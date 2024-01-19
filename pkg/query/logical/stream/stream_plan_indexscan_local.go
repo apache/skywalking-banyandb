@@ -72,18 +72,82 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 	}
 	ec := executor.FromStreamExecutionContext(ctx)
 	if i.order != nil && i.order.Index != nil {
-		es, err := ec.Sort(ctx, pbv1.StreamSortOptions{
-			Name:          i.metadata.GetName(),
-			TimeRange:     &i.timeRange,
-			Entities:      i.entities,
-			Filter:        i.filter,
-			Order:         orderBy,
-			TagProjection: i.projectionTags,
+		ssr, err := ec.Sort(ctx, pbv1.StreamSortOptions{
+			Name:           i.metadata.GetName(),
+			TimeRange:      &i.timeRange,
+			Entities:       i.entities,
+			Filter:         i.filter,
+			Order:          orderBy,
+			TagProjection:  i.projectionTags,
+			MaxElementSize: i.maxElementSize,
 		})
 		if err != nil {
 			return nil, err
 		}
-		elements = append(elements, es...)
+		if ssr == nil {
+			return elements, nil
+		}
+		r := ssr.Pull()
+		for i := range r.Timestamps {
+			e := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+				ElementId: r.ElementIDs[i],
+			}
+
+			for _, tf := range r.TagFamilies[i] {
+				tagFamily := &modelv1.TagFamily{
+					Name: tf.Name,
+				}
+				e.TagFamilies = append(e.TagFamilies, tagFamily)
+				for _, t := range tf.Tags {
+					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+						Key:   t.Name,
+						Value: t.Values[0],
+					})
+				}
+			}
+			elements = append(elements, e)
+		}
+		return elements, nil
+	}
+
+	if i.filter != nil && i.filter != logical.Enode {
+		sfr, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
+			Name:           i.metadata.GetName(),
+			TimeRange:      &i.timeRange,
+			Entities:       i.entities,
+			Filter:         i.filter,
+			Order:          orderBy,
+			TagProjection:  i.projectionTags,
+			MaxElementSize: i.maxElementSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if sfr == nil {
+			return elements, nil
+		}
+		r := sfr.Pull()
+		for i := range r.Timestamps {
+			e := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+				ElementId: r.ElementIDs[i],
+			}
+
+			for _, tf := range r.TagFamilies[i] {
+				tagFamily := &modelv1.TagFamily{
+					Name: tf.Name,
+				}
+				e.TagFamilies = append(e.TagFamilies, tagFamily)
+				for _, t := range tf.Tags {
+					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+						Key:   t.Name,
+						Value: t.Values[0],
+					})
+				}
+			}
+			elements = append(elements, e)
+		}
 		return elements, nil
 	}
 
@@ -98,7 +162,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 			TagProjection: i.projectionTags,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to query measure: %w", err)
+			return nil, fmt.Errorf("failed to query stream: %w", err)
 		}
 
 		results = append(results, result)

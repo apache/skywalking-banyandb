@@ -80,7 +80,7 @@ func BuildLocalFilterDeprecated(criteria *modelv1.Criteria, schema Schema, entit
 		} else if mandatoryIndexRule {
 			return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
 		}
-		return eNode, []tsdb.Entity{entity}, nil
+		return Enode, []tsdb.Entity{entity}, nil
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
 		if le.GetLeft() == nil && le.GetRight() == nil {
@@ -323,22 +323,11 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 			return nil, parsedEntity, nil
 		}
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
-			if indexRule.Location == databasev1.IndexRule_LOCATION_GLOBAL {
-				switch cond.Op {
-				case modelv1.Condition_BINARY_OP_EQ, modelv1.Condition_BINARY_OP_IN:
-					return nil, nil, GlobalIndexError{
-						IndexRule: indexRule,
-						Expr:      expr,
-					}
-				default:
-					return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "gobal index conf:%s", cond)
-				}
-			}
 			return parseCondition(cond, indexRule, expr, entity)
 		} else if mandatoryIndexRule {
 			return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
 		}
-		return eNode, [][]*modelv1.TagValue{entity}, nil
+		return Enode, [][]*modelv1.TagValue{entity}, nil
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
 		if le.GetLeft() == nil && le.GetRight() == nil {
@@ -904,7 +893,8 @@ func jsonToString(marshaler json.Marshaler) string {
 }
 
 var (
-	eNode = new(emptyNode)
+	// Enode is an empty node.
+	Enode = new(emptyNode)
 	bList = new(bypassList)
 )
 

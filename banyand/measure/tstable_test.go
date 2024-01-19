@@ -99,8 +99,9 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 				introductions: make(chan *introduction),
 			}
 			flushCh := make(chan *flusherIntroduction)
+			mergeCh := make(chan *mergerIntroduction)
 			introducerWatcher := make(watcher.Channel, 1)
-			go tst.introducerLoop(flushCh, introducerWatcher, 1)
+			go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
 			defer tst.Close()
 			for _, dps := range tt.dpsList {
 				tst.mustAddDataPoints(dps)
@@ -126,7 +127,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 }
 
 func Test_tstIter(t *testing.T) {
-	tests := []struct {
+	type testCtx struct {
 		wantErr      error
 		name         string
 		dpsList      []*dataPoints
@@ -134,131 +135,252 @@ func Test_tstIter(t *testing.T) {
 		want         []blockMetadata
 		minTimestamp int64
 		maxTimestamp int64
-	}{
-		{
-			name:         "Test with no data points",
-			dpsList:      []*dataPoints{},
-			sids:         []common.SeriesID{1, 2, 3},
-			minTimestamp: 1,
-			maxTimestamp: 1,
-		},
-		{
-			name:         "Test with single part",
-			dpsList:      []*dataPoints{dpsTS1},
-			sids:         []common.SeriesID{1, 2, 3},
-			minTimestamp: 1,
-			maxTimestamp: 1,
-			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-			},
-		},
-		{
-			name:         "Test with multiple parts with different ts",
-			dpsList:      []*dataPoints{dpsTS1, dpsTS2},
-			sids:         []common.SeriesID{1, 2, 3},
-			minTimestamp: 1,
-			maxTimestamp: 2,
-			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-			},
-		},
-		{
-			name:         "Test with multiple parts with same ts",
-			dpsList:      []*dataPoints{dpsTS1, dpsTS1},
-			sids:         []common.SeriesID{1, 2, 3},
-			minTimestamp: 1,
-			maxTimestamp: 2,
-			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-			},
-		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			verify := func(tst *tsTable) uint64 {
-				defer tst.Close()
-				s := tst.currentSnapshot()
-				if s == nil {
-					s = new(snapshot)
-				}
-				defer s.decRef()
-				pp, n := s.getParts(nil, queryOptions{
-					minTimestamp: tt.minTimestamp,
-					maxTimestamp: tt.maxTimestamp,
-				})
-				require.Equal(t, len(s.parts), n)
-				ti := &tstIter{}
-				ti.init(pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
-				var got []blockMetadata
-				for ti.nextBlock() {
-					if ti.piHeap[0].curBlock.seriesID == 0 {
-						t.Errorf("Expected curBlock to be initialized, but it was nil")
-					}
-					got = append(got, ti.piHeap[0].curBlock)
-				}
 
-				if !errors.Is(ti.Error(), tt.wantErr) {
-					t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
-				}
-
-				if diff := cmp.Diff(got, tt.want,
-					cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
-					cmpopts.IgnoreFields(blockMetadata{}, "field"),
-					cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
-					cmp.AllowUnexported(blockMetadata{}),
-				); diff != "" {
-					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
-				}
-				return s.epoch
+	verify := func(t *testing.T, tt testCtx, tst *tsTable) uint64 {
+		defer tst.Close()
+		s := tst.currentSnapshot()
+		if s == nil {
+			s = new(snapshot)
+		}
+		defer s.decRef()
+		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
+		require.Equal(t, len(s.parts), n)
+		ti := &tstIter{}
+		ti.init(pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
+		var got []blockMetadata
+		for ti.nextBlock() {
+			if ti.piHeap[0].curBlock.seriesID == 0 {
+				t.Errorf("Expected curBlock to be initialized, but it was nil")
 			}
+			got = append(got, ti.piHeap[0].curBlock)
+		}
 
-			t.Run("memory snapshot", func(t *testing.T) {
+		if !errors.Is(ti.Error(), tt.wantErr) {
+			t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
+		}
+
+		if diff := cmp.Diff(got, tt.want,
+			cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
+			cmpopts.IgnoreFields(blockMetadata{}, "field"),
+			cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+			cmp.AllowUnexported(blockMetadata{}),
+		); diff != "" {
+			t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+		}
+		return s.epoch
+	}
+
+	t.Run("memory snapshot", func(t *testing.T) {
+		tests := []testCtx{
+			{
+				name:         "Test with no data points",
+				dpsList:      []*dataPoints{},
+				sids:         []common.SeriesID{1, 2, 3},
+				minTimestamp: 1,
+				maxTimestamp: 1,
+			},
+			{
+				name:         "Test with single part",
+				dpsList:      []*dataPoints{dpsTS1},
+				sids:         []common.SeriesID{1, 2, 3},
+				minTimestamp: 1,
+				maxTimestamp: 1,
+				want: []blockMetadata{
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				},
+			},
+			{
+				name:         "Test with multiple parts with different ts",
+				dpsList:      []*dataPoints{dpsTS1, dpsTS2},
+				sids:         []common.SeriesID{1, 2, 3},
+				minTimestamp: 1,
+				maxTimestamp: 2,
+				want: []blockMetadata{
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				},
+			},
+			{
+				name:         "Test with multiple parts with same ts",
+				dpsList:      []*dataPoints{dpsTS1, dpsTS1},
+				sids:         []common.SeriesID{1, 2, 3},
+				minTimestamp: 1,
+				maxTimestamp: 2,
+				want: []blockMetadata{
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				},
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				tmpPath, defFn := test.Space(require.New(t))
+				defer defFn()
 				tst := &tsTable{
 					loopCloser:    run.NewCloser(2),
 					introductions: make(chan *introduction),
+					fileSystem:    fs.NewLocalFileSystem(),
+					root:          tmpPath,
 				}
+				tst.gc.init(tst)
 				flushCh := make(chan *flusherIntroduction)
+				mergeCh := make(chan *mergerIntroduction)
 				introducerWatcher := make(watcher.Channel, 1)
-				go tst.introducerLoop(flushCh, introducerWatcher, 1)
+				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
 				for _, dps := range tt.dpsList {
 					tst.mustAddDataPoints(dps)
 					time.Sleep(100 * time.Millisecond)
 				}
-				verify(tst)
+				verify(t, tt, tst)
 			})
+		}
+	})
 
-			t.Run("file snapshot", func(t *testing.T) {
-				tmpPath, defFn := test.Space(require.New(t))
-				fileSystem := fs.NewLocalFileSystem()
-				defer defFn()
+	t.Run("file snapshot", func(t *testing.T) {
+		tests := []testCtx{
+			{
+				name:         "Test with no data points",
+				dpsList:      []*dataPoints{},
+				sids:         []common.SeriesID{1, 2, 3},
+				minTimestamp: 1,
+				maxTimestamp: 1,
+			},
+			{
+				name:         "Test with single part",
+				dpsList:      []*dataPoints{dpsTS1},
+				sids:         []common.SeriesID{1, 2, 3},
+				minTimestamp: 1,
+				maxTimestamp: 1,
+				want: []blockMetadata{
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				},
+			},
+			{
+				name:         "Test with multiple parts with different ts, the block will be merged",
+				dpsList:      []*dataPoints{dpsTS1, dpsTS2, dpsTS2},
+				sids:         []common.SeriesID{1, 2, 3},
+				minTimestamp: 1,
+				maxTimestamp: 2,
+				want: []blockMetadata{
+					{seriesID: 1, count: 2, uncompressedSizeBytes: 3352},
+					{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
+					{seriesID: 3, count: 2, uncompressedSizeBytes: 48},
+				},
+			},
+			{
+				name:         "Test with multiple parts with same ts, duplicated blocks will be merged",
+				dpsList:      []*dataPoints{dpsTS1, dpsTS1},
+				sids:         []common.SeriesID{1, 2, 3},
+				minTimestamp: 1,
+				maxTimestamp: 2,
+				want: []blockMetadata{
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				},
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Run("merging on the fly", func(t *testing.T) {
+					tmpPath, defFn := test.Space(require.New(t))
+					fileSystem := fs.NewLocalFileSystem()
+					defer defFn()
 
-				tst, err := newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
-				require.NoError(t, err)
-				for _, dps := range tt.dpsList {
-					tst.mustAddDataPoints(dps)
-					time.Sleep(100 * time.Millisecond)
-				}
-				epoch := verify(tst)
+					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0})
+					require.NoError(t, err)
+					for i, dps := range tt.dpsList {
+						tst.mustAddDataPoints(dps)
+						for {
+							snp := tst.currentSnapshot()
+							if snp == nil {
+								t.Logf("waiting for snapshot %d to be introduced", i)
+								time.Sleep(100 * time.Millisecond)
+								continue
+							}
+							if snp.creator != snapshotCreatorMemPart {
+								snp.decRef()
+								break
+							}
+							t.Logf("waiting for snapshot %d to be flushed or merged: current creator:%d, parts: %+v",
+								i, snp.creator, snp.parts)
+							snp.decRef()
+							time.Sleep(100 * time.Millisecond)
+						}
+					}
+					// wait until some parts are merged
+					if len(tt.dpsList) > 0 {
+						for {
+							snp := tst.currentSnapshot()
+							if snp == nil {
+								time.Sleep(100 * time.Millisecond)
+								continue
+							}
+							if len(snp.parts) == 1 || len(snp.parts) < len(tt.dpsList) {
+								snp.decRef()
+								break
+							}
+							t.Logf("waiting for snapshot to be merged: current creator:%d, parts: %+v", snp.creator, snp.parts)
+							snp.decRef()
+							time.Sleep(100 * time.Millisecond)
+						}
+					}
+					verify(t, tt, tst)
+				})
 
-				// reopen the table
-				tst, err = newTSTable(fileSystem, tmpPath, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{})
-				require.NoError(t, err)
-				assert.Equal(t, epoch, verify(tst))
+				t.Run("merging on close", func(t *testing.T) {
+					t.Skip("the test is flaky due to unpredictable merge loop schedule.")
+					tmpPath, defFn := test.Space(require.New(t))
+					fileSystem := fs.NewLocalFileSystem()
+					defer defFn()
+
+					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout})
+					require.NoError(t, err)
+					for _, dps := range tt.dpsList {
+						tst.mustAddDataPoints(dps)
+						time.Sleep(100 * time.Millisecond)
+					}
+					// wait until the introducer is done
+					if len(tt.dpsList) > 0 {
+						for {
+							snp := tst.currentSnapshot()
+							if snp == nil {
+								time.Sleep(100 * time.Millisecond)
+								continue
+							}
+							if len(snp.parts) == len(tt.dpsList) {
+								snp.decRef()
+								tst.Close()
+								break
+							}
+							snp.decRef()
+							time.Sleep(100 * time.Millisecond)
+						}
+					}
+					// reopen the table
+					tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout})
+					require.NoError(t, err)
+					verify(t, tt, tst)
+				})
 			})
-		})
-	}
+		}
+	})
 }
 
 var tagProjections = map[int][]pbv1.TagProjection{

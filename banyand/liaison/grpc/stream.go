@@ -116,9 +116,8 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			Request:    writeEntity,
 			ShardId:    uint32(shardID),
 			SeriesHash: tsdb.HashEntity(entity),
-		}
-		if s.log.Debug().Enabled() {
-			iwr.EntityValues = tagValues.Encode()
+			// TODO: remove the first value (stream name) of tagValues
+			EntityValues: tagValues[1:].Encode(),
 		}
 		nodeID, errPickNode := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID))
 		if errPickNode != nil {

@@ -31,7 +31,8 @@ import (
 // StreamExecutionContext allows retrieving data through the stream module.
 type StreamExecutionContext interface {
 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
-	Sort(ctx context.Context, opts pbv1.StreamSortOptions) ([]*streamv1.Element, error)
+	Sort(ctx context.Context, opts pbv1.StreamSortOptions) (pbv1.StreamSortResult, error)
+	Filter(ctx context.Context, opts pbv1.StreamFilterOptions) (pbv1.StreamFilterResult, error)
 }
 
 // StreamExecutionContextKey is the key of stream execution context in context.Context.

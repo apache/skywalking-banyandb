@@ -97,7 +97,7 @@ func TestMustInitFromElements(t *testing.T) {
 
 			fileSystem := fs.NewLocalFileSystem()
 			mp.mustFlush(fileSystem, path)
-			p := mustOpenFilePart(path, fileSystem)
+			p := mustOpenFilePart(epoch, tmpPath, fileSystem)
 			defer p.close()
 			assert.Equal(t, tt.want.BlocksCount, p.partMetadata.BlocksCount)
 			assert.Equal(t, tt.want.MinTimestamp, p.partMetadata.MinTimestamp)

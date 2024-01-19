@@ -47,6 +47,35 @@ const (
 	tagFamiliesFilenameExt         = ".tf"
 )
 
+type columnElements struct {
+	elementID []string
+	// TODO: change it to 1d array after refactoring low-level query
+	tagFamilies [][]pbv1.TagFamily
+	timestamp   []int64
+}
+
+func newColumnElements() *columnElements {
+	ces := &columnElements{}
+	ces.elementID = make([]string, 0)
+	ces.tagFamilies = make([][]pbv1.TagFamily, 0)
+	ces.timestamp = make([]int64, 0)
+	return ces
+}
+
+func (ces *columnElements) Pull() *pbv1.StreamColumnResult {
+	r := &pbv1.StreamColumnResult{}
+	r.Timestamps = make([]int64, 0)
+	r.ElementIDs = make([]string, 0)
+	r.TagFamilies = make([][]pbv1.TagFamily, len(ces.tagFamilies))
+	r.Timestamps = append(r.Timestamps, ces.timestamp...)
+	r.ElementIDs = append(r.ElementIDs, ces.elementID...)
+	for i, tfs := range ces.tagFamilies {
+		r.TagFamilies[i] = make([]pbv1.TagFamily, 0)
+		r.TagFamilies[i] = append(r.TagFamilies[i], tfs...)
+	}
+	return r
+}
+
 type element struct {
 	elementID   string
 	tagFamilies []*tagFamily
@@ -89,9 +118,14 @@ func (p *part) String() string {
 func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, error) {
 	// TODO: refactor to column-based query
 	// TODO: cache blocks
-	for _, primaryMeta := range p.primaryBlockMetadata {
-		if !primaryMeta.mightContainElement(seriesID, timestamp) {
+	for i, primaryMeta := range p.primaryBlockMetadata {
+		if i != len(p.primaryBlockMetadata)-1 && seriesID >= p.primaryBlockMetadata[i+1].seriesID {
 			continue
+		}
+		if seriesID < p.primaryBlockMetadata[i].seriesID ||
+			timestamp < common.ItemID(p.primaryBlockMetadata[i].minTimestamp) ||
+			timestamp > common.ItemID(p.primaryBlockMetadata[i].maxTimestamp) {
+			break
 		}
 
 		compressedPrimaryBuf := make([]byte, primaryMeta.size)
@@ -107,17 +141,24 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 		if err != nil {
 			return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 		}
+		var targetBlockMetadata blockMetadata
+		for _, blockMetadata := range bm {
+			if blockMetadata.seriesID == seriesID {
+				targetBlockMetadata = blockMetadata
+				break
+			}
+		}
 
 		timestamps := make([]int64, 0)
-		timestamps = mustReadTimestampsFrom(timestamps, &bm[0].timestamps, int(bm[0].count), p.timestamps)
+		timestamps = mustReadTimestampsFrom(timestamps, &targetBlockMetadata.timestamps, int(targetBlockMetadata.count), p.timestamps)
 		for i, ts := range timestamps {
 			if timestamp == common.ItemID(ts) {
 				elementIDs := make([]string, 0)
-				elementIDs = mustReadElementIDsFrom(elementIDs, &bm[0].elementIDs, int(bm[0].count), p.elementIDs)
+				elementIDs = mustReadElementIDsFrom(elementIDs, &targetBlockMetadata.elementIDs, int(targetBlockMetadata.count), p.elementIDs)
 				tfs := make([]*tagFamily, 0)
 				for j := range tagProjection {
 					name := tagProjection[j].Family
-					block, ok := bm[0].tagFamilies[name]
+					block, ok := targetBlockMetadata.tagFamilies[name]
 					if !ok {
 						continue
 					}
@@ -176,7 +217,7 @@ func openMemPart(mp *memPart) *part {
 	var p part
 	p.partMetadata = mp.partMetadata
 
-	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], newReader(&mp.meta))
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], &mp.meta)
 
 	// Open data files
 	p.meta = &mp.meta
@@ -226,6 +267,7 @@ func (mp *memPart) reset() {
 	mp.meta.Reset()
 	mp.primary.Reset()
 	mp.timestamps.Reset()
+	mp.elementIDs.Reset()
 	if mp.tagFamilies != nil {
 		for _, tf := range mp.tagFamilies {
 			tf.Reset()
@@ -318,15 +360,13 @@ func releaseMemPart(mp *memPart) {
 var memPartPool sync.Pool
 
 type partWrapper struct {
-	fileSystem    fs.FileSystem
-	mp            *memPart
-	p             *part
-	ref           int32
-	mustBeDeleted uint32
+	mp  *memPart
+	p   *part
+	ref int32
 }
 
-func newPartWrapper(mp *memPart, p *part, fileSystem fs.FileSystem) *partWrapper {
-	return &partWrapper{mp: mp, p: p, fileSystem: fileSystem, ref: 1}
+func newPartWrapper(mp *memPart, p *part) *partWrapper {
+	return &partWrapper{mp: mp, p: p, ref: 1}
 }
 
 func (pw *partWrapper) incRef() {
@@ -345,24 +385,22 @@ func (pw *partWrapper) decRef() {
 		return
 	}
 	pw.p.close()
-	if atomic.LoadUint32(&pw.mustBeDeleted) == 0 {
-		return
-	}
-	pw.fileSystem.MustRMAll(pw.p.path)
 }
 
 func (pw *partWrapper) ID() uint64 {
 	return pw.p.partMetadata.ID
 }
 
-func mustOpenFilePart(partPath string, fileSystem fs.FileSystem) *part {
+func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	var p part
+	partPath := partPath(root, id)
 	p.path = partPath
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
+	p.partMetadata.ID = id
 
 	metaPath := path.Join(partPath, metaFilename)
 	pr := mustOpenReader(metaPath, fileSystem)
-	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], newReader(pr))
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], pr)
 	fs.MustClose(pr)
 
 	p.primary = mustOpenReader(path.Join(partPath, primaryFilename), fileSystem)

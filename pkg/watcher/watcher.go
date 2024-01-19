@@ -27,6 +27,9 @@ type Epoch struct {
 
 // Watch returns a channel that will be notified when the epoch is reached.
 func (e *Epoch) Watch() <-chan struct{} {
+	if e == nil {
+		return nil
+	}
 	return e.ch
 }
 

@@ -112,6 +112,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	et.elements.seriesIDs = append(et.elements.seriesIDs, series.ID)
 
 	tagFamilies := make([]tagValues, len(stm.schema.TagFamilies))
+	tagFamiliesForIndexWrite := make([]tagValues, len(stm.schema.TagFamilies))
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.Element.TagFamilies) <= i {
@@ -128,6 +129,14 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			} else {
 				tagValue = tagFamily.Tags[j]
 			}
+			tagFamiliesForIndexWrite[i].values = append(tagFamiliesForIndexWrite[i].values, encodeTagValue(
+				tagFamilySpec.Tags[j].Name,
+				tagFamilySpec.Tags[j].Type,
+				tagValue,
+			))
+			if tagFamilySpec.Tags[j].IndexedOnly {
+				continue
+			}
 			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue(
 				tagFamilySpec.Tags[j].Name,
 				tagFamilySpec.Tags[j].Type,
@@ -138,16 +147,16 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
 
 	var fields []index.Field
-	for _, ruleIndex := range stm.indexRuleLocators {
-		tv := getIndexValue(ruleIndex, tagFamilies)
+	for _, indexRule := range stm.indexRuleLocators {
+		tv := getIndexValue(indexRule, tagFamiliesForIndexWrite)
 		if tv == nil {
 			continue
 		}
 		if tv.value != nil {
 			fields = append(fields, index.Field{
 				Key: index.FieldKey{
-					IndexRuleID: ruleIndex.Rule.GetMetadata().GetId(),
-					Analyzer:    ruleIndex.Rule.Analyzer,
+					IndexRuleID: indexRule.Rule.GetMetadata().GetId(),
+					Analyzer:    indexRule.Rule.Analyzer,
 					SeriesID:    series.ID,
 				},
 				Term: tv.value,
@@ -155,7 +164,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			continue
 		}
 		for _, val := range tv.valueArr {
-			rule := ruleIndex.Rule
+			rule := indexRule.Rule
 			fields = append(fields, index.Field{
 				Key: index.FieldKey{
 					IndexRuleID: rule.GetMetadata().GetId(),

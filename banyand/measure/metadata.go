@@ -301,12 +301,12 @@ func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) 
 	return s, ok
 }
 
-func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable], error) {
+func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option], error) {
 	g, ok := sr.LoadGroup(groupName)
 	if !ok {
 		return nil, fmt.Errorf("group %s not found", groupName)
 	}
-	return g.SupplyTSDB().(storage.TSDB[*tsTable]), nil
+	return g.SupplyTSDB().(storage.TSDB[*tsTable, option]), nil
 }
 
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
@@ -316,6 +316,7 @@ type supplier struct {
 	pipeline queue.Queue
 	l        *logger.Logger
 	path     string
+	option   option
 }
 
 func newSupplier(path string, svc *service) *supplier {
@@ -324,6 +325,7 @@ func newSupplier(path string, svc *service) *supplier {
 		metadata: svc.metadata,
 		l:        svc.l,
 		pipeline: svc.localPipeline,
+		option:   svc.option,
 	}
 }
 
@@ -343,12 +345,13 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
-	opts := storage.TSDBOpts[*tsTable]{
+	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:        groupSchema.ResourceOpts.ShardNum,
 		Location:        path.Join(s.path, groupSchema.Metadata.Name),
 		TSTableCreator:  newTSTable,
 		SegmentInterval: storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
 		TTL:             storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
+		Option:          s.option,
 	}
 	name := groupSchema.Metadata.Name
 	return storage.OpenTSDB(

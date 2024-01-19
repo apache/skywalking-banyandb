@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 )
 
 func TestSnapshotGetParts(t *testing.T) {
@@ -110,7 +112,7 @@ func TestSnapshotGetParts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, count := tt.snapshot.getParts(tt.dst, tt.opts)
+			result, count := tt.snapshot.getParts(tt.dst, tt.opts.minTimestamp, tt.opts.maxTimestamp)
 			assert.Equal(t, tt.expected, result)
 			assert.Equal(t, tt.count, count)
 		})
@@ -278,6 +280,140 @@ func TestSnapshotMerge(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.snapshot.merge(tt.nextEpoch, tt.nextParts)
+			if tt.closePrev {
+				tt.snapshot.decRef()
+			}
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestSnapshotRemove(t *testing.T) {
+	tests := []struct {
+		snapshot    *snapshot
+		mergedParts map[uint64]struct{}
+		name        string
+		expected    snapshot
+		nextEpoch   uint64
+		closePrev   bool
+	}{
+		{
+			name: "Test with empty snapshot and no parts to remove",
+			snapshot: &snapshot{
+				parts: []*partWrapper{},
+			},
+			nextEpoch:   1,
+			mergedParts: map[uint64]struct{}{},
+			expected: snapshot{
+				epoch: 1,
+				ref:   1,
+				parts: nil,
+			},
+		},
+		{
+			name: "Test with non-empty snapshot and no parts to remove",
+			snapshot: &snapshot{
+				parts: []*partWrapper{
+					{p: &part{partMetadata: partMetadata{ID: 1}}, ref: 1},
+					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 2},
+				},
+			},
+			nextEpoch:   1,
+			mergedParts: map[uint64]struct{}{},
+			expected: snapshot{
+				epoch: 1,
+				ref:   1,
+				parts: []*partWrapper{
+					{p: &part{partMetadata: partMetadata{ID: 1}}, ref: 2},
+					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 3},
+				},
+			},
+		},
+		{
+			name: "Test with non-empty snapshot and some parts to remove",
+			snapshot: &snapshot{
+				parts: []*partWrapper{
+					{p: &part{partMetadata: partMetadata{ID: 1}}, ref: 1},
+					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 2},
+				},
+			},
+			nextEpoch: 1,
+			mergedParts: map[uint64]struct{}{
+				1: {},
+			},
+			expected: snapshot{
+				epoch: 1,
+				ref:   1,
+				parts: []*partWrapper{
+					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 3},
+				},
+			},
+		},
+		{
+			name: "Test with empty snapshot, no parts to remove, and closePrev=true",
+			snapshot: &snapshot{
+				parts: []*partWrapper{},
+			},
+			nextEpoch:   1,
+			mergedParts: map[uint64]struct{}{},
+			expected: snapshot{
+				epoch: 1,
+				ref:   1,
+				parts: nil,
+			},
+			closePrev: true,
+		},
+		{
+			name: "Test with non-empty snapshot, no parts to remove, and closePrev=true",
+			snapshot: &snapshot{
+				parts: []*partWrapper{
+					{p: &part{partMetadata: partMetadata{ID: 1}}, ref: 1},
+					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 2},
+				},
+			},
+			nextEpoch:   1,
+			mergedParts: map[uint64]struct{}{},
+			expected: snapshot{
+				epoch: 1,
+				ref:   1,
+				parts: []*partWrapper{
+					{p: &part{partMetadata: partMetadata{ID: 1}}, ref: 1},
+					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 2},
+				},
+			},
+			closePrev: true,
+		},
+		{
+			name: "Test with non-empty snapshot, some parts to remove, and closePrev=true",
+			snapshot: &snapshot{
+				parts: []*partWrapper{
+					{p: &part{
+						partMetadata: partMetadata{ID: 1},
+						timestamps:   &bytes.Buffer{},
+						elementIDs:   &bytes.Buffer{},
+						primary:      &bytes.Buffer{},
+					}, ref: 1},
+					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 2},
+				},
+			},
+			nextEpoch: 1,
+			mergedParts: map[uint64]struct{}{
+				1: {},
+			},
+			expected: snapshot{
+				epoch: 1,
+				ref:   1,
+				parts: []*partWrapper{
+					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 2},
+				},
+			},
+			closePrev: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.snapshot.remove(tt.nextEpoch, tt.mergedParts)
 			if tt.closePrev {
 				tt.snapshot.decRef()
 			}

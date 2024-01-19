@@ -91,6 +91,29 @@ func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 	}
 }
 
+func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seqReader, cm columnMetadata, count uint64) {
+	c.name = cm.name
+	c.valueType = cm.valueType
+	if cm.offset != reader.bytesRead {
+		logger.Panicf("%s: offset mismatch: %d vs %d", reader.Path(), cm.offset, reader.bytesRead)
+	}
+	valuesSize := cm.size
+	if valuesSize > maxValuesBlockSize {
+		logger.Panicf("%s: block size cannot exceed %d bytes; got %d bytes", reader.Path(), maxValuesBlockSize, valuesSize)
+	}
+
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
+
+	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
+	reader.mustReadFull(bb.Buf)
+	var err error
+	c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
+	if err != nil {
+		logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+	}
+}
+
 var bigValuePool bytes.BufferPool
 
 type columnFamily struct {

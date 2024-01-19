@@ -62,9 +62,39 @@ func (b *Buffer) Read(offset int64, buffer []byte) (int, error) {
 	return n, err
 }
 
+// StreamRead implements fs.Reader.
+func (b *Buffer) StreamRead() io.Reader {
+	return &reader{bb: b}
+}
+
 // Reset resets the buffer.
 func (b *Buffer) Reset() {
 	b.Buf = b.Buf[:0]
+}
+
+type reader struct {
+	bb *Buffer
+
+	readOffset int
+}
+
+func (r *reader) Path() string {
+	return r.bb.Path()
+}
+
+func (r *reader) Read(p []byte) (int, error) {
+	var err error
+	n := copy(p, r.bb.Buf[r.readOffset:])
+	if n < len(p) {
+		err = io.EOF
+	}
+	r.readOffset += n
+	return n, err
+}
+
+func (r *reader) MustClose() {
+	r.bb = nil
+	r.readOffset = 0
 }
 
 // BufferPool is a pool of Buffer.

@@ -70,7 +70,7 @@ type IndexDB interface {
 }
 
 // TSDB allows listing and getting shard details.
-type TSDB[T TSTable] interface {
+type TSDB[T TSTable, O any] interface {
 	io.Closer
 	Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error)
 	CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error)
@@ -92,8 +92,8 @@ type TSTableWrapper[T TSTable] interface {
 }
 
 // TSTableCreator creates a TSTable.
-type TSTableCreator[T TSTable] func(fileSystem fs.FileSystem, root string, position common.Position,
-	l *logger.Logger, timeRange timestamp.TimeRange) (T, error)
+type TSTableCreator[T TSTable, O any] func(fileSystem fs.FileSystem, root string, position common.Position,
+	l *logger.Logger, timeRange timestamp.TimeRange, option O) (T, error)
 
 // IntervalUnit denotes the unit of a time point.
 type IntervalUnit int

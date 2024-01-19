@@ -110,6 +110,13 @@ type Result struct {
 	SID         common.SeriesID
 }
 
+// StreamColumnResult is the result of a stream sort or filter.
+type StreamColumnResult struct {
+	TagFamilies [][]TagFamily
+	Timestamps  []int64
+	ElementIDs  []string
+}
+
 // TagProjection is the projection of a tag family and its tags.
 type TagProjection struct {
 	Family string
@@ -128,18 +135,40 @@ type StreamQueryOptions struct {
 
 // StreamSortOptions is the options of a stream sort.
 type StreamSortOptions struct {
-	Name          string
-	TimeRange     *timestamp.TimeRange
-	Entities      [][]*modelv1.TagValue
-	Filter        index.Filter
-	Order         *OrderBy
-	TagProjection []TagProjection
+	Name           string
+	TimeRange      *timestamp.TimeRange
+	Entities       [][]*modelv1.TagValue
+	Filter         index.Filter
+	Order          *OrderBy
+	TagProjection  []TagProjection
+	MaxElementSize int
+}
+
+// StreamFilterOptions is the options of a stream filter.
+type StreamFilterOptions struct {
+	Name           string
+	TimeRange      *timestamp.TimeRange
+	Entities       [][]*modelv1.TagValue
+	Filter         index.Filter
+	Order          *OrderBy
+	TagProjection  []TagProjection
+	MaxElementSize int
 }
 
 // StreamQueryResult is the result of a stream query.
 type StreamQueryResult interface {
 	Pull() *Result
 	Release()
+}
+
+// StreamSortResult is the result of a stream sort.
+type StreamSortResult interface {
+	Pull() *StreamColumnResult
+}
+
+// StreamFilterResult is the result of a stream filter.
+type StreamFilterResult interface {
+	Pull() *StreamColumnResult
 }
 
 // MeasureQueryOptions is the options of a measure query.

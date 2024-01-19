@@ -20,6 +20,7 @@ package stream
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -74,6 +75,21 @@ type blockMetadata struct {
 	count                 uint64
 }
 
+func (bh *blockMetadata) copyFrom(src *blockMetadata) {
+	bh.seriesID = src.seriesID
+	bh.uncompressedSizeBytes = src.uncompressedSizeBytes
+	bh.count = src.count
+	bh.timestamps.copyFrom(&src.timestamps)
+	bh.elementIDs.copyFrom(&src.elementIDs)
+	for k, db := range src.tagFamilies {
+		if bh.tagFamilies == nil {
+			bh.tagFamilies = make(map[string]*dataBlock)
+		}
+		bh.tagFamilies[k] = &dataBlock{}
+		bh.tagFamilies[k].copyFrom(db)
+	}
+}
+
 func (bh *blockMetadata) getTagFamilyMetadata(name string) *dataBlock {
 	if bh.tagFamilies == nil {
 		bh.tagFamilies = make(map[string]*dataBlock)
@@ -106,7 +122,14 @@ func (bh *blockMetadata) marshal(dst []byte) []byte {
 	dst = bh.timestamps.marshal(dst)
 	dst = bh.elementIDs.marshal(dst)
 	dst = encoding.VarUint64ToBytes(dst, uint64(len(bh.tagFamilies)))
-	for name, cf := range bh.tagFamilies {
+	// make sure the order of tagFamilies is stable
+	keys := make([]string, 0, len(bh.tagFamilies))
+	for k := range bh.tagFamilies {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		cf := bh.tagFamilies[name]
 		dst = encoding.EncodeBytes(dst, convert.StringToBytes(name))
 		dst = cf.marshal(dst)
 	}
@@ -241,7 +264,6 @@ func (th *elementIDsMetadata) reset() {
 	th.encodeType = 0
 }
 
-// nolint: unused
 func (th *elementIDsMetadata) copyFrom(src *elementIDsMetadata) {
 	th.dataBlock.copyFrom(&src.dataBlock)
 	th.encodeType = src.encodeType
@@ -258,7 +280,6 @@ func (th *elementIDsMetadata) unmarshal(src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
 	}
-	// src = src[8:]
 	th.encodeType = encoding.EncodeType(src[0])
 	return src[1:], nil
 }

@@ -27,6 +27,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/shirou/gopsutil/v3/disk"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -281,8 +283,17 @@ func (fs *localFileSystem) MustRMAll(path string) {
 	fs.logger.Panic().Str("path", path).Msg("failed to remove all files under path")
 }
 
+func (fs *localFileSystem) MustGetFreeSpace(path string) uint64 {
+	usage, err := disk.Usage(path)
+	if err != nil {
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to get disk usage")
+	}
+	return usage.Free
+}
+
 // Write adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
+	// TODO: use bufio.Writer to optimize performance.
 	size, err := file.file.Write(buffer)
 	switch {
 	case err == nil:
@@ -363,9 +374,9 @@ func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 }
 
 // StreamRead is used to read the entire file using streaming read.
-func (file *LocalFile) StreamRead(buffer []byte) (*Iter, error) {
+func (file *LocalFile) StreamRead() io.Reader {
 	reader := bufio.NewReader(file.file)
-	return &Iter{reader: reader, buffer: buffer, fileName: file.file.Name()}, nil
+	return &seqReader{reader: reader, fileName: file.file.Name()}
 }
 
 // Size is used to get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
@@ -414,11 +425,15 @@ func (file *LocalFile) Close() error {
 	return nil
 }
 
-// Next is used to obtain the next data of stream.
-func (iter *Iter) Next() (int, error) {
-	rsize, err := iter.reader.Read(iter.buffer)
+type seqReader struct {
+	reader   *bufio.Reader
+	fileName string
+}
+
+func (i *seqReader) Read(p []byte) (int, error) {
+	rsize, err := i.reader.Read(p)
 	if err != nil {
-		return readErrorHandle("ReadStream operation", err, iter.fileName, rsize)
+		return readErrorHandle("ReadStream operation", err, i.fileName, rsize)
 	}
 	return rsize, nil
 }
