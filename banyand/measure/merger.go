@@ -40,6 +40,8 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 		return
 	}
 
+	var pwsChunk []*partWrapper
+
 	for {
 		select {
 		case <-tst.loopCloser.CloseNotify():
@@ -50,7 +52,8 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 				continue
 			}
 			if curSnapshot.epoch != epoch {
-				if err := tst.mergeSnapshot(curSnapshot, merges); err != nil {
+				var err error
+				if pwsChunk, err = tst.mergeSnapshot(curSnapshot, merges, pwsChunk[:0]); err != nil {
 					if errors.Is(err, errClosed) {
 						curSnapshot.decRef()
 						return
@@ -70,17 +73,18 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 	}
 }
 
-func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction) error {
+func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction, dst []*partWrapper) ([]*partWrapper, error) {
 	freeDiskSize := tst.freeDiskSpace(tst.root)
-	partsToMerge, toBeMerged := tst.getPartsToMerge(curSnapshot, freeDiskSize)
-	if len(partsToMerge) < 2 {
-		return nil
+	var toBeMerged map[uint64]struct{}
+	dst, toBeMerged = tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
+	if len(dst) < 2 {
+		return nil, nil
 	}
-	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, partsToMerge,
+	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, dst,
 		toBeMerged, merges, tst.loopCloser.CloseNotify()); err != nil {
-		return err
+		return dst, err
 	}
-	return nil
+	return dst, nil
 }
 
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
@@ -177,7 +181,7 @@ func releaseDiskSpace(n uint64) {
 
 var reservedDiskSpace uint64
 
-func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64) ([]*partWrapper, map[uint64]struct{}) {
+func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
 
 	for _, pw := range snapshot.parts {
@@ -187,16 +191,16 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64) ([]
 		parts = append(parts, pw)
 	}
 
-	tst.pwsChunk = tst.option.mergePolicy.getPartsToMerge(tst.pwsChunk[:0], parts, freeDiskSize)
-	if len(tst.pwsChunk) == 0 {
+	dst = tst.option.mergePolicy.getPartsToMerge(dst, parts, freeDiskSize)
+	if len(dst) == 0 {
 		return nil, nil
 	}
 
 	toBeMerged := make(map[uint64]struct{})
-	for _, pw := range tst.pwsChunk {
+	for _, pw := range dst {
 		toBeMerged[pw.ID()] = struct{}{}
 	}
-	return parts, toBeMerged
+	return dst, toBeMerged
 }
 
 func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {

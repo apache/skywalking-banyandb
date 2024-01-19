@@ -115,7 +115,6 @@ type tsTable struct {
 	loopCloser    *run.Closer
 	p             common.Position
 	root          string
-	pwsChunk      []*partWrapper
 	gc            garbageCleaner
 	curPartID     uint64
 	sync.RWMutex
