@@ -65,6 +65,9 @@ func (s *searcherIterator) Next() bool {
 		if !s.timeFilter(s.Val()) {
 			return s.Next()
 		}
+		if s.indexFilter != nil && !s.indexFilter(s.Val()) {
+			return s.Next()
+		}
 		if e := s.l.Debug(); e.Enabled() {
 			e.Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.Val().ID())).Msg("got an item")
 		}

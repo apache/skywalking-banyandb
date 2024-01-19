@@ -66,6 +66,9 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []*searcherIterator, err er
 	}
 	for _, tw := range s.seriesSpan.tableWrappers {
 		indexFilter := func(item item) bool {
+			if s.indexFilter == nil {
+				return true
+			}
 			pl, err := s.indexFilter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
 				return tw.Table().Index().store, nil
 			}, s.seriesSpan.seriesID)
