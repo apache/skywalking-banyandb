@@ -79,8 +79,8 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
-	s.option.maxFanOutSize = math.MaxInt64
-	flagS.VarP(&s.option.maxFanOutSize, "max-fan-out-size", "", "the upper bound of a single file size after merge")
+	s.option.mergePolicy = newDefaultMergePolicy()
+	flagS.Uint64Var(&s.option.mergePolicy.maxFanOutSize, "max-fan-out-size", math.MaxUint64, "the upper bound of a single file size after merge")
 	return flagS
 }
 
