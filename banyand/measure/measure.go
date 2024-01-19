@@ -46,8 +46,8 @@ const (
 )
 
 type option struct {
-	flushTimeout time.Duration
 	mergePolicy  *mergePolicy
+	flushTimeout time.Duration
 }
 
 type measure struct {

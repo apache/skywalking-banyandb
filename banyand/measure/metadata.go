@@ -314,9 +314,9 @@ var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 type supplier struct {
 	metadata metadata.Repo
 	pipeline queue.Queue
+	option   option
 	l        *logger.Logger
 	path     string
-	option   option
 }
 
 func newSupplier(path string, svc *service) *supplier {

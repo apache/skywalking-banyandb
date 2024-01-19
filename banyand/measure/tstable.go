@@ -108,17 +108,16 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 
 type tsTable struct {
 	fileSystem    fs.FileSystem
+	option        option
 	l             *logger.Logger
 	snapshot      *snapshot
 	introductions chan *introduction
 	loopCloser    *run.Closer
 	p             common.Position
 	root          string
-	// pwsChunk is the memory buffer for parts to be merged
-	pwsChunk  []*partWrapper
-	gc        garbageCleaner
-	curPartID uint64
-	option    option
+	pwsChunk      []*partWrapper
+	gc            garbageCleaner
+	curPartID     uint64
 	sync.RWMutex
 }
 

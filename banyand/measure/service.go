@@ -58,9 +58,9 @@ type service struct {
 	metadata      metadata.Repo
 	pipeline      queue.Server
 	localPipeline queue.Queue
+	option        option
 	l             *logger.Logger
 	root          string
-	option        option
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
