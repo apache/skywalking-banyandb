@@ -251,7 +251,7 @@ func New(path string, options *Options) (WAL, error) {
 	}
 	log.start()
 
-	log.logger.Info().Str("path", path).Msg("WAL has be initialized")
+	log.logger.Info().Str("path", path).Msg("WAL has been initialized")
 	return log, nil
 }
 
