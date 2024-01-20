@@ -220,7 +220,7 @@ func New(path string, options *Options) (WAL, error) {
 	// Initial WAL path.
 	path, err := filepath.Abs(path)
 	if err != nil {
-		return nil, errors.Wrap(err, "Can not get absolute path: "+path)
+		return nil, errors.Wrap(err, "Can not get absolute path: " +  path)
 	}
 	if err := os.MkdirAll(path, os.ModePerm); err != nil {
 		return nil, err
@@ -507,7 +507,7 @@ func (log *log) writeWorkSegment(data []byte) error {
 
 	// Write batch data to WAL segment file
 	if _, err := log.workSegment.file.Write(data); err != nil {
-		return errors.Wrap(err, "Write WAL segment file error, file: "+log.workSegment.path)
+		return errors.Wrap(err, "Write WAL segment file error, file: " +  log.workSegment.path)
 	}
 	if log.options.SyncFlush {
 		if err := log.workSegment.file.Sync(); err != nil {
@@ -520,7 +520,7 @@ func (log *log) writeWorkSegment(data []byte) error {
 func (log *log) load() error {
 	files, err := os.ReadDir(log.path)
 	if err != nil {
-		return errors.Wrap(err, "Can not read dir: "+log.path)
+		return errors.Wrap(err, "Can not read dir: " +  log.path)
 	}
 	// Load all of WAL segments.
 	var workSegmentID SegmentID
@@ -529,7 +529,7 @@ func (log *log) load() error {
 		name := file.Name()
 		segmentID, parsePathErr := parseSegmentID(name)
 		if parsePathErr != nil {
-			return errors.Wrap(parsePathErr, "Parse file name error, name: "+name)
+			return errors.Wrap(parsePathErr, "Parse file name error, name: " +  name)
 		}
 		if segmentID > uint64(workSegmentID) {
 			workSegmentID = SegmentID(segmentID)
@@ -561,7 +561,7 @@ func (log *log) load() error {
 		log.workSegment = log.segmentMap[workSegmentID]
 	}
 	if err = log.workSegment.openFile(false); err != nil {
-		return errors.Wrap(err, "Open WAL segment error, file: "+log.workSegment.path)
+		return errors.Wrap(err, "Open WAL segment error, file: " +  log.workSegment.path)
 	}
 	return nil
 }
@@ -727,7 +727,7 @@ func (segment *segment) openFile(overwrite bool) error {
 func (segment *segment) parseLogEntries() error {
 	segmentBytes, err := os.ReadFile(segment.path)
 	if err != nil {
-		return errors.Wrap(err, "Read WAL segment failed, path: "+segment.path)
+		return errors.Wrap(err, "Read WAL segment failed, path: " +  segment.path)
 	}
 
 	var logEntries []LogEntry
