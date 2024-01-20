@@ -30,13 +30,16 @@ import (
 )
 
 type seqReader struct {
-	sr        io.Reader
+	sr        fs.SeqReader
 	r         fs.Reader
 	bytesRead uint64
 }
 
 func (sr *seqReader) reset() {
 	sr.r = nil
+	if sr.sr != nil {
+		fs.MustClose(sr.sr)
+	}
 	sr.sr = nil
 	sr.bytesRead = 0
 }
@@ -47,7 +50,7 @@ func (sr *seqReader) Path() string {
 
 func (sr *seqReader) init(r fs.Reader) {
 	sr.reset()
-	sr.sr = r.StreamRead()
+	sr.sr = r.SequentialRead()
 	sr.r = r
 }
 

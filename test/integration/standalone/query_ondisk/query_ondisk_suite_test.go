@@ -68,6 +68,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute))
 	test_cases.Initialize(addr, now)
+	time.Sleep(10 * time.Second)
 	closeFunc()
 	time.Sleep(time.Second)
 	addr, _, closeFunc = setup.EmptyClosableStandalone(path, ports)

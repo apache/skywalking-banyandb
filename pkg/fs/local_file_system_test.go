@@ -109,7 +109,8 @@ var _ = ginkgo.Describe("Loacl File System", func() {
 			gomega.Expect(size == len(data)).To(gomega.BeTrue())
 
 			buffer := make([]byte, len(data))
-			iter := file.StreamRead()
+			iter := file.SequentialRead()
+			defer iter.Close()
 			for {
 				size, err := iter.Read(buffer)
 				if err == nil {

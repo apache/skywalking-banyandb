@@ -40,6 +40,8 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 		return
 	}
 
+	var pwsChunk []*partWrapper
+
 	for {
 		select {
 		case <-tst.loopCloser.CloseNotify():
@@ -50,7 +52,8 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 				continue
 			}
 			if curSnapshot.epoch != epoch {
-				if err := tst.mergeSnapshot(curSnapshot, merges); err != nil {
+				var err error
+				if pwsChunk, err = tst.mergeSnapshot(curSnapshot, merges, pwsChunk[:0]); err != nil {
 					if errors.Is(err, errClosed) {
 						curSnapshot.decRef()
 						return
@@ -70,17 +73,18 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 	}
 }
 
-func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction) error {
-	maxFanOut := tst.freeDiskSpace(tst.root) / 2
-	partsToMerge, toBeMerged := tst.getPartsToMerge(curSnapshot, maxFanOut)
-	if len(partsToMerge) < 2 {
-		return nil
+func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction, dst []*partWrapper) ([]*partWrapper, error) {
+	freeDiskSize := tst.freeDiskSpace(tst.root)
+	var toBeMerged map[uint64]struct{}
+	dst, toBeMerged = tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
+	if len(dst) < 2 {
+		return nil, nil
 	}
-	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, partsToMerge,
+	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, dst,
 		toBeMerged, merges, tst.loopCloser.CloseNotify()); err != nil {
-		return err
+		return dst, err
 	}
-	return nil
+	return dst, nil
 }
 
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
@@ -177,18 +181,26 @@ func releaseDiskSpace(n uint64) {
 
 var reservedDiskSpace uint64
 
-func (tst *tsTable) getPartsToMerge(snapshot *snapshot, maxFanOut uint64) ([]*partWrapper, map[uint64]struct{}) {
+func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
-	toBeMerged := make(map[uint64]struct{})
+
 	for _, pw := range snapshot.parts {
-		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 || pw.p.partMetadata.CompressedSizeBytes > maxFanOut {
+		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 {
 			continue
 		}
 		parts = append(parts, pw)
+	}
+
+	dst = tst.option.mergePolicy.getPartsToMerge(dst, parts, freeDiskSize)
+	if len(dst) == 0 {
+		return nil, nil
+	}
+
+	toBeMerged := make(map[uint64]struct{})
+	for _, pw := range dst {
 		toBeMerged[pw.ID()] = struct{}{}
 	}
-	// TODO: select proper parts to generate the lowest write amplification
-	return parts, toBeMerged
+	return dst, toBeMerged
 }
 
 func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
@@ -239,7 +251,8 @@ var errClosed = fmt.Errorf("the merger is closed")
 
 func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, error) {
 	pendingBlockIsEmpty := true
-	pendingBlock := &blockPointer{}
+	pendingBlock := generateBlockPointer()
+	defer releaseBlockPointer(pendingBlock)
 	var tmpBlock, tmpBlock2 *blockPointer
 	var decoder *encoding.BytesBlockDecoder
 	getDecoder := func() *encoding.BytesBlockDecoder {
@@ -280,7 +293,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 
 		if tmpBlock == nil {
-			tmpBlock = &blockPointer{}
+			tmpBlock = generateBlockPointer()
+			defer releaseBlockPointer(tmpBlock)
 		}
 		tmpBlock.reset()
 		tmpBlock.bm.seriesID = b.bm.seriesID
@@ -304,7 +318,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		l := tmpBlock.idx
 		tmpBlock.idx = 0
 		if tmpBlock2 == nil {
-			tmpBlock2 = &blockPointer{}
+			tmpBlock2 = generateBlockPointer()
+			defer releaseBlockPointer(tmpBlock2)
 		}
 		tmpBlock2.reset()
 		tmpBlock2.append(tmpBlock, l)

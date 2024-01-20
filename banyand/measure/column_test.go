@@ -64,7 +64,8 @@ func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
 	cm := &columnMetadata{}
 
 	buf := &bytes.Buffer{}
-	w := &writer{w: buf}
+	w := &writer{}
+	w.init(buf)
 	original.mustWriteTo(cm, w)
 	assert.Equal(t, w.bytesWritten, cm.size)
 	assert.Equal(t, uint64(len(buf.Buf)), cm.size)

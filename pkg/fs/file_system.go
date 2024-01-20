@@ -29,22 +29,38 @@ const moduleName string = "filesystem"
 // Mode contains permission of file and directory.
 type Mode uint64
 
+// SeqWriter allows writing data to a file in a sequential way.
+type SeqWriter interface {
+	io.Writer
+	Path() string
+	Close() error
+}
+
 // Writer allows writing data to a file.
 type Writer interface {
 	// Append mode, which adds new data to the end of a file.
 	Write(buffer []byte) (int, error)
+	// SequentialWrite mode, which supports appending consecutive buffers to the end of the file.
+	SequentialWrite() SeqWriter
 	// Returns the absolute path of the file.
 	Path() string
 	// Close File.
 	Close() error
 }
 
+// SeqReader allows reading data from a file in a sequential way.
+type SeqReader interface {
+	io.Reader
+	Path() string
+	Close() error
+}
+
 // Reader allows reading data from a file.
 type Reader interface {
-	// Read the entire file using streaming read.
+	// Read the entire file at a specified offset.
 	Read(offset int64, buffer []byte) (int, error)
-	// Read the entire file using streaming read.
-	StreamRead() io.Reader
+	// Read the entire file using sequential read.
+	SequentialRead() SeqReader
 	// Returns the absolute path of the file.
 	Path() string
 	// Close File.
@@ -135,7 +151,7 @@ func MustFlush(fs FileSystem, buffer []byte, name string, permission Mode) {
 }
 
 // MustWriteData writes data to w and panics if it cannot write all data.
-func MustWriteData(w Writer, data []byte) {
+func MustWriteData(w SeqWriter, data []byte) {
 	if len(data) == 0 {
 		return
 	}
