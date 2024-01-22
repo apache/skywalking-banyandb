@@ -240,7 +240,9 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 			}()
 			tm := &timestampsMetadata{}
 			b := &bytes.Buffer{}
-			mustWriteTimestampsTo(tm, tt.args, &writer{w: b})
+			w := new(writer)
+			w.init(b)
+			mustWriteTimestampsTo(tm, tt.args, w)
 			timestamps := mustReadTimestampsFrom(nil, tm, len(tt.args), b)
 			if !reflect.DeepEqual(timestamps, tt.args) {
 				t.Errorf("mustReadTimestampsFrom() = %v, want %v", timestamps, tt.args)
@@ -261,11 +263,6 @@ func Test_mustWriteAndReadElementIDs(t *testing.T) {
 			args:      []string{"0", "1", "2", "3", "4"},
 			wantPanic: false,
 		},
-		// {
-		// 	name:      "Test mustWriteAndReadTimestamps with panic",
-		// 	args:      getBitInt64Arr(),
-		// 	wantPanic: true,
-		// },
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -362,14 +359,17 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 
 func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	timestampBuffer, elementIDsBuffer := &bytes.Buffer{}, &bytes.Buffer{}
+	timestampWriter, elementIDsWriter := &writer{}, &writer{}
+	timestampWriter.init(timestampBuffer)
+	elementIDsWriter.init(elementIDsBuffer)
 	ww := &writers{
 		mustCreateTagFamilyWriters: func(name string) (fs.Writer, fs.Writer) {
 			return &bytes.Buffer{}, &bytes.Buffer{}
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
-		timestampsWriter:         writer{w: timestampBuffer},
-		elementIDsWriter:         writer{w: elementIDsBuffer},
+		timestampsWriter:         *timestampWriter,
+		elementIDsWriter:         *elementIDsWriter,
 	}
 	p := &part{
 		primary:    &bytes.Buffer{},

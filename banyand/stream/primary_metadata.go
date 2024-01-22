@@ -83,10 +83,12 @@ func (ph *primaryBlockMetadata) unmarshal(src []byte) ([]byte, error) {
 }
 
 func mustReadPrimaryBlockMetadata(dst []primaryBlockMetadata, r fs.Reader) []primaryBlockMetadata {
-	data, err := io.ReadAll(r.StreamRead())
+	sr := r.SequentialRead()
+	data, err := io.ReadAll(sr)
 	if err != nil {
 		logger.Panicf("cannot read primaryBlockMetadata entries from %s: %s", r.Path(), err)
 	}
+	fs.MustClose(sr)
 
 	bb := bigValuePool.Generate()
 	bb.Buf, err = zstd.Decompress(bb.Buf[:0], data)

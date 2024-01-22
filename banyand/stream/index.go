@@ -60,7 +60,16 @@ func (e *elementIndex) Iterator(fieldKey index.FieldKey, termRange index.RangeOp
 }
 
 func (e *elementIndex) Write(docs index.Documents) error {
-	return e.store.Batch(docs)
+	applied := make(chan struct{})
+	err := e.store.Batch(index.Batch{
+		Documents: docs,
+		Applied:   applied,
+	})
+	if err != nil {
+		return err
+	}
+	<-applied
+	return nil
 }
 
 func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) ([]elementRef, error) {
