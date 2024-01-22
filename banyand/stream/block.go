@@ -182,9 +182,9 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	bb := bigValuePool.Generate()
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
-	cfm := generateTagFamilyMetadata()
-	defer releaseTagFamilyMetadata(cfm)
-	err := cfm.unmarshal(bb.Buf)
+	tfm := generateTagFamilyMetadata()
+	defer releaseTagFamilyMetadata(tfm)
+	err := tfm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}
@@ -195,9 +195,9 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	}
 	cc := b.tagFamilies[tfIndex].resizeTags(len(tagProjection))
 	for j := range tagProjection {
-		for i := range cfm.tagMetadata {
-			if tagProjection[j] == cfm.tagMetadata[i].name {
-				cc[j].mustReadValues(decoder, valueReader, cfm.tagMetadata[i], uint64(b.Len()))
+		for i := range tfm.tagMetadata {
+			if tagProjection[j] == tfm.tagMetadata[i].name {
+				cc[j].mustReadValues(decoder, valueReader, tfm.tagMetadata[i], uint64(b.Len()))
 				break
 			}
 		}
@@ -213,18 +213,18 @@ func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDec
 	bb := bigValuePool.Generate()
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
 	metaReader.mustReadFull(bb.Buf)
-	cfm := generateTagFamilyMetadata()
-	defer releaseTagFamilyMetadata(cfm)
-	err := cfm.unmarshal(bb.Buf)
+	tfm := generateTagFamilyMetadata()
+	defer releaseTagFamilyMetadata(tfm)
+	err := tfm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal columnFamilyMetadata: %v", metaReader.Path(), err)
 	}
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].name = name
 
-	cc := b.tagFamilies[tfIndex].resizeTags(len(cfm.tagMetadata))
-	for i := range cfm.tagMetadata {
-		cc[i].mustSeqReadValues(decoder, valueReader, cfm.tagMetadata[i], uint64(b.Len()))
+	cc := b.tagFamilies[tfIndex].resizeTags(len(tfm.tagMetadata))
+	for i := range tfm.tagMetadata {
+		cc[i].mustSeqReadValues(decoder, valueReader, tfm.tagMetadata[i], uint64(b.Len()))
 	}
 }
 
