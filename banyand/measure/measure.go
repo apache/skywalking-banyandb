@@ -46,6 +46,7 @@ const (
 )
 
 type option struct {
+	mergePolicy  *mergePolicy
 	flushTimeout time.Duration
 }
 

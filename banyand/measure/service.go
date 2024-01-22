@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	"math"
 	"path"
 
 	"github.com/pkg/errors"
@@ -57,9 +58,9 @@ type service struct {
 	metadata      metadata.Repo
 	pipeline      queue.Server
 	localPipeline queue.Queue
+	option        option
 	l             *logger.Logger
 	root          string
-	option        option
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -78,6 +79,8 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
+	s.option.mergePolicy = newDefaultMergePolicy()
+	flagS.Uint64Var(&s.option.mergePolicy.maxFanOutSize, "max-fan-out-size", math.MaxUint64, "the upper bound of a single file size after merge")
 	return flagS
 }
 

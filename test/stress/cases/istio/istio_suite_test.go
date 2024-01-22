@@ -25,7 +25,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime/pprof"
 	"testing"
 	"time"
 
@@ -45,6 +44,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	"github.com/apache/skywalking-banyandb/pkg/test/metric"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -53,41 +53,6 @@ func TestIstio(t *testing.T) {
 	gomega.RegisterFailHandler(g.Fail)
 	g.RunSpecs(t, "Istio Suite", g.Label("integration", "slow"))
 }
-
-var (
-	cpuProfileFile  *os.File
-	heapProfileFile *os.File
-)
-
-var _ = g.BeforeSuite(func() {
-	// Create CPU profile file
-	var err error
-	cpuProfileFile, err = os.Create("cpu.prof")
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-	// Start CPU profiling
-	err = pprof.StartCPUProfile(cpuProfileFile)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-	// Create heap profile file
-	heapProfileFile, err = os.Create("heap.prof")
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-})
-
-var _ = g.AfterSuite(func() {
-	// Stop CPU profiling
-	pprof.StopCPUProfile()
-
-	// Write heap profile
-	err := pprof.WriteHeapProfile(heapProfileFile)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-	// Close profile files
-	err = cpuProfileFile.Close()
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	err = heapProfileFile.Close()
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-})
 
 var _ = g.Describe("Istio", func() {
 	g.BeforeEach(func() {
@@ -99,8 +64,9 @@ var _ = g.Describe("Istio", func() {
 	g.It("should pass", func() {
 		path, deferFn, err := test.NewSpace()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		measurePath := filepath.Join(path, "measure")
 		g.DeferCleanup(func() {
-			printDiskUsage(path+"/measure", 5, 0)
+			printDiskUsage(measurePath, 5, 0)
 			deferFn()
 		})
 		var ports []int
@@ -110,19 +76,30 @@ var _ = g.Describe("Istio", func() {
 			path, ports,
 			[]setup.SchemaLoader{&preloadService{name: "oap"}},
 			"--logging-level", "info")
-		g.DeferCleanup(closerServerFunc)
+		g.DeferCleanup(func() {
+			time.Sleep(time.Minute)
+			closerServerFunc()
+		})
 		gomega.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(gomega.Succeed())
 		bc := &clientCounter{}
 		conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(bc))
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		closeMetricCollectorCh := metric.Start(measurePath)
 		g.DeferCleanup(func() {
+			close(closeMetricCollectorCh)
 			conn.Close()
 		})
 		startTime := time.Now()
 		writtenCount, err := ReadAndWriteFromFile(extractData(), conn)
 		gomega.Expect(err).To(gomega.Succeed())
 		endTime := time.Now()
+
+		// Print machine and OS information.
+		fmt.Println("Machine and OS information:")
+		fmt.Println("  - CPU:", helpers.CPUInfo())
+		fmt.Println("  - Memory:", helpers.MemoryInfo())
+		fmt.Println("  - OS:", helpers.OSInfo())
 
 		fmt.Printf("written %d items in %s\n", writtenCount, endTime.Sub(startTime).String())
 		fmt.Printf("throughput: %f items/s\n", float64(writtenCount)/endTime.Sub(startTime).Seconds())

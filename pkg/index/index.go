@@ -201,10 +201,16 @@ type Document struct {
 // Documents is a collection of documents.
 type Documents []Document
 
+// Batch is a collection of documents.
+type Batch struct {
+	Applied   chan struct{}
+	Documents Documents
+}
+
 // Writer allows writing fields and docID in a document to a index.
 type Writer interface {
 	Write(fields []Field, docID uint64) error
-	Batch(docs Documents) error
+	Batch(batch Batch) error
 }
 
 // FieldIterable allows building a FieldIterator.

@@ -314,9 +314,9 @@ var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 type supplier struct {
 	metadata metadata.Repo
 	pipeline queue.Queue
+	option   option
 	l        *logger.Logger
 	path     string
-	option   option
 }
 
 func newSupplier(path string, svc *service) *supplier {
@@ -346,12 +346,13 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:        groupSchema.ResourceOpts.ShardNum,
-		Location:        path.Join(s.path, groupSchema.Metadata.Name),
-		TSTableCreator:  newTSTable,
-		SegmentInterval: storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
-		TTL:             storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
-		Option:          s.option,
+		ShardNum:                       groupSchema.ResourceOpts.ShardNum,
+		Location:                       path.Join(s.path, groupSchema.Metadata.Name),
+		TSTableCreator:                 newTSTable,
+		SegmentInterval:                storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
+		TTL:                            storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
+		Option:                         s.option,
+		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 	}
 	name := groupSchema.Metadata.Name
 	return storage.OpenTSDB(

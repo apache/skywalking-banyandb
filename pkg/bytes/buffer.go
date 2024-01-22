@@ -62,9 +62,14 @@ func (b *Buffer) Read(offset int64, buffer []byte) (int, error) {
 	return n, err
 }
 
-// StreamRead implements fs.Reader.
-func (b *Buffer) StreamRead() io.Reader {
+// SequentialRead implements fs.Reader.
+func (b *Buffer) SequentialRead() fs.SeqReader {
 	return &reader{bb: b}
+}
+
+// SequentialWrite implements fs.Writer.
+func (b *Buffer) SequentialWrite() fs.SeqWriter {
+	return b
 }
 
 // Reset resets the buffer.
@@ -95,6 +100,11 @@ func (r *reader) Read(p []byte) (int, error) {
 func (r *reader) MustClose() {
 	r.bb = nil
 	r.readOffset = 0
+}
+
+func (r *reader) Close() error {
+	r.MustClose()
+	return nil
 }
 
 // BufferPool is a pool of Buffer.

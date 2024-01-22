@@ -46,14 +46,15 @@ type seriesIndex struct {
 	l     *logger.Logger
 }
 
-func newSeriesIndex(ctx context.Context, root string) (*seriesIndex, error) {
+func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64) (*seriesIndex, error) {
 	si := &seriesIndex{
 		l: logger.Fetch(ctx, "series_index"),
 	}
 	var err error
 	if si.store, err = inverted.NewStore(inverted.StoreOpts{
-		Path:   path.Join(root, "idx"),
-		Logger: si.l,
+		Path:         path.Join(root, "idx"),
+		Logger:       si.l,
+		BatchWaitSec: flushTimeoutSeconds,
 	}); err != nil {
 		return nil, err
 	}
@@ -61,7 +62,16 @@ func newSeriesIndex(ctx context.Context, root string) (*seriesIndex, error) {
 }
 
 func (s *seriesIndex) Write(docs index.Documents) error {
-	return s.store.Batch(docs)
+	applied := make(chan struct{})
+	err := s.store.Batch(index.Batch{
+		Documents: docs,
+		Applied:   applied,
+	})
+	if err != nil {
+		return err
+	}
+	<-applied
+	return nil
 }
 
 var rangeOpts = index.RangeOpts{}
