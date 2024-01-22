@@ -161,12 +161,12 @@ func Test_partMergeIter_nextBlock(t *testing.T) {
 	tests := []struct {
 		wantErr error
 		name    string
-		dps     *elements
+		es      *elements
 		want    []blockMetadata
 	}{
 		{
 			name: "Test with all data",
-			dps:  es,
+			es:   es,
 			want: []blockMetadata{
 				{seriesID: 1, count: 2}, {seriesID: 2, count: 2}, {seriesID: 3, count: 2},
 			},
@@ -204,7 +204,7 @@ func Test_partMergeIter_nextBlock(t *testing.T) {
 			}
 			mp := generateMemPart()
 			releaseMemPart(mp)
-			mp.mustInitFromElements(tt.dps)
+			mp.mustInitFromElements(tt.es)
 
 			decoder := generateColumnValuesDecoder()
 			defer releaseColumnValuesDecoder(decoder)

@@ -191,9 +191,9 @@ func unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, name string,
 	bb := bigValuePool.Generate()
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
-	cfm := generateTagFamilyMetadata()
-	defer releaseTagFamilyMetadata(cfm)
-	_, err := cfm.unmarshal(bb.Buf)
+	tfm := generateTagFamilyMetadata()
+	defer releaseTagFamilyMetadata(tfm)
+	_, err := tfm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}
@@ -203,9 +203,9 @@ func unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, name string,
 	tf.tags = tf.resizeTags(len(tagProjection))
 
 	for j := range tagProjection {
-		for i := range cfm.tagMetadata {
-			if tagProjection[j] == cfm.tagMetadata[i].name {
-				tf.tags[j].mustReadValues(decoder, valueReader, cfm.tagMetadata[i], uint64(count))
+		for i := range tfm.tagMetadata {
+			if tagProjection[j] == tfm.tagMetadata[i].name {
+				tf.tags[j].mustReadValues(decoder, valueReader, tfm.tagMetadata[i], uint64(count))
 				break
 			}
 		}

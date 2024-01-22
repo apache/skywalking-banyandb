@@ -41,13 +41,13 @@ import (
 
 func Test_tsTable_mustAddDataPoints(t *testing.T) {
 	tests := []struct {
-		name    string
-		dpsList []*elements
-		want    int
+		name   string
+		esList []*elements
+		want   int
 	}{
 		{
 			name: "Test with empty elements",
-			dpsList: []*elements{
+			esList: []*elements{
 				{
 					timestamps:  []int64{},
 					elementIDs:  []string{},
@@ -59,7 +59,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 		},
 		{
 			name: "Test with one item in elements",
-			dpsList: []*elements{
+			esList: []*elements{
 				{
 					timestamps: []int64{1},
 					elementIDs: []string{"0"},
@@ -80,7 +80,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 		},
 		{
 			name: "Test with multiple calls to mustAddDataPoints",
-			dpsList: []*elements{
+			esList: []*elements{
 				esTS1,
 				esTS2,
 			},
@@ -101,8 +101,8 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 			introducerWatcher := make(watcher.Channel, 1)
 			go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
 			defer tst.Close()
-			for _, dps := range tt.dpsList {
-				tst.mustAddElements(dps)
+			for _, es := range tt.esList {
+				tst.mustAddElements(es)
 				time.Sleep(100 * time.Millisecond)
 			}
 			s := tst.currentSnapshot()
@@ -128,7 +128,7 @@ func Test_tstIter(t *testing.T) {
 	type testCtx struct {
 		wantErr      error
 		name         string
-		dpsList      []*elements
+		esList       []*elements
 		sids         []common.SeriesID
 		want         []blockMetadata
 		minTimestamp int64
@@ -173,14 +173,14 @@ func Test_tstIter(t *testing.T) {
 		tests := []testCtx{
 			{
 				name:         "Test with no data points",
-				dpsList:      []*elements{},
+				esList:       []*elements{},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 1,
 			},
 			{
 				name:         "Test with single part",
-				dpsList:      []*elements{esTS1},
+				esList:       []*elements{esTS1},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 1,
@@ -192,7 +192,7 @@ func Test_tstIter(t *testing.T) {
 			},
 			{
 				name:         "Test with multiple parts with different ts",
-				dpsList:      []*elements{esTS1, esTS2},
+				esList:       []*elements{esTS1, esTS2},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 2,
@@ -207,7 +207,7 @@ func Test_tstIter(t *testing.T) {
 			},
 			{
 				name:         "Test with multiple parts with same ts",
-				dpsList:      []*elements{esTS1, esTS1},
+				esList:       []*elements{esTS1, esTS1},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 2,
@@ -238,8 +238,8 @@ func Test_tstIter(t *testing.T) {
 				mergeCh := make(chan *mergerIntroduction)
 				introducerWatcher := make(watcher.Channel, 1)
 				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
-				for _, dps := range tt.dpsList {
-					tst.mustAddElements(dps)
+				for _, es := range tt.esList {
+					tst.mustAddElements(es)
 					time.Sleep(100 * time.Millisecond)
 				}
 				verify(t, tt, tst)
@@ -251,14 +251,14 @@ func Test_tstIter(t *testing.T) {
 		tests := []testCtx{
 			{
 				name:         "Test with no data points",
-				dpsList:      []*elements{},
+				esList:       []*elements{},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 1,
 			},
 			{
 				name:         "Test with single part",
-				dpsList:      []*elements{esTS1},
+				esList:       []*elements{esTS1},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 1,
@@ -270,7 +270,7 @@ func Test_tstIter(t *testing.T) {
 			},
 			{
 				name:         "Test with multiple parts with different ts, the block will be merged",
-				dpsList:      []*elements{esTS1, esTS2, esTS2},
+				esList:       []*elements{esTS1, esTS2, esTS2},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 2,
@@ -282,7 +282,7 @@ func Test_tstIter(t *testing.T) {
 			},
 			{
 				name:         "Test with multiple parts with same ts, duplicated blocks will be merged",
-				dpsList:      []*elements{esTS1, esTS1},
+				esList:       []*elements{esTS1, esTS1},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 2,
@@ -303,8 +303,8 @@ func Test_tstIter(t *testing.T) {
 					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
 						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0})
 					require.NoError(t, err)
-					for i, dps := range tt.dpsList {
-						tst.mustAddElements(dps)
+					for i, es := range tt.esList {
+						tst.mustAddElements(es)
 						for {
 							snp := tst.currentSnapshot()
 							if snp == nil {
@@ -323,14 +323,14 @@ func Test_tstIter(t *testing.T) {
 						}
 					}
 					// wait until some parts are merged
-					if len(tt.dpsList) > 0 {
+					if len(tt.esList) > 0 {
 						for {
 							snp := tst.currentSnapshot()
 							if snp == nil {
 								time.Sleep(100 * time.Millisecond)
 								continue
 							}
-							if len(snp.parts) == 1 || len(snp.parts) < len(tt.dpsList) {
+							if len(snp.parts) == 1 || len(snp.parts) < len(tt.esList) {
 								snp.decRef()
 								break
 							}
@@ -351,19 +351,19 @@ func Test_tstIter(t *testing.T) {
 					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
 						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout})
 					require.NoError(t, err)
-					for _, dps := range tt.dpsList {
-						tst.mustAddElements(dps)
+					for _, es := range tt.esList {
+						tst.mustAddElements(es)
 						time.Sleep(100 * time.Millisecond)
 					}
 					// wait until the introducer is done
-					if len(tt.dpsList) > 0 {
+					if len(tt.esList) > 0 {
 						for {
 							snp := tst.currentSnapshot()
 							if snp == nil {
 								time.Sleep(100 * time.Millisecond)
 								continue
 							}
-							if len(snp.parts) == len(tt.dpsList) {
+							if len(snp.parts) == len(tt.esList) {
 								snp.decRef()
 								tst.Close()
 								break
