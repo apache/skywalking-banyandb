@@ -108,23 +108,22 @@ func (tfm *tagFamilyMetadata) marshal(dst []byte) []byte {
 	return dst
 }
 
-// nolint: unparam
-func (tfm *tagFamilyMetadata) unmarshal(src []byte) ([]byte, error) {
+func (tfm *tagFamilyMetadata) unmarshal(src []byte) error {
 	src, tagMetadataLen, err := encoding.BytesToVarUint64(src)
 	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal tagMetadataLen: %w", err)
+		return fmt.Errorf("cannot unmarshal tagMetadataLen: %w", err)
 	}
 	if tagMetadataLen < 1 {
-		return src, nil
+		return nil
 	}
 	tms := tfm.resizeTagMetadata(int(tagMetadataLen))
 	for i := range tms {
 		src, err = tms[i].unmarshal(src)
 		if err != nil {
-			return nil, fmt.Errorf("cannot unmarshal tagMetadata %d: %w", i, err)
+			return fmt.Errorf("cannot unmarshal tagMetadata %d: %w", i, err)
 		}
 	}
-	return src, nil
+	return nil
 }
 
 func generateTagFamilyMetadata() *tagFamilyMetadata {

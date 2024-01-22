@@ -62,6 +62,31 @@ func newColumnElements() *columnElements {
 	return ces
 }
 
+func (ces *columnElements) BuildFromElement(e *element, tp []pbv1.TagProjection) {
+	tagFamilies := make([]pbv1.TagFamily, 0)
+	for i, tf := range e.tagFamilies {
+		tagFamily := pbv1.TagFamily{
+			Name: tf.name,
+		}
+		for j, t := range tf.tags {
+			tag := pbv1.Tag{
+				Name: t.name,
+			}
+			if tag.Name == "" {
+				tag.Name = tp[i].Names[j]
+				tag.Values = append(tag.Values, pbv1.NullTagValue)
+			} else {
+				tag.Values = append(tag.Values, mustDecodeTagValue(t.valueType, t.values[e.index]))
+			}
+			tagFamily.Tags = append(tagFamily.Tags, tag)
+		}
+		tagFamilies = append(tagFamilies, tagFamily)
+	}
+	ces.tagFamilies = append(ces.tagFamilies, tagFamilies)
+	ces.elementID = append(ces.elementID, e.elementID)
+	ces.timestamp = append(ces.timestamp, e.timestamp)
+}
+
 func (ces *columnElements) Pull() *pbv1.StreamColumnResult {
 	r := &pbv1.StreamColumnResult{}
 	r.Timestamps = make([]int64, 0)
@@ -193,7 +218,7 @@ func unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, name string,
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
-	_, err := tfm.unmarshal(bb.Buf)
+	err := tfm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}

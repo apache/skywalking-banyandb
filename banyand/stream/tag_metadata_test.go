@@ -163,7 +163,7 @@ func Test_tagFamilyMetadata_marshalUnmarshal(t *testing.T) {
 			assert.NotNil(t, marshaled)
 
 			unmarshaled := &tagFamilyMetadata{}
-			_, err := unmarshaled.unmarshal(marshaled)
+			err := unmarshaled.unmarshal(marshaled)
 			assert.Nil(t, err)
 
 			assert.Equal(t, tt.original, unmarshaled)

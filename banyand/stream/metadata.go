@@ -233,7 +233,7 @@ func (s *supplier) OpenResource(shardNum uint32, supplier resourceSchema.Supplie
 	return openStream(shardNum, supplier, streamSpec{
 		schema:     streamSchema,
 		indexRules: spec.IndexRules(),
-	}, s.l)
+	}, s.l), nil
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -288,5 +288,5 @@ func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Suppli
 	return openStream(shardNum, nil, streamSpec{
 		schema:     streamSchema,
 		indexRules: spec.IndexRules(),
-	}, s.l)
+	}, s.l), nil
 }

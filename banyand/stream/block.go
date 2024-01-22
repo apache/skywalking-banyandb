@@ -184,7 +184,7 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
 	cfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(cfm)
-	_, err := cfm.unmarshal(bb.Buf)
+	err := cfm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}
@@ -215,7 +215,7 @@ func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDec
 	metaReader.mustReadFull(bb.Buf)
 	cfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(cfm)
-	_, err := cfm.unmarshal(bb.Buf)
+	err := cfm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal columnFamilyMetadata: %v", metaReader.Path(), err)
 	}
