@@ -455,7 +455,7 @@ func (bc *blockCursor) init(p *part, bm blockMetadata, queryOpts queryOptions) {
 	bc.tagProjection = queryOpts.TagProjection
 }
 
-func (bc *blockCursor) copyAllTo(r *pbv1.Result, desc bool) {
+func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
 	var idx, offset int
 	if desc {
 		idx = 0
@@ -487,7 +487,7 @@ func (bc *blockCursor) copyAllTo(r *pbv1.Result, desc bool) {
 	}
 }
 
-func (bc *blockCursor) copyTo(r *pbv1.Result) {
+func (bc *blockCursor) copyTo(r *pbv1.StreamResult) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[bc.idx])

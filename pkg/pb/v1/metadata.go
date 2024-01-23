@@ -101,12 +101,19 @@ type Field struct {
 	Values []*modelv1.FieldValue
 }
 
-// Result is the result of a query.
-type Result struct {
+// MeasureResult is the result of a query.
+type MeasureResult struct {
+	Timestamps  []int64
+	TagFamilies []TagFamily
+	Fields      []Field
+	SID         common.SeriesID
+}
+
+// StreamResult is the result of a query.
+type StreamResult struct {
 	Timestamps  []int64
 	ElementIDs  []string
 	TagFamilies []TagFamily
-	Fields      []Field
 	SID         common.SeriesID
 }
 
@@ -157,7 +164,7 @@ type StreamFilterOptions struct {
 
 // StreamQueryResult is the result of a stream query.
 type StreamQueryResult interface {
-	Pull() *Result
+	Pull() *StreamResult
 	Release()
 }
 
@@ -184,7 +191,7 @@ type MeasureQueryOptions struct {
 
 // MeasureQueryResult is the result of a measure query.
 type MeasureQueryResult interface {
-	Pull() *Result
+	Pull() *MeasureResult
 	Release()
 }
 

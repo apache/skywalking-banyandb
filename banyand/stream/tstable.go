@@ -156,7 +156,7 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option,
 ) (*tsTable, error) {
-	index, err := newElementIndex(context.TODO(), rootPath)
+	index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second))
 	if err != nil {
 		return nil, err
 	}

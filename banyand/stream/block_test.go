@@ -274,7 +274,9 @@ func Test_mustWriteAndReadElementIDs(t *testing.T) {
 			}()
 			em := &elementIDsMetadata{}
 			b := &bytes.Buffer{}
-			mustWriteElementIDsTo(em, tt.args, &writer{w: b})
+			w := new(writer)
+			w.init(b)
+			mustWriteElementIDsTo(em, tt.args, w)
 			elementIDs := mustReadElementIDsFrom(nil, em, len(tt.args), b)
 			if !reflect.DeepEqual(elementIDs, tt.args) {
 				t.Errorf("mustReadElementIDsFrom() = %v, want %v", elementIDs, tt.args)

@@ -40,12 +40,6 @@ func (s *seriesSpan) Build() *seekerBuilder {
 	}
 }
 
-func (s *seriesSpan) Close() {
-	for _, tw := range s.tableWrappers {
-		tw.DecRef()
-	}
-}
-
 func newSeriesSpan(ctx context.Context, timeRange *timestamp.TimeRange, tableWrappers []storage.TSTableWrapper[*tsTable], id common.SeriesID) *seriesSpan {
 	s := &seriesSpan{
 		tableWrappers: tableWrappers,
