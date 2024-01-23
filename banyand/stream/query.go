@@ -341,10 +341,8 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 
 	var iters []*searcherIterator
 	for _, series := range seriesList {
-		seriesSpan := newSeriesSpan(ctx, sso.TimeRange, tabWrappers, series.ID)
-		seekerBuilder := seriesSpan.Build()
-		seekerBuilder.enhance(sso.Filter, sso.Order.Index, sso.Order.Sort, sso.TagProjection)
-		seriesIters, buildErr := seekerBuilder.buildSeriesByIndex()
+		seekerBuilder := newIterBuilder(tabWrappers, series.ID, sso)
+		seriesIters, buildErr := buildSeriesByIndex(seekerBuilder)
 		if err != nil {
 			return nil, buildErr
 		}
