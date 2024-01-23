@@ -49,7 +49,12 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
-	g.Entry("nothing", helpers.Args{Input: "all", WantEmpty: true}),
+	g.Entry("nothing", helpers.Args{
+		Input:     "all",
+		Begin:     timestamppb.New(time.Unix(0, 0).Truncate(time.Millisecond)),
+		End:       timestamppb.New(time.Unix(0, 1).Truncate(time.Millisecond)),
+		WantEmpty: true,
+	}),
 	g.Entry("invalid time range", helpers.Args{
 		Input: "all",
 		Begin: timestamppb.New(time.Unix(0, int64(math.MinInt64+time.Millisecond)).Truncate(time.Millisecond)),

@@ -101,18 +101,81 @@ type Field struct {
 	Values []*modelv1.FieldValue
 }
 
-// Result is the result of a query.
-type Result struct {
+// MeasureResult is the result of a query.
+type MeasureResult struct {
 	Timestamps  []int64
 	TagFamilies []TagFamily
 	Fields      []Field
 	SID         common.SeriesID
 }
 
+// StreamResult is the result of a query.
+type StreamResult struct {
+	Timestamps  []int64
+	ElementIDs  []string
+	TagFamilies []TagFamily
+	SID         common.SeriesID
+}
+
+// StreamColumnResult is the result of a stream sort or filter.
+type StreamColumnResult struct {
+	TagFamilies [][]TagFamily
+	Timestamps  []int64
+	ElementIDs  []string
+}
+
 // TagProjection is the projection of a tag family and its tags.
 type TagProjection struct {
 	Family string
 	Names  []string
+}
+
+// StreamQueryOptions is the options of a stream query.
+type StreamQueryOptions struct {
+	Name          string
+	TimeRange     *timestamp.TimeRange
+	Entity        []*modelv1.TagValue
+	Filter        index.Filter
+	Order         *OrderBy
+	TagProjection []TagProjection
+}
+
+// StreamSortOptions is the options of a stream sort.
+type StreamSortOptions struct {
+	Name           string
+	TimeRange      *timestamp.TimeRange
+	Entities       [][]*modelv1.TagValue
+	Filter         index.Filter
+	Order          *OrderBy
+	TagProjection  []TagProjection
+	MaxElementSize int
+}
+
+// StreamFilterOptions is the options of a stream filter.
+type StreamFilterOptions struct {
+	Name           string
+	TimeRange      *timestamp.TimeRange
+	Entities       [][]*modelv1.TagValue
+	Filter         index.Filter
+	Order          *OrderBy
+	TagProjection  []TagProjection
+	MaxElementSize int
+}
+
+// StreamQueryResult is the result of a stream query.
+type StreamQueryResult interface {
+	Pull() *StreamResult
+	Release()
+}
+
+// StreamSortResult is the result of a stream sort.
+type StreamSortResult interface {
+	Pull() *StreamColumnResult
+}
+
+// StreamFilterResult is the result of a stream filter.
+type StreamFilterResult interface {
+	Pull() *StreamColumnResult
 }
 
 // MeasureQueryOptions is the options of a measure query.
@@ -128,7 +191,7 @@ type MeasureQueryOptions struct {
 
 // MeasureQueryResult is the result of a measure query.
 type MeasureQueryResult interface {
-	Pull() *Result
+	Pull() *MeasureResult
 	Release()
 }
 

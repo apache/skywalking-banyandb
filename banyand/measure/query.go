@@ -323,7 +323,7 @@ type queryResult struct {
 	ascTS      bool
 }
 
-func (qr *queryResult) Pull() *pbv1.Result {
+func (qr *queryResult) Pull() *pbv1.MeasureResult {
 	if !qr.loaded {
 		if len(qr.data) == 0 {
 			return nil
@@ -347,7 +347,7 @@ func (qr *queryResult) Pull() *pbv1.Result {
 		return nil
 	}
 	if len(qr.data) == 1 {
-		r := &pbv1.Result{}
+		r := &pbv1.MeasureResult{}
 		bc := qr.data[0]
 		bc.copyAllTo(r, qr.orderByTimestampDesc())
 		qr.data = qr.data[:0]
@@ -424,12 +424,12 @@ func (qr *queryResult) orderByTimestampDesc() bool {
 	return qr.orderByTS && !qr.ascTS
 }
 
-func (qr *queryResult) merge() *pbv1.Result {
+func (qr *queryResult) merge() *pbv1.MeasureResult {
 	step := 1
 	if qr.orderByTimestampDesc() {
 		step = -1
 	}
-	result := &pbv1.Result{}
+	result := &pbv1.MeasureResult{}
 	var lastPartVersion uint64
 	var lastSid common.SeriesID
 

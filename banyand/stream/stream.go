@@ -21,25 +21,61 @@ package stream
 
 import (
 	"context"
+	"io"
+	"time"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-// a chunk is 1MB.
-const chunkSize = 1 << 20
+const (
+	maxValuesBlockSize              = 8 * 1024 * 1024
+	maxTimestampsBlockSize          = 8 * 1024 * 1024
+	maxElementIDsBlockSize          = 8 * 1024 * 1024
+	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
+	maxUncompressedBlockSize        = 2 * 1024 * 1024
+	maxUncompressedPrimaryBlockSize = 128 * 1024
+
+	maxBlockLength      = 8 * 1024
+	defaultFlushTimeout = 5 * time.Second
+)
+
+type option struct {
+	flushTimeout             time.Duration
+	elementIndexFlushTimeout time.Duration
+}
+
+// Query allow to retrieve elements in a series of streams.
+type Query interface {
+	LoadGroup(name string) (schema.Group, bool)
+	Stream(stream *commonv1.Metadata) (Stream, error)
+}
+
+// Stream allows inspecting elements' details.
+type Stream interface {
+	io.Closer
+	GetSchema() *databasev1.Stream
+	GetIndexRules() []*databasev1.IndexRule
+	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
+	Sort(ctx context.Context, opts pbv1.StreamSortOptions) (pbv1.StreamSortResult, error)
+	Filter(ctx context.Context, opts pbv1.StreamFilterOptions) (pbv1.StreamFilterResult, error)
+}
+
+var _ Stream = (*stream)(nil)
 
 type stream struct {
-	db          tsdb.Supplier
-	l           *logger.Logger
-	schema      *databasev1.Stream
-	indexWriter *index.Writer
-	name        string
-	group       string
-	indexRules  []*databasev1.IndexRule
-	shardNum    uint32
+	databaseSupplier  schema.Supplier
+	l                 *logger.Logger
+	schema            *databasev1.Stream
+	name              string
+	group             string
+	indexRules        []*databasev1.IndexRule
+	indexRuleLocators []*partition.IndexRuleLocator
+	shardNum          uint32
 }
 
 func (s *stream) GetSchema() *databasev1.Stream {
@@ -56,6 +92,7 @@ func (s *stream) Close() error {
 
 func (s *stream) parseSpec() {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
+	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetTagFamilies(), s.indexRules)
 }
 
 type streamSpec struct {
@@ -63,26 +100,18 @@ type streamSpec struct {
 	indexRules []*databasev1.IndexRule
 }
 
-func openStream(shardNum uint32, db tsdb.Supplier, spec streamSpec, l *logger.Logger) *stream {
-	sm := &stream{
+func openStream(shardNum uint32, db schema.Supplier, spec streamSpec, l *logger.Logger) *stream {
+	s := &stream{
 		shardNum:   shardNum,
 		schema:     spec.schema,
 		indexRules: spec.indexRules,
 		l:          l,
 	}
-	sm.parseSpec()
-	ctx := context.WithValue(context.Background(), logger.ContextKey, l)
-
+	s.parseSpec()
 	if db == nil {
-		return sm
+		return s
 	}
-	sm.db = db
-	sm.indexWriter = index.NewWriter(ctx, index.WriterOptions{
-		DB:                db,
-		ShardNum:          shardNum,
-		Families:          spec.schema.TagFamilies,
-		IndexRules:        spec.indexRules,
-		EnableGlobalIndex: true,
-	})
-	return sm
+
+	s.databaseSupplier = db
+	return s
 }

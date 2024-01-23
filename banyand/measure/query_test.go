@@ -44,7 +44,7 @@ func TestQueryResult(t *testing.T) {
 		name          string
 		dpsList       []*dataPoints
 		sids          []common.SeriesID
-		want          []pbv1.Result
+		want          []pbv1.MeasureResult
 		minTimestamp  int64
 		maxTimestamp  int64
 		orderBySeries bool
@@ -56,7 +56,7 @@ func TestQueryResult(t *testing.T) {
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 1,
-			want: []pbv1.Result{{
+			want: []pbv1.MeasureResult{{
 				SID:        1,
 				Timestamps: []int64{1},
 				TagFamilies: []pbv1.TagFamily{
@@ -103,7 +103,7 @@ func TestQueryResult(t *testing.T) {
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 2,
-			want: []pbv1.Result{{
+			want: []pbv1.MeasureResult{{
 				SID:        1,
 				Timestamps: []int64{2},
 				TagFamilies: []pbv1.TagFamily{
@@ -190,7 +190,7 @@ func TestQueryResult(t *testing.T) {
 			ascTS:        true,
 			minTimestamp: 1,
 			maxTimestamp: 2,
-			want: []pbv1.Result{{
+			want: []pbv1.MeasureResult{{
 				SID:        1,
 				Timestamps: []int64{1},
 				TagFamilies: []pbv1.TagFamily{
@@ -277,7 +277,7 @@ func TestQueryResult(t *testing.T) {
 			orderBySeries: true,
 			minTimestamp:  1,
 			maxTimestamp:  1,
-			want: []pbv1.Result{{
+			want: []pbv1.MeasureResult{{
 				SID:        1,
 				Timestamps: []int64{1},
 				TagFamilies: []pbv1.TagFamily{
@@ -325,7 +325,7 @@ func TestQueryResult(t *testing.T) {
 			orderBySeries: true,
 			minTimestamp:  1,
 			maxTimestamp:  2,
-			want: []pbv1.Result{{
+			want: []pbv1.MeasureResult{{
 				SID:        2,
 				Timestamps: []int64{1, 2},
 				TagFamilies: []pbv1.TagFamily{
@@ -408,7 +408,7 @@ func TestQueryResult(t *testing.T) {
 					result.orderByTS = true
 					result.ascTS = tt.ascTS
 				}
-				var got []pbv1.Result
+				var got []pbv1.MeasureResult
 				for {
 					r := result.Pull()
 					if r == nil {
