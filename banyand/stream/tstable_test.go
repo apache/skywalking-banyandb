@@ -301,7 +301,7 @@ func Test_tstIter(t *testing.T) {
 					defer defFn()
 
 					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, elementIndexFlushTimeout: 0})
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, elementIndexFlushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()})
 					require.NoError(t, err)
 					for i, es := range tt.esList {
 						tst.mustAddElements(es)
@@ -349,7 +349,12 @@ func Test_tstIter(t *testing.T) {
 					defer defFn()
 
 					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, elementIndexFlushTimeout: defaultFlushTimeout})
+						logger.GetLogger("test"), timestamp.TimeRange{},
+						option{
+							flushTimeout:             defaultFlushTimeout,
+							elementIndexFlushTimeout: defaultFlushTimeout,
+							mergePolicy:              newDefaultMergePolicyForTesting(),
+						})
 					require.NoError(t, err)
 					for _, es := range tt.esList {
 						tst.mustAddElements(es)
@@ -376,7 +381,12 @@ func Test_tstIter(t *testing.T) {
 					}
 					// reopen the table
 					tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, elementIndexFlushTimeout: defaultFlushTimeout})
+						logger.GetLogger("test"), timestamp.TimeRange{},
+						option{
+							flushTimeout:             defaultFlushTimeout,
+							elementIndexFlushTimeout: defaultFlushTimeout,
+							mergePolicy:              newDefaultMergePolicyForTesting(),
+						})
 					require.NoError(t, err)
 					verify(t, tt, tst)
 				})

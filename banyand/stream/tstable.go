@@ -49,6 +49,7 @@ const (
 type tsTable struct {
 	index         *elementIndex
 	fileSystem    fs.FileSystem
+	option        option
 	l             *logger.Logger
 	snapshot      *snapshot
 	introductions chan *introduction
@@ -57,7 +58,6 @@ type tsTable struct {
 	root          string
 	gc            garbageCleaner
 	curPartID     uint64
-	option        option
 	sync.RWMutex
 }
 

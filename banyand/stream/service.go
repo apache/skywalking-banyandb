@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"math"
 	"path"
 
 	"github.com/pkg/errors"
@@ -79,6 +80,8 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of database")
 	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
 	flagS.DurationVar(&s.option.elementIndexFlushTimeout, "element-index-flush-timeout", defaultFlushTimeout, "the elementIndex timeout of stream")
+	s.option.mergePolicy = newDefaultMergePolicy()
+	flagS.Uint64Var(&s.option.mergePolicy.maxFanOutSize, "max-fan-out-size", math.MaxUint64, "the upper bound of a single file size after merge")
 	return flagS
 }
 
