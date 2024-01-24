@@ -43,7 +43,7 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 	}
 	var err error
 	if ei.store, err = inverted.NewStore(inverted.StoreOpts{
-		Path:         path.Join(root, "element_idx"),
+		Path:         path.Join(root, elementIndexFilename),
 		Logger:       ei.l,
 		BatchWaitSec: flushTimeoutSeconds,
 	}); err != nil {
