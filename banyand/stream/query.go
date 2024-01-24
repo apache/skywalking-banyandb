@@ -39,8 +39,6 @@ type queryOptions struct {
 	pbv1.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
-	includeMin   bool
-	includeMax   bool
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
@@ -407,8 +405,6 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		StreamQueryOptions: sqo,
 		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
-		includeMin:         sqo.TimeRange.IncludeStart,
-		includeMax:         sqo.TimeRange.IncludeEnd,
 	}
 	var n int
 	for i := range tabWrappers {

@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type block struct {
@@ -410,18 +411,16 @@ func releaseBlock(b *block) {
 var blockPool sync.Pool
 
 type blockCursor struct {
-	p                   *part
-	timestamps          []int64
-	elementIDs          []string
-	tagFamilies         []tagFamily
-	tagValuesDecoder    encoding.BytesBlockDecoder
-	tagProjection       []pbv1.TagProjection
-	bm                  blockMetadata
-	idx                 int
-	minTimestamp        int64
-	maxTimestamp        int64
-	includeMinTimestamp bool
-	includeMaxTimestamp bool
+	p                *part
+	timestamps       []int64
+	elementIDs       []string
+	tagFamilies      []tagFamily
+	tagValuesDecoder encoding.BytesBlockDecoder
+	tagProjection    []pbv1.TagProjection
+	bm               blockMetadata
+	idx              int
+	minTimestamp     int64
+	maxTimestamp     int64
 }
 
 func (bc *blockCursor) reset() {
@@ -430,8 +429,6 @@ func (bc *blockCursor) reset() {
 	bc.bm = blockMetadata{}
 	bc.minTimestamp = 0
 	bc.maxTimestamp = 0
-	bc.includeMinTimestamp = false
-	bc.includeMaxTimestamp = false
 	bc.tagProjection = bc.tagProjection[:0]
 
 	bc.timestamps = bc.timestamps[:0]
@@ -450,8 +447,6 @@ func (bc *blockCursor) init(p *part, bm blockMetadata, queryOpts queryOptions) {
 	bc.bm = bm
 	bc.minTimestamp = queryOpts.minTimestamp
 	bc.maxTimestamp = queryOpts.maxTimestamp
-	bc.includeMinTimestamp = queryOpts.includeMin
-	bc.includeMaxTimestamp = queryOpts.includeMax
 	bc.tagProjection = queryOpts.TagProjection
 }
 
@@ -536,7 +531,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	bc.bm.tagFamilies = tf
 	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)
 
-	start, end, ok := findRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp, bc.includeMinTimestamp, bc.includeMaxTimestamp)
+	start, end, ok := timestamp.FindRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
 	if !ok {
 		return false
 	}
@@ -566,33 +561,6 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		bc.tagFamilies = append(bc.tagFamilies, tf)
 	}
 	return true
-}
-
-func findRange(timestamps []int64, min, max int64, includeMin, includeMax bool) (int, int, bool) {
-	if len(timestamps) == 0 {
-		return -1, -1, false
-	}
-	if timestamps[0] > max || !includeMin && timestamps[0] == max {
-		return -1, -1, false
-	}
-	if timestamps[len(timestamps)-1] < min || !includeMax && timestamps[len(timestamps)-1] == min {
-		return -1, -1, false
-	}
-
-	start, end := -1, len(timestamps)
-	for start < len(timestamps)-1 {
-		start++
-		if timestamps[start] > min || (includeMin && timestamps[start] == min) {
-			break
-		}
-	}
-	for end > 0 {
-		end--
-		if timestamps[end] < max || (includeMax && timestamps[end] == max) {
-			break
-		}
-	}
-	return start, end, start <= end
 }
 
 var blockCursorPool sync.Pool
