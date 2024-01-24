@@ -411,18 +411,16 @@ func releaseBlock(b *block) {
 var blockPool sync.Pool
 
 type blockCursor struct {
-	p                   *part
-	timestamps          []int64
-	elementIDs          []string
-	tagFamilies         []tagFamily
-	tagValuesDecoder    encoding.BytesBlockDecoder
-	tagProjection       []pbv1.TagProjection
-	bm                  blockMetadata
-	idx                 int
-	minTimestamp        int64
-	maxTimestamp        int64
-	includeMinTimestamp bool
-	includeMaxTimestamp bool
+	p                *part
+	timestamps       []int64
+	elementIDs       []string
+	tagFamilies      []tagFamily
+	tagValuesDecoder encoding.BytesBlockDecoder
+	tagProjection    []pbv1.TagProjection
+	bm               blockMetadata
+	idx              int
+	minTimestamp     int64
+	maxTimestamp     int64
 }
 
 func (bc *blockCursor) reset() {
@@ -431,8 +429,6 @@ func (bc *blockCursor) reset() {
 	bc.bm = blockMetadata{}
 	bc.minTimestamp = 0
 	bc.maxTimestamp = 0
-	bc.includeMinTimestamp = false
-	bc.includeMaxTimestamp = false
 	bc.tagProjection = bc.tagProjection[:0]
 
 	bc.timestamps = bc.timestamps[:0]
@@ -451,8 +447,6 @@ func (bc *blockCursor) init(p *part, bm blockMetadata, queryOpts queryOptions) {
 	bc.bm = bm
 	bc.minTimestamp = queryOpts.minTimestamp
 	bc.maxTimestamp = queryOpts.maxTimestamp
-	bc.includeMinTimestamp = queryOpts.includeMin
-	bc.includeMaxTimestamp = queryOpts.includeMax
 	bc.tagProjection = queryOpts.TagProjection
 }
 
@@ -537,7 +531,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	bc.bm.tagFamilies = tf
 	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)
 
-	start, end, ok := timestamp.FindRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp, bc.includeMinTimestamp, bc.includeMaxTimestamp)
+	start, end, ok := timestamp.FindRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
 	if !ok {
 		return false
 	}

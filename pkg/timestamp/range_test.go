@@ -24,8 +24,6 @@ func Test_findRange(t *testing.T) {
 		timestamps []int64
 		min        int64
 		max        int64
-		includeMin bool
-		includeMax bool
 	}
 	tests := []struct {
 		name      string
@@ -51,8 +49,6 @@ func Test_findRange(t *testing.T) {
 				timestamps: []int64{1},
 				min:        1,
 				max:        1,
-				includeMin: true,
-				includeMax: true,
 			},
 			wantStart: 0,
 			wantEnd:   0,
@@ -75,8 +71,6 @@ func Test_findRange(t *testing.T) {
 				timestamps: []int64{1, 2, 3, 4, 5},
 				min:        2,
 				max:        4,
-				includeMin: true,
-				includeMax: true,
 			},
 			wantStart: 1,
 			wantEnd:   3,
@@ -88,8 +82,6 @@ func Test_findRange(t *testing.T) {
 				timestamps: []int64{1, 2, 3, 4, 5},
 				min:        1,
 				max:        5,
-				includeMin: true,
-				includeMax: true,
 			},
 			wantStart: 0,
 			wantEnd:   4,
@@ -101,8 +93,6 @@ func Test_findRange(t *testing.T) {
 				timestamps: []int64{1, 2, 3, 4, 5},
 				min:        1,
 				max:        1,
-				includeMin: true,
-				includeMax: true,
 			},
 			wantStart: 0,
 			wantEnd:   0,
@@ -111,7 +101,7 @@ func Test_findRange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotStart, gotEnd, gotExist := FindRange(tt.args.timestamps, tt.args.min, tt.args.max, tt.args.includeMin, tt.args.includeMax)
+			gotStart, gotEnd, gotExist := FindRange(tt.args.timestamps, tt.args.min, tt.args.max)
 			if gotStart != tt.wantStart {
 				t.Errorf("findRange() gotStart = %v, want %v", gotStart, tt.wantStart)
 			}

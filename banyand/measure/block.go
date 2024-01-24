@@ -26,8 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type block struct {
@@ -543,7 +543,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	bc.bm.tagFamilies = tf
 	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm)
 
-	start, end, ok := timestamp.FindRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp, true, true)
+	start, end, ok := timestamp.FindRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
 	if !ok {
 		return false
 	}
