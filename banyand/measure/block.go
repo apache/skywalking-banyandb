@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type block struct {
@@ -542,11 +543,11 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	bc.bm.tagFamilies = tf
 	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm)
 
-	start, end, ok := findRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
+	start, end, ok := timestamp.FindRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
 	if !ok {
 		return false
 	}
-	bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[start:end]...)
+	bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[start:end+1]...)
 
 	for _, cf := range tmpBlock.tagFamilies {
 		tf := columnFamily{
@@ -563,7 +564,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			if len(cf.columns[i].values) != len(tmpBlock.timestamps) {
 				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", cf.columns[i].name, len(cf.columns[i].values), len(tmpBlock.timestamps))
 			}
-			column.values = append(column.values, cf.columns[i].values[start:end]...)
+			column.values = append(column.values, cf.columns[i].values[start:end+1]...)
 			tf.columns = append(tf.columns, column)
 		}
 		bc.tagFamilies = append(bc.tagFamilies, tf)
@@ -582,47 +583,10 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			valueType: tmpBlock.field.columns[i].valueType,
 		}
 
-		c.values = append(c.values, tmpBlock.field.columns[i].values[start:end]...)
+		c.values = append(c.values, tmpBlock.field.columns[i].values[start:end+1]...)
 		bc.fields.columns = append(bc.fields.columns, c)
 	}
 	return true
-}
-
-func findRange(timestamps []int64, min int64, max int64) (int, int, bool) {
-	l := len(timestamps)
-	start, end := -1, -1
-
-	for i := 0; i < l; i++ {
-		if timestamps[i] > max || timestamps[l-i-1] < min {
-			break
-		}
-		if timestamps[i] >= min && start == -1 {
-			start = i
-		}
-		if timestamps[l-i-1] <= max && end == -1 {
-			end = l - i
-		}
-		if start != -1 && end != -1 {
-			break
-		}
-	}
-
-	if start == -1 && end == -1 {
-		return 0, 0, false
-	}
-
-	if start == -1 {
-		start = 0
-	}
-
-	if end == -1 {
-		end = l
-	}
-
-	if start >= end {
-		return 0, 0, false
-	}
-	return start, end, true
 }
 
 var blockCursorPool sync.Pool

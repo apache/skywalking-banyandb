@@ -112,3 +112,31 @@ func NewTimeRange(start, end time.Time, includeStart, includeEnd bool) TimeRange
 func NewTimeRangeDuration(start time.Time, duration time.Duration, includeStart, includeEnd bool) TimeRange {
 	return NewTimeRange(start, start.Add(duration), includeStart, includeEnd)
 }
+
+// FindRange returns the indices of the first and last elements in a sorted 'timestamps' slice that are within the min and max range.
+func FindRange(timestamps []int64, min, max int64) (int, int, bool) {
+	if len(timestamps) == 0 {
+		return -1, -1, false
+	}
+	if timestamps[0] > max {
+		return -1, -1, false
+	}
+	if timestamps[len(timestamps)-1] < min {
+		return -1, -1, false
+	}
+
+	start, end := -1, len(timestamps)
+	for start < len(timestamps)-1 {
+		start++
+		if timestamps[start] >= min {
+			break
+		}
+	}
+	for end > 0 {
+		end--
+		if timestamps[end] <= max {
+			break
+		}
+	}
+	return start, end, start <= end
+}
