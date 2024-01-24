@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type block struct {
@@ -536,7 +537,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	bc.bm.tagFamilies = tf
 	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)
 
-	start, end, ok := findRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp, bc.includeMinTimestamp, bc.includeMaxTimestamp)
+	start, end, ok := timestamp.FindRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp, bc.includeMinTimestamp, bc.includeMaxTimestamp)
 	if !ok {
 		return false
 	}
@@ -566,33 +567,6 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		bc.tagFamilies = append(bc.tagFamilies, tf)
 	}
 	return true
-}
-
-func findRange(timestamps []int64, min, max int64, includeMin, includeMax bool) (int, int, bool) {
-	if len(timestamps) == 0 {
-		return -1, -1, false
-	}
-	if timestamps[0] > max || !includeMin && timestamps[0] == max {
-		return -1, -1, false
-	}
-	if timestamps[len(timestamps)-1] < min || !includeMax && timestamps[len(timestamps)-1] == min {
-		return -1, -1, false
-	}
-
-	start, end := -1, len(timestamps)
-	for start < len(timestamps)-1 {
-		start++
-		if timestamps[start] > min || (includeMin && timestamps[start] == min) {
-			break
-		}
-	}
-	for end > 0 {
-		end--
-		if timestamps[end] < max || (includeMax && timestamps[end] == max) {
-			break
-		}
-	}
-	return start, end, start <= end
 }
 
 var blockCursorPool sync.Pool

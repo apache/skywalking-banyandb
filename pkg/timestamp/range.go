@@ -112,3 +112,30 @@ func NewTimeRange(start, end time.Time, includeStart, includeEnd bool) TimeRange
 func NewTimeRangeDuration(start time.Time, duration time.Duration, includeStart, includeEnd bool) TimeRange {
 	return NewTimeRange(start, start.Add(duration), includeStart, includeEnd)
 }
+
+func FindRange(timestamps []int64, min, max int64, includeMin, includeMax bool) (int, int, bool) {
+	if len(timestamps) == 0 {
+		return -1, -1, false
+	}
+	if timestamps[0] > max || !includeMin && timestamps[0] == max {
+		return -1, -1, false
+	}
+	if timestamps[len(timestamps)-1] < min || !includeMax && timestamps[len(timestamps)-1] == min {
+		return -1, -1, false
+	}
+
+	start, end := -1, len(timestamps)
+	for start < len(timestamps)-1 {
+		start++
+		if timestamps[start] > min || (includeMin && timestamps[start] == min) {
+			break
+		}
+	}
+	for end > 0 {
+		end--
+		if timestamps[end] < max || (includeMax && timestamps[end] == max) {
+			break
+		}
+	}
+	return start, end, start <= end
+}
