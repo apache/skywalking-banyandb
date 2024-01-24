@@ -27,7 +27,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -180,7 +179,10 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	var loadedSnapshots []uint64
 	var needToDelete []string
 	for i := range ee {
-		if ee[i].IsDir() && strings.HasPrefix(ee[i].Name(), "part-") {
+		if ee[i].IsDir() {
+			if ee[i].Name() == elementIndexFilename {
+				continue
+			}
 			p, err := parseEpoch(ee[i].Name())
 			if err != nil {
 				l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")
