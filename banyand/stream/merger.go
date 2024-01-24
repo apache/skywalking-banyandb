@@ -300,7 +300,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		tmpBlock.bm.seriesID = b.bm.seriesID
 		br.loadBlockData(getDecoder())
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
-		if len(tmpBlock.timestamps) <= maxBlockLength && tmpBlock.uncompressedSizeBytes() <= maxUncompressedBlockSize {
+		if tmpBlock.uncompressedSizeBytes() <= maxUncompressedBlockSize {
 			if len(tmpBlock.timestamps) == 0 {
 				pendingBlockIsEmpty = true
 			}
@@ -308,12 +308,6 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			continue
 		}
 
-		if len(tmpBlock.timestamps) <= maxBlockLength {
-			bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
-			releaseDecoder()
-			continue
-		}
-		tmpBlock.idx = maxBlockLength
 		pendingBlock.copyFrom(tmpBlock)
 		l := tmpBlock.idx
 		tmpBlock.idx = 0
