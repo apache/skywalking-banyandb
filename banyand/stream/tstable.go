@@ -180,6 +180,9 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	var needToDelete []string
 	for i := range ee {
 		if ee[i].IsDir() {
+			if ee[i].Name() == elementIndexFilename {
+				continue
+			}
 			p, err := parseEpoch(ee[i].Name())
 			if err != nil {
 				l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")

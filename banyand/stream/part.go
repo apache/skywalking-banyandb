@@ -42,7 +42,7 @@ const (
 	metaFilename                   = "meta.bin"
 	timestampsFilename             = "timestamps.bin"
 	elementIDsFilename             = "elementIDs.bin"
-	fieldValuesFilename            = "fields.bin"
+	elementIndexFilename           = "idx"
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
 )
