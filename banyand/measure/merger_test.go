@@ -278,6 +278,22 @@ func Test_mergeParts(t *testing.T) {
 				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
 			},
 		},
+		{
+			name:    "Test with multiple parts with a large quantity of different ts",
+			dpsList: []*dataPoints{generateHugeDps(1, 5000, 1), generateHugeDps(5001, 10000, 2)},
+			want: []blockMetadata{
+				{seriesID: 1, count: 2500, uncompressedSizeBytes: 4190000},
+				{seriesID: 1, count: 2500, uncompressedSizeBytes: 4190000},
+				{seriesID: 1, count: 2500, uncompressedSizeBytes: 4190000},
+				{seriesID: 1, count: 2500, uncompressedSizeBytes: 4190000},
+				{seriesID: 1, count: 2500, uncompressedSizeBytes: 4190000},
+				{seriesID: 1, count: 2500, uncompressedSizeBytes: 4190000},
+				{seriesID: 1, count: 2500, uncompressedSizeBytes: 4190000},
+				{seriesID: 1, count: 1250, uncompressedSizeBytes: 2095000},
+				{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
+				{seriesID: 3, count: 2, uncompressedSizeBytes: 48},
+			},
+		},
 	}
 
 	for _, tt := range tests {

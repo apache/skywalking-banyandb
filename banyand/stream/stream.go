@@ -40,7 +40,6 @@ const (
 	maxUncompressedBlockSize        = 2 * 1024 * 1024
 	maxUncompressedPrimaryBlockSize = 128 * 1024
 
-	maxBlockLength      = 8 * 1024
 	defaultFlushTimeout = 5 * time.Second
 )
 

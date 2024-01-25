@@ -20,6 +20,7 @@ package stream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -477,4 +478,49 @@ var esTS2 = &elements{
 		},
 		{}, // empty tagFamilies for seriesID 6
 	},
+}
+
+func generateHugeEs(startTimestamp, endTimestamp, timestamp int64) *elements {
+	hugeEs := &elements{
+		seriesIDs:   []common.SeriesID{},
+		timestamps:  []int64{},
+		elementIDs:  []string{},
+		tagFamilies: [][]tagValues{},
+	}
+	for i := startTimestamp; i <= endTimestamp; i++ {
+		hugeEs.seriesIDs = append(hugeEs.seriesIDs, 1)
+		hugeEs.timestamps = append(hugeEs.timestamps, i)
+		hugeEs.elementIDs = append(hugeEs.elementIDs, "1"+fmt.Sprint(i))
+		hugeEs.tagFamilies = append(hugeEs.tagFamilies, []tagValues{
+			{
+				tag: "arrTag", values: []*tagValue{
+					{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+					{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
+				},
+			},
+			{
+				tag: "binaryTag", values: []*tagValue{
+					{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				},
+			},
+			{
+				tag: "singleTag", values: []*tagValue{
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value3"), valueArr: nil},
+					{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
+				},
+			},
+		})
+	}
+	hugeEs.seriesIDs = append(hugeEs.seriesIDs, []common.SeriesID{2, 3}...)
+	hugeEs.timestamps = append(hugeEs.timestamps, []int64{timestamp, timestamp}...)
+	hugeEs.elementIDs = append(hugeEs.elementIDs, []string{"2" + fmt.Sprint(timestamp), "3" + fmt.Sprint(timestamp)}...)
+	hugeEs.tagFamilies = append(hugeEs.tagFamilies, [][]tagValues{{
+		{
+			tag: "singleTag", values: []*tagValue{
+				{tag: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
+				{tag: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag4"), valueArr: nil},
+			},
+		},
+	}, {}}...)
+	return hugeEs
 }
