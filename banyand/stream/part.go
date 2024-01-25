@@ -325,8 +325,7 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 			sidPrev = sid
 		}
 
-		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize ||
-			(i-indexPrev) > maxBlockLength || sid != sidPrev {
+		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize || sid != sidPrev {
 			bsw.MustWriteElements(sidPrev, es.timestamps[indexPrev:i], es.elementIDs[indexPrev:i], es.tagFamilies[indexPrev:i])
 			sidPrev = sid
 			indexPrev = i

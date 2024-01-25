@@ -215,17 +215,17 @@ func Test_mergeParts(t *testing.T) {
 	tests := []struct {
 		wantErr error
 		name    string
-		dpsList []*elements
+		esList  []*elements
 		want    []blockMetadata
 	}{
 		{
 			name:    "Test with no data points",
-			dpsList: []*elements{},
+			esList:  []*elements{},
 			wantErr: errNoPartToMerge,
 		},
 		{
-			name:    "Test with single part",
-			dpsList: []*elements{esTS1},
+			name:   "Test with single part",
+			esList: []*elements{esTS1},
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
@@ -233,8 +233,8 @@ func Test_mergeParts(t *testing.T) {
 			},
 		},
 		{
-			name:    "Test with multiple parts with different ts",
-			dpsList: []*elements{esTS1, esTS2, esTS2},
+			name:   "Test with multiple parts with different ts",
+			esList: []*elements{esTS1, esTS2, esTS2},
 			want: []blockMetadata{
 				{seriesID: 1, count: 2, uncompressedSizeBytes: 1762},
 				{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
@@ -242,12 +242,25 @@ func Test_mergeParts(t *testing.T) {
 			},
 		},
 		{
-			name:    "Test with multiple parts with same ts",
-			dpsList: []*elements{esTS1, esTS1, esTS1},
+			name:   "Test with multiple parts with same ts",
+			esList: []*elements{esTS1, esTS1, esTS1},
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+			},
+		},
+		{
+			name:   "Test with multiple parts with a large quantity of different ts",
+			esList: []*elements{generateHugeEs(1, 5000, 1), generateHugeEs(5001, 10000, 2)},
+			want: []blockMetadata{
+				{seriesID: 1, count: 2395, uncompressedSizeBytes: 2109995},
+				{seriesID: 1, count: 2395, uncompressedSizeBytes: 2109995},
+				{seriesID: 1, count: 2605, uncompressedSizeBytes: 2295005},
+				{seriesID: 1, count: 2395, uncompressedSizeBytes: 2109995},
+				{seriesID: 1, count: 210, uncompressedSizeBytes: 185010},
+				{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
+				{seriesID: 3, count: 2, uncompressedSizeBytes: 16},
 			},
 		},
 	}
@@ -294,9 +307,9 @@ func Test_mergeParts(t *testing.T) {
 					}
 					defFn()
 				}()
-				for _, dps := range tt.dpsList {
+				for _, es := range tt.esList {
 					mp := generateMemPart()
-					mp.mustInitFromElements(dps)
+					mp.mustInitFromElements(es)
 					pp = append(pp, newPartWrapper(mp, openMemPart(mp)))
 				}
 				verify(t, pp, fs.NewLocalFileSystem(), tmpPath, 1)
@@ -312,16 +325,16 @@ func Test_mergeParts(t *testing.T) {
 					defFn()
 				}()
 				fileSystem := fs.NewLocalFileSystem()
-				for i, dps := range tt.dpsList {
+				for i, es := range tt.esList {
 					mp := generateMemPart()
-					mp.mustInitFromElements(dps)
+					mp.mustInitFromElements(es)
 					mp.mustFlush(fileSystem, partPath(tmpPath, uint64(i)))
 					filePW := newPartWrapper(nil, mustOpenFilePart(uint64(i), tmpPath, fileSystem))
 					filePW.p.partMetadata.ID = uint64(i)
 					fpp = append(fpp, filePW)
 					releaseMemPart(mp)
 				}
-				verify(t, fpp, fileSystem, tmpPath, uint64(len(tt.dpsList)))
+				verify(t, fpp, fileSystem, tmpPath, uint64(len(tt.esList)))
 			})
 		})
 	}

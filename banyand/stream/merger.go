@@ -253,7 +253,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
-	var tmpBlock, tmpBlock2 *blockPointer
+	var tmpBlock *blockPointer
 	var decoder *encoding.BytesBlockDecoder
 	getDecoder := func() *encoding.BytesBlockDecoder {
 		if decoder == nil {
@@ -300,31 +300,18 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		tmpBlock.bm.seriesID = b.bm.seriesID
 		br.loadBlockData(getDecoder())
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
-		if len(tmpBlock.timestamps) <= maxBlockLength && tmpBlock.uncompressedSizeBytes() <= maxUncompressedBlockSize {
+		if tmpBlock.uncompressedSizeBytes() <= maxUncompressedBlockSize {
 			if len(tmpBlock.timestamps) == 0 {
 				pendingBlockIsEmpty = true
 			}
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
 			continue
 		}
-
-		if len(tmpBlock.timestamps) <= maxBlockLength {
-			bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
-			releaseDecoder()
-			continue
-		}
-		tmpBlock.idx = maxBlockLength
-		pendingBlock.copyFrom(tmpBlock)
-		l := tmpBlock.idx
-		tmpBlock.idx = 0
-		if tmpBlock2 == nil {
-			tmpBlock2 = generateBlockPointer()
-			defer releaseBlockPointer(tmpBlock2)
-		}
-		tmpBlock2.reset()
-		tmpBlock2.append(tmpBlock, l)
-		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock2.block)
+		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
 		releaseDecoder()
+		pendingBlock.reset()
+		tmpBlock.reset()
+		pendingBlockIsEmpty = true
 	}
 	if err := br.error(); err != nil {
 		return nil, fmt.Errorf("cannot read block to merge: %w", err)

@@ -500,3 +500,59 @@ var dpsTS2 = &dataPoints{
 		},
 	},
 }
+
+func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints {
+	hugeDps := &dataPoints{
+		seriesIDs:   []common.SeriesID{},
+		timestamps:  []int64{},
+		tagFamilies: [][]nameValues{},
+		fields:      []nameValues{},
+	}
+	for i := startTimestamp; i <= endTimestamp; i++ {
+		hugeDps.seriesIDs = append(hugeDps.seriesIDs, 1)
+		hugeDps.timestamps = append(hugeDps.timestamps, i)
+		hugeDps.tagFamilies = append(hugeDps.tagFamilies, []nameValues{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
+				},
+			},
+			{
+				name: "binaryTag", values: []*nameValue{
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				},
+			},
+			{
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value3"), valueArr: nil},
+					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
+				},
+			},
+		})
+		hugeDps.fields = append(hugeDps.fields, nameValues{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field3"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(3330), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(3663699.029), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		})
+	}
+	hugeDps.seriesIDs = append(hugeDps.seriesIDs, []common.SeriesID{2, 3}...)
+	hugeDps.timestamps = append(hugeDps.timestamps, []int64{timestamp, timestamp}...)
+	hugeDps.tagFamilies = append(hugeDps.tagFamilies, [][]nameValues{{
+		{
+			name: "singleTag", values: []*nameValue{
+				{name: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
+				{name: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag4"), valueArr: nil},
+			},
+		},
+	}, {}}...)
+	hugeDps.fields = append(hugeDps.fields, []nameValues{{}, {
+		name: "onlyFields", values: []*nameValue{
+			{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(4440), valueArr: nil},
+		},
+	}}...)
+	return hugeDps
+}
