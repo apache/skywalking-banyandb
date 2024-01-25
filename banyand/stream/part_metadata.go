@@ -32,8 +32,7 @@ type partMetadata struct {
 	BlocksCount           uint64 `json:"blocksCount"`
 	MinTimestamp          int64  `json:"minTimestamp"`
 	MaxTimestamp          int64  `json:"maxTimestamp"`
-	// TODO: remove this?
-	ID uint64 `json:"-"`
+	ID                    uint64 `json:"-"`
 }
 
 func (pm *partMetadata) reset() {

@@ -305,10 +305,13 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 				pendingBlockIsEmpty = true
 			}
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
-		} else {
-			bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
-			releaseDecoder()
+			continue
 		}
+		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
+		releaseDecoder()
+		pendingBlock.reset()
+		tmpBlock.reset()
+		pendingBlockIsEmpty = true
 	}
 	if err := br.error(); err != nil {
 		return nil, fmt.Errorf("cannot read block to merge: %w", err)

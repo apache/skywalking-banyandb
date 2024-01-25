@@ -278,6 +278,127 @@ func Test_mergeParts(t *testing.T) {
 				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
 			},
 		},
+		{
+			name:    "Test with multiple parts with a large quantity of different ts",
+			dpsList: []*dataPoints{generateHugeDps(1, 5000, 1), generateHugeDps(5001, 10000, 2)},
+			want: []blockMetadata{
+				{seriesID: 1, count: 2500, uncompressedSizeBytes: 4190000},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 27, size: 28},
+						"binaryTag": {offset: 15, size: 16},
+						"singleTag": {offset: 21, size: 22},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 1, size: 2501},
+						min:        1,
+						max:        3750,
+						encodeType: 4,
+					},
+					seriesID:              1,
+					uncompressedSizeBytes: 4190000,
+					count:                 2500,
+				},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 55, size: 29},
+						"binaryTag": {offset: 31, size: 16},
+						"singleTag": {offset: 43, size: 23},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 2502, size: 2501},
+						min:        1,
+						max:        5000,
+						encodeType: 4,
+					},
+					seriesID:              1,
+					uncompressedSizeBytes: 4190000,
+					count:                 2500,
+				},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 84, size: 29},
+						"binaryTag": {offset: 47, size: 16},
+						"singleTag": {offset: 66, size: 23},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 5003, size: 2501},
+						min:        1,
+						max:        6250,
+						encodeType: 4,
+					},
+					seriesID:              1,
+					uncompressedSizeBytes: 4190000,
+					count:                 2500,
+				},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 113, size: 29},
+						"binaryTag": {offset: 63, size: 16},
+						"singleTag": {offset: 89, size: 23},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 7504, size: 2501},
+						min:        1,
+						max:        7500,
+						encodeType: 4,
+					},
+					seriesID:              1,
+					uncompressedSizeBytes: 4190000,
+					count:                 2500,
+				},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 142, size: 29},
+						"binaryTag": {offset: 79, size: 16},
+						"singleTag": {offset: 112, size: 23},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 10005, size: 2501},
+						min:        1,
+						max:        8750,
+						encodeType: 4,
+					},
+					seriesID:              1,
+					uncompressedSizeBytes: 4190000,
+					count:                 2500,
+				},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 171, size: 29},
+						"binaryTag": {offset: 95, size: 16},
+						"singleTag": {offset: 135, size: 23},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 12506, size: 2501},
+						min:        1,
+						max:        10000,
+						encodeType: 4,
+					},
+					seriesID:              1,
+					uncompressedSizeBytes: 4190000,
+					count:                 2500,
+				},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 200, size: 29},
+						"binaryTag": {offset: 111, size: 16},
+						"singleTag": {offset: 158, size: 23},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 15007, size: 1},
+						min:        1,
+						max:        1250,
+						encodeType: 2,
+					},
+					seriesID:              1,
+					uncompressedSizeBytes: 2095000,
+					count:                 1250,
+				},
+				{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
+				{seriesID: 3, count: 2, uncompressedSizeBytes: 48},
+			},
+		},
 	}
 
 	for _, tt := range tests {

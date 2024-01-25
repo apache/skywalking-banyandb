@@ -215,17 +215,17 @@ func Test_mergeParts(t *testing.T) {
 	tests := []struct {
 		wantErr error
 		name    string
-		dpsList []*elements
+		esList  []*elements
 		want    []blockMetadata
 	}{
 		{
 			name:    "Test with no data points",
-			dpsList: []*elements{},
+			esList:  []*elements{},
 			wantErr: errNoPartToMerge,
 		},
 		{
-			name:    "Test with single part",
-			dpsList: []*elements{esTS1},
+			name:   "Test with single part",
+			esList: []*elements{esTS1},
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
@@ -233,8 +233,8 @@ func Test_mergeParts(t *testing.T) {
 			},
 		},
 		{
-			name:    "Test with multiple parts with different ts",
-			dpsList: []*elements{esTS1, esTS2, esTS2},
+			name:   "Test with multiple parts with different ts",
+			esList: []*elements{esTS1, esTS2, esTS2},
 			want: []blockMetadata{
 				{seriesID: 1, count: 2, uncompressedSizeBytes: 1762},
 				{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
@@ -242,12 +242,89 @@ func Test_mergeParts(t *testing.T) {
 			},
 		},
 		{
-			name:    "Test with multiple parts with same ts",
-			dpsList: []*elements{esTS1, esTS1, esTS1},
+			name:   "Test with multiple parts with same ts",
+			esList: []*elements{esTS1, esTS1, esTS1},
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+			},
+		},
+		{
+			name:   "Test with multiple parts with a large quantity of different ts",
+			esList: []*elements{generateHugeEs(1, 5000, 1), generateHugeEs(5001, 10000, 2)},
+			want: []blockMetadata{
+				{seriesID: 1, count: 2395, uncompressedSizeBytes: 2109995},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 27, size: 28},
+						"binaryTag": {offset: 15, size: 16},
+						"singleTag": {offset: 21, size: 22},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 1, size: 1},
+						min:        2396,
+						max:        4790,
+						encodeType: 2,
+					},
+					elementIDs:            elementIDsMetadata{dataBlock: dataBlock{offset: 4221, size: 12010}},
+					seriesID:              1,
+					uncompressedSizeBytes: 2109995,
+					count:                 2395,
+				},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 55, size: 29},
+						"binaryTag": {offset: 31, size: 16},
+						"singleTag": {offset: 43, size: 23},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 2, size: 1},
+						min:        4791,
+						max:        7395,
+						encodeType: 2,
+					},
+					elementIDs:            elementIDsMetadata{dataBlock: dataBlock{offset: 16231, size: 13060}},
+					seriesID:              1,
+					uncompressedSizeBytes: 2295005,
+					count:                 2605,
+				},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 84, size: 29},
+						"binaryTag": {offset: 47, size: 16},
+						"singleTag": {offset: 66, size: 23},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 3, size: 1},
+						min:        7396,
+						max:        9790,
+						encodeType: 2,
+					},
+					elementIDs:            elementIDsMetadata{dataBlock: dataBlock{offset: 29291, size: 12010}},
+					seriesID:              1,
+					uncompressedSizeBytes: 2109995,
+					count:                 2395,
+				},
+				{
+					tagFamilies: map[string]*dataBlock{
+						"arrTag":    {offset: 113, size: 29},
+						"binaryTag": {offset: 63, size: 16},
+						"singleTag": {offset: 89, size: 23},
+					},
+					timestamps: timestampsMetadata{
+						dataBlock:  dataBlock{offset: 4, size: 1},
+						min:        9791,
+						max:        10000,
+						encodeType: 2,
+					},
+					elementIDs:            elementIDsMetadata{dataBlock: dataBlock{offset: 41301, size: 1086}},
+					seriesID:              1,
+					uncompressedSizeBytes: 185010,
+					count:                 210,
+				},
+				{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
+				{seriesID: 3, count: 2, uncompressedSizeBytes: 16},
 			},
 		},
 	}
@@ -294,9 +371,9 @@ func Test_mergeParts(t *testing.T) {
 					}
 					defFn()
 				}()
-				for _, dps := range tt.dpsList {
+				for _, es := range tt.esList {
 					mp := generateMemPart()
-					mp.mustInitFromElements(dps)
+					mp.mustInitFromElements(es)
 					pp = append(pp, newPartWrapper(mp, openMemPart(mp)))
 				}
 				verify(t, pp, fs.NewLocalFileSystem(), tmpPath, 1)
@@ -312,16 +389,16 @@ func Test_mergeParts(t *testing.T) {
 					defFn()
 				}()
 				fileSystem := fs.NewLocalFileSystem()
-				for i, dps := range tt.dpsList {
+				for i, es := range tt.esList {
 					mp := generateMemPart()
-					mp.mustInitFromElements(dps)
+					mp.mustInitFromElements(es)
 					mp.mustFlush(fileSystem, partPath(tmpPath, uint64(i)))
 					filePW := newPartWrapper(nil, mustOpenFilePart(uint64(i), tmpPath, fileSystem))
 					filePW.p.partMetadata.ID = uint64(i)
 					fpp = append(fpp, filePW)
 					releaseMemPart(mp)
 				}
-				verify(t, fpp, fileSystem, tmpPath, uint64(len(tt.dpsList)))
+				verify(t, fpp, fileSystem, tmpPath, uint64(len(tt.esList)))
 			})
 		})
 	}
