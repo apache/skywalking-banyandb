@@ -44,7 +44,6 @@ const (
 
 type part struct {
 	path                 string
-	meta                 fs.Reader
 	primary              fs.Reader
 	timestamps           fs.Reader
 	fieldValues          fs.Reader
@@ -77,7 +76,6 @@ func openMemPart(mp *memPart) *part {
 	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], &mp.meta)
 
 	// Open data files
-	p.meta = &mp.meta
 	p.primary = &mp.primary
 	p.timestamps = &mp.timestamps
 	p.fieldValues = &mp.fieldValues
