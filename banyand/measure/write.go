@@ -127,6 +127,10 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
 	tagFamilies := make([]nameValues, len(stm.schema.TagFamilies))
 	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
+	tagNameMap := make(map[string]bool)
+	for _, entity := range stm.GetSchema().GetEntity().GetTagNames() {
+		tagNameMap[entity] = true
+	}
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.DataPoint.TagFamilies) <= i {
@@ -189,6 +193,16 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		}
 	}
 
+	for i := range tagFamilies {
+		values := make([]*nameValue, len(tagFamilies[i].values))
+		copy(values, tagFamilies[i].values)
+		tagFamilies[i].values = tagFamilies[i].values[:0]
+		for j, tagValue := range values {
+			if !tagNameMap[tagValue.name] {
+				tagFamilies[i].values = append(tagFamilies[i].values, values[j])
+			}
+		}
+	}
 	dpg.docs = append(dpg.docs, index.Document{
 		DocID:        uint64(series.ID),
 		EntityValues: series.Buffer,
