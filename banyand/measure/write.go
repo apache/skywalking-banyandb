@@ -19,6 +19,7 @@ package measure
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
@@ -127,9 +128,17 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
 	tagFamilies := make([]nameValues, len(stm.schema.TagFamilies))
 	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
-	tagNameMap := make(map[string]bool)
-	for _, entity := range stm.GetSchema().GetEntity().GetTagNames() {
-		tagNameMap[entity] = true
+	entityMap := make(map[string]bool)
+	topNSchema, _ := w.schemaRepo.metadata.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), stm.GetSchema().GetMetadata())
+
+	var entities []string
+	if topNSchema != nil {
+		entities = topNSchema.GetGroupByTagNames()
+	} else {
+		entities = stm.GetSchema().GetEntity().GetTagNames()
+	}
+	for _, entity := range entities {
+		entityMap[entity] = true
 	}
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
@@ -198,7 +207,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		copy(values, tagFamilies[i].values)
 		tagFamilies[i].values = tagFamilies[i].values[:0]
 		for j, tagValue := range values {
-			if !tagNameMap[tagValue.name] {
+			if !entityMap[tagValue.name] {
 				tagFamilies[i].values = append(tagFamilies[i].values, values[j])
 			}
 		}
