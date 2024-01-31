@@ -420,7 +420,7 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 				qr.data = append(qr.data[:i], qr.data[i+1:]...)
 				i--
 			}
-			if len(qr.entities) == 0 {
+			if qr.schema.GetEntity == nil || len(qr.entities ) == 0 {
 				continue
 			}
 			sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
