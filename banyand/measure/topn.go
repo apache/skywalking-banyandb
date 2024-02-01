@@ -201,6 +201,22 @@ func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, event
 									},
 								},
 							},
+							// SortDirection
+							{
+								Value: &modelv1.TagValue_Int{
+									Int: &modelv1.Int{
+										Value: int64(t.sortDirection),
+									},
+								},
+							},
+							// RankNumber
+							{
+								Value: &modelv1.TagValue_Int{
+									Int: &modelv1.Int{
+										Value: int64(rankNum),
+									},
+								},
+							},
 						}, data[0].([]*modelv1.TagValue)...),
 					},
 				},

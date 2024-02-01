@@ -19,7 +19,6 @@ package measure
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"time"
 
@@ -129,15 +128,8 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	tagFamilies := make([]nameValues, len(stm.schema.TagFamilies))
 	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
 	entityMap := make(map[string]bool)
-	topNSchema, _ := w.schemaRepo.metadata.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), stm.GetSchema().GetMetadata())
 
-	var entities []string
-	if topNSchema != nil {
-		entities = topNSchema.GetGroupByTagNames()
-	} else {
-		entities = stm.GetSchema().GetEntity().GetTagNames()
-	}
-	for _, entity := range entities {
+	for _, entity := range stm.GetSchema().GetEntity().GetTagNames() {
 		entityMap[entity] = true
 	}
 	for i := range stm.GetSchema().GetTagFamilies() {

@@ -208,11 +208,24 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 						Name: "measure_id",
 						Type: databasev1.TagType_TAG_TYPE_STRING,
 					},
+					{
+						Name: "sortDirection",
+						Type: databasev1.TagType_TAG_TYPE_INT,
+					},
+					{
+						Name: "rankNumber",
+						Type: databasev1.TagType_TAG_TYPE_INT,
+					},
 				}, seriesSpecs...),
 			},
 		},
 		Fields: []*databasev1.FieldSpec{topNValueFieldSpec},
-		Entity: sourceMeasureSchema.GetEntity(),
+		Entity: &databasev1.Entity{
+			TagNames: append([]string{
+				"sortDirection",
+				"rankNumber",
+			}, topNSchema.GetGroupByTagNames()...),
+		},
 	}
 	if oldTopNSchema == nil {
 		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {

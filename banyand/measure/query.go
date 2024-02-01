@@ -141,22 +141,9 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
 
-	entities := make([]string, 0)
-	if s.GetSchema().GetTagFamilies()[0].GetName() == topNTagFamily {
-		for _, topNAggregation := range s.topNAggregations {
-			if topNAggregation.GetMetadata().GetName() == s.schema.GetMetadata().GetName() {
-				entities = append(entities, "sortDirection", "rankNumber")
-				entities = append(entities, topNAggregation.GetGroupByTagNames()...)
-			}
-		}
-	} else {
-		entities = append(entities, s.schema.GetEntity().GetTagNames()...)
-	}
-
 	result.seriesList = sl
 	result.tagNameIndex = tagNameIndex
 	result.schema = s.schema
-	result.entities = entities
 
 	result.sidToIndex = make(map[common.SeriesID]int)
 	for i, si := range originalSids {
@@ -398,7 +385,6 @@ type queryResult struct {
 	sidToIndex   map[common.SeriesID]int
 	tagNameIndex map[string]partition.TagLocator
 	schema       *databasev1.Measure
-	entities     []string
 	data         []*blockCursor
 	snapshots    []*snapshot
 	seriesList   pbv1.SeriesList
@@ -420,14 +406,14 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 				qr.data = append(qr.data[:i], qr.data[i+1:]...)
 				i--
 			}
-			if qr.schema.GetEntity() == nil || len(qr.entities) == 0 {
+			if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
 				continue
 			}
 			sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
 			series := qr.seriesList[sidIndex]
 			entityMap := make(map[string]int)
 			tagFamilyMap := make(map[string]int)
-			for idx, entity := range qr.entities {
+			for idx, entity := range qr.schema.GetEntity().GetTagNames() {
 				entityMap[entity] = idx + 1
 			}
 			for idx, tagFamily := range qr.data[i].tagFamilies {

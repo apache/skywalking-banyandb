@@ -96,21 +96,11 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 
 func (uls *unresolvedLocalScan) locateEntity(entityList []string) ([]*modelv1.TagValue, error) {
 	entityMap := make(map[string]int)
-	entity := make([]*modelv1.TagValue, 1+1+len(entityList))
-	// sortDirection
-	entity[0] = &modelv1.TagValue{
-		Value: &modelv1.TagValue_Int{
-			Int: &modelv1.Int{
-				Value: int64(uls.sort.Number()),
-			},
-		},
-	}
-	// rankNumber
-	entity[1] = pbv1.AnyTagValue
+	entity := make([]*modelv1.TagValue, len(entityList))
 	for idx, tagName := range entityList {
-		entityMap[tagName] = idx + 2
+		entityMap[tagName] = idx
 		// allow to make fuzzy search with partial conditions
-		entity[idx+2] = pbv1.AnyTagValue
+		entity[idx] = pbv1.AnyTagValue
 	}
 	for _, pairQuery := range uls.conditions {
 		if pairQuery.GetOp() != modelv1.Condition_BINARY_OP_EQ {
