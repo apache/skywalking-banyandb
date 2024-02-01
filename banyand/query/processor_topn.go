@@ -90,14 +90,15 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
+	sourceMeasureSchema := sourceMeasure.GetSchema()
 	sourceMeasure.SetSchema(schema)
-	s, err := logical_measure.BuildTopNSchema(schema, topNSchema.GetGroupByTagNames())
+	s, err := logical_measure.BuildTopNSchema(schema)
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
 			Msg("fail to build schema")
 	}
-	plan, err := logical_measure.TopNAnalyze(context.TODO(), request, schema, topNSchema, s)
+	plan, err := logical_measure.TopNAnalyze(context.TODO(), request, schema, sourceMeasureSchema, topNSchema, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", topNMetadata.GetName(), err))
 		return
@@ -118,6 +119,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		}
 	}()
 
+	sourceMeasure.SetSchema(sourceMeasureSchema)
 	result := make([]*measurev1.DataPoint, 0)
 	for mIterator.Next() {
 		current := mIterator.Current()

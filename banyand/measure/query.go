@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
@@ -78,11 +80,21 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 			tabWrappers[i].DecRef()
 		}
 	}()
+
+	tagNameIndex := make(map[string]partition.TagLocator)
+	tagFamilySpecs := s.schema.GetTagFamilies()
+	for i, tagFamilySpec := range tagFamilySpecs {
+		for j, tagSpec := range tagFamilySpec.GetTags() {
+			tagNameIndex[tagSpec.GetName()] = partition.TagLocator{
+				FamilyOffset: i,
+				TagOffset:    j,
+			}
+		}
+	}
 	sl, err := tsdb.IndexDB().Search(ctx, &pbv1.Series{Subject: mqo.Name, EntityValues: mqo.Entity}, mqo.Filter, mqo.Order)
 	if err != nil {
 		return nil, err
 	}
-
 	var result queryResult
 	if len(sl) < 1 {
 		return &result, nil
@@ -128,6 +140,15 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	if tstIter.Error() != nil {
 		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
+
+	result.seriesList = sl
+	result.tagNameIndex = tagNameIndex
+	result.schema = s.schema
+
+	result.sidToIndex = make(map[common.SeriesID]int)
+	for i, si := range originalSids {
+		result.sidToIndex[si] = i
+	}
 	if mqo.Order == nil {
 		result.orderByTS = true
 		result.ascTS = true
@@ -141,11 +162,57 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		return &result, nil
 	}
 
-	result.sidToIndex = make(map[common.SeriesID]int)
-	for i, si := range originalSids {
-		result.sidToIndex[si] = i
-	}
 	return &result, nil
+}
+
+func mustEncodeTagValue(tagType databasev1.TagType, tagValue *modelv1.TagValue, num int) [][]byte {
+	values := make([][]byte, 0)
+	switch tagType {
+	case databasev1.TagType_TAG_TYPE_INT:
+		if tagValue.GetInt() != nil {
+			for i := 0; i < num; i++ {
+				values = append(values, convert.Int64ToBytes(tagValue.GetInt().GetValue()))
+			}
+		}
+	case databasev1.TagType_TAG_TYPE_STRING:
+		if tagValue.GetStr() != nil {
+			for i := 0; i < num; i++ {
+				values = append(values, []byte(tagValue.GetStr().GetValue()))
+			}
+		}
+	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
+		if tagValue.GetBinaryData() != nil {
+			for i := 0; i < num; i++ {
+				values = append(values, bytes.Clone(tagValue.GetBinaryData()))
+			}
+		}
+	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
+		if tagValue.GetIntArray() == nil {
+			return values
+		}
+		for i := 0; i < num; i++ {
+			value := make([]byte, 0)
+			for j := range tagValue.GetIntArray().Value {
+				value = append(value, byte(128))
+				value = append(value, convert.Int64ToBytes(tagValue.GetIntArray().Value[j])...)
+			}
+			values = append(values, value)
+		}
+	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
+		if tagValue.GetStrArray() == nil {
+			return values
+		}
+		for i := 0; i < num; i++ {
+			var value string
+			for j := range tagValue.GetStrArray().Value {
+				value += tagValue.GetStrArray().Value[j] + "|"
+			}
+			values = append(values, []byte(value))
+		}
+	default:
+		logger.Panicf("unsupported tag value type: %T", tagValue.GetValue())
+	}
+	return values
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
@@ -315,12 +382,15 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 }
 
 type queryResult struct {
-	sidToIndex map[common.SeriesID]int
-	data       []*blockCursor
-	snapshots  []*snapshot
-	loaded     bool
-	orderByTS  bool
-	ascTS      bool
+	sidToIndex   map[common.SeriesID]int
+	tagNameIndex map[string]partition.TagLocator
+	schema       *databasev1.Measure
+	data         []*blockCursor
+	snapshots    []*snapshot
+	seriesList   pbv1.SeriesList
+	loaded       bool
+	orderByTS    bool
+	ascTS        bool
 }
 
 func (qr *queryResult) Pull() *pbv1.MeasureResult {
@@ -335,6 +405,44 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 			if !qr.data[i].loadData(tmpBlock) {
 				qr.data = append(qr.data[:i], qr.data[i+1:]...)
 				i--
+			}
+			if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
+				continue
+			}
+			sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
+			series := qr.seriesList[sidIndex]
+			entityMap := make(map[string]int)
+			tagFamilyMap := make(map[string]int)
+			for idx, entity := range qr.schema.GetEntity().GetTagNames() {
+				entityMap[entity] = idx + 1
+			}
+			for idx, tagFamily := range qr.data[i].tagFamilies {
+				tagFamilyMap[tagFamily.name] = idx + 1
+			}
+			for _, tagFamilyProj := range qr.data[i].tagProjection {
+				for j, tagProj := range tagFamilyProj.Names {
+					entityPos := entityMap[tagProj]
+					tagFamilyPos := tagFamilyMap[tagFamilyProj.Family]
+					if entityPos == 0 {
+						continue
+					}
+					if tagFamilyPos == 0 {
+						qr.data[i].tagFamilies[tagFamilyPos-1] = columnFamily{
+							name:    tagFamilyProj.Family,
+							columns: make([]column, 0),
+						}
+					}
+					offset := qr.tagNameIndex[tagProj]
+					tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
+					tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
+					valueType := pbv1.MustTagValueToValueType(series.EntityValues[entityPos-1])
+					qr.data[i].tagFamilies[tagFamilyPos-1].columns = append(qr.data[i].tagFamilies[tagFamilyPos-1].columns[:j],
+						append([]column{{
+							name:      tagProj,
+							values:    mustEncodeTagValue(tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
+							valueType: valueType,
+						}}, qr.data[i].tagFamilies[tagFamilyPos-1].columns[j:]...)...)
+				}
 			}
 			if qr.orderByTimestampDesc() {
 				qr.data[i].idx = len(qr.data[i].timestamps) - 1

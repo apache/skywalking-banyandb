@@ -24,17 +24,18 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 // BuildTopNSchema returns Schema loaded from the metadata repository.
-func BuildTopNSchema(md *databasev1.Measure, entityList []string) (logical.Schema, error) {
+func BuildTopNSchema(md *databasev1.Measure) (logical.Schema, error) {
 	md.GetEntity()
 
 	ms := &schema{
 		common: &logical.CommonSchema{
 			TagSpecMap: make(map[string]*logical.TagSpec),
-			EntityList: entityList,
+			EntityList: md.GetEntity().GetTagNames(),
 		},
 		measure:  md,
 		fieldMap: make(map[string]*logical.FieldSpec),
@@ -51,9 +52,9 @@ func BuildTopNSchema(md *databasev1.Measure, entityList []string) (logical.Schem
 
 // TopNAnalyze converts logical expressions to executable operation tree represented by Plan.
 func TopNAnalyze(_ context.Context, criteria *measurev1.TopNRequest, schema *databasev1.Measure,
-	topNAggregation *databasev1.TopNAggregation, s logical.Schema,
+	sourceMeasureSchema *databasev1.Measure, topNAggregation *databasev1.TopNAggregation, s logical.Schema,
 ) (logical.Plan, error) {
-	groupByProjectionTags := schema.GetEntity().GetTagNames()
+	groupByProjectionTags := sourceMeasureSchema.GetEntity().GetTagNames()
 	groupByTags := make([][]*logical.Tag, len(schema.GetTagFamilies()))
 	tagFamily := schema.GetTagFamilies()[0]
 	groupByTags[0] = logical.NewTags(tagFamily.GetName(), groupByProjectionTags...)
@@ -90,5 +91,21 @@ func parse(criteria *measurev1.TopNRequest, metadata *commonv1.Metadata,
 ) logical.UnresolvedPlan {
 	timeRange := criteria.GetTimeRange()
 	return local(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(),
-		metadata, projTags, projFields, criteria.GetConditions(), criteria.GetFieldValueSort())
+		metadata, projTags, projFields, buildConditions(criteria), criteria.GetFieldValueSort())
+}
+
+func buildConditions(criteria *measurev1.TopNRequest) []*modelv1.Condition {
+	return append([]*modelv1.Condition{
+		{
+			Name: "sortDirection",
+			Op:   modelv1.Condition_BINARY_OP_EQ,
+			Value: &modelv1.TagValue{
+				Value: &modelv1.TagValue_Int{
+					Int: &modelv1.Int{
+						Value: int64(criteria.GetFieldValueSort().Number()),
+					},
+				},
+			},
+		},
+	}, criteria.GetConditions()...)
 }
