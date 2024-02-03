@@ -99,8 +99,9 @@ type item struct {
 	seriesID      common.SeriesID
 }
 
-func (i *item) Element() (*element, error) {
-	return i.table.getElement(i.seriesID, i.itemID, i.tagProjection)
+func (i *item) Element() (*element, int, error) {
+	e, count, err := i.table.getElement(i.seriesID, i.itemID, i.tagProjection)
+	return e, count, err
 }
 
 func (i *item) Time() uint64 {

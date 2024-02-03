@@ -267,19 +267,19 @@ func (tst *tsTable) mustAddElements(es *elements) {
 	}
 }
 
-func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, error) {
+func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, int, error) {
 	tst.RLock()
 	defer tst.RUnlock()
 	for _, p := range tst.currentSnapshot().parts {
 		if !p.p.containTimestamp(timestamp) {
 			continue
 		}
-		elem, err := p.p.getElement(seriesID, timestamp, tagProjection)
+		elem, count, err := p.p.getElement(seriesID, timestamp, tagProjection)
 		if err == nil {
-			return elem, nil
+			return elem, count, nil
 		}
 	}
-	return nil, fmt.Errorf("cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
+	return nil, 0, fmt.Errorf("cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
 }
 
 type tstIter struct {

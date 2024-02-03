@@ -27,11 +27,13 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -39,6 +41,15 @@ type queryOptions struct {
 	pbv1.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
+}
+
+func mustEncodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue, num int) [][]byte {
+	values := make([][]byte, num)
+	nv := encodeTagValue(name, tagType, tagValue)
+	for i := 0; i < num; i++ {
+		values[i] = nv.marshal()
+	}
+	return values
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
@@ -140,12 +151,15 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 }
 
 type queryResult struct {
-	sidToIndex map[common.SeriesID]int
-	data       []*blockCursor
-	snapshots  []*snapshot
-	loaded     bool
-	orderByTS  bool
-	ascTS      bool
+	sidToIndex   map[common.SeriesID]int
+	tagNameIndex map[string]partition.TagLocator
+	schema       *databasev1.Measure
+	data         []*blockCursor
+	snapshots    []*snapshot
+	seriesList   pbv1.SeriesList
+	loaded       bool
+	orderByTS    bool
+	ascTS        bool
 }
 
 func (qr *queryResult) Pull() *pbv1.StreamResult {
@@ -160,6 +174,44 @@ func (qr *queryResult) Pull() *pbv1.StreamResult {
 			if !qr.data[i].loadData(tmpBlock) {
 				qr.data = append(qr.data[:i], qr.data[i+1:]...)
 				i--
+			}
+			if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
+				continue
+			}
+			sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
+			series := qr.seriesList[sidIndex]
+			entityMap := make(map[string]int)
+			tagFamilyMap := make(map[string]int)
+			for idx, entity := range qr.schema.GetEntity().GetTagNames() {
+				entityMap[entity] = idx + 1
+			}
+			for idx, tagFamily := range qr.data[i].tagFamilies {
+				tagFamilyMap[tagFamily.name] = idx + 1
+			}
+			for _, tagFamilyProj := range qr.data[i].tagProjection {
+				for j, tagProj := range tagFamilyProj.Names {
+					entityPos := entityMap[tagProj]
+					tagFamilyPos := tagFamilyMap[tagFamilyProj.Family]
+					if entityPos == 0 {
+						continue
+					}
+					if tagFamilyPos == 0 {
+						qr.data[i].tagFamilies[tagFamilyPos-1] = tagFamily{
+							name: tagFamilyProj.Family,
+							tags: make([]tag, 0),
+						}
+					}
+					offset := qr.tagNameIndex[tagProj]
+					tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
+					tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
+					valueType := pbv1.MustTagValueToValueType(series.EntityValues[entityPos-1])
+					qr.data[i].tagFamilies[tagFamilyPos-1].tags = append(qr.data[i].tagFamilies[tagFamilyPos-1].tags[:j],
+						append([]tag{{
+							name:      tagProj,
+							values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
+							valueType: valueType,
+						}}, qr.data[i].tagFamilies[tagFamilyPos-1].tags[j:]...)...)
+				}
 			}
 			if qr.orderByTimestampDesc() {
 				qr.data[i].idx = len(qr.data[i].timestamps) - 1
@@ -289,6 +341,32 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 		seriesList = seriesList.Merge(sl)
 	}
 
+	entityMap := make(map[string]int)
+	for idx, entity := range s.schema.GetEntity().GetTagNames() {
+		entityMap[entity] = idx + 1
+	}
+	tagSpecIndex := make(map[string]*databasev1.TagSpec)
+	for _, tagFamilySpec := range s.schema.GetTagFamilies() {
+		for _, tagSpec := range tagFamilySpec.Tags {
+			tagSpecIndex[tagSpec.GetName()] = tagSpec
+		}
+	}
+	tagProjIndex := make(map[string]partition.TagLocator)
+	for i, tagFamilyProj := range sfo.TagProjection {
+		for j, tagProj := range tagFamilyProj.Names {
+			if entityMap[tagProj] == 0 {
+				continue
+			}
+			tagProjIndex[tagProj] = partition.TagLocator{
+				FamilyOffset: i,
+				TagOffset:    j,
+			}
+		}
+	}
+	sidToIndex := make(map[common.SeriesID]int)
+	for idx, series := range seriesList {
+		sidToIndex[series.ID] = idx
+	}
 	ces := newColumnElements()
 	for _, tw := range tabWrappers {
 		if len(ces.timestamp) >= sfo.MaxElementSize {
@@ -303,9 +381,21 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 			erl = erl[:sfo.MaxElementSize-len(ces.timestamp)]
 		}
 		for _, er := range erl {
-			e, err := tw.Table().getElement(er.seriesID, common.ItemID(er.timestamp), sfo.TagProjection)
+			e, count, err := tw.Table().getElement(er.seriesID, common.ItemID(er.timestamp), sfo.TagProjection)
 			if err != nil {
 				return nil, err
+			}
+			if len(tagProjIndex) != 0 {
+				for entity, offset := range tagProjIndex {
+					tagSpec := tagSpecIndex[entity]
+					series := seriesList[sidToIndex[er.seriesID]]
+					entityPos := entityMap[entity] - 1
+					e.tagFamilies[offset.FamilyOffset].tags[offset.TagOffset] = tag{
+						name:      entity,
+						values:    mustEncodeTagValue(entity, tagSpec.GetType(), series.EntityValues[entityPos], count),
+						valueType: pbv1.MustTagValueToValueType(series.EntityValues[entityPos]),
+					}
+				}
 			}
 			ces.BuildFromElement(e, sfo.TagProjection)
 		}
@@ -337,6 +427,33 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 		seriesList = seriesList.Merge(sl)
 	}
 
+	entityMap := make(map[string]int)
+	for idx, entity := range s.schema.GetEntity().GetTagNames() {
+		entityMap[entity] = idx + 1
+	}
+	tagSpecIndex := make(map[string]*databasev1.TagSpec)
+	for _, tagFamilySpec := range s.schema.GetTagFamilies() {
+		for _, tagSpec := range tagFamilySpec.Tags {
+			tagSpecIndex[tagSpec.GetName()] = tagSpec
+		}
+	}
+	tagProjIndex := make(map[string]partition.TagLocator)
+	for i, tagFamilyProj := range sso.TagProjection {
+		for j, tagProj := range tagFamilyProj.Names {
+			if entityMap[tagProj] == 0 {
+				continue
+			}
+			tagProjIndex[tagProj] = partition.TagLocator{
+				FamilyOffset: i,
+				TagOffset:    j,
+			}
+		}
+	}
+	sidToIndex := make(map[common.SeriesID]int)
+	for idx, series := range seriesList {
+		sidToIndex[series.ID] = idx
+	}
+
 	var iters []*searcherIterator
 	for _, series := range seriesList {
 		seekerBuilder := newIterBuilder(tabWrappers, series.ID, sso)
@@ -361,9 +478,21 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 	ces := newColumnElements()
 	for it.Next() {
 		nextItem := it.Val()
-		e, err := nextItem.Element()
+		e, count, err := nextItem.Element()
 		if err != nil {
 			return nil, err
+		}
+		if len(tagProjIndex) != 0 {
+			for entity, offset := range tagProjIndex {
+				tagSpec := tagSpecIndex[entity]
+				series := seriesList[sidToIndex[nextItem.seriesID]]
+				entityPos := entityMap[entity] - 1
+				e.tagFamilies[offset.FamilyOffset].tags[offset.TagOffset] = tag{
+					name:      entity,
+					values:    mustEncodeTagValue(entity, tagSpec.GetType(), series.EntityValues[entityPos], count),
+					valueType: pbv1.MustTagValueToValueType(series.EntityValues[entityPos]),
+				}
+			}
 		}
 		ces.BuildFromElement(e, sso.TagProjection)
 		if len(ces.timestamp) >= sso.MaxElementSize {
@@ -437,6 +566,21 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	if tstIter.Error() != nil {
 		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
+
+	result.sidToIndex = make(map[common.SeriesID]int)
+	result.tagNameIndex = make(map[string]partition.TagLocator)
+	result.seriesList = sl
+	for i, si := range originalSids {
+		result.sidToIndex[si] = i
+	}
+	for i, tagFamilySpec := range s.schema.GetTagFamilies() {
+		for j, tagSpec := range tagFamilySpec.GetTags() {
+			result.tagNameIndex[tagSpec.GetName()] = partition.TagLocator{
+				FamilyOffset: i,
+				TagOffset:    j,
+			}
+		}
+	}
 	if sqo.Order == nil {
 		result.orderByTS = true
 		result.ascTS = true
@@ -450,10 +594,6 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		return &result, nil
 	}
 
-	result.sidToIndex = make(map[common.SeriesID]int)
-	for i, si := range originalSids {
-		result.sidToIndex[si] = i
-	}
 	return &result, nil
 }
 
