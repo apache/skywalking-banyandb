@@ -135,7 +135,6 @@ func Test_mergeTwoBlocks(t *testing.T) {
 		{
 			name: "Merge two non-empty blocks with duplicated timestamps",
 			left: &blockPointer{
-				lastPartID: 1, // the less partID will be skipped
 				block: block{
 					timestamps: []int64{1, 2, 3},
 					elementIDs: []string{"0", "1", "2"},
@@ -157,7 +156,6 @@ func Test_mergeTwoBlocks(t *testing.T) {
 				},
 			},
 			right: &blockPointer{
-				lastPartID: 2, // the greater partID will be appended
 				block: block{
 					timestamps: []int64{2, 3, 4},
 					elementIDs: []string{"1", "2", "3"},
@@ -177,7 +175,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, lastPartID: 2, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
+			want: &blockPointer{block: duplicatedMergedBlock, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
 		},
 	}
 
@@ -211,6 +209,25 @@ var mergedBlock = block{
 	},
 }
 
+var duplicatedMergedBlock = block{
+	timestamps: []int64{1, 2, 2, 3, 3, 4},
+	elementIDs: []string{"0", "1", "1", "2", "2", "3"},
+	tagFamilies: []tagFamily{
+		{
+			name: "arrTag",
+			tags: []tag{
+				{
+					name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+					values: [][]byte{
+						marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}), marshalStrArr([][]byte{[]byte("duplicated1")}), marshalStrArr([][]byte{[]byte("value3"), []byte("value4")}),
+						marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("duplicated2")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+					},
+				},
+			},
+		},
+	},
+}
+
 func Test_mergeParts(t *testing.T) {
 	tests := []struct {
 		wantErr error
@@ -236,18 +253,18 @@ func Test_mergeParts(t *testing.T) {
 			name:   "Test with multiple parts with different ts",
 			esList: []*elements{esTS1, esTS2, esTS2},
 			want: []blockMetadata{
-				{seriesID: 1, count: 2, uncompressedSizeBytes: 1762},
-				{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
-				{seriesID: 3, count: 2, uncompressedSizeBytes: 16},
+				{seriesID: 1, count: 3, uncompressedSizeBytes: 2643},
+				{seriesID: 2, count: 3, uncompressedSizeBytes: 165},
+				{seriesID: 3, count: 3, uncompressedSizeBytes: 24},
 			},
 		},
 		{
 			name:   "Test with multiple parts with same ts",
 			esList: []*elements{esTS1, esTS1, esTS1},
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+				{seriesID: 1, count: 3, uncompressedSizeBytes: 2643},
+				{seriesID: 2, count: 3, uncompressedSizeBytes: 165},
+				{seriesID: 3, count: 3, uncompressedSizeBytes: 24},
 			},
 		},
 		{

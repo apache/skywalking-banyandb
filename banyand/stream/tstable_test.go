@@ -276,9 +276,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 2, uncompressedSizeBytes: 1762},
-					{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
-					{seriesID: 3, count: 2, uncompressedSizeBytes: 16},
+					{seriesID: 1, count: 3, uncompressedSizeBytes: 2643},
+					{seriesID: 2, count: 3, uncompressedSizeBytes: 165},
+					{seriesID: 3, count: 3, uncompressedSizeBytes: 24},
 				},
 			},
 			{
@@ -288,9 +288,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+					{seriesID: 1, count: 2, uncompressedSizeBytes: 1762},
+					{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
+					{seriesID: 3, count: 2, uncompressedSizeBytes: 16},
 				},
 			},
 		}
