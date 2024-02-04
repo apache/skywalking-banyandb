@@ -465,20 +465,32 @@ func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[idx:offset]...)
-	for _, cf := range bc.tagFamilies {
-		tf := pbv1.TagFamily{
-			Name: cf.name,
-		}
-		for _, c := range cf.tags {
-			t := pbv1.Tag{
-				Name: c.name,
+	if len(r.TagFamilies) != len(bc.tagProjection) {
+		for _, tp := range bc.tagProjection {
+			tf := pbv1.TagFamily{
+				Name: tp.Family,
 			}
-			for _, v := range c.values[idx:offset] {
-				t.Values = append(t.Values, mustDecodeTagValue(c.valueType, v))
+			for _, n := range tp.Names {
+				t := pbv1.Tag{
+					Name: n,
+				}
+				tf.Tags = append(tf.Tags, t)
 			}
-			tf.Tags = append(tf.Tags, t)
+			r.TagFamilies = append(r.TagFamilies, tf)
 		}
-		r.TagFamilies = append(r.TagFamilies, tf)
+	}
+	for i, cf := range bc.tagFamilies {
+		for i2, c := range cf.tags {
+			if c.values != nil {
+				for _, v := range c.values[idx:offset] {
+					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, v))
+				}
+			} else {
+				for j := idx; j < offset; j++ {
+					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
+				}
+			}
+		}
 	}
 }
 
