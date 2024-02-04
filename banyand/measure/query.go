@@ -18,7 +18,6 @@
 package measure
 
 import (
-	"bytes"
 	"container/heap"
 	"context"
 	"fmt"
@@ -165,52 +164,11 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	return &result, nil
 }
 
-func mustEncodeTagValue(tagType databasev1.TagType, tagValue *modelv1.TagValue, num int) [][]byte {
-	values := make([][]byte, 0)
-	switch tagType {
-	case databasev1.TagType_TAG_TYPE_INT:
-		if tagValue.GetInt() != nil {
-			for i := 0; i < num; i++ {
-				values = append(values, convert.Int64ToBytes(tagValue.GetInt().GetValue()))
-			}
-		}
-	case databasev1.TagType_TAG_TYPE_STRING:
-		if tagValue.GetStr() != nil {
-			for i := 0; i < num; i++ {
-				values = append(values, []byte(tagValue.GetStr().GetValue()))
-			}
-		}
-	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
-		if tagValue.GetBinaryData() != nil {
-			for i := 0; i < num; i++ {
-				values = append(values, bytes.Clone(tagValue.GetBinaryData()))
-			}
-		}
-	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
-		if tagValue.GetIntArray() == nil {
-			return values
-		}
-		for i := 0; i < num; i++ {
-			value := make([]byte, 0)
-			for j := range tagValue.GetIntArray().Value {
-				value = append(value, byte(128))
-				value = append(value, convert.Int64ToBytes(tagValue.GetIntArray().Value[j])...)
-			}
-			values = append(values, value)
-		}
-	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
-		if tagValue.GetStrArray() == nil {
-			return values
-		}
-		for i := 0; i < num; i++ {
-			var value string
-			for j := range tagValue.GetStrArray().Value {
-				value += tagValue.GetStrArray().Value[j] + "|"
-			}
-			values = append(values, []byte(value))
-		}
-	default:
-		logger.Panicf("unsupported tag value type: %T", tagValue.GetValue())
+func mustEncodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue, num int) [][]byte {
+	values := make([][]byte, num)
+	nv := encodeTagValue(name, tagType, tagValue)
+	for i := 0; i < num; i++ {
+		values[i] = nv.marshal()
 	}
 	return values
 }
@@ -439,7 +397,7 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 					qr.data[i].tagFamilies[tagFamilyPos-1].columns = append(qr.data[i].tagFamilies[tagFamilyPos-1].columns[:j],
 						append([]column{{
 							name:      tagProj,
-							values:    mustEncodeTagValue(tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
+							values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
 							valueType: valueType,
 						}}, qr.data[i].tagFamilies[tagFamilyPos-1].columns[j:]...)...)
 				}
