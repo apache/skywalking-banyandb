@@ -396,7 +396,6 @@ func Test_tstIter(t *testing.T) {
 	})
 }
 
-// nolint: unused
 var tagProjections = map[int][]pbv1.TagProjection{
 	1: {
 		{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},

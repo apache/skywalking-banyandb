@@ -404,8 +404,8 @@ func TestQueryResult(t *testing.T) {
 				mergeCh := make(chan *mergerIntroduction)
 				introducerWatcher := make(watcher.Channel, 1)
 				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
-				for _, dps := range tt.esList {
-					tst.mustAddElements(dps)
+				for _, es := range tt.esList {
+					tst.mustAddElements(es)
 					time.Sleep(100 * time.Millisecond)
 				}
 				verify(t, tst)
@@ -419,8 +419,8 @@ func TestQueryResult(t *testing.T) {
 				tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
 					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()})
 				require.NoError(t, err)
-				for _, dps := range tt.esList {
-					tst.mustAddElements(dps)
+				for _, es := range tt.esList {
+					tst.mustAddElements(es)
 					time.Sleep(100 * time.Millisecond)
 				}
 				// wait until the introducer is done
