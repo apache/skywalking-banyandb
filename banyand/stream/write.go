@@ -164,11 +164,10 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			continue
 		}
 		for _, val := range tv.valueArr {
-			rule := indexRule.Rule
 			fields = append(fields, index.Field{
 				Key: index.FieldKey{
-					IndexRuleID: rule.GetMetadata().GetId(),
-					Analyzer:    rule.Analyzer,
+					IndexRuleID: indexRule.Rule.GetMetadata().GetId(),
+					Analyzer:    indexRule.Rule.Analyzer,
 					SeriesID:    series.ID,
 				},
 				Term: val,
