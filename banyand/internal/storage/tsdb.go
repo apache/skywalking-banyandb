@@ -29,6 +29,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -40,6 +41,11 @@ type IndexGranularity int
 const (
 	IndexGranularityBlock IndexGranularity = iota
 	IndexGranularitySeries
+)
+
+const (
+	lockFilename   = "lock"
+	filePermission = 0o600
 )
 
 // TSDBOpts wraps options to create a tsdb.
@@ -62,12 +68,14 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 }
 
 type database[T TSTable, O any] struct {
-	logger   *logger.Logger
-	index    *seriesIndex
-	p        common.Position
-	location string
-	sLst     []*shard[T, O]
-	opts     TSDBOpts[T, O]
+	logger     *logger.Logger
+	fileSystem fs.FileSystem
+	lock       fs.File
+	index      *seriesIndex
+	p          common.Position
+	location   string
+	sLst       []*shard[T, O]
+	opts       TSDBOpts[T, O]
 	sync.RWMutex
 	sLen uint32
 }
@@ -77,6 +85,12 @@ func (d *database[T, O]) Close() error {
 	defer d.Unlock()
 	for _, s := range d.sLst {
 		s.close()
+	}
+	if d.lock != nil {
+		d.lock.Close()
+		if err := d.fileSystem.DeleteFile(d.lock.Path()); err != nil {
+			logger.Panicf("cannot delete lock file %s: %s", d.lock.Path(), err)
+		}
 	}
 	return d.index.Close()
 }
@@ -105,6 +119,13 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		p:        p,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
+	db.fileSystem = fs.NewLocalFileSystem()
+	lockPath := filepath.Join(opts.Location, lockFilename)
+	lock, err := db.fileSystem.CreateLockFile(lockPath, filePermission)
+	if err != nil {
+		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
+	}
+	db.lock = lock
 	if err = db.loadDatabase(); err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "load database failed").Error())
 	}

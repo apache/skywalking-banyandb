@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"sync"
@@ -30,8 +31,14 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+)
+
+const (
+	versionFilename = "version"
+	currentVersion  = "0.1"
 )
 
 var errEndOfSegment = errors.New("reached the end of the segment")
@@ -160,6 +167,20 @@ func (sc *segmentController[T, O]) selectTSTables(timeRange timestamp.TimeRange)
 }
 
 func (sc *segmentController[T, O]) createTSTable(ts time.Time) (TSTableWrapper[T], error) {
+	data := []byte(currentVersion)
+	versionPath := filepath.Join(sc.location, versionFilename)
+	fileSystem := fs.NewLocalFileSystem()
+	lf, err := fileSystem.CreateLockFile(versionPath, filePermission)
+	if err != nil {
+		logger.Panicf("cannot create lock file %s: %s", versionPath, err)
+	}
+	n, err := lf.Write(data)
+	if err != nil {
+		logger.Panicf("cannot write version %s: %s", versionPath, err)
+	}
+	if n != len(data) {
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", versionPath, n, len(data))
+	}
 	s, err := sc.create(ts)
 	if err != nil {
 		return nil, err
