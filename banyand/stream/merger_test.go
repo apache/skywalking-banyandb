@@ -219,8 +219,12 @@ var duplicatedMergedBlock = block{
 				{
 					name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
 					values: [][]byte{
-						marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}), marshalStrArr([][]byte{[]byte("duplicated1")}), marshalStrArr([][]byte{[]byte("value3"), []byte("value4")}),
-						marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("duplicated2")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+						marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}),
+						marshalStrArr([][]byte{[]byte("duplicated1")}),
+						marshalStrArr([][]byte{[]byte("value3"), []byte("value4")}),
+						marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+						marshalStrArr([][]byte{[]byte("duplicated2")}),
+						marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
 					},
 				},
 			},

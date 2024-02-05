@@ -580,8 +580,8 @@ func releaseBlockCursor(bc *blockCursor) {
 
 type blockPointer struct {
 	block
-	bm         blockMetadata
-	idx        int
+	bm  blockMetadata
+	idx int
 }
 
 func (bi *blockPointer) updateMetadata() {

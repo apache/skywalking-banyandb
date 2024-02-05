@@ -705,15 +705,15 @@ func Test_blockPointer_copyFrom(t *testing.T) {
 			},
 			args: args{
 				src: &blockPointer{
-					bm:         blockMetadata{count: 1},
-					idx:        0,
-					block:      conventionalBlock,
+					bm:    blockMetadata{count: 1},
+					idx:   0,
+					block: conventionalBlock,
 				},
 			},
 			want: &blockPointer{
-				bm:         blockMetadata{count: 1},
-				idx:        0,
-				block:      conventionalBlock,
+				bm:    blockMetadata{count: 1},
+				idx:   0,
+				block: conventionalBlock,
 			},
 		},
 	}
