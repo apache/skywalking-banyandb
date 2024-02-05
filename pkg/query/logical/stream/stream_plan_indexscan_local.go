@@ -173,29 +173,31 @@ func buildElementsFromColumnResult(r *pbv1.StreamColumnResult) (elements []*stre
 
 func buildElementsFromQueryResults(results []pbv1.StreamQueryResult) (elements []*streamv1.Element) {
 	for _, result := range results {
-		r := result.Pull()
-		if r == nil {
-			continue
-		}
-		for i := range r.Timestamps {
-			e := &streamv1.Element{
-				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
-				ElementId: r.ElementIDs[i],
+		for {
+			r := result.Pull()
+			if r == nil {
+				break
 			}
+			for i := range r.Timestamps {
+				e := &streamv1.Element{
+					Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+					ElementId: r.ElementIDs[i],
+				}
 
-			for _, tf := range r.TagFamilies {
-				tagFamily := &modelv1.TagFamily{
-					Name: tf.Name,
+				for _, tf := range r.TagFamilies {
+					tagFamily := &modelv1.TagFamily{
+						Name: tf.Name,
+					}
+					e.TagFamilies = append(e.TagFamilies, tagFamily)
+					for _, t := range tf.Tags {
+						tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+							Key:   t.Name,
+							Value: t.Values[i],
+						})
+					}
 				}
-				e.TagFamilies = append(e.TagFamilies, tagFamily)
-				for _, t := range tf.Tags {
-					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-						Key:   t.Name,
-						Value: t.Values[i],
-					})
-				}
+				elements = append(elements, e)
 			}
-			elements = append(elements, e)
 		}
 	}
 	return

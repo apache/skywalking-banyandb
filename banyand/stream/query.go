@@ -237,9 +237,14 @@ func (qr *queryResult) merge() *pbv1.StreamResult {
 		step = -1
 	}
 	result := &pbv1.StreamResult{}
+	var lastSid common.SeriesID
 
 	for qr.Len() > 0 {
 		topBC := qr.data[0]
+		if lastSid != 0 && topBC.bm.seriesID != lastSid {
+			return result
+		}
+		lastSid = topBC.bm.seriesID
 
 		topBC.copyTo(result)
 		topBC.idx += step
