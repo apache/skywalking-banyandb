@@ -592,9 +592,8 @@ func releaseBlockCursor(bc *blockCursor) {
 
 type blockPointer struct {
 	block
-	bm         blockMetadata
-	idx        int
-	lastPartID uint64
+	bm  blockMetadata
+	idx int
 }
 
 func (bi *blockPointer) updateMetadata() {
@@ -659,8 +658,6 @@ func (bi *blockPointer) append(b *blockPointer, offset int) {
 	assertIdxAndOffset("timestamps", len(b.timestamps), bi.idx, offset)
 	bi.timestamps = append(bi.timestamps, b.timestamps[b.idx:offset]...)
 	bi.elementIDs = append(bi.elementIDs, b.elementIDs[b.idx:offset]...)
-
-	bi.lastPartID = b.lastPartID
 }
 
 func assertIdxAndOffset(name string, length int, idx int, offset int) {
@@ -678,7 +675,6 @@ func (bi *blockPointer) isFull() bool {
 
 func (bi *blockPointer) reset() {
 	bi.idx = 0
-	bi.lastPartID = 0
 	bi.block.reset()
 	bi.bm = blockMetadata{}
 }
