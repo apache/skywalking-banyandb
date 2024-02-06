@@ -432,7 +432,6 @@ func Test_blockPointer_append(t *testing.T) {
 		timestamps  []int64
 		elementIDs  []string
 		tagFamilies []tagFamily
-		partID      uint64
 	}
 	type args struct {
 		b      *blockPointer
@@ -498,11 +497,9 @@ func Test_blockPointer_append(t *testing.T) {
 				timestamps:  nil,
 				elementIDs:  nil,
 				tagFamilies: nil,
-				partID:      0,
 			},
 			args: args{
 				b: &blockPointer{
-					lastPartID: 2,
 					block: block{
 						timestamps: []int64{4, 5},
 						elementIDs: []string{"3", "4"},
@@ -523,7 +520,6 @@ func Test_blockPointer_append(t *testing.T) {
 				offset: 2,
 			},
 			want: &blockPointer{
-				lastPartID: 2,
 				block: block{
 					timestamps: []int64{4, 5},
 					elementIDs: []string{"3", "4"},
@@ -558,11 +554,9 @@ func Test_blockPointer_append(t *testing.T) {
 						},
 					},
 				},
-				partID: 1,
 			},
 			args: args{
 				b: &blockPointer{
-					lastPartID: 2,
 					block: block{
 						timestamps: []int64{4, 5},
 						elementIDs: []string{"3", "4"},
@@ -583,7 +577,6 @@ func Test_blockPointer_append(t *testing.T) {
 				offset: 2,
 			},
 			want: &blockPointer{
-				lastPartID: 2,
 				block: block{
 					timestamps: []int64{1, 2, 4, 5},
 					elementIDs: []string{"0", "1", "3", "4"},
@@ -625,7 +618,6 @@ func Test_blockPointer_append(t *testing.T) {
 			},
 			args: args{
 				b: &blockPointer{
-					lastPartID: 2,
 					block: block{
 						timestamps: []int64{4, 5},
 						elementIDs: []string{"3", "4"},
@@ -646,7 +638,6 @@ func Test_blockPointer_append(t *testing.T) {
 				offset: 1,
 			},
 			want: &blockPointer{
-				lastPartID: 2,
 				block: block{
 					timestamps: []int64{1, 2, 4},
 					elementIDs: []string{"0", "1", "3"},
@@ -683,7 +674,6 @@ func Test_blockPointer_append(t *testing.T) {
 					tagFamilies: tt.fields.tagFamilies,
 					elementIDs:  tt.fields.elementIDs,
 				},
-				lastPartID: tt.fields.partID,
 			}
 			bi.append(tt.args.b, tt.args.offset)
 			if !reflect.DeepEqual(bi, tt.want) {
@@ -715,17 +705,15 @@ func Test_blockPointer_copyFrom(t *testing.T) {
 			},
 			args: args{
 				src: &blockPointer{
-					bm:         blockMetadata{count: 1},
-					idx:        0,
-					block:      conventionalBlock,
-					lastPartID: 2,
+					bm:    blockMetadata{count: 1},
+					idx:   0,
+					block: conventionalBlock,
 				},
 			},
 			want: &blockPointer{
-				bm:         blockMetadata{count: 1},
-				idx:        0,
-				block:      conventionalBlock,
-				lastPartID: 2,
+				bm:    blockMetadata{count: 1},
+				idx:   0,
+				block: conventionalBlock,
 			},
 		},
 	}

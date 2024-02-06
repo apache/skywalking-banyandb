@@ -356,22 +356,8 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		for i < len(left.timestamps) && left.timestamps[i] <= ts2 {
 			i++
 		}
-		if left.timestamps[i-1] == ts2 {
-			if left.lastPartID >= right.lastPartID {
-				target.append(left, i)
-			} else {
-				target.append(left, i-1) // skip left
-				target.append(right, right.idx+1)
-			}
-			left.idx = i
-			right.idx++ // skip right
-			if appendIfEmpty(right, left) {
-				return
-			}
-		} else {
-			target.append(left, i)
-			left.idx = i
-		}
+		target.append(left, i)
+		left.idx = i
 		if appendIfEmpty(left, right) {
 			return
 		}
