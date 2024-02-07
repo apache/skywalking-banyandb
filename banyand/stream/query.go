@@ -153,7 +153,7 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 type queryResult struct {
 	sidToIndex   map[common.SeriesID]int
 	tagNameIndex map[string]partition.TagLocator
-	schema       *databasev1.Measure
+	schema       *databasev1.Stream
 	data         []*blockCursor
 	snapshots    []*snapshot
 	seriesList   pbv1.SeriesList
@@ -190,6 +190,12 @@ func (qr *queryResult) Pull() *pbv1.StreamResult {
 			}
 			for _, tagFamilyProj := range qr.data[i].tagProjection {
 				for j, tagProj := range tagFamilyProj.Names {
+					offset := qr.tagNameIndex[tagProj]
+					tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
+					tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
+					if tagSpec.IndexedOnly {
+						continue
+					}
 					entityPos := entityMap[tagProj]
 					tagFamilyPos := tagFamilyMap[tagFamilyProj.Family]
 					if entityPos == 0 {
@@ -201,16 +207,12 @@ func (qr *queryResult) Pull() *pbv1.StreamResult {
 							tags: make([]tag, 0),
 						}
 					}
-					offset := qr.tagNameIndex[tagProj]
-					tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
-					tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
 					valueType := pbv1.MustTagValueToValueType(series.EntityValues[entityPos-1])
-					qr.data[i].tagFamilies[tagFamilyPos-1].tags = append(qr.data[i].tagFamilies[tagFamilyPos-1].tags[:j],
-						append([]tag{{
-							name:      tagProj,
-							values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
-							valueType: valueType,
-						}}, qr.data[i].tagFamilies[tagFamilyPos-1].tags[j:]...)...)
+					qr.data[i].tagFamilies[tagFamilyPos-1].tags[j] = tag{
+						name:      tagProj,
+						values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
+						valueType: valueType,
+					}
 				}
 			}
 			if qr.orderByTimestampDesc() {
@@ -393,6 +395,9 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 			if len(tagProjIndex) != 0 {
 				for entity, offset := range tagProjIndex {
 					tagSpec := tagSpecIndex[entity]
+					if tagSpec.IndexedOnly {
+						continue
+					}
 					series := seriesList[sidToIndex[er.seriesID]]
 					entityPos := entityMap[entity] - 1
 					e.tagFamilies[offset.FamilyOffset].tags[offset.TagOffset] = tag{
@@ -490,6 +495,9 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 		if len(tagProjIndex) != 0 {
 			for entity, offset := range tagProjIndex {
 				tagSpec := tagSpecIndex[entity]
+				if tagSpec.IndexedOnly {
+					continue
+				}
 				series := seriesList[sidToIndex[nextItem.seriesID]]
 				entityPos := entityMap[entity] - 1
 				e.tagFamilies[offset.FamilyOffset].tags[offset.TagOffset] = tag{
@@ -574,6 +582,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 
 	result.sidToIndex = make(map[common.SeriesID]int)
 	result.tagNameIndex = make(map[string]partition.TagLocator)
+	result.schema = s.schema
 	result.seriesList = sl
 	for i, si := range originalSids {
 		result.sidToIndex[si] = i

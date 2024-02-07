@@ -393,6 +393,9 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 					offset := qr.tagNameIndex[tagProj]
 					tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
 					tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
+					if tagSpec.IndexedOnly {
+						continue
+					}
 					valueType := pbv1.MustTagValueToValueType(series.EntityValues[entityPos-1])
 					qr.data[i].tagFamilies[tagFamilyPos-1].columns = append(qr.data[i].tagFamilies[tagFamilyPos-1].columns[:j],
 						append([]column{{
