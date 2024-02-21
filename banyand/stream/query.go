@@ -46,8 +46,9 @@ type queryOptions struct {
 func mustEncodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue, num int) [][]byte {
 	values := make([][]byte, num)
 	nv := encodeTagValue(name, tagType, tagValue)
+	value := nv.marshal()
 	for i := 0; i < num; i++ {
-		values[i] = nv.marshal()
+		values[i] = value
 	}
 	return values
 }
@@ -151,6 +152,7 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 }
 
 type queryResult struct {
+	entityMap    map[string]int
 	sidToIndex   map[common.SeriesID]int
 	tagNameIndex map[string]partition.TagLocator
 	schema       *databasev1.Stream
@@ -321,6 +323,39 @@ func (qr *queryResult) merge() *pbv1.StreamResult {
 	return result
 }
 
+func (s *stream) genIndex(tagProj []pbv1.TagProjection, seriesList pbv1.SeriesList) (map[string]int, map[string]*databasev1.TagSpec,
+	map[string]partition.TagLocator, map[common.SeriesID]int,
+) {
+	entityMap := make(map[string]int)
+	for idx, entity := range s.schema.GetEntity().GetTagNames() {
+		entityMap[entity] = idx + 1
+	}
+	tagSpecIndex := make(map[string]*databasev1.TagSpec)
+	for _, tagFamilySpec := range s.schema.GetTagFamilies() {
+		for _, tagSpec := range tagFamilySpec.Tags {
+			tagSpecIndex[tagSpec.GetName()] = tagSpec
+		}
+	}
+	tagProjIndex := make(map[string]partition.TagLocator)
+	for i, tagFamilyProj := range tagProj {
+		for j, tagProj := range tagFamilyProj.Names {
+			if entityMap[tagProj] == 0 {
+				continue
+			}
+			tagProjIndex[tagProj] = partition.TagLocator{
+				FamilyOffset: i,
+				TagOffset:    j,
+			}
+		}
+	}
+	sidToIndex := make(map[common.SeriesID]int)
+	for idx, series := range seriesList {
+		sidToIndex[series.ID] = idx
+	}
+
+	return entityMap, tagSpecIndex, tagProjIndex, sidToIndex
+}
+
 func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr pbv1.StreamFilterResult, err error) {
 	if sfo.TimeRange == nil || sfo.Entities == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
@@ -348,32 +383,7 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 		seriesList = seriesList.Merge(sl)
 	}
 
-	entityMap := make(map[string]int)
-	for idx, entity := range s.schema.GetEntity().GetTagNames() {
-		entityMap[entity] = idx + 1
-	}
-	tagSpecIndex := make(map[string]*databasev1.TagSpec)
-	for _, tagFamilySpec := range s.schema.GetTagFamilies() {
-		for _, tagSpec := range tagFamilySpec.Tags {
-			tagSpecIndex[tagSpec.GetName()] = tagSpec
-		}
-	}
-	tagProjIndex := make(map[string]partition.TagLocator)
-	for i, tagFamilyProj := range sfo.TagProjection {
-		for j, tagProj := range tagFamilyProj.Names {
-			if entityMap[tagProj] == 0 {
-				continue
-			}
-			tagProjIndex[tagProj] = partition.TagLocator{
-				FamilyOffset: i,
-				TagOffset:    j,
-			}
-		}
-	}
-	sidToIndex := make(map[common.SeriesID]int)
-	for idx, series := range seriesList {
-		sidToIndex[series.ID] = idx
-	}
+	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sfo.TagProjection, seriesList)
 	ces := newColumnElements()
 	for _, tw := range tabWrappers {
 		if len(ces.timestamp) >= sfo.MaxElementSize {
@@ -437,32 +447,7 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 		seriesList = seriesList.Merge(sl)
 	}
 
-	entityMap := make(map[string]int)
-	for idx, entity := range s.schema.GetEntity().GetTagNames() {
-		entityMap[entity] = idx + 1
-	}
-	tagSpecIndex := make(map[string]*databasev1.TagSpec)
-	for _, tagFamilySpec := range s.schema.GetTagFamilies() {
-		for _, tagSpec := range tagFamilySpec.Tags {
-			tagSpecIndex[tagSpec.GetName()] = tagSpec
-		}
-	}
-	tagProjIndex := make(map[string]partition.TagLocator)
-	for i, tagFamilyProj := range sso.TagProjection {
-		for j, tagProj := range tagFamilyProj.Names {
-			if entityMap[tagProj] == 0 {
-				continue
-			}
-			tagProjIndex[tagProj] = partition.TagLocator{
-				FamilyOffset: i,
-				TagOffset:    j,
-			}
-		}
-	}
-	sidToIndex := make(map[common.SeriesID]int)
-	for idx, series := range seriesList {
-		sidToIndex[series.ID] = idx
-	}
+	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sso.TagProjection, seriesList)
 
 	var iters []*searcherIterator
 	for _, series := range seriesList {
@@ -580,7 +565,9 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
 
-	result.sidToIndex = make(map[common.SeriesID]int)
+	entityMap, _, _, sidToIndex := s.genIndex(sqo.TagProjection, sl)
+	result.entityMap = entityMap
+	result.sidToIndex = sidToIndex
 	result.tagNameIndex = make(map[string]partition.TagLocator)
 	result.schema = s.schema
 	result.seriesList = sl

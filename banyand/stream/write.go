@@ -134,19 +134,16 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			} else {
 				tagValue = tagFamily.Tags[j]
 			}
-			tagFamiliesForIndexWrite[i].values = append(tagFamiliesForIndexWrite[i].values, encodeTagValue(
+
+			encodeTagValue := encodeTagValue(
 				tagFamilySpec.Tags[j].Name,
 				tagFamilySpec.Tags[j].Type,
-				tagValue,
-			))
+				tagValue)
+			tagFamiliesForIndexWrite[i].values = append(tagFamiliesForIndexWrite[i].values, encodeTagValue)
 			if tagFamilySpec.Tags[j].IndexedOnly || entityMap[tagFamilySpec.Tags[j].Name] {
 				continue
 			}
-			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue(
-				tagFamilySpec.Tags[j].Name,
-				tagFamilySpec.Tags[j].Type,
-				tagValue,
-			))
+			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue)
 		}
 	}
 
