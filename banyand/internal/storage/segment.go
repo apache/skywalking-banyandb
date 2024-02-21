@@ -31,14 +31,9 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/banyand/version"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-)
-
-const (
-	versionFilename = "version"
-	currentVersion  = "0.1"
 )
 
 var errEndOfSegment = errors.New("reached the end of the segment")
@@ -167,20 +162,6 @@ func (sc *segmentController[T, O]) selectTSTables(timeRange timestamp.TimeRange)
 }
 
 func (sc *segmentController[T, O]) createTSTable(ts time.Time) (TSTableWrapper[T], error) {
-	data := []byte(currentVersion)
-	versionPath := filepath.Join(sc.location, versionFilename)
-	fileSystem := fs.NewLocalFileSystem()
-	lf, err := fileSystem.CreateLockFile(versionPath, filePermission)
-	if err != nil {
-		logger.Panicf("cannot create lock file %s: %s", versionPath, err)
-	}
-	n, err := lf.Write(data)
-	if err != nil {
-		logger.Panicf("cannot write version %s: %s", versionPath, err)
-	}
-	if n != len(data) {
-		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", versionPath, n, len(data))
-	}
 	s, err := sc.create(ts)
 	if err != nil {
 		return nil, err
@@ -276,11 +257,26 @@ func (sc *segmentController[T, O]) open() error {
 	sc.Lock()
 	defer sc.Unlock()
 	return loadSegments(sc.location, segPathPrefix, sc, sc.segmentSize, func(start, end time.Time) error {
-		_, err := sc.load(start, end, sc.location)
-		if errors.Is(err, errEndOfSegment) {
-			return nil
+		compatibleVersions, err := version.ReadCompatibleVersions()
+		if err != nil {
+			return err
 		}
-		return err
+		suffix := sc.Format(start)
+		versionPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix), version.VersionFilename)
+		v, err := lfs.Read(versionPath)
+		if err != nil {
+			return err
+		}
+		for _, cv := range compatibleVersions[version.CompatibleVersionsKey] {
+			if string(v) == strconv.FormatFloat(cv, 'f', -1, 64) {
+				_, err := sc.load(start, end, sc.location)
+				if errors.Is(err, errEndOfSegment) {
+					return nil
+				}
+				return err
+			}
+		}
+		return version.ErrVersionIncompatible
 	})
 }
 
@@ -304,7 +300,21 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) 
 	} else {
 		end = stdEnd
 	}
-	lfs.MkdirPanicIfExist(path.Join(sc.location, fmt.Sprintf(segTemplate, sc.Format(start))), dirPerm)
+	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.Format(start)))
+	lfs.MkdirPanicIfExist(segPath, dirPerm)
+	data := []byte(version.CurrentVersion)
+	versionPath := filepath.Join(segPath, version.VersionFilename)
+	lf, err := lfs.CreateLockFile(versionPath, filePermission)
+	if err != nil {
+		logger.Panicf("cannot create lock file %s: %s", versionPath, err)
+	}
+	n, err := lf.Write(data)
+	if err != nil {
+		logger.Panicf("cannot write version %s: %s", versionPath, err)
+	}
+	if n != len(data) {
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", versionPath, n, len(data))
+	}
 	return sc.load(start, end, sc.location)
 }
 

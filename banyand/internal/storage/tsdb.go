@@ -68,14 +68,13 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 }
 
 type database[T TSTable, O any] struct {
-	logger     *logger.Logger
-	fileSystem fs.FileSystem
-	lock       fs.File
-	index      *seriesIndex
-	p          common.Position
-	location   string
-	sLst       []*shard[T, O]
-	opts       TSDBOpts[T, O]
+	logger   *logger.Logger
+	lock     fs.File
+	index    *seriesIndex
+	p        common.Position
+	location string
+	sLst     []*shard[T, O]
+	opts     TSDBOpts[T, O]
 	sync.RWMutex
 	sLen uint32
 }
@@ -86,11 +85,9 @@ func (d *database[T, O]) Close() error {
 	for _, s := range d.sLst {
 		s.close()
 	}
-	if d.lock != nil {
-		d.lock.Close()
-		if err := d.fileSystem.DeleteFile(d.lock.Path()); err != nil {
-			logger.Panicf("cannot delete lock file %s: %s", d.lock.Path(), err)
-		}
+	d.lock.Close()
+	if err := lfs.DeleteFile(d.lock.Path()); err != nil {
+		logger.Panicf("cannot delete lock file %s: %s", d.lock.Path(), err)
 	}
 	return d.index.Close()
 }
@@ -119,9 +116,8 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		p:        p,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
-	db.fileSystem = fs.NewLocalFileSystem()
 	lockPath := filepath.Join(opts.Location, lockFilename)
-	lock, err := db.fileSystem.CreateLockFile(lockPath, filePermission)
+	lock, err := lfs.CreateLockFile(lockPath, filePermission)
 	if err != nil {
 		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
 	}
