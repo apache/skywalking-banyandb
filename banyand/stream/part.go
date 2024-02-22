@@ -139,7 +139,7 @@ func (p *part) String() string {
 	return fmt.Sprintf("part %d", p.partMetadata.ID)
 }
 
-func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, error) {
+func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, int, error) {
 	// TODO: refactor to column-based query
 	// TODO: cache blocks
 	for i, primaryMeta := range p.primaryBlockMetadata {
@@ -158,12 +158,12 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 		primaryBuf := make([]byte, 0)
 		primaryBuf, err = zstd.Decompress(primaryBuf[:0], compressedPrimaryBuf)
 		if err != nil {
-			return nil, fmt.Errorf("cannot decompress index block: %w", err)
+			return nil, 0, fmt.Errorf("cannot decompress index block: %w", err)
 		}
 		bm := make([]blockMetadata, 0)
 		bm, err = unmarshalBlockMetadata(bm, primaryBuf)
 		if err != nil {
-			return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
+			return nil, 0, fmt.Errorf("cannot unmarshal index block: %w", err)
 		}
 		var targetBlockMetadata blockMetadata
 		for _, blockMetadata := range bm {
@@ -196,14 +196,14 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 					elementID:   elementIDs[i],
 					tagFamilies: tfs,
 					index:       i,
-				}, nil
+				}, len(timestamps), nil
 			}
 			if common.ItemID(ts) > timestamp {
 				break
 			}
 		}
 	}
-	return nil, errors.New("element not found")
+	return nil, 0, errors.New("element not found")
 }
 
 func unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, name string,
