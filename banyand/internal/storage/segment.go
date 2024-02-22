@@ -31,7 +31,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
-	"github.com/apache/skywalking-banyandb/banyand/version"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -257,18 +256,18 @@ func (sc *segmentController[T, O]) open() error {
 	sc.Lock()
 	defer sc.Unlock()
 	return loadSegments(sc.location, segPathPrefix, sc, sc.segmentSize, func(start, end time.Time) error {
-		compatibleVersions, err := version.ReadCompatibleVersions()
+		compatibleVersions, err := readCompatibleVersions()
 		if err != nil {
 			return err
 		}
 		suffix := sc.Format(start)
-		versionPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix), version.VersionFilename)
-		v, err := lfs.Read(versionPath)
+		metadataPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix), metadataFilename)
+		version, err := lfs.Read(metadataPath)
 		if err != nil {
 			return err
 		}
-		for _, cv := range compatibleVersions[version.CompatibleVersionsKey] {
-			if string(v) == strconv.FormatFloat(cv, 'f', -1, 64) {
+		for _, cv := range compatibleVersions[compatibleVersionsKey] {
+			if string(version) == cv {
 				_, err := sc.load(start, end, sc.location)
 				if errors.Is(err, errEndOfSegment) {
 					return nil
@@ -276,7 +275,7 @@ func (sc *segmentController[T, O]) open() error {
 				return err
 			}
 		}
-		return version.ErrVersionIncompatible
+		return errVersionIncompatible
 	})
 }
 
@@ -302,18 +301,18 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) 
 	}
 	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.Format(start)))
 	lfs.MkdirPanicIfExist(segPath, dirPerm)
-	data := []byte(version.CurrentVersion)
-	versionPath := filepath.Join(segPath, version.VersionFilename)
-	lf, err := lfs.CreateLockFile(versionPath, filePermission)
+	data := []byte(currentVersion)
+	metadataPath := filepath.Join(segPath, metadataFilename)
+	lf, err := lfs.CreateLockFile(metadataPath, filePermission)
 	if err != nil {
-		logger.Panicf("cannot create lock file %s: %s", versionPath, err)
+		logger.Panicf("cannot create lock file %s: %s", metadataPath, err)
 	}
 	n, err := lf.Write(data)
 	if err != nil {
-		logger.Panicf("cannot write version %s: %s", versionPath, err)
+		logger.Panicf("cannot write metadata %s: %s", metadataPath, err)
 	}
 	if n != len(data) {
-		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", versionPath, n, len(data))
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", metadataPath, n, len(data))
 	}
 	return sc.load(start, end, sc.location)
 }

@@ -15,8 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package version provides functionality related to version information.
-package version
+package storage
 
 import (
 	"embed"
@@ -27,23 +26,18 @@ import (
 )
 
 const (
-	// VersionFilename represents the name of the version file.
-	VersionFilename = "version"
-	// CurrentVersion represents the current version number.
-	CurrentVersion = "0.1"
-	// CompatibleVersionsKey represents the key for compatible versions in versions.yml.
-	CompatibleVersionsKey      = "versions"
+	metadataFilename           = "metadata"
+	currentVersion             = "1.0.0"
+	compatibleVersionsKey      = "versions"
 	compatibleVersionsFilename = "versions.yml"
 )
 
-// ErrVersionIncompatible is returned when versions are not compatible.
-var ErrVersionIncompatible = errors.New("version not compatible")
+var errVersionIncompatible = errors.New("version not compatible")
 
 //go:embed versions.yml
 var versionFS embed.FS
 
-// ReadCompatibleVersions reads compatible versions from versions.yml.
-func ReadCompatibleVersions() (map[string][]float64, error) {
+func readCompatibleVersions() (map[string][]string, error) {
 	i, err := versionFS.ReadFile(compatibleVersionsFilename)
 	if err != nil {
 		return nil, err
@@ -52,7 +46,7 @@ func ReadCompatibleVersions() (map[string][]float64, error) {
 	if err != nil {
 		return nil, err
 	}
-	var compatibleVersions map[string][]float64
+	var compatibleVersions map[string][]string
 	if err := json.Unmarshal(j, &compatibleVersions); err != nil {
 		return nil, err
 	}
