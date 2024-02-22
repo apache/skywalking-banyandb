@@ -126,6 +126,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
 	tagFamilies := make([]nameValues, len(stm.schema.TagFamilies))
+	tagFamiliesForIndexWrite := make([]nameValues, len(stm.schema.TagFamilies))
 	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
 	entityMap := make(map[string]bool)
 
@@ -148,11 +149,16 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			} else {
 				tagValue = tagFamily.Tags[j]
 			}
-			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue(
+
+			nameValue := encodeTagValue(
 				tagFamilySpec.Tags[j].Name,
 				tagFamilySpec.Tags[j].Type,
-				tagValue,
-			))
+				tagValue)
+			tagFamiliesForIndexWrite[i].values = append(tagFamiliesForIndexWrite[i].values, nameValue)
+			if tagFamilySpec.Tags[j].IndexedOnly || entityMap[tagFamilySpec.Tags[j].Name] {
+				continue
+			}
+			tagFamilies[i].values = append(tagFamilies[i].values, nameValue)
 		}
 	}
 
@@ -168,7 +174,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	var fields []index.Field
 	for _, ruleIndex := range stm.indexRuleLocators {
-		nv := getIndexValue(ruleIndex, tagFamilies)
+		nv := getIndexValue(ruleIndex, tagFamiliesForIndexWrite)
 		if nv == nil {
 			continue
 		}
@@ -191,17 +197,6 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 				},
 				Term: val,
 			})
-		}
-	}
-
-	for i := range tagFamilies {
-		values := make([]*nameValue, len(tagFamilies[i].values))
-		copy(values, tagFamilies[i].values)
-		tagFamilies[i].values = tagFamilies[i].values[:0]
-		for j, tagValue := range values {
-			if !entityMap[tagValue.name] {
-				tagFamilies[i].values = append(tagFamilies[i].values, values[j])
-			}
 		}
 	}
 	dpg.docs = append(dpg.docs, index.Document{

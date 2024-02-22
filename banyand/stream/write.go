@@ -113,6 +113,11 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 
 	tagFamilies := make([]tagValues, len(stm.schema.TagFamilies))
 	tagFamiliesForIndexWrite := make([]tagValues, len(stm.schema.TagFamilies))
+	entityMap := make(map[string]bool)
+	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
+	for _, entity := range stm.GetSchema().GetEntity().GetTagNames() {
+		entityMap[entity] = true
+	}
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.Element.TagFamilies) <= i {
@@ -129,22 +134,18 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			} else {
 				tagValue = tagFamily.Tags[j]
 			}
-			tagFamiliesForIndexWrite[i].values = append(tagFamiliesForIndexWrite[i].values, encodeTagValue(
+
+			encodeTagValue := encodeTagValue(
 				tagFamilySpec.Tags[j].Name,
 				tagFamilySpec.Tags[j].Type,
-				tagValue,
-			))
-			if tagFamilySpec.Tags[j].IndexedOnly {
+				tagValue)
+			tagFamiliesForIndexWrite[i].values = append(tagFamiliesForIndexWrite[i].values, encodeTagValue)
+			if tagFamilySpec.Tags[j].IndexedOnly || entityMap[tagFamilySpec.Tags[j].Name] {
 				continue
 			}
-			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue(
-				tagFamilySpec.Tags[j].Name,
-				tagFamilySpec.Tags[j].Type,
-				tagValue,
-			))
+			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue)
 		}
 	}
-	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
 
 	var fields []index.Field
 	for _, indexRule := range stm.indexRuleLocators {

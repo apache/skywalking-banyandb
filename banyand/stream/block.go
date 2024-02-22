@@ -566,8 +566,8 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 						tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
 				}
 				t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[start:end+1]...)
-				blockIndex++
 			}
+			blockIndex++
 			tf.tags = append(tf.tags, t)
 		}
 		bc.tagFamilies = append(bc.tagFamilies, tf)
