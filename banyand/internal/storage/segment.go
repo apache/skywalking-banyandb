@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"sync"
@@ -255,11 +256,26 @@ func (sc *segmentController[T, O]) open() error {
 	sc.Lock()
 	defer sc.Unlock()
 	return loadSegments(sc.location, segPathPrefix, sc, sc.segmentSize, func(start, end time.Time) error {
-		_, err := sc.load(start, end, sc.location)
-		if errors.Is(err, errEndOfSegment) {
-			return nil
+		compatibleVersions, err := readCompatibleVersions()
+		if err != nil {
+			return err
 		}
-		return err
+		suffix := sc.Format(start)
+		metadataPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix), metadataFilename)
+		version, err := lfs.Read(metadataPath)
+		if err != nil {
+			return err
+		}
+		for _, cv := range compatibleVersions[compatibleVersionsKey] {
+			if string(version) == cv {
+				_, err := sc.load(start, end, sc.location)
+				if errors.Is(err, errEndOfSegment) {
+					return nil
+				}
+				return err
+			}
+		}
+		return errVersionIncompatible
 	})
 }
 
@@ -283,7 +299,21 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) 
 	} else {
 		end = stdEnd
 	}
-	lfs.MkdirPanicIfExist(path.Join(sc.location, fmt.Sprintf(segTemplate, sc.Format(start))), dirPerm)
+	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.Format(start)))
+	lfs.MkdirPanicIfExist(segPath, dirPerm)
+	data := []byte(currentVersion)
+	metadataPath := filepath.Join(segPath, metadataFilename)
+	lf, err := lfs.CreateLockFile(metadataPath, filePermission)
+	if err != nil {
+		logger.Panicf("cannot create lock file %s: %s", metadataPath, err)
+	}
+	n, err := lf.Write(data)
+	if err != nil {
+		logger.Panicf("cannot write metadata %s: %s", metadataPath, err)
+	}
+	if n != len(data) {
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", metadataPath, n, len(data))
+	}
 	return sc.load(start, end, sc.location)
 }
 
