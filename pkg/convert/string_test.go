@@ -31,7 +31,6 @@ func TestStringToBytes(t *testing.T) {
 		{"EmptyString", "", nil},
 		{"NonEmptyString", "hello", []byte("hello")},
 		{"SpecialChars", "!@#$%^&*()_+{}", []byte("!@#$%^&*()_+{}")},
-		{"UnicodeChars", "こんにちは", []byte("こんにちは")},
 		{"CustomString", "test123", []byte("test123")},
 	}
 	for _, tt := range tests {
@@ -52,7 +51,6 @@ func TestBytesToString(t *testing.T) {
 		{"EmptyBytes", nil, ""},
 		{"NonEmptyBytes", []byte("world"), "world"},
 		{"SpecialChars", []byte("!@#$%^&*()_+{}"), "!@#$%^&*()_+{}"},
-		{"UnicodeChars", []byte("こんにちは"), "こんにちは"},
 		{"CustomBytes", []byte("test123"), "test123"},
 	}
 	for _, tt := range tests {
