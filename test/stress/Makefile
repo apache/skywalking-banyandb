@@ -24,14 +24,20 @@ ifdef PROFILE
 	CLI_ARGS := $(CLI_ARGS) --profile $(PROFILE)
 endif
 
+cli_env := DOCKER_BUILDKIT=1 USER_ID=$(shell id -u) GROUP_ID=$(shell id -g)
+
+.PHONY: clean
+clean:
+	rm -rf /tmp/banyandb-stress-agent
+
 .PHONY: dev-up
-dev-up:
-	DOCKER_BUILDKIT=1 docker compose $(CLI_ARGS) --env-file ./env.dev up --build
+dev-up: clean
+	$(cli_env) docker compose $(CLI_ARGS) --env-file ./env.dev up --build
 
 .PHONY: up
-up:
-	DOCKER_BUILDKIT=1 docker compose $(CLI_ARGS) --env-file ./env up --build
+up: clean
+	$(cli_env) docker compose $(CLI_ARGS) --env-file ./env up --build
 
 .PHONY: down
 down:
-	DOCKER_BUILDKIT=1 docker compose down
+	docker compose down

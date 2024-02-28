@@ -79,6 +79,9 @@ func init() {
 
 func initConfig() {
 	if cfgFile != "" {
+		if cfgFile == "-" {
+			return
+		}
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
 	} else {

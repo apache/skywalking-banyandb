@@ -14,7 +14,16 @@
 # limitations under the License.
 
 services:
+  change-vol-ownership:
+    image: ubuntu
+    user: "root"
+    group_add:
+      - '${GROUP_ID}'
+    volumes:
+      - /tmp/banyandb-stress-agent:/tmp/change-ownership
+    command: chown -R ${USER_ID}:${GROUP_ID} /tmp/change-ownership
   banyandb:
+    user: "${USER_ID}:${GROUP_ID}"
     extends:
       file: ../docker/base-compose.yml
       service: banyandb
@@ -22,9 +31,7 @@ services:
       dockerfile: ./docker/Dockerfile
       context: ../..
     volumes:
-    - ../..:/app:rw,delegated
-    # Uncomment below line to mount an external volume
-    # - /tmp:/tmp:rw,delgated
+    - /tmp/banyandb-stress-agent:/tmp:rw,delgated
     ports:
     - 17913:17913
     - 6060:6060
@@ -32,6 +39,9 @@ services:
     networks:
       - test
       - monitoring
+    depends_on:
+      change-vol-ownership:
+        condition: service_completed_successfully
 
   oap:
     extends:
