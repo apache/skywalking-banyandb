@@ -45,17 +45,17 @@ func TestStringToBytes(t *testing.T) {
 func TestBytesToString(t *testing.T) {
 	tests := []struct {
 		name string
-		b    []byte
 		want string
+		b    []byte
 	}{
-		{"EmptyBytes", nil, ""},
-		{"NonEmptyBytes", []byte("world"), "world"},
-		{"SpecialChars", []byte("!@#$%^&*()_+{}"), "!@#$%^&*()_+{}"},
-		{"CustomBytes", []byte("test123"), "test123"},
+		{"EmptyString", "", nil},
+		{"NonEmptyString", "hello", []byte("hello")},
+		{"SpecialChars", "!@#$%^&*()_+{}", []byte("!@#$%^&*()_+{}")},
+		{"CustomString", "test123", []byte("test123")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := BytesToString(tt.b); got != tt.want {
+			if got := BytesToString(tt.b); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("BytesToString() = %v, want %v", got, tt.want)
 			}
 		})
