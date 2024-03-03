@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -438,7 +439,9 @@ func (bc *blockCursor) init(p *part, bm blockMetadata, queryOpts queryOptions) {
 	bc.fieldProjection = queryOpts.FieldProjection
 }
 
-func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, desc bool) {
+func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
+	tagProjection []pbv1.TagProjection, desc bool,
+) {
 	var idx, offset int
 	if desc {
 		idx = 0
@@ -450,18 +453,68 @@ func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, desc bool) {
 	if offset <= idx {
 		return
 	}
+	size := offset - idx
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
-	for _, cf := range bc.tagFamilies {
+	var entityValues map[string]*modelv1.TagValue
+	if entityValuesAll != nil {
+		entityValues = entityValuesAll[r.SID]
+	}
+OUTER:
+	for _, tp := range tagProjection {
 		tf := pbv1.TagFamily{
-			Name: cf.name,
+			Name: tp.Family,
 		}
-		for _, c := range cf.columns {
+		var cf *columnFamily
+		for _, tagName := range tp.Names {
 			t := pbv1.Tag{
-				Name: c.name,
+				Name: tagName,
 			}
-			for _, v := range c.values[idx:offset] {
-				t.Values = append(t.Values, mustDecodeTagValue(c.valueType, v))
+			if entityValues != nil && entityValues[tagName] != nil {
+				t.Values = make([]*modelv1.TagValue, size)
+				for i := 0; i < size; i++ {
+					t.Values[i] = entityValues[tagName]
+				}
+				tf.Tags = append(tf.Tags, t)
+				continue
+			}
+			if cf == nil {
+				for i := range bc.tagFamilies {
+					if bc.tagFamilies[i].name == tp.Family {
+						cf = &bc.tagFamilies[i]
+						break
+					}
+				}
+			}
+			if cf == nil {
+				for _, n := range tp.Names {
+					t = pbv1.Tag{
+						Name:   n,
+						Values: make([]*modelv1.TagValue, size),
+					}
+					for i := 0; i < size; i++ {
+						t.Values[i] = pbv1.NullTagValue
+					}
+					tf.Tags = append(tf.Tags, t)
+				}
+				r.TagFamilies = append(r.TagFamilies, tf)
+				continue OUTER
+			}
+			var foundTag bool
+			for i := range cf.columns {
+				if cf.columns[i].name == tagName {
+					for _, v := range cf.columns[i].values[idx:offset] {
+						t.Values = append(t.Values, mustDecodeTagValue(cf.columns[i].valueType, v))
+					}
+					foundTag = true
+					break
+				}
+			}
+			if !foundTag {
+				t.Values = make([]*modelv1.TagValue, size)
+				for i := 0; i < size; i++ {
+					t.Values[i] = pbv1.NullTagValue
+				}
 			}
 			tf.Tags = append(tf.Tags, t)
 		}
@@ -478,11 +531,17 @@ func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, desc bool) {
 	}
 }
 
-func (bc *blockCursor) copyTo(r *pbv1.MeasureResult) {
+func (bc *blockCursor) copyTo(r *pbv1.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
+	tagProjection []pbv1.TagProjection,
+) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
-	if len(r.TagFamilies) != len(bc.tagProjection) {
-		for _, tp := range bc.tagProjection {
+	var entityValues map[string]*modelv1.TagValue
+	if entityValuesAll != nil {
+		entityValues = entityValuesAll[r.SID]
+	}
+	if len(r.TagFamilies) == 0 {
+		for _, tp := range tagProjection {
 			tf := pbv1.TagFamily{
 				Name: tp.Family,
 			}
@@ -495,19 +554,42 @@ func (bc *blockCursor) copyTo(r *pbv1.MeasureResult) {
 			r.TagFamilies = append(r.TagFamilies, tf)
 		}
 	}
-	if len(bc.tagFamilies) != len(r.TagFamilies) {
-		logger.Panicf("unexpected number of tag families: got %d; want %d", len(bc.tagFamilies), len(r.TagFamilies))
-	}
-	for i, cf := range bc.tagFamilies {
-		if len(r.TagFamilies[i].Tags) != len(cf.columns) {
-			logger.Panicf("unexpected number of tags: got %d; want %d", len(r.TagFamilies[i].Tags), len(bc.tagProjection[i].Names))
-		}
-		for i2, c := range cf.columns {
-			r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
+	for i := range r.TagFamilies {
+		tfName := r.TagFamilies[i].Name
+		var cf *columnFamily
+		for j := range r.TagFamilies[i].Tags {
+			tagName := r.TagFamilies[i].Tags[j].Name
+			if entityValues != nil && entityValues[tagName] != nil {
+				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, entityValues[tagName])
+				continue
+			}
+			if cf == nil {
+				for i := range bc.tagFamilies {
+					if bc.tagFamilies[i].name == tfName {
+						cf = &bc.tagFamilies[i]
+						break
+					}
+				}
+			}
+			if cf == nil {
+				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, pbv1.NullTagValue)
+				continue
+			}
+			var foundTag bool
+			for _, c := range cf.columns {
+				if c.name == tagName {
+					r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
+					foundTag = true
+					break
+				}
+			}
+			if !foundTag {
+				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, pbv1.NullTagValue)
+			}
 		}
 	}
 
-	if len(r.Fields) != len(bc.fieldProjection) {
+	if len(r.Fields) == 0 {
 		for _, n := range bc.fieldProjection {
 			f := pbv1.Field{
 				Name: n,

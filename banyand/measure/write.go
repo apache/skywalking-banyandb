@@ -125,11 +125,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		))
 	}
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
-	tagFamilies := make([]nameValues, len(stm.schema.TagFamilies))
+	tagFamilies := make([]nameValues, 0, len(stm.schema.TagFamilies))
 	tagFamiliesForIndexWrite := make([]nameValues, len(stm.schema.TagFamilies))
-	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
 	entityMap := make(map[string]bool)
-
 	for _, entity := range stm.GetSchema().GetEntity().GetTagNames() {
 		entityMap[entity] = true
 	}
@@ -141,7 +139,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			tagFamily = req.DataPoint.TagFamilies[i]
 		}
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
-		tagFamilies[i].name = tagFamilySpec.Name
+		tf := nameValues{
+			name: tagFamilySpec.Name,
+		}
 		for j := range tagFamilySpec.Tags {
 			var tagValue *modelv1.TagValue
 			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
@@ -158,9 +158,13 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			if tagFamilySpec.Tags[j].IndexedOnly || entityMap[tagFamilySpec.Tags[j].Name] {
 				continue
 			}
-			tagFamilies[i].values = append(tagFamilies[i].values, nameValue)
+			tf.values = append(tf.values, nameValue)
+		}
+		if len(tf.values) > 0 {
+			tagFamilies = append(tagFamilies, tf)
 		}
 	}
+	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
 
 	if stm.processorManager != nil {
 		stm.processorManager.onMeasureWrite(&measurev1.InternalWriteRequest{
