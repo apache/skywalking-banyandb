@@ -19,7 +19,6 @@
 
 import { createRouter, createWebHistory } from 'vue-router'
 import Header from '@/components/Header/index.vue'
-import NotFoundView from '../views/NotFoundView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -161,10 +160,17 @@ const router = createRouter({
       // will match everything
       path: '/:pathMatch(.*)',
       name: 'NotFound',
-      component: NotFoundView,
+      component: Header,
       meta: {
         keepAlive: false,
-      }
+      },
+      children: [
+        {
+          path: '/:pathMatch(.*)',
+          name: 'property',
+          component: () => import('@/views/404/NotFound.vue'),
+        }
+      ]
     },
   ]
 })
