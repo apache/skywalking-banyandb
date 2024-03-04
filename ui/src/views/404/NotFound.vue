@@ -54,7 +54,7 @@ import userImg from '@/assets/banyan-db.svg'
 }
 
 .display-image {
-  height: 200px;
+  height: 12rem;
 }
 
 .display-message {
