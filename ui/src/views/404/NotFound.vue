@@ -19,19 +19,21 @@
 
 <script setup>
 import { ElImage, ElTooltip, ElMenu, ElMenuItem } from 'element-plus'
-import userImg from '@/assets/banyandb_small.jpg'
+import userImg from '@/assets/banyan-db.svg'
 </script>
 
 <template>
     <div class="display-view">
-        <el-image :src="userImg" class="display-image" fit="fill">
-            <div slot="error" class="image-slot">
-                <i class="el-icon-picture-outline"></i>
+        <div class="inner-component">
+            <el-image :src="userImg" class="display-image" fit="fill">
+                <div slot="error" class="image-slot">
+                    <i class="el-icon-picture-outline"></i>
+                </div>
+            </el-image>
+            <div class="display-message">
+                <h1 class="message">404 Page Not Found</h1>
+                <router-link to="/" class="go-home-link">Go Home</router-link>
             </div>
-        </el-image>
-        <div class="display-message">
-            <h1 class="message">404 Page Not Found</h1>
-            <router-link to="/" class="go-home-link">Go Home</router-link>
         </div>
     </div>
 </template>
@@ -41,14 +43,18 @@ import userImg from '@/assets/banyandb_small.jpg'
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 2rem;
     height: 100%;
 }
 
+.inner-component {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 2rem;
+}
+
 .display-image {
-  border-radius: 40%; 
-  overflow: hidden; 
-  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+  height: 200px;
 }
 
 .display-message {
