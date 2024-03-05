@@ -30,11 +30,12 @@ on:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-20.04
+    runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     strategy:
       matrix:
         tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
+        os: [ ubuntu-latest, macos-14, windows-latest ]
     steps:
       - name: Set timezone
         run: sudo timedatectl set-timezone ${{ matrix.tz }}
