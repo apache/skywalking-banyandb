@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import { ElImage, ElTooltip, ElMenu, ElMenuItem } from 'element-plus'
+import { ElImage } from 'element-plus'
 import userImg from '@/assets/banyan-db.svg'
 </script>
 
