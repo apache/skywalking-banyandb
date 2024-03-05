@@ -19,7 +19,7 @@
 
 <script setup>
 import { ElImage } from 'element-plus'
-import userImg from '@/assets/banyan-db.svg'
+import userImg from '@/assets/banyandb.svg'
 </script>
 
 <template>
