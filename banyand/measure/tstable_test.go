@@ -394,6 +394,12 @@ var tagProjections = map[int][]pbv1.TagProjection{
 	},
 }
 
+var allTagProjections = []pbv1.TagProjection{
+	{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
+	{Family: "binaryTag", Names: []string{"binaryTag"}},
+	{Family: "singleTag", Names: []string{"strTag", "intTag", "strTag1", "strTag2"}},
+}
+
 var fieldProjections = map[int][]string{
 	1: {"strField", "intField", "floatField", "binaryField"},
 	3: {"intField"},
