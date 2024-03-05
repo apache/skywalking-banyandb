@@ -81,8 +81,6 @@ jobs:
     name: Test on Windows
     timeout-minutes: ${{ inputs.timeout-minutes }}
     runs-on: windows-latest
-    strategy:
-      matrix:
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v3
