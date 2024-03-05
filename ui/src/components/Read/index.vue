@@ -32,8 +32,6 @@ const route = useRoute()
 
 const yamlRef = ref()
 
-const isDatePicker = ref(false)
-
 const last15Minutes = ref(900 * 1000)
 
 const lastWeek = ref(3600 * 1000 * 24 * 7)
@@ -197,11 +195,10 @@ function initCode() {
     } else {
         let timeRange = {
             timeRange: {
-                begin: new Date(new Date() - 15),
+                begin: new Date(new Date() - 15 * 60 * 1000),
                 end: new Date()
             }
         }
-        timeRange.timeRange.begin.setTime(timeRange.timeRange.begin.getTime() - 900 * 1000)
         timeRange = jsonToYaml(timeRange).data
         data.code = ref(
             `${timeRange}offset: 1
@@ -347,27 +344,25 @@ function handleCodeData() {
     getTableData()
 }
 function autoRefreshTimeRange() {
-    if (isDatePicker.value) {
-        let json = yamlToJson(data.code)
-        const begin = new Date()
-        const end = new Date()
-        const oldBeginDate = new Date(json.data.timeRange.begin)
-        const oldEndDate = new Date(json.data.timeRange.end)
-        const interval = oldEndDate.getTime() - oldBeginDate.getTime()
+    let json = yamlToJson(data.code)
+    const begin = new Date()
+    const end = new Date()
+    const oldBeginDate = new Date(json.data.timeRange.begin)
+    const oldEndDate = new Date(json.data.timeRange.end)
+    const interval = oldEndDate.getTime() - oldBeginDate.getTime()
         
-        if (interval === last15Minutes.value) {
-            begin.setTime(begin.getTime() - last15Minutes.value)
-        } else if (interval === lastWeek.value) {
-            begin.setTime(begin.getTime() - lastWeek.value)
-        } else if (interval === lastMonth.value) {
-            begin.setTime(begin.getTime() - lastMonth.value)
-        } else if (interval === last3Months.value) {
-            begin.setTime(begin.getTime() - last3Months.value)
-        }
-        json.data.timeRange.begin = begin.toISOString()
-        json.data.timeRange.end = end.toISOString()
-        data.code = jsonToYaml(json.data).data
+    if (interval === last15Minutes.value) {
+        begin.setTime(begin.getTime() - last15Minutes.value)
+    } else if (interval === lastWeek.value) {
+        begin.setTime(begin.getTime() - lastWeek.value)
+    } else if (interval === lastMonth.value) {
+        begin.setTime(begin.getTime() - lastMonth.value)
+    } else if (interval === last3Months.value) {
+        begin.setTime(begin.getTime() - last3Months.value)
     }
+    json.data.timeRange.begin = begin.toISOString()
+    json.data.timeRange.end = end.toISOString()
+    data.code = jsonToYaml(json.data).data
 }
 function searchTableData() {
     yamlRef.value.checkYaml(data.code).then(() => {
@@ -385,7 +380,6 @@ function searchTableData() {
         })
 }
 function changeDatePicker() {
-    isDatePicker.value = true
     let json = yamlToJson(data.code)
     if (!json.data.hasOwnProperty('timeRange')) {
         json.data.timeRange = {
@@ -406,9 +400,6 @@ function changeFields() {
         return item
     })
     getTableData()
-}
-function changeStatus() {
-    isDatePicker.value = false
 }
 </script>
 
@@ -453,7 +444,7 @@ function changeStatus() {
                     </div>
                 </el-col>
             </el-row>
-            <CodeMirror ref="yamlRef" v-model="data.code" @click="changeStatus" mode="yaml" style="height: 200px" :lint="true" :readonly="false">
+            <CodeMirror ref="yamlRef" v-model="data.code" mode="yaml" style="height: 200px" :lint="true" :readonly="false">
             </CodeMirror>
         </el-card>
         <el-card shadow="always">
