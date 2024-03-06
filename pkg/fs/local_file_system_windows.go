@@ -59,3 +59,7 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 }
 
 func (fs *localFileSystem) SyncPath(_ string) {}
+
+func syncFile(_ *os.File) error {
+	return nil
+}
