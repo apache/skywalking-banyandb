@@ -31,7 +31,6 @@ concurrency:
 
 jobs:
   StoragePlugins:
-    if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
     name: Storage E2E
     runs-on: ${{ matrix.test.os }}
     timeout-minutes: 90
@@ -41,15 +40,22 @@ jobs:
         test:
           - name: BanyanDB
             config: test/e2e-v2/cases/storage/banyandb/e2e.yaml
-            os: [ubuntu-latest, windows-latest]
+            os: ubuntu-latest
+          - name: BanyanDB
+            config: test/e2e-v2/cases/storage/banyandb/e2e.yaml
+            os: windows-latest
           - name: Trace Profiling BanyanDB
             config: test/e2e-v2/cases/profiling/trace/banyandb/e2e.yaml
+            os: ubuntu-latest
           - name: eBPF Profiling BanyanDB
             config: test/e2e-v2/cases/profiling/ebpf/oncpu/banyandb/e2e.yaml
+            os: ubuntu-latest
           - name: Event BanyanDB
             config: test/e2e-v2/cases/event/banyandb/e2e.yaml
+            os: ubuntu-latest
           - name: BanyanDB Cluster Mode
             config: test/e2e-v2/cases/cluster/e2e.yaml
+            os: ubuntu-latest
     env:
       TAG: ${{ github.sha }}
     steps:
@@ -82,9 +88,14 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version-file: 'go.mod'
-      - name: Update dependencies 
-        if: steps.cache-go.outputs.cache-hit != 'true'
+      - name: Update dependencies on Ubuntu
+        if: steps.cache-go.outputs.cache-hit != 'true' && matrix.test.os == 'ubuntu-latest'
         run: GOPROXY=https://proxy.golang.org go mod download
+      - name: Update dependencies on Windows
+        if: steps.cache-go.outputs.cache-hit != 'true' && matrix.test.os == 'windows-latest'
+        run: |
+          SET GOPROXY=https://proxy.golang.org
+          go mod download
       - name: Generate codes
         run: make generate
       - name: Set up Docker Buildx
@@ -99,7 +110,6 @@ jobs:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
 
   Storage:
-    if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs: [StoragePlugins]
