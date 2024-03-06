@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,8 +104,8 @@ var _ = g.Describe("Istio", func() {
 
 		fmt.Printf("written %d items in %s\n", writtenCount, endTime.Sub(startTime).String())
 		fmt.Printf("throughput: %f items/s\n", float64(writtenCount)/endTime.Sub(startTime).Seconds())
-		fmt.Printf("throughput(kb/s) %f\n", float64(bc.bytesSent)/endTime.Sub(startTime).Seconds()/1024)
-		fmt.Printf("latency: %s\n", bc.totalLatency/time.Duration(writtenCount))
+		fmt.Printf("throughput(kb/s) %f\n", float64(bc.bytesSent.Load())/endTime.Sub(startTime).Seconds()/1024)
+		fmt.Printf("latency: %s\n", time.Duration(bc.totalLatency.Load())/time.Duration(writtenCount))
 	})
 })
 
@@ -263,8 +264,8 @@ func printDiskUsage(dir string, maxDepth, curDepth int) {
 }
 
 type clientCounter struct {
-	bytesSent    int
-	totalLatency time.Duration
+	bytesSent    atomic.Int64
+	totalLatency atomic.Int64
 }
 
 func (*clientCounter) HandleConn(context.Context, stats.ConnStats) {}
@@ -276,9 +277,9 @@ func (c *clientCounter) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context
 func (c *clientCounter) HandleRPC(_ context.Context, s stats.RPCStats) {
 	switch s := s.(type) {
 	case *stats.OutPayload:
-		c.bytesSent += s.WireLength
+		c.bytesSent.Add(int64(s.WireLength))
 	case *stats.End:
-		c.totalLatency += s.EndTime.Sub(s.BeginTime)
+		c.totalLatency.Add(int64(s.EndTime.Sub(s.BeginTime)))
 	}
 }
 
