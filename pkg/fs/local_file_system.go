@@ -100,7 +100,7 @@ func (fs *localFileSystem) mkdir(path string, permission Mode) {
 		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to create directory")
 	}
 	parentDirPath := filepath.Dir(path)
-	fs.syncPath(parentDirPath)
+	fs.SyncPath(parentDirPath)
 }
 
 func (fs *localFileSystem) pathExist(path string) bool {
@@ -111,20 +111,6 @@ func (fs *localFileSystem) pathExist(path string) bool {
 		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to stat path")
 	}
 	return true
-}
-
-func (fs *localFileSystem) syncPath(path string) {
-	d, err := os.Open(path)
-	if err != nil {
-		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to open directory")
-	}
-	if err := d.Sync(); err != nil {
-		_ = d.Close()
-		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to sync directory")
-	}
-	if err := d.Close(); err != nil {
-		fs.logger.Panic().Str("path", path).Err(err).Msg("ailed to sync directory")
-	}
 }
 
 func (fs *localFileSystem) ReadDir(dirname string) []DirEntry {
