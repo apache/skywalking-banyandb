@@ -344,8 +344,11 @@ function getGroupLists() {
                 }).finally(() => {
                     $loadingClose()
                 })
+            }else{
+                $loadingClose()
             }
         })
+    $loadingClose()
 }
 function deleteOtherGroup() {
     let flag = {
