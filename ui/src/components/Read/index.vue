@@ -32,13 +32,13 @@ const route = useRoute()
 
 const yamlRef = ref()
 
-const last15Minutes = ref(900 * 1000)
+const last15Minutes = 900 * 1000
 
-const lastWeek = ref(3600 * 1000 * 24 * 7)
+const lastWeek = 3600 * 1000 * 24 * 7
 
-const lastMonth = ref(3600 * 1000 * 24 * 30)
+const lastMonth = 3600 * 1000 * 24 * 30
 
-const last3Months = ref(3600 * 1000 * 24 * 90)
+const last3Months = 3600 * 1000 * 24 * 90
 
 // Loading
 const { proxy } = getCurrentInstance()
@@ -66,7 +66,7 @@ const shortcuts = [
         value: () => {
             const end = new Date()
             const start = new Date()
-            start.setTime(start.getTime() - last15Minutes.value)
+            start.setTime(start.getTime() - last15Minutes)
             return [start, end]
         }
     },
@@ -75,7 +75,7 @@ const shortcuts = [
         value: () => {
             const end = new Date()
             const start = new Date()
-            start.setTime(start.getTime() - lastWeek.value)
+            start.setTime(start.getTime() - lastWeek)
             return [start, end]
         },
     },
@@ -84,7 +84,7 @@ const shortcuts = [
         value: () => {
             const end = new Date()
             const start = new Date()
-            start.setTime(start.getTime() - lastMonth.value)
+            start.setTime(start.getTime() - lastMonth)
             return [start, end]
         },
     },
@@ -93,7 +93,7 @@ const shortcuts = [
         value: () => {
             const end = new Date()
             const start = new Date()
-            start.setTime(start.getTime() - last3Months.value)
+            start.setTime(start.getTime() - last3Months)
             return [start, end]
         },
     },
@@ -195,7 +195,7 @@ function initCode() {
     } else {
         let timeRange = {
             timeRange: {
-                begin: new Date(new Date() - 15 * 60 * 1000),
+                begin: new Date(new Date() - last15Minutes),
                 end: new Date()
             }
         }
@@ -351,14 +351,14 @@ function autoRefreshTimeRange() {
     const oldEndDate = new Date(json.data.timeRange.end)
     const interval = oldEndDate.getTime() - oldBeginDate.getTime()
         
-    if (interval === last15Minutes.value) {
-        begin.setTime(begin.getTime() - last15Minutes.value)
-    } else if (interval === lastWeek.value) {
-        begin.setTime(begin.getTime() - lastWeek.value)
-    } else if (interval === lastMonth.value) {
-        begin.setTime(begin.getTime() - lastMonth.value)
-    } else if (interval === last3Months.value) {
-        begin.setTime(begin.getTime() - last3Months.value)
+    if (interval === last15Minutes) {
+        begin.setTime(begin.getTime() - last15Minutes)
+    } else if (interval === lastWeek) {
+        begin.setTime(begin.getTime() - lastWeek)
+    } else if (interval === lastMonth) {
+        begin.setTime(begin.getTime() - lastMonth)
+    } else if (interval === last3Months) {
+        begin.setTime(begin.getTime() - last3Months)
     }
     json.data.timeRange.begin = begin.toISOString()
     json.data.timeRange.end = end.toISOString()
