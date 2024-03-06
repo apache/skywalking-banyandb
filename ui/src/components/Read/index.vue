@@ -32,8 +32,6 @@ const route = useRoute()
 
 const yamlRef = ref()
 
-const isDatePicker = ref(false)
-
 const last15Minutes = 900 * 1000
 
 const lastWeek = 3600 * 1000 * 24 * 7
@@ -41,6 +39,10 @@ const lastWeek = 3600 * 1000 * 24 * 7
 const lastMonth = 3600 * 1000 * 24 * 30
 
 const last3Months = 3600 * 1000 * 24 * 90
+
+const autoRefreshTimeRangeFlag = ref(true)
+
+const pickedShortCutTimeRanges = ref(false)
 
 // Loading
 const { proxy } = getCurrentInstance()
@@ -69,6 +71,7 @@ const shortcuts = [
             const end = new Date()
             const start = new Date()
             start.setTime(start.getTime() - last15Minutes)
+            pickedShortCutTimeRanges.value = true
             return [start, end]
         }
     },
@@ -78,6 +81,7 @@ const shortcuts = [
             const end = new Date()
             const start = new Date()
             start.setTime(start.getTime() - lastWeek)
+            pickedShortCutTimeRanges.value = true
             return [start, end]
         },
     },
@@ -87,6 +91,7 @@ const shortcuts = [
             const end = new Date()
             const start = new Date()
             start.setTime(start.getTime() - lastMonth)
+            pickedShortCutTimeRanges.value = true
             return [start, end]
         },
     },
@@ -96,6 +101,7 @@ const shortcuts = [
             const end = new Date()
             const start = new Date()
             start.setTime(start.getTime() - last3Months)
+            pickedShortCutTimeRanges.value = true
             return [start, end]
         },
     },
@@ -346,11 +352,9 @@ function handleCodeData() {
     getTableData()
 }
 function autoRefreshTimeRange() {
-    if (isDatePicker.value) {
-        return
-    }
     let json = yamlToJson(data.code)
-    const begin = new Date(new Date() - last15Minutes)
+    const interval = new Date(json.data.timeRange.end).getTime() - new Date(json.data.timeRange.begin).getTime()
+    const begin = new Date(new Date() - interval)
     const end = new Date()
     json.data.timeRange.begin = begin.toISOString()
     json.data.timeRange.end = end.toISOString()
@@ -358,7 +362,9 @@ function autoRefreshTimeRange() {
 }
 function searchTableData() {
     yamlRef.value.checkYaml(data.code).then(() => {
-        autoRefreshTimeRange()
+        if (autoRefreshTimeRangeFlag.value) {
+            autoRefreshTimeRange()
+        }
         handleCodeData()
     })
         .catch((err) => {
@@ -372,7 +378,7 @@ function searchTableData() {
         })
 }
 function changeDatePicker() {
-    isDatePicker.value = true
+    autoRefreshTimeRangeFlag.value = pickedShortCutTimeRanges.value
     let json = yamlToJson(data.code)
     if (!json.data.hasOwnProperty('timeRange')) {
         json.data.timeRange = {
@@ -383,6 +389,9 @@ function changeDatePicker() {
     json.data.timeRange.begin = data.timeValue ? data.timeValue[0] : null
     json.data.timeRange.end = data.timeValue ? data.timeValue[1] : null
     data.code = jsonToYaml(json.data).data
+}
+function resetDatePicker() {
+    pickedShortCutTimeRanges.value = false
 }
 function changeFields() {
     data.tableFields = data.handleFields.map(fieldName => {
@@ -424,7 +433,7 @@ function changeFields() {
                             <el-option v-for="item in data.fields" :key="item.name" :label="item.name" :value="item.name">
                             </el-option>
                         </el-select>
-                        <el-date-picker @change="changeDatePicker" style="margin: 0 10px 0 10px" v-model="data.timeValue"
+                        <el-date-picker @change="changeDatePicker" @visible-change="resetDatePicker" style="margin: 0 10px 0 10px" v-model="data.timeValue"
                             type="datetimerange" :shortcuts="shortcuts" range-separator="to" start-placeholder="begin"
                             end-placeholder="end" align="right">
                         </el-date-picker>
