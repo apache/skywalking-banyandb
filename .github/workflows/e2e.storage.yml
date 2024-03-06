@@ -33,7 +33,7 @@ jobs:
   StoragePlugins:
     if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
     name: Storage E2E
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.test.os }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -41,6 +41,7 @@ jobs:
         test:
           - name: BanyanDB
             config: test/e2e-v2/cases/storage/banyandb/e2e.yaml
+            os: [ubuntu-latest, windows-latest]
           - name: Trace Profiling BanyanDB
             config: test/e2e-v2/cases/profiling/trace/banyandb/e2e.yaml
           - name: eBPF Profiling BanyanDB
