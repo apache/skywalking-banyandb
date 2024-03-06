@@ -46,5 +46,5 @@ $(BUF):
 	@GOBIN=$(tool_bin) go install github.com/envoyproxy/protoc-gen-validate@$(PROTOC_GEN_VALIDATE_VERSION)
 
 generate: $(BUF)
-	@PATH=$(tool_bin):$(proto_dir) $(BUF) generate && \
-	  cp proto/api-reference.md $(root_dir)/docs
+	PATH=$(tool_bin):$(proto_dir):$$PATH; $(BUF) generate
+	cp proto/api-reference.md $(root_dir)/docs

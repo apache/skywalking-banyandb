@@ -31,15 +31,32 @@ IMG := $(HUB)/$(IMG_NAME):$(TAG)
 
 # Disable cache in CI environment
 ifeq (true,$(CI))
-	DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache --load
+	ifeq ($(OS),Windows_NT)
+		# windows not support buildx, so no "--load" option
+		DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache
+	else
+		DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache --load
+	endif
+endif
+
+DOCKER_FILE := Dockerfile
+DOCKER_BUILD = docker buildx build
+TIME = time
+ifeq ($(OS),Windows_NT)
+	# build docker using other Dockerfile and docker build command
+	DOCKER_FILE = Dockerfile.windows
+	DOCKER_BUILD = docker build
+	# time is not support in the windows(CI environment)
+	TIME =
 endif
 
 .PHONY: docker
 docker:
 	@echo "Build $(IMG)"
-	time docker buildx build $(DOCKER_BUILD_ARGS) -t $(IMG) -f Dockerfile ..
+	$(TIME) $(DOCKER_BUILD) $(DOCKER_BUILD_ARGS) -t $(IMG) -f $(DOCKER_FILE) ..
 
 .PHONY: docker.push
 docker.push:
 	@echo "Push $(IMG)"
-	@time docker push $(IMG)
+	$(TIME) docker push $(IMG)
+
