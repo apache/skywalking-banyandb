@@ -59,3 +59,13 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 }
 
 func (fs *localFileSystem) SyncPath(_ string) {}
+
+func syncFile(file *os.File) error {
+	if err := file.Sync(); err != nil {
+		return &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", file.Name(), err),
+		}
+	}
+	return nil
+}

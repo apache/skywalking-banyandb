@@ -404,11 +404,8 @@ func (file *LocalFile) Path() string {
 
 // Close is used to close File.
 func (file *LocalFile) Close() error {
-	if err := file.file.Sync(); err != nil {
-		return &FileSystemError{
-			Code:    closeError,
-			Message: fmt.Sprintf("Close File error, directory name: %s, error message: %s", file.file.Name(), err),
-		}
+	if err := syncFile(file.file); err != nil {
+		return err
 	}
 
 	if err := file.file.Close(); err != nil {
