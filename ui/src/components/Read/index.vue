@@ -32,6 +32,8 @@ const route = useRoute()
 
 const yamlRef = ref()
 
+const isDatePicker = ref(false)
+
 const last15Minutes = 900 * 1000
 
 const lastWeek = 3600 * 1000 * 24 * 7
@@ -344,22 +346,12 @@ function handleCodeData() {
     getTableData()
 }
 function autoRefreshTimeRange() {
-    let json = yamlToJson(data.code)
-    const begin = new Date()
-    const end = new Date()
-    const oldBeginDate = new Date(json.data.timeRange.begin)
-    const oldEndDate = new Date(json.data.timeRange.end)
-    const interval = oldEndDate.getTime() - oldBeginDate.getTime()
-        
-    if (interval === last15Minutes) {
-        begin.setTime(begin.getTime() - last15Minutes)
-    } else if (interval === lastWeek) {
-        begin.setTime(begin.getTime() - lastWeek)
-    } else if (interval === lastMonth) {
-        begin.setTime(begin.getTime() - lastMonth)
-    } else if (interval === last3Months) {
-        begin.setTime(begin.getTime() - last3Months)
+    if (isDatePicker.value) {
+        return
     }
+    let json = yamlToJson(data.code)
+    const begin = new Date(new Date() - last15Minutes)
+    const end = new Date()
     json.data.timeRange.begin = begin.toISOString()
     json.data.timeRange.end = end.toISOString()
     data.code = jsonToYaml(json.data).data
@@ -380,6 +372,7 @@ function searchTableData() {
         })
 }
 function changeDatePicker() {
+    isDatePicker.value = true
     let json = yamlToJson(data.code)
     if (!json.data.hasOwnProperty('timeRange')) {
         json.data.timeRange = {
