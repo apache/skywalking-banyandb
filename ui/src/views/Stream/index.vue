@@ -39,7 +39,7 @@ function setWidth(width) {
       </el-aside>
       <el-main>
         <TopNav></TopNav>
-        <RouterView></RouterView>
+        <RouterView :key="$route.path"></RouterView>
       </el-main>
     </el-container>
   </div>
