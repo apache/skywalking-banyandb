@@ -42,7 +42,7 @@ docker.push: PLATFORMS = --platform linux/amd64,windows/amd64
 docker.push: LOAD_OR_PUSH = --push
 docker.push: DOCKER_TYPE = "Push"
 
-docker%:
+docker docker.push:
 	@echo "$(DOCKER_TYPE) $(IMG)"
 	@time docker buildx build $(DOCKER_BUILD_ARGS) $(PLATFORMS) $(LOAD_OR_PUSH) -t $(IMG) -f Dockerfile ..
 
