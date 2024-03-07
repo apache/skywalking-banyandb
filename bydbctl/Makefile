@@ -23,13 +23,16 @@ include ../scripts/build/version.mk
 include ../scripts/build/base.mk
 include ../scripts/build/generate_go.mk
 
+GOOS ?= linux
+GOARCH ?= amd64
+
 .PHONY: all
 all: build
 
 .PHONY: build
 build: 
 	@echo "Building binary"
-	go build -v --ldflags '${GO_LINK_VERSION}' -o $(BUILD_DIR)/$(NAME) github.com/apache/skywalking-banyandb/bydbctl/cmd/bydbctl/$*
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -v --ldflags '${GO_LINK_VERSION}' -o $(BUILD_DIR)/$(NAME) github.com/apache/skywalking-banyandb/bydbctl/cmd/bydbctl/$*
 	chmod +x $(BUILD_DIR)/$(NAME)
 	@echo "Done building $(NAME)"
 

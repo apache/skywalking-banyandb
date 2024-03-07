@@ -30,6 +30,8 @@ DEBUG_STATIC_BINARIES ?= $(addsuffix -static,$(DEBUG_BINARIES))
 BUILD_DIR ?= build/bin
 # Define SUB_DIR var if the project is not at root level project
 SOURCE_DIR := $(if $(SUB_DIR),$(SUB_DIR)/$(NAME),$(NAME))
+GOOS ?= linux
+GOARCH ?= amd64
 
 ##@ Build targets
 
@@ -39,7 +41,7 @@ all: $(BINARIES)  ## Build all the binaries
 $(BINARIES): $(NAME)-%: $(BUILD_DIR)/$(NAME)-%
 $(addprefix $(BUILD_DIR)/,$(BINARIES)): $(BUILD_DIR)/$(NAME)-%:
 	@echo "Building binary"
-	go build -v -buildvcs=false --ldflags '${GO_LINK_VERSION}' -tags "$(BUILD_TAGS)" -o $@ github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/$*
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -v -buildvcs=false --ldflags '${GO_LINK_VERSION}' -tags "$(BUILD_TAGS)" -o $@ github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/$*
 	chmod +x $@
 	@echo "Done building $(NAME) $*"
 
@@ -49,14 +51,14 @@ $(DEBUG_BINARIES): $(NAME)-%-debug: $(BUILD_DIR)/$(NAME)-%-debug
 $(addprefix $(BUILD_DIR)/,$(DEBUG_BINARIES)): $(BUILD_DIR)/$(NAME)-%-debug:
 	@echo "Building debug binary"
 	mkdir -p $(BUILD_DIR)
-	go build -v -buildvcs=false --ldflags '${GO_LINK_VERSION}' -tags "$(BUILD_TAGS)" -gcflags='all=-N -l' -o $@ github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/$*
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -v -buildvcs=false --ldflags '${GO_LINK_VERSION}' -tags "$(BUILD_TAGS)" -gcflags='all=-N -l' -o $@ github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/$*
 	chmod +x $@
 	@echo "Done building debug $(NAME) $*"
 
 $(STATIC_BINARIES): $(NAME)-%-static: $(BUILD_DIR)/$(NAME)-%-static
 $(addprefix $(BUILD_DIR)/,$(STATIC_BINARIES)): $(BUILD_DIR)/$(NAME)-%-static:
 	@echo "Building static binary"
-	CGO_ENABLED=0 go build \
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 	        -buildvcs=false \
 		-a --ldflags '${GO_LINK_VERSION} -extldflags "-static"' -tags "netgo $(BUILD_TAGS)" -installsuffix netgo \
 		-o $(BUILD_DIR)/$(NAME)-$*-static github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/$*
@@ -68,7 +70,7 @@ debug-static: $(DEBUG_STATIC_BINARIES)  ## Build the debug static binaries
 $(DEBUG_STATIC_BINARIES): $(NAME)-%-debug-static: $(BUILD_DIR)/$(NAME)-%-debug-static
 $(addprefix $(BUILD_DIR)/,$(DEBUG_STATIC_BINARIES)): $(BUILD_DIR)/$(NAME)-%-debug-static:
 	@echo "Building debug static binary"
-	CGO_ENABLED=0 go build \
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 	        -buildvcs=false \
 		-a --ldflags '${GO_LINK_VERSION} -extldflags "-static"' -tags "netgo $(BUILD_TAGS)" -gcflags='all=-N -l' -installsuffix netgo \
 		-o $(BUILD_DIR)/$(NAME)-$*-debug-static github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/$*
