@@ -29,13 +29,17 @@ env:
 jobs:
   push-banyandb-image:
     if: github.repository == 'apache/skywalking-banyandb'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.target }}-latest
     permissions:
       contents: read
       packages: write
     timeout-minutes: 90
     strategy:
       fail-fast: true
+      matrix:
+        target:
+          - ubuntu
+          - windows
     env:
       TAG: ${{ github.sha }}
     steps:
@@ -68,14 +72,26 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version-file: 'go.mod'
-      - name: Update dependencies 
-        if: steps.cache-go.outputs.cache-hit != 'true'
+      - name: Update dependencies on Linux
+        if: steps.cache-go.outputs.cache-hit != 'true' && matrix.target == 'ubuntu'
         run: GOPROXY=https://proxy.golang.org go mod download
+      - name: Update dependencies on Windows
+        if: steps.cache-go.outputs.cache-hit != 'true' && matrix.target == 'windows'
+        run: |
+          $env:GOPROXY="https://proxy.golang.org"
+          go mod download
       - name: Generate codes
         run: make generate
-      - name: Set up Docker Buildx
+      - name: Set up Docker Buildx on Linux
+        if: matrix.target == 'ubuntu'
         uses: docker/setup-buildx-action@v1
-      - name: Build docker image
+      - name: Build binaries on Windows
+        if: matrix.target == 'windows'
+        run: |
+          $env:BUILD_TAGS="prometheus"
+          make -C banyand banyand-server-static
+          make -C bydbctl build
+      - name: Build docker image on Linux
         run: |
           make docker.build || make docker.build
           docker image ls

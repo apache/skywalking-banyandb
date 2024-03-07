@@ -22,6 +22,13 @@ root_dir := $(mk_dir)../..
 tool_bin := $(root_dir)/bin
 tool_include := "$(root_dir)/include"
 
+ifeq ($(OS),Windows_NT)
+	# Using unix style path when running on Windows machine or Windows version Git Bash
+    tool_bin := $(subst \,/,$(tool_bin))
+    # Match any drive letter and replace with lowercase version prefixed with '/'
+    tool_bin := $(shell echo $(tool_bin) | sed 's/\([A-Za-z]\):\/\?/\/\L\1\//g')
+endif
+
 # Retrieve git versioning details so we can add to our binary assets
 VERSION_PATH    := github.com/apache/skywalking-banyandb/pkg/version
 ifdef RELEASE_VERSION

@@ -56,7 +56,7 @@ $(addprefix $(BUILD_DIR)/,$(DEBUG_BINARIES)): $(BUILD_DIR)/$(NAME)-%-debug:
 $(STATIC_BINARIES): $(NAME)-%-static: $(BUILD_DIR)/$(NAME)-%-static
 $(addprefix $(BUILD_DIR)/,$(STATIC_BINARIES)): $(BUILD_DIR)/$(NAME)-%-static:
 	@echo "Building static binary"
-	CGO_ENABLED=0 GOOS=linux go build \
+	CGO_ENABLED=0 go build \
 	        -buildvcs=false \
 		-a --ldflags '${GO_LINK_VERSION} -extldflags "-static"' -tags "netgo $(BUILD_TAGS)" -installsuffix netgo \
 		-o $(BUILD_DIR)/$(NAME)-$*-static github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/$*
@@ -68,7 +68,7 @@ debug-static: $(DEBUG_STATIC_BINARIES)  ## Build the debug static binaries
 $(DEBUG_STATIC_BINARIES): $(NAME)-%-debug-static: $(BUILD_DIR)/$(NAME)-%-debug-static
 $(addprefix $(BUILD_DIR)/,$(DEBUG_STATIC_BINARIES)): $(BUILD_DIR)/$(NAME)-%-debug-static:
 	@echo "Building debug static binary"
-	CGO_ENABLED=0 GOOS=linux go build \
+	CGO_ENABLED=0 go build \
 	        -buildvcs=false \
 		-a --ldflags '${GO_LINK_VERSION} -extldflags "-static"' -tags "netgo $(BUILD_TAGS)" -gcflags='all=-N -l' -installsuffix netgo \
 		-o $(BUILD_DIR)/$(NAME)-$*-debug-static github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/$*
