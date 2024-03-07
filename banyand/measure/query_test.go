@@ -634,7 +634,7 @@ func TestQueryResult(t *testing.T) {
 				fileSystem := fs.NewLocalFileSystem()
 				defer defFn()
 				tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()})
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()})
 				require.NoError(t, err)
 				for _, dps := range tt.dpsList {
 					tst.mustAddDataPoints(dps)
@@ -648,13 +648,14 @@ func TestQueryResult(t *testing.T) {
 							time.Sleep(100 * time.Millisecond)
 							continue
 						}
-						if len(snp.parts) == len(tt.dpsList) {
+						if snp.creator == snapshotCreatorMemPart {
 							snp.decRef()
-							tst.Close()
-							break
+							time.Sleep(100 * time.Millisecond)
+							continue
 						}
 						snp.decRef()
-						time.Sleep(100 * time.Millisecond)
+						tst.Close()
+						break
 					}
 				}
 

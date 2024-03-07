@@ -208,7 +208,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	}
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewTopNSearch(math.MaxInt64, query).SortBy([]string{sortedKey}))
 	if err != nil {
-		return nil, err
+		return nil, multierr.Combine(err, reader.Close())
 	}
 	result := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm, reader)
 	return &result, nil

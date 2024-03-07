@@ -95,9 +95,7 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	}
 	for i := range needToDelete {
 		l.Info().Str("path", filepath.Join(rootPath, needToDelete[i])).Msg("delete invalid directory or file")
-		if err := fileSystem.DeleteFile(filepath.Join(rootPath, needToDelete[i])); err != nil {
-			l.Warn().Err(err).Str("path", filepath.Join(rootPath, needToDelete[i])).Msg("failed to delete part. Please check manually")
-		}
+		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
 		t := &tst
@@ -143,12 +141,13 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 			}
 		}
 		if !find {
-			tst.gc.submitParts(id)
+			tst.gc.removePart(id)
+			continue
 		}
 		err := validatePartMetadata(tst.fileSystem, partPath(tst.root, id))
 		if err != nil {
 			tst.l.Info().Err(err).Uint64("id", id).Msg("cannot validate part metadata. skip and delete it")
-			tst.gc.submitParts(id)
+			tst.gc.removePart(id)
 			needToPersist = true
 			continue
 		}

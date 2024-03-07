@@ -23,65 +23,35 @@ import (
 
 type garbageCleaner struct {
 	parent          *tsTable
-	liveParts       map[uint64]map[uint64]struct{}
-	knownPartFiles  map[uint64]struct{}
 	deletableEpochs []uint64
 	liveEpoch       uint64
 }
 
 func (g *garbageCleaner) init(parent *tsTable) {
 	g.parent = parent
-	g.liveParts = make(map[uint64]map[uint64]struct{})
-	g.knownPartFiles = make(map[uint64]struct{})
 }
 
 func (g *garbageCleaner) registerSnapshot(snapshot *snapshot) {
-	parts := make(map[uint64]struct{})
-	for _, part := range snapshot.parts {
-		parts[part.ID()] = struct{}{}
-		g.knownPartFiles[part.ID()] = struct{}{}
-	}
-	g.liveParts[snapshot.epoch] = parts
-
 	if g.liveEpoch > 0 {
 		g.deletableEpochs = append(g.deletableEpochs, g.liveEpoch)
 	}
 	g.liveEpoch = snapshot.epoch
 }
 
-func (g *garbageCleaner) submitParts(partID uint64) {
-	g.knownPartFiles[partID] = struct{}{}
+func (g *garbageCleaner) removePart(partID uint64) {
+	g.parent.fileSystem.MustRMAll(partPath(g.parent.root, partID))
 }
 
 func (g *garbageCleaner) clean() {
-	g.cleanSnapshots()
-	g.cleanParts()
-}
-
-func (g *garbageCleaner) cleanSnapshots() {
 	var remainingEpochs []uint64
 	for _, deletableEpoch := range g.deletableEpochs {
 		path := filepath.Join(g.parent.root, snapshotName(deletableEpoch))
 		err := g.parent.fileSystem.DeleteFile(path)
 		if err == nil {
-			delete(g.liveParts, deletableEpoch)
 			continue
 		}
 		g.parent.l.Warn().Err(err).Msgf("cannot delete snapshot file: %s", path)
 		remainingEpochs = append(remainingEpochs, deletableEpoch)
 	}
 	g.deletableEpochs = remainingEpochs
-}
-
-func (g garbageCleaner) cleanParts() {
-OUTER:
-	for partID := range g.knownPartFiles {
-		for _, partInSnapshot := range g.liveParts {
-			if _, ok := partInSnapshot[partID]; ok {
-				continue OUTER
-			}
-		}
-		g.parent.fileSystem.MustRMAll(partPath(g.parent.root, partID))
-		delete(g.knownPartFiles, partID)
-	}
 }

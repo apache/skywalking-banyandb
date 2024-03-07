@@ -109,12 +109,13 @@ type element struct {
 }
 
 type part struct {
-	path                 string
 	primary              fs.Reader
 	timestamps           fs.Reader
 	elementIDs           fs.Reader
+	fileSystem           fs.FileSystem
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
+	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
 }
@@ -382,9 +383,10 @@ func releaseMemPart(mp *memPart) {
 var memPartPool sync.Pool
 
 type partWrapper struct {
-	mp  *memPart
-	p   *part
-	ref int32
+	mp        *memPart
+	p         *part
+	ref       int32
+	removable atomic.Bool
 }
 
 func newPartWrapper(mp *memPart, p *part) *partWrapper {
@@ -407,6 +409,9 @@ func (pw *partWrapper) decRef() {
 		return
 	}
 	pw.p.close()
+	if pw.removable.Load() && pw.p.fileSystem != nil {
+		pw.p.fileSystem.MustRMAll(pw.p.path)
+	}
 }
 
 func (pw *partWrapper) ID() uint64 {
@@ -417,6 +422,7 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	var p part
 	partPath := partPath(root, id)
 	p.path = partPath
+	p.fileSystem = fileSystem
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
 	p.partMetadata.ID = id
 
