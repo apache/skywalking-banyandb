@@ -150,7 +150,7 @@ license-dep: default ## Fix license header issues
 
 docker.build: TARGET=docker
 docker.build: DIR=docker
-docker.build: 
+docker.build:
 	$(MAKE) $(TARGET) -C $(DIR); \
 	if [ $$? -ne 0 ]; then \
 		exit 1; \

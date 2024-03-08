@@ -31,32 +31,17 @@ IMG := $(HUB)/$(IMG_NAME):$(TAG)
 
 # Disable cache in CI environment
 ifeq (true,$(CI))
-	ifeq ($(OS),Windows_NT)
-		# windows not support buildx, so no "--load" option
-		DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache
-	else
-		DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache --load
-	endif
+	DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache
 endif
 
-DOCKER_FILE := Dockerfile
-DOCKER_BUILD = docker buildx build
-TIME = time
-ifeq ($(OS),Windows_NT)
-	# build docker using other Dockerfile and docker build command
-	DOCKER_FILE = Dockerfile.windows
-	DOCKER_BUILD = docker build
-	# time is not support in the windows(CI environment)
-	TIME =
-endif
+docker: PLATFORMS =
+docker: LOAD_OR_PUSH = --load
+docker: DOCKER_TYPE = "Build"
+docker.push: PLATFORMS = --platform linux/amd64,linux/arm64,windows/amd64
+docker.push: LOAD_OR_PUSH = --push
+docker.push: DOCKER_TYPE = "Push"
 
-.PHONY: docker
-docker:
-	@echo "Build $(IMG)"
-	$(TIME) $(DOCKER_BUILD) $(DOCKER_BUILD_ARGS) -t $(IMG) -f $(DOCKER_FILE) ..
-
-.PHONY: docker.push
-docker.push:
-	@echo "Push $(IMG)"
-	$(TIME) docker push $(IMG)
+docker docker.push:
+	@echo "$(DOCKER_TYPE) $(IMG)"
+	@time docker buildx build $(DOCKER_BUILD_ARGS) $(PLATFORMS) $(LOAD_OR_PUSH) -t $(IMG) -f Dockerfile ..
 
