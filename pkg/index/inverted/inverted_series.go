@@ -36,6 +36,9 @@ func (s *store) Search(term []byte) (common.SeriesID, error) {
 	if err != nil {
 		return 0, err
 	}
+	defer func() {
+		_ = reader.Close()
+	}()
 	query := bluge.NewTermQuery(convert.BytesToString(term)).SetField(entityField)
 	dmi, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
@@ -67,6 +70,9 @@ func (s *store) SearchPrefix(prefix []byte) ([]index.Series, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		_ = reader.Close()
+	}()
 	query := bluge.NewPrefixQuery(convert.BytesToString(prefix)).SetField(entityField)
 	dmi, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
@@ -81,6 +87,9 @@ func (s *store) SearchWildcard(wildcard []byte) ([]index.Series, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		_ = reader.Close()
+	}()
 	query := bluge.NewWildcardQuery(convert.BytesToString(wildcard)).SetField(entityField)
 	dmi, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {

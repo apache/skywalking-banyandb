@@ -417,7 +417,8 @@ func TestQueryResult(t *testing.T) {
 				fileSystem := fs.NewLocalFileSystem()
 				defer defFn()
 				tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()})
+					// Since Stream deduplicate data in merging process, we need to disable the merging in the test.
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDisabledMergePolicyForTesting()})
 				require.NoError(t, err)
 				for _, es := range tt.esList {
 					tst.mustAddElements(es)
@@ -431,7 +432,7 @@ func TestQueryResult(t *testing.T) {
 							time.Sleep(100 * time.Millisecond)
 							continue
 						}
-						if len(snp.parts) == len(tt.esList) {
+						if snp.creator != snapshotCreatorMemPart && len(snp.parts) == len(tt.esList) {
 							snp.decRef()
 							tst.Close()
 							break

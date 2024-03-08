@@ -114,7 +114,9 @@ func (s *snapshot) remove(nextEpoch uint64, merged map[uint64]struct{}) snapshot
 		if _, ok := merged[s.parts[i].ID()]; !ok {
 			s.parts[i].incRef()
 			result.parts = append(result.parts, s.parts[i])
+			continue
 		}
+		s.parts[i].removable.Store(true)
 	}
 	return result
 }

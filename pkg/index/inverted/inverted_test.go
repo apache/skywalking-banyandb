@@ -123,7 +123,7 @@ func TestStore_Match(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		name := strings.Join(tt.matches, " and ")
+		name := strings.Join(tt.matches, "-")
 		t.Run(name, func(t *testing.T) {
 			list, err := s.Match(serviceName, tt.matches)
 			if tt.wantErr {
