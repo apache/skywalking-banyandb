@@ -37,7 +37,7 @@ endif
 docker: PLATFORMS =
 docker: LOAD_OR_PUSH = --load
 docker: DOCKER_TYPE = "Build"
-docker.push: PLATFORMS = --platform linux/amd64,windows/amd64
+docker.push: PLATFORMS = --platform linux/amd64,linux/arm64,windows/amd64
 docker.push: LOAD_OR_PUSH = --push
 docker.push: DOCKER_TYPE = "Push"
 
