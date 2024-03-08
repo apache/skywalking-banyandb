@@ -120,7 +120,7 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 			epoch++
 		case next := <-flushCh:
 			tst.introduceFlushed(next, epoch)
-			tst.gc.cleanSnapshots()
+			tst.gc.clean()
 			epoch++
 		case next := <-mergeCh:
 			tst.introduceMerged(next, epoch)
