@@ -260,7 +260,7 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_16MB(b *testing.B
 	seriesID := seriesID1000
 	seriesIDLen := len(seriesID)
 
-	rotateSize := 1024 * 1024 * 16 // 16MB
+	rotateSize := 1024 * 1024 * 16
 	rotateChan := make(chan struct{})
 	rotateMessage := struct{}{}
 	seriesIDVolume := 16
@@ -298,7 +298,7 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_32MB(b *testing.B
 	seriesID := seriesID1000
 	seriesIDLen := len(seriesID)
 
-	rotateSize := 1024 * 1024 * 32 // 32MB
+	rotateSize := 1024 * 1024 * 32
 	rotateChan := make(chan struct{})
 	rotateMessage := struct{}{}
 	seriesIDVolume := 16
@@ -336,7 +336,7 @@ func Benchmark_SeriesID_1000_Buffer_64K_NoSyncFlush_And_Rotate_64MB(b *testing.B
 	seriesID := seriesID1000
 	seriesIDLen := len(seriesID)
 
-	rotateSize := 1024 * 1024 * 64 // 64MB
+	rotateSize := 1024 * 1024 * 64
 	rotateChan := make(chan struct{})
 	rotateMessage := struct{}{}
 	seriesIDVolume := 16
@@ -374,7 +374,7 @@ func newWAL(options *Options) WAL {
 	logPath, _ := filepath.Abs(path)
 	if options == nil {
 		options = &Options{
-			BufferSize:          1024 * 64, // 64KB
+			BufferSize:          1024 * 64,
 			BufferBatchInterval: 3 * time.Second,
 		}
 	}

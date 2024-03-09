@@ -62,8 +62,8 @@ const (
 
 // DefaultOptions for Open().
 var DefaultOptions = &Options{
-	FileSize:            67108864, // 64MB
-	BufferSize:          65535,    // 16KB
+	FileSize:            1024 * 1024 * 64, // 64MB
+	BufferSize:          1024 * 16,        // 16KB
 	BufferBatchInterval: 3 * time.Second,
 	SyncFlush:           defaultSyncFlush,
 }
