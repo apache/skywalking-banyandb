@@ -135,6 +135,8 @@ func Test_tstIter(t *testing.T) {
 		minTimestamp int64
 		maxTimestamp int64
 	}
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
 
 	verify := func(t *testing.T, tt testCtx, tst *tsTable) uint64 {
 		defer tst.Close()
@@ -146,7 +148,7 @@ func Test_tstIter(t *testing.T) {
 		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
 		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
-		ti.init(pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
+		ti.init(bma, pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
 		var got []blockMetadata
 		for ti.nextBlock() {
 			if ti.piHeap[0].curBlock.seriesID == 0 {
