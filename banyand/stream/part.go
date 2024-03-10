@@ -410,7 +410,9 @@ func (pw *partWrapper) decRef() {
 	}
 	pw.p.close()
 	if pw.removable.Load() && pw.p.fileSystem != nil {
-		pw.p.fileSystem.MustRMAll(pw.p.path)
+		go func(pw *partWrapper) {
+			pw.p.fileSystem.MustRMAll(pw.p.path)
+		}(pw)
 	}
 }
 
