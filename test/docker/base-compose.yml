@@ -21,7 +21,7 @@ services:
       - 6060
     command: standalone
     healthcheck:
-      test: ["CMD", "./bydbctl", "health", "--addr=http://banyandb:17913"]
+      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913"]
       interval: 5s
       timeout: 10s
       retries: 120

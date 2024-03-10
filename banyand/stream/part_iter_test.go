@@ -109,13 +109,14 @@ func Test_partIter_nextBlock(t *testing.T) {
 			wantErr: nil,
 		},
 	}
-
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			verifyPart := func(p *part) {
 				defer p.close()
 				pi := partIter{}
-				pi.init(p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
+				pi.init(bma, p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
 
 				var got []blockMetadata
 				for pi.nextBlock() {

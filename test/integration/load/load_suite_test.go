@@ -18,6 +18,7 @@
 package integration_load_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -27,12 +28,14 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	cases_stream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	cases_stream_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
 
@@ -41,64 +44,88 @@ func TestIntegrationLoad(t *testing.T) {
 	RunSpecs(t, "Integration Load Suite", Label("integration", "slow"))
 }
 
-var (
-	connection *grpc.ClientConn
-	now        time.Time
-	deferFunc  func()
-	goods      []gleak.Goroutine
-)
+var _ = Describe("Test Suite", func() {
+	var (
+		connection *grpc.ClientConn
+		now        time.Time
+		deferFunc  func()
+		goods      []gleak.Goroutine
+		addr       string
+	)
 
-var _ = SynchronizedBeforeSuite(func() []byte {
-	goods = gleak.Goroutines()
-	Expect(logger.Init(logger.Logging{
-		Env:   "dev",
-		Level: flags.LogLevel,
-	})).To(Succeed())
-	var addr string
-	addr, _, deferFunc = setup.Standalone()
-	Eventually(
-		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
-		flags.EventuallyTimeout).Should(Succeed())
-	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
-	days := 7
-	hours := 24
-	minutes := 60
-	interval := 10 * time.Second
-	c := time.Now()
-	for i := 0; i < days; i++ {
-		date := c.Add(-time.Hour * time.Duration((days-i)*24))
-		for h := 0; h < hours; h++ {
-			hour := date.Add(time.Hour * time.Duration(h))
-			start := time.Now()
-			for j := 0; j < minutes; j++ {
-				n := hour.Add(time.Minute * time.Duration(j))
-				ns := n.UnixNano()
-				now = time.Unix(0, ns-ns%int64(time.Minute))
-				// stream
-				cases_stream_data.Write(conn, "data.json", now, interval)
+	BeforeEach(func() {
+		Expect(logger.Init(logger.Logging{
+			Env:   "dev",
+			Level: flags.LogLevel,
+		})).Should(Succeed())
+		goods = gleak.Goroutines()
+		addr, _, deferFunc = setup.Standalone()
+		Eventually(
+			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+			flags.EventuallyTimeout).Should(Succeed())
+		var err error
+		connection, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		Expect(err).NotTo(HaveOccurred())
+		days := 7
+		hours := 24
+		minutes := 60
+		interval := 10 * time.Second
+		c := time.Now()
+		for i := 0; i < days; i++ {
+			date := c.Add(-time.Hour * time.Duration((days-i)*24))
+			for h := 0; h < hours; h++ {
+				hour := date.Add(time.Hour * time.Duration(h))
+				start := time.Now()
+				for j := 0; j < minutes; j++ {
+					n := hour.Add(time.Minute * time.Duration(j))
+					ns := n.UnixNano()
+					now = time.Unix(0, ns-ns%int64(time.Minute))
+					// stream
+					cases_stream_data.Write(connection, "data.json", now, interval)
+				}
+				logger.Infof("written stream in %s took %s \n", hour, time.Since(start))
 			}
-			GinkgoWriter.Printf("written stream in %s took %s \n", hour, time.Since(start))
 		}
-	}
-	Expect(conn.Close()).To(Succeed())
-	return []byte(addr)
-}, func(address []byte) {
-	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	cases_stream.SharedContext = helpers.SharedContext{
-		Connection: connection,
-		BaseTime:   now,
-	}
-	Expect(err).NotTo(HaveOccurred())
-})
-
-var _ = SynchronizedAfterSuite(func() {
-	if connection != nil {
 		Expect(connection.Close()).To(Succeed())
-	}
-}, func() {
-	deferFunc()
-	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+	})
+
+	It("should read data", func() {
+		var err error
+		connection, err = grpchelper.Conn(addr, 10*time.Second,
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		Expect(err).NotTo(HaveOccurred())
+		sharedContext := helpers.SharedContext{
+			Connection: connection,
+			BaseTime:   now,
+		}
+		query := &streamv1.QueryRequest{
+			Metadata: &commonv1.Metadata{
+				Name:  "sw",
+				Group: "default",
+			},
+			Projection: &modelv1.TagProjection{
+				TagFamilies: []*modelv1.TagProjection_TagFamily{
+					{
+						Name: "searchable",
+						Tags: []string{"trace_id"},
+					},
+				},
+			},
+		}
+		query.TimeRange = helpers.TimeRange(helpers.Args{Input: "all", Duration: 1 * time.Hour}, sharedContext)
+		c := streamv1.NewStreamServiceClient(sharedContext.Connection)
+		ctx := context.Background()
+		resp, err := c.Query(ctx, query)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("query result: %s elements\n", resp.GetElements())
+		Expect(len(resp.GetElements())).To(BeNumerically(">", 0))
+	})
+
+	AfterEach(func() {
+		if connection != nil {
+			Expect(connection.Close()).To(Succeed())
+		}
+		deferFunc()
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+	})
 })

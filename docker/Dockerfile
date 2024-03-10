@@ -47,14 +47,21 @@ RUN --mount=target=. \
 FROM alpine:edge AS certs
 RUN apk add --no-cache ca-certificates && update-ca-certificates
 
-FROM busybox:stable-glibc
+FROM busybox:stable-glibc as build-linux
 
-COPY --from=builder /out/banyand-server-static /banyand-server
+COPY --from=builder /out/banyand-server-static /banyand
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 COPY --from=builder /out/bydbctl /bydbctl
+
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 as build-windows
+
+COPY banyand/build/bin/banyand-server-static "/banyand"
+COPY bydbctl/build/bin/bydbctl "/bydbctl"
+
+FROM build-${TARGETOS} AS final
 
 EXPOSE 17912
 EXPOSE 17913
 EXPOSE 6060
 
-ENTRYPOINT ["/banyand-server"]
+ENTRYPOINT ["/banyand"]

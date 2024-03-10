@@ -58,10 +58,11 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	pi.reset()
 	pi.p = p
 
+	pi.bms = bma.arr
 	pi.sids = sids
 	pi.minTimestamp = minTimestamp
 	pi.maxTimestamp = maxTimestamp
@@ -145,13 +146,13 @@ func (pi *partIter) loadNextBlockMetadata() bool {
 			continue
 		}
 
-		bm, err := pi.readPrimaryBlock(pbm)
+		var err error
+		pi.bms, err = pi.readPrimaryBlock(pi.bms[:0], pbm)
 		if err != nil {
 			pi.err = fmt.Errorf("cannot read primary block for part %q at offset %d with size %d: %w",
 				&pi.p.partMetadata, pbm.offset, pbm.size, err)
 			return false
 		}
-		pi.bms = bm
 		return true
 	}
 	pi.err = io.EOF
@@ -177,7 +178,7 @@ func searchPBM(pbmIndex []primaryBlockMetadata, sid common.SeriesID) []primaryBl
 	return pbmIndex[n-1:]
 }
 
-func (pi *partIter) readPrimaryBlock(mr *primaryBlockMetadata) ([]blockMetadata, error) {
+func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetadata) ([]blockMetadata, error) {
 	pi.compressedPrimaryBuf = bytes.ResizeOver(pi.compressedPrimaryBuf, int(mr.size))
 	fs.MustReadData(pi.p.primary, int64(mr.offset), pi.compressedPrimaryBuf)
 
@@ -186,12 +187,11 @@ func (pi *partIter) readPrimaryBlock(mr *primaryBlockMetadata) ([]blockMetadata,
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress index block: %w", err)
 	}
-	bm := make([]blockMetadata, 0)
-	bm, err = unmarshalBlockMetadata(bm, pi.primaryBuf)
+	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
-	return bm, nil
+	return bms, nil
 }
 
 func (pi *partIter) findBlock() bool {

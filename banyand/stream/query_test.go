@@ -326,7 +326,8 @@ func TestQueryResult(t *testing.T) {
 			}},
 		},
 	}
-
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			verify := func(t *testing.T, tst *tsTable) {
@@ -345,7 +346,7 @@ func TestQueryResult(t *testing.T) {
 					return sids[i] < tt.sids[j]
 				})
 				ti := &tstIter{}
-				ti.init(pp, sids, tt.minTimestamp, tt.maxTimestamp)
+				ti.init(bma, pp, sids, tt.minTimestamp, tt.maxTimestamp)
 
 				var result queryResult
 				for ti.nextBlock() {
@@ -417,7 +418,8 @@ func TestQueryResult(t *testing.T) {
 				fileSystem := fs.NewLocalFileSystem()
 				defer defFn()
 				tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()})
+					// Since Stream deduplicate data in merging process, we need to disable the merging in the test.
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDisabledMergePolicyForTesting()})
 				require.NoError(t, err)
 				for _, es := range tt.esList {
 					tst.mustAddElements(es)
@@ -431,7 +433,7 @@ func TestQueryResult(t *testing.T) {
 							time.Sleep(100 * time.Millisecond)
 							continue
 						}
-						if len(snp.parts) == len(tt.esList) {
+						if snp.creator != snapshotCreatorMemPart && len(snp.parts) == len(tt.esList) {
 							snp.decRef()
 							tst.Close()
 							break

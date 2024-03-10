@@ -31,15 +31,17 @@ IMG := $(HUB)/$(IMG_NAME):$(TAG)
 
 # Disable cache in CI environment
 ifeq (true,$(CI))
-	DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache --load
+	DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache
 endif
 
-.PHONY: docker
-docker:
-	@echo "Build $(IMG)"
-	time docker buildx build $(DOCKER_BUILD_ARGS) -t $(IMG) -f Dockerfile ..
+docker: PLATFORMS =
+docker: LOAD_OR_PUSH = --load
+docker: DOCKER_TYPE = "Build"
+docker.push: PLATFORMS = --platform linux/amd64,linux/arm64,windows/amd64
+docker.push: LOAD_OR_PUSH = --push
+docker.push: DOCKER_TYPE = "Push"
 
-.PHONY: docker.push
-docker.push:
-	@echo "Push $(IMG)"
-	@time docker push $(IMG)
+docker docker.push:
+	@echo "$(DOCKER_TYPE) $(IMG)"
+	@time docker buildx build $(DOCKER_BUILD_ARGS) $(PLATFORMS) $(LOAD_OR_PUSH) -t $(IMG) -f Dockerfile ..
+

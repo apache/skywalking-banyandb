@@ -66,6 +66,7 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 	snp := snapshot{
 		epoch: epoch,
 	}
+	needToPersist := false
 	for _, id := range loadedParts {
 		var find bool
 		for j := range parts {
@@ -75,7 +76,15 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 			}
 		}
 		if !find {
-			tst.gc.submitParts(id)
+			tst.gc.removePart(id)
+			continue
+		}
+		err := validatePartMetadata(tst.fileSystem, partPath(tst.root, id))
+		if err != nil {
+			tst.l.Info().Err(err).Uint64("id", id).Msg("cannot validate part metadata. skip and delete it")
+			tst.gc.removePart(id)
+			needToPersist = true
+			continue
 		}
 		p := mustOpenFilePart(id, tst.root, tst.fileSystem)
 		p.partMetadata.ID = id
@@ -91,6 +100,9 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 	}
 	snp.incRef()
 	tst.snapshot = &snp
+	if needToPersist {
+		tst.persistSnapshot(&snp)
+	}
 }
 
 func (tst *tsTable) startLoop(cur uint64) {
@@ -189,6 +201,12 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 				needToDelete = append(needToDelete, ee[i].Name())
 				continue
 			}
+			err = validatePartMetadata(fileSystem, filepath.Join(rootPath, ee[i].Name()))
+			if err != nil {
+				l.Info().Err(err).Msg("cannot validate part metadata. skip and delete it")
+				needToDelete = append(needToDelete, ee[i].Name())
+				continue
+			}
 			loadedParts = append(loadedParts, p)
 			continue
 		}
@@ -204,9 +222,8 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		loadedSnapshots = append(loadedSnapshots, snapshot)
 	}
 	for i := range needToDelete {
-		if err := fileSystem.DeleteFile(filepath.Join(rootPath, needToDelete[i])); err != nil {
-			l.Warn().Err(err).Str("path", filepath.Join(rootPath, needToDelete[i])).Msg("failed to delete part. Please check manually")
-		}
+		l.Info().Str("path", filepath.Join(rootPath, needToDelete[i])).Msg("delete invalid directory or file")
+		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
 		t := &tst
@@ -310,7 +327,7 @@ func (ti *tstIter) reset() {
 	ti.nextBlockNoop = false
 }
 
-func (ti *tstIter) init(parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	ti.reset()
 	ti.parts = parts
 
@@ -319,7 +336,7 @@ func (ti *tstIter) init(parts []*part, sids []common.SeriesID, minTimestamp, max
 	}
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
-		ti.piPool[i].init(p, sids, minTimestamp, maxTimestamp)
+		ti.piPool[i].init(bma, p, sids, minTimestamp, maxTimestamp)
 	}
 
 	ti.piHeap = ti.piHeap[:0]

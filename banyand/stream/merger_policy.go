@@ -39,6 +39,10 @@ func newDefaultMergePolicyForTesting() *mergePolicy {
 	return newMergePolicy(4, 1.7, math.MaxUint64)
 }
 
+func newDisabledMergePolicyForTesting() *mergePolicy {
+	return newMergePolicy(0, 0, 0)
+}
+
 // NewMergePolicy creates a MergePolicy with given parameters.
 func newMergePolicy(maxParts int, minMergeMul float64, maxFanOutSize uint64) *mergePolicy {
 	return &mergePolicy{

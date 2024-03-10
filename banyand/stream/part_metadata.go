@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"path/filepath"
 
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -43,6 +45,19 @@ func (pm *partMetadata) reset() {
 	pm.MinTimestamp = 0
 	pm.MaxTimestamp = 0
 	pm.ID = 0
+}
+
+func validatePartMetadata(fileSystem fs.FileSystem, partPath string) error {
+	metadataPath := filepath.Join(partPath, metadataFilename)
+	metadata, err := fileSystem.Read(metadataPath)
+	if err != nil {
+		return errors.WithMessage(err, "cannot read metadata.json")
+	}
+	var pm partMetadata
+	if err := json.Unmarshal(metadata, &pm); err != nil {
+		return errors.WithMessage(err, "cannot parse metadata.json")
+	}
+	return nil
 }
 
 func (pm *partMetadata) mustReadMetadata(fileSystem fs.FileSystem, partPath string) {

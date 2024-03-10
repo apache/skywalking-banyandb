@@ -110,14 +110,7 @@ initData()
                 <el-menu-item index="/banyandb/property">Property</el-menu-item>
             </el-menu>
         </div>
-        <div class="person flex justify-around align-item-center">
-            <el-icon class="icon pointer">
-                <Message />
-            </el-icon>
-            <el-icon class="icon pointer">
-                <Avatar />
-            </el-icon>
-            <div class="text-normal text-main-color text-family text-weight-lt text-title">Admin</div>
+        <div class="flex-block">
         </div>
     </div>
 </template>
@@ -154,9 +147,8 @@ initData()
     justify-content: center;
 }
 
-.person {
+.flex-block {
     width: 140px;
-    height: 100%;
     margin-right: 30px;
 }
 

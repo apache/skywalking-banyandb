@@ -546,12 +546,15 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		}
 		result.snapshots = append(result.snapshots, s)
 	}
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
 	// TODO: cache tstIter
 	var tstIter tstIter
+	defer tstIter.reset()
 	originalSids := make([]common.SeriesID, len(sids))
 	copy(originalSids, sids)
 	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	tstIter.init(parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
 	if tstIter.Error() != nil {
 		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
 	}

@@ -120,7 +120,7 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 			epoch++
 		case next := <-flushCh:
 			tst.introduceFlushed(next, epoch)
-			tst.gc.cleanSnapshots()
+			tst.gc.clean()
 			epoch++
 		case next := <-mergeCh:
 			tst.introduceMerged(next, epoch)
@@ -146,7 +146,7 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 	nextSnp := cur.copyAllTo(epoch)
 	nextSnp.parts = append(nextSnp.parts, next)
 	nextSnp.creator = snapshotCreatorMemPart
-	tst.replaceSnapshot(&nextSnp)
+	tst.replaceSnapshot(&nextSnp, false)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
@@ -160,8 +160,7 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 	defer cur.decRef()
 	nextSnp := cur.merge(epoch, nextIntroduction.flushed)
 	nextSnp.creator = snapshotCreatorFlusher
-	tst.replaceSnapshot(&nextSnp)
-	tst.persistSnapshot(&nextSnp)
+	tst.replaceSnapshot(&nextSnp, true)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
@@ -177,20 +176,22 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 	nextSnp := cur.remove(epoch, nextIntroduction.merged)
 	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
 	nextSnp.creator = nextIntroduction.creator
-	tst.replaceSnapshot(&nextSnp)
-	tst.persistSnapshot(&nextSnp)
+	tst.replaceSnapshot(&nextSnp, true)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
 }
 
-func (tst *tsTable) replaceSnapshot(next *snapshot) {
+func (tst *tsTable) replaceSnapshot(next *snapshot, persisted bool) {
 	tst.Lock()
 	defer tst.Unlock()
 	if tst.snapshot != nil {
 		tst.snapshot.decRef()
 	}
 	tst.snapshot = next
+	if persisted {
+		tst.persistSnapshot(next)
+	}
 }
 
 func (tst *tsTable) currentEpoch() uint64 {
