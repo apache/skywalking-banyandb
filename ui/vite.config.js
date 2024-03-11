@@ -23,37 +23,41 @@ import { fileURLToPath, URL } from 'node:url'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
-import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import {loadEnv} from 'vite'
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [
-    // ...
-    AutoImport({
-      resolvers: [ElementPlusResolver()],
-    }),
-    Components({
-      resolvers: [ElementPlusResolver()],
-    }),
-    vue()
-  ],
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url))
-    }
-  },
-  server: {
-    proxy: {
-      "^/api": {
-        target: "http://localhost:17913",
-        changeOrigin: true,
-      },
-      "^/monitoring": {
-        target: "http://localhost:2121",
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/monitoring/, ''),
-      },
+export default ({ mode }) => {
+  const { VITE_API_PROXY_TARGET, VITE_MONITOR_PROXY_TARGET } = loadEnv(mode, process.cwd());
+
+  return {
+    plugins: [
+      // ...
+      AutoImport({
+        resolvers: [ElementPlusResolver()],
+      }),
+      Components({
+        resolvers: [ElementPlusResolver()],
+      }),
+      vue()
+    ],
+    resolve: {
+      alias: {
+        '@': fileURLToPath(new URL('./src', import.meta.url))
+      }
     },
-  }
-})
+    server: {
+      proxy: {
+        "^/api": {
+          target: `${VITE_API_PROXY_TARGET || "http://127.0.0.1:12800"}`,
+          changeOrigin: true,
+        },
+        "^/monitoring": {
+          target: `${VITE_MONITOR_PROXY_TARGET || "http://127.0.0.1:12800"}`,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/monitoring/, ''),
+        },
+      },
+    }
+  };
+};
