@@ -107,7 +107,7 @@ func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, err
 			return multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 		}
 		stream, errCreateStream := client.client.Send(context.Background())
-		if err != nil {
+		if errCreateStream != nil {
 			return multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 		}
 		errSend = stream.Send(r)

@@ -65,10 +65,16 @@ func (w *watcher) Close() error {
 func (w *watcher) allEvents() int64 {
 	cli := w.cli
 	var resp *clientv3.GetResponse
+	start := time.Now()
+	var eventHandleTime time.Duration
+	var eventSize int
 	for {
 		var err error
 		if resp, err = cli.Get(w.closer.Ctx(), w.key, clientv3.WithPrefix()); err == nil {
+			startHandle := time.Now()
+			eventSize = len(resp.Kvs)
 			w.handleAllEvents(resp.Kvs)
+			eventHandleTime = time.Since(startHandle)
 			break
 		}
 		select {
@@ -77,6 +83,8 @@ func (w *watcher) allEvents() int64 {
 		case <-time.After(1 * time.Second):
 		}
 	}
+	w.l.Info().Dur("event_handle_time", eventHandleTime).Dur("total_time", time.Since(start)).
+		Int("event_size", eventSize).Str("key", w.key).Msg("watcher all events")
 	return resp.Header.Revision
 }
 
