@@ -68,13 +68,13 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 }
 
 type database[T TSTable, O any] struct {
-	logger   *logger.Logger
-	lock     fs.File
-	index    *seriesIndex
-	p        common.Position
-	location string
-	sLst     []*shard[T, O]
-	opts     TSDBOpts[T, O]
+	logger          *logger.Logger
+	lock            fs.File
+	indexController *seriesIndexController[T, O]
+	p               common.Position
+	location        string
+	sLst            []*shard[T, O]
+	opts            TSDBOpts[T, O]
 	sync.RWMutex
 	sLen uint32
 }
@@ -89,7 +89,7 @@ func (d *database[T, O]) Close() error {
 	if err := lfs.DeleteFile(d.lock.Path()); err != nil {
 		logger.Panicf("cannot delete lock file %s: %s", d.lock.Path(), err)
 	}
-	return d.index.Close()
+	return d.indexController.Close()
 }
 
 // OpenTSDB returns a new tsdb runtime. This constructor will create a new database if it's absent,
@@ -104,16 +104,17 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	p := common.GetPosition(ctx)
 	location := filepath.Clean(opts.Location)
 	lfs.MkdirIfNotExist(location, dirPerm)
-	si, err := newSeriesIndex(ctx, location, opts.SeriesIndexFlushTimeoutSeconds)
+	sir, err := newSeriesIndexController(ctx, opts)
 	if err != nil {
-		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index failed").Error())
+		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
 	}
+
 	db := &database[T, O]{
-		location: location,
-		logger:   logger.Fetch(ctx, p.Database),
-		index:    si,
-		opts:     opts,
-		p:        p,
+		location:        location,
+		logger:          logger.Fetch(ctx, p.Database),
+		indexController: sir,
+		opts:            opts,
+		p:               p,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	lockPath := filepath.Join(opts.Location, lockFilename)

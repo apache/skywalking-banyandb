@@ -19,9 +19,13 @@ package storage
 
 import (
 	"context"
-	"path"
+	"fmt"
+	"path/filepath"
+	"time"
 
 	"github.com/pkg/errors"
+	"github.com/robfig/cron/v3"
+	"github.com/valyala/fastrand"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -31,14 +35,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func (d *database[T, O]) IndexDB() IndexDB {
-	return d.index
+	return d.indexController.hot
 }
 
 func (d *database[T, O]) Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
-	return d.index.searchPrimary(ctx, series)
+	return d.indexController.searchPrimary(ctx, series)
 }
 
 type seriesIndex struct {
@@ -46,13 +51,13 @@ type seriesIndex struct {
 	l     *logger.Logger
 }
 
-func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64) (*seriesIndex, error) {
+func newSeriesIndex(ctx context.Context, path string, flushTimeoutSeconds int64) (*seriesIndex, error) {
 	si := &seriesIndex{
 		l: logger.Fetch(ctx, "series_index"),
 	}
 	var err error
 	if si.store, err = inverted.NewStore(inverted.StoreOpts{
-		Path:         path.Join(root, "idx"),
+		Path:         path,
 		Logger:       si.l,
 		BatchWaitSec: flushTimeoutSeconds,
 	}); err != nil {
@@ -223,4 +228,85 @@ func appendSeriesList(dest, src pbv1.SeriesList, filter posting.List) pbv1.Serie
 
 func (s *seriesIndex) Close() error {
 	return s.store.Close()
+}
+
+type seriesIndexController[T TSTable, O any] struct {
+	ctx       context.Context
+	hot       *seriesIndex
+	standby   *seriesIndex
+	scheduler *timestamp.Scheduler
+	l         *logger.Logger
+	opts      TSDBOpts[T, O]
+}
+
+func newSeriesIndexController[T TSTable, O any](
+	ctx context.Context,
+	opts TSDBOpts[T, O],
+) (*seriesIndexController[T, O], error) {
+	location := filepath.Clean(opts.Location)
+	path := fmt.Sprintf("idx-%v", fastrand.Uint32())
+	h, err := newSeriesIndex(ctx, filepath.Join(location, path), opts.SeriesIndexFlushTimeoutSeconds)
+	if err != nil {
+		return nil, err
+	}
+	path = fmt.Sprintf("idx-%v", fastrand.Uint32())
+	sb, err := newSeriesIndex(ctx, filepath.Join(location, path), opts.SeriesIndexFlushTimeoutSeconds)
+	if err != nil {
+		return nil, err
+	}
+	l := logger.Fetch(ctx, "seriesIndexController")
+
+	var expr string
+	switch opts.TTL.Unit {
+	case HOUR:
+		expr = "5 *"
+	case DAY:
+		expr = "5 0"
+	}
+	clock, _ := timestamp.GetClock(ctx)
+	scheduler := timestamp.NewScheduler(l, clock)
+	sir := &seriesIndexController[T, O]{
+		hot:       h,
+		standby:   sb,
+		ctx:       ctx,
+		scheduler: scheduler,
+		l:         l,
+	}
+	if err := scheduler.Register("seriesIndexController", cron.Minute|cron.Hour, expr, sir.run); err != nil {
+		return nil, err
+	}
+	return sir, nil
+}
+
+func (sir *seriesIndexController[T, O]) run(_ time.Time, l *logger.Logger) bool {
+	err := sir.hot.Close()
+	if err != nil {
+		l.Error().Msg("fail to close old hot series index")
+		return false
+	}
+	sir.hot = sir.standby
+	location := filepath.Clean(sir.opts.Location)
+	path := fmt.Sprintf("idx-%v", fastrand.Uint32())
+	sir.standby, err = newSeriesIndex(sir.ctx, filepath.Join(location, path), sir.opts.SeriesIndexFlushTimeoutSeconds)
+	if err != nil {
+		l.Error().Msg("fail to create series index")
+		return false
+	}
+	return true
+}
+
+func (sir *seriesIndexController[T, O]) Write(docs index.Documents) error {
+	return sir.hot.Write(docs)
+}
+
+func (sir *seriesIndexController[T, O]) searchPrimary(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+	return sir.hot.searchPrimary(ctx, series)
+}
+
+func (sir *seriesIndexController[T, O]) Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy) (pbv1.SeriesList, error) {
+	return sir.hot.Search(ctx, series, filter, order)
+}
+
+func (sir *seriesIndexController[T, O]) Close() error {
+	return sir.hot.Close()
 }

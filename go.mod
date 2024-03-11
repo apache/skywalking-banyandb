@@ -45,6 +45,8 @@ require (
 	sigs.k8s.io/yaml v1.4.0
 )
 
+require github.com/valyala/fastrand v1.1.0
+
 require (
 	github.com/axiomhq/hyperloglog v0.0.0-20230201085229-3ddf4bad03dc // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
