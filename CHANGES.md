@@ -58,7 +58,8 @@ Release Notes.
 - BanyanDB ui misses fields when creating a group
 - Fix data duplicate writing
 - Syncing metadata change events from etcd instead of a local channel.
-- Fix parse environment variables error
+- Fix parse environment variables error.
+- Fix console warnings in dev mod, and optimize `vite` configuration for proxy.
 
 ### Chores
 

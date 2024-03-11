@@ -103,7 +103,7 @@ initData()
         </div>
         <div class="navigation" style="margin-right: 20%">
             <el-menu active-text-color="#6E38F7" router :ellipsis="false" class="el-menu-demo" mode="horizontal"
-                :default-active="data.activeMenu" @select="handleSelect">
+                :default-active="data.activeMenu">
                 <el-menu-item index="/banyandb/dashboard">Dashboard</el-menu-item>
                 <el-menu-item index="/banyandb/stream">Stream</el-menu-item>
                 <el-menu-item index="/banyandb/measure">Measure</el-menu-item>
