@@ -167,7 +167,7 @@ const router = createRouter({
       children: [
         {
           path: '/:pathMatch(.*)',
-          name: 'property',
+          name: 'error',
           component: () => import('@/views/Errors/NotFound.vue'),
         }
       ]
