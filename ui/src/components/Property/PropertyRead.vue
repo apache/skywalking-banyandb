@@ -25,6 +25,7 @@ import { ElMessage } from 'element-plus';
 import { onMounted, reactive, ref } from 'vue';
 import { RefreshRight } from '@element-plus/icons-vue';
 import PropertyEditror from './PropertyEditror.vue';
+import PropertyValueReader from './PropertyValueReader.vue';
 
 const { proxy } = getCurrentInstance()
 // Loading
@@ -33,6 +34,7 @@ const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = proxy.$loadingClose
 const propertyEditorRef = ref()
+const propertyValueViewerRef = ref()
 const data = reactive({
     group: "",
     tableData: []
@@ -61,6 +63,13 @@ const getProperty = () => {
         .finally(() => {
             $loadingClose()
         })
+}
+const openPropertyView = (data) => {
+    propertyValueViewerRef?.value.openDialog(data)
+}
+
+const ellipsizeValueData = (data) => {
+    return data.value.slice(0, 20)+"..."
 }
 const openEditField = (index) => {
     const item = data.tableData[index]
@@ -156,7 +165,13 @@ onMounted(() => {
                     <template #default="scope">
                         <el-table :data="scope.row.tags">
                             <el-table-column label="Key" prop="key" width="150"></el-table-column>
-                            <el-table-column label="Value" prop="value"></el-table-column>
+                            <el-table-column label="Value" prop="value">
+                                <template #default="scope">
+                                    {{ellipsizeValueData(scope.row)}}
+                                    <el-button link type="primary" @click.prevent="openPropertyView(scope.row)"
+                                style="color: var(--color-main); font-weight: bold;">view</el-button>
+                                </template>
+                          </el-table-column>
                         </el-table>
                     </template>
                 </el-table-column>
@@ -174,6 +189,7 @@ onMounted(() => {
             </el-table>
         </el-card>
         <PropertyEditror ref="propertyEditorRef"></PropertyEditror>
+        <PropertyValueReader ref="propertyValueViewerRef"></PropertyValueReader>
     </div>
 </template>
 <style lang="scss" scoped>
