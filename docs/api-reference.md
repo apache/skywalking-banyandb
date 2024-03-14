@@ -2282,7 +2282,7 @@ Type determine the index structure under the hood
 | Delete | [TopNAggregationRegistryServiceDeleteRequest](#banyandb-database-v1-TopNAggregationRegistryServiceDeleteRequest) | [TopNAggregationRegistryServiceDeleteResponse](#banyandb-database-v1-TopNAggregationRegistryServiceDeleteResponse) |  |
 | Get | [TopNAggregationRegistryServiceGetRequest](#banyandb-database-v1-TopNAggregationRegistryServiceGetRequest) | [TopNAggregationRegistryServiceGetResponse](#banyandb-database-v1-TopNAggregationRegistryServiceGetResponse) |  |
 | List | [TopNAggregationRegistryServiceListRequest](#banyandb-database-v1-TopNAggregationRegistryServiceListRequest) | [TopNAggregationRegistryServiceListResponse](#banyandb-database-v1-TopNAggregationRegistryServiceListResponse) |  |
-| Exist | [TopNAggregationRegistryServiceExistRequest](#banyandb-database-v1-TopNAggregationRegistryServiceExistRequest) | [TopNAggregationRegistryServiceExistResponse](#banyandb-database-v1-TopNAggregationRegistryServiceExistResponse) |  |
+| Exist | [TopNAggregationRegistryServiceExistRequest](#banyandb-database-v1-TopNAggregationRegistryServiceExistRequest) | [TopNAggregationRegistryServiceExistResponse](#banyandb-database-v1-TopNAggregationRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 
  
 
