@@ -253,7 +253,9 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	}
 	sr.l.Info().Str("group", name).Msg("closing the previous tsdb")
 	db := g.SupplyTSDB()
-	db.Close()
+	if db != nil {
+		db.Close()
+	}
 	sr.l.Info().Str("group", name).Msg("creating a new tsdb")
 	if err := g.init(name); err != nil {
 		return nil, err
@@ -442,7 +444,10 @@ func (g *group) GetSchema() *commonv1.Group {
 }
 
 func (g *group) SupplyTSDB() io.Closer {
-	return g.db.Load().(io.Closer)
+	if v := g.db.Load(); v != nil {
+		return v.(io.Closer)
+	}
+	return nil
 }
 
 func (g *group) initResource(ctx context.Context, resourceSchema ResourceSchema) (Resource, error) {
@@ -530,7 +535,11 @@ func (g *group) close() (err error) {
 	if !g.isInit() || g.isPortable() {
 		return nil
 	}
-	return multierr.Append(err, g.SupplyTSDB().Close())
+	db := g.SupplyTSDB()
+	if db != nil {
+		err = multierr.Append(err, db.Close())
+	}
+	return err
 }
 
 func parseMaxModRevision[T ResourceSchema](indexRules []T) (maxRevisionForIdxRules int64) {

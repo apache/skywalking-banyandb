@@ -213,7 +213,11 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	if !ok {
 		return nil, fmt.Errorf("group %s not found", groupName)
 	}
-	return g.SupplyTSDB().(storage.TSDB[*tsTable, option]), nil
+	db := g.SupplyTSDB()
+	if db == nil {
+		return nil, fmt.Errorf("tsdb for group %s not found", groupName)
+	}
+	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)

@@ -71,7 +71,11 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
 	}
-	tsdb := s.databaseSupplier.SupplyTSDB().(storage.TSDB[*tsTable, option])
+	db := s.databaseSupplier.SupplyTSDB()
+	if db == nil {
+		return nil, errors.New("cannot get tsdb")
+	}
+	tsdb := db.(storage.TSDB[*tsTable, option])
 	tabWrappers := tsdb.SelectTSTables(*mqo.TimeRange)
 	defer func() {
 		for i := range tabWrappers {
