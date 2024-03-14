@@ -20,6 +20,7 @@ Release Notes.
   - Data ingestion and retrieval.
   - Flush memory data to disk.
   - Merge memory data and disk data.
+- Add HTTP services to TopNAggregation operations.
 
 ### Bugs
 
