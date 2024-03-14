@@ -44,11 +44,9 @@ const closeDialog = () => {
 const downloadValue = () => {
     const dataBlob = new Blob([valueData.formattedData], { type: 'text/JSON' })
     var a = document.createElement('a');
-
     a.download = 'value.txt';
     a.href = URL.createObjectURL(dataBlob);
     document.body.appendChild(a);
-
     a.click();
     document.body.removeChild(a);
 }
