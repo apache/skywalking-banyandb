@@ -1,0 +1,141 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+services:
+  change-vol-ownership:
+    image: ubuntu
+    user: "root"
+    group_add:
+      - '${GROUP_ID}'
+    volumes:
+      - /tmp/banyandb-stress-agent:/tmp/change-ownership
+    command: chown -R ${USER_ID}:${GROUP_ID} /tmp/change-ownership
+  banyandb:
+    user: "${USER_ID}:${GROUP_ID}"
+    extends:
+      file: ../../docker/base-compose.yml
+      service: banyandb
+    build:
+      dockerfile: ./docker/Dockerfile
+      context: ../../..
+    volumes:
+    - /tmp/banyandb-stress-agent:/tmp:rw,delgated
+    ports:
+    - 17913:17913
+    - 6060:6060
+    - 2121:2121
+    networks:
+      - test
+      - monitoring
+    depends_on:
+      change-vol-ownership:
+        condition: service_completed_successfully
+
+  oap:
+    extends:
+      file: ../../docker/base-compose.yml
+      service: oap
+    environment:
+      SW_STORAGE: banyandb
+    ports:
+      - 12800
+    volumes:
+      - ./log4j2.xml:/skywalking/config/log4j2.xml
+    networks:
+      - test
+    depends_on:
+      banyandb:
+        condition: service_healthy
+
+  agent:
+    extends:
+      file: ../../docker/base-compose.yml
+      service: agent
+    networks:
+      - test
+
+  provider:
+    extends:
+      file: ../../docker/base-compose.yml
+      service: provider
+    ports:
+      - 9090
+    networks:
+      - test
+    depends_on:
+      oap:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
+
+  consumer:
+    extends:
+      file: ../../docker/base-compose.yml
+      service: consumer
+    ports:
+      - 9092
+    networks:
+      - test
+    depends_on:
+      oap:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
+
+  traffic_loader:
+    extends:
+      file: ../../docker/base-compose.yml
+      service: traffic_loader
+    command: run --vus ${VUS} --duration 1h /scripts/consumer.js
+    volumes:
+      - ./scripts:/scripts
+    networks:
+      - test
+    depends_on:
+      oap:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+      consumer:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    profiles:
+      - "monitoring"
+    volumes:
+      - ./prom/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - 9090:9090
+    networks:
+      - monitoring
+networks:
+  test:
+  monitoring:
+
+volumes:
+  sw_agent: {}
+  prometheus_data: {}

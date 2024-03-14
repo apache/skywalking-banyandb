@@ -95,6 +95,7 @@ func (i identity) String() string {
 var _ schema.EventHandler = (*shardRepo)(nil)
 
 type shardRepo struct {
+	schema.UnimplementedOnInitHandler
 	log            *logger.Logger
 	shardEventsMap map[identity]uint32
 	sync.RWMutex
@@ -154,6 +155,7 @@ func getID(metadata *commonv1.Metadata) identity {
 var _ schema.EventHandler = (*entityRepo)(nil)
 
 type entityRepo struct {
+	schema.UnimplementedOnInitHandler
 	log         *logger.Logger
 	entitiesMap map[identity]partition.EntityLocator
 	sync.RWMutex
