@@ -23,6 +23,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 // EventType defines actions of events.
@@ -42,6 +43,7 @@ type EventKind uint8
 const (
 	EventKindGroup EventKind = iota
 	EventKindResource
+	EventKindTopNAgg
 )
 
 // Group is the root node, allowing get resources from its sub nodes.
@@ -53,7 +55,7 @@ type Group interface {
 
 // MetadataEvent is the syncing message between metadata repo and this framework.
 type MetadataEvent struct {
-	Metadata *commonv1.Metadata
+	Metadata ResourceSchema
 	Typ      EventType
 	Kind     EventKind
 }
@@ -92,8 +94,8 @@ type ResourceSupplier interface {
 // Repository is the collection of several hierarchies groups by a "Group".
 type Repository interface {
 	Watcher()
+	Init(schema.Kind) []int64
 	SendMetadataEvent(MetadataEvent)
-	StoreGroup(groupMeta *commonv1.Metadata) (*group, error)
 	LoadGroup(name string) (Group, bool)
 	LoadResource(metadata *commonv1.Metadata) (Resource, bool)
 	Close()

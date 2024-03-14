@@ -24,9 +24,7 @@ import (
 	"path"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -94,6 +92,14 @@ func (sr *schemaRepo) Measure(metadata *commonv1.Metadata) (Measure, error) {
 	return sm, nil
 }
 
+func (sr *schemaRepo) OnInit(kinds []schema.Kind) (bool, []int64) {
+	if len(kinds) != 5 {
+		logger.Panicf("unexpected kinds: %v", kinds)
+		return false, nil
+	}
+	return true, sr.Repository.Init(schema.KindMeasure)
+}
+
 func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindGroup:
@@ -104,13 +110,13 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindGroup,
-			Metadata: g.GetMetadata(),
+			Metadata: g,
 		})
 	case schema.KindMeasure:
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Measure).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Measure),
 		})
 	case schema.KindIndexRuleBinding:
 		irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding)
@@ -131,7 +137,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: stm.GetMetadata(),
+				Metadata: stm,
 			})
 		}
 	case schema.KindIndexRule:
@@ -145,107 +151,17 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: sub.(*databasev1.Measure).GetMetadata(),
+				Metadata: sub.(*databasev1.Measure),
 			})
 		}
 	case schema.KindTopNAggregation:
-		// createOrUpdate TopN schemas in advance
-		_, err := createOrUpdateTopNMeasure(context.Background(), sr.metadata.MeasureRegistry(), metadata.Spec.(*databasev1.TopNAggregation))
-		if err != nil {
-			return
-		}
-		// reload source measure
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
-			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure(),
+			Kind:     resourceSchema.EventKindTopNAgg,
+			Metadata: metadata.Spec.(*databasev1.TopNAggregation),
 		})
 	default:
 	}
-}
-
-func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) (*databasev1.Measure, error) {
-	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetMetadata())
-	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
-		return nil, err
-	}
-
-	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetSourceMeasure())
-	if err != nil {
-		return nil, err
-	}
-
-	tagNames := sourceMeasureSchema.GetEntity().GetTagNames()
-	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
-
-	for _, tagName := range tagNames {
-		var found bool
-		for _, fSpec := range sourceMeasureSchema.GetTagFamilies() {
-			for _, tSpec := range fSpec.GetTags() {
-				if tSpec.GetName() == tagName {
-					seriesSpecs = append(seriesSpecs, tSpec)
-					found = true
-					goto CHECK
-				}
-			}
-		}
-
-	CHECK:
-		if !found {
-			return nil, fmt.Errorf("fail to find tag spec %s", tagName)
-		}
-	}
-
-	// create a new "derived" measure for TopN result
-	newTopNMeasure := &databasev1.Measure{
-		Metadata: topNSchema.GetMetadata(),
-		Interval: sourceMeasureSchema.GetInterval(),
-		TagFamilies: []*databasev1.TagFamilySpec{
-			{
-				Name: topNTagFamily,
-				Tags: append([]*databasev1.TagSpec{
-					{
-						Name: "measure_id",
-						Type: databasev1.TagType_TAG_TYPE_STRING,
-					},
-					{
-						Name: "sortDirection",
-						Type: databasev1.TagType_TAG_TYPE_INT,
-					},
-					{
-						Name: "rankNumber",
-						Type: databasev1.TagType_TAG_TYPE_INT,
-					},
-				}, seriesSpecs...),
-			},
-		},
-		Fields: []*databasev1.FieldSpec{topNValueFieldSpec},
-		Entity: &databasev1.Entity{
-			TagNames: append([]string{
-				"sortDirection",
-				"rankNumber",
-			}, topNSchema.GetGroupByTagNames()...),
-		},
-	}
-	if oldTopNSchema == nil {
-		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
-			return nil, innerErr
-		}
-		return newTopNMeasure, nil
-	}
-	// compare with the old one
-	if cmp.Diff(newTopNMeasure, oldTopNSchema,
-		protocmp.IgnoreUnknown(),
-		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
-		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-		protocmp.Transform()) == "" {
-		return oldTopNSchema, nil
-	}
-	// update
-	if _, err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
-		return nil, err
-	}
-	return newTopNMeasure, nil
 }
 
 func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
@@ -258,13 +174,13 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindGroup,
-			Metadata: g.GetMetadata(),
+			Metadata: g,
 		})
 	case schema.KindMeasure:
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Measure).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Measure),
 		})
 	case schema.KindIndexRuleBinding:
 		if metadata.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
@@ -281,28 +197,18 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: m.GetMetadata(),
+				Metadata: m,
 			})
 		}
 	case schema.KindIndexRule:
 	case schema.KindTopNAggregation:
-		err := sr.removeTopNMeasure(metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure())
-		if err != nil {
-			return
-		}
-		// we should update instead of delete
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
-			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.TopNAggregation).GetSourceMeasure(),
+			Kind:     resourceSchema.EventKindTopNAgg,
+			Metadata: metadata.Spec.(*databasev1.TopNAggregation),
 		})
 	default:
 	}
-}
-
-func (sr *schemaRepo) removeTopNMeasure(metadata *commonv1.Metadata) error {
-	_, err := sr.metadata.MeasureRegistry().DeleteMeasure(context.Background(), metadata)
-	return err
 }
 
 func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) {

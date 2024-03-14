@@ -92,6 +92,14 @@ func (sr *schemaRepo) Stream(metadata *commonv1.Metadata) (Stream, error) {
 	return sm, nil
 }
 
+func (sr *schemaRepo) OnInit(kinds []schema.Kind) (bool, []int64) {
+	if len(kinds) != 4 {
+		logger.Panicf("invalid kinds: %v", kinds)
+		return false, nil
+	}
+	return true, sr.Repository.Init(schema.KindStream)
+}
+
 func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindGroup:
@@ -102,13 +110,13 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindGroup,
-			Metadata: g.GetMetadata(),
+			Metadata: g,
 		})
 	case schema.KindStream:
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Stream).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Stream),
 		})
 	case schema.KindIndexRuleBinding:
 		irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding)
@@ -129,7 +137,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: stm.GetMetadata(),
+				Metadata: stm,
 			})
 		}
 	case schema.KindIndexRule:
@@ -143,7 +151,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: sub.(*databasev1.Stream).GetMetadata(),
+				Metadata: sub.(*databasev1.Stream),
 			})
 		}
 	default:
@@ -160,13 +168,13 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindGroup,
-			Metadata: g.GetMetadata(),
+			Metadata: g,
 		})
 	case schema.KindStream:
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Stream).GetMetadata(),
+			Metadata: metadata.Spec.(*databasev1.Stream),
 		})
 	case schema.KindIndexRuleBinding:
 		if metadata.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
@@ -183,7 +191,7 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
 				Kind:     resourceSchema.EventKindResource,
-				Metadata: m.GetMetadata(),
+				Metadata: m,
 			})
 		}
 	case schema.KindIndexRule:
