@@ -25,7 +25,8 @@ Release Notes.
 ### Bugs
 
 - Fix the bug that property merge new tags failed.
-- Fix CPU Spike and Extended Duration in BanyanDB's etcd Watching Registration Process
+- Fix CPU Spike and Extended Duration in BanyanDB's etcd Watching Registration Process.
+- Fix panic when closing banyand.
 
 ### Chores
 
