@@ -27,7 +27,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -48,21 +47,7 @@ var (
 	streamJSON string
 	//go:embed testdata/group.json
 	groupJSON string
-
-	_ EventHandler = (*mockedEventHandler)(nil)
 )
-
-type mockedEventHandler struct {
-	mock.Mock
-}
-
-func (m *mockedEventHandler) OnAddOrUpdate(metadata Metadata) {
-	m.Called(metadata)
-}
-
-func (m *mockedEventHandler) OnDelete(metadata Metadata) {
-	m.Called(metadata)
-}
 
 func preloadSchema(e Registry) error {
 	g := &commonv1.Group{}

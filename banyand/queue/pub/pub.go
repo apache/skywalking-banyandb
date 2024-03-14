@@ -46,6 +46,7 @@ var (
 )
 
 type pub struct {
+	schema.UnimplementedOnInitHandler
 	metadata metadata.Repo
 	handler  schema.EventHandler
 	log      *logger.Logger
