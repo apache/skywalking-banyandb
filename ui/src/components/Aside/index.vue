@@ -298,7 +298,7 @@ function getGroupLists() {
                             })
                     })
                 })
-                if (props.type == 'stream') {
+                if (props.type == 'stream' || props.type == 'measure') {
                     let promiseIndexRule = data.groupLists.map((item) => {
                         let name = item.metadata.name
                         return new Promise((resolve, reject) => {
@@ -442,15 +442,6 @@ function shrinkDown(e) {
 // right click menu
 function rightClickGroup(e, index) {
     data.rightMenuList = groupMenu
-    if (props.type == 'measure') {
-        const rightMenuList = JSON.parse(JSON.stringify(groupMenu))
-        rightMenuList.push({
-            icon: "el-icon-document",
-            name: "new resources",
-            id: "create resources"
-        })
-        data.rightMenuList = rightMenuList
-    }
     data.clickIndex = index
     data.rightClickType = 'group'
     openRightMenu(e)
@@ -462,36 +453,40 @@ function rightClickResources(e, index, childIndex) {
     data.rightClickType = 'resources'
     openRightMenu(e)
 }
-function rightClickStream(e, index) {
+function rightClickResourcesFolder(e, index) {
     data.rightMenuList = StreamMenu
     data.clickIndex = index
     data.rightClickType = 'group'
     openRightMenu(e)
 }
-function rightClickIndexRule(e, index) {
+function rightClickIndexRule(e, index, schema) {
     data.rightMenuList = indexRuleMenu
     data.clickIndex = index
     data.rightClickType = 'index-rule'
+    data.schema = schema
     openRightMenu(e)
 }
-function rightClickIndexRuleBinding(e, index) {
+function rightClickIndexRuleBinding(e, index, schema) {
     data.rightMenuList = indexRuleBindMenu
     data.clickIndex = index
     data.rightClickType = 'index-rule-binding'
+    data.schema = schema
     openRightMenu(e)
 }
-function rightClickIndexRuleItem(e, index, childIndex) {
+function rightClickIndexRuleItem(e, index, childIndex, schema) {
     data.rightMenuList = indexRuleItemMenu
     data.clickIndex = index
     data.clickChildIndex = childIndex
     data.rightClickType = 'index-rule'
+    data.schema = schema
     openRightMenu(e)
 }
-function rightClickIndexRuleBindingItem(e, index, childIndex) {
+function rightClickIndexRuleBindingItem(e, index, childIndex, schema) {
     data.rightMenuList = indexRuleBindingItemMenu
     data.clickIndex = index
     data.clickChildIndex = childIndex
     data.rightClickType = 'index-rule-binding'
+    data.schema = schema
     openRightMenu(e)
 }
 function openRightMenu(e) {
@@ -522,12 +517,12 @@ function stopPropagation(e) {
 // CRUD operator
 function openCreateIndexRuleOrIndexRuleBinding() {
     const route = {
-        name: `create-${data.rightClickType}`,
+        name: `${data.schema}-create-${data.rightClickType}`,
         params: {
             operator: 'create',
             group: data.groupLists[data.clickIndex].metadata.name,
-            name: '',
-            type: data.rightClickType
+            type: data.rightClickType,
+            schema: data.schema
         }
     }
     router.push(route)
@@ -546,14 +541,16 @@ function openEditIndexRuleOrIndexRuleBinding() {
         'index-rule-binding': 'indexRuleBinding'
     }
     const route = {
-        name: `edit-${data.rightClickType}`,
+        name: `${data.schema}-edit-${data.rightClickType}`,
         params: {
             operator: 'edit',
             group: data.groupLists[data.clickIndex].metadata.name,
             name: data.groupLists[data.clickIndex][typeFlag[data.rightClickType]][data.clickChildIndex].metadata.name,
-            type: data.rightClickType
+            type: data.rightClickType,
+            schema: data.schema
         }
     }
+    console.log(route)
     router.push(route)
     const add = {
         label: data.groupLists[data.clickIndex][typeFlag[data.rightClickType]][data.clickChildIndex].metadata.name,
@@ -562,7 +559,7 @@ function openEditIndexRuleOrIndexRuleBinding() {
     }
     $bus.emit('AddTabs', add)
 }
-function openIndexRuleOrIndexRuleBinding(index, childIndex, type) {
+function openIndexRuleOrIndexRuleBinding(index, childIndex, type, schema) {
     const typeFlag = {
         'indexRule': 'index-rule',
         'indexRuleBinding': 'index-rule-binding'
@@ -570,7 +567,7 @@ function openIndexRuleOrIndexRuleBinding(index, childIndex, type) {
     const group = data.groupLists[index][type][childIndex].metadata.group
     const name = data.groupLists[index][type][childIndex].metadata.name
     const route = {
-        name: `${typeFlag[type]}`,
+        name: `${schema}-${typeFlag[type]}`,
         params: {
             group: group,
             name: name,
@@ -905,8 +902,8 @@ initActiveMenu()
                                 {{ item.metadata.name }}
                             </span>
                         </template>
-                        <el-sub-menu v-if="props.type == 'stream'" :index="`${item.metadata.name}-${index}-index-rule`"
-                            @contextmenu.prevent="rightClickIndexRule($event, index)">
+                        <el-sub-menu :index="`${item.metadata.name}-${index}-index-rule`"
+                            @contextmenu.prevent="rightClickIndexRule($event, index, props.type)">
                             <template #title>
                                 <el-icon>
                                     <Folder />
@@ -916,8 +913,8 @@ initActiveMenu()
                                 </span>
                             </template>
                             <div v-for="(child, childIndex) in item.indexRule" :key="child.metadata.name">
-                                <div @contextmenu.prevent="rightClickIndexRuleItem($event, index, childIndex)">
-                                    <el-menu-item @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRule')"
+                                <div @contextmenu.prevent="rightClickIndexRuleItem($event, index, childIndex, props.type)">
+                                    <el-menu-item @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRule', props.type)"
                                         :index="`${child.metadata.group}-${child.metadata.name}`">
                                         <template #title>
                                             <el-icon>
@@ -932,9 +929,9 @@ initActiveMenu()
                                 </div>
                             </div>
                         </el-sub-menu>
-                        <el-sub-menu v-if="props.type == 'stream'"
+                        <el-sub-menu
                             :index="`${item.metadata.name}-${index}-index-rule-binding`"
-                            @contextmenu.prevent="rightClickIndexRuleBinding($event, index)">
+                            @contextmenu.prevent="rightClickIndexRuleBinding($event, index, props.type)">
                             <template #title>
                                 <el-icon>
                                     <Folder />
@@ -945,9 +942,9 @@ initActiveMenu()
                                 </span>
                             </template>
                             <div v-for="(child, childIndex) in item.indexRuleBinding" :key="child.metadata.name">
-                                <div @contextmenu.prevent="rightClickIndexRuleBindingItem($event, index, childIndex)">
+                                <div @contextmenu.prevent="rightClickIndexRuleBindingItem($event, index, childIndex, props.type)">
                                     <el-menu-item
-                                        @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRuleBinding')"
+                                        @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRuleBinding', props.type)"
                                         :index="`${child.metadata.group}-${child.metadata.name}`">
                                         <template #title>
                                             <el-icon>
@@ -962,14 +959,17 @@ initActiveMenu()
                                 </div>
                             </div>
                         </el-sub-menu>
-                        <el-sub-menu v-if="props.type == 'stream'" @contextmenu.prevent="rightClickStream($event, index)"
+                        <el-sub-menu @contextmenu.prevent="rightClickResourcesFolder($event, index)"
                             :index="`${item.metadata.name}-${index}-stream`">
                             <template #title>
                                 <el-icon>
                                     <Folder />
                                 </el-icon>
-                                <span slot="title" title="Stream" style="width: 70%" class="text-overflow-hidden">
+                                <span v-if="props.type == 'stream'" slot="title" title="Stream" style="width: 70%" class="text-overflow-hidden">
                                     Stream
+                                </span>
+                                <span v-if="props.type == 'measure'" slot="title" title="Measure" style="width: 70%" class="text-overflow-hidden">
+                                    Measure
                                 </span>
                             </template>
                             <div v-for="(child, childIndex) in item.children" :key="child.metadata.name">
@@ -989,24 +989,6 @@ initActiveMenu()
                                 </div>
                             </div>
                         </el-sub-menu>
-                        <div v-if="props.type == 'measure'">
-                            <div v-for="(child, childIndex) in item.children" :key="child.metadata.name">
-                                <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">
-                                    <el-menu-item :index="`${child.metadata.group}-${child.metadata.name}`"
-                                        @click="openResources(index, childIndex)">
-                                        <template #title>
-                                            <el-icon>
-                                                <Document />
-                                            </el-icon>
-                                            <span slot="title" :title="child.metadata.name" style="width: 90%"
-                                                class="text-overflow-hidden">
-                                                {{ child.metadata.name }}
-                                            </span>
-                                        </template>
-                                    </el-menu-item>
-                                </div>
-                            </div>
-                        </div>
                         <!-- <div v-if="props.type == 'property'">
                             <div v-for="(child, childIndex) in item.children" :key="child.metadata.id">
                                 <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">

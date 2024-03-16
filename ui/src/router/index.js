@@ -72,32 +72,32 @@ const router = createRouter({
             },
             {
               path: '/banyandb/stream/index-rule/operator-read/:type/:operator/:group/:name',
-              name: 'index-rule',
+              name: 'stream-index-rule',
               component: () => import('@/components/IndexRule/index.vue')
             },
             {
-              path: '/banyandb/stream/index-rule/operator-create/:type/:operator/:group',
-              name: 'create-index-rule',
+              path: '/banyandb/:schema/index-rule/operator-create/:type/:operator/:group',
+              name: 'stream-create-index-rule',
               component: () => import('@/components/IndexRule/Editor.vue')
             },
             {
-              path: '/banyandb/stream/index-rule/operator-edit/:type/:operator/:group/:name',
-              name: 'edit-index-rule',
+              path: '/banyandb/:schema/index-rule/operator-edit/:type/:operator/:group/:name',
+              name: 'stream-edit-index-rule',
               component: () => import('@/components/IndexRule/Editor.vue')
             },
             {
               path: '/banyandb/stream/index-rule-binding/operator-read/:type/:operator/:group/:name',
-              name: 'index-rule-binding',
+              name: 'stream-index-rule-binding',
               component: () => import('@/components/IndexRuleBinding/index.vue')
             },
             {
-              path: '/banyandb/stream/index-rule-binding/operator-create/:type/:operator/:group',
-              name: 'create-index-rule-binding',
+              path: '/banyandb/:schema/index-rule-binding/operator-create/:type/:operator/:group',
+              name: 'stream-create-index-rule-binding',
               component: () => import('@/components/IndexRuleBinding/Editor.vue')
             },
             {
-              path: '/banyandb/stream/index-rule-binding/operator-edit/:type/:operator/:group/:name',
-              name: 'edit-index-rule-binding',
+              path: '/banyandb/:schema/index-rule-binding/operator-edit/:type/:operator/:group/:name',
+              name: 'stream-edit-index-rule-binding',
               component: () => import('@/components/IndexRuleBinding/Editor.vue')
             }
           ]
@@ -130,6 +130,36 @@ const router = createRouter({
               path: '/banyandb/measure/operator-edit/:type/:operator/:group/:name',
               name: 'edit-measure',
               component: () => import('@/views/Stream/createEdit.vue')
+            },
+            {
+              path: '/banyandb/measure/index-rule/operator-read/:type/:operator/:group/:name',
+              name: 'measure-index-rule',
+              component: () => import('@/components/IndexRule/index.vue')
+            },
+            {
+              path: '/banyandb/:schema/index-rule/operator-create/:type/:operator/:group',
+              name: 'measure-create-index-rule',
+              component: () => import('@/components/IndexRule/Editor.vue')
+            },
+            {
+              path: '/banyandb/:schema/index-rule/operator-edit/:type/:operator/:group/:name',
+              name: 'measure-edit-index-rule',
+              component: () => import('@/components/IndexRule/Editor.vue')
+            },
+            {
+              path: '/banyandb/measure/index-rule-binding/operator-read/:type/:operator/:group/:name',
+              name: 'measure-index-rule-binding',
+              component: () => import('@/components/IndexRuleBinding/index.vue')
+            },
+            {
+              path: '/banyandb/:schema/index-rule-binding/operator-create/:type/:operator/:group',
+              name: 'measure-create-index-rule-binding',
+              component: () => import('@/components/IndexRuleBinding/Editor.vue')
+            },
+            {
+              path: '/banyandb/:schema/index-rule-binding/operator-edit/:type/:operator/:group/:name',
+              name: 'measure-edit-index-rule-binding',
+              component: () => import('@/components/IndexRuleBinding/Editor.vue')
             }
           ]
         },
