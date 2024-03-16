@@ -25,7 +25,7 @@ The database research community usually uses [RUM Conjecture](http://daslab.seas
 * For Chinese speaker, send `[CN] Request to join SkyWalking slack` mail to the mail list(`dev@skywalking.apache.org`), we will invite you in.
 * X (Twitter): [@BanyanDB](https://twitter.com/BanyanDB) and [@ASFSkyWalking](https://twitter.com/ASFSkyWalking)
 
-## Documents
+## Documentation
 
 - [Dev version doc](https://skywalking.apache.org/docs/skywalking-banyandb/next/readme/)
 - [Latest release doc](https://skywalking.apache.org/docs/skywalking-banyandb/latest/readme/)
