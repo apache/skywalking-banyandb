@@ -124,11 +124,33 @@ func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler Eve
 	}
 	e.mux.Lock()
 	defer e.mux.Unlock()
+	var kinds []Kind
 	for i := 0; i < KindSize; i++ {
 		ki := Kind(1 << i)
 		if kind&ki > 0 {
-			e.l.Info().Str("name", name).Stringer("kind", ki).Msg("registering watcher")
-			w := e.newWatcher(name, ki, handler)
+			kinds = append(kinds, ki)
+		}
+	}
+	e.l.Info().Str("name", name).Interface("kinds", kinds).Msg("initializing schema cache")
+	ok, revisions := handler.OnInit(kinds)
+	if ok {
+		if len(revisions) != len(kinds) {
+			logger.Panicf("invalid number of revisions for %s", name)
+			return
+		}
+		for i := range kinds {
+			e.l.Info().Str("name", name).Stringer("kind", kinds[i]).Msg("registering watcher")
+			w := e.newWatcherWithRevision(name, kinds[i], revisions[i], handler)
+			if w != nil {
+				e.watchers = append(e.watchers, w)
+			}
+		}
+		return
+	}
+	for i := range kinds {
+		e.l.Info().Str("name", name).Stringer("kind", kinds[i]).Msg("registering watcher")
+		w := e.newWatcher(name, kinds[i], handler)
+		if w != nil {
 			e.watchers = append(e.watchers, w)
 		}
 	}
@@ -419,11 +441,16 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata, fo
 	return nil
 }
 
-func (e *etcdSchemaRegistry) newWatcher(name string, kind Kind, handler EventHandler) *watcher {
+func (e *etcdSchemaRegistry) newWatcher(name string, kind Kind, handler watchEventHandler) *watcher {
+	return e.newWatcherWithRevision(name, kind, 0, handler)
+}
+
+func (e *etcdSchemaRegistry) newWatcherWithRevision(name string, kind Kind, revision int64, handler watchEventHandler) *watcher {
 	return newWatcher(e.client, watcherConfig{
-		key:     e.prependNamespace(kind.key()),
-		kind:    kind,
-		handler: handler,
+		key:      e.prependNamespace(kind.key()),
+		kind:     kind,
+		handler:  handler,
+		revision: revision,
 	}, e.l.Named(fmt.Sprintf("watcher-%s[%s]", name, kind.String())))
 }
 

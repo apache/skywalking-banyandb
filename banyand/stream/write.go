@@ -217,6 +217,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		var err error
 		if groups, err = w.handle(groups, writeEvent); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
+			groups = make(map[string]*elementsInGroup)
 			continue
 		}
 	}

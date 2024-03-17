@@ -114,6 +114,7 @@ const data = reactive({
   name: route.params.name,
   type: route.params.type,
   operator: route.params.operator,
+  schema: route.params.schema,
   form: {
     group: route.params.group,
     name: route.params.name || '',
@@ -138,6 +139,7 @@ watch(() => route, () => {
   data.name = route.params.name
   data.type = route.params.type
   data.operator = route.params.operator
+  data.schema = route.params.schema
   initData()
 }, {
   immediate: true,
@@ -215,7 +217,7 @@ const submit = async (formEl: FormInstance | undefined) => {
 
 function openIndexRule() {
   const route = {
-    name: data.type + '',
+    name: data.schema + '-' + data.type,
     params: {
       group: data.form.group,
       name: data.form.name,

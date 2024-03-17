@@ -459,10 +459,27 @@ message TopNAggregationRegistryServiceExistResponse {
 }
 
 service TopNAggregationRegistryService {
-  rpc Create(TopNAggregationRegistryServiceCreateRequest) returns (TopNAggregationRegistryServiceCreateResponse);
-  rpc Update(TopNAggregationRegistryServiceUpdateRequest) returns (TopNAggregationRegistryServiceUpdateResponse);
-  rpc Delete(TopNAggregationRegistryServiceDeleteRequest) returns (TopNAggregationRegistryServiceDeleteResponse);
-  rpc Get(TopNAggregationRegistryServiceGetRequest) returns (TopNAggregationRegistryServiceGetResponse);
-  rpc List(TopNAggregationRegistryServiceListRequest) returns (TopNAggregationRegistryServiceListResponse);
+  rpc Create(TopNAggregationRegistryServiceCreateRequest) returns (TopNAggregationRegistryServiceCreateResponse) {
+    option (google.api.http) = {
+      post: "/v1/topn-agg/schema"
+      body: "*"
+    };
+  }
+  rpc Update(TopNAggregationRegistryServiceUpdateRequest) returns (TopNAggregationRegistryServiceUpdateResponse) {
+    option (google.api.http) = {
+      put: "/v1/topn-agg/schema/{top_n_aggregation.metadata.group}/{top_n_aggregation.metadata.name}"
+      body: "*"
+    };
+  }
+  rpc Delete(TopNAggregationRegistryServiceDeleteRequest) returns (TopNAggregationRegistryServiceDeleteResponse) {
+    option (google.api.http) = {delete: "/v1/topn-agg/schema/{metadata.group}/{metadata.name}"};
+  }
+  rpc Get(TopNAggregationRegistryServiceGetRequest) returns (TopNAggregationRegistryServiceGetResponse) {
+    option (google.api.http) = {get: "/v1/topn-agg/schema/{metadata.group}/{metadata.name}"};
+  }
+  rpc List(TopNAggregationRegistryServiceListRequest) returns (TopNAggregationRegistryServiceListResponse) {
+    option (google.api.http) = {get: "/v1/topn-agg/schema/lists/{group}"};
+  }
+  // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(TopNAggregationRegistryServiceExistRequest) returns (TopNAggregationRegistryServiceExistResponse);
 }

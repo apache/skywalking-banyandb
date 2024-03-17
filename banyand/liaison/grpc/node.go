@@ -40,6 +40,7 @@ type NodeRegistry interface {
 }
 
 type clusterNodeService struct {
+	schema.UnimplementedOnInitHandler
 	pipeline queue.Client
 	sel      node.Selector
 	sync.Once

@@ -51,20 +51,12 @@ import (
 
 const (
 	timeBucketFormat = "200601021504"
-	topNTagFamily    = "__topN__"
 )
 
 var (
 	_ io.Closer = (*topNStreamingProcessor)(nil)
 	_ io.Closer = (*topNProcessorManager)(nil)
 	_ flow.Sink = (*topNStreamingProcessor)(nil)
-
-	topNValueFieldSpec = &databasev1.FieldSpec{
-		Name:              "value",
-		FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
-		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
-		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
-	}
 )
 
 type dataPointWithEntityValues struct {

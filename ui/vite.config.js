@@ -49,11 +49,11 @@ export default ({ mode }) => {
     server: {
       proxy: {
         "^/api": {
-          target: `${VITE_API_PROXY_TARGET || "http://127.0.0.1:12800"}`,
+          target: `${VITE_API_PROXY_TARGET || "http://127.0.0.1:17913"}`,
           changeOrigin: true,
         },
         "^/monitoring": {
-          target: `${VITE_MONITOR_PROXY_TARGET || "http://127.0.0.1:12800"}`,
+          target: `${VITE_MONITOR_PROXY_TARGET || "http://127.0.0.1:2121"}`,
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/monitoring/, ''),
         },
