@@ -25,56 +25,12 @@ The database research community usually uses [RUM Conjecture](http://daslab.seas
 * For Chinese speaker, send `[CN] Request to join SkyWalking slack` mail to the mail list(`dev@skywalking.apache.org`), we will invite you in.
 * X (Twitter): [@BanyanDB](https://twitter.com/BanyanDB) and [@ASFSkyWalking](https://twitter.com/ASFSkyWalking)
 
-## Documents
+## Documentation
 
-[Documents](https://skywalking.apache.org/docs/skywalking-banyandb/next/readme/)
+- [Dev version doc](https://skywalking.apache.org/docs/skywalking-banyandb/next/readme/)
+- [Latest release doc](https://skywalking.apache.org/docs/skywalking-banyandb/latest/readme/)
+- [Java Client SDK doc](https://skywalking.apache.org/docs/#BanyanDBJavaClient)
 
-## RoadMap
-
-### Client manager
-
-- [x] gRPC server
-- [x] HTTP server
-
-### Distributed manager
-
-- [x] Sharding
-- [x] Load balance
-- [x] Distributed query optimizer
-- [x] Data queue
-
-### Data processor
-
-- [x] Schema management
-- [x] Time-series abstract layer
-- [x] Stream data processor
-- [x] Measure data processor
-- [x] Property data processor
-- [x] TopNAggregation processor
-- [x] Index processor
-- [x] TTL
-- [x] Cold data processor
-- [x] WAL
-
-### Query processor
-
-- [x] Stream query processor
-- [x] Measure query processor
-- [x] Index reader
-- [x] Streaming pipeline processor(OR and nested querying)
-- [ ] Parallel executor
-- [ ] Cost-based optimizer
-
-### Storage
-
-- [ ] Compaction
-- [ ] Merge data files
-- [ ] Sparse index
-
-### Tools
-
-- [x] Command-line
-- [x] Webapp
 
 ## Contributing
 
