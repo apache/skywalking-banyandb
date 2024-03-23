@@ -53,15 +53,11 @@ services:
     extends:
       file: ../../docker/base-compose.yml
       service: oap
+    image: hanahmily/data-generator:latest
     environment:
       SW_STORAGE: banyandb
     ports:
-      - 12800
-    deploy:
-      resources:
-        limits:
-          cpus: "4"
-          memory: 4G
+      - 12800:12800
     volumes:
       - ./log4j2.xml:/skywalking/config/log4j2.xml
     networks:

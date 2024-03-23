@@ -191,9 +191,6 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	}
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].name = name
-	if len(tagProjection) < 1 {
-		return
-	}
 	cc := b.tagFamilies[tfIndex].resizeTags(len(tagProjection))
 	for j := range tagProjection {
 		for i := range tfm.tagMetadata {
@@ -426,7 +423,7 @@ type blockCursor struct {
 func (bc *blockCursor) reset() {
 	bc.idx = 0
 	bc.p = nil
-	bc.bm = blockMetadata{}
+	bc.bm.reset()
 	bc.minTimestamp = 0
 	bc.maxTimestamp = 0
 	bc.tagProjection = bc.tagProjection[:0]
@@ -441,10 +438,10 @@ func (bc *blockCursor) reset() {
 	bc.tagFamilies = tff[:0]
 }
 
-func (bc *blockCursor) init(p *part, bm blockMetadata, queryOpts queryOptions) {
+func (bc *blockCursor) init(p *part, bm *blockMetadata, queryOpts queryOptions) {
 	bc.reset()
 	bc.p = p
-	bc.bm = bm
+	bc.bm.copyFrom(bm)
 	bc.minTimestamp = queryOpts.minTimestamp
 	bc.maxTimestamp = queryOpts.maxTimestamp
 	bc.tagProjection = queryOpts.TagProjection

@@ -26,6 +26,10 @@ endif
 
 cli_env := DOCKER_BUILDKIT=1 USER_ID=$(shell id -u) GROUP_ID=$(shell id -g)
 
+SIZE ?= 2
+
+QPS ?= 10
+
 .PHONY: clean
 clean:
 	rm -rf /tmp/banyandb-stress-trace
@@ -37,3 +41,24 @@ up: clean
 .PHONY: down
 down:
 	docker compose down
+
+.PHONY: test_traffic
+test_traffic:
+	curl -XPOST 'http://localhost:12800/mock-data/segments/tasks?size=$(SIZE)' -H'Content-Type: application/json' -d "@segment.tpl.json"
+
+.PHONY: up_traffic
+up_traffic:
+	curl -XPOST 'http://localhost:12800/mock-data/segments/tasks?qps=$(QPS)' -H'Content-Type: application/json' -d "@segment.tpl.json"
+
+.PHONY: ls_traffic
+ls_traffic:
+	curl -XGET 'http://localhost:12800/mock-data/segments/tasks'
+
+.PHONY: rm_traffic
+rm_traffic:
+	curl -XDELETE 'http://localhost:12800/mock-data/segments/tasks'
+
+.PHONY: test_query
+test_query:
+	go test -v -timeout 1h -run TestQuery ./...
+	
