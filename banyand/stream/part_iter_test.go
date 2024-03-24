@@ -123,7 +123,9 @@ func Test_partIter_nextBlock(t *testing.T) {
 					if pi.curBlock.seriesID == 0 {
 						t.Errorf("Expected currBlock to be initialized, but it was nil")
 					}
-					got = append(got, pi.curBlock)
+					var bm blockMetadata
+					bm.copyFrom(pi.curBlock)
+					got = append(got, bm)
 				}
 
 				if !errors.Is(pi.error(), tt.wantErr) {
