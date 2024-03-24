@@ -94,14 +94,7 @@ func buildSeriesByIndex(s *iterBuilder) (series []*searcherIterator, err error) 
 			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
 			Analyzer:    s.indexRuleForSorting.GetAnalyzer(),
 		}
-		switch s.indexRuleForSorting.GetType() {
-		case databasev1.IndexRule_TYPE_TREE:
-			inner, err = tw.Table().Index().Iterator(fieldKey, rangeOpts, s.order)
-		case databasev1.IndexRule_TYPE_INVERTED:
-			inner, err = tw.Table().Index().Iterator(fieldKey, rangeOpts, s.order)
-		case databasev1.IndexRule_TYPE_UNSPECIFIED:
-			return nil, errors.WithMessagef(errUnspecifiedIndexType, "index rule:%v", s.indexRuleForSorting)
-		}
+		inner, err = tw.Table().Index().Iterator(fieldKey, rangeOpts, s.order)
 		if err != nil {
 			return nil, err
 		}

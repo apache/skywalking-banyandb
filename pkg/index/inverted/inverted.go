@@ -206,12 +206,15 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	if order == modelv1.Sort_SORT_DESC {
 		sortedKey = "-" + sortedKey
 	}
-	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewTopNSearch(math.MaxInt64, query).SortBy([]string{sortedKey}))
-	if err != nil {
-		return nil, multierr.Combine(err, reader.Close())
+	result := &sortIterator{
+		query:            query,
+		reader:           reader,
+		sortedKey:        sortedKey,
+		fk:               fk,
+		shouldDecodeTerm: shouldDecodeTerm,
+		size:             5,
 	}
-	result := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm, reader)
-	return &result, nil
+	return result, nil
 }
 
 func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err error) {
@@ -520,5 +523,8 @@ func (bmi *blugeMatchIterator) Val() *index.PostingValue {
 
 func (bmi *blugeMatchIterator) Close() error {
 	bmi.closed = true
+	if bmi.closer == nil {
+		return bmi.err
+	}
 	return errors.Join(bmi.err, bmi.closer.Close())
 }

@@ -31,7 +31,6 @@ import (
 )
 
 func TestIntegrationLoad(t *testing.T) {
-	t.Skip("Skip the stress trace test")
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Stress Trace Suite")
 }
