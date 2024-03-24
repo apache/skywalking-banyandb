@@ -21,11 +21,10 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/robfig/cron/v3"
-	"github.com/valyala/fastrand"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -231,12 +230,23 @@ func (s *seriesIndex) Close() error {
 }
 
 type seriesIndexController[T TSTable, O any] struct {
-	ctx       context.Context
-	hot       *seriesIndex
-	standby   *seriesIndex
-	scheduler *timestamp.Scheduler
-	l         *logger.Logger
-	opts      TSDBOpts[T, O]
+	ctx     context.Context
+	hot     *seriesIndex
+	standby *seriesIndex
+	timestamp.TimeRange
+	l    *logger.Logger
+	opts TSDBOpts[T, O]
+	sync.RWMutex
+}
+
+func standard(t time.Time, unit IntervalUnit) time.Time {
+	switch unit {
+	case HOUR:
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
+	case DAY:
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	}
+	panic("invalid interval unit")
 }
 
 func newSeriesIndexController[T TSTable, O any](
@@ -244,69 +254,89 @@ func newSeriesIndexController[T TSTable, O any](
 	opts TSDBOpts[T, O],
 ) (*seriesIndexController[T, O], error) {
 	location := filepath.Clean(opts.Location)
-	path := fmt.Sprintf("idx-%v", fastrand.Uint32())
+	path := fmt.Sprintf("idx-%v", time.Now().UnixNano())
 	h, err := newSeriesIndex(ctx, filepath.Join(location, path), opts.SeriesIndexFlushTimeoutSeconds)
 	if err != nil {
 		return nil, err
 	}
-	path = fmt.Sprintf("idx-%v", fastrand.Uint32())
+	path = fmt.Sprintf("idx-%v", time.Now().UnixNano())
 	sb, err := newSeriesIndex(ctx, filepath.Join(location, path), opts.SeriesIndexFlushTimeoutSeconds)
 	if err != nil {
 		return nil, err
 	}
 	l := logger.Fetch(ctx, "seriesIndexController")
 
-	var expr string
-	switch opts.TTL.Unit {
-	case HOUR:
-		expr = "5 *"
-	case DAY:
-		expr = "5 0"
-	}
-	clock, _ := timestamp.GetClock(ctx)
-	scheduler := timestamp.NewScheduler(l, clock)
+	startTime := standard(time.Now(), opts.TTL.Unit)
+	endTime := startTime.Add(opts.TTL.estimatedDuration())
+	timeRange := timestamp.NewSectionTimeRange(startTime, endTime)
 	sir := &seriesIndexController[T, O]{
 		hot:       h,
 		standby:   sb,
 		ctx:       ctx,
-		scheduler: scheduler,
+		TimeRange: timeRange,
 		l:         l,
-	}
-	if err := scheduler.Register("seriesIndexController", cron.Minute|cron.Hour, expr, sir.run); err != nil {
-		return nil, err
 	}
 	return sir, nil
 }
 
-func (sir *seriesIndexController[T, O]) run(_ time.Time, l *logger.Logger) bool {
-	err := sir.hot.Close()
-	if err != nil {
-		l.Error().Msg("fail to close old hot series index")
-		return false
+func (sir *seriesIndexController[T, O]) run(deadline time.Time) (err error) {
+	sir.l.Info().Time("deadline", deadline).Msg("start to swap series index")
+	if sir.End.Before(deadline) {
+		sir.Lock()
+		defer sir.Unlock()
+
+		sir.hot, sir.standby = sir.standby, sir.hot
+		go func() {
+			<-time.After(time.Hour)
+			sir.Lock()
+			defer sir.Unlock()
+			_ = sir.standby.Close()
+		}()
+
+		startTime := standard(time.Now(), sir.opts.TTL.Unit)
+		endTime := startTime.Add(sir.opts.TTL.estimatedDuration())
+		sir.TimeRange = timestamp.NewSectionTimeRange(startTime, endTime)
 	}
-	sir.hot = sir.standby
-	location := filepath.Clean(sir.opts.Location)
-	path := fmt.Sprintf("idx-%v", fastrand.Uint32())
-	sir.standby, err = newSeriesIndex(sir.ctx, filepath.Join(location, path), sir.opts.SeriesIndexFlushTimeoutSeconds)
-	if err != nil {
-		l.Error().Msg("fail to create series index")
-		return false
+	if sir.End.Sub(deadline) < time.Hour {
+		location := filepath.Clean(sir.opts.Location)
+		path := fmt.Sprintf("idx-%v", time.Now().UnixNano())
+		sir.standby, err = newSeriesIndex(sir.ctx, filepath.Join(location, path), sir.opts.SeriesIndexFlushTimeoutSeconds)
 	}
-	return true
+	return err
 }
 
 func (sir *seriesIndexController[T, O]) Write(docs index.Documents) error {
+	sir.Lock()
+	defer sir.Unlock()
 	return sir.hot.Write(docs)
 }
 
 func (sir *seriesIndexController[T, O]) searchPrimary(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
-	return sir.hot.searchPrimary(ctx, series)
+	sir.RLock()
+	defer sir.RUnlock()
+
+	sl, _ := sir.hot.searchPrimary(ctx, series)
+	if sl != nil {
+		return sl, nil
+	}
+
+	return sir.standby.searchPrimary(ctx, series)
 }
 
 func (sir *seriesIndexController[T, O]) Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy) (pbv1.SeriesList, error) {
+	sir.RLock()
+	defer sir.RUnlock()
+
+	sl, _ := sir.hot.Search(ctx, series, filter, order)
+	if sl != nil {
+		return sl, nil
+	}
 	return sir.hot.Search(ctx, series, filter, order)
 }
 
 func (sir *seriesIndexController[T, O]) Close() error {
+	sir.Lock()
+	defer sir.Unlock()
+	_ = sir.standby.Close()
 	return sir.hot.Close()
 }

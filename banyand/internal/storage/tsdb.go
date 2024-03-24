@@ -71,6 +71,7 @@ type database[T TSTable, O any] struct {
 	logger          *logger.Logger
 	lock            fs.File
 	indexController *seriesIndexController[T, O]
+	scheduler       *timestamp.Scheduler
 	p               common.Position
 	location        string
 	sLst            []*shard[T, O]
@@ -82,6 +83,7 @@ type database[T TSTable, O any] struct {
 func (d *database[T, O]) Close() error {
 	d.Lock()
 	defer d.Unlock()
+	d.scheduler.Close()
 	for _, s := range d.sLst {
 		s.close()
 	}
@@ -108,10 +110,13 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	if err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
 	}
-
+	l := logger.Fetch(ctx, p.Database)
+	clock, _ := timestamp.GetClock(ctx)
+	scheduler := timestamp.NewScheduler(l, clock)
 	db := &database[T, O]{
 		location:        location,
-		logger:          logger.Fetch(ctx, p.Database),
+		scheduler:       scheduler,
+		logger:          l,
 		indexController: sir,
 		opts:            opts,
 		p:               p,
@@ -125,6 +130,10 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	db.lock = lock
 	if err = db.loadDatabase(); err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "load database failed").Error())
+	}
+	retentionTask := newRetentionTask(db, opts.TTL)
+	if err = db.scheduler.Register("retention", retentionTask.option, retentionTask.expr, retentionTask.run); err != nil {
+		return nil, err
 	}
 	return db, nil
 }
