@@ -15,6 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 #
+mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
+mk_dir   := $(dir $(mk_path))
+root_dir := $(abspath $(mk_dir)/../../..)
+tool_bin := $(root_dir)/bin
+
+include $(root_dir)/scripts/build/version.mk
+include $(root_dir)/scripts/build/ginkgo.mk
 
 NAME := stress
 
@@ -59,6 +66,6 @@ rm_traffic:
 	curl -XDELETE 'http://localhost:12800/mock-data/segments/tasks'
 
 .PHONY: test_query
-test_query:
-	go test -v -timeout 1h -run TestQuery ./...
+test_query: $(GINKGO)
+	$(GINKGO) -v -timeout 1h TestQuery ./...
 	

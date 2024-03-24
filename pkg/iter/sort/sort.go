@@ -21,7 +21,8 @@ package sort
 import (
 	"bytes"
 	"container/heap"
-	"fmt"
+
+	"go.uber.org/multierr"
 )
 
 // Comparable is an interface that allows sorting of items.
@@ -124,10 +125,7 @@ func (it *itemIter[T]) Val() T {
 func (it *itemIter[T]) Close() error {
 	var err error
 	for _, iter := range it.iters {
-		if e := iter.Close(); e != nil {
-			fmt.Println("Error closing iterator:", e)
-			err = e
-		}
+		err = multierr.Append(err, iter.Close())
 	}
 	return err
 }
