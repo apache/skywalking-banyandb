@@ -21,7 +21,7 @@
 import { reactive } from 'vue';
 import { watch, getCurrentInstance } from '@vue/runtime-core'
 import { useRoute } from 'vue-router'
-import { getIndexRuleOrIndexRuleBinding } from '@/api/index'
+import { getIndexRuleOrIndexRuleBindingOrTopNAggregation } from '@/api/index'
 
 const { proxy } = getCurrentInstance()
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
@@ -51,7 +51,7 @@ watch(() => route, () => {
 function initData() {
   if (data.type && data.group && data.name) {
     $loadingCreate()
-    getIndexRuleOrIndexRuleBinding(data.type, data.group, data.name)
+    getIndexRuleOrIndexRuleBindingOrTopNAggregation(data.type, data.group, data.name)
       .then(result => {
         data.indexRule = result.data.indexRule
       })

@@ -19,7 +19,7 @@
 
 <script setup>
 import RigheMenu from '@/components/RightMenu/index.vue'
-import { deleteIndexRuleOrIndexRuleBinding, getindexRuleList, getindexRuleBindingList, getGroupList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup } from '@/api/index'
+import { deleteIndexRuleOrIndexRuleBindingOrTopNAggregation, getindexRuleList, getindexRuleBindingList, getGroupList, getTopNAggregationList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup } from '@/api/index'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { watch, getCurrentInstance } from "@vue/runtime-core"
 import { useRouter, useRoute } from 'vue-router'
@@ -331,6 +331,24 @@ function getGroupLists() {
                     })
                     promise = promise.concat(promiseIndexRule)
                     promise = promise.concat(promiseIndexRuleBinding)
+                }
+                if (props.type == 'measure') {
+                    let TopNAggregationRule = data.groupLists.map((item) => {
+                        let name = item.metadata.name
+                        return new Promise((resolve, reject) => {
+                            getTopNAggregationList(name)
+                                .then(res => {
+                                    if (res.status == 200) {
+                                        item.topNAggregation = res.data.topNAggregation
+                                        resolve()
+                                    }
+                                })
+                                .catch((err) => {
+                                    reject(err)
+                                })
+                        })
+                    })
+                    promise = promise.concat(TopNAggregationRule)
                 }
                 Promise.all(promise).then(() => {
                     data.showSearch = true
@@ -663,7 +681,7 @@ function deleteIndexRuleOrIndexRuleBindingFunction(type) {
     }
     let group = data.groupLists[data.clickIndex].metadata.name
     let name = data.groupLists[data.clickIndex][flag[type]][data.clickChildIndex].metadata.name
-    deleteIndexRuleOrIndexRuleBinding(type, group, name)
+    deleteIndexRuleOrIndexRuleBindingOrTopNAggregation(type, group, name)
         .then((res) => {
             if (res.status == 200) {
                 if (res.data.deleted) {

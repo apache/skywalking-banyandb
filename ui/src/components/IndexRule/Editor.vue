@@ -22,7 +22,7 @@ import { reactive, ref } from 'vue'
 import { watch, getCurrentInstance } from '@vue/runtime-core'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance } from 'element-plus'
-import { createIndexRuleOrIndexRuleBinding, getIndexRuleOrIndexRuleBinding, updatendexRuleOrIndexRuleBinding } from '@/api/index'
+import { createIndexRuleOrIndexRuleBindingOrTopNAggregation, getIndexRuleOrIndexRuleBindingOrTopNAggregation, updatendexRuleOrIndexRuleBindingOrTopNAggregation } from '@/api/index'
 import { ElMessage } from 'element-plus'
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose
@@ -163,7 +163,7 @@ const submit = async (formEl: FormInstance | undefined) => {
       }
       $loadingCreate()
       if (data.operator == 'create') {
-        return createIndexRuleOrIndexRuleBinding("index-rule", param)
+        return createIndexRuleOrIndexRuleBindingOrTopNAggregation("index-rule", param)
           .then(res => {
             if (res.status == 200) {
               ElMessage({
@@ -187,7 +187,7 @@ const submit = async (formEl: FormInstance | undefined) => {
             $loadingClose()
           })
       } else {
-        return updatendexRuleOrIndexRuleBinding("index-rule", data.form.group, data.form.name, param)
+        return updatendexRuleOrIndexRuleBindingOrTopNAggregation("index-rule", data.form.group, data.form.name, param)
           .then(res => {
             if (res.status == 200) {
               ElMessage({
@@ -238,7 +238,7 @@ function openIndexRule() {
 function initData() {
   if (data.operator == 'edit' && data.form.group && data.form.name) {
     $loadingCreate()
-    getIndexRuleOrIndexRuleBinding("index-rule", data.form.group, data.form.name)
+    getIndexRuleOrIndexRuleBindingOrTopNAggregation("index-rule", data.form.group, data.form.name)
       .then(res => {
         if (res.status == 200) {
           const indexRule = res.data.indexRule

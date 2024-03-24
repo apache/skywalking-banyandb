@@ -111,14 +111,21 @@ export function getindexRuleBindingList(name) {
     })
 }
 
-export function getIndexRuleOrIndexRuleBinding(type, group, name) {
+export function getTopNAggregationList(name) {
+    return request({
+        url: `/api/v1/topn-agg/schema/lists/${name}`,
+        method: 'get'
+    })
+}
+
+export function getIndexRuleOrIndexRuleBindingOrTopNAggregation(type, group, name) {
     return request({
         url: `/api/v1/${type}/schema/${group}/${name}`,
         method: 'get'
     })
 }
 
-export function createIndexRuleOrIndexRuleBinding(type, data) {
+export function createIndexRuleOrIndexRuleBindingOrTopNAggregation(type, data) {
     return request({
         url: `/api/v1/${type}/schema`,
         method: 'post',
@@ -126,7 +133,7 @@ export function createIndexRuleOrIndexRuleBinding(type, data) {
     })
 }
 
-export function updatendexRuleOrIndexRuleBinding(type, group, name, data) {
+export function updatendexRuleOrIndexRuleBindingOrTopNAggregation(type, group, name, data) {
     return request({
         url: `/api/v1/${type}/schema/${group}/${name}`,
         method: 'put',
@@ -134,7 +141,7 @@ export function updatendexRuleOrIndexRuleBinding(type, group, name, data) {
     })
 }
 
-export function deleteIndexRuleOrIndexRuleBinding(type, group, name) {
+export function deleteIndexRuleOrIndexRuleBindingOrTopNAggregation(type, group, name) {
     return request({
         url: `/api/v1/${type}/schema/${group}/${name}`,
         method: 'delete'
