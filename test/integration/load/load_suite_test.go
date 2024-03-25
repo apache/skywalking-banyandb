@@ -44,7 +44,7 @@ func TestIntegrationLoad(t *testing.T) {
 	RunSpecs(t, "Integration Load Suite", Label("integration", "slow"))
 }
 
-var _ = Describe("Test Suite", func() {
+var _ = Describe("Load Test Suit", func() {
 	var (
 		connection *grpc.ClientConn
 		now        time.Time
