@@ -20,6 +20,7 @@ package fs
 
 import (
 	"io"
+	"os"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -87,6 +88,8 @@ type File interface {
 	Size() (int64, error)
 	// Returns the absolute path of the file.
 	Path() string
+	// Clear file content
+	Clear() error
 	// Close File.
 	Close() error
 }
@@ -102,7 +105,7 @@ type FileSystem interface {
 	// ReadDir reads the directory named by dirname and returns a list of directory entries sorted by filename.
 	ReadDir(dirname string) []DirEntry
 	// Create and open the file by specified name and mode.
-	CreateFile(name string, permission Mode) (File, error)
+	CreateFile(name string, flag int, permission Mode) (File, error)
 	// Create and open lock file by specified name and mode.
 	CreateLockFile(name string, permission Mode) (File, error)
 	// Open the file by specified name and mode.
@@ -132,7 +135,7 @@ type DirEntry interface {
 
 // MustCreateFile creates a new file with the specified name and permission.
 func MustCreateFile(fs FileSystem, path string, permission Mode) File {
-	f, err := fs.CreateFile(path, permission)
+	f, err := fs.CreateFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, permission)
 	if err != nil {
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("cannot create file")
 	}

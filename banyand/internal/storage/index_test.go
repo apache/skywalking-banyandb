@@ -20,7 +20,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,7 +38,7 @@ var testSeriesPool pbv1.SeriesPool
 func TestSeriesIndex_Primary(t *testing.T) {
 	ctx := context.Background()
 	path, fn := setUp(require.New(t))
-	si, err := newSeriesIndex(ctx, filepath.Join(path, "idx"), 0)
+	si, err := newSeriesIndex(ctx, path, "idx", 0)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, si.Close())
@@ -70,7 +69,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 	require.NoError(t, si.Write(docs))
 	// Restart the index
 	require.NoError(t, si.Close())
-	si, err = newSeriesIndex(ctx, filepath.Join(path, "idx"), 0)
+	si, err = newSeriesIndex(ctx, path, "idx", 0)
 	require.NoError(t, err)
 	tests := []struct {
 		name         string
