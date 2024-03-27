@@ -46,7 +46,7 @@ var _ = ginkgo.Describe("Loacl File System", func() {
 			fs = NewLocalFileSystem()
 			err := os.MkdirAll(dirName, 0o777)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-			file, err = fs.CreateFile(fileName, 0o777)
+			file, err = fs.CreateFile(fileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o777)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			_, err = os.Stat(fileName)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())

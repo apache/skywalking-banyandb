@@ -26,13 +26,13 @@ import (
 )
 
 type retentionTask[T TSTable, O any] struct {
-	segment  *segmentController[T, O]
+	database *database[T, O]
 	expr     string
 	option   cron.ParseOption
 	duration time.Duration
 }
 
-func newRetentionTask[T TSTable, O any](segment *segmentController[T, O], ttl IntervalRule) *retentionTask[T, O] {
+func newRetentionTask[T TSTable, O any](database *database[T, O], ttl IntervalRule) *retentionTask[T, O] {
 	var expr string
 	switch ttl.Unit {
 	case HOUR:
@@ -43,7 +43,7 @@ func newRetentionTask[T TSTable, O any](segment *segmentController[T, O], ttl In
 		expr = "5 0"
 	}
 	return &retentionTask[T, O]{
-		segment:  segment,
+		database: database,
 		option:   cron.Minute | cron.Hour,
 		expr:     expr,
 		duration: ttl.estimatedDuration(),
@@ -51,7 +51,12 @@ func newRetentionTask[T TSTable, O any](segment *segmentController[T, O], ttl In
 }
 
 func (rc *retentionTask[T, O]) run(now time.Time, l *logger.Logger) bool {
-	if err := rc.segment.remove(now.Add(-rc.duration)); err != nil {
+	for _, shard := range rc.database.sLst {
+		if err := shard.segmentController.remove(now.Add(-rc.duration)); err != nil {
+			l.Error().Err(err)
+		}
+	}
+	if err := rc.database.indexController.run(now.Add(-rc.duration)); err != nil {
 		l.Error().Err(err)
 	}
 	return true

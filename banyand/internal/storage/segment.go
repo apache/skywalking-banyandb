@@ -51,7 +51,7 @@ type segment[T TSTable] struct {
 }
 
 func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, path, suffix string,
-	segmentSize IntervalRule, scheduler *timestamp.Scheduler, tsTable T,
+	segmentSize IntervalRule, scheduler *timestamp.Scheduler, tsTable T, p common.Position,
 ) (s *segment[T], err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
@@ -71,7 +71,7 @@ func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, p
 	l := logger.Fetch(ctx, s.String())
 	s.l = l
 	clock, _ := timestamp.GetClock(ctx)
-	s.Reporter = bucket.NewTimeBasedReporter(s.String(), timeRange, clock, scheduler)
+	s.Reporter = bucket.NewTimeBasedReporter(fmt.Sprintf("Shard-%s-%s", p.Shard, s.String()), timeRange, clock, scheduler)
 	return s, nil
 }
 
@@ -332,7 +332,7 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 	if tsTable, err = sc.tsTableCreator(lfs, segPath, p, sc.l, timestamp.NewSectionTimeRange(start, end), sc.option); err != nil {
 		return nil, err
 	}
-	seg, err = openSegment[T](context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, sc.segmentSize, sc.scheduler, tsTable)
+	seg, err = openSegment[T](context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, sc.segmentSize, sc.scheduler, tsTable, p)
 	if err != nil {
 		return nil, err
 	}

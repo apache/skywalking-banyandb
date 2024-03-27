@@ -19,40 +19,48 @@ package storage
 
 import (
 	"context"
-	"path"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func (d *database[T, O]) IndexDB() IndexDB {
-	return d.index
+	return d.indexController.hot
 }
 
 func (d *database[T, O]) Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
-	return d.index.searchPrimary(ctx, series)
+	return d.indexController.searchPrimary(ctx, series)
 }
 
 type seriesIndex struct {
-	store index.SeriesStore
 	l     *logger.Logger
+	store index.SeriesStore
+	name  string
 }
 
-func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64) (*seriesIndex, error) {
+func newSeriesIndex(ctx context.Context, path, name string, flushTimeoutSeconds int64) (*seriesIndex, error) {
 	si := &seriesIndex{
-		l: logger.Fetch(ctx, "series_index"),
+		name: name,
+		l:    logger.Fetch(ctx, "series_index"),
 	}
 	var err error
 	if si.store, err = inverted.NewStore(inverted.StoreOpts{
-		Path:         path.Join(root, "idx"),
+		Path:         filepath.Join(path, name),
 		Logger:       si.l,
 		BatchWaitSec: flushTimeoutSeconds,
 	}); err != nil {
@@ -223,4 +231,180 @@ func appendSeriesList(dest, src pbv1.SeriesList, filter posting.List) pbv1.Serie
 
 func (s *seriesIndex) Close() error {
 	return s.store.Close()
+}
+
+type seriesIndexController[T TSTable, O any] struct {
+	ctx     context.Context
+	hot     *seriesIndex
+	standby *seriesIndex
+	info    fs.File
+	timestamp.TimeRange
+	l    *logger.Logger
+	opts TSDBOpts[T, O]
+	sync.RWMutex
+}
+
+func standard(t time.Time, unit IntervalUnit) time.Time {
+	switch unit {
+	case HOUR:
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
+	case DAY:
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	}
+	panic("invalid interval unit")
+}
+
+func newSeriesIndexController[T TSTable, O any](
+	ctx context.Context,
+	opts TSDBOpts[T, O],
+) (*seriesIndexController[T, O], error) {
+	var hpath, spath string
+	location := filepath.Clean(opts.Location)
+	fs := fs.NewLocalFileSystem()
+	idxFile, err := fs.CreateFile(filepath.Join(location, "idx.meta"), os.O_RDWR|os.O_CREATE, filePermission)
+	if err != nil {
+		return nil, err
+	}
+	size, _ := idxFile.Size()
+	if size > 0 {
+		buffer := make([][]byte, 2)
+		buffer[0] = make([]byte, 20)
+		buffer[1] = make([]byte, 20)
+		_, err = idxFile.Readv(0, &buffer)
+		if err != nil {
+			return nil, err
+		}
+		hpath = string(buffer[0])
+		spath = string(buffer[1])
+	} else {
+		hpath = fmt.Sprintf("idx-%016x", time.Now().UnixNano())
+		spath = fmt.Sprintf("idx-%016x", time.Now().UnixNano())
+		iov := make([][]byte, 2)
+		iov[0] = []byte(hpath)
+		iov[1] = []byte(spath)
+		_, err = idxFile.Writev(&iov)
+		if err != nil {
+			return nil, err
+		}
+	}
+	h, err := newSeriesIndex(ctx, location, hpath, opts.SeriesIndexFlushTimeoutSeconds)
+	if err != nil {
+		return nil, err
+	}
+	sb, err := newSeriesIndex(ctx, location, spath, opts.SeriesIndexFlushTimeoutSeconds)
+	if err != nil {
+		return nil, err
+	}
+	l := logger.Fetch(ctx, "seriesIndexController")
+
+	startTime := standard(time.Now(), opts.TTL.Unit)
+	endTime := startTime.Add(opts.TTL.estimatedDuration())
+	timeRange := timestamp.NewSectionTimeRange(startTime, endTime)
+	sir := &seriesIndexController[T, O]{
+		hot:       h,
+		standby:   sb,
+		ctx:       ctx,
+		TimeRange: timeRange,
+		info:      idxFile,
+		l:         l,
+	}
+	return sir, nil
+}
+
+func (sir *seriesIndexController[T, O]) run(deadline time.Time) (err error) {
+	sir.l.Info().Time("deadline", deadline).Msg("start to swap series index")
+	if sir.End.Before(deadline) {
+		sir.Lock()
+		defer sir.Unlock()
+
+		iov := make([][]byte, 2)
+		iov[0] = []byte(sir.hot.name)
+		iov[1] = []byte(sir.standby.name)
+		err = sir.info.Clear()
+		if err != nil {
+			return err
+		}
+		_, err = sir.info.Writev(&iov)
+		if err != nil {
+			return err
+		}
+		sir.hot, sir.standby = sir.standby, sir.hot
+		go func() {
+			<-time.After(time.Hour)
+			sir.Lock()
+			defer sir.Unlock()
+			_ = sir.standby.Close()
+		}()
+
+		startTime := standard(time.Now(), sir.opts.TTL.Unit)
+		endTime := startTime.Add(sir.opts.TTL.estimatedDuration())
+		sir.TimeRange = timestamp.NewSectionTimeRange(startTime, endTime)
+	}
+	if sir.End.Sub(deadline) < time.Hour {
+		location := filepath.Clean(sir.opts.Location)
+		path := fmt.Sprintf("idx-%016x", time.Now().UnixNano())
+		iov := make([][]byte, 2)
+		iov[0] = []byte(sir.hot.name)
+		iov[1] = []byte(path)
+		err = sir.info.Clear()
+		if err != nil {
+			return err
+		}
+		_, err = sir.info.Writev(&iov)
+		if err != nil {
+			return err
+		}
+
+		sir.standby, err = newSeriesIndex(sir.ctx, location, path, sir.opts.SeriesIndexFlushTimeoutSeconds)
+	}
+	return err
+}
+
+func (sir *seriesIndexController[T, O]) Write(docs index.Documents) error {
+	sir.Lock()
+	defer sir.Unlock()
+	return sir.hot.Write(docs)
+}
+
+func (sir *seriesIndexController[T, O]) searchPrimary(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+	sir.RLock()
+	defer sir.RUnlock()
+
+	sl, err := sir.hot.searchPrimary(ctx, series)
+	if err != nil {
+		return nil, err
+	}
+	if len(sl) > 0 {
+		return sl, nil
+	}
+
+	if sir.standby == nil {
+		return nil, errors.New("standby series index is nil")
+	}
+	return sir.standby.searchPrimary(ctx, series)
+}
+
+func (sir *seriesIndexController[T, O]) Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy) (pbv1.SeriesList, error) {
+	sir.RLock()
+	defer sir.RUnlock()
+
+	sl, _ := sir.hot.Search(ctx, series, filter, order)
+	if sl != nil {
+		return sl, nil
+	}
+	return sir.standby.Search(ctx, series, filter, order)
+}
+
+func (sir *seriesIndexController[T, O]) Close() error {
+	sir.Lock()
+	defer sir.Unlock()
+	err := sir.info.Close()
+	if err != nil {
+		return err
+	}
+	err = sir.standby.Close()
+	if err != nil {
+		return err
+	}
+	return sir.hot.Close()
 }
