@@ -3,6 +3,7 @@
 The standalone mode is the simplest way to run Banyand. It is suitable for the development and testing environment. The standalone mode is running as a standalone process by
 
 ```shell
+$ cd banyand/build/bin
 $ ./banyand-server standalone
 ██████╗  █████╗ ███╗   ██╗██╗   ██╗ █████╗ ███╗   ██╗██████╗ ██████╗ 
 ██╔══██╗██╔══██╗████╗  ██║╚██╗ ██╔╝██╔══██╗████╗  ██║██╔══██╗██╔══██╗
