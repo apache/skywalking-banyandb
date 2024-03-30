@@ -35,19 +35,19 @@ import (
 type partIter struct {
 	err                  error
 	p                    *part
+	curBlock             *blockMetadata
 	sids                 []common.SeriesID
 	primaryBlockMetadata []primaryBlockMetadata
 	bms                  []blockMetadata
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
-	curBlock             blockMetadata
 	sidIdx               int
 	minTimestamp         int64
 	maxTimestamp         int64
 }
 
 func (pi *partIter) reset() {
-	pi.curBlock = blockMetadata{}
+	pi.curBlock = nil
 	pi.p = nil
 	pi.sids = nil
 	pi.sidIdx = 0
@@ -60,6 +60,7 @@ func (pi *partIter) reset() {
 
 func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	pi.reset()
+	pi.curBlock = &blockMetadata{}
 	pi.p = p
 
 	pi.bms = bma.arr
@@ -227,7 +228,7 @@ func (pi *partIter) findBlock() bool {
 			continue
 		}
 
-		pi.curBlock = *bm
+		pi.curBlock = bm
 
 		pi.bms = bhs[1:]
 		return true
@@ -341,7 +342,7 @@ func (pih *partMergeIterHeap) Len() int {
 
 func (pih *partMergeIterHeap) Less(i, j int) bool {
 	x := *pih
-	return x[i].block.bm.less(x[j].block.bm)
+	return x[i].block.bm.less(&x[j].block.bm)
 }
 
 func (pih *partMergeIterHeap) Swap(i, j int) {

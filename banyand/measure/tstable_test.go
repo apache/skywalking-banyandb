@@ -155,7 +155,9 @@ func Test_tstIter(t *testing.T) {
 			if ti.piHeap[0].curBlock.seriesID == 0 {
 				t.Errorf("Expected curBlock to be initialized, but it was nil")
 			}
-			got = append(got, ti.piHeap[0].curBlock)
+			var bm blockMetadata
+			bm.copyFrom(ti.piHeap[0].curBlock)
+			got = append(got, bm)
 		}
 
 		if !errors.Is(ti.Error(), tt.wantErr) {

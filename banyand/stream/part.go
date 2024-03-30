@@ -173,6 +173,9 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 				break
 			}
 		}
+		if targetBlockMetadata.seriesID != seriesID {
+			continue
+		}
 
 		timestamps := make([]int64, 0)
 		timestamps = mustReadTimestampsFrom(timestamps, &targetBlockMetadata.timestamps, int(targetBlockMetadata.count), p.timestamps)

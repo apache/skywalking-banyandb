@@ -172,6 +172,7 @@ func buildElementsFromColumnResult(r *pbv1.StreamColumnResult) (elements []*stre
 }
 
 func buildElementsFromQueryResults(results []pbv1.StreamQueryResult) (elements []*streamv1.Element) {
+	deduplication := make(map[string]struct{})
 	for _, result := range results {
 		for {
 			r := result.Pull()
@@ -179,6 +180,10 @@ func buildElementsFromQueryResults(results []pbv1.StreamQueryResult) (elements [
 				break
 			}
 			for i := range r.Timestamps {
+				if _, ok := deduplication[r.ElementIDs[i]]; ok {
+					continue
+				}
+				deduplication[r.ElementIDs[i]] = struct{}{}
 				e := &streamv1.Element{
 					Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
 					ElementId: r.ElementIDs[i],
