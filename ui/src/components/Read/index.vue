@@ -183,17 +183,7 @@ watch(() => route, () => {
     immediate: true,
     deep: true
 })
-watch(() => data.code, () => {
-    let index = data.codeStorage.findIndex(item => {
-        return item.params.group == route.params.group && item.params.name == route.params.name
-    })
-    if (index >= 0) {
-        data.codeStorage[index].params.code = data.code
-    } else {
-        route.params.code = data.code
-        data.codeStorage.push(JSON.parse(JSON.stringify(route)))
-    }
-})
+
 function initCode() {
     let index = data.codeStorage.findIndex(item => {
         return item.params.group == route.params.group && item.params.name == route.params.name
@@ -437,12 +427,12 @@ function changeFields() {
                             type="datetimerange" :shortcuts="shortcuts" range-separator="to" start-placeholder="begin"
                             end-placeholder="end" align="right">
                         </el-date-picker>
-                        <el-button size="normal" :icon="Search" @click="searchTableData" color="#6E38F7" plain></el-button>
+                        <el-button :icon="Search" @click="searchTableData" color="#6E38F7" plain></el-button>
                     </div>
                 </el-col>
                 <el-col :span="12">
                     <div class="flex align-item-center justify-end" style="height: 30px;">
-                        <el-button size="normal" :icon="RefreshRight" @click="getTableData" plain></el-button>
+                        <el-button :icon="RefreshRight" @click="getTableData" plain></el-button>
                     </div>
                 </el-col>
             </el-row>
@@ -452,14 +442,14 @@ function changeFields() {
         <el-card shadow="always">
             <el-table v-loading="data.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
                 element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" stripe border highlight-current-row
-                tooltip-effect="dark" empty-text="No data yet" @selection-change="handleSelectionChange"
+                tooltip-effect="dark" empty-text="No data yet"
                 :data="data.tableData">
                 <el-table-column type="selection" width="55">
                 </el-table-column>
                 <el-table-column type="index" label="number" width="90">
                 </el-table-column>
                 <el-table-column label="timestamp" width="260" key="timestamp" prop="timestamp"></el-table-column>
-                <el-table-column v-for="item in tableHeader" sortable :sort-change="sortChange" :key="item.name"
+                <el-table-column v-for="item in tableHeader" sortable :key="item.name"
                     :label="item.label" :prop="item.name" show-overflow-tooltip>
                 </el-table-column>
             </el-table>

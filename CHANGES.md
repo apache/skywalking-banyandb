@@ -20,10 +20,13 @@ Release Notes.
   - Data ingestion and retrieval.
   - Flush memory data to disk.
   - Merge memory data and disk data.
+- Add HTTP services to TopNAggregation operations.
 
 ### Bugs
 
 - Fix the bug that property merge new tags failed.
+- Fix CPU Spike and Extended Duration in BanyanDB's etcd Watching Registration Process.
+- Fix panic when closing banyand.
 
 ### Chores
 
@@ -58,7 +61,8 @@ Release Notes.
 - BanyanDB ui misses fields when creating a group
 - Fix data duplicate writing
 - Syncing metadata change events from etcd instead of a local channel.
-- Fix parse environment variables error
+- Fix parse environment variables error.
+- Fix console warnings in dev mod, and optimize `vite` configuration for proxy.
 
 ### Chores
 

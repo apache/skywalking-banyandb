@@ -173,6 +173,9 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 				break
 			}
 		}
+		if targetBlockMetadata.seriesID != seriesID {
+			continue
+		}
 
 		timestamps := make([]int64, 0)
 		timestamps = mustReadTimestampsFrom(timestamps, &targetBlockMetadata.timestamps, int(targetBlockMetadata.count), p.timestamps)
@@ -410,7 +413,9 @@ func (pw *partWrapper) decRef() {
 	}
 	pw.p.close()
 	if pw.removable.Load() && pw.p.fileSystem != nil {
-		pw.p.fileSystem.MustRMAll(pw.p.path)
+		go func(pw *partWrapper) {
+			pw.p.fileSystem.MustRMAll(pw.p.path)
+		}(pw)
 	}
 }
 

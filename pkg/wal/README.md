@@ -1,5 +1,7 @@
 # WAL
 
+Deprecation Notice: This package is deprecated and will be removed in the future.
+
 ## Benchmark
 
 Testing environment:

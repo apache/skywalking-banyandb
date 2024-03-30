@@ -34,8 +34,17 @@ var errUnsupportedEntityType = errors.New("unsupported entity type")
 
 // EventHandler allows receiving and handling the resource change events.
 type EventHandler interface {
+	OnInit([]Kind) (bool, []int64)
 	OnAddOrUpdate(Metadata)
 	OnDelete(Metadata)
+}
+
+// UnimplementedOnInitHandler is a placeholder for unimplemented OnInitHandler.
+type UnimplementedOnInitHandler struct{}
+
+// OnInit is a placeholder for unimplemented OnInitHandler.
+func (u UnimplementedOnInitHandler) OnInit([]Kind) (bool, []int64) {
+	return false, nil
 }
 
 // ListOpt contains options to list resources.

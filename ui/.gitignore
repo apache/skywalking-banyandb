@@ -19,3 +19,4 @@
 dist
 node_modules
 ui-licenses
+.env.local

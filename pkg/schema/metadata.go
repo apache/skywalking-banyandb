@@ -180,16 +180,29 @@ func (sr *schemaRepo) Watcher() {
 					case EventAddOrUpdate:
 						switch evt.Kind {
 						case EventKindGroup:
-							_, err = sr.StoreGroup(evt.Metadata)
+							_, err = sr.storeGroup(evt.Metadata.GetMetadata())
 						case EventKindResource:
-							err = sr.storeResource(evt.Metadata)
+							err = sr.storeResource(evt.Metadata.GetMetadata())
+						case EventKindTopNAgg:
+							topNSchema := evt.Metadata.(*databasev1.TopNAggregation)
+							_, err = createOrUpdateTopNMeasure(context.Background(), sr.metadata.MeasureRegistry(), topNSchema)
+							if err != nil {
+								break
+							}
+							err = sr.storeResource(topNSchema.SourceMeasure)
 						}
 					case EventDelete:
 						switch evt.Kind {
 						case EventKindGroup:
-							err = sr.deleteGroup(evt.Metadata)
+							err = sr.deleteGroup(evt.Metadata.GetMetadata())
 						case EventKindResource:
-							err = sr.deleteResource(evt.Metadata)
+							err = sr.deleteResource(evt.Metadata.GetMetadata())
+						case EventKindTopNAgg:
+							topNSchema := evt.Metadata.(*databasev1.TopNAggregation)
+							err = multierr.Combine(
+								sr.deleteResource(topNSchema.SourceMeasure),
+								sr.storeResource(topNSchema.SourceMeasure),
+							)
 						}
 					}
 					if err != nil && !errors.Is(err, schema.ErrClosed) {
@@ -209,7 +222,7 @@ func (sr *schemaRepo) Watcher() {
 	}
 }
 
-func (sr *schemaRepo) StoreGroup(groupMeta *commonv1.Metadata) (*group, error) {
+func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	name := groupMeta.GetName()
 	sr.Lock()
 	defer sr.Unlock()
@@ -240,7 +253,9 @@ func (sr *schemaRepo) StoreGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	}
 	sr.l.Info().Str("group", name).Msg("closing the previous tsdb")
 	db := g.SupplyTSDB()
-	db.Close()
+	if db != nil {
+		db.Close()
+	}
 	sr.l.Info().Str("group", name).Msg("creating a new tsdb")
 	if err := g.init(name); err != nil {
 		return nil, err
@@ -305,7 +320,7 @@ func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) error {
 	g, ok := sr.LoadGroup(metadata.Group)
 	if !ok {
 		var err error
-		if g, err = sr.StoreGroup(&commonv1.Metadata{Name: metadata.Group}); err != nil {
+		if g, err = sr.storeGroup(&commonv1.Metadata{Name: metadata.Group}); err != nil {
 			return errors.WithMessagef(err, "create unknown group:%s", metadata.Group)
 		}
 	}
@@ -319,7 +334,7 @@ func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) error {
 		}
 		return errors.WithMessage(err, "fails to get the resource")
 	}
-	_, err = g.(*group).storeResource(context.Background(), stm)
+	_, err = g.(*group).initResource(context.Background(), stm)
 	return err
 }
 
@@ -404,6 +419,10 @@ func (g *group) init(name string) error {
 	if err != nil {
 		return err
 	}
+	return g.initBySchema(groupSchema)
+}
+
+func (g *group) initBySchema(groupSchema *commonv1.Group) error {
 	g.groupSchema.Store(groupSchema)
 	if g.isPortable() {
 		return nil
@@ -425,12 +444,13 @@ func (g *group) GetSchema() *commonv1.Group {
 }
 
 func (g *group) SupplyTSDB() io.Closer {
-	return g.db.Load().(io.Closer)
+	if v := g.db.Load(); v != nil {
+		return v.(io.Closer)
+	}
+	return nil
 }
 
-func (g *group) storeResource(ctx context.Context, resourceSchema ResourceSchema) (Resource, error) {
-	g.mapMutex.Lock()
-	defer g.mapMutex.Unlock()
+func (g *group) initResource(ctx context.Context, resourceSchema ResourceSchema) (Resource, error) {
 	localCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	idxRules, err := g.metadata.IndexRules(localCtx, resourceSchema.GetMetadata())
@@ -447,6 +467,12 @@ func (g *group) storeResource(ctx context.Context, resourceSchema ResourceSchema
 			return nil, innerErr
 		}
 	}
+	return g.storeResource(resourceSchema, idxRules, topNAggrs)
+}
+
+func (g *group) storeResource(resourceSchema ResourceSchema, idxRules []*databasev1.IndexRule, topNAggrs []*databasev1.TopNAggregation) (Resource, error) {
+	g.mapMutex.Lock()
+	defer g.mapMutex.Unlock()
 	resource := &resourceSpec{
 		schema:       resourceSchema,
 		indexRules:   idxRules,
@@ -509,7 +535,11 @@ func (g *group) close() (err error) {
 	if !g.isInit() || g.isPortable() {
 		return nil
 	}
-	return multierr.Append(err, g.SupplyTSDB().Close())
+	db := g.SupplyTSDB()
+	if db != nil {
+		err = multierr.Append(err, db.Close())
+	}
+	return err
 }
 
 func parseMaxModRevision[T ResourceSchema](indexRules []T) (maxRevisionForIdxRules int64) {

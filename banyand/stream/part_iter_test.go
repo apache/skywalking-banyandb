@@ -109,20 +109,23 @@ func Test_partIter_nextBlock(t *testing.T) {
 			wantErr: nil,
 		},
 	}
-
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			verifyPart := func(p *part) {
 				defer p.close()
 				pi := partIter{}
-				pi.init(p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
+				pi.init(bma, p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
 
 				var got []blockMetadata
 				for pi.nextBlock() {
 					if pi.curBlock.seriesID == 0 {
 						t.Errorf("Expected currBlock to be initialized, but it was nil")
 					}
-					got = append(got, pi.curBlock)
+					var bm blockMetadata
+					bm.copyFrom(pi.curBlock)
+					got = append(got, bm)
 				}
 
 				if !errors.Is(pi.error(), tt.wantErr) {

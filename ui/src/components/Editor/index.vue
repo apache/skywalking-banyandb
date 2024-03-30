@@ -311,7 +311,7 @@ function initData() {
                     <el-input clearable v-model="data.form.name"></el-input>
                 </el-form-item>
                 <el-form-item v-if="data.type == 'measure'" label="interval" prop="interval">
-                    <el-input-number v-model="data.form.interval" min="1" />
+                    <el-input-number v-model="data.form.interval" :min="1" />
                     <el-select v-model="data.form.intervalUnit" style="width: 100px; margin-left: 5px;">
                         <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value" />
                     </el-select>

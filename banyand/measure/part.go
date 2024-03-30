@@ -239,15 +239,11 @@ func (pw *partWrapper) decRef() {
 	if n > 0 {
 		return
 	}
-	if pw.mp != nil {
-		releaseMemPart(pw.mp)
-		pw.mp = nil
-		pw.p = nil
-		return
-	}
 	pw.p.close()
 	if pw.removable.Load() && pw.p.fileSystem != nil {
-		pw.p.fileSystem.MustRMAll(pw.p.path)
+		go func(pw *partWrapper) {
+			pw.p.fileSystem.MustRMAll(pw.p.path)
+		}(pw)
 	}
 }
 

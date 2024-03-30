@@ -34,34 +34,34 @@ type dataBlock struct {
 	size   uint64
 }
 
-func (h *dataBlock) reset() {
-	h.offset = 0
-	h.size = 0
+func (b *dataBlock) reset() {
+	b.offset = 0
+	b.size = 0
 }
 
-func (h *dataBlock) copyFrom(src *dataBlock) {
-	h.offset = src.offset
-	h.size = src.size
+func (b *dataBlock) copyFrom(src *dataBlock) {
+	b.offset = src.offset
+	b.size = src.size
 }
 
-func (h *dataBlock) marshal(dst []byte) []byte {
-	dst = encoding.VarUint64ToBytes(dst, h.offset)
-	dst = encoding.VarUint64ToBytes(dst, h.size)
+func (b *dataBlock) marshal(dst []byte) []byte {
+	dst = encoding.VarUint64ToBytes(dst, b.offset)
+	dst = encoding.VarUint64ToBytes(dst, b.size)
 	return dst
 }
 
-func (h *dataBlock) unmarshal(src []byte) ([]byte, error) {
+func (b *dataBlock) unmarshal(src []byte) ([]byte, error) {
 	src, n, err := encoding.BytesToVarUint64(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal offset: %w", err)
 	}
-	h.offset = n
+	b.offset = n
 
 	src, n, err = encoding.BytesToVarUint64(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal size: %w", err)
 	}
-	h.size = n
+	b.size = n
 	return src, nil
 }
 
@@ -75,84 +75,84 @@ type blockMetadata struct {
 	count                 uint64
 }
 
-func (bh *blockMetadata) copyFrom(src *blockMetadata) {
-	bh.seriesID = src.seriesID
-	bh.uncompressedSizeBytes = src.uncompressedSizeBytes
-	bh.count = src.count
-	bh.timestamps.copyFrom(&src.timestamps)
+func (bm *blockMetadata) copyFrom(src *blockMetadata) {
+	bm.seriesID = src.seriesID
+	bm.uncompressedSizeBytes = src.uncompressedSizeBytes
+	bm.count = src.count
+	bm.timestamps.copyFrom(&src.timestamps)
 	for k, db := range src.tagFamilies {
-		if bh.tagFamilies == nil {
-			bh.tagFamilies = make(map[string]*dataBlock)
+		if bm.tagFamilies == nil {
+			bm.tagFamilies = make(map[string]*dataBlock)
 		}
-		bh.tagFamilies[k] = &dataBlock{}
-		bh.tagFamilies[k].copyFrom(db)
+		bm.tagFamilies[k] = &dataBlock{}
+		bm.tagFamilies[k].copyFrom(db)
 	}
-	bh.field.copyFrom(&src.field)
+	bm.field.copyFrom(&src.field)
 }
 
-func (bh *blockMetadata) getTagFamilyMetadata(name string) *dataBlock {
-	if bh.tagFamilies == nil {
-		bh.tagFamilies = make(map[string]*dataBlock)
+func (bm *blockMetadata) getTagFamilyMetadata(name string) *dataBlock {
+	if bm.tagFamilies == nil {
+		bm.tagFamilies = make(map[string]*dataBlock)
 	}
-	tf, ok := bh.tagFamilies[name]
+	tf, ok := bm.tagFamilies[name]
 	if !ok {
 		tf = &dataBlock{}
-		bh.tagFamilies[name] = tf
+		bm.tagFamilies[name] = tf
 	}
 	return tf
 }
 
-func (bh *blockMetadata) reset() {
-	bh.seriesID = 0
-	bh.uncompressedSizeBytes = 0
-	bh.count = 0
-	bh.timestamps.reset()
-	bh.field.reset()
-	for k := range bh.tagFamilies {
-		bh.tagFamilies[k].reset()
-		delete(bh.tagFamilies, k)
+func (bm *blockMetadata) reset() {
+	bm.seriesID = 0
+	bm.uncompressedSizeBytes = 0
+	bm.count = 0
+	bm.timestamps.reset()
+	bm.field.reset()
+	for k := range bm.tagFamilies {
+		bm.tagFamilies[k].reset()
+		delete(bm.tagFamilies, k)
 	}
-	bh.tagProjection = bh.tagProjection[:0]
+	bm.tagProjection = bm.tagProjection[:0]
 }
 
-func (bh *blockMetadata) marshal(dst []byte) []byte {
-	dst = bh.seriesID.AppendToBytes(dst)
-	dst = encoding.VarUint64ToBytes(dst, bh.uncompressedSizeBytes)
-	dst = encoding.VarUint64ToBytes(dst, bh.count)
-	dst = bh.timestamps.marshal(dst)
-	dst = encoding.VarUint64ToBytes(dst, uint64(len(bh.tagFamilies)))
+func (bm *blockMetadata) marshal(dst []byte) []byte {
+	dst = bm.seriesID.AppendToBytes(dst)
+	dst = encoding.VarUint64ToBytes(dst, bm.uncompressedSizeBytes)
+	dst = encoding.VarUint64ToBytes(dst, bm.count)
+	dst = bm.timestamps.marshal(dst)
+	dst = encoding.VarUint64ToBytes(dst, uint64(len(bm.tagFamilies)))
 	// make sure the order of tagFamilies is stable
-	keys := make([]string, 0, len(bh.tagFamilies))
-	for k := range bh.tagFamilies {
+	keys := make([]string, 0, len(bm.tagFamilies))
+	for k := range bm.tagFamilies {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, name := range keys {
-		cf := bh.tagFamilies[name]
+		cf := bm.tagFamilies[name]
 		dst = encoding.EncodeBytes(dst, convert.StringToBytes(name))
 		dst = cf.marshal(dst)
 	}
-	return bh.field.marshal(dst)
+	return bm.field.marshal(dst)
 }
 
-func (bh *blockMetadata) unmarshal(src []byte) ([]byte, error) {
+func (bm *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 	if len(src) < 8 {
 		return nil, errors.New("cannot unmarshal blockMetadata from less than 8 bytes")
 	}
-	bh.seriesID = common.SeriesID(encoding.BytesToUint64(src))
+	bm.seriesID = common.SeriesID(encoding.BytesToUint64(src))
 	src = src[8:]
 	src, n, err := encoding.BytesToVarUint64(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal uncompressedSizeBytes: %w", err)
 	}
-	bh.uncompressedSizeBytes = n
+	bm.uncompressedSizeBytes = n
 
 	src, n, err = encoding.BytesToVarUint64(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal count: %w", err)
 	}
-	bh.count = n
-	src, err = bh.timestamps.unmarshal(src)
+	bm.count = n
+	src, err = bm.timestamps.unmarshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal timestampsMetadata: %w", err)
 	}
@@ -161,8 +161,8 @@ func (bh *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 		return nil, fmt.Errorf("cannot unmarshal tagFamilies count: %w", err)
 	}
 	if n > 0 {
-		if bh.tagFamilies == nil {
-			bh.tagFamilies = make(map[string]*dataBlock, n)
+		if bm.tagFamilies == nil {
+			bm.tagFamilies = make(map[string]*dataBlock, n)
 		}
 		var nameBytes []byte
 		for i := uint64(0); i < n; i++ {
@@ -176,21 +176,21 @@ func (bh *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("cannot unmarshal tagFamily dataBlock: %w", err)
 			}
-			bh.tagFamilies[convert.BytesToString(nameBytes)] = tf
+			bm.tagFamilies[convert.BytesToString(nameBytes)] = tf
 		}
 	}
-	src, err = bh.field.unmarshal(src)
+	src, err = bm.field.unmarshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal columnFamilyMetadata: %w", err)
 	}
 	return src, nil
 }
 
-func (bh blockMetadata) less(other blockMetadata) bool {
-	if bh.seriesID == other.seriesID {
-		return bh.timestamps.min < other.timestamps.min
+func (bm *blockMetadata) less(other *blockMetadata) bool {
+	if bm.seriesID == other.seriesID {
+		return bm.timestamps.min < other.timestamps.min
 	}
-	return bh.seriesID < other.seriesID
+	return bm.seriesID < other.seriesID
 }
 
 func generateBlockMetadata() *blockMetadata {
@@ -201,12 +201,31 @@ func generateBlockMetadata() *blockMetadata {
 	return v.(*blockMetadata)
 }
 
-func releaseBlockMetadata(bh *blockMetadata) {
-	bh.reset()
-	blockMetadataPool.Put(bh)
+func releaseBlockMetadata(bm *blockMetadata) {
+	bm.reset()
+	blockMetadataPool.Put(bm)
 }
 
 var blockMetadataPool sync.Pool
+
+type blockMetadataArray struct {
+	arr []blockMetadata
+}
+
+var blockMetadataArrayPool sync.Pool
+
+func generateBlockMetadataArray() *blockMetadataArray {
+	v := blockMetadataArrayPool.Get()
+	if v == nil {
+		return &blockMetadataArray{}
+	}
+	return v.(*blockMetadataArray)
+}
+
+func releaseBlockMetadataArray(bma *blockMetadataArray) {
+	bma.arr = bma.arr[:0]
+	blockMetadataArrayPool.Put(bma)
+}
 
 type timestampsMetadata struct {
 	dataBlock
@@ -215,38 +234,38 @@ type timestampsMetadata struct {
 	encodeType encoding.EncodeType
 }
 
-func (th *timestampsMetadata) reset() {
-	th.dataBlock.reset()
-	th.min = 0
-	th.max = 0
-	th.encodeType = 0
+func (tm *timestampsMetadata) reset() {
+	tm.dataBlock.reset()
+	tm.min = 0
+	tm.max = 0
+	tm.encodeType = 0
 }
 
-func (th *timestampsMetadata) copyFrom(src *timestampsMetadata) {
-	th.dataBlock.copyFrom(&src.dataBlock)
-	th.min = src.min
-	th.max = src.max
-	th.encodeType = src.encodeType
+func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
+	tm.dataBlock.copyFrom(&src.dataBlock)
+	tm.min = src.min
+	tm.max = src.max
+	tm.encodeType = src.encodeType
 }
 
-func (th *timestampsMetadata) marshal(dst []byte) []byte {
-	dst = th.dataBlock.marshal(dst)
-	dst = encoding.Uint64ToBytes(dst, uint64(th.min))
-	dst = encoding.Uint64ToBytes(dst, uint64(th.max))
-	dst = append(dst, byte(th.encodeType))
+func (tm *timestampsMetadata) marshal(dst []byte) []byte {
+	dst = tm.dataBlock.marshal(dst)
+	dst = encoding.Uint64ToBytes(dst, uint64(tm.min))
+	dst = encoding.Uint64ToBytes(dst, uint64(tm.max))
+	dst = append(dst, byte(tm.encodeType))
 	return dst
 }
 
-func (th *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
-	src, err := th.dataBlock.unmarshal(src)
+func (tm *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
+	src, err := tm.dataBlock.unmarshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
 	}
-	th.min = int64(encoding.BytesToUint64(src))
+	tm.min = int64(encoding.BytesToUint64(src))
 	src = src[8:]
-	th.max = int64(encoding.BytesToUint64(src))
+	tm.max = int64(encoding.BytesToUint64(src))
 	src = src[8:]
-	th.encodeType = encoding.EncodeType(src[0])
+	tm.encodeType = encoding.EncodeType(src[0])
 	return src[1:], nil
 }
 

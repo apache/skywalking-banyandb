@@ -285,9 +285,12 @@ func (tst *tsTable) mustAddElements(es *elements) {
 }
 
 func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, int, error) {
-	tst.RLock()
-	defer tst.RUnlock()
-	for _, p := range tst.currentSnapshot().parts {
+	s := tst.currentSnapshot()
+	if s == nil {
+		return nil, 0, fmt.Errorf("snapshot is absent, cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
+	}
+	defer s.decRef()
+	for _, p := range s.parts {
 		if !p.p.containTimestamp(timestamp) {
 			continue
 		}
@@ -327,7 +330,7 @@ func (ti *tstIter) reset() {
 	ti.nextBlockNoop = false
 }
 
-func (ti *tstIter) init(parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	ti.reset()
 	ti.parts = parts
 
@@ -336,7 +339,7 @@ func (ti *tstIter) init(parts []*part, sids []common.SeriesID, minTimestamp, max
 	}
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
-		ti.piPool[i].init(p, sids, minTimestamp, maxTimestamp)
+		ti.piPool[i].init(bma, p, sids, minTimestamp, maxTimestamp)
 	}
 
 	ti.piHeap = ti.piHeap[:0]

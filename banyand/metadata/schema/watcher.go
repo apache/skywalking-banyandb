@@ -18,40 +18,52 @@
 package schema
 
 import (
+	"errors"
 	"time"
 
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
+	v3rpc "go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+type watchEventHandler interface {
+	OnAddOrUpdate(Metadata)
+	OnDelete(Metadata)
+}
 type watcherConfig struct {
-	handler EventHandler
-	key     string
-	kind    Kind
+	handler  watchEventHandler
+	key      string
+	revision int64
+	kind     Kind
 }
 
 type watcher struct {
-	handler EventHandler
-	cli     *clientv3.Client
-	closer  *run.Closer
-	l       *logger.Logger
-	key     string
-	kind    Kind
+	handler  watchEventHandler
+	cli      *clientv3.Client
+	closer   *run.Closer
+	l        *logger.Logger
+	key      string
+	revision int64
+	kind     Kind
 }
 
 func newWatcher(cli *clientv3.Client, wc watcherConfig, l *logger.Logger) *watcher {
 	w := &watcher{
-		cli:     cli,
-		key:     wc.key,
-		kind:    wc.kind,
-		handler: wc.handler,
-		closer:  run.NewCloser(1),
-		l:       l,
+		cli:      cli,
+		key:      wc.key,
+		kind:     wc.kind,
+		handler:  wc.handler,
+		revision: wc.revision,
+		closer:   run.NewCloser(1),
+		l:        l,
 	}
-	revision := w.allEvents()
+	revision := w.revision
+	if revision < 1 {
+		revision = w.allEvents()
+	}
 	go w.watch(revision)
 	return w
 }
@@ -65,10 +77,16 @@ func (w *watcher) Close() error {
 func (w *watcher) allEvents() int64 {
 	cli := w.cli
 	var resp *clientv3.GetResponse
+	start := time.Now()
+	var eventHandleTime time.Duration
+	var eventSize int
 	for {
 		var err error
 		if resp, err = cli.Get(w.closer.Ctx(), w.key, clientv3.WithPrefix()); err == nil {
+			startHandle := time.Now()
+			eventSize = len(resp.Kvs)
 			w.handleAllEvents(resp.Kvs)
+			eventHandleTime = time.Since(startHandle)
 			break
 		}
 		select {
@@ -77,6 +95,8 @@ func (w *watcher) allEvents() int64 {
 		case <-time.After(1 * time.Second):
 		}
 	}
+	w.l.Info().Dur("event_handle_time", eventHandleTime).Dur("total_time", time.Since(start)).
+		Int("event_size", eventSize).Str("key", w.key).Msg("watcher all events")
 	return resp.Header.Revision
 }
 
@@ -87,9 +107,7 @@ func (w *watcher) watch(revision int64) {
 	defer w.closer.Done()
 	cli := w.cli
 	for {
-		if revision > 0 {
-			revision = -1
-		} else {
+		if revision < 0 {
 			revision = w.allEvents()
 		}
 		select {
@@ -112,6 +130,10 @@ func (w *watcher) watch(revision int64) {
 				case <-w.closer.CloseNotify():
 					return
 				default:
+					if errors.Is(err, v3rpc.ErrCompacted) {
+						revision = -1
+						break
+					}
 					continue
 				}
 			}

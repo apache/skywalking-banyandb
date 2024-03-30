@@ -4,6 +4,7 @@ go 1.21
 
 require (
 	github.com/RoaringBitmap/roaring v1.7.0
+	github.com/apache/skywalking-cli v0.0.0-20231201043336-d5f3597733aa
 	github.com/benbjohnson/clock v1.3.0
 	github.com/blugelabs/bluge v0.2.2
 	github.com/cespare/xxhash v1.1.0
@@ -20,6 +21,7 @@ require (
 	github.com/hashicorp/golang-lru v1.0.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kkdai/maglev v0.2.0
+	github.com/montanaflynn/stats v0.7.1
 	github.com/oklog/run v1.1.0
 	github.com/onsi/ginkgo/v2 v2.13.2
 	github.com/onsi/gomega v1.30.0
@@ -30,6 +32,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.8.4
+	github.com/urfave/cli/v2 v2.3.0
 	github.com/xhit/go-str2duration/v2 v2.1.0
 	github.com/zenizh/go-capturer v0.0.0-20211219060012-52ea6c8fed04
 	go.etcd.io/etcd/client/v3 v3.5.11
@@ -43,6 +46,13 @@ require (
 	google.golang.org/grpc v1.60.1
 	google.golang.org/protobuf v1.31.0
 	sigs.k8s.io/yaml v1.4.0
+	skywalking.apache.org/repo/goapi v0.0.0-20230712035303-201c1fb2d6ec
+)
+
+require (
+	github.com/cpuguy83/go-md2man/v2 v2.0.3 // indirect
+	github.com/machinebox/graphql v0.2.2 // indirect
+	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 )
 
 require (
@@ -97,7 +107,6 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/montanaflynn/stats v0.7.1
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
@@ -115,7 +124,6 @@ require (
 	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/spf13/afero v1.11.0 // indirect
 	github.com/spf13/cast v1.6.0 // indirect
-	github.com/stretchr/objx v0.5.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.13 // indirect
 	github.com/tklauser/numcpus v0.7.0 // indirect
