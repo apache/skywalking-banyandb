@@ -160,6 +160,21 @@ const router = createRouter({
               path: '/banyandb/:schema/index-rule-binding/operator-edit/:type/:operator/:group/:name',
               name: 'measure-edit-index-rule-binding',
               component: () => import('@/components/IndexRuleBinding/Editor.vue')
+            },
+            {
+              path: '/banyandb/measure/topn-agg/operator-read/:type/:operator/:group/:name',
+              name: 'measure-topn-agg',
+              component: () => import('@/components/TopNAggregation/index.vue')
+            },
+            {
+              path: '/banyandb/:schema/topn-agg/operator-create/:type/:operator/:group',
+              name: 'measure-create-topn-agg',
+              component: () => import('@/components/TopNAggregation/Editor.vue')
+            },
+            {
+              path: '/banyandb/:schema/topn-agg/operator-edit/:type/:operator/:group/:name',
+              name: 'measure-edit-topn-agg',
+              component: () => import('@/components/TopNAggregation/Editor.vue')
             }
           ]
         },

@@ -19,7 +19,7 @@
 
 <script setup>
 import RigheMenu from '@/components/RightMenu/index.vue'
-import { deleteIndexRuleOrIndexRuleBindingOrTopNAggregation, getindexRuleList, getindexRuleBindingList, getGroupList, getTopNAggregationList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup } from '@/api/index'
+import { deleteSecondaryDataModel, getindexRuleList, getindexRuleBindingList, getGroupList, getTopNAggregationList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup } from '@/api/index'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { watch, getCurrentInstance } from "@vue/runtime-core"
 import { useRouter, useRoute } from 'vue-router'
@@ -128,6 +128,13 @@ const indexRuleBindMenu = [
         id: "create index-rule-binding"
     }
 ]
+const topNAggregationMenu = [
+    {
+        icon: "el-icon-document",
+        name: "new topn-agg",
+        id: "create topn-agg"
+    }
+]
 const indexRuleItemMenu = [
     {
         icon: "el-icon-document",
@@ -152,6 +159,18 @@ const indexRuleBindingItemMenu = [
         id: "delete index-rule-binding"
     }
 ]
+const topNAggregationItemMenu = [
+    {
+        icon: "el-icon-document",
+        name: "edit topn-agg",
+        id: "edit topn-agg"
+    },
+    {
+        icon: "el-icon-delete",
+        name: "delete",
+        id: "delete topn-agg"
+    }
+]
 const menuItemFunction = {
     "new group": openCreateGroup,
     "edit group": openEditGroup,
@@ -159,10 +178,12 @@ const menuItemFunction = {
     "refresh": getGroupLists,
     "delete": openDeletaDialog,
     "edit resources": openEditResource,
-    'new index-rule': openCreateIndexRuleOrIndexRuleBinding,
-    'edit index-rule': openEditIndexRuleOrIndexRuleBinding,
-    'new index-rule-binding': openCreateIndexRuleOrIndexRuleBinding,
-    'edit index-rule-binding': openEditIndexRuleOrIndexRuleBinding
+    'new index-rule': openCreateSecondaryDataModel,
+    'edit index-rule': openEditSecondaryDataModel,
+    'new index-rule-binding': openCreateSecondaryDataModel,
+    'edit index-rule-binding': openEditSecondaryDataModel,
+    'new topn-agg': openCreateSecondaryDataModel,
+    'edit topn-agg': openEditSecondaryDataModel
 }
 
 // rules
@@ -353,6 +374,7 @@ function getGroupLists() {
                 Promise.all(promise).then(() => {
                     data.showSearch = true
                     data.groupListsCopy = JSON.parse(JSON.stringify(data.groupLists))
+                    console.log(data.groupLists)
                 }).catch((err) => {
                     ElMessage({
                         message: 'An error occurred while obtaining group data. Please refresh and try again. Error: ' + err,
@@ -491,6 +513,13 @@ function rightClickIndexRuleBinding(e, index, schema) {
     data.schema = schema
     openRightMenu(e)
 }
+function rightClickTopNAggregation(e, index, schema) {
+    data.rightMenuList = topNAggregationMenu
+    data.clickIndex = index
+    data.rightClickType = 'topn-agg'
+    data.schema = schema
+    openRightMenu(e)
+}
 function rightClickIndexRuleItem(e, index, childIndex, schema) {
     data.rightMenuList = indexRuleItemMenu
     data.clickIndex = index
@@ -504,6 +533,14 @@ function rightClickIndexRuleBindingItem(e, index, childIndex, schema) {
     data.clickIndex = index
     data.clickChildIndex = childIndex
     data.rightClickType = 'index-rule-binding'
+    data.schema = schema
+    openRightMenu(e)
+}
+function rightClickTopNAggregationItem(e, index, childIndex, schema) {
+    data.rightMenuList = topNAggregationItemMenu
+    data.clickIndex = index
+    data.clickChildIndex = childIndex
+    data.rightClickType = 'topn-agg'
     data.schema = schema
     openRightMenu(e)
 }
@@ -533,7 +570,7 @@ function stopPropagation(e) {
 }
 
 // CRUD operator
-function openCreateIndexRuleOrIndexRuleBinding() {
+function openCreateSecondaryDataModel() {
     const route = {
         name: `${data.schema}-create-${data.rightClickType}`,
         params: {
@@ -553,8 +590,9 @@ function openCreateIndexRuleOrIndexRuleBinding() {
     $bus.emit('AddTabs', add)
 }
 
-function openEditIndexRuleOrIndexRuleBinding() {
+function openEditSecondaryDataModel() {
     const typeFlag = {
+        'topn-agg': 'topNAggregation',
         'index-rule': 'indexRule',
         'index-rule-binding': 'indexRuleBinding'
     }
@@ -577,7 +615,7 @@ function openEditIndexRuleOrIndexRuleBinding() {
     }
     $bus.emit('AddTabs', add)
 }
-function openIndexRuleOrIndexRuleBinding(index, childIndex, type, schema) {
+function openSecondaryDataModel(index, childIndex, type, schema) {
     const typeFlag = {
         'indexRule': 'index-rule',
         'indexRuleBinding': 'index-rule-binding'
@@ -663,9 +701,11 @@ function openDeletaDialog() {
             if (data.rightClickType == 'group') {
                 return deleteGroupFunction(group)
             } else if (data.rightClickType == 'index-rule') {
-                return deleteIndexRuleOrIndexRuleBindingFunction("index-rule")
+                return deleteSecondaryDataModelFunction("index-rule")
             } else if (data.rightClickType == 'index-rule-binding') {
-                return deleteIndexRuleOrIndexRuleBindingFunction("index-rule-binding")
+                return deleteSecondaryDataModelFunction("index-rule-binding")
+            } else if (data.rightClickType == 'topn-agg') {
+                return deleteSecondaryDataModelFunction("topn-agg")
             }
             return deleteResource(group)
         })
@@ -673,15 +713,16 @@ function openDeletaDialog() {
             // catch error
         })
 }
-function deleteIndexRuleOrIndexRuleBindingFunction(type) {
+function deleteSecondaryDataModelFunction(type) {
     $loadingCreate()
     const flag = {
         'index-rule': 'indexRule',
-        'index-rule-binding': 'indexRuleBinding'
+        'index-rule-binding': 'indexRuleBinding',
+        'topn-agg': 'topNAggregation'
     }
     let group = data.groupLists[data.clickIndex].metadata.name
     let name = data.groupLists[data.clickIndex][flag[type]][data.clickChildIndex].metadata.name
-    deleteIndexRuleOrIndexRuleBindingOrTopNAggregation(type, group, name)
+    deleteSecondaryDataModel(type, group, name)
         .then((res) => {
             if (res.status == 200) {
                 if (res.data.deleted) {
@@ -932,7 +973,7 @@ initActiveMenu()
                             </template>
                             <div v-for="(child, childIndex) in item.indexRule" :key="child.metadata.name">
                                 <div @contextmenu.prevent="rightClickIndexRuleItem($event, index, childIndex, props.type)">
-                                    <el-menu-item @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRule', props.type)"
+                                    <el-menu-item @click="openSecondaryDataModel(index, childIndex, 'indexRule', props.type)"
                                         :index="`${child.metadata.group}-${child.metadata.name}`">
                                         <template #title>
                                             <el-icon>
@@ -962,7 +1003,38 @@ initActiveMenu()
                             <div v-for="(child, childIndex) in item.indexRuleBinding" :key="child.metadata.name">
                                 <div @contextmenu.prevent="rightClickIndexRuleBindingItem($event, index, childIndex, props.type)">
                                     <el-menu-item
-                                        @click="openIndexRuleOrIndexRuleBinding(index, childIndex, 'indexRuleBinding', props.type)"
+                                        @click="openSecondaryDataModel(index, childIndex, 'indexRuleBinding', props.type)"
+                                        :index="`${child.metadata.group}-${child.metadata.name}`">
+                                        <template #title>
+                                            <el-icon>
+                                                <Document />
+                                            </el-icon>
+                                            <span slot="title" :title="child.metadata.name" style="width: 90%"
+                                                class="text-overflow-hidden">
+                                                {{ child.metadata.name }}
+                                            </span>
+                                        </template>
+                                    </el-menu-item>
+                                </div>
+                            </div>
+                        </el-sub-menu>
+                        <el-sub-menu
+                            v-if="props.type == 'measure'"
+                            :index="`${item.metadata.name}-${index}-topn-agg`"
+                            @contextmenu.prevent="rightClickTopNAggregation($event, index, props.type)">
+                            <template #title>
+                                <el-icon>
+                                    <Folder />
+                                </el-icon>
+                                <span slot="title" title="Top-N-Aggregation" style="width: 70%"
+                                    class="text-overflow-hidden">
+                                    Top-N-Aggregation
+                                </span>
+                            </template>
+                            <div v-for="(child, childIndex) in item.topNAggregation" :key="child.metadata.name">
+                                <div @contextmenu.prevent="rightClickTopNAggregationItem($event, index, childIndex, props.type)">
+                                    <el-menu-item
+                                        @click="openSecondaryDataModel(index, childIndex, 'topNAggregation', props.type)"
                                         :index="`${child.metadata.group}-${child.metadata.name}`">
                                         <template #title>
                                             <el-icon>

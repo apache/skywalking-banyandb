@@ -118,14 +118,14 @@ export function getTopNAggregationList(name) {
     })
 }
 
-export function getIndexRuleOrIndexRuleBindingOrTopNAggregation(type, group, name) {
+export function getSecondaryDataModel(type, group, name) {
     return request({
         url: `/api/v1/${type}/schema/${group}/${name}`,
         method: 'get'
     })
 }
 
-export function createIndexRuleOrIndexRuleBindingOrTopNAggregation(type, data) {
+export function createSecondaryDataModel(type, data) {
     return request({
         url: `/api/v1/${type}/schema`,
         method: 'post',
@@ -133,7 +133,7 @@ export function createIndexRuleOrIndexRuleBindingOrTopNAggregation(type, data) {
     })
 }
 
-export function updatendexRuleOrIndexRuleBindingOrTopNAggregation(type, group, name, data) {
+export function updateSecondaryDataModel(type, group, name, data) {
     return request({
         url: `/api/v1/${type}/schema/${group}/${name}`,
         method: 'put',
@@ -141,7 +141,7 @@ export function updatendexRuleOrIndexRuleBindingOrTopNAggregation(type, group, n
     })
 }
 
-export function deleteIndexRuleOrIndexRuleBindingOrTopNAggregation(type, group, name) {
+export function deleteSecondaryDataModel(type, group, name) {
     return request({
         url: `/api/v1/${type}/schema/${group}/${name}`,
         method: 'delete'
