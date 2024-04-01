@@ -19,27 +19,29 @@
 package inverted
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
-	"strings"
+	"math"
+
+	"github.com/blugelabs/bluge"
 
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/blugelabs/bluge"
 )
 
 type sortIterator struct {
 	query            bluge.Query
+	err              error
 	reader           *bluge.Reader
+	current          *blugeMatchIterator
 	sortedKey        string
 	fk               string
-	shouldDecodeTerm bool
+	lastKey          []byte
+	currKey          []byte
 	size             int
-
-	current *blugeMatchIterator
-	lastKey []byte
-
-	err error
+	skipped          int
+	shouldDecodeTerm bool
 }
 
 func (si *sortIterator) Next() bool {
@@ -50,8 +52,7 @@ func (si *sortIterator) Next() bool {
 		return si.loadCurrent()
 	}
 
-	if si.current.Next() {
-		si.lastKey = si.current.current.Term
+	if si.next() {
 		return true
 	}
 	si.current.Close()
@@ -59,13 +60,14 @@ func (si *sortIterator) Next() bool {
 }
 
 func (si *sortIterator) loadCurrent() bool {
-	topNSearch := bluge.NewTopNSearch(si.size, si.query).SortBy([]string{si.sortedKey})
+	size := si.size + si.skipped
+	if size < 0 {
+		// overflow
+		size = math.MaxInt64
+	}
+	topNSearch := bluge.NewTopNSearch(size, si.query).SortBy([]string{si.sortedKey})
 	if si.lastKey != nil {
-		if strings.HasPrefix(si.sortedKey, "-") {
-			topNSearch = topNSearch.Before([][]byte{si.lastKey})
-		} else {
-			topNSearch = topNSearch.After([][]byte{si.lastKey})
-		}
+		topNSearch = topNSearch.After([][]byte{si.lastKey})
 	}
 
 	documentMatchIterator, err := si.reader.Search(context.Background(), topNSearch)
@@ -74,15 +76,27 @@ func (si *sortIterator) loadCurrent() bool {
 		return false
 	}
 
-	iter := newBlugeMatchIterator(documentMatchIterator, si.fk, si.shouldDecodeTerm, nil)
+	iter := newBlugeMatchIterator(documentMatchIterator, si.fk, si.shouldDecodeTerm, si.skipped, nil)
 	si.current = &iter
-	if si.current.Next() {
-		si.lastKey = si.current.current.Term
+	if si.next() {
 		return true
-	} else {
-		si.err = io.EOF
-		return false
 	}
+	si.err = io.EOF
+	return false
+}
+
+func (si *sortIterator) next() bool {
+	if si.current.Next() {
+		currKey := si.current.Val().TermRaw
+		if si.currKey != nil && !bytes.Equal(currKey, si.currKey) {
+			si.lastKey = si.currKey
+			si.skipped = 0
+		}
+		si.currKey = currKey
+		si.skipped += si.current.Val().Value.Len()
+		return true
+	}
+	return false
 }
 
 func (si *sortIterator) Val() *index.PostingValue {

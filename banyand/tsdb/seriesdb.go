@@ -497,9 +497,9 @@ func (s *seriesDB) Search(ctx context.Context, path Path, filter index.Filter, o
 	var err error
 	switch order.Index.Type {
 	case databasev1.IndexRule_TYPE_TREE:
-		iter, err = s.lsmIndex.Iterator(fieldKey, rangeOpts, order.Sort)
+		iter, err = s.lsmIndex.Iterator(fieldKey, rangeOpts, order.Sort, math.MaxInt)
 	case databasev1.IndexRule_TYPE_INVERTED:
-		iter, err = s.invertedIndex.Iterator(fieldKey, rangeOpts, order.Sort)
+		iter, err = s.invertedIndex.Iterator(fieldKey, rangeOpts, order.Sort, math.MaxInt)
 	default:
 		return nil, errUnspecifiedIndexType
 	}
