@@ -21,6 +21,7 @@ Release Notes.
   - Flush memory data to disk.
   - Merge memory data and disk data.
 - Add HTTP services to TopNAggregation operations.
+- Add preload for the TopN query of index.
 
 ### Bugs
 
