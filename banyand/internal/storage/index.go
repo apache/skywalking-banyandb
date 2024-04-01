@@ -25,6 +25,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -33,8 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 )
 
 func (d *database[T, O]) IndexDB() IndexDB {
@@ -255,10 +256,7 @@ func newSeriesIndexController[T TSTable, O any](
 	ctx context.Context,
 	opts TSDBOpts[T, O],
 ) (*seriesIndexController[T, O], error) {
-	var (
-		hpath, spath string
-		sir          *seriesIndexController[T, O]
-	)
+	var hpath, spath string
 	l := logger.Fetch(ctx, "seriesIndexController")
 	startTime := standard(time.Now(), opts.TTL.Unit)
 	endTime := startTime.Add(opts.TTL.estimatedDuration())
@@ -275,26 +273,7 @@ func newSeriesIndexController[T TSTable, O any](
 		}); err != nil {
 		return nil, err
 	}
-	if len(idxName) == 2 {
-		hpath, spath = idxName[0], idxName[1]
-		h, err := newSeriesIndex(ctx, location, hpath, opts.SeriesIndexFlushTimeoutSeconds)
-		if err != nil {
-			return nil, err
-		}
-		sb, err := newSeriesIndex(ctx, location, spath, opts.SeriesIndexFlushTimeoutSeconds)
-		if err != nil {
-			return nil, err
-		}
-		sir = &seriesIndexController[T, O]{
-			hot:       h,
-			standby:   sb,
-			ctx:       ctx,
-			opts:      opts,
-			TimeRange: timeRange,
-			l:         l,
-		}
-	}
-	if len(idxName) == 1 {
+	if len(idxName) != 0 {
 		hpath = idxName[0]
 	} else {
 		hpath = fmt.Sprintf("idx-%016x", time.Now().UnixNano())
@@ -303,12 +282,20 @@ func newSeriesIndexController[T TSTable, O any](
 	if err != nil {
 		return nil, err
 	}
-	sir = &seriesIndexController[T, O]{
+	sir := &seriesIndexController[T, O]{
 		hot:       h,
 		ctx:       ctx,
 		opts:      opts,
 		TimeRange: timeRange,
 		l:         l,
+	}
+	if len(idxName) == 2 {
+		spath = idxName[1]
+		sb, err := newSeriesIndex(ctx, location, spath, opts.SeriesIndexFlushTimeoutSeconds)
+		if err != nil {
+			return nil, err
+		}
+		sir.standby = sb
 	}
 	return sir, nil
 }
