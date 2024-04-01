@@ -19,6 +19,7 @@ package lsm
 
 import (
 	"bytes"
+	"math"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -50,7 +51,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC)
+	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, math.MaxInt)
 	if err != nil {
 		return roaring.DummyPostingList, err
 	}
@@ -62,7 +63,7 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	return
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, _ int) (index.FieldIterator, error) {
 	if !s.closer.AddRunning() {
 		return nil, errors.New("lsm index store is closed")
 	}

@@ -18,6 +18,7 @@
 package tsdb
 
 import (
+	"math"
 	"sort"
 	"time"
 
@@ -85,9 +86,9 @@ func (s *seekerBuilder) buildSeriesByIndex() (series []Iterator, err error) {
 		}
 		switch s.indexRuleForSorting.GetType() {
 		case databasev1.IndexRule_TYPE_TREE:
-			inner, err = b.lsmIndexReader().Iterator(fieldKey, rangeOpts, s.order)
+			inner, err = b.lsmIndexReader().Iterator(fieldKey, rangeOpts, s.order, math.MaxInt)
 		case databasev1.IndexRule_TYPE_INVERTED:
-			inner, err = b.invertedIndexReader().Iterator(fieldKey, rangeOpts, s.order)
+			inner, err = b.invertedIndexReader().Iterator(fieldKey, rangeOpts, s.order, math.MaxInt)
 		case databasev1.IndexRule_TYPE_UNSPECIFIED:
 			return nil, errors.WithMessagef(errUnspecifiedIndexType, "index rule:%v", s.indexRuleForSorting)
 		}
@@ -132,6 +133,7 @@ func (s *seekerBuilder) buildSeriesByTime() ([]Iterator, error) {
 				},
 				termRange,
 				s.order,
+				math.MaxInt,
 			)
 		if err != nil {
 			return nil, err

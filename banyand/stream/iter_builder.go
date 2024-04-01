@@ -20,8 +20,6 @@ package stream
 import (
 	"time"
 
-	"github.com/pkg/errors"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -32,10 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var (
-	errUnspecifiedIndexType = errors.New("Unspecified index type")
-	rangeOpts               = index.RangeOpts{}
-)
+var rangeOpts = index.RangeOpts{}
 
 type filterFn func(item item) bool
 
@@ -48,6 +43,7 @@ type iterBuilder struct {
 	tagProjection       []pbv1.TagProjection
 	seriesID            common.SeriesID
 	order               modelv1.Sort
+	preloadSize         int
 }
 
 func newIterBuilder(tableWrappers []storage.TSTableWrapper[*tsTable], id common.SeriesID, sso pbv1.StreamSortOptions) *iterBuilder {
@@ -60,6 +56,7 @@ func newIterBuilder(tableWrappers []storage.TSTableWrapper[*tsTable], id common.
 		tagProjection:       sso.TagProjection,
 		seriesID:            id,
 		order:               sso.Order.Sort,
+		preloadSize:         sso.MaxElementSize,
 	}
 }
 
@@ -94,14 +91,7 @@ func buildSeriesByIndex(s *iterBuilder) (series []*searcherIterator, err error) 
 			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
 			Analyzer:    s.indexRuleForSorting.GetAnalyzer(),
 		}
-		switch s.indexRuleForSorting.GetType() {
-		case databasev1.IndexRule_TYPE_TREE:
-			inner, err = tw.Table().Index().Iterator(fieldKey, rangeOpts, s.order)
-		case databasev1.IndexRule_TYPE_INVERTED:
-			inner, err = tw.Table().Index().Iterator(fieldKey, rangeOpts, s.order)
-		case databasev1.IndexRule_TYPE_UNSPECIFIED:
-			return nil, errors.WithMessagef(errUnspecifiedIndexType, "index rule:%v", s.indexRuleForSorting)
-		}
+		inner, err = tw.Table().Index().Iterator(fieldKey, rangeOpts, s.order, s.preloadSize)
 		if err != nil {
 			return nil, err
 		}

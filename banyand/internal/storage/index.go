@@ -149,7 +149,7 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList
 	return seriesList, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy) (pbv1.SeriesList, error) {
+func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error) {
 	seriesList, err := s.searchPrimary(ctx, series)
 	if err != nil {
 		return nil, err
@@ -176,7 +176,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 	fieldKey := index.FieldKey{
 		IndexRuleID: order.Index.GetMetadata().Id,
 	}
-	iter, err := s.store.Iterator(fieldKey, rangeOpts, order.Sort)
+	iter, err := s.store.Iterator(fieldKey, rangeOpts, order.Sort, preloadSize)
 	if err != nil {
 		return nil, err
 	}

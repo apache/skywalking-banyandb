@@ -52,8 +52,8 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 	return ei, nil
 }
 
-func (e *elementIndex) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (index.FieldIterator, error) {
-	iter, err := e.store.Iterator(fieldKey, termRange, order)
+func (e *elementIndex) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, preloadSize int) (index.FieldIterator, error) {
+	iter, err := e.store.Iterator(fieldKey, termRange, order, preloadSize)
 	if err != nil {
 		return nil, err
 	}

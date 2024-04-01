@@ -187,8 +187,9 @@ func (i *dummyIterator) Close() error {
 
 // PostingValue is the collection of a field's values.
 type PostingValue struct {
-	Value posting.List
-	Term  []byte
+	Value   posting.List
+	Term    []byte
+	TermRaw []byte
 }
 
 // Document represents a document in a index.
@@ -215,7 +216,7 @@ type Writer interface {
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort) (iter FieldIterator, err error)
+	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator, err error)
 }
 
 // Searcher allows searching a field either by its key or by its key and term.

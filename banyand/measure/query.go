@@ -37,6 +37,10 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
+const (
+	preloadSize = 100
+)
+
 // Query allow to retrieve measure data points.
 type Query interface {
 	LoadGroup(name string) (resourceSchema.Group, bool)
@@ -83,7 +87,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		}
 	}()
 
-	sl, err := tsdb.IndexDB().Search(ctx, &pbv1.Series{Subject: mqo.Name, EntityValues: mqo.Entity}, mqo.Filter, mqo.Order)
+	sl, err := tsdb.IndexDB().Search(ctx, &pbv1.Series{Subject: mqo.Name, EntityValues: mqo.Entity}, mqo.Filter, mqo.Order, preloadSize)
 	if err != nil {
 		return nil, err
 	}
