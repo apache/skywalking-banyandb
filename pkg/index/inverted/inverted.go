@@ -55,8 +55,9 @@ const (
 )
 
 var (
-	defaultUpper = convert.Uint64ToBytes(math.MaxUint64)
-	defaultLower = convert.Uint64ToBytes(0)
+	defaultUpper            = convert.Uint64ToBytes(math.MaxUint64)
+	defaultLower            = convert.Uint64ToBytes(0)
+	defaultRangePreloadSize = 1000
 )
 
 var analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
@@ -159,7 +160,7 @@ func (s *store) Write(fields []index.Field, docID uint64) error {
 	return nil
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort) (iter index.FieldIterator, err error) {
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator, err error) {
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
 		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
@@ -206,12 +207,15 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	if order == modelv1.Sort_SORT_DESC {
 		sortedKey = "-" + sortedKey
 	}
-	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewTopNSearch(math.MaxInt64, query).SortBy([]string{sortedKey}))
-	if err != nil {
-		return nil, multierr.Combine(err, reader.Close())
+	result := &sortIterator{
+		query:            query,
+		reader:           reader,
+		sortedKey:        sortedKey,
+		fk:               fk,
+		shouldDecodeTerm: shouldDecodeTerm,
+		size:             preLoadSize,
 	}
-	result := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm, reader)
-	return &result, nil
+	return result, nil
 }
 
 func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err error) {
@@ -241,7 +245,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm, reader)
+	iter := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm, 0, reader)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
@@ -274,7 +278,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, fk, false, reader)
+	iter := newBlugeMatchIterator(documentMatchIterator, fk, false, 0, reader)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
@@ -286,7 +290,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC)
+	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize)
 	if err != nil {
 		return roaring.DummyPostingList, err
 	}
@@ -423,14 +427,17 @@ type blugeMatchIterator struct {
 	fieldKey         string
 	shouldDecodeTerm bool
 	closed           bool
+	num              int
+	skip             int
 }
 
-func newBlugeMatchIterator(delegated search.DocumentMatchIterator, fieldKey string, shouldDecodeTerm bool, closer io.Closer) blugeMatchIterator {
+func newBlugeMatchIterator(delegated search.DocumentMatchIterator, fieldKey string, shouldDecodeTerm bool, skip int, closer io.Closer) blugeMatchIterator {
 	return blugeMatchIterator{
 		delegated:        delegated,
 		fieldKey:         fieldKey,
 		shouldDecodeTerm: shouldDecodeTerm,
 		closer:           closer,
+		skip:             skip,
 	}
 }
 
@@ -463,9 +470,13 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 		}
 		return false
 	}
+	bmi.num++
+	if bmi.num <= bmi.skip {
+		return true
+	}
 	i := 0
 	var docID uint64
-	var term []byte
+	var term, termRaw []byte
 	bmi.err = match.VisitStoredFields(func(field string, value []byte) bool {
 		if field == docIDField {
 			if len(value) == 8 {
@@ -479,6 +490,7 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 		if field == bmi.fieldKey {
 			v := y.Copy(value)
 			if bmi.shouldDecodeTerm {
+				termRaw = v
 				term = index.UnmarshalTerm(v)
 			} else {
 				term = v
@@ -497,8 +509,9 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 	}
 	if bmi.agg == nil {
 		bmi.agg = &index.PostingValue{
-			Term:  term,
-			Value: roaring.NewPostingListWithInitialData(docID),
+			Term:    term,
+			TermRaw: termRaw,
+			Value:   roaring.NewPostingListWithInitialData(docID),
 		}
 		return true
 	}
@@ -508,8 +521,9 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 	}
 	bmi.current = bmi.agg
 	bmi.agg = &index.PostingValue{
-		Term:  term,
-		Value: roaring.NewPostingListWithInitialData(docID),
+		Term:    term,
+		TermRaw: termRaw,
+		Value:   roaring.NewPostingListWithInitialData(docID),
 	}
 	return false
 }
@@ -520,5 +534,8 @@ func (bmi *blugeMatchIterator) Val() *index.PostingValue {
 
 func (bmi *blugeMatchIterator) Close() error {
 	bmi.closed = true
+	if bmi.closer == nil {
+		return bmi.err
+	}
 	return errors.Join(bmi.err, bmi.closer.Close())
 }
