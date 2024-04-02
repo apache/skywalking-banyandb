@@ -19,6 +19,7 @@
 package testcases
 
 import (
+	"fmt"
 	"sort"
 	"testing"
 
@@ -57,8 +58,6 @@ type result struct {
 
 // RunDuration executes duration related cases.
 func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
-	tester := assert.New(t)
-	is := require.New(t)
 	tests := []struct {
 		name string
 		want []int
@@ -262,9 +261,34 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			},
 		},
 	}
-	for _, tt := range tests {
+	preLoadSizes := []int{7, 20, 50}
+	allTests := make([]struct {
+		name        string
+		want        []int
+		args        args
+		preloadSize int
+	}, 0, len(tests)*len(preLoadSizes))
+
+	for _, size := range preLoadSizes {
+		for _, t := range tests {
+			allTests = append(allTests, struct {
+				name        string
+				want        []int
+				args        args
+				preloadSize int
+			}{
+				name:        t.name + " preLoadSize " + fmt.Sprint(size),
+				want:        t.want,
+				preloadSize: size,
+				args:        t.args,
+			})
+		}
+	}
+	for _, tt := range allTests {
 		t.Run(tt.name, func(t *testing.T) {
-			iter, err := store.Iterator(tt.args.fieldKey, tt.args.termRange, tt.args.orderType)
+			tester := assert.New(t)
+			is := require.New(t)
+			iter, err := store.Iterator(tt.args.fieldKey, tt.args.termRange, tt.args.orderType, tt.preloadSize)
 			is.NoError(err)
 			if iter == nil {
 				tester.Empty(tt.want)
@@ -278,11 +302,20 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			}()
 			is.NotNil(iter)
 			got := make([]result, 0)
+			var currResult result
 			for iter.Next() {
-				got = append(got, result{
-					key:   int(convert.BytesToInt64(iter.Val().Term)),
-					items: toArray(iter.Val().Value),
-				})
+				key := int(convert.BytesToInt64(iter.Val().Term))
+				if currResult.key != key {
+					if currResult.key != 0 {
+						got = append(got, currResult)
+						currResult = result{}
+					}
+					currResult.key = key
+				}
+				currResult.items = append(currResult.items, toArray(iter.Val().Value)...)
+			}
+			if len(currResult.items) > 0 {
+				got = append(got, currResult)
 			}
 			for i := 0; i < 10; i++ {
 				is.False(iter.Next())

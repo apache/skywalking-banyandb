@@ -61,8 +61,7 @@ $ ls banyand/build/bin
 banyand-server  
 banyand-server-debug  
 banyand-server-debug-static  
-banyand-server-static
 
-$ ls banyand/build/bin
-bydbctl
+$ ls bydbctl/build/bin
+bydbctl  bydbctl--darwin-amd64  bydbctl--darwin-arm64  bydbctl--linux-386  bydbctl--linux-amd64  bydbctl--linux-arm64  bydbctl--windows-386  bydbctl--windows-amd64
 ```
