@@ -610,10 +610,13 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	}
 	bc.bm.field.columnMetadata = cfm
 	bc.bm.tagProjection = bc.tagProjection
-	tf := make(map[string]*dataBlock, len(bc.tagProjection))
+	var tf map[string]*dataBlock
 	for i := range bc.tagProjection {
 		for tfName, block := range bc.bm.tagFamilies {
 			if bc.tagProjection[i].Family == tfName {
+				if tf == nil {
+					tf = make(map[string]*dataBlock, len(bc.tagProjection))
+				}
 				tf[tfName] = block
 			}
 		}
