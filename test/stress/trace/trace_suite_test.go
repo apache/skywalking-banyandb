@@ -54,4 +54,12 @@ var _ = Describe("Query", func() {
 	It("TraceListOrderByDuration", func() {
 		query.TraceListOrderByDuration(basePath, timeout, fs)
 	})
+
+	It("TraceListOrderByTime", func() {
+		query.TraceListOrderByTime(basePath, timeout, fs)
+	})
+
+	It("TraceByID", func() {
+		query.TraceByID(basePath, timeout, fs)
+	})
 })

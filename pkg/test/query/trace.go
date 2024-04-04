@@ -43,7 +43,51 @@ func TraceListOrderByDuration(basePath string, timeout time.Duration, fs *flag.F
 		close(stopCh)
 	}()
 	collect(basePath, func() ([]float64, error) {
-		d, err := traceList(api.QueryOrderByDuration, fs)
+		d, _, err := traceList(api.QueryOrderByDuration, fs)
+		if err != nil {
+			return nil, err
+		}
+		return []float64{d.Seconds()}, nil
+	}, 500*time.Millisecond, stopCh)
+	analyze([]string{"result"}, basePath)
+}
+
+// TraceListOrderByTime verifies the trace list order by time.
+func TraceListOrderByTime(basePath string, timeout time.Duration, fs *flag.FlagSet) {
+	basePath = path.Join(basePath, "trace-time")
+	err := os.MkdirAll(basePath, 0o755)
+	if err != nil {
+		panic(err)
+	}
+	stopCh := make(chan struct{})
+	go func() {
+		time.Sleep(timeout)
+		close(stopCh)
+	}()
+	collect(basePath, func() ([]float64, error) {
+		d, _, err := traceList(api.QueryOrderByStartTime, fs)
+		if err != nil {
+			return nil, err
+		}
+		return []float64{d.Seconds()}, nil
+	}, 500*time.Millisecond, stopCh)
+	analyze([]string{"result"}, basePath)
+}
+
+// TraceByID verifies the trace by ID.
+func TraceByID(basePath string, timeout time.Duration, fs *flag.FlagSet) {
+	basePath = path.Join(basePath, "trace-by-id")
+	err := os.MkdirAll(basePath, 0o755)
+	if err != nil {
+		panic(err)
+	}
+	stopCh := make(chan struct{})
+	go func() {
+		time.Sleep(timeout)
+		close(stopCh)
+	}()
+	collect(basePath, func() ([]float64, error) {
+		d, err := traceByID(api.QueryOrderByDuration, fs)
 		if err != nil {
 			return nil, err
 		}
@@ -56,7 +100,7 @@ const (
 	defaultPageSize = 15
 )
 
-func traceList(order api.QueryOrder, fs *flag.FlagSet) (time.Duration, error) {
+func traceList(order api.QueryOrder, fs *flag.FlagSet) (time.Duration, []*api.BasicTrace, error) {
 	ctx := cli.NewContext(cli.NewApp(), fs, nil)
 	duration := api.Duration{
 		Start: time.Now().Add(-30 * time.Minute).Format(utils.StepFormats[api.StepMinute]),
@@ -79,10 +123,37 @@ func traceList(order api.QueryOrder, fs *flag.FlagSet) (time.Duration, error) {
 	result, err := trace.Traces(ctx, condition)
 	elapsed := time.Since(start)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if len(result.Traces) < 1 {
+		return 0, nil, fmt.Errorf("no result")
+	}
+	return elapsed, result.Traces, nil
+}
+
+func traceByID(order api.QueryOrder, fs *flag.FlagSet) (time.Duration, error) {
+	_, traces, err := traceList(order, fs)
+	if err != nil {
+		return 0, err
+	}
+	if len(traces) < 1 {
 		return 0, fmt.Errorf("no result")
 	}
-	return elapsed, nil
+	start := time.Now()
+	numTraces := int64(0)
+	for _, bt := range traces {
+		for _, id := range bt.TraceIds {
+			ctx := cli.NewContext(cli.NewApp(), fs, nil)
+			t, err := trace.Trace(ctx, id)
+			if err != nil {
+				return 0, err
+			}
+			if len(t.Spans) < 1 {
+				return 0, fmt.Errorf("no result span")
+			}
+			numTraces++
+		}
+	}
+	elapsed := time.Since(start)
+	return time.Duration(int64(elapsed) / numTraces), nil
 }

@@ -181,7 +181,7 @@ func (bm *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("cannot unmarshal tagFamily dataBlock: %w", err)
 			}
-			bm.tagFamilies[convert.BytesToString(nameBytes)] = tf
+			bm.tagFamilies[string(nameBytes)] = tf
 		}
 	}
 	if err != nil {
@@ -216,6 +216,13 @@ type blockMetadataArray struct {
 	arr []blockMetadata
 }
 
+func (bma *blockMetadataArray) reset() {
+	for i := range bma.arr {
+		bma.arr[i].reset()
+	}
+	bma.arr = bma.arr[:0]
+}
+
 var blockMetadataArrayPool sync.Pool
 
 func generateBlockMetadataArray() *blockMetadataArray {
@@ -227,7 +234,7 @@ func generateBlockMetadataArray() *blockMetadataArray {
 }
 
 func releaseBlockMetadataArray(bma *blockMetadataArray) {
-	bma.arr = bma.arr[:0]
+	bma.reset()
 	blockMetadataArrayPool.Put(bma)
 }
 
