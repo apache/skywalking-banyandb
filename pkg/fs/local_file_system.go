@@ -126,8 +126,8 @@ func (fs *localFileSystem) ReadDir(dirname string) []DirEntry {
 }
 
 // CreateFile is used to create and open the file by specified name and mode.
-func (fs *localFileSystem) CreateFile(name string, flag int, permission Mode) (File, error) {
-	file, err := os.OpenFile(name, flag, os.FileMode(permission))
+func (fs *localFileSystem) CreateFile(name string, permission Mode) (File, error) {
+	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	switch {
 	case err == nil:
 		return &LocalFile{
@@ -413,19 +413,6 @@ func (file *LocalFile) Close() error {
 			Code:    closeError,
 			Message: fmt.Sprintf("Close File error, directory name: %s, error message: %s", file.file.Name(), err),
 		}
-	}
-	return nil
-}
-
-// Clear file content.
-func (file *LocalFile) Clear() error {
-	err := file.file.Truncate(0)
-	if err != nil {
-		return err
-	}
-	_, err = file.file.Seek(0, 0)
-	if err != nil {
-		return err
 	}
 	return nil
 }

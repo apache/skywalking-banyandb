@@ -114,6 +114,16 @@ func (iu IntervalUnit) String() string {
 	panic("invalid interval unit")
 }
 
+func (iu IntervalUnit) standard(t time.Time) time.Time {
+	switch iu {
+	case HOUR:
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
+	case DAY:
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	}
+	panic("invalid interval unit")
+}
+
 // IntervalRule defines a length of two points in time.
 type IntervalRule struct {
 	Unit IntervalUnit

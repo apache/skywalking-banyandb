@@ -51,12 +51,18 @@ func newRetentionTask[T TSTable, O any](database *database[T, O], ttl IntervalRu
 }
 
 func (rc *retentionTask[T, O]) run(now time.Time, l *logger.Logger) bool {
-	for _, shard := range rc.database.sLst {
-		if err := shard.segmentController.remove(now.Add(-rc.duration)); err != nil {
+	var shardList []*shard[T, O]
+	rc.database.RLock()
+	shardList = append(shardList, rc.database.sLst...)
+	rc.database.RUnlock()
+	deadline := now.Add(-rc.duration)
+
+	for _, shard := range shardList {
+		if err := shard.segmentController.remove(deadline); err != nil {
 			l.Error().Err(err)
 		}
 	}
-	if err := rc.database.indexController.run(now.Add(-rc.duration)); err != nil {
+	if err := rc.database.indexController.run(deadline); err != nil {
 		l.Error().Err(err)
 	}
 	return true
