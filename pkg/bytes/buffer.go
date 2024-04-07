@@ -126,3 +126,10 @@ func (bp *BufferPool) Release(b *Buffer) {
 	b.Reset()
 	bp.p.Put(b)
 }
+
+// Copy copies a to a new slice.
+func Copy(a []byte) []byte {
+	b := make([]byte, len(a))
+	copy(b, a)
+	return b
+}

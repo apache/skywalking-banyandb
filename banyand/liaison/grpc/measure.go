@@ -32,10 +32,10 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -115,7 +115,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		iwr := &measurev1.InternalWriteRequest{
 			Request:    writeRequest,
 			ShardId:    uint32(shardID),
-			SeriesHash: tsdb.HashEntity(entity),
+			SeriesHash: pbv1.HashEntity(entity),
 			// TODO: remove the first value (measure name) of tagValues
 			EntityValues: tagValues[1:].Encode(),
 		}

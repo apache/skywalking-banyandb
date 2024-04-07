@@ -33,11 +33,11 @@ import (
 	"github.com/blugelabs/bluge/analysis/analyzer"
 	blugeIndex "github.com/blugelabs/bluge/index"
 	"github.com/blugelabs/bluge/search"
-	"github.com/dgraph-io/badger/v3/y"
 	"go.uber.org/multierr"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	pbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -488,7 +488,7 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 			i++
 		}
 		if field == bmi.fieldKey {
-			v := y.Copy(value)
+			v := pbytes.Copy(value)
 			if bmi.shouldDecodeTerm {
 				termRaw = v
 				term = index.UnmarshalTerm(v)

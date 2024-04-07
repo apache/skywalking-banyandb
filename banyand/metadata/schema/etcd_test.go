@@ -387,7 +387,7 @@ func Test_Etcd_Entity_Update(t *testing.T) {
 				}
 				// reset
 				ir.Metadata.Id = 0
-				ir.Type = databasev1.IndexRule_TYPE_TREE
+				ir.Type = databasev1.IndexRule_TYPE_INVERTED
 				return r.UpdateIndexRule(ctx, ir)
 			},
 			validationFunc: func(ctx context.Context, r Registry) bool {
@@ -401,7 +401,7 @@ func Test_Etcd_Entity_Update(t *testing.T) {
 				if ir.Metadata.Id != 1 {
 					return false
 				}
-				if ir.Type != databasev1.IndexRule_TYPE_TREE {
+				if ir.Type != databasev1.IndexRule_TYPE_INVERTED {
 					return false
 				}
 				return true

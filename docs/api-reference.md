@@ -67,7 +67,6 @@
     - [EncodingMethod](#banyandb-database-v1-EncodingMethod)
     - [FieldType](#banyandb-database-v1-FieldType)
     - [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer)
-    - [IndexRule.Location](#banyandb-database-v1-IndexRule-Location)
     - [IndexRule.Type](#banyandb-database-v1-IndexRule-Type)
     - [TagType](#banyandb-database-v1-TagType)
   
@@ -330,7 +329,7 @@ Metadata is for multi-tenant, multi-model use
 | ----- | ---- | ----- | ----------- |
 | group | [string](#string) |  | group contains a set of options, like retention policy, max |
 | name | [string](#string) |  | name of the entity |
-| id | [uint32](#uint32) |  |  |
+| id | [uint32](#uint32) |  | id is the unique identifier of the entity if id is not set, the system will generate a unique id |
 | create_revision | [int64](#int64) |  | readonly. create_revision is the revision of last creation on this key. |
 | mod_revision | [int64](#int64) |  | readonly. mod_revision is the revision of last modification on this key. |
 
@@ -348,7 +347,6 @@ Metadata is for multi-tenant, multi-model use
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | shard_num | [uint32](#uint32) |  | shard_num is the number of shards |
-| block_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | block_interval indicates the length of a block block_interval should be less than or equal to segment_interval |
 | segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
 | ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
 
@@ -897,7 +895,6 @@ IndexRule should bind to a subject through an IndexRuleBinding to generate prope
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata define the rule&#39;s identity |
 | tags | [string](#string) | repeated | tags are the combination that refers to an indexed object If the elements in tags are more than 1, the object will generate a multi-tag index Caveat: All tags in a multi-tag MUST have an identical IndexType |
 | type | [IndexRule.Type](#banyandb-database-v1-IndexRule-Type) |  | type is the IndexType of this IndexObject. |
-| location | [IndexRule.Location](#banyandb-database-v1-IndexRule-Location) |  | location indicates where to store index. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRule is updated |
 | analyzer | [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. |
 
@@ -1093,19 +1090,6 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 
 
 
-<a name="banyandb-database-v1-IndexRule-Location"></a>
-
-### IndexRule.Location
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| LOCATION_UNSPECIFIED | 0 |  |
-| LOCATION_SERIES | 1 |  |
-| LOCATION_GLOBAL | 2 |  |
-
-
-
 <a name="banyandb-database-v1-IndexRule-Type"></a>
 
 ### IndexRule.Type
@@ -1114,8 +1098,7 @@ Type determine the index structure under the hood
 | Name | Number | Description |
 | ---- | ------ | ----------- |
 | TYPE_UNSPECIFIED | 0 |  |
-| TYPE_TREE | 1 |  |
-| TYPE_INVERTED | 2 |  |
+| TYPE_INVERTED | 1 |  |
 
 
 
