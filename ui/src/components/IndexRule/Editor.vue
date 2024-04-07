@@ -47,11 +47,6 @@ const rules = {
       required: true, message: 'Please select the analyzer', trigger: 'blur'
     }
   ],
-  location: [
-    {
-      required: true, message: 'Please select the location', trigger: 'blur'
-    }
-  ],
   tags: [
     {
       required: true, message: 'Please select the tags', trigger: 'blur'
@@ -69,26 +64,8 @@ const typeList = [
     value: "TYPE_UNSPECIFIED"
   },
   {
-    label: "TYPE_TREE",
-    value: "TYPE_TREE"
-  },
-  {
     label: "TYPE_INVERTED",
     value: "TYPE_INVERTED"
-  }
-]
-const locationList = [
-  {
-    label: "LOCATION_UNSPECIFIED",
-    value: "LOCATION_UNSPECIFIED"
-  },
-  {
-    label: "LOCATION_SERIES",
-    value: "LOCATION_SERIES"
-  },
-  {
-    label: "LOCATION_GLOBAL",
-    value: "LOCATION_GLOBAL"
   }
 ]
 const analyzerList = [
@@ -119,7 +96,6 @@ const data = reactive({
     group: route.params.group,
     name: route.params.name || '',
     analyzer: '',
-    location: '',
     tags: [],
     type: ''
   }
@@ -131,7 +107,6 @@ watch(() => route, () => {
     group: route.params.group,
     name: route.params.name || '',
     analyzer: '',
-    location: '',
     tags: [],
     type: ''
   }
@@ -157,7 +132,6 @@ const submit = async (formEl: FormInstance | undefined) => {
           },
           tags: data.form.tags,
           type: data.form.type,
-          location: data.form.location,
           analyzer: data.form.analyzer
         }
       }
@@ -246,7 +220,6 @@ function initData() {
             group: indexRule.metadata.group,
             name: indexRule.metadata.name,
             analyzer: indexRule.analyzer,
-            location: indexRule.location,
             tags: indexRule.tags,
             type: indexRule.type
           }
@@ -304,11 +277,6 @@ function initData() {
         <el-form-item label="Analyzer" prop="analyzer">
           <el-select v-model="data.form.analyzer" placeholder="Choose Analyzer" style="width: 100%;" clearable>
             <el-option v-for="item in analyzerList" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Location" prop="location">
-          <el-select v-model="data.form.location" placeholder="Choose Location" style="width: 100%;" clearable>
-            <el-option v-for="item in locationList" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="Tags" prop="tags">

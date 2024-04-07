@@ -24,9 +24,6 @@ metadata:
 catalog: CATALOG_STREAM
 resource_opts:
   shard_num: 2
-  block_interval:
-    unit: UNIT_HOUR
-    num: 2
   segment_interval:
     unit: UNIT_DAY
     num: 1
@@ -50,12 +47,11 @@ metadata:
   group: sw_stream
 tags:
 - trace_id
-type: TYPE_TREE
-location: LOCATION_GLOBAL
+type: TYPE_INVERTED
 EOF
 ```
 
-This YAML creates an index rule which uses the tag `trace_id` to generate a `TREE_TYPE` index which is located at `GLOBAL`.
+This YAML creates an index rule which uses the tag `trace_id` to generate a `TYPE_INVERTED` index.
 
 ## Get operation
 
@@ -83,7 +79,6 @@ metadata:
 tags:
 - trace_id
 type: TYPE_INVERTED
-location: LOCATION_GLOBAL
 EOF
 
 ```
