@@ -1,11 +1,11 @@
 # Persistence Storage
-Persistence storage is used for unifying data of BanyanDB persistence, including write-ahead logging(WAL), index, and data collected from skywalking and other observability platforms or APM systems. It provides various implementations and IO modes to satisfy the need of different components.
+Persistence storage is used for unifying data of BanyanDB persistence, including index, and data collected from skywalking and other observability platforms or APM systems. It provides various implementations and IO modes to satisfy the need of different components.
 BanyanDB provides a concise interface that shields the complexity of the implementation from the upper layer. By exposing necessary interfaces, upper components do not need to care how persistence is implemented and avoid dealing with differences between different operating systems.
 
 # Architecture
 BanyanDB uses third-party storage for actual storage, and the file system shields the differences between different platforms and storage systems, allowing developers to operate files as easily as the local file system without worrying about specific details.
 
-For different data models, stored in different locations, such as for meta and wal data, BanyanDB uses a local file system for storage.
+For different data models, stored in different locations, such as for meta data, BanyanDB uses a local file system for storage.
 ![](https://skywalking.apache.org/doc-graph/banyandb/v0.5.0/local_file_system.png)
 
 For index and data, the architecture of the file system is divided into three layers.
@@ -45,7 +45,7 @@ return: The file instance, can be used for various file operations.
 
 ### Write
 BanyanDB provides two methods for writing files.
-Append mode, which adds new data to the end of a file. This mode is typically used for WAL. And BanyanDB supports vector Append mode, which supports appending consecutive buffers to the end of the file.
+Append mode, which adds new data to the end of a file. BanyanDB also supports vector Append mode, which supports appending consecutive buffers to the end of the file.
 Flush mode, which flushes all data to one file. It will return an error when writing a directory, the file does not exist or there is not enough space, and the incomplete file will be discarded. The flush operation is atomic, which means the file won't be created if an error happens during the flush process.
 The following is the pseudocode that calls the API in the go style.
 

@@ -266,7 +266,6 @@ BSD-3-Clause licenses
     github.com/fsnotify/fsnotify v1.7.0 BSD-3-Clause
     github.com/gogo/protobuf v1.3.2 BSD-3-Clause
     github.com/golang/protobuf v1.5.3 BSD-3-Clause
-    github.com/golang/snappy v0.0.4 BSD-3-Clause
     github.com/google/go-cmp v0.6.0 BSD-3-Clause
     github.com/google/uuid v1.4.0 BSD-3-Clause
     github.com/gorilla/websocket v1.5.1 BSD-3-Clause

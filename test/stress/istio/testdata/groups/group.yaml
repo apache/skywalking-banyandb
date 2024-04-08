@@ -6,9 +6,6 @@
     modRevision: "0"
     name: measure-default
   resourceOpts:
-    blockInterval:
-      num: 192
-      unit: UNIT_HOUR
     segmentInterval:
       num: 8
       unit: UNIT_DAY
@@ -25,9 +22,6 @@
     modRevision: "0"
     name: measure-minute
   resourceOpts:
-    blockInterval:
-      num: 4
-      unit: UNIT_HOUR
     segmentInterval:
       num: 1
       unit: UNIT_DAY
@@ -44,9 +38,6 @@
     modRevision: "0"
     name: stream-browser_error_log
   resourceOpts:
-    blockInterval:
-      num: 4
-      unit: UNIT_HOUR
     segmentInterval:
       num: 1
       unit: UNIT_DAY
@@ -63,9 +54,6 @@
     modRevision: "0"
     name: stream-default
   resourceOpts:
-    blockInterval:
-      num: 24
-      unit: UNIT_HOUR
     segmentInterval:
       num: 1
       unit: UNIT_DAY
@@ -82,9 +70,6 @@
     modRevision: "0"
     name: stream-log
   resourceOpts:
-    blockInterval:
-      num: 4
-      unit: UNIT_HOUR
     segmentInterval:
       num: 1
       unit: UNIT_DAY
@@ -101,9 +86,6 @@
     modRevision: "0"
     name: stream-segment
   resourceOpts:
-    blockInterval:
-      num: 4
-      unit: UNIT_HOUR
     segmentInterval:
       num: 1
       unit: UNIT_DAY
@@ -120,9 +102,6 @@
     modRevision: "0"
     name: stream-zipkin_span
   resourceOpts:
-    blockInterval:
-      num: 4
-      unit: UNIT_HOUR
     segmentInterval:
       num: 1
       unit: UNIT_DAY
