@@ -31,9 +31,6 @@ metadata:
 catalog: CATALOG_MEASURE
 resource_opts:
   shard_num: 2
-  block_interval:
-    unit: UNIT_HOUR
-    num: 2
   segment_interval:
     unit: UNIT_DAY
     num: 1
@@ -265,13 +262,10 @@ metadata:
   group: sw_stream
 tags:
 - trace_id
-type: TYPE_TREE
-location: LOCATION_GLOBAL
+type: TYPE_INVERTED
 ```
 
-IndexRule supports selecting two distinct kinds of index structures. The `INVERTED` index is the primary option when users set up an index rule. It's suitable for most tag indexing due to a better memory usage ratio and query performance. When there are many unique tag values here, such as the `ID` tag and numeric duration tag, the `TREE` index could be better. This index saves much memory space with high-cardinality data sets.
-
-Most IndexRule's location is `LOCAL` which places indices with their indexed data together. IndexRule also provides a `GLOBAL` location to place some indices on a higher layer of hierarchical structure. This option intends to optimize the full-scan operation for some querying cases of no time range specification, such as finding spans from a trace by `trace_id`.
+IndexRule supports selecting two distinct kinds of index structures. The `INVERTED` index is the primary option when users set up an index rule. It's suitable for most tag indexing due to a better memory usage ratio and query performance.
 
 ```yaml
 metadata:

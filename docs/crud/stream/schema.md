@@ -21,9 +21,6 @@ metadata:
 catalog: CATALOG_STREAM
 resource_opts:
   shard_num: 2
-  block_interval:
-    unit: UNIT_HOUR
-    num: 2
   segment_interval:
     unit: UNIT_DAY
     num: 1

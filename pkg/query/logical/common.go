@@ -21,7 +21,6 @@ import (
 	"github.com/pkg/errors"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
 var (
@@ -30,12 +29,6 @@ var (
 	errUnsupportedConditionValue = errors.New("unsupported condition value type")
 	errInvalidCriteriaType       = errors.New("invalid criteria type")
 	errIndexNotDefined           = errors.New("index is not define for the tag")
-)
-
-type (
-	// SeekerBuilder wraps the execution of tsdb.SeekerBuilder.
-	// TODO:// we could have a chance to remove this wrapper.
-	SeekerBuilder func(builder tsdb.SeekerBuilder)
 )
 
 // Tag represents the combination of  tag family and tag name.

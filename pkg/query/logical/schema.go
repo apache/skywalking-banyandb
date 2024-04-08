@@ -21,7 +21,6 @@ import (
 	"github.com/pkg/errors"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 )
 
 // IndexChecker allows checking the existence of a specific index rule.
@@ -49,7 +48,6 @@ type TagSpecRegistry interface {
 type Schema interface {
 	TagSpecRegistry
 	IndexChecker
-	Scope() tsdb.Entry
 	EntityList() []string
 	CreateTagRef(tags ...[]*Tag) ([][]*TagRef, error)
 	CreateFieldRef(fields ...*Field) ([]*FieldRef, error)

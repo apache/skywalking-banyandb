@@ -37,6 +37,8 @@ message Metadata {
   string group = 1;
   // name of the entity
   string name = 2;
+  // id is the unique identifier of the entity
+  // if id is not set, the system will generate a unique id
   uint32 id = 3;
   // readonly. create_revision is the revision of last creation on this key.
   int64 create_revision = 4;
@@ -59,14 +61,10 @@ message IntervalRule {
 message ResourceOpts {
   // shard_num is the number of shards
   uint32 shard_num = 1 [(validate.rules).uint32.gt = 0];
-  // block_interval indicates the length of a block
-  // block_interval should be less than or equal to segment_interval
-  IntervalRule block_interval = 2 [(validate.rules).message.required = true];
   // segment_interval indicates the length of a segment
-  IntervalRule segment_interval = 3 [(validate.rules).message.required = true];
-
+  IntervalRule segment_interval = 2 [(validate.rules).message.required = true];
   // ttl indicates time to live, how long the data will be cached
-  IntervalRule ttl = 4 [(validate.rules).message.required = true];
+  IntervalRule ttl = 3 [(validate.rules).message.required = true];
 }
 
 // Group is an internal object for Group management

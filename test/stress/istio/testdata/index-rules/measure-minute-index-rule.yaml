@@ -1,5 +1,4 @@
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "57"
     group: measure-minute
@@ -11,7 +10,6 @@
   type: TYPE_INVERTED
   updatedAt: null
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "82"
     group: measure-minute
@@ -23,7 +21,6 @@
   type: TYPE_INVERTED
   updatedAt: null
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "70"
     group: measure-minute
@@ -35,7 +32,6 @@
   type: TYPE_INVERTED
   updatedAt: null
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "71"
     group: measure-minute
@@ -47,7 +43,6 @@
   type: TYPE_INVERTED
   updatedAt: null
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "55"
     group: measure-minute
@@ -56,10 +51,9 @@
     name: id
   tags:
   - id
-  type: TYPE_TREE
+  type: TYPE_INVERTED
   updatedAt: "2023-05-22T18:03:28.196387339Z"
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "412"
     group: measure-minute
@@ -71,7 +65,6 @@
   type: TYPE_INVERTED
   updatedAt: null
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "80"
     group: measure-minute
@@ -83,7 +76,6 @@
   type: TYPE_INVERTED
   updatedAt: null
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "56"
     group: measure-minute
@@ -95,7 +87,6 @@
   type: TYPE_INVERTED
   updatedAt: null
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "81"
     group: measure-minute
@@ -107,7 +98,6 @@
   type: TYPE_INVERTED
   updatedAt: null
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "68"
     group: measure-minute
@@ -119,7 +109,6 @@
   type: TYPE_INVERTED
   updatedAt: null
 - analyzer: ANALYZER_UNSPECIFIED
-  location: LOCATION_SERIES
   metadata:
     createRevision: "69"
     group: measure-minute

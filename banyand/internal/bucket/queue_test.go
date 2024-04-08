@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
-	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
+	"github.com/apache/skywalking-banyandb/banyand/internal/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"

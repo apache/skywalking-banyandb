@@ -22,6 +22,9 @@ Release Notes.
   - Merge memory data and disk data.
 - Add HTTP services to TopNAggregation operations.
 - Add preload for the TopN query of index.
+- Remove "TREE" index type. The "TREE" index type is merged into "INVERTED" index type.
+- Remove "Location" field on IndexRule. Currently, the location of index is in a segment.
+- Remove "BlockInterval" from Group. The block size is determined by the part.
 
 ### Bugs
 

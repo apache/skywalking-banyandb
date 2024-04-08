@@ -19,9 +19,6 @@ metadata:
 catalog: CATALOG_MEASURE
 resource_opts:
   shard_num: 2
-  block_interval:
-    unit: UNIT_HOUR
-    num: 2
   segment_interval:
     unit: UNIT_DAY
     num: 1
@@ -60,9 +57,6 @@ metadata:
 catalog: CATALOG_MEASURE
 resource_opts:
   shard_num: 2
-  block_interval:
-    unit: UNIT_HOUR
-    num: 2
   segment_interval:
     unit: UNIT_DAY
     num: 1

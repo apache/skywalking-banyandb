@@ -23,7 +23,6 @@ import (
 	"github.com/pkg/errors"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -34,10 +33,6 @@ type schema struct {
 	measure  *databasev1.Measure
 	fieldMap map[string]*logical.FieldSpec
 	common   *logical.CommonSchema
-}
-
-func (m *schema) Scope() tsdb.Entry {
-	return tsdb.Entry(m.measure.Metadata.Name)
 }
 
 func (m *schema) EntityList() []string {

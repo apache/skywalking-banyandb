@@ -22,7 +22,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -83,8 +82,4 @@ func (s *schema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
 
 func (s *schema) ProjFields(...*logical.FieldRef) logical.Schema {
 	panic("stream does not support field")
-}
-
-func (s *schema) Scope() tsdb.Entry {
-	return tsdb.Entry(s.stream.Metadata.Name)
 }

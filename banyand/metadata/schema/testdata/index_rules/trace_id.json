@@ -7,7 +7,6 @@
   "tags": [
     "trace_id"
   ],
-  "type": "TYPE_TREE",
-  "location": "LOCATION_GLOBAL",
+  "type": "TYPE_INVERTED",
   "updated_at": "2021-04-15T01:30:15.01Z"
 }

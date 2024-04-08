@@ -152,20 +152,12 @@ message IndexRule {
   // Type determine the index structure under the hood
   enum Type {
     TYPE_UNSPECIFIED = 0;
-    TYPE_TREE = 1;
-    TYPE_INVERTED = 2;
+    TYPE_INVERTED = 1;
   }
   // type is the IndexType of this IndexObject.
   Type type = 3 [(validate.rules).enum.defined_only = true];
-  enum Location {
-    LOCATION_UNSPECIFIED = 0;
-    LOCATION_SERIES = 1;
-    LOCATION_GLOBAL = 2;
-  }
-  // location indicates where to store index.
-  Location location = 4 [(validate.rules).enum.defined_only = true];
   // updated_at indicates when the IndexRule is updated
-  google.protobuf.Timestamp updated_at = 5;
+  google.protobuf.Timestamp updated_at = 4;
   enum Analyzer {
     ANALYZER_UNSPECIFIED = 0;
     // Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.
@@ -178,7 +170,7 @@ message IndexRule {
     ANALYZER_SIMPLE = 3;
   }
   // analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices.
-  Analyzer analyzer = 6;
+  Analyzer analyzer = 5;
 }
 
 // Subject defines which stream or measure would generate indices

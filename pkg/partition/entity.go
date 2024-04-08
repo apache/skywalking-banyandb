@@ -25,7 +25,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -57,9 +56,9 @@ func NewEntityLocator(families []*databasev1.TagFamilySpec, entity *databasev1.E
 }
 
 // Find the entity from a tag family, prepend a subject to the entity.
-func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) (tsdb.Entity, tsdb.EntityValues, error) {
-	entityValues := make(tsdb.EntityValues, len(e.TagLocators)+1)
-	entityValues[0] = tsdb.StrValue(subject)
+func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) (pbv1.Entity, pbv1.EntityValues, error) {
+	entityValues := make(pbv1.EntityValues, len(e.TagLocators)+1)
+	entityValues[0] = pbv1.StrValue(subject)
 	for i, index := range e.TagLocators {
 		tag, err := GetTagByOffset(value, index.FamilyOffset, index.TagOffset)
 		if err != nil {
@@ -75,7 +74,7 @@ func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) 
 }
 
 // Locate a shard and find the entity from a tag family, prepend a subject to the entity.
-func (e EntityLocator) Locate(subject string, value []*modelv1.TagFamilyForWrite, shardNum uint32) (tsdb.Entity, tsdb.EntityValues, common.ShardID, error) {
+func (e EntityLocator) Locate(subject string, value []*modelv1.TagFamilyForWrite, shardNum uint32) (pbv1.Entity, pbv1.EntityValues, common.ShardID, error) {
 	entity, tagValues, err := e.Find(subject, value)
 	if err != nil {
 		return nil, nil, 0, err
