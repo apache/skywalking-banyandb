@@ -56,7 +56,6 @@ function initData() {
     getSecondaryDataModel(data.type, data.group, data.name)
       .then(result => {
         data.topNAggregation = result.data.topNAggregation
-        console.log(data.topNAggregation)
       })
       .catch(err => {
         ElMessage({
