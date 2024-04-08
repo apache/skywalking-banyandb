@@ -25,16 +25,14 @@ import (
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
+	"github.com/apache/skywalking-banyandb/banyand/internal/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type shard[T TSTable, O any] struct {
 	l                     *logger.Logger
 	segmentController     *segmentController[T, O]
 	segmentManageStrategy *bucket.Strategy
-	scheduler             *timestamp.Scheduler
 	position              common.Position
 	closeOnce             sync.Once
 	id                    common.ShardID
@@ -50,16 +48,13 @@ func (d *database[T, O]) openShard(ctx context.Context, id common.ShardID) (*sha
 		p.Shard = strconv.Itoa(int(id))
 		return p
 	})
-	clock, _ := timestamp.GetClock(shardCtx)
 
-	scheduler := timestamp.NewScheduler(l, clock)
 	s := &shard[T, O]{
-		id:        id,
-		l:         l,
-		scheduler: scheduler,
-		position:  common.GetPosition(shardCtx),
+		id:       id,
+		l:        l,
+		position: common.GetPosition(shardCtx),
 		segmentController: newSegmentController[T](shardCtx, location,
-			d.opts.SegmentInterval, l, scheduler, d.opts.TSTableCreator, d.opts.Option),
+			d.opts.SegmentInterval, l, d.scheduler, d.opts.TSTableCreator, d.opts.Option),
 	}
 	var err error
 	if err = s.segmentController.open(); err != nil {
@@ -69,16 +64,11 @@ func (d *database[T, O]) openShard(ctx context.Context, id common.ShardID) (*sha
 		return nil, err
 	}
 	s.segmentManageStrategy.Run()
-	retentionTask := newRetentionTask(s.segmentController, d.opts.TTL)
-	if err := scheduler.Register("retention", retentionTask.option, retentionTask.expr, retentionTask.run); err != nil {
-		return nil, err
-	}
 	return s, nil
 }
 
 func (s *shard[T, O]) close() {
 	s.closeOnce.Do(func() {
-		s.scheduler.Close()
 		s.segmentManageStrategy.Close()
 		s.segmentController.close()
 	})

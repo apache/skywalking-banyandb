@@ -50,9 +50,6 @@ metadata:
 catalog: CATALOG_STREAM
 resource_opts:
   shard_num: 2
-  block_interval:
-    unit: UNIT_HOUR
-    num: 2
   segment_interval:
     unit: UNIT_DAY
     num: 1
@@ -74,8 +71,7 @@ metadata:
   name: name1
   group: group1
 tags: ["layer"]
-type: TYPE_INVERTED
-location: LOCATION_SERIES`))
+type: TYPE_INVERTED`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {
@@ -106,8 +102,7 @@ metadata:
   name: name1
   group: group1
 tags: ["layer"]
-type: TYPE_INVERTED
-location: LOCATION_SERIES`))
+type: TYPE_INVERTED`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -146,8 +141,7 @@ metadata:
   name: name2
   group: group1
 tags: ["layer"]
-type: TYPE_INVERTED
-location: LOCATION_SERIES`))
+type: TYPE_INVERTED`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())

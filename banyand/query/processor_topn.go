@@ -29,10 +29,10 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
@@ -152,7 +152,7 @@ var _ heap.Interface = (*postAggregationProcessor)(nil)
 type aggregatorItem struct {
 	int64Func aggregation.Func[int64]
 	key       string
-	values    tsdb.EntityValues
+	values    pbv1.EntityValues
 	index     int
 }
 
@@ -169,7 +169,7 @@ func (n *aggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
 
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
 type PostProcessor interface {
-	Put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error
+	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error
 	Val([]string) []*measurev1.TopNList
 }
 
@@ -241,7 +241,7 @@ func (aggr *postAggregationProcessor) Pop() any {
 	return item
 }
 
-func (aggr *postAggregationProcessor) Put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error {
+func (aggr *postAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error {
 	// update latest ts
 	if aggr.latestTimestamp < timestampMillis {
 		aggr.latestTimestamp = timestampMillis
@@ -314,7 +314,7 @@ var _ flow.Element = (*nonAggregatorItem)(nil)
 
 type nonAggregatorItem struct {
 	key    string
-	values tsdb.EntityValues
+	values pbv1.EntityValues
 	val    int64
 	index  int
 }
@@ -375,7 +375,7 @@ func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.To
 	return topNLists
 }
 
-func (naggr *postNonAggregationProcessor) Put(entityValues tsdb.EntityValues, val int64, timestampMillis uint64) error {
+func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error {
 	key := entityValues.String()
 	if timeline, ok := naggr.timelines[timestampMillis]; ok {
 		if timeline.Len() < int(naggr.topN) {

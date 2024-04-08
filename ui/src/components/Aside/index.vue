@@ -59,8 +59,6 @@ const data = reactive({
         name: null,
         catalog: 'CATALOG_STREAM',
         shardNum: 1,
-        blockIntervalUnit: "UNIT_UNSPECIFIED",
-        blockIntervalNum: 1,
         segmentIntervalUnit: "UNIT_UNSPECIFIED",
         segmentIntervalNum: 1,
         ttlUnit: "UNIT_UNSPECIFIED",
@@ -201,16 +199,6 @@ const rules = {
     shardNum: [
         {
             required: true, message: 'Please select the shard num of the group', trigger: 'blur'
-        }
-    ],
-    blockIntervalUnit: [
-        {
-            required: true, message: 'Please select the block interval unit of the group', trigger: 'blur'
-        }
-    ],
-    blockIntervalNum: [
-        {
-            required: true, message: 'Please select the block Interval num of the group', trigger: 'blur'
         }
     ],
     segmentIntervalUnit: [
@@ -648,8 +636,6 @@ function openEditGroup() {
     data.groupForm.name = data.groupLists[data.clickIndex].metadata.name
     data.groupForm.catalog = data.groupLists[data.clickIndex].catalog
     data.groupForm.shardNum = data.groupLists[data.clickIndex].resourceOpts?.shardNum
-    data.groupForm.blockIntervalUnit = data.groupLists[data.clickIndex].resourceOpts?.blockInterval?.unit
-    data.groupForm.blockIntervalNum = data.groupLists[data.clickIndex].resourceOpts?.blockInterval?.num
     data.groupForm.segmentIntervalUnit = data.groupLists[data.clickIndex].resourceOpts?.segmentInterval?.unit
     data.groupForm.segmentIntervalNum = data.groupLists[data.clickIndex].resourceOpts?.segmentInterval?.num
     data.groupForm.ttlUnit = data.groupLists[data.clickIndex].resourceOpts?.ttl?.unit
@@ -800,10 +786,6 @@ function createGroupFunction() {
                     catalog: data.groupForm.catalog,
                     resourceOpts: {
                         shardNum: data.groupForm.shardNum,
-                        blockInterval: {
-                            unit: data.groupForm.blockIntervalUnit,
-                            num: data.groupForm.blockIntervalNum
-                        },
                         segmentInterval: {
                             unit: data.groupForm.segmentIntervalUnit,
                             num: data.groupForm.segmentIntervalNum
@@ -847,10 +829,6 @@ function editGroupFunction() {
                     catalog: data.groupForm.catalog,
                     resourceOpts: {
                         shardNum: data.groupForm.shardNum,
-                        blockInterval: {
-                            unit: data.groupForm.blockIntervalUnit,
-                            num: data.groupForm.blockIntervalNum
-                        },
                         segmentInterval: {
                             unit: data.groupForm.segmentIntervalUnit,
                             num: data.groupForm.segmentIntervalNum
@@ -891,8 +869,6 @@ function clearGroupForm() {
         name: null,
         catalog: 'CATALOG_STREAM',
         shardNum: 1,
-        blockIntervalUnit: "UNIT_UNSPECIFIED",
-        blockIntervalNum: 1,
         segmentIntervalUnit: "UNIT_UNSPECIFIED",
         segmentIntervalNum: 1,
         ttlUnit: "UNIT_UNSPECIFIED",
@@ -1125,16 +1101,6 @@ initActiveMenu()
                 </el-form-item>
                 <el-form-item label="shard num" :label-width="data.formLabelWidth" prop="shardNum">
                     <el-input-number v-model="data.groupForm.shardNum" :min="1" />
-                </el-form-item>
-                <el-form-item label="block interval unit" :label-width="data.formLabelWidth" prop="blockIntervalUnit">
-                    <el-select v-model="data.groupForm.blockIntervalUnit" placeholder="please select" style="width: 100%">
-                        <el-option label="UNIT_UNSPECIFIED" value="UNIT_UNSPECIFIED"></el-option>
-                        <el-option label="UNIT_HOUR" value="UNIT_HOUR"></el-option>
-                        <el-option label="UNIT_DAY" value="UNIT_DAY"></el-option>
-                    </el-select>
-                </el-form-item>
-                <el-form-item label="block interval num" :label-width="data.formLabelWidth" prop="blockIntervalNum">
-                    <el-input-number v-model="data.groupForm.blockIntervalNum" :min="1" />
                 </el-form-item>
                 <el-form-item label="segment interval unit" :label-width="data.formLabelWidth" prop="segmentIntervalUnit">
                     <el-select v-model="data.groupForm.segmentIntervalUnit" placeholder="please select" style="width: 100%">

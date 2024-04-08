@@ -88,9 +88,6 @@ function initData() {
         <el-form-item label="Analyzer">
           <el-input v-model="data.indexRule.analyzer" :disabled="true"></el-input>
         </el-form-item>
-        <el-form-item label="Location">
-          <el-input v-model="data.indexRule.location" :disabled="true"></el-input>
-        </el-form-item>
         <el-form-item label="Tags">
           <el-select v-model="data.indexRule.tags" style="width: 100%;" :disabled="true" multiple></el-select>
         </el-form-item>

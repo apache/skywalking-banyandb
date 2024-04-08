@@ -25,10 +25,10 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/query"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type topNQueryProcessor struct {
@@ -78,7 +78,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 							tags = append(tags, e.Key)
 						}
 					}
-					entityValues := make(tsdb.EntityValues, 0, len(tn.Entity))
+					entityValues := make(pbv1.EntityValues, 0, len(tn.Entity))
 					for _, e := range tn.Entity {
 						entityValues = append(entityValues, e.Value)
 					}

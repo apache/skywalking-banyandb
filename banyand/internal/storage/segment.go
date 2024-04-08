@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/tsdb/bucket"
+	"github.com/apache/skywalking-banyandb/banyand/internal/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -51,7 +51,7 @@ type segment[T TSTable] struct {
 }
 
 func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, path, suffix string,
-	segmentSize IntervalRule, scheduler *timestamp.Scheduler, tsTable T,
+	segmentSize IntervalRule, scheduler *timestamp.Scheduler, tsTable T, p common.Position,
 ) (s *segment[T], err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
@@ -71,7 +71,7 @@ func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, p
 	l := logger.Fetch(ctx, s.String())
 	s.l = l
 	clock, _ := timestamp.GetClock(ctx)
-	s.Reporter = bucket.NewTimeBasedReporter(s.String(), timeRange, clock, scheduler)
+	s.Reporter = bucket.NewTimeBasedReporter(fmt.Sprintf("%s-%s", p.Shard, s.String()), timeRange, clock, scheduler)
 	return s, nil
 }
 
@@ -181,7 +181,7 @@ func (sc *segmentController[T, O]) segments() (ss []*segment[T]) {
 }
 
 func (sc *segmentController[T, O]) Current() (bucket.Reporter, error) {
-	now := sc.Standard(sc.clock.Now())
+	now := sc.segmentSize.Unit.standard(sc.clock.Now())
 	ns := uint64(now.UnixNano())
 	if b := func() bucket.Reporter {
 		sc.RLock()
@@ -220,16 +220,6 @@ func (sc *segmentController[T, O]) OnMove(prev bucket.Reporter, next bucket.Repo
 		event.Stringer("next", next)
 	}
 	event.Msg("move to the next segment")
-}
-
-func (sc *segmentController[T, O]) Standard(t time.Time) time.Time {
-	switch sc.segmentSize.Unit {
-	case HOUR:
-		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
-	case DAY:
-		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-	}
-	panic("invalid interval unit")
 }
 
 func (sc *segmentController[T, O]) Format(tm time.Time) string {
@@ -282,7 +272,7 @@ func (sc *segmentController[T, O]) open() error {
 func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) {
 	sc.Lock()
 	defer sc.Unlock()
-	start = sc.Standard(start)
+	start = sc.segmentSize.Unit.standard(start)
 	var next *segment[T]
 	for _, s := range sc.lst {
 		if s.Contains(uint64(start.UnixNano())) {
@@ -332,7 +322,7 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 	if tsTable, err = sc.tsTableCreator(lfs, segPath, p, sc.l, timestamp.NewSectionTimeRange(start, end), sc.option); err != nil {
 		return nil, err
 	}
-	seg, err = openSegment[T](context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, sc.segmentSize, sc.scheduler, tsTable)
+	seg, err = openSegment[T](context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, sc.segmentSize, sc.scheduler, tsTable, p)
 	if err != nil {
 		return nil, err
 	}
