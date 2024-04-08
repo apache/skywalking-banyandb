@@ -42,71 +42,54 @@ const rules = {
       required: true, message: 'Please enter the name', trigger: 'blur'
     }
   ],
-  analyzer: [
+  sourceMeasureGroup: [
     {
-      required: true, message: 'Please select the analyzer', trigger: 'blur'
+      required: true, message: 'Please enter the source measure group', trigger: 'blur'
     }
   ],
-  location: [
+  sourceMeasureName: [
     {
-      required: true, message: 'Please select the location', trigger: 'blur'
+      required: true, message: 'Please enter the source measure', trigger: 'blur'
     }
   ],
-  tags: [
+  fieldName: [
     {
-      required: true, message: 'Please select the tags', trigger: 'blur'
+      required: true, message: 'Please enter the field name', trigger: 'blur'
     }
   ],
-  type: [
+  fieldValueSort: [
     {
-      required: true, message: 'Please select the type', trigger: 'blur'
+      required: true, message: 'Please select the field value sort', trigger: 'blur'
+    }
+  ],
+  groupByTagNames: [
+    {
+      required: true, message: 'Please enter the group by tag names', trigger: 'blur'
+    }
+  ],
+  countersNumber: [
+    {
+      required: true, message: 'Please enter counters number', trigger: 'blur'
+    }
+  ],
+  lruSize: [
+    {
+      required: true, message: 'Please enter LRU size', trigger: 'blur'
     }
   ]
 }
-const typeList = [
+const fieldValueSortList = [
   {
-    label: "TYPE_UNSPECIFIED",
-    value: "TYPE_UNSPECIFIED"
+    label: "SORT_UNSPECIFIED",
+    value: "SORT_UNSPECIFIED"
   },
   {
-    label: "TYPE_TREE",
-    value: "TYPE_TREE"
+    label: "SORT_DESC",
+    value: "SORT_DESC"
   },
   {
-    label: "TYPE_INVERTED",
-    value: "TYPE_INVERTED"
-  }
-]
-const locationList = [
-  {
-    label: "LOCATION_UNSPECIFIED",
-    value: "LOCATION_UNSPECIFIED"
-  },
-  {
-    label: "LOCATION_SERIES",
-    value: "LOCATION_SERIES"
-  },
-  {
-    label: "LOCATION_GLOBAL",
-    value: "LOCATION_GLOBAL"
-  }
-]
-const analyzerList = [
-  {
-    label: "ANALYZER_UNSPECIFIED",
-    value: "ANALYZER_UNSPECIFIED"
-  },
-  {
-    label: "ANALYZER_KEYWORD",
-    value: "ANALYZER_KEYWORD"
-  },
-  {
-    label: "ANALYZER_STANDARD",
-    value: "ANALYZER_STANDARD"
-  },
-  {
-    label: "ANALYZER_SIMPLE",
-    value: "ANALYZER_SIMPLE"
+    label: "SORT_ASC",
+    value: "SORT_ASC"
   }
 ]
 const data = reactive({
@@ -118,10 +101,13 @@ const data = reactive({
   form: {
     group: route.params.group,
     name: route.params.name || '',
-    analyzer: '',
-    location: '',
-    tags: [],
-    type: ''
+    sourceMeasureGroup: route.params.group,
+    sourceMeasureName: '',
+    fieldName: '',
+    fieldValueSort: '',
+    groupByTagNames: [],
+    countersNumber: '',
+    lruSize: ''
   }
 })
 
@@ -130,10 +116,13 @@ watch(() => route, () => {
   data.form = {
     group: route.params.group,
     name: route.params.name || '',
-    analyzer: '',
-    location: '',
-    tags: [],
-    type: ''
+    sourceMeasureGroup: route.params.group,
+    sourceMeasureName: '',
+    fieldName: '',
+    fieldValueSort: '',
+    groupByTagNames: [],
+    countersNumber: '',
+    lruSize: ''
   }
   data.group = route.params.group
   data.name = route.params.name
@@ -150,20 +139,25 @@ const submit = async (formEl: FormInstance | undefined) => {
   await formEl.validate((valid) => {
     if (valid) {
       const param = {
-        indexRule: {
+        top_n_aggregation: {
           metadata: {
             group: data.form.group,
             name: data.form.name
           },
-          tags: data.form.tags,
-          type: data.form.type,
-          location: data.form.location,
-          analyzer: data.form.analyzer
+          sourceMeasure: {
+            group: data.form.sourceMeasureGroup,
+            name: data.form.sourceMeasureName,
+          },
+          fieldName: data.form.fieldName,
+          fieldValueSort: data.form.fieldValueSort,
+          groupByTagNames: data.form.groupByTagNames,
+          countersNumber: data.form.countersNumber,
+          lruSize: data.form.lruSize,
         }
       }
       $loadingCreate()
       if (data.operator == 'create') {
-        return createSecondaryDataModel("index-rule", param)
+        return createSecondaryDataModel("topn-agg", param)
           .then(res => {
             if (res.status == 200) {
               ElMessage({
@@ -173,7 +167,7 @@ const submit = async (formEl: FormInstance | undefined) => {
               })
               $bus.emit('refreshAside')
               $bus.emit('deleteGroup', data.form.group)
-              openIndexRule()
+              openTopNAgg()
             }
           })
           .catch(err => {
@@ -187,7 +181,7 @@ const submit = async (formEl: FormInstance | undefined) => {
             $loadingClose()
           })
       } else {
-        return updateSecondaryDataModel("index-rule", data.form.group, data.form.name, param)
+        return updateSecondaryDataModel("topn-agg", data.form.group, data.form.name, param)
           .then(res => {
             if (res.status == 200) {
               ElMessage({
@@ -197,7 +191,7 @@ const submit = async (formEl: FormInstance | undefined) => {
               })
               $bus.emit('refreshAside')
               $bus.emit('deleteResource', data.form.group)
-              openIndexRule()
+              openTopNAgg()
             }
           })
           .catch(err => {
@@ -215,7 +209,7 @@ const submit = async (formEl: FormInstance | undefined) => {
   })
 }
 
-function openIndexRule() {
+function openTopNAgg() {
   const route = {
     name: data.schema + '-' + data.type,
     params: {
@@ -238,17 +232,20 @@ function openIndexRule() {
 function initData() {
   if (data.operator == 'edit' && data.form.group && data.form.name) {
     $loadingCreate()
-    getSecondaryDataModel("index-rule", data.form.group, data.form.name)
+    getSecondaryDataModel("topn-agg", data.form.group, data.form.name)
       .then(res => {
         if (res.status == 200) {
-          const indexRule = res.data.indexRule
+          const topNAggregation = res.data.topNAggregation
           data.form = {
-            group: indexRule.metadata.group,
-            name: indexRule.metadata.name,
-            analyzer: indexRule.analyzer,
-            location: indexRule.location,
-            tags: indexRule.tags,
-            type: indexRule.type
+            group: topNAggregation.metadata.group,
+            name: topNAggregation.metadata.name,
+            sourceMeasureGroup: topNAggregation.sourceMeasure.group,
+            sourceMeasureName: topNAggregation.sourceMeasure.name,
+            fieldName: topNAggregation.fieldName,
+            fieldValueSort: topNAggregation.fieldValueSort,
+            groupByTagNames: topNAggregation.groupByTagNames,
+            countersNumber: topNAggregation.countersNumber,
+            lruSize: topNAggregation.lruSize,
           }
         }
       })
@@ -294,31 +291,41 @@ function initData() {
       </template>
       <el-form ref="ruleFormRef" :rules="rules" label-position="left" label-width="100px" :model="data.form"
         style="width: 50%;">
-        <el-form-item label="Group" prop="group">
+        <el-form-item label="Group" prop="group" label-width="150px">
           <el-input v-model="data.form.group" clearable :disabled="true"></el-input>
         </el-form-item>
-        <el-form-item label="Name" prop="name">
+        <el-form-item label="Name" prop="name" label-width="150px">
           <el-input v-model="data.form.name" :disabled="data.operator == 'edit'" clearable
             placeholder="Input Name"></el-input>
         </el-form-item>
-        <el-form-item label="Analyzer" prop="analyzer">
-          <el-select v-model="data.form.analyzer" placeholder="Choose Analyzer" style="width: 100%;" clearable>
-            <el-option v-for="item in analyzerList" :key="item.value" :label="item.label" :value="item.value" />
+        <el-form-item label="Measure Group" prop="sourceMeasureGroup" label-width="150px">
+          <el-input v-model="data.form.sourceMeasureGroup" :disabled="true" clearable
+            placeholder="Input Source Measure Group"></el-input>
+        </el-form-item>
+        <el-form-item label="Measure Name" prop="sourceMeasureName" label-width="150px">
+          <el-input v-model="data.form.sourceMeasureName" :disabled="data.operator == 'edit'" clearable
+            placeholder="Input Source Measure Name"></el-input>
+        </el-form-item>
+        <el-form-item label="Field Name" prop="fieldName" label-width="150px">
+          <el-input v-model="data.form.fieldName" clearable
+            placeholder="Input Field Name"></el-input>
+        </el-form-item>
+        <el-form-item label="Field Value Sort" prop="fieldValueSort" label-width="150px">
+          <el-select v-model="data.form.fieldValueSort" placeholder="Choose Field Value Sort" style="width: 100%;" clearable>
+            <el-option v-for="item in fieldValueSortList" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Location" prop="location">
-          <el-select v-model="data.form.location" placeholder="Choose Location" style="width: 100%;" clearable>
-            <el-option v-for="item in locationList" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Tags" prop="tags">
-          <el-select v-model="data.form.tags" allow-create filterable default-first-option placeholder="Input Tags"
+        <el-form-item label="Group By Tag Names" prop="groupByTagNames" label-width="150px">
+          <el-select v-model="data.form.groupByTagNames" allow-create filterable default-first-option placeholder="Input Group By Tag Names"
             style="width: 100%;" clearable multiple></el-select>
         </el-form-item>
-        <el-form-item label="Type" prop="type">
-          <el-select v-model="data.form.type" placeholder="Choose Type" style="width: 100%;" clearable>
-            <el-option v-for="item in typeList" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
+        <el-form-item label="Counters Number" prop="countersNumber" label-width="150px">
+          <el-input v-model="data.form.countersNumber" clearable
+            placeholder="Input Counters Number"></el-input>
+        </el-form-item>
+        <el-form-item label="LRU Size" prop="lruSize" label-width="150px">
+          <el-input v-model="data.form.lruSize" clearable
+            placeholder="Input LRU Size"></el-input>
         </el-form-item>
       </el-form>
     </el-card>

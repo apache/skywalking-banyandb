@@ -606,7 +606,6 @@ function openEditSecondaryDataModel() {
             schema: data.schema
         }
     }
-    console.log(route)
     router.push(route)
     const add = {
         label: data.groupLists[data.clickIndex][typeFlag[data.rightClickType]][data.clickChildIndex].metadata.name,
@@ -617,6 +616,7 @@ function openEditSecondaryDataModel() {
 }
 function openSecondaryDataModel(index, childIndex, type, schema) {
     const typeFlag = {
+        'topNAggregation': 'topn-agg',
         'indexRule': 'index-rule',
         'indexRuleBinding': 'index-rule-binding'
     }

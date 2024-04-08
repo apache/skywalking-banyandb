@@ -32,7 +32,9 @@ const data = reactive({
   name: '',
   type: '',
   operator: '',
-  indexRule: {}
+  topNAggregation: {
+    sourceMeasure: {}
+  }
 })
 
 const route = useRoute()
@@ -53,7 +55,8 @@ function initData() {
     $loadingCreate()
     getSecondaryDataModel(data.type, data.group, data.name)
       .then(result => {
-        data.indexRule = result.data.indexRule
+        data.topNAggregation = result.data.topNAggregation
+        console.log(data.topNAggregation)
       })
       .catch(err => {
         ElMessage({
@@ -85,17 +88,26 @@ function initData() {
         </div>
       </template>
       <el-form label-position="left" label-width="100px" :model="data.indexRule" style="width: 50%;">
-        <el-form-item label="Analyzer">
-          <el-input v-model="data.indexRule.analyzer" :disabled="true"></el-input>
+        <el-form-item label="Measure Group">
+          <el-input v-model="data.topNAggregation.sourceMeasure.group" :disabled="true"></el-input>
         </el-form-item>
-        <el-form-item label="Location">
-          <el-input v-model="data.indexRule.location" :disabled="true"></el-input>
+        <el-form-item label="Measure Name">
+          <el-input v-model="data.topNAggregation.sourceMeasure.name" :disabled="true"></el-input>
         </el-form-item>
-        <el-form-item label="Tags">
-          <el-select v-model="data.indexRule.tags" style="width: 100%;" :disabled="true" multiple></el-select>
+        <el-form-item label="Field Name">
+          <el-input v-model="data.topNAggregation.fieldName" :disabled="true"></el-input>
         </el-form-item>
-        <el-form-item label="Type">
-          <el-input v-model="data.indexRule.type" :disabled="true"></el-input>
+        <el-form-item label="Field Value Sort">
+          <el-select v-model="data.topNAggregation.fieldValueSort" style="width: 100%;" :disabled="true"></el-select>
+        </el-form-item>
+        <el-form-item label="Group By Tag Names">
+          <el-select v-model="data.topNAggregation.groupByTagNames" style="width: 100%;" :disabled="true" multiple></el-select>
+        </el-form-item>
+        <el-form-item label="Counters Number">
+          <el-input v-model="data.topNAggregation.countersNumber" :disabled="true"></el-input>
+        </el-form-item>
+        <el-form-item label="LRU Size">
+          <el-input v-model="data.topNAggregation.lruSize" :disabled="true"></el-input>
         </el-form-item>
       </el-form>
     </el-card>
