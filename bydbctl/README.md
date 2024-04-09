@@ -5,5 +5,8 @@
 ## Build
 
 ```
+# If you haven't generated the API code yet
+make -C ../api generate
+
 make build
 ```

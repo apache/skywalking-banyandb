@@ -39,6 +39,7 @@ Release Notes.
 - Bump several tools.
 - Bump all dependencies of Go and Node.
 - Combine banyand and bydbctl Dockerfile.
+- Update readme for bydbctl
 
 ## 0.5.0
 
