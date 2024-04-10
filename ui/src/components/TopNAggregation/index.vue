@@ -32,7 +32,9 @@ const data = reactive({
   name: '',
   type: '',
   operator: '',
-  indexRuleBinding: {}
+  topNAggregation: {
+    sourceMeasure: {}
+  }
 })
 
 const route = useRoute()
@@ -53,7 +55,7 @@ function initData() {
     $loadingCreate()
     getSecondaryDataModel(data.type, data.group, data.name)
       .then(result => {
-        data.indexRuleBinding = result.data.indexRuleBinding
+        data.topNAggregation = result.data.topNAggregation
       })
       .catch(err => {
         ElMessage({
@@ -84,16 +86,27 @@ function initData() {
           <span>Read</span>
         </div>
       </template>
-      <el-form label-position="left" label-width="100px" :model="data.indexRuleBinding" style="width: 50%;">
-        <el-form-item label="Begin At">
-          <el-date-picker v-model="data.indexRuleBinding.beginAt" :disabled="true" type="datetime"
-            style="width: 100% !important;"></el-date-picker>
+      <el-form label-position="left" label-width="100px" :model="data.indexRule" style="width: 50%;">
+        <el-form-item label="Measure Group">
+          <el-input v-model="data.topNAggregation.sourceMeasure.group" :disabled="true"></el-input>
         </el-form-item>
-        <el-form-item label="Expire At">
-          <el-date-picker v-model="data.indexRuleBinding.expireAt" :disabled="true" type="datetime"></el-date-picker>
+        <el-form-item label="Measure Name">
+          <el-input v-model="data.topNAggregation.sourceMeasure.name" :disabled="true"></el-input>
         </el-form-item>
-        <el-form-item label="Rules">
-          <el-select v-model="data.indexRuleBinding.rules" style="width: 100%;" :disabled="true" multiple></el-select>
+        <el-form-item label="Field Name">
+          <el-input v-model="data.topNAggregation.fieldName" :disabled="true"></el-input>
+        </el-form-item>
+        <el-form-item label="Field Value Sort">
+          <el-select v-model="data.topNAggregation.fieldValueSort" style="width: 100%;" :disabled="true"></el-select>
+        </el-form-item>
+        <el-form-item label="Group By Tag Names">
+          <el-select v-model="data.topNAggregation.groupByTagNames" style="width: 100%;" :disabled="true" multiple></el-select>
+        </el-form-item>
+        <el-form-item label="Counters Number">
+          <el-input v-model="data.topNAggregation.countersNumber" :disabled="true"></el-input>
+        </el-form-item>
+        <el-form-item label="LRU Size">
+          <el-input v-model="data.topNAggregation.lruSize" :disabled="true"></el-input>
         </el-form-item>
       </el-form>
     </el-card>
