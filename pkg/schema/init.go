@@ -304,7 +304,13 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 	}
 	if oldTopNSchema == nil {
 		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
-			return nil, innerErr
+			if !errors.Is(innerErr, schema.ErrGRPCAlreadyExists) {
+				return nil, innerErr
+			}
+			newTopNMeasure, err = measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetMetadata())
+			if err != nil {
+				return nil, err
+			}
 		}
 		return newTopNMeasure, nil
 	}

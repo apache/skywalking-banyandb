@@ -26,9 +26,12 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -159,9 +162,8 @@ func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler Eve
 func (e *etcdSchemaRegistry) Close() error {
 	e.closer.Done()
 	e.closer.CloseThenWait()
-	for i, w := range e.watchers {
-		_ = w.Close()
-		e.watchers[i] = nil
+	for i := range e.watchers {
+		e.watchers[i].Close()
 	}
 	return e.client.Close()
 }
@@ -323,10 +325,14 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) (int
 	}
 	replace := getResp.Count > 0
 	if replace {
-		return 0, errGRPCAlreadyExists
+		return 0, ErrGRPCAlreadyExists
 	}
 	putResp, err := e.client.Put(ctx, key, string(val))
 	if err != nil {
+		s, ok := status.FromError(err)
+		if ok && s.Code() == codes.AlreadyExists {
+			return 0, ErrGRPCAlreadyExists
+		}
 		return 0, err
 	}
 
@@ -407,8 +413,10 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata, fo
 		if errCommit != nil {
 			return errCommit
 		}
+
 		if !response.Succeeded {
-			return errGRPCAlreadyExists
+			tr := pb.TxnResponse(*response)
+			return errors.Wrapf(ErrGRPCAlreadyExists, "response: %s", tr.String())
 		}
 	}
 
@@ -423,7 +431,13 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata, fo
 			return
 		}
 		defer func() {
-			_, _ = e.client.Lease.Revoke(context.Background(), lease.ID)
+			e.l.Info().Msgf("revoking lease %d", lease.ID)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err = e.client.Lease.Revoke(ctx, lease.ID)
+			cancel()
+			if err != nil {
+				e.l.Error().Err(err).Msgf("failed to revoke lease %d", lease.ID)
+			}
 			e.closer.Done()
 		}()
 		for {

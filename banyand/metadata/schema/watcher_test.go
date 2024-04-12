@@ -133,7 +133,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		// Start the watcher
 		watcher = registry.newWatcher("test", KindMeasure, mockedObj)
 		ginkgo.DeferCleanup(func() {
-			gomega.Expect(watcher.Close()).ShouldNot(gomega.HaveOccurred())
+			watcher.Close()
 		})
 		gomega.Eventually(func() bool {
 			_, ok := mockedObj.Data()["testkey1"]
@@ -150,7 +150,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 	ginkgo.It("should handle watch events", func() {
 		watcher = registry.newWatcher("test", KindStream, mockedObj)
 		ginkgo.DeferCleanup(func() {
-			gomega.Expect(watcher.Close()).ShouldNot(gomega.HaveOccurred())
+			watcher.Close()
 		})
 		err := registry.CreateGroup(context.Background(), &commonv1.Group{
 			Metadata: &commonv1.Metadata{

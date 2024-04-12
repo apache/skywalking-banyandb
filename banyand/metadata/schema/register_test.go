@@ -87,6 +87,6 @@ var _ = ginkgo.Describe("etcd_register", func() {
 
 	ginkgo.It("should register only once", func() {
 		gomega.Expect(r.register(context.Background(), md, false)).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(r.register(context.Background(), md, false)).Should(gomega.MatchError(errGRPCAlreadyExists))
+		gomega.Expect(r.register(context.Background(), md, false)).Should(gomega.MatchError(ErrGRPCAlreadyExists))
 	})
 })

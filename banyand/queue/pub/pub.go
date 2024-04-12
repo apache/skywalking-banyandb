@@ -20,12 +20,12 @@ package pub
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -81,15 +81,41 @@ func (p *pub) Broadcast(topic bus.Topic, messages bus.Message) ([]bus.Future, er
 		names = append(names, k)
 	}
 	p.mu.RUnlock()
-	var futures []bus.Future
+	futureCh := make(chan publishResult, len(names))
+	var wg sync.WaitGroup
 	for _, n := range names {
-		f, err := p.Publish(topic, bus.NewMessageWithNode(messages.ID(), n, messages.Data()))
-		if err != nil {
-			return nil, err
+		wg.Add(1)
+		// Send a value into sem. If sem is full, this will block until there's room.
+		go func(n string) {
+			defer wg.Done()
+			f, err := p.Publish(topic, bus.NewMessageWithNode(messages.ID(), n, messages.Data()))
+			futureCh <- publishResult{n: n, f: f, e: err}
+		}(n)
+	}
+	go func() {
+		wg.Wait()
+		close(futureCh)
+	}()
+	var futures []bus.Future
+	var errs error
+	for f := range futureCh {
+		if f.e != nil {
+			errs = multierr.Append(errs, errors.Wrapf(f.e, "failed to publish message to %s", f.n))
+			continue
 		}
-		futures = append(futures, f)
+		futures = append(futures, f.f)
+	}
+
+	if errs != nil {
+		return futures, fmt.Errorf("broadcast errors: %w", errs)
 	}
 	return futures, nil
+}
+
+type publishResult struct {
+	f bus.Future
+	e error
+	n string
 }
 
 func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
@@ -101,13 +127,15 @@ func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, err
 			return multierr.Append(err, fmt.Errorf("failed to marshal message %T: %w", m, errSend))
 		}
 		node := m.Node()
-		p.mu.Lock()
+		p.mu.RLock()
 		client, ok := p.clients[node]
-		p.mu.Unlock()
+		p.mu.RUnlock()
 		if !ok {
 			return multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 		}
-		stream, errCreateStream := client.client.Send(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		f.cancelFn = append(f.cancelFn, cancel)
+		stream, errCreateStream := client.client.Send(ctx)
 		if errCreateStream != nil {
 			return multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 		}
@@ -150,8 +178,8 @@ func (p *pub) PreRun(context.Context) error {
 }
 
 type writeStream struct {
-	client clusterv1.Service_SendClient
-	cancel func()
+	client    clusterv1.Service_SendClient
+	ctxDoneCh <-chan struct{}
 }
 
 type batchPublisher struct {
@@ -160,9 +188,11 @@ type batchPublisher struct {
 }
 
 func (bp *batchPublisher) Close() (err error) {
-	for _, ws := range bp.streams {
-		err = multierr.Append(err, ws.client.CloseSend())
-		ws.cancel()
+	for i := range bp.streams {
+		err = multierr.Append(err, bp.streams[i].client.CloseSend())
+	}
+	for i := range bp.streams {
+		<-bp.streams[i].ctxDoneCh
 	}
 	return err
 }
@@ -180,7 +210,6 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 				defer func() {
 					if !success {
 						delete(bp.streams, node)
-						stream.cancel()
 					}
 				}()
 				select {
@@ -193,8 +222,7 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 					err = multierr.Append(err, fmt.Errorf("failed to send message to node %s: %w", node, errSend))
 					return false
 				}
-				_, errRecv := stream.client.Recv()
-				return errRecv == nil
+				return errSend == nil
 			}
 			return false
 		}
@@ -202,27 +230,40 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 			continue
 		}
 
-		bp.pub.mu.Lock()
+		bp.pub.mu.RLock()
 		client, ok := bp.pub.clients[node]
-		bp.pub.mu.Unlock()
+		bp.pub.mu.RUnlock()
 		if !ok {
 			err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 			continue
 		}
-		//nolint: govet
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// this assignment is for getting around the go vet lint
+		deferFn := cancel
 		stream, errCreateStream := client.client.Send(ctx)
 		if err != nil {
 			err = multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 			continue
 		}
 		bp.streams[node] = writeStream{
-			client: stream,
-			cancel: cancel,
+			client:    stream,
+			ctxDoneCh: ctx.Done(),
 		}
 		_ = sendData()
+		go func(s clusterv1.Service_SendClient, deferFn func()) {
+			defer deferFn()
+			for {
+				_, errRecv := s.Recv()
+				if errRecv == nil {
+					continue
+				}
+				if errors.Is(errRecv, io.EOF) {
+					return
+				}
+				bp.pub.log.Err(errRecv).Msg("failed to receive message")
+			}
+		}(stream, deferFn)
 	}
-	//nolint: govet
 	return nil, nil
 }
 
@@ -245,8 +286,9 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 }
 
 type future struct {
-	clients []clusterv1.Service_SendClient
-	topics  []bus.Topic
+	clients  []clusterv1.Service_SendClient
+	cancelFn []func()
+	topics   []bus.Topic
 }
 
 func (l *future) Get() (bus.Message, error) {
@@ -258,6 +300,8 @@ func (l *future) Get() (bus.Message, error) {
 	defer func() {
 		l.clients = l.clients[1:]
 		l.topics = l.topics[1:]
+		l.cancelFn[0]()
+		l.cancelFn = l.cancelFn[1:]
 	}()
 	resp, err := c.Recv()
 	if err != nil {

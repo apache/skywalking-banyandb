@@ -18,6 +18,8 @@
 package pub
 
 import (
+	"fmt"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -26,18 +28,23 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
-var retryPolicy = `{
+var (
+	serviceName = clusterv1.Service_ServiceDesc.ServiceName
+
+	// The timeout is set by each RPC.
+	retryPolicy = fmt.Sprintf(`{
 	"methodConfig": [{
-	  "name": [{"service": "grpc.examples.echo.Echo"}],
+	  "name": [{"service": "%s"}],
 	  "waitForReady": true,
 	  "retryPolicy": {
-		  "MaxAttempts": 4,
-		  "InitialBackoff": ".5s",
-		  "MaxBackoff": "10s",
-		  "BackoffMultiplier": 1.0,
-		  "RetryableStatusCodes": [ "UNAVAILABLE" ]
+	      "MaxAttempts": 4,
+	      "InitialBackoff": ".5s",
+	      "MaxBackoff": "10s",
+	      "BackoffMultiplier": 1.0,
+	      "RetryableStatusCodes": [ "UNAVAILABLE" ]
 	  }
-	}]}`
+	}]}`, serviceName)
+)
 
 type client struct {
 	client clusterv1.ServiceClient

@@ -68,10 +68,9 @@ func newWatcher(cli *clientv3.Client, wc watcherConfig, l *logger.Logger) *watch
 	return w
 }
 
-func (w *watcher) Close() error {
+func (w *watcher) Close() {
 	w.closer.Done()
 	w.closer.CloseThenWait()
-	return nil
 }
 
 func (w *watcher) allEvents() int64 {
@@ -106,6 +105,7 @@ func (w *watcher) watch(revision int64) {
 	}
 	defer w.closer.Done()
 	cli := w.cli
+OUTER:
 	for {
 		if revision < 0 {
 			revision = w.allEvents()
@@ -124,25 +124,39 @@ func (w *watcher) watch(revision int64) {
 		if wch == nil {
 			continue
 		}
-		for watchResp := range wch {
-			if err := watchResp.Err(); err != nil {
-				select {
-				case <-w.closer.CloseNotify():
-					return
-				default:
-					if errors.Is(err, v3rpc.ErrCompacted) {
-						revision = -1
-						break
+		for {
+			select {
+			case <-w.closer.CloseNotify():
+				w.l.Warn().Msgf("watcher closed")
+				return
+			case watchResp, ok := <-wch:
+				if !ok {
+					select {
+					case <-w.closer.CloseNotify():
+						return
+					default:
+						break OUTER
 					}
-					continue
 				}
-			}
-			for _, event := range watchResp.Events {
-				select {
-				case <-w.closer.CloseNotify():
-					return
-				default:
-					w.handle(event)
+				if err := watchResp.Err(); err != nil {
+					select {
+					case <-w.closer.CloseNotify():
+						return
+					default:
+						if errors.Is(err, v3rpc.ErrCompacted) {
+							revision = -1
+							break
+						}
+						continue
+					}
+				}
+				for _, event := range watchResp.Events {
+					select {
+					case <-w.closer.CloseNotify():
+						return
+					default:
+						w.handle(event)
+					}
 				}
 			}
 		}

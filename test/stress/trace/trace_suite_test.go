@@ -19,6 +19,7 @@ package trace_test
 
 import (
 	"flag"
+	"net/http"
 	"path"
 	"runtime"
 	"testing"
@@ -31,9 +32,8 @@ import (
 )
 
 func TestIntegrationLoad(t *testing.T) {
-	t.Skip("Skip the stress test")
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Stress Trace Suite")
+	RunSpecs(t, "Stress Trace Suite", Label("slow"))
 }
 
 var _ = Describe("Query", func() {
@@ -44,6 +44,12 @@ var _ = Describe("Query", func() {
 	)
 
 	BeforeEach(func() {
+		// Check if the URL is reachable
+		resp, err := http.Get("http://localhost:12800/graphql")
+		if err != nil || resp.StatusCode != 200 {
+			// If the request fails or the status code is not 200, skip the test
+			Skip("http://localhost:12800/graphql is not reachable")
+		}
 		fs = flag.NewFlagSet("", flag.PanicOnError)
 		fs.String("base-url", "http://localhost:12800/graphql", "")
 		fs.String("service-id", "c2VydmljZV8x.1", "")
