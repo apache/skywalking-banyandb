@@ -19,9 +19,9 @@ package metadata
 
 import (
 	"context"
-	"errors"
 	"time"
 
+	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -129,7 +129,9 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		ctxRegister, cancel := context.WithTimeout(ctx, time.Second*10)
 		err = s.schemaRegistry.RegisterNode(ctxRegister, nodeInfo, s.forceRegisterNode)
 		cancel()
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, schema.ErrGRPCAlreadyExists) {
+			return errors.Wrapf(err, "node[%s] already exists in etcd", node.NodeID)
+		} else if errors.Is(err, context.DeadlineExceeded) {
 			l.Warn().Strs("etcd-endpoints", s.endpoints).Msg("register node timeout, retrying...")
 			continue
 		}
@@ -147,7 +149,9 @@ func (s *clientService) Serve() run.StopNotify {
 func (s *clientService) GracefulStop() {
 	s.closer.Done()
 	s.closer.CloseThenWait()
-	_ = s.schemaRegistry.Close()
+	if err := s.schemaRegistry.Close(); err != nil {
+		logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close schema registry")
+	}
 }
 
 func (s *clientService) RegisterHandler(name string, kind schema.Kind, handler schema.EventHandler) {

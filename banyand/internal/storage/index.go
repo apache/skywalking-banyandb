@@ -365,7 +365,7 @@ func (sic *seriesIndexController[T, O]) run(deadline time.Time) (err error) {
 	}
 
 	liveTime := sic.hot.startTime.Sub(deadline)
-	if liveTime > 0 && liveTime < sic.standbyLiveTime {
+	if liveTime > 0 && liveTime <= sic.standbyLiveTime {
 		sic.l.Info().Time("deadline", deadline).Msg("start to create standby series index")
 		standby, err = sic.newIdx(ctx)
 		if err != nil {

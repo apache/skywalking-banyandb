@@ -41,13 +41,11 @@ QPS ?= 10
 clean:
 	rm -rf /tmp/banyandb-stress-trace
 
-.PHONY: up
-up: clean
-	$(cli_env) docker compose $(CLI_ARGS) --env-file ./env up --build
+up-%: clean
+	$(cli_env) docker compose -f docker-compose-$*.yaml $(CLI_ARGS) --env-file ./env up --build
 
-.PHONY: down
-down:
-	docker compose down
+down-%:
+	docker compose -f docker-compose-$*.yaml down
 
 .PHONY: test_traffic
 test_traffic:

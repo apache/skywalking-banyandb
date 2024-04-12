@@ -143,10 +143,6 @@ func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, err
 				continue
 			}
 			resp := d.(*streamv1.QueryResponse)
-			if err != nil {
-				allErr = multierr.Append(allErr, err)
-				continue
-			}
 			see = append(see,
 				newSortableElements(resp.Elements, t.sortByTime, t.sortTagSpec))
 		}

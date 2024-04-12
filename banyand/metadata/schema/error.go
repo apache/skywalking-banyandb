@@ -29,11 +29,12 @@ var (
 	ErrGRPCResourceNotFound = statusGRPCResourceNotFound.Err()
 	// ErrClosed indicates the registry is closed.
 	ErrClosed = errors.New("metadata registry is closed")
+	// ErrGRPCAlreadyExists indicates the resource already exists.
+	ErrGRPCAlreadyExists = statusGRPCAlreadyExists.Err()
 
 	statusGRPCInvalidArgument  = status.New(codes.InvalidArgument, "banyandb: input is invalid")
 	statusGRPCResourceNotFound = status.New(codes.NotFound, "banyandb: resource not found")
 	statusGRPCAlreadyExists    = status.New(codes.AlreadyExists, "banyandb: resource already exists")
-	errGRPCAlreadyExists       = statusGRPCAlreadyExists.Err()
 	statusDataLoss             = status.New(codes.DataLoss, "banyandb: resource corrupts.")
 	errGRPCDataLoss            = statusDataLoss.Err()
 )
