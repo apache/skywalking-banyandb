@@ -39,12 +39,20 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 func TestPub(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "Publish Suite")
 }
+
+var _ = ginkgo.BeforeSuite(func() {
+	gomega.Expect(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})).To(gomega.Succeed())
+})
 
 type mockServer struct {
 	clusterv1.UnimplementedServiceServer
@@ -79,7 +87,7 @@ func (s *mockServer) Send(stream clusterv1.Service_SendServer) error {
 		}
 
 		if err := stream.Send(res); err != nil {
-			panic(err)
+			return err
 		}
 	}
 }

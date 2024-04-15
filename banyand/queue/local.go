@@ -19,6 +19,8 @@
 package queue
 
 import (
+	"time"
+
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -75,7 +77,7 @@ func (l local) Name() string {
 	return "local-pipeline"
 }
 
-func (l local) NewBatchPublisher() BatchPublisher {
+func (l local) NewBatchPublisher(_ time.Duration) BatchPublisher {
 	return &localBatchPublisher{
 		local: l.local,
 	}

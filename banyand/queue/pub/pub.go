@@ -159,10 +159,11 @@ func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, err
 }
 
 // NewBatchPublisher returns a new batch publisher.
-func (p *pub) NewBatchPublisher() queue.BatchPublisher {
+func (p *pub) NewBatchPublisher(timeout time.Duration) queue.BatchPublisher {
 	return &batchPublisher{
 		pub:     p,
 		streams: make(map[string]writeStream),
+		timeout: timeout,
 		f:       batchFuture{errNodes: make(map[string]struct{}), l: p.log},
 	}
 }
@@ -196,6 +197,7 @@ type batchPublisher struct {
 	pub     *pub
 	streams map[string]writeStream
 	f       batchFuture
+	timeout time.Duration
 }
 
 func (bp *batchPublisher) Close() (err error) {
@@ -257,7 +259,7 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 			err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), bp.timeout)
 		// this assignment is for getting around the go vet lint
 		deferFn := cancel
 		stream, errCreateStream := client.client.Send(ctx)

@@ -46,6 +46,7 @@ type streamService struct {
 	ingestionAccessLog accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
+	writeTimeout       time.Duration
 }
 
 func (s *streamService) setLogger(log *logger.Logger) {
@@ -66,7 +67,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			logger.Err(errResp).Msg("failed to send response")
 		}
 	}
-	publisher := s.pipeline.NewBatchPublisher()
+	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
 	defer publisher.Close()
 	ctx := stream.Context()
 	for {

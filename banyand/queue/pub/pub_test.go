@@ -56,7 +56,7 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			bp := p.NewBatchPublisher()
+			bp := p.NewBatchPublisher(3 * time.Second)
 			defer bp.Close()
 			t := bus.UniTopic("test")
 			for i := 0; i < 10; i++ {
@@ -68,7 +68,7 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 			}
 		})
 
-		ginkgo.FIt("should go to evict queue when node is unavailable", func() {
+		ginkgo.It("should go to evict queue when node is unavailable", func() {
 			addr1 := getAddress()
 			addr2 := getAddress()
 			closeFn1 := setup(addr1, codes.OK, 200*time.Millisecond)
@@ -84,7 +84,7 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			bp := p.NewBatchPublisher()
+			bp := p.NewBatchPublisher(3 * time.Second)
 			t := bus.UniTopic("test")
 			for i := 0; i < 10; i++ {
 				_, err := bp.Publish(t,
@@ -106,6 +106,39 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 				gomega.Expect(p.evictClients).Should(gomega.HaveKey("node2"))
 				gomega.Expect(p.clients).Should(gomega.HaveKey("node1"))
 			}()
+		})
+
+		ginkgo.It("should stay in active queue when operation takes a long time", func() {
+			addr1 := getAddress()
+			addr2 := getAddress()
+			closeFn1 := setup(addr1, codes.OK, 0)
+			closeFn2 := setup(addr2, codes.OK, 5*time.Second)
+			p := newPub()
+			defer func() {
+				p.GracefulStop()
+				closeFn1()
+				closeFn2()
+			}()
+			node1 := getDataNode("node1", addr1)
+			p.OnAddOrUpdate(node1)
+			node2 := getDataNode("node2", addr2)
+			p.OnAddOrUpdate(node2)
+
+			bp := p.NewBatchPublisher(3 * time.Second)
+			t := bus.UniTopic("test")
+			for i := 0; i < 10; i++ {
+				_, err := bp.Publish(t,
+					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
+					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
+				)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			}
+			gomega.Expect(bp.Close()).ShouldNot(gomega.HaveOccurred())
+			gomega.Consistently(func() int {
+				p.mu.RLock()
+				defer p.mu.RUnlock()
+				return len(p.clients)
+			}, "1s").Should(gomega.Equal(2))
 		})
 	})
 })
