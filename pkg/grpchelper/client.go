@@ -70,11 +70,11 @@ func Request(ctx context.Context, rpcTimeout time.Duration, fn func(rpcCtx conte
 	err := fn(rpcCtx)
 	if err != nil {
 		if stat, ok := status.FromError(err); ok && stat.Code() == codes.Unimplemented {
-			l.Warn().Str("stat", stat.Message()).Msg("error: this server does not implement the service")
+			l.Info().Str("stat", stat.Message()).Msg("error: this server does not implement the service")
 		} else if stat, ok := status.FromError(err); ok && stat.Code() == codes.DeadlineExceeded {
-			l.Warn().Dur("rpcTimeout", rpcTimeout).Msg("timeout: rpc did not complete within")
+			l.Info().Dur("rpcTimeout", rpcTimeout).Msg("timeout: rpc did not complete within")
 		} else {
-			l.Error().Err(err).Msg("error: rpc failed:")
+			l.Info().Err(err).Msg("error: rpc failed:")
 		}
 		return err
 	}
