@@ -27,6 +27,8 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -47,13 +49,14 @@ var (
 
 type pub struct {
 	schema.UnimplementedOnInitHandler
-	metadata     metadata.Repo
-	handler      schema.EventHandler
-	log          *logger.Logger
-	clients      map[string]*client
-	evictClients map[string]evictNode
-	closer       *run.Closer
-	mu           sync.RWMutex
+	metadata   metadata.Repo
+	handler    schema.EventHandler
+	log        *logger.Logger
+	registered map[string]struct{}
+	active     map[string]*client
+	evictable  map[string]evictNode
+	closer     *run.Closer
+	mu         sync.RWMutex
 }
 
 func (p *pub) Register(handler schema.EventHandler) {
@@ -63,16 +66,16 @@ func (p *pub) Register(handler schema.EventHandler) {
 func (p *pub) GracefulStop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for i := range p.evictClients {
-		close(p.evictClients[i].c)
+	for i := range p.evictable {
+		close(p.evictable[i].c)
 	}
-	p.evictClients = nil
+	p.evictable = nil
 	p.closer.Done()
 	p.closer.CloseThenWait()
-	for _, c := range p.clients {
+	for _, c := range p.active {
 		_ = c.conn.Close()
 	}
-	p.clients = nil
+	p.active = nil
 }
 
 // Serve implements run.Service.
@@ -80,10 +83,10 @@ func (p *pub) Serve() run.StopNotify {
 	return p.closer.CloseNotify()
 }
 
-func (p *pub) Broadcast(topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
+func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
 	var names []string
 	p.mu.RLock()
-	for k := range p.clients {
+	for k := range p.active {
 		names = append(names, k)
 	}
 	p.mu.RUnlock()
@@ -93,7 +96,7 @@ func (p *pub) Broadcast(topic bus.Topic, messages bus.Message) ([]bus.Future, er
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()
-			f, err := p.Publish(topic, bus.NewMessageWithNode(messages.ID(), n, messages.Data()))
+			f, err := p.publish(timeout, topic, bus.NewMessageWithNode(messages.ID(), n, messages.Data()))
 			futureCh <- publishResult{n: n, f: f, e: err}
 		}(n)
 	}
@@ -106,6 +109,14 @@ func (p *pub) Broadcast(topic bus.Topic, messages bus.Message) ([]bus.Future, er
 	for f := range futureCh {
 		if f.e != nil {
 			errs = multierr.Append(errs, errors.Wrapf(f.e, "failed to publish message to %s", f.n))
+			if isFailoverError(f.e) {
+				if p.closer.AddRunning() {
+					go func() {
+						defer p.closer.Done()
+						p.failover(f.n)
+					}()
+				}
+			}
 			continue
 		}
 		futures = append(futures, f.f)
@@ -123,7 +134,7 @@ type publishResult struct {
 	n string
 }
 
-func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
+func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
 	var err error
 	f := &future{}
 	handleMessage := func(m bus.Message, err error) error {
@@ -133,12 +144,12 @@ func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, err
 		}
 		node := m.Node()
 		p.mu.RLock()
-		client, ok := p.clients[node]
+		client, ok := p.active[node]
 		p.mu.RUnlock()
 		if !ok {
 			return multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		f.cancelFn = append(f.cancelFn, cancel)
 		stream, errCreateStream := client.client.Send(ctx)
 		if errCreateStream != nil {
@@ -158,6 +169,10 @@ func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, err
 	return f, err
 }
 
+func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
+	return p.publish(5*time.Second, topic, messages...)
+}
+
 // NewBatchPublisher returns a new batch publisher.
 func (p *pub) NewBatchPublisher(timeout time.Duration) queue.BatchPublisher {
 	return &batchPublisher{
@@ -171,10 +186,11 @@ func (p *pub) NewBatchPublisher(timeout time.Duration) queue.BatchPublisher {
 // New returns a new queue client.
 func New(metadata metadata.Repo) queue.Client {
 	return &pub{
-		metadata:     metadata,
-		clients:      make(map[string]*client),
-		evictClients: make(map[string]evictNode),
-		closer:       run.NewCloser(1),
+		metadata:   metadata,
+		active:     make(map[string]*client),
+		evictable:  make(map[string]evictNode),
+		registered: make(map[string]struct{}),
+		closer:     run.NewCloser(1),
 	}
 }
 
@@ -253,7 +269,7 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 		}
 
 		bp.pub.mu.RLock()
-		client, ok := bp.pub.clients[node]
+		client, ok := bp.pub.active[node]
 		bp.pub.mu.RUnlock()
 		if !ok {
 			err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
@@ -393,10 +409,12 @@ func (b *batchFuture) get() []string {
 					mux.Lock()
 					defer mux.Unlock()
 					// only log the error once for each node
-					if _, ok := b.errNodes[evt.n]; !ok {
+					if _, ok := b.errNodes[evt.n]; !ok && isFailoverError(evt.e) {
 						b.l.Error().Err(evt.e).Msgf("failed to send message to node %s", evt.n)
+						b.errNodes[evt.n] = struct{}{}
+						return
 					}
-					b.errNodes[evt.n] = struct{}{}
+					b.l.Error().Err(evt.e).Msgf("failed to send message to node %s", evt.n)
 				}()
 			}
 		}(e, &mux)
@@ -409,4 +427,12 @@ func (b *batchFuture) get() []string {
 		result = append(result, n)
 	}
 	return result
+}
+
+func isFailoverError(err error) bool {
+	s, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	return s.Code() == codes.Unavailable || s.Code() == codes.DeadlineExceeded
 }

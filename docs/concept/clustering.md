@@ -45,6 +45,8 @@ All nodes within a BanyanDB cluster communicate with other nodes according to th
 
 All nodes in the cluster are discovered by the Meta Nodes. When a node starts up, it registers itself with the Meta Nodes. The Meta Nodes then share this information with the Liaison Nodes which use it to route requests to the appropriate nodes.
 
+If data nodes are unable to connect to the meta nodes due to network partition or other issues, they will be removed from the meta nodes. However, the liaison nodes will not remove the data nodes from their routing list until the data nodes are also unreachable from the liaison nodes' perspective. This approach ensures that the system can continue to function even if some data nodes are temporarily unavailable from the meta nodes.
+
 ## 3. **Data Organization**
 
 Different nodes in BanyanDB are responsible for different parts of the database, while Query and Liaison Nodes manage the routing and processing of queries.
@@ -177,3 +179,15 @@ User
 4. The results from each shard are then returned to the Liaison Node, which consolidates them into a single response to the user.
 
 This architecture allows BanyanDB to execute queries efficiently across a distributed system, leveraging the distributed query capabilities of the Liaison Node and the parallel processing of Data Nodes.
+
+## 7. Failover
+
+BanyanDB is designed to be highly available and fault-tolerant.
+
+In case of a Data Node failure, the system can automatically recover and continue to operate.
+
+Liaison nodes have a built-in mechanism to detect the failure of a Data Node. When a Data Node fails, the Liaison Node will automatically route requests to other available Data Nodes with the same shard. This ensures that the system remains operational even in the face of node failures. Thanks to the query mode, which allows Liaison Nodes to access all Data Nodes, the system can continue to function even if some Data Nodes are unavailable. When the failed data nodes are restored, the system won't reply data to them since the data is still retrieved from other nodes.
+
+In the case of a Liaison Node failure, the system can be configured to have multiple Liaison Nodes for redundancy. If one Liaison Node fails, the other Liaison Nodes can take over its responsibilities, ensuring that the system remains available.
+
+> Please note that any written request which triggers the failover process will be rejected, and the client should re-send the request.

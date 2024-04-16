@@ -97,11 +97,13 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	p.registered[name] = struct{}{}
+
 	// If the client already exists, just return
-	if _, ok := p.clients[name]; ok {
+	if _, ok := p.active[name]; ok {
 		return
 	}
-	if _, ok := p.evictClients[name]; ok {
+	if _, ok := p.evictable[name]; ok {
 		return
 	}
 	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
@@ -111,15 +113,16 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	}
 
 	if !p.checkClient(conn, md) {
+		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is unhealthy, move it to evict queue")
 		return
 	}
 
 	c := clusterv1.NewServiceClient(conn)
-	p.clients[name] = &client{conn: conn, client: c, md: md}
+	p.active[name] = &client{conn: conn, client: c, md: md}
 	if p.handler != nil {
 		p.handler.OnAddOrUpdate(md)
 	}
-	p.log.Info().Stringer("node", node).Msg("new node is healthy, add it to active queue")
+	p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("new node is healthy, add it to active queue")
 }
 
 func (p *pub) OnDelete(md schema.Metadata) {
@@ -138,20 +141,21 @@ func (p *pub) OnDelete(md schema.Metadata) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if en, ok := p.evictClients[name]; ok {
+	delete(p.registered, name)
+	if en, ok := p.evictable[name]; ok {
 		close(en.c)
-		delete(p.evictClients, name)
-		p.log.Info().Stringer("node", node).Msg("node is removed from evict queue by delete event")
+		delete(p.evictable, name)
+		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is removed from evict queue by delete event")
 		return
 	}
 
-	if client, ok := p.clients[name]; ok && !p.healthCheck(node, client.conn) {
+	if client, ok := p.active[name]; ok && !p.healthCheck(node, client.conn) {
 		_ = client.conn.Close()
-		delete(p.clients, name)
+		delete(p.active, name)
 		if p.handler != nil {
 			p.handler.OnDelete(md)
 		}
-		p.log.Info().Stringer("node", node).Msg("node is removed from active queue by delete event")
+		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is removed from active queue by delete event")
 	}
 }
 
@@ -168,9 +172,8 @@ func (p *pub) checkClient(conn *grpc.ClientConn, md schema.Metadata) bool {
 	if !p.closer.AddRunning() {
 		return false
 	}
-	p.log.Info().Stringer("node", node).Msg("node is unhealthy, move it to evict queue")
 	name := node.Metadata.Name
-	p.evictClients[name] = evictNode{n: node, c: make(chan struct{})}
+	p.evictable[name] = evictNode{n: node, c: make(chan struct{})}
 	if p.handler != nil {
 		p.handler.OnDelete(md)
 	}
@@ -184,21 +187,24 @@ func (p *pub) checkClient(conn *grpc.ClientConn, md schema.Metadata) bool {
 				if errEvict == nil && p.healthCheck(en.n, connEvict) {
 					p.mu.Lock()
 					defer p.mu.Unlock()
-					if _, ok := p.evictClients[name]; !ok {
+					if _, ok := p.evictable[name]; !ok {
 						// The client has been removed from evict clients map, just return
 						return
 					}
 					c := clusterv1.NewServiceClient(connEvict)
-					p.clients[name] = &client{conn: connEvict, client: c, md: md}
+					p.active[name] = &client{conn: connEvict, client: c, md: md}
 					if p.handler != nil {
 						p.handler.OnAddOrUpdate(md)
 					}
-					delete(p.evictClients, name)
+					delete(p.evictable, name)
 					p.log.Info().Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
 					return
 				}
 				if errEvict != nil {
 					_ = connEvict.Close()
+				}
+				if _, ok := p.registered[name]; !ok {
+					return
 				}
 				p.log.Error().Err(errEvict).Msgf("failed to re-connect to grpc server after waiting for %s", backoff)
 			case <-en.c:
@@ -210,7 +216,7 @@ func (p *pub) checkClient(conn *grpc.ClientConn, md schema.Metadata) bool {
 				backoff = maxBackoff
 			}
 		}
-	}(p, name, p.evictClients[name], md)
+	}(p, name, p.evictable[name], md)
 	return false
 }
 
@@ -237,20 +243,37 @@ func (p *pub) healthCheck(node fmt.Stringer, conn *grpc.ClientConn) bool {
 func (p *pub) failover(node string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if en, ok := p.evictClients[node]; ok {
+	if en, ok := p.evictable[node]; ok {
 		close(en.c)
-		delete(p.evictClients, node)
-		p.log.Info().Str("node", node).Msg("node is removed from evict queue by wire event")
+		delete(p.evictable, node)
+		p.log.Info().Str("node", node).Str("status", p.dump()).Msg("node is removed from evict queue by wire event")
 		return
 	}
 
-	if client, ok := p.clients[node]; ok && !p.checkClient(client.conn, client.md) {
+	if client, ok := p.active[node]; ok && !p.checkClient(client.conn, client.md) {
 		_ = client.conn.Close()
-		delete(p.clients, node)
+		delete(p.active, node)
 		if p.handler != nil {
 			p.handler.OnDelete(client.md)
 		}
+		p.log.Info().Str("status", p.dump()).Str("node", node).Msg("node is unhealthy, move it to evict queue")
 	}
+}
+
+func (p *pub) dump() string {
+	keysRegistered := make([]string, 0, len(p.registered))
+	for k := range p.registered {
+		keysRegistered = append(keysRegistered, k)
+	}
+	keysActive := make([]string, 0, len(p.active))
+	for k := range p.active {
+		keysActive = append(keysActive, k)
+	}
+	keysEvictable := make([]string, 0, len(p.evictable))
+	for k := range p.evictable {
+		keysEvictable = append(keysEvictable, k)
+	}
+	return fmt.Sprintf("registered: %v, active :%v, evictable :%v", keysRegistered, keysActive, keysEvictable)
 }
 
 type evictNode struct {

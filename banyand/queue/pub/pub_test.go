@@ -24,13 +24,15 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var _ = ginkgo.Describe("publish clients register/unregister", func() {
+var _ = ginkgo.Describe("Publish and Broadcast", func() {
 	var goods []gleak.Goroutine
 	ginkgo.BeforeEach(func() {
 		goods = gleak.Goroutines()
@@ -39,7 +41,7 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 
-	ginkgo.Context("publisher and batch publisher", func() {
+	ginkgo.Context("Publisher and batch publisher", func() {
 		ginkgo.It("should publish messages", func() {
 			addr1 := getAddress()
 			addr2 := getAddress()
@@ -58,9 +60,8 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 
 			bp := p.NewBatchPublisher(3 * time.Second)
 			defer bp.Close()
-			t := bus.UniTopic("test")
 			for i := 0; i < 10; i++ {
-				_, err := bp.Publish(t,
+				_, err := bp.Publish(data.TopicStreamWrite,
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
 				)
@@ -84,10 +85,9 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			bp := p.NewBatchPublisher(3 * time.Second)
-			t := bus.UniTopic("test")
+			bp := p.NewBatchPublisher(30 * time.Second)
 			for i := 0; i < 10; i++ {
-				_, err := bp.Publish(t,
+				_, err := bp.Publish(data.TopicStreamWrite,
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
 				)
@@ -97,14 +97,14 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 			gomega.Eventually(func() int {
 				p.mu.RLock()
 				defer p.mu.RUnlock()
-				return len(p.clients)
+				return len(p.active)
 			}, flags.EventuallyTimeout).Should(gomega.Equal(1))
 			func() {
 				p.mu.RLock()
 				defer p.mu.RUnlock()
-				gomega.Expect(p.evictClients).Should(gomega.HaveLen(1))
-				gomega.Expect(p.evictClients).Should(gomega.HaveKey("node2"))
-				gomega.Expect(p.clients).Should(gomega.HaveKey("node1"))
+				gomega.Expect(p.evictable).Should(gomega.HaveLen(1))
+				gomega.Expect(p.evictable).Should(gomega.HaveKey("node2"))
+				gomega.Expect(p.active).Should(gomega.HaveKey("node1"))
 			}()
 		})
 
@@ -125,9 +125,8 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 			p.OnAddOrUpdate(node2)
 
 			bp := p.NewBatchPublisher(3 * time.Second)
-			t := bus.UniTopic("test")
 			for i := 0; i < 10; i++ {
-				_, err := bp.Publish(t,
+				_, err := bp.Publish(data.TopicStreamWrite,
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
 				)
@@ -137,8 +136,98 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 			gomega.Consistently(func() int {
 				p.mu.RLock()
 				defer p.mu.RUnlock()
-				return len(p.clients)
+				return len(p.active)
 			}, "1s").Should(gomega.Equal(2))
+		})
+	})
+
+	ginkgo.Context("Broadcast", func() {
+		ginkgo.It("should broadcast messages", func() {
+			addr1 := getAddress()
+			addr2 := getAddress()
+			closeFn1 := setup(addr1, codes.OK, 200*time.Millisecond)
+			closeFn2 := setup(addr2, codes.OK, 10*time.Millisecond)
+			p := newPub()
+			defer func() {
+				p.GracefulStop()
+				closeFn1()
+				closeFn2()
+			}()
+			node1 := getDataNode("node1", addr1)
+			p.OnAddOrUpdate(node1)
+			node2 := getDataNode("node2", addr2)
+			p.OnAddOrUpdate(node2)
+
+			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(ff).Should(gomega.HaveLen(2))
+			messages, err := ff[0].GetAll()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(messages).Should(gomega.HaveLen(1))
+		})
+
+		ginkgo.It("should broadcast messages to failed nodes", func() {
+			addr1 := getAddress()
+			addr2 := getAddress()
+			closeFn1 := setup(addr1, codes.OK, 200*time.Millisecond)
+			closeFn2 := setup(addr2, codes.Unavailable, 0)
+			p := newPub()
+			defer func() {
+				p.GracefulStop()
+				closeFn1()
+				closeFn2()
+			}()
+			node1 := getDataNode("node1", addr1)
+			p.OnAddOrUpdate(node1)
+			node2 := getDataNode("node2", addr2)
+			p.OnAddOrUpdate(node2)
+
+			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(ff).Should(gomega.HaveLen(2))
+			for i := range ff {
+				_, err := ff[i].GetAll()
+				ginkgo.GinkgoWriter.Printf("error: %v \n", err)
+				if err != nil {
+					s, ok := status.FromError(err)
+					gomega.Expect(ok).Should(gomega.BeTrue())
+					gomega.Expect(s.Code()).Should(gomega.Equal(codes.Unavailable))
+					return
+				}
+			}
+			ginkgo.Fail("should not reach here")
+		})
+
+		ginkgo.It("should broadcast messages to slow nodes", func() {
+			addr1 := getAddress()
+			addr2 := getAddress()
+			closeFn1 := setup(addr1, codes.OK, 200*time.Millisecond)
+			closeFn2 := setup(addr2, codes.OK, 5*time.Second)
+			p := newPub()
+			defer func() {
+				p.GracefulStop()
+				closeFn1()
+				closeFn2()
+			}()
+			node1 := getDataNode("node1", addr1)
+			p.OnAddOrUpdate(node1)
+			node2 := getDataNode("node2", addr2)
+			p.OnAddOrUpdate(node2)
+
+			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(ff).Should(gomega.HaveLen(2))
+			for i := range ff {
+				_, err := ff[i].GetAll()
+				ginkgo.GinkgoWriter.Printf("error: %v \n", err)
+				if err != nil {
+					s, ok := status.FromError(err)
+					gomega.Expect(ok).Should(gomega.BeTrue())
+					gomega.Expect(s.Code()).Should(gomega.Equal(codes.DeadlineExceeded))
+					return
+				}
+			}
+			ginkgo.Fail("should not reach here")
 		})
 	})
 })

@@ -32,7 +32,9 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/anypb"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -80,10 +82,27 @@ func (s *mockServer) Send(stream clusterv1.Service_SendServer) error {
 			time.Sleep(s.latency)
 		}
 
+		topic, ok := data.TopicMap[req.Topic]
+
+		if !ok {
+			panic("invalid topic")
+		}
+		f := data.TopicResponseMap[topic]
+		var body *anypb.Any
+		if f == nil {
+			body = req.Body
+		} else {
+			var errAny error
+			body, errAny = anypb.New(f())
+			if errAny != nil {
+				panic(errAny)
+			}
+		}
+
 		res := &clusterv1.SendResponse{
 			MessageId: req.MessageId,
 			Error:     "",
-			Body:      req.Body,
+			Body:      body,
 		}
 
 		if err := stream.Send(res); err != nil {

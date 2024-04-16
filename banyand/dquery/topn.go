@@ -18,6 +18,8 @@
 package dquery
 
 import (
+	"time"
+
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -30,6 +32,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
+
+const defaultTopNQueryTimeout = 10 * time.Second
 
 type topNQueryProcessor struct {
 	broadcaster bus.Broadcaster
@@ -52,7 +56,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
 	now := bus.MessageID(request.TimeRange.Begin.Nanos)
-	ff, err := t.broadcaster.Broadcast(data.TopicTopNQuery, bus.NewMessage(now, request))
+	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessage(now, request))
 	if err != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.Metadata.GetName(), err))
 		return
@@ -86,6 +90,10 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 				}
 			}
 		}
+	}
+	if allErr != nil {
+		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.Metadata.GetName(), allErr))
+		return
 	}
 	if tags == nil {
 		resp = bus.NewMessage(now, &measurev1.TopNResponse{})

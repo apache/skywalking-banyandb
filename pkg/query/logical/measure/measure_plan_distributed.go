@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
@@ -34,6 +35,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
+
+const defaultQueryTimeout = 10 * time.Second
 
 var _ logical.UnresolvedPlan = (*unresolvedDistributed)(nil)
 
@@ -138,11 +141,11 @@ func (t *distributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 	if t.maxDataPointsSize > 0 {
 		query.Limit = t.maxDataPointsSize
 	}
-	ff, err := dctx.Broadcast(data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
+	var allErr error
+	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
 	if err != nil {
 		return nil, err
 	}
-	var allErr error
 	var see []sort.Iterator[*comparableDataPoint]
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
