@@ -18,11 +18,13 @@
 package pub
 
 import (
+	"io"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -85,13 +87,17 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			bp := p.NewBatchPublisher(10 * time.Minute)
+			bp := p.NewBatchPublisher(3 * time.Second)
 			for i := 0; i < 10; i++ {
 				_, err := bp.Publish(data.TopicStreamWrite,
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
 				)
-				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+				if err != nil {
+					// The mock server will return io.EOF when the node is unavailable
+					// It will close the stream and return io.EOF to the send
+					gomega.Expect(errors.Is(err, io.EOF))
+				}
 			}
 			gomega.Expect(bp.Close()).ShouldNot(gomega.HaveOccurred())
 			gomega.Eventually(func() int {

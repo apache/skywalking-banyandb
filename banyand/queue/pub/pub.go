@@ -279,7 +279,7 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 		// this assignment is for getting around the go vet lint
 		deferFn := cancel
 		stream, errCreateStream := client.client.Send(ctx)
-		if err != nil {
+		if errCreateStream != nil {
 			err = multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 			continue
 		}
