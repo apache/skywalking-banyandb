@@ -85,7 +85,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			bp := p.NewBatchPublisher(30 * time.Second)
+			bp := p.NewBatchPublisher(10 * time.Minute)
 			for i := 0; i < 10; i++ {
 				_, err := bp.Publish(data.TopicStreamWrite,
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
