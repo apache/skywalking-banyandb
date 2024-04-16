@@ -18,17 +18,29 @@
 package pub
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+const rpcTimeout = 2 * time.Second
+
 var (
+	// Retry policy for health check.
+	initBackoff       = time.Second
+	maxBackoff        = 20 * time.Second
+	backoffMultiplier = 2.0
+
 	serviceName = clusterv1.Service_ServiceDesc.ServiceName
 
 	// The timeout is set by each RPC.
@@ -49,6 +61,7 @@ var (
 type client struct {
 	client clusterv1.ServiceClient
 	conn   *grpc.ClientConn
+	md     schema.Metadata
 }
 
 func (p *pub) OnAddOrUpdate(md schema.Metadata) {
@@ -84,8 +97,13 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	p.registered[name] = struct{}{}
+
 	// If the client already exists, just return
-	if _, ok := p.clients[name]; ok {
+	if _, ok := p.active[name]; ok {
+		return
+	}
+	if _, ok := p.evictable[name]; ok {
 		return
 	}
 	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
@@ -93,11 +111,18 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 		p.log.Error().Err(err).Msg("failed to connect to grpc server")
 		return
 	}
+
+	if !p.checkClient(conn, md) {
+		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is unhealthy, move it to evict queue")
+		return
+	}
+
 	c := clusterv1.NewServiceClient(conn)
-	p.clients[name] = &client{conn: conn, client: c}
+	p.active[name] = &client{conn: conn, client: c, md: md}
 	if p.handler != nil {
 		p.handler.OnAddOrUpdate(md)
 	}
+	p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("new node is healthy, add it to active queue")
 }
 
 func (p *pub) OnDelete(md schema.Metadata) {
@@ -116,14 +141,142 @@ func (p *pub) OnDelete(md schema.Metadata) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	delete(p.registered, name)
+	if en, ok := p.evictable[name]; ok {
+		close(en.c)
+		delete(p.evictable, name)
+		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is removed from evict queue by delete event")
+		return
+	}
 
-	if client, ok := p.clients[name]; ok {
-		if client.conn != nil {
-			client.conn.Close() // Close the client connection
-		}
-		delete(p.clients, name)
+	if client, ok := p.active[name]; ok && !p.healthCheck(node, client.conn) {
+		_ = client.conn.Close()
+		delete(p.active, name)
 		if p.handler != nil {
 			p.handler.OnDelete(md)
 		}
+		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is removed from active queue by delete event")
 	}
+}
+
+func (p *pub) checkClient(conn *grpc.ClientConn, md schema.Metadata) bool {
+	node, ok := md.Spec.(*databasev1.Node)
+	if !ok {
+		logger.Panicf("failed to cast node spec")
+		return false
+	}
+	if p.healthCheck(node, conn) {
+		return true
+	}
+	_ = conn.Close()
+	if !p.closer.AddRunning() {
+		return false
+	}
+	name := node.Metadata.Name
+	p.evictable[name] = evictNode{n: node, c: make(chan struct{})}
+	if p.handler != nil {
+		p.handler.OnDelete(md)
+	}
+	go func(p *pub, name string, en evictNode, md schema.Metadata) {
+		defer p.closer.Done()
+		backoff := initBackoff
+		for {
+			select {
+			case <-time.After(backoff):
+				connEvict, errEvict := grpc.Dial(node.GrpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
+				if errEvict == nil && p.healthCheck(en.n, connEvict) {
+					p.mu.Lock()
+					defer p.mu.Unlock()
+					if _, ok := p.evictable[name]; !ok {
+						// The client has been removed from evict clients map, just return
+						return
+					}
+					c := clusterv1.NewServiceClient(connEvict)
+					p.active[name] = &client{conn: connEvict, client: c, md: md}
+					if p.handler != nil {
+						p.handler.OnAddOrUpdate(md)
+					}
+					delete(p.evictable, name)
+					p.log.Info().Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
+					return
+				}
+				if errEvict != nil {
+					_ = connEvict.Close()
+				}
+				if _, ok := p.registered[name]; !ok {
+					return
+				}
+				p.log.Error().Err(errEvict).Msgf("failed to re-connect to grpc server after waiting for %s", backoff)
+			case <-en.c:
+				return
+			}
+			if backoff < maxBackoff {
+				backoff *= time.Duration(backoffMultiplier)
+			} else {
+				backoff = maxBackoff
+			}
+		}
+	}(p, name, p.evictable[name], md)
+	return false
+}
+
+func (p *pub) healthCheck(node fmt.Stringer, conn *grpc.ClientConn) bool {
+	var resp *grpc_health_v1.HealthCheckResponse
+	if err := grpchelper.Request(context.Background(), rpcTimeout, func(rpcCtx context.Context) (err error) {
+		resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
+			&grpc_health_v1.HealthCheckRequest{
+				Service: "",
+			})
+		return err
+	}); err != nil {
+		if e := p.log.Debug(); e.Enabled() {
+			e.Err(err).Stringer("node", node).Msg("service unhealthy")
+		}
+		return false
+	}
+	if resp.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING {
+		return true
+	}
+	return false
+}
+
+func (p *pub) failover(node string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if en, ok := p.evictable[node]; ok {
+		close(en.c)
+		delete(p.evictable, node)
+		p.log.Info().Str("node", node).Str("status", p.dump()).Msg("node is removed from evict queue by wire event")
+		return
+	}
+
+	if client, ok := p.active[node]; ok && !p.checkClient(client.conn, client.md) {
+		_ = client.conn.Close()
+		delete(p.active, node)
+		if p.handler != nil {
+			p.handler.OnDelete(client.md)
+		}
+		p.log.Info().Str("status", p.dump()).Str("node", node).Msg("node is unhealthy, move it to evict queue")
+	}
+}
+
+func (p *pub) dump() string {
+	keysRegistered := make([]string, 0, len(p.registered))
+	for k := range p.registered {
+		keysRegistered = append(keysRegistered, k)
+	}
+	keysActive := make([]string, 0, len(p.active))
+	for k := range p.active {
+		keysActive = append(keysActive, k)
+	}
+	keysEvictable := make([]string, 0, len(p.evictable))
+	for k := range p.evictable {
+		keysEvictable = append(keysEvictable, k)
+	}
+	return fmt.Sprintf("registered: %v, active :%v, evictable :%v", keysRegistered, keysActive, keysEvictable)
+}
+
+type evictNode struct {
+	n *databasev1.Node
+	c chan struct{}
 }

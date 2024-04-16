@@ -50,7 +50,8 @@ import (
 )
 
 const (
-	timeBucketFormat = "200601021504"
+	timeBucketFormat         = "200601021504"
+	resultPersistencyTimeout = 10 * time.Second
 )
 
 var (
@@ -133,7 +134,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	eventTime := t.downSampleTimeBucket(record.TimestampMillis())
 	timeBucket := eventTime.Format(timeBucketFormat)
 	var err error
-	publisher := t.pipeline.NewBatchPublisher()
+	publisher := t.pipeline.NewBatchPublisher(resultPersistencyTimeout)
 	defer publisher.Close()
 	for group, tuples := range tuplesGroups {
 		if e := t.l.Debug(); e.Enabled() {

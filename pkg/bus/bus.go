@@ -23,6 +23,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 
 	"go.uber.org/multierr"
 
@@ -102,7 +103,7 @@ type Publisher interface {
 
 // Broadcaster allow sending Messages to a Topic and receiving the responses.
 type Broadcaster interface {
-	Broadcast(topic Topic, message Message) ([]Future, error)
+	Broadcast(timeout time.Duration, topic Topic, message Message) ([]Future, error)
 }
 
 type channel chan event

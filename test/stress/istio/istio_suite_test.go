@@ -66,10 +66,6 @@ var _ = g.Describe("Istio", func() {
 		path, deferFn, err := test.NewSpace()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		measurePath := filepath.Join(path, "measure")
-		g.DeferCleanup(func() {
-			printDiskUsage(measurePath, 5, 0)
-			deferFn()
-		})
 		var ports []int
 		ports, err = test.AllocateFreePorts(4)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -80,6 +76,8 @@ var _ = g.Describe("Istio", func() {
 		g.DeferCleanup(func() {
 			time.Sleep(time.Minute)
 			closerServerFunc()
+			printDiskUsage(measurePath, 5, 0)
+			deferFn()
 		})
 		gomega.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(gomega.Succeed())

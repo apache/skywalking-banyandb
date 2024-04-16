@@ -20,6 +20,7 @@ package stream
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
@@ -34,6 +35,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
+
+const defaultQueryTimeout = 10 * time.Second
 
 var _ logical.UnresolvedPlan = (*unresolvedDistributed)(nil)
 
@@ -128,7 +131,7 @@ func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, err
 	if t.maxElementSize > 0 {
 		query.Limit = t.maxElementSize
 	}
-	ff, err := dctx.Broadcast(data.TopicStreamQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
+	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +155,7 @@ func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, err
 	for iter.Next() {
 		result = append(result, iter.Val().Element)
 	}
-	return result, nil
+	return result, allErr
 }
 
 func (t *distributedPlan) String() string {

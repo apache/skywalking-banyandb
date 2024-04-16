@@ -178,6 +178,8 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
+	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "stream write timeout")
+	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "measure write timeout")
 	return fs
 }
 

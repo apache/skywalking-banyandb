@@ -46,6 +46,7 @@ type measureService struct {
 	ingestionAccessLog accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
+	writeTimeout       time.Duration
 }
 
 func (ms *measureService) setLogger(log *logger.Logger) {
@@ -67,7 +68,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 	}
 	ctx := measure.Context()
-	publisher := ms.pipeline.NewBatchPublisher()
+	publisher := ms.pipeline.NewBatchPublisher(ms.writeTimeout)
 	defer publisher.Close()
 	for {
 		select {

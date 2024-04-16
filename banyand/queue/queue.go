@@ -19,6 +19,7 @@ package queue
 
 import (
 	"io"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -41,7 +42,7 @@ type Client interface {
 	run.Unit
 	bus.Publisher
 	bus.Broadcaster
-	NewBatchPublisher() BatchPublisher
+	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	Register(schema.EventHandler)
 }
 

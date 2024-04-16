@@ -209,16 +209,23 @@ func TestSeriesIndexController(t *testing.T) {
 		require.NoError(t, err)
 		defer sic.Close()
 		require.NoError(t, sic.run(time.Now().Add(-time.Hour*23+10*time.Minute)))
-		require.NotNil(t, sic.standby)
+		sic.RLock()
+		standby := sic.standby
+		sic.RUnlock()
+		require.NotNil(t, standby)
 		idxNames := make([]string, 0)
 		walkDir(tmpDir, "idx-", func(suffix string) error {
 			idxNames = append(idxNames, suffix)
 			return nil
 		})
 		assert.Equal(t, 2, len(idxNames))
-		nextTime := sic.standby.startTime
+		nextTime := standby.startTime
 		require.NoError(t, sic.run(time.Now().Add(time.Hour)))
-		require.Nil(t, sic.standby)
-		assert.Equal(t, nextTime, sic.hot.startTime)
+		sic.RLock()
+		standby = sic.standby
+		hot := sic.hot
+		sic.RUnlock()
+		require.Nil(t, standby)
+		assert.Equal(t, nextTime, hot.startTime)
 	})
 }
