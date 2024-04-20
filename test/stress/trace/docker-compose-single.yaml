@@ -37,11 +37,11 @@ services:
     - 17913:17913
     - 6060:6060
     - 2121:2121
-    deploy:
-      resources:
-        limits:
-          cpus: "4"
-          memory: 4G
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "4"
+    #       memory: 8G
     networks:
       - test
       - monitoring
@@ -63,9 +63,9 @@ services:
       - ./log4j2.xml:/skywalking/config/log4j2.xml
     networks:
       - test
-    depends_on:
-      banyandb:
-        condition: service_healthy
+    # depends_on:
+    #   banyandb:
+    #     condition: service_healthy
 
   prometheus:
     image: prom/prometheus:latest

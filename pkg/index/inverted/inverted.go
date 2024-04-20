@@ -317,20 +317,17 @@ func (s *store) run() {
 		}()
 		size := 0
 		batch := bluge.NewBatch()
-		flush := func(applied chan struct{}) {
+		flush := func() {
 			if size < 1 {
 				return
 			}
 			if err := s.writer.Batch(batch); err != nil {
 				s.l.Error().Err(err).Msg("write to the inverted index")
 			}
-			if applied != nil {
-				close(applied)
-			}
 			batch.Reset()
 			size = 0
 		}
-		defer flush(nil)
+		defer flush()
 		var docIDBuffer bytes.Buffer
 		for {
 			timer := time.NewTimer(s.batchInterval)
@@ -345,7 +342,7 @@ func (s *store) run() {
 				}
 				switch d := event.(type) {
 				case flushEvent:
-					flush(nil)
+					flush()
 					close(d.onComplete)
 				case index.Document, index.Batch:
 					var docs []index.Document
@@ -394,11 +391,14 @@ func (s *store) run() {
 						batch.Update(doc.ID(), doc)
 					}
 					if isBatch || size >= batchSize {
-						flush(applied)
+						flush()
+						if applied != nil {
+							close(applied)
+						}
 					}
 				}
 			case <-timer.C:
-				flush(nil)
+				flush()
 			}
 			timer.Stop()
 		}

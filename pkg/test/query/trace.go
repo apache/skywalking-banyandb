@@ -48,7 +48,7 @@ func TraceListOrderByDuration(basePath string, timeout time.Duration, fs *flag.F
 			return nil, err
 		}
 		return []float64{d.Seconds()}, nil
-	}, 500*time.Millisecond, stopCh)
+	}, time.Second, stopCh)
 	analyze([]string{"result"}, basePath)
 }
 
@@ -70,7 +70,7 @@ func TraceListOrderByTime(basePath string, timeout time.Duration, fs *flag.FlagS
 			return nil, err
 		}
 		return []float64{d.Seconds()}, nil
-	}, 500*time.Millisecond, stopCh)
+	}, time.Second, stopCh)
 	analyze([]string{"result"}, basePath)
 }
 

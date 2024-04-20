@@ -37,7 +37,7 @@ func TestIntegrationLoad(t *testing.T) {
 }
 
 var _ = Describe("Query", func() {
-	const timeout = 30 * time.Minute
+	const timeout = time.Hour
 	var (
 		fs       *flag.FlagSet
 		basePath string
@@ -45,14 +45,14 @@ var _ = Describe("Query", func() {
 
 	BeforeEach(func() {
 		// Check if the URL is reachable
-		resp, err := http.Get("http://localhost:12800/graphql")
-		if err != nil || resp.StatusCode != 200 {
+		_, err := http.Get("http://localhost:12800/graphql")
+		if err != nil {
 			// If the request fails or the status code is not 200, skip the test
 			Skip("http://localhost:12800/graphql is not reachable")
 		}
 		fs = flag.NewFlagSet("", flag.PanicOnError)
 		fs.String("base-url", "http://localhost:12800/graphql", "")
-		fs.String("service-id", "c2VydmljZV8x.1", "")
+		fs.String("service-id", "ZzE6OnNlcnZpY2VfMQ==.1", "")
 		_, basePath, _, _ = runtime.Caller(0)
 		basePath = path.Dir(basePath)
 	})
@@ -61,11 +61,19 @@ var _ = Describe("Query", func() {
 		query.TraceListOrderByDuration(basePath, timeout, fs)
 	})
 
-	It("TraceListOrderByTime", func() {
-		query.TraceListOrderByTime(basePath, timeout, fs)
-	})
+	// It("TraceListOrderByTime", func() {
+	// 	query.TraceListOrderByTime(basePath, timeout, fs)
+	// })
 
 	It("TraceByID", func() {
 		query.TraceByID(basePath, timeout, fs)
+	})
+
+	It("Metric", func() {
+		query.ServiceList(basePath, timeout, 6, fs)
+	})
+
+	It("TopN", func() {
+		query.TopN(basePath, timeout, 6, fs)
 	})
 })

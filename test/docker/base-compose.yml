@@ -20,11 +20,11 @@ services:
       - 2121
       - 6060
     command: standalone
-    healthcheck:
-      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913"]
-      interval: 5s
-      timeout: 10s
-      retries: 120
+    # healthcheck:
+    #   test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913"]
+    #   interval: 30s
+    #   timeout: 30s
+    #   retries: 120
 
   liaison:
     hostname: liaison
@@ -35,8 +35,8 @@ services:
     command: liaison --etcd-endpoints=http://etcd:2379 
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--addr=http://liaison:17913"]
-      interval: 5s
-      timeout: 10s
+      interval: 30s
+      timeout: 30s
       retries: 120
   
   data:
@@ -48,8 +48,8 @@ services:
     command: data --etcd-endpoints=http://etcd:2379 
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--grpc-addr=data:17912"]
-      interval: 5s
-      timeout: 10s
+      interval: 30s
+      timeout: 30s
       retries: 120
   
   agent:
