@@ -19,7 +19,6 @@
 package inverted
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -37,8 +36,6 @@ type sortIterator struct {
 	current          *blugeMatchIterator
 	sortedKey        string
 	fk               string
-	lastKey          []byte
-	currKey          []byte
 	size             int
 	skipped          int
 	shouldDecodeTerm bool
@@ -66,8 +63,8 @@ func (si *sortIterator) loadCurrent() bool {
 		size = math.MaxInt64
 	}
 	topNSearch := bluge.NewTopNSearch(size, si.query).SortBy([]string{si.sortedKey})
-	if si.lastKey != nil {
-		topNSearch = topNSearch.After([][]byte{si.lastKey})
+	if si.skipped > 0 {
+		topNSearch = topNSearch.SetFrom(si.skipped)
 	}
 
 	documentMatchIterator, err := si.reader.Search(context.Background(), topNSearch)
@@ -76,7 +73,7 @@ func (si *sortIterator) loadCurrent() bool {
 		return false
 	}
 
-	iter := newBlugeMatchIterator(documentMatchIterator, si.fk, si.shouldDecodeTerm, si.skipped, nil)
+	iter := newBlugeMatchIterator(documentMatchIterator, si.fk, si.shouldDecodeTerm, nil)
 	si.current = &iter
 	if si.next() {
 		return true
@@ -87,12 +84,6 @@ func (si *sortIterator) loadCurrent() bool {
 
 func (si *sortIterator) next() bool {
 	if si.current.Next() {
-		currKey := si.current.Val().TermRaw
-		if si.currKey != nil && !bytes.Equal(currKey, si.currKey) {
-			si.lastKey = si.currKey
-			si.skipped = 0
-		}
-		si.currKey = currKey
 		si.skipped += si.current.Val().Value.Len()
 		return true
 	}

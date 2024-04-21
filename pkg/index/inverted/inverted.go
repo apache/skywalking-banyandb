@@ -245,7 +245,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm, 0, reader)
+	iter := newBlugeMatchIterator(documentMatchIterator, fk, shouldDecodeTerm, reader)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
@@ -278,7 +278,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, fk, false, 0, reader)
+	iter := newBlugeMatchIterator(documentMatchIterator, fk, false, reader)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
@@ -427,17 +427,14 @@ type blugeMatchIterator struct {
 	fieldKey         string
 	shouldDecodeTerm bool
 	closed           bool
-	num              int
-	skip             int
 }
 
-func newBlugeMatchIterator(delegated search.DocumentMatchIterator, fieldKey string, shouldDecodeTerm bool, skip int, closer io.Closer) blugeMatchIterator {
+func newBlugeMatchIterator(delegated search.DocumentMatchIterator, fieldKey string, shouldDecodeTerm bool, closer io.Closer) blugeMatchIterator {
 	return blugeMatchIterator{
 		delegated:        delegated,
 		fieldKey:         fieldKey,
 		shouldDecodeTerm: shouldDecodeTerm,
 		closer:           closer,
-		skip:             skip,
 	}
 }
 
@@ -470,13 +467,9 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 		}
 		return false
 	}
-	bmi.num++
-	if bmi.num <= bmi.skip {
-		return true
-	}
 	i := 0
 	var docID uint64
-	var term, termRaw []byte
+	var term []byte
 	bmi.err = match.VisitStoredFields(func(field string, value []byte) bool {
 		if field == docIDField {
 			if len(value) == 8 {
@@ -490,7 +483,6 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 		if field == bmi.fieldKey {
 			v := pbytes.Copy(value)
 			if bmi.shouldDecodeTerm {
-				termRaw = v
 				term = index.UnmarshalTerm(v)
 			} else {
 				term = v
@@ -509,9 +501,8 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 	}
 	if bmi.agg == nil {
 		bmi.agg = &index.PostingValue{
-			Term:    term,
-			TermRaw: termRaw,
-			Value:   roaring.NewPostingListWithInitialData(docID),
+			Term:  term,
+			Value: roaring.NewPostingListWithInitialData(docID),
 		}
 		return true
 	}
@@ -521,9 +512,8 @@ func (bmi *blugeMatchIterator) nextTerm() bool {
 	}
 	bmi.current = bmi.agg
 	bmi.agg = &index.PostingValue{
-		Term:    term,
-		TermRaw: termRaw,
-		Value:   roaring.NewPostingListWithInitialData(docID),
+		Term:  term,
+		Value: roaring.NewPostingListWithInitialData(docID),
 	}
 	return false
 }

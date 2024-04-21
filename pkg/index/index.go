@@ -187,9 +187,8 @@ func (i *dummyIterator) Close() error {
 
 // PostingValue is the collection of a field's values.
 type PostingValue struct {
-	Value   posting.List
-	Term    []byte
-	TermRaw []byte
+	Value posting.List
+	Term  []byte
 }
 
 // Document represents a document in a index.
