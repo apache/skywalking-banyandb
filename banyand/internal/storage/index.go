@@ -198,14 +198,11 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 
 	var sortedSeriesList pbv1.SeriesList
 	for iter.Next() {
-		pv := iter.Val().Value
-		if err = pv.Intersect(pl); err != nil {
-			return nil, err
-		}
-		if pv.IsEmpty() {
+		seriesID := iter.Val()
+		if !pl.Contains(seriesID) {
 			continue
 		}
-		sortedSeriesList = appendSeriesList(sortedSeriesList, seriesList, pv)
+		sortedSeriesList = appendSeriesList(sortedSeriesList, seriesList, common.SeriesID(seriesID))
 		if err != nil {
 			return nil, err
 		}
@@ -223,12 +220,12 @@ func filterSeriesList(seriesList pbv1.SeriesList, filter posting.List) pbv1.Seri
 	return seriesList
 }
 
-func appendSeriesList(dest, src pbv1.SeriesList, filter posting.List) pbv1.SeriesList {
+func appendSeriesList(dest, src pbv1.SeriesList, target common.SeriesID) pbv1.SeriesList {
 	for i := 0; i < len(src); i++ {
-		if !filter.Contains(uint64(src[i].ID)) {
-			continue
+		if target == src[i].ID {
+			dest = append(dest, src[i])
+			break
 		}
-		dest = append(dest, src[i])
 	}
 	return dest
 }

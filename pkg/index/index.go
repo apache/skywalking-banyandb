@@ -164,7 +164,7 @@ func (r RangeOpts) Between(value []byte) int {
 // FieldIterator allows iterating over a field's posting values.
 type FieldIterator interface {
 	Next() bool
-	Val() *PostingValue
+	Val() uint64
 	Close() error
 }
 
@@ -177,18 +177,12 @@ func (i *dummyIterator) Next() bool {
 	return false
 }
 
-func (i *dummyIterator) Val() *PostingValue {
-	return nil
+func (i *dummyIterator) Val() uint64 {
+	return 0
 }
 
 func (i *dummyIterator) Close() error {
 	return nil
-}
-
-// PostingValue is the collection of a field's values.
-type PostingValue struct {
-	Value posting.List
-	Term  []byte
 }
 
 // Document represents a document in a index.

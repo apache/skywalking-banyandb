@@ -222,12 +222,10 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 			es := g.tables[j]
 			es.tsTable.Table().mustAddElements(&es.elements)
 			if len(es.docs) > 0 {
-				go func() {
-					index := es.tsTable.Table().Index()
-					if err := index.Write(es.docs); err != nil {
-						w.l.Error().Err(err).Msg("cannot write element index")
-					}
-				}()
+				index := es.tsTable.Table().Index()
+				if err := index.Write(es.docs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write element index")
+				}
 			}
 			es.tsTable.DecRef()
 		}

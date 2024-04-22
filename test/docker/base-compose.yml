@@ -20,11 +20,11 @@ services:
       - 2121
       - 6060
     command: standalone
-    # healthcheck:
-    #   test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913"]
-    #   interval: 30s
-    #   timeout: 30s
-    #   retries: 120
+    healthcheck:
+      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913"]
+      interval: 30s
+      timeout: 30s
+      retries: 120
 
   liaison:
     hostname: liaison

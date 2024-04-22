@@ -25,20 +25,16 @@ import (
 	"math"
 
 	"github.com/blugelabs/bluge"
-
-	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
 type sortIterator struct {
-	query            bluge.Query
-	err              error
-	reader           *bluge.Reader
-	current          *blugeMatchIterator
-	sortedKey        string
-	fk               string
-	size             int
-	skipped          int
-	shouldDecodeTerm bool
+	query     bluge.Query
+	err       error
+	reader    *bluge.Reader
+	current   *blugeMatchIterator
+	sortedKey string
+	size      int
+	skipped   int
 }
 
 func (si *sortIterator) Next() bool {
@@ -73,7 +69,7 @@ func (si *sortIterator) loadCurrent() bool {
 		return false
 	}
 
-	iter := newBlugeMatchIterator(documentMatchIterator, si.fk, si.shouldDecodeTerm, nil)
+	iter := newBlugeMatchIterator(documentMatchIterator, nil)
 	si.current = &iter
 	if si.next() {
 		return true
@@ -84,13 +80,13 @@ func (si *sortIterator) loadCurrent() bool {
 
 func (si *sortIterator) next() bool {
 	if si.current.Next() {
-		si.skipped += si.current.Val().Value.Len()
+		si.skipped++
 		return true
 	}
 	return false
 }
 
-func (si *sortIterator) Val() *index.PostingValue {
+func (si *sortIterator) Val() uint64 {
 	return si.current.Val()
 }
 

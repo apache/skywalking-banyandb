@@ -25,14 +25,12 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type searcherIterator struct {
 	fieldIterator     index.FieldIterator
-	cur               posting.Iterator
 	err               error
 	indexFilter       filterFn
 	timeFilter        filterFn
@@ -64,46 +62,37 @@ func (s *searcherIterator) Next() bool {
 	if s.err != nil {
 		return false
 	}
-	if s.cur == nil {
-		if s.fieldIterator.Next() {
-			v := s.fieldIterator.Val()
-			s.cur = v.Value.Iterator()
-		} else {
-			s.err = io.EOF
-			return false
-		}
+	if !s.fieldIterator.Next() {
+		s.err = io.EOF
+		return false
 	}
-	if s.cur.Next() {
-		itemID := s.cur.Current()
-		if !s.timeFilter(itemID) {
-			return s.Next()
-		}
-		if s.indexFilter != nil && !s.indexFilter(itemID) {
-			return s.Next()
-		}
-		if e := s.l.Debug(); e.Enabled() {
-			e.Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", itemID).Msg("got an item")
-		}
-		e, c, err := s.table.getElement(s.seriesID, int64(itemID), s.tagProjection)
-		if err != nil {
-			s.err = err
-			return false
-		}
-		sv, err := s.sortedTagLocation.getTagValue(e)
-		if err != nil {
-			s.err = err
-			return false
-		}
-		s.currItem = item{
-			element:        e,
-			count:          c,
-			sortedTagValue: sv,
-			seriesID:       s.seriesID,
-		}
-		return true
+	itemID := s.fieldIterator.Val()
+	if !s.timeFilter(itemID) {
+		return s.Next()
 	}
-	s.cur = nil
-	return s.Next()
+	if s.indexFilter != nil && !s.indexFilter(itemID) {
+		return s.Next()
+	}
+	if e := s.l.Debug(); e.Enabled() {
+		e.Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", itemID).Msg("got an item")
+	}
+	e, c, err := s.table.getElement(s.seriesID, int64(itemID), s.tagProjection)
+	if err != nil {
+		s.err = err
+		return false
+	}
+	sv, err := s.sortedTagLocation.getTagValue(e)
+	if err != nil {
+		s.err = err
+		return false
+	}
+	s.currItem = item{
+		element:        e,
+		count:          c,
+		sortedTagValue: sv,
+		seriesID:       s.seriesID,
+	}
+	return true
 }
 
 func (s *searcherIterator) Val() item {
