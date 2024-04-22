@@ -18,6 +18,11 @@
 package stream
 
 import (
+	"errors"
+	"io"
+
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -26,50 +31,74 @@ import (
 )
 
 type searcherIterator struct {
-	indexFilter   filterFn
-	timeFilter    filterFn
-	fieldIterator index.FieldIterator
-	cur           posting.Iterator
-	tagProjection []pbv1.TagProjection
-	table         *tsTable
-	l             *logger.Logger
-	curKey        []byte
-	seriesID      common.SeriesID
+	fieldIterator     index.FieldIterator
+	cur               posting.Iterator
+	err               error
+	indexFilter       filterFn
+	timeFilter        filterFn
+	table             *tsTable
+	l                 *logger.Logger
+	tagProjection     []pbv1.TagProjection
+	currItem          item
+	sortedTagLocation tagLocation
+	seriesID          common.SeriesID
 }
 
 func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, table *tsTable,
 	seriesID common.SeriesID, indexFilter filterFn, timeFilter filterFn, tagProjection []pbv1.TagProjection,
+	sortedTagLocation tagLocation,
 ) *searcherIterator {
 	return &searcherIterator{
-		fieldIterator: fieldIterator,
-		table:         table,
-		seriesID:      seriesID,
-		indexFilter:   indexFilter,
-		timeFilter:    timeFilter,
-		l:             l,
-		tagProjection: tagProjection,
+		fieldIterator:     fieldIterator,
+		table:             table,
+		seriesID:          seriesID,
+		indexFilter:       indexFilter,
+		timeFilter:        timeFilter,
+		l:                 l,
+		tagProjection:     tagProjection,
+		sortedTagLocation: sortedTagLocation,
 	}
 }
 
 func (s *searcherIterator) Next() bool {
+	if s.err != nil {
+		return false
+	}
 	if s.cur == nil {
 		if s.fieldIterator.Next() {
 			v := s.fieldIterator.Val()
 			s.cur = v.Value.Iterator()
-			s.curKey = v.Term
 		} else {
+			s.err = io.EOF
 			return false
 		}
 	}
 	if s.cur.Next() {
-		if !s.timeFilter(s.Val()) {
+		itemID := s.cur.Current()
+		if !s.timeFilter(itemID) {
 			return s.Next()
 		}
-		if s.indexFilter != nil && !s.indexFilter(s.Val()) {
+		if s.indexFilter != nil && !s.indexFilter(itemID) {
 			return s.Next()
 		}
 		if e := s.l.Debug(); e.Enabled() {
-			e.Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", uint64(s.Val().ID())).Msg("got an item")
+			e.Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", itemID).Msg("got an item")
+		}
+		e, c, err := s.table.getElement(s.seriesID, int64(itemID), s.tagProjection)
+		if err != nil {
+			s.err = err
+			return false
+		}
+		sv, err := s.sortedTagLocation.getTagValue(e)
+		if err != nil {
+			s.err = err
+			return false
+		}
+		s.currItem = item{
+			element:        e,
+			count:          c,
+			sortedTagValue: sv,
+			seriesID:       s.seriesID,
 		}
 		return true
 	}
@@ -78,40 +107,23 @@ func (s *searcherIterator) Next() bool {
 }
 
 func (s *searcherIterator) Val() item {
-	return item{
-		sortedField:   s.curKey,
-		itemID:        common.ItemID(s.cur.Current()),
-		table:         s.table,
-		seriesID:      s.seriesID,
-		tagProjection: s.tagProjection,
-	}
+	return s.currItem
 }
 
 func (s *searcherIterator) Close() error {
-	return s.fieldIterator.Close()
+	if errors.Is(s.err, io.EOF) {
+		return s.fieldIterator.Close()
+	}
+	return multierr.Combine(s.err, s.fieldIterator.Close())
 }
 
 type item struct {
-	tagProjection []pbv1.TagProjection
-	table         *tsTable
-	sortedField   []byte
-	itemID        common.ItemID
-	seriesID      common.SeriesID
-}
-
-func (i *item) Element() (*element, int, error) {
-	e, count, err := i.table.getElement(i.seriesID, i.itemID, i.tagProjection)
-	return e, count, err
-}
-
-func (i *item) Time() uint64 {
-	return uint64(i.itemID)
+	element        *element
+	sortedTagValue []byte
+	count          int
+	seriesID       common.SeriesID
 }
 
 func (i item) SortedField() []byte {
-	return i.sortedField
-}
-
-func (i item) ID() common.ItemID {
-	return i.itemID
+	return i.sortedTagValue
 }

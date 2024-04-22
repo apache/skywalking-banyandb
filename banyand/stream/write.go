@@ -53,7 +53,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
-	ts := uint64(t.UnixNano())
+	ts := t.UnixNano()
 
 	gn := req.Metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
@@ -88,7 +88,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		}
 		eg.tables = append(eg.tables, et)
 	}
-	et.elements.timestamps = append(et.elements.timestamps, int64(ts))
+	et.elements.timestamps = append(et.elements.timestamps, ts)
 	et.elements.elementIDs = append(et.elements.elementIDs, writeEvent.Request.Element.GetElementId())
 	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
@@ -172,7 +172,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 
 	et.docs = append(et.docs, index.Document{
-		DocID:  ts,
+		DocID:  uint64(ts),
 		Fields: fields,
 	})
 

@@ -90,7 +90,7 @@ func (e *elementIndex) Close() error {
 
 type elementRef struct {
 	seriesID  common.SeriesID
-	timestamp uint64
+	timestamp int64
 }
 
 type indexedElementRef struct {
@@ -130,7 +130,7 @@ func merge(postingMap map[common.SeriesID][]uint64) []elementRef {
 
 	for seriesID, timestamps := range postingMap {
 		if len(timestamps) > 0 {
-			er := elementRef{seriesID: seriesID, timestamp: timestamps[0]}
+			er := elementRef{seriesID: seriesID, timestamp: int64(timestamps[0])}
 			item := &indexedElementRef{elementRef: er, elemIdx: 0}
 			heap.Push(&pq, item)
 		}
@@ -141,7 +141,7 @@ func merge(postingMap map[common.SeriesID][]uint64) []elementRef {
 
 		if item.elemIdx+1 < len(postingMap[item.seriesID]) {
 			nextTS := postingMap[item.seriesID][item.elemIdx+1]
-			nextEr := elementRef{seriesID: item.seriesID, timestamp: nextTS}
+			nextEr := elementRef{seriesID: item.seriesID, timestamp: int64(nextTS)}
 			nextItem := &indexedElementRef{elementRef: nextEr, elemIdx: item.elemIdx + 1}
 			heap.Push(&pq, nextItem)
 		}

@@ -402,7 +402,7 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 			erl = erl[:sfo.MaxElementSize-len(ces.timestamp)]
 		}
 		for _, er := range erl {
-			e, count, err := tw.Table().getElement(er.seriesID, common.ItemID(er.timestamp), sfo.TagProjection)
+			e, count, err := tw.Table().getElement(er.seriesID, er.timestamp, sfo.TagProjection)
 			if err != nil {
 				return nil, err
 			}
@@ -481,10 +481,7 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 	ces := newColumnElements()
 	for it.Next() {
 		nextItem := it.Val()
-		e, count, err := nextItem.Element()
-		if err != nil {
-			return nil, err
-		}
+		e, count := nextItem.element, nextItem.count
 		if len(tagProjIndex) != 0 {
 			for entity, offset := range tagProjIndex {
 				tagSpec := tagSpecIndex[entity]
@@ -505,7 +502,7 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 			break
 		}
 	}
-	return ces, nil
+	return ces, err
 }
 
 func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {

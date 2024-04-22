@@ -54,7 +54,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
-	ts := uint64(t.UnixNano())
+	ts := t.UnixNano()
 
 	gn := req.Metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
@@ -89,7 +89,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		}
 		dpg.tables = append(dpg.tables, dpt)
 	}
-	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, int64(ts))
+	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, ts)
 	stm, ok := w.schemaRepo.loadMeasure(writeEvent.GetRequest().GetMetadata())
 	if !ok {
 		return nil, fmt.Errorf("cannot find measure definition: %s", writeEvent.GetRequest().GetMetadata())

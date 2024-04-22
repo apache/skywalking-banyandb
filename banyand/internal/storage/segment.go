@@ -182,7 +182,7 @@ func (sc *segmentController[T, O]) segments() (ss []*segment[T]) {
 
 func (sc *segmentController[T, O]) Current() (bucket.Reporter, error) {
 	now := sc.segmentSize.Unit.standard(sc.clock.Now())
-	ns := uint64(now.UnixNano())
+	ns := now.UnixNano()
 	if b := func() bucket.Reporter {
 		sc.RLock()
 		defer sc.RUnlock()
@@ -275,7 +275,7 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) 
 	start = sc.segmentSize.Unit.standard(start)
 	var next *segment[T]
 	for _, s := range sc.lst {
-		if s.Contains(uint64(start.UnixNano())) {
+		if s.Contains(start.UnixNano()) {
 			return s, nil
 		}
 		if next == nil && s.Start.After(start) {
@@ -334,7 +334,7 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 func (sc *segmentController[T, O]) remove(deadline time.Time) (err error) {
 	sc.l.Info().Time("deadline", deadline).Msg("start to remove before deadline")
 	for _, s := range sc.segments() {
-		if s.End.Before(deadline) || s.Contains(uint64(deadline.UnixNano())) {
+		if s.End.Before(deadline) || s.Contains(deadline.UnixNano()) {
 			if e := sc.l.Debug(); e.Enabled() {
 				e.Stringer("segment", s).Msg("start to remove data in a segment")
 			}

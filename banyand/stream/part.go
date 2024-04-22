@@ -120,8 +120,8 @@ type part struct {
 	partMetadata         partMetadata
 }
 
-func (p *part) containTimestamp(timestamp common.ItemID) bool {
-	return timestamp >= common.ItemID(p.partMetadata.MinTimestamp) && timestamp <= common.ItemID(p.partMetadata.MaxTimestamp)
+func (p *part) containTimestamp(timestamp int64) bool {
+	return timestamp >= p.partMetadata.MinTimestamp && timestamp <= p.partMetadata.MaxTimestamp
 }
 
 func (p *part) close() {
@@ -140,7 +140,7 @@ func (p *part) String() string {
 	return fmt.Sprintf("part %d", p.partMetadata.ID)
 }
 
-func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, int, error) {
+func (p *part) getElement(seriesID common.SeriesID, timestamp int64, tagProjection []pbv1.TagProjection) (*element, int, error) {
 	// TODO: refactor to column-based query
 	// TODO: cache blocks
 	for i, primaryMeta := range p.primaryBlockMetadata {
@@ -148,8 +148,8 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 			continue
 		}
 		if seriesID < p.primaryBlockMetadata[i].seriesID ||
-			timestamp < common.ItemID(p.primaryBlockMetadata[i].minTimestamp) ||
-			timestamp > common.ItemID(p.primaryBlockMetadata[i].maxTimestamp) {
+			timestamp < p.primaryBlockMetadata[i].minTimestamp ||
+			timestamp > p.primaryBlockMetadata[i].maxTimestamp {
 			break
 		}
 
@@ -180,7 +180,7 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 		timestamps := make([]int64, 0)
 		timestamps = mustReadTimestampsFrom(timestamps, &targetBlockMetadata.timestamps, int(targetBlockMetadata.count), p.timestamps)
 		for i, ts := range timestamps {
-			if timestamp == common.ItemID(ts) {
+			if timestamp == ts {
 				elementIDs := make([]string, 0)
 				elementIDs = mustReadElementIDsFrom(elementIDs, &targetBlockMetadata.elementIDs, int(targetBlockMetadata.count), p.elementIDs)
 				tfs := make([]*tagFamily, 0)
@@ -202,7 +202,7 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp common.ItemID, tag
 					index:       i,
 				}, len(timestamps), nil
 			}
-			if common.ItemID(ts) > timestamp {
+			if ts > timestamp {
 				break
 			}
 		}

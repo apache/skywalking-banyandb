@@ -18,13 +18,15 @@
 package stream
 
 import (
-	"time"
+	"bytes"
+	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -32,7 +34,7 @@ import (
 
 var rangeOpts = index.RangeOpts{}
 
-type filterFn func(item item) bool
+type filterFn func(itemID uint64) bool
 
 type iterBuilder struct {
 	indexFilter         index.Filter
@@ -61,31 +63,43 @@ func newIterBuilder(tableWrappers []storage.TSTableWrapper[*tsTable], id common.
 }
 
 func buildSeriesByIndex(s *iterBuilder) (series []*searcherIterator, err error) {
-	timeFilter := func(item item) bool {
-		valid := s.timeRange.Contains(item.Time())
-		timeRange := s.timeRange
-		s.l.Trace().
-			Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
-			Bool("valid", valid).Msg("filter item by time range")
-		return valid
+	timeFilter := func(itemID uint64) bool {
+		return s.timeRange.Contains(int64(itemID))
+	}
+	if len(s.indexRuleForSorting.Tags) != 1 {
+		return nil, fmt.Errorf("only support one tag for sorting, but got %d", len(s.indexRuleForSorting.Tags))
+	}
+	sortedTag := s.indexRuleForSorting.Tags[0]
+	tl := newTagLocation()
+	for i := range s.tagProjection {
+		for j := range s.tagProjection[i].Names {
+			if s.tagProjection[i].Names[j] == sortedTag {
+				tl.familyIndex, tl.tagIndex = i, j
+			}
+		}
+	}
+	if !tl.valid() {
+		return nil, fmt.Errorf("sorted tag %s not found in tag projection", sortedTag)
 	}
 	for _, tw := range s.tableWrappers {
-		indexFilter := func(item item) bool {
-			if s.indexFilter == nil {
-				return true
-			}
-			pl, err := s.indexFilter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+		var indexFilter filterFn
+		if s.indexFilter != nil {
+			var pl posting.List
+			pl, err = s.indexFilter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
 				return tw.Table().Index().store, nil
 			}, s.seriesID)
 			if err != nil {
-				return false
+				return nil, err
 			}
-			valid := pl.Contains(item.Time())
-			s.l.Trace().Int("valid_item_num", pl.Len()).Bool("valid", valid).Msg("filter item by index")
-			return valid
+			indexFilter = func(itemID uint64) bool {
+				if pl == nil {
+					return true
+				}
+				return pl.Contains(itemID)
+			}
 		}
+
 		var inner index.FieldIterator
-		var err error
 		fieldKey := index.FieldKey{
 			SeriesID:    s.seriesID,
 			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
@@ -95,10 +109,41 @@ func buildSeriesByIndex(s *iterBuilder) (series []*searcherIterator, err error) 
 		if err != nil {
 			return nil, err
 		}
+
 		if inner != nil {
 			series = append(series, newSearcherIterator(s.l, inner, tw.Table(),
-				s.seriesID, indexFilter, timeFilter, s.tagProjection))
+				s.seriesID, indexFilter, timeFilter, s.tagProjection, tl))
 		}
 	}
 	return
+}
+
+type tagLocation struct {
+	familyIndex int
+	tagIndex    int
+}
+
+func newTagLocation() tagLocation {
+	return tagLocation{
+		familyIndex: -1,
+		tagIndex:    -1,
+	}
+}
+
+func (t tagLocation) valid() bool {
+	return t.familyIndex != -1 && t.tagIndex != -1
+}
+
+func (t tagLocation) getTagValue(e *element) ([]byte, error) {
+	if len(e.tagFamilies) <= t.familyIndex {
+		return nil, fmt.Errorf("tag family index %d out of range", t.familyIndex)
+	}
+	if len(e.tagFamilies[t.familyIndex].tags) <= t.tagIndex {
+		return nil, fmt.Errorf("tag index %d out of range", t.tagIndex)
+	}
+	if len(e.tagFamilies[t.familyIndex].tags[t.tagIndex].values) <= e.index {
+		return nil, fmt.Errorf("element index %d out of range", e.index)
+	}
+	v := e.tagFamilies[t.familyIndex].tags[t.tagIndex].values[e.index]
+	return bytes.Clone(v), nil
 }
