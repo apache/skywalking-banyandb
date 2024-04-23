@@ -57,4 +57,3 @@ The first step in the read path is to perform an index lookup to determine which
 If the requested data is present in the buffer (i.e., it has been recently written but not yet persisted to disk), the buffer is checked to see if the data can be returned directly from memory. The read path determines which memory part(s) contain the requested time range. If the data is not present in the buffer, the read path proceeds to the next step.
 
 The next step in the read path is to look up the appropriate parts on disk. Files are the on-disk representation of blocks and are organized by shard and time range. The read path determines which parts contain the requested time range and reads the appropriate blocks from the disk. Due to the column-based storage design, it may be necessary to read multiple data files.
-
