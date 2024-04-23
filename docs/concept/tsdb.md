@@ -6,13 +6,13 @@ TSDB is a time-series storage engine designed to store and query large volumes o
 
 In TSDB, the data in a group is partitioned into shards based on a configurable sharding scheme. Each shard is assigned to a specific set of storage nodes, and those nodes store and process the data within that shard. This allows BanyanDB to scale horizontally by adding more storage nodes to the cluster as needed.
 
-Within each shard, data is stored in different segments based on time ranges. The series index generated based on entities, and the indexes generated based on indexing rules of the `Measure` types are also stored under the shard.
+Within each shard, data is stored in different [segments](#Segment) based on time ranges. The series indexes are generated based on entities, and the indexes generated based on indexing rules of the `Measure` types are also stored under the shard.
 
 ![shard](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/shard.png)
 
 ## Segment
 
-Each segment is composed of multiple parts. Whenever SkyWalking sends a batch of data, BanyanDB writes this batch of data into a new Part. For data of the `Stream` type, the inverted indexes generated based on the indexing rules are also stored in the segment. Since BanyanDB adopts a snapshot approach for data read and write operations, the segment also needs to maintain additional snapshot information to record the validity of the parts.
+Each segment is composed of multiple [parts](#Part). Whenever SkyWalking sends a batch of data, BanyanDB writes this batch of data into a new part. For data of the `Stream` type, the inverted indexes generated based on the indexing rules are also stored in the segment. Since BanyanDB adopts a snapshot approach for data read and write operations, the segment also needs to maintain additional snapshot information to record the validity of the parts.
 
 ![segment](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/segment.png)
 
@@ -24,7 +24,7 @@ In addition, each part maintains several metadata files. Among them, `metadata.j
 
 The `meta.bin` is a skipping index file serves as the entry file for the entire part, helping to index the `primary.bin` file. 
 
-The `primary.bin` file contains the index of each block. Through it, the actual data files or the tagFamily metadata files ending with `.tfm` can be indexed, which in turn helps locate the data in blocks. 
+The `primary.bin` file contains the index of each [block](#Block). Through it, the actual data files or the tagFamily metadata files ending with `.tfm` can be indexed, which in turn helps to locate the data in blocks. 
 
 Notably, for data of the `Stream` type, since there are no field columns, the `fields.bin` file does not exist, while the rest of the structure is entirely consistent with the `Measure` type.
 
@@ -44,13 +44,13 @@ The write path of TSDB begins when time-series data is ingested into the system.
 
 Each shard in TSDB is responsible for storing a subset of the time-series data. The shard also holds an in-memory index allowing fast lookups of time-series data.
 
-When a shard receives a write request, the data is written to the buffer as a memory part and the series index and inverted index will also be updated. The worker in the background periodically flushes data, writing the memory part to the disk. After the flush operation is completed, it triggers a merge operation to combine the parts and remove invalid data. 
+When a shard receives a write request, the data is written to the buffer as a memory part. Meanwhile, the series index and inverted index will also be updated. The worker in the background periodically flushes data, writing the memory part to the disk. After the flush operation is completed, it triggers a merge operation to combine the parts and remove invalid data. 
 
-Whenever a new memory part is generated or a flush and merge operation is triggered, it initiates an update of the snapshot and deletes outdated snapshots.
+Whenever a new memory part is generated, or when a flush or merge operation is triggered, they initiate an update of the snapshot and delete outdated snapshots.
 
 ## Read Path
 
-The read path in TSDB retrieves time-series data from disk or memory and returns it to the query engine. The read path comprises several components: the buffer and parts. The following is a high-level overview of how these components work together to retrieve time-series data in TSDB.
+The read path in TSDB retrieves time-series data from disk or memory, and returns it to the query engine. The read path comprises several components: the buffer and parts. The following is a high-level overview of how these components work together to retrieve time-series data in TSDB.
 
 The first step in the read path is to perform an index lookup to determine which parts contain the desired time range. The index contains metadata about each data part, including its start and end time.
 
