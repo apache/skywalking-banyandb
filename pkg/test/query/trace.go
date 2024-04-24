@@ -87,7 +87,7 @@ func TraceByID(basePath string, timeout time.Duration, fs *flag.FlagSet) {
 		close(stopCh)
 	}()
 	collect(basePath, func() ([]float64, error) {
-		d, err := traceByID(api.QueryOrderByDuration, fs)
+		d, err := traceByID(api.QueryOrderByStartTime, fs)
 		if err != nil {
 			return nil, err
 		}

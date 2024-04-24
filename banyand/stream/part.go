@@ -143,14 +143,12 @@ func (p *part) String() string {
 func (p *part) getElement(seriesID common.SeriesID, timestamp int64, tagProjection []pbv1.TagProjection) (*element, int, error) {
 	// TODO: refactor to column-based query
 	// TODO: cache blocks
+	if seriesID < p.primaryBlockMetadata[0].seriesID {
+		return nil, 0, errors.New("element not found")
+	}
 	for i, primaryMeta := range p.primaryBlockMetadata {
-		if i != len(p.primaryBlockMetadata)-1 && seriesID >= p.primaryBlockMetadata[i+1].seriesID {
+		if seriesID < p.primaryBlockMetadata[i].seriesID {
 			continue
-		}
-		if seriesID < p.primaryBlockMetadata[i].seriesID ||
-			timestamp < p.primaryBlockMetadata[i].minTimestamp ||
-			timestamp > p.primaryBlockMetadata[i].maxTimestamp {
-			break
 		}
 
 		compressedPrimaryBuf := make([]byte, primaryMeta.size)
@@ -166,44 +164,37 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp int64, tagProjecti
 		if err != nil {
 			return nil, 0, fmt.Errorf("cannot unmarshal index block: %w", err)
 		}
-		var targetBlockMetadata blockMetadata
-		for _, blockMetadata := range bm {
-			if blockMetadata.seriesID == seriesID {
-				targetBlockMetadata = blockMetadata
-				break
-			}
-		}
-		if targetBlockMetadata.seriesID != seriesID {
-			continue
-		}
+		for i := range bm {
+			if bm[i].seriesID == seriesID && bm[i].timestamps.max >= timestamp && bm[i].timestamps.min <= timestamp {
+				timestamps := make([]int64, 0)
+				timestamps = mustReadTimestampsFrom(timestamps, &bm[i].timestamps, int(bm[i].count), p.timestamps)
+				for j, ts := range timestamps {
+					if timestamp == ts {
+						elementIDs := make([]string, 0)
+						elementIDs = mustReadElementIDsFrom(elementIDs, &bm[i].elementIDs, int(bm[i].count), p.elementIDs)
+						tfs := make([]*tagFamily, 0)
+						for k := range tagProjection {
+							name := tagProjection[k].Family
+							block, ok := bm[i].tagFamilies[name]
+							if !ok {
+								continue
+							}
+							decoder := &encoding.BytesBlockDecoder{}
+							tf := unmarshalTagFamily(decoder, name, block, tagProjection[k].Names, p.tagFamilyMetadata[name], p.tagFamilies[name], len(timestamps))
+							tfs = append(tfs, tf)
+						}
 
-		timestamps := make([]int64, 0)
-		timestamps = mustReadTimestampsFrom(timestamps, &targetBlockMetadata.timestamps, int(targetBlockMetadata.count), p.timestamps)
-		for i, ts := range timestamps {
-			if timestamp == ts {
-				elementIDs := make([]string, 0)
-				elementIDs = mustReadElementIDsFrom(elementIDs, &targetBlockMetadata.elementIDs, int(targetBlockMetadata.count), p.elementIDs)
-				tfs := make([]*tagFamily, 0)
-				for j := range tagProjection {
-					name := tagProjection[j].Family
-					block, ok := targetBlockMetadata.tagFamilies[name]
-					if !ok {
-						continue
+						return &element{
+							timestamp:   timestamps[j],
+							elementID:   elementIDs[j],
+							tagFamilies: tfs,
+							index:       j,
+						}, len(timestamps), nil
 					}
-					decoder := &encoding.BytesBlockDecoder{}
-					tf := unmarshalTagFamily(decoder, name, block, tagProjection[j].Names, p.tagFamilyMetadata[name], p.tagFamilies[name], len(timestamps))
-					tfs = append(tfs, tf)
+					if ts > timestamp {
+						break
+					}
 				}
-
-				return &element{
-					timestamp:   timestamps[i],
-					elementID:   elementIDs[i],
-					tagFamilies: tfs,
-					index:       i,
-				}, len(timestamps), nil
-			}
-			if ts > timestamp {
-				break
 			}
 		}
 	}

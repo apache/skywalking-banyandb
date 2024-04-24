@@ -28,6 +28,7 @@ import (
 )
 
 var serviceName = index.FieldKey{
+	SeriesID: 887,
 	// http_method
 	IndexRuleID: 6,
 }

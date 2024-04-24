@@ -34,6 +34,7 @@ import (
 )
 
 var duration = index.FieldKey{
+	SeriesID: 998,
 	// duration
 	IndexRuleID: 3,
 }
@@ -302,7 +303,8 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			is.NotNil(iter)
 			var got result
 			for iter.Next() {
-				got.items = append(got.items, iter.Val())
+				docID, _ := iter.Val()
+				got.items = append(got.items, docID)
 			}
 			for i := 0; i < 10; i++ {
 				is.False(iter.Next())

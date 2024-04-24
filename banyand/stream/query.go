@@ -386,6 +386,9 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 		}
 		seriesList = seriesList.Merge(sl)
 	}
+	if len(seriesList) == 0 {
+		return sfr, nil
+	}
 
 	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sfo.TagProjection, seriesList)
 	ces := newColumnElements()
@@ -454,19 +457,15 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 		}
 		seriesList = seriesList.Merge(sl)
 	}
+	if len(seriesList) == 0 {
+		return ssr, nil
+	}
 
 	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sso.TagProjection, seriesList)
 
-	var iters []*searcherIterator
-	for _, series := range seriesList {
-		seekerBuilder := newIterBuilder(tabWrappers, series.ID, sso)
-		seriesIters, buildErr := buildSeriesByIndex(seekerBuilder)
-		if err != nil {
-			return nil, buildErr
-		}
-		if len(seriesIters) > 0 {
-			iters = append(iters, seriesIters...)
-		}
+	iters, err := s.buildSeriesByIndex(tabWrappers, seriesList.IDs(), sso)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(iters) == 0 {
@@ -488,7 +487,11 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 				if tagSpec.IndexedOnly {
 					continue
 				}
-				series := seriesList[sidToIndex[nextItem.seriesID]]
+				index, ok := sidToIndex[nextItem.seriesID]
+				if !ok {
+					continue
+				}
+				series := seriesList[index]
 				entityPos := entityMap[entity] - 1
 				e.tagFamilies[offset.FamilyOffset].tags[offset.TagOffset] = tag{
 					name:      entity,

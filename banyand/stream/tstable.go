@@ -290,6 +290,7 @@ func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp int64, tagPro
 		return nil, 0, fmt.Errorf("snapshot is absent, cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
 	}
 	defer s.decRef()
+
 	for _, p := range s.parts {
 		if !p.p.containTimestamp(timestamp) {
 			continue

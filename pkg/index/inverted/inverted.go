@@ -35,6 +35,7 @@ import (
 	"github.com/blugelabs/bluge/search"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -165,39 +166,39 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
 		return index.DummyFieldIterator, nil
 	}
-	if termRange.Upper == nil {
-		termRange.Upper = defaultUpper
-	}
-	if termRange.Lower == nil {
-		termRange.Lower = defaultLower
-	}
+
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
 	}
 	fk := fieldKey.MarshalIndexRule()
-	var query bluge.Query
-	if fieldKey.Analyzer == databasev1.IndexRule_ANALYZER_UNSPECIFIED {
-		query = bluge.NewTermRangeInclusiveQuery(
-			index.FieldStr(fieldKey, termRange.Lower),
-			index.FieldStr(fieldKey, termRange.Upper),
+	query := bluge.NewBooleanQuery()
+	addRange := func(query *bluge.BooleanQuery, termRange index.RangeOpts) *bluge.BooleanQuery {
+		if termRange.Upper == nil {
+			termRange.Upper = defaultUpper
+		}
+		if termRange.Lower == nil {
+			termRange.Lower = defaultLower
+		}
+		bluge.NewMatchAllQuery()
+		query.AddMust(bluge.NewTermRangeInclusiveQuery(
+			string(termRange.Lower),
+			string(termRange.Upper),
 			termRange.IncludesLower,
 			termRange.IncludesUpper,
 		).
-			SetField(fk)
-	} else {
-		bQuery := bluge.NewBooleanQuery().
-			AddMust(bluge.NewTermRangeInclusiveQuery(
-				string(termRange.Lower),
-				string(termRange.Upper),
-				termRange.IncludesLower,
-				termRange.IncludesUpper,
-			).
-				SetField(fk))
-		if fieldKey.HasSeriesID() {
-			bQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).SetField(seriesIDField))
+			SetField(fk))
+		return query
+	}
+
+	if fieldKey.HasSeriesID() {
+		query = query.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
+			SetField(seriesIDField))
+		if termRange.Lower != nil || termRange.Upper != nil {
+			query = addRange(query, termRange)
 		}
-		query = bQuery
+	} else {
+		query = addRange(query, termRange)
 	}
 
 	sortedKey := fk
@@ -209,6 +210,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		reader:    reader,
 		sortedKey: sortedKey,
 		size:      preLoadSize,
+		sid:       fieldKey.SeriesID,
 	}
 	return result, nil
 }
@@ -223,16 +225,11 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 		return nil, err
 	}
 	fk := field.Key.MarshalIndexRule()
-	var query bluge.Query
-	if field.Key.Analyzer == databasev1.IndexRule_ANALYZER_UNSPECIFIED {
-		query = bluge.NewTermQuery(string(field.Marshal())).SetField(fk)
-	} else {
-		bQuery := bluge.NewBooleanQuery().
-			AddMust(bluge.NewTermQuery(string(field.Term)).SetField(fk))
-		if field.Key.HasSeriesID() {
-			bQuery.AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).SetField(seriesIDField))
-		}
-		query = bQuery
+	query := bluge.NewBooleanQuery().
+		AddMust(bluge.NewTermQuery(string(field.Term)).SetField(fk))
+	if field.Key.HasSeriesID() {
+		query = query.AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).
+			SetField(seriesIDField))
 	}
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
@@ -244,7 +241,8 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	}()
 	list = roaring.NewPostingList()
 	for iter.Next() {
-		list.Insert(iter.Val())
+		docID, _ := iter.Val()
+		list.Insert(docID)
 	}
 	return list, err
 }
@@ -277,7 +275,8 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	}()
 	list := roaring.NewPostingList()
 	for iter.Next() {
-		list.Insert(iter.Val())
+		docID, _ := iter.Val()
+		list.Insert(docID)
 	}
 	return list, err
 }
@@ -289,7 +288,8 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	}
 	list = roaring.NewPostingList()
 	for iter.Next() {
-		list.Insert(iter.Val())
+		docID, _ := iter.Val()
+		list.Insert(docID)
 	}
 	err = multierr.Append(err, iter.Close())
 	return
@@ -362,22 +362,18 @@ func (s *store) run() {
 						}
 						docIDBuffer.Write(convert.Uint64ToBytes(d.DocID))
 						doc := bluge.NewDocument(docIDBuffer.String())
-						toAddSeriesIDField := false
 						for _, f := range d.Fields {
-							if f.Key.Analyzer == databasev1.IndexRule_ANALYZER_UNSPECIFIED {
-								doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Marshal()).Sortable())
-							} else {
-								toAddSeriesIDField = true
-								doc.AddField(bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term).Sortable().
-									WithAnalyzer(analyzers[f.Key.Analyzer]))
+							tf := bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term).Sortable()
+							if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
+								tf = tf.WithAnalyzer(analyzers[f.Key.Analyzer])
 							}
-						}
-						if fk != nil && toAddSeriesIDField && fk.HasSeriesID() {
-							doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, fk.SeriesID.Marshal()))
+							doc.AddField(tf)
 						}
 
 						if d.EntityValues != nil {
 							doc.AddField(bluge.NewKeywordFieldBytes(entityField, d.EntityValues).StoreValue())
+						} else if fk != nil && fk.HasSeriesID() {
+							doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, fk.SeriesID.Marshal()))
 						}
 
 						size++
@@ -416,6 +412,7 @@ type blugeMatchIterator struct {
 	err       error
 	closer    io.Closer
 	docID     uint64
+	seriesID  common.SeriesID
 }
 
 func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer) blugeMatchIterator {
@@ -442,6 +439,7 @@ func (bmi *blugeMatchIterator) Next() bool {
 			} else if len(value) == 16 {
 				// value = seriesID(8bytes)+docID(8bytes)
 				bmi.docID = convert.BytesToUint64(value[8:])
+				bmi.seriesID = common.SeriesID(convert.BytesToUint64(value[:8]))
 			}
 		}
 		return true
@@ -449,8 +447,8 @@ func (bmi *blugeMatchIterator) Next() bool {
 	return bmi.err == nil
 }
 
-func (bmi *blugeMatchIterator) Val() uint64 {
-	return bmi.docID
+func (bmi *blugeMatchIterator) Val() (uint64, common.SeriesID) {
+	return bmi.docID, bmi.seriesID
 }
 
 func (bmi *blugeMatchIterator) Close() error {

@@ -64,7 +64,7 @@ func (s *streamService) activeIngestionAccessLog(root string) (err error) {
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
 		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
-			logger.Err(errResp).Msg("failed to send response")
+			logger.Debug().Err(errResp).Msg("failed to send response")
 		}
 	}
 	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)

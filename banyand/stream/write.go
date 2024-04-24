@@ -110,8 +110,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 	et.elements.seriesIDs = append(et.elements.seriesIDs, series.ID)
 
-	tagFamilies := make([]tagValues, len(stm.schema.TagFamilies))
-	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
+	tagFamilies := make([]tagValues, 0, len(stm.schema.TagFamilies))
 	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
 		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
 			len(stm.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
@@ -126,7 +125,10 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		}
 		tfr := stm.indexRuleLocators.TagFamilyTRule[i]
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
-		tagFamilies[i].tag = tagFamilySpec.Name
+		tf := tagValues{
+			tag: tagFamilySpec.Name,
+		}
+
 		for j := range tagFamilySpec.Tags {
 			var tagValue *modelv1.TagValue
 			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
@@ -167,9 +169,13 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
 				continue
 			}
-			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue)
+			tf.values = append(tf.values, encodeTagValue)
+		}
+		if len(tf.values) > 0 {
+			tagFamilies = append(tagFamilies, tf)
 		}
 	}
+	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
 
 	et.docs = append(et.docs, index.Document{
 		DocID:  uint64(ts),

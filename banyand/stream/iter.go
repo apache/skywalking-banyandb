@@ -32,24 +32,22 @@ import (
 type searcherIterator struct {
 	fieldIterator     index.FieldIterator
 	err               error
-	indexFilter       filterFn
+	indexFilter       map[common.SeriesID]filterFn
 	timeFilter        filterFn
 	table             *tsTable
 	l                 *logger.Logger
 	tagProjection     []pbv1.TagProjection
 	currItem          item
 	sortedTagLocation tagLocation
-	seriesID          common.SeriesID
 }
 
 func newSearcherIterator(l *logger.Logger, fieldIterator index.FieldIterator, table *tsTable,
-	seriesID common.SeriesID, indexFilter filterFn, timeFilter filterFn, tagProjection []pbv1.TagProjection,
+	indexFilter map[common.SeriesID]filterFn, timeFilter filterFn, tagProjection []pbv1.TagProjection,
 	sortedTagLocation tagLocation,
 ) *searcherIterator {
 	return &searcherIterator{
 		fieldIterator:     fieldIterator,
 		table:             table,
-		seriesID:          seriesID,
 		indexFilter:       indexFilter,
 		timeFilter:        timeFilter,
 		l:                 l,
@@ -66,17 +64,19 @@ func (s *searcherIterator) Next() bool {
 		s.err = io.EOF
 		return false
 	}
-	itemID := s.fieldIterator.Val()
+	itemID, seriesID := s.fieldIterator.Val()
 	if !s.timeFilter(itemID) {
 		return s.Next()
 	}
-	if s.indexFilter != nil && !s.indexFilter(itemID) {
-		return s.Next()
+	if s.indexFilter != nil {
+		if f, ok := s.indexFilter[seriesID]; ok && !f(itemID) {
+			return s.Next()
+		}
 	}
 	if e := s.l.Debug(); e.Enabled() {
-		e.Uint64("series_id", uint64(s.seriesID)).Uint64("item_id", itemID).Msg("got an item")
+		e.Uint64("series_id", uint64(seriesID)).Uint64("item_id", itemID).Msg("got an item")
 	}
-	e, c, err := s.table.getElement(s.seriesID, int64(itemID), s.tagProjection)
+	e, c, err := s.table.getElement(seriesID, int64(itemID), s.tagProjection)
 	if err != nil {
 		s.err = err
 		return false
@@ -90,7 +90,7 @@ func (s *searcherIterator) Next() bool {
 		element:        e,
 		count:          c,
 		sortedTagValue: sv,
-		seriesID:       s.seriesID,
+		seriesID:       seriesID,
 	}
 	return true
 }

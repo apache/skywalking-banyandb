@@ -52,7 +52,7 @@ var _ = Describe("Query", func() {
 		}
 		fs = flag.NewFlagSet("", flag.PanicOnError)
 		fs.String("base-url", "http://localhost:12800/graphql", "")
-		fs.String("service-id", "ZzE6OnNlcnZpY2VfMQ==.1", "")
+		fs.String("service-id", "ZzA6OnNlcnZpY2VfMQ==.1", "")
 		_, basePath, _, _ = runtime.Caller(0)
 		basePath = path.Dir(basePath)
 	})

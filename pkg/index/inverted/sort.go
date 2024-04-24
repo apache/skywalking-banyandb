@@ -25,7 +25,47 @@ import (
 	"math"
 
 	"github.com/blugelabs/bluge"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
+
+func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator, err error) {
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return nil, err
+	}
+	fk := fieldKey.MarshalIndexRule()
+	tqs := make([]bluge.Query, len(sids))
+	for i := range sids {
+		tq := bluge.NewTermQuery(string(sids[i].Marshal()))
+		tq.SetField(seriesIDField)
+		tqs[i] = tq
+	}
+	var query bluge.Query
+	if len(tqs) == 0 {
+		query = bluge.NewMatchAllQuery()
+	} else {
+		bq := bluge.NewBooleanQuery()
+		bq.AddShould(tqs...)
+		bq.SetMinShould(1)
+		query = bq
+	}
+
+	sortedKey := fk
+	if order == modelv1.Sort_SORT_DESC {
+		sortedKey = "-" + sortedKey
+	}
+	result := &sortIterator{
+		query:     query,
+		reader:    reader,
+		sortedKey: sortedKey,
+		size:      preLoadSize,
+		sid:       fieldKey.SeriesID,
+	}
+	return result, nil
+}
 
 type sortIterator struct {
 	query     bluge.Query
@@ -35,6 +75,7 @@ type sortIterator struct {
 	sortedKey string
 	size      int
 	skipped   int
+	sid       common.SeriesID
 }
 
 func (si *sortIterator) Next() bool {
@@ -86,14 +127,20 @@ func (si *sortIterator) next() bool {
 	return false
 }
 
-func (si *sortIterator) Val() uint64 {
+func (si *sortIterator) Val() (uint64, common.SeriesID) {
 	return si.current.Val()
 }
 
 func (si *sortIterator) Close() error {
 	if errors.Is(si.err, io.EOF) {
 		si.err = nil
-		return errors.Join(si.current.Close(), si.reader.Close())
+		if si.current != nil {
+			return errors.Join(si.current.Close(), si.reader.Close())
+		}
+		return si.reader.Close()
+	}
+	if si.current == nil {
+		return errors.Join(si.err, si.reader.Close())
 	}
 	return errors.Join(si.err, si.current.Close(), si.reader.Close())
 }

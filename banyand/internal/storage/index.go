@@ -198,7 +198,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 
 	var sortedSeriesList pbv1.SeriesList
 	for iter.Next() {
-		seriesID := iter.Val()
+		seriesID, _ := iter.Val()
 		if !pl.Contains(seriesID) {
 			continue
 		}
