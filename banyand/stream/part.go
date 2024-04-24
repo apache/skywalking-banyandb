@@ -177,6 +177,7 @@ func (p *part) getElement(seriesID common.SeriesID, timestamp int64, tagProjecti
 							name := tagProjection[k].Family
 							block, ok := bm[i].tagFamilies[name]
 							if !ok {
+								tfs = append(tfs, &tagFamily{name: name, tags: make([]tag, len(tagProjection[k].Names))})
 								continue
 							}
 							decoder := &encoding.BytesBlockDecoder{}

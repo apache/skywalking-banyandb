@@ -461,9 +461,7 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 		return ssr, nil
 	}
 
-	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sso.TagProjection, seriesList)
-
-	iters, err := s.buildSeriesByIndex(tabWrappers, seriesList.IDs(), sso)
+	iters, err := s.buildSeriesByIndex(tabWrappers, seriesList, sso)
 	if err != nil {
 		return nil, err
 	}
@@ -480,26 +478,7 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 	ces := newColumnElements()
 	for it.Next() {
 		nextItem := it.Val()
-		e, count := nextItem.element, nextItem.count
-		if len(tagProjIndex) != 0 {
-			for entity, offset := range tagProjIndex {
-				tagSpec := tagSpecIndex[entity]
-				if tagSpec.IndexedOnly {
-					continue
-				}
-				index, ok := sidToIndex[nextItem.seriesID]
-				if !ok {
-					continue
-				}
-				series := seriesList[index]
-				entityPos := entityMap[entity] - 1
-				e.tagFamilies[offset.FamilyOffset].tags[offset.TagOffset] = tag{
-					name:      entity,
-					values:    mustEncodeTagValue(entity, tagSpec.GetType(), series.EntityValues[entityPos], count),
-					valueType: pbv1.MustTagValueToValueType(series.EntityValues[entityPos]),
-				}
-			}
-		}
+		e := nextItem.element
 		ces.BuildFromElement(e, sso.TagProjection)
 		if len(ces.timestamp) >= sso.MaxElementSize {
 			break

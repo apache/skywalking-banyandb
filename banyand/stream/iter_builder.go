@@ -31,7 +31,7 @@ import (
 type filterFn func(itemID uint64) bool
 
 func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTable],
-	sids []common.SeriesID, sso pbv1.StreamSortOptions,
+	seriesList pbv1.SeriesList, sso pbv1.StreamSortOptions,
 ) (series []*searcherIterator, err error) {
 	timeFilter := func(itemID uint64) bool {
 		return sso.TimeRange.Contains(int64(itemID))
@@ -52,6 +52,8 @@ func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTa
 	if !tl.valid() {
 		return nil, fmt.Errorf("sorted tag %s not found in tag projection", sortedTag)
 	}
+	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sso.TagProjection, seriesList)
+	sids := seriesList.IDs()
 	for _, tw := range tableWrappers {
 		seriesFilter := make(map[common.SeriesID]filterFn)
 		if sso.Filter != nil {
@@ -84,7 +86,8 @@ func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTa
 
 		if inner != nil {
 			series = append(series, newSearcherIterator(s.l, inner, tw.Table(),
-				seriesFilter, timeFilter, sso.TagProjection, tl))
+				seriesFilter, timeFilter, sso.TagProjection, tl,
+				tagSpecIndex, tagProjIndex, sidToIndex, seriesList, entityMap))
 		}
 	}
 	return
