@@ -22,7 +22,7 @@ Within a part, data is split into multiple files in a columnar manner. The times
 
 In addition, each part maintains several metadata files. Among them, `metadata.json` is the metadata file for the part, storing descriptive information, such as start and end times, part size, etc. 
 
-The `meta.bin` is a skipping index file serves as the entry file for the entire part, helping to index the `primary.bin` file. 
+The `meta.bin` is a skipping index file that serves as the entry file for the entire part, helping to index the `primary.bin` file. 
 
 The `primary.bin` file contains the index of each [block](#Block). Through it, the actual data files or the tagFamily metadata files ending with `.tfm` can be indexed, which in turn helps to locate the data in blocks. 
 
@@ -33,7 +33,9 @@ Notably, for data of the `Stream` type, since there are no field columns, the `f
 
 ## Block
 
-The diagram below shows the detailed fields within each block. The block is the minimal unit of tsdb, which contains several rows of data. Due to the column-based design, each block is spread over several files.
+Each block holds data with the same series ID. 
+The max size of the measure block is controlled by data volume and the number of rows. Meanwhile, the max size of the stream block is controlled by data volume.
+The diagram below shows the detailed fields within each block. The block is the minimal unit of TSDB, which contains several rows of data. Due to the column-based design, each block is spread over several files.
 
 ![measure-block](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/measure-block.png)
 ![stream-block](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/stream-block.png)
