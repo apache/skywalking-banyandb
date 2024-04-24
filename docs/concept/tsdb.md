@@ -33,7 +33,8 @@ Notably, for data of the `Stream` type, since there are no field columns, the `f
 
 ## Block
 
-Each block holds data with the same series ID. The max size of the block is controlled by data volume(2MB) and the number(8k) of rows. The size of each measure row is small, number-of-row policy works, meanwhile, the data-volume policy controls the block of stream.
+Each block holds data with the same series ID. 
+The max size of the measure block is controlled by data volume and the number of rows. Meanwhile, the max size of the stream block is controlled by data volume.
 The diagram below shows the detailed fields within each block. The block is the minimal unit of TSDB, which contains several rows of data. Due to the column-based design, each block is spread over several files.
 
 ![measure-block](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/measure-block.png)
