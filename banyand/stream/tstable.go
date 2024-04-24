@@ -284,12 +284,13 @@ func (tst *tsTable) mustAddElements(es *elements) {
 	}
 }
 
-func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp common.ItemID, tagProjection []pbv1.TagProjection) (*element, int, error) {
+func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp int64, tagProjection []pbv1.TagProjection) (*element, int, error) {
 	s := tst.currentSnapshot()
 	if s == nil {
 		return nil, 0, fmt.Errorf("snapshot is absent, cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
 	}
 	defer s.decRef()
+
 	for _, p := range s.parts {
 		if !p.p.containTimestamp(timestamp) {
 			continue

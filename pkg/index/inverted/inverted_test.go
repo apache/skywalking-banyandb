@@ -53,12 +53,7 @@ func TestStore_Match(t *testing.T) {
 		SeriesID:    common.SeriesID(11),
 		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
 	}
-	setup(tester, s, serviceName, index.FieldKey{
-		// http_method
-		IndexRuleID: 6,
-		SeriesID:    common.SeriesID(1),
-		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
-	})
+	setup(tester, s, serviceName)
 
 	tests := []struct {
 		want    posting.List
@@ -154,7 +149,7 @@ func TestStore_SeriesMatch(t *testing.T) {
 		IndexRuleID: 6,
 		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
 	}
-	setup(tester, s, serviceName, serviceName)
+	setupSeries(tester, s, serviceName)
 
 	tests := []struct {
 		want    posting.List
@@ -189,7 +184,7 @@ func TestStore_SeriesMatch(t *testing.T) {
 	}
 }
 
-func setup(tester *assert.Assertions, s index.Store, serviceName, serviceName1 index.FieldKey) {
+func setup(tester *assert.Assertions, s index.Store, serviceName index.FieldKey) {
 	tester.NoError(s.Write([]index.Field{{
 		Key:  serviceName,
 		Term: []byte("GET::/product/order"),
@@ -203,16 +198,19 @@ func setup(tester *assert.Assertions, s index.Store, serviceName, serviceName1 i
 		Term: []byte("org.apache.skywalking.examples.OrderService.order"),
 	}}, 3))
 	s.(*store).flush()
+}
+
+func setupSeries(tester *assert.Assertions, s index.Store, serviceName index.FieldKey) {
 	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName1,
+		Key:  serviceName,
 		Term: []byte("test.a"),
 	}}, 1))
 	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName1,
+		Key:  serviceName,
 		Term: []byte("test.b"),
 	}}, 2))
 	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName1,
+		Key:  serviceName,
 		Term: []byte("test.c"),
 	}}, 3))
 	s.(*store).flush()

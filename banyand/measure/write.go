@@ -32,7 +32,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -55,7 +54,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
-	ts := uint64(t.UnixNano())
+	ts := t.UnixNano()
 
 	gn := req.Metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
@@ -90,7 +89,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		}
 		dpg.tables = append(dpg.tables, dpt)
 	}
-	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, int64(ts))
+	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, ts)
 	stm, ok := w.schemaRepo.loadMeasure(writeEvent.GetRequest().GetMetadata())
 	if !ok {
 		return nil, fmt.Errorf("cannot find measure definition: %s", writeEvent.GetRequest().GetMetadata())
@@ -126,11 +125,11 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
 	tagFamilies := make([]nameValues, 0, len(stm.schema.TagFamilies))
-	tagFamiliesForIndexWrite := make([]nameValues, len(stm.schema.TagFamilies))
-	entityMap := make(map[string]bool)
-	for _, entity := range stm.GetSchema().GetEntity().GetTagNames() {
-		entityMap[entity] = true
+	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
+		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
+			len(stm.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
 	}
+	var fields []index.Field
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.DataPoint.TagFamilies) <= i {
@@ -138,6 +137,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		} else {
 			tagFamily = req.DataPoint.TagFamilies[i]
 		}
+		tfr := stm.indexRuleLocators.TagFamilyTRule[i]
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
 		tf := nameValues{
 			name: tagFamilySpec.Name,
@@ -150,15 +150,37 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 				tagValue = tagFamily.Tags[j]
 			}
 
-			nameValue := encodeTagValue(
-				tagFamilySpec.Tags[j].Name,
-				tagFamilySpec.Tags[j].Type,
+			t := tagFamilySpec.Tags[j]
+			encodeTagValue := encodeTagValue(
+				t.Name,
+				t.Type,
 				tagValue)
-			tagFamiliesForIndexWrite[i].values = append(tagFamiliesForIndexWrite[i].values, nameValue)
-			if tagFamilySpec.Tags[j].IndexedOnly || entityMap[tagFamilySpec.Tags[j].Name] {
+			if r, ok := tfr[t.Name]; ok {
+				if encodeTagValue.value != nil {
+					fields = append(fields, index.Field{
+						Key: index.FieldKey{
+							IndexRuleID: r.GetMetadata().GetId(),
+							Analyzer:    r.Analyzer,
+						},
+						Term: encodeTagValue.value,
+					})
+				} else {
+					for _, val := range encodeTagValue.valueArr {
+						fields = append(fields, index.Field{
+							Key: index.FieldKey{
+								IndexRuleID: r.GetMetadata().GetId(),
+								Analyzer:    r.Analyzer,
+							},
+							Term: val,
+						})
+					}
+				}
+			}
+			_, isEntity := stm.indexRuleLocators.EntitySet[t.Name]
+			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
 				continue
 			}
-			tf.values = append(tf.values, nameValue)
+			tf.values = append(tf.values, encodeTagValue)
 		}
 		if len(tf.values) > 0 {
 			tagFamilies = append(tagFamilies, tf)
@@ -176,33 +198,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			EntityValues: writeEvent.EntityValues,
 		})
 	}
-	var fields []index.Field
-	for _, ruleIndex := range stm.indexRuleLocators {
-		nv := getIndexValue(ruleIndex, tagFamiliesForIndexWrite)
-		if nv == nil {
-			continue
-		}
-		if nv.value != nil {
-			fields = append(fields, index.Field{
-				Key: index.FieldKey{
-					IndexRuleID: ruleIndex.Rule.GetMetadata().GetId(),
-					Analyzer:    ruleIndex.Rule.Analyzer,
-				},
-				Term: nv.value,
-			})
-			continue
-		}
-		for _, val := range nv.valueArr {
-			rule := ruleIndex.Rule
-			fields = append(fields, index.Field{
-				Key: index.FieldKey{
-					IndexRuleID: rule.GetMetadata().GetId(),
-					Analyzer:    rule.Analyzer,
-				},
-				Term: val,
-			})
-		}
-	}
+
 	dpg.docs = append(dpg.docs, index.Document{
 		DocID:        uint64(series.ID),
 		EntityValues: series.Buffer,
@@ -327,20 +323,4 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.T
 		logger.Panicf("unsupported tag value type: %T", tagValue.GetValue())
 	}
 	return nv
-}
-
-func getIndexValue(ruleIndex *partition.IndexRuleLocator, tagFamilies []nameValues) *nameValue {
-	if len(ruleIndex.TagIndices) != 1 {
-		logger.Panicf("the index rule %s(%v) didn't support composited tags",
-			ruleIndex.Rule.Metadata.Name, ruleIndex.Rule.Tags)
-	}
-	tIndex := ruleIndex.TagIndices[0]
-	if tIndex.FamilyOffset >= len(tagFamilies) {
-		return nil
-	}
-	tf := tagFamilies[tIndex.FamilyOffset]
-	if tIndex.TagOffset >= len(tf.values) {
-		return nil
-	}
-	return tf.values[tIndex.TagOffset]
 }

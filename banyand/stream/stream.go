@@ -40,7 +40,7 @@ const (
 	maxUncompressedBlockSize        = 2 * 1024 * 1024
 	maxUncompressedPrimaryBlockSize = 128 * 1024
 
-	defaultFlushTimeout = 5 * time.Second
+	defaultFlushTimeout = time.Second
 )
 
 type option struct {
@@ -74,7 +74,7 @@ type stream struct {
 	name              string
 	group             string
 	indexRules        []*databasev1.IndexRule
-	indexRuleLocators []*partition.IndexRuleLocator
+	indexRuleLocators partition.IndexRuleLocator
 	shardNum          uint32
 }
 
@@ -92,7 +92,7 @@ func (s *stream) Close() error {
 
 func (s *stream) parseSpec() {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetTagFamilies(), s.indexRules)
+	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules)
 }
 
 type streamSpec struct {

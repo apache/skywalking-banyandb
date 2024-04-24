@@ -52,8 +52,8 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 	return ei, nil
 }
 
-func (e *elementIndex) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, preloadSize int) (index.FieldIterator, error) {
-	iter, err := e.store.Iterator(fieldKey, termRange, order, preloadSize)
+func (e *elementIndex) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preloadSize int) (index.FieldIterator, error) {
+	iter, err := e.store.Sort(sids, fieldKey, order, preloadSize)
 	if err != nil {
 		return nil, err
 	}
@@ -61,16 +61,9 @@ func (e *elementIndex) Iterator(fieldKey index.FieldKey, termRange index.RangeOp
 }
 
 func (e *elementIndex) Write(docs index.Documents) error {
-	applied := make(chan struct{})
-	err := e.store.Batch(index.Batch{
+	return e.store.Batch(index.Batch{
 		Documents: docs,
-		Applied:   applied,
 	})
-	if err != nil {
-		return err
-	}
-	<-applied
-	return nil
 }
 
 func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) ([]elementRef, error) {
@@ -97,7 +90,7 @@ func (e *elementIndex) Close() error {
 
 type elementRef struct {
 	seriesID  common.SeriesID
-	timestamp uint64
+	timestamp int64
 }
 
 type indexedElementRef struct {
@@ -137,7 +130,7 @@ func merge(postingMap map[common.SeriesID][]uint64) []elementRef {
 
 	for seriesID, timestamps := range postingMap {
 		if len(timestamps) > 0 {
-			er := elementRef{seriesID: seriesID, timestamp: timestamps[0]}
+			er := elementRef{seriesID: seriesID, timestamp: int64(timestamps[0])}
 			item := &indexedElementRef{elementRef: er, elemIdx: 0}
 			heap.Push(&pq, item)
 		}
@@ -148,7 +141,7 @@ func merge(postingMap map[common.SeriesID][]uint64) []elementRef {
 
 		if item.elemIdx+1 < len(postingMap[item.seriesID]) {
 			nextTS := postingMap[item.seriesID][item.elemIdx+1]
-			nextEr := elementRef{seriesID: item.seriesID, timestamp: nextTS}
+			nextEr := elementRef{seriesID: item.seriesID, timestamp: int64(nextTS)}
 			nextItem := &indexedElementRef{elementRef: nextEr, elemIdx: item.elemIdx + 1}
 			heap.Push(&pq, nextItem)
 		}

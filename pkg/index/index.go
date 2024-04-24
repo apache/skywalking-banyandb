@@ -164,7 +164,7 @@ func (r RangeOpts) Between(value []byte) int {
 // FieldIterator allows iterating over a field's posting values.
 type FieldIterator interface {
 	Next() bool
-	Val() *PostingValue
+	Val() (uint64, common.SeriesID)
 	Close() error
 }
 
@@ -177,19 +177,12 @@ func (i *dummyIterator) Next() bool {
 	return false
 }
 
-func (i *dummyIterator) Val() *PostingValue {
-	return nil
+func (i *dummyIterator) Val() (uint64, common.SeriesID) {
+	return 0, 0
 }
 
 func (i *dummyIterator) Close() error {
 	return nil
-}
-
-// PostingValue is the collection of a field's values.
-type PostingValue struct {
-	Value   posting.List
-	Term    []byte
-	TermRaw []byte
 }
 
 // Document represents a document in a index.
@@ -217,6 +210,7 @@ type Writer interface {
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
 	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator, err error)
+	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, preLoadSize int) (FieldIterator, error)
 }
 
 // Searcher allows searching a field either by its key or by its key and term.

@@ -34,6 +34,7 @@ import (
 )
 
 var duration = index.FieldKey{
+	SeriesID: 998,
 	// duration
 	IndexRuleID: 3,
 }
@@ -52,8 +53,7 @@ type args struct {
 }
 
 type result struct {
-	items []int
-	key   int
+	items []uint64
 }
 
 // RunDuration executes duration related cases.
@@ -301,47 +301,22 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 				}
 			}()
 			is.NotNil(iter)
-			got := make([]result, 0)
-			var currResult result
+			var got result
 			for iter.Next() {
-				key := int(convert.BytesToInt64(iter.Val().Term))
-				if currResult.key != key {
-					if currResult.key != 0 {
-						got = append(got, currResult)
-						currResult = result{}
-					}
-					currResult.key = key
-				}
-				currResult.items = append(currResult.items, toArray(iter.Val().Value)...)
-			}
-			if len(currResult.items) > 0 {
-				got = append(got, currResult)
+				docID, _ := iter.Val()
+				got.items = append(got.items, docID)
 			}
 			for i := 0; i < 10; i++ {
 				is.False(iter.Next())
 			}
-			wants := make([]result, 0, len(tt.want))
+			var wants result
 			for _, w := range tt.want {
-				wants = append(wants, result{
-					key:   w,
-					items: toArray(data[w]),
-				})
+				pl := data[w]
+				wants.items = append(wants.items, pl.ToSlice()...)
 			}
 			tester.Equal(wants, got, tt.name)
 		})
 	}
-}
-
-func toArray(list posting.List) []int {
-	ints := make([]int, 0, list.Len())
-	iter := list.Iterator()
-	defer func(iter posting.Iterator) {
-		_ = iter.Close()
-	}(iter)
-	for iter.Next() {
-		ints = append(ints, int(iter.Current()))
-	}
-	return ints
 }
 
 // SetUpDuration initializes data for testing duration related cases.

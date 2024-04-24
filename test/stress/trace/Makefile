@@ -37,6 +37,10 @@ SIZE ?= 2
 
 QPS ?= 10
 
+GROUP ?= "default"
+
+GINKGO_FLAGS ?=
+
 .PHONY: clean
 clean:
 	rm -rf /tmp/banyandb-stress-trace
@@ -49,11 +53,11 @@ down-%:
 
 .PHONY: test_traffic
 test_traffic:
-	curl -XPOST 'http://localhost:12800/mock-data/segments/tasks?size=$(SIZE)' -H'Content-Type: application/json' -d "@segment.tpl.json"
+	curl -XPOST 'http://localhost:12800/mock-data/segments/tasks?size=$(SIZE)&group=$(GROUP)' -H'Content-Type: application/json' -d "@segment.tpl.json"
 
 .PHONY: up_traffic
 up_traffic:
-	curl -XPOST 'http://localhost:12800/mock-data/segments/tasks?qps=$(QPS)' -H'Content-Type: application/json' -d "@segment.tpl.json"
+	curl -XPOST 'http://localhost:12800/mock-data/segments/tasks?qps=$(QPS)&group=$(GROUP)' -H'Content-Type: application/json' -d "@segment.tpl.json"
 
 .PHONY: ls_traffic
 ls_traffic:
@@ -65,5 +69,5 @@ rm_traffic:
 
 .PHONY: test_query
 test_query: $(GINKGO)
-	$(GINKGO) -v -timeout 1h TestQuery ./...
+	$(GINKGO) $(GINKGO_FLAGS) -p -v -timeout 2h TestQuery ./...
 	

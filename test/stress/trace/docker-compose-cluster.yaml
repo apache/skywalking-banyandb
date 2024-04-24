@@ -34,7 +34,38 @@ services:
       resources:
         limits:
           cpus: "4"
-          memory: 4G
+          memory: 8G
+    networks:
+      - cluster-test
+  data1:
+    extends:
+      file: ../../docker/base-compose.yml
+      service: data
+    build:
+      dockerfile: ./docker/Dockerfile
+      context: ../../..
+    hostname: data1
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+    networks:
+      - cluster-test
+
+  data2:
+    extends:
+      file: ../../docker/base-compose.yml
+      service: data
+    build:
+      dockerfile: ./docker/Dockerfile
+      context: ../../..
+    hostname: data2
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
     networks:
       - cluster-test
 
@@ -62,6 +93,9 @@ services:
     environment:
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_TARGETS: "liaison:17912"
+      SW_STORAGE_BANYANDB_METRICS_SHARDS_NUMBER: "3"
+      SW_STORAGE_BANYANDB_RECORD_SHARDS_NUMBER: "3"
+      SW_STORAGE_BANYANDB_SUPERDATASET_SHARDS_FACTOR: "1"
     ports:
       - 12800:12800
     volumes:

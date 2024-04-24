@@ -64,7 +64,7 @@ func (ms *measureService) activeIngestionAccessLog(root string) (err error) {
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
 	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, measure measurev1.MeasureService_WriteServer, logger *logger.Logger) {
 		if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
-			logger.Err(errResp).Msg("failed to send response")
+			logger.Debug().Err(errResp).Msg("failed to send response")
 		}
 	}
 	ctx := measure.Context()
