@@ -58,7 +58,7 @@ type measure struct {
 	name              string
 	group             string
 	indexRules        []*databasev1.IndexRule
-	indexRuleLocators []*partition.IndexRuleLocator
+	indexRuleLocators partition.IndexRuleLocator
 	topNAggregations  []*databasev1.TopNAggregation
 	interval          time.Duration
 	shardNum          uint32
@@ -103,7 +103,7 @@ func (s *measure) parseSpec() (err error) {
 	if s.schema.Interval != "" {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
-	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetTagFamilies(), s.indexRules)
+	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules)
 
 	return err
 }

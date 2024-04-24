@@ -30,8 +30,8 @@ type TimeRange struct {
 }
 
 // Contains returns whether the unixNano is in the TimeRange.
-func (t TimeRange) Contains(unixNano uint64) bool {
-	tp := time.Unix(0, int64(unixNano))
+func (t TimeRange) Contains(unixNano int64) bool {
+	tp := time.Unix(0, unixNano)
 	if t.Start.Equal(tp) {
 		return t.IncludeStart
 	}

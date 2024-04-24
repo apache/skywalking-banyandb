@@ -31,7 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -54,7 +53,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
-	ts := uint64(t.UnixNano())
+	ts := t.UnixNano()
 
 	gn := req.Metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
@@ -79,17 +78,17 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 	shardID := common.ShardID(writeEvent.ShardId)
 	if et == nil {
-		tstb, err := tsdb.CreateTSTableIfNotExist(shardID, t)
+		tsdb, err := tsdb.CreateTSTableIfNotExist(shardID, t)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
 		et = &elementsInTable{
-			timeRange: tstb.GetTimeRange(),
-			tsTable:   tstb,
+			timeRange: tsdb.GetTimeRange(),
+			tsTable:   tsdb,
 		}
 		eg.tables = append(eg.tables, et)
 	}
-	et.elements.timestamps = append(et.elements.timestamps, int64(ts))
+	et.elements.timestamps = append(et.elements.timestamps, ts)
 	et.elements.elementIDs = append(et.elements.elementIDs, writeEvent.Request.Element.GetElementId())
 	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
@@ -111,13 +110,12 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 	et.elements.seriesIDs = append(et.elements.seriesIDs, series.ID)
 
-	tagFamilies := make([]tagValues, len(stm.schema.TagFamilies))
-	tagFamiliesForIndexWrite := make([]tagValues, len(stm.schema.TagFamilies))
-	entityMap := make(map[string]bool)
-	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
-	for _, entity := range stm.GetSchema().GetEntity().GetTagNames() {
-		entityMap[entity] = true
+	tagFamilies := make([]tagValues, 0, len(stm.schema.TagFamilies))
+	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
+		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
+			len(stm.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
 	}
+	var fields []index.Field
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.Element.TagFamilies) <= i {
@@ -125,8 +123,12 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		} else {
 			tagFamily = req.Element.TagFamilies[i]
 		}
+		tfr := stm.indexRuleLocators.TagFamilyTRule[i]
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
-		tagFamilies[i].tag = tagFamilySpec.Name
+		tf := tagValues{
+			tag: tagFamilySpec.Name,
+		}
+
 		for j := range tagFamilySpec.Tags {
 			var tagValue *modelv1.TagValue
 			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
@@ -135,49 +137,48 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 				tagValue = tagFamily.Tags[j]
 			}
 
+			t := tagFamilySpec.Tags[j]
 			encodeTagValue := encodeTagValue(
-				tagFamilySpec.Tags[j].Name,
-				tagFamilySpec.Tags[j].Type,
+				t.Name,
+				t.Type,
 				tagValue)
-			tagFamiliesForIndexWrite[i].values = append(tagFamiliesForIndexWrite[i].values, encodeTagValue)
-			if tagFamilySpec.Tags[j].IndexedOnly || entityMap[tagFamilySpec.Tags[j].Name] {
+			if r, ok := tfr[t.Name]; ok {
+				if encodeTagValue.value != nil {
+					fields = append(fields, index.Field{
+						Key: index.FieldKey{
+							IndexRuleID: r.GetMetadata().GetId(),
+							Analyzer:    r.Analyzer,
+							SeriesID:    series.ID,
+						},
+						Term: encodeTagValue.value,
+					})
+				} else {
+					for _, val := range encodeTagValue.valueArr {
+						fields = append(fields, index.Field{
+							Key: index.FieldKey{
+								IndexRuleID: r.GetMetadata().GetId(),
+								Analyzer:    r.Analyzer,
+								SeriesID:    series.ID,
+							},
+							Term: val,
+						})
+					}
+				}
+			}
+			_, isEntity := stm.indexRuleLocators.EntitySet[tagFamilySpec.Tags[j].Name]
+			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
 				continue
 			}
-			tagFamilies[i].values = append(tagFamilies[i].values, encodeTagValue)
+			tf.values = append(tf.values, encodeTagValue)
+		}
+		if len(tf.values) > 0 {
+			tagFamilies = append(tagFamilies, tf)
 		}
 	}
-
-	var fields []index.Field
-	for _, indexRule := range stm.indexRuleLocators {
-		tv := getIndexValue(indexRule, tagFamiliesForIndexWrite)
-		if tv == nil {
-			continue
-		}
-		if tv.value != nil {
-			fields = append(fields, index.Field{
-				Key: index.FieldKey{
-					IndexRuleID: indexRule.Rule.GetMetadata().GetId(),
-					Analyzer:    indexRule.Rule.Analyzer,
-					SeriesID:    series.ID,
-				},
-				Term: tv.value,
-			})
-			continue
-		}
-		for _, val := range tv.valueArr {
-			fields = append(fields, index.Field{
-				Key: index.FieldKey{
-					IndexRuleID: indexRule.Rule.GetMetadata().GetId(),
-					Analyzer:    indexRule.Rule.Analyzer,
-					SeriesID:    series.ID,
-				},
-				Term: val,
-			})
-		}
-	}
+	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
 
 	et.docs = append(et.docs, index.Document{
-		DocID:  ts,
+		DocID:  uint64(ts),
 		Fields: fields,
 	})
 
@@ -226,14 +227,18 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		for j := range g.tables {
 			es := g.tables[j]
 			es.tsTable.Table().mustAddElements(&es.elements)
-			index := es.tsTable.Table().Index()
-			if err := index.Write(es.docs); err != nil {
-				w.l.Error().Err(err).Msg("cannot write element index")
+			if len(es.docs) > 0 {
+				index := es.tsTable.Table().Index()
+				if err := index.Write(es.docs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write element index")
+				}
 			}
 			es.tsTable.DecRef()
 		}
-		if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
-			w.l.Error().Err(err).Msg("cannot write series index")
+		if len(g.docs) > 0 {
+			if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
+				w.l.Error().Err(err).Msg("cannot write series index")
+			}
 		}
 	}
 	return
@@ -279,20 +284,4 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.Tag
 		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())
 	}
 	return tv
-}
-
-func getIndexValue(ruleIndex *partition.IndexRuleLocator, tagFamilies []tagValues) *tagValue {
-	if len(ruleIndex.TagIndices) != 1 {
-		logger.Panicf("the index rule %s(%v) didn't support composited tags",
-			ruleIndex.Rule.Metadata.Name, ruleIndex.Rule.Tags)
-	}
-	tIndex := ruleIndex.TagIndices[0]
-	if tIndex.FamilyOffset >= len(tagFamilies) {
-		return nil
-	}
-	tf := tagFamilies[tIndex.FamilyOffset]
-	if tIndex.TagOffset >= len(tf.values) {
-		return nil
-	}
-	return tf.values[tIndex.TagOffset]
 }

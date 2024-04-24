@@ -41,7 +41,7 @@ services:
       resources:
         limits:
           cpus: "4"
-          memory: 4G
+          memory: 8G
     networks:
       - test
       - monitoring

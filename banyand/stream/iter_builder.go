@@ -18,87 +18,107 @@
 package stream
 
 import (
-	"time"
+	"bytes"
+	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var rangeOpts = index.RangeOpts{}
+type filterFn func(itemID uint64) bool
 
-type filterFn func(item item) bool
-
-type iterBuilder struct {
-	indexFilter         index.Filter
-	timeRange           *timestamp.TimeRange
-	tableWrappers       []storage.TSTableWrapper[*tsTable]
-	indexRuleForSorting *databasev1.IndexRule
-	l                   *logger.Logger
-	tagProjection       []pbv1.TagProjection
-	seriesID            common.SeriesID
-	order               modelv1.Sort
-	preloadSize         int
-}
-
-func newIterBuilder(tableWrappers []storage.TSTableWrapper[*tsTable], id common.SeriesID, sso pbv1.StreamSortOptions) *iterBuilder {
-	return &iterBuilder{
-		indexFilter:         sso.Filter,
-		timeRange:           sso.TimeRange,
-		tableWrappers:       tableWrappers,
-		indexRuleForSorting: sso.Order.Index,
-		l:                   logger.GetLogger("seeker-builder"),
-		tagProjection:       sso.TagProjection,
-		seriesID:            id,
-		order:               sso.Order.Sort,
-		preloadSize:         sso.MaxElementSize,
+func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTable],
+	seriesList pbv1.SeriesList, sso pbv1.StreamSortOptions,
+) (series []*searcherIterator, err error) {
+	timeFilter := func(itemID uint64) bool {
+		return sso.TimeRange.Contains(int64(itemID))
 	}
-}
-
-func buildSeriesByIndex(s *iterBuilder) (series []*searcherIterator, err error) {
-	timeFilter := func(item item) bool {
-		valid := s.timeRange.Contains(item.Time())
-		timeRange := s.timeRange
-		s.l.Trace().
-			Times("time_range", []time.Time{timeRange.Start, timeRange.End}).
-			Bool("valid", valid).Msg("filter item by time range")
-		return valid
+	indexRuleForSorting := sso.Order.Index
+	if len(indexRuleForSorting.Tags) != 1 {
+		return nil, fmt.Errorf("only support one tag for sorting, but got %d", len(indexRuleForSorting.Tags))
 	}
-	for _, tw := range s.tableWrappers {
-		indexFilter := func(item item) bool {
-			if s.indexFilter == nil {
-				return true
+	sortedTag := indexRuleForSorting.Tags[0]
+	tl := newTagLocation()
+	for i := range sso.TagProjection {
+		for j := range sso.TagProjection[i].Names {
+			if sso.TagProjection[i].Names[j] == sortedTag {
+				tl.familyIndex, tl.tagIndex = i, j
 			}
-			pl, err := s.indexFilter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
-				return tw.Table().Index().store, nil
-			}, s.seriesID)
-			if err != nil {
-				return false
-			}
-			valid := pl.Contains(item.Time())
-			s.l.Trace().Int("valid_item_num", pl.Len()).Bool("valid", valid).Msg("filter item by index")
-			return valid
 		}
+	}
+	if !tl.valid() {
+		return nil, fmt.Errorf("sorted tag %s not found in tag projection", sortedTag)
+	}
+	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sso.TagProjection, seriesList)
+	sids := seriesList.IDs()
+	for _, tw := range tableWrappers {
+		seriesFilter := make(map[common.SeriesID]filterFn)
+		if sso.Filter != nil {
+			for i := range sids {
+				pl, errExe := sso.Filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+					return tw.Table().Index().store, nil
+				}, sids[i])
+				if errExe != nil {
+					return nil, err
+				}
+
+				seriesFilter[sids[i]] = func(itemID uint64) bool {
+					if pl == nil {
+						return true
+					}
+					return pl.Contains(itemID)
+				}
+			}
+		}
+
 		var inner index.FieldIterator
-		var err error
 		fieldKey := index.FieldKey{
-			SeriesID:    s.seriesID,
-			IndexRuleID: s.indexRuleForSorting.GetMetadata().GetId(),
-			Analyzer:    s.indexRuleForSorting.GetAnalyzer(),
+			IndexRuleID: indexRuleForSorting.GetMetadata().GetId(),
+			Analyzer:    indexRuleForSorting.GetAnalyzer(),
 		}
-		inner, err = tw.Table().Index().Iterator(fieldKey, rangeOpts, s.order, s.preloadSize)
+		inner, err = tw.Table().Index().Sort(sids, fieldKey, sso.Order.Sort, sso.MaxElementSize)
 		if err != nil {
 			return nil, err
 		}
+
 		if inner != nil {
 			series = append(series, newSearcherIterator(s.l, inner, tw.Table(),
-				s.seriesID, indexFilter, timeFilter, s.tagProjection))
+				seriesFilter, timeFilter, sso.TagProjection, tl,
+				tagSpecIndex, tagProjIndex, sidToIndex, seriesList, entityMap))
 		}
 	}
 	return
+}
+
+type tagLocation struct {
+	familyIndex int
+	tagIndex    int
+}
+
+func newTagLocation() tagLocation {
+	return tagLocation{
+		familyIndex: -1,
+		tagIndex:    -1,
+	}
+}
+
+func (t tagLocation) valid() bool {
+	return t.familyIndex != -1 && t.tagIndex != -1
+}
+
+func (t tagLocation) getTagValue(e *element) ([]byte, error) {
+	if len(e.tagFamilies) <= t.familyIndex {
+		return nil, fmt.Errorf("tag family index %d out of range", t.familyIndex)
+	}
+	if len(e.tagFamilies[t.familyIndex].tags) <= t.tagIndex {
+		return nil, fmt.Errorf("tag index %d out of range", t.tagIndex)
+	}
+	if len(e.tagFamilies[t.familyIndex].tags[t.tagIndex].values) <= e.index {
+		return nil, fmt.Errorf("element index %d out of range", e.index)
+	}
+	v := e.tagFamilies[t.familyIndex].tags[t.tagIndex].values[e.index]
+	return bytes.Clone(v), nil
 }

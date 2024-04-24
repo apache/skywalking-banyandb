@@ -154,3 +154,12 @@ func (a SeriesList) ToList() posting.List {
 	}
 	return pl
 }
+
+// IDs returns the IDs of the SeriesList.
+func (a SeriesList) IDs() []common.SeriesID {
+	ids := make([]common.SeriesID, 0, len(a))
+	for _, v := range a {
+		ids = append(ids, v.ID)
+	}
+	return ids
+}

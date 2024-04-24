@@ -19,27 +19,38 @@ package partition
 
 import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-// IndexRuleLocator combines several TagLocators that help find the index value.
+// IndexRuleLocator is a helper struct to locate the index rule by tag name.
 type IndexRuleLocator struct {
-	Rule       *databasev1.IndexRule
-	TagIndices []TagLocator
+	EntitySet      map[string]struct{}
+	TagFamilyTRule []map[string]*databasev1.IndexRule
 }
 
 // ParseIndexRuleLocators returns a IndexRuleLocator based on the tag family spec and index rules.
-func ParseIndexRuleLocators(families []*databasev1.TagFamilySpec, indexRules []*databasev1.IndexRule) (locators []*IndexRuleLocator) {
-	for _, rule := range indexRules {
-		tagIndices := make([]TagLocator, 0, len(rule.GetTags()))
-		for _, tagInIndex := range rule.GetTags() {
-			fIndex, tIndex, tag := pbv1.FindTagByName(families, tagInIndex)
-			if tag != nil {
-				tagIndices = append(tagIndices, TagLocator{FamilyOffset: fIndex, TagOffset: tIndex})
+func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.TagFamilySpec, indexRules []*databasev1.IndexRule) (locators IndexRuleLocator) {
+	locators.EntitySet = make(map[string]struct{}, len(entity.TagNames))
+	for i := range entity.TagNames {
+		locators.EntitySet[entity.TagNames[i]] = struct{}{}
+	}
+	findIndexRuleByTagName := func(tagName string) *databasev1.IndexRule {
+		for i := range indexRules {
+			for j := range indexRules[i].Tags {
+				if indexRules[i].Tags[j] == tagName {
+					return indexRules[i]
+				}
 			}
 		}
-		if len(tagIndices) > 0 {
-			locators = append(locators, &IndexRuleLocator{Rule: rule, TagIndices: tagIndices})
+		return nil
+	}
+	for i := range families {
+		ttr := make(map[string]*databasev1.IndexRule)
+		locators.TagFamilyTRule = append(locators.TagFamilyTRule, ttr)
+		for j := range families[i].Tags {
+			ir := findIndexRuleByTagName(families[i].Tags[j].Name)
+			if ir != nil {
+				ttr[families[i].Tags[j].Name] = ir
+			}
 		}
 	}
 	return locators

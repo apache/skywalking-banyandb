@@ -386,6 +386,9 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 		}
 		seriesList = seriesList.Merge(sl)
 	}
+	if len(seriesList) == 0 {
+		return sfr, nil
+	}
 
 	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sfo.TagProjection, seriesList)
 	ces := newColumnElements()
@@ -402,7 +405,7 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 			erl = erl[:sfo.MaxElementSize-len(ces.timestamp)]
 		}
 		for _, er := range erl {
-			e, count, err := tw.Table().getElement(er.seriesID, common.ItemID(er.timestamp), sfo.TagProjection)
+			e, count, err := tw.Table().getElement(er.seriesID, er.timestamp, sfo.TagProjection)
 			if err != nil {
 				return nil, err
 			}
@@ -454,19 +457,13 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 		}
 		seriesList = seriesList.Merge(sl)
 	}
+	if len(seriesList) == 0 {
+		return ssr, nil
+	}
 
-	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sso.TagProjection, seriesList)
-
-	var iters []*searcherIterator
-	for _, series := range seriesList {
-		seekerBuilder := newIterBuilder(tabWrappers, series.ID, sso)
-		seriesIters, buildErr := buildSeriesByIndex(seekerBuilder)
-		if err != nil {
-			return nil, buildErr
-		}
-		if len(seriesIters) > 0 {
-			iters = append(iters, seriesIters...)
-		}
+	iters, err := s.buildSeriesByIndex(tabWrappers, seriesList, sso)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(iters) == 0 {
@@ -481,31 +478,13 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 	ces := newColumnElements()
 	for it.Next() {
 		nextItem := it.Val()
-		e, count, err := nextItem.Element()
-		if err != nil {
-			return nil, err
-		}
-		if len(tagProjIndex) != 0 {
-			for entity, offset := range tagProjIndex {
-				tagSpec := tagSpecIndex[entity]
-				if tagSpec.IndexedOnly {
-					continue
-				}
-				series := seriesList[sidToIndex[nextItem.seriesID]]
-				entityPos := entityMap[entity] - 1
-				e.tagFamilies[offset.FamilyOffset].tags[offset.TagOffset] = tag{
-					name:      entity,
-					values:    mustEncodeTagValue(entity, tagSpec.GetType(), series.EntityValues[entityPos], count),
-					valueType: pbv1.MustTagValueToValueType(series.EntityValues[entityPos]),
-				}
-			}
-		}
+		e := nextItem.element
 		ces.BuildFromElement(e, sso.TagProjection)
 		if len(ces.timestamp) >= sso.MaxElementSize {
 			break
 		}
 	}
-	return ces, nil
+	return ces, err
 }
 
 func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {
