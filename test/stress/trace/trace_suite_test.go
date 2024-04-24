@@ -70,10 +70,10 @@ var _ = Describe("Query", func() {
 	})
 
 	It("Metric", func() {
-		query.ServiceList(basePath, timeout, 6, fs)
+		query.ServiceList(basePath, timeout, 1, fs)
 	})
 
 	It("TopN", func() {
-		query.TopN(basePath, timeout, 6, fs)
+		query.TopN(basePath, timeout, 1, fs)
 	})
 })

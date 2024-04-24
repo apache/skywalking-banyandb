@@ -25,7 +25,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -53,15 +52,14 @@ func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTa
 	if !tl.valid() {
 		return nil, fmt.Errorf("sorted tag %s not found in tag projection", sortedTag)
 	}
-	var pl posting.List
 	for _, tw := range tableWrappers {
 		seriesFilter := make(map[common.SeriesID]filterFn)
 		if sso.Filter != nil {
 			for i := range sids {
-				pl, err = sso.Filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+				pl, errExe := sso.Filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
 					return tw.Table().Index().store, nil
 				}, sids[i])
-				if err != nil {
+				if errExe != nil {
 					return nil, err
 				}
 

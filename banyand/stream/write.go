@@ -78,13 +78,13 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 	shardID := common.ShardID(writeEvent.ShardId)
 	if et == nil {
-		tstb, err := tsdb.CreateTSTableIfNotExist(shardID, t)
+		tsdb, err := tsdb.CreateTSTableIfNotExist(shardID, t)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
 		et = &elementsInTable{
-			timeRange: tstb.GetTimeRange(),
-			tsTable:   tstb,
+			timeRange: tsdb.GetTimeRange(),
+			tsTable:   tsdb,
 		}
 		eg.tables = append(eg.tables, et)
 	}

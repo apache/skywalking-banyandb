@@ -74,18 +74,20 @@ type database[T TSTable, O any] struct {
 	scheduler       *timestamp.Scheduler
 	p               common.Position
 	location        string
-	sLst            []*shard[T, O]
+	sLst            atomic.Pointer[[]*shard[T, O]]
 	opts            TSDBOpts[T, O]
 	sync.RWMutex
-	sLen uint32
 }
 
 func (d *database[T, O]) Close() error {
 	d.Lock()
 	defer d.Unlock()
 	d.scheduler.Close()
-	for _, s := range d.sLst {
-		s.close()
+	sLst := d.sLst.Load()
+	if sLst != nil {
+		for _, s := range *sLst {
+			s.close()
+		}
 	}
 	d.lock.Close()
 	if err := lfs.DeleteFile(d.lock.Path()); err != nil {
@@ -139,58 +141,77 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 }
 
 func (d *database[T, O]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {
-	id := uint32(shardID)
-	if id >= atomic.LoadUint32(&d.sLen) {
-		return func() (TSTableWrapper[T], error) {
-			d.Lock()
-			defer d.Unlock()
-			if int(id) >= len(d.sLst) {
-				for i := len(d.sLst); i <= int(id); i++ {
-					d.logger.Info().Int("shard_id", i).Msg("creating a shard")
-					if err := d.registerShard(i); err != nil {
-						return nil, err
-					}
-				}
-			}
-			return d.createTSTTable(shardID, ts)
-		}()
+	if s, ok := d.getShard(shardID); ok {
+		d.RLock()
+		defer d.RUnlock()
+		return d.createTSTTable(s, ts)
 	}
-	d.RLock()
-	defer d.RUnlock()
-	return d.createTSTTable(shardID, ts)
+	d.Lock()
+	defer d.Unlock()
+	if s, ok := d.getShard(shardID); ok {
+		return d.createTSTTable(s, ts)
+	}
+	d.logger.Info().Int("shard_id", int(shardID)).Msg("creating a shard")
+	s, err := d.registerShard(shardID)
+	if err != nil {
+		return nil, err
+	}
+	return d.createTSTTable(s, ts)
 }
 
-func (d *database[T, O]) createTSTTable(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {
+func (d *database[T, O]) getShard(shardID common.ShardID) (*shard[T, O], bool) {
+	sLst := d.sLst.Load()
+	if sLst != nil {
+		for _, s := range *sLst {
+			if s.id == shardID {
+				return s, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (d *database[T, O]) createTSTTable(shard *shard[T, O], ts time.Time) (TSTableWrapper[T], error) {
 	timeRange := timestamp.NewInclusiveTimeRange(ts, ts)
-	ss := d.sLst[shardID].segmentController.selectTSTables(timeRange)
+	ss := shard.segmentController.selectTSTables(timeRange)
 	if len(ss) > 0 {
 		return ss[0], nil
 	}
-	return d.sLst[shardID].segmentController.createTSTable(ts)
+	return shard.segmentController.createTSTable(ts)
 }
 
 func (d *database[T, O]) SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T] {
 	var result []TSTableWrapper[T]
-	d.RLock()
-	for i := range d.sLst {
-		result = append(result, d.sLst[i].segmentController.selectTSTables(timeRange)...)
+	sLst := d.sLst.Load()
+	if sLst == nil {
+		return result
 	}
-	d.RUnlock()
+	for _, s := range *sLst {
+		result = append(result, s.segmentController.selectTSTables(timeRange)...)
+	}
 	return result
 }
 
-func (d *database[T, O]) registerShard(id int) error {
+func (d *database[T, O]) registerShard(id common.ShardID) (*shard[T, O], error) {
+	if s, ok := d.getShard(id); ok {
+		return s, nil
+	}
 	ctx := context.WithValue(context.Background(), logger.ContextKey, d.logger)
 	ctx = common.SetPosition(ctx, func(p common.Position) common.Position {
 		return d.p
 	})
-	so, err := d.openShard(ctx, common.ShardID(id))
+	so, err := d.openShard(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	d.sLst = append(d.sLst, so)
-	d.sLen++
-	return nil
+	var shardList []*shard[T, O]
+	sLst := d.sLst.Load()
+	if sLst != nil {
+		shardList = *sLst
+	}
+	shardList = append(shardList, so)
+	d.sLst.Store(&shardList)
+	return so, nil
 }
 
 func (d *database[T, O]) loadDatabase() error {
@@ -204,8 +225,9 @@ func (d *database[T, O]) loadDatabase() error {
 		if shardID >= int(d.opts.ShardNum) {
 			return nil
 		}
-		d.logger.Info().Int("shard_id", shardID).Msg("opening a existed shard")
-		return d.registerShard(shardID)
+		d.logger.Info().Int("shard_id", shardID).Msg("loaded a existed shard")
+		_, err = d.registerShard(common.ShardID(shardID))
+		return err
 	})
 }
 
