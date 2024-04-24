@@ -46,7 +46,7 @@ Each shard in TSDB is responsible for storing a subset of the time-series data. 
 
 When a shard receives a write request, the data is written to the buffer as a memory part. Meanwhile, the series index and inverted index will also be updated. The worker in the background periodically flushes data, writing the memory part to the disk. After the flush operation is completed, it triggers a merge operation to combine the parts and remove invalid data. 
 
-Whenever a new memory part is generated, or when a flush or merge operation is triggered, they initiate an update of the snapshot and delete outdated snapshots.
+Whenever a new memory part is generated, or when a flush or merge operation is triggered, they initiate an update of the snapshot and delete outdated snapshots. The parts in a persistent snapshot could be accessible to the reader.
 
 ## Read Path
 
