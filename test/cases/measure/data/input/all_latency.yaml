@@ -15,9 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-metadata:
-  name: "service_latency_minute"
-  group: "sw_metric"
+name: "service_latency_minute"
+groups: ["sw_metric"]
 tagProjection:
   tagFamilies:
   - name: "storage_only"

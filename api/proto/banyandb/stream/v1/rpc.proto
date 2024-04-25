@@ -29,12 +29,12 @@ option java_package = "org.apache.skywalking.banyandb.stream.v1";
 option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_path: "/api"};
 
 service StreamService {
-  rpc Query(banyandb.stream.v1.QueryRequest) returns (banyandb.stream.v1.QueryResponse) {
+  rpc Query(QueryRequest) returns (QueryResponse) {
     option (google.api.http) = {
       post: "/v1/stream/data"
       body: "*"
     };
   }
 
-  rpc Write(stream banyandb.stream.v1.WriteRequest) returns (stream banyandb.stream.v1.WriteResponse);
+  rpc Write(stream WriteRequest) returns (stream WriteResponse);
 }

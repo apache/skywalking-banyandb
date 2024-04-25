@@ -107,13 +107,8 @@ const shortcuts = [
     },
 ]
 const param = {
-    metadata: {
-        group: '',
-        name: '',
-        createRevision: '',
-        modRevision: '',
-        id: ''
-    },
+    groups: [],
+    name: '',
     offset: null,
     limit: null,
     //criteria: {},
@@ -250,7 +245,8 @@ function getTableData() {
     }
     /* paramList.offset = data.queryInfo.pagenum
     paramList.limit = data.queryInfo.pagesize */
-    paramList.metadata = data.resourceData.metadata
+    paramList.name = data.resourceData.metadata.name
+    paramList.groups = [data.resourceData.metadata.group]
     getTableList(paramList, data.type)
         .then((res) => {
             if (res.status == 200) {

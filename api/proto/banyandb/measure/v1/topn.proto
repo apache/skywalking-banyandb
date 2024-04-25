@@ -19,7 +19,6 @@ syntax = "proto3";
 
 package banyandb.measure.v1;
 
-import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/common.proto";
 import "banyandb/model/v1/query.proto";
 import "google/protobuf/timestamp.proto";
@@ -49,17 +48,19 @@ message TopNResponse {
 
 // TopNRequest is the request contract for query.
 message TopNRequest {
-  // metadata is required
-  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  // groups indicate where the data points are stored.
+  repeated string groups = 1 [(validate.rules).repeated.min_items = 1];
+  // name is the identity of a measure.
+  string name = 2 [(validate.rules).string.min_len = 1];
   // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
-  model.v1.TimeRange time_range = 2 [(validate.rules).message.required = true];
+  model.v1.TimeRange time_range = 3 [(validate.rules).message.required = true];
   // top_n set the how many items should be returned in each list.
-  int32 top_n = 3 [(validate.rules).int32.gt = 0];
+  int32 top_n = 4 [(validate.rules).int32.gt = 0];
   // agg aggregates lists grouped by field names in the time_range
   // TODO validate enum defined_only
-  model.v1.AggregationFunction agg = 4;
+  model.v1.AggregationFunction agg = 5;
   // criteria select counters. Only equals are acceptable.
-  repeated model.v1.Condition conditions = 5;
+  repeated model.v1.Condition conditions = 6;
   // field_value_sort indicates how to sort fields
-  model.v1.Sort field_value_sort = 6;
+  model.v1.Sort field_value_sort = 7;
 }

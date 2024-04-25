@@ -15,9 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-metadata:
-  name: "service_instance_traffic"
-  group: "sw_metric"
+name: "service_instance_traffic"
+groups: ["sw_metric"]
 tagProjection:
   tagFamilies:
   - name: "default"

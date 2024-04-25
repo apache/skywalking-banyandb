@@ -113,21 +113,36 @@ func parseFromYAML(tryParseGroup bool, reader io.Reader) (requests []reqBody, er
 		if err != nil {
 			return nil, err
 		}
-		metadata, ok := data["metadata"].(map[string]interface{})
-		if !ok {
-			return nil, errors.WithMessage(errMalformedInput, "absent node: metadata")
-		}
-		group, ok := metadata["group"].(string)
-		if !ok && tryParseGroup {
-			group = viper.GetString("group")
-			if group == "" {
-				return nil, errors.New("please specify a group through the input json or the config file")
+
+		var group string
+		// TODO:// bydbctl should support multiple groups
+		if metadata, ok := data["metadata"].(map[string]interface{}); ok {
+			group, ok = metadata["group"].(string)
+			if !ok && tryParseGroup {
+				group = viper.GetString("group")
+				if group == "" {
+					return nil, errors.New("please specify a group through the input json or the config file")
+				}
+				metadata["group"] = group
 			}
-			metadata["group"] = group
-		}
-		name, ok = metadata["name"].(string)
-		if !ok {
-			return nil, errors.WithMessage(errMalformedInput, "absent node: name in metadata")
+			name, ok = metadata["name"].(string)
+			if !ok {
+				return nil, errors.WithMessage(errMalformedInput, "absent node: name in metadata")
+			}
+		} else if name, ok = data["name"].(string); ok {
+			groups, ok := data["groups"].([]any)
+			if ok {
+				group = groups[0].(string)
+			}
+			if !ok && tryParseGroup {
+				group = viper.GetString("group")
+				if group == "" {
+					return nil, errors.New("please specify a group through the input json or the config file")
+				}
+				data["groups"] = []string{group}
+			}
+		} else {
+			return nil, errors.WithMessage(errMalformedInput, "absent node: metadata or name&group")
 		}
 		j, err = json.Marshal(data)
 		if err != nil {

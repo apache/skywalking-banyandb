@@ -79,7 +79,8 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	temp := &measurev1.QueryRequest{
 		TagProjection:   ud.originalQuery.TagProjection,
 		FieldProjection: ud.originalQuery.FieldProjection,
-		Metadata:        ud.originalQuery.Metadata,
+		Name:            ud.originalQuery.Name,
+		Groups:          ud.originalQuery.Groups,
 		Criteria:        ud.originalQuery.Criteria,
 		Limit:           limit,
 		OrderBy:         ud.originalQuery.OrderBy,

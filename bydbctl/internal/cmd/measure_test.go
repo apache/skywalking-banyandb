@@ -213,9 +213,8 @@ var _ = Describe("Measure Data Query", func() {
 		rootCmd.SetArgs([]string{"measure", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
-metadata:
-  name: service_cpm_minute
-  group: sw_metric
+name: service_cpm_minute
+groups: ["sw_metric"]
 timeRange:
   begin: %s
   end: %s
@@ -255,9 +254,8 @@ tagProjection:
 		rootCmd.SetArgs(args)
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(`
-metadata:
- name: service_cpm_minute
- group: sw_metric
+name: service_cpm_minute
+groups: ["sw_metric"]
 tagProjection:
  tagFamilies:
    - name: default

@@ -28,7 +28,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -99,10 +98,8 @@ var _ = Describe("Load Test Suit", func() {
 			BaseTime:   now,
 		}
 		query := &streamv1.QueryRequest{
-			Metadata: &commonv1.Metadata{
-				Name:  "sw",
-				Group: "default",
-			},
+			Name:   "sw",
+			Groups: []string{"default"},
 			Projection: &modelv1.TagProjection{
 				TagFamilies: []*modelv1.TagProjection_TagFamily{
 					{

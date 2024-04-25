@@ -15,9 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-metadata:
-  group: "default"
-  name: "sw"
+name: "sw"
+groups: ["default"]
 projection:
   tagFamilies:
   - name: "searchable"
@@ -30,4 +29,4 @@ criteria:
     op: "BINARY_OP_HAVING"
     value:
       strArray:
-        value: ["b","c"]
+        value: ["b", "c"]

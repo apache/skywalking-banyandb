@@ -115,7 +115,7 @@ func newGroupCmd() *cobra.Command {
 				return request.req.SetPathParam("group", request.group).Delete(getPath("/api/v1/group/schema/{group}"))
 			},
 				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("group %s is deleted", reqBody.name)
+					fmt.Printf("group %s is deleted", reqBody.group)
 					fmt.Println()
 					return nil
 				}, enableTLS, insecure, grpcCert)
