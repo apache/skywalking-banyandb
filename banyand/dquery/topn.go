@@ -58,7 +58,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	now := bus.MessageID(request.TimeRange.Begin.Nanos)
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessage(now, request))
 	if err != nil {
-		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.Metadata.GetName(), err))
+		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), err))
 		return
 	}
 	var allErr error
@@ -92,7 +92,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		}
 	}
 	if allErr != nil {
-		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.Metadata.GetName(), allErr))
+		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), allErr))
 		return
 	}
 	if tags == nil {

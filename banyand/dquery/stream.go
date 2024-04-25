@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -46,8 +47,15 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if p.log.Debug().Enabled() {
 		p.log.Debug().RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a query request")
 	}
-
-	meta := queryCriteria.GetMetadata()
+	// TODO: support multiple groups
+	if len(queryCriteria.Groups) > 1 {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
+		return
+	}
+	meta := &commonv1.Metadata{
+		Name:  queryCriteria.Name,
+		Group: queryCriteria.Groups[0],
+	}
 	ec, err := p.streamService.Stream(meta)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))

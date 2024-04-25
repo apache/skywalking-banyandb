@@ -25,6 +25,7 @@ Release Notes.
 - Remove "TREE" index type. The "TREE" index type is merged into "INVERTED" index type.
 - Remove "Location" field on IndexRule. Currently, the location of index is in a segment.
 - Remove "BlockInterval" from Group. The block size is determined by the part.
+- Support querying multiple groups in one request.
 
 ### Bugs
 

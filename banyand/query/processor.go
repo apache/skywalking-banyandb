@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -75,8 +76,15 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if p.log.Debug().Enabled() {
 		p.log.Debug().RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a query request")
 	}
-
-	meta := queryCriteria.GetMetadata()
+	// TODO: support multiple groups
+	if len(queryCriteria.Groups) > 1 {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
+		return
+	}
+	meta := &commonv1.Metadata{
+		Name:  queryCriteria.Name,
+		Group: queryCriteria.Groups[0],
+	}
 	ec, err := p.streamService.Stream(meta)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
@@ -121,12 +129,20 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
-	ml := p.log.Named("measure", queryCriteria.Metadata.Group, queryCriteria.Metadata.Name)
+	// TODO: support multiple groups
+	if len(queryCriteria.Groups) > 1 {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
+		return
+	}
+	ml := p.log.Named("measure", queryCriteria.Groups[0], queryCriteria.Name)
 	if e := ml.Debug(); e.Enabled() {
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	meta := queryCriteria.GetMetadata()
+	meta := &commonv1.Metadata{
+		Name:  queryCriteria.Name,
+		Group: queryCriteria.Groups[0],
+	}
 	ec, err := p.measureService.Measure(meta)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))

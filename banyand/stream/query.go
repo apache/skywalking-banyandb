@@ -365,7 +365,7 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 	}
 	db := s.databaseSupplier.SupplyTSDB()
 	if db == nil {
-		return nil, errors.New("no tsdb found")
+		return sfr, nil
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
 	tabWrappers := tsdb.SelectTSTables(*sfo.TimeRange)
@@ -439,7 +439,7 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 	}
 	db := s.databaseSupplier.SupplyTSDB()
 	if db == nil {
-		return nil, errors.New("no tsdb found")
+		return ssr, nil
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
 	tabWrappers := tsdb.SelectTSTables(*sso.TimeRange)
@@ -495,8 +495,9 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		return nil, errors.New("invalid query options: tagProjection is required")
 	}
 	db := s.databaseSupplier.SupplyTSDB()
+	var result queryResult
 	if db == nil {
-		return nil, errors.New("no tsdb found")
+		return &result, nil
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
@@ -510,7 +511,6 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 		return nil, err
 	}
 
-	var result queryResult
 	if len(sl) < 1 {
 		return &result, nil
 	}

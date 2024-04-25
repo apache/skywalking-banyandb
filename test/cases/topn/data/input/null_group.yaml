@@ -15,9 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-metadata:
-  name: "service_instance_endpoint_cpm_minute_top_bottom_100"
-  group: "sw_metric"
+name: "service_instance_endpoint_cpm_minute_top_bottom_100"
+groups: ["sw_metric"]
 topN: 3
 fieldValueSort: 1
 agg: 2

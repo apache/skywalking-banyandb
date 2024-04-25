@@ -315,7 +315,7 @@ func (sic *seriesIndexController[T, O]) loadIdx() ([]string, error) {
 }
 
 func (sic *seriesIndexController[T, O]) newIdx(ctx context.Context) (*seriesIndex, error) {
-	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", time.Now().UnixNano()))
+	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", sic.clock.Now().UnixNano()))
 }
 
 func (sic *seriesIndexController[T, O]) openIdx(ctx context.Context, name string) (*seriesIndex, error) {

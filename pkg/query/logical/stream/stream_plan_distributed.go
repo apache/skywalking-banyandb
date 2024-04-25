@@ -69,7 +69,8 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	}
 	temp := &streamv1.QueryRequest{
 		Projection: ud.originalQuery.Projection,
-		Metadata:   ud.originalQuery.Metadata,
+		Name:       ud.originalQuery.Name,
+		Groups:     ud.originalQuery.Groups,
 		Criteria:   ud.originalQuery.Criteria,
 		Limit:      limit,
 		OrderBy:    ud.originalQuery.OrderBy,

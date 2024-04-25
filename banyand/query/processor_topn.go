@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -50,7 +51,12 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Warn().Msg("invalid event data type")
 		return
 	}
-	ml := t.log.Named("topn", request.Metadata.Group, request.Metadata.Name)
+	// TODO: support multiple groups
+	if len(request.Groups) > 1 {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
+		return
+	}
+	ml := t.log.Named("topn", request.Groups[0], request.Name)
 	if e := ml.Debug(); e.Enabled() {
 		e.RawJSON("req", logger.Proto(request)).Msg("received a topn event")
 	}
@@ -61,7 +67,10 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if e := t.log.Debug(); e.Enabled() {
 		e.Stringer("req", request).Msg("received a topN query event")
 	}
-	topNMetadata := request.GetMetadata()
+	topNMetadata := &commonv1.Metadata{
+		Name:  request.Name,
+		Group: request.Groups[0],
+	}
 	topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), topNMetadata)
 	if err != nil {
 		t.log.Error().Err(err).

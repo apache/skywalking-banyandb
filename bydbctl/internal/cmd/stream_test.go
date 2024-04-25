@@ -215,9 +215,8 @@ var _ = Describe("Stream Data Query", func() {
 		rootCmd.SetArgs([]string{"stream", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
-metadata:
-  name: sw
-  group: default
+name: sw
+groups: ["default"]
 timeRange:
   begin: %s
   end: %s
@@ -256,9 +255,8 @@ projection:
 		rootCmd.SetArgs(args)
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(`
-metadata:
-  name: sw
-  group: default
+name: sw
+groups: ["default"]
 projection:
   tagFamilies:
     - name: searchable

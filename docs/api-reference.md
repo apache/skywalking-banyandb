@@ -2319,7 +2319,8 @@ QueryRequest is the request contract for query.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is required |
+| groups | [string](#string) | repeated | groups indicate where the data points are stored. |
+| name | [string](#string) |  | name is the identity of a measure. |
 | time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
 | criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | tag_families are indexed. |
 | tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection can be used to select tags of the data points in the response |
@@ -2471,7 +2472,8 @@ TopNRequest is the request contract for query.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is required |
+| groups | [string](#string) | repeated | groups indicate where the data points are stored. |
+| name | [string](#string) |  | name is the identity of a measure. |
 | time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
 | top_n | [int32](#int32) |  | top_n set the how many items should be returned in each list. |
 | agg | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | agg aggregates lists grouped by field names in the time_range TODO validate enum defined_only |
@@ -2933,7 +2935,8 @@ QueryRequest is the request contract for query.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is required |
+| groups | [string](#string) | repeated | groups indicate where the elements are stored. |
+| name | [string](#string) |  | name is the identity of a stream. |
 | time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. In the context of stream, it represents the range of the `startTime` for spans/segments, while in the context of Log, it means the range of the timestamp(s) for logs. it is always recommended to specify time range for performance reason |
 | offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
 | limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned |

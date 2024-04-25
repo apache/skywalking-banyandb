@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -43,12 +44,20 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
-	ml := p.log.Named("measure", queryCriteria.Metadata.Group, queryCriteria.Metadata.Name)
+	// TODO: support multiple groups
+	if len(queryCriteria.Groups) > 1 {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
+		return
+	}
+	ml := p.log.Named("measure", queryCriteria.Groups[0], queryCriteria.Name)
 	if e := ml.Debug(); e.Enabled() {
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	meta := queryCriteria.GetMetadata()
+	meta := &commonv1.Metadata{
+		Name:  queryCriteria.Name,
+		Group: queryCriteria.Groups[0],
+	}
 	ec, err := p.measureService.Measure(meta)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
