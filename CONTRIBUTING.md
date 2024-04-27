@@ -75,7 +75,7 @@ Finally, run `make build` in the source directory, which will build the default 
 make build
 ```
 
-Please refer to the [installation](./docs/installation.md) for more details.
+Please refer to the [installation](./docs/installation/binaries.md) for more details.
 
 Test your changes before submitting them by
 
