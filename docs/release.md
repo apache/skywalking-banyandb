@@ -75,7 +75,7 @@ Keys to verify the Release Candidate :
 
 Guide to build the release from source :
 
- * https://github.com/apache/skywalking-banyandb/blob/v$VERSION/docs/installation.md
+ * https://github.com/apache/skywalking-banyandb/blob/v$VERSION/docs/installation/binaries.md
 
 Voting will start now and will remain open for at least 72 hours, all PMC members are required to give their votes.
 
