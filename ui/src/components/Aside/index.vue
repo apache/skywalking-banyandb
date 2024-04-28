@@ -37,6 +37,20 @@ const ruleForm = ref()
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = proxy.$loadingClose
 
+// catalog to group type
+const catalogToGroupType = {
+    'CATALOG_MEASURE': 'measure',
+    'CATALOG_STREAM': 'stream',
+    'CATALOG_UNSPECIFIED': 'property'
+}
+
+// group type to catalog
+const groupTypeToCatalog = {
+    'measure': 'CATALOG_MEASURE',
+    'stream': 'CATALOG_STREAM',
+    'property': 'CATALOG_UNSPECIFIED'
+}
+
 // Data
 const data = reactive({
     groupLists: [],
@@ -378,13 +392,8 @@ function getGroupLists() {
     $loadingClose()
 }
 function deleteOtherGroup() {
-    let flag = {
-        'CATALOG_MEASURE': 'measure',
-        'CATALOG_STREAM': 'stream',
-        'CATALOG_UNSPECIFIED': 'property'
-    }
     for (let i = 0; i < data.groupLists.length; i++) {
-        let type = flag[data.groupLists[i].catalog]
+        let type = catalogToGroupType[data.groupLists[i].catalog]
         if (type !== props.type) {
             data.groupLists.splice(i, 1)
             i--
@@ -629,6 +638,7 @@ function openSecondaryDataModel(index, childIndex, type, schema) {
 }
 function openCreateGroup() {
     data.setGroup = 'create'
+    data.groupForm.catalog = groupTypeToCatalog[props.type]
     data.dialogGroupVisible = true
 }
 function openEditGroup() {
@@ -1054,25 +1064,6 @@ initActiveMenu()
                                 </div>
                             </div>
                         </el-sub-menu>
-                        <!-- <div v-if="props.type == 'property'">
-                            <div v-for="(child, childIndex) in item.children" :key="child.metadata.id">
-                                <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">
-                                    <el-menu-item
-                                        :index="`${child.metadata.container.group}-${child.metadata.container.name}`"
-                                        @click="openResources(index, childIndex)">
-                                        <template #title>
-                                            <el-icon>
-                                                <Document />
-                                            </el-icon>
-                                            <span slot="title" :title="child.metadata.container.name" style="width: 90%"
-                                                class="text-overflow-hidden">
-                                                {{ child.metadata.container.name }}
-                                            </span>
-                                        </template>
-                                    </el-menu-item>
-                                </div>
-                            </div>
-                        </div> -->
                     </el-sub-menu>
                 </div>
             </el-menu>
@@ -1093,9 +1084,9 @@ initActiveMenu()
                 </el-form-item>
                 <el-form-item label="group type" :label-width="data.formLabelWidth" prop="catalog">
                     <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
-                        <el-option label="CATALOG_STREAM" value="CATALOG_STREAM"></el-option>
-                        <el-option label="CATALOG_MEASURE" value="CATALOG_MEASURE"></el-option>
-                        <el-option label="CATALOG_UNSPECIFIED" value="CATALOG_UNSPECIFIED"></el-option>
+                        <el-option label="Stream" value="CATALOG_STREAM"></el-option>
+                        <el-option label="Measure" value="CATALOG_MEASURE"></el-option>
+                        <el-option label="Unspecified(Property)" value="CATALOG_UNSPECIFIED"></el-option>
                     </el-select>
                 </el-form-item>
                 <el-form-item label="shard num" :label-width="data.formLabelWidth" prop="shardNum">
@@ -1103,8 +1094,8 @@ initActiveMenu()
                 </el-form-item>
                 <el-form-item label="segment interval unit" :label-width="data.formLabelWidth" prop="segmentIntervalUnit">
                     <el-select v-model="data.groupForm.segmentIntervalUnit" placeholder="please select" style="width: 100%">
-                        <el-option label="UNIT_HOUR" value="UNIT_HOUR"></el-option>
-                        <el-option label="UNIT_DAY" value="UNIT_DAY"></el-option>
+                        <el-option label="Hour" value="UNIT_HOUR"></el-option>
+                        <el-option label="Day" value="UNIT_DAY"></el-option>
                     </el-select>
                 </el-form-item>
                 <el-form-item label="segment interval num" :label-width="data.formLabelWidth" prop="segmentIntervalNum">
@@ -1112,8 +1103,8 @@ initActiveMenu()
                 </el-form-item>
                 <el-form-item label="ttl unit" :label-width="data.formLabelWidth" prop="ttlUnit">
                     <el-select v-model="data.groupForm.ttlUnit" placeholder="please select" style="width: 100%">
-                        <el-option label="UNIT_HOUR" value="UNIT_HOUR"></el-option>
-                        <el-option label="UNIT_DAY" value="UNIT_DAY"></el-option>
+                        <el-option label="Hour" value="UNIT_HOUR"></el-option>
+                        <el-option label="Day" value="UNIT_DAY"></el-option>
                     </el-select>
                 </el-form-item>
                 <el-form-item label="ttl num" :label-width="data.formLabelWidth" prop="ttlNum">

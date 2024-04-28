@@ -20,6 +20,7 @@
 const path = require('path');
 const fs = require('fs');
 const jsonfile = require('jsonfile');
+const semver = require('semver');
 const packageJsonPath = path.join(process.cwd(), 'package.json')
 
 fs.accessSync(packageJsonPath);
@@ -29,13 +30,12 @@ if (!engines) {
   process.exit(1); 
 }
 const nodeVersion = engines['node']
-const desired = `v${nodeVersion}`
 const running = process.version;
 
-if (!running.startsWith(desired)) {
+if (semver.lt(running, nodeVersion)) {
   console.error(
-    `You are running Node ${running} but version ${desired} is expected. ` +
-      `Use nvm or another version manager to install ${desired}, and then activate it.`
+    `You are running Node ${running} but version ^${nodeVersion} is expected. ` +
+      `Use nvm or another version manager to install ${nodeVersion}, and then activate it.`
   );
   process.exit(1);
 }

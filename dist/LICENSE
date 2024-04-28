@@ -417,8 +417,11 @@ ISC licenses
     anymatch 3.1.3 ISC
     glob-parent 5.1.2 ISC
     graceful-fs 4.2.11 ISC
+    lru-cache 6.0.0 ISC
     picocolors 1.0.0 ISC
-    yaml 2.4.1 ISC
+    semver 7.6.0 ISC
+    yallist 4.0.0 ISC
+    yaml 2.4.2 ISC
 
 ========================================================================
 MIT licenses
@@ -438,7 +441,6 @@ MIT licenses
     @vue/compiler-core 3.4.25 MIT
     @vue/compiler-dom 3.4.25 MIT
     @vue/compiler-sfc 3.4.25 MIT
-    @vue/compiler-sfc/node_modules/magic-string 0.30.10 MIT
     @vue/compiler-ssr 3.4.25 MIT
     @vue/devtools-api 6.6.1 MIT
     @vue/reactivity 3.4.25 MIT
@@ -478,6 +480,7 @@ MIT licenses
     lodash 4.17.21 MIT
     lodash-es 4.17.21 MIT
     lodash-unified 1.0.3 MIT
+    magic-string 0.30.10 MIT
     memoize-one 6.0.0 MIT
     mime-db 1.52.0 MIT
     mime-types 2.1.35 MIT
