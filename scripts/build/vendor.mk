@@ -22,4 +22,4 @@
 .PHONY: vendor-update
 vendor-update: ## Update vendors
 	go get -u -d ./...
-	go mod tidy -compat=1.21
+	go mod tidy -compat=1.22

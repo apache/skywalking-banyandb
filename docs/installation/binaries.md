@@ -12,7 +12,7 @@ Get binaries from the [download](https://skywalking.apache.org/downloads/).
 
 Users who want to build a binary from sources have to set up:
 
-* Go 1.21
+* Go 1.22
 * Node 20.9
 * Git >= 2.30
 * Linux, macOS or Windows+WSL2
