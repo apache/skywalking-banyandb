@@ -24,6 +24,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/api/validate"
 )
 
 var streamKeyPrefix = "/streams/"
@@ -52,6 +53,20 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 }
 
 func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) (int64, error) {
+	if stream.UpdatedAt != nil {
+		stream.UpdatedAt = timestamppb.Now()
+	}
+	if err := validate.Stream(stream); err != nil {
+		return 0, err
+	}
+	group := stream.Metadata.GetGroup()
+	g, err := e.GetGroup(ctx, group)
+	if err != nil {
+		return 0, err
+	}
+	if err := validate.GroupForStreamOrMeasure(g); err != nil {
+		return 0, err
+	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:        KindStream,
@@ -67,9 +82,15 @@ func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev
 	if stream.UpdatedAt != nil {
 		stream.UpdatedAt = timestamppb.Now()
 	}
+	if err := validate.Stream(stream); err != nil {
+		return 0, err
+	}
 	group := stream.Metadata.GetGroup()
-	_, err := e.GetGroup(ctx, group)
+	g, err := e.GetGroup(ctx, group)
 	if err != nil {
+		return 0, err
+	}
+	if err := validate.GroupForStreamOrMeasure(g); err != nil {
 		return 0, err
 	}
 	return e.create(ctx, Metadata{

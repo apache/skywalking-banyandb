@@ -73,10 +73,6 @@ const typeOptions = [
     {
         value: 'TAG_TYPE_DATA_BINARY',
         label: 'DATA_BINARY'
-    },
-    {
-        value: 'TAG_TYPE_UNSPECIFIED',
-        label: 'UNSPECIFIED'
     }
 ]
 const validateTag = (rule: any, value: any, callback: any) => {

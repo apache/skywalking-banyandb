@@ -59,10 +59,10 @@ const data = reactive({
         name: null,
         catalog: 'CATALOG_STREAM',
         shardNum: 1,
-        segmentIntervalUnit: "UNIT_UNSPECIFIED",
+        segmentIntervalUnit: "UNIT_DAY",
         segmentIntervalNum: 1,
-        ttlUnit: "UNIT_UNSPECIFIED",
-        ttlNum: 1
+        ttlUnit: "UNIT_DAY",
+        ttlNum: 3
     },
     activeMenu: '',
     search: '',
@@ -868,10 +868,10 @@ function clearGroupForm() {
         name: null,
         catalog: 'CATALOG_STREAM',
         shardNum: 1,
-        segmentIntervalUnit: "UNIT_UNSPECIFIED",
+        segmentIntervalUnit: "UNIT_DAY",
         segmentIntervalNum: 1,
-        ttlUnit: "UNIT_UNSPECIFIED",
-        ttlNum: 1
+        ttlUnit: "UNIT_DAY",
+        ttlNum: 3
     }
 }
 function initActiveMenu() {
@@ -1103,7 +1103,6 @@ initActiveMenu()
                 </el-form-item>
                 <el-form-item label="segment interval unit" :label-width="data.formLabelWidth" prop="segmentIntervalUnit">
                     <el-select v-model="data.groupForm.segmentIntervalUnit" placeholder="please select" style="width: 100%">
-                        <el-option label="UNIT_UNSPECIFIED" value="UNIT_UNSPECIFIED"></el-option>
                         <el-option label="UNIT_HOUR" value="UNIT_HOUR"></el-option>
                         <el-option label="UNIT_DAY" value="UNIT_DAY"></el-option>
                     </el-select>
@@ -1113,7 +1112,6 @@ initActiveMenu()
                 </el-form-item>
                 <el-form-item label="ttl unit" :label-width="data.formLabelWidth" prop="ttlUnit">
                     <el-select v-model="data.groupForm.ttlUnit" placeholder="please select" style="width: 100%">
-                        <el-option label="UNIT_UNSPECIFIED" value="UNIT_UNSPECIFIED"></el-option>
                         <el-option label="UNIT_HOUR" value="UNIT_HOUR"></el-option>
                         <el-option label="UNIT_DAY" value="UNIT_DAY"></el-option>
                     </el-select>

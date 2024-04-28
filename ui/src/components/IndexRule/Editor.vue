@@ -60,10 +60,6 @@ const rules = {
 }
 const typeList = [
   {
-    label: "TYPE_UNSPECIFIED",
-    value: "TYPE_UNSPECIFIED"
-  },
-  {
     label: "TYPE_INVERTED",
     value: "TYPE_INVERTED"
   }

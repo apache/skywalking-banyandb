@@ -80,10 +80,6 @@ const rules = {
 }
 const fieldValueSortList = [
   {
-    label: "SORT_UNSPECIFIED",
-    value: "SORT_UNSPECIFIED"
-  },
-  {
     label: "SORT_DESC",
     value: "SORT_DESC"
   },

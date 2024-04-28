@@ -24,6 +24,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/api/validate"
 )
 
 var topNAggregationKeyPrefix = "/topnagg/"
@@ -55,6 +56,9 @@ func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggr
 	if topNAggregation.UpdatedAt != nil {
 		topNAggregation.UpdatedAt = timestamppb.Now()
 	}
+	if err := validate.TopNAggregation(topNAggregation); err != nil {
+		return err
+	}
 	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTopNAggregation,
@@ -67,6 +71,12 @@ func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggr
 }
 
 func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggregation *databasev1.TopNAggregation) error {
+	if topNAggregation.UpdatedAt != nil {
+		topNAggregation.UpdatedAt = timestamppb.Now()
+	}
+	if err := validate.TopNAggregation(topNAggregation); err != nil {
+		return err
+	}
 	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTopNAggregation,
