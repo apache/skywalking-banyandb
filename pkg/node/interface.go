@@ -52,7 +52,7 @@ func NewPickFirstSelector() (Selector, error) {
 // pickFirstSelector always pick the first node in the sorted node ids list.
 type pickFirstSelector struct {
 	nodeIDMap map[string]struct{}
-	nodeIds   []string
+	nodeIDs   []string
 	mu        sync.RWMutex
 }
 
@@ -67,8 +67,8 @@ func (p *pickFirstSelector) AddNode(node *databasev1.Node) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.nodeIDMap[nodeID] = struct{}{}
-	p.nodeIds = append(p.nodeIds, nodeID)
-	slices.Sort(p.nodeIds)
+	p.nodeIDs = append(p.nodeIDs, nodeID)
+	slices.Sort(p.nodeIDs)
 }
 
 func (p *pickFirstSelector) RemoveNode(node *databasev1.Node) {
@@ -82,20 +82,20 @@ func (p *pickFirstSelector) RemoveNode(node *databasev1.Node) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.nodeIDMap, nodeID)
-	idx, ok := slices.BinarySearch(p.nodeIds, nodeID)
+	idx, ok := slices.BinarySearch(p.nodeIDs, nodeID)
 	if !ok {
 		return
 	}
-	p.nodeIds = slices.Delete(p.nodeIds, idx, idx+1)
+	p.nodeIDs = slices.Delete(p.nodeIDs, idx, idx+1)
 }
 
 func (p *pickFirstSelector) Pick(_, _ string, _ uint32) (string, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if len(p.nodeIds) == 0 {
+	if len(p.nodeIDs) == 0 {
 		return "", ErrNoAvailableNode
 	}
-	return p.nodeIds[0], nil
+	return p.nodeIDs[0], nil
 }
 
 func formatSearchKey(group, name string, shardID uint32) string {

@@ -72,7 +72,7 @@ func RunServiceName(t *testing.T, store SimpleStore) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(_ *testing.T) {
 			list, err := store.MatchTerms(tt.arg)
 			if tt.wantErr {
 				tester.Error(err)

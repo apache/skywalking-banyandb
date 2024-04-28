@@ -289,7 +289,7 @@ func getBitInt64Arr() []int64 {
 func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	metaBuffer, dataBuffer := &bytes.Buffer{}, &bytes.Buffer{}
 	ww := &writers{
-		mustCreateTagFamilyWriters: func(name string) (fs.Writer, fs.Writer) {
+		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer) {
 			return metaBuffer, dataBuffer
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),
@@ -355,7 +355,7 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	timestampWriter.init(timestampBuffer)
 	fieldWriter.init(fieldBuffer)
 	ww := &writers{
-		mustCreateTagFamilyWriters: func(name string) (fs.Writer, fs.Writer) {
+		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer) {
 			return &bytes.Buffer{}, &bytes.Buffer{}
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),

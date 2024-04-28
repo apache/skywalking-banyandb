@@ -60,7 +60,7 @@ func TestStore_Search(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.term), func(t *testing.T) {
+		t.Run(string(tt.term), func(_ *testing.T) {
 			got, err := s.Search(tt.term)
 			tester.NoError(err)
 			tester.Equal(tt.want, got)
@@ -131,7 +131,7 @@ func TestStore_SearchWildcard(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.wildcard), func(t *testing.T) {
+		t.Run(string(tt.wildcard), func(_ *testing.T) {
 			got, err := s.SearchWildcard(tt.wildcard)
 			tester.NoError(err)
 			tester.ElementsMatch(tt.want, got)
@@ -184,7 +184,7 @@ func TestStore_SearchPrefix(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.prefix), func(t *testing.T) {
+		t.Run(string(tt.prefix), func(_ *testing.T) {
 			got, err := s.SearchPrefix(tt.prefix)
 			tester.NoError(err)
 			tester.ElementsMatch(tt.want, got)

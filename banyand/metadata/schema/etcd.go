@@ -426,6 +426,7 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata, fo
 	if err != nil {
 		return err
 	}
+	// nolint:contextcheck
 	go func() {
 		if !e.closer.AddRunning() {
 			return

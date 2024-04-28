@@ -36,6 +36,7 @@ var TopicMap = map[string]bus.Topic{
 }
 
 // TopicRequestMap is the map of topic name to request message.
+// nolint: exhaustruct
 var TopicRequestMap = map[bus.Topic]func() proto.Message{
 	TopicStreamWrite: func() proto.Message {
 		return &streamv1.InternalWriteRequest{}
@@ -55,6 +56,7 @@ var TopicRequestMap = map[bus.Topic]func() proto.Message{
 }
 
 // TopicResponseMap is the map of topic name to response message.
+// nolint: exhaustruct
 var TopicResponseMap = map[bus.Topic]func() proto.Message{
 	TopicStreamQuery: func() proto.Message {
 		return &streamv1.QueryResponse{}

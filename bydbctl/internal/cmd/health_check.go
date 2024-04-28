@@ -52,8 +52,8 @@ func newHealthCheckCmd() *cobra.Command {
 				}, yamlPrinter, enableTLS, insecure, grpcCert)
 			}
 			if enableTLS {
-				// #nosec G402
 				config := &tls.Config{
+					// #nosec G402
 					InsecureSkipVerify: insecure,
 				}
 				if grpcCert != "" {

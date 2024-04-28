@@ -69,7 +69,7 @@ func (e *elementIndex) Write(docs index.Documents) error {
 func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) ([]elementRef, error) {
 	pm := make(map[common.SeriesID][]uint64)
 	for _, series := range seriesList {
-		pl, err := filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+		pl, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return e.store, nil
 		}, series.ID)
 		if err != nil {

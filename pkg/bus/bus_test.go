@@ -29,7 +29,7 @@ import (
 func TestBus_PubAndSub(t *testing.T) {
 	type message struct {
 		topic      Topic
-		messageIDS []MessageID
+		messageIDs []MessageID
 		wantRet    []MessageID
 		wantErr    bool
 	}
@@ -49,7 +49,7 @@ func TestBus_PubAndSub(t *testing.T) {
 			messages: []message{
 				{
 					topic:      BiTopic("default"),
-					messageIDS: []MessageID{12, 33},
+					messageIDs: []MessageID{12, 33},
 					wantRet:    []MessageID{22, 43},
 				},
 			},
@@ -66,11 +66,11 @@ func TestBus_PubAndSub(t *testing.T) {
 			messages: []message{
 				{
 					topic:      UniTopic("t1"),
-					messageIDS: []MessageID{12, 33},
+					messageIDs: []MessageID{12, 33},
 				},
 				{
 					topic:      UniTopic("t2"),
-					messageIDS: []MessageID{101, 102},
+					messageIDs: []MessageID{101, 102},
 				},
 			},
 			listeners: []listener{
@@ -89,11 +89,11 @@ func TestBus_PubAndSub(t *testing.T) {
 			messages: []message{
 				{
 					topic:      UniTopic("t1"),
-					messageIDS: []MessageID{12, 33},
+					messageIDs: []MessageID{12, 33},
 				},
 				{
 					topic:      UniTopic("t2"),
-					messageIDS: []MessageID{101, 102},
+					messageIDs: []MessageID{101, 102},
 				},
 			},
 			listeners: []listener{
@@ -120,7 +120,7 @@ func TestBus_PubAndSub(t *testing.T) {
 			messages: []message{
 				{
 					topic:      UniTopic(""),
-					messageIDS: []MessageID{12, 33},
+					messageIDs: []MessageID{12, 33},
 					wantErr:    true,
 				},
 			},
@@ -130,7 +130,7 @@ func TestBus_PubAndSub(t *testing.T) {
 			messages: []message{
 				{
 					topic:      UniTopic("default"),
-					messageIDS: []MessageID{},
+					messageIDs: []MessageID{},
 				},
 			},
 			listeners: []listener{
@@ -172,7 +172,7 @@ func TestBus_PubAndSub(t *testing.T) {
 			}
 			for _, m := range tt.messages {
 				mm := make([]Message, 0)
-				for _, id := range m.messageIDS {
+				for _, id := range m.messageIDs {
 					mm = append(mm, NewMessage(id, nil))
 				}
 				f, err := e.Publish(m.topic, mm...)

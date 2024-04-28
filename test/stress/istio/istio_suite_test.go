@@ -228,7 +228,7 @@ func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) (int, error) {
 func printDiskUsage(dir string, maxDepth, curDepth int) {
 	// Calculate the total size of all files and directories within the directory
 	var totalSize int64
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}

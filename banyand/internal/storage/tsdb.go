@@ -197,7 +197,7 @@ func (d *database[T, O]) registerShard(id common.ShardID) (*shard[T, O], error) 
 		return s, nil
 	}
 	ctx := context.WithValue(context.Background(), logger.ContextKey, d.logger)
-	ctx = common.SetPosition(ctx, func(p common.Position) common.Position {
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
 		return d.p
 	})
 	so, err := d.openShard(ctx, id)

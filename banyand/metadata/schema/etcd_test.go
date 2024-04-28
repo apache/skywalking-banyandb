@@ -142,7 +142,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 		{
 			name: "Get Group",
 			meta: &commonv1.Metadata{Name: "default"},
-			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
 				stm, innerErr := registry.GetGroup(context.TODO(), meta.GetName())
 				if innerErr != nil {
 					return nil, innerErr
@@ -153,7 +153,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 		{
 			name: "Get Stream",
 			meta: &commonv1.Metadata{Name: "sw", Group: "default"},
-			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
 				stm, innerErr := registry.GetStream(context.TODO(), meta)
 				if innerErr != nil {
 					return nil, innerErr
@@ -164,7 +164,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 		{
 			name: "Get IndexRuleBinding",
 			meta: &commonv1.Metadata{Name: "sw-index-rule-binding", Group: "default"},
-			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
 				e, innerErr := registry.GetIndexRuleBinding(context.TODO(), meta)
 				if innerErr != nil {
 					return nil, innerErr
@@ -175,7 +175,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 		{
 			name: "Get IndexRule",
 			meta: &commonv1.Metadata{Name: "db.instance", Group: "default"},
-			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
 				e, innerErr := registry.GetIndexRule(context.TODO(), meta)
 				if innerErr != nil {
 					return nil, innerErr
@@ -186,7 +186,7 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 		{
 			name: "Get unknown Measure",
 			meta: &commonv1.Metadata{Name: "unknown-stream", Group: "default"},
-			get: func(r Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
 				e, innerErr := registry.GetMeasure(context.TODO(), meta)
 				if innerErr != nil {
 					return nil, innerErr

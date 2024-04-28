@@ -78,7 +78,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		Use:     "liaison",
 		Version: version.Build(),
 		Short:   "Run as the liaison server",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			node, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort())
 			if err != nil {
 				return err

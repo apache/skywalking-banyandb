@@ -144,26 +144,26 @@ func (p *preloadService) Name() string {
 	return "preload-" + p.name
 }
 
-func (p *preloadService) PreRun(_ context.Context) error {
+func (p *preloadService) PreRun(ctx context.Context) error {
 	e := p.registry
-	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
-		return e.CreateGroup(context.TODO(), group)
+	if err := loadSchema(ctx, groupDir, &commonv1.Group{}, func(ctx context.Context, group *commonv1.Group) error {
+		return e.CreateGroup(ctx, group)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
-		_, innerErr := e.CreateMeasure(context.TODO(), measure)
+	if err := loadSchema(ctx, measureDir, &databasev1.Measure{}, func(ctx context.Context, measure *databasev1.Measure) error {
+		_, innerErr := e.CreateMeasure(ctx, measure)
 		return innerErr
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
-		return e.CreateIndexRule(context.TODO(), indexRule)
+	if err := loadSchema(ctx, indexRuleDir, &databasev1.IndexRule{}, func(ctx context.Context, indexRule *databasev1.IndexRule) error {
+		return e.CreateIndexRule(ctx, indexRule)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
-		return e.CreateIndexRuleBinding(context.TODO(), indexRuleBinding)
+	if err := loadSchema(ctx, indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+		return e.CreateIndexRuleBinding(ctx, indexRuleBinding)
 	}); err != nil {
 		return errors.WithStack(err)
 	}
@@ -181,7 +181,7 @@ const (
 	indexRuleBindingDir = "testdata/index-rule-bindings"
 )
 
-func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T) error) error {
+func loadSchema[T proto.Message](ctx context.Context, dir string, resource T, loadFn func(ctx context.Context, resource T) error) error {
 	entries, err := store.ReadDir(dir)
 	if err != nil {
 		return err
@@ -204,7 +204,7 @@ func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T)
 			if err := protojson.Unmarshal(jsonData, resource); err != nil {
 				return err
 			}
-			if err := loadFn(resource); err != nil {
+			if err := loadFn(ctx, resource); err != nil {
 				if status.Code(err) == codes.AlreadyExists {
 					continue
 				}

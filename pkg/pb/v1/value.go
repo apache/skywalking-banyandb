@@ -167,15 +167,16 @@ func unmarshalEntityValue(dest, src []byte) ([]byte, []byte, error) {
 		return dest, src[1:], nil
 	}
 	for len(src) > 0 {
-		if src[0] == escape {
+		switch {
+		case src[0] == escape:
 			if len(src) < 2 {
 				return nil, nil, errors.New("invalid escape character")
 			}
 			src = src[1:]
 			dest = append(dest, src[0])
-		} else if src[0] == entityDelimiter {
+		case src[0] == entityDelimiter:
 			return dest, src[1:], nil
-		} else {
+		default:
 			dest = append(dest, src[0])
 		}
 		src = src[1:]

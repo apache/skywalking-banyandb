@@ -85,7 +85,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		Use:     "standalone",
 		Version: version.Build(),
 		Short:   "Run as the standalone server",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			nodeID, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort())
 			if err != nil {
 				return err
