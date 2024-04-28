@@ -354,7 +354,7 @@ func TestQueryResult(t *testing.T) {
 					p := ti.piHeap[0]
 					opts := queryOpts
 					opts.TagProjection = tagProjections[int(p.curBlock.seriesID)]
-					bc.init(p.p, p.curBlock, opts)
+					initBlockCursor(bc, p.p, p.curBlock, opts)
 					result.data = append(result.data, bc)
 				}
 				defer result.Release()

@@ -93,7 +93,8 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 	}
 
 	if i.filter != nil && i.filter != logical.Enode {
-		sfr, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
+		var results []pbv1.StreamResultPuller
+		srp, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
 			Name:           i.metadata.GetName(),
 			TimeRange:      &i.timeRange,
 			Entities:       i.entities,
@@ -105,14 +106,14 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		if err != nil {
 			return nil, err
 		}
-		if sfr == nil {
+		if srp == nil {
 			return elements, nil
 		}
-		r := sfr.Pull()
-		return buildElementsFromColumnResult(r), nil
+		results = append(results, srp)
+		return buildElementsFromStreamResults(results), nil
 	}
 
-	var results []pbv1.StreamQueryResult
+	var results []pbv1.StreamResultPuller
 	for _, e := range i.entities {
 		result, err := ec.Query(ctx, pbv1.StreamQueryOptions{
 			Name:          i.metadata.GetName(),
@@ -127,7 +128,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		}
 		results = append(results, result)
 	}
-	return buildElementsFromQueryResults(results), nil
+	return buildElementsFromStreamResults(results), nil
 }
 
 func (i *localIndexScan) String() string {
@@ -171,7 +172,7 @@ func buildElementsFromColumnResult(r *pbv1.StreamColumnResult) (elements []*stre
 	return
 }
 
-func buildElementsFromQueryResults(results []pbv1.StreamQueryResult) (elements []*streamv1.Element) {
+func buildElementsFromStreamResults(results []pbv1.StreamResultPuller) (elements []*streamv1.Element) {
 	deduplication := make(map[string]struct{})
 	for _, result := range results {
 		for {

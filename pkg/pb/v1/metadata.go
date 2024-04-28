@@ -162,19 +162,14 @@ type StreamFilterOptions struct {
 	MaxElementSize int
 }
 
-// StreamQueryResult is the result of a stream query.
-type StreamQueryResult interface {
+// StreamResultPuller is the result of a stream query.
+type StreamResultPuller interface {
 	Pull() *StreamResult
 	Release()
 }
 
 // StreamSortResult is the result of a stream sort.
 type StreamSortResult interface {
-	Pull() *StreamColumnResult
-}
-
-// StreamFilterResult is the result of a stream filter.
-type StreamFilterResult interface {
 	Pull() *StreamColumnResult
 }
 

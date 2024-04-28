@@ -408,16 +408,17 @@ func releaseBlock(b *block) {
 var blockPool sync.Pool
 
 type blockCursor struct {
-	p                *part
-	timestamps       []int64
-	elementIDs       []string
-	tagFamilies      []tagFamily
-	tagValuesDecoder encoding.BytesBlockDecoder
-	tagProjection    []pbv1.TagProjection
-	bm               blockMetadata
-	idx              int
-	minTimestamp     int64
-	maxTimestamp     int64
+	p                  *part
+	timestamps         []int64
+	expectedTimestamps []int64
+	elementIDs         []string
+	tagFamilies        []tagFamily
+	tagValuesDecoder   encoding.BytesBlockDecoder
+	tagProjection      []pbv1.TagProjection
+	bm                 blockMetadata
+	idx                int
+	minTimestamp       int64
+	maxTimestamp       int64
 }
 
 func (bc *blockCursor) reset() {
@@ -438,13 +439,22 @@ func (bc *blockCursor) reset() {
 	bc.tagFamilies = tff[:0]
 }
 
-func (bc *blockCursor) init(p *part, bm *blockMetadata, queryOpts queryOptions) {
+func initBlockCursor[T queryOptions | filterOptions](bc *blockCursor, p *part, bm *blockMetadata, opts T) {
 	bc.reset()
 	bc.p = p
 	bc.bm.copyFrom(bm)
-	bc.minTimestamp = queryOpts.minTimestamp
-	bc.maxTimestamp = queryOpts.maxTimestamp
-	bc.tagProjection = queryOpts.TagProjection
+	switch opts := interface{}(opts).(type) {
+	case queryOptions:
+		bc.minTimestamp = opts.minTimestamp
+		bc.maxTimestamp = opts.maxTimestamp
+		bc.tagProjection = opts.TagProjection
+	case filterOptions:
+		bc.minTimestamp = opts.minTimestamp
+		bc.maxTimestamp = opts.maxTimestamp
+		seriesID := bc.bm.seriesID
+		bc.expectedTimestamps = opts.elementRefMap[seriesID]
+		bc.tagProjection = opts.TagProjection
+	}
 }
 
 func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
@@ -573,6 +583,60 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		bc.tagFamilies = append(bc.tagFamilies, tf)
 	}
 	return true
+}
+
+func (bc *blockCursor) searchData(tmpBlock *block) bool {
+	tmpBlock.reset()
+	bc.bm.tagProjection = bc.tagProjection
+	var tf map[string]*dataBlock
+	for i := range bc.tagProjection {
+		for tfName, block := range bc.bm.tagFamilies {
+			if bc.tagProjection[i].Family == tfName {
+				if tf == nil {
+					tf = make(map[string]*dataBlock, len(bc.tagProjection))
+				}
+				tf[tfName] = block
+			}
+		}
+	}
+	bc.bm.tagFamilies = tf
+	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)
+
+	idxList := make([]int, 0)
+	for _, ts := range bc.expectedTimestamps {
+		idx := timestamp.Find(tmpBlock.timestamps, ts)
+		if idx == -1 {
+			continue
+		}
+		idxList = append(idxList, idx)
+		bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[idx])
+		bc.elementIDs = append(bc.elementIDs, tmpBlock.elementIDs[idx])
+	}
+	for i, projection := range bc.bm.tagProjection {
+		tf := tagFamily{
+			name: projection.Family,
+		}
+		blockIndex := 0
+		for _, name := range projection.Names {
+			t := tag{
+				name: name,
+			}
+			if tmpBlock.tagFamilies[i].tags[blockIndex].name == name {
+				t.valueType = tmpBlock.tagFamilies[i].tags[blockIndex].valueType
+				if len(tmpBlock.tagFamilies[i].tags[blockIndex].values) != len(tmpBlock.timestamps) {
+					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
+						tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
+				}
+				for _, idx := range idxList {
+					t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[idx])
+				}
+			}
+			blockIndex++
+			tf.tags = append(tf.tags, t)
+		}
+		bc.tagFamilies = append(bc.tagFamilies, tf)
+	}
+	return len(bc.timestamps) != 0
 }
 
 var blockCursorPool sync.Pool

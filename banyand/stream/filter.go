@@ -32,13 +32,14 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-type queryOptions struct {
-	pbv1.StreamQueryOptions
+type filterOptions struct {
+	elementRefMap map[common.SeriesID][]int64
+	pbv1.StreamFilterOptions
 	minTimestamp int64
 	maxTimestamp int64
 }
 
-type queryResult struct {
+type filterResult struct {
 	entityMap    map[string]int
 	sidToIndex   map[common.SeriesID]int
 	tagNameIndex map[string]partition.TagLocator
@@ -51,36 +52,36 @@ type queryResult struct {
 	ascTS        bool
 }
 
-func (qr *queryResult) Pull() *pbv1.StreamResult {
-	if !qr.loaded {
-		if len(qr.data) == 0 {
+func (fr *filterResult) Pull() *pbv1.StreamResult {
+	if !fr.loaded {
+		if len(fr.data) == 0 {
 			return nil
 		}
-		// TODO:// Parallel load
-		tmpBlock := generateBlock()
-		defer releaseBlock(tmpBlock)
-		for i := 0; i < len(qr.data); i++ {
-			if !qr.data[i].loadData(tmpBlock) {
-				qr.data = append(qr.data[:i], qr.data[i+1:]...)
-				i--
-			}
-			if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
+		n := len(fr.data)
+		for i := 0; i < n; i++ {
+			// TODO: fetching data concurrently
+			tmpBlock := generateBlock()
+			defer releaseBlock(tmpBlock)
+			if !fr.data[i].searchData(tmpBlock) {
 				continue
 			}
-			sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
-			series := qr.seriesList[sidIndex]
+			if fr.schema.GetEntity() == nil || len(fr.schema.GetEntity().GetTagNames()) == 0 {
+				continue
+			}
+			sidIndex := fr.sidToIndex[fr.data[i].bm.seriesID]
+			series := fr.seriesList[sidIndex]
 			entityMap := make(map[string]int)
 			tagFamilyMap := make(map[string]int)
-			for idx, entity := range qr.schema.GetEntity().GetTagNames() {
+			for idx, entity := range fr.schema.GetEntity().GetTagNames() {
 				entityMap[entity] = idx + 1
 			}
-			for idx, tagFamily := range qr.data[i].tagFamilies {
+			for idx, tagFamily := range fr.data[i].tagFamilies {
 				tagFamilyMap[tagFamily.name] = idx + 1
 			}
-			for _, tagFamilyProj := range qr.data[i].tagProjection {
+			for _, tagFamilyProj := range fr.data[i].tagProjection {
 				for j, tagProj := range tagFamilyProj.Names {
-					offset := qr.tagNameIndex[tagProj]
-					tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
+					offset := fr.tagNameIndex[tagProj]
+					tagFamilySpec := fr.schema.GetTagFamilies()[offset.FamilyOffset]
 					tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
 					if tagSpec.IndexedOnly {
 						continue
@@ -91,99 +92,101 @@ func (qr *queryResult) Pull() *pbv1.StreamResult {
 						continue
 					}
 					if tagFamilyPos == 0 {
-						qr.data[i].tagFamilies[tagFamilyPos-1] = tagFamily{
+						fr.data[i].tagFamilies[tagFamilyPos-1] = tagFamily{
 							name: tagFamilyProj.Family,
 							tags: make([]tag, 0),
 						}
 					}
 					valueType := pbv1.MustTagValueToValueType(series.EntityValues[entityPos-1])
-					qr.data[i].tagFamilies[tagFamilyPos-1].tags[j] = tag{
+					fr.data[i].tagFamilies[tagFamilyPos-1].tags[j] = tag{
 						name:      tagProj,
-						values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
+						values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(fr.data[i].timestamps)),
 						valueType: valueType,
 					}
 				}
 			}
-			if qr.orderByTimestampDesc() {
-				qr.data[i].idx = len(qr.data[i].timestamps) - 1
+			if fr.orderByTimestampDesc() {
+				fr.data[i].idx = len(fr.data[i].timestamps) - 1
 			}
+			fr.data = append(fr.data, fr.data[i])
 		}
-		qr.loaded = true
-		heap.Init(qr)
+		fr.data = fr.data[n:]
+		fr.loaded = true
+		heap.Init(fr)
 	}
-	if len(qr.data) == 0 {
+	if len(fr.data) == 0 {
 		return nil
 	}
-	if len(qr.data) == 1 {
+	if len(fr.data) == 1 {
 		r := &pbv1.StreamResult{}
-		bc := qr.data[0]
-		bc.copyAllTo(r, qr.orderByTimestampDesc())
-		qr.data = qr.data[:0]
+		bc := fr.data[0]
+		bc.copyAllTo(r, fr.orderByTimestampDesc())
+		fr.data = fr.data[:0]
 		return r
 	}
-	return qr.merge()
+	return fr.merge()
 }
 
-func (qr *queryResult) Release() {
-	for i, v := range qr.data {
+func (fr *filterResult) Release() {
+	for i, v := range fr.data {
 		releaseBlockCursor(v)
-		qr.data[i] = nil
+		fr.data[i] = nil
 	}
-	qr.data = qr.data[:0]
-	for i := range qr.snapshots {
-		qr.snapshots[i].decRef()
+	fr.data = fr.data[:0]
+	for i := range fr.snapshots {
+		fr.snapshots[i].decRef()
 	}
-	qr.snapshots = qr.snapshots[:0]
+	fr.snapshots = fr.snapshots[:0]
 }
 
-func (qr queryResult) Len() int {
-	return len(qr.data)
+func (fr filterResult) Len() int {
+	return len(fr.data)
 }
 
-func (qr queryResult) Less(i, j int) bool {
-	leftTS := qr.data[i].timestamps[qr.data[i].idx]
-	rightTS := qr.data[j].timestamps[qr.data[j].idx]
-	if qr.orderByTS {
-		if qr.ascTS {
+func (fr filterResult) Less(i, j int) bool {
+	leftTS := fr.data[i].timestamps[fr.data[i].idx]
+	rightTS := fr.data[j].timestamps[fr.data[j].idx]
+	if fr.orderByTS {
+		if fr.ascTS {
 			return leftTS < rightTS
 		}
 		return leftTS > rightTS
 	}
-	leftSIDIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
-	rightSIDIndex := qr.sidToIndex[qr.data[j].bm.seriesID]
+	leftSIDIndex := fr.sidToIndex[fr.data[i].bm.seriesID]
+	rightSIDIndex := fr.sidToIndex[fr.data[j].bm.seriesID]
 	return leftSIDIndex < rightSIDIndex
 }
 
-func (qr queryResult) Swap(i, j int) {
-	qr.data[i], qr.data[j] = qr.data[j], qr.data[i]
+func (fr filterResult) Swap(i, j int) {
+	fr.data[i], fr.data[j] = fr.data[j], fr.data[i]
 }
 
-func (qr *queryResult) Push(x interface{}) {
-	qr.data = append(qr.data, x.(*blockCursor))
+func (fr *filterResult) Push(x interface{}) {
+	fr.data = append(fr.data, x.(*blockCursor))
 }
 
-func (qr *queryResult) Pop() interface{} {
-	old := qr.data
+func (fr *filterResult) Pop() interface{} {
+	old := fr.data
 	n := len(old)
 	x := old[n-1]
-	qr.data = old[0 : n-1]
+	fr.data = old[0 : n-1]
 	return x
 }
 
-func (qr *queryResult) orderByTimestampDesc() bool {
-	return qr.orderByTS && !qr.ascTS
+func (fr *filterResult) orderByTimestampDesc() bool {
+	return fr.orderByTS && !fr.ascTS
 }
 
-func (qr *queryResult) merge() *pbv1.StreamResult {
+func (fr *filterResult) merge() *pbv1.StreamResult {
 	step := 1
-	if qr.orderByTimestampDesc() {
+	if fr.orderByTimestampDesc() {
 		step = -1
 	}
 	result := &pbv1.StreamResult{}
 	var lastSid common.SeriesID
 
-	for qr.Len() > 0 {
-		topBC := qr.data[0]
+	for fr.Len() > 0 {
+		topBC := fr.data[0]
 		if lastSid != 0 && topBC.bm.seriesID != lastSid {
 			return result
 		}
@@ -192,17 +195,17 @@ func (qr *queryResult) merge() *pbv1.StreamResult {
 		topBC.copyTo(result)
 		topBC.idx += step
 
-		if qr.orderByTimestampDesc() {
+		if fr.orderByTimestampDesc() {
 			if topBC.idx < 0 {
-				heap.Pop(qr)
+				heap.Pop(fr)
 			} else {
-				heap.Fix(qr, 0)
+				heap.Fix(fr, 0)
 			}
 		} else {
 			if topBC.idx >= len(topBC.timestamps) {
-				heap.Pop(qr)
+				heap.Pop(fr)
 			} else {
-				heap.Fix(qr, 0)
+				heap.Fix(fr, 0)
 			}
 		}
 	}
@@ -210,50 +213,80 @@ func (qr *queryResult) merge() *pbv1.StreamResult {
 	return result
 }
 
-func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamResultPuller, error) {
-	if sqo.TimeRange == nil || sqo.Entity == nil {
+func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (srp pbv1.StreamResultPuller, err error) {
+	if sfo.TimeRange == nil || sfo.Entities == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
-	if len(sqo.TagProjection) == 0 {
+	if len(sfo.TagProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection is required")
 	}
 	db := s.databaseSupplier.SupplyTSDB()
-	var result queryResult
+	var result filterResult
 	if db == nil {
-		return &result, nil
+		return srp, nil
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
-	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	tabWrappers := tsdb.SelectTSTables(*sfo.TimeRange)
+	sort.Slice(tabWrappers, func(i, j int) bool {
+		return tabWrappers[i].GetTimeRange().Start.Before(tabWrappers[j].GetTimeRange().Start)
+	})
 	defer func() {
 		for i := range tabWrappers {
 			tabWrappers[i].DecRef()
 		}
 	}()
-	sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: sqo.Entity})
-	if err != nil {
-		return nil, err
+
+	var seriesList pbv1.SeriesList
+	for _, entity := range sfo.Entities {
+		sl, lookupErr := tsdb.Lookup(ctx, &pbv1.Series{Subject: sfo.Name, EntityValues: entity})
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		seriesList = seriesList.Merge(sl)
+	}
+	if len(seriesList) == 0 {
+		return srp, nil
 	}
 
-	if len(sl) < 1 {
-		return &result, nil
-	}
 	var sids []common.SeriesID
-	for i := range sl {
-		sids = append(sids, sl[i].ID)
+	for i := range seriesList {
+		sids = append(sids, seriesList[i].ID)
+	}
+	var elementRefList []elementRef
+	for _, tw := range tabWrappers {
+		index := tw.Table().Index()
+		erl, err := index.Search(ctx, seriesList, sfo.Filter)
+		if err != nil {
+			return nil, err
+		}
+		elementRefList = append(elementRefList, erl...)
+		if len(elementRefList) > sfo.MaxElementSize {
+			elementRefList = elementRefList[:sfo.MaxElementSize]
+			break
+		}
+	}
+	elementRefMap := make(map[common.SeriesID][]int64)
+	for _, ref := range elementRefList {
+		if _, ok := elementRefMap[ref.seriesID]; !ok {
+			elementRefMap[ref.seriesID] = []int64{ref.timestamp}
+		} else {
+			elementRefMap[ref.seriesID] = append(elementRefMap[ref.seriesID], ref.timestamp)
+		}
+	}
+	fo := filterOptions{
+		StreamFilterOptions: sfo,
+		minTimestamp:        sfo.TimeRange.Start.UnixNano(),
+		maxTimestamp:        sfo.TimeRange.End.UnixNano(),
+		elementRefMap:       elementRefMap,
 	}
 	var parts []*part
-	qo := queryOptions{
-		StreamQueryOptions: sqo,
-		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
-		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
-	}
 	var n int
 	for i := range tabWrappers {
 		s := tabWrappers[i].Table().currentSnapshot()
 		if s == nil {
 			continue
 		}
-		parts, n = s.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
+		parts, n = s.getParts(parts, fo.minTimestamp, fo.maxTimestamp)
 		if n < 1 {
 			s.decRef()
 			continue
@@ -268,26 +301,26 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	originalSids := make([]common.SeriesID, len(sids))
 	copy(originalSids, sids)
 	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	tstIter.init(bma, parts, sids, fo.minTimestamp, fo.maxTimestamp)
 	if tstIter.Error() != nil {
 		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
 	}
 	for tstIter.nextBlock() {
 		bc := generateBlockCursor()
 		p := tstIter.piHeap[0]
-		initBlockCursor(bc, p.p, p.curBlock, qo)
+		initBlockCursor(bc, p.p, p.curBlock, fo)
 		result.data = append(result.data, bc)
 	}
 	if tstIter.Error() != nil {
 		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
 
-	entityMap, _, _, sidToIndex := s.genIndex(sqo.TagProjection, sl)
+	entityMap, _, _, sidToIndex := s.genIndex(sfo.TagProjection, seriesList)
 	result.entityMap = entityMap
 	result.sidToIndex = sidToIndex
 	result.tagNameIndex = make(map[string]partition.TagLocator)
 	result.schema = s.schema
-	result.seriesList = sl
+	result.seriesList = seriesList
 	for i, si := range originalSids {
 		result.sidToIndex[si] = i
 	}
@@ -299,14 +332,14 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 			}
 		}
 	}
-	if sqo.Order == nil {
+	if sfo.Order == nil {
 		result.orderByTS = true
 		result.ascTS = true
 		return &result, nil
 	}
-	if sqo.Order.Index == nil {
+	if sfo.Order.Index == nil {
 		result.orderByTS = true
-		if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+		if sfo.Order.Sort == modelv1.Sort_SORT_ASC || sfo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
 			result.ascTS = true
 		}
 		return &result, nil
