@@ -21,11 +21,12 @@ import (
 	"context"
 	"errors"
 
+	"go.uber.org/multierr"
+
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"go.uber.org/multierr"
 )
 
 func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1.StreamSortResult, err error) {

@@ -262,24 +262,24 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	}
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
-	// TODO: cache tstIter
-	var tstIter tstIter
-	defer tstIter.reset()
+	// TODO: cache ti
+	var ti tstIter
+	defer ti.reset()
 	originalSids := make([]common.SeriesID, len(sids))
 	copy(originalSids, sids)
 	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
-	if tstIter.Error() != nil {
-		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
+	ti.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	if ti.Error() != nil {
+		return nil, fmt.Errorf("cannot init tstIter: %w", ti.Error())
 	}
-	for tstIter.nextBlock() {
+	for ti.nextBlock() {
 		bc := generateBlockCursor()
-		p := tstIter.piHeap[0]
+		p := ti.piHeap[0]
 		initBlockCursor(bc, p.p, p.curBlock, qo)
 		result.data = append(result.data, bc)
 	}
-	if tstIter.Error() != nil {
-		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
+	if ti.Error() != nil {
+		return nil, fmt.Errorf("cannot iterate tstIter: %w", ti.Error())
 	}
 
 	entityMap, _, _, sidToIndex := s.genIndex(sqo.TagProjection, sl)
