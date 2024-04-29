@@ -92,7 +92,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		return buildElementsFromColumnResult(r), nil
 	}
 
-	if i.filter != nil && i.filter != logical.Enode {
+	if i.filter != nil && i.filter != logical.ENode {
 		sfr, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
 			Name:           i.metadata.GetName(),
 			TimeRange:      &i.timeRange,

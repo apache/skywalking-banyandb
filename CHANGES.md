@@ -32,11 +32,12 @@ Release Notes.
 - Fix the bug that property merge new tags failed.
 - Fix CPU Spike and Extended Duration in BanyanDB's etcd Watching Registration Process.
 - Fix panic when closing banyand.
+- Fix NPE when no index filter in the query.
 
 ### Chores
 
 - Bump go to 1.22.
-- Bump node to 20.9.
+- Bump node to 2.12.2.
 - Bump several tools.
 - Bump all dependencies of Go and Node.
 - Combine banyand and bydbctl Dockerfile.
