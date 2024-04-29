@@ -25,6 +25,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/api/validate"
 )
 
 var (
@@ -59,6 +60,9 @@ func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRu
 	if indexRuleBinding.UpdatedAt != nil {
 		indexRuleBinding.UpdatedAt = timestamppb.Now()
 	}
+	if err := validate.IndexRuleBinding(indexRuleBinding); err != nil {
+		return err
+	}
 	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
@@ -71,6 +75,12 @@ func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRu
 }
 
 func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+	if indexRuleBinding.UpdatedAt != nil {
+		indexRuleBinding.UpdatedAt = timestamppb.Now()
+	}
+	if err := validate.IndexRuleBinding(indexRuleBinding); err != nil {
+		return err
+	}
 	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRuleBinding,
@@ -131,6 +141,9 @@ func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *dat
 		buf = append(buf, indexRule.Metadata.Name...)
 		indexRule.Metadata.Id = crc32.ChecksumIEEE(buf)
 	}
+	if err := validate.IndexRule(indexRule); err != nil {
+		return err
+	}
 	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindIndexRule,
@@ -149,6 +162,12 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 			return err
 		}
 		indexRule.Metadata.Id = existingIndexRule.Metadata.Id
+	}
+	if indexRule.UpdatedAt != nil {
+		indexRule.UpdatedAt = timestamppb.Now()
+	}
+	if err := validate.IndexRule(indexRule); err != nil {
+		return err
 	}
 	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{

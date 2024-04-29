@@ -25,6 +25,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/api/validate"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -65,6 +66,17 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 			return 0, errors.Wrap(err, "interval is malformed")
 		}
 	}
+	if err := validate.Measure(measure); err != nil {
+		return 0, err
+	}
+	group := measure.Metadata.GetGroup()
+	g, err := e.GetGroup(ctx, group)
+	if err != nil {
+		return 0, err
+	}
+	if err := validate.GroupForStreamOrMeasure(g); err != nil {
+		return 0, err
+	}
 	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindMeasure,
@@ -76,10 +88,24 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 }
 
 func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error) {
+	if measure.UpdatedAt != nil {
+		measure.UpdatedAt = timestamppb.Now()
+	}
 	if measure.GetInterval() != "" {
 		if _, err := timestamp.ParseDuration(measure.GetInterval()); err != nil {
 			return 0, errors.Wrap(err, "interval is malformed")
 		}
+	}
+	if err := validate.Measure(measure); err != nil {
+		return 0, err
+	}
+	group := measure.Metadata.GetGroup()
+	g, err := e.GetGroup(ctx, group)
+	if err != nil {
+		return 0, err
+	}
+	if err := validate.GroupForStreamOrMeasure(g); err != nil {
+		return 0, err
 	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{

@@ -78,7 +78,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		Use:     "data",
 		Version: version.Build(),
 		Short:   "Run as the data server",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			node, err := common.GenerateNode(pipeline.GetPort(), nil)
 			if err != nil {
 				return err

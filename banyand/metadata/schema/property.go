@@ -110,10 +110,31 @@ func (e *etcdSchemaRegistry) ApplyProperty(ctx context.Context, property *proper
 		return false, 0, 0, ErrClosed
 	}
 	defer e.closer.Done()
+	if property.Metadata == nil {
+		return false, 0, 0, BadRequest("metadata", "metadata should not be nil")
+	}
+	if property.Metadata.Container == nil {
+		return false, 0, 0, BadRequest("metadata.container", "container should not be nil")
+	}
+	if property.Metadata.Container.Name == "" {
+		return false, 0, 0, BadRequest("metadata.container.name", "container.name should not be empty")
+	}
+	if property.Metadata.Id == "" {
+		return false, 0, 0, BadRequest("metadata.id", "id should not be empty")
+	}
+	if len(property.Tags) == 0 {
+		return false, 0, 0, BadRequest("tags", "tags should not be empty")
+	}
 	m := transformKey(property.GetMetadata())
 	group := m.GetGroup()
-	if _, getGroupErr := e.GetGroup(ctx, group); getGroupErr != nil {
+	if g, getGroupErr := e.GetGroup(ctx, group); getGroupErr != nil {
 		return false, 0, 0, errors.Wrap(getGroupErr, "group is not exist")
+	} else if g.Catalog != commonv1.Catalog_CATALOG_UNSPECIFIED {
+		return false, 0, 0, errors.New("group is not allowed to have properties")
+	}
+
+	if property.UpdatedAt != nil {
+		property.UpdatedAt = timestamppb.Now()
 	}
 	md := Metadata{
 		TypeMeta: TypeMeta{

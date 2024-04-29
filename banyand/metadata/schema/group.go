@@ -76,6 +76,12 @@ func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Gr
 	if group.UpdatedAt != nil {
 		group.UpdatedAt = timestamppb.Now()
 	}
+	if group.Metadata == nil {
+		return errors.New("metadata is required")
+	}
+	if group.Metadata.Name == "" {
+		return errors.New("metadata.name is required")
+	}
 	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind: KindGroup,
@@ -87,6 +93,15 @@ func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Gr
 }
 
 func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) error {
+	if group.UpdatedAt != nil {
+		group.UpdatedAt = timestamppb.Now()
+	}
+	if group.Metadata == nil {
+		return errors.New("metadata is required")
+	}
+	if group.Metadata.Name == "" {
+		return errors.New("metadata.name is required")
+	}
 	_, err := e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind: KindGroup,

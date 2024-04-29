@@ -179,22 +179,23 @@ func parseGroupFromFlags() ([]reqBody, error) {
 
 func parseTimeRangeFromFlagAndYAML(reader io.Reader) (requests []reqBody, err error) {
 	var startTS, endTS time.Time
-	if start == "" && end == "" {
+	switch {
+	case start == "" && end == "":
 		startTS = time.Now().Add((-30) * time.Minute)
 		endTS = time.Now()
-	} else if start != "" && end != "" {
+	case start != "" && end != "":
 		if startTS, err = parseTime(start); err != nil {
 			return nil, err
 		}
 		if endTS, err = parseTime(end); err != nil {
 			return nil, err
 		}
-	} else if start != "" {
+	case start != "":
 		if startTS, err = parseTime(start); err != nil {
 			return nil, err
 		}
 		endTS = startTS.Add(timeRange)
-	} else {
+	case end != "":
 		if endTS, err = parseTime(end); err != nil {
 			return nil, err
 		}
@@ -322,8 +323,8 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 	for i, r := range requests {
 		client := resty.New()
 		if enableTLS {
-			// #nosec G402
 			config := tls.Config{
+				// #nosec G402
 				InsecureSkipVerify: insecure,
 			}
 			if grpcCert != "" {

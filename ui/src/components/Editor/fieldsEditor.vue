@@ -38,10 +38,6 @@ const data = reactive({
 
 const typeOptions = [
     {
-        value: 'FIELD_TYPE_UNSPECIFIED',
-        label: 'UNSPECIFIED'
-    },
-    {
         value: 'FIELD_TYPE_STRING',
         label: 'STRING'
     },
@@ -60,19 +56,11 @@ const typeOptions = [
 ]
 const encodingMethodOptions = [
     {
-        value: 'ENCODING_METHOD_UNSPECIFIED',
-        label: 'UNSPECIFIED'
-    },
-    {
         value: 'ENCODING_METHOD_GORILLA',
         label: 'GORILLA'
     }
 ]
 const compressionMethodOptions = [
-    {
-        value: 'COMPRESSION_METHOD_UNSPECIFIED',
-        label: 'UNSPECIFIED'
-    },
     {
         value: 'COMPRESSION_METHOD_ZSTD',
         label: 'ZSTD'

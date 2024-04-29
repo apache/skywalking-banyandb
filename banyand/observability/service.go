@@ -76,7 +76,7 @@ func (p *metricService) Serve() run.StopNotify {
 	defer p.mutex.Unlock()
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
-	err := p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(now time.Time, logger *logger.Logger) bool {
+	err := p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
 		MetricsCollector.collect()
 		return true
 	})

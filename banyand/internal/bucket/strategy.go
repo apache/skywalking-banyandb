@@ -150,11 +150,12 @@ func (s *Strategy) observe(c Channel) bool {
 			atomic.StoreUint64(&s.currentRatio, math.Float64bits(float64(r)))
 			if r >= s.ratio && next == nil && moreBucket {
 				n, err := s.ctrl.Next()
-				if errors.Is(err, ErrNoMoreBucket) {
+				switch {
+				case errors.Is(err, ErrNoMoreBucket):
 					moreBucket = false
-				} else if err != nil {
+				case err != nil:
 					s.logger.Err(err).Msg("failed to create the next bucket")
-				} else {
+				default:
 					s.logger.Info().Stringer("next", n).Msg("created the next bucket")
 					next = n
 				}

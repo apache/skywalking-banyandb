@@ -116,6 +116,18 @@ var _ = ginkgo.Describe("Watcher", func() {
 			Metadata: &commonv1.Metadata{
 				Name: "testgroup-measure",
 			},
+			Catalog: commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 1,
+				SegmentInterval: &commonv1.IntervalRule{
+					Num:  1,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Num:  3,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+			},
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		var modRevision int64
@@ -125,9 +137,31 @@ var _ = ginkgo.Describe("Watcher", func() {
 					Name:  fmt.Sprintf("testkey%d", i+1),
 					Group: "testgroup-measure",
 				},
+				Entity: &databasev1.Entity{
+					TagNames: []string{"testtag"},
+				},
+				TagFamilies: []*databasev1.TagFamilySpec{
+					{
+						Name: "testtagfamily",
+						Tags: []*databasev1.TagSpec{
+							{
+								Name: "testtag",
+								Type: databasev1.TagType_TAG_TYPE_STRING,
+							},
+						},
+					},
+				},
+				Fields: []*databasev1.FieldSpec{
+					{
+						Name:              "testfield",
+						FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
+						EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
+						CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+					},
+				},
 			})
-			gomega.Expect(modRevision).ShouldNot(gomega.BeZero())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(modRevision).ShouldNot(gomega.BeZero())
 		}
 
 		// Start the watcher
@@ -156,6 +190,18 @@ var _ = ginkgo.Describe("Watcher", func() {
 			Metadata: &commonv1.Metadata{
 				Name: "testgroup-stream",
 			},
+			Catalog: commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 1,
+				SegmentInterval: &commonv1.IntervalRule{
+					Num:  1,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Num:  3,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+			},
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		var modRevision int64
@@ -163,6 +209,20 @@ var _ = ginkgo.Describe("Watcher", func() {
 			Metadata: &commonv1.Metadata{
 				Name:  "testkey",
 				Group: "testgroup-stream",
+			},
+			Entity: &databasev1.Entity{
+				TagNames: []string{"testtag"},
+			},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{
+					Name: "testtagfamily",
+					Tags: []*databasev1.TagSpec{
+						{
+							Name: "testtag",
+							Type: databasev1.TagType_TAG_TYPE_STRING,
+						},
+					},
+				},
 			},
 		})
 		gomega.Expect(modRevision).ShouldNot(gomega.BeZero())

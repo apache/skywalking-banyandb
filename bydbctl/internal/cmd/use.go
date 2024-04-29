@@ -32,7 +32,7 @@ func newUserCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Select a group",
 		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
+		RunE: func(_ *cobra.Command, args []string) (err error) {
 			viper.Set("group", args[0])
 			err = viper.WriteConfig()
 			if err != nil {

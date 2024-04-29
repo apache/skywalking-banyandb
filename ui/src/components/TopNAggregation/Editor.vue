@@ -79,8 +79,8 @@ const rules = {
   ]
 }
 const fieldValueSortList = [
-  {
-    label: "SORT_UNSPECIFIED",
+ {
+    label: "Both",
     value: "SORT_UNSPECIFIED"
   },
   {
