@@ -49,7 +49,7 @@ func NewRoot(runners ...run.Unit) *cobra.Command {
 		Long: logo + `
 BanyanDB, as an observability database, aims to ingest, analyze and store Metrics, Tracing and Logging data
 `,
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) (err error) {
 			fmt.Print(logo)
 			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err

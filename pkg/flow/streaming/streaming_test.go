@@ -70,7 +70,7 @@ var _ = g.Describe("Streaming", func() {
 
 		g.When("Given a odd filter", func() {
 			g.BeforeEach(func() {
-				filter = func(ctx context.Context, i interface{}) bool {
+				filter = func(_ context.Context, i interface{}) bool {
 					return i.(int)%2 == 0
 				}
 			})
@@ -107,7 +107,7 @@ var _ = g.Describe("Streaming", func() {
 
 		g.When("given a multiplier", func() {
 			g.BeforeEach(func() {
-				mapper = func(ctx context.Context, i interface{}) interface{} {
+				mapper = func(_ context.Context, i interface{}) interface{} {
 					return i.(int) * 2
 				}
 			})
@@ -144,7 +144,7 @@ var _ = g.Describe("Streaming", func() {
 			snk = newSlice()
 
 			f = New(flowTest.NewSlice(input)).
-				Map(flow.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
+				Map(flow.UnaryFunc[any](func(_ context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
 				})).
@@ -207,7 +207,7 @@ var _ = g.Describe("Streaming", func() {
 			snk = newSlice()
 
 			f = New(flowTest.NewSlice(input)).
-				Map(flow.UnaryFunc[any](func(ctx context.Context, item interface{}) interface{} {
+				Map(flow.UnaryFunc[any](func(_ context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
 				})).

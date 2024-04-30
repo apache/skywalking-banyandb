@@ -66,7 +66,7 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 		} else if mandatoryIndexRule {
 			return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
 		}
-		return Enode, [][]*modelv1.TagValue{entity}, nil
+		return ENode, [][]*modelv1.TagValue{entity}, nil
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
 		if le.GetLeft() == nil && le.GetRight() == nil {
@@ -92,6 +92,9 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 		}
 		if left == nil && right == nil {
 			return nil, entities, nil
+		}
+		if left == ENode && right == ENode {
+			return ENode, entities, nil
 		}
 		switch le.Op {
 		case modelv1.LogicalExpression_LOGICAL_OP_AND:
@@ -632,8 +635,8 @@ func jsonToString(marshaler json.Marshaler) string {
 }
 
 var (
-	// Enode is an empty node.
-	Enode = new(emptyNode)
+	// ENode is an empty node.
+	ENode = new(emptyNode)
 	bList = new(bypassList)
 )
 

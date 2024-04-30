@@ -77,14 +77,11 @@ linters-settings:
   goconst:
     min-occurrences: 4
   govet:
-    check-shadowing: true
     enable:
       - fieldalignment
+      - shadow
   misspell:
     locale: US
-  unused:
-    go: "1.21"
-    check-exported: false
   unparam:
     check-exported: false
   gci:
@@ -95,48 +92,24 @@ linters-settings:
   gocritic:
     enabled-checks:
       - appendCombine
-      - argOrder
-      - assignOp
-      - badCond
       - boolExprSimplify
       - builtinShadow
-      - captLocal
-      - caseOrder
-      - codegenComment
       - commentedOutCode
       - commentedOutImport
-      - defaultCaseOrder
-      - deprecatedComment
       - docStub
-      - dupArg
-      - dupBranchBody
-      - dupCase
-      - dupSubExpr
-      - elseif
       - emptyFallthrough
       - equalFold
-      - flagDeref
-      - flagName
       - hexLiteral
       - indexAlloc
       - initClause
       - methodExprCall
       - nilValReturn
       - octalLiteral
-      - offBy1
       - rangeExprCopy
-      - regexpMust
-      - sloppyLen
       - stringXbytes
-      - switchTrue
       - typeAssertChain
-      - typeSwitchVar
       - typeUnparen
-      - underef
-      - unlambda
       - unnecessaryBlock
-      - unslice
-      - valSwap
       - weakCond
   godot:
     #   declarations - for top level declaration comments (default);
@@ -144,10 +117,7 @@ linters-settings:
     #   all          - for all comments.
     scope: toplevel
   staticcheck:
-    go: "1.21"
     checks: ["all", "-ST1000", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
-  stylecheck:
-    go: "1.21"
   exhaustive:
     check:
       - switch
@@ -159,13 +129,18 @@ linters-settings:
       - 'cobra\.Command$'
 
 run:
-  deadline: 20m
-  skip-files:
-    - ".*\\.pb\\.go"
-    - ".*\\.pb\\.validate\\.go"
-    - ".*\\.gen\\.go"
+  go: "1.22"
 issues:
   exclude-rules:
+    - path: ".*\\.pb\\.go"
+      linters:
+        - "*"
+    - path: ".*\\.pb\\.validate\\.go"
+      linters:
+        - "*"
+    - path: ".*\\.gen\\.go"
+      linters:
+        - "*"
     - path: _test\.go$|^tests/|^samples/
       linters:
         - errcheck

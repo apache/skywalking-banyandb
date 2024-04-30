@@ -57,41 +57,25 @@ const data = reactive({
         name: route.params.group,
         modRevision: route.params.modRevision,
         interval: 1,
-        intervalUnit: 'ns'
+        intervalUnit: 'm'
     }
 })
 
 const options = [
     {
-        label: 'ns',
-        value: 'ns'
-    },
-    {
-        label: 'us',
-        value: 'us'
-    },
-    {
-        label: 'µs',
-        value: 'µs'
-    },
-    {
-        label: 'ms',
-        value: 'ms'
-    },
-    {
-        label: 's',
+        label: 'seconds',
         value: 's'
     },
     {
-        label: 'm',
+        label: 'minutes',
         value: 'm'
     },
     {
-        label: 'h',
+        label: 'hours',
         value: 'h'
     },
     {
-        label: 'd',
+        label: 'days',
         value: 'd'
     }
 ]

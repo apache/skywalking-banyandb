@@ -49,7 +49,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		name := "bind flag: " + tt.flagName
-		t.Run(name, func(t *testing.T) {
+		t.Run(name, func(_ *testing.T) {
 			var flagValue string
 			fs.StringVar(&flagValue, tt.flagName, "", tt.flagDescription)
 			os.Setenv(tt.envName, tt.envValue)

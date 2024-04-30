@@ -89,19 +89,17 @@ func (p Position) ShardLabelValues() []string {
 func SetPosition(ctx context.Context, fn func(p Position) Position) context.Context {
 	val := ctx.Value(positionKey)
 	var p Position
-	if val == nil {
-		p = Position{}
-	} else {
+	if val != nil {
 		p = val.(Position)
 	}
 	return context.WithValue(ctx, positionKey, fn(p))
 }
 
 // GetPosition returns the position from ctx.
-func GetPosition(ctx context.Context) Position {
+func GetPosition(ctx context.Context) (p Position) {
 	val := ctx.Value(positionKey)
 	if val == nil {
-		return Position{}
+		return p
 	}
 	return val.(Position)
 }
@@ -165,33 +163,32 @@ func ParseNodeHostProvider(s string) (NodeHostProvider, error) {
 }
 
 // GenerateNode generates a node id.
-func GenerateNode(grpcPort, httpPort *uint32) (Node, error) {
+func GenerateNode(grpcPort, httpPort *uint32) (node Node, err error) {
 	port := grpcPort
 	if port == nil {
 		port = httpPort
 	}
 	if port == nil {
-		return Node{}, fmt.Errorf("no port found")
+		return node, fmt.Errorf("no port found")
 	}
-	node := Node{}
 	var nodeHost string
 	switch FlagNodeHostProvider {
 	case NodeHostProviderHostname:
 		h, err := host.Name()
 		if err != nil {
-			return Node{}, err
+			return node, err
 		}
 		nodeHost = h
 	case NodeHostProviderIP:
 		ip, err := host.IP()
 		if err != nil {
-			return Node{}, err
+			return node, err
 		}
 		nodeHost = ip
 	case NodeHostProviderFlag:
 		nodeHost = FlagNodeHost
 	default:
-		return Node{}, fmt.Errorf("unknown node id provider %d", FlagNodeHostProvider)
+		return node, fmt.Errorf("unknown node id provider %d", FlagNodeHostProvider)
 	}
 	node.NodeID = net.JoinHostPort(nodeHost, strconv.FormatUint(uint64(*port), 10))
 	if grpcPort != nil {

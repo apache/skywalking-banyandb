@@ -119,12 +119,12 @@ var _ = Describe("Metadata", func() {
 
 			It("should update a new measure", func() {
 				// Remove the first tag from the entity
-				measureSchema.Entity.TagNames = measureSchema.Entity.TagNames[1:]
-				entitySize := len(measureSchema.Entity.TagNames)
+				newEntityTag := measureSchema.Entity.TagNames[0] + "_updated"
+				measureSchema.Entity.TagNames[0] = newEntityTag
 
 				modRevision, err := svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema)
-				Expect(modRevision).ShouldNot(BeZero())
 				Expect(err).ShouldNot(HaveOccurred())
+				Expect(modRevision).ShouldNot(BeZero())
 
 				Eventually(func() bool {
 					val, err := svcs.measure.Measure(&commonv1.Metadata{
@@ -135,7 +135,7 @@ var _ = Describe("Metadata", func() {
 						return false
 					}
 
-					return len(val.GetSchema().GetEntity().TagNames) == entitySize
+					return newEntityTag == val.GetSchema().Entity.TagNames[0]
 				}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 			})
 		})

@@ -40,7 +40,7 @@ func Read(path string, reader io.Reader) (contents [][]byte, err error) {
 		b, err = os.ReadFile(path)
 		return append(contents, b), err
 	}
-	err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(path, func(path string, _ os.FileInfo, err error) error {
 		if err != nil {
 			return err // prevent panic from failed accessing path
 		}

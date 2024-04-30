@@ -58,7 +58,7 @@ func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTa
 		seriesFilter := make(map[common.SeriesID]filterFn)
 		if sso.Filter != nil {
 			for i := range sids {
-				pl, errExe := sso.Filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+				pl, errExe := sso.Filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 					return tw.Table().Index().store, nil
 				}, sids[i])
 				if errExe != nil {

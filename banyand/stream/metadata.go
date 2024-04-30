@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/api/validate"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -107,12 +108,20 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 			return
 		}
+		if err := validate.GroupForStreamOrMeasure(g); err != nil {
+			sr.l.Warn().Err(err).Msg("group is ignored")
+			return
+		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
 	case schema.KindStream:
+		if err := validate.Stream(metadata.Spec.(*databasev1.Stream)); err != nil {
+			sr.l.Warn().Err(err).Msg("stream is ignored")
+			return
+		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
@@ -122,6 +131,10 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding)
 		if !ok {
 			sr.l.Warn().Msg("fail to convert message to IndexRuleBinding")
+			return
+		}
+		if err := validate.IndexRuleBinding(irb); err != nil {
+			sr.l.Warn().Err(err).Msg("index rule binding is ignored")
 			return
 		}
 		if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
@@ -141,6 +154,10 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			})
 		}
 	case schema.KindIndexRule:
+		if err := validate.IndexRule(metadata.Spec.(*databasev1.IndexRule)); err != nil {
+			sr.l.Warn().Err(err).Msg("index rule is ignored")
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		subjects, err := sr.metadata.Subjects(ctx, metadata.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_STREAM)

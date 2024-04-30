@@ -116,7 +116,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 				}
 			}
 
-			t.Run("memory parts", func(t *testing.T) {
+			t.Run("memory parts", func(_ *testing.T) {
 				var mpp []*memPart
 				defer func() {
 					for _, mp := range mpp {

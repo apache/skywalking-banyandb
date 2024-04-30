@@ -28,6 +28,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
@@ -69,11 +70,14 @@ func (e *elementIndex) Write(docs index.Documents) error {
 func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) ([]elementRef, error) {
 	pm := make(map[common.SeriesID][]uint64)
 	for _, series := range seriesList {
-		pl, err := filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+		pl, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return e.store, nil
 		}, series.ID)
 		if err != nil {
 			return nil, err
+		}
+		if pl == nil {
+			pl = roaring.DummyPostingList
 		}
 		timestamps := pl.ToSlice()
 		if pl.IsEmpty() {

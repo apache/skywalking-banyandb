@@ -40,7 +40,7 @@ func newGroupCmd() *cobra.Command {
 		Use:     "create -f [file|dir|-]",
 		Version: version.Build(),
 		Short:   "Create groups from files",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					g := new(commonv1.Group)
@@ -69,7 +69,7 @@ func newGroupCmd() *cobra.Command {
 		Use:     "update -f [file|dir|-]",
 		Version: version.Build(),
 		Short:   "Update groups from files",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					g := new(commonv1.Group)
@@ -126,7 +126,7 @@ func newGroupCmd() *cobra.Command {
 		Use:     "list",
 		Version: version.Build(),
 		Short:   "List all groups",
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
+		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(nil, func(request request) (*resty.Response, error) {
 				return request.req.Get(getPath("/api/v1/group/schema/lists"))
 			}, yamlPrinter, enableTLS, insecure, grpcCert)

@@ -170,7 +170,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 	pl := seriesList.ToList()
 	if filter != nil {
 		var plFilter posting.List
-		plFilter, err = filter.Execute(func(ruleType databasev1.IndexRule_Type) (index.Searcher, error) {
+		plFilter, err = filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return s.store, nil
 		}, 0)
 		if err != nil {

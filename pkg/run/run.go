@@ -290,8 +290,7 @@ func (g *Group) RunConfig() (interrupted bool, err error) {
 	}
 
 	// bail early on help or version requests
-	switch {
-	case g.showRunGroup:
+	if g.showRunGroup {
 		fmt.Println(g.ListUnits())
 		return true, nil
 	}
