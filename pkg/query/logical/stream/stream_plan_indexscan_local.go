@@ -92,9 +92,9 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		return buildElementsFromColumnResult(r), nil
 	}
 
-	if i.filter != nil && i.filter != logical.Enode {
+	if i.filter != nil && i.filter != logical.ENode {
 		var results []pbv1.StreamResultPuller
-		srp, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
+		result, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
 			Name:           i.metadata.GetName(),
 			TimeRange:      &i.timeRange,
 			Entities:       i.entities,
@@ -106,10 +106,10 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 		if err != nil {
 			return nil, err
 		}
-		if srp == nil {
+		if result == nil {
 			return elements, nil
 		}
-		results = append(results, srp)
+		results = append(results, result)
 		return buildElementsFromStreamResults(results), nil
 	}
 
