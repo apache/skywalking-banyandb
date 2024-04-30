@@ -76,6 +76,9 @@ func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, fil
 			return nil, err
 		}
 		timestamps := pl.ToSlice()
+		if pl.IsEmpty() {
+			continue
+		}
 		sort.Slice(timestamps, func(i, j int) bool {
 			return timestamps[i] < timestamps[j]
 		})

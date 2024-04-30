@@ -569,7 +569,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			t := tag{
 				name: name,
 			}
-			if tmpBlock.tagFamilies[i].tags[blockIndex].name == name {
+			if len(tmpBlock.tagFamilies[i].tags) != 0 && tmpBlock.tagFamilies[i].tags[blockIndex].name == name {
 				t.valueType = tmpBlock.tagFamilies[i].tags[blockIndex].valueType
 				if len(tmpBlock.tagFamilies[i].tags[blockIndex].values) != len(tmpBlock.timestamps) {
 					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
@@ -612,6 +612,10 @@ func (bc *blockCursor) searchData(tmpBlock *block) bool {
 		bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[idx])
 		bc.elementIDs = append(bc.elementIDs, tmpBlock.elementIDs[idx])
 	}
+	if len(bc.timestamps) == 0 {
+		return false
+	}
+
 	for i, projection := range bc.bm.tagProjection {
 		tf := tagFamily{
 			name: projection.Family,
@@ -621,7 +625,7 @@ func (bc *blockCursor) searchData(tmpBlock *block) bool {
 			t := tag{
 				name: name,
 			}
-			if tmpBlock.tagFamilies[i].tags[blockIndex].name == name {
+			if len(tmpBlock.tagFamilies[i].tags) != 0 && tmpBlock.tagFamilies[i].tags[blockIndex].name == name {
 				t.valueType = tmpBlock.tagFamilies[i].tags[blockIndex].valueType
 				if len(tmpBlock.tagFamilies[i].tags[blockIndex].values) != len(tmpBlock.timestamps) {
 					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
@@ -636,7 +640,7 @@ func (bc *blockCursor) searchData(tmpBlock *block) bool {
 		}
 		bc.tagFamilies = append(bc.tagFamilies, tf)
 	}
-	return len(bc.timestamps) != 0
+	return true
 }
 
 var blockCursorPool sync.Pool
