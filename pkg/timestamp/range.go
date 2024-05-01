@@ -29,6 +29,13 @@ type TimeRange struct {
 	IncludeEnd   bool
 }
 
+func (t TimeRange) Before(other time.Time) bool {
+	if t.IncludeEnd {
+		return t.End.Before(other)
+	}
+	return !t.End.After(other)
+}
+
 // Contains returns whether the unixNano is in the TimeRange.
 func (t TimeRange) Contains(unixNano int64) bool {
 	tp := time.Unix(0, unixNano)

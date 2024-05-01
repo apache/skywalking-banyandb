@@ -176,6 +176,9 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 		if err != nil {
 			return nil, err
 		}
+		if plFilter == nil {
+			return pbv1.SeriesList{}, nil
+		}
 		if err = pl.Intersect(plFilter); err != nil {
 			return nil, err
 		}
@@ -315,7 +318,14 @@ func (sic *seriesIndexController[T, O]) loadIdx() ([]string, error) {
 }
 
 func (sic *seriesIndexController[T, O]) newIdx(ctx context.Context) (*seriesIndex, error) {
-	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", sic.clock.Now().UnixNano()))
+	ts := sic.opts.TTL.Unit.standard(sic.clock.Now())
+	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", ts.UnixNano()))
+}
+
+func (sic *seriesIndexController[T, O]) newNextIdx(ctx context.Context) (*seriesIndex, error) {
+	ts := sic.opts.TTL.Unit.standard(sic.clock.Now())
+	ts = ts.Add(sic.standbyLiveTime)
+	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", ts.UnixNano()))
 }
 
 func (sic *seriesIndexController[T, O]) openIdx(ctx context.Context, name string) (*seriesIndex, error) {
@@ -338,7 +348,7 @@ func (sic *seriesIndexController[T, O]) run(deadline time.Time) (err error) {
 	if err != nil {
 		sic.l.Warn().Err(err).Msg("fail to clear redundant series index")
 	}
-	if sic.hot.startTime.Before(deadline) {
+	if sic.hot.startTime.Compare(deadline) <= 0 {
 		sic.l.Info().Time("deadline", deadline).Msg("start to swap series index")
 		sic.Lock()
 		if sic.standby == nil {
@@ -364,7 +374,7 @@ func (sic *seriesIndexController[T, O]) run(deadline time.Time) (err error) {
 	liveTime := sic.hot.startTime.Sub(deadline)
 	if liveTime > 0 && liveTime <= sic.standbyLiveTime {
 		sic.l.Info().Time("deadline", deadline).Msg("start to create standby series index")
-		standby, err = sic.newIdx(ctx)
+		standby, err = sic.newNextIdx(ctx)
 		if err != nil {
 			return err
 		}

@@ -25,17 +25,15 @@ import (
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/internal/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 type shard[T TSTable, O any] struct {
-	l                     *logger.Logger
-	segmentController     *segmentController[T, O]
-	segmentManageStrategy *bucket.Strategy
-	position              common.Position
-	closeOnce             sync.Once
-	id                    common.ShardID
+	l                 *logger.Logger
+	segmentController *segmentController[T, O]
+	position          common.Position
+	closeOnce         sync.Once
+	id                common.ShardID
 }
 
 func (d *database[T, O]) openShard(ctx context.Context, id common.ShardID) (*shard[T, O], error) {
@@ -54,22 +52,18 @@ func (d *database[T, O]) openShard(ctx context.Context, id common.ShardID) (*sha
 		l:        l,
 		position: common.GetPosition(shardCtx),
 		segmentController: newSegmentController[T](shardCtx, location,
-			d.opts.SegmentInterval, l, d.scheduler, d.opts.TSTableCreator, d.opts.Option),
+			d.opts.SegmentInterval, l, d.scheduler,
+			d.opts.TSTableCreator, d.opts.Option),
 	}
 	var err error
 	if err = s.segmentController.open(); err != nil {
 		return nil, err
 	}
-	if s.segmentManageStrategy, err = bucket.NewStrategy(s.segmentController, bucket.WithLogger(s.l)); err != nil {
-		return nil, err
-	}
-	s.segmentManageStrategy.Run()
 	return s, nil
 }
 
 func (s *shard[T, O]) close() {
 	s.closeOnce.Do(func() {
-		s.segmentManageStrategy.Close()
 		s.segmentController.close()
 	})
 }

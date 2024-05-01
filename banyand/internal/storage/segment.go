@@ -180,48 +180,6 @@ func (sc *segmentController[T, O]) segments() (ss []*segment[T]) {
 	return r
 }
 
-func (sc *segmentController[T, O]) Current() (bucket.Reporter, error) {
-	now := sc.segmentSize.Unit.standard(sc.clock.Now())
-	ns := now.UnixNano()
-	if b := func() bucket.Reporter {
-		sc.RLock()
-		defer sc.RUnlock()
-		for _, s := range sc.lst {
-			if s.Contains(ns) {
-				return s
-			}
-		}
-		return nil
-	}(); b != nil {
-		return b, nil
-	}
-	return sc.create(now)
-}
-
-func (sc *segmentController[T, O]) Next() (bucket.Reporter, error) {
-	c, err := sc.Current()
-	if err != nil {
-		return nil, err
-	}
-	seg := c.(*segment[T])
-	reporter, err := sc.create(sc.segmentSize.nextTime(seg.Start))
-	if errors.Is(err, errEndOfSegment) {
-		return nil, bucket.ErrNoMoreBucket
-	}
-	return reporter, err
-}
-
-func (sc *segmentController[T, O]) OnMove(prev bucket.Reporter, next bucket.Reporter) {
-	event := sc.l.Info()
-	if prev != nil {
-		event.Stringer("prev", prev)
-	}
-	if next != nil {
-		event.Stringer("next", next)
-	}
-	event.Msg("move to the next segment")
-}
-
 func (sc *segmentController[T, O]) Format(tm time.Time) string {
 	switch sc.segmentSize.Unit {
 	case HOUR:
@@ -334,16 +292,14 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 func (sc *segmentController[T, O]) remove(deadline time.Time) (err error) {
 	sc.l.Info().Time("deadline", deadline).Msg("start to remove before deadline")
 	for _, s := range sc.segments() {
-		if s.End.Before(deadline) || s.Contains(deadline.UnixNano()) {
+		if s.Before(deadline) {
 			if e := sc.l.Debug(); e.Enabled() {
 				e.Stringer("segment", s).Msg("start to remove data in a segment")
 			}
-			if s.End.Before(deadline) {
-				s.delete()
-				sc.Lock()
-				sc.removeSeg(s.id)
-				sc.Unlock()
-			}
+			s.delete()
+			sc.Lock()
+			sc.removeSeg(s.id)
+			sc.Unlock()
 		}
 		s.DecRef()
 	}

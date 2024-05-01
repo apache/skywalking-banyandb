@@ -69,6 +69,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		}
 		dst[gn] = dpg
 	}
+	if dpg.latestTS < ts {
+		dpg.latestTS = ts
+	}
 
 	var dpt *dataPointsInTable
 	for i := range dpg.tables {
@@ -242,6 +245,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	for i := range groups {
 		g := groups[i]
+		g.tsdb.Tick(g.latestTS)
 		for j := range g.tables {
 			dps := g.tables[j]
 			dps.tsTable.Table().mustAddDataPoints(&dps.dataPoints)

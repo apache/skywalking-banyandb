@@ -76,6 +76,7 @@ type TSDB[T TSTable, O any] interface {
 	CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error)
 	SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T]
 	IndexDB() IndexDB
+	Tick(ts int64)
 }
 
 // TSTable is time series table.

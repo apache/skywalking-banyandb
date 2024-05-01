@@ -25,8 +25,12 @@ import (
 var (
 	eventuallyTimeout string
 
+	neverTimeout string
+
 	// EventuallyTimeout is the timeout of async time cases execution.
 	EventuallyTimeout time.Duration
+
+	NeverTimeout time.Duration
 
 	// LogLevel is the log level of test cases.
 	LogLevel = "debug"
@@ -34,12 +38,19 @@ var (
 
 func init() {
 	if eventuallyTimeout == "" {
-		EventuallyTimeout = time.Second * 10
-		return
+		eventuallyTimeout = "10s"
+	}
+	if neverTimeout == "" {
+		neverTimeout = "2s"
 	}
 	d, err := time.ParseDuration(eventuallyTimeout)
 	if err != nil {
 		panic(err)
 	}
 	EventuallyTimeout = d
+	d, err = time.ParseDuration(neverTimeout)
+	if err != nil {
+		panic(err)
+	}
+	NeverTimeout = d
 }
