@@ -30,6 +30,7 @@ var (
 	// EventuallyTimeout is the timeout of async time cases execution.
 	EventuallyTimeout time.Duration
 
+	// NeverTimeout is the timeout of async time cases execution.
 	NeverTimeout time.Duration
 
 	// LogLevel is the log level of test cases.

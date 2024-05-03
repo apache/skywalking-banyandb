@@ -29,6 +29,7 @@ type TimeRange struct {
 	IncludeEnd   bool
 }
 
+// Before returns whether the TimeRange is before the other time.
 func (t TimeRange) Before(other time.Time) bool {
 	if t.IncludeEnd {
 		return t.End.Before(other)

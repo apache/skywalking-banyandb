@@ -29,7 +29,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dustin/go-humanize"
 	g "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/pkg/errors"
@@ -76,7 +75,7 @@ var _ = g.Describe("Istio", func() {
 		g.DeferCleanup(func() {
 			time.Sleep(time.Minute)
 			closerServerFunc()
-			printDiskUsage(measurePath, 5, 0)
+			helpers.PrintDiskUsage(measurePath, 5, 0)
 			deferFn()
 		})
 		gomega.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
@@ -223,42 +222,6 @@ func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) (int, error) {
 		}
 	}
 	return writeCount, flush(false)
-}
-
-func printDiskUsage(dir string, maxDepth, curDepth int) {
-	// Calculate the total size of all files and directories within the directory
-	var totalSize int64
-	err := filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.Mode().IsRegular() {
-			totalSize += info.Size()
-		}
-		return nil
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
-	}
-
-	// Print the disk usage of the current directory
-	fmt.Printf("%s: %s\n", dir, humanize.Bytes(uint64(totalSize)))
-
-	// Recursively print the disk usage of subdirectories
-	if curDepth < maxDepth {
-		files, err := os.ReadDir(dir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			return
-		}
-		for _, file := range files {
-			if file.IsDir() {
-				subdir := filepath.Join(dir, file.Name())
-				printDiskUsage(subdir, maxDepth, curDepth+1)
-			}
-		}
-	}
 }
 
 type clientCounter struct {

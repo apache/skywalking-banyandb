@@ -290,16 +290,13 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 }
 
 func (sc *segmentController[T, O]) remove(deadline time.Time) (err error) {
-	sc.l.Info().Time("deadline", deadline).Msg("start to remove before deadline")
 	for _, s := range sc.segments() {
 		if s.Before(deadline) {
-			if e := sc.l.Debug(); e.Enabled() {
-				e.Stringer("segment", s).Msg("start to remove data in a segment")
-			}
 			s.delete()
 			sc.Lock()
 			sc.removeSeg(s.id)
 			sc.Unlock()
+			sc.l.Info().Stringer("segment", s).Msg("removed a segment")
 		}
 		s.DecRef()
 	}

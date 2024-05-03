@@ -68,18 +68,18 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 }
 
 type database[T TSTable, O any] struct {
-	logger            *logger.Logger
-	lock              fs.File
-	indexController   *seriesIndexController[T, O]
-	scheduler         *timestamp.Scheduler
-	p                 common.Position
-	location          string
-	sLst              atomic.Pointer[[]*shard[T, O]]
-	opts              TSDBOpts[T, O]
-	tsEventCh         chan int64
-	latestTickTime    atomic.Int64
-	rotationProcessOn atomic.Bool
+	lock            fs.File
+	logger          *logger.Logger
+	indexController *seriesIndexController[T, O]
+	scheduler       *timestamp.Scheduler
+	sLst            atomic.Pointer[[]*shard[T, O]]
+	tsEventCh       chan int64
+	p               common.Position
+	location        string
+	opts            TSDBOpts[T, O]
+	latestTickTime  atomic.Int64
 	sync.RWMutex
+	rotationProcessOn atomic.Bool
 }
 
 func (d *database[T, O]) Close() error {

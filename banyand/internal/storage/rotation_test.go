@@ -186,8 +186,8 @@ func (m *MockTSTable) Close() error {
 	return nil
 }
 
-var MockTSTableCreator = func(fileSystem fs.FileSystem, root string, position common.Position,
-	l *logger.Logger, timeRange timestamp.TimeRange, option any,
+var MockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
+	_ *logger.Logger, _ timestamp.TimeRange, _ any,
 ) (*MockTSTable, error) {
 	return &MockTSTable{}, nil
 }

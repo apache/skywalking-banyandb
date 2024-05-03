@@ -46,11 +46,11 @@ func (d *database[T, O]) startRotationTask() error {
 	rt := newRetentionTask(d, d.opts.TTL)
 	go func(rt *retentionTask[T, O]) {
 		for ts := range d.tsEventCh {
+			logger.Infof("rotation task start at %s", time.Unix(0, ts).Format(time.RFC3339))
 			func(ts int64) {
 				d.rotationProcessOn.Store(true)
 				defer d.rotationProcessOn.Store(false)
 				t := time.Unix(0, ts)
-				d.logger.Info().Time("ts", t).Msg("rotation task triggered")
 				rt.run(t, d.logger)
 				shardsRef := d.sLst.Load()
 				if shardsRef == nil {
@@ -71,7 +71,6 @@ func (d *database[T, O]) startRotationTask() error {
 						gap := latest.End.UnixNano() - ts
 						// gap <=0 means the event is from the future
 						// the segment will be created by a written event directly
-						d.logger.Info().Time("ts", t).Time("end", latest.End).Msg("check segment creation")
 						if gap <= 0 || gap > newSegmentTimeGap {
 							return
 						}
@@ -83,7 +82,6 @@ func (d *database[T, O]) startRotationTask() error {
 					}(s)
 				}
 			}(ts)
-			d.logger.Info().Time("ts", time.Unix(0, ts)).Msg("rotation task finished")
 		}
 	}(rt)
 	return d.scheduler.Register("retention", rt.option, rt.expr, rt.run)
@@ -92,9 +90,9 @@ func (d *database[T, O]) startRotationTask() error {
 type retentionTask[T TSTable, O any] struct {
 	database *database[T, O]
 	running  chan struct{}
+	expr     string
 	option   cron.ParseOption
 	duration time.Duration
-	expr     string
 }
 
 func newRetentionTask[T TSTable, O any](database *database[T, O], ttl IntervalRule) *retentionTask[T, O] {
@@ -130,7 +128,7 @@ func (rc *retentionTask[T, O]) run(now time.Time, l *logger.Logger) bool {
 		}
 	}
 	stdDeadline := rc.database.opts.TTL.Unit.standard(deadline)
-	if err := rc.database.indexController.run(stdDeadline); err != nil {
+	if err := rc.database.indexController.run(now, stdDeadline); err != nil {
 		l.Error().Err(err)
 	}
 	return true

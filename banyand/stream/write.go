@@ -68,6 +68,9 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		}
 		dst[gn] = eg
 	}
+	if eg.latestTS < ts {
+		eg.latestTS = ts
+	}
 
 	var et *elementsInTable
 	for i := range eg.tables {
@@ -224,6 +227,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	for i := range groups {
 		g := groups[i]
+		g.tsdb.Tick(g.latestTS)
 		for j := range g.tables {
 			es := g.tables[j]
 			es.tsTable.Table().mustAddElements(&es.elements)

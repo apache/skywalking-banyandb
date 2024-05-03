@@ -275,7 +275,7 @@ func newSeriesIndexController[T TSTable, O any](
 	}
 	switch len(idxName) {
 	case 0:
-		if sic.hot, err = sic.newIdx(ctx); err != nil {
+		if sic.hot, err = sic.newIdx(ctx, clock.Now()); err != nil {
 			return nil, err
 		}
 	case 1:
@@ -317,13 +317,13 @@ func (sic *seriesIndexController[T, O]) loadIdx() ([]string, error) {
 	return idxName, nil
 }
 
-func (sic *seriesIndexController[T, O]) newIdx(ctx context.Context) (*seriesIndex, error) {
-	ts := sic.opts.TTL.Unit.standard(sic.clock.Now())
+func (sic *seriesIndexController[T, O]) newIdx(ctx context.Context, now time.Time) (*seriesIndex, error) {
+	ts := sic.opts.TTL.Unit.standard(now)
 	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", ts.UnixNano()))
 }
 
-func (sic *seriesIndexController[T, O]) newNextIdx(ctx context.Context) (*seriesIndex, error) {
-	ts := sic.opts.TTL.Unit.standard(sic.clock.Now())
+func (sic *seriesIndexController[T, O]) newNextIdx(ctx context.Context, now time.Time) (*seriesIndex, error) {
+	ts := sic.opts.TTL.Unit.standard(now)
 	ts = ts.Add(sic.standbyLiveTime)
 	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", ts.UnixNano()))
 }
@@ -341,47 +341,66 @@ func (sic *seriesIndexController[T, O]) openIdx(ctx context.Context, name string
 	return nil, errors.New("unexpected series index name")
 }
 
-func (sic *seriesIndexController[T, O]) run(deadline time.Time) (err error) {
-	var standby *seriesIndex
+func (sic *seriesIndexController[T, O]) run(now, deadline time.Time) (err error) {
 	ctx := context.WithValue(context.Background(), logger.ContextKey, sic.l)
-	_, err = sic.loadIdx()
-	if err != nil {
+	if _, err := sic.loadIdx(); err != nil {
 		sic.l.Warn().Err(err).Msg("fail to clear redundant series index")
 	}
+
+	sic.Lock()
+	defer sic.Unlock()
 	if sic.hot.startTime.Compare(deadline) <= 0 {
-		sic.l.Info().Time("deadline", deadline).Msg("start to swap series index")
-		sic.Lock()
-		if sic.standby == nil {
-			sic.standby, err = sic.newIdx(ctx)
-			if err != nil {
-				sic.Unlock()
-				return err
-			}
-		}
-		standby = sic.hot
-		sic.hot = sic.standby
-		sic.standby = nil
-		sic.Unlock()
-		err = standby.Close()
-		if err != nil {
-			sic.l.Warn().Err(err).Msg("fail to close standby series index")
-		}
-		lfs.MustRMAll(standby.path)
-		sic.l.Info().Str("path", standby.path).Msg("dropped series index")
-		lfs.SyncPath(sic.location)
+		return sic.handleStandby(ctx, now, deadline)
 	}
 
+	if sic.standby != nil {
+		return nil
+	}
 	liveTime := sic.hot.startTime.Sub(deadline)
-	if liveTime > 0 && liveTime <= sic.standbyLiveTime {
-		sic.l.Info().Time("deadline", deadline).Msg("start to create standby series index")
-		standby, err = sic.newNextIdx(ctx)
+	if liveTime <= 0 || liveTime > sic.standbyLiveTime {
+		return nil
+	}
+	return sic.createStandby(ctx, now, deadline)
+}
+
+func (sic *seriesIndexController[T, O]) handleStandby(ctx context.Context, now, deadline time.Time) error {
+	sic.l.Info().Time("deadline", deadline).Msg("start to swap series index")
+
+	if sic.standby == nil {
+		var err error
+		sic.standby, err = sic.newIdx(ctx, now)
 		if err != nil {
 			return err
 		}
-		sic.Lock()
-		sic.standby = standby
-		sic.Unlock()
 	}
+
+	standby := sic.hot
+	sic.hot = sic.standby
+	sic.standby = nil
+
+	if err := standby.Close(); err != nil {
+		sic.l.Warn().Err(err).Msg("fail to close standby series index")
+	}
+
+	lfs.MustRMAll(standby.path)
+	sic.l.Info().Str("path", standby.path).Msg("dropped series index")
+	lfs.SyncPath(sic.location)
+
+	return nil
+}
+
+func (sic *seriesIndexController[T, O]) createStandby(ctx context.Context, now, deadline time.Time) error {
+	if sic.standby != nil {
+		return nil
+	}
+	sic.l.Info().Time("deadline", deadline).Msg("start to create standby series index")
+	standby, err := sic.newNextIdx(ctx, now)
+	if err != nil {
+		sic.l.Error().Err(err).Msg("fail to create standby series index")
+		return err
+	}
+
+	sic.standby = standby
 	return nil
 }
 

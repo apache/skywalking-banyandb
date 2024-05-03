@@ -149,8 +149,8 @@ type elementsInTable struct {
 }
 
 type elementsInGroup struct {
-	tsdb storage.TSDB[*tsTable, option]
-
-	docs   index.Documents
-	tables []*elementsInTable
+	tsdb     storage.TSDB[*tsTable, option]
+	docs     index.Documents
+	tables   []*elementsInTable
+	latestTS int64
 }
