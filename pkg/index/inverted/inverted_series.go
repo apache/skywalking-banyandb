@@ -30,9 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
-var (
-	emptySeries = make([]index.Series, 0)
-)
+var emptySeries = make([]index.Series, 0)
 
 // Search implements index.SeriesStore.
 func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher) ([]index.Series, error) {

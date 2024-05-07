@@ -89,14 +89,13 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 var rangeOpts = index.RangeOpts{}
 
 func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
-	var seriesMatchers = make([]index.SeriesMatcher, len(series))
+	seriesMatchers := make([]index.SeriesMatcher, len(series))
 	for i := range series {
 		var err error
 		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
 		if err != nil {
 			return nil, err
 		}
-
 	}
 	ss, err := s.store.Search(ctx, seriesMatchers)
 	if err != nil {

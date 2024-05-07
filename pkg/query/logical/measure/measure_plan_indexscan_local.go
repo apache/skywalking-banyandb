@@ -106,41 +106,6 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 	}, nil
 }
 
-func (uis *unresolvedIndexScan) String() string {
-	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},projection=%s,groupByEntity=%t, criteria=%s",
-		uis.startTime.Unix(), uis.endTime.Unix(), uis.metadata.GetGroup(), uis.metadata.GetName(), FormatTags(", ", uis.projectionTags...), uis.groupByEntity, Truncate(uis.criteria))
-}
-
-func Truncate(criteria fmt.Stringer) string {
-	str := criteria.String()
-	if len(str) > 100 {
-		return str[:100] + "..."
-	}
-	return str
-}
-
-func FormatTags(sep string, tags ...[]*logical.Tag) string {
-	var result string
-	for i, tag := range tags {
-		if i > 0 {
-			result += sep
-		}
-		result += FormatTag(sep, tag...)
-	}
-	return result
-}
-
-func FormatTag(sep string, tags ...*logical.Tag) string {
-	var result string
-	for i, tag := range tags {
-		if i > 0 {
-			result += sep
-		}
-		result += tag.GetCompoundName()
-	}
-	return result
-}
-
 var (
 	_ logical.Plan          = (*localIndexScan)(nil)
 	_ logical.Sorter        = (*localIndexScan)(nil)
@@ -148,20 +113,20 @@ var (
 )
 
 type localIndexScan struct {
-	schema               logical.Schema
 	filter               index.Filter
+	schema               logical.Schema
+	uis                  *unresolvedIndexScan
 	order                *logical.OrderBy
 	metadata             *commonv1.Metadata
 	l                    *logger.Logger
 	timeRange            timestamp.TimeRange
 	projectionTags       []pbv1.TagProjection
-	projectionFields     []string
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
 	entities             [][]*modelv1.TagValue
-	groupByEntity        bool
+	projectionFields     []string
 	maxDataPointsSize    int
-	uis                  *unresolvedIndexScan
+	groupByEntity        bool
 }
 
 func (i *localIndexScan) Limit(max int) {
@@ -181,7 +146,6 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		}
 	}
 	ec := executor.FromMeasureExecutionContext(ctx)
-	start := time.Now()
 	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
 		Name:            i.metadata.GetName(),
 		TimeRange:       &i.timeRange,
@@ -193,11 +157,6 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query measure: %w", err)
-	}
-
-	elasped := time.Since(start)
-	if elasped > 2*time.Second {
-		i.l.Warn().Msgf("query measure %s/%s takes %s, entity size: %d, filter: %s, time range: %s, uis: %s", i.metadata.GetGroup(), i.metadata.GetName(), elasped, len(i.entities), i.filter, i.timeRange.String(), i.uis.String())
 	}
 	return &resultMIterator{
 		result: result,
@@ -288,21 +247,5 @@ func (ei *resultMIterator) Current() []*measurev1.DataPoint {
 
 func (ei *resultMIterator) Close() error {
 	ei.result.Release()
-	return nil
-}
-
-var dummyIter = dummyMIterator{}
-
-type dummyMIterator struct{}
-
-func (ei dummyMIterator) Next() bool {
-	return false
-}
-
-func (ei dummyMIterator) Current() []*measurev1.DataPoint {
-	return nil
-}
-
-func (ei dummyMIterator) Close() error {
 	return nil
 }

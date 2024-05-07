@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+// ErrExpiredData is returned when the data is expired.
 var ErrExpiredData = errors.New("expired data")
 
 type segment[T TSTable] struct {

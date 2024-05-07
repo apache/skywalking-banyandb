@@ -240,9 +240,11 @@ type Series struct {
 // SeriesStore is an abstract of a series repository.
 type SeriesStore interface {
 	Store
+	// Search returns a list of series that match the given matchers.
 	Search(context.Context, []SeriesMatcher) ([]Series, error)
 }
 
+// SeriesMatcherType represents the type of series matcher.
 type SeriesMatcherType int
 
 const (
@@ -254,6 +256,7 @@ const (
 	SeriesMatcherTypeWildcard
 )
 
+// SeriesMatcher represents a series matcher.
 type SeriesMatcher struct {
 	Match []byte
 	Type  SeriesMatcherType

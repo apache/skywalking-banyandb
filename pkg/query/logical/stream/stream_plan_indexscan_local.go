@@ -62,7 +62,7 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
 }
 
-func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Element, err error) {
+func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
 	var orderBy *pbv1.OrderBy
 	if i.order != nil {
 		orderBy = &pbv1.OrderBy{
@@ -86,7 +86,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 			return nil, err
 		}
 		if ssr == nil {
-			return elements, nil
+			return nil, nil
 		}
 		r := ssr.Pull()
 		return buildElementsFromColumnResult(r), nil
@@ -106,7 +106,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 			return nil, err
 		}
 		if sfr == nil {
-			return elements, nil
+			return nil, nil
 		}
 		r := sfr.Pull()
 		return buildElementsFromColumnResult(r), nil
