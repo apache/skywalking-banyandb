@@ -49,7 +49,7 @@ make[1]: Leaving directory '<path_to_project_root>/bydbctl'
 The build system provides a series of binary options as well.
 
 * `make -C banyand banyand-server` generates a basic `banyand-server`.
-* `make -C banyand release` or `make -C banyand static` builds out a static binary `banyand-server-static` for releasing.
+* `make -C banyand release` or `make -C banyand banyand-server-static` builds out a static binary `banyand-server-static` for releasing.
 * `make -C banyand debug` gives a binary for debugging without the complier's optimizations.
 * `make -C banyand debug-static` is a static binary for debugging.
 * `make -C bydbctl release` cross-builds several binaries for multi-platforms.
@@ -59,9 +59,12 @@ Then users get binaries as below
 ``` shell
 $ ls banyand/build/bin
 banyand-server  
+banyand-server-static
 banyand-server-debug  
 banyand-server-debug-static  
 
 $ ls bydbctl/build/bin
 bydbctl  bydbctl--darwin-amd64  bydbctl--darwin-arm64  bydbctl--linux-386  bydbctl--linux-amd64  bydbctl--linux-arm64  bydbctl--windows-386  bydbctl--windows-amd64
 ```
+
+> The build script now checks if the binary file exists before rebuilding. If you want to rebuild, please remove the binary file manually.

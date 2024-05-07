@@ -27,6 +27,7 @@ include $(root_dir)/scripts/build/ginkgo.mk
 
 .PHONY: profile
 profile: $(GINKGO)
+	mkdir -p prof
 	$(GINKGO) -v --tags="prometheus" \
 	  --blockprofile prof/block.prof \
 	  --cpuprofile prof/cpu.prof \
