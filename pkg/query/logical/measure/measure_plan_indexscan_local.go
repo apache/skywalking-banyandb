@@ -101,8 +101,44 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		filter:               filter,
 		entities:             entities,
 		groupByEntity:        uis.groupByEntity,
+		uis:                  uis,
 		l:                    logger.GetLogger("query", "measure", uis.metadata.Group, uis.metadata.Name, "local-index"),
 	}, nil
+}
+
+func (uis *unresolvedIndexScan) String() string {
+	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},projection=%s,groupByEntity=%t, criteria=%s",
+		uis.startTime.Unix(), uis.endTime.Unix(), uis.metadata.GetGroup(), uis.metadata.GetName(), FormatTags(", ", uis.projectionTags...), uis.groupByEntity, Truncate(uis.criteria))
+}
+
+func Truncate(criteria fmt.Stringer) string {
+	str := criteria.String()
+	if len(str) > 100 {
+		return str[:100] + "..."
+	}
+	return str
+}
+
+func FormatTags(sep string, tags ...[]*logical.Tag) string {
+	var result string
+	for i, tag := range tags {
+		if i > 0 {
+			result += sep
+		}
+		result += FormatTag(sep, tag...)
+	}
+	return result
+}
+
+func FormatTag(sep string, tags ...*logical.Tag) string {
+	var result string
+	for i, tag := range tags {
+		if i > 0 {
+			result += sep
+		}
+		result += tag.GetCompoundName()
+	}
+	return result
 }
 
 var (
@@ -125,6 +161,7 @@ type localIndexScan struct {
 	entities             [][]*modelv1.TagValue
 	groupByEntity        bool
 	maxDataPointsSize    int
+	uis                  *unresolvedIndexScan
 }
 
 func (i *localIndexScan) Limit(max int) {
@@ -144,28 +181,26 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		}
 	}
 	ec := executor.FromMeasureExecutionContext(ctx)
-	var results []pbv1.MeasureQueryResult
-	for _, e := range i.entities {
-		result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
-			Name:            i.metadata.GetName(),
-			TimeRange:       &i.timeRange,
-			Entity:          e,
-			Filter:          i.filter,
-			Order:           orderBy,
-			TagProjection:   i.projectionTags,
-			FieldProjection: i.projectionFields,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to query measure: %w", err)
-		}
-
-		results = append(results, result)
+	start := time.Now()
+	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
+		Name:            i.metadata.GetName(),
+		TimeRange:       &i.timeRange,
+		Entities:        i.entities,
+		Filter:          i.filter,
+		Order:           orderBy,
+		TagProjection:   i.projectionTags,
+		FieldProjection: i.projectionFields,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
-	if len(results) == 0 {
-		return dummyIter, nil
+
+	elasped := time.Since(start)
+	if elasped > 2*time.Second {
+		i.l.Warn().Msgf("query measure %s/%s takes %s, entity size: %d, filter: %s, time range: %s, uis: %s", i.metadata.GetGroup(), i.metadata.GetName(), elasped, len(i.entities), i.filter, i.timeRange.String(), i.uis.String())
 	}
 	return &resultMIterator{
-		results: results,
+		result: result,
 	}, nil
 }
 
@@ -201,28 +236,23 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 }
 
 type resultMIterator struct {
-	results      []pbv1.MeasureQueryResult
-	current      []*measurev1.DataPoint
-	index        int
-	currentIndex int
+	result  pbv1.MeasureQueryResult
+	current []*measurev1.DataPoint
+	i       int
 }
 
 func (ei *resultMIterator) Next() bool {
-	if ei.index >= len(ei.results) {
-		return false
-	}
-	ei.currentIndex++
-	if ei.currentIndex < len(ei.current) {
+	ei.i++
+	if ei.i < len(ei.current) {
 		return true
 	}
 
-	r := ei.results[ei.index].Pull()
+	r := ei.result.Pull()
 	if r == nil {
-		ei.index++
-		return ei.Next()
+		return false
 	}
 	ei.current = ei.current[:0]
-	ei.currentIndex = 0
+	ei.i = 0
 	for i := range r.Timestamps {
 		dp := &measurev1.DataPoint{
 			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
@@ -253,13 +283,11 @@ func (ei *resultMIterator) Next() bool {
 }
 
 func (ei *resultMIterator) Current() []*measurev1.DataPoint {
-	return []*measurev1.DataPoint{ei.current[ei.currentIndex]}
+	return []*measurev1.DataPoint{ei.current[ei.i]}
 }
 
 func (ei *resultMIterator) Close() error {
-	for _, result := range ei.results {
-		result.Release()
-	}
+	ei.result.Release()
 	return nil
 }
 

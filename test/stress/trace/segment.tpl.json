@@ -33,7 +33,7 @@
       },
       "now": {
         "type": "time",
-        "stepMillisecond": 300000,
+        "stepMillisecond": 600000,
         "waitMillisecond": 1000
       },
       "tags": {

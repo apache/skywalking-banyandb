@@ -69,7 +69,7 @@ type queryOptions struct {
 }
 
 func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1.MeasureQueryResult, error) {
-	if mqo.TimeRange == nil || mqo.Entity == nil {
+	if mqo.TimeRange == nil || len(mqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
@@ -87,8 +87,15 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 			tabWrappers[i].DecRef()
 		}
 	}()
+	series := make([]*pbv1.Series, len(mqo.Entities))
+	for i := range mqo.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      mqo.Name,
+			EntityValues: mqo.Entities[i],
+		}
+	}
 
-	sl, err := tsdb.IndexDB().Search(ctx, &pbv1.Series{Subject: mqo.Name, EntityValues: mqo.Entity}, mqo.Filter, mqo.Order, preloadSize)
+	sl, err := tsdb.IndexDB().Search(ctx, series, mqo.Filter, mqo.Order, preloadSize)
 	if err != nil {
 		return nil, err
 	}

@@ -134,7 +134,7 @@ type TagProjection struct {
 type StreamQueryOptions struct {
 	Name          string
 	TimeRange     *timestamp.TimeRange
-	Entity        []*modelv1.TagValue
+	Entities      [][]*modelv1.TagValue
 	Filter        index.Filter
 	Order         *OrderBy
 	TagProjection []TagProjection
@@ -182,7 +182,7 @@ type StreamFilterResult interface {
 type MeasureQueryOptions struct {
 	Name            string
 	TimeRange       *timestamp.TimeRange
-	Entity          []*modelv1.TagValue
+	Entities        [][]*modelv1.TagValue
 	Filter          index.Filter
 	Order           *OrderBy
 	TagProjection   []TagProjection

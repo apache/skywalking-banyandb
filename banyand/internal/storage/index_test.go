@@ -77,60 +77,102 @@ func TestSeriesIndex_Primary(t *testing.T) {
 	tests := []struct {
 		name         string
 		subject      string
-		entityValues []*modelv1.TagValue
-		expected     []*modelv1.TagValue
+		entityValues [][]*modelv1.TagValue
+		expected     [][]*modelv1.TagValue
 	}{
 		{
 			name:    "Search",
 			subject: "service_instance_latency",
-			entityValues: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			entityValues: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
 			},
-			expected: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			expected: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
+			},
+		},
+		{
+			name:    "Search multiple series",
+			subject: "service_instance_latency",
+			entityValues: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_2"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_2_instance_2"}}},
+				},
+			},
+			expected: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_2"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_2_instance_2"}}},
+				},
 			},
 		},
 		{
 			name:    "Prefix",
 			subject: "service_instance_latency",
-			entityValues: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				pbv1.AnyTagValue,
+			entityValues: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					pbv1.AnyTagValue,
+				},
 			},
-			expected: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			expected: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
 			},
 		},
 		{
 			name:    "Wildcard",
 			subject: "service_instance_latency",
-			entityValues: []*modelv1.TagValue{
-				pbv1.AnyTagValue,
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			entityValues: [][]*modelv1.TagValue{
+				{
+					pbv1.AnyTagValue,
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
 			},
-			expected: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			expected: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			seriesQuery := testSeriesPool.Generate()
-			defer testSeriesPool.Release(seriesQuery)
-			seriesQuery.Subject = tt.subject
-			seriesQuery.EntityValues = tt.entityValues
-			sl, err := si.searchPrimary(ctx, seriesQuery)
+			var seriesQueries []*pbv1.Series
+			for i := range tt.entityValues {
+				seriesQuery := testSeriesPool.Generate()
+				defer testSeriesPool.Release(seriesQuery)
+				seriesQuery.Subject = tt.subject
+				seriesQuery.EntityValues = tt.entityValues[i]
+				seriesQueries = append(seriesQueries, seriesQuery)
+			}
+			sl, err := si.searchPrimary(ctx, seriesQueries)
 			require.NoError(t, err)
-			require.Equal(t, 1, len(sl))
+			require.Equal(t, len(tt.entityValues), len(sl))
 			assert.Equal(t, tt.subject, sl[0].Subject)
-			assert.Equal(t, tt.expected[0].GetStr().GetValue(), sl[0].EntityValues[0].GetStr().GetValue())
-			assert.Equal(t, tt.expected[1].GetStr().GetValue(), sl[0].EntityValues[1].GetStr().GetValue())
-			assert.True(t, sl[0].ID > 0)
+			for i := range tt.expected {
+				assert.Equal(t, tt.expected[i][0].GetStr().GetValue(), sl[i].EntityValues[0].GetStr().GetValue())
+				assert.Equal(t, tt.expected[i][1].GetStr().GetValue(), sl[i].EntityValues[1].GetStr().GetValue())
+				assert.True(t, sl[0].ID > 0)
+			}
 		})
 	}
 }

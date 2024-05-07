@@ -153,7 +153,7 @@ func (p *preloadService) PreRun(ctx context.Context) error {
 	}
 	if err := loadSchema(ctx, measureDir, &databasev1.Measure{}, func(ctx context.Context, measure *databasev1.Measure) error {
 		_, innerErr := e.CreateMeasure(ctx, measure)
-		return innerErr
+		return errors.WithMessagef(innerErr, "failed to create measure %s", measure.Metadata.Name)
 	}); err != nil {
 		return errors.WithStack(err)
 	}

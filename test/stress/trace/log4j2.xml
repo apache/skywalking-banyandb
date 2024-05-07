@@ -25,8 +25,7 @@
     </Appenders>
     <Loggers>
         <logger name="org.apache.skywalking.oap.server.storage.plugin.banyandb" level="WARN"/>
-        <logger name="org.apache.skywalking.oap.server.core.storage.ttl" level="INFO"/>
-        <logger name="org.apache.skywalking.restapi" level="INFO"/>
+        <logger name="org.apache.skywalking.oap.server.storage.plugin.banyandb.measure" level="WARN"/>
         <Root level="WARN">
             <AppenderRef ref="Console"/>
         </Root>

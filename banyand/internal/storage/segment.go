@@ -35,7 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var errEndOfSegment = errors.New("reached the end of the segment")
+var ErrExpiredData = errors.New("expired data")
 
 type segment[T TSTable] struct {
 	bucket.Reporter
@@ -126,6 +126,7 @@ type segmentController[T TSTable, O any] struct {
 	location       string
 	lst            []*segment[T]
 	segmentSize    IntervalRule
+	deadline       atomic.Int64
 	sync.RWMutex
 }
 
@@ -161,6 +162,10 @@ func (sc *segmentController[T, O]) selectTSTables(timeRange timestamp.TimeRange)
 }
 
 func (sc *segmentController[T, O]) createTSTable(ts time.Time) (TSTableWrapper[T], error) {
+	// Before the first remove old segment run, any segment should be created.
+	if sc.deadline.Load() > ts.UnixNano() {
+		return nil, ErrExpiredData
+	}
 	s, err := sc.create(ts)
 	if err != nil {
 		return nil, err
@@ -217,9 +222,6 @@ func (sc *segmentController[T, O]) open() error {
 		for _, cv := range compatibleVersions[compatibleVersionsKey] {
 			if string(version) == cv {
 				_, err := sc.load(start, end, sc.location)
-				if errors.Is(err, errEndOfSegment) {
-					return nil
-				}
 				return err
 			}
 		}
@@ -230,6 +232,14 @@ func (sc *segmentController[T, O]) open() error {
 func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) {
 	sc.Lock()
 	defer sc.Unlock()
+	last := len(sc.lst) - 1
+	for i := range sc.lst {
+		s := sc.lst[last-i]
+		if s.Contains(start.UnixNano()) {
+			s.incRef()
+			return s, nil
+		}
+	}
 	start = sc.segmentSize.Unit.standard(start)
 	var next *segment[T]
 	for _, s := range sc.lst {
@@ -307,6 +317,7 @@ func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 	for i, b := range sc.lst {
 		if b.id == segID {
 			sc.lst = append(sc.lst[:i], sc.lst[i+1:]...)
+			sc.deadline.Store(sc.lst[0].Start.UnixNano())
 			break
 		}
 	}

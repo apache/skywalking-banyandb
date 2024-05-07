@@ -45,7 +45,7 @@ func (d *database[T, O]) IndexDB() IndexDB {
 	return d.indexController.hot
 }
 
-func (d *database[T, O]) Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+func (d *database[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
 	return d.indexController.searchPrimary(ctx, series)
 }
 
@@ -88,13 +88,32 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) searchPrimary(_ context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
+	var seriesMatchers = make([]index.SeriesMatcher, len(series))
+	for i := range series {
+		var err error
+		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
+		if err != nil {
+			return nil, err
+		}
+
+	}
+	ss, err := s.store.Search(ctx, seriesMatchers)
+	if err != nil {
+		return nil, err
+	}
+	return convertIndexSeriesToSeriesList(ss)
+}
+
+var emptySeriesMatcher = index.SeriesMatcher{}
+
+func convertEntityValuesToSeriesMatcher(series *pbv1.Series) (index.SeriesMatcher, error) {
 	var hasAny, hasWildcard bool
 	var prefixIndex int
 
 	for i, tv := range series.EntityValues {
 		if tv == nil {
-			return nil, errors.New("nil tag value")
+			return emptySeriesMatcher, errors.New("unexpected nil tag value")
 		}
 		if tv == pbv1.AnyTagValue {
 			if !hasAny {
@@ -112,40 +131,31 @@ func (s *seriesIndex) searchPrimary(_ context.Context, series *pbv1.Series) (pbv
 	var err error
 
 	if hasAny {
-		var ss []index.Series
 		if hasWildcard {
 			if err = series.Marshal(); err != nil {
-				return nil, err
+				return emptySeriesMatcher, err
 			}
-			ss, err = s.store.SearchWildcard(series.Buffer)
-			if err != nil {
-				return nil, err
-			}
-			return convertIndexSeriesToSeriesList(ss)
+			return index.SeriesMatcher{
+				Type:  index.SeriesMatcherTypeWildcard,
+				Match: series.Buffer,
+			}, nil
 		}
 		series.EntityValues = series.EntityValues[:prefixIndex]
 		if err = series.Marshal(); err != nil {
-			return nil, err
+			return emptySeriesMatcher, err
 		}
-		ss, err = s.store.SearchPrefix(series.Buffer)
-		if err != nil {
-			return nil, err
-		}
-		return convertIndexSeriesToSeriesList(ss)
+		return index.SeriesMatcher{
+			Type:  index.SeriesMatcherTypePrefix,
+			Match: series.Buffer,
+		}, nil
 	}
 	if err = series.Marshal(); err != nil {
-		return nil, err
+		return emptySeriesMatcher, err
 	}
-	var seriesID common.SeriesID
-	seriesID, err = s.store.Search(series.Buffer)
-	if err != nil {
-		return nil, err
-	}
-	if seriesID > 0 {
-		series.ID = seriesID
-		return pbv1.SeriesList{series}, nil
-	}
-	return nil, nil
+	return index.SeriesMatcher{
+		Type:  index.SeriesMatcherTypeExact,
+		Match: series.Buffer,
+	}, nil
 }
 
 func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList, error) {
@@ -161,7 +171,7 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList
 	return seriesList, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error) {
+func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error) {
 	seriesList, err := s.searchPrimary(ctx, series)
 	if err != nil {
 		return nil, err
@@ -170,6 +180,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 	pl := seriesList.ToList()
 	if filter != nil {
 		var plFilter posting.List
+		// TODO: merge searchPrimary and filter
 		plFilter, err = filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return s.store, nil
 		}, 0)
@@ -191,6 +202,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 	fieldKey := index.FieldKey{
 		IndexRuleID: order.Index.GetMetadata().Id,
 	}
+	// TODO:// merge searchPrimary and sort
 	iter, err := s.store.Iterator(fieldKey, rangeOpts, order.Sort, preloadSize)
 	if err != nil {
 		return nil, err
@@ -413,7 +425,7 @@ func (sic *seriesIndexController[T, O]) Write(docs index.Documents) error {
 	return sic.hot.Write(docs)
 }
 
-func (sic *seriesIndexController[T, O]) searchPrimary(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+func (sic *seriesIndexController[T, O]) searchPrimary(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
 	sic.RLock()
 	defer sic.RUnlock()
 
@@ -427,7 +439,7 @@ func (sic *seriesIndexController[T, O]) searchPrimary(ctx context.Context, serie
 	return sic.standby.searchPrimary(ctx, series)
 }
 
-func (sic *seriesIndexController[T, O]) Search(ctx context.Context, series *pbv1.Series,
+func (sic *seriesIndexController[T, O]) Search(ctx context.Context, series []*pbv1.Series,
 	filter index.Filter, order *pbv1.OrderBy, preloadSize int,
 ) (pbv1.SeriesList, error) {
 	sic.RLock()

@@ -46,7 +46,6 @@ func (d *database[T, O]) startRotationTask() error {
 	rt := newRetentionTask(d, d.opts.TTL)
 	go func(rt *retentionTask[T, O]) {
 		for ts := range d.tsEventCh {
-			logger.Infof("rotation task start at %s", time.Unix(0, ts).Format(time.RFC3339))
 			func(ts int64) {
 				d.rotationProcessOn.Store(true)
 				defer d.rotationProcessOn.Store(false)

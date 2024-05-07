@@ -58,6 +58,7 @@ services:
     environment:
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_FLUSH_INTERVAL: 5
+      SW_CORE_PERSISTENT_PERIOD: 5
     ports:
       - 12800:12800
     volumes:

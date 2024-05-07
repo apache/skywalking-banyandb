@@ -30,68 +30,52 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
+var (
+	emptySeries = make([]index.Series, 0)
+)
+
 // Search implements index.SeriesStore.
-func (s *store) Search(term []byte) (common.SeriesID, error) {
+func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher) ([]index.Series, error) {
+	if len(seriesMatchers) == 0 {
+		return emptySeries, nil
+	}
 	reader, err := s.writer.Reader()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer func() {
 		_ = reader.Close()
 	}()
-	query := bluge.NewTermQuery(convert.BytesToString(term)).SetField(entityField)
-	dmi, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
-	if err != nil {
-		return 0, err
-	}
-	var result common.SeriesID
-	next, err := dmi.Next()
-	if err == nil && next != nil {
-		err = next.VisitStoredFields(func(field string, value []byte) bool {
-			if field == docIDField {
-				result = common.SeriesID(convert.BytesToUint64(value))
-				return false
-			}
-			return true
-		})
-		if err != nil {
-			return 0, errors.WithMessage(err, "visit stored fields")
+	qs := make([]bluge.Query, len(seriesMatchers))
+	for i := range seriesMatchers {
+		switch seriesMatchers[i].Type {
+		case index.SeriesMatcherTypeExact:
+			q := bluge.NewTermQuery(convert.BytesToString(seriesMatchers[i].Match))
+			q.SetField(entityField)
+			qs[i] = q
+		case index.SeriesMatcherTypePrefix:
+			q := bluge.NewPrefixQuery(convert.BytesToString(seriesMatchers[i].Match))
+			q.SetField(entityField)
+			qs[i] = q
+		case index.SeriesMatcherTypeWildcard:
+			q := bluge.NewWildcardQuery(convert.BytesToString(seriesMatchers[i].Match))
+			q.SetField(entityField)
+			qs[i] = q
+		default:
+			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
 		}
 	}
-	if err != nil {
-		return 0, errors.WithMessage(err, "iterate document match iterator")
+	var query bluge.Query
+	if len(qs) > 1 {
+		bq := bluge.NewBooleanQuery()
+		bq.AddShould(qs...)
+		bq.SetMinShould(1)
+		query = bq
+	} else {
+		query = qs[0]
 	}
-	return result, nil
-}
 
-// SearchPrefix implements index.SeriesStore.
-func (s *store) SearchPrefix(prefix []byte) ([]index.Series, error) {
-	reader, err := s.writer.Reader()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = reader.Close()
-	}()
-	query := bluge.NewPrefixQuery(convert.BytesToString(prefix)).SetField(entityField)
-	dmi, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
-	if err != nil {
-		return nil, err
-	}
-	return parseResult(dmi)
-}
-
-// SearchWildcard implements index.SeriesStore.
-func (s *store) SearchWildcard(wildcard []byte) ([]index.Series, error) {
-	reader, err := s.writer.Reader()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = reader.Close()
-	}()
-	query := bluge.NewWildcardQuery(convert.BytesToString(wildcard)).SetField(entityField)
-	dmi, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
+	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query))
 	if err != nil {
 		return nil, err
 	}
