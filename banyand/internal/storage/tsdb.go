@@ -68,15 +68,18 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 }
 
 type database[T TSTable, O any] struct {
-	logger          *logger.Logger
 	lock            fs.File
+	logger          *logger.Logger
 	indexController *seriesIndexController[T, O]
 	scheduler       *timestamp.Scheduler
+	sLst            atomic.Pointer[[]*shard[T, O]]
+	tsEventCh       chan int64
 	p               common.Position
 	location        string
-	sLst            atomic.Pointer[[]*shard[T, O]]
 	opts            TSDBOpts[T, O]
+	latestTickTime  atomic.Int64
 	sync.RWMutex
+	rotationProcessOn atomic.Bool
 }
 
 func (d *database[T, O]) Close() error {
@@ -89,6 +92,7 @@ func (d *database[T, O]) Close() error {
 			s.close()
 		}
 	}
+	close(d.tsEventCh)
 	d.lock.Close()
 	if err := lfs.DeleteFile(d.lock.Path()); err != nil {
 		logger.Panicf("cannot delete lock file %s: %s", d.lock.Path(), err)
@@ -121,6 +125,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		logger:          l,
 		indexController: sir,
 		opts:            opts,
+		tsEventCh:       make(chan int64),
 		p:               p,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
@@ -133,11 +138,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	if err = db.loadDatabase(); err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "load database failed").Error())
 	}
-	retentionTask := newRetentionTask(db, opts.TTL)
-	if err = db.scheduler.Register("retention", retentionTask.option, retentionTask.expr, retentionTask.run); err != nil {
-		return nil, err
-	}
-	return db, nil
+	return db, db.startRotationTask()
 }
 
 func (d *database[T, O]) CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error) {

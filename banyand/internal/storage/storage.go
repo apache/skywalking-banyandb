@@ -66,16 +66,17 @@ type SupplyTSDB[T TSTable] func() T
 // IndexDB is the interface of index database.
 type IndexDB interface {
 	Write(docs index.Documents) error
-	Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error)
+	Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error)
 }
 
 // TSDB allows listing and getting shard details.
 type TSDB[T TSTable, O any] interface {
 	io.Closer
-	Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error)
+	Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error)
 	CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error)
 	SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T]
 	IndexDB() IndexDB
+	Tick(ts int64)
 }
 
 // TSTable is time series table.

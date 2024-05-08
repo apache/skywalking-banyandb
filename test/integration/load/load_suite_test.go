@@ -19,9 +19,13 @@ package integration_load_test
 
 import (
 	"context"
+	"os"
+	"path"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/montanaflynn/stats"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
@@ -32,6 +36,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -43,60 +48,22 @@ func TestIntegrationLoad(t *testing.T) {
 	RunSpecs(t, "Integration Load Suite", Label("integration", "slow"))
 }
 
+const (
+	minutes        = 10 * 24 * 60
+	interval       = 10 * time.Second
+	queryInterval  = time.Hour
+	reportInterval = 24 * time.Hour
+)
+
 var _ = Describe("Load Test Suit", func() {
 	var (
 		connection *grpc.ClientConn
-		now        time.Time
 		deferFunc  func()
 		goods      []gleak.Goroutine
-		addr       string
+		dir        string
 	)
 
-	BeforeEach(func() {
-		Expect(logger.Init(logger.Logging{
-			Env:   "dev",
-			Level: flags.LogLevel,
-		})).Should(Succeed())
-		goods = gleak.Goroutines()
-		addr, _, deferFunc = setup.Standalone()
-		Eventually(
-			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
-			flags.EventuallyTimeout).Should(Succeed())
-		var err error
-		connection, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		Expect(err).NotTo(HaveOccurred())
-		days := 7
-		hours := 24
-		minutes := 60
-		interval := 10 * time.Second
-		c := time.Now()
-		for i := 0; i < days; i++ {
-			date := c.Add(-time.Hour * time.Duration((days-i)*24))
-			for h := 0; h < hours; h++ {
-				hour := date.Add(time.Hour * time.Duration(h))
-				start := time.Now()
-				for j := 0; j < minutes; j++ {
-					n := hour.Add(time.Minute * time.Duration(j))
-					ns := n.UnixNano()
-					now = time.Unix(0, ns-ns%int64(time.Minute))
-					// stream
-					cases_stream_data.Write(connection, "data.json", now, interval)
-				}
-				logger.Infof("written stream in %s took %s \n", hour, time.Since(start))
-			}
-		}
-		Expect(connection.Close()).To(Succeed())
-	})
-
-	It("should read data", func() {
-		var err error
-		connection, err = grpchelper.Conn(addr, 10*time.Second,
-			grpc.WithTransportCredentials(insecure.NewCredentials()))
-		Expect(err).NotTo(HaveOccurred())
-		sharedContext := helpers.SharedContext{
-			Connection: connection,
-			BaseTime:   now,
-		}
+	queryFn := func(now time.Time, dur time.Duration) time.Duration {
 		query := &streamv1.QueryRequest{
 			Name:   "sw",
 			Groups: []string{"default"},
@@ -109,13 +76,79 @@ var _ = Describe("Load Test Suit", func() {
 				},
 			},
 		}
-		query.TimeRange = helpers.TimeRange(helpers.Args{Input: "all", Duration: 1 * time.Hour}, sharedContext)
-		c := streamv1.NewStreamServiceClient(sharedContext.Connection)
+		query.TimeRange = helpers.TimeRange(helpers.Args{Input: "all", Duration: dur}, helpers.SharedContext{
+			Connection: connection,
+			BaseTime:   now,
+		})
+		c := streamv1.NewStreamServiceClient(connection)
 		ctx := context.Background()
+		GinkgoWriter.Printf("querying at %s\n", now)
+		start := time.Now()
 		resp, err := c.Query(ctx, query)
 		Expect(err).NotTo(HaveOccurred())
-		GinkgoWriter.Printf("query result: %s elements\n", resp.GetElements())
-		Expect(len(resp.GetElements())).To(BeNumerically(">", 0))
+		latency := time.Since(start)
+		size := len(resp.GetElements())
+		Expect(size).Should(BeNumerically(">", 0))
+		GinkgoWriter.Printf("query result: %s elements using %s \n", size, latency)
+		return latency
+	}
+
+	BeforeEach(func() {
+		Expect(logger.Init(logger.Logging{
+			Env:   "dev",
+			Level: "debug",
+		})).Should(Succeed())
+		test.Cleanup()
+		goods = gleak.Goroutines()
+		var addr string
+		addr, _, deferFunc = setup.Standalone()
+		Eventually(
+			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+			flags.EventuallyTimeout).Should(Succeed())
+		var err error
+		connection, err = grpchelper.Conn(addr, 10*time.Second,
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		Expect(err).NotTo(HaveOccurred())
+		files, err := os.ReadDir(os.TempDir())
+		Expect(err).NotTo(HaveOccurred())
+
+		for _, file := range files {
+			if strings.HasPrefix(file.Name(), "banyandb-") {
+				dir = path.Join(os.TempDir(), file.Name())
+				break
+			}
+		}
+		Expect(dir).NotTo(BeEmpty())
+	})
+
+	It("should pass without any error after running 10 days with 1 day segment and 3 days ttl", func() {
+		ns := time.Now().UnixNano()
+		now := time.Unix(0, ns-ns%int64(time.Minute))
+		var lastQueryTime, lastReportTime time.Time
+		latest1HourQueryLatencyData := make([]float64, 0)
+		allQueryLatencyData := make([]float64, 0)
+		for i := 0; i < minutes; i++ {
+			GinkgoWriter.Printf("writing data at %s\n", now)
+			cases_stream_data.Write(connection, "data.json", now, interval)
+			if now.Sub(lastQueryTime) > queryInterval {
+				latency := queryFn(now, time.Hour)
+				latest1HourQueryLatencyData = append(latest1HourQueryLatencyData, float64(latency.Milliseconds()))
+				latency = queryFn(now, 11*24*time.Hour)
+				allQueryLatencyData = append(allQueryLatencyData, float64(latency.Milliseconds()))
+				lastQueryTime = now
+			}
+			if now.Sub(lastReportTime) > reportInterval {
+				logger.Infof("reporting at %s\n", now)
+				// Print files in the directory with prefix "banyandb-" in "tmp" directory
+				helpers.PrintDiskUsage(dir, 4, 0)
+				analysis("latest 1 hour query latency", latest1HourQueryLatencyData)
+				analysis("all query latency", allQueryLatencyData)
+				lastReportTime = now
+				latest1HourQueryLatencyData = latest1HourQueryLatencyData[:0]
+				allQueryLatencyData = allQueryLatencyData[:0]
+			}
+			now = now.Add(time.Minute)
+		}
 	})
 
 	AfterEach(func() {
@@ -126,3 +159,15 @@ var _ = Describe("Load Test Suit", func() {
 		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 })
+
+func analysis(name string, data []float64) {
+	min, _ := stats.Min(data)
+	max, _ := stats.Max(data)
+	mean, _ := stats.Mean(data)
+	median, _ := stats.Median(data)
+	p90, _ := stats.Percentile(data, 90)
+	p95, _ := stats.Percentile(data, 95)
+	p98, _ := stats.Percentile(data, 98)
+	p99, _ := stats.Percentile(data, 99)
+	logger.Infof("%s: min: %f, max: %f, mean: %f, median: %f, p90: %f, p95: %f, p98: %f, p99: %f\n", name, min, max, mean, median, p90, p95, p98, p99)
+}

@@ -62,7 +62,7 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
 }
 
-func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Element, err error) {
+func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
 	var orderBy *pbv1.OrderBy
 	if i.order != nil {
 		orderBy = &pbv1.OrderBy{
@@ -86,7 +86,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 			return nil, err
 		}
 		if ssr == nil {
-			return elements, nil
+			return nil, nil
 		}
 		r := ssr.Pull()
 		return buildElementsFromColumnResult(r), nil
@@ -106,28 +106,24 @@ func (i *localIndexScan) Execute(ctx context.Context) (elements []*streamv1.Elem
 			return nil, err
 		}
 		if sfr == nil {
-			return elements, nil
+			return nil, nil
 		}
 		r := sfr.Pull()
 		return buildElementsFromColumnResult(r), nil
 	}
 
-	var results []pbv1.StreamQueryResult
-	for _, e := range i.entities {
-		result, err := ec.Query(ctx, pbv1.StreamQueryOptions{
-			Name:          i.metadata.GetName(),
-			TimeRange:     &i.timeRange,
-			Entity:        e,
-			Filter:        i.filter,
-			Order:         orderBy,
-			TagProjection: i.projectionTags,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to query stream: %w", err)
-		}
-		results = append(results, result)
+	result, err := ec.Query(ctx, pbv1.StreamQueryOptions{
+		Name:          i.metadata.GetName(),
+		TimeRange:     &i.timeRange,
+		Entities:      i.entities,
+		Filter:        i.filter,
+		Order:         orderBy,
+		TagProjection: i.projectionTags,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stream: %w", err)
 	}
-	return buildElementsFromQueryResults(results), nil
+	return buildElementsFromQueryResults(result), nil
 }
 
 func (i *localIndexScan) String() string {
@@ -171,38 +167,36 @@ func buildElementsFromColumnResult(r *pbv1.StreamColumnResult) (elements []*stre
 	return
 }
 
-func buildElementsFromQueryResults(results []pbv1.StreamQueryResult) (elements []*streamv1.Element) {
+func buildElementsFromQueryResults(result pbv1.StreamQueryResult) (elements []*streamv1.Element) {
 	deduplication := make(map[string]struct{})
-	for _, result := range results {
-		for {
-			r := result.Pull()
-			if r == nil {
-				break
+	for {
+		r := result.Pull()
+		if r == nil {
+			break
+		}
+		for i := range r.Timestamps {
+			if _, ok := deduplication[r.ElementIDs[i]]; ok {
+				continue
 			}
-			for i := range r.Timestamps {
-				if _, ok := deduplication[r.ElementIDs[i]]; ok {
-					continue
-				}
-				deduplication[r.ElementIDs[i]] = struct{}{}
-				e := &streamv1.Element{
-					Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
-					ElementId: r.ElementIDs[i],
-				}
+			deduplication[r.ElementIDs[i]] = struct{}{}
+			e := &streamv1.Element{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+				ElementId: r.ElementIDs[i],
+			}
 
-				for _, tf := range r.TagFamilies {
-					tagFamily := &modelv1.TagFamily{
-						Name: tf.Name,
-					}
-					e.TagFamilies = append(e.TagFamilies, tagFamily)
-					for _, t := range tf.Tags {
-						tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-							Key:   t.Name,
-							Value: t.Values[i],
-						})
-					}
+			for _, tf := range r.TagFamilies {
+				tagFamily := &modelv1.TagFamily{
+					Name: tf.Name,
 				}
-				elements = append(elements, e)
+				e.TagFamilies = append(e.TagFamilies, tagFamily)
+				for _, t := range tf.Tags {
+					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+						Key:   t.Name,
+						Value: t.Values[i],
+					})
+				}
 			}
+			elements = append(elements, e)
 		}
 	}
 	return

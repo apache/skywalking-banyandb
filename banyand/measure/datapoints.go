@@ -150,6 +150,7 @@ type dataPointsInTable struct {
 type dataPointsInGroup struct {
 	tsdb storage.TSDB[*tsTable, option]
 
-	docs   index.Documents
-	tables []*dataPointsInTable
+	docs     index.Documents
+	tables   []*dataPointsInTable
+	latestTS int64
 }

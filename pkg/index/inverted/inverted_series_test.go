@@ -18,6 +18,7 @@
 package inverted
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,22 +47,53 @@ func TestStore_Search(t *testing.T) {
 
 	// Test cases
 	tests := []struct {
-		term []byte
-		want common.SeriesID
+		term [][]byte
+		want []index.Series
 	}{
 		{
-			term: []byte("test1"),
-			want: common.SeriesID(1),
+			term: [][]byte{[]byte("test1")},
+			want: []index.Series{
+				{
+					ID:           common.SeriesID(1),
+					EntityValues: []byte("test1"),
+				},
+			},
 		},
 		{
-			term: []byte("foo"),
-			want: common.SeriesID(0),
+			term: [][]byte{[]byte("test1"), []byte("test2"), []byte("test3"), []byte("foo")},
+			want: []index.Series{
+				{
+					ID:           common.SeriesID(1),
+					EntityValues: []byte("test1"),
+				},
+				{
+					ID:           common.SeriesID(2),
+					EntityValues: []byte("test2"),
+				},
+				{
+					ID:           common.SeriesID(3),
+					EntityValues: []byte("test3"),
+				},
+			},
+		},
+		{
+			term: [][]byte{[]byte("foo")},
+			want: emptySeries,
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.term), func(_ *testing.T) {
-			got, err := s.Search(tt.term)
+		var matchers []index.SeriesMatcher
+		var name string
+		for _, term := range tt.term {
+			matchers = append(matchers, index.SeriesMatcher{
+				Type:  index.SeriesMatcherTypeExact,
+				Match: term,
+			})
+			name += string(term) + "-"
+		}
+		t.Run(name, func(_ *testing.T) {
+			got, err := s.Search(context.Background(), matchers)
 			tester.NoError(err)
 			tester.Equal(tt.want, got)
 		})
@@ -132,7 +164,12 @@ func TestStore_SearchWildcard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.wildcard), func(_ *testing.T) {
-			got, err := s.SearchWildcard(tt.wildcard)
+			got, err := s.Search(context.Background(), []index.SeriesMatcher{
+				{
+					Type:  index.SeriesMatcherTypeWildcard,
+					Match: tt.wildcard,
+				},
+			})
 			tester.NoError(err)
 			tester.ElementsMatch(tt.want, got)
 		})
@@ -185,7 +222,12 @@ func TestStore_SearchPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.prefix), func(_ *testing.T) {
-			got, err := s.SearchPrefix(tt.prefix)
+			got, err := s.Search(context.Background(), []index.SeriesMatcher{
+				{
+					Type:  index.SeriesMatcherTypePrefix,
+					Match: tt.prefix,
+				},
+			})
 			tester.NoError(err)
 			tester.ElementsMatch(tt.want, got)
 		})

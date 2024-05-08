@@ -357,7 +357,7 @@ func (s *stream) genIndex(tagProj []pbv1.TagProjection, seriesList pbv1.SeriesLi
 }
 
 func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr pbv1.StreamFilterResult, err error) {
-	if sfo.TimeRange == nil || sfo.Entities == nil {
+	if sfo.TimeRange == nil || len(sfo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(sfo.TagProjection) == 0 {
@@ -378,13 +378,16 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 		}
 	}()
 
-	var seriesList pbv1.SeriesList
-	for _, entity := range sfo.Entities {
-		sl, lookupErr := tsdb.Lookup(ctx, &pbv1.Series{Subject: sfo.Name, EntityValues: entity})
-		if lookupErr != nil {
-			return nil, lookupErr
+	series := make([]*pbv1.Series, len(sfo.Entities))
+	for i := range sfo.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      sfo.Name,
+			EntityValues: sfo.Entities[i],
 		}
-		seriesList = seriesList.Merge(sl)
+	}
+	seriesList, err := tsdb.Lookup(ctx, series)
+	if err != nil {
+		return nil, err
 	}
 	if len(seriesList) == 0 {
 		return sfr, nil
@@ -431,7 +434,7 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 }
 
 func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1.StreamSortResult, err error) {
-	if sso.TimeRange == nil || sso.Entities == nil {
+	if sso.TimeRange == nil || len(sso.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(sso.TagProjection) == 0 {
@@ -448,14 +451,16 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 			tabWrappers[i].DecRef()
 		}
 	}()
-
-	var seriesList pbv1.SeriesList
-	for _, entity := range sso.Entities {
-		sl, lookupErr := tsdb.Lookup(ctx, &pbv1.Series{Subject: sso.Name, EntityValues: entity})
-		if lookupErr != nil {
-			return nil, lookupErr
+	series := make([]*pbv1.Series, len(sso.Entities))
+	for i := range sso.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      sso.Name,
+			EntityValues: sso.Entities[i],
 		}
-		seriesList = seriesList.Merge(sl)
+	}
+	seriesList, err := tsdb.Lookup(ctx, series)
+	if err != nil {
+		return nil, err
 	}
 	if len(seriesList) == 0 {
 		return ssr, nil
@@ -488,7 +493,7 @@ func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1
 }
 
 func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {
-	if sqo.TimeRange == nil || sqo.Entity == nil {
+	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(sqo.TagProjection) == 0 {
@@ -506,7 +511,14 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 			tabWrappers[i].DecRef()
 		}
 	}()
-	sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: sqo.Entity})
+	series := make([]*pbv1.Series, len(sqo.Entities))
+	for i := range sqo.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      sqo.Name,
+			EntityValues: sqo.Entities[i],
+		}
+	}
+	sl, err := tsdb.Lookup(ctx, series)
 	if err != nil {
 		return nil, err
 	}
