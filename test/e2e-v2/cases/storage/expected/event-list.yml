@@ -19,7 +19,7 @@ events:
   source:
     service: e2e-service-provider
     serviceinstance: provider1
-    endpoint: ""
+    endpoint: nil
   name: Start
   type: Normal
   message: Start Java Application
