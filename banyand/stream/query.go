@@ -211,7 +211,7 @@ func (qr *queryResult) merge() *pbv1.StreamResult {
 }
 
 func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamResultPuller, error) {
-	if sqo.TimeRange == nil || sqo.Entities == nil {
+	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(sqo.TagProjection) == 0 {
