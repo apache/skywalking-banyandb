@@ -211,7 +211,7 @@ func (qr *queryResult) merge() *pbv1.StreamResult {
 }
 
 func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamResultPuller, error) {
-	if sqo.TimeRange == nil || sqo.Entity == nil {
+	if sqo.TimeRange == nil || sqo.Entities == nil {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(sqo.TagProjection) == 0 {
@@ -229,7 +229,14 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 			tabWrappers[i].DecRef()
 		}
 	}()
-	sl, err := tsdb.Lookup(ctx, &pbv1.Series{Subject: sqo.Name, EntityValues: sqo.Entity})
+	series := make([]*pbv1.Series, len(sqo.Entities))
+	for i := range sqo.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      sqo.Name,
+			EntityValues: sqo.Entities[i],
+		}
+	}
+	sl, err := tsdb.Lookup(ctx, series)
 	if err != nil {
 		return nil, err
 	}

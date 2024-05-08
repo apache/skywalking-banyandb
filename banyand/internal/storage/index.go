@@ -45,7 +45,7 @@ func (d *database[T, O]) IndexDB() IndexDB {
 	return d.indexController.hot
 }
 
-func (d *database[T, O]) Lookup(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+func (d *database[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
 	return d.indexController.searchPrimary(ctx, series)
 }
 
@@ -88,13 +88,31 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) searchPrimary(_ context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
+	seriesMatchers := make([]index.SeriesMatcher, len(series))
+	for i := range series {
+		var err error
+		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	ss, err := s.store.Search(ctx, seriesMatchers)
+	if err != nil {
+		return nil, err
+	}
+	return convertIndexSeriesToSeriesList(ss)
+}
+
+var emptySeriesMatcher = index.SeriesMatcher{}
+
+func convertEntityValuesToSeriesMatcher(series *pbv1.Series) (index.SeriesMatcher, error) {
 	var hasAny, hasWildcard bool
 	var prefixIndex int
 
 	for i, tv := range series.EntityValues {
 		if tv == nil {
-			return nil, errors.New("nil tag value")
+			return emptySeriesMatcher, errors.New("unexpected nil tag value")
 		}
 		if tv == pbv1.AnyTagValue {
 			if !hasAny {
@@ -112,40 +130,31 @@ func (s *seriesIndex) searchPrimary(_ context.Context, series *pbv1.Series) (pbv
 	var err error
 
 	if hasAny {
-		var ss []index.Series
 		if hasWildcard {
 			if err = series.Marshal(); err != nil {
-				return nil, err
+				return emptySeriesMatcher, err
 			}
-			ss, err = s.store.SearchWildcard(series.Buffer)
-			if err != nil {
-				return nil, err
-			}
-			return convertIndexSeriesToSeriesList(ss)
+			return index.SeriesMatcher{
+				Type:  index.SeriesMatcherTypeWildcard,
+				Match: series.Buffer,
+			}, nil
 		}
 		series.EntityValues = series.EntityValues[:prefixIndex]
 		if err = series.Marshal(); err != nil {
-			return nil, err
+			return emptySeriesMatcher, err
 		}
-		ss, err = s.store.SearchPrefix(series.Buffer)
-		if err != nil {
-			return nil, err
-		}
-		return convertIndexSeriesToSeriesList(ss)
+		return index.SeriesMatcher{
+			Type:  index.SeriesMatcherTypePrefix,
+			Match: series.Buffer,
+		}, nil
 	}
 	if err = series.Marshal(); err != nil {
-		return nil, err
+		return emptySeriesMatcher, err
 	}
-	var seriesID common.SeriesID
-	seriesID, err = s.store.Search(series.Buffer)
-	if err != nil {
-		return nil, err
-	}
-	if seriesID > 0 {
-		series.ID = seriesID
-		return pbv1.SeriesList{series}, nil
-	}
-	return nil, nil
+	return index.SeriesMatcher{
+		Type:  index.SeriesMatcherTypeExact,
+		Match: series.Buffer,
+	}, nil
 }
 
 func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList, error) {
@@ -161,7 +170,7 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList
 	return seriesList, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error) {
+func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error) {
 	seriesList, err := s.searchPrimary(ctx, series)
 	if err != nil {
 		return nil, err
@@ -170,11 +179,15 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 	pl := seriesList.ToList()
 	if filter != nil {
 		var plFilter posting.List
+		// TODO: merge searchPrimary and filter
 		plFilter, err = filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return s.store, nil
 		}, 0)
 		if err != nil {
 			return nil, err
+		}
+		if plFilter == nil {
+			return pbv1.SeriesList{}, nil
 		}
 		if err = pl.Intersect(plFilter); err != nil {
 			return nil, err
@@ -188,6 +201,7 @@ func (s *seriesIndex) Search(ctx context.Context, series *pbv1.Series, filter in
 	fieldKey := index.FieldKey{
 		IndexRuleID: order.Index.GetMetadata().Id,
 	}
+	// TODO:// merge searchPrimary and sort
 	iter, err := s.store.Iterator(fieldKey, rangeOpts, order.Sort, preloadSize)
 	if err != nil {
 		return nil, err
@@ -272,7 +286,7 @@ func newSeriesIndexController[T TSTable, O any](
 	}
 	switch len(idxName) {
 	case 0:
-		if sic.hot, err = sic.newIdx(ctx); err != nil {
+		if sic.hot, err = sic.newIdx(ctx, clock.Now()); err != nil {
 			return nil, err
 		}
 	case 1:
@@ -314,8 +328,15 @@ func (sic *seriesIndexController[T, O]) loadIdx() ([]string, error) {
 	return idxName, nil
 }
 
-func (sic *seriesIndexController[T, O]) newIdx(ctx context.Context) (*seriesIndex, error) {
-	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", sic.clock.Now().UnixNano()))
+func (sic *seriesIndexController[T, O]) newIdx(ctx context.Context, now time.Time) (*seriesIndex, error) {
+	ts := sic.opts.TTL.Unit.standard(now)
+	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", ts.UnixNano()))
+}
+
+func (sic *seriesIndexController[T, O]) newNextIdx(ctx context.Context, now time.Time) (*seriesIndex, error) {
+	ts := sic.opts.TTL.Unit.standard(now)
+	ts = ts.Add(sic.standbyLiveTime)
+	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", ts.UnixNano()))
 }
 
 func (sic *seriesIndexController[T, O]) openIdx(ctx context.Context, name string) (*seriesIndex, error) {
@@ -331,47 +352,66 @@ func (sic *seriesIndexController[T, O]) openIdx(ctx context.Context, name string
 	return nil, errors.New("unexpected series index name")
 }
 
-func (sic *seriesIndexController[T, O]) run(deadline time.Time) (err error) {
-	var standby *seriesIndex
+func (sic *seriesIndexController[T, O]) run(now, deadline time.Time) (err error) {
 	ctx := context.WithValue(context.Background(), logger.ContextKey, sic.l)
-	_, err = sic.loadIdx()
-	if err != nil {
+	if _, err := sic.loadIdx(); err != nil {
 		sic.l.Warn().Err(err).Msg("fail to clear redundant series index")
 	}
-	if sic.hot.startTime.Before(deadline) {
-		sic.l.Info().Time("deadline", deadline).Msg("start to swap series index")
-		sic.Lock()
-		if sic.standby == nil {
-			sic.standby, err = sic.newIdx(ctx)
-			if err != nil {
-				sic.Unlock()
-				return err
-			}
-		}
-		standby = sic.hot
-		sic.hot = sic.standby
-		sic.standby = nil
-		sic.Unlock()
-		err = standby.Close()
-		if err != nil {
-			sic.l.Warn().Err(err).Msg("fail to close standby series index")
-		}
-		lfs.MustRMAll(standby.path)
-		sic.l.Info().Str("path", standby.path).Msg("dropped series index")
-		lfs.SyncPath(sic.location)
+
+	sic.Lock()
+	defer sic.Unlock()
+	if sic.hot.startTime.Compare(deadline) <= 0 {
+		return sic.handleStandby(ctx, now, deadline)
 	}
 
+	if sic.standby != nil {
+		return nil
+	}
 	liveTime := sic.hot.startTime.Sub(deadline)
-	if liveTime > 0 && liveTime <= sic.standbyLiveTime {
-		sic.l.Info().Time("deadline", deadline).Msg("start to create standby series index")
-		standby, err = sic.newIdx(ctx)
+	if liveTime <= 0 || liveTime > sic.standbyLiveTime {
+		return nil
+	}
+	return sic.createStandby(ctx, now, deadline)
+}
+
+func (sic *seriesIndexController[T, O]) handleStandby(ctx context.Context, now, deadline time.Time) error {
+	sic.l.Info().Time("deadline", deadline).Msg("start to swap series index")
+
+	if sic.standby == nil {
+		var err error
+		sic.standby, err = sic.newIdx(ctx, now)
 		if err != nil {
 			return err
 		}
-		sic.Lock()
-		sic.standby = standby
-		sic.Unlock()
 	}
+
+	standby := sic.hot
+	sic.hot = sic.standby
+	sic.standby = nil
+
+	if err := standby.Close(); err != nil {
+		sic.l.Warn().Err(err).Msg("fail to close standby series index")
+	}
+
+	lfs.MustRMAll(standby.path)
+	sic.l.Info().Str("path", standby.path).Msg("dropped series index")
+	lfs.SyncPath(sic.location)
+
+	return nil
+}
+
+func (sic *seriesIndexController[T, O]) createStandby(ctx context.Context, now, deadline time.Time) error {
+	if sic.standby != nil {
+		return nil
+	}
+	sic.l.Info().Time("deadline", deadline).Msg("start to create standby series index")
+	standby, err := sic.newNextIdx(ctx, now)
+	if err != nil {
+		sic.l.Error().Err(err).Msg("fail to create standby series index")
+		return err
+	}
+
+	sic.standby = standby
 	return nil
 }
 
@@ -384,7 +424,7 @@ func (sic *seriesIndexController[T, O]) Write(docs index.Documents) error {
 	return sic.hot.Write(docs)
 }
 
-func (sic *seriesIndexController[T, O]) searchPrimary(ctx context.Context, series *pbv1.Series) (pbv1.SeriesList, error) {
+func (sic *seriesIndexController[T, O]) searchPrimary(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
 	sic.RLock()
 	defer sic.RUnlock()
 
@@ -398,7 +438,7 @@ func (sic *seriesIndexController[T, O]) searchPrimary(ctx context.Context, serie
 	return sic.standby.searchPrimary(ctx, series)
 }
 
-func (sic *seriesIndexController[T, O]) Search(ctx context.Context, series *pbv1.Series,
+func (sic *seriesIndexController[T, O]) Search(ctx context.Context, series []*pbv1.Series,
 	filter index.Filter, order *pbv1.OrderBy, preloadSize int,
 ) (pbv1.SeriesList, error) {
 	sic.RLock()

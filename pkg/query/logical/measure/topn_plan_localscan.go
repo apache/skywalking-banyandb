@@ -156,7 +156,7 @@ func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err er
 	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
 		Name:            i.metadata.GetName(),
 		TimeRange:       &i.timeRange,
-		Entity:          i.entity,
+		Entities:        [][]*modelv1.TagValue{i.entity},
 		Order:           &pbv1.OrderBy{Sort: i.sort},
 		TagProjection:   i.projectionTags,
 		FieldProjection: i.projectionFields,
@@ -165,7 +165,7 @@ func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err er
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
 	return &resultMIterator{
-		results: []pbv1.MeasureQueryResult{result},
+		result: result,
 	}, nil
 }
 

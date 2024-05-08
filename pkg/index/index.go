@@ -20,6 +20,7 @@ package index
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 
@@ -239,9 +240,26 @@ type Series struct {
 // SeriesStore is an abstract of a series repository.
 type SeriesStore interface {
 	Store
-	Search([]byte) (common.SeriesID, error)
-	SearchPrefix([]byte) ([]Series, error)
-	SearchWildcard([]byte) ([]Series, error)
+	// Search returns a list of series that match the given matchers.
+	Search(context.Context, []SeriesMatcher) ([]Series, error)
+}
+
+// SeriesMatcherType represents the type of series matcher.
+type SeriesMatcherType int
+
+const (
+	// SeriesMatcherTypeExact represents an exact matcher.
+	SeriesMatcherTypeExact SeriesMatcherType = iota
+	// SeriesMatcherTypePrefix represents a prefix matcher.
+	SeriesMatcherTypePrefix
+	// SeriesMatcherTypeWildcard represents a wildcard matcher.
+	SeriesMatcherTypeWildcard
+)
+
+// SeriesMatcher represents a series matcher.
+type SeriesMatcher struct {
+	Match []byte
+	Type  SeriesMatcherType
 }
 
 // GetSearcher returns a searcher associated with input index rule type.

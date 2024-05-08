@@ -40,6 +40,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 //go:embed testdata/*
@@ -153,7 +154,10 @@ func (p *preloadService) PreRun(ctx context.Context) error {
 	}
 	if err := loadSchema(ctx, measureDir, &databasev1.Measure{}, func(ctx context.Context, measure *databasev1.Measure) error {
 		_, innerErr := e.CreateMeasure(ctx, measure)
-		return innerErr
+		if innerErr != nil {
+			logger.Errorf("failed to create measure %s: %v", measure.Metadata.Name, innerErr)
+		}
+		return nil
 	}); err != nil {
 		return errors.WithStack(err)
 	}

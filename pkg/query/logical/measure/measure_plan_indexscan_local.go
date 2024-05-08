@@ -101,6 +101,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		filter:               filter,
 		entities:             entities,
 		groupByEntity:        uis.groupByEntity,
+		uis:                  uis,
 		l:                    logger.GetLogger("query", "measure", uis.metadata.Group, uis.metadata.Name, "local-index"),
 	}, nil
 }
@@ -112,19 +113,20 @@ var (
 )
 
 type localIndexScan struct {
-	schema               logical.Schema
 	filter               index.Filter
+	schema               logical.Schema
+	uis                  *unresolvedIndexScan
 	order                *logical.OrderBy
 	metadata             *commonv1.Metadata
 	l                    *logger.Logger
 	timeRange            timestamp.TimeRange
 	projectionTags       []pbv1.TagProjection
-	projectionFields     []string
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
 	entities             [][]*modelv1.TagValue
-	groupByEntity        bool
+	projectionFields     []string
 	maxDataPointsSize    int
+	groupByEntity        bool
 }
 
 func (i *localIndexScan) Limit(max int) {
@@ -144,28 +146,20 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		}
 	}
 	ec := executor.FromMeasureExecutionContext(ctx)
-	var results []pbv1.MeasureQueryResult
-	for _, e := range i.entities {
-		result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
-			Name:            i.metadata.GetName(),
-			TimeRange:       &i.timeRange,
-			Entity:          e,
-			Filter:          i.filter,
-			Order:           orderBy,
-			TagProjection:   i.projectionTags,
-			FieldProjection: i.projectionFields,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to query measure: %w", err)
-		}
-
-		results = append(results, result)
-	}
-	if len(results) == 0 {
-		return dummyIter, nil
+	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
+		Name:            i.metadata.GetName(),
+		TimeRange:       &i.timeRange,
+		Entities:        i.entities,
+		Filter:          i.filter,
+		Order:           orderBy,
+		TagProjection:   i.projectionTags,
+		FieldProjection: i.projectionFields,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
 	return &resultMIterator{
-		results: results,
+		result: result,
 	}, nil
 }
 
@@ -201,28 +195,23 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 }
 
 type resultMIterator struct {
-	results      []pbv1.MeasureQueryResult
-	current      []*measurev1.DataPoint
-	index        int
-	currentIndex int
+	result  pbv1.MeasureQueryResult
+	current []*measurev1.DataPoint
+	i       int
 }
 
 func (ei *resultMIterator) Next() bool {
-	if ei.index >= len(ei.results) {
-		return false
-	}
-	ei.currentIndex++
-	if ei.currentIndex < len(ei.current) {
+	ei.i++
+	if ei.i < len(ei.current) {
 		return true
 	}
 
-	r := ei.results[ei.index].Pull()
+	r := ei.result.Pull()
 	if r == nil {
-		ei.index++
-		return ei.Next()
+		return false
 	}
 	ei.current = ei.current[:0]
-	ei.currentIndex = 0
+	ei.i = 0
 	for i := range r.Timestamps {
 		dp := &measurev1.DataPoint{
 			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
@@ -253,28 +242,10 @@ func (ei *resultMIterator) Next() bool {
 }
 
 func (ei *resultMIterator) Current() []*measurev1.DataPoint {
-	return []*measurev1.DataPoint{ei.current[ei.currentIndex]}
+	return []*measurev1.DataPoint{ei.current[ei.i]}
 }
 
 func (ei *resultMIterator) Close() error {
-	for _, result := range ei.results {
-		result.Release()
-	}
-	return nil
-}
-
-var dummyIter = dummyMIterator{}
-
-type dummyMIterator struct{}
-
-func (ei dummyMIterator) Next() bool {
-	return false
-}
-
-func (ei dummyMIterator) Current() []*measurev1.DataPoint {
-	return nil
-}
-
-func (ei dummyMIterator) Close() error {
+	ei.result.Release()
 	return nil
 }

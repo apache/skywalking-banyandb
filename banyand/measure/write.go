@@ -69,6 +69,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		}
 		dst[gn] = dpg
 	}
+	if dpg.latestTS < ts {
+		dpg.latestTS = ts
+	}
 
 	var dpt *dataPointsInTable
 	for i := range dpg.tables {
@@ -235,13 +238,14 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		}
 		var err error
 		if groups, err = w.handle(groups, writeEvent); err != nil {
-			w.l.Error().Err(err).Msg("cannot handle write event")
+			w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
 			groups = make(map[string]*dataPointsInGroup)
 			continue
 		}
 	}
 	for i := range groups {
 		g := groups[i]
+		g.tsdb.Tick(g.latestTS)
 		for j := range g.tables {
 			dps := g.tables[j]
 			dps.tsTable.Table().mustAddDataPoints(&dps.dataPoints)

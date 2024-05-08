@@ -19,7 +19,10 @@ package test
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/stretchr/testify/require"
 )
@@ -46,4 +49,22 @@ func NewSpace() (tempDir string, deferFunc func(), err error) {
 			_, _ = fmt.Fprintf(os.Stderr, "Error while removing dir: %v\n", err)
 		}
 	}, err
+}
+
+// Cleanup removes all files and directories created by the test.
+func Cleanup() {
+	files, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), "banyandb-") {
+			err = os.RemoveAll(filepath.Join(os.TempDir(), file.Name()))
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
 }

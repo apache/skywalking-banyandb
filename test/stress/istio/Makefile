@@ -19,7 +19,7 @@
 istio_mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
 istio_mk_dir   := $(dir $(istio_mk_path))
 
-root_dir := $(istio_mk_dir)../../../..
+root_dir := $(istio_mk_dir)../../..
 
 include $(root_dir)/scripts/build/version.mk
 include $(root_dir)/scripts/build/base.mk
@@ -27,6 +27,7 @@ include $(root_dir)/scripts/build/ginkgo.mk
 
 .PHONY: profile
 profile: $(GINKGO)
+	mkdir -p prof
 	$(GINKGO) -v --tags="prometheus" \
 	  --blockprofile prof/block.prof \
 	  --cpuprofile prof/cpu.prof \

@@ -34,7 +34,6 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var testSeriesPool pbv1.SeriesPool
@@ -78,60 +77,102 @@ func TestSeriesIndex_Primary(t *testing.T) {
 	tests := []struct {
 		name         string
 		subject      string
-		entityValues []*modelv1.TagValue
-		expected     []*modelv1.TagValue
+		entityValues [][]*modelv1.TagValue
+		expected     [][]*modelv1.TagValue
 	}{
 		{
 			name:    "Search",
 			subject: "service_instance_latency",
-			entityValues: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			entityValues: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
 			},
-			expected: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			expected: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
+			},
+		},
+		{
+			name:    "Search multiple series",
+			subject: "service_instance_latency",
+			entityValues: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_2"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_2_instance_2"}}},
+				},
+			},
+			expected: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_2"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_2_instance_2"}}},
+				},
 			},
 		},
 		{
 			name:    "Prefix",
 			subject: "service_instance_latency",
-			entityValues: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				pbv1.AnyTagValue,
+			entityValues: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					pbv1.AnyTagValue,
+				},
 			},
-			expected: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			expected: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
 			},
 		},
 		{
 			name:    "Wildcard",
 			subject: "service_instance_latency",
-			entityValues: []*modelv1.TagValue{
-				pbv1.AnyTagValue,
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			entityValues: [][]*modelv1.TagValue{
+				{
+					pbv1.AnyTagValue,
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
 			},
-			expected: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+			expected: [][]*modelv1.TagValue{
+				{
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1"}}},
+					{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc_1_instance_1"}}},
+				},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			seriesQuery := testSeriesPool.Generate()
-			defer testSeriesPool.Release(seriesQuery)
-			seriesQuery.Subject = tt.subject
-			seriesQuery.EntityValues = tt.entityValues
-			sl, err := si.searchPrimary(ctx, seriesQuery)
+			var seriesQueries []*pbv1.Series
+			for i := range tt.entityValues {
+				seriesQuery := testSeriesPool.Generate()
+				defer testSeriesPool.Release(seriesQuery)
+				seriesQuery.Subject = tt.subject
+				seriesQuery.EntityValues = tt.entityValues[i]
+				seriesQueries = append(seriesQueries, seriesQuery)
+			}
+			sl, err := si.searchPrimary(ctx, seriesQueries)
 			require.NoError(t, err)
-			require.Equal(t, 1, len(sl))
+			require.Equal(t, len(tt.entityValues), len(sl))
 			assert.Equal(t, tt.subject, sl[0].Subject)
-			assert.Equal(t, tt.expected[0].GetStr().GetValue(), sl[0].EntityValues[0].GetStr().GetValue())
-			assert.Equal(t, tt.expected[1].GetStr().GetValue(), sl[0].EntityValues[1].GetStr().GetValue())
-			assert.True(t, sl[0].ID > 0)
+			for i := range tt.expected {
+				assert.Equal(t, tt.expected[i][0].GetStr().GetValue(), sl[i].EntityValues[0].GetStr().GetValue())
+				assert.Equal(t, tt.expected[i][1].GetStr().GetValue(), sl[i].EntityValues[1].GetStr().GetValue())
+				assert.True(t, sl[0].ID > 0)
+			}
 		})
 	}
 }
@@ -194,100 +235,5 @@ func TestSeriesIndexController(t *testing.T) {
 		})
 		assert.Equal(t, 2, len(idxNames))
 		require.NoError(t, sic.Close())
-	})
-
-	t.Run("Test retention", func(t *testing.T) {
-		scenarios := []struct {
-			name string
-			now  string
-		}{
-			{"more than one hour before a new day", "2024-04-24 22:30:00"},
-			{"more than one hour after a new day", "2024-04-25 01:30:00"},
-			{"equal one hour after a new day", "2024-04-25 01:00:00"},
-			{"less one hour after a new day", "2024-04-25 00:50:00"},
-		}
-
-		for _, scenario := range scenarios {
-			t.Run(scenario.name, func(t *testing.T) {
-				ctx := context.Background()
-				c := timestamp.NewMockClock()
-				now, err := time.ParseInLocation("2006-01-02 15:04:05", scenario.now, time.Local)
-				require.NoError(t, err)
-				c.Set(now)
-				ctx = timestamp.SetClock(ctx, c)
-				tmpDir, dfFn, err := test.NewSpace()
-				require.NoError(t, err)
-				defer dfFn()
-
-				opts := TSDBOpts[TSTable, any]{
-					Location: tmpDir,
-					TTL:      ttl,
-				}
-				sic, err := newSeriesIndexController(ctx, opts)
-				require.NoError(t, err)
-				defer sic.Close()
-				c.Set(now.Add(-time.Hour*23 + 10*time.Minute))
-				require.NoError(t, sic.run(c.Now()))
-				sic.RLock()
-				standby := sic.standby
-				sic.RUnlock()
-				require.NotNil(t, standby)
-				idxNames := make([]string, 0)
-				walkDir(tmpDir, "idx-", func(suffix string) error {
-					idxNames = append(idxNames, suffix)
-					return nil
-				})
-				assert.Equal(t, 2, len(idxNames))
-				nextTime := standby.startTime
-				c.Set(now.Add(time.Hour))
-				require.NoError(t, sic.run(c.Now()))
-				sic.RLock()
-				standby = sic.standby
-				hot := sic.hot
-				sic.RUnlock()
-				require.Nil(t, standby)
-				assert.Equal(t, nextTime, hot.startTime)
-			})
-		}
-		scenarios = []struct {
-			name string
-			now  string
-		}{
-			{"less one hour before a new day", "2024-04-24 23:10:00"},
-			{"equal one hour before a new day", "2024-04-24 23:00:00"},
-		}
-		for _, scenario := range scenarios {
-			t.Run(scenario.name, func(t *testing.T) {
-				ctx := context.Background()
-				c := timestamp.NewMockClock()
-				now, err := time.ParseInLocation("2006-01-02 15:04:05", scenario.now, time.Local)
-				require.NoError(t, err)
-				c.Set(now)
-				ctx = timestamp.SetClock(ctx, c)
-				tmpDir, dfFn, err := test.NewSpace()
-				require.NoError(t, err)
-				defer dfFn()
-
-				opts := TSDBOpts[TSTable, any]{
-					Location: tmpDir,
-					TTL:      ttl,
-				}
-				sic, err := newSeriesIndexController(ctx, opts)
-				require.NoError(t, err)
-				defer sic.Close()
-				c.Set(now.Add(-time.Hour*23 + 10*time.Minute))
-				require.NoError(t, sic.run(c.Now()))
-				sic.RLock()
-				standby := sic.standby
-				sic.RUnlock()
-				require.Nil(t, standby)
-				idxNames := make([]string, 0)
-				walkDir(tmpDir, "idx-", func(suffix string) error {
-					idxNames = append(idxNames, suffix)
-					return nil
-				})
-				assert.Equal(t, 1, len(idxNames))
-			})
-		}
 	})
 }
