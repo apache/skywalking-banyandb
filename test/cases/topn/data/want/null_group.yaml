@@ -44,8 +44,7 @@ lists:
   - entity:
     - key: service_id
       value:
-        str:
-          value: ""
+        "null": null
     - key: entity_id
       value:
         str:
