@@ -33,11 +33,10 @@ RUN make generate
 
 RUN make build
 
-RUN ls -la bin/
-
 FROM alpine:3
 
-COPY --from=builder /src/bin/banyand /banyand
+COPY --from=builder /src/banyand/build/bin/banyand-server /banyand
+COPY --from=builder /src/bydbctl/build/bin/bydbctl /bydbctl
 
 
 EXPOSE 17912
