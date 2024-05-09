@@ -13,52 +13,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-FROM golang:1.22 AS dev
-WORKDIR /app
-ENV GOOS="linux"
-ENV CGO_ENABLED=0
-
-RUN go install github.com/cosmtrek/air@latest \
-    && go install github.com/go-delve/delve/cmd/dlv@latest
-
-EXPOSE 8080
-EXPOSE 2345
-
-ENTRYPOINT ["air"]
-
-FROM golang:1.22 AS base
+FROM golang:1.22 AS builder
 
 ENV GOPATH "/go"
 ENV GO111MODULE "on"
 WORKDIR /src
-COPY go.* ./
-RUN go mod download
+COPY ./ ./
 
-FROM base AS builder
+RUN make generate
 
-RUN --mount=target=. \
-            --mount=type=cache,target=/root/.cache/go-build \
-            BUILD_DIR=/out BUILD_TAGS=prometheus make -C banyand banyand-server-static
-RUN --mount=target=. \
-            --mount=type=cache,target=/root/.cache/go-build \
-            BUILD_DIR=/out make -C bydbctl build
+RUN make build
 
-FROM alpine:edge AS certs
-RUN apk add --no-cache ca-certificates && update-ca-certificates
+FROM alpine:3
 
-FROM busybox:stable-glibc as build-linux
+COPY --from=builder /src/build/bin/banyand /banyand
 
-COPY --from=builder /out/banyand-server-static /banyand
-COPY --from=certs /etc/ssl/certs /etc/ssl/certs
-COPY --from=builder /out/bydbctl /bydbctl
-
-FROM mcr.microsoft.com/windows/servercore:ltsc2022 as build-windows
-
-COPY banyand/build/bin/banyand-server-static "/banyand"
-COPY bydbctl/build/bin/bydbctl "/bydbctl"
-
-FROM build-${TARGETOS} AS final
 
 EXPOSE 17912
 EXPOSE 17913
