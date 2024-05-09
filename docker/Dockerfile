@@ -33,6 +33,8 @@ RUN make generate
 
 RUN make build
 
+RUN ls -la 
+
 FROM alpine:3
 
 COPY --from=builder /src/build/bin/banyand /banyand
