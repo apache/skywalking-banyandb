@@ -9,9 +9,6 @@ jobs:
     outputs:
       imageTag: ${{ steps.meta.outputs.json }}
     steps:
-      - name: Get current date
-        id: date
-        run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
         with:
@@ -27,6 +24,38 @@ jobs:
           password: ${{ secrets.DOCKER_TOKEN }}
       - uses: actions/checkout@v3.1.0
         name: Checkout current repository
+      - name: Cache Go Modules
+        uses: actions/cache@v3
+        id: cache-go
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Cache Tools
+        uses: actions/cache@v3
+        id: cache-tool
+        with:
+          path: bin
+          key: ${{ runner.os }}-build-tool-${{ hashFiles('**version.mk') }}
+          restore-keys: |
+            ${{ runner.os }}-build-tool-
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 20.12
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+      - name: Update dependencies
+        if: steps.cache-go.outputs.cache-hit != 'true'
+        run: GOPROXY=https://proxy.golang.org go mod download
+      - name: Generate codes
+        run: make generate
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v3
