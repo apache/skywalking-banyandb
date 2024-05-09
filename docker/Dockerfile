@@ -13,7 +13,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-FROM golang:1.22 AS builder
+ARG NODE_VERSION=18.16.0
+FROM node:${NODE_VERSION}-alpine AS node
+
+FROM golang:alpine3.18 AS builder
+
+
+COPY --from=node /usr/lib /usr/lib
+COPY --from=node /usr/local/lib /usr/local/lib
+COPY --from=node /usr/local/include /usr/local/include
+COPY --from=node /usr/local/bin /usr/local/bin
 
 ENV GOPATH "/go"
 ENV GO111MODULE "on"
