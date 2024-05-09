@@ -17,7 +17,7 @@ ARG NODE_VERSION=18.16.0
 FROM node:${NODE_VERSION}-alpine AS node
 
 FROM golang:alpine3.18 AS builder
-
+RUN apk add bash git openssh github-cli
 
 COPY --from=node /usr/lib /usr/lib
 COPY --from=node /usr/local/lib /usr/local/lib
