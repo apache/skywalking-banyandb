@@ -36,8 +36,6 @@ RUN make -C banyand release
 FROM alpine:3
 
 COPY --from=builder /src/banyand/build/bin/banyand-server-static /banyand
-COPY --from=builder /src/bydbctl/build/bin/bydbctl /bydbctl
-
 
 EXPOSE 17912
 EXPOSE 17913
