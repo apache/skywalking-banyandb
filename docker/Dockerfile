@@ -31,7 +31,7 @@ COPY ./ ./
 
 RUN make generate
 
-RUN make build
+RUN make -C banyand release
 
 FROM alpine:3
 
