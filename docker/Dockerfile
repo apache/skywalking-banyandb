@@ -34,10 +34,12 @@ ARG TARGETARCH
 RUN make generate
 
 RUN GOARCH=$TARGETARCH make -C banyand release
+RUN GOARCH=$TARGETARCH make -C bydbctl release
 
 FROM alpine:3
 
 COPY --from=builder /src/banyand/build/bin/banyand-server-static /banyand
+COPY --from=builder /src/bydbctl/build/bin/*-linux-$TARGETARCH /bydbctl
 
 EXPOSE 17912
 EXPOSE 17913
