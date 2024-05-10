@@ -35,7 +35,7 @@ RUN make build
 
 FROM alpine:3
 
-COPY --from=builder /src/banyand/build/bin/banyand-server /banyand
+COPY --from=builder /src/banyand/build/bin/banyand-server-static /banyand
 COPY --from=builder /src/bydbctl/build/bin/bydbctl /bydbctl
 
 
