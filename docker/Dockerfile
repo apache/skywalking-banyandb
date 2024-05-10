@@ -29,9 +29,11 @@ ENV GO111MODULE "on"
 WORKDIR /src
 COPY ./ ./
 
+ARG TARGETARCH
+
 RUN make generate
 
-RUN make -C banyand release
+RUN GOARCH=$TARGETARCH make -C banyand release
 
 FROM alpine:3
 
