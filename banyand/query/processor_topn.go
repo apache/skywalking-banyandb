@@ -121,6 +121,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to close the topn plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", topNMetadata.GetName(), err))
+		return
 	}
 	defer func() {
 		if err = mIterator.Close(); err != nil {

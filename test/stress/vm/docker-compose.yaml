@@ -1,0 +1,95 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: '3.8'
+services:
+  change-vol-ownership:
+    image: ubuntu
+    user: "root"
+    group_add:
+      - '${GROUP_ID}'
+    volumes:
+      - /tmp/banyandb-stress-vm:/tmp/change-ownership
+    command: chown -R ${USER_ID}:${GROUP_ID} /tmp/change-ownership
+
+  banyandb:
+    user: "${USER_ID}:${GROUP_ID}"
+    extends:
+      file: ../../docker/base-compose.yml
+      service: banyandb
+    build:
+      dockerfile: ./docker/Dockerfile
+      context: ../../..
+    volumes:
+    - /tmp/banyandb-stress-vm:/tmp:rw,delgated
+    ports:
+    - 17913:17913
+    - 6060:6060
+    - 2121:2121
+    networks:
+      - skywalking
+    depends_on:
+      change-vol-ownership:
+        condition: service_completed_successfully
+
+  oap:
+    container_name: skywalking-server-bdb
+    image: ${OAP_IMAGE:-ghcr.io/apache/skywalking/oap:latest}
+    ports:
+      - "11800:11800"
+      - "12800:12800"
+      - "9099:9090"
+      - "3100:3100"
+    networks:
+      - skywalking
+    healthcheck:
+      test: [ "CMD-SHELL", "curl http://localhost:12800/internal/l7check" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+#    restart: always
+    environment: &oap-env
+      TZ: Europe/Moscow
+      SW_HEALTH_CHECKER: default
+      SW_OTEL_RECEIVER: default
+      SW_OTEL_RECEIVER_ENABLED_OC_RULES: vm
+      SW_OTEL_RECEIVER_ENABLED_OTEL_METRICS_RULES: vm
+      SW_TELEMETRY: prometheus
+      JAVA_OPTS: "-Xms2048m -Xmx2048m"
+      SW_STORAGE: banyandb
+      SW_STORAGE_BANYANDB_TARGETS: banyandb:17912
+      SW_CORE_RECORD_DATA_TTL: 14 # https://skywalking.apache.org/docs/main/next/en/setup/backend/ttl/
+      SW_CORE_METRICS_DATA_TTL: 14
+      SW_DCS_MAX_INBOUND_MESSAGE_SIZE: 5000000000
+    depends_on:
+      banyandb:
+        condition: service_healthy
+
+  ui:
+    image: ${UI_IMAGE:-ghcr.io/apache/skywalking/ui:latest}
+    container_name: skywalking-ui
+    ports:
+      - "1010:8080"
+    networks:
+      - skywalking
+    restart: always
+    environment:
+      <<: *oap-env
+      SW_OAP_ADDRESS: http://skywalking-server-bdb:12800
+      SW_ZIPKIN_ADDRESS: http://skywalking-server-bdb:9412
+
+networks:
+  skywalking:
