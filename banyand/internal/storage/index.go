@@ -101,7 +101,11 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series) 
 	if err != nil {
 		return nil, err
 	}
-	return convertIndexSeriesToSeriesList(ss)
+	result, err := convertIndexSeriesToSeriesList(ss)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, result:%v", seriesMatchers, ss)
+	}
+	return result, nil
 }
 
 var emptySeriesMatcher = index.SeriesMatcher{}
