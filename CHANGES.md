@@ -2,6 +2,14 @@
 
 Release Notes.
 
+## 0.7.0
+
+### Features
+
+### Bugs
+
+- Fix the bug that topN query doesn't return when an error occurs.
+
 ## 0.6.0
 
 ### Features
