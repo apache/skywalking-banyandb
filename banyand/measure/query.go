@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 
 	"github.com/pkg/errors"
 
@@ -378,21 +379,32 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 		if len(qr.data) == 0 {
 			return nil
 		}
-		// TODO:// Parallel load
-		tmpBlock := generateBlock()
-		defer releaseBlock(tmpBlock)
+		blankCursorList := []int{}
+		var mu sync.Mutex
+		var wg sync.WaitGroup
 		for i := 0; i < len(qr.data); i++ {
-			if !qr.data[i].loadData(tmpBlock) {
-				qr.data = append(qr.data[:i], qr.data[i+1:]...)
-				i--
-				continue
-			}
-			if i < 0 {
-				continue
-			}
-			if qr.orderByTimestampDesc() {
-				qr.data[i].idx = len(qr.data[i].timestamps) - 1
-			}
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				tmpBlock := generateBlock()
+				defer releaseBlock(tmpBlock)
+				if !qr.data[i].loadData(tmpBlock) {
+					mu.Lock()
+					defer mu.Unlock()
+					blankCursorList = append(blankCursorList, i)
+					return
+				}
+				if qr.orderByTimestampDesc() {
+					qr.data[i].idx = len(qr.data[i].timestamps) - 1
+				}
+			}(i)
+		}
+		wg.Wait()
+		sort.Slice(blankCursorList, func(i, j int) bool {
+			return blankCursorList[i] > blankCursorList[j]
+		})
+		for _, index := range blankCursorList {
+			qr.data = append(qr.data[:index], qr.data[index+1:]...)
 		}
 		qr.loaded = true
 		heap.Init(qr)

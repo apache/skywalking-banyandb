@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 
 	"go.uber.org/multierr"
 
@@ -157,58 +158,69 @@ func (qr *queryResult) Pull(applyFilter bool) *pbv1.StreamResult {
 		if len(qr.data) == 0 {
 			return nil
 		}
-		// TODO:// Parallel load
-		tmpBlock := generateBlock()
-		defer releaseBlock(tmpBlock)
+		blankCursorList := []int{}
+		var mu sync.Mutex
+		var wg sync.WaitGroup
 		for i := 0; i < len(qr.data); i++ {
-			if !qr.data[i].loadData(tmpBlock, applyFilter) {
-				qr.data = append(qr.data[:i], qr.data[i+1:]...)
-				i--
-				continue
-			}
-			if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
-				continue
-			}
-			sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
-			series := qr.seriesList[sidIndex]
-			entityMap := make(map[string]int)
-			tagFamilyMap := make(map[string]int)
-			for idx, entity := range qr.schema.GetEntity().GetTagNames() {
-				entityMap[entity] = idx + 1
-			}
-			for idx, tagFamily := range qr.data[i].tagFamilies {
-				tagFamilyMap[tagFamily.name] = idx + 1
-			}
-			for _, tagFamilyProj := range qr.data[i].tagProjection {
-				for j, tagProj := range tagFamilyProj.Names {
-					offset := qr.tagNameIndex[tagProj]
-					tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
-					tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
-					if tagSpec.IndexedOnly {
-						continue
-					}
-					entityPos := entityMap[tagProj]
-					tagFamilyPos := tagFamilyMap[tagFamilyProj.Family]
-					if entityPos == 0 {
-						continue
-					}
-					if tagFamilyPos == 0 {
-						qr.data[i].tagFamilies[tagFamilyPos-1] = tagFamily{
-							name: tagFamilyProj.Family,
-							tags: make([]tag, 0),
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				tmpBlock := generateBlock()
+				defer releaseBlock(tmpBlock)
+				if !qr.data[i].loadData(tmpBlock, applyFilter) || qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
+					mu.Lock()
+					defer mu.Unlock()
+					blankCursorList = append(blankCursorList, i)
+					return
+				}
+				sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
+				series := qr.seriesList[sidIndex]
+				entityMap := make(map[string]int)
+				tagFamilyMap := make(map[string]int)
+				for idx, entity := range qr.schema.GetEntity().GetTagNames() {
+					entityMap[entity] = idx + 1
+				}
+				for idx, tagFamily := range qr.data[i].tagFamilies {
+					tagFamilyMap[tagFamily.name] = idx + 1
+				}
+				for _, tagFamilyProj := range qr.data[i].tagProjection {
+					for j, tagProj := range tagFamilyProj.Names {
+						offset := qr.tagNameIndex[tagProj]
+						tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
+						tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
+						if tagSpec.IndexedOnly {
+							continue
+						}
+						entityPos := entityMap[tagProj]
+						tagFamilyPos := tagFamilyMap[tagFamilyProj.Family]
+						if entityPos == 0 {
+							continue
+						}
+						if tagFamilyPos == 0 {
+							qr.data[i].tagFamilies[tagFamilyPos-1] = tagFamily{
+								name: tagFamilyProj.Family,
+								tags: make([]tag, 0),
+							}
+						}
+						valueType := pbv1.MustTagValueToValueType(series.EntityValues[entityPos-1])
+						qr.data[i].tagFamilies[tagFamilyPos-1].tags[j] = tag{
+							name:      tagProj,
+							values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
+							valueType: valueType,
 						}
 					}
-					valueType := pbv1.MustTagValueToValueType(series.EntityValues[entityPos-1])
-					qr.data[i].tagFamilies[tagFamilyPos-1].tags[j] = tag{
-						name:      tagProj,
-						values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
-						valueType: valueType,
-					}
 				}
-			}
-			if qr.orderByTimestampDesc() {
-				qr.data[i].idx = len(qr.data[i].timestamps) - 1
-			}
+				if qr.orderByTimestampDesc() {
+					qr.data[i].idx = len(qr.data[i].timestamps) - 1
+				}
+			}(i)
+		}
+		wg.Wait()
+		sort.Slice(blankCursorList, func(i, j int) bool {
+			return blankCursorList[i] > blankCursorList[j]
+		})
+		for _, index := range blankCursorList {
+			qr.data = append(qr.data[:index], qr.data[index+1:]...)
 		}
 		qr.loaded = true
 		heap.Init(qr)
