@@ -237,6 +237,10 @@ type Series struct {
 	ID           common.SeriesID
 }
 
+func (s Series) String() string {
+	return fmt.Sprintf("%s:%d", s.EntityValues, s.ID)
+}
+
 // SeriesStore is an abstract of a series repository.
 type SeriesStore interface {
 	Store
@@ -260,6 +264,20 @@ const (
 type SeriesMatcher struct {
 	Match []byte
 	Type  SeriesMatcherType
+}
+
+// String returns a string representation of the series matcher.
+func (s SeriesMatcher) String() string {
+	switch s.Type {
+	case SeriesMatcherTypeExact:
+		return fmt.Sprintf("exact:%s", s.Match)
+	case SeriesMatcherTypePrefix:
+		return fmt.Sprintf("prefix:%s", s.Match)
+	case SeriesMatcherTypeWildcard:
+		return fmt.Sprintf("wildcard:%s", s.Match)
+	default:
+		return fmt.Sprintf("unknown:%s", s.Match)
+	}
 }
 
 // GetSearcher returns a searcher associated with input index rule type.

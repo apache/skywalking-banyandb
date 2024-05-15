@@ -14,41 +14,25 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
-lists:
-- items:
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_2
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
-    value:
-      int:
-        value: "12"
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_1
-    - key: entity_id
-      value:
-        str:
-          value: entity_3
-    value:
-      int:
-        value: "11"
-  - entity:
-    - key: service_id
-      value:
-        "null": null
-    - key: entity_id
-      value:
-        str:
-          value: entity_2
-    value:
-      int:
-        value: "10"
+NAME := vm
+
+CLI_ARGS :=
+
+ifdef PROFILE
+	CLI_ARGS := $(CLI_ARGS) --profile $(PROFILE)
+endif
+
+cli_env := DOCKER_BUILDKIT=1 USER_ID=$(shell id -u) GROUP_ID=$(shell id -g)
+
+.PHONY: clean
+clean:
+	rm -rf /tmp/banyandb-stress-vm
+
+up: clean
+	$(cli_env) docker compose -f docker-compose.yaml $(CLI_ARGS) up --build
+
+down:
+	docker compose -f docker-compose.yaml down
+	

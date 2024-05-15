@@ -184,16 +184,4 @@ var (
 
 	// NullTagValue represents a null tag value in the model.
 	NullTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
-
-	// EmptyStrTagValue represents an empty string tag value in the model.
-	EmptyStrTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}}
-
-	// EmptyStrArrTagValue represents an empty string array tag value in the model.
-	EmptyStrArrTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: []string{}}}}
-
-	// EmptyIntArrTagValue represents an empty integer array tag value in the model.
-	EmptyIntArrTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: []int64{}}}}
-
-	// EmptyBinaryTagValue represents an empty binary tag value in the model.
-	EmptyBinaryTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: []byte{}}}
 )

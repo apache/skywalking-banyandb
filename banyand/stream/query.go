@@ -56,20 +56,7 @@ func mustEncodeTagValue(name string, tagType databasev1.TagType, tagValue *model
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
 	if value == nil {
-		switch valueType {
-		case pbv1.ValueTypeInt64:
-			logger.Panicf("int64 can be nil")
-		case pbv1.ValueTypeStr:
-			return pbv1.EmptyStrTagValue
-		case pbv1.ValueTypeStrArr:
-			return pbv1.EmptyStrArrTagValue
-		case pbv1.ValueTypeInt64Arr:
-			return pbv1.EmptyIntArrTagValue
-		case pbv1.ValueTypeBinaryData:
-			return pbv1.EmptyBinaryTagValue
-		default:
-			return pbv1.NullTagValue
-		}
+		return pbv1.NullTagValue
 	}
 	switch valueType {
 	case pbv1.ValueTypeInt64:

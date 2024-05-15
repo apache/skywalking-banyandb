@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+version: '3.8'
 services:
   change-vol-ownership:
     image: ubuntu
@@ -20,7 +21,7 @@ services:
     group_add:
       - '${GROUP_ID}'
     volumes:
-      - /tmp/banyandb-stress-trace:/tmp/change-ownership
+      - /tmp/banyandb-stress-vm:/tmp/change-ownership
     command: chown -R ${USER_ID}:${GROUP_ID} /tmp/change-ownership
 
   banyandb:
@@ -32,65 +33,63 @@ services:
       dockerfile: ./docker/Dockerfile
       context: ../../..
     volumes:
-    - /tmp/banyandb-stress-trace:/tmp:rw,delgated
+    - /tmp/banyandb-stress-vm:/tmp:rw,delgated
     ports:
     - 17913:17913
     - 6060:6060
     - 2121:2121
-    deploy:
-      resources:
-        limits:
-          cpus: "4"
-          memory: 8G
     networks:
-      - test
-      - monitoring
+      - skywalking
     depends_on:
       change-vol-ownership:
         condition: service_completed_successfully
 
   oap:
-    extends:
-      file: ../../docker/base-compose.yml
-      service: oap
-    # TODO: use the main repo image once v0.6.0 is released and merged into the main repo
-    image: "ghcr.io/apache/skywalking/data-generator:${SW_OAP_COMMIT}"
-    environment:
-      SW_STORAGE: banyandb
-      SW_STORAGE_BANYANDB_FLUSH_INTERVAL: 5
-      SW_CORE_PERSISTENT_PERIOD: 5
+    container_name: skywalking-server-bdb
+    image: ${OAP_IMAGE:-ghcr.io/apache/skywalking/oap:latest}
     ports:
-      - 12800:12800
-    volumes:
-      - ./log4j2.xml:/skywalking/config/log4j2.xml
+      - "11800:11800"
+      - "12800:12800"
+      - "9099:9090"
+      - "3100:3100"
     networks:
-      - test
+      - skywalking
+    healthcheck:
+      test: [ "CMD-SHELL", "curl http://localhost:12800/internal/l7check" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+#    restart: always
+    environment: &oap-env
+      TZ: Europe/Moscow
+      SW_HEALTH_CHECKER: default
+      SW_OTEL_RECEIVER: default
+      SW_OTEL_RECEIVER_ENABLED_OC_RULES: vm
+      SW_OTEL_RECEIVER_ENABLED_OTEL_METRICS_RULES: vm
+      SW_TELEMETRY: prometheus
+      JAVA_OPTS: "-Xms2048m -Xmx2048m"
+      SW_STORAGE: banyandb
+      SW_STORAGE_BANYANDB_TARGETS: banyandb:17912
+      SW_CORE_RECORD_DATA_TTL: 14 # https://skywalking.apache.org/docs/main/next/en/setup/backend/ttl/
+      SW_CORE_METRICS_DATA_TTL: 14
+      SW_DCS_MAX_INBOUND_MESSAGE_SIZE: 5000000000
     depends_on:
       banyandb:
         condition: service_healthy
 
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    restart: unless-stopped
-    profiles:
-      - "monitoring"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
+  ui:
+    image: ${UI_IMAGE:-ghcr.io/apache/skywalking/ui:latest}
+    container_name: skywalking-ui
     ports:
-      - 9090:9090
+      - "1010:8080"
     networks:
-      - monitoring
-networks:
-  test:
-  monitoring:
+      - skywalking
+    restart: always
+    environment:
+      <<: *oap-env
+      SW_OAP_ADDRESS: http://skywalking-server-bdb:12800
+      SW_ZIPKIN_ADDRESS: http://skywalking-server-bdb:9412
 
-volumes:
-  prometheus_data: {}
+networks:
+  skywalking:
