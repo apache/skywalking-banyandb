@@ -24,18 +24,132 @@ import (
 	"fmt"
 	"sort"
 
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type queryOptions struct {
+	elementRefMap map[common.SeriesID][]int64
 	pbv1.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
+}
+
+func mustEncodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue, num int) [][]byte {
+	values := make([][]byte, num)
+	nv := encodeTagValue(name, tagType, tagValue)
+	value := nv.marshal()
+	for i := 0; i < num; i++ {
+		values[i] = value
+	}
+	return values
+}
+
+func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
+	if value == nil {
+		switch valueType {
+		case pbv1.ValueTypeInt64:
+			logger.Panicf("int64 can be nil")
+		case pbv1.ValueTypeStr:
+			return pbv1.EmptyStrTagValue
+		case pbv1.ValueTypeStrArr:
+			return pbv1.EmptyStrArrTagValue
+		case pbv1.ValueTypeInt64Arr:
+			return pbv1.EmptyIntArrTagValue
+		case pbv1.ValueTypeBinaryData:
+			return pbv1.EmptyBinaryTagValue
+		default:
+			return pbv1.NullTagValue
+		}
+	}
+	switch valueType {
+	case pbv1.ValueTypeInt64:
+		return int64TagValue(convert.BytesToInt64(value))
+	case pbv1.ValueTypeStr:
+		return strTagValue(string(value))
+	case pbv1.ValueTypeBinaryData:
+		return binaryDataTagValue(value)
+	case pbv1.ValueTypeInt64Arr:
+		var values []int64
+		for i := 0; i < len(value); i += 8 {
+			values = append(values, convert.BytesToInt64(value[i:i+8]))
+		}
+		return int64ArrTagValue(values)
+	case pbv1.ValueTypeStrArr:
+		var values []string
+		bb := bigValuePool.Generate()
+		var err error
+		for len(value) > 0 {
+			bb.Buf, value, err = unmarshalVarArray(bb.Buf[:0], value)
+			if err != nil {
+				logger.Panicf("unmarshalVarArray failed: %v", err)
+			}
+			values = append(values, string(bb.Buf))
+		}
+		return strArrTagValue(values)
+	default:
+		logger.Panicf("unsupported value type: %v", valueType)
+		return nil
+	}
+}
+
+func int64TagValue(value int64) *modelv1.TagValue {
+	return &modelv1.TagValue{
+		Value: &modelv1.TagValue_Int{
+			Int: &modelv1.Int{
+				Value: value,
+			},
+		},
+	}
+}
+
+func strTagValue(value string) *modelv1.TagValue {
+	return &modelv1.TagValue{
+		Value: &modelv1.TagValue_Str{
+			Str: &modelv1.Str{
+				Value: value,
+			},
+		},
+	}
+}
+
+func binaryDataTagValue(value []byte) *modelv1.TagValue {
+	data := make([]byte, len(value))
+	copy(data, value)
+	return &modelv1.TagValue{
+		Value: &modelv1.TagValue_BinaryData{
+			BinaryData: data,
+		},
+	}
+}
+
+func int64ArrTagValue(values []int64) *modelv1.TagValue {
+	return &modelv1.TagValue{
+		Value: &modelv1.TagValue_IntArray{
+			IntArray: &modelv1.IntArray{
+				Value: values,
+			},
+		},
+	}
+}
+
+func strArrTagValue(values []string) *modelv1.TagValue {
+	return &modelv1.TagValue{
+		Value: &modelv1.TagValue_StrArray{
+			StrArray: &modelv1.StrArray{
+				Value: values,
+			},
+		},
+	}
 }
 
 type queryResult struct {
@@ -51,7 +165,7 @@ type queryResult struct {
 	ascTS        bool
 }
 
-func (qr *queryResult) Pull() *pbv1.StreamResult {
+func (qr *queryResult) Pull(applyFilter bool) *pbv1.StreamResult {
 	if !qr.loaded {
 		if len(qr.data) == 0 {
 			return nil
@@ -60,9 +174,10 @@ func (qr *queryResult) Pull() *pbv1.StreamResult {
 		tmpBlock := generateBlock()
 		defer releaseBlock(tmpBlock)
 		for i := 0; i < len(qr.data); i++ {
-			if !qr.data[i].loadData(tmpBlock) {
+			if !qr.data[i].loadData(tmpBlock, applyFilter) {
 				qr.data = append(qr.data[:i], qr.data[i+1:]...)
 				i--
+				continue
 			}
 			if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
 				continue
@@ -210,7 +325,40 @@ func (qr *queryResult) merge() *pbv1.StreamResult {
 	return result
 }
 
-func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamResultPuller, error) {
+func (s *stream) genIndex(tagProj []pbv1.TagProjection, seriesList pbv1.SeriesList) (map[string]int, map[string]*databasev1.TagSpec,
+	map[string]partition.TagLocator, map[common.SeriesID]int,
+) {
+	entityMap := make(map[string]int)
+	for idx, entity := range s.schema.GetEntity().GetTagNames() {
+		entityMap[entity] = idx + 1
+	}
+	tagSpecIndex := make(map[string]*databasev1.TagSpec)
+	for _, tagFamilySpec := range s.schema.GetTagFamilies() {
+		for _, tagSpec := range tagFamilySpec.Tags {
+			tagSpecIndex[tagSpec.GetName()] = tagSpec
+		}
+	}
+	tagProjIndex := make(map[string]partition.TagLocator)
+	for i, tagFamilyProj := range tagProj {
+		for j, tagProj := range tagFamilyProj.Names {
+			if entityMap[tagProj] == 0 {
+				continue
+			}
+			tagProjIndex[tagProj] = partition.TagLocator{
+				FamilyOffset: i,
+				TagOffset:    j,
+			}
+		}
+	}
+	sidToIndex := make(map[common.SeriesID]int)
+	for idx, series := range seriesList {
+		sidToIndex[series.ID] = idx
+	}
+
+	return entityMap, tagSpecIndex, tagProjIndex, sidToIndex
+}
+
+func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {
 	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
@@ -269,7 +417,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	}
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
-	// TODO: cache ti
+	// TODO: cache tstIter
 	var ti tstIter
 	defer ti.reset()
 	originalSids := make([]common.SeriesID, len(sids))
@@ -282,7 +430,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	for ti.nextBlock() {
 		bc := generateBlockCursor()
 		p := ti.piHeap[0]
-		initBlockCursor(bc, p.p, p.curBlock, qo)
+		bc.init(p.p, p.curBlock, qo)
 		result.data = append(result.data, bc)
 	}
 	if ti.Error() != nil {
@@ -295,6 +443,218 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	result.tagNameIndex = make(map[string]partition.TagLocator)
 	result.schema = s.schema
 	result.seriesList = sl
+	for i, si := range originalSids {
+		result.sidToIndex[si] = i
+	}
+	for i, tagFamilySpec := range s.schema.GetTagFamilies() {
+		for j, tagSpec := range tagFamilySpec.GetTags() {
+			result.tagNameIndex[tagSpec.GetName()] = partition.TagLocator{
+				FamilyOffset: i,
+				TagOffset:    j,
+			}
+		}
+	}
+	if sqo.Order == nil {
+		result.orderByTS = true
+		result.ascTS = true
+		return &result, nil
+	}
+	if sqo.Order.Index == nil {
+		result.orderByTS = true
+		if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+			result.ascTS = true
+		}
+		return &result, nil
+	}
+
+	return &result, nil
+}
+
+func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamQueryOptions) (ssr pbv1.StreamSortResult, err error) {
+	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
+		return nil, errors.New("invalid query options: timeRange and series are required")
+	}
+	if len(sqo.TagProjection) == 0 {
+		return nil, errors.New("invalid query options: tagProjection is required")
+	}
+	db := s.databaseSupplier.SupplyTSDB()
+	if db == nil {
+		return ssr, nil
+	}
+	tsdb := db.(storage.TSDB[*tsTable, option])
+	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
+		}
+	}()
+
+	series := make([]*pbv1.Series, len(sqo.Entities))
+	for i := range sqo.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      sqo.Name,
+			EntityValues: sqo.Entities[i],
+		}
+	}
+	seriesList, err := tsdb.Lookup(ctx, series)
+	if err != nil {
+		return nil, err
+	}
+	if len(seriesList) == 0 {
+		return ssr, nil
+	}
+
+	iters, err := s.buildSeriesByIndex(tabWrappers, seriesList, sqo)
+	if err != nil {
+		return nil, err
+	}
+	if len(iters) == 0 {
+		return ssr, nil
+	}
+
+	it := newItemIter(iters, sqo.Order.Sort)
+	defer func() {
+		err = multierr.Append(err, it.Close())
+	}()
+
+	ces := newColumnElements()
+	for it.Next() {
+		nextItem := it.Val()
+		e := nextItem.element
+		ces.BuildFromElement(e, sqo.TagProjection)
+		if len(ces.timestamp) >= sqo.MaxElementSize {
+			break
+		}
+	}
+	return ces, err
+}
+
+// newItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
+func newItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[item] {
+	var ii []itersort.Iterator[item]
+	for _, iter := range iters {
+		ii = append(ii, iter)
+	}
+	if s == modelv1.Sort_SORT_DESC {
+		return itersort.NewItemIter[item](ii, true)
+	}
+	return itersort.NewItemIter[item](ii, false)
+}
+
+func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (srp pbv1.StreamQueryResult, err error) {
+	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
+		return nil, errors.New("invalid query options: timeRange and series are required")
+	}
+	if len(sqo.TagProjection) == 0 {
+		return nil, errors.New("invalid query options: tagProjection is required")
+	}
+	db := s.databaseSupplier.SupplyTSDB()
+	var result queryResult
+	if db == nil {
+		return srp, nil
+	}
+	tsdb := db.(storage.TSDB[*tsTable, option])
+	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
+		}
+	}()
+
+	series := make([]*pbv1.Series, len(sqo.Entities))
+	for i := range sqo.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      sqo.Name,
+			EntityValues: sqo.Entities[i],
+		}
+	}
+	seriesList, err := tsdb.Lookup(ctx, series)
+	if err != nil {
+		return nil, err
+	}
+	if len(seriesList) == 0 {
+		return srp, nil
+	}
+
+	var elementRefList []elementRef
+	for _, tw := range tabWrappers {
+		index := tw.Table().Index()
+		erl, err := index.Search(ctx, seriesList, sqo.Filter)
+		if err != nil {
+			return nil, err
+		}
+		elementRefList = append(elementRefList, erl...)
+		if len(elementRefList) > sqo.MaxElementSize {
+			elementRefList = elementRefList[:sqo.MaxElementSize]
+			break
+		}
+	}
+	elementRefMap := make(map[common.SeriesID][]int64)
+	for _, ref := range elementRefList {
+		if _, ok := elementRefMap[ref.seriesID]; !ok {
+			elementRefMap[ref.seriesID] = []int64{ref.timestamp}
+		} else {
+			elementRefMap[ref.seriesID] = append(elementRefMap[ref.seriesID], ref.timestamp)
+		}
+	}
+	qo := queryOptions{
+		StreamQueryOptions: sqo,
+		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
+		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
+		elementRefMap:      elementRefMap,
+	}
+	var parts []*part
+	var n int
+	for i := range tabWrappers {
+		s := tabWrappers[i].Table().currentSnapshot()
+		if s == nil {
+			continue
+		}
+		parts, n = s.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
+		if n < 1 {
+			s.decRef()
+			continue
+		}
+		result.snapshots = append(result.snapshots, s)
+	}
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+	// TODO: cache tstIter
+	var ti tstIter
+	defer ti.reset()
+	var sids []common.SeriesID
+	for i := 0; i < len(seriesList); i++ {
+		sid := seriesList[i].ID
+		if _, ok := elementRefMap[sid]; !ok {
+			seriesList = append(seriesList[:i], seriesList[i+1:]...)
+			i--
+			continue
+		}
+		sids = append(sids, sid)
+	}
+	originalSids := make([]common.SeriesID, len(sids))
+	copy(originalSids, sids)
+	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
+	ti.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	if ti.Error() != nil {
+		return nil, fmt.Errorf("cannot init tstIter: %w", ti.Error())
+	}
+	for ti.nextBlock() {
+		bc := generateBlockCursor()
+		p := ti.piHeap[0]
+		bc.init(p.p, p.curBlock, qo)
+		result.data = append(result.data, bc)
+	}
+	if ti.Error() != nil {
+		return nil, fmt.Errorf("cannot iterate tstIter: %w", ti.Error())
+	}
+
+	entityMap, _, _, sidToIndex := s.genIndex(sqo.TagProjection, seriesList)
+	result.entityMap = entityMap
+	result.sidToIndex = sidToIndex
+	result.tagNameIndex = make(map[string]partition.TagLocator)
+	result.schema = s.schema
+	result.seriesList = seriesList
 	for i, si := range originalSids {
 		result.sidToIndex[si] = i
 	}

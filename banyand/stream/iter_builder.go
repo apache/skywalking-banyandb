@@ -31,20 +31,20 @@ import (
 type filterFn func(itemID uint64) bool
 
 func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTable],
-	seriesList pbv1.SeriesList, sso pbv1.StreamSortOptions,
+	seriesList pbv1.SeriesList, sqo pbv1.StreamQueryOptions,
 ) (series []*searcherIterator, err error) {
 	timeFilter := func(itemID uint64) bool {
-		return sso.TimeRange.Contains(int64(itemID))
+		return sqo.TimeRange.Contains(int64(itemID))
 	}
-	indexRuleForSorting := sso.Order.Index
+	indexRuleForSorting := sqo.Order.Index
 	if len(indexRuleForSorting.Tags) != 1 {
 		return nil, fmt.Errorf("only support one tag for sorting, but got %d", len(indexRuleForSorting.Tags))
 	}
 	sortedTag := indexRuleForSorting.Tags[0]
 	tl := newTagLocation()
-	for i := range sso.TagProjection {
-		for j := range sso.TagProjection[i].Names {
-			if sso.TagProjection[i].Names[j] == sortedTag {
+	for i := range sqo.TagProjection {
+		for j := range sqo.TagProjection[i].Names {
+			if sqo.TagProjection[i].Names[j] == sortedTag {
 				tl.familyIndex, tl.tagIndex = i, j
 			}
 		}
@@ -52,13 +52,13 @@ func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTa
 	if !tl.valid() {
 		return nil, fmt.Errorf("sorted tag %s not found in tag projection", sortedTag)
 	}
-	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sso.TagProjection, seriesList)
+	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sqo.TagProjection, seriesList)
 	sids := seriesList.IDs()
 	for _, tw := range tableWrappers {
 		seriesFilter := make(map[common.SeriesID]filterFn)
-		if sso.Filter != nil {
+		if sqo.Filter != nil {
 			for i := range sids {
-				pl, errExe := sso.Filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
+				pl, errExe := sqo.Filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 					return tw.Table().Index().store, nil
 				}, sids[i])
 				if errExe != nil {
@@ -79,14 +79,14 @@ func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTa
 			IndexRuleID: indexRuleForSorting.GetMetadata().GetId(),
 			Analyzer:    indexRuleForSorting.GetAnalyzer(),
 		}
-		inner, err = tw.Table().Index().Sort(sids, fieldKey, sso.Order.Sort, sso.MaxElementSize)
+		inner, err = tw.Table().Index().Sort(sids, fieldKey, sqo.Order.Sort, sqo.MaxElementSize)
 		if err != nil {
 			return nil, err
 		}
 
 		if inner != nil {
 			series = append(series, newSearcherIterator(s.l, inner, tw.Table(),
-				seriesFilter, timeFilter, sso.TagProjection, tl,
+				seriesFilter, timeFilter, sqo.TagProjection, tl,
 				tagSpecIndex, tagProjIndex, sidToIndex, seriesList, entityMap))
 		}
 	}

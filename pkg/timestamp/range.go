@@ -151,6 +151,12 @@ func FindRange(timestamps []int64, min, max int64) (int, int, bool) {
 
 // Find returns the index of the target in the sorted 'timestamps' slice.
 func Find(timestamps []int64, target int64) int {
+	if len(timestamps) == 0 {
+		return -1
+	}
+	if timestamps[0] > target || timestamps[len(timestamps)-1] < target {
+		return -1
+	}
 	left, right := 0, len(timestamps)-1
 	for left <= right {
 		mid := (left + right) / 2

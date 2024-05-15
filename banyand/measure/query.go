@@ -400,6 +400,7 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 			if !qr.data[i].loadData(tmpBlock) {
 				qr.data = append(qr.data[:i], qr.data[i+1:]...)
 				i--
+				continue
 			}
 			if i < 0 {
 				continue
