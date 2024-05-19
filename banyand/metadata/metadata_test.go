@@ -27,7 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	embeddedserver "github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	testhelper "github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"

@@ -27,7 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	embeddedserver "github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"

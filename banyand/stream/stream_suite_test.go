@@ -26,7 +26,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	embeddedserver "github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
