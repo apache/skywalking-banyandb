@@ -32,7 +32,8 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadata "github.com/apache/skywalking-banyandb/banyand/metadata"
+	embeddedserver "github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -175,7 +176,7 @@ func setupForRegistry() func() {
 	// Init `Queue` module
 	pipeline := queue.Local()
 	// Init `Metadata` module
-	metaSvc, err := metadata.NewService(context.TODO())
+	metaSvc, err := embeddedserver.NewService(context.TODO())
 	Expect(err).NotTo(HaveOccurred())
 
 	tcp := grpc.NewServer(context.TODO(), pipeline, pipeline, metaSvc, grpc.NewLocalNodeRegistry())

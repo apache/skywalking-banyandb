@@ -27,7 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	embeddedserver "github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -41,7 +41,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
 	pipeline := queue.Local()
-	metaSvc, err := metadata.NewService(ctx)
+	metaSvc, err := embeddedserver.NewService(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
@@ -59,7 +59,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	}
 	grpcServer := grpc.NewServer(ctx, pipeline, pipeline, metaSvc, grpc.NewLocalNodeRegistry())
 	profSvc := observability.NewProfService()
-	metricSvc := observability.NewMetricService()
+	metricSvc := observability.NewMetricService(metaSvc)
 	httpServer := http.NewServer()
 
 	var units []run.Unit

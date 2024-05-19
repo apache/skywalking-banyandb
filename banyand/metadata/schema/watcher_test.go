@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package schema_test
 
 import (
 	"context"
@@ -29,13 +29,14 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 type mockedHandler struct {
-	data                 map[string]Metadata
+	data                 map[string]schema.Metadata
 	addOrUpdateCalledNum *atomic.Int32
 	deleteCalledNum      *atomic.Int32
 	sync.RWMutex
@@ -43,20 +44,20 @@ type mockedHandler struct {
 
 func newMockedHandler() *mockedHandler {
 	return &mockedHandler{
-		data:                 make(map[string]Metadata),
+		data:                 make(map[string]schema.Metadata),
 		addOrUpdateCalledNum: &atomic.Int32{},
 		deleteCalledNum:      &atomic.Int32{},
 	}
 }
 
-func (m *mockedHandler) OnAddOrUpdate(obj Metadata) {
+func (m *mockedHandler) OnAddOrUpdate(obj schema.Metadata) {
 	m.Lock()
 	defer m.Unlock()
 	m.data[obj.Name] = obj
 	m.addOrUpdateCalledNum.Add(1)
 }
 
-func (m *mockedHandler) OnDelete(obj Metadata) {
+func (m *mockedHandler) OnDelete(obj schema.Metadata) {
 	m.Lock()
 	defer m.Unlock()
 	delete(m.data, obj.Name)
@@ -76,9 +77,8 @@ func (m *mockedHandler) Data() map[string]any {
 var _ = ginkgo.Describe("Watcher", func() {
 	var (
 		mockedObj *mockedHandler
-		watcher   *watcher
 		server    embeddedetcd.Server
-		registry  *etcdSchemaRegistry
+		registry  schema.Registry
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -97,12 +97,10 @@ var _ = ginkgo.Describe("Watcher", func() {
 			embeddedetcd.RootDir(randomTempDir()))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
-		schemaRegistry, err := NewEtcdSchemaRegistry(
-			Namespace("test"),
-			ConfigureServerEndpoints(endpoints),
+		registry, err = schema.NewEtcdSchemaRegistry(
+			schema.Namespace("test"),
+			schema.ConfigureServerEndpoints(endpoints),
 		)
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		registry = schemaRegistry.(*etcdSchemaRegistry)
 	})
 	ginkgo.AfterEach(func() {
 		registry.Close()
@@ -165,7 +163,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		}
 
 		// Start the watcher
-		watcher = registry.newWatcher("test", KindMeasure, mockedObj)
+		watcher := registry.NewWatcher("test", schema.KindMeasure, mockedObj)
 		ginkgo.DeferCleanup(func() {
 			watcher.Close()
 		})
@@ -182,7 +180,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		}, flags.EventuallyTimeout).Should(gomega.BeTrue())
 	})
 	ginkgo.It("should handle watch events", func() {
-		watcher = registry.newWatcher("test", KindStream, mockedObj)
+		watcher := registry.NewWatcher("test", schema.KindStream, mockedObj)
 		ginkgo.DeferCleanup(func() {
 			watcher.Close()
 		})

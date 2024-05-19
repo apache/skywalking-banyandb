@@ -64,6 +64,9 @@ type Registry interface {
 	Property
 	Node
 	RegisterHandler(string, Kind, EventHandler)
+	Get(context.Context, string, proto.Message) error
+	NewWatcher(string, Kind, watchEventHandler) *watcher
+	Register(context.Context, Metadata, bool) error
 }
 
 // TypeMeta defines the identity and type of an Event.
@@ -83,7 +86,7 @@ type Metadata struct {
 // Spec is a placeholder of a serialized resource.
 type Spec interface{}
 
-func (m Metadata) key() (string, error) {
+func (m Metadata) Key() (string, error) {
 	switch m.Kind {
 	case KindGroup:
 		return formatGroupKey(m.Name), nil
@@ -129,7 +132,7 @@ func (m Metadata) equal(other Metadata) bool {
 		return false
 	}
 
-	if checker, ok := checkerMap[m.Kind]; ok {
+	if checker, ok := CheckerMap[m.Kind]; ok {
 		return checker(m.Spec.(proto.Message), other.Spec.(proto.Message))
 	}
 

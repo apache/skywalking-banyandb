@@ -144,7 +144,7 @@ func (e *etcdSchemaRegistry) ApplyProperty(ctx context.Context, property *proper
 		},
 		Spec: property,
 	}
-	key, err := md.key()
+	key, err := md.Key()
 	if err != nil {
 		return false, 0, 0, err
 	}

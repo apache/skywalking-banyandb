@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package metadata
+package metadata_test
 
 import (
 	"context"
@@ -26,6 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	embeddedserver "github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	testhelper "github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -42,7 +44,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 		Level: flags.LogLevel,
 	}))
 	ctx := context.TODO()
-	s, _ := NewService(ctx)
+	s, _ := embeddedserver.NewService(ctx)
 	is.NotNil(s)
 	rootDir, deferFn, err := testhelper.NewSpace()
 	is.NoError(err)
@@ -110,7 +112,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 	}
 }
 
-func getIndexRule(ctx context.Context, s Service, names ...string) []*databasev1.IndexRule {
+func getIndexRule(ctx context.Context, s metadata.Service, names ...string) []*databasev1.IndexRule {
 	ruleRepo := s.IndexRuleRegistry()
 	result := make([]*databasev1.IndexRule, 0, len(names))
 	for _, name := range names {

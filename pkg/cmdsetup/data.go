@@ -57,7 +57,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
 	profSvc := observability.NewProfService()
-	metricSvc := observability.NewMetricService()
+	metricSvc := observability.NewMetricService(metaSvc)
 
 	var units []run.Unit
 	units = append(units, runners...)

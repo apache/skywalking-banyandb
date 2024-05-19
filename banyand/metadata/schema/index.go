@@ -35,7 +35,7 @@ var (
 
 func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error) {
 	var indexRuleBinding databasev1.IndexRuleBinding
-	if err := e.get(ctx, formatIndexRuleBindingKey(metadata), &indexRuleBinding); err != nil {
+	if err := e.Get(ctx, formatIndexRuleBindingKey(metadata), &indexRuleBinding); err != nil {
 		return nil, err
 	}
 	return &indexRuleBinding, nil
@@ -104,7 +104,7 @@ func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadat
 
 func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error) {
 	var entity databasev1.IndexRule
-	if err := e.get(ctx, formatIndexRuleKey(metadata), &entity); err != nil {
+	if err := e.Get(ctx, formatIndexRuleKey(metadata), &entity); err != nil {
 		return nil, err
 	}
 	if entity.Metadata.Id == 0 {

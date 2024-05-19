@@ -48,7 +48,7 @@ func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role databasev1.Role)
 }
 
 func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.Node, forced bool) error {
-	return e.register(ctx, Metadata{
+	return e.Register(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind: KindNode,
 			Name: node.Metadata.Name,

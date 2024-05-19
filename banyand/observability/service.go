@@ -23,11 +23,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robfig/cron/v3"
-
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/robfig/cron/v3"
 )
 
 var (
@@ -37,9 +37,10 @@ var (
 )
 
 // NewMetricService returns a metric service.
-func NewMetricService() run.Service {
+func NewMetricService(metadata metadata.Repo) run.Service {
 	return &metricService{
-		closer: run.NewCloser(1),
+		closer:   run.NewCloser(1),
+		metadata: metadata,
 	}
 }
 
@@ -50,6 +51,7 @@ type metricService struct {
 	scheduler  *timestamp.Scheduler
 	listenAddr string
 	mutex      sync.Mutex
+	metadata   metadata.Repo
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
@@ -74,9 +76,13 @@ func (p *metricService) Serve() run.StopNotify {
 
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
+	err := createInternalGroup(p.metadata)
+	if err != nil {
+		p.l.Error().Err(err).Msg("Failed to create internal group")
+	}
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
-	err := p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
+	err = p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
 		MetricsCollector.collect()
 		return true
 	})
