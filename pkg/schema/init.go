@@ -235,8 +235,7 @@ func (sr *schemaRepo) storeMeasure(m *databasev1.Measure, group *group, bindings
 	if aa, ok := aggMap[m.Metadata.GetName()]; ok {
 		topNAggr = append(topNAggr, aa...)
 	}
-	_, err := group.storeResource(m, indexRules, topNAggr)
-	if err != nil {
+	if err := sr.storeResource(group, m, indexRules, topNAggr); err != nil {
 		logger.Panicf("fails to store the measure: %v", err)
 	}
 }
@@ -267,8 +266,7 @@ func (sr *schemaRepo) storeStream(s *databasev1.Stream, group *group, bindings m
 			indexRules = append(indexRules, rules[r])
 		}
 	}
-	_, err := group.storeResource(s, indexRules, nil)
-	if err != nil {
+	if err := sr.storeResource(group, s, indexRules, nil); err != nil {
 		logger.Panicf("fails to store the stream: %v", err)
 	}
 }
