@@ -102,6 +102,9 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 			and.append(left).append(right)
 			return and, entities, nil
 		case modelv1.LogicalExpression_LOGICAL_OP_OR:
+			if left == ENode || right == ENode {
+				return ENode, entities, nil
+			}
 			or := newOr(2)
 			or.append(left).append(right)
 			return or, entities, nil

@@ -53,7 +53,7 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaRepo    schemaRepo
+	schemaRepo    *schemaRepo
 	writeListener bus.MessageListener
 	metadata      metadata.Repo
 	pipeline      queue.Server
@@ -107,7 +107,7 @@ func (s *service) PreRun(_ context.Context) error {
 	s.schemaRepo = newSchemaRepo(path, s)
 	// run a serial watcher
 
-	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
+	s.writeListener = setUpWriteCallback(s.l, s.schemaRepo)
 	err := s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
 	if err != nil {
 		return err

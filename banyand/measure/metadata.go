@@ -49,8 +49,8 @@ type schemaRepo struct {
 	metadata metadata.Repo
 }
 
-func newSchemaRepo(path string, svc *service) schemaRepo {
-	sr := schemaRepo{
+func newSchemaRepo(path string, svc *service) *schemaRepo {
+	sr := &schemaRepo{
 		l:        svc.l,
 		metadata: svc.metadata,
 		Repository: resourceSchema.NewRepository(
