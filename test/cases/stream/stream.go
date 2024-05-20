@@ -75,4 +75,5 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("having non indexed array", helpers.Args{Input: "having_non_indexed_arr", Duration: 1 * time.Hour}),
 	g.Entry("full text searching", helpers.Args{Input: "search", Duration: 1 * time.Hour}),
 	g.Entry("indexed only tags", helpers.Args{Input: "indexed_only", Duration: 1 * time.Hour}),
+	g.Entry("filter by non-indexed tag with or", helpers.Args{Input: "filter_no_indexed_or", Duration: 1 * time.Hour}),
 )
