@@ -95,10 +95,10 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, ts)
 	stm, ok := w.schemaRepo.loadMeasure(req.GetMetadata())
 	if !ok {
-		return nil, fmt.Errorf("cannot find measure definition: %s", writeEvent.GetRequest().GetMetadata())
+		return nil, fmt.Errorf("cannot find measure definition: %s", req.GetMetadata())
 	}
 	if stm.name != req.Metadata.Name {
-		return nil, fmt.Errorf("measure name mismatch: %s != %s", stm.name, req.Metadata.Name)
+		return nil, fmt.Errorf("measure name mismatch: %s != %s", stm.schema, req.Metadata)
 	}
 	fLen := len(req.DataPoint.GetTagFamilies())
 	if fLen < 1 {

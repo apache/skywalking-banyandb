@@ -89,7 +89,7 @@ func (rs *resourceSpec) isNewThan(other *resourceSpec) bool {
 	return true
 }
 
-const defaultWorkerNum = 10
+const defaultWorkerNum = 1
 
 var _ Repository = (*schemaRepo)(nil)
 
@@ -177,6 +177,10 @@ func (sr *schemaRepo) Watcher() {
 					if e := sr.l.Debug(); e.Enabled() {
 						e.Interface("event", evt).Msg("received an event")
 					}
+					k := getKey(evt.Metadata.GetMetadata())
+					if strings.HasPrefix(k, "measure-minute/endpoint_sla_minute") {
+						logger.Infof("EventKindResource: %v", evt)
+					}
 					var err error
 					switch evt.Typ {
 					case EventAddOrUpdate:
@@ -191,7 +195,11 @@ func (sr *schemaRepo) Watcher() {
 							if err != nil {
 								break
 							}
-							err = sr.initResource(topNSchema.SourceMeasure)
+							k := getKey(topNSchema.SourceMeasure)
+							if strings.HasPrefix(k, "measure-minute/endpoint_sla_minute") {
+								logger.Infof("EventKindTopNAgg: %s", topNSchema.SourceMeasure)
+							}
+							// err = sr.initResource(topNSchema.SourceMeasure)
 						}
 					case EventDelete:
 						switch evt.Kind {
@@ -307,6 +315,9 @@ func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool)
 	if k != rk {
 		logger.Panicf("'%s' is not the expected metadata by '%s', gotten [%s]", rk, k, r.Schema())
 	}
+	if strings.HasPrefix(k, "measure-minute/endpoint_sla_minute") {
+		logger.Infof("LoadResource: %s: %s", k, r.Schema())
+	}
 	return s.(Resource), true
 }
 
@@ -343,7 +354,7 @@ func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
 		return errors.Errorf("'%s' is not the expected metadata by '%s'", rk, key)
 	}
 	if strings.HasPrefix(key, "measure-minute/endpoint_sla_minute") {
-		logger.Infof("storeResource: %s: %s", key, resource)
+		logger.Infof("storeResource: %s: %s, agg: %s", key, resource.Schema(), resource.aggregations)
 	}
 	sr.resourceMap.Store(key, resource)
 	if loadedPre {
