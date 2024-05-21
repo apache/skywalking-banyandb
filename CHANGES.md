@@ -4,6 +4,8 @@ Release Notes.
 
 ## 0.7.0
 
+- Add benchmarks for stream filtering and sorting.
+
 ### Features
 
 ### Bugs
