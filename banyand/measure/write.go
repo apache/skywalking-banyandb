@@ -102,7 +102,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		return nil, fmt.Errorf("%s has no tag family", req.Metadata)
 	}
 	if fLen > len(stm.schema.GetTagFamilies()) {
-		return nil, fmt.Errorf("%s has more tag families than expected", req.Metadata)
+		return nil, fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
 	}
 	series := &pbv1.Series{
 		Subject:      req.Metadata.Name,

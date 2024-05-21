@@ -49,7 +49,6 @@ const (
 // Group is the root node, allowing get resources from its sub nodes.
 type Group interface {
 	GetSchema() *commonv1.Group
-	LoadResource(name string) (Resource, bool)
 	SupplyTSDB() io.Closer
 }
 

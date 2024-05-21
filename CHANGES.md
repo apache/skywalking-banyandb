@@ -11,6 +11,7 @@ Release Notes.
 ### Bugs
 
 - Fix the bug that topN query doesn't return when an error occurs.
+- Data race in the hot series index selection.
 
 ## 0.6.0
 
