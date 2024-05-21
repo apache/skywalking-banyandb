@@ -20,6 +20,8 @@ package schema
 import (
 	"context"
 	"io"
+	"path"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -295,13 +297,15 @@ func (sr *schemaRepo) LoadGroup(name string) (Group, bool) {
 }
 
 func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool) {
-	_, ok := sr.LoadGroup(metadata.Group)
+	k := getKey(metadata)
+	s, ok := sr.resourceMap.Load(k)
 	if !ok {
 		return nil, false
 	}
-	s, ok := sr.resourceMap.Load(metadata.Name)
-	if !ok {
-		return nil, false
+	r := s.(Resource)
+	rk := getKey(r.Schema().GetMetadata())
+	if k != rk {
+		logger.Panicf("'%s' is not the expected metadata by '%s', gotten [%s]", rk, k, r.Schema())
 	}
 	return s.(Resource), true
 }
@@ -316,7 +320,7 @@ func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
 		indexRules:   idxRules,
 		aggregations: topNAggrs,
 	}
-	key := stm.GetMetadata().GetName()
+	key := getKey(stm.GetMetadata())
 	pre, loadedPre := sr.resourceMap.Load(key)
 	var preResource *resourceSpec
 	if loadedPre {
@@ -334,11 +338,22 @@ func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
 		return err
 	}
 	resource.delegated = sm
+	rk := getKey(resource.schema.GetMetadata())
+	if rk != key {
+		return errors.Errorf("'%s' is not the expected metadata by '%s'", rk, key)
+	}
+	if strings.HasPrefix(key, "measure-minute/endpoint_sla_minute") {
+		logger.Infof("storeResource: %s: %s", key, resource)
+	}
 	sr.resourceMap.Store(key, resource)
 	if loadedPre {
 		return preResource.Close()
 	}
 	return nil
+}
+
+func getKey(metadata *commonv1.Metadata) string {
+	return path.Join(metadata.GetGroup(), metadata.GetName())
 }
 
 func (sr *schemaRepo) initResource(metadata *commonv1.Metadata) error {
