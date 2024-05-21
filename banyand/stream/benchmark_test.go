@@ -19,9 +19,10 @@ package stream
 
 import (
 	"context"
+	"crypto/rand"
 	"io"
 	"math"
-	"math/rand"
+	"math/big"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
@@ -48,6 +49,8 @@ import (
 const (
 	segmentMetadataFilename = "metadata"
 	version                 = "1.0.0"
+	entityTagValuePrefix    = "entity"
+	filterTagValuePrefix    = "value"
 )
 
 type parameter struct {
@@ -59,29 +62,35 @@ type parameter struct {
 	endTimestamp   int
 }
 
-type invertedIndex map[string]map[common.SeriesID]posting.List
-
-func (index invertedIndex) insert(value string, seriesID common.SeriesID, timestamp int) {
-	if _, ok := index[value]; !ok {
-		index[value] = make(map[common.SeriesID]posting.List)
-	}
-	if _, ok := index[value][seriesID]; !ok {
-		index[value][seriesID] = roaring.NewPostingList()
-	}
-	index[value][seriesID].Insert(uint64(timestamp))
+var pList = [3]parameter{
+	{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 1, endTimestamp: 1000},
+	{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 900, endTimestamp: 1000},
+	{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 300, endTimestamp: 400},
 }
 
-type filter struct {
-	index invertedIndex
+type mockIndex map[string]map[common.SeriesID]posting.List
+
+func (mi mockIndex) insert(value string, seriesID common.SeriesID, timestamp int) {
+	if _, ok := mi[value]; !ok {
+		mi[value] = make(map[common.SeriesID]posting.List)
+	}
+	if _, ok := mi[value][seriesID]; !ok {
+		mi[value][seriesID] = roaring.NewPostingList()
+	}
+	mi[value][seriesID].Insert(uint64(timestamp))
+}
+
+type mockFilter struct {
+	index mockIndex
 	value string
 }
 
-func (f filter) String() string {
+func (mf mockFilter) String() string {
 	return "filter"
 }
 
-func (f filter) Execute(getSearcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
-	return f.index[f.value][seriesID], nil
+func (mf mockFilter) Execute(_ index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+	return mf.index[mf.value][seriesID], nil
 }
 
 type databaseSupplier struct {
@@ -95,12 +104,15 @@ func (dbs *databaseSupplier) SupplyTSDB() io.Closer {
 	return nil
 }
 
-func generateData(p parameter) ([]*elements, []index.Documents, invertedIndex) {
+func generateRandomNumber(max int64) int {
+	n, _ := rand.Int(rand.Reader, big.NewInt(max))
+	return int(n.Int64()) + 1
+}
+
+func generateData(p parameter) ([]*elements, []index.Documents, mockIndex) {
 	esList := make([]*elements, 0)
 	docsList := make([]index.Documents, 0)
-	idx := make(invertedIndex)
-	src := rand.NewSource(time.Now().UnixNano())
-	rng := rand.New(src)
+	idx := make(mockIndex)
 	for i := 0; i < p.batchCount; i++ {
 		es := &elements{
 			seriesIDs:   []common.SeriesID{},
@@ -117,29 +129,30 @@ func generateData(p parameter) ([]*elements, []index.Documents, invertedIndex) {
 				es.seriesIDs = append(es.seriesIDs, common.SeriesID(k))
 				es.elementIDs = append(es.elementIDs, elementID)
 				es.timestamps = append(es.timestamps, unixTimestamp)
-				num := rng.Intn(p.tagCardinality) + 1
+				num := generateRandomNumber(int64(p.tagCardinality))
+				value := filterTagValuePrefix + strconv.Itoa(num)
 				tf := tagValues{
 					tag: "benchmark-family",
 					values: []*tagValue{{
 						tag:       "entity-tag",
-						value:     []byte("entity" + strconv.Itoa(k)),
+						value:     []byte(entityTagValuePrefix + strconv.Itoa(k)),
 						valueType: pbv1.ValueTypeStr,
 					}, {
 						tag:       "filter-tag",
-						value:     []byte("value" + strconv.Itoa(num)),
+						value:     []byte(value),
 						valueType: pbv1.ValueTypeStr,
 					}},
 				}
 				tfs := []tagValues{tf}
 				es.tagFamilies = append(es.tagFamilies, tfs)
-				idx.insert("value"+strconv.Itoa(num), common.SeriesID(k), int(unixTimestamp))
+				idx.insert(value, common.SeriesID(k), int(unixTimestamp))
 				var fields []index.Field
 				fields = append(fields, index.Field{
 					Key: index.FieldKey{
 						IndexRuleID: 1,
 						SeriesID:    common.SeriesID(k),
 					},
-					Term: []byte("value" + strconv.Itoa(num)),
+					Term: []byte(value),
 				})
 				docs = append(docs, index.Document{
 					DocID:  uint64(unixTimestamp),
@@ -176,6 +189,71 @@ func openDatabase(b *testing.B, path string) storage.TSDB[*tsTable, option] {
 	return db
 }
 
+func write(b *testing.B, p parameter, esList []*elements, docsList []index.Documents) storage.TSDB[*tsTable, option] {
+	// Initialize a tstIter object.
+	tmpPath, defFn := test.Space(require.New(b))
+	segmentPath := filepath.Join(tmpPath, "shard-0", "seg-19700101")
+	fileSystem := fs.NewLocalFileSystem()
+	defer defFn()
+	tst, err := newTSTable(fileSystem, segmentPath, common.Position{},
+		// Since Stream deduplicate data in merging process, we need to disable the merging in the test.
+		logger.GetLogger("benchmark"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDisabledMergePolicyForTesting()})
+	require.NoError(b, err)
+	for i := 0; i < len(esList); i++ {
+		tst.mustAddElements(esList[i])
+		tst.index.Write(docsList[i])
+		time.Sleep(100 * time.Millisecond)
+	}
+	// wait until the introducer is done
+	if len(esList) > 0 {
+		for {
+			snp := tst.currentSnapshot()
+			if snp == nil {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			if snp.creator != snapshotCreatorMemPart && len(snp.parts) == len(esList) {
+				snp.decRef()
+				tst.Close()
+				break
+			}
+			snp.decRef()
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	data := []byte(version)
+	metadataPath := filepath.Join(segmentPath, segmentMetadataFilename)
+	lf, err := fileSystem.CreateLockFile(metadataPath, filePermission)
+	require.NoError(b, err)
+	_, err = lf.Write(data)
+	require.NoError(b, err)
+	db := openDatabase(b, tmpPath)
+	var docs index.Documents
+	for i := 1; i <= p.seriesCount; i++ {
+		entity := []*modelv1.TagValue{
+			{
+				Value: &modelv1.TagValue_Str{
+					Str: &modelv1.Str{
+						Value: entityTagValuePrefix + strconv.Itoa(i),
+					},
+				},
+			},
+		}
+		series := &pbv1.Series{
+			Subject:      "benchmark",
+			EntityValues: entity,
+		}
+		err = series.Marshal()
+		require.NoError(b, err)
+		docs = append(docs, index.Document{
+			DocID:        uint64(i),
+			EntityValues: series.Buffer,
+		})
+		db.IndexDB().Write(docs)
+	}
+	return db
+}
+
 func generateStream(db storage.TSDB[*tsTable, option]) *stream {
 	dbSupplier := &databaseSupplier{
 		database: atomic.Value{},
@@ -206,11 +284,10 @@ func generateStream(db storage.TSDB[*tsTable, option]) *stream {
 	return &stream{
 		databaseSupplier: dbSupplier,
 		schema:           schema,
-		l:                logger.GetLogger("benchmark"),
 	}
 }
 
-func generateStreamFilterOptions(p parameter, index invertedIndex) pbv1.StreamFilterOptions {
+func generateStreamFilterOptions(p parameter, index mockIndex) pbv1.StreamFilterOptions {
 	timeRange := timestamp.TimeRange{
 		Start:        time.Unix(int64(p.startTimestamp), 0),
 		End:          time.Unix(int64(p.endTimestamp), 0),
@@ -223,17 +300,16 @@ func generateStreamFilterOptions(p parameter, index invertedIndex) pbv1.StreamFi
 			{
 				Value: &modelv1.TagValue_Str{
 					Str: &modelv1.Str{
-						Value: "entity" + strconv.Itoa(i),
+						Value: entityTagValuePrefix + strconv.Itoa(i),
 					},
 				},
 			},
 		}
 		entities = append(entities, entity)
 	}
-	src := rand.NewSource(time.Now().UnixNano())
-	rng := rand.New(src)
-	value := "value" + strconv.Itoa(rng.Intn(p.tagCardinality)+1)
-	filter := filter{
+	num := generateRandomNumber(int64(p.tagCardinality))
+	value := filterTagValuePrefix + strconv.Itoa(num)
+	filter := mockFilter{
 		index: index,
 		value: value,
 	}
@@ -251,7 +327,7 @@ func generateStreamFilterOptions(p parameter, index invertedIndex) pbv1.StreamFi
 	}
 }
 
-func generateStreamSortOptions(p parameter, index invertedIndex) pbv1.StreamSortOptions {
+func generateStreamSortOptions(p parameter, index mockIndex) pbv1.StreamSortOptions {
 	timeRange := timestamp.TimeRange{
 		Start:        time.Unix(int64(p.startTimestamp), 0),
 		End:          time.Unix(int64(p.endTimestamp), 0),
@@ -264,17 +340,16 @@ func generateStreamSortOptions(p parameter, index invertedIndex) pbv1.StreamSort
 			{
 				Value: &modelv1.TagValue_Str{
 					Str: &modelv1.Str{
-						Value: "entity" + strconv.Itoa(i),
+						Value: entityTagValuePrefix + strconv.Itoa(i),
 					},
 				},
 			},
 		}
 		entities = append(entities, entity)
 	}
-	src := rand.NewSource(time.Now().UnixNano())
-	rng := rand.New(src)
-	value := "value" + strconv.Itoa(rng.Intn(p.tagCardinality)+1)
-	filter := filter{
+	num := generateRandomNumber(int64(p.tagCardinality))
+	value := filterTagValuePrefix + strconv.Itoa(num)
+	filter := mockFilter{
 		index: index,
 		value: value,
 	}
@@ -305,162 +380,28 @@ func generateStreamSortOptions(p parameter, index invertedIndex) pbv1.StreamSort
 }
 
 func BenchmarkFilter(b *testing.B) {
-	pList := []parameter{
-		{batchCount: 1, timestampCount: 10, seriesCount: 10, tagCardinality: 10, startTimestamp: 1, endTimestamp: 10},
-		{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 1, endTimestamp: 1000},
-	}
-
 	b.ReportAllocs()
 	for _, p := range pList {
-		esList, _, idx := generateData(p)
-
-		b.Run("file snapshot", func(b *testing.B) {
-			// Initialize a tstIter object.
-			tmpPath, defFn := test.Space(require.New(b))
-			segmentPath := filepath.Join(tmpPath, "shard-0", "seg-19700101")
-			fileSystem := fs.NewLocalFileSystem()
-			defer defFn()
-			tst, err := newTSTable(fileSystem, segmentPath, common.Position{},
-				// Since Stream deduplicate data in merging process, we need to disable the merging in the test.
-				logger.GetLogger("benchmark"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDisabledMergePolicyForTesting()})
+		esList, docsList, idx := generateData(p)
+		db := write(b, p, esList, docsList)
+		s := generateStream(db)
+		sfo := generateStreamFilterOptions(p, idx)
+		b.Run("filter", func(b *testing.B) {
+			_, err := s.Filter(context.TODO(), sfo)
 			require.NoError(b, err)
-			for _, es := range esList {
-				tst.mustAddElements(es)
-				time.Sleep(100 * time.Millisecond)
-			}
-			// wait until the introducer is done
-			if len(esList) > 0 {
-				for {
-					snp := tst.currentSnapshot()
-					if snp == nil {
-						time.Sleep(100 * time.Millisecond)
-						continue
-					}
-					if snp.creator != snapshotCreatorMemPart && len(snp.parts) == len(esList) {
-						snp.decRef()
-						tst.Close()
-						break
-					}
-					snp.decRef()
-					time.Sleep(100 * time.Millisecond)
-				}
-			}
-			data := []byte(version)
-			metadataPath := filepath.Join(segmentPath, segmentMetadataFilename)
-			lf, err := fileSystem.CreateLockFile(metadataPath, filePermission)
-			require.NoError(b, err)
-			_, err = lf.Write(data)
-			require.NoError(b, err)
-			db := openDatabase(b, tmpPath)
-			var docs index.Documents
-			for i := 1; i <= p.seriesCount; i++ {
-				entity := []*modelv1.TagValue{
-					{
-						Value: &modelv1.TagValue_Str{
-							Str: &modelv1.Str{
-								Value: "entity" + strconv.Itoa(i),
-							},
-						},
-					},
-				}
-				series := &pbv1.Series{
-					Subject:      "benchmark",
-					EntityValues: entity,
-				}
-				err = series.Marshal()
-				require.NoError(b, err)
-				docs = append(docs, index.Document{
-					DocID:        uint64(i),
-					EntityValues: series.Buffer,
-				})
-			}
-			db.IndexDB().Write(docs)
-			s := generateStream(db)
-			sfo := generateStreamFilterOptions(p, idx)
-			b.ResetTimer()
-			_, err = s.Filter(context.TODO(), sfo)
-			require.NoError(b, err)
-			b.StopTimer()
 		})
 	}
 }
 
 func BenchmarkSort(b *testing.B) {
-	pList := []parameter{
-		{batchCount: 1, timestampCount: 10, seriesCount: 10, tagCardinality: 10, startTimestamp: 1, endTimestamp: 10},
-		{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 1, endTimestamp: 1000},
-	}
-
 	b.ReportAllocs()
 	for _, p := range pList {
 		esList, docsList, idx := generateData(p)
-
-		b.Run("file snapshot", func(b *testing.B) {
-			// Initialize a tstIter object.
-			tmpPath, defFn := test.Space(require.New(b))
-			segmentPath := filepath.Join(tmpPath, "shard-0", "seg-19700101")
-			fileSystem := fs.NewLocalFileSystem()
-			defer defFn()
-			tst, err := newTSTable(fileSystem, segmentPath, common.Position{},
-				// Since Stream deduplicate data in merging process, we need to disable the merging in the test.
-				logger.GetLogger("benchmark"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDisabledMergePolicyForTesting()})
-			require.NoError(b, err)
-			for i := 0; i < len(esList); i++ {
-				tst.mustAddElements(esList[i])
-				tst.index.Write(docsList[i])
-				time.Sleep(100 * time.Millisecond)
-			}
-			// wait until the introducer is done
-			if len(esList) > 0 {
-				for {
-					snp := tst.currentSnapshot()
-					if snp == nil {
-						time.Sleep(100 * time.Millisecond)
-						continue
-					}
-					if snp.creator != snapshotCreatorMemPart && len(snp.parts) == len(esList) {
-						snp.decRef()
-						tst.Close()
-						break
-					}
-					snp.decRef()
-					time.Sleep(100 * time.Millisecond)
-				}
-			}
-			data := []byte(version)
-			metadataPath := filepath.Join(segmentPath, segmentMetadataFilename)
-			lf, err := fileSystem.CreateLockFile(metadataPath, filePermission)
-			require.NoError(b, err)
-			_, err = lf.Write(data)
-			require.NoError(b, err)
-			db := openDatabase(b, tmpPath)
-			var docs index.Documents
-			for i := 1; i <= p.seriesCount; i++ {
-				entity := []*modelv1.TagValue{
-					{
-						Value: &modelv1.TagValue_Str{
-							Str: &modelv1.Str{
-								Value: "entity" + strconv.Itoa(i),
-							},
-						},
-					},
-				}
-				series := &pbv1.Series{
-					Subject:      "benchmark",
-					EntityValues: entity,
-				}
-				err = series.Marshal()
-				require.NoError(b, err)
-				docs = append(docs, index.Document{
-					DocID:        uint64(i),
-					EntityValues: series.Buffer,
-				})
-			}
-			db.IndexDB().Write(docs)
-			s := generateStream(db)
-			sso := generateStreamSortOptions(p, idx)
-			b.ResetTimer()
-			_, err = s.Sort(context.TODO(), sso)
+		db := write(b, p, esList, docsList)
+		s := generateStream(db)
+		sso := generateStreamSortOptions(p, idx)
+		b.Run("sort", func(b *testing.B) {
+			_, err := s.Sort(context.TODO(), sso)
 			require.NoError(b, err)
 		})
 	}
