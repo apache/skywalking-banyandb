@@ -49,9 +49,9 @@ type metricService struct {
 	svr        *http.Server
 	closer     *run.Closer
 	scheduler  *timestamp.Scheduler
+	metadata   metadata.Repo
 	listenAddr string
 	mutex      sync.Mutex
-	metadata   metadata.Repo
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {

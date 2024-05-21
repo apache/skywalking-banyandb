@@ -101,6 +101,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 			schema.Namespace("test"),
 			schema.ConfigureServerEndpoints(endpoints),
 		)
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 	})
 	ginkgo.AfterEach(func() {
 		registry.Close()
