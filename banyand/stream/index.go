@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type elementIndex struct {
@@ -62,12 +63,19 @@ func (e *elementIndex) Sort(sids []common.SeriesID, fieldKey index.FieldKey, ord
 }
 
 func (e *elementIndex) Write(docs index.Documents) error {
-	return e.store.Batch(index.Batch{
+	applied := make(chan struct{})
+	err := e.store.Batch(index.Batch{
 		Documents: docs,
+		Applied:   applied,
 	})
+	if err != nil {
+		return err
+	}
+	<-applied
+	return nil
 }
 
-func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter) ([]elementRef, error) {
+func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter, timeRange *timestamp.TimeRange) ([]elementRef, error) {
 	pm := make(map[common.SeriesID][]uint64)
 	for _, series := range seriesList {
 		pl, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
@@ -83,7 +91,12 @@ func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, fil
 		sort.Slice(timestamps, func(i, j int) bool {
 			return timestamps[i] < timestamps[j]
 		})
-		pm[series.ID] = timestamps
+		start, end, ok := timestamp.FindRange(timestamps, uint64(timeRange.Start.UnixNano()), uint64(timeRange.End.UnixNano()))
+		if !ok {
+			pm[series.ID] = []uint64{}
+		} else {
+			pm[series.ID] = timestamps[start : end+1]
+		}
 	}
 	return merge(pm), nil
 }
