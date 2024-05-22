@@ -387,7 +387,7 @@ func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr 
 			break
 		}
 		index := tw.Table().Index()
-		erl, err := index.Search(ctx, seriesList, sfo.Filter)
+		erl, err := index.Search(ctx, seriesList, sfo.Filter, sfo.TimeRange)
 		if err != nil {
 			return nil, err
 		}

@@ -87,9 +87,6 @@ func (s *searcherIterator) Next() bool {
 			return s.Next()
 		}
 	}
-	if e := s.l.Debug(); e.Enabled() {
-		e.Uint64("series_id", uint64(seriesID)).Uint64("item_id", itemID).Msg("got an item")
-	}
 	e, c, err := s.table.getElement(seriesID, int64(itemID), s.tagProjection)
 	if err != nil {
 		s.err = err
