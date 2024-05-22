@@ -74,7 +74,6 @@ var _ = ginkgo.Describe("etcd_register", func() {
 
 	ginkgo.It("should revoke the leaser", func() {
 		gomega.Expect(r.Register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
-		fmt.Println(md)
 		_, err := r.GetNode(context.Background(), node)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(r.Close()).ShouldNot(gomega.HaveOccurred())

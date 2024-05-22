@@ -65,7 +65,7 @@ func formatNodeKey(name string) string {
 
 func (e *etcdSchemaRegistry) GetNode(ctx context.Context, node string) (*databasev1.Node, error) {
 	var entity databasev1.Node
-	err := e.get(ctx, formatGroupKey(node), &entity)
+	err := e.get(ctx, formatNodeKey(node), &entity)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "GetNode[%s]", node)
 	}
