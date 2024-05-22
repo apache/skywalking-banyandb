@@ -38,14 +38,15 @@ var _ = ginkgo.Describe("etcd_register", func() {
 	var goods []gleak.Goroutine
 	var server embeddedetcd.Server
 	var r schema.Registry
+	const node string = "test"
 	md := schema.Metadata{
 		TypeMeta: schema.TypeMeta{
-			Name: "test",
+			Name: node,
 			Kind: schema.KindNode,
 		},
 		Spec: &databasev1.Node{
 			Metadata: &commonv1.Metadata{
-				Name: "test",
+				Name: node,
 			},
 		},
 	}
@@ -73,15 +74,16 @@ var _ = ginkgo.Describe("etcd_register", func() {
 
 	ginkgo.It("should revoke the leaser", func() {
 		gomega.Expect(r.Register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
-		k, err := md.Key()
+		fmt.Println(md)
+		_, err := r.GetNode(context.Background(), node)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(r.Get(context.Background(), k, &databasev1.Node{})).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(r.Close()).ShouldNot(gomega.HaveOccurred())
 		r, err = schema.NewEtcdSchemaRegistry(
 			schema.Namespace("test"),
 			schema.ConfigureServerEndpoints(endpoints))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(r.Get(context.Background(), k, &databasev1.Node{})).Should(gomega.MatchError(schema.ErrGRPCResourceNotFound))
+		_, err = r.GetNode(context.Background(), node)
+		gomega.Expect(err).Should(gomega.MatchError(schema.ErrGRPCResourceNotFound))
 	})
 
 	ginkgo.It("should register only once", func() {

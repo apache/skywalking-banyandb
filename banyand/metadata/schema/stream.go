@@ -31,7 +31,7 @@ var streamKeyPrefix = "/streams/"
 
 func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
 	var entity databasev1.Stream
-	if err := e.Get(ctx, formatStreamKey(metadata), &entity); err != nil {
+	if err := e.get(ctx, formatStreamKey(metadata), &entity); err != nil {
 		return nil, err
 	}
 	return &entity, nil

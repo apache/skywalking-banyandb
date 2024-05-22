@@ -36,7 +36,7 @@ const (
 
 func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error) {
 	var entity databasev1.Measure
-	if err := e.Get(ctx, formatMeasureKey(metadata), &entity); err != nil {
+	if err := e.get(ctx, formatMeasureKey(metadata), &entity); err != nil {
 		return nil, err
 	}
 	return &entity, nil

@@ -27,8 +27,10 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
+// EqualityChecker Type Function.
 type EqualityChecker func(a, b proto.Message) bool
 
+// CheckerMap to map each Kind to its EqualityChecker.
 var CheckerMap = map[Kind]EqualityChecker{
 	KindIndexRuleBinding: func(a, b proto.Message) bool {
 		return cmp.Equal(a, b,

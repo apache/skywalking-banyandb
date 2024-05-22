@@ -35,7 +35,8 @@ import (
 
 const (
 	// DefaultNamespace is the default namespace of the metadata stored in etcd.
-	DefaultNamespace      = "banyandb"
+	DefaultNamespace = "banyandb"
+	// FlagEtcdEndpointsName is the default flag name for etcd endpoints.
 	FlagEtcdEndpointsName = "etcd-endpoints"
 )
 

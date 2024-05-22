@@ -32,7 +32,7 @@ var groupsKeyPrefix = "/groups/"
 
 func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commonv1.Group, error) {
 	var entity commonv1.Group
-	err := e.Get(ctx, formatGroupKey(group), &entity)
+	err := e.get(ctx, formatGroupKey(group), &entity)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "GetGroup[%s]", group)
 	}

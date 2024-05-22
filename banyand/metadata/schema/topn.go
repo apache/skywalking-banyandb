@@ -31,7 +31,7 @@ var topNAggregationKeyPrefix = "/topnagg/"
 
 func (e *etcdSchemaRegistry) GetTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.TopNAggregation, error) {
 	var entity databasev1.TopNAggregation
-	if err := e.Get(ctx, formatTopNAggregationKey(metadata), &entity); err != nil {
+	if err := e.get(ctx, formatTopNAggregationKey(metadata), &entity); err != nil {
 		return nil, err
 	}
 	return &entity, nil

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package embeddedserver implements an embedded meta server.
 package embeddedserver
 
 import (

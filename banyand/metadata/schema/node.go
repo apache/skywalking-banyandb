@@ -21,6 +21,8 @@ import (
 	"context"
 	"path"
 
+	"github.com/pkg/errors"
+
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
@@ -59,4 +61,13 @@ func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.
 
 func formatNodeKey(name string) string {
 	return path.Join(nodeKeyPrefix, name)
+}
+
+func (e *etcdSchemaRegistry) GetNode(ctx context.Context, node string) (*databasev1.Node, error) {
+	var entity databasev1.Node
+	err := e.get(ctx, formatGroupKey(node), &entity)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "GetNode[%s]", node)
+	}
+	return &entity, nil
 }

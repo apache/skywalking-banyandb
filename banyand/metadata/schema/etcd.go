@@ -217,7 +217,7 @@ func (e *etcdSchemaRegistry) prependNamespace(key string) string {
 	return path.Join("/", e.namespace, key)
 }
 
-func (e *etcdSchemaRegistry) Get(ctx context.Context, key string, message proto.Message) error {
+func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {
 	if !e.closer.AddRunning() {
 		return ErrClosed
 	}
@@ -252,7 +252,7 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) (int
 		return 0, ErrClosed
 	}
 	defer e.closer.Done()
-	key, err := metadata.Key()
+	key, err := metadata.key()
 	if err != nil {
 		return 0, err
 	}
@@ -307,7 +307,7 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) (int
 		return 0, ErrClosed
 	}
 	defer e.closer.Done()
-	key, err := metadata.Key()
+	key, err := metadata.key()
 	if err != nil {
 		return 0, err
 	}
@@ -365,7 +365,7 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 		return false, ErrClosed
 	}
 	defer e.closer.Done()
-	key, err := metadata.Key()
+	key, err := metadata.key()
 	if err != nil {
 		return false, err
 	}
@@ -385,7 +385,7 @@ func (e *etcdSchemaRegistry) Register(ctx context.Context, metadata Metadata, fo
 		return ErrClosed
 	}
 	defer e.closer.Done()
-	key, err := metadata.Key()
+	key, err := metadata.key()
 	if err != nil {
 		return err
 	}

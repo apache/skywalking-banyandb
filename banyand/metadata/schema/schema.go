@@ -64,7 +64,6 @@ type Registry interface {
 	Property
 	Node
 	RegisterHandler(string, Kind, EventHandler)
-	Get(context.Context, string, proto.Message) error
 	NewWatcher(string, Kind, watchEventHandler) *watcher
 	Register(context.Context, Metadata, bool) error
 }
@@ -86,7 +85,7 @@ type Metadata struct {
 // Spec is a placeholder of a serialized resource.
 type Spec interface{}
 
-func (m Metadata) Key() (string, error) {
+func (m Metadata) key() (string, error) {
 	switch m.Kind {
 	case KindGroup:
 		return formatGroupKey(m.Name), nil
@@ -208,4 +207,5 @@ type Property interface {
 type Node interface {
 	ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error)
 	RegisterNode(ctx context.Context, node *databasev1.Node, forced bool) error
+	GetNode(ctx context.Context, node string) (*databasev1.Node, error)
 }
