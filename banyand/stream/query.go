@@ -167,10 +167,13 @@ func (qr *queryResult) Pull(applyFilter bool) *pbv1.StreamResult {
 				defer wg.Done()
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
-				if !qr.data[i].loadData(tmpBlock, applyFilter) || qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
+				if !qr.data[i].loadData(tmpBlock, applyFilter) {
 					mu.Lock()
 					defer mu.Unlock()
 					blankCursorList = append(blankCursorList, i)
+					return
+				}
+				if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
 					return
 				}
 				sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
