@@ -55,13 +55,13 @@ const (
 )
 
 type parameter struct {
+	scenario       string
 	batchCount     int
 	timestampCount int
 	seriesCount    int
 	tagCardinality int
 	startTimestamp int
 	endTimestamp   int
-	scenario       string
 }
 
 var pList = [3]parameter{

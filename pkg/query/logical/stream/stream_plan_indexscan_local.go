@@ -166,6 +166,7 @@ func buildElementsFromColumnResult(r *pbv1.StreamColumnResult) (elements []*stre
 	return
 }
 
+// BuildElementsFromStreamResult builds a slice of elements from the given stream query result.
 func BuildElementsFromStreamResult(result pbv1.StreamQueryResult, applyFilter bool) (elements []*streamv1.Element) {
 	deduplication := make(map[string]struct{})
 	for {
