@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package schema_test
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
@@ -36,15 +37,16 @@ var _ = ginkgo.Describe("etcd_register", func() {
 	var endpoints []string
 	var goods []gleak.Goroutine
 	var server embeddedetcd.Server
-	var r *etcdSchemaRegistry
-	md := Metadata{
-		TypeMeta: TypeMeta{
-			Name: "test",
-			Kind: KindNode,
+	var r schema.Registry
+	const node string = "test"
+	md := schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Name: node,
+			Kind: schema.KindNode,
 		},
 		Spec: &databasev1.Node{
 			Metadata: &commonv1.Metadata{
-				Name: "test",
+				Name: node,
 			},
 		},
 	}
@@ -58,12 +60,11 @@ var _ = ginkgo.Describe("etcd_register", func() {
 			embeddedetcd.RootDir(randomTempDir()))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
-		schemaRegistry, err := NewEtcdSchemaRegistry(
-			Namespace("test"),
-			ConfigureServerEndpoints(endpoints),
+		r, err = schema.NewEtcdSchemaRegistry(
+			schema.Namespace("test"),
+			schema.ConfigureServerEndpoints(endpoints),
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		r = schemaRegistry.(*etcdSchemaRegistry)
 	})
 	ginkgo.AfterEach(func() {
 		gomega.Expect(r.Close()).ShouldNot(gomega.HaveOccurred())
@@ -72,21 +73,20 @@ var _ = ginkgo.Describe("etcd_register", func() {
 	})
 
 	ginkgo.It("should revoke the leaser", func() {
-		gomega.Expect(r.register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
-		k, err := md.key()
+		gomega.Expect(r.Register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
+		_, err := r.GetNode(context.Background(), node)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(r.get(context.Background(), k, &databasev1.Node{})).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(r.Close()).ShouldNot(gomega.HaveOccurred())
-		schemaRegistry, err := NewEtcdSchemaRegistry(
-			Namespace("test"),
-			ConfigureServerEndpoints(endpoints))
+		r, err = schema.NewEtcdSchemaRegistry(
+			schema.Namespace("test"),
+			schema.ConfigureServerEndpoints(endpoints))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		r = schemaRegistry.(*etcdSchemaRegistry)
-		gomega.Expect(r.get(context.Background(), k, &databasev1.Node{})).Should(gomega.MatchError(ErrGRPCResourceNotFound))
+		_, err = r.GetNode(context.Background(), node)
+		gomega.Expect(err).Should(gomega.MatchError(schema.ErrGRPCResourceNotFound))
 	})
 
 	ginkgo.It("should register only once", func() {
-		gomega.Expect(r.register(context.Background(), md, false)).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(r.register(context.Background(), md, false)).Should(gomega.MatchError(ErrGRPCAlreadyExists))
+		gomega.Expect(r.Register(context.Background(), md, false)).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(r.Register(context.Background(), md, false)).Should(gomega.MatchError(schema.ErrGRPCAlreadyExists))
 	})
 })

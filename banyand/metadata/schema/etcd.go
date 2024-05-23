@@ -152,7 +152,7 @@ func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler Eve
 	}
 	for i := range kinds {
 		e.l.Info().Str("name", name).Stringer("kind", kinds[i]).Msg("registering watcher")
-		w := e.newWatcher(name, kinds[i], handler)
+		w := e.NewWatcher(name, kinds[i], handler)
 		if w != nil {
 			e.watchers = append(e.watchers, w)
 		}
@@ -380,7 +380,7 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 	return false, nil
 }
 
-func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata, forced bool) error {
+func (e *etcdSchemaRegistry) Register(ctx context.Context, metadata Metadata, forced bool) error {
 	if !e.closer.AddRunning() {
 		return ErrClosed
 	}
@@ -456,7 +456,7 @@ func (e *etcdSchemaRegistry) register(ctx context.Context, metadata Metadata, fo
 	return nil
 }
 
-func (e *etcdSchemaRegistry) newWatcher(name string, kind Kind, handler watchEventHandler) *watcher {
+func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, handler watchEventHandler) *watcher {
 	return e.newWatcherWithRevision(name, kind, 0, handler)
 }
 

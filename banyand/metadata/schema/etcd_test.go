@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package schema_test
 
 import (
 	"context"
@@ -33,6 +33,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -49,7 +50,7 @@ var (
 	groupJSON string
 )
 
-func preloadSchema(e Registry) error {
+func preloadSchema(e schema.Registry) error {
 	g := &commonv1.Group{}
 	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
 		return err
@@ -103,7 +104,7 @@ func randomTempDir() string {
 	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
 }
 
-func initServerAndRegister(t *testing.T) (Registry, func()) {
+func initServerAndRegister(t *testing.T) (schema.Registry, func()) {
 	req := require.New(t)
 	ports, err := test.AllocateFreePorts(2)
 	if err != nil {
@@ -116,7 +117,7 @@ func initServerAndRegister(t *testing.T) (Registry, func()) {
 	req.NoError(err)
 	req.NotNil(server)
 	<-server.ReadyNotify()
-	schemaRegistry, err := NewEtcdSchemaRegistry(ConfigureServerEndpoints(endpoints))
+	schemaRegistry, err := schema.NewEtcdSchemaRegistry(schema.ConfigureServerEndpoints(endpoints))
 	req.NoError(err)
 	req.NotNil(server)
 	return schemaRegistry, func() {
@@ -135,63 +136,63 @@ func Test_Etcd_Entity_Get(t *testing.T) {
 
 	tests := []struct {
 		meta        *commonv1.Metadata
-		get         func(Registry, *commonv1.Metadata) (HasMetadata, error)
+		get         func(schema.Registry, *commonv1.Metadata) (schema.HasMetadata, error)
 		name        string
 		expectedErr bool
 	}{
 		{
 			name: "Get Group",
 			meta: &commonv1.Metadata{Name: "default"},
-			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ schema.Registry, meta *commonv1.Metadata) (schema.HasMetadata, error) {
 				stm, innerErr := registry.GetGroup(context.TODO(), meta.GetName())
 				if innerErr != nil {
 					return nil, innerErr
 				}
-				return HasMetadata(stm), nil
+				return schema.HasMetadata(stm), nil
 			},
 		},
 		{
 			name: "Get Stream",
 			meta: &commonv1.Metadata{Name: "sw", Group: "default"},
-			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ schema.Registry, meta *commonv1.Metadata) (schema.HasMetadata, error) {
 				stm, innerErr := registry.GetStream(context.TODO(), meta)
 				if innerErr != nil {
 					return nil, innerErr
 				}
-				return HasMetadata(stm), nil
+				return schema.HasMetadata(stm), nil
 			},
 		},
 		{
 			name: "Get IndexRuleBinding",
 			meta: &commonv1.Metadata{Name: "sw-index-rule-binding", Group: "default"},
-			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ schema.Registry, meta *commonv1.Metadata) (schema.HasMetadata, error) {
 				e, innerErr := registry.GetIndexRuleBinding(context.TODO(), meta)
 				if innerErr != nil {
 					return nil, innerErr
 				}
-				return HasMetadata(e), nil
+				return schema.HasMetadata(e), nil
 			},
 		},
 		{
 			name: "Get IndexRule",
 			meta: &commonv1.Metadata{Name: "db.instance", Group: "default"},
-			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ schema.Registry, meta *commonv1.Metadata) (schema.HasMetadata, error) {
 				e, innerErr := registry.GetIndexRule(context.TODO(), meta)
 				if innerErr != nil {
 					return nil, innerErr
 				}
-				return HasMetadata(e), nil
+				return schema.HasMetadata(e), nil
 			},
 		},
 		{
 			name: "Get unknown Measure",
 			meta: &commonv1.Metadata{Name: "unknown-stream", Group: "default"},
-			get: func(_ Registry, meta *commonv1.Metadata) (HasMetadata, error) {
+			get: func(_ schema.Registry, meta *commonv1.Metadata) (schema.HasMetadata, error) {
 				e, innerErr := registry.GetMeasure(context.TODO(), meta)
 				if innerErr != nil {
 					return nil, innerErr
 				}
-				return HasMetadata(e), nil
+				return schema.HasMetadata(e), nil
 			},
 			expectedErr: true,
 		},
@@ -224,13 +225,13 @@ func Test_Etcd_Entity_List(t *testing.T) {
 	tester.NoError(err)
 
 	tests := []struct {
-		list        func(Registry) (int, error)
+		list        func(schema.Registry) (int, error)
 		name        string
 		expectedLen int
 	}{
 		{
 			name: "List Group",
-			list: func(r Registry) (int, error) {
+			list: func(r schema.Registry) (int, error) {
 				entities, innerErr := r.ListGroup(context.TODO())
 				if innerErr != nil {
 					return 0, innerErr
@@ -241,8 +242,8 @@ func Test_Etcd_Entity_List(t *testing.T) {
 		},
 		{
 			name: "List Stream",
-			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListStream(context.TODO(), ListOpt{Group: "default"})
+			list: func(r schema.Registry) (int, error) {
+				entities, innerErr := r.ListStream(context.TODO(), schema.ListOpt{Group: "default"})
 				if innerErr != nil {
 					return 0, innerErr
 				}
@@ -252,8 +253,8 @@ func Test_Etcd_Entity_List(t *testing.T) {
 		},
 		{
 			name: "List IndexRuleBinding",
-			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListIndexRuleBinding(context.TODO(), ListOpt{Group: "default"})
+			list: func(r schema.Registry) (int, error) {
+				entities, innerErr := r.ListIndexRuleBinding(context.TODO(), schema.ListOpt{Group: "default"})
 				if innerErr != nil {
 					return 0, innerErr
 				}
@@ -263,8 +264,8 @@ func Test_Etcd_Entity_List(t *testing.T) {
 		},
 		{
 			name: "List IndexRule",
-			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListIndexRule(context.TODO(), ListOpt{Group: "default"})
+			list: func(r schema.Registry) (int, error) {
+				entities, innerErr := r.ListIndexRule(context.TODO(), schema.ListOpt{Group: "default"})
 				if innerErr != nil {
 					return 0, innerErr
 				}
@@ -274,8 +275,8 @@ func Test_Etcd_Entity_List(t *testing.T) {
 		},
 		{
 			name: "List Measure",
-			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListMeasure(context.TODO(), ListOpt{Group: "default"})
+			list: func(r schema.Registry) (int, error) {
+				entities, innerErr := r.ListMeasure(context.TODO(), schema.ListOpt{Group: "default"})
 				if innerErr != nil {
 					return 0, innerErr
 				}
@@ -304,22 +305,22 @@ func Test_Etcd_Delete(t *testing.T) {
 	tester.NoError(err)
 
 	tests := []struct {
-		list              func(Registry) (int, error)
-		delete            func(Registry) error
+		list              func(schema.Registry) (int, error)
+		delete            func(schema.Registry) error
 		name              string
 		expectedLenBefore int
 		expectedLenAfter  int
 	}{
 		{
 			name: "Delete IndexRule",
-			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListIndexRule(context.TODO(), ListOpt{Group: "default"})
+			list: func(r schema.Registry) (int, error) {
+				entities, innerErr := r.ListIndexRule(context.TODO(), schema.ListOpt{Group: "default"})
 				if innerErr != nil {
 					return 0, innerErr
 				}
 				return len(entities), nil
 			},
-			delete: func(r Registry) error {
+			delete: func(r schema.Registry) error {
 				_, innerErr := r.DeleteIndexRule(context.TODO(), &commonv1.Metadata{
 					Name:  "db.instance",
 					Group: "default",
@@ -331,14 +332,14 @@ func Test_Etcd_Delete(t *testing.T) {
 		},
 		{
 			name: "Delete Group",
-			list: func(r Registry) (int, error) {
-				entities, innerErr := r.ListIndexRule(context.TODO(), ListOpt{Group: "default"})
+			list: func(r schema.Registry) (int, error) {
+				entities, innerErr := r.ListIndexRule(context.TODO(), schema.ListOpt{Group: "default"})
 				if innerErr != nil {
 					return 0, innerErr
 				}
 				return len(entities), nil
 			},
-			delete: func(r Registry) error {
+			delete: func(r schema.Registry) error {
 				_, innerErr := r.DeleteGroup(context.TODO(), "default")
 				return innerErr
 			},
@@ -371,13 +372,13 @@ func Test_Etcd_Entity_Update(t *testing.T) {
 	tester.NoError(err)
 
 	tests := []struct {
-		updateFunc     func(context.Context, Registry) error
-		validationFunc func(context.Context, Registry) bool
+		updateFunc     func(context.Context, schema.Registry) error
+		validationFunc func(context.Context, schema.Registry) bool
 		name           string
 	}{
 		{
 			name: "update indexRule when none metadata-id",
-			updateFunc: func(ctx context.Context, r Registry) error {
+			updateFunc: func(ctx context.Context, r schema.Registry) error {
 				ir, err := r.GetIndexRule(ctx, &commonv1.Metadata{
 					Name:  "db.instance",
 					Group: "default",
@@ -390,7 +391,7 @@ func Test_Etcd_Entity_Update(t *testing.T) {
 				ir.Type = databasev1.IndexRule_TYPE_INVERTED
 				return r.UpdateIndexRule(ctx, ir)
 			},
-			validationFunc: func(ctx context.Context, r Registry) bool {
+			validationFunc: func(ctx context.Context, r schema.Registry) bool {
 				ir, err := r.GetIndexRule(ctx, &commonv1.Metadata{
 					Name:  "db.instance",
 					Group: "default",
