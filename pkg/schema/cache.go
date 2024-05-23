@@ -330,7 +330,7 @@ func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
 	}
 	sm, err := sr.resourceSchemaSupplier.OpenResource(g.GetSchema().GetResourceOpts().ShardNum, dbSupplier, resource)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "fails to open the resource")
 	}
 	resource.delegated = sm
 	sr.resourceMap.Store(key, resource)
@@ -376,7 +376,7 @@ func (sr *schemaRepo) initResource(metadata *commonv1.Metadata) error {
 		topNAggrs, innerErr = sr.metadata.MeasureRegistry().TopNAggregations(localCtx, stm.GetMetadata())
 		cancel()
 		if innerErr != nil {
-			return innerErr
+			return errors.WithMessage(innerErr, "fails to get the topN aggregations")
 		}
 	}
 	return sr.storeResource(g, stm, idxRules, topNAggrs)
