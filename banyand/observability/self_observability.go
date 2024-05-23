@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -15,16 +15,32 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema_test
+package observability
 
 import (
-	"testing"
+	"context"
 
-	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 )
 
-func TestSchema(t *testing.T) {
-	gomega.RegisterFailHandler(ginkgo.Fail)
-	ginkgo.RunSpecs(t, "Schema Suite")
+func createInternalGroup(e metadata.Repo) error {
+	g := &commonv1.Group{
+		Metadata: &commonv1.Metadata{
+			Name: "self_observability",
+		},
+		Catalog: commonv1.Catalog_CATALOG_MEASURE,
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 1,
+			SegmentInterval: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+			Ttl: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+		},
+	}
+	return e.GroupRegistry().CreateGroup(context.TODO(), g)
 }

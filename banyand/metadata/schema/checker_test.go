@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package schema_test
 
 import (
 	"time"
@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -55,12 +56,12 @@ func loadIndexRule() *databasev1.IndexRule {
 var _ = ginkgo.Describe("Utils", func() {
 	ginkgo.Context("Check equality for Stream", func() {
 		var s *databasev1.Stream
-		var checker equalityChecker
+		var checker schema.EqualityChecker
 		var goods []gleak.Goroutine
 
 		ginkgo.BeforeEach(func() {
 			s = loadStream()
-			checker = checkerMap[KindStream]
+			checker = schema.CheckerMap[schema.KindStream]
 			goods = gleak.Goroutines()
 		})
 
@@ -123,12 +124,12 @@ var _ = ginkgo.Describe("Utils", func() {
 
 	ginkgo.Context("Check equality for IndexRuleBinding", func() {
 		var irb *databasev1.IndexRuleBinding
-		var checker equalityChecker
+		var checker schema.EqualityChecker
 		var goods []gleak.Goroutine
 
 		ginkgo.BeforeEach(func() {
 			irb = loadIndexRuleBinding()
-			checker = checkerMap[KindIndexRuleBinding]
+			checker = schema.CheckerMap[schema.KindIndexRuleBinding]
 			goods = gleak.Goroutines()
 		})
 
@@ -179,11 +180,11 @@ var _ = ginkgo.Describe("Utils", func() {
 
 	ginkgo.Context("Check equality for IndexRule", func() {
 		var ir *databasev1.IndexRule
-		var checker equalityChecker
+		var checker schema.EqualityChecker
 		var goods []gleak.Goroutine
 		ginkgo.BeforeEach(func() {
 			ir = loadIndexRule()
-			checker = checkerMap[KindIndexRule]
+			checker = schema.CheckerMap[schema.KindIndexRule]
 			goods = gleak.Goroutines()
 		})
 

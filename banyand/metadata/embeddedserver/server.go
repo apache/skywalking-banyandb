@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package metadata
+// Package embeddedserver implements an embedded meta server.
+package embeddedserver
 
 import (
 	"context"
@@ -23,12 +24,13 @@ import (
 	"strings"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type server struct {
-	Service
+	metadata.Service
 	metaServer      embeddedetcd.Server
 	rootDir         string
 	listenClientURL []string
@@ -61,7 +63,7 @@ func (s *server) Validate() error {
 	if s.listenPeerURL == nil {
 		return errors.New("listenPeerURL is empty")
 	}
-	if err := s.Service.FlagSet().Set(flagEtcdEndpointsName,
+	if err := s.Service.FlagSet().Set(metadata.FlagEtcdEndpointsName,
 		strings.Join(s.listenClientURL, ",")); err != nil {
 		return err
 	}
@@ -89,10 +91,10 @@ func (s *server) GracefulStop() {
 }
 
 // NewService returns a new metadata repository Service.
-func NewService(_ context.Context) (Service, error) {
+func NewService(_ context.Context) (metadata.Service, error) {
 	s := &server{}
 	var err error
-	s.Service, err = NewClient(true)
+	s.Service, err = metadata.NewClient(true)
 	if err != nil {
 		return nil, err
 	}
