@@ -64,6 +64,8 @@ type Registry interface {
 	Property
 	Node
 	RegisterHandler(string, Kind, EventHandler)
+	NewWatcher(string, Kind, watchEventHandler) *watcher
+	Register(context.Context, Metadata, bool) error
 }
 
 // TypeMeta defines the identity and type of an Event.
@@ -129,7 +131,7 @@ func (m Metadata) equal(other Metadata) bool {
 		return false
 	}
 
-	if checker, ok := checkerMap[m.Kind]; ok {
+	if checker, ok := CheckerMap[m.Kind]; ok {
 		return checker(m.Spec.(proto.Message), other.Spec.(proto.Message))
 	}
 
@@ -205,4 +207,5 @@ type Property interface {
 type Node interface {
 	ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error)
 	RegisterNode(ctx context.Context, node *databasev1.Node, forced bool) error
+	GetNode(ctx context.Context, node string) (*databasev1.Node, error)
 }

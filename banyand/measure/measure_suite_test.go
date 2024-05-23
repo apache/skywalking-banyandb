@@ -27,6 +27,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -72,7 +73,7 @@ func setUp() (*services, func()) {
 	pipeline := queue.Local()
 
 	// Init Metadata Service
-	metadataService, err := metadata.NewService(context.TODO())
+	metadataService, err := embeddedserver.NewService(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Init Measure Service

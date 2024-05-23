@@ -26,6 +26,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -70,7 +71,7 @@ func setUp() (*services, func()) {
 	pipeline := queue.Local()
 
 	// Init Metadata Service
-	metadataService, err := metadata.NewService(context.TODO())
+	metadataService, err := embeddedserver.NewService(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
