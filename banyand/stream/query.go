@@ -456,19 +456,14 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 			}
 		}
 	}
+	result.orderByTS = true
 	if sqo.Order == nil {
-		result.orderByTS = true
 		result.ascTS = true
 		return &result, nil
 	}
-	if sqo.Order.Index == nil {
-		result.orderByTS = true
-		if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-			result.ascTS = true
-		}
-		return &result, nil
+	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+		result.ascTS = true
 	}
-
 	return &result, nil
 }
 
@@ -543,7 +538,7 @@ func newItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[it
 	return itersort.NewItemIter[item](ii, false)
 }
 
-func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (srp pbv1.StreamQueryResult, err error) {
+func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pbv1.StreamQueryResult, err error) {
 	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
@@ -553,7 +548,7 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (srp p
 	db := s.databaseSupplier.SupplyTSDB()
 	var result queryResult
 	if db == nil {
-		return srp, nil
+		return sqr, nil
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
 	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
@@ -575,13 +570,13 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (srp p
 		return nil, err
 	}
 	if len(seriesList) == 0 {
-		return srp, nil
+		return sqr, nil
 	}
 
 	var elementRefList []elementRef
 	for _, tw := range tabWrappers {
 		index := tw.Table().Index()
-		erl, err := index.Search(ctx, seriesList, sqo.Filter)
+		erl, err := index.Search(ctx, seriesList, sqo.Filter, sqo.TimeRange)
 		if err != nil {
 			return nil, err
 		}
@@ -668,18 +663,13 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (srp p
 			}
 		}
 	}
+	result.orderByTS = true
 	if sqo.Order == nil {
-		result.orderByTS = true
 		result.ascTS = true
 		return &result, nil
 	}
-	if sqo.Order.Index == nil {
-		result.orderByTS = true
-		if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-			result.ascTS = true
-		}
-		return &result, nil
+	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+		result.ascTS = true
 	}
-
 	return &result, nil
 }

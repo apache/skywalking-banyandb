@@ -42,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -60,12 +61,13 @@ type parameter struct {
 	tagCardinality int
 	startTimestamp int
 	endTimestamp   int
+	scenario       string
 }
 
 var pList = [3]parameter{
-	{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 1, endTimestamp: 1000},
-	{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 900, endTimestamp: 1000},
-	{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 300, endTimestamp: 400},
+	{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 1, endTimestamp: 1000, scenario: "large-scale"},
+	{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 900, endTimestamp: 1000, scenario: "latest"},
+	{batchCount: 2, timestampCount: 500, seriesCount: 100, tagCardinality: 10, startTimestamp: 300, endTimestamp: 400, scenario: "historical"},
 }
 
 type mockIndex map[string]map[common.SeriesID]posting.List
@@ -287,47 +289,7 @@ func generateStream(db storage.TSDB[*tsTable, option]) *stream {
 	}
 }
 
-func generateStreamFilterOptions(p parameter, index mockIndex) pbv1.StreamFilterOptions {
-	timeRange := timestamp.TimeRange{
-		Start:        time.Unix(int64(p.startTimestamp), 0),
-		End:          time.Unix(int64(p.endTimestamp), 0),
-		IncludeStart: true,
-		IncludeEnd:   true,
-	}
-	entities := make([][]*modelv1.TagValue, 0)
-	for i := 1; i <= p.seriesCount; i++ {
-		entity := []*modelv1.TagValue{
-			{
-				Value: &modelv1.TagValue_Str{
-					Str: &modelv1.Str{
-						Value: entityTagValuePrefix + strconv.Itoa(i),
-					},
-				},
-			},
-		}
-		entities = append(entities, entity)
-	}
-	num := generateRandomNumber(int64(p.tagCardinality))
-	value := filterTagValuePrefix + strconv.Itoa(num)
-	filter := mockFilter{
-		index: index,
-		value: value,
-	}
-	tagProjection := pbv1.TagProjection{
-		Family: "benchmark-family",
-		Names:  []string{"entity-tag", "filter-tag"},
-	}
-	return pbv1.StreamFilterOptions{
-		Name:           "benchmark",
-		TimeRange:      &timeRange,
-		Entities:       entities,
-		Filter:         filter,
-		TagProjection:  []pbv1.TagProjection{tagProjection},
-		MaxElementSize: math.MaxInt32,
-	}
-}
-
-func generateStreamSortOptions(p parameter, index mockIndex) pbv1.StreamSortOptions {
+func generateStreamQueryOptions(p parameter, index mockIndex) pbv1.StreamQueryOptions {
 	timeRange := timestamp.TimeRange{
 		Start:        time.Unix(int64(p.startTimestamp), 0),
 		End:          time.Unix(int64(p.endTimestamp), 0),
@@ -368,7 +330,7 @@ func generateStreamSortOptions(p parameter, index mockIndex) pbv1.StreamSortOpti
 		Family: "benchmark-family",
 		Names:  []string{"entity-tag", "filter-tag"},
 	}
-	return pbv1.StreamSortOptions{
+	return pbv1.StreamQueryOptions{
 		Name:           "benchmark",
 		TimeRange:      &timeRange,
 		Entities:       entities,
@@ -385,10 +347,11 @@ func BenchmarkFilter(b *testing.B) {
 		esList, docsList, idx := generateData(p)
 		db := write(b, p, esList, docsList)
 		s := generateStream(db)
-		sfo := generateStreamFilterOptions(p, idx)
-		b.Run("filter", func(b *testing.B) {
-			_, err := s.Filter(context.TODO(), sfo)
+		sqo := generateStreamQueryOptions(p, idx)
+		b.Run("filter-"+p.scenario, func(b *testing.B) {
+			res, err := s.Filter(context.TODO(), sqo)
 			require.NoError(b, err)
+			logicalstream.BuildElementsFromStreamResult(res, true)
 		})
 	}
 }
@@ -399,9 +362,9 @@ func BenchmarkSort(b *testing.B) {
 		esList, docsList, idx := generateData(p)
 		db := write(b, p, esList, docsList)
 		s := generateStream(db)
-		sso := generateStreamSortOptions(p, idx)
-		b.Run("sort", func(b *testing.B) {
-			_, err := s.Sort(context.TODO(), sso)
+		sqo := generateStreamQueryOptions(p, idx)
+		b.Run("sort-"+p.scenario, func(b *testing.B) {
+			_, err := s.Sort(context.TODO(), sqo)
 			require.NoError(b, err)
 		})
 	}

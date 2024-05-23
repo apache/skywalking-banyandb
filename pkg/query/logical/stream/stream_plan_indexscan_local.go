@@ -108,7 +108,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 		if result == nil {
 			return nil, nil
 		}
-		return buildElementsFromStreamResult(result, true), nil
+		return BuildElementsFromStreamResult(result, true), nil
 	}
 
 	result, err := ec.Query(ctx, pbv1.StreamQueryOptions{
@@ -122,7 +122,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stream: %w", err)
 	}
-	return buildElementsFromStreamResult(result, false), nil
+	return BuildElementsFromStreamResult(result, false), nil
 }
 
 func (i *localIndexScan) String() string {
@@ -166,7 +166,7 @@ func buildElementsFromColumnResult(r *pbv1.StreamColumnResult) (elements []*stre
 	return
 }
 
-func buildElementsFromStreamResult(result pbv1.StreamQueryResult, applyFilter bool) (elements []*streamv1.Element) {
+func BuildElementsFromStreamResult(result pbv1.StreamQueryResult, applyFilter bool) (elements []*streamv1.Element) {
 	deduplication := make(map[string]struct{})
 	for {
 		r := result.Pull(applyFilter)
