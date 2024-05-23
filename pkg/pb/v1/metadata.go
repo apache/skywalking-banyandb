@@ -143,7 +143,7 @@ type StreamQueryOptions struct {
 
 // StreamQueryResult is the result of a stream query.
 type StreamQueryResult interface {
-	Pull(applyFilter bool) *StreamResult
+	Pull() *StreamResult
 	Release()
 }
 

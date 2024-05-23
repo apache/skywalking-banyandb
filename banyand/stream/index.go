@@ -87,10 +87,10 @@ func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, fil
 		if pl == nil {
 			pl = roaring.DummyPostingList
 		}
-		timestamps := pl.ToSlice()
 		if pl.IsEmpty() {
 			continue
 		}
+		timestamps := pl.ToSlice()
 		sort.Slice(timestamps, func(i, j int) bool {
 			return timestamps[i] < timestamps[j]
 		})

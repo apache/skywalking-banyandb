@@ -21,12 +21,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/apache/skywalking-banyandb/pkg/cmdsetup"
 	"github.com/apache/skywalking-banyandb/pkg/signal"
 )
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
 	if err := cmdsetup.NewRoot(new(signal.Handler)).Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

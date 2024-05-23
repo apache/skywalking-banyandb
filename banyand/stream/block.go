@@ -531,7 +531,7 @@ func (bc *blockCursor) copyTo(r *pbv1.StreamResult) {
 	}
 }
 
-func (bc *blockCursor) loadData(tmpBlock *block, applyFilter bool) bool {
+func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	tmpBlock.reset()
 	bc.bm.tagProjection = bc.tagProjection
 	var tf map[string]*dataBlock
@@ -550,7 +550,7 @@ func (bc *blockCursor) loadData(tmpBlock *block, applyFilter bool) bool {
 
 	idxList := make([]int, 0)
 	var start, end int
-	if applyFilter {
+	if bc.expectedTimestamps != nil {
 		for _, ts := range bc.expectedTimestamps {
 			idx := timestamp.Find(tmpBlock.timestamps, ts)
 			if idx == -1 {
@@ -588,7 +588,7 @@ func (bc *blockCursor) loadData(tmpBlock *block, applyFilter bool) bool {
 					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
 						tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
 				}
-				if applyFilter {
+				if bc.expectedTimestamps != nil {
 					for _, idx := range idxList {
 						t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[idx])
 					}

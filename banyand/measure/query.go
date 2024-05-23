@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"sync"
 
 	"github.com/pkg/errors"
 
@@ -379,27 +378,30 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 		if len(qr.data) == 0 {
 			return nil
 		}
-		blankCursorList := []int{}
-		var mu sync.Mutex
-		var wg sync.WaitGroup
+
+		cursorChan := make(chan int, len(qr.data))
 		for i := 0; i < len(qr.data); i++ {
-			wg.Add(1)
 			go func(i int) {
-				defer wg.Done()
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
 				if !qr.data[i].loadData(tmpBlock) {
-					mu.Lock()
-					defer mu.Unlock()
-					blankCursorList = append(blankCursorList, i)
+					cursorChan <- i
 					return
 				}
 				if qr.orderByTimestampDesc() {
 					qr.data[i].idx = len(qr.data[i].timestamps) - 1
 				}
+				cursorChan <- -1
 			}(i)
 		}
-		wg.Wait()
+
+		blankCursorList := []int{}
+		for completed := 0; completed < len(qr.data); completed++ {
+			result := <-cursorChan
+			if result != -1 {
+				blankCursorList = append(blankCursorList, result)
+			}
+		}
 		sort.Slice(blankCursorList, func(i, j int) bool {
 			return blankCursorList[i] > blankCursorList[j]
 		})

@@ -369,7 +369,7 @@ func TestQueryResult(t *testing.T) {
 				}
 				var got []pbv1.StreamResult
 				for {
-					r := result.Pull(false)
+					r := result.Pull()
 					if r == nil {
 						break
 					}

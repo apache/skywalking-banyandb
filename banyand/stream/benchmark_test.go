@@ -351,7 +351,7 @@ func BenchmarkFilter(b *testing.B) {
 		b.Run("filter-"+p.scenario, func(b *testing.B) {
 			res, err := s.Filter(context.TODO(), sqo)
 			require.NoError(b, err)
-			logicalstream.BuildElementsFromStreamResult(res, true)
+			logicalstream.BuildElementsFromStreamResult(res)
 		})
 	}
 }

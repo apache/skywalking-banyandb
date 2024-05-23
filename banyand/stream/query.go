@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
 
 	"go.uber.org/multierr"
 
@@ -153,27 +152,23 @@ type queryResult struct {
 	ascTS        bool
 }
 
-func (qr *queryResult) Pull(applyFilter bool) *pbv1.StreamResult {
+func (qr *queryResult) Pull() *pbv1.StreamResult {
 	if !qr.loaded {
 		if len(qr.data) == 0 {
 			return nil
 		}
-		blankCursorList := []int{}
-		var mu sync.Mutex
-		var wg sync.WaitGroup
+
+		cursorChan := make(chan int, len(qr.data))
 		for i := 0; i < len(qr.data); i++ {
-			wg.Add(1)
 			go func(i int) {
-				defer wg.Done()
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
-				if !qr.data[i].loadData(tmpBlock, applyFilter) {
-					mu.Lock()
-					defer mu.Unlock()
-					blankCursorList = append(blankCursorList, i)
+				if !qr.data[i].loadData(tmpBlock) {
+					cursorChan <- i
 					return
 				}
 				if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
+					cursorChan <- -1
 					return
 				}
 				sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
@@ -216,9 +211,17 @@ func (qr *queryResult) Pull(applyFilter bool) *pbv1.StreamResult {
 				if qr.orderByTimestampDesc() {
 					qr.data[i].idx = len(qr.data[i].timestamps) - 1
 				}
+				cursorChan <- -1
 			}(i)
 		}
-		wg.Wait()
+
+		blankCursorList := []int{}
+		for completed := 0; completed < len(qr.data); completed++ {
+			result := <-cursorChan
+			if result != -1 {
+				blankCursorList = append(blankCursorList, result)
+			}
+		}
 		sort.Slice(blankCursorList, func(i, j int) bool {
 			return blankCursorList[i] > blankCursorList[j]
 		})
@@ -586,12 +589,15 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr p
 			break
 		}
 	}
-	elementRefMap := make(map[common.SeriesID][]int64)
-	for _, ref := range elementRefList {
-		if _, ok := elementRefMap[ref.seriesID]; !ok {
-			elementRefMap[ref.seriesID] = []int64{ref.timestamp}
-		} else {
-			elementRefMap[ref.seriesID] = append(elementRefMap[ref.seriesID], ref.timestamp)
+	var elementRefMap map[common.SeriesID][]int64
+	if len(elementRefList) != 0 {
+		elementRefMap = make(map[common.SeriesID][]int64)
+		for _, ref := range elementRefList {
+			if _, ok := elementRefMap[ref.seriesID]; !ok {
+				elementRefMap[ref.seriesID] = []int64{ref.timestamp}
+			} else {
+				elementRefMap[ref.seriesID] = append(elementRefMap[ref.seriesID], ref.timestamp)
+			}
 		}
 	}
 	qo := queryOptions{
@@ -600,6 +606,7 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr p
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
 		elementRefMap:      elementRefMap,
 	}
+
 	var parts []*part
 	var n int
 	for i := range tabWrappers {
