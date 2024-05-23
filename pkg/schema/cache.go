@@ -108,13 +108,23 @@ type schemaRepo struct {
 }
 
 func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
+	sr.sendMetadataEvent(event, false)
+}
+
+func (sr *schemaRepo) sendMetadataEvent(event MetadataEvent, retry bool) {
 	if !sr.closer.AddSender() {
 		return
 	}
 	defer sr.closer.SenderDone()
+	if retry {
+		sr.l.Error().Msgf("sending metadata event: %v", event)
+	}
 	select {
 	case sr.eventCh <- event:
 	case <-sr.closer.CloseNotify():
+	}
+	if retry {
+		sr.l.Error().Msgf("sent metadata event done: %v", event)
 	}
 }
 
@@ -214,7 +224,7 @@ func (sr *schemaRepo) Watcher() {
 						default:
 						}
 						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
-						sr.SendMetadataEvent(evt)
+						sr.sendMetadataEvent(evt, true)
 					}
 				case <-sr.closer.CloseNotify():
 					return
