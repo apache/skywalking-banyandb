@@ -53,14 +53,9 @@ type Measure interface {
 	Query(ctx context.Context, opts pbv1.MeasureQueryOptions) (pbv1.MeasureQueryResult, error)
 	GetSchema() *databasev1.Measure
 	GetIndexRules() []*databasev1.IndexRule
-	SetSchema(schema *databasev1.Measure)
 }
 
 var _ Measure = (*measure)(nil)
-
-func (s *measure) SetSchema(schema *databasev1.Measure) {
-	s.schema = schema
-}
 
 type queryOptions struct {
 	pbv1.MeasureQueryOptions

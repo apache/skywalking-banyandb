@@ -19,7 +19,6 @@ package schema
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
@@ -169,17 +168,14 @@ func (w *watcher) handle(watchEvent *clientv3.Event, watchResp *clientv3.WatchRe
 	case mvccpb.PUT:
 		md, err := w.kind.Unmarshal(watchEvent.Kv)
 		if err != nil {
-			w.l.Error().AnErr("err", err).Msg("failed to unmarshal message")
+			w.l.Error().Stringer("event_header", &watchResp.Header).AnErr("err", err).Msg("failed to unmarshal message")
 			return
-		}
-		if strings.HasPrefix(md.Name, "endpoint_sla_minute") {
-			logger.Infof("watching '%s' handle: header[%s] all events[%d] body[%v]", w.key, &watchResp.Header, len(watchResp.Events), md)
 		}
 		w.handler.OnAddOrUpdate(md)
 	case mvccpb.DELETE:
 		md, err := w.kind.Unmarshal(watchEvent.PrevKv)
 		if err != nil {
-			w.l.Error().AnErr("err", err).Msg("failed to unmarshal message")
+			w.l.Error().Stringer("event_header", &watchResp.Header).AnErr("err", err).Msg("failed to unmarshal message")
 			return
 		}
 		w.handler.OnDelete(md)
