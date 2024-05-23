@@ -4,11 +4,14 @@ Release Notes.
 
 ## 0.7.0
 
+- Add benchmarks for stream filtering and sorting.
+
 ### Features
 
 ### Bugs
 
 - Fix the bug that topN query doesn't return when an error occurs.
+- Data race in the hot series index selection.
 
 ## 0.6.0
 

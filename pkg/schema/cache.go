@@ -96,11 +96,13 @@ type schemaRepo struct {
 	resourceSupplier       ResourceSupplier
 	resourceSchemaSupplier ResourceSchemaSupplier
 	l                      *logger.Logger
-	data                   map[string]*group
 	closer                 *run.ChannelCloser
 	eventCh                chan MetadataEvent
+	groupMap               sync.Map
+	resourceMap            sync.Map
 	workerNum              int
-	sync.RWMutex
+	resourceMutex          sync.Mutex
+	groupMux               sync.Mutex
 }
 
 func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
@@ -130,7 +132,6 @@ func NewRepository(
 		l:                      l,
 		resourceSupplier:       resourceSupplier,
 		resourceSchemaSupplier: resourceSupplier,
-		data:                   make(map[string]*group),
 		eventCh:                make(chan MetadataEvent, defaultWorkerNum),
 		workerNum:              defaultWorkerNum,
 		closer:                 run.NewChannelCloser(),
@@ -147,7 +148,6 @@ func NewPortableRepository(
 		metadata:               metadata,
 		l:                      l,
 		resourceSchemaSupplier: supplier,
-		data:                   make(map[string]*group),
 		eventCh:                make(chan MetadataEvent, defaultWorkerNum),
 		workerNum:              defaultWorkerNum,
 		closer:                 run.NewChannelCloser(),
@@ -182,14 +182,14 @@ func (sr *schemaRepo) Watcher() {
 						case EventKindGroup:
 							_, err = sr.storeGroup(evt.Metadata.GetMetadata())
 						case EventKindResource:
-							err = sr.storeResource(evt.Metadata.GetMetadata())
+							err = sr.initResource(evt.Metadata.GetMetadata())
 						case EventKindTopNAgg:
 							topNSchema := evt.Metadata.(*databasev1.TopNAggregation)
 							_, err = createOrUpdateTopNMeasure(context.Background(), sr.metadata.MeasureRegistry(), topNSchema)
 							if err != nil {
 								break
 							}
-							err = sr.storeResource(topNSchema.SourceMeasure)
+							err = sr.initResource(topNSchema.SourceMeasure)
 						}
 					case EventDelete:
 						switch evt.Kind {
@@ -201,7 +201,7 @@ func (sr *schemaRepo) Watcher() {
 							topNSchema := evt.Metadata.(*databasev1.TopNAggregation)
 							err = multierr.Combine(
 								sr.deleteResource(topNSchema.SourceMeasure),
-								sr.storeResource(topNSchema.SourceMeasure),
+								sr.initResource(topNSchema.SourceMeasure),
 							)
 						}
 					}
@@ -224,8 +224,8 @@ func (sr *schemaRepo) Watcher() {
 
 func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	name := groupMeta.GetName()
-	sr.Lock()
-	defer sr.Unlock()
+	sr.groupMux.Lock()
+	defer sr.groupMux.Unlock()
 	g, ok := sr.getGroup(name)
 	if !ok {
 		sr.l.Info().Str("group", name).Msg("creating a tsdb")
@@ -264,43 +264,29 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 }
 
 func (sr *schemaRepo) createGroup(name string) (g *group) {
-	if sr.resourceSupplier != nil {
-		g = newGroup(sr.metadata, sr.l, sr.resourceSupplier)
-	} else {
-		g = newPortableGroup(sr.metadata, sr.l, sr.resourceSchemaSupplier)
-	}
-	sr.data[name] = g
+	g = newGroup(sr.metadata, sr.l, sr.resourceSupplier)
+	sr.groupMap.Store(name, g)
 	return
 }
 
 func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	name := groupMeta.GetName()
-	sr.Lock()
-	defer sr.Unlock()
-	var ok bool
-	g, ok := sr.getGroup(name)
-	if !ok {
+	g, loaded := sr.groupMap.LoadAndDelete(name)
+	if !loaded {
 		return nil
 	}
-	err := g.close()
-	if err != nil {
-		return err
-	}
-	delete(sr.data, name)
-	return nil
+	return g.(*group).close()
 }
 
 func (sr *schemaRepo) getGroup(name string) (*group, bool) {
-	g := sr.data[name]
-	if g == nil {
+	g, ok := sr.groupMap.Load(name)
+	if !ok {
 		return nil, false
 	}
-	return g, true
+	return g.(*group), true
 }
 
 func (sr *schemaRepo) LoadGroup(name string) (Group, bool) {
-	sr.RLock()
-	defer sr.RUnlock()
 	g, ok := sr.getGroup(name)
 	if !ok {
 		return nil, false
@@ -309,14 +295,53 @@ func (sr *schemaRepo) LoadGroup(name string) (Group, bool) {
 }
 
 func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool) {
-	g, ok := sr.LoadGroup(metadata.Group)
+	_, ok := sr.LoadGroup(metadata.Group)
 	if !ok {
 		return nil, false
 	}
-	return g.LoadResource(metadata.Name)
+	s, ok := sr.resourceMap.Load(metadata.Name)
+	if !ok {
+		return nil, false
+	}
+	return s.(Resource), true
 }
 
-func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) error {
+func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
+	idxRules []*databasev1.IndexRule, topNAggrs []*databasev1.TopNAggregation,
+) error {
+	sr.resourceMutex.Lock()
+	defer sr.resourceMutex.Unlock()
+	resource := &resourceSpec{
+		schema:       stm,
+		indexRules:   idxRules,
+		aggregations: topNAggrs,
+	}
+	key := stm.GetMetadata().GetName()
+	pre, loadedPre := sr.resourceMap.Load(key)
+	var preResource *resourceSpec
+	if loadedPre {
+		preResource = pre.(*resourceSpec)
+	}
+	if loadedPre && preResource.isNewThan(resource) {
+		return nil
+	}
+	var dbSupplier Supplier
+	if !g.(*group).isPortable() {
+		dbSupplier = g
+	}
+	sm, err := sr.resourceSchemaSupplier.OpenResource(g.GetSchema().GetResourceOpts().ShardNum, dbSupplier, resource)
+	if err != nil {
+		return err
+	}
+	resource.delegated = sm
+	sr.resourceMap.Store(key, resource)
+	if loadedPre {
+		return preResource.Close()
+	}
+	return nil
+}
+
+func (sr *schemaRepo) initResource(metadata *commonv1.Metadata) error {
 	g, ok := sr.LoadGroup(metadata.Group)
 	if !ok {
 		var err error
@@ -334,16 +359,33 @@ func (sr *schemaRepo) storeResource(metadata *commonv1.Metadata) error {
 		}
 		return errors.WithMessage(err, "fails to get the resource")
 	}
-	_, err = g.(*group).initResource(context.Background(), stm)
-	return err
+	ctx := context.Background()
+	localCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	idxRules, err := sr.metadata.IndexRules(localCtx, stm.GetMetadata())
+	if err != nil {
+		return err
+	}
+	var topNAggrs []*databasev1.TopNAggregation
+	if _, ok := stm.(*databasev1.Measure); ok {
+		localCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		var innerErr error
+		topNAggrs, innerErr = sr.metadata.MeasureRegistry().TopNAggregations(localCtx, stm.GetMetadata())
+		cancel()
+		if innerErr != nil {
+			return innerErr
+		}
+	}
+	return sr.storeResource(g, stm, idxRules, topNAggrs)
 }
 
 func (sr *schemaRepo) deleteResource(metadata *commonv1.Metadata) error {
-	g, ok := sr.LoadGroup(metadata.Group)
-	if !ok {
+	key := metadata.GetName()
+	pre, loaded := sr.resourceMap.LoadAndDelete(key)
+	if !loaded {
 		return nil
 	}
-	return g.(*group).deleteResource(metadata)
+	return pre.(Resource).Close()
 }
 
 func (sr *schemaRepo) Close() {
@@ -355,27 +397,50 @@ func (sr *schemaRepo) Close() {
 	sr.closer.CloseThenWait()
 	close(sr.eventCh)
 
-	sr.RLock()
-	defer sr.RUnlock()
-	for _, g := range sr.data {
+	sr.resourceMutex.Lock()
+	sr.resourceMap.Range(func(_, value any) bool {
+		if value == nil {
+			return true
+		}
+		r, ok := value.(*resourceSpec)
+		if !ok {
+			return true
+		}
+		err := r.Close()
+		if err != nil {
+			sr.l.Err(err).RawJSON("resource", logger.Proto(r.Schema().GetMetadata())).Msg("closing")
+		}
+		return true
+	})
+	sr.resourceMutex.Unlock()
+
+	sr.groupMux.Lock()
+	defer sr.groupMux.Unlock()
+	sr.groupMap.Range(func(_, value any) bool {
+		if value == nil {
+			return true
+		}
+		g, ok := value.(*group)
+		if !ok {
+			return true
+		}
 		err := g.close()
 		if err != nil {
 			sr.l.Err(err).RawJSON("group", logger.Proto(g.GetSchema().Metadata)).Msg("closing")
 		}
-	}
+		return true
+	})
+	sr.groupMap = sync.Map{}
 }
 
 var _ Group = (*group)(nil)
 
 type group struct {
-	resourceSupplier       ResourceSupplier
-	resourceSchemaSupplier ResourceSchemaSupplier
-	metadata               metadata.Repo
-	db                     atomic.Value
-	groupSchema            atomic.Pointer[commonv1.Group]
-	l                      *logger.Logger
-	schemaMap              map[string]*resourceSpec
-	mapMutex               sync.RWMutex
+	resourceSupplier ResourceSupplier
+	metadata         metadata.Repo
+	db               atomic.Value
+	groupSchema      atomic.Pointer[commonv1.Group]
+	l                *logger.Logger
 }
 
 func newGroup(
@@ -384,27 +449,10 @@ func newGroup(
 	resourceSupplier ResourceSupplier,
 ) *group {
 	g := &group{
-		groupSchema:            atomic.Pointer[commonv1.Group]{},
-		metadata:               metadata,
-		l:                      l,
-		schemaMap:              make(map[string]*resourceSpec),
-		resourceSupplier:       resourceSupplier,
-		resourceSchemaSupplier: resourceSupplier,
-	}
-	return g
-}
-
-func newPortableGroup(
-	metadata metadata.Repo,
-	l *logger.Logger,
-	resourceSchemaSupplier ResourceSchemaSupplier,
-) *group {
-	g := &group{
-		groupSchema:            atomic.Pointer[commonv1.Group]{},
-		metadata:               metadata,
-		l:                      l,
-		schemaMap:              make(map[string]*resourceSpec),
-		resourceSchemaSupplier: resourceSchemaSupplier,
+		groupSchema:      atomic.Pointer[commonv1.Group]{},
+		metadata:         metadata,
+		l:                l,
+		resourceSupplier: resourceSupplier,
 	}
 	return g
 }
@@ -450,88 +498,11 @@ func (g *group) SupplyTSDB() io.Closer {
 	return nil
 }
 
-func (g *group) initResource(ctx context.Context, resourceSchema ResourceSchema) (Resource, error) {
-	localCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	idxRules, err := g.metadata.IndexRules(localCtx, resourceSchema.GetMetadata())
-	if err != nil {
-		return nil, err
-	}
-	var topNAggrs []*databasev1.TopNAggregation
-	if _, ok := resourceSchema.(*databasev1.Measure); ok {
-		localCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
-		var innerErr error
-		topNAggrs, innerErr = g.metadata.MeasureRegistry().TopNAggregations(localCtx, resourceSchema.GetMetadata())
-		cancel()
-		if innerErr != nil {
-			return nil, innerErr
-		}
-	}
-	return g.storeResource(resourceSchema, idxRules, topNAggrs)
-}
-
-func (g *group) storeResource(resourceSchema ResourceSchema, idxRules []*databasev1.IndexRule, topNAggrs []*databasev1.TopNAggregation) (Resource, error) {
-	g.mapMutex.Lock()
-	defer g.mapMutex.Unlock()
-	resource := &resourceSpec{
-		schema:       resourceSchema,
-		indexRules:   idxRules,
-		aggregations: topNAggrs,
-	}
-	key := resourceSchema.GetMetadata().GetName()
-	preResource := g.schemaMap[key]
-	if preResource != nil && preResource.isNewThan(resource) {
-		return preResource, nil
-	}
-	var dbSupplier Supplier
-	if !g.isPortable() {
-		dbSupplier = g
-	}
-	sm, errTS := g.resourceSchemaSupplier.OpenResource(g.GetSchema().GetResourceOpts().ShardNum, dbSupplier, resource)
-	if errTS != nil {
-		return nil, errTS
-	}
-	resource.delegated = sm
-	g.schemaMap[key] = resource
-	if preResource != nil {
-		_ = preResource.Close()
-	}
-	return resource, nil
-}
-
-func (g *group) deleteResource(metadata *commonv1.Metadata) error {
-	g.mapMutex.Lock()
-	defer g.mapMutex.Unlock()
-	key := metadata.GetName()
-	preResource := g.schemaMap[key]
-	if preResource == nil {
-		return nil
-	}
-	delete(g.schemaMap, key)
-	_ = preResource.Close()
-	return nil
-}
-
 func (g *group) isPortable() bool {
 	return g.resourceSupplier == nil
 }
 
-func (g *group) LoadResource(name string) (Resource, bool) {
-	g.mapMutex.RLock()
-	s := g.schemaMap[name]
-	g.mapMutex.RUnlock()
-	if s == nil {
-		return nil, false
-	}
-	return s, true
-}
-
 func (g *group) close() (err error) {
-	g.mapMutex.RLock()
-	for _, s := range g.schemaMap {
-		err = multierr.Append(err, s.Close())
-	}
-	g.mapMutex.RUnlock()
 	if !g.isInit() || g.isPortable() {
 		return nil
 	}

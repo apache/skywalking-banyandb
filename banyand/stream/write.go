@@ -99,10 +99,10 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 	fLen := len(req.Element.GetTagFamilies())
 	if fLen < 1 {
-		return nil, fmt.Errorf("%s has no tag family", req.Metadata)
+		return nil, fmt.Errorf("%s has no tag family", req)
 	}
 	if fLen > len(stm.schema.GetTagFamilies()) {
-		return nil, fmt.Errorf("%s has more tag families than expected", req.Metadata)
+		return nil, fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
 	}
 	series := &pbv1.Series{
 		Subject:      req.Metadata.Name,

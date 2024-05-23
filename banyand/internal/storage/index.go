@@ -42,7 +42,7 @@ import (
 )
 
 func (d *database[T, O]) IndexDB() IndexDB {
-	return d.indexController.hot
+	return d.indexController.getHot()
 }
 
 func (d *database[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
@@ -308,6 +308,12 @@ func newSeriesIndexController[T TSTable, O any](
 		return nil, errors.New("unexpected series index count")
 	}
 	return sic, nil
+}
+
+func (sic *seriesIndexController[T, O]) getHot() *seriesIndex {
+	sic.RLock()
+	defer sic.RUnlock()
+	return sic.hot
 }
 
 func (sic *seriesIndexController[T, O]) loadIdx() ([]string, error) {
