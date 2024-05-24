@@ -155,7 +155,7 @@ OUTER:
 					case <-w.closer.CloseNotify():
 						return
 					default:
-						w.handle(event)
+						w.handle(event, &watchResp)
 					}
 				}
 			}
@@ -163,19 +163,19 @@ OUTER:
 	}
 }
 
-func (w *watcher) handle(watchEvent *clientv3.Event) {
+func (w *watcher) handle(watchEvent *clientv3.Event, watchResp *clientv3.WatchResponse) {
 	switch watchEvent.Type {
 	case mvccpb.PUT:
 		md, err := w.kind.Unmarshal(watchEvent.Kv)
 		if err != nil {
-			w.l.Error().AnErr("err", err).Msg("failed to unmarshal message")
+			w.l.Error().Stringer("event_header", &watchResp.Header).AnErr("err", err).Msg("failed to unmarshal message")
 			return
 		}
 		w.handler.OnAddOrUpdate(md)
 	case mvccpb.DELETE:
 		md, err := w.kind.Unmarshal(watchEvent.PrevKv)
 		if err != nil {
-			w.l.Error().AnErr("err", err).Msg("failed to unmarshal message")
+			w.l.Error().Stringer("event_header", &watchResp.Header).AnErr("err", err).Msg("failed to unmarshal message")
 			return
 		}
 		w.handler.OnDelete(md)

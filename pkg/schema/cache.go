@@ -20,6 +20,8 @@ package schema
 import (
 	"context"
 	"io"
+	"path"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -87,7 +89,7 @@ func (rs *resourceSpec) isNewThan(other *resourceSpec) bool {
 	return true
 }
 
-const defaultWorkerNum = 10
+var defaultWorkerNum = runtime.GOMAXPROCS(-1)
 
 var _ Repository = (*schemaRepo)(nil)
 
@@ -106,13 +108,23 @@ type schemaRepo struct {
 }
 
 func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
+	sr.sendMetadataEvent(event, false)
+}
+
+func (sr *schemaRepo) sendMetadataEvent(event MetadataEvent, retry bool) {
 	if !sr.closer.AddSender() {
 		return
 	}
 	defer sr.closer.SenderDone()
+	if retry {
+		sr.l.Error().Msgf("sending metadata event: %v", event)
+	}
 	select {
 	case sr.eventCh <- event:
 	case <-sr.closer.CloseNotify():
+	}
+	if retry {
+		sr.l.Error().Msgf("sent metadata event done: %v", event)
 	}
 }
 
@@ -211,8 +223,11 @@ func (sr *schemaRepo) Watcher() {
 							return
 						default:
 						}
+						// TODO: Reconcile when the retry times is more than 3.
 						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
-						sr.SendMetadataEvent(evt)
+						go func() {
+							sr.sendMetadataEvent(evt, true)
+						}()
 					}
 				case <-sr.closer.CloseNotify():
 					return
@@ -295,11 +310,8 @@ func (sr *schemaRepo) LoadGroup(name string) (Group, bool) {
 }
 
 func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool) {
-	_, ok := sr.LoadGroup(metadata.Group)
-	if !ok {
-		return nil, false
-	}
-	s, ok := sr.resourceMap.Load(metadata.Name)
+	k := getKey(metadata)
+	s, ok := sr.resourceMap.Load(k)
 	if !ok {
 		return nil, false
 	}
@@ -316,7 +328,7 @@ func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
 		indexRules:   idxRules,
 		aggregations: topNAggrs,
 	}
-	key := stm.GetMetadata().GetName()
+	key := getKey(stm.GetMetadata())
 	pre, loadedPre := sr.resourceMap.Load(key)
 	var preResource *resourceSpec
 	if loadedPre {
@@ -331,7 +343,7 @@ func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
 	}
 	sm, err := sr.resourceSchemaSupplier.OpenResource(g.GetSchema().GetResourceOpts().ShardNum, dbSupplier, resource)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "fails to open the resource")
 	}
 	resource.delegated = sm
 	sr.resourceMap.Store(key, resource)
@@ -339,6 +351,10 @@ func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
 		return preResource.Close()
 	}
 	return nil
+}
+
+func getKey(metadata *commonv1.Metadata) string {
+	return path.Join(metadata.GetGroup(), metadata.GetName())
 }
 
 func (sr *schemaRepo) initResource(metadata *commonv1.Metadata) error {
@@ -373,14 +389,14 @@ func (sr *schemaRepo) initResource(metadata *commonv1.Metadata) error {
 		topNAggrs, innerErr = sr.metadata.MeasureRegistry().TopNAggregations(localCtx, stm.GetMetadata())
 		cancel()
 		if innerErr != nil {
-			return innerErr
+			return errors.WithMessage(innerErr, "fails to get the topN aggregations")
 		}
 	}
 	return sr.storeResource(g, stm, idxRules, topNAggrs)
 }
 
 func (sr *schemaRepo) deleteResource(metadata *commonv1.Metadata) error {
-	key := metadata.GetName()
+	key := getKey(metadata)
 	pre, loaded := sr.resourceMap.LoadAndDelete(key)
 	if !loaded {
 		return nil

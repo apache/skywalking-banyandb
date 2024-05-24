@@ -12,6 +12,7 @@ Release Notes.
 
 - Fix the bug that topN query doesn't return when an error occurs.
 - Data race in the hot series index selection.
+- Remove SetSchema from measure cache which could change the schema in the cache.
 
 ## 0.6.0
 
