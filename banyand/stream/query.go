@@ -38,6 +38,7 @@ import (
 )
 
 type queryOptions struct {
+	elementRefMap map[common.SeriesID][]int64
 	pbv1.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -156,57 +157,76 @@ func (qr *queryResult) Pull() *pbv1.StreamResult {
 		if len(qr.data) == 0 {
 			return nil
 		}
-		// TODO:// Parallel load
-		tmpBlock := generateBlock()
-		defer releaseBlock(tmpBlock)
+
+		cursorChan := make(chan int, len(qr.data))
 		for i := 0; i < len(qr.data); i++ {
-			if !qr.data[i].loadData(tmpBlock) {
-				qr.data = append(qr.data[:i], qr.data[i+1:]...)
-				i--
-			}
-			if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
-				continue
-			}
-			sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
-			series := qr.seriesList[sidIndex]
-			entityMap := make(map[string]int)
-			tagFamilyMap := make(map[string]int)
-			for idx, entity := range qr.schema.GetEntity().GetTagNames() {
-				entityMap[entity] = idx + 1
-			}
-			for idx, tagFamily := range qr.data[i].tagFamilies {
-				tagFamilyMap[tagFamily.name] = idx + 1
-			}
-			for _, tagFamilyProj := range qr.data[i].tagProjection {
-				for j, tagProj := range tagFamilyProj.Names {
-					offset := qr.tagNameIndex[tagProj]
-					tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
-					tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
-					if tagSpec.IndexedOnly {
-						continue
-					}
-					entityPos := entityMap[tagProj]
-					tagFamilyPos := tagFamilyMap[tagFamilyProj.Family]
-					if entityPos == 0 {
-						continue
-					}
-					if tagFamilyPos == 0 {
-						qr.data[i].tagFamilies[tagFamilyPos-1] = tagFamily{
-							name: tagFamilyProj.Family,
-							tags: make([]tag, 0),
+			go func(i int) {
+				tmpBlock := generateBlock()
+				defer releaseBlock(tmpBlock)
+				if !qr.data[i].loadData(tmpBlock) {
+					cursorChan <- i
+					return
+				}
+				if qr.schema.GetEntity() == nil || len(qr.schema.GetEntity().GetTagNames()) == 0 {
+					cursorChan <- -1
+					return
+				}
+				sidIndex := qr.sidToIndex[qr.data[i].bm.seriesID]
+				series := qr.seriesList[sidIndex]
+				entityMap := make(map[string]int)
+				tagFamilyMap := make(map[string]int)
+				for idx, entity := range qr.schema.GetEntity().GetTagNames() {
+					entityMap[entity] = idx + 1
+				}
+				for idx, tagFamily := range qr.data[i].tagFamilies {
+					tagFamilyMap[tagFamily.name] = idx + 1
+				}
+				for _, tagFamilyProj := range qr.data[i].tagProjection {
+					for j, tagProj := range tagFamilyProj.Names {
+						offset := qr.tagNameIndex[tagProj]
+						tagFamilySpec := qr.schema.GetTagFamilies()[offset.FamilyOffset]
+						tagSpec := tagFamilySpec.GetTags()[offset.TagOffset]
+						if tagSpec.IndexedOnly {
+							continue
+						}
+						entityPos := entityMap[tagProj]
+						tagFamilyPos := tagFamilyMap[tagFamilyProj.Family]
+						if entityPos == 0 {
+							continue
+						}
+						if tagFamilyPos == 0 {
+							qr.data[i].tagFamilies[tagFamilyPos-1] = tagFamily{
+								name: tagFamilyProj.Family,
+								tags: make([]tag, 0),
+							}
+						}
+						valueType := pbv1.MustTagValueToValueType(series.EntityValues[entityPos-1])
+						qr.data[i].tagFamilies[tagFamilyPos-1].tags[j] = tag{
+							name:      tagProj,
+							values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
+							valueType: valueType,
 						}
 					}
-					valueType := pbv1.MustTagValueToValueType(series.EntityValues[entityPos-1])
-					qr.data[i].tagFamilies[tagFamilyPos-1].tags[j] = tag{
-						name:      tagProj,
-						values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), series.EntityValues[entityPos-1], len(qr.data[i].timestamps)),
-						valueType: valueType,
-					}
 				}
+				if qr.orderByTimestampDesc() {
+					qr.data[i].idx = len(qr.data[i].timestamps) - 1
+				}
+				cursorChan <- -1
+			}(i)
+		}
+
+		blankCursorList := []int{}
+		for completed := 0; completed < len(qr.data); completed++ {
+			result := <-cursorChan
+			if result != -1 {
+				blankCursorList = append(blankCursorList, result)
 			}
-			if qr.orderByTimestampDesc() {
-				qr.data[i].idx = len(qr.data[i].timestamps) - 1
-			}
+		}
+		sort.Slice(blankCursorList, func(i, j int) bool {
+			return blankCursorList[i] > blankCursorList[j]
+		})
+		for _, index := range blankCursorList {
+			qr.data = append(qr.data[:index], qr.data[index+1:]...)
 		}
 		qr.loaded = true
 		heap.Init(qr)
@@ -343,142 +363,6 @@ func (s *stream) genIndex(tagProj []pbv1.TagProjection, seriesList pbv1.SeriesLi
 	return entityMap, tagSpecIndex, tagProjIndex, sidToIndex
 }
 
-func (s *stream) Filter(ctx context.Context, sfo pbv1.StreamFilterOptions) (sfr pbv1.StreamFilterResult, err error) {
-	if sfo.TimeRange == nil || len(sfo.Entities) < 1 {
-		return nil, errors.New("invalid query options: timeRange and series are required")
-	}
-	if len(sfo.TagProjection) == 0 {
-		return nil, errors.New("invalid query options: tagProjection is required")
-	}
-	db := s.databaseSupplier.SupplyTSDB()
-	if db == nil {
-		return sfr, nil
-	}
-	tsdb := db.(storage.TSDB[*tsTable, option])
-	tabWrappers := tsdb.SelectTSTables(*sfo.TimeRange)
-	sort.Slice(tabWrappers, func(i, j int) bool {
-		return tabWrappers[i].GetTimeRange().Start.Before(tabWrappers[j].GetTimeRange().Start)
-	})
-	defer func() {
-		for i := range tabWrappers {
-			tabWrappers[i].DecRef()
-		}
-	}()
-
-	series := make([]*pbv1.Series, len(sfo.Entities))
-	for i := range sfo.Entities {
-		series[i] = &pbv1.Series{
-			Subject:      sfo.Name,
-			EntityValues: sfo.Entities[i],
-		}
-	}
-	seriesList, err := tsdb.Lookup(ctx, series)
-	if err != nil {
-		return nil, err
-	}
-	if len(seriesList) == 0 {
-		return sfr, nil
-	}
-
-	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sfo.TagProjection, seriesList)
-	ces := newColumnElements()
-	for _, tw := range tabWrappers {
-		if len(ces.timestamp) >= sfo.MaxElementSize {
-			break
-		}
-		index := tw.Table().Index()
-		erl, err := index.Search(ctx, seriesList, sfo.Filter, sfo.TimeRange)
-		if err != nil {
-			return nil, err
-		}
-		if len(ces.timestamp)+len(erl) > sfo.MaxElementSize {
-			erl = erl[:sfo.MaxElementSize-len(ces.timestamp)]
-		}
-		for _, er := range erl {
-			e, count, err := tw.Table().getElement(er.seriesID, er.timestamp, sfo.TagProjection)
-			if err != nil {
-				return nil, err
-			}
-			if len(tagProjIndex) != 0 {
-				for entity, offset := range tagProjIndex {
-					tagSpec := tagSpecIndex[entity]
-					if tagSpec.IndexedOnly {
-						continue
-					}
-					series := seriesList[sidToIndex[er.seriesID]]
-					entityPos := entityMap[entity] - 1
-					e.tagFamilies[offset.FamilyOffset].tags[offset.TagOffset] = tag{
-						name:      entity,
-						values:    mustEncodeTagValue(entity, tagSpec.GetType(), series.EntityValues[entityPos], count),
-						valueType: pbv1.MustTagValueToValueType(series.EntityValues[entityPos]),
-					}
-				}
-			}
-			ces.BuildFromElement(e, sfo.TagProjection)
-		}
-	}
-	return ces, nil
-}
-
-func (s *stream) Sort(ctx context.Context, sso pbv1.StreamSortOptions) (ssr pbv1.StreamSortResult, err error) {
-	if sso.TimeRange == nil || len(sso.Entities) < 1 {
-		return nil, errors.New("invalid query options: timeRange and series are required")
-	}
-	if len(sso.TagProjection) == 0 {
-		return nil, errors.New("invalid query options: tagProjection is required")
-	}
-	db := s.databaseSupplier.SupplyTSDB()
-	if db == nil {
-		return ssr, nil
-	}
-	tsdb := db.(storage.TSDB[*tsTable, option])
-	tabWrappers := tsdb.SelectTSTables(*sso.TimeRange)
-	defer func() {
-		for i := range tabWrappers {
-			tabWrappers[i].DecRef()
-		}
-	}()
-	series := make([]*pbv1.Series, len(sso.Entities))
-	for i := range sso.Entities {
-		series[i] = &pbv1.Series{
-			Subject:      sso.Name,
-			EntityValues: sso.Entities[i],
-		}
-	}
-	seriesList, err := tsdb.Lookup(ctx, series)
-	if err != nil {
-		return nil, err
-	}
-	if len(seriesList) == 0 {
-		return ssr, nil
-	}
-
-	iters, err := s.buildSeriesByIndex(tabWrappers, seriesList, sso)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(iters) == 0 {
-		return ssr, nil
-	}
-
-	it := newItemIter(iters, sso.Order.Sort)
-	defer func() {
-		err = multierr.Append(err, it.Close())
-	}()
-
-	ces := newColumnElements()
-	for it.Next() {
-		nextItem := it.Val()
-		e := nextItem.element
-		ces.BuildFromElement(e, sso.TagProjection)
-		if len(ces.timestamp) >= sso.MaxElementSize {
-			break
-		}
-	}
-	return ces, err
-}
-
 func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {
 	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
@@ -539,23 +423,23 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
 	// TODO: cache tstIter
-	var tstIter tstIter
-	defer tstIter.reset()
+	var ti tstIter
+	defer ti.reset()
 	originalSids := make([]common.SeriesID, len(sids))
 	copy(originalSids, sids)
 	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
-	if tstIter.Error() != nil {
-		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
+	ti.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	if ti.Error() != nil {
+		return nil, fmt.Errorf("cannot init tstIter: %w", ti.Error())
 	}
-	for tstIter.nextBlock() {
+	for ti.nextBlock() {
 		bc := generateBlockCursor()
-		p := tstIter.piHeap[0]
+		p := ti.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
 		result.data = append(result.data, bc)
 	}
-	if tstIter.Error() != nil {
-		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
+	if ti.Error() != nil {
+		return nil, fmt.Errorf("cannot iterate tstIter: %w", ti.Error())
 	}
 
 	entityMap, _, _, sidToIndex := s.genIndex(sqo.TagProjection, sl)
@@ -575,20 +459,74 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.S
 			}
 		}
 	}
+	result.orderByTS = true
 	if sqo.Order == nil {
-		result.orderByTS = true
 		result.ascTS = true
 		return &result, nil
 	}
-	if sqo.Order.Index == nil {
-		result.orderByTS = true
-		if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-			result.ascTS = true
+	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+		result.ascTS = true
+	}
+	return &result, nil
+}
+
+func (s *stream) Sort(ctx context.Context, sqo pbv1.StreamQueryOptions) (ssr pbv1.StreamSortResult, err error) {
+	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
+		return nil, errors.New("invalid query options: timeRange and series are required")
+	}
+	if len(sqo.TagProjection) == 0 {
+		return nil, errors.New("invalid query options: tagProjection is required")
+	}
+	db := s.databaseSupplier.SupplyTSDB()
+	if db == nil {
+		return ssr, nil
+	}
+	tsdb := db.(storage.TSDB[*tsTable, option])
+	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
 		}
-		return &result, nil
+	}()
+
+	series := make([]*pbv1.Series, len(sqo.Entities))
+	for i := range sqo.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      sqo.Name,
+			EntityValues: sqo.Entities[i],
+		}
+	}
+	seriesList, err := tsdb.Lookup(ctx, series)
+	if err != nil {
+		return nil, err
+	}
+	if len(seriesList) == 0 {
+		return ssr, nil
 	}
 
-	return &result, nil
+	iters, err := s.buildSeriesByIndex(tabWrappers, seriesList, sqo)
+	if err != nil {
+		return nil, err
+	}
+	if len(iters) == 0 {
+		return ssr, nil
+	}
+
+	it := newItemIter(iters, sqo.Order.Sort)
+	defer func() {
+		err = multierr.Append(err, it.Close())
+	}()
+
+	ces := newColumnElements()
+	for it.Next() {
+		nextItem := it.Val()
+		e := nextItem.element
+		ces.BuildFromElement(e, sqo.TagProjection)
+		if len(ces.timestamp) >= sqo.MaxElementSize {
+			break
+		}
+	}
+	return ces, err
 }
 
 // newItemIter returns a ItemIterator which mergers several tsdb.Iterator by input sorting order.
@@ -601,4 +539,144 @@ func newItemIter(iters []*searcherIterator, s modelv1.Sort) itersort.Iterator[it
 		return itersort.NewItemIter[item](ii, true)
 	}
 	return itersort.NewItemIter[item](ii, false)
+}
+
+func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pbv1.StreamQueryResult, err error) {
+	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
+		return nil, errors.New("invalid query options: timeRange and series are required")
+	}
+	if len(sqo.TagProjection) == 0 {
+		return nil, errors.New("invalid query options: tagProjection is required")
+	}
+	db := s.databaseSupplier.SupplyTSDB()
+	var result queryResult
+	if db == nil {
+		return sqr, nil
+	}
+	tsdb := db.(storage.TSDB[*tsTable, option])
+	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
+	defer func() {
+		for i := range tabWrappers {
+			tabWrappers[i].DecRef()
+		}
+	}()
+
+	series := make([]*pbv1.Series, len(sqo.Entities))
+	for i := range sqo.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      sqo.Name,
+			EntityValues: sqo.Entities[i],
+		}
+	}
+	seriesList, err := tsdb.Lookup(ctx, series)
+	if err != nil {
+		return nil, err
+	}
+	if len(seriesList) == 0 {
+		return sqr, nil
+	}
+
+	var elementRefList []elementRef
+	for _, tw := range tabWrappers {
+		index := tw.Table().Index()
+		erl, err := index.Search(ctx, seriesList, sqo.Filter, sqo.TimeRange)
+		if err != nil {
+			return nil, err
+		}
+		elementRefList = append(elementRefList, erl...)
+		if len(elementRefList) > sqo.MaxElementSize {
+			elementRefList = elementRefList[:sqo.MaxElementSize]
+			break
+		}
+	}
+	var elementRefMap map[common.SeriesID][]int64
+	if len(elementRefList) != 0 {
+		elementRefMap = make(map[common.SeriesID][]int64)
+		for _, ref := range elementRefList {
+			if _, ok := elementRefMap[ref.seriesID]; !ok {
+				elementRefMap[ref.seriesID] = []int64{ref.timestamp}
+			} else {
+				elementRefMap[ref.seriesID] = append(elementRefMap[ref.seriesID], ref.timestamp)
+			}
+		}
+	}
+	qo := queryOptions{
+		StreamQueryOptions: sqo,
+		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
+		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
+		elementRefMap:      elementRefMap,
+	}
+
+	var parts []*part
+	var n int
+	for i := range tabWrappers {
+		s := tabWrappers[i].Table().currentSnapshot()
+		if s == nil {
+			continue
+		}
+		parts, n = s.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
+		if n < 1 {
+			s.decRef()
+			continue
+		}
+		result.snapshots = append(result.snapshots, s)
+	}
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+	// TODO: cache tstIter
+	var ti tstIter
+	defer ti.reset()
+	var sids []common.SeriesID
+	for i := 0; i < len(seriesList); i++ {
+		sid := seriesList[i].ID
+		if _, ok := elementRefMap[sid]; !ok {
+			seriesList = append(seriesList[:i], seriesList[i+1:]...)
+			i--
+			continue
+		}
+		sids = append(sids, sid)
+	}
+	originalSids := make([]common.SeriesID, len(sids))
+	copy(originalSids, sids)
+	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
+	ti.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	if ti.Error() != nil {
+		return nil, fmt.Errorf("cannot init tstIter: %w", ti.Error())
+	}
+	for ti.nextBlock() {
+		bc := generateBlockCursor()
+		p := ti.piHeap[0]
+		bc.init(p.p, p.curBlock, qo)
+		result.data = append(result.data, bc)
+	}
+	if ti.Error() != nil {
+		return nil, fmt.Errorf("cannot iterate tstIter: %w", ti.Error())
+	}
+
+	entityMap, _, _, sidToIndex := s.genIndex(sqo.TagProjection, seriesList)
+	result.entityMap = entityMap
+	result.sidToIndex = sidToIndex
+	result.tagNameIndex = make(map[string]partition.TagLocator)
+	result.schema = s.schema
+	result.seriesList = seriesList
+	for i, si := range originalSids {
+		result.sidToIndex[si] = i
+	}
+	for i, tagFamilySpec := range s.schema.GetTagFamilies() {
+		for j, tagSpec := range tagFamilySpec.GetTags() {
+			result.tagNameIndex[tagSpec.GetName()] = partition.TagLocator{
+				FamilyOffset: i,
+				TagOffset:    j,
+			}
+		}
+	}
+	result.orderByTS = true
+	if sqo.Order == nil {
+		result.ascTS = true
+		return &result, nil
+	}
+	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+		result.ascTS = true
+	}
+	return &result, nil
 }

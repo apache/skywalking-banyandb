@@ -373,20 +373,35 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 		if len(qr.data) == 0 {
 			return nil
 		}
-		// TODO:// Parallel load
-		tmpBlock := generateBlock()
-		defer releaseBlock(tmpBlock)
+
+		cursorChan := make(chan int, len(qr.data))
 		for i := 0; i < len(qr.data); i++ {
-			if !qr.data[i].loadData(tmpBlock) {
-				qr.data = append(qr.data[:i], qr.data[i+1:]...)
-				i--
+			go func(i int) {
+				tmpBlock := generateBlock()
+				defer releaseBlock(tmpBlock)
+				if !qr.data[i].loadData(tmpBlock) {
+					cursorChan <- i
+					return
+				}
+				if qr.orderByTimestampDesc() {
+					qr.data[i].idx = len(qr.data[i].timestamps) - 1
+				}
+				cursorChan <- -1
+			}(i)
+		}
+
+		blankCursorList := []int{}
+		for completed := 0; completed < len(qr.data); completed++ {
+			result := <-cursorChan
+			if result != -1 {
+				blankCursorList = append(blankCursorList, result)
 			}
-			if i < 0 {
-				continue
-			}
-			if qr.orderByTimestampDesc() {
-				qr.data[i].idx = len(qr.data[i].timestamps) - 1
-			}
+		}
+		sort.Slice(blankCursorList, func(i, j int) bool {
+			return blankCursorList[i] > blankCursorList[j]
+		})
+		for _, index := range blankCursorList {
+			qr.data = append(qr.data[:index], qr.data[index+1:]...)
 		}
 		qr.loaded = true
 		heap.Init(qr)

@@ -132,27 +132,6 @@ type TagProjection struct {
 
 // StreamQueryOptions is the options of a stream query.
 type StreamQueryOptions struct {
-	Name          string
-	TimeRange     *timestamp.TimeRange
-	Entities      [][]*modelv1.TagValue
-	Filter        index.Filter
-	Order         *OrderBy
-	TagProjection []TagProjection
-}
-
-// StreamSortOptions is the options of a stream sort.
-type StreamSortOptions struct {
-	Name           string
-	TimeRange      *timestamp.TimeRange
-	Entities       [][]*modelv1.TagValue
-	Filter         index.Filter
-	Order          *OrderBy
-	TagProjection  []TagProjection
-	MaxElementSize int
-}
-
-// StreamFilterOptions is the options of a stream filter.
-type StreamFilterOptions struct {
 	Name           string
 	TimeRange      *timestamp.TimeRange
 	Entities       [][]*modelv1.TagValue
@@ -170,11 +149,6 @@ type StreamQueryResult interface {
 
 // StreamSortResult is the result of a stream sort.
 type StreamSortResult interface {
-	Pull() *StreamColumnResult
-}
-
-// StreamFilterResult is the result of a stream filter.
-type StreamFilterResult interface {
 	Pull() *StreamColumnResult
 }
 

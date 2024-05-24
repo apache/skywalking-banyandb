@@ -73,7 +73,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	ec := executor.FromStreamExecutionContext(ctx)
 
 	if i.order != nil && i.order.Index != nil {
-		ssr, err := ec.Sort(ctx, pbv1.StreamSortOptions{
+		ssr, err := ec.Sort(ctx, pbv1.StreamQueryOptions{
 			Name:           i.metadata.GetName(),
 			TimeRange:      &i.timeRange,
 			Entities:       i.entities,
@@ -93,7 +93,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	}
 
 	if i.filter != nil && i.filter != logical.ENode {
-		sfr, err := ec.Filter(ctx, pbv1.StreamFilterOptions{
+		result, err := ec.Filter(ctx, pbv1.StreamQueryOptions{
 			Name:           i.metadata.GetName(),
 			TimeRange:      &i.timeRange,
 			Entities:       i.entities,
@@ -105,11 +105,10 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 		if err != nil {
 			return nil, err
 		}
-		if sfr == nil {
+		if result == nil {
 			return nil, nil
 		}
-		r := sfr.Pull()
-		return buildElementsFromColumnResult(r), nil
+		return BuildElementsFromStreamResult(result), nil
 	}
 
 	result, err := ec.Query(ctx, pbv1.StreamQueryOptions{
@@ -123,7 +122,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stream: %w", err)
 	}
-	return buildElementsFromQueryResults(result), nil
+	return BuildElementsFromStreamResult(result), nil
 }
 
 func (i *localIndexScan) String() string {
@@ -167,7 +166,8 @@ func buildElementsFromColumnResult(r *pbv1.StreamColumnResult) (elements []*stre
 	return
 }
 
-func buildElementsFromQueryResults(result pbv1.StreamQueryResult) (elements []*streamv1.Element) {
+// BuildElementsFromStreamResult builds a slice of elements from the given stream query result.
+func BuildElementsFromStreamResult(result pbv1.StreamQueryResult) (elements []*streamv1.Element) {
 	deduplication := make(map[string]struct{})
 	for {
 		r := result.Pull()

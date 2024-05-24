@@ -61,8 +61,8 @@ type Stream interface {
 	GetSchema() *databasev1.Stream
 	GetIndexRules() []*databasev1.IndexRule
 	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
-	Sort(ctx context.Context, opts pbv1.StreamSortOptions) (pbv1.StreamSortResult, error)
-	Filter(ctx context.Context, opts pbv1.StreamFilterOptions) (pbv1.StreamFilterResult, error)
+	Sort(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamSortResult, error)
+	Filter(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
 }
 
 var _ Stream = (*stream)(nil)
