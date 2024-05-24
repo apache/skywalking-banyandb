@@ -223,8 +223,11 @@ func (sr *schemaRepo) Watcher() {
 							return
 						default:
 						}
+						// TODO: Reconcile when the retry times is more than 3.
 						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
-						sr.sendMetadataEvent(evt, true)
+						go func() {
+							sr.sendMetadataEvent(evt, true)
+						}()
 					}
 				case <-sr.closer.CloseNotify():
 					return
