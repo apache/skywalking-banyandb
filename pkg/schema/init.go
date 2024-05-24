@@ -287,12 +287,12 @@ func (sr *schemaRepo) initGroup(groupSchema *commonv1.Group) (*group, error) {
 func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) (*databasev1.Measure, error) {
 	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetMetadata())
 	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
-		return nil, err
+		return nil, errors.WithMessagef(err, "fail to get current topN measure %s", topNSchema.GetMetadata().GetName())
 	}
 
 	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetSourceMeasure())
 	if err != nil {
-		return nil, err
+		return nil, errors.WithMessagef(err, "fail to get source measure %s", topNSchema.GetSourceMeasure().GetName())
 	}
 
 	// create a new "derived" measure for TopN result
@@ -303,11 +303,11 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 	if oldTopNSchema == nil {
 		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
 			if !errors.Is(innerErr, schema.ErrGRPCAlreadyExists) {
-				return nil, innerErr
+				return nil, errors.WithMessagef(innerErr, "fail to create new topN measure %s", newTopNMeasure.GetMetadata().GetName())
 			}
 			newTopNMeasure, err = measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetMetadata())
 			if err != nil {
-				return nil, err
+				return nil, errors.WithMessagef(err, "fail to get created topN measure %s", topNSchema.GetMetadata().GetName())
 			}
 		}
 		return newTopNMeasure, nil
@@ -322,7 +322,7 @@ func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema
 	}
 	// update
 	if _, err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
-		return nil, err
+		return nil, errors.WithMessagef(err, "fail to update topN measure %s", newTopNMeasure.GetMetadata().GetName())
 	}
 	return newTopNMeasure, nil
 }

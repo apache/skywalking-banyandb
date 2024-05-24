@@ -91,23 +91,21 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	schema, err := t.metaService.MeasureRegistry().GetMeasure(context.TODO(), topNMetadata)
+	topNResultMeasure, err := t.measureService.Measure(topNMetadata)
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
-			Msg("fail to find topN measure")
+			Msg("fail to find topN result measure")
 		return
 	}
 
-	sourceMeasureSchema := sourceMeasure.GetSchema()
-	sourceMeasure.SetSchema(schema)
-	s, err := logical_measure.BuildTopNSchema(schema)
+	s, err := logical_measure.BuildTopNSchema(topNResultMeasure.GetSchema())
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
 			Msg("fail to build schema")
 	}
-	plan, err := logical_measure.TopNAnalyze(context.TODO(), request, schema, sourceMeasureSchema, topNSchema, s)
+	plan, err := logical_measure.TopNAnalyze(context.TODO(), request, topNResultMeasure.GetSchema(), sourceMeasure.GetSchema(), topNSchema, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", topNMetadata.GetName(), err))
 		return
@@ -117,7 +115,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		e.Str("plan", plan.String()).Msg("topn plan")
 	}
 
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(context.Background(), sourceMeasure))
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(context.Background(), topNResultMeasure))
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to close the topn plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", topNMetadata.GetName(), err))
@@ -129,7 +127,6 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		}
 	}()
 
-	sourceMeasure.SetSchema(sourceMeasureSchema)
 	result := make([]*measurev1.DataPoint, 0)
 	for mIterator.Next() {
 		current := mIterator.Current()
