@@ -42,6 +42,7 @@ var _ logical.UnresolvedPlan = (*unresolvedDistributed)(nil)
 
 type unresolvedDistributed struct {
 	originalQuery *measurev1.QueryRequest
+	groupByEntity bool
 }
 
 func newUnresolvedDistributed(query *measurev1.QueryRequest) logical.UnresolvedPlan {
@@ -84,6 +85,23 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		Criteria:        ud.originalQuery.Criteria,
 		Limit:           limit,
 		OrderBy:         ud.originalQuery.OrderBy,
+	}
+	if ud.groupByEntity {
+		e := s.EntityList()[0]
+		sortTagSpec := s.FindTagSpecByName(e)
+		if sortTagSpec == nil {
+			return nil, fmt.Errorf("entity tag %s not found", e)
+		}
+		result := &distributedPlan{
+			queryTemplate: temp,
+			s:             s,
+			sortByTime:    false,
+			sortTagSpec:   *sortTagSpec,
+		}
+		if ud.originalQuery.OrderBy != nil && ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
+			result.desc = true
+		}
+		return result, nil
 	}
 	if ud.originalQuery.OrderBy == nil {
 		return &distributedPlan{
@@ -162,7 +180,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		}
 	}
 	return &sortedMIterator{
-		Iterator: sort.NewItemIter[*comparableDataPoint](see, t.desc),
+		Iterator: sort.NewItemIter(see, t.desc),
 	}, allErr
 }
 
