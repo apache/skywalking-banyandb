@@ -89,7 +89,15 @@ func (rs *resourceSpec) isNewThan(other *resourceSpec) bool {
 	return true
 }
 
-var defaultWorkerNum = runtime.GOMAXPROCS(-1)
+const maxWorkerNum = 8
+
+func getWorkerNum() int {
+	maxProcs := runtime.GOMAXPROCS(-1)
+	if maxProcs > maxWorkerNum {
+		return maxWorkerNum
+	}
+	return maxProcs
+}
 
 var _ Repository = (*schemaRepo)(nil)
 
@@ -108,23 +116,13 @@ type schemaRepo struct {
 }
 
 func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
-	sr.sendMetadataEvent(event, false)
-}
-
-func (sr *schemaRepo) sendMetadataEvent(event MetadataEvent, retry bool) {
 	if !sr.closer.AddSender() {
 		return
 	}
 	defer sr.closer.SenderDone()
-	if retry {
-		sr.l.Error().Msgf("sending metadata event: %v", event)
-	}
 	select {
 	case sr.eventCh <- event:
 	case <-sr.closer.CloseNotify():
-	}
-	if retry {
-		sr.l.Error().Msgf("sent metadata event done: %v", event)
 	}
 }
 
@@ -139,13 +137,14 @@ func NewRepository(
 	l *logger.Logger,
 	resourceSupplier ResourceSupplier,
 ) Repository {
+	workNum := getWorkerNum()
 	return &schemaRepo{
 		metadata:               metadata,
 		l:                      l,
 		resourceSupplier:       resourceSupplier,
 		resourceSchemaSupplier: resourceSupplier,
-		eventCh:                make(chan MetadataEvent, defaultWorkerNum),
-		workerNum:              defaultWorkerNum,
+		eventCh:                make(chan MetadataEvent, workNum),
+		workerNum:              workNum,
 		closer:                 run.NewChannelCloser(),
 	}
 }
@@ -156,12 +155,13 @@ func NewPortableRepository(
 	l *logger.Logger,
 	supplier ResourceSchemaSupplier,
 ) Repository {
+	workNum := getWorkerNum()
 	return &schemaRepo{
 		metadata:               metadata,
 		l:                      l,
 		resourceSchemaSupplier: supplier,
-		eventCh:                make(chan MetadataEvent, defaultWorkerNum),
-		workerNum:              defaultWorkerNum,
+		eventCh:                make(chan MetadataEvent, workNum),
+		workerNum:              workNum,
 		closer:                 run.NewChannelCloser(),
 	}
 }
@@ -226,7 +226,7 @@ func (sr *schemaRepo) Watcher() {
 						// TODO: Reconcile when the retry times is more than 3.
 						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
 						go func() {
-							sr.sendMetadataEvent(evt, true)
+							sr.SendMetadataEvent(evt)
 						}()
 					}
 				case <-sr.closer.CloseNotify():

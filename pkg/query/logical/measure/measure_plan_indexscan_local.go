@@ -139,11 +139,18 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 
 func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
 	var orderBy *pbv1.OrderBy
+	orderByType := pbv1.OrderByTypeTime
 	if i.order != nil {
+		if i.order.Index != nil {
+			orderByType = pbv1.OrderByTypeIndex
+		}
 		orderBy = &pbv1.OrderBy{
 			Index: i.order.Index,
 			Sort:  i.order.Sort,
 		}
+	}
+	if i.groupByEntity {
+		orderByType = pbv1.OrderByTypeSeries
 	}
 	ec := executor.FromMeasureExecutionContext(ctx)
 	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
@@ -151,6 +158,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		TimeRange:       &i.timeRange,
 		Entities:        i.entities,
 		Filter:          i.filter,
+		OrderByType:     orderByType,
 		Order:           orderBy,
 		TagProjection:   i.projectionTags,
 		FieldProjection: i.projectionFields,
