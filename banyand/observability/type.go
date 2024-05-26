@@ -21,3 +21,4 @@ package observability
 import "errors"
 
 var errNoAddr = errors.New("no address")
+var errInvalidMode = errors.New("invalid observability mode") 

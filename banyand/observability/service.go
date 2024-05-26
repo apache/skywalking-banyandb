@@ -24,21 +24,38 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+)
+
+const (
+	flagNativeMode = "native"
+	flagPromethusMode = "prometheus"
 )
 
 var (
 	_   run.Service = (*metricService)(nil)
 	_   run.Config  = (*metricService)(nil)
 	mux             = http.NewServeMux()
+	modeNewMeterProvider = map[string]func(_ meter.Scope) meter.Provider{
+		flagNativeMode: newNativeMeterProvider,
+		flagPromethusMode: newPromMeterProvider,
+	}
+	MetricsServerInterceptor func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) = emptyMetricsServerInterceptor
 )
 
+type Service interface {
+	run.PreRunner
+	run.Service
+}
+
 // NewMetricService returns a metric service.
-func NewMetricService(metadata metadata.Repo) run.Service {
+func NewMetricService(metadata metadata.Repo) Service {
 	return &metricService{
 		closer:   run.NewCloser(1),
 		metadata: metadata,
@@ -53,11 +70,13 @@ type metricService struct {
 	metadata   metadata.Repo
 	listenAddr string
 	mutex      sync.Mutex
+	modes      []string
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("observability")
 	flagSet.StringVar(&p.listenAddr, "observability-listener-addr", ":2121", "listen addr for observability")
+	flagSet.StringArrayVar(&p.modes, "observability-modes", []string{}, "modes for observability")
 	return flagSet
 }
 
@@ -65,8 +84,24 @@ func (p *metricService) Validate() error {
 	if p.listenAddr == "" {
 		return errNoAddr
 	}
+	for _, mode := range p.modes {
+		if mode != flagNativeMode && mode != flagPromethusMode {
+			return errInvalidMode
+		}
+	}
 	return nil
 }
+
+func (p *metricService) PreRun(_ context.Context) error {
+	for _, mode := range p.modes {
+		MetricsCollector.RegisterProvider(mode, modeNewMeterProvider[mode](SystemScope))
+		if mode == flagPromethusMode {
+			MetricsServerInterceptor = promMetricsServerInterceptor
+		}
+	}
+	return nil
+}
+
 
 func (p *metricService) Name() string {
 	return "metric-service"

@@ -41,15 +41,8 @@ var (
 
 var (
 	// RootScope is the root scope for all metrics.
-	RootScope = meter.NewHierarchicalScope("banyandb", "_")
-
-	systemScope = RootScope.SubScope("system")
-
-	systemProvider  = NewMeterProvider(systemScope)
-	cpuStateGauge   = systemProvider.Gauge("cpu_state", "kind")
-	cpuNumGauge     = systemProvider.Gauge("cpu_num")
-	memorySateGauge = systemProvider.Gauge("memory_state", "kind")
-	netStateGauge   = systemProvider.Gauge("net_state", "kind", "name")
+	RootScope   = meter.NewHierarchicalScope("banyandb", "_")
+	SystemScope = RootScope.SubScope("system")
 )
 
 func init() {
@@ -58,7 +51,9 @@ func init() {
 	MetricsCollector.Register("net", collectNet)
 }
 
-func collectCPU() {
+func collectCPU(provider meter.Provider) {
+	cpuStateGauge := provider.Gauge("cpu_state", "kind")
+	cpuNumGauge := provider.Gauge("cpu_num")
 	once4CpuCount.Do(func() {
 		if c, err := cpuCountsFunc(false); err != nil {
 			log.Error().Err(err).Msg("cannot get cpu count")
@@ -87,7 +82,8 @@ func collectCPU() {
 	cpuStateGauge.Set(allStat.Steal/total, "steal")
 }
 
-func collectMemory() {
+func collectMemory(provider meter.Provider) {
+	memorySateGauge := provider.Gauge("memory_state", "kind")
 	m, err := mem.VirtualMemory()
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get memory stat")
@@ -96,7 +92,8 @@ func collectMemory() {
 	memorySateGauge.Set(float64(m.Used)/float64(m.Total), "used")
 }
 
-func collectNet() {
+func collectNet(provider meter.Provider) {
+	netStateGauge := provider.Gauge("net_state", "kind", "name")
 	stats, err := getNetStat(context.Background())
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get net stat")

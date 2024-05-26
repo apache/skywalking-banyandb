@@ -1,6 +1,3 @@
-//go:build !prometheus
-// +build !prometheus
-
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -27,11 +24,11 @@ import (
 )
 
 // NewMeterProvider returns a meter.Provider based on the given scope.
-func NewMeterProvider(_ meter.Scope) meter.Provider {
+func newNativeMeterProvider(_ meter.Scope) meter.Provider {
 	return meter.NoopProvider{}
 }
 
 // MetricsServerInterceptor returns a grpc.UnaryServerInterceptor and a grpc.StreamServerInterceptor.
-func MetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
+func emptyMetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
 	return nil, nil
 }
