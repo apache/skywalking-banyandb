@@ -19,6 +19,7 @@ package v1
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/pkg/errors"
 
@@ -128,7 +129,7 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 			},
 		}, nil
 	default:
-		return nil, nil, nil, errors.New("unsupported tag value type")
+		return nil, src, nil, fmt.Errorf("unsupported tag value type %d, tag value: %s", vt, src)
 	}
 }
 

@@ -63,7 +63,7 @@ func (s *Series) Unmarshal(src []byte) error {
 		s.Buffer = s.Buffer[:0]
 		var tv *modelv1.TagValue
 		if s.Buffer, src, tv, err = unmarshalTagValue(s.Buffer, src); err != nil {
-			return errors.WithMessage(err, "unmarshal tag value")
+			return errors.WithMessagef(err, "unmarshal tag value %v, marshaled %s", src, s.EntityValues)
 		}
 		s.EntityValues = append(s.EntityValues, tv)
 	}
