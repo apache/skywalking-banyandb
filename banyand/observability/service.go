@@ -34,21 +34,25 @@ import (
 )
 
 const (
-	flagNativeMode = "native"
+	flagNativeMode    = "native"
 	flagPromethusMode = "prometheus"
 )
 
 var (
-	_   run.Service = (*metricService)(nil)
-	_   run.Config  = (*metricService)(nil)
-	mux             = http.NewServeMux()
-	modeNewMeterProvider = map[string]func(_ meter.Scope) meter.Provider{
-		flagNativeMode: newNativeMeterProvider,
+	_                    run.Service = (*metricService)(nil)
+	_                    run.Config  = (*metricService)(nil)
+	mux                              = http.NewServeMux()
+	modeNewMeterProvider             = map[string]func(_ meter.Scope) meter.Provider{
+		flagNativeMode:    newNativeMeterProvider,
 		flagPromethusMode: newPromMeterProvider,
 	}
-	MetricsServerInterceptor func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) = emptyMetricsServerInterceptor
+	modeNewInterceptors = map[string]func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor){
+		flagNativeMode:    emptyMetricsServerInterceptor,
+		flagPromethusMode: promMetricsServerInterceptor,
+	}
 )
 
+// Service type for Metric Service.
 type Service interface {
 	run.PreRunner
 	run.Service
@@ -69,8 +73,8 @@ type metricService struct {
 	scheduler  *timestamp.Scheduler
 	metadata   metadata.Repo
 	listenAddr string
-	mutex      sync.Mutex
 	modes      []string
+	mutex      sync.Mutex
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
@@ -84,24 +88,28 @@ func (p *metricService) Validate() error {
 	if p.listenAddr == "" {
 		return errNoAddr
 	}
+	set := make(map[string]bool)
 	for _, mode := range p.modes {
 		if mode != flagNativeMode && mode != flagPromethusMode {
 			return errInvalidMode
 		}
+		if _, exists := set[mode]; exists {
+			return errDuplicatedMode
+		}
+		set[mode] = true
 	}
 	return nil
 }
 
 func (p *metricService) PreRun(_ context.Context) error {
 	for _, mode := range p.modes {
-		MetricsCollector.RegisterProvider(mode, modeNewMeterProvider[mode](SystemScope))
-		if mode == flagPromethusMode {
-			MetricsServerInterceptor = promMetricsServerInterceptor
-		}
+		MetricsCollector.RegisterProvider(modeNewMeterProvider[mode](SystemScope))
+		unaryMetrics, streamMetrics := modeNewInterceptors[mode]()
+		MetricsInterceptorCollection.RegisterUnaryServerInterceptor(unaryMetrics)
+		MetricsInterceptorCollection.RegisterStreamServerInterceptor(streamMetrics)
 	}
 	return nil
 }
-
 
 func (p *metricService) Name() string {
 	return "metric-service"

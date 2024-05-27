@@ -25,8 +25,8 @@ import (
 
 // MetricsCollector is a global metrics collector.
 var MetricsCollector = Collector{
-	getters: make(map[string]MetricsGetter),
-	providers: make(map[string]meter.Provider),
+	getters:   make(map[string]MetricsGetter),
+	providers: []meter.Provider{},
 }
 
 // MetricsGetter is a function that collects metrics.
@@ -34,15 +34,16 @@ type MetricsGetter func(meter.Provider)
 
 // Collector is a metrics collector.
 type Collector struct {
-	getters map[string]MetricsGetter
-	gMux    sync.RWMutex
-	providers map[string]meter.Provider
+	getters   map[string]MetricsGetter
+	providers []meter.Provider
+	gMux      sync.RWMutex
 }
 
-func (c *Collector) RegisterProvider(mode string, provider meter.Provider) {
+// RegisterProvider register a metrics provider.
+func (c *Collector) RegisterProvider(provider meter.Provider) {
 	c.gMux.Lock()
 	defer c.gMux.Unlock()
-	c.providers[mode] = provider
+	c.providers = append(c.providers, provider)
 }
 
 // Register registers a metrics getter.

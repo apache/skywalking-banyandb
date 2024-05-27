@@ -41,7 +41,8 @@ var (
 
 var (
 	// RootScope is the root scope for all metrics.
-	RootScope   = meter.NewHierarchicalScope("banyandb", "_")
+	RootScope = meter.NewHierarchicalScope("banyandb", "_")
+	// SystemScope is the system scope for all metrics.
 	SystemScope = RootScope.SubScope("system")
 )
 
