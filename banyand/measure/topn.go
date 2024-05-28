@@ -252,27 +252,29 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 		EntityValues: make([]*modelv1.TagValue, 1+1+len(tagValues)),
 	}
 
-	// entity prefix
-	series.EntityValues[0] = &modelv1.TagValue{
+	copy(series.EntityValues, tagValues)
+	series.EntityValues[len(series.EntityValues)-2] = &modelv1.TagValue{
 		Value: &modelv1.TagValue_Int{
 			Int: &modelv1.Int{
 				Value: int64(t.sortDirection),
 			},
 		},
 	}
-	series.EntityValues[1] = &modelv1.TagValue{
+	series.EntityValues[len(series.EntityValues)-1] = &modelv1.TagValue{
 		Value: &modelv1.TagValue_Int{
 			Int: &modelv1.Int{
 				Value: int64(rankNum),
 			},
 		},
 	}
-	// measureID as sharding key
-	for idx, tagVal := range tagValues {
-		series.EntityValues[idx+2] = tagVal
-	}
 	if err := series.Marshal(); err != nil {
 		return nil, 0, fmt.Errorf("fail to marshal series: %w", err)
+	}
+	src := make([]byte, len(series.Buffer))
+	copy(src, series.Buffer)
+	var s1 pbv1.Series
+	if err := s1.Unmarshal(src); err != nil {
+		return nil, 0, fmt.Errorf("fail to unmarshal series encoded:[%s] tagValues:[%s]: %w", series.Buffer, series.EntityValues, err)
 	}
 	id, err := partition.ShardID(series.Buffer, t.m.shardNum)
 	if err != nil {

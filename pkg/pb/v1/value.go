@@ -64,10 +64,6 @@ func MustTagValueToValueType(tag *modelv1.TagValue) ValueType {
 }
 
 func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
-	if tv == AnyTagValue {
-		dest = marshalEntityValue(dest, anyWildcard)
-		return dest, nil
-	}
 	dest = append(dest, byte(MustTagValueToValueType(tv)))
 	switch tv.Value.(type) {
 	case *modelv1.TagValue_Null:
@@ -83,6 +79,14 @@ func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
 		return nil, errors.New("unsupported tag value type: " + tv.String())
 	}
 	return dest, nil
+}
+
+func marshalTagValueWithWildcard(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
+	if tv == AnyTagValue {
+		dest = marshalEntityValue(dest, anyWildcard)
+		return dest, nil
+	}
+	return marshalTagValue(dest, tv)
 }
 
 func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagValue, error) {

@@ -361,7 +361,6 @@ func buildTopNSourceMeasure(topNSchema *databasev1.TopNAggregation, sourceMeasur
 			return nil, fmt.Errorf("fail to find tag spec %s", tagName)
 		}
 	}
-
 	// create a new "derived" measure for TopN result
 	return &databasev1.Measure{
 		Metadata: topNSchema.Metadata,
@@ -387,10 +386,9 @@ func buildTopNSourceMeasure(topNSchema *databasev1.TopNAggregation, sourceMeasur
 		},
 		Fields: []*databasev1.FieldSpec{topNValueFieldSpec},
 		Entity: &databasev1.Entity{
-			TagNames: append([]string{
+			TagNames: append(topNSchema.GetGroupByTagNames(),
 				"sortDirection",
-				"rankNumber",
-			}, topNSchema.GetGroupByTagNames()...),
+				"rankNumber"),
 		},
 	}, nil
 }

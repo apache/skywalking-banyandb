@@ -135,7 +135,7 @@ func convertEntityValuesToSeriesMatcher(series *pbv1.Series) (index.SeriesMatche
 
 	if hasAny {
 		if hasWildcard {
-			if err = series.Marshal(); err != nil {
+			if err = series.MarshalWithWildcard(); err != nil {
 				return emptySeriesMatcher, err
 			}
 			return index.SeriesMatcher{
