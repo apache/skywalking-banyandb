@@ -97,7 +97,7 @@ func TestMarshalAndUnmarshalSeries(t *testing.T) {
 			src: &Series{Subject: "subject", EntityValues: []*modelv1.TagValue{
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "stringValue"}}},
 				{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 1}}},
-				{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 1}}},
+				{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 46}}},
 			}},
 		},
 	}

@@ -51,11 +51,11 @@ func (c *column) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
-func (c *column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
-	ch.reset()
+func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
+	cm.reset()
 
-	ch.name = c.name
-	ch.valueType = c.valueType
+	cm.name = c.name
+	cm.valueType = c.valueType
 
 	// TODO: encoding values based on value type
 
@@ -64,11 +64,11 @@ func (c *column) mustWriteTo(ch *columnMetadata, columnWriter *writer) {
 
 	// marshal values
 	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
-	ch.size = uint64(len(bb.Buf))
-	if ch.size > maxValuesBlockSize {
-		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", ch.size, maxValuesBlockSize)
+	cm.size = uint64(len(bb.Buf))
+	if cm.size > maxValuesBlockSize {
+		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", cm.size, maxValuesBlockSize)
 	}
-	ch.offset = columnWriter.bytesWritten
+	cm.offset = columnWriter.bytesWritten
 	columnWriter.MustWrite(bb.Buf)
 }
 

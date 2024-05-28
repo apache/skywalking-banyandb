@@ -71,8 +71,7 @@ func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
 	case *modelv1.TagValue_Str:
 		dest = marshalEntityValue(dest, convert.StringToBytes(tv.GetStr().Value))
 	case *modelv1.TagValue_Int:
-		dest = encoding.Int64ToBytes(dest, tv.GetInt().Value)
-		dest = marshalEntityValue(dest, nil)
+		dest = marshalEntityValue(dest, encoding.Int64ToBytes(nil, tv.GetInt().Value))
 	case *modelv1.TagValue_BinaryData:
 		dest = marshalEntityValue(dest, tv.GetBinaryData())
 	default:

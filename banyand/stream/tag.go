@@ -51,11 +51,11 @@ func (t *tag) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
-func (t *tag) mustWriteTo(ch *tagMetadata, tagWriter *writer) {
-	ch.reset()
+func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
+	tm.reset()
 
-	ch.name = t.name
-	ch.valueType = t.valueType
+	tm.name = t.name
+	tm.valueType = t.valueType
 
 	// TODO: encoding values based on value type
 
@@ -64,11 +64,11 @@ func (t *tag) mustWriteTo(ch *tagMetadata, tagWriter *writer) {
 
 	// marshal values
 	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
-	ch.size = uint64(len(bb.Buf))
-	if ch.size > maxValuesBlockSize {
-		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", ch.size, maxValuesBlockSize)
+	tm.size = uint64(len(bb.Buf))
+	if tm.size > maxValuesBlockSize {
+		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", tm.size, maxValuesBlockSize)
 	}
-	ch.offset = tagWriter.bytesWritten
+	tm.offset = tagWriter.bytesWritten
 	tagWriter.MustWrite(bb.Buf)
 }
 

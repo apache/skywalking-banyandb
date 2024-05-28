@@ -18,7 +18,6 @@
 package dquery
 
 import (
-	"fmt"
 	"time"
 
 	"go.uber.org/multierr"
@@ -66,7 +65,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	aggregator := query.CreateTopNPostAggregator(request.GetTopN(),
 		agg, request.GetFieldValueSort())
 	var tags []string
-	for i, f := range ff {
+	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			allErr = multierr.Append(allErr, getErr)
 		} else {
@@ -87,13 +86,11 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 					for _, e := range tn.Entity {
 						entityValues = append(entityValues, e.Value)
 					}
-					fmt.Printf("%d entityValues: %v value: %d\n", i, entityValues, tn.Value.GetInt().GetValue())
 					_ = aggregator.Put(entityValues, tn.Value.GetInt().GetValue(), uint64(l.Timestamp.AsTime().UnixMilli()))
 				}
 			}
 		}
 	}
-	fmt.Println("--------------------")
 	if allErr != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), allErr))
 		return
@@ -102,10 +99,8 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(now, &measurev1.TopNResponse{})
 		return
 	}
-	lst := aggregator.Val(tags)
-	fmt.Println(lst)
 	resp = bus.NewMessage(now, &measurev1.TopNResponse{
-		Lists: lst,
+		Lists: aggregator.Val(tags),
 	})
 	return
 }
