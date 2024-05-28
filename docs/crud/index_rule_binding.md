@@ -1,4 +1,4 @@
-# CRUD indexRuleBindings
+# CRUD IndexRuleBindings
 
 CRUD operations create, read, update and delete index rule bindings.
 
