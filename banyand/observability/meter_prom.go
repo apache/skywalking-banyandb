@@ -40,7 +40,7 @@ var (
 func init() {
 	reg.MustRegister(collectors.NewGoCollector())
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	mux.Handle("/metrics", promhttp.HandlerFor(
+	metricsMux.Handle("/metrics", promhttp.HandlerFor(
 		reg,
 		promhttp.HandlerOpts{},
 	))

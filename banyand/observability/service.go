@@ -41,15 +41,13 @@ const (
 var (
 	_                    run.Service = (*metricService)(nil)
 	_                    run.Config  = (*metricService)(nil)
-	mux                              = http.NewServeMux()
+	metricsMux                       = http.NewServeMux()
 	modeNewMeterProvider             = map[string]func(_ meter.Scope) meter.Provider{
 		flagNativeMode:    newNativeMeterProvider,
 		flagPromethusMode: newPromMeterProvider,
 	}
-	modeNewInterceptors = map[string]func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor){
-		flagNativeMode:    emptyMetricsServerInterceptor,
-		flagPromethusMode: promMetricsServerInterceptor,
-	}
+	// MetricsServerInterceptor is the function to obtain grpc metrics interceptor.
+	MetricsServerInterceptor func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) = emptyMetricsServerInterceptor
 )
 
 // Service type for Metric Service.
@@ -80,7 +78,7 @@ type metricService struct {
 func (p *metricService) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("observability")
 	flagSet.StringVar(&p.listenAddr, "observability-listener-addr", ":2121", "listen addr for observability")
-	flagSet.StringArrayVar(&p.modes, "observability-modes", []string{}, "modes for observability")
+	flagSet.StringArrayVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
 	return flagSet
 }
 
@@ -104,9 +102,9 @@ func (p *metricService) Validate() error {
 func (p *metricService) PreRun(_ context.Context) error {
 	for _, mode := range p.modes {
 		MetricsCollector.RegisterProvider(modeNewMeterProvider[mode](SystemScope))
-		unaryMetrics, streamMetrics := modeNewInterceptors[mode]()
-		MetricsInterceptorCollection.RegisterUnaryServerInterceptor(unaryMetrics)
-		MetricsInterceptorCollection.RegisterStreamServerInterceptor(streamMetrics)
+		if mode == flagPromethusMode {
+			MetricsServerInterceptor = promMetricsServerInterceptor
+		}
 	}
 	return nil
 }
@@ -136,7 +134,7 @@ func (p *metricService) Serve() run.StopNotify {
 	p.svr = &http.Server{
 		Addr:              p.listenAddr,
 		ReadHeaderTimeout: 3 * time.Second,
-		Handler:           mux,
+		Handler:           metricsMux,
 	}
 	go func() {
 		defer p.closer.Done()

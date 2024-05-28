@@ -92,7 +92,7 @@ type ErrorResponse struct {
 }
 
 func init() {
-	mux.HandleFunc("/system", systemInfoHandler)
+	metricsMux.HandleFunc("/system", systemInfoHandler)
 }
 
 func systemInfoHandler(w http.ResponseWriter, _ *http.Request) {

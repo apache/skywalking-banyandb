@@ -220,21 +220,20 @@ func (s *server) Serve() run.StopNotify {
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 
-	unaryMetrics := observability.MetricsInterceptorCollection.GetUnaryServerInterceptors()
-	streamMetrics := observability.MetricsInterceptorCollection.GetStreamServerInterceptor()
+	unaryMetrics, streamMetrics := observability.MetricsServerInterceptor()
 	streamChain := []grpclib.StreamServerInterceptor{
 		grpc_validator.StreamServerInterceptor(),
 		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
 	if streamMetrics != nil {
-		streamChain = append(streamChain, streamMetrics...)
+		streamChain = append(streamChain, streamMetrics)
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
 		grpc_validator.UnaryServerInterceptor(),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
 	if unaryMetrics != nil {
-		unaryChain = append(unaryChain, unaryMetrics...)
+		unaryChain = append(unaryChain, unaryMetrics)
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
