@@ -74,7 +74,7 @@ func Test_dataBlock_marshal_unmarshal(t *testing.T) {
 }
 
 func Test_timestampsMetadata_reset(t *testing.T) {
-	th := &timestampsMetadata{
+	tm := &timestampsMetadata{
 		dataBlock: dataBlock{
 			offset: 1,
 			size:   1,
@@ -84,13 +84,13 @@ func Test_timestampsMetadata_reset(t *testing.T) {
 		encodeType: encoding.EncodeTypeConst,
 	}
 
-	th.reset()
+	tm.reset()
 
-	assert.Equal(t, uint64(0), th.dataBlock.offset)
-	assert.Equal(t, uint64(0), th.dataBlock.size)
-	assert.Equal(t, int64(0), th.min)
-	assert.Equal(t, int64(0), th.max)
-	assert.Equal(t, encoding.EncodeTypeUnknown, th.encodeType)
+	assert.Equal(t, uint64(0), tm.dataBlock.offset)
+	assert.Equal(t, uint64(0), tm.dataBlock.size)
+	assert.Equal(t, int64(0), tm.min)
+	assert.Equal(t, int64(0), tm.max)
+	assert.Equal(t, encoding.EncodeTypeUnknown, tm.encodeType)
 }
 
 func Test_timestampsMetadata_copyFrom(t *testing.T) {
