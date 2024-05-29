@@ -51,6 +51,7 @@ func (s *Series) Marshal() error {
 	return nil
 }
 
+// MarshalWithWildcard encodes series to internal Buffer and generates ID with wildcard.
 func (s *Series) MarshalWithWildcard() error {
 	s.Buffer = marshalEntityValue(s.Buffer, convert.StringToBytes(s.Subject))
 	var err error

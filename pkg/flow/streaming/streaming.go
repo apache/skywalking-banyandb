@@ -35,8 +35,8 @@ type streamingFlow struct {
 	source flow.Source
 	sink   flow.Sink
 	drain  chan error
-	ops    []flow.Operator
 	l      *logger.Logger
+	ops    []flow.Operator
 }
 
 // New returns a new streaming flow.

@@ -74,20 +74,20 @@ func (s *windowedFlow) AllowedMaxWindows(windowCnt int) flow.WindowedFlow {
 }
 
 type tumblingTimeWindows struct {
-	errorHandler       func(error)
+	l                  *logger.Logger
 	snapshots          *lru.Cache
 	timerHeap          *flow.DedupPriorityQueue
 	aggregationFactory flow.AggregationOpFactory
 	in                 chan flow.StreamRecord
 	out                chan flow.StreamRecord
+	errorHandler       func(error)
 	flow.ComponentState
-	windowSize       int64
 	windowCount      int
 	currentWatermark int64
 	lastFlushTime    int64
-	timerMu          sync.Mutex
 	flushInterval    int64
-	l                *logger.Logger
+	windowSize       int64
+	timerMu          sync.Mutex
 }
 
 func (s *tumblingTimeWindows) In() chan<- flow.StreamRecord {

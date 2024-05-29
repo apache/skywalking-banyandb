@@ -79,9 +79,9 @@ type topNAggregatorGroup struct {
 	sortKeyExtractor  func(flow.StreamRecord) int64
 	groupKeyExtractor func(flow.StreamRecord) string
 	comparator        utils.Comparator
+	l                 *logger.Logger
 	cacheSize         int
 	sort              TopNSort
-	l                 *logger.Logger
 }
 
 type topNAggregator struct {

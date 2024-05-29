@@ -53,7 +53,7 @@ func BuildTopNSchema(md *databasev1.Measure) (logical.Schema, error) {
 
 // TopNAnalyze converts logical expressions to executable operation tree represented by Plan.
 func TopNAnalyze(_ context.Context, criteria *measurev1.TopNRequest, schema *databasev1.Measure,
-	sourceMeasureSchema *databasev1.Measure, topNAggregation *databasev1.TopNAggregation, s logical.Schema,
+	sourceMeasureSchema *databasev1.Measure, s logical.Schema,
 ) (logical.Plan, error) {
 	groupByProjectionTags := sourceMeasureSchema.GetEntity().GetTagNames()
 	groupByTags := make([][]*logical.Tag, len(schema.GetTagFamilies()))
