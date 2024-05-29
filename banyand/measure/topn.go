@@ -346,7 +346,8 @@ func (manager *topNProcessorManager) start() error {
 		for i, sortDirection := range sortDirections {
 			srcCh := make(chan interface{})
 			src, _ := sources.NewChannel(srcCh)
-			streamingFlow := streaming.New(src)
+			name := strings.Join([]string{topNSchema.GetMetadata().Group, topNSchema.GetMetadata().Name, modelv1.Sort_name[int32(sortDirection)]}, "-")
+			streamingFlow := streaming.New(name, src)
 
 			filters, buildErr := manager.buildFilter(topNSchema.GetCriteria())
 			if buildErr != nil {

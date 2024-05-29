@@ -25,6 +25,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -75,6 +76,7 @@ var _ = g.Describe("Sliding Window", func() {
 		slidingWindows = NewTumblingTimeWindows(time.Second * 15).(*tumblingTimeWindows)
 		slidingWindows.aggregationFactory = aggrFactory
 		slidingWindows.windowCount = 2
+		slidingWindows.l = logger.GetLogger("tumblingTimeWindows")
 
 		gomega.Expect(slidingWindows.Setup(context.TODO())).Should(gomega.Succeed())
 		gomega.Expect(snk.Setup(context.TODO())).Should(gomega.Succeed())

@@ -61,7 +61,7 @@ var _ = g.Describe("Streaming", func() {
 
 		g.JustBeforeEach(func() {
 			snk = newSlice()
-			f = New(input).
+			f = New("test", input).
 				Filter(filter).
 				To(snk)
 			errCh = f.Open()
@@ -98,7 +98,7 @@ var _ = g.Describe("Streaming", func() {
 
 		g.JustBeforeEach(func() {
 			snk = newSlice()
-			f = New(input).
+			f = New("test", input).
 				Map(mapper).
 				To(snk)
 			errCh = f.Open()
@@ -143,7 +143,7 @@ var _ = g.Describe("Streaming", func() {
 		g.JustBeforeEach(func() {
 			snk = newSlice()
 
-			f = New(flowTest.NewSlice(input)).
+			f = New("test", flowTest.NewSlice(input)).
 				Map(flow.UnaryFunc[any](func(_ context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
@@ -206,7 +206,7 @@ var _ = g.Describe("Streaming", func() {
 		g.JustBeforeEach(func() {
 			snk = newSlice()
 
-			f = New(flowTest.NewSlice(input)).
+			f = New("test", flowTest.NewSlice(input)).
 				Map(flow.UnaryFunc[any](func(_ context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}

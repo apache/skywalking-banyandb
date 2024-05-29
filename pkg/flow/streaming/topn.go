@@ -18,11 +18,16 @@
 package streaming
 
 import (
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/emirpasic/gods/utils"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // TopNSort defines the order of sorting.
@@ -37,6 +42,7 @@ const (
 type windowedFlow struct {
 	f  *streamingFlow
 	wa flow.WindowAssigner
+	l  *logger.Logger
 }
 
 func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
@@ -44,6 +50,7 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 		topNAggrFunc := &topNAggregatorGroup{
 			cacheSize: topNum,
 			sort:      DESC,
+			l:         s.l,
 		}
 		// apply user customized options
 		for _, opt := range opts {
@@ -74,6 +81,7 @@ type topNAggregatorGroup struct {
 	comparator        utils.Comparator
 	cacheSize         int
 	sort              TopNSort
+	l                 *logger.Logger
 }
 
 type topNAggregator struct {
@@ -113,6 +121,9 @@ func (t *topNAggregatorGroup) Add(input []flow.StreamRecord) {
 		groupKey := t.groupKeyExtractor(item)
 		aggregator := t.getOrCreateGroup(groupKey)
 		if aggregator.checkSortKeyInBufferRange(sortKey) {
+			if e := t.l.Debug(); e.Enabled() {
+				e.Str("group", groupKey).Time("elem_ts", time.Unix(0, item.TimestampMillis()*int64(time.Millisecond))).Msg("put into topN buffer")
+			}
 			aggregator.put(sortKey, item)
 			aggregator.doCleanUp()
 		}
@@ -135,6 +146,17 @@ func (t *topNAggregatorGroup) Snapshot() interface{} {
 			}
 		}
 		groupRanks[group] = items
+	}
+	if len(groupRanks) > 0 {
+		sb := strings.Builder{}
+		for g, item := range groupRanks {
+			sb.WriteString("{")
+			sb.WriteString(g)
+			sb.WriteString(":")
+			sb.WriteString(strconv.Itoa(len(item)))
+			sb.WriteString("}")
+		}
+		t.l.Info().Interface("snapshot", sb.String()).Msg("taken a topN snapshot")
 	}
 	return groupRanks
 }

@@ -25,6 +25,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var _ flow.Flow = (*streamingFlow)(nil)
@@ -35,14 +36,16 @@ type streamingFlow struct {
 	sink   flow.Sink
 	drain  chan error
 	ops    []flow.Operator
+	l      *logger.Logger
 }
 
 // New returns a new streaming flow.
-func New(source flow.Source) flow.Flow {
+func New(name string, source flow.Source) flow.Flow {
 	return &streamingFlow{
 		source: source,
 		ops:    make([]flow.Operator, 0),
 		drain:  make(chan error),
+		l:      logger.GetLogger(name),
 	}
 }
 
@@ -66,6 +69,7 @@ func (f *streamingFlow) To(sink flow.Sink) flow.Flow {
 }
 
 func (f *streamingFlow) Close() error {
+	f.l.Info().Msg("flow is closing")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	err := f.source.Teardown(ctx)
@@ -113,6 +117,8 @@ func (f *streamingFlow) Open() <-chan error {
 	}
 	// finally connect sources and the first operator
 	f.source.Exec(f.ops[0])
+
+	f.l.Info().Msg("flow is running")
 
 	return f.drain
 }
