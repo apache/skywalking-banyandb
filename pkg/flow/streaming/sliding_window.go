@@ -84,8 +84,9 @@ type tumblingTimeWindows struct {
 	windowSize       int64
 	windowCount      int
 	currentWatermark int64
+	lastFlushTime    int64
 	timerMu          sync.Mutex
-	maxFlushInterval int64
+	flushInterval    int64
 	l                *logger.Logger
 }
 
@@ -196,7 +197,13 @@ func (s *tumblingTimeWindows) receive() {
 
 		// even if the incoming elements do not follow strict order,
 		// the watermark could increase monotonically.
-		if pastDur := elem.TimestampMillis() - s.currentWatermark; pastDur > 0 {
+		now := time.Now().UnixNano() / int64(time.Millisecond)
+		pastDataDur := elem.TimestampMillis() - s.currentWatermark
+		if s.lastFlushTime == 0 {
+			s.lastFlushTime = now
+		}
+		pastDur := now - s.lastFlushTime
+		if pastDur > 0 || pastDataDur > 0 {
 			previousWaterMark := s.currentWatermark
 			s.currentWatermark = elem.TimestampMillis()
 
@@ -214,11 +221,8 @@ func (s *tumblingTimeWindows) receive() {
 			// |          flush        flush     |
 			// |---------------------------------|
 			// the max flush interval is 1 minute.
-			it := float64(s.windowSize) * 0.4
-			if it > float64(s.maxFlushInterval) {
-				it = float64(s.maxFlushInterval)
-			}
-			if previousWaterMark > 0 && float64(pastDur) > it {
+			if (pastDur > s.flushInterval) || (previousWaterMark > 0 && pastDataDur > s.flushInterval) {
+				s.lastFlushTime = now
 				s.flushDirtyWindows()
 			}
 		}
@@ -247,15 +251,21 @@ func (s *tumblingTimeWindows) Exec(downstream flow.Inlet) {
 
 // NewTumblingTimeWindows return tumbling-time windows.
 func NewTumblingTimeWindows(size time.Duration, maxFlushInterval time.Duration) flow.WindowAssigner {
+	ws := size.Milliseconds()
+	mfi := maxFlushInterval.Milliseconds()
+	it := int64(float64(ws) * 0.4)
+	if it > mfi {
+		it = mfi
+	}
 	return &tumblingTimeWindows{
-		windowSize: size.Milliseconds(),
+		windowSize: ws,
 		timerHeap: flow.NewPriorityQueue(func(a, b interface{}) int {
 			return int(a.(*internalTimer).triggerTimeMillis - b.(*internalTimer).triggerTimeMillis)
 		}, false),
 		in:               make(chan flow.StreamRecord),
 		out:              make(chan flow.StreamRecord),
 		currentWatermark: 0,
-		maxFlushInterval: maxFlushInterval.Milliseconds(),
+		flushInterval:    it,
 	}
 }
 
