@@ -61,7 +61,7 @@ var _ = g.Describe("Streaming", func() {
 
 		g.JustBeforeEach(func() {
 			snk = newSlice()
-			f = New(input).
+			f = New("test", input).
 				Filter(filter).
 				To(snk)
 			errCh = f.Open()
@@ -98,7 +98,7 @@ var _ = g.Describe("Streaming", func() {
 
 		g.JustBeforeEach(func() {
 			snk = newSlice()
-			f = New(input).
+			f = New("test", input).
 				Map(mapper).
 				To(snk)
 			errCh = f.Open()
@@ -143,12 +143,12 @@ var _ = g.Describe("Streaming", func() {
 		g.JustBeforeEach(func() {
 			snk = newSlice()
 
-			f = New(flowTest.NewSlice(input)).
+			f = New("test", flowTest.NewSlice(input)).
 				Map(flow.UnaryFunc[any](func(_ context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
 				})).
-				Window(NewTumblingTimeWindows(15*time.Second)).
+				Window(NewTumblingTimeWindows(15*time.Second, 15*time.Second)).
 				TopN(3, WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 					return record.Data().(flow.Data)[1].(int64)
 				}), OrderBy(ASC), WithGroupKeyExtractor(func(record flow.StreamRecord) string {
@@ -206,12 +206,12 @@ var _ = g.Describe("Streaming", func() {
 		g.JustBeforeEach(func() {
 			snk = newSlice()
 
-			f = New(flowTest.NewSlice(input)).
+			f = New("test", flowTest.NewSlice(input)).
 				Map(flow.UnaryFunc[any](func(_ context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
 				})).
-				Window(NewTumblingTimeWindows(15*time.Second)).
+				Window(NewTumblingTimeWindows(15*time.Second, 15*time.Second)).
 				TopN(3, WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 					return record.Data().(flow.Data)[1].(int64)
 				}), WithGroupKeyExtractor(func(record flow.StreamRecord) string {

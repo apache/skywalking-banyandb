@@ -19,6 +19,7 @@
 package sub
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/pkg/errors"
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -120,9 +122,15 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			}
 			continue
 		}
-		message, ok := m.Data().(proto.Message)
-		if !ok {
-			reply(writeEntity, err, "invalid response")
+		var message proto.Message
+		switch d := m.Data().(type) {
+		case proto.Message:
+			message = d
+		case common.Error:
+			reply(writeEntity, nil, d.Msg())
+			continue
+		default:
+			reply(writeEntity, nil, fmt.Sprintf("invalid response: %T", d))
 			continue
 		}
 		anyMessage, err := anypb.New(message)

@@ -20,8 +20,10 @@ package flow
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -140,6 +142,11 @@ func (sr StreamRecord) Data() interface{} {
 // Equal checks if two StreamRecord are the same.
 func (sr StreamRecord) Equal(other StreamRecord) bool {
 	return sr.ts == other.ts && cmp.Equal(sr.data, other.data)
+}
+
+func (sr StreamRecord) String() string {
+	t := time.Unix(0, sr.ts*int64(time.Millisecond))
+	return fmt.Sprintf("data: %s, ts: %v", sr.data, t)
 }
 
 // Inlet represents a type that exposes one open input.

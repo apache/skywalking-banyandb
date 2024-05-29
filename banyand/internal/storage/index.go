@@ -103,7 +103,7 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series) 
 	}
 	result, err := convertIndexSeriesToSeriesList(ss)
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, result:%v", seriesMatchers, ss)
+		return nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, matched: %d", seriesMatchers, len(ss))
 	}
 	return result, nil
 }
@@ -135,7 +135,7 @@ func convertEntityValuesToSeriesMatcher(series *pbv1.Series) (index.SeriesMatche
 
 	if hasAny {
 		if hasWildcard {
-			if err = series.Marshal(); err != nil {
+			if err = series.MarshalWithWildcard(); err != nil {
 				return emptySeriesMatcher, err
 			}
 			return index.SeriesMatcher{
@@ -167,7 +167,7 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList
 		var series pbv1.Series
 		series.ID = s.ID
 		if err := series.Unmarshal(s.EntityValues); err != nil {
-			return nil, err
+			return nil, errors.WithMessagef(err, "failed to unmarshal series: %s", s.EntityValues)
 		}
 		seriesList = append(seriesList, &series)
 	}

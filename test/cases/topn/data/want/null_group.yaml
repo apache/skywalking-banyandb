@@ -20,15 +20,14 @@ lists:
   - entity:
     - key: service_id
       value:
-        str:
-          value: svc_2
+        "null": null
     - key: entity_id
       value:
         str:
           value: entity_1
     value:
       int:
-        value: "12"
+        value: "300"
   - entity:
     - key: service_id
       value:
@@ -37,18 +36,19 @@ lists:
     - key: entity_id
       value:
         str:
-          value: entity_3
+          value: entity_1
     value:
       int:
-        value: "11"
+        value: "240"
   - entity:
     - key: service_id
       value:
-        "null": null
+        str:
+          value: svc_2
     - key: entity_id
       value:
         str:
-          value: entity_2
+          value: entity_3
     value:
       int:
-        value: "10"
+        value: "155"

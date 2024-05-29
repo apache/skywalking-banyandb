@@ -105,7 +105,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 			Str("topN", topNMetadata.GetName()).
 			Msg("fail to build schema")
 	}
-	plan, err := logical_measure.TopNAnalyze(context.TODO(), request, topNResultMeasure.GetSchema(), sourceMeasure.GetSchema(), topNSchema, s)
+	plan, err := logical_measure.TopNAnalyze(context.TODO(), request, topNResultMeasure.GetSchema(), sourceMeasure.GetSchema(), s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", topNMetadata.GetName(), err))
 		return
@@ -256,7 +256,6 @@ func (aggr *postAggregationProcessor) Put(entityValues pbv1.EntityValues, val in
 	key := entityValues.String()
 	if item, found := aggr.cache[key]; found {
 		item.int64Func.In(val)
-		aggr.tryEnqueue(key, item)
 		return nil
 	}
 
