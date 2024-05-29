@@ -52,6 +52,7 @@ import (
 const (
 	timeBucketFormat         = "200601021504"
 	resultPersistencyTimeout = 10 * time.Second
+	maxFlushInterval         = time.Minute
 )
 
 var (
@@ -132,7 +133,6 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	}
 	// down-sample the start of the timeWindow to a time-bucket
 	eventTime := t.downSampleTimeBucket(record.TimestampMillis())
-	timeBucket := eventTime.Format(timeBucketFormat)
 	var err error
 	publisher := t.pipeline.NewBatchPublisher(resultPersistencyTimeout)
 	defer publisher.Close()
@@ -146,14 +146,14 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 		for rankNum, tuple := range tuples {
 			fieldValue := tuple.V1.(int64)
 			data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-			err = multierr.Append(err, t.writeData(publisher, eventTime, timeBucket, fieldValue, group, data, rankNum))
+			err = multierr.Append(err, t.writeData(publisher, eventTime, fieldValue, data, rankNum))
 		}
 	}
 	return err
 }
 
-func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, eventTime time.Time, timeBucket string, fieldValue int64,
-	group string, data flow.Data, rankNum int,
+func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, eventTime time.Time, fieldValue int64,
+	data flow.Data, rankNum int,
 ) error {
 	var tagValues []*modelv1.TagValue
 	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
@@ -172,11 +172,6 @@ func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, event
 		return err
 	}
 
-	// measureID is consist of three parts,
-	// 1. groupValues
-	// 2. rankNumber
-	// 3. timeBucket
-	measureID := group + "_" + strconv.Itoa(rankNum) + "_" + timeBucket
 	iwr := &measurev1.InternalWriteRequest{
 		Request: &measurev1.WriteRequest{
 			MessageId: uint64(time.Now().UnixNano()),
@@ -185,17 +180,10 @@ func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, event
 				Timestamp: timestamppb.New(eventTime),
 				TagFamilies: []*modelv1.TagFamilyForWrite{
 					{
-						Tags: append([]*modelv1.TagValue{
-							// MeasureID
-							{
-								Value: &modelv1.TagValue_Str{
-									Str: &modelv1.Str{
-										Value: measureID,
-									},
-								},
-							},
+						Tags: append(
+							data[0].([]*modelv1.TagValue),
 							// SortDirection
-							{
+							&modelv1.TagValue{
 								Value: &modelv1.TagValue_Int{
 									Int: &modelv1.Int{
 										Value: int64(t.sortDirection),
@@ -203,14 +191,14 @@ func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, event
 								},
 							},
 							// RankNumber
-							{
+							&modelv1.TagValue{
 								Value: &modelv1.TagValue_Int{
 									Int: &modelv1.Int{
 										Value: int64(rankNum),
 									},
 								},
 							},
-						}, data[0].([]*modelv1.TagValue)...),
+						),
 					},
 				},
 				Fields: []*modelv1.FieldValue{
@@ -240,39 +228,34 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 	if len(tagValues) != 0 && len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
 		return nil, 0, errors.New("no enough tag values for the entity")
 	}
-	// Subject: topN aggregation Name
-	//
-	// entity prefix
-	//
-	// 1) sort direction
-	// 2) rank number
-	// >3) group tag values if needed
 	series := &pbv1.Series{
 		Subject:      t.topNSchema.GetMetadata().GetName(),
 		EntityValues: make([]*modelv1.TagValue, 1+1+len(tagValues)),
 	}
 
-	// entity prefix
-	series.EntityValues[0] = &modelv1.TagValue{
+	copy(series.EntityValues, tagValues)
+	series.EntityValues[len(series.EntityValues)-2] = &modelv1.TagValue{
 		Value: &modelv1.TagValue_Int{
 			Int: &modelv1.Int{
 				Value: int64(t.sortDirection),
 			},
 		},
 	}
-	series.EntityValues[1] = &modelv1.TagValue{
+	series.EntityValues[len(series.EntityValues)-1] = &modelv1.TagValue{
 		Value: &modelv1.TagValue_Int{
 			Int: &modelv1.Int{
 				Value: int64(rankNum),
 			},
 		},
 	}
-	// measureID as sharding key
-	for idx, tagVal := range tagValues {
-		series.EntityValues[idx+2] = tagVal
-	}
 	if err := series.Marshal(); err != nil {
 		return nil, 0, fmt.Errorf("fail to marshal series: %w", err)
+	}
+	src := make([]byte, len(series.Buffer))
+	copy(src, series.Buffer)
+	var s1 pbv1.Series
+	if err := s1.Unmarshal(src); err != nil {
+		return nil, 0, fmt.Errorf("fail to unmarshal series encoded:[%s] tagValues:[%s]: %w", series.Buffer, series.EntityValues, err)
 	}
 	id, err := partition.ShardID(series.Buffer, t.m.shardNum)
 	if err != nil {
@@ -282,7 +265,11 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 }
 
 func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
-	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.interval)).
+	flushInterval := t.interval
+	if flushInterval > maxFlushInterval {
+		flushInterval = maxFlushInterval
+	}
+	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.interval, flushInterval)).
 		AllowedMaxWindows(int(t.topNSchema.GetLruSize())).
 		TopN(int(t.topNSchema.GetCountersNumber()),
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
@@ -364,7 +351,8 @@ func (manager *topNProcessorManager) start() error {
 		for i, sortDirection := range sortDirections {
 			srcCh := make(chan interface{})
 			src, _ := sources.NewChannel(srcCh)
-			streamingFlow := streaming.New(src)
+			name := strings.Join([]string{topNSchema.GetMetadata().Group, topNSchema.GetMetadata().Name, modelv1.Sort_name[int32(sortDirection)]}, "-")
+			streamingFlow := streaming.New(name, src)
 
 			filters, buildErr := manager.buildFilter(topNSchema.GetCriteria())
 			if buildErr != nil {

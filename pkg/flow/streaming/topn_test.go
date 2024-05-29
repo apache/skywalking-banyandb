@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/flow"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func TestFlow_TopN_Aggregator(t *testing.T) {
@@ -117,6 +118,7 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 				groupKeyExtractor: func(record flow.StreamRecord) string {
 					return record.Data().(flow.Data)[0].(string)
 				},
+				l: logger.GetLogger("test"),
 			}
 			topN.Add(input)
 			snapshot := topN.Snapshot()

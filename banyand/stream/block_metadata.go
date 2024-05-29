@@ -245,38 +245,38 @@ type timestampsMetadata struct {
 	encodeType encoding.EncodeType
 }
 
-func (th *timestampsMetadata) reset() {
-	th.dataBlock.reset()
-	th.min = 0
-	th.max = 0
-	th.encodeType = 0
+func (tm *timestampsMetadata) reset() {
+	tm.dataBlock.reset()
+	tm.min = 0
+	tm.max = 0
+	tm.encodeType = 0
 }
 
-func (th *timestampsMetadata) copyFrom(src *timestampsMetadata) {
-	th.dataBlock.copyFrom(&src.dataBlock)
-	th.min = src.min
-	th.max = src.max
-	th.encodeType = src.encodeType
+func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
+	tm.dataBlock.copyFrom(&src.dataBlock)
+	tm.min = src.min
+	tm.max = src.max
+	tm.encodeType = src.encodeType
 }
 
-func (th *timestampsMetadata) marshal(dst []byte) []byte {
-	dst = th.dataBlock.marshal(dst)
-	dst = encoding.Uint64ToBytes(dst, uint64(th.min))
-	dst = encoding.Uint64ToBytes(dst, uint64(th.max))
-	dst = append(dst, byte(th.encodeType))
+func (tm *timestampsMetadata) marshal(dst []byte) []byte {
+	dst = tm.dataBlock.marshal(dst)
+	dst = encoding.Uint64ToBytes(dst, uint64(tm.min))
+	dst = encoding.Uint64ToBytes(dst, uint64(tm.max))
+	dst = append(dst, byte(tm.encodeType))
 	return dst
 }
 
-func (th *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
-	src, err := th.dataBlock.unmarshal(src)
+func (tm *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
+	src, err := tm.dataBlock.unmarshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
 	}
-	th.min = int64(encoding.BytesToUint64(src))
+	tm.min = int64(encoding.BytesToUint64(src))
 	src = src[8:]
-	th.max = int64(encoding.BytesToUint64(src))
+	tm.max = int64(encoding.BytesToUint64(src))
 	src = src[8:]
-	th.encodeType = encoding.EncodeType(src[0])
+	tm.encodeType = encoding.EncodeType(src[0])
 	return src[1:], nil
 }
 
@@ -285,28 +285,28 @@ type elementIDsMetadata struct {
 	encodeType encoding.EncodeType
 }
 
-func (th *elementIDsMetadata) reset() {
-	th.dataBlock.reset()
-	th.encodeType = 0
+func (em *elementIDsMetadata) reset() {
+	em.dataBlock.reset()
+	em.encodeType = 0
 }
 
-func (th *elementIDsMetadata) copyFrom(src *elementIDsMetadata) {
-	th.dataBlock.copyFrom(&src.dataBlock)
-	th.encodeType = src.encodeType
+func (em *elementIDsMetadata) copyFrom(src *elementIDsMetadata) {
+	em.dataBlock.copyFrom(&src.dataBlock)
+	em.encodeType = src.encodeType
 }
 
-func (th *elementIDsMetadata) marshal(dst []byte) []byte {
-	dst = th.dataBlock.marshal(dst)
-	dst = append(dst, byte(th.encodeType))
+func (em *elementIDsMetadata) marshal(dst []byte) []byte {
+	dst = em.dataBlock.marshal(dst)
+	dst = append(dst, byte(em.encodeType))
 	return dst
 }
 
-func (th *elementIDsMetadata) unmarshal(src []byte) ([]byte, error) {
-	src, err := th.dataBlock.unmarshal(src)
+func (em *elementIDsMetadata) unmarshal(src []byte) ([]byte, error) {
+	src, err := em.dataBlock.unmarshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
 	}
-	th.encodeType = encoding.EncodeType(src[0])
+	em.encodeType = encoding.EncodeType(src[0])
 	return src[1:], nil
 }
 

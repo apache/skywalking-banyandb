@@ -214,23 +214,23 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 
 	bm := generateBlockMetadata()
 	b.mustWriteTo(sid, bm, &bw.writers)
-	th := &bm.timestamps
-	if bw.totalCount == 0 || th.min < bw.totalMinTimestamp {
-		bw.totalMinTimestamp = th.min
+	tm := &bm.timestamps
+	if bw.totalCount == 0 || tm.min < bw.totalMinTimestamp {
+		bw.totalMinTimestamp = tm.min
 	}
-	if bw.totalCount == 0 || th.max > bw.totalMaxTimestamp {
-		bw.totalMaxTimestamp = th.max
+	if bw.totalCount == 0 || tm.max > bw.totalMaxTimestamp {
+		bw.totalMaxTimestamp = tm.max
 	}
-	if !hasWrittenBlocks || th.min < bw.minTimestamp {
-		bw.minTimestamp = th.min
+	if !hasWrittenBlocks || tm.min < bw.minTimestamp {
+		bw.minTimestamp = tm.min
 	}
-	if !hasWrittenBlocks || th.max > bw.maxTimestamp {
-		bw.maxTimestamp = th.max
+	if !hasWrittenBlocks || tm.max > bw.maxTimestamp {
+		bw.maxTimestamp = tm.max
 	}
-	if isSeenSid && th.min < bw.minTimestampLast {
-		logger.Panicf("the block for sid=%d cannot contain timestamp smaller than %d, but it contains timestamp %d", sid, bw.minTimestampLast, th.min)
+	if isSeenSid && tm.min < bw.minTimestampLast {
+		logger.Panicf("the block for sid=%d cannot contain timestamp smaller than %d, but it contains timestamp %d", sid, bw.minTimestampLast, tm.min)
 	}
-	bw.minTimestampLast = th.min
+	bw.minTimestampLast = tm.min
 
 	bw.totalUncompressedSizeBytes += bm.uncompressedSizeBytes
 	bw.totalCount += bm.count

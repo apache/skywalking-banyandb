@@ -102,7 +102,7 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 	endpoint := fmt.Sprintf("http://%s:%d", host, ports[2])
 	ff := []string{
 		"--logging-env=dev",
-		"--logging-level=error",
+		"--logging-level=" + testflags.LogLevel,
 		"--grpc-host=" + host,
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
 		"--http-host=" + host,
