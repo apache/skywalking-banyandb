@@ -148,7 +148,7 @@ var _ = g.Describe("Streaming", func() {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
 				})).
-				Window(NewTumblingTimeWindows(15*time.Second)).
+				Window(NewTumblingTimeWindows(15*time.Second, 15*time.Second)).
 				TopN(3, WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 					return record.Data().(flow.Data)[1].(int64)
 				}), OrderBy(ASC), WithGroupKeyExtractor(func(record flow.StreamRecord) string {
@@ -211,7 +211,7 @@ var _ = g.Describe("Streaming", func() {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value)}
 				})).
-				Window(NewTumblingTimeWindows(15*time.Second)).
+				Window(NewTumblingTimeWindows(15*time.Second, 15*time.Second)).
 				TopN(3, WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 					return record.Data().(flow.Data)[1].(int64)
 				}), WithGroupKeyExtractor(func(record flow.StreamRecord) string {

@@ -148,15 +148,17 @@ func (t *topNAggregatorGroup) Snapshot() interface{} {
 		groupRanks[group] = items
 	}
 	if len(groupRanks) > 0 {
-		sb := strings.Builder{}
-		for g, item := range groupRanks {
-			sb.WriteString("{")
-			sb.WriteString(g)
-			sb.WriteString(":")
-			sb.WriteString(strconv.Itoa(len(item)))
-			sb.WriteString("}")
+		if e := t.l.Debug(); e.Enabled() {
+			sb := strings.Builder{}
+			for g, item := range groupRanks {
+				sb.WriteString("{")
+				sb.WriteString(g)
+				sb.WriteString(":")
+				sb.WriteString(strconv.Itoa(len(item)))
+				sb.WriteString("}")
+			}
+			t.l.Debug().Interface("snapshot", sb.String()).Msg("taken a topN snapshot")
 		}
-		t.l.Info().Interface("snapshot", sb.String()).Msg("taken a topN snapshot")
 	}
 	return groupRanks
 }

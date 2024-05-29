@@ -85,6 +85,7 @@ type tumblingTimeWindows struct {
 	windowCount      int
 	currentWatermark int64
 	timerMu          sync.Mutex
+	maxFlushInterval int64
 	l                *logger.Logger
 }
 
@@ -103,7 +104,9 @@ func (s *tumblingTimeWindows) Setup(_ context.Context) (err error) {
 		}
 		s.snapshots, err = lru.NewWithEvict(s.windowCount, func(key interface{}, value interface{}) {
 			flushed := s.flushSnapshot(key.(timeWindow), value.(flow.AggregationOp))
-			s.l.Info().Stringer("window", key.(timeWindow)).Bool("flushed", flushed).Msg("evict window on lru cache is full")
+			if e := s.l.Debug(); e.Enabled() {
+				e.Stringer("window", key.(timeWindow)).Bool("flushed", flushed).Msg("evict window on lru cache is full")
+			}
 		})
 		if err != nil {
 			return err
@@ -127,7 +130,9 @@ func (s *tumblingTimeWindows) flushSnapshot(w timeWindow, snapshot flow.Aggregat
 func (s *tumblingTimeWindows) flushWindow(w timeWindow) {
 	if snapshot, ok := s.snapshots.Get(w); ok {
 		flushed := s.flushSnapshot(w, snapshot.(flow.AggregationOp))
-		s.l.Info().Stringer("window", w).Bool("flushed", flushed).Msg("flush window")
+		if e := s.l.Debug(); e.Enabled() {
+			e.Stringer("window", w).Bool("flushed", flushed).Msg("flush window")
+		}
 	}
 }
 
@@ -178,7 +183,9 @@ func (s *tumblingTimeWindows) receive() {
 				newAggr := s.aggregationFactory()
 				newAggr.Add([]flow.StreamRecord{elem})
 				s.snapshots.Add(tw, newAggr)
-				s.l.Info().Stringer("window", tw).Msg("create new window")
+				if e := s.l.Debug(); e.Enabled() {
+					e.Stringer("window", tw).Msg("create new window")
+				}
 			}
 
 			result := ctx.OnElement(elem)
@@ -206,8 +213,12 @@ func (s *tumblingTimeWindows) receive() {
 			// |    40%     |    40%     |  20%  |
 			// |          flush        flush     |
 			// |---------------------------------|
-			// TODO: how to determine the threshold
-			if previousWaterMark > 0 && float64(pastDur) > float64(s.windowSize)*0.4 {
+			// the max flush interval is 1 minute.
+			it := float64(s.windowSize) * 0.4
+			if it > float64(s.maxFlushInterval) {
+				it = float64(s.maxFlushInterval)
+			}
+			if previousWaterMark > 0 && float64(pastDur) > it {
 				s.flushDirtyWindows()
 			}
 		}
@@ -235,7 +246,7 @@ func (s *tumblingTimeWindows) Exec(downstream flow.Inlet) {
 }
 
 // NewTumblingTimeWindows return tumbling-time windows.
-func NewTumblingTimeWindows(size time.Duration) flow.WindowAssigner {
+func NewTumblingTimeWindows(size time.Duration, maxFlushInterval time.Duration) flow.WindowAssigner {
 	return &tumblingTimeWindows{
 		windowSize: size.Milliseconds(),
 		timerHeap: flow.NewPriorityQueue(func(a, b interface{}) int {
@@ -244,6 +255,7 @@ func NewTumblingTimeWindows(size time.Duration) flow.WindowAssigner {
 		in:               make(chan flow.StreamRecord),
 		out:              make(chan flow.StreamRecord),
 		currentWatermark: 0,
+		maxFlushInterval: maxFlushInterval.Milliseconds(),
 	}
 }
 

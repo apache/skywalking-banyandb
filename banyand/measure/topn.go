@@ -52,6 +52,7 @@ import (
 const (
 	timeBucketFormat         = "200601021504"
 	resultPersistencyTimeout = 10 * time.Second
+	maxFlushInterval         = time.Minute
 )
 
 var (
@@ -264,7 +265,11 @@ func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum i
 }
 
 func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
-	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.interval)).
+	flushInterval := t.interval
+	if flushInterval > maxFlushInterval {
+		flushInterval = maxFlushInterval
+	}
+	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.interval, flushInterval)).
 		AllowedMaxWindows(int(t.topNSchema.GetLruSize())).
 		TopN(int(t.topNSchema.GetCountersNumber()),
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {

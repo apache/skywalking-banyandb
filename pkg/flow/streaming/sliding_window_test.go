@@ -73,7 +73,7 @@ var _ = g.Describe("Sliding Window", func() {
 	g.JustBeforeEach(func() {
 		snk = newSlice()
 
-		slidingWindows = NewTumblingTimeWindows(time.Second * 15).(*tumblingTimeWindows)
+		slidingWindows = NewTumblingTimeWindows(time.Second*15, time.Second*15).(*tumblingTimeWindows)
 		slidingWindows.aggregationFactory = aggrFactory
 		slidingWindows.windowCount = 2
 		slidingWindows.l = logger.GetLogger("tumblingTimeWindows")
