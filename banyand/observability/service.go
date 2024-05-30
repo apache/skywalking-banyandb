@@ -103,7 +103,7 @@ func (p *metricService) PreRun(ctx context.Context) error {
 		case flagNativeMode:
 			err := createNativeObservabilityGroup(ctx, p.metadata)
 			if err != nil {
-				p.l.Warn().Err(err).Msg("Failed to init native observability resources")
+				p.l.Warn().Err(err).Msg("Failed to create native observability group")
 			}
 			MetricsCollector.RegisterProvider(newNativeMeterProvider(SystemScope))
 		}
