@@ -28,7 +28,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -39,13 +38,9 @@ const (
 )
 
 var (
-	_                    run.Service = (*metricService)(nil)
-	_                    run.Config  = (*metricService)(nil)
-	metricsMux                       = http.NewServeMux()
-	modeNewMeterProvider             = map[string]func(_ meter.Scope) meter.Provider{
-		flagNativeMode:    newNativeMeterProvider,
-		flagPromethusMode: newPromMeterProvider,
-	}
+	_          run.Service = (*metricService)(nil)
+	_          run.Config  = (*metricService)(nil)
+	metricsMux             = http.NewServeMux()
 	// MetricsServerInterceptor is the function to obtain grpc metrics interceptor.
 	MetricsServerInterceptor func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) = emptyMetricsServerInterceptor
 )
@@ -86,7 +81,7 @@ func (p *metricService) Validate() error {
 	if p.listenAddr == "" {
 		return errNoAddr
 	}
-	set := make(map[string]bool)
+	set := make(map[string]struct{})
 	for _, mode := range p.modes {
 		if mode != flagNativeMode && mode != flagPromethusMode {
 			return errInvalidMode
@@ -94,16 +89,23 @@ func (p *metricService) Validate() error {
 		if _, exists := set[mode]; exists {
 			return errDuplicatedMode
 		}
-		set[mode] = true
+		set[mode] = struct{}{}
 	}
 	return nil
 }
 
-func (p *metricService) PreRun(_ context.Context) error {
+func (p *metricService) PreRun(ctx context.Context) error {
 	for _, mode := range p.modes {
-		MetricsCollector.RegisterProvider(modeNewMeterProvider[mode](SystemScope))
-		if mode == flagPromethusMode {
+		switch mode {
+		case flagPromethusMode:
 			MetricsServerInterceptor = promMetricsServerInterceptor
+			MetricsCollector.RegisterProvider(newPromMeterProvider(SystemScope))
+		case flagNativeMode:
+			err := createNativeObservabilityGroup(ctx, p.metadata)
+			if err != nil {
+				p.l.Warn().Err(err).Msg("Failed to init native observability resources")
+			}
+			MetricsCollector.RegisterProvider(newNativeMeterProvider(SystemScope))
 		}
 	}
 	return nil
