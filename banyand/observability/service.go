@@ -118,13 +118,9 @@ func (p *metricService) Serve() run.StopNotify {
 
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	err := createInternalGroup(p.metadata)
-	if err != nil {
-		p.l.Error().Err(err).Msg("Failed to create internal group")
-	}
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
-	err = p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
+	err := p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
 		MetricsCollector.collect()
 		return true
 	})
