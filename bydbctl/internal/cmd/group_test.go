@@ -132,7 +132,7 @@ resource_opts:
 		})
 		resp := new(databasev1.GroupRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Group).To(HaveLen(3)) // group1, group2, self-observability [internal group]
+		Expect(resp.Group).To(HaveLen(2)) // group1, group2 [internal group]
 	})
 
 	AfterEach(func() {
