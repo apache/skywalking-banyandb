@@ -13,7 +13,7 @@ Select and download the distribution from the suggested location for your platfo
 unpack and extract the package.
 
 ```shell
-$ tar -zxvf skywalking-banyandb-x.x.x-bin.tgz
+$ tar -zxvf skywalking-banyandb-x.y.z-bin.tgz
 ```
 
 The directory structure is as follows.
@@ -26,13 +26,13 @@ The directory structure is as follows.
 ├── README.md
 ├── bin
 │   ├── banyand-server-static
-│   ├── bydbctl-0.6.0-darwin-amd64
-│   ├── bydbctl-0.6.0-darwin-arm64
-│   ├── bydbctl-0.6.0-linux-386
-│   ├── bydbctl-0.6.0-linux-amd64
-│   ├── bydbctl-0.6.0-linux-arm64
-│   ├── bydbctl-0.6.0-windows-386
-│   └── bydbctl-0.6.0-windows-amd64
+│   ├── bydbctl-x.y.z-darwin-amd64
+│   ├── bydbctl-x.y.z-darwin-arm64
+│   ├── bydbctl-x.y.z-linux-386
+│   ├── bydbctl-x.y.z-linux-amd64
+│   ├── bydbctl-x.y.z-linux-arm64
+│   ├── bydbctl-x.y.z-windows-386
+│   └── bydbctl-x.y.z-windows-amd64
 └── licenses
 ```
 
