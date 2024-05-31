@@ -39,7 +39,7 @@ FROM base AS builder
 
 RUN --mount=target=. \
             --mount=type=cache,target=/root/.cache/go-build \
-            BUILD_DIR=/out BUILD_TAGS=prometheus make -C banyand banyand-server-static
+            BUILD_DIR=/out make -C banyand banyand-server-static
 RUN --mount=target=. \
             --mount=type=cache,target=/root/.cache/go-build \
             BUILD_DIR=/out make -C bydbctl build

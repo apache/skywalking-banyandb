@@ -1,6 +1,3 @@
-//go:build !prometheus
-// +build !prometheus
-
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -21,17 +18,42 @@
 package observability
 
 import (
+	"context"
+
 	"google.golang.org/grpc"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
 // NewMeterProvider returns a meter.Provider based on the given scope.
-func NewMeterProvider(_ meter.Scope) meter.Provider {
+func newNativeMeterProvider(_ meter.Scope) meter.Provider {
 	return meter.NoopProvider{}
 }
 
 // MetricsServerInterceptor returns a grpc.UnaryServerInterceptor and a grpc.StreamServerInterceptor.
-func MetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
+func emptyMetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
 	return nil, nil
+}
+
+func createNativeObservabilityGroup(ctx context.Context, e metadata.Repo) error {
+	g := &commonv1.Group{
+		Metadata: &commonv1.Metadata{
+			Name: "_monitoring",
+		},
+		Catalog: commonv1.Catalog_CATALOG_MEASURE,
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 1,
+			SegmentInterval: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+			Ttl: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+		},
+	}
+	return e.GroupRegistry().CreateGroup(ctx, g)
 }
