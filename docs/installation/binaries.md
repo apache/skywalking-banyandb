@@ -3,8 +3,38 @@
 This page shows how to get binaries of Banyand.
 
 ## Prebuilt Released binaries
+                           
+Go to the [SkyWalking download page](https://skywalking.apache.org/downloads/#Database) .
 
-Get binaries from the [download](https://skywalking.apache.org/downloads/).
+Select and download the distribution from the suggested location for your platform, such as `skywalking-banyandb-x.x.x-bin.tgz`.
+
+> It is essential that you verify the integrity of the downloaded file using the PGP signature ( .asc file) or a hash ( .md5 or .sha* file).
+
+unpack and extract the package.
+
+```shell
+$ tar -zxvf skywalking-banyandb-x.y.z-bin.tgz
+```
+
+The directory structure is as follows.
+
+```shell
+├── CHANGES.md
+├── LICENSE
+├── LICENSE.tpl
+├── NOTICE
+├── README.md
+├── bin
+│   ├── banyand-server-static
+│   ├── bydbctl-x.y.z-darwin-amd64
+│   ├── bydbctl-x.y.z-darwin-arm64
+│   ├── bydbctl-x.y.z-linux-386
+│   ├── bydbctl-x.y.z-linux-amd64
+│   ├── bydbctl-x.y.z-linux-arm64
+│   ├── bydbctl-x.y.z-windows-386
+│   └── bydbctl-x.y.z-windows-amd64
+└── licenses
+```
 
 ## Build From Source
 
