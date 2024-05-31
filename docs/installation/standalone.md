@@ -1,32 +1,13 @@
-# Standalone Mode
+# Installing BanyanDB Standalone Mode
 
 The standalone mode is the simplest way to run Banyand. It is suitable for the development and testing environment.
 
 Follow these steps to install BanyanDB and start up in standalone mode.
 
-## Download the BanyanDB packages
 
-Go to the [SkyWalking download page](https://skywalking.apache.org/downloads/#Database).
-
-Select and download the release package from the suggested location for your platform, such as `skywalking-banyandb-x.x.x-bin.tgz`.
-
-## Install the BanyanDB packages
-
-unpack and extract the package.
-
-```shell
-$ tar -zxpf skywalking-banyandb-x.x.x-bin.tgz
-
--rw-r--r--@   1 banyand  group   6449  5 10 05:45 CHANGES.md
--rw-r--r--@   1 banyand  group  23825  5 10 05:45 LICENSE
--rw-r--r--@   1 banyand  group    290  5 10 05:45 LICENSE.tpl
--rw-r--r--@   1 banyand  group    171  5 10 05:45 NOTICE
--rw-r--r--@   1 banyand  group   3034  5 10 05:45 README.md
-drwxr-xr-x@  10 banyand  group    320  5 10 05:45 bin
-drwx------@ 145 banyand  group   4640  5 10 05:45 licenses
-```
-
-start up BanyanDB standalone server.
+- Download or build the BanyanDB packages.
+- unpack and extract the `skywalking-banyandb-x.x.x-bin.tgz`.
+- start up BanyanDB standalone server.
 
 ```shell
 $ ./bin/banyand-server-static standalone
