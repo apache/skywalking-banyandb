@@ -77,7 +77,7 @@ jobs:
         uses: docker/setup-buildx-action@v1
       - name: Build Windows binaries
         run: |
-          GOOS=windows GOARCH=amd64 BUILD_TAGS=prometheus make -C banyand banyand-server-static
+          GOOS=windows GOARCH=amd64 make -C banyand banyand-server-static
           GOOS=windows GOARCH=amd64 make -C bydbctl build
       - name: Build docker image
         if: github.ref != 'refs/heads/main' # Only build docker image on PR(Push image when pushed to main branch)

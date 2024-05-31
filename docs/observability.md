@@ -4,15 +4,7 @@ This document outlines the observability features of BanyanDB, which include met
 
 ## Metrics
 
-BanyanDB has built-in support for metrics collection through the use of build tags. The metrics provider can be enabled by specifying the build tag during the compilation process.
-
-Currently, there is only one supported metrics provider: `Prometheus`. To use Prometheus as the metrics client, include the `prometheus` build tag when building BanyanDB:
-
-`BUILD_TAGS=prometheus make -C banyand banyand-server`
-
-If no build tag is specified, the metrics server will not be started, and no metrics will be collected:
-
-`make -C banyand banyand-server`
+BanyanDB has built-in support for metrics collection. Currently, there is only one supported metrics provider: `Prometheus`. It is auto enabled at run time through `observability-modes` flag. 
 
 When the Prometheus metrics provider is enabled, the metrics server listens on port `2121`. This allows Prometheus to scrape metrics data from BanyanDB for monitoring and analysis.
 

@@ -20,4 +20,8 @@ package observability
 
 import "errors"
 
-var errNoAddr = errors.New("no address")
+var (
+	errNoAddr         = errors.New("no address")
+	errInvalidMode    = errors.New("invalid observability mode")
+	errDuplicatedMode = errors.New("duplicated observability mode")
+)
