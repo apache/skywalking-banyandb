@@ -18,30 +18,22 @@
 package stream
 
 import (
-	"bytes"
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-type filterFn func(itemID uint64) bool
-
-func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTable],
+func (s *stream) buildItersByIndex(tableWrappers []storage.TSTableWrapper[*tsTable],
 	seriesList pbv1.SeriesList, sqo pbv1.StreamQueryOptions,
-) (series []*searcherIterator, err error) {
-	timeFilter := func(itemID uint64) bool {
-		return sqo.TimeRange.Contains(int64(itemID))
-	}
+) (iters []index.FieldIterator, tl *tagLocation, err error) {
 	indexRuleForSorting := sqo.Order.Index
 	if len(indexRuleForSorting.Tags) != 1 {
-		return nil, fmt.Errorf("only support one tag for sorting, but got %d", len(indexRuleForSorting.Tags))
+		return nil, nil, fmt.Errorf("only support one tag for sorting, but got %d", len(indexRuleForSorting.Tags))
 	}
 	sortedTag := indexRuleForSorting.Tags[0]
-	tl := newTagLocation()
+	tl = newTagLocation()
 	for i := range sqo.TagProjection {
 		for j := range sqo.TagProjection[i].Names {
 			if sqo.TagProjection[i].Names[j] == sortedTag {
@@ -50,45 +42,20 @@ func (s *stream) buildSeriesByIndex(tableWrappers []storage.TSTableWrapper[*tsTa
 		}
 	}
 	if !tl.valid() {
-		return nil, fmt.Errorf("sorted tag %s not found in tag projection", sortedTag)
+		return nil, nil, fmt.Errorf("sorted tag %s not found in tag projection", sortedTag)
 	}
-	entityMap, tagSpecIndex, tagProjIndex, sidToIndex := s.genIndex(sqo.TagProjection, seriesList)
 	sids := seriesList.IDs()
 	for _, tw := range tableWrappers {
-		seriesFilter := make(map[common.SeriesID]filterFn)
-		if sqo.Filter != nil {
-			for i := range sids {
-				pl, errExe := sqo.Filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
-					return tw.Table().Index().store, nil
-				}, sids[i])
-				if errExe != nil {
-					return nil, err
-				}
-
-				seriesFilter[sids[i]] = func(itemID uint64) bool {
-					if pl == nil {
-						return true
-					}
-					return pl.Contains(itemID)
-				}
-			}
-		}
-
-		var inner index.FieldIterator
+		var iter index.FieldIterator
 		fieldKey := index.FieldKey{
 			IndexRuleID: indexRuleForSorting.GetMetadata().GetId(),
 			Analyzer:    indexRuleForSorting.GetAnalyzer(),
 		}
-		inner, err = tw.Table().Index().Sort(sids, fieldKey, sqo.Order.Sort, sqo.MaxElementSize)
+		iter, err = tw.Table().Index().Sort(sids, fieldKey, sqo.Order.Sort, sqo.MaxElementSize)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-
-		if inner != nil {
-			series = append(series, newSearcherIterator(s.l, inner, tw.Table(),
-				seriesFilter, timeFilter, sqo.TagProjection, tl,
-				tagSpecIndex, tagProjIndex, sidToIndex, seriesList, entityMap))
-		}
+		iters = append(iters, iter)
 	}
 	return
 }
@@ -98,8 +65,8 @@ type tagLocation struct {
 	tagIndex    int
 }
 
-func newTagLocation() tagLocation {
-	return tagLocation{
+func newTagLocation() *tagLocation {
+	return &tagLocation{
 		familyIndex: -1,
 		tagIndex:    -1,
 	}
@@ -107,18 +74,4 @@ func newTagLocation() tagLocation {
 
 func (t tagLocation) valid() bool {
 	return t.familyIndex != -1 && t.tagIndex != -1
-}
-
-func (t tagLocation) getTagValue(e *element) ([]byte, error) {
-	if len(e.tagFamilies) <= t.familyIndex {
-		return nil, fmt.Errorf("tag family index %d out of range", t.familyIndex)
-	}
-	if len(e.tagFamilies[t.familyIndex].tags) <= t.tagIndex {
-		return nil, fmt.Errorf("tag index %d out of range", t.tagIndex)
-	}
-	if len(e.tagFamilies[t.familyIndex].tags[t.tagIndex].values) <= e.index {
-		return nil, fmt.Errorf("element index %d out of range", e.index)
-	}
-	v := e.tagFamilies[t.familyIndex].tags[t.tagIndex].values[e.index]
-	return bytes.Clone(v), nil
 }

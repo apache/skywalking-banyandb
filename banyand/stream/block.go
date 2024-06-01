@@ -446,9 +446,21 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.minTimestamp = opts.minTimestamp
 	bc.maxTimestamp = opts.maxTimestamp
 	bc.tagProjection = opts.TagProjection
-	if opts.elementRefMap != nil {
+	if len(opts.sortedRefMap) != 0 {
 		seriesID := bc.bm.seriesID
-		bc.expectedTimestamps = opts.elementRefMap[seriesID]
+		for tw := range opts.sortedRefMap {
+			timeRange := tw.GetTimeRange()
+			min, max := bm.timestamps.min, bm.timestamps.max
+			if min >= timeRange.Start.UnixNano() && max <= timeRange.End.UnixNano() {
+				bc.expectedTimestamps = opts.sortedRefMap[tw][seriesID]
+				break
+			}
+		}
+		return
+	}
+	if opts.filteredRefMap != nil {
+		seriesID := bc.bm.seriesID
+		bc.expectedTimestamps = opts.filteredRefMap[seriesID]
 	}
 }
 
