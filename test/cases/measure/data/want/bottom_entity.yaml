@@ -15,40 +15,64 @@
 # specific language governing permissions and limitations
 # under the License.
 
-lists:
-- items:
-  - entity:
-    - key: service_id
-      value:
-        "null": null
+dataPoints:
+- fields:
+  - name: value
+    value:
+      int:
+        value: "7"
+  tagFamilies:
+  - name: default
+    tags:
     - key: entity_id
       value:
         str:
           value: entity_1
+- fields:
+  - name: value
     value:
       int:
-        value: "300"
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_1
+        value: "8"
+  tagFamilies:
+  - name: default
+    tags:
     - key: entity_id
       value:
         str:
-          value: entity_1
+          value: entity_4
+- fields:
+  - name: value
     value:
       int:
-        value: "240"
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_2
+        value: "9"
+  tagFamilies:
+  - name: default
+    tags:
     - key: entity_id
       value:
         str:
           value: entity_3
+- fields:
+  - name: value
     value:
       int:
-        value: "155"
+        value: "13"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+- fields:
+  - name: value
+    value:
+      int:
+        value: "16"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: entity_id
+      value:
+        str:
+          value: entity_6

@@ -163,18 +163,18 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		result.sidToIndex[si] = i
 	}
 	if mqo.Order == nil {
-		result.orderByTS = true
 		result.ascTS = true
-		return &result, nil
+	} else if mqo.Order.Sort == modelv1.Sort_SORT_ASC || mqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+		result.ascTS = true
 	}
-	if mqo.Order.Index == nil {
+	switch mqo.OrderByType {
+	case pbv1.OrderByTypeTime:
 		result.orderByTS = true
-		if mqo.Order.Sort == modelv1.Sort_SORT_ASC || mqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-			result.ascTS = true
-		}
-		return &result, nil
+	case pbv1.OrderByTypeIndex:
+		result.orderByTS = false
+	case pbv1.OrderByTypeSeries:
+		result.orderByTS = false
 	}
-
 	return &result, nil
 }
 

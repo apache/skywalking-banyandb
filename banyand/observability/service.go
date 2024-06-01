@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -31,14 +32,27 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var (
-	_   run.Service = (*metricService)(nil)
-	_   run.Config  = (*metricService)(nil)
-	mux             = http.NewServeMux()
+const (
+	flagNativeMode    = "native"
+	flagPromethusMode = "prometheus"
 )
 
+var (
+	_          run.Service = (*metricService)(nil)
+	_          run.Config  = (*metricService)(nil)
+	metricsMux             = http.NewServeMux()
+	// MetricsServerInterceptor is the function to obtain grpc metrics interceptor.
+	MetricsServerInterceptor func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) = emptyMetricsServerInterceptor
+)
+
+// Service type for Metric Service.
+type Service interface {
+	run.PreRunner
+	run.Service
+}
+
 // NewMetricService returns a metric service.
-func NewMetricService(metadata metadata.Repo) run.Service {
+func NewMetricService(metadata metadata.Repo) Service {
 	return &metricService{
 		closer:   run.NewCloser(1),
 		metadata: metadata,
@@ -52,18 +66,47 @@ type metricService struct {
 	scheduler  *timestamp.Scheduler
 	metadata   metadata.Repo
 	listenAddr string
+	modes      []string
 	mutex      sync.Mutex
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("observability")
 	flagSet.StringVar(&p.listenAddr, "observability-listener-addr", ":2121", "listen addr for observability")
+	flagSet.StringArrayVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
 	return flagSet
 }
 
 func (p *metricService) Validate() error {
 	if p.listenAddr == "" {
 		return errNoAddr
+	}
+	set := make(map[string]struct{})
+	for _, mode := range p.modes {
+		if mode != flagNativeMode && mode != flagPromethusMode {
+			return errInvalidMode
+		}
+		if _, exists := set[mode]; exists {
+			return errDuplicatedMode
+		}
+		set[mode] = struct{}{}
+	}
+	return nil
+}
+
+func (p *metricService) PreRun(ctx context.Context) error {
+	for _, mode := range p.modes {
+		switch mode {
+		case flagPromethusMode:
+			MetricsServerInterceptor = promMetricsServerInterceptor
+			MetricsCollector.RegisterProvider(newPromMeterProvider(SystemScope))
+		case flagNativeMode:
+			err := createNativeObservabilityGroup(ctx, p.metadata)
+			if err != nil {
+				p.l.Warn().Err(err).Msg("Failed to create native observability group")
+			}
+			MetricsCollector.RegisterProvider(newNativeMeterProvider(SystemScope))
+		}
 	}
 	return nil
 }
@@ -77,13 +120,9 @@ func (p *metricService) Serve() run.StopNotify {
 
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	err := createInternalGroup(p.metadata)
-	if err != nil {
-		p.l.Error().Err(err).Msg("Failed to create internal group")
-	}
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
-	err = p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
+	err := p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
 		MetricsCollector.collect()
 		return true
 	})
@@ -93,7 +132,7 @@ func (p *metricService) Serve() run.StopNotify {
 	p.svr = &http.Server{
 		Addr:              p.listenAddr,
 		ReadHeaderTimeout: 3 * time.Second,
-		Handler:           mux,
+		Handler:           metricsMux,
 	}
 	go func() {
 		defer p.closer.Done()

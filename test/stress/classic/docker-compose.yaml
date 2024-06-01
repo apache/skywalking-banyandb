@@ -50,7 +50,7 @@ services:
     environment:
       SW_STORAGE: banyandb
     ports:
-      - 12800
+      - 12800:12800
     volumes:
       - ./log4j2.xml:/skywalking/config/log4j2.xml
     networks:

@@ -19,6 +19,7 @@ package v1
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/pkg/errors"
 
@@ -63,10 +64,6 @@ func MustTagValueToValueType(tag *modelv1.TagValue) ValueType {
 }
 
 func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
-	if tv == AnyTagValue {
-		dest = marshalEntityValue(dest, anyWildcard)
-		return dest, nil
-	}
 	dest = append(dest, byte(MustTagValueToValueType(tv)))
 	switch tv.Value.(type) {
 	case *modelv1.TagValue_Null:
@@ -74,14 +71,21 @@ func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
 	case *modelv1.TagValue_Str:
 		dest = marshalEntityValue(dest, convert.StringToBytes(tv.GetStr().Value))
 	case *modelv1.TagValue_Int:
-		dest = encoding.Int64ToBytes(dest, tv.GetInt().Value)
-		dest = marshalEntityValue(dest, nil)
+		dest = marshalEntityValue(dest, encoding.Int64ToBytes(nil, tv.GetInt().Value))
 	case *modelv1.TagValue_BinaryData:
 		dest = marshalEntityValue(dest, tv.GetBinaryData())
 	default:
 		return nil, errors.New("unsupported tag value type: " + tv.String())
 	}
 	return dest, nil
+}
+
+func marshalTagValueWithWildcard(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
+	if tv == AnyTagValue {
+		dest = marshalEntityValue(dest, anyWildcard)
+		return dest, nil
+	}
+	return marshalTagValue(dest, tv)
 }
 
 func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagValue, error) {
@@ -128,7 +132,7 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 			},
 		}, nil
 	default:
-		return nil, nil, nil, errors.New("unsupported tag value type")
+		return nil, src, nil, fmt.Errorf("unsupported tag value type %d, tag value: %s", vt, src)
 	}
 }
 

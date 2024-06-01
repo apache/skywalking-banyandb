@@ -44,7 +44,7 @@ Users who want to build a binary from sources have to set up:
 * Go 1.22
 * Node 20.12
 * Git >= 2.30
-* Linux, macOS or Windows+WSL2
+* Linux, macOS or Windows + WSL2
 * GNU make
 
 ### Windows

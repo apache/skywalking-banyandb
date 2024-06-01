@@ -5,11 +5,6 @@
         "tags": [
           {
             "str": {
-              "value": "1"
-            }
-          },
-          {
-            "str": {
               "value": "entity_1"
             }
           },
@@ -17,21 +12,11 @@
             "str": {
               "value": "svc_1"
             }
-          },
-          {
-            "str": {
-              "value": "GET:/metrics"
-            }
           }
         ]
       }
     ],
     "fields": [
-      {
-        "int": {
-          "value": 100
-        }
-      },
       {
         "int": {
           "value": 1
@@ -45,11 +30,6 @@
         "tags": [
           {
             "str": {
-              "value": "4"
-            }
-          },
-          {
-            "str": {
               "value": "entity_2"
             }
           },
@@ -57,21 +37,11 @@
             "str": {
               "value": "svc_2"
             }
-          },
-          {
-            "str": {
-              "value": "GET:/check"
-            }
           }
         ]
       }
     ],
     "fields": [
-      {
-        "int": {
-          "value": 101
-        }
-      },
       {
         "int": {
           "value": 2
@@ -85,12 +55,7 @@
         "tags": [
           {
             "str": {
-              "value": "5"
-            }
-          },
-          {
-            "str": {
-              "value": "entity_2"
+              "value": "entity_3"
             }
           },
           {
@@ -102,11 +67,6 @@
       }
     ],
     "fields": [
-      {
-        "int": {
-          "value": 130
-        }
-      },
       {
         "int": {
           "value": 3
@@ -120,12 +80,7 @@
         "tags": [
           {
             "str": {
-              "value": "6"
-            }
-          },
-          {
-            "str": {
-              "value": "entity_3"
+              "value": "entity_4"
             }
           },
           {
@@ -139,11 +94,6 @@
     "fields": [
       {
         "int": {
-          "value": 155
-        }
-      },
-      {
-        "int": {
           "value": 5
         }
       }
@@ -155,31 +105,18 @@
         "tags": [
           {
             "str": {
-              "value": "2"
-            }
-          },
-          {
-            "str": {
-              "value": "entity_1"
+              "value": "entity_5"
             }
           },
           {
             "str": {
               "value": ""
             }
-          },
-          {
-            "null": 0
           }
         ]
       }
     ],
     "fields": [
-      {
-        "int": {
-          "value": 50
-        }
-      },
       {
         "int": {
           "value": 4
@@ -193,31 +130,18 @@
         "tags": [
           {
             "str": {
-              "value": "3"
-            }
-          },
-          {
-            "str": {
-              "value": "entity_1"
+              "value": "entity_6"
             }
           },
           {
             "str": {
               "value": "svc_1"
             }
-          },
-          {
-            "null": 0
           }
         ]
       }
     ],
     "fields": [
-      {
-        "int": {
-          "value": 240
-        }
-      },
       {
         "int": {
           "value": 6

@@ -114,18 +114,12 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 
 // DistributedAnalyze converts logical expressions to executable operation tree represented by Plan.
 func DistributedAnalyze(criteria *measurev1.QueryRequest, s logical.Schema) (logical.Plan, error) {
-	groupByEntity := false
 	var groupByTags [][]*logical.Tag
 	if criteria.GetGroupBy() != nil {
 		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
 		groupByTags = make([][]*logical.Tag, len(groupByProjectionTags.GetTagFamilies()))
-		tags := make([]string, 0)
 		for i, tagFamily := range groupByProjectionTags.GetTagFamilies() {
 			groupByTags[i] = logical.NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
-			tags = append(tags, tagFamily.GetTags()...)
-		}
-		if logical.StringSlicesEqual(s.EntityList(), tags) {
-			groupByEntity = true
 		}
 	}
 
@@ -140,7 +134,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, s logical.Schema) (log
 	pushedLimit := int(limitParameter + criteria.GetOffset())
 
 	if criteria.GetGroupBy() != nil {
-		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity)
+		plan = newUnresolvedGroupBy(plan, groupByTags, false)
 		pushedLimit = math.MaxInt
 	}
 

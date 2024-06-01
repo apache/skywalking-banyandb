@@ -20,6 +20,7 @@ package measure
 
 import (
 	"context"
+	"fmt"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -52,31 +53,33 @@ func BuildTopNSchema(md *databasev1.Measure) (logical.Schema, error) {
 
 // TopNAnalyze converts logical expressions to executable operation tree represented by Plan.
 func TopNAnalyze(_ context.Context, criteria *measurev1.TopNRequest, schema *databasev1.Measure,
-	sourceMeasureSchema *databasev1.Measure, topNAggregation *databasev1.TopNAggregation, s logical.Schema,
+	sourceMeasureSchema *databasev1.Measure, s logical.Schema,
 ) (logical.Plan, error) {
 	groupByProjectionTags := sourceMeasureSchema.GetEntity().GetTagNames()
 	groupByTags := make([][]*logical.Tag, len(schema.GetTagFamilies()))
 	tagFamily := schema.GetTagFamilies()[0]
 	groupByTags[0] = logical.NewTags(tagFamily.GetName(), groupByProjectionTags...)
 
-	projectionFields := make([]*logical.Field, len(schema.GetFields()))
-	for i, fieldSpecProj := range schema.GetFields() {
-		projectionFields[i] = logical.NewField(fieldSpecProj.GetName())
+	if len(schema.GetFields()) != 1 {
+		return nil, fmt.Errorf("topN schema fields count should be 1 but got %d", len(schema.GetFields()))
 	}
+	projectionFields := make([]*logical.Field, 1)
+	fieldName := schema.GetFields()[0].GetName()
+	projectionFields[0] = logical.NewField(fieldName)
 	// parse fields
 	plan := parse(criteria, schema.GetMetadata(), projectionFields, groupByTags)
 
 	if criteria.GetAgg() != 0 {
 		plan = newUnresolvedGroupBy(plan, groupByTags, false)
 		plan = newUnresolvedAggregation(plan,
-			logical.NewField(topNAggregation.GetFieldName()),
+			projectionFields[0],
 			criteria.GetAgg(),
 			true)
 	}
 
 	plan = top(plan, &measurev1.QueryRequest_Top{
 		Number:         criteria.GetTopN(),
-		FieldName:      topNAggregation.GetFieldName(),
+		FieldName:      fieldName,
 		FieldValueSort: criteria.GetFieldValueSort(),
 	})
 	p, err := plan.Analyze(s)

@@ -152,15 +152,28 @@ type StreamSortResult interface {
 	Pull() *StreamColumnResult
 }
 
+// OrderByType is the type of order by.
+type OrderByType int
+
+const (
+	// OrderByTypeTime is the order by time.
+	OrderByTypeTime OrderByType = iota
+	// OrderByTypeIndex is the order by index.
+	OrderByTypeIndex
+	// OrderByTypeSeries is the order by series.
+	OrderByTypeSeries
+)
+
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
-	Name            string
-	TimeRange       *timestamp.TimeRange
-	Entities        [][]*modelv1.TagValue
 	Filter          index.Filter
+	TimeRange       *timestamp.TimeRange
 	Order           *OrderBy
+	Name            string
+	Entities        [][]*modelv1.TagValue
 	TagProjection   []TagProjection
 	FieldProjection []string
+	OrderByType     OrderByType
 }
 
 // MeasureQueryResult is the result of a measure query.

@@ -15,40 +15,31 @@
 # specific language governing permissions and limitations
 # under the License.
 
-lists:
-- items:
-  - entity:
-    - key: service_id
-      value:
-        "null": null
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
+name: "service_instance_latency_minute"
+groups: ["sw_metric"]
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["entity_id", "service_id"]
+fieldProjection:
+  names: ["value"]
+criteria:
+  condition:
+    name: "service_id"
+    op: "BINARY_OP_EQ"
     value:
-      int:
-        value: "300"
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_1
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
-    value:
-      int:
-        value: "240"
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_2
-    - key: entity_id
-      value:
-        str:
-          value: entity_3
-    value:
-      int:
-        value: "155"
+      str:
+        value: "svc_1"
+groupBy:
+  tagProjection:
+    tagFamilies:
+    - name: "default"
+      tags: ["entity_id"]
+  fieldName: "value"
+agg:
+  function: "AGGREGATION_FUNCTION_MEAN"
+  fieldName: "value"
+top:
+  number: 2
+  fieldName: "value"
+  fieldValueSort: "SORT_ASC"

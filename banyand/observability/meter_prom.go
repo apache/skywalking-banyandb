@@ -1,6 +1,3 @@
-//go:build prometheus
-// +build prometheus
-
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -27,10 +24,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
-	"google.golang.org/grpc"
 )
 
 var (
@@ -43,19 +40,19 @@ var (
 func init() {
 	reg.MustRegister(collectors.NewGoCollector())
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	mux.Handle("/metrics", promhttp.HandlerFor(
+	metricsMux.Handle("/metrics", promhttp.HandlerFor(
 		reg,
 		promhttp.HandlerOpts{},
 	))
 }
 
 // NewMeterProvider returns a meter.Provider based on the given scope.
-func NewMeterProvider(scope meter.Scope) meter.Provider {
+func newPromMeterProvider(scope meter.Scope) meter.Provider {
 	return prom.NewProvider(scope, reg)
 }
 
 // MetricsServerInterceptor returns a server interceptor for metrics.
-func MetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
+func promMetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
 	once.Do(func() {
 		srvMetrics = grpcprom.NewServerMetrics(
 			grpcprom.WithServerHandlingTimeHistogram(
