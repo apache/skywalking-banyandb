@@ -18,6 +18,7 @@
 package prom
 
 import (
+	"sync"
 	"unsafe"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,8 +29,12 @@ import (
 
 // Provider is a prometheus provider.
 type provider struct {
-	scope meter.Scope
-	reg   prometheus.Registerer
+	scope        meter.Scope
+	reg          prometheus.Registerer
+	counterMap   map[string]meter.Counter
+	gaugeMap     map[string]meter.Gauge
+	histogramMap map[string]meter.Histogram
+	mutex        sync.Mutex
 }
 
 // NewProvider creates a new prometheus provider with given meter.Scope.
@@ -40,9 +45,11 @@ func NewProvider(scope meter.Scope, reg prometheus.Registerer) meter.Provider {
 	}
 }
 
-// Counter returns a prometheus counter.
-func (p *provider) Counter(name string, labels ...string) meter.Counter {
-	return &counter{
+// RegisterCounter register a prometheus counter.
+func (p *provider) RegisterCounter(name string, labels ...string) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.counterMap[meter.GenerateKey(name, labels)] = &counter{
 		counter: promauto.With(p.reg).NewCounterVec(prometheus.CounterOpts{
 			Name:        p.scope.GetNamespace() + "_" + name,
 			Help:        p.scope.GetNamespace() + "_" + name,
@@ -51,9 +58,11 @@ func (p *provider) Counter(name string, labels ...string) meter.Counter {
 	}
 }
 
-// Gauge returns a prometheus gauge.
-func (p *provider) Gauge(name string, labels ...string) meter.Gauge {
-	return &gauge{
+// RegisterGauge register a prometheus gauge.
+func (p *provider) RegisterGauge(name string, labels ...string) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.gaugeMap[meter.GenerateKey(name, labels)] = &gauge{
 		gauge: promauto.With(p.reg).NewGaugeVec(prometheus.GaugeOpts{
 			Name:        p.scope.GetNamespace() + "_" + name,
 			Help:        p.scope.GetNamespace() + "_" + name,
@@ -62,9 +71,11 @@ func (p *provider) Gauge(name string, labels ...string) meter.Gauge {
 	}
 }
 
-// Histogram returns a prometheus histogram.
-func (p *provider) Histogram(name string, buckets meter.Buckets, labels ...string) meter.Histogram {
-	return &histogram{
+// RegisterHistogram register a prometheus histogram.
+func (p *provider) RegisterHistogram(name string, buckets meter.Buckets, labels ...string) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.histogramMap[meter.GenerateKey(name, labels)] = &histogram{
 		histogram: promauto.With(p.reg).NewHistogramVec(prometheus.HistogramOpts{
 			Name:        p.scope.GetNamespace() + "_" + name,
 			Help:        p.scope.GetNamespace() + "_" + name,
@@ -72,6 +83,27 @@ func (p *provider) Histogram(name string, buckets meter.Buckets, labels ...strin
 			Buckets:     buckets,
 		}, labels),
 	}
+}
+
+// GetCounter retrieves a registered prometheus counter.
+func (p *provider) GetCounter(name string, labels ...string) meter.Counter {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	return p.counterMap[meter.GenerateKey(name, labels)]
+}
+
+// GetGauge retrieves a registered prometheus gauge.
+func (p *provider) GetGauge(name string, labels ...string) meter.Gauge {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	return p.gaugeMap[meter.GenerateKey(name, labels)]
+}
+
+// GetHistogram retrieves a registered prometheus histogram.
+func (p *provider) GetHistogram(name string, _ meter.Buckets, labels ...string) meter.Histogram {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	return p.histogramMap[meter.GenerateKey(name, labels)]
 }
 
 // convertLabels converts a map of labels to a prometheus.Labels.

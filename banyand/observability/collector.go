@@ -43,6 +43,7 @@ type Collector struct {
 func (c *Collector) RegisterProvider(provider meter.Provider) {
 	c.gMux.Lock()
 	defer c.gMux.Unlock()
+	registerMetrics(provider)
 	c.providers = append(c.providers, provider)
 }
 

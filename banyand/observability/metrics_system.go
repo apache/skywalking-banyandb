@@ -52,9 +52,22 @@ func init() {
 	MetricsCollector.Register("net", collectNet)
 }
 
+func registerMetrics(provider meter.Provider) {
+	provider.RegisterGauge("cpu_state", "kind")
+	provider.RegisterGauge("cpu_num")
+	provider.RegisterGauge("memory_state", "kind")
+	provider.RegisterGauge("net_state", "kind", "name")
+}
+
 func collectCPU(provider meter.Provider) {
-	cpuStateGauge := provider.Gauge("cpu_state", "kind")
-	cpuNumGauge := provider.Gauge("cpu_num")
+	cpuStateGauge := provider.GetGauge("cpu_state", "kind")
+	if cpuStateGauge == nil {
+		log.Error().Msg("cpuStateGauge is not registered")
+	}
+	cpuNumGauge := provider.GetGauge("cpu_num")
+	if cpuNumGauge == nil {
+		log.Error().Msg("cpuNumGauge is not registered")
+	}
 	once4CpuCount.Do(func() {
 		if c, err := cpuCountsFunc(false); err != nil {
 			log.Error().Err(err).Msg("cannot get cpu count")
@@ -84,7 +97,10 @@ func collectCPU(provider meter.Provider) {
 }
 
 func collectMemory(provider meter.Provider) {
-	memorySateGauge := provider.Gauge("memory_state", "kind")
+	memorySateGauge := provider.GetGauge("memory_state", "kind")
+	if memorySateGauge == nil {
+		log.Error().Msg("memorySateGauge is not registered")
+	}
 	m, err := mem.VirtualMemory()
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get memory stat")
@@ -94,7 +110,10 @@ func collectMemory(provider meter.Provider) {
 }
 
 func collectNet(provider meter.Provider) {
-	netStateGauge := provider.Gauge("net_state", "kind", "name")
+	netStateGauge := provider.GetGauge("net_state", "kind", "name")
+	if netStateGauge == nil {
+		log.Error().Msg("netStateGauge is not registered")
+	}
 	stats, err := getNetStat(context.Background())
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get net stat")
