@@ -446,7 +446,7 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.minTimestamp = opts.minTimestamp
 	bc.maxTimestamp = opts.maxTimestamp
 	bc.tagProjection = opts.TagProjection
-	if len(opts.sortedRefMap) != 0 {
+	if opts.sortedRefMap != nil {
 		seriesID := bc.bm.seriesID
 		for tw := range opts.sortedRefMap {
 			timeRange := tw.GetTimeRange()

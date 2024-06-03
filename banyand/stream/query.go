@@ -575,20 +575,20 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr p
 func indexSearch(ctx context.Context, sqo pbv1.StreamQueryOptions,
 	tabWrappers []storage.TSTableWrapper[*tsTable], seriesList pbv1.SeriesList,
 ) (map[common.SeriesID][]int64, error) {
-	var filteredRefList []elementRef
-	if sqo.Filter != nil {
-		for _, tw := range tabWrappers {
-			index := tw.Table().Index()
-			erl, err := index.Search(ctx, seriesList, sqo.Filter, sqo.TimeRange)
-			if err != nil {
-				return nil, err
-			}
-			filteredRefList = append(filteredRefList, erl...)
-		}
+	if sqo.Filter == nil {
+		return nil, nil
 	}
-	var filteredRefMap map[common.SeriesID][]int64
+	var filteredRefList []elementRef
+	for _, tw := range tabWrappers {
+		index := tw.Table().Index()
+		erl, err := index.Search(ctx, seriesList, sqo.Filter, sqo.TimeRange)
+		if err != nil {
+			return nil, err
+		}
+		filteredRefList = append(filteredRefList, erl...)
+	}
+	filteredRefMap := make(map[common.SeriesID][]int64)
 	if len(filteredRefList) != 0 {
-		filteredRefMap = make(map[common.SeriesID][]int64)
 		for _, ref := range filteredRefList {
 			if _, ok := filteredRefMap[ref.seriesID]; !ok {
 				filteredRefMap[ref.seriesID] = []int64{ref.timestamp}
@@ -603,22 +603,28 @@ func indexSearch(ctx context.Context, sqo pbv1.StreamQueryOptions,
 func indexSort(s *stream, sqo pbv1.StreamQueryOptions, tabWrappers []storage.TSTableWrapper[*tsTable],
 	seriesList pbv1.SeriesList, filteredRefMap map[common.SeriesID][]int64,
 ) (map[storage.TSTableWrapper[*tsTable]]map[common.SeriesID][]int64, *tagLocation, error) {
+	if sqo.Order == nil || sqo.Order.Index == nil {
+		return nil, nil, nil
+	}
 	elementRefCount := 0
 	sortedRefMap := make(map[storage.TSTableWrapper[*tsTable]]map[common.SeriesID][]int64)
-	var sortedTagLocation *tagLocation
-	for sqo.Order != nil && sqo.Order.Index != nil {
-		iters, tl, err := s.buildItersByIndex(tabWrappers, seriesList, sqo)
-		if err != nil {
-			return nil, nil, err
-		}
-		sortedTagLocation = tl
-		for i, iter := range iters {
+	iters, stl, err := s.buildItersByIndex(tabWrappers, seriesList, sqo)
+	if err != nil {
+		return nil, nil, err
+	}
+	for {
+		for i := 0; i < len(iters); i++ {
 			if _, ok := sortedRefMap[tabWrappers[i]]; !ok {
 				sortedRefMap[tabWrappers[i]] = make(map[common.SeriesID][]int64)
 			}
 			srm := sortedRefMap[tabWrappers[i]]
-			for iter.Next() {
-				timestamp, seriesID := iter.Val()
+			var hasNext bool
+			for j := 1; j <= sqo.MaxElementSize; j++ {
+				hasNext = iters[i].Next()
+				if !hasNext {
+					break
+				}
+				timestamp, seriesID := iters[i].Val()
 				if filteredRefMap != nil && filteredRefMap[seriesID] == nil {
 					continue
 				}
@@ -630,12 +636,16 @@ func indexSort(s *stream, sqo pbv1.StreamQueryOptions, tabWrappers []storage.TST
 				elementRefCount++
 			}
 			sortedRefMap[tabWrappers[i]] = srm
+			if !hasNext {
+				iters = append(iters[:i], iters[i+1:]...)
+				i--
+			}
 		}
-		if elementRefCount >= sqo.MaxElementSize {
+		if elementRefCount >= sqo.MaxElementSize || len(iters) == 0 {
 			break
 		}
 	}
-	return sortedRefMap, sortedTagLocation, nil
+	return sortedRefMap, stl, nil
 }
 
 func findSeriesID(sid common.SeriesID, filteredRefMap map[common.SeriesID][]int64, sortedRefMap map[storage.TSTableWrapper[*tsTable]]map[common.SeriesID][]int64) bool {
