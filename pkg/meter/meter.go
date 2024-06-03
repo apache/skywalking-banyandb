@@ -43,21 +43,9 @@ func (p LabelPairs) Merge(other LabelPairs) LabelPairs {
 
 // Provider is the interface for a metrics provider, which is responsible for creating metrics.
 type Provider interface {
-	RegisterCounter(name string, labels ...string)
-	RegisterGauge(name string, labelNames ...string)
-	RegisterHistogram(name string, buckets Buckets, labelNames ...string)
-	GetCounter(name string, labelNames ...string) Counter
-	GetGauge(name string, labelNames ...string) Gauge
-	GetHistogram(name string, buckets Buckets, labelNames ...string) Histogram
-}
-
-// GenerateKey is a helper function to generate a unique key for the Provider registry.
-func GenerateKey(name string, labelNames []string) string {
-	key := name
-	for _, label := range labelNames {
-		key += "_" + label
-	}
-	return key
+	Counter(name string, labelNames ...string) Counter
+	Gauge(name string, labelNames ...string) Gauge
+	Histogram(name string, buckets Buckets, labelNames ...string) Histogram
 }
 
 // Scope is a namespace wrapper for metrics.
@@ -104,26 +92,17 @@ func (noopInstrument) Delete(_ ...string) bool        { return false }
 // NoopProvider is a no-op implementation of the Provider interface.
 type NoopProvider struct{}
 
-// RegisterCounter register a noop Counter.
-func (NoopProvider) RegisterCounter(_ string, _ ...string) {}
-
-// RegisterGauge register a noop Gauge.
-func (NoopProvider) RegisterGauge(_ string, _ ...string) {}
-
-// RegisterHistogram register a noop Histogram.
-func (NoopProvider) RegisterHistogram(_ string, _ Buckets, _ ...string) {}
-
-// GetCounter retrieves a registered noop Counter.
-func (NoopProvider) GetCounter(_ string, _ ...string) Counter {
+// Counter returns a no-op implementation of the Counter interface.
+func (NoopProvider) Counter(_ string, _ ...string) Counter {
 	return noopInstrument{}
 }
 
-// GetGauge retrieves a registered noop Gauge.
-func (NoopProvider) GetGauge(_ string, _ ...string) Gauge {
+// Gauge returns a no-op implementation of the Gauge interface.
+func (NoopProvider) Gauge(_ string, _ ...string) Gauge {
 	return noopInstrument{}
 }
 
-// GetHistogram retrieves a registered noop Histogram.
-func (NoopProvider) GetHistogram(_ string, _ Buckets, _ ...string) Histogram {
+// Histogram returns a no-op implementation of the Histogram interface.
+func (NoopProvider) Histogram(_ string, _ Buckets, _ ...string) Histogram {
 	return noopInstrument{}
 }

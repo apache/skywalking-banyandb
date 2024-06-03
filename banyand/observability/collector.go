@@ -19,32 +19,20 @@ package observability
 
 import (
 	"sync"
-
-	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
 // MetricsCollector is a global metrics collector.
 var MetricsCollector = Collector{
-	getters:   make(map[string]MetricsGetter),
-	providers: []meter.Provider{},
+	getters: make(map[string]MetricsGetter),
 }
 
 // MetricsGetter is a function that collects metrics.
-type MetricsGetter func(meter.Provider)
+type MetricsGetter func()
 
 // Collector is a metrics collector.
 type Collector struct {
-	getters   map[string]MetricsGetter
-	providers []meter.Provider
-	gMux      sync.RWMutex
-}
-
-// RegisterProvider register a metrics provider.
-func (c *Collector) RegisterProvider(provider meter.Provider) {
-	c.gMux.Lock()
-	defer c.gMux.Unlock()
-	registerMetrics(provider)
-	c.providers = append(c.providers, provider)
+	getters map[string]MetricsGetter
+	gMux    sync.RWMutex
 }
 
 // Register registers a metrics getter.
@@ -64,9 +52,7 @@ func (c *Collector) Unregister(name string) {
 func (c *Collector) collect() {
 	c.gMux.RLock()
 	defer c.gMux.RUnlock()
-	for _, provider := range c.providers {
-		for _, getter := range c.getters {
-			getter(provider)
-		}
+	for _, getter := range c.getters {
+		getter()
 	}
 }
