@@ -19,6 +19,7 @@ syntax = "proto3";
 
 package banyandb.stream.v1;
 
+import "banyandb/common/v1/trace.proto";
 import "banyandb/model/v1/query.proto";
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
@@ -49,6 +50,8 @@ message Element {
 message QueryResponse {
   // elements are the actual data returned
   repeated Element elements = 1;
+  // trace contains the trace information of the query when trace is enabled
+  common.v1.Trace trace = 2;
 }
 
 // QueryRequest is the request contract for query.
@@ -72,4 +75,6 @@ message QueryRequest {
   model.v1.Criteria criteria = 7;
   // projection can be used to select the key names of the element in the response
   model.v1.TagProjection projection = 8 [(validate.rules).message.required = true];
+  // trace is used to enable trace for the query
+  bool trace = 9;
 }
