@@ -96,6 +96,8 @@ func (p *metricService) Validate() error {
 }
 
 func (p *metricService) PreRun(ctx context.Context) error {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
 	var providers []meter.Provider
 	for _, mode := range p.modes {
 		switch mode {
