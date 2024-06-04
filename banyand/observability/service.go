@@ -61,14 +61,15 @@ func NewMetricService(metadata metadata.Repo) Service {
 }
 
 type metricService struct {
-	l          *logger.Logger
-	svr        *http.Server
-	closer     *run.Closer
-	scheduler  *timestamp.Scheduler
-	metadata   metadata.Repo
-	listenAddr string
-	modes      []string
-	mutex      sync.Mutex
+	l               *logger.Logger
+	svr             *http.Server
+	closer          *run.Closer
+	scheduler       *timestamp.Scheduler
+	metadata        metadata.Repo
+	listenAddr      string
+	modes           []string
+	mutex           sync.Mutex
+	initMetricsOnce sync.Once
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
@@ -112,7 +113,7 @@ func (p *metricService) PreRun(ctx context.Context) error {
 			providers = append(providers, newNativeMeterProvider(SystemScope))
 		}
 	}
-	initMetrics(providers)
+	p.initMetricsOnce.Do(func() { initMetrics(providers) })
 	return nil
 }
 
