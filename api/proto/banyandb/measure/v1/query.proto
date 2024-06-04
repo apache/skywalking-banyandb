@@ -19,6 +19,7 @@ syntax = "proto3";
 
 package banyandb.measure.v1;
 
+import "banyandb/common/v1/trace.proto";
 import "banyandb/model/v1/common.proto";
 import "banyandb/model/v1/query.proto";
 import "google/protobuf/timestamp.proto";
@@ -45,6 +46,8 @@ message DataPoint {
 message QueryResponse {
   // data_points are the actual data returned
   repeated DataPoint data_points = 1;
+  // trace contains the trace information of the query when trace is enabled
+  common.v1.Trace trace = 2;
 }
 
 // QueryRequest is the request contract for query.
@@ -101,4 +104,6 @@ message QueryRequest {
   uint32 limit = 11;
   // order_by is given to specify the sort for a tag.
   model.v1.QueryOrder order_by = 12;
+  // trace is used to enable trace for the query
+  bool trace = 13;
 }
