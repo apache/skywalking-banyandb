@@ -69,7 +69,6 @@ type metricService struct {
 	listenAddr      string
 	modes           []string
 	mutex           sync.Mutex
-	initMetricsOnce sync.Once
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
@@ -113,7 +112,7 @@ func (p *metricService) PreRun(ctx context.Context) error {
 			providers = append(providers, newNativeMeterProvider(SystemScope))
 		}
 	}
-	p.initMetricsOnce.Do(func() { initMetrics(providers) })
+	initMetrics(providers)
 	return nil
 }
 

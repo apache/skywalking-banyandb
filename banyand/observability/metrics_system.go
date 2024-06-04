@@ -48,6 +48,7 @@ var (
 	cpuNumGauge     meter.Gauge
 	memorySateGauge meter.Gauge
 	netStateGauge   meter.Gauge
+	initMetricsOnce sync.Once
 )
 
 func init() {
@@ -57,10 +58,12 @@ func init() {
 }
 
 func initMetrics(providers []meter.Provider) {
-	cpuStateGauge = NewGauge(providers, "cpu_state", "kind")
-	cpuNumGauge = NewGauge(providers, "cpu_num")
-	memorySateGauge = NewGauge(providers, "memory_state", "kind")
-	netStateGauge = NewGauge(providers, "net_state", "kind", "name")
+	initMetricsOnce.Do(func() { 
+		cpuStateGauge = NewGauge(providers, "cpu_state", "kind")
+		cpuNumGauge = NewGauge(providers, "cpu_num")
+		memorySateGauge = NewGauge(providers, "memory_state", "kind")
+		netStateGauge = NewGauge(providers, "net_state", "kind", "name")
+	})
 }
 
 func collectCPU() {
