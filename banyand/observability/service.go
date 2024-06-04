@@ -61,14 +61,14 @@ func NewMetricService(metadata metadata.Repo) Service {
 }
 
 type metricService struct {
-	l               *logger.Logger
-	svr             *http.Server
-	closer          *run.Closer
-	scheduler       *timestamp.Scheduler
-	metadata        metadata.Repo
-	listenAddr      string
-	modes           []string
-	mutex           sync.Mutex
+	l          *logger.Logger
+	svr        *http.Server
+	closer     *run.Closer
+	scheduler  *timestamp.Scheduler
+	metadata   metadata.Repo
+	listenAddr string
+	modes      []string
+	mutex      sync.Mutex
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {

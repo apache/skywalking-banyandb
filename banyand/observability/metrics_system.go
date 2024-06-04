@@ -58,7 +58,7 @@ func init() {
 }
 
 func initMetrics(providers []meter.Provider) {
-	initMetricsOnce.Do(func() { 
+	initMetricsOnce.Do(func() {
 		cpuStateGauge = NewGauge(providers, "cpu_state", "kind")
 		cpuNumGauge = NewGauge(providers, "cpu_num")
 		memorySateGauge = NewGauge(providers, "memory_state", "kind")
