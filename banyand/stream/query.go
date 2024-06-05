@@ -33,6 +33,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type queryOptions struct {
@@ -335,114 +337,7 @@ func (qr *queryResult) merge() *pbv1.StreamResult {
 	return result
 }
 
-func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error) {
-	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
-		return nil, errors.New("invalid query options: timeRange and series are required")
-	}
-	if len(sqo.TagProjection) == 0 {
-		return nil, errors.New("invalid query options: tagProjection is required")
-	}
-	db := s.databaseSupplier.SupplyTSDB()
-	var result queryResult
-	if db == nil {
-		return &result, nil
-	}
-	tsdb := db.(storage.TSDB[*tsTable, option])
-	tabWrappers := tsdb.SelectTSTables(*sqo.TimeRange)
-	defer func() {
-		for i := range tabWrappers {
-			tabWrappers[i].DecRef()
-		}
-	}()
-	series := make([]*pbv1.Series, len(sqo.Entities))
-	for i := range sqo.Entities {
-		series[i] = &pbv1.Series{
-			Subject:      sqo.Name,
-			EntityValues: sqo.Entities[i],
-		}
-	}
-	sl, err := tsdb.Lookup(ctx, series)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(sl) < 1 {
-		return &result, nil
-	}
-	var sids []common.SeriesID
-	for i := range sl {
-		sids = append(sids, sl[i].ID)
-	}
-	var parts []*part
-	qo := queryOptions{
-		StreamQueryOptions: sqo,
-		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
-		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
-	}
-	var n int
-	for i := range tabWrappers {
-		s := tabWrappers[i].Table().currentSnapshot()
-		if s == nil {
-			continue
-		}
-		parts, n = s.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
-		if n < 1 {
-			s.decRef()
-			continue
-		}
-		result.snapshots = append(result.snapshots, s)
-	}
-	bma := generateBlockMetadataArray()
-	defer releaseBlockMetadataArray(bma)
-	// TODO: cache tstIter
-	var ti tstIter
-	defer ti.reset()
-	originalSids := make([]common.SeriesID, len(sids))
-	copy(originalSids, sids)
-	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	ti.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
-	if ti.Error() != nil {
-		return nil, fmt.Errorf("cannot init tstIter: %w", ti.Error())
-	}
-	for ti.nextBlock() {
-		bc := generateBlockCursor()
-		p := ti.piHeap[0]
-		bc.init(p.p, p.curBlock, qo)
-		result.data = append(result.data, bc)
-	}
-	if ti.Error() != nil {
-		return nil, fmt.Errorf("cannot iterate tstIter: %w", ti.Error())
-	}
-
-	entityMap, sidToIndex := s.genIndex(sl)
-	result.entityMap = entityMap
-	result.sidToIndex = sidToIndex
-	result.tagNameIndex = make(map[string]partition.TagLocator)
-	result.schema = s.schema
-	result.seriesList = sl
-	for i, si := range originalSids {
-		result.sidToIndex[si] = i
-	}
-	for i, tagFamilySpec := range s.schema.GetTagFamilies() {
-		for j, tagSpec := range tagFamilySpec.GetTags() {
-			result.tagNameIndex[tagSpec.GetName()] = partition.TagLocator{
-				FamilyOffset: i,
-				TagOffset:    j,
-			}
-		}
-	}
-	result.orderByTS = true
-	if sqo.Order == nil {
-		result.asc = true
-		return &result, nil
-	}
-	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-		result.asc = true
-	}
-	return &result, nil
-}
-
-func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pbv1.StreamQueryResult, err error) {
+func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pbv1.StreamQueryResult, err error) {
 	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
@@ -515,7 +410,7 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr p
 	var sids []common.SeriesID
 	for i := 0; i < len(seriesList); i++ {
 		sid := seriesList[i].ID
-		if !findSeriesID(sid, filteredRefMap, sortedRefMap) {
+		if (filteredRefMap != nil || sortedRefMap != nil) && !findSeriesID(sid, filteredRefMap, sortedRefMap) {
 			seriesList = append(seriesList[:i], seriesList[i+1:]...)
 			i--
 			continue
@@ -575,7 +470,7 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr p
 func indexSearch(ctx context.Context, sqo pbv1.StreamQueryOptions,
 	tabWrappers []storage.TSTableWrapper[*tsTable], seriesList pbv1.SeriesList,
 ) (map[common.SeriesID][]int64, error) {
-	if sqo.Filter == nil {
+	if sqo.Filter == nil || sqo.Filter == logical.ENode {
 		return nil, nil
 	}
 	var filteredRefList []elementRef
@@ -624,14 +519,14 @@ func indexSort(s *stream, sqo pbv1.StreamQueryOptions, tabWrappers []storage.TST
 				if !hasNext {
 					break
 				}
-				timestamp, seriesID := iters[i].Val()
-				if filteredRefMap != nil && filteredRefMap[seriesID] == nil {
+				ts, sid := iters[i].Val()
+				if filteredRefMap != nil && (filteredRefMap[sid] == nil || timestamp.Find(filteredRefMap[sid], int64(ts)) == -1) {
 					continue
 				}
-				if _, ok := srm[seriesID]; !ok {
-					srm[seriesID] = []int64{int64(timestamp)}
+				if _, ok := srm[sid]; !ok {
+					srm[sid] = []int64{int64(ts)}
 				} else {
-					srm[seriesID] = append(srm[seriesID], int64(timestamp))
+					srm[sid] = append(srm[sid], int64(ts))
 				}
 				elementRefCount++
 			}

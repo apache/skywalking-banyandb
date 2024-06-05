@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/rand"
 	"io"
+	"math"
 	"math/big"
 	"path/filepath"
 	"strconv"
@@ -336,7 +337,7 @@ func generateStreamQueryOptions(p parameter, index mockIndex) pbv1.StreamQueryOp
 		Filter:         filter,
 		Order:          order,
 		TagProjection:  []pbv1.TagProjection{tagProjection},
-		MaxElementSize: int(float64(p.batchCount*p.seriesCount*(p.endTimestamp-p.startTimestamp)/p.tagCardinality) * 0.98),
+		MaxElementSize: math.MaxInt32,
 	}
 }
 
@@ -349,7 +350,7 @@ func BenchmarkFilter(b *testing.B) {
 		sqo := generateStreamQueryOptions(p, idx)
 		sqo.Order = nil
 		b.Run("filter-"+p.scenario, func(b *testing.B) {
-			res, err := s.Filter(context.TODO(), sqo)
+			res, err := s.Query(context.TODO(), sqo)
 			require.NoError(b, err)
 			logicalstream.BuildElementsFromStreamResult(res)
 		})
@@ -364,8 +365,9 @@ func BenchmarkSort(b *testing.B) {
 		s := generateStream(db)
 		sqo := generateStreamQueryOptions(p, idx)
 		b.Run("sort-"+p.scenario, func(b *testing.B) {
-			_, err := s.Filter(context.TODO(), sqo)
+			res, err := s.Query(context.TODO(), sqo)
 			require.NoError(b, err)
+			logicalstream.BuildElementsFromStreamResult(res)
 		})
 	}
 }
