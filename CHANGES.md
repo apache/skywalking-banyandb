@@ -19,6 +19,7 @@ Release Notes.
 - Fix duplicated items in the query aggregation top-n list.
 - Fix non-"value" field in topN pre-calculation result measure is lack of data.
 - Encode escaped characters to int64 bytes to fix the malformed data.
+- Fix the filtering of stream in descending order by timestamp.
 
 ## 0.6.0
 
