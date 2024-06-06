@@ -75,7 +75,9 @@ func (e *elementIndex) Write(docs index.Documents) error {
 	return nil
 }
 
-func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter, timeRange *timestamp.TimeRange, order *pbv1.OrderBy) ([]elementRef, error) {
+func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter,
+	timeRange *timestamp.TimeRange, order *pbv1.OrderBy,
+) ([]elementRef, error) {
 	pm := make(map[common.SeriesID][]uint64)
 	for _, series := range seriesList {
 		pl, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
