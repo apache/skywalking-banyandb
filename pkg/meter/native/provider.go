@@ -33,6 +33,7 @@ const (
 	NativeObservabilityGroupName = "_monitoring"
 	defaultTagFamily             = "default"
 	defaultFieldName             = "value"
+	nodeNameTag                  = "node_name"
 )
 
 var log = logger.GetLogger("observability", "metrics", "system")
@@ -114,6 +115,7 @@ func (p *provider) getTags(labels []string) ([]*databasev1.TagSpec, []string) {
 			entityTags = append(entityTags, label)
 		}
 	}
+	addTags(nodeNameTag)
 	addTags(labels...)
 	for label := range p.scope.GetLabels() {
 		addTags(label)
