@@ -235,13 +235,13 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, false)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
 	list = roaring.NewPostingList()
 	for iter.Next() {
-		docID, _ := iter.Val()
+		docID, _, _ := iter.Val()
 		list.Insert(docID)
 	}
 	return list, err
@@ -269,13 +269,13 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, false)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
 	list := roaring.NewPostingList()
 	for iter.Next() {
-		docID, _ := iter.Val()
+		docID, _, _ := iter.Val()
 		list.Insert(docID)
 	}
 	return list, err
@@ -288,7 +288,7 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	}
 	list = roaring.NewPostingList()
 	for iter.Next() {
-		docID, _ := iter.Val()
+		docID, _, _ := iter.Val()
 		list.Insert(docID)
 	}
 	err = multierr.Append(err, iter.Close())
@@ -411,14 +411,17 @@ type blugeMatchIterator struct {
 	delegated search.DocumentMatchIterator
 	err       error
 	closer    io.Closer
+	term      []byte
 	docID     uint64
 	seriesID  common.SeriesID
+	sorted    bool
 }
 
-func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer) blugeMatchIterator {
+func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer, sorted bool) blugeMatchIterator {
 	return blugeMatchIterator{
 		delegated: delegated,
 		closer:    closer,
+		sorted:    sorted,
 	}
 }
 
@@ -440,6 +443,9 @@ func (bmi *blugeMatchIterator) Next() bool {
 				// value = seriesID(8bytes)+docID(8bytes)
 				bmi.docID = convert.BytesToUint64(value[8:])
 				bmi.seriesID = common.SeriesID(convert.BytesToUint64(value[:8]))
+				if bmi.sorted {
+					bmi.term = index.UnmarshalTerm(value)
+				}
 			}
 		}
 		return true
@@ -447,8 +453,8 @@ func (bmi *blugeMatchIterator) Next() bool {
 	return bmi.err == nil
 }
 
-func (bmi *blugeMatchIterator) Val() (uint64, common.SeriesID) {
-	return bmi.docID, bmi.seriesID
+func (bmi *blugeMatchIterator) Val() (uint64, common.SeriesID, []byte) {
+	return bmi.docID, bmi.seriesID, bmi.term
 }
 
 func (bmi *blugeMatchIterator) Close() error {

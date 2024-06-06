@@ -156,8 +156,10 @@ message IndexRule {
   }
   // type is the IndexType of this IndexObject.
   Type type = 3 [(validate.rules).enum.defined_only = true];
+  // sorted indicates whether the index is for sorting.
+  bool sorted = 4;
   // updated_at indicates when the IndexRule is updated
-  google.protobuf.Timestamp updated_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
   enum Analyzer {
     ANALYZER_UNSPECIFIED = 0;
     // Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.
@@ -170,7 +172,7 @@ message IndexRule {
     ANALYZER_SIMPLE = 3;
   }
   // analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices.
-  Analyzer analyzer = 5;
+  Analyzer analyzer = 6;
 }
 
 // Subject defines which stream or measure would generate indices

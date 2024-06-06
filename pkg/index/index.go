@@ -165,7 +165,7 @@ func (r RangeOpts) Between(value []byte) int {
 // FieldIterator allows iterating over a field's posting values.
 type FieldIterator interface {
 	Next() bool
-	Val() (uint64, common.SeriesID)
+	Val() (uint64, common.SeriesID, []byte)
 	Close() error
 }
 
@@ -178,8 +178,8 @@ func (i *dummyIterator) Next() bool {
 	return false
 }
 
-func (i *dummyIterator) Val() (uint64, common.SeriesID) {
-	return 0, 0
+func (i *dummyIterator) Val() (uint64, common.SeriesID, []byte) {
+	return 0, 0, nil
 }
 
 func (i *dummyIterator) Close() error {

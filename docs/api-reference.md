@@ -969,6 +969,7 @@ IndexRule should bind to a subject through an IndexRuleBinding to generate prope
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata define the rule&#39;s identity |
 | tags | [string](#string) | repeated | tags are the combination that refers to an indexed object If the elements in tags are more than 1, the object will generate a multi-tag index Caveat: All tags in a multi-tag MUST have an identical IndexType |
 | type | [IndexRule.Type](#banyandb-database-v1-IndexRule-Type) |  | type is the IndexType of this IndexObject. |
+| sorted | [bool](#bool) |  | sorted indicates whether the index is for sorting |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRule is updated |
 | analyzer | [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. |
 
