@@ -104,13 +104,9 @@ func (p *metricService) PreRun(ctx context.Context) error {
 		switch mode {
 		case flagPromethusMode:
 			MetricsServerInterceptor = promMetricsServerInterceptor
-			providers = append(providers, newPromMeterProvider(SystemScope))
+			providers = append(providers, newPromMeterProvider())
 		case flagNativeMode:
-			err := createNativeObservabilityGroup(ctx, p.metadata)
-			if err != nil {
-				p.l.Warn().Err(err).Msg("Failed to create native observability group")
-			}
-			providers = append(providers, newNativeMeterProvider(SystemScope, p.metadata))
+			providers = append(providers, newNativeMeterProvider(ctx, p.metadata))
 		}
 	}
 	initMetrics(providers)

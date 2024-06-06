@@ -18,10 +18,10 @@
 // Package native provides a simple meter system for metrics. The metrics are aggregated by the meter provider.
 package native
 
-type noopInstrument struct{}
+type nativeInstrument struct{}
 
-func (noopInstrument) Inc(_ float64, _ ...string)     {}
-func (noopInstrument) Set(_ float64, _ ...string)     {}
-func (noopInstrument) Add(_ float64, _ ...string)     {}
-func (noopInstrument) Observe(_ float64, _ ...string) {}
-func (noopInstrument) Delete(_ ...string) bool        { return false }
+func (nativeInstrument) Inc(_ float64, _ ...string)     {}
+func (nativeInstrument) Set(_ float64, _ ...string)     {}
+func (nativeInstrument) Add(_ float64, _ ...string)     {}
+func (nativeInstrument) Observe(_ float64, _ ...string) {}
+func (nativeInstrument) Delete(_ ...string) bool        { return false }

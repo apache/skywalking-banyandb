@@ -22,39 +22,17 @@ import (
 
 	"google.golang.org/grpc"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 )
 
 // NewMeterProvider returns a meter.Provider based on the given scope.
-func newNativeMeterProvider(scope meter.Scope, metadata metadata.Repo) meter.Provider {
-	return native.NewProvider(scope, metadata)
+func newNativeMeterProvider(ctx context.Context, metadata metadata.Repo) meter.Provider {
+	return native.NewProvider(ctx, SystemScope, metadata)
 }
 
 // MetricsServerInterceptor returns a grpc.UnaryServerInterceptor and a grpc.StreamServerInterceptor.
 func emptyMetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
 	return nil, nil
-}
-
-func createNativeObservabilityGroup(ctx context.Context, e metadata.Repo) error {
-	g := &commonv1.Group{
-		Metadata: &commonv1.Metadata{
-			Name: native.NativeObservabilityGroupName,
-		},
-		Catalog: commonv1.Catalog_CATALOG_MEASURE,
-		ResourceOpts: &commonv1.ResourceOpts{
-			ShardNum: 1,
-			SegmentInterval: &commonv1.IntervalRule{
-				Unit: commonv1.IntervalRule_UNIT_DAY,
-				Num:  1,
-			},
-			Ttl: &commonv1.IntervalRule{
-				Unit: commonv1.IntervalRule_UNIT_DAY,
-				Num:  1,
-			},
-		},
-	}
-	return e.GroupRegistry().CreateGroup(ctx, g)
 }

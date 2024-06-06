@@ -20,10 +20,12 @@ package native
 
 import (
 	"context"
+	"errors"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
@@ -44,34 +46,60 @@ type provider struct {
 }
 
 // NewProvider returns a native metrics Provider.
-func NewProvider(scope meter.Scope, metadata metadata.Repo) meter.Provider {
-	return &provider{
+func NewProvider(ctx context.Context, scope meter.Scope, metadata metadata.Repo) meter.Provider {
+	p := &provider{
 		scope:    scope,
 		metadata: metadata,
 	}
+	err := p.createNativeObservabilityGroup(ctx)
+	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
+		log.Warn().Err(err).Msg("Failed to create native observability group")
+	}
+	return p
 }
 
 // Counter returns a no-op implementation of the Counter interface.
 func (p *provider) Counter(name string, labelNames ...string) meter.Counter {
 	err := p.createMeasure(name, labelNames...)
-	if err != nil {
+	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
 		log.Error().Err(err).Msgf("Failure to createMeasure for Counter %s, labels: %v", name, labelNames)
 	}
-	return noopInstrument{}
+	return nativeInstrument{}
 }
 
 // Gauge returns a no-op implementation of the Gauge interface.
 func (p *provider) Gauge(name string, labelNames ...string) meter.Gauge {
 	err := p.createMeasure(name, labelNames...)
-	if err != nil {
+	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
 		log.Error().Err(err).Msgf("Failure to createMeasure for Gauge %s, labels: %v", name, labelNames)
 	}
-	return noopInstrument{}
+	return nativeInstrument{}
 }
 
 // Histogram returns a no-op implementation of the Histogram interface.
 func (p *provider) Histogram(_ string, _ meter.Buckets, _ ...string) meter.Histogram {
-	return noopInstrument{}
+	return nativeInstrument{}
+}
+
+func (p *provider) createNativeObservabilityGroup(ctx context.Context) error {
+	g := &commonv1.Group{
+		Metadata: &commonv1.Metadata{
+			Name: NativeObservabilityGroupName,
+		},
+		Catalog: commonv1.Catalog_CATALOG_MEASURE,
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 1,
+			SegmentInterval: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+			Ttl: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+		},
+	}
+	return p.metadata.GroupRegistry().CreateGroup(ctx, g)
 }
 
 func (p *provider) createMeasure(metric string, labels ...string) error {
