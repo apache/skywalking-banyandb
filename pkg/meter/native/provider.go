@@ -53,7 +53,7 @@ func NewProvider(ctx context.Context, scope meter.Scope, metadata metadata.Repo)
 	}
 	err := p.createNativeObservabilityGroup(ctx)
 	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
-		log.Warn().Err(err).Msg("Failed to create native observability group")
+		log.Error().Err(err).Msg("Failed to create native observability group")
 	}
 	return p
 }
