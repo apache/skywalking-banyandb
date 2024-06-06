@@ -335,6 +335,14 @@ function handleCodeData() {
         data.timeValue = []
     }
     json.orderBy ? param.orderBy = json.orderBy : delete param.orderBy
+
+    // Add other fields from json to param
+    Object.keys(json).forEach(key => {
+        if (!['offset', 'limit', 'timeRange', 'orderBy'].includes(key)) {
+            param[key] = json[key];
+        }
+    });
+
     getTableData()
 }
 function autoRefreshTimeRange() {
