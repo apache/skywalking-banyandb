@@ -96,6 +96,7 @@ func (p *metricService) Validate() error {
 }
 
 func (p *metricService) PreRun(ctx context.Context) error {
+	p.l = logger.GetLogger(p.Name())
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	var providers []meter.Provider
@@ -121,8 +122,6 @@ func (p *metricService) Name() string {
 }
 
 func (p *metricService) Serve() run.StopNotify {
-	p.l = logger.GetLogger(p.Name())
-
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	clock, _ := timestamp.GetClock(context.TODO())
