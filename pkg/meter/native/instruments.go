@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -15,24 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+// Package native provides a simple meter system for metrics. The metrics are aggregated by the meter provider.
+package native
 
-import (
-	"context"
+type nativeInstrument struct{}
 
-	"google.golang.org/grpc"
-
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
-	"github.com/apache/skywalking-banyandb/pkg/meter/native"
-)
-
-// NewMeterProvider returns a meter.Provider based on the given scope.
-func newNativeMeterProvider(ctx context.Context, metadata metadata.Repo) meter.Provider {
-	return native.NewProvider(ctx, SystemScope, metadata)
-}
-
-// MetricsServerInterceptor returns a grpc.UnaryServerInterceptor and a grpc.StreamServerInterceptor.
-func emptyMetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
-	return nil, nil
-}
+func (nativeInstrument) Inc(_ float64, _ ...string)     {}
+func (nativeInstrument) Set(_ float64, _ ...string)     {}
+func (nativeInstrument) Add(_ float64, _ ...string)     {}
+func (nativeInstrument) Observe(_ float64, _ ...string) {}
+func (nativeInstrument) Delete(_ ...string) bool        { return false }
