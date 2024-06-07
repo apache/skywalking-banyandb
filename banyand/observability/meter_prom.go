@@ -47,8 +47,8 @@ func init() {
 }
 
 // NewMeterProvider returns a meter.Provider based on the given scope.
-func newPromMeterProvider(scope meter.Scope) meter.Provider {
-	return prom.NewProvider(scope, reg)
+func newPromMeterProvider() meter.Provider {
+	return prom.NewProvider(SystemScope, reg)
 }
 
 // MetricsServerInterceptor returns a server interceptor for metrics.
