@@ -77,6 +77,17 @@ func Test_findRange(t *testing.T) {
 			wantExist: true,
 		},
 		{
+			name: "Test with range in timestamps desc",
+			args: args{
+				timestamps: []int64{5, 4, 3, 2, 1},
+				min:        2,
+				max:        4,
+			},
+			wantStart: 1,
+			wantEnd:   3,
+			wantExist: true,
+		},
+		{
 			name: "Test with range as timestamps",
 			args: args{
 				timestamps: []int64{1, 2, 3, 4, 5},
