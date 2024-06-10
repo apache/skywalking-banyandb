@@ -76,6 +76,7 @@ var _ = g.Describe("Istio", func() {
 			time.Sleep(time.Minute)
 			closerServerFunc()
 			helpers.PrintDiskUsage(measurePath, 5, 0)
+			time.Sleep(10 * time.Second)
 			deferFn()
 		})
 		gomega.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),

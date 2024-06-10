@@ -34,6 +34,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -52,7 +53,7 @@ type pub struct {
 	metadata   metadata.Repo
 	handler    schema.EventHandler
 	log        *logger.Logger
-	registered map[string]struct{}
+	registered map[string]*databasev1.Node
 	active     map[string]*client
 	evictable  map[string]evictNode
 	closer     *run.Closer
@@ -189,7 +190,7 @@ func New(metadata metadata.Repo) queue.Client {
 		metadata:   metadata,
 		active:     make(map[string]*client),
 		evictable:  make(map[string]evictNode),
-		registered: make(map[string]struct{}),
+		registered: make(map[string]*databasev1.Node),
 		closer:     run.NewCloser(1),
 	}
 }
