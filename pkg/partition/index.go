@@ -23,8 +23,8 @@ import (
 
 // IndexRuleLocator is a helper struct to locate the index rule by tag name.
 type IndexRuleLocator struct {
-	EntitySet      map[string]struct{}
-	TagFamilyTRule []map[string]*databasev1.IndexRule
+	EntitySet     map[string]struct{}
+	TagFamilyRule []map[string]*databasev1.IndexRule
 }
 
 // ParseIndexRuleLocators returns a IndexRuleLocator based on the tag family spec and index rules.
@@ -45,7 +45,7 @@ func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.Ta
 	}
 	for i := range families {
 		ttr := make(map[string]*databasev1.IndexRule)
-		locators.TagFamilyTRule = append(locators.TagFamilyTRule, ttr)
+		locators.TagFamilyRule = append(locators.TagFamilyRule, ttr)
 		for j := range families[i].Tags {
 			ir := findIndexRuleByTagName(families[i].Tags[j].Name)
 			if ir != nil {

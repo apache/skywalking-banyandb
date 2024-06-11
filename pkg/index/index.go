@@ -84,8 +84,9 @@ func (f FieldKey) Equal(other FieldKey) bool {
 
 // Field is a indexed item in a document.
 type Field struct {
-	Term []byte
-	Key  FieldKey
+	Term   []byte
+	Key    FieldKey
+	NoSort bool
 }
 
 // Marshal encodes f to bytes.

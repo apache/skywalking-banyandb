@@ -63,16 +63,9 @@ func (e *elementIndex) Sort(sids []common.SeriesID, fieldKey index.FieldKey, ord
 }
 
 func (e *elementIndex) Write(docs index.Documents) error {
-	applied := make(chan struct{})
-	err := e.store.Batch(index.Batch{
+	return e.store.Batch(index.Batch{
 		Documents: docs,
-		Applied:   applied,
 	})
-	if err != nil {
-		return err
-	}
-	<-applied
-	return nil
 }
 
 func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter, timeRange *timestamp.TimeRange) ([]elementRef, error) {

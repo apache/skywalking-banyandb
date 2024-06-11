@@ -128,9 +128,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
 	tagFamilies := make([]nameValues, 0, len(stm.schema.TagFamilies))
-	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
+	if len(stm.indexRuleLocators.TagFamilyRule) != len(stm.GetSchema().GetTagFamilies()) {
 		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
-			len(stm.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
+			len(stm.indexRuleLocators.TagFamilyRule), len(stm.GetSchema().GetTagFamilies()))
 	}
 	var fields []index.Field
 	for i := range stm.GetSchema().GetTagFamilies() {
@@ -140,7 +140,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		} else {
 			tagFamily = req.DataPoint.TagFamilies[i]
 		}
-		tfr := stm.indexRuleLocators.TagFamilyTRule[i]
+		tfr := stm.indexRuleLocators.TagFamilyRule[i]
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
 		tf := nameValues{
 			name: tagFamilySpec.Name,

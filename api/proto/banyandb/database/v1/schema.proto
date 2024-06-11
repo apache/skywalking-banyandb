@@ -172,7 +172,7 @@ message IndexRule {
   // analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices.
   Analyzer analyzer = 5;
   // sorted indicates whether the index is for sorting.
-  bool sorted = 6;
+  bool no_sort = 6;
 }
 
 // Subject defines which stream or measure would generate indices
