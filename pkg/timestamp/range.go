@@ -126,23 +126,24 @@ func FindRange[T int64 | uint64](timestamps []T, min, max T) (int, int, bool) {
 	if len(timestamps) == 0 {
 		return -1, -1, false
 	}
-	if timestamps[0] > max {
+	isAsc := timestamps[0] <= timestamps[len(timestamps)-1]
+	if isAsc && (timestamps[0] > max || timestamps[len(timestamps)-1] < min) {
 		return -1, -1, false
 	}
-	if timestamps[len(timestamps)-1] < min {
+	if !isAsc && (timestamps[0] < min || timestamps[len(timestamps)-1] > max) {
 		return -1, -1, false
 	}
 
 	start, end := -1, len(timestamps)
 	for start < len(timestamps)-1 {
 		start++
-		if timestamps[start] >= min {
+		if isAsc && timestamps[start] >= min || !isAsc && timestamps[start] <= max {
 			break
 		}
 	}
 	for end > 0 {
 		end--
-		if timestamps[end] <= max {
+		if isAsc && timestamps[end] <= max || !isAsc && timestamps[end] >= min {
 			break
 		}
 	}

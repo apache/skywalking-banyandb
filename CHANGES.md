@@ -8,14 +8,18 @@ Release Notes.
 
 - Check unregistered nodes in background.
 
-## 0.6.1
+### Bugs
 
-- Add benchmarks for stream filtering and sorting.
+- Fix the filtering of stream in descending order by timestamp.
+
+## 0.6.1
 
 ### Features
 
 - Limit the max pre-calculation result flush interval to 1 minute.
 - Use both datapoint timestamp and server time to trigger the flush of topN pre-calculation result.
+- Add benchmarks for stream filtering and sorting.
+- Improve filtering performance of stream.
 
 ### Bugs
 
