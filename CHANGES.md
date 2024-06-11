@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.7.0
+
+### Features
+
+- Check unregistered nodes in background.
+
 ## 0.6.1
 
 - Add benchmarks for stream filtering and sorting.
