@@ -579,7 +579,7 @@ func (s *stream) Filter(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr p
 	var elementRefList []elementRef
 	for _, tw := range tabWrappers {
 		index := tw.Table().Index()
-		erl, err := index.Search(ctx, seriesList, sqo.Filter, sqo.TimeRange)
+		erl, err := index.Search(ctx, seriesList, sqo.Filter, sqo.TimeRange, sqo.Order)
 		if err != nil {
 			return nil, err
 		}
