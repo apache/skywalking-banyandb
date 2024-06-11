@@ -97,9 +97,27 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.registered[name] = struct{}{}
+	if n, ok := p.registered[name]; ok {
+		if n.GrpcAddress == address {
+			return
+		}
+		if en, ok := p.evictable[name]; ok {
+			close(en.c)
+			delete(p.evictable, name)
+			p.log.Info().Str("node", name).Str("status", p.dump()).Msg("node is removed from evict queue by the new gRPC address updated event")
+		}
 
-	// If the client already exists, just return
+		if client, ok := p.active[name]; ok {
+			_ = client.conn.Close()
+			delete(p.active, name)
+			if p.handler != nil {
+				p.handler.OnDelete(client.md)
+			}
+			p.log.Info().Str("status", p.dump()).Str("node", name).Msg("node is removed from active queue by the new gRPC address updated event")
+		}
+		p.registered[name] = node
+	}
+
 	if _, ok := p.active[name]; ok {
 		return
 	}
@@ -112,7 +130,7 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 		return
 	}
 
-	if !p.checkClient(conn, md) {
+	if !p.checkClientHealthAndReconnect(conn, md) {
 		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is unhealthy, move it to evict queue")
 		return
 	}
@@ -149,17 +167,64 @@ func (p *pub) OnDelete(md schema.Metadata) {
 		return
 	}
 
-	if client, ok := p.active[name]; ok && !p.healthCheck(node, client.conn) {
-		_ = client.conn.Close()
-		delete(p.active, name)
-		if p.handler != nil {
-			p.handler.OnDelete(md)
+	if client, ok := p.active[name]; ok {
+		if p.removeNodeIfUnhealthy(md, node, client) {
+			p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("remove node from active queue by delete event")
+			return
 		}
-		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is removed from active queue by delete event")
+		if !p.closer.AddRunning() {
+			return
+		}
+		go func() {
+			defer p.closer.Done()
+			backoff := initBackoff
+			var elapsed time.Duration
+			for {
+				select {
+				case <-time.After(backoff):
+					if func() bool {
+						elapsed += backoff
+						p.mu.Lock()
+						defer p.mu.Unlock()
+						if p.removeNodeIfUnhealthy(md, node, client) {
+							p.log.Info().Str("status", p.dump()).Stringer("node", node).Dur("after", elapsed).Msg("remove node from active queue by delete event")
+							return true
+						}
+						if _, ok := p.registered[name]; ok {
+							// The client has been added back to registered clients map, just return
+							return true
+						}
+						return false
+					}() {
+						return
+					}
+				case <-p.closer.CloseNotify():
+					return
+				}
+				if backoff < maxBackoff {
+					backoff *= time.Duration(backoffMultiplier)
+				} else {
+					backoff = maxBackoff
+				}
+			}
+		}()
 	}
 }
 
-func (p *pub) checkClient(conn *grpc.ClientConn, md schema.Metadata) bool {
+func (p *pub) removeNodeIfUnhealthy(md schema.Metadata, node *databasev1.Node, client *client) bool {
+	if p.healthCheck(node, client.conn) {
+		return false
+	}
+	_ = client.conn.Close()
+	name := node.Metadata.GetName()
+	delete(p.active, name)
+	if p.handler != nil {
+		p.handler.OnDelete(md)
+	}
+	return true
+}
+
+func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Metadata) bool {
 	node, ok := md.Spec.(*databasev1.Node)
 	if !ok {
 		logger.Panicf("failed to cast node spec")
@@ -185,20 +250,21 @@ func (p *pub) checkClient(conn *grpc.ClientConn, md schema.Metadata) bool {
 			case <-time.After(backoff):
 				connEvict, errEvict := grpc.Dial(node.GrpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
 				if errEvict == nil && p.healthCheck(en.n, connEvict) {
-					p.mu.Lock()
-					defer p.mu.Unlock()
-					if _, ok := p.evictable[name]; !ok {
-						// The client has been removed from evict clients map, just return
-						return
-					}
-					c := clusterv1.NewServiceClient(connEvict)
-					p.active[name] = &client{conn: connEvict, client: c, md: md}
-					if p.handler != nil {
-						p.handler.OnAddOrUpdate(md)
-					}
-					delete(p.evictable, name)
-					p.log.Info().Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
-					return
+					func() {
+						p.mu.Lock()
+						defer p.mu.Unlock()
+						if _, ok := p.evictable[name]; !ok {
+							// The client has been removed from evict clients map, just return
+							return
+						}
+						c := clusterv1.NewServiceClient(connEvict)
+						p.active[name] = &client{conn: connEvict, client: c, md: md}
+						if p.handler != nil {
+							p.handler.OnAddOrUpdate(md)
+						}
+						delete(p.evictable, name)
+						p.log.Info().Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
+					}()
 				}
 				if errEvict != nil {
 					_ = connEvict.Close()
@@ -208,6 +274,8 @@ func (p *pub) checkClient(conn *grpc.ClientConn, md schema.Metadata) bool {
 				}
 				p.log.Error().Err(errEvict).Msgf("failed to re-connect to grpc server after waiting for %s", backoff)
 			case <-en.c:
+				return
+			case <-p.closer.CloseNotify():
 				return
 			}
 			if backoff < maxBackoff {
@@ -250,7 +318,7 @@ func (p *pub) failover(node string) {
 		return
 	}
 
-	if client, ok := p.active[node]; ok && !p.checkClient(client.conn, client.md) {
+	if client, ok := p.active[node]; ok && !p.checkClientHealthAndReconnect(client.conn, client.md) {
 		_ = client.conn.Close()
 		delete(p.active, node)
 		if p.handler != nil {
