@@ -438,8 +438,8 @@ func (qr queryResult) Len() int {
 func (qr queryResult) Less(i, j int) bool {
 	leftTS := qr.data[i].timestamps[qr.data[i].idx]
 	rightTS := qr.data[j].timestamps[qr.data[j].idx]
-	leftVersion := qr.data[i].p.partMetadata.ID
-	rightVersion := qr.data[j].p.partMetadata.ID
+	leftVersion := qr.data[i].versions[qr.data[i].idx]
+	rightVersion := qr.data[j].versions[qr.data[j].idx]
 	if qr.orderByTS {
 		if leftTS == rightTS {
 			if qr.data[i].bm.seriesID == qr.data[j].bm.seriesID {
@@ -495,7 +495,7 @@ func (qr *queryResult) merge(entityValuesAll map[common.SeriesID]map[string]*mod
 		step = -1
 	}
 	result := &pbv1.MeasureResult{}
-	var lastPartVersion uint64
+	var lastVersion int64
 	var lastSid common.SeriesID
 
 	for qr.Len() > 0 {
@@ -507,12 +507,12 @@ func (qr *queryResult) merge(entityValuesAll map[common.SeriesID]map[string]*mod
 
 		if len(result.Timestamps) > 0 &&
 			topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
-			if topBC.p.partMetadata.ID > lastPartVersion {
+			if topBC.versions[topBC.idx] > lastVersion {
 				logger.Panicf("following parts version should be less or equal to the previous one")
 			}
 		} else {
 			topBC.copyTo(result, entityValuesAll, tagProjection)
-			lastPartVersion = topBC.p.partMetadata.ID
+			lastVersion = topBC.versions[topBC.idx]
 		}
 
 		topBC.idx += step

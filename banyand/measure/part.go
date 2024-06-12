@@ -158,14 +158,14 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 
 		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize ||
 			(i-indexPrev) > maxBlockLength || sid != sidPrev {
-			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.tagFamilies[indexPrev:i], dps.fields[indexPrev:i])
+			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.versions[indexPrev:i], dps.tagFamilies[indexPrev:i], dps.fields[indexPrev:i])
 			sidPrev = sid
 			indexPrev = i
 			uncompressedBlockSizeBytes = 0
 		}
 		uncompressedBlockSizeBytes += uncompressedDataPointSizeBytes(i, dps)
 	}
-	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.tagFamilies[indexPrev:], dps.fields[indexPrev:])
+	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.versions[indexPrev:], dps.tagFamilies[indexPrev:], dps.fields[indexPrev:])
 	bsw.Flush(&mp.partMetadata)
 	releaseBlockWriter(bsw)
 }

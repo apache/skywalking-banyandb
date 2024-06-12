@@ -80,9 +80,12 @@ func Test_timestampsMetadata_reset(t *testing.T) {
 			offset: 1,
 			size:   1,
 		},
-		min:        1,
-		max:        1,
-		encodeType: encoding.EncodeTypeConst,
+		min:               1,
+		max:               1,
+		encodeType:        encoding.EncodeTypeConst,
+		versionOffset:     1,
+		versionFirst:      1,
+		versionEncodeType: encoding.EncodeTypeDelta,
 	}
 
 	tm.reset()
@@ -92,6 +95,9 @@ func Test_timestampsMetadata_reset(t *testing.T) {
 	assert.Equal(t, int64(0), tm.min)
 	assert.Equal(t, int64(0), tm.max)
 	assert.Equal(t, encoding.EncodeTypeUnknown, tm.encodeType)
+	assert.Equal(t, uint64(0), tm.versionOffset)
+	assert.Equal(t, int64(0), tm.versionFirst)
+	assert.Equal(t, encoding.EncodeTypeUnknown, tm.versionEncodeType)
 }
 
 func Test_timestampsMetadata_copyFrom(t *testing.T) {
@@ -100,9 +106,12 @@ func Test_timestampsMetadata_copyFrom(t *testing.T) {
 			offset: 1,
 			size:   1,
 		},
-		min:        1,
-		max:        1,
-		encodeType: encoding.EncodeTypeConst,
+		min:               1,
+		max:               1,
+		encodeType:        encoding.EncodeTypeConst,
+		versionOffset:     1,
+		versionFirst:      1,
+		versionEncodeType: encoding.EncodeTypeDelta,
 	}
 
 	dest := &timestampsMetadata{
@@ -110,9 +119,12 @@ func Test_timestampsMetadata_copyFrom(t *testing.T) {
 			offset: 2,
 			size:   2,
 		},
-		min:        2,
-		max:        2,
-		encodeType: encoding.EncodeTypeDelta,
+		min:               2,
+		max:               2,
+		encodeType:        encoding.EncodeTypeDelta,
+		versionOffset:     2,
+		versionFirst:      2,
+		versionEncodeType: encoding.EncodeTypeDeltaOfDelta,
 	}
 
 	dest.copyFrom(src)
@@ -122,6 +134,9 @@ func Test_timestampsMetadata_copyFrom(t *testing.T) {
 	assert.Equal(t, src.min, dest.min)
 	assert.Equal(t, src.max, dest.max)
 	assert.Equal(t, src.encodeType, dest.encodeType)
+	assert.Equal(t, src.versionOffset, dest.versionOffset)
+	assert.Equal(t, src.versionFirst, dest.versionFirst)
+	assert.Equal(t, src.versionEncodeType, dest.versionEncodeType)
 }
 
 func Test_timestampsMetadata_marshal_unmarshal(t *testing.T) {
@@ -130,9 +145,12 @@ func Test_timestampsMetadata_marshal_unmarshal(t *testing.T) {
 			offset: 1,
 			size:   1,
 		},
-		min:        1,
-		max:        1,
-		encodeType: encoding.EncodeTypeConst,
+		min:               1,
+		max:               1,
+		encodeType:        encoding.EncodeTypeConst,
+		versionOffset:     1,
+		versionFirst:      1,
+		versionEncodeType: encoding.EncodeTypeDelta,
 	}
 
 	marshaled := original.marshal(nil)
@@ -147,6 +165,9 @@ func Test_timestampsMetadata_marshal_unmarshal(t *testing.T) {
 	assert.Equal(t, original.min, unmarshaled.min)
 	assert.Equal(t, original.max, unmarshaled.max)
 	assert.Equal(t, original.encodeType, unmarshaled.encodeType)
+	assert.Equal(t, original.versionOffset, unmarshaled.versionOffset)
+	assert.Equal(t, original.versionFirst, unmarshaled.versionFirst)
+	assert.Equal(t, original.versionEncodeType, unmarshaled.versionEncodeType)
 }
 
 func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
@@ -201,6 +222,44 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 			},
 		},
 		{
+			name: "Non-zero values with versions",
+			original: &blockMetadata{
+				seriesID:              common.SeriesID(1),
+				uncompressedSizeBytes: 1,
+				count:                 1,
+				timestamps: timestampsMetadata{
+					dataBlock: dataBlock{
+						offset: 1,
+						size:   1,
+					},
+					min:               1,
+					max:               1,
+					encodeType:        encoding.EncodeTypeConst,
+					versionOffset:     1,
+					versionFirst:      1,
+					versionEncodeType: encoding.EncodeTypeDelta,
+				},
+				tagFamilies: map[string]*dataBlock{
+					"tag1": {
+						offset: 1,
+						size:   1,
+					},
+				},
+				field: columnFamilyMetadata{
+					columnMetadata: []columnMetadata{
+						{
+							dataBlock: dataBlock{
+								offset: 1,
+								size:   1,
+							},
+							name:      "field1",
+							valueType: pbv1.ValueTypeInt64,
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "Multiple tagFamilies and columnMetadata",
 			original: &blockMetadata{
 				seriesID:              common.SeriesID(2),
@@ -211,9 +270,12 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 						offset: 2,
 						size:   2,
 					},
-					min:        2,
-					max:        2,
-					encodeType: encoding.EncodeTypeConst,
+					min:               2,
+					max:               2,
+					encodeType:        encoding.EncodeTypeConst,
+					versionOffset:     2,
+					versionFirst:      2,
+					versionEncodeType: encoding.EncodeTypeDelta,
 				},
 				tagFamilies: map[string]*dataBlock{
 					"tag1": {

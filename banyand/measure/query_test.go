@@ -59,6 +59,7 @@ func TestQueryResult(t *testing.T) {
 			want: []pbv1.MeasureResult{{
 				SID:        1,
 				Timestamps: []int64{1},
+				Versions:   []int64{1},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
@@ -83,6 +84,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        2,
 				Timestamps: []int64{1},
+				Versions:   []int64{2},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -102,6 +104,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        3,
 				Timestamps: []int64{1},
+				Versions:   []int64{3},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -123,7 +126,157 @@ func TestQueryResult(t *testing.T) {
 			}},
 		},
 		{
-			name:         "Test with multiple parts with multiple data orderBy TS desc",
+			name:         "Test with multiple parts with duplicated data with different version order by TS 1",
+			dpsList:      []*dataPoints{dpsTS1, dpsTS11},
+			sids:         []common.SeriesID{1, 2, 3},
+			minTimestamp: 1,
+			maxTimestamp: 1,
+			want: []pbv1.MeasureResult{{
+				SID:        1,
+				Timestamps: []int64{1},
+				Versions:   []int64{1},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        2,
+				Timestamps: []int64{1},
+				Versions:   []int64{2},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        3,
+				Timestamps: []int64{1},
+				Versions:   []int64{3},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+				},
+			}},
+		},
+		{
+			name:         "Test with multiple parts with duplicated data with different version order by TS 2",
+			dpsList:      []*dataPoints{dpsTS11, dpsTS1},
+			sids:         []common.SeriesID{1, 2, 3},
+			minTimestamp: 1,
+			maxTimestamp: 1,
+			want: []pbv1.MeasureResult{{
+				SID:        1,
+				Timestamps: []int64{1},
+				Versions:   []int64{1},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        2,
+				Timestamps: []int64{1},
+				Versions:   []int64{2},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        3,
+				Timestamps: []int64{1},
+				Versions:   []int64{3},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+				},
+			}},
+		},
+		{
+			name:         "Test with multiple parts with multiple data orderBy TS desc 1",
 			dpsList:      []*dataPoints{dpsTS1, dpsTS2},
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
@@ -131,6 +284,7 @@ func TestQueryResult(t *testing.T) {
 			want: []pbv1.MeasureResult{{
 				SID:        1,
 				Timestamps: []int64{2},
+				Versions:   []int64{4},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value5", "value6"})}},
@@ -155,6 +309,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        2,
 				Timestamps: []int64{2},
+				Versions:   []int64{5},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -174,6 +329,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        3,
 				Timestamps: []int64{2},
+				Versions:   []int64{6},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -195,6 +351,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        1,
 				Timestamps: []int64{1},
+				Versions:   []int64{1},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
@@ -219,6 +376,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        2,
 				Timestamps: []int64{1},
+				Versions:   []int64{2},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -238,6 +396,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        3,
 				Timestamps: []int64{1},
+				Versions:   []int64{3},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -259,79 +418,15 @@ func TestQueryResult(t *testing.T) {
 			}},
 		},
 		{
-			name:         "Test with multiple parts with multiple data orderBy TS asc",
-			dpsList:      []*dataPoints{dpsTS1, dpsTS2},
+			name:         "Test with multiple parts with multiple data orderBy TS desc 2",
+			dpsList:      []*dataPoints{dpsTS2, dpsTS1},
 			sids:         []common.SeriesID{1, 2, 3},
-			ascTS:        true,
 			minTimestamp: 1,
 			maxTimestamp: 2,
 			want: []pbv1.MeasureResult{{
 				SID:        1,
-				Timestamps: []int64{1},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
-						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
-						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
-					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
-						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
-					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
-						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
-						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
-						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-					}},
-				},
-				Fields: []pbv1.Field{
-					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
-					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
-					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1221233.343)}},
-					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
-				},
-			}, {
-				SID:        2,
-				Timestamps: []int64{1},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
-						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
-						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
-						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
-						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2")}},
-					}},
-				},
-				Fields: nil,
-			}, {
-				SID:        3,
-				Timestamps: []int64{1},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
-						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
-						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
-						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-					}},
-				},
-				Fields: []pbv1.Field{
-					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
-				},
-			}, {
-				SID:        1,
 				Timestamps: []int64{2},
+				Versions:   []int64{4},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value5", "value6"})}},
@@ -356,6 +451,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        2,
 				Timestamps: []int64{2},
+				Versions:   []int64{5},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -375,6 +471,360 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        3,
 				Timestamps: []int64{2},
+				Versions:   []int64{6},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(4440)}},
+				},
+			}, {
+				SID:        1,
+				Timestamps: []int64{1},
+				Versions:   []int64{1},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1221233.343)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        2,
+				Timestamps: []int64{1},
+				Versions:   []int64{2},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        3,
+				Timestamps: []int64{1},
+				Versions:   []int64{3},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+				},
+			}},
+		},
+		{
+			name:         "Test with multiple parts with multiple data orderBy TS asc 1",
+			dpsList:      []*dataPoints{dpsTS1, dpsTS2},
+			sids:         []common.SeriesID{1, 2, 3},
+			ascTS:        true,
+			minTimestamp: 1,
+			maxTimestamp: 2,
+			want: []pbv1.MeasureResult{{
+				SID:        1,
+				Timestamps: []int64{1},
+				Versions:   []int64{1},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1221233.343)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        2,
+				Timestamps: []int64{1},
+				Versions:   []int64{2},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        3,
+				Timestamps: []int64{1},
+				Versions:   []int64{3},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+				},
+			}, {
+				SID:        1,
+				Timestamps: []int64{2},
+				Versions:   []int64{4},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value5", "value6"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{35, 40})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value3")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(30)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field3")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(3330)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(3663699.029)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        2,
+				Timestamps: []int64{2},
+				Versions:   []int64{5},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag3")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag4")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        3,
+				Timestamps: []int64{2},
+				Versions:   []int64{6},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(4440)}},
+				},
+			}},
+		},
+		{
+			name:         "Test with multiple parts with multiple data orderBy TS asc 2",
+			dpsList:      []*dataPoints{dpsTS2, dpsTS1},
+			sids:         []common.SeriesID{1, 2, 3},
+			ascTS:        true,
+			minTimestamp: 1,
+			maxTimestamp: 2,
+			want: []pbv1.MeasureResult{{
+				SID:        1,
+				Timestamps: []int64{1},
+				Versions:   []int64{1},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1221233.343)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        2,
+				Timestamps: []int64{1},
+				Versions:   []int64{2},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        3,
+				Timestamps: []int64{1},
+				Versions:   []int64{3},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+				},
+			}, {
+				SID:        1,
+				Timestamps: []int64{2},
+				Versions:   []int64{4},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value5", "value6"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{35, 40})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value3")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(30)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field3")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(3330)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(3663699.029)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        2,
+				Timestamps: []int64{2},
+				Versions:   []int64{5},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag3")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag4")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        3,
+				Timestamps: []int64{2},
+				Versions:   []int64{6},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -405,6 +855,7 @@ func TestQueryResult(t *testing.T) {
 			want: []pbv1.MeasureResult{{
 				SID:        1,
 				Timestamps: []int64{1},
+				Versions:   []int64{1},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
@@ -429,6 +880,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        2,
 				Timestamps: []int64{1},
+				Versions:   []int64{2},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -448,6 +900,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        3,
 				Timestamps: []int64{1},
+				Versions:   []int64{3},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -469,7 +922,159 @@ func TestQueryResult(t *testing.T) {
 			}},
 		},
 		{
-			name:          "Test with multiple parts with multiple data order by Series",
+			name:          "Test with multiple parts with duplicated data with different versions order by Series 1",
+			dpsList:       []*dataPoints{dpsTS11, dpsTS1},
+			sids:          []common.SeriesID{1, 2, 3},
+			orderBySeries: true,
+			minTimestamp:  1,
+			maxTimestamp:  1,
+			want: []pbv1.MeasureResult{{
+				SID:        1,
+				Timestamps: []int64{1},
+				Versions:   []int64{1},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        2,
+				Timestamps: []int64{1},
+				Versions:   []int64{2},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        3,
+				Timestamps: []int64{1},
+				Versions:   []int64{3},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+				},
+			}},
+		},
+		{
+			name:          "Test with multiple parts with duplicated data with different versions order by Series 2",
+			dpsList:       []*dataPoints{dpsTS1, dpsTS11},
+			sids:          []common.SeriesID{1, 2, 3},
+			orderBySeries: true,
+			minTimestamp:  1,
+			maxTimestamp:  1,
+			want: []pbv1.MeasureResult{{
+				SID:        1,
+				Timestamps: []int64{1},
+				Versions:   []int64{1},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        2,
+				Timestamps: []int64{1},
+				Versions:   []int64{2},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        3,
+				Timestamps: []int64{1},
+				Versions:   []int64{3},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
+				},
+			}},
+		},
+		{
+			name:          "Test with multiple parts with multiple data order by Series 1",
 			dpsList:       []*dataPoints{dpsTS1, dpsTS2},
 			sids:          []common.SeriesID{2, 1, 3},
 			orderBySeries: true,
@@ -478,6 +1083,7 @@ func TestQueryResult(t *testing.T) {
 			want: []pbv1.MeasureResult{{
 				SID:        2,
 				Timestamps: []int64{1, 2},
+				Versions:   []int64{2, 5},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
@@ -497,6 +1103,7 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        1,
 				Timestamps: []int64{1, 2},
+				Versions:   []int64{1, 4},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"}), strArrTagValue([]string{"value5", "value6"})}},
@@ -521,6 +1128,83 @@ func TestQueryResult(t *testing.T) {
 			}, {
 				SID:        3,
 				Timestamps: []int64{1, 2},
+				Versions:   []int64{3, 6},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110), int64FieldValue(4440)}},
+				},
+			}},
+		},
+		{
+			name:          "Test with multiple parts with multiple data order by Series 2",
+			dpsList:       []*dataPoints{dpsTS2, dpsTS1},
+			sids:          []common.SeriesID{2, 1, 3},
+			orderBySeries: true,
+			minTimestamp:  1,
+			maxTimestamp:  2,
+			want: []pbv1.MeasureResult{{
+				SID:        2,
+				Timestamps: []int64{1, 2},
+				Versions:   []int64{2, 5},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1"), strTagValue("tag3")}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2"), strTagValue("tag4")}},
+					}},
+				},
+				Fields: nil,
+			}, {
+				SID:        1,
+				Timestamps: []int64{1, 2},
+				Versions:   []int64{1, 4},
+				TagFamilies: []pbv1.TagFamily{
+					{Name: "arrTag", Tags: []pbv1.Tag{
+						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"}), strArrTagValue([]string{"value5", "value6"})}},
+						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30}), int64ArrTagValue([]int64{35, 40})}},
+					}},
+					{Name: "binaryTag", Tags: []pbv1.Tag{
+						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText), binaryDataTagValue(longText)}},
+					}},
+					{Name: "singleTag", Tags: []pbv1.Tag{
+						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1"), strTagValue("value3")}},
+						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10), int64TagValue(30)}},
+						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []pbv1.Field{
+					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1"), strFieldValue("field3")}},
+					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110), int64FieldValue(3330)}},
+					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06), float64FieldValue(3663699.029)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText), binaryDataFieldValue(longText)}},
+				},
+			}, {
+				SID:        3,
+				Timestamps: []int64{1, 2},
+				Versions:   []int64{3, 6},
 				TagFamilies: []pbv1.TagFamily{
 					{Name: "arrTag", Tags: []pbv1.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
