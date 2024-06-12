@@ -236,9 +236,12 @@ func releaseBlockMetadataArray(bma *blockMetadataArray) {
 
 type timestampsMetadata struct {
 	dataBlock
-	min        int64
-	max        int64
-	encodeType encoding.EncodeType
+	min               int64
+	max               int64
+	versionOffset     uint64
+	versionFirst      int64
+	encodeType        encoding.EncodeType
+	versionEncodeType encoding.EncodeType
 }
 
 func (tm *timestampsMetadata) reset() {
@@ -246,6 +249,9 @@ func (tm *timestampsMetadata) reset() {
 	tm.min = 0
 	tm.max = 0
 	tm.encodeType = 0
+	tm.versionOffset = 0
+	tm.versionFirst = 0
+	tm.versionEncodeType = 0
 }
 
 func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
@@ -253,6 +259,9 @@ func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
 	tm.min = src.min
 	tm.max = src.max
 	tm.encodeType = src.encodeType
+	tm.versionOffset = src.versionOffset
+	tm.versionFirst = src.versionFirst
+	tm.versionEncodeType = src.versionEncodeType
 }
 
 func (tm *timestampsMetadata) marshal(dst []byte) []byte {
@@ -260,19 +269,31 @@ func (tm *timestampsMetadata) marshal(dst []byte) []byte {
 	dst = encoding.Uint64ToBytes(dst, uint64(tm.min))
 	dst = encoding.Uint64ToBytes(dst, uint64(tm.max))
 	dst = append(dst, byte(tm.encodeType))
+	dst = encoding.VarUint64ToBytes(dst, tm.versionOffset)
+	dst = encoding.Uint64ToBytes(dst, uint64(tm.versionFirst))
+	dst = append(dst, byte(tm.versionEncodeType))
 	return dst
 }
 
 func (tm *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
 	src, err := tm.dataBlock.unmarshal(src)
 	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
+		return nil, fmt.Errorf("cannot unmarshal ts dataBlock: %w", err)
 	}
 	tm.min = int64(encoding.BytesToUint64(src))
 	src = src[8:]
 	tm.max = int64(encoding.BytesToUint64(src))
 	src = src[8:]
 	tm.encodeType = encoding.EncodeType(src[0])
+	src = src[1:]
+	src, n, err := encoding.BytesToVarUint64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal ts offset: %w", err)
+	}
+	tm.versionOffset = n
+	tm.versionFirst = int64(encoding.BytesToUint64(src))
+	src = src[8:]
+	tm.versionEncodeType = encoding.EncodeType(src[0])
 	return src[1:], nil
 }
 

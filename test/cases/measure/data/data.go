@@ -75,9 +75,15 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &measurev1.QueryResponse{}
 	helpers.UnmarshalYAML(ww, want)
+	for i := range resp.DataPoints {
+		if resp.DataPoints[i].Timestamp != nil {
+			innerGm.Expect(resp.DataPoints[i].Version).Should(gm.BeNumerically(">", 0))
+		}
+	}
 	innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&measurev1.DataPoint{}, "timestamp"),
+		protocmp.IgnoreFields(&measurev1.DataPoint{}, "version"),
 		protocmp.Transform())).
 		To(gm.BeTrue(), func() string {
 			j, err := protojson.Marshal(resp)

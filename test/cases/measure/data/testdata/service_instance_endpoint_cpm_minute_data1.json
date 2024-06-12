@@ -5,6 +5,44 @@
         "tags": [
           {
             "str": {
+              "value": "12"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_1"
+            }
+          },
+          {
+            "str": {
+              "value": ""
+            }
+          },
+          {
+            "null": 0
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 300
+        }
+      },
+      {
+        "int": {
+          "value": 7
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
               "value": "7"
             }
           },
@@ -183,44 +221,6 @@
       {
         "int": {
           "value": 12
-        }
-      }
-    ]
-  },
-  {
-    "tag_families": [
-      {
-        "tags": [
-          {
-            "str": {
-              "value": "12"
-            }
-          },
-          {
-            "str": {
-              "value": "entity_1"
-            }
-          },
-          {
-            "str": {
-              "value": ""
-            }
-          },
-          {
-            "null": 0
-          }
-        ]
-      }
-    ],
-    "fields": [
-      {
-        "int": {
-          "value": 300
-        }
-      },
-      {
-        "int": {
-          "value": 7
         }
       }
     ]

@@ -49,6 +49,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 			dpsList: []*dataPoints{
 				{
 					timestamps:  []int64{},
+					versions:    []int64{},
 					seriesIDs:   []common.SeriesID{},
 					tagFamilies: make([][]nameValues, 0),
 					fields:      make([]nameValues, 0),
@@ -61,6 +62,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 			dpsList: []*dataPoints{
 				{
 					timestamps: []int64{1},
+					versions:   []int64{1},
 					seriesIDs:  []common.SeriesID{1},
 					tagFamilies: [][]nameValues{
 						{
@@ -274,7 +276,7 @@ func Test_tstIter(t *testing.T) {
 			},
 			{
 				name:         "Test with multiple parts with different ts, the block will be merged",
-				dpsList:      []*dataPoints{dpsTS1, dpsTS2, dpsTS2},
+				dpsList:      []*dataPoints{dpsTS1, dpsTS2},
 				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 2,
@@ -334,7 +336,7 @@ func Test_tstIter(t *testing.T) {
 								time.Sleep(100 * time.Millisecond)
 								continue
 							}
-							if len(snp.parts) == 1 || len(snp.parts) < len(tt.dpsList) {
+							if len(snp.parts) == 1 {
 								snp.decRef()
 								break
 							}
@@ -412,6 +414,7 @@ var fieldProjections = map[int][]string{
 var dpsTS1 = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{1, 1, 1},
+	versions:   []int64{1, 2, 3},
 	tagFamilies: [][]nameValues{
 		{
 			{
@@ -460,9 +463,62 @@ var dpsTS1 = &dataPoints{
 	},
 }
 
+var dpsTS11 = &dataPoints{
+	seriesIDs:  []common.SeriesID{1, 2, 3},
+	timestamps: []int64{1, 1, 1},
+	versions:   []int64{0, 1, 2},
+	tagFamilies: [][]nameValues{
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
+				},
+			},
+			{
+				name: "binaryTag", values: []*nameValue{
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				},
+			},
+			{
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value3"), valueArr: nil},
+					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
+				},
+			},
+		},
+		{
+			{
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
+					{name: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag4"), valueArr: nil},
+				},
+			},
+		},
+		{}, // empty tagFamilies for seriesID 6
+	},
+	fields: []nameValues{
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field3"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(3330), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(3663699.029), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+		{}, // empty fields for seriesID 5
+		{
+			name: "onlyFields", values: []*nameValue{
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(4440), valueArr: nil},
+			},
+		},
+	},
+}
+
 var dpsTS2 = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{2, 2, 2},
+	versions:   []int64{4, 5, 6},
 	tagFamilies: [][]nameValues{
 		{
 			{
@@ -515,12 +571,15 @@ func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints 
 	hugeDps := &dataPoints{
 		seriesIDs:   []common.SeriesID{},
 		timestamps:  []int64{},
+		versions:    []int64{},
 		tagFamilies: [][]nameValues{},
 		fields:      []nameValues{},
 	}
+	now := time.Now().UnixNano()
 	for i := startTimestamp; i <= endTimestamp; i++ {
 		hugeDps.seriesIDs = append(hugeDps.seriesIDs, 1)
 		hugeDps.timestamps = append(hugeDps.timestamps, i)
+		hugeDps.versions = append(hugeDps.versions, now+i)
 		hugeDps.tagFamilies = append(hugeDps.tagFamilies, []nameValues{
 			{
 				name: "arrTag", values: []*nameValue{
@@ -551,6 +610,7 @@ func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints 
 	}
 	hugeDps.seriesIDs = append(hugeDps.seriesIDs, []common.SeriesID{2, 3}...)
 	hugeDps.timestamps = append(hugeDps.timestamps, []int64{timestamp, timestamp}...)
+	hugeDps.versions = append(hugeDps.versions, []int64{now + timestamp, now + timestamp}...)
 	hugeDps.tagFamilies = append(hugeDps.tagFamilies, [][]nameValues{{
 		{
 			name: "singleTag", values: []*nameValue{

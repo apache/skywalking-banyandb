@@ -104,6 +104,7 @@ type Field struct {
 // MeasureResult is the result of a query.
 type MeasureResult struct {
 	Timestamps  []int64
+	Versions    []int64
 	TagFamilies []TagFamily
 	Fields      []Field
 	SID         common.SeriesID
