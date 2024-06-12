@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -53,10 +54,11 @@ type Service interface {
 }
 
 // NewMetricService returns a metric service.
-func NewMetricService(metadata metadata.Repo) Service {
+func NewMetricService(metadata metadata.Repo, pipeline queue.Client) Service {
 	return &metricService{
 		closer:   run.NewCloser(1),
 		metadata: metadata,
+		pipeline: pipeline,
 	}
 }
 
@@ -66,6 +68,7 @@ type metricService struct {
 	closer     *run.Closer
 	scheduler  *timestamp.Scheduler
 	metadata   metadata.Repo
+	pipeline   queue.Client
 	listenAddr string
 	modes      []string
 	mutex      sync.Mutex
@@ -106,7 +109,7 @@ func (p *metricService) PreRun(ctx context.Context) error {
 			MetricsServerInterceptor = promMetricsServerInterceptor
 			providers = append(providers, newPromMeterProvider())
 		case flagNativeMode:
-			providers = append(providers, newNativeMeterProvider(ctx, p.metadata))
+			providers = append(providers, newNativeMeterProvider(ctx, p.metadata, p.pipeline))
 		}
 	}
 	initMetrics(providers)

@@ -23,13 +23,14 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 )
 
 // NewMeterProvider returns a meter.Provider based on the given scope.
-func newNativeMeterProvider(ctx context.Context, metadata metadata.Repo) meter.Provider {
-	return native.NewProvider(ctx, SystemScope, metadata)
+func newNativeMeterProvider(ctx context.Context, metadata metadata.Repo, pipeline queue.Client) meter.Provider {
+	return native.NewProvider(ctx, SystemScope, metadata, pipeline)
 }
 
 // MetricsServerInterceptor returns a grpc.UnaryServerInterceptor and a grpc.StreamServerInterceptor.

@@ -18,10 +18,126 @@
 // Package native provides a simple meter system for metrics. The metrics are aggregated by the meter provider.
 package native
 
-type nativeInstrument struct{}
+import (
+	"context"
+	"sync"
+	"time"
 
-func (nativeInstrument) Inc(_ float64, _ ...string)     {}
-func (nativeInstrument) Set(_ float64, _ ...string)     {}
-func (nativeInstrument) Add(_ float64, _ ...string)     {}
-func (nativeInstrument) Observe(_ float64, _ ...string) {}
-func (nativeInstrument) Delete(_ ...string) bool        { return false }
+	"github.com/robfig/cron/v3"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+)
+
+const (
+	writeTimeout = 5 * time.Second
+)
+
+type nativeInstrument struct {
+	scheduler     *timestamp.Scheduler
+	pipeline      queue.Client
+	scope         meter.Scope
+	measureName   string
+	messageBuffer []bus.Message
+	mutex         sync.Mutex
+}
+
+func NewNativeInstrument(measureName string, pipeline queue.Client, scope meter.Scope) *nativeInstrument {
+	clock, _ := timestamp.GetClock(context.TODO())
+	n := &nativeInstrument{
+		measureName: measureName,
+		pipeline:    pipeline,
+		scope:       scope,
+		scheduler:   timestamp.NewScheduler(log, clock),
+	}
+	err := n.scheduler.Register("flush messages", cron.Descriptor, "@every 5s", func(_ time.Time, _ *logger.Logger) bool {
+		n.flushMessages()
+		return true
+	})
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to register flushMessages")
+	}
+	return n
+}
+
+// Counter Only Methods.
+func (n *nativeInstrument) Inc(_ float64, _ ...string) {}
+
+// Gauge Only Methods.
+func (n *nativeInstrument) Set(value float64, labelValues ...string) {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "", n.buildIWR(value, labelValues...))
+	n.messageBuffer = append(n.messageBuffer, message)
+}
+
+func (n *nativeInstrument) Add(_ float64, _ ...string) {}
+
+// Histogram Only Methods.
+func (n *nativeInstrument) Observe(_ float64, _ ...string) {}
+
+// Shared Methods.
+func (n *nativeInstrument) Delete(_ ...string) bool { return false }
+
+func (n *nativeInstrument) buildIWR(value float64, labelValues ...string) *measurev1.InternalWriteRequest {
+	tagValues := buildTagValues(n.scope, labelValues...)
+	entities, err := pbv1.EntityValues(tagValues).ToEntity()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to convert tagValues to Entity")
+	}
+	writeRequest := &measurev1.WriteRequest{
+		MessageId: uint64(time.Now().UnixNano()),
+		Metadata: &commonv1.Metadata{
+			Group: NativeObservabilityGroupName,
+			Name:  n.measureName,
+		},
+		DataPoint: &measurev1.DataPointValue{
+			Timestamp: timestamppb.New(time.Now().Truncate(time.Millisecond)),
+			TagFamilies: []*modelv1.TagFamilyForWrite{
+				{
+					Tags: tagValues,
+				},
+			},
+			Fields: []*modelv1.FieldValue{
+				{
+					Value: &modelv1.FieldValue_Float{
+						Float: &modelv1.Float{
+							Value: value,
+						},
+					},
+				},
+			},
+		},
+	}
+	return &measurev1.InternalWriteRequest{
+		Request:      writeRequest,
+		ShardId:      uint32(0),
+		SeriesHash:   pbv1.HashEntity(entities),
+		EntityValues: tagValues,
+	}
+}
+
+func (n *nativeInstrument) flushMessages() {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+	if len(n.messageBuffer) == 0 {
+		return
+	}
+	publisher := n.pipeline.NewBatchPublisher(writeTimeout)
+	defer publisher.Close()
+	_, err := publisher.Publish(data.TopicMeasureWrite, n.messageBuffer...)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to publish messasges")
+	}
+	// Clear the buffer and release the underlying array
+	n.messageBuffer = nil
+}
