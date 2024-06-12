@@ -89,5 +89,40 @@ const (
 	EncodeTypeDeltaConst
 	EncodeTypeDelta
 	EncodeTypeDeltaOfDelta
-	EncodeTypeXOR
+	EncodeTypeConstWithVersion
+	EncodeTypeDeltaConstWithVersion
+	EncodeTypeDeltaWithVersion
+	EncodeTypeDeltaOfDeltaWithVersion
 )
+
+// GetVersionType returns the version type of the given encoding type.
+func GetVersionType(et EncodeType) EncodeType {
+	switch et {
+	case EncodeTypeConst:
+		return EncodeTypeConstWithVersion
+	case EncodeTypeDeltaConst:
+		return EncodeTypeDeltaConstWithVersion
+	case EncodeTypeDelta:
+		return EncodeTypeDeltaWithVersion
+	case EncodeTypeDeltaOfDelta:
+		return EncodeTypeDeltaOfDeltaWithVersion
+	default:
+		return EncodeTypeUnknown
+	}
+}
+
+// GetCommonType returns the common type of the given encoding type.
+func GetCommonType(et EncodeType) EncodeType {
+	switch et {
+	case EncodeTypeConstWithVersion:
+		return EncodeTypeConst
+	case EncodeTypeDeltaConstWithVersion:
+		return EncodeTypeDeltaConst
+	case EncodeTypeDeltaWithVersion:
+		return EncodeTypeDelta
+	case EncodeTypeDeltaOfDeltaWithVersion:
+		return EncodeTypeDeltaOfDelta
+	default:
+		return EncodeTypeUnknown
+	}
+}

@@ -93,6 +93,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		dpg.tables = append(dpg.tables, dpt)
 	}
 	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, ts)
+	dpt.dataPoints.versions = append(dpt.dataPoints.versions, req.DataPoint.Version)
 	stm, ok := w.schemaRepo.loadMeasure(req.GetMetadata())
 	if !ok {
 		return nil, fmt.Errorf("cannot find measure definition: %s", req.GetMetadata())

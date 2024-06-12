@@ -40,6 +40,8 @@ message DataPoint {
   }
   // fields contains fields selected in the projection
   repeated Field fields = 3;
+  // version is the version of the data point
+  int64 version = 4;
 }
 
 // QueryResponse is the response for a query to the Query module.

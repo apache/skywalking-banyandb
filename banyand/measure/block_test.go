@@ -18,8 +18,6 @@
 package measure
 
 import (
-	"crypto/rand"
-	"encoding/binary"
 	"reflect"
 	"testing"
 
@@ -36,6 +34,7 @@ import (
 func Test_block_reset(t *testing.T) {
 	type fields struct {
 		timestamps  []int64
+		versions    []int64
 		tagFamilies []columnFamily
 		field       columnFamily
 	}
@@ -48,11 +47,13 @@ func Test_block_reset(t *testing.T) {
 			name: "Test reset",
 			fields: fields{
 				timestamps:  []int64{1, 2, 3},
+				versions:    []int64{1, 2, 3},
 				tagFamilies: []columnFamily{{}, {}, {}},
 				field:       columnFamily{columns: []column{{}, {}}},
 			},
 			want: block{
 				timestamps:  []int64{},
+				versions:    []int64{},
 				tagFamilies: []columnFamily{},
 				field:       columnFamily{columns: []column{}},
 			},
@@ -62,6 +63,7 @@ func Test_block_reset(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{
 				timestamps:  tt.fields.timestamps,
+				versions:    tt.fields.versions,
 				tagFamilies: tt.fields.tagFamilies,
 				field:       tt.fields.field,
 			}
@@ -87,6 +89,7 @@ func toTagProjection(b block) map[string][]string {
 
 var conventionalBlock = block{
 	timestamps: []int64{1, 2},
+	versions:   []int64{1, 1},
 	tagFamilies: []columnFamily{
 		{
 			name: "arrTag",
@@ -131,6 +134,7 @@ var conventionalBlock = block{
 func Test_block_mustInitFromDataPoints(t *testing.T) {
 	type args struct {
 		timestamps  []int64
+		versions    []int64
 		tagFamilies [][]nameValues
 		fields      []nameValues
 	}
@@ -143,6 +147,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 			name: "Test mustInitFromDataPoints",
 			args: args{
 				timestamps: []int64{1, 2},
+				versions:   []int64{1, 1},
 				tagFamilies: [][]nameValues{
 					{
 						{
@@ -208,7 +213,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{}
-			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.tagFamilies, tt.args.fields)
+			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.versions, tt.args.tagFamilies, tt.args.fields)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromDataPoints() = %+v, want %+v", *b, tt.want)
 			}
@@ -237,21 +242,31 @@ func marshalIntArr(arr [][]byte) []byte {
 }
 
 func Test_mustWriteAndReadTimestamps(t *testing.T) {
+	type args struct {
+		timestamp []int64
+		versions  []int64
+	}
 	tests := []struct {
 		name      string
-		args      []int64
+		args      args
 		wantPanic bool
 		wantTM    timestampsMetadata
 	}{
 		{
-			name:      "Test mustWriteAndReadTimestamps",
-			args:      []int64{1, 2, 3, 4, 5},
+			name: "Test mustWriteAndReadTimestamps",
+			args: args{
+				timestamp: []int64{1, 2, 3, 4, 5},
+				versions:  []int64{1, 2, 3, 4, 5},
+			},
 			wantPanic: false,
 		},
 		{
-			name:      "Test mustWriteAndReadTimestamps with panic",
-			args:      getBitInt64Arr(),
-			wantPanic: true,
+			name: "Test mustWriteAndReadTimestamps with the same version",
+			args: args{
+				timestamp: []int64{1, 2, 3, 4, 5},
+				versions:  []int64{0, 0, 0, 0, 0},
+			},
+			wantPanic: false,
 		},
 	}
 	for _, tt := range tests {
@@ -266,24 +281,16 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 			b := &bytes.Buffer{}
 			w := new(writer)
 			w.init(b)
-			mustWriteTimestampsTo(tm, tt.args, w)
-			timestamps := mustReadTimestampsFrom(nil, tm, len(tt.args), b)
-			if !reflect.DeepEqual(timestamps, tt.args) {
+			mustWriteTimestampsTo(tm, tt.args.timestamp, tt.args.versions, w)
+			timestamps, versions := mustReadTimestampsFrom(nil, nil, tm, len(tt.args.timestamp), b)
+			if !reflect.DeepEqual(timestamps, tt.args.timestamp) {
 				t.Errorf("mustReadTimestampsFrom() = %v, want %v", timestamps, tt.args)
+			}
+			if !reflect.DeepEqual(versions, tt.args.versions) {
+				t.Errorf("mustReadTimestampsFrom() = %v, want %v", versions, tt.args)
 			}
 		})
 	}
-}
-
-func getBitInt64Arr() []int64 {
-	size := maxTimestampsBlockSize + 1
-	randSlice := make([]int64, size)
-	for i := range randSlice {
-		b := make([]byte, 8)
-		_, _ = rand.Read(b)
-		randSlice[i] = int64(binary.BigEndian.Uint64(b))
-	}
-	return randSlice
 }
 
 func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
@@ -420,6 +427,7 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 func Test_blockPointer_append(t *testing.T) {
 	type fields struct {
 		timestamps  []int64
+		versions    []int64
 		tagFamilies []columnFamily
 		field       columnFamily
 		partID      uint64
@@ -439,6 +447,7 @@ func Test_blockPointer_append(t *testing.T) {
 			name: "Test append with empty block",
 			fields: fields{
 				timestamps: []int64{1, 2},
+				versions:   []int64{1, 1},
 				tagFamilies: []columnFamily{
 					{
 						name: "arrTag",
@@ -460,6 +469,7 @@ func Test_blockPointer_append(t *testing.T) {
 				b: &blockPointer{
 					block: block{
 						timestamps:  []int64{},
+						versions:    []int64{},
 						tagFamilies: []columnFamily{},
 						field:       columnFamily{},
 					},
@@ -470,6 +480,7 @@ func Test_blockPointer_append(t *testing.T) {
 			want: &blockPointer{
 				block: block{
 					timestamps: []int64{1, 2},
+					versions:   []int64{1, 1},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -494,6 +505,7 @@ func Test_blockPointer_append(t *testing.T) {
 			name: "Test append to a empty block",
 			fields: fields{
 				timestamps:  nil,
+				versions:    nil,
 				tagFamilies: nil,
 				field: columnFamily{
 					columns: nil,
@@ -502,9 +514,9 @@ func Test_blockPointer_append(t *testing.T) {
 			},
 			args: args{
 				b: &blockPointer{
-					lastPartID: 2,
 					block: block{
 						timestamps: []int64{4, 5},
+						versions:   []int64{1, 1},
 						tagFamilies: []columnFamily{
 							{
 								name: "arrTag",
@@ -527,9 +539,9 @@ func Test_blockPointer_append(t *testing.T) {
 				offset: 2,
 			},
 			want: &blockPointer{
-				lastPartID: 2,
 				block: block{
 					timestamps: []int64{4, 5},
+					versions:   []int64{1, 1},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -554,6 +566,7 @@ func Test_blockPointer_append(t *testing.T) {
 			name: "Test append with offset equals to the data size. All data",
 			fields: fields{
 				timestamps: []int64{1, 2},
+				versions:   []int64{1, 1},
 				tagFamilies: []columnFamily{
 					{
 						name: "arrTag",
@@ -574,9 +587,9 @@ func Test_blockPointer_append(t *testing.T) {
 			},
 			args: args{
 				b: &blockPointer{
-					lastPartID: 2,
 					block: block{
 						timestamps: []int64{4, 5},
+						versions:   []int64{1, 1},
 						tagFamilies: []columnFamily{
 							{
 								name: "arrTag",
@@ -599,9 +612,9 @@ func Test_blockPointer_append(t *testing.T) {
 				offset: 2,
 			},
 			want: &blockPointer{
-				lastPartID: 2,
 				block: block{
 					timestamps: []int64{1, 2, 4, 5},
+					versions:   []int64{1, 1, 1, 1},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -630,6 +643,7 @@ func Test_blockPointer_append(t *testing.T) {
 			name: "Test append with non-empty block and offset less than timestamps",
 			fields: fields{
 				timestamps: []int64{1, 2},
+				versions:   []int64{1, 1},
 				tagFamilies: []columnFamily{
 					{
 						name: "arrTag",
@@ -650,9 +664,9 @@ func Test_blockPointer_append(t *testing.T) {
 			},
 			args: args{
 				b: &blockPointer{
-					lastPartID: 2,
 					block: block{
 						timestamps: []int64{4, 5},
+						versions:   []int64{1, 1},
 						tagFamilies: []columnFamily{
 							{
 								name: "arrTag",
@@ -675,9 +689,9 @@ func Test_blockPointer_append(t *testing.T) {
 				offset: 1,
 			},
 			want: &blockPointer{
-				lastPartID: 2,
 				block: block{
 					timestamps: []int64{1, 2, 4},
+					versions:   []int64{1, 1, 1},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -713,10 +727,10 @@ func Test_blockPointer_append(t *testing.T) {
 			bi := &blockPointer{
 				block: block{
 					timestamps:  tt.fields.timestamps,
+					versions:    tt.fields.versions,
 					tagFamilies: tt.fields.tagFamilies,
 					field:       tt.fields.field,
 				},
-				lastPartID: tt.fields.partID,
 			}
 			bi.append(tt.args.b, tt.args.offset)
 			if !reflect.DeepEqual(bi, tt.want) {
@@ -748,17 +762,15 @@ func Test_blockPointer_copyFrom(t *testing.T) {
 			},
 			args: args{
 				src: &blockPointer{
-					bm:         blockMetadata{count: 1},
-					idx:        0,
-					block:      conventionalBlock,
-					lastPartID: 2,
+					bm:    blockMetadata{count: 1},
+					idx:   0,
+					block: conventionalBlock,
 				},
 			},
 			want: &blockPointer{
-				bm:         blockMetadata{count: 1},
-				idx:        0,
-				block:      conventionalBlock,
-				lastPartID: 2,
+				bm:    blockMetadata{count: 1},
+				idx:   0,
+				block: conventionalBlock,
 			},
 		},
 	}
