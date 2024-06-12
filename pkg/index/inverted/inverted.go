@@ -363,9 +363,9 @@ func (s *store) run() {
 						docIDBuffer.Write(convert.Uint64ToBytes(d.DocID))
 						doc := bluge.NewDocument(docIDBuffer.String())
 						for _, f := range d.Fields {
-							tf := bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term).Sortable()
+							tf := bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term)
 							if !f.NoSort {
-								tf.StoreValue()
+								tf.StoreValue().Sortable()
 							}
 							if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
 								tf = tf.WithAnalyzer(analyzers[f.Key.Analyzer])

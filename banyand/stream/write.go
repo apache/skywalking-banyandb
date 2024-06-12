@@ -114,9 +114,9 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	et.elements.seriesIDs = append(et.elements.seriesIDs, series.ID)
 
 	tagFamilies := make([]tagValues, 0, len(stm.schema.TagFamilies))
-	if len(stm.indexRuleLocators.TagFamilyRule) != len(stm.GetSchema().GetTagFamilies()) {
+	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
 		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
-			len(stm.indexRuleLocators.TagFamilyRule), len(stm.GetSchema().GetTagFamilies()))
+			len(stm.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
 	}
 	var fields []index.Field
 	for i := range stm.GetSchema().GetTagFamilies() {
@@ -126,7 +126,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		} else {
 			tagFamily = req.Element.TagFamilies[i]
 		}
-		tfr := stm.indexRuleLocators.TagFamilyRule[i]
+		tfr := stm.indexRuleLocators.TagFamilyTRule[i]
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
 		tf := tagValues{
 			tag: tagFamilySpec.Name,

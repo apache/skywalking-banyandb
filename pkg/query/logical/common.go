@@ -29,6 +29,7 @@ var (
 	errUnsupportedConditionValue = errors.New("unsupported condition value type")
 	errInvalidCriteriaType       = errors.New("invalid criteria type")
 	errIndexNotDefined           = errors.New("index is not define for the tag")
+	errIndexSortingUnsupported   = errors.New("index does not support sorting")
 )
 
 // Tag represents the combination of  tag family and tag name.
