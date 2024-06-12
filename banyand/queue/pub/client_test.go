@@ -92,14 +92,34 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		p.OnDelete(node1)
 		verifyClients(p, 0, 0, 1, 2)
 	})
+
+	ginkgo.It("should be removed eventually", func() {
+		addr1 := getAddress()
+		node1 := getDataNode("node1", addr1)
+		p := newPub()
+		defer p.GracefulStop()
+		closeFn := setup(addr1, codes.OK, 200*time.Millisecond)
+		p.OnAddOrUpdate(node1)
+		verifyClients(p, 1, 0, 1, 0)
+		p.OnDelete(node1)
+		verifyClients(p, 1, 0, 1, 0)
+		closeFn()
+		gomega.Eventually(func(g gomega.Gomega) {
+			verifyClientsWithGomega(g, p, 0, 0, 1, 1)
+		}, flags.EventuallyTimeout).Should(gomega.Succeed())
+	})
 })
 
 func verifyClients(p *pub, active, evict, onAdd, onDelete int) {
+	verifyClientsWithGomega(gomega.Default, p, active, evict, onAdd, onDelete)
+}
+
+func verifyClientsWithGomega(g gomega.Gomega, p *pub, active, evict, onAdd, onDelete int) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	gomega.Expect(p.active).Should(gomega.HaveLen(active))
-	gomega.Expect(p.evictable).Should(gomega.HaveLen(evict))
+	g.Expect(len(p.active)).Should(gomega.Equal(active))
+	g.Expect(len(p.evictable)).Should(gomega.Equal(evict))
 	h := p.handler.(*mockHandler)
-	gomega.Expect(h.addOrUpdateCount).Should(gomega.Equal(onAdd))
-	gomega.Expect(h.deleteCount).Should(gomega.Equal(onDelete))
+	g.Expect(h.addOrUpdateCount).Should(gomega.Equal(onAdd))
+	g.Expect(h.deleteCount).Should(gomega.Equal(onDelete))
 }

@@ -4,6 +4,10 @@ Release Notes.
 
 ## 0.7.0
 
+### Features
+
+- Check unregistered nodes in background.
+
 ### Bugs
 
 - Fix the filtering of stream in descending order by timestamp.
