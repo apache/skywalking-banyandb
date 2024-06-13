@@ -72,6 +72,9 @@ func ParseOrderBy(s Schema, indexRuleName string, sort modelv1.Sort) (*OrderBy, 
 	if !defined {
 		return nil, errors.Wrap(errIndexNotDefined, indexRuleName)
 	}
+	if indexRule.NoSort {
+		return nil, errors.Wrap(errIndexSortingUnsupported, indexRuleName)
+	}
 
 	projFieldSpecs, err := s.CreateTagRef(NewTags("", indexRule.GetTags()...))
 	if err != nil {

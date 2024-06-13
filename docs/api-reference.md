@@ -971,6 +971,7 @@ IndexRule should bind to a subject through an IndexRuleBinding to generate prope
 | type | [IndexRule.Type](#banyandb-database-v1-IndexRule-Type) |  | type is the IndexType of this IndexObject. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRule is updated |
 | analyzer | [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. |
+| no_sort | [bool](#bool) |  | no_sort indicates whether the index is not for sorting. |
 
 
 
