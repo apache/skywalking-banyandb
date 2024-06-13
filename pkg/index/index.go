@@ -163,10 +163,20 @@ func (r RangeOpts) Between(value []byte) int {
 	return 0
 }
 
+type ItemRef struct {
+	SeriesID common.SeriesID
+	DocID    uint64
+	Term     []byte
+}
+
+func (ir ItemRef) SortedField() []byte {
+	return ir.Term
+}
+
 // FieldIterator allows iterating over a field's posting values.
 type FieldIterator interface {
 	Next() bool
-	Val() (uint64, common.SeriesID, []byte)
+	Val() *ItemRef
 	Close() error
 }
 
@@ -179,8 +189,8 @@ func (i *dummyIterator) Next() bool {
 	return false
 }
 
-func (i *dummyIterator) Val() (uint64, common.SeriesID, []byte) {
-	return 0, 0, nil
+func (i *dummyIterator) Val() *ItemRef {
+	return &ItemRef{}
 }
 
 func (i *dummyIterator) Close() error {

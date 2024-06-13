@@ -241,8 +241,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	}()
 	list = roaring.NewPostingList()
 	for iter.Next() {
-		docID, _, _ := iter.Val()
-		list.Insert(docID)
+		list.Insert(iter.Val().DocID)
 	}
 	return list, err
 }
@@ -275,8 +274,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	}()
 	list := roaring.NewPostingList()
 	for iter.Next() {
-		docID, _, _ := iter.Val()
-		list.Insert(docID)
+		list.Insert(iter.Val().DocID)
 	}
 	return list, err
 }
@@ -288,8 +286,7 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	}
 	list = roaring.NewPostingList()
 	for iter.Next() {
-		docID, _, _ := iter.Val()
-		list.Insert(docID)
+		list.Insert(iter.Val().DocID)
 	}
 	err = multierr.Append(err, iter.Close())
 	return
@@ -456,8 +453,12 @@ func (bmi *blugeMatchIterator) Next() bool {
 	return bmi.err == nil
 }
 
-func (bmi *blugeMatchIterator) Val() (uint64, common.SeriesID, []byte) {
-	return bmi.docID, bmi.seriesID, bmi.term
+func (bmi *blugeMatchIterator) Val() *index.ItemRef {
+	return &index.ItemRef{
+		SeriesID: bmi.seriesID,
+		DocID:    bmi.docID,
+		Term:     bmi.term,
+	}
 }
 
 func (bmi *blugeMatchIterator) Close() error {

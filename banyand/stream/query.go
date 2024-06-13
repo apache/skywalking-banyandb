@@ -30,6 +30,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -523,7 +524,8 @@ func indexSort(s *stream, sqo pbv1.StreamQueryOptions, tabWrappers []storage.TST
 				if !hasNext {
 					break
 				}
-				ts, sid, _ := iters[i].Val()
+				val := iters[i].Val()
+				ts, sid, _ := val.DocID, val.SeriesID, val.Term
 				if filteredRefMap != nil && (filteredRefMap[sid] == nil || timestamp.Find(filteredRefMap[sid], int64(ts)) == -1) {
 					continue
 				}

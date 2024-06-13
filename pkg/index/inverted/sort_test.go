@@ -167,10 +167,10 @@ func TestStore_Sort(t *testing.T) {
 			is.NotNil(iter)
 			var got result
 			for iter.Next() {
-				docID, _, term := iter.Val()
-				got.items = append(got.items, docID)
-				if term != nil {
-					got.terms = append(got.terms, term)
+				val := iter.Val()
+				got.items = append(got.items, val.DocID)
+				if val.Term != nil {
+					got.terms = append(got.terms, val.Term)
 				}
 			}
 			for i := 0; i < 10; i++ {

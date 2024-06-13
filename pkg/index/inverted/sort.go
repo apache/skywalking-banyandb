@@ -127,7 +127,7 @@ func (si *sortIterator) next() bool {
 	return false
 }
 
-func (si *sortIterator) Val() (uint64, common.SeriesID, []byte) {
+func (si *sortIterator) Val() *index.ItemRef {
 	return si.current.Val()
 }
 
