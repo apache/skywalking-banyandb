@@ -36,6 +36,8 @@ message DataPointValue {
   repeated model.v1.TagFamilyForWrite tag_families = 2 [(validate.rules).repeated.min_items = 1];
   // the order of fields match the measure schema
   repeated model.v1.FieldValue fields = 3;
+  // the version of the data point
+  int64 version = 4;
 }
 
 // WriteRequest is the request contract for write

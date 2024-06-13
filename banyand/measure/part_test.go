@@ -40,6 +40,7 @@ func TestMustInitFromDataPoints(t *testing.T) {
 			name: "Test with empty dataPoints",
 			dps: &dataPoints{
 				timestamps:  []int64{},
+				versions:    []int64{},
 				seriesIDs:   []common.SeriesID{},
 				tagFamilies: make([][]nameValues, 0),
 				fields:      make([]nameValues, 0),
@@ -50,6 +51,7 @@ func TestMustInitFromDataPoints(t *testing.T) {
 			name: "Test with one item in dataPoints",
 			dps: &dataPoints{
 				timestamps: []int64{1},
+				versions:   []int64{1},
 				seriesIDs:  []common.SeriesID{1},
 				tagFamilies: [][]nameValues{
 					{
@@ -126,6 +128,7 @@ func TestMustInitFromDataPoints(t *testing.T) {
 var dps = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 1, 2, 2, 3, 3},
 	timestamps: []int64{1, 2, 8, 10, 100, 220},
+	versions:   []int64{1, 2, 3, 4, 5, 6},
 	tagFamilies: [][]nameValues{
 		{
 			{

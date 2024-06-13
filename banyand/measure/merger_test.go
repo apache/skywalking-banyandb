@@ -61,6 +61,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			left: &blockPointer{
 				block: block{
 					timestamps: []int64{1, 2},
+					versions:   []int64{1, 4},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -82,6 +83,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			right: &blockPointer{
 				block: block{
 					timestamps: []int64{3, 4},
+					versions:   []int64{5, 6},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -107,6 +109,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			left: &blockPointer{
 				block: block{
 					timestamps: []int64{1, 3},
+					versions:   []int64{1, 5},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -128,6 +131,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			right: &blockPointer{
 				block: block{
 					timestamps: []int64{2, 4},
+					versions:   []int64{4, 6},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -151,9 +155,9 @@ func Test_mergeTwoBlocks(t *testing.T) {
 		{
 			name: "Merge two non-empty blocks with duplicated timestamps",
 			left: &blockPointer{
-				lastPartID: 1, // the less partID will be skipped
 				block: block{
 					timestamps: []int64{1, 2, 3},
+					versions:   []int64{1, 2, 3},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -177,9 +181,9 @@ func Test_mergeTwoBlocks(t *testing.T) {
 				},
 			},
 			right: &blockPointer{
-				lastPartID: 2, // the greater partID will be appended
 				block: block{
 					timestamps: []int64{2, 3, 4},
+					versions:   []int64{4, 5, 6},
 					tagFamilies: []columnFamily{
 						{
 							name: "arrTag",
@@ -201,7 +205,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, lastPartID: 2, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
+			want: &blockPointer{block: mergedBlock, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
 		},
 	}
 
@@ -218,6 +222,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 
 var mergedBlock = block{
 	timestamps: []int64{1, 2, 3, 4},
+	versions:   []int64{1, 4, 5, 6},
 	tagFamilies: []columnFamily{
 		{
 			name: "arrTag",

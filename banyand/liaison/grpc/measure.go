@@ -108,6 +108,12 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
+		if writeRequest.DataPoint.Version == 0 {
+			if writeRequest.MessageId == 0 {
+				writeRequest.MessageId = uint64(time.Now().UnixNano())
+			}
+			writeRequest.DataPoint.Version = int64(writeRequest.MessageId)
+		}
 		if ms.ingestionAccessLog != nil {
 			if errAccessLog := ms.ingestionAccessLog.Write(writeRequest); errAccessLog != nil {
 				ms.sampled.Error().Err(errAccessLog).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to write access log")

@@ -118,6 +118,7 @@ type nameValues struct {
 type dataPoints struct {
 	seriesIDs   []common.SeriesID
 	timestamps  []int64
+	versions    []int64
 	tagFamilies [][]nameValues
 	fields      []nameValues
 }
@@ -136,6 +137,7 @@ func (d *dataPoints) Less(i, j int) bool {
 func (d *dataPoints) Swap(i, j int) {
 	d.seriesIDs[i], d.seriesIDs[j] = d.seriesIDs[j], d.seriesIDs[i]
 	d.timestamps[i], d.timestamps[j] = d.timestamps[j], d.timestamps[i]
+	d.versions[i], d.versions[j] = d.versions[j], d.versions[i]
 	d.tagFamilies[i], d.tagFamilies[j] = d.tagFamilies[j], d.tagFamilies[i]
 	d.fields[i], d.fields[j] = d.fields[j], d.fields[i]
 }
