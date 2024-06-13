@@ -160,7 +160,7 @@ func (s *store) Write(fields []index.Field, docID uint64) error {
 	return nil
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator, err error) {
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator[*index.ItemRef], err error) {
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
 		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {

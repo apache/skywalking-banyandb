@@ -31,6 +31,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 )
 
 var errMalformed = errors.New("the data is malformed")
@@ -174,9 +175,9 @@ func (ir ItemRef) SortedField() []byte {
 }
 
 // FieldIterator allows iterating over a field's posting values.
-type FieldIterator interface {
+type FieldIterator[T sort.Comparable] interface {
 	Next() bool
-	Val() *ItemRef
+	Val() T
 	Close() error
 }
 
@@ -221,8 +222,8 @@ type Writer interface {
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator, err error)
-	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, preLoadSize int) (FieldIterator, error)
+	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator[*ItemRef], err error)
+	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, preLoadSize int) (FieldIterator[*ItemRef], error)
 }
 
 // Searcher allows searching a field either by its key or by its key and term.

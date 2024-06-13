@@ -31,7 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
-func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator, err error) {
+func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator[*index.ItemRef], err error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err

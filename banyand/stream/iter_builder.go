@@ -22,12 +22,13 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 func (s *stream) buildItersByIndex(tableWrappers []storage.TSTableWrapper[*tsTable],
 	seriesList pbv1.SeriesList, sqo pbv1.StreamQueryOptions,
-) (iters []index.FieldIterator, tl *tagLocation, err error) {
+) (iters []sort.Iterator[*index.ItemRef], tl *tagLocation, err error) {
 	indexRuleForSorting := sqo.Order.Index
 	if len(indexRuleForSorting.Tags) != 1 {
 		return nil, nil, fmt.Errorf("only support one tag for sorting, but got %d", len(indexRuleForSorting.Tags))
@@ -46,7 +47,7 @@ func (s *stream) buildItersByIndex(tableWrappers []storage.TSTableWrapper[*tsTab
 	}
 	sids := seriesList.IDs()
 	for _, tw := range tableWrappers {
-		var iter index.FieldIterator
+		var iter index.FieldIterator[*index.ItemRef]
 		fieldKey := index.FieldKey{
 			IndexRuleID: indexRuleForSorting.GetMetadata().GetId(),
 			Analyzer:    indexRuleForSorting.GetAnalyzer(),
