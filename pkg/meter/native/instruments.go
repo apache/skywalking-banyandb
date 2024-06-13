@@ -47,7 +47,7 @@ type nativeInstrument struct {
 	pipeline      queue.Client
 	scope         meter.Scope
 	measureName   string
-	messageBuffer []bus.Message
+	requestBuffer []*measurev1.InternalWriteRequest
 	mutex         sync.Mutex
 }
 
@@ -76,8 +76,7 @@ func (n *nativeInstrument) Inc(_ float64, _ ...string) {}
 func (n *nativeInstrument) Set(value float64, labelValues ...string) {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
-	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "", n.buildIWR(value, labelValues...))
-	n.messageBuffer = append(n.messageBuffer, message)
+	n.requestBuffer = append(n.requestBuffer, n.buildIWR(value, labelValues...))
 }
 
 func (n *nativeInstrument) Add(_ float64, _ ...string) {}
@@ -101,7 +100,7 @@ func (n *nativeInstrument) buildIWR(value float64, labelValues ...string) *measu
 			Name:  n.measureName,
 		},
 		DataPoint: &measurev1.DataPointValue{
-			Timestamp: timestamppb.New(time.Now().Truncate(time.Millisecond)),
+			Timestamp: timestamppb.New(time.Now().Truncate(time.Second)),
 			TagFamilies: []*modelv1.TagFamilyForWrite{
 				{
 					Tags: tagValues,
@@ -129,15 +128,19 @@ func (n *nativeInstrument) buildIWR(value float64, labelValues ...string) *measu
 func (n *nativeInstrument) flushMessages() {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
-	if len(n.messageBuffer) == 0 {
+	if len(n.requestBuffer) == 0 {
 		return
 	}
 	publisher := n.pipeline.NewBatchPublisher(writeTimeout)
 	defer publisher.Close()
-	_, err := publisher.Publish(data.TopicMeasureWrite, n.messageBuffer...)
+	var messages []bus.Message
+	for _, iwr := range n.requestBuffer {
+		messages = append (messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "", iwr))
+	}
+	_, err := publisher.Publish(data.TopicMeasureWrite, messages...)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to publish messasges")
 	}
 	// Clear the buffer and release the underlying array
-	n.messageBuffer = nil
+	n.requestBuffer = nil
 }
