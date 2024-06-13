@@ -476,11 +476,15 @@ func indexSearch(ctx context.Context, sqo pbv1.StreamQueryOptions,
 	var filteredRefList []elementRef
 	for _, tw := range tabWrappers {
 		index := tw.Table().Index()
-		erl, err := index.Search(ctx, seriesList, sqo.Filter, sqo.TimeRange)
+		erl, err := index.Search(ctx, seriesList, sqo.Filter, sqo.TimeRange, sqo.Order)
 		if err != nil {
 			return nil, err
 		}
 		filteredRefList = append(filteredRefList, erl...)
+		if (sqo.Order == nil || sqo.Order.Index == nil) && len(filteredRefList) > sqo.MaxElementSize {
+			filteredRefList = filteredRefList[:sqo.MaxElementSize]
+			break
+		}
 	}
 	filteredRefMap := make(map[common.SeriesID][]int64)
 	if len(filteredRefList) != 0 {
@@ -519,7 +523,7 @@ func indexSort(s *stream, sqo pbv1.StreamQueryOptions, tabWrappers []storage.TST
 				if !hasNext {
 					break
 				}
-				ts, sid := iters[i].Val()
+				ts, sid, _ := iters[i].Val()
 				if filteredRefMap != nil && (filteredRefMap[sid] == nil || timestamp.Find(filteredRefMap[sid], int64(ts)) == -1) {
 					continue
 				}
