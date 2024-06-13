@@ -51,7 +51,7 @@ type nativeInstrument struct {
 	mutex         sync.Mutex
 }
 
-func NewNativeInstrument(measureName string, pipeline queue.Client, scope meter.Scope) *nativeInstrument {
+func newNativeInstrument(measureName string, pipeline queue.Client, scope meter.Scope) *nativeInstrument {
 	clock, _ := timestamp.GetClock(context.TODO())
 	n := &nativeInstrument{
 		measureName: measureName,
@@ -135,7 +135,7 @@ func (n *nativeInstrument) flushMessages() {
 	defer publisher.Close()
 	var messages []bus.Message
 	for _, iwr := range n.requestBuffer {
-		messages = append (messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "", iwr))
+		messages = append(messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "", iwr))
 	}
 	_, err := publisher.Publish(data.TopicMeasureWrite, messages...)
 	if err != nil {
