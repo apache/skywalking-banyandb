@@ -35,7 +35,6 @@ import (
 
 const (
 	maxValuesBlockSize              = 8 * 1024 * 1024
-	maxTimestampsBlockSize          = 8 * 1024 * 1024
 	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
 	maxUncompressedBlockSize        = 2 * 1024 * 1024
 	maxUncompressedPrimaryBlockSize = 128 * 1024

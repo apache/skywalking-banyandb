@@ -66,7 +66,7 @@ func (b *block) mustInitFromElements(timestamps []int64, elementIDs []string, ta
 func assertTimestampsSorted(timestamps []int64) {
 	for i := range timestamps {
 		if i > 0 && timestamps[i-1] > timestamps[i] {
-			logger.Panicf("log entries must be sorted by timestamp; got the previous entry with bigger timestamp %d than the current entry with timestamp %d",
+			logger.Panicf("elements must be sorted by timestamp; got the previous element with bigger timestamp %d than the current element with timestamp %d",
 				timestamps[i-1], timestamps[i])
 		}
 	}

@@ -315,8 +315,6 @@ func (pmi *partMergeIter) loadBlockMetadata() error {
 		pm := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1]
 		return fmt.Errorf("can't read block metadata from primary at %d: %w", pm.offset, err)
 	}
-
-	pmi.block.lastPartID = pmi.partID
 	return nil
 }
 

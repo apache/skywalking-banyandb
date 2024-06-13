@@ -80,29 +80,3 @@ type Histogram interface {
 	Instrument
 	Observe(value float64, labelValues ...string)
 }
-
-type noopInstrument struct{}
-
-func (noopInstrument) Inc(_ float64, _ ...string)     {}
-func (noopInstrument) Set(_ float64, _ ...string)     {}
-func (noopInstrument) Add(_ float64, _ ...string)     {}
-func (noopInstrument) Observe(_ float64, _ ...string) {}
-func (noopInstrument) Delete(_ ...string) bool        { return false }
-
-// NoopProvider is a no-op implementation of the Provider interface.
-type NoopProvider struct{}
-
-// Counter returns a no-op implementation of the Counter interface.
-func (NoopProvider) Counter(_ string, _ ...string) Counter {
-	return noopInstrument{}
-}
-
-// Gauge returns a no-op implementation of the Gauge interface.
-func (NoopProvider) Gauge(_ string, _ ...string) Gauge {
-	return noopInstrument{}
-}
-
-// Histogram returns a no-op implementation of the Histogram interface.
-func (NoopProvider) Histogram(_ string, _ Buckets, _ ...string) Histogram {
-	return noopInstrument{}
-}

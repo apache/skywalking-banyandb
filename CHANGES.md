@@ -6,7 +6,13 @@ Release Notes.
 
 ### Features
 
+- Check unregistered nodes in background.
 - Improve sorting performance of stream.
+
+### Bugs
+
+- Fix the filtering of stream in descending order by timestamp.
+- Fix querying old data points when the data is in a newer part. A version column is introduced to each data point and stored in the timestamp file.
 
 ## 0.6.1
 

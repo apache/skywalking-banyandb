@@ -34,6 +34,8 @@ import (
 type block struct {
 	timestamps []int64
 
+	versions []int64
+
 	tagFamilies []columnFamily
 
 	field columnFamily
@@ -41,6 +43,7 @@ type block struct {
 
 func (b *block) reset() {
 	b.timestamps = b.timestamps[:0]
+	b.versions = b.versions[:0]
 
 	tff := b.tagFamilies
 	for i := range tff {
@@ -50,7 +53,7 @@ func (b *block) reset() {
 	b.field.reset()
 }
 
-func (b *block) mustInitFromDataPoints(timestamps []int64, tagFamilies [][]nameValues, fields []nameValues) {
+func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tagFamilies [][]nameValues, fields []nameValues) {
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -65,13 +68,14 @@ func (b *block) mustInitFromDataPoints(timestamps []int64, tagFamilies [][]nameV
 
 	assertTimestampsSorted(timestamps)
 	b.timestamps = append(b.timestamps, timestamps...)
+	b.versions = append(b.versions, versions...)
 	b.mustInitFromTagsAndFields(tagFamilies, fields)
 }
 
 func assertTimestampsSorted(timestamps []int64) {
 	for i := range timestamps {
 		if i > 0 && timestamps[i-1] > timestamps[i] {
-			logger.Panicf("log entries must be sorted by timestamp; got the previous entry with bigger timestamp %d than the current entry with timestamp %d",
+			logger.Panicf("data points must be sorted by timestamp; got the previous data point with bigger timestamp %d than the current data point with timestamp %d",
 				timestamps[i-1], timestamps[i])
 		}
 	}
@@ -136,7 +140,7 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 	bm.uncompressedSizeBytes = b.uncompressedSizeBytes()
 	bm.count = uint64(b.Len())
 
-	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, &ww.timestampsWriter)
+	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, b.versions, &ww.timestampsWriter)
 
 	for ti := range b.tagFamilies {
 		b.marshalTagFamily(b.tagFamilies[ti], bm, ww)
@@ -284,7 +288,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
 	b.reset()
 
-	b.timestamps = mustReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), p.timestamps)
+	b.timestamps, b.versions = mustReadTimestampsFrom(b.timestamps, b.versions, &bm.timestamps, int(bm.count), p.timestamps)
 
 	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
 	for i := range cc {
@@ -307,7 +311,7 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
 	b.reset()
 
-	b.timestamps = mustSeqReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
+	b.timestamps, b.versions = mustSeqReadTimestampsFrom(b.timestamps, b.versions, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
 
 	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
 	for i := range cc {
@@ -333,35 +337,35 @@ func (b *block) sortTagFamilies() {
 	})
 }
 
-func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, timestampsWriter *writer) {
+func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps, versions []int64, timestampsWriter *writer) {
 	tm.reset()
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf, tm.encodeType, tm.min = encoding.Int64ListToBytes(bb.Buf[:0], timestamps)
-	if len(bb.Buf) > maxTimestampsBlockSize {
-		logger.Panicf("too big block with timestamps: %d bytes; the maximum supported size is %d bytes", len(bb.Buf), maxTimestampsBlockSize)
+	tm.encodeType = encoding.GetVersionType(tm.encodeType)
+	if tm.encodeType == encoding.EncodeTypeUnknown {
+		logger.Panicf("unexpected encodeType %d", tm.encodeType)
+		return
 	}
 	tm.max = timestamps[len(timestamps)-1]
 	tm.offset = timestampsWriter.bytesWritten
-	tm.size = uint64(len(bb.Buf))
+	tm.versionOffset = uint64(len(bb.Buf))
+	timestampsWriter.MustWrite(bb.Buf)
+	bb.Buf, tm.versionEncodeType, tm.versionFirst = encoding.Int64ListToBytes(bb.Buf[:0], versions)
+	tm.size = tm.versionOffset + uint64(len(bb.Buf))
 	timestampsWriter.MustWrite(bb.Buf)
 }
 
-func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader fs.Reader) []int64 {
+func mustReadTimestampsFrom(timestamps, versions []int64, tm *timestampsMetadata, count int, reader fs.Reader) ([]int64, []int64) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
-	var err error
-	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
-	if err != nil {
-		logger.Panicf("%s: cannot unmarshal timestamps: %v", reader.Path(), err)
-	}
-	return dst
+	return mustDecodeTimestampsWithVersions(timestamps, versions, tm, count, reader.Path(), bb.Buf)
 }
 
-func mustSeqReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader *seqReader) []int64 {
+func mustSeqReadTimestampsFrom(timestamps, versions []int64, tm *timestampsMetadata, count int, reader *seqReader) ([]int64, []int64) {
 	if tm.offset != reader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", tm.offset, reader.bytesRead)
 	}
@@ -369,12 +373,31 @@ func mustSeqReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, r
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	reader.mustReadFull(bb.Buf)
+	return mustDecodeTimestampsWithVersions(timestamps, versions, tm, count, reader.Path(), bb.Buf)
+}
+
+func mustDecodeTimestampsWithVersions(timestamps, versions []int64, tm *timestampsMetadata, count int, path string, src []byte) ([]int64, []int64) {
 	var err error
-	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
-	if err != nil {
-		logger.Panicf("%s: cannot unmarshal timestamps: %v", reader.Path(), err)
+	if t := encoding.GetCommonType(tm.encodeType); t != encoding.EncodeTypeUnknown {
+		if tm.size < tm.versionOffset {
+			logger.Panicf("size %d must be greater than versionOffset %d", tm.size, tm.versionOffset)
+		}
+		timestamps, err = encoding.BytesToInt64List(timestamps, src[:tm.versionOffset], t, tm.min, count)
+		if err != nil {
+			logger.Panicf("%s: cannot unmarshal timestamps with versions: %v", path, err)
+		}
+		versions, err = encoding.BytesToInt64List(versions, src[tm.versionOffset:], tm.versionEncodeType, tm.versionFirst, count)
+		if err != nil {
+			logger.Panicf("%s: cannot unmarshal versions: %v", path, err)
+		}
+		return timestamps, versions
 	}
-	return dst
+	timestamps, err = encoding.BytesToInt64List(timestamps, src, tm.encodeType, tm.min, count)
+	if err != nil {
+		logger.Panicf("%s: cannot unmarshal timestamps: %v", path, err)
+	}
+	versions = encoding.ExtendInt64ListCapacity(versions, count)
+	return timestamps, versions
 }
 
 func generateBlock() *block {
@@ -396,6 +419,7 @@ type blockCursor struct {
 	p                   *part
 	fields              columnFamily
 	timestamps          []int64
+	versions            []int64
 	tagFamilies         []columnFamily
 	columnValuesDecoder encoding.BytesBlockDecoder
 	tagProjection       []pbv1.TagProjection
@@ -416,6 +440,7 @@ func (bc *blockCursor) reset() {
 	bc.fieldProjection = bc.fieldProjection[:0]
 
 	bc.timestamps = bc.timestamps[:0]
+	bc.versions = bc.versions[:0]
 
 	tff := bc.tagFamilies
 	for i := range tff {
@@ -452,6 +477,7 @@ func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, entityValuesAll map[comm
 	size := offset - idx
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
+	r.Versions = append(r.Versions, bc.versions[idx:offset]...)
 	var entityValues map[string]*modelv1.TagValue
 	if entityValuesAll != nil {
 		entityValues = entityValuesAll[r.SID]
@@ -532,6 +558,7 @@ func (bc *blockCursor) copyTo(r *pbv1.MeasureResult, entityValuesAll map[common.
 ) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
+	r.Versions = append(r.Versions, bc.versions[bc.idx])
 	var entityValues map[string]*modelv1.TagValue
 	if entityValuesAll != nil {
 		entityValues = entityValuesAll[r.SID]
@@ -629,6 +656,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		return false
 	}
 	bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[start:end+1]...)
+	bc.versions = append(bc.versions, tmpBlock.versions[start:end+1]...)
 
 	for _, cf := range tmpBlock.tagFamilies {
 		tf := columnFamily{
@@ -687,9 +715,8 @@ func releaseBlockCursor(bc *blockCursor) {
 
 type blockPointer struct {
 	block
-	bm         blockMetadata
-	idx        int
-	lastPartID uint64
+	bm  blockMetadata
+	idx int
 }
 
 func (bi *blockPointer) updateMetadata() {
@@ -770,8 +797,8 @@ func (bi *blockPointer) append(b *blockPointer, offset int) {
 
 	assertIdxAndOffset("timestamps", len(b.timestamps), bi.idx, offset)
 	bi.timestamps = append(bi.timestamps, b.timestamps[b.idx:offset]...)
-
-	bi.lastPartID = b.lastPartID
+	assertIdxAndOffset("versions", len(b.versions), bi.idx, offset)
+	bi.versions = append(bi.versions, b.versions[b.idx:offset]...)
 }
 
 func assertIdxAndOffset(name string, length int, idx int, offset int) {
@@ -789,7 +816,6 @@ func (bi *blockPointer) isFull() bool {
 
 func (bi *blockPointer) reset() {
 	bi.idx = 0
-	bi.lastPartID = 0
 	bi.block.reset()
 	bi.bm = blockMetadata{}
 }

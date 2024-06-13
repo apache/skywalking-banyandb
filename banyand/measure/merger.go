@@ -370,7 +370,7 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 			i++
 		}
 		if left.timestamps[i-1] == ts2 {
-			if left.lastPartID >= right.lastPartID {
+			if left.versions[i-1] >= right.versions[right.idx] {
 				target.append(left, i)
 			} else {
 				target.append(left, i-1) // skip left

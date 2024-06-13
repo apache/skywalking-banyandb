@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -95,19 +96,20 @@ func (p *metricService) Validate() error {
 }
 
 func (p *metricService) PreRun(ctx context.Context) error {
+	p.l = logger.GetLogger(p.Name())
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	var providers []meter.Provider
 	for _, mode := range p.modes {
 		switch mode {
 		case flagPromethusMode:
 			MetricsServerInterceptor = promMetricsServerInterceptor
-			MetricsCollector.RegisterProvider(newPromMeterProvider(SystemScope))
+			providers = append(providers, newPromMeterProvider())
 		case flagNativeMode:
-			err := createNativeObservabilityGroup(ctx, p.metadata)
-			if err != nil {
-				p.l.Warn().Err(err).Msg("Failed to create native observability group")
-			}
-			MetricsCollector.RegisterProvider(newNativeMeterProvider(SystemScope))
+			providers = append(providers, newNativeMeterProvider(ctx, p.metadata))
 		}
 	}
+	initMetrics(providers)
 	return nil
 }
 
@@ -116,8 +118,6 @@ func (p *metricService) Name() string {
 }
 
 func (p *metricService) Serve() run.StopNotify {
-	p.l = logger.GetLogger(p.Name())
-
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	clock, _ := timestamp.GetClock(context.TODO())

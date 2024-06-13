@@ -43,7 +43,12 @@ var (
 	// RootScope is the root scope for all metrics.
 	RootScope = meter.NewHierarchicalScope("banyandb", "_")
 	// SystemScope is the system scope for all metrics.
-	SystemScope = RootScope.SubScope("system")
+	SystemScope     = RootScope.SubScope("system")
+	cpuStateGauge   meter.Gauge
+	cpuNumGauge     meter.Gauge
+	memorySateGauge meter.Gauge
+	netStateGauge   meter.Gauge
+	initMetricsOnce sync.Once
 )
 
 func init() {
@@ -52,9 +57,16 @@ func init() {
 	MetricsCollector.Register("net", collectNet)
 }
 
-func collectCPU(provider meter.Provider) {
-	cpuStateGauge := provider.Gauge("cpu_state", "kind")
-	cpuNumGauge := provider.Gauge("cpu_num")
+func initMetrics(providers []meter.Provider) {
+	initMetricsOnce.Do(func() {
+		cpuStateGauge = NewGauge(providers, "cpu_state", "kind")
+		cpuNumGauge = NewGauge(providers, "cpu_num")
+		memorySateGauge = NewGauge(providers, "memory_state", "kind")
+		netStateGauge = NewGauge(providers, "net_state", "kind", "name")
+	})
+}
+
+func collectCPU() {
 	once4CpuCount.Do(func() {
 		if c, err := cpuCountsFunc(false); err != nil {
 			log.Error().Err(err).Msg("cannot get cpu count")
@@ -83,8 +95,10 @@ func collectCPU(provider meter.Provider) {
 	cpuStateGauge.Set(allStat.Steal/total, "steal")
 }
 
-func collectMemory(provider meter.Provider) {
-	memorySateGauge := provider.Gauge("memory_state", "kind")
+func collectMemory() {
+	if memorySateGauge == nil {
+		log.Error().Msg("memorySateGauge is not registered")
+	}
 	m, err := mem.VirtualMemory()
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get memory stat")
@@ -93,8 +107,10 @@ func collectMemory(provider meter.Provider) {
 	memorySateGauge.Set(float64(m.Used)/float64(m.Total), "used")
 }
 
-func collectNet(provider meter.Provider) {
-	netStateGauge := provider.Gauge("net_state", "kind", "name")
+func collectNet() {
+	if netStateGauge == nil {
+		log.Error().Msg("netStateGauge is not registered")
+	}
 	stats, err := getNetStat(context.Background())
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get net stat")
