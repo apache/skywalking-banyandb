@@ -303,7 +303,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			is.NotNil(iter)
 			var got result
 			for iter.Next() {
-				docID, _ := iter.Val()
+				docID, _, _ := iter.Val()
 				got.items = append(got.items, docID)
 			}
 			for i := 0; i < 10; i++ {

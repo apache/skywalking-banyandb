@@ -110,7 +110,7 @@ func (si *sortIterator) loadCurrent() bool {
 		return false
 	}
 
-	iter := newBlugeMatchIterator(documentMatchIterator, nil)
+	iter := newBlugeMatchIterator(documentMatchIterator, nil, true)
 	si.current = &iter
 	if si.next() {
 		return true
@@ -127,7 +127,7 @@ func (si *sortIterator) next() bool {
 	return false
 }
 
-func (si *sortIterator) Val() (uint64, common.SeriesID) {
+func (si *sortIterator) Val() (uint64, common.SeriesID, []byte) {
 	return si.current.Val()
 }
 

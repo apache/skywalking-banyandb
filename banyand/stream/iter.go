@@ -78,7 +78,7 @@ func (s *searcherIterator) Next() bool {
 		s.err = io.EOF
 		return false
 	}
-	itemID, seriesID := s.fieldIterator.Val()
+	itemID, seriesID, _ := s.fieldIterator.Val()
 	if !s.timeFilter(itemID) {
 		return s.Next()
 	}
