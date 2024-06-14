@@ -507,6 +507,7 @@ func (bc *blockCursor) copyTo(r *pbv1.StreamResult) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[bc.idx])
+	r.SIDs = append(r.SIDs, bc.bm.seriesID)
 	if len(r.TagFamilies) != len(bc.tagProjection) {
 		for _, tp := range bc.tagProjection {
 			tf := pbv1.TagFamily{
