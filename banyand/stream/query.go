@@ -38,9 +38,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+type seriesTimestampMap map[common.SeriesID][]int64
+
 type queryOptions struct {
-	filteredRefMap map[common.SeriesID][]int64
-	sortedRefMap   map[common.SeriesID][]int64
+	filteredRefMap seriesTimestampMap
+	sortedRefMap   seriesTimestampMap
 	pbv1.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
