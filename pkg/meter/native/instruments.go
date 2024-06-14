@@ -19,128 +19,75 @@
 package native
 
 import (
-	"context"
-	"sync"
-	"time"
-
-	"github.com/robfig/cron/v3"
-	"google.golang.org/protobuf/types/known/timestamppb"
-
-	"github.com/apache/skywalking-banyandb/api/data"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-const (
-	writeTimeout = 5 * time.Second
-)
-
-type nativeInstrument struct {
-	scheduler     *timestamp.Scheduler
-	pipeline      queue.Client
-	scope         meter.Scope
-	measureName   string
-	requestBuffer []*measurev1.InternalWriteRequest
-	mutex         sync.Mutex
+type counter struct {
+	*metricVec
 }
 
-func newNativeInstrument(measureName string, pipeline queue.Client, scope meter.Scope) *nativeInstrument {
-	clock, _ := timestamp.GetClock(context.TODO())
-	n := &nativeInstrument{
-		measureName: measureName,
-		pipeline:    pipeline,
-		scope:       scope,
-		scheduler:   timestamp.NewScheduler(log, clock),
-	}
-	err := n.scheduler.Register("flush messages", cron.Descriptor, "@every 5s", func(_ time.Time, _ *logger.Logger) bool {
-		n.flushMessages()
-		return true
-	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to register flushMessages")
-	}
-	return n
-}
-
-// Counter Only Methods.
-func (n *nativeInstrument) Inc(_ float64, _ ...string) {}
-
-// Gauge Only Methods.
-func (n *nativeInstrument) Set(value float64, labelValues ...string) {
-	n.mutex.Lock()
-	defer n.mutex.Unlock()
-	n.requestBuffer = append(n.requestBuffer, n.buildIWR(value, labelValues...))
-}
-
-func (n *nativeInstrument) Add(_ float64, _ ...string) {}
-
-// Histogram Only Methods.
-func (n *nativeInstrument) Observe(_ float64, _ ...string) {}
-
-// Shared Methods.
-func (n *nativeInstrument) Delete(_ ...string) bool { return false }
-
-func (n *nativeInstrument) buildIWR(value float64, labelValues ...string) *measurev1.InternalWriteRequest {
-	tagValues := buildTagValues(n.scope, labelValues...)
-	entities, err := pbv1.EntityValues(tagValues).ToEntity()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to convert tagValues to Entity")
-	}
-	writeRequest := &measurev1.WriteRequest{
-		MessageId: uint64(time.Now().UnixNano()),
-		Metadata: &commonv1.Metadata{
-			Group: NativeObservabilityGroupName,
-			Name:  n.measureName,
-		},
-		DataPoint: &measurev1.DataPointValue{
-			Timestamp: timestamppb.New(time.Now().Truncate(time.Second)),
-			TagFamilies: []*modelv1.TagFamilyForWrite{
-				{
-					Tags: tagValues,
-				},
-			},
-			Fields: []*modelv1.FieldValue{
-				{
-					Value: &modelv1.FieldValue_Float{
-						Float: &modelv1.Float{
-							Value: value,
-						},
-					},
-				},
-			},
-		},
-	}
-	return &measurev1.InternalWriteRequest{
-		Request:      writeRequest,
-		ShardId:      uint32(0),
-		SeriesHash:   pbv1.HashEntity(entities),
-		EntityValues: tagValues,
+func newCounter(measureName string, pipeline queue.Client, scope meter.Scope) *counter {
+	return &counter{
+		newMetricVec(measureName, pipeline, scope),
 	}
 }
 
-func (n *nativeInstrument) flushMessages() {
-	n.mutex.Lock()
-	defer n.mutex.Unlock()
-	if len(n.requestBuffer) == 0 {
-		return
+func (c *counter) Inc(delta float64, labelValues ...string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	key := generateKey(labelValues)
+	v, exist := c.metrics[key]
+	if !exist {
+		v = metricWithLabelValues{
+			labelValues: labelValues,
+		}
 	}
-	publisher := n.pipeline.NewBatchPublisher(writeTimeout)
-	defer publisher.Close()
-	var messages []bus.Message
-	for _, iwr := range n.requestBuffer {
-		messages = append(messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "", iwr))
-	}
-	_, err := publisher.Publish(data.TopicMeasureWrite, messages...)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to publish messasges")
-	}
-	// Clear the buffer and release the underlying array
-	n.requestBuffer = nil
+	v.metric += delta
+	c.metrics[key] = v
 }
+
+type gauge struct {
+	*metricVec
+}
+
+func newGauge(measureName string, pipeline queue.Client, scope meter.Scope) *gauge {
+	return &gauge{
+		newMetricVec(measureName, pipeline, scope),
+	}
+}
+
+func (g *gauge) Set(value float64, labelValues ...string) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	g.metrics[generateKey(labelValues)] = metricWithLabelValues{
+		metric:      value,
+		labelValues: labelValues,
+	}
+}
+
+func (g *gauge) Add(delta float64, labelValues ...string) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	key := generateKey(labelValues)
+	v, exist := g.metrics[key]
+	if !exist {
+		v = metricWithLabelValues{
+			labelValues: labelValues,
+		}
+	}
+	v.metric += delta
+	g.metrics[key] = v
+}
+
+type histogram struct {
+	*metricVec
+}
+
+func newHistogram(measureName string, pipeline queue.Client, scope meter.Scope) *histogram {
+	return &histogram{
+		newMetricVec(measureName, pipeline, scope),
+	}
+}
+
+func (h *histogram) Observe(_ float64, _ ...string) {}
