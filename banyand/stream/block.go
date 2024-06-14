@@ -446,20 +446,12 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.minTimestamp = opts.minTimestamp
 	bc.maxTimestamp = opts.maxTimestamp
 	bc.tagProjection = opts.TagProjection
+	seriesID := bc.bm.seriesID
 	if opts.sortedRefMap != nil {
-		seriesID := bc.bm.seriesID
-		for tw := range opts.sortedRefMap {
-			timeRange := tw.GetTimeRange()
-			min, max := bm.timestamps.min, bm.timestamps.max
-			if min >= timeRange.Start.UnixNano() && max <= timeRange.End.UnixNano() {
-				bc.expectedTimestamps = opts.sortedRefMap[tw][seriesID]
-				break
-			}
-		}
+		bc.expectedTimestamps = opts.sortedRefMap[seriesID]
 		return
 	}
 	if opts.filteredRefMap != nil {
-		seriesID := bc.bm.seriesID
 		bc.expectedTimestamps = opts.filteredRefMap[seriesID]
 	}
 }
@@ -479,6 +471,9 @@ func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[idx:offset]...)
+	for i := idx; i < offset; i++ {
+		r.SIDs = append(r.SIDs, bc.bm.seriesID)
+	}
 	if len(r.TagFamilies) != len(bc.tagProjection) {
 		for _, tp := range bc.tagProjection {
 			tf := pbv1.TagFamily{

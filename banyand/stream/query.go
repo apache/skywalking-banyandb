@@ -18,7 +18,6 @@
 package stream
 
 import (
-	"bytes"
 	"container/heap"
 	"context"
 	"errors"
@@ -30,7 +29,8 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -40,7 +40,7 @@ import (
 
 type queryOptions struct {
 	filteredRefMap map[common.SeriesID][]int64
-	sortedRefMap   map[storage.TSTableWrapper[*tsTable]]map[common.SeriesID][]int64
+	sortedRefMap   map[common.SeriesID][]int64
 	pbv1.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -142,17 +142,17 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 }
 
 type queryResult struct {
-	entityMap         map[string]int
-	sidToIndex        map[common.SeriesID]int
-	tagNameIndex      map[string]partition.TagLocator
-	schema            *databasev1.Stream
-	sortedTagLocation *tagLocation
-	data              []*blockCursor
-	snapshots         []*snapshot
-	seriesList        pbv1.SeriesList
-	loaded            bool
-	orderByTS         bool
-	asc               bool
+	entityMap      map[string]int
+	sidToIndex     map[common.SeriesID]int
+	tagNameIndex   map[string]partition.TagLocator
+	schema         *databasev1.Stream
+	elementRefList []*elementRef
+	data           []*blockCursor
+	snapshots      []*snapshot
+	seriesList     pbv1.SeriesList
+	loaded         bool
+	orderByTS      bool
+	asc            bool
 }
 
 func (qr *queryResult) Pull() *pbv1.StreamResult {
@@ -234,8 +234,12 @@ func (qr *queryResult) Pull() *pbv1.StreamResult {
 		qr.loaded = true
 		heap.Init(qr)
 	}
+
 	if len(qr.data) == 0 {
 		return nil
+	}
+	if !qr.orderByTS {
+		return qr.mergeByTagValue()
 	}
 	if len(qr.data) == 1 {
 		r := &pbv1.StreamResult{}
@@ -244,7 +248,7 @@ func (qr *queryResult) Pull() *pbv1.StreamResult {
 		qr.data = qr.data[:0]
 		return r
 	}
-	return qr.merge()
+	return qr.mergeByTimestamp()
 }
 
 func (qr *queryResult) Release() {
@@ -265,21 +269,12 @@ func (qr queryResult) Len() int {
 
 func (qr queryResult) Less(i, j int) bool {
 	leftIdx, rightIdx := qr.data[i].idx, qr.data[j].idx
-	if qr.orderByTS {
-		leftTS := qr.data[i].timestamps[leftIdx]
-		rightTS := qr.data[j].timestamps[rightIdx]
-		if qr.asc {
-			return leftTS < rightTS
-		}
-		return leftTS > rightTS
-	}
-	stl := qr.sortedTagLocation
-	leftTagValue := qr.data[i].tagFamilies[stl.familyIndex].tags[stl.tagIndex].values[leftIdx]
-	rightTagValue := qr.data[j].tagFamilies[stl.familyIndex].tags[stl.tagIndex].values[rightIdx]
+	leftTS := qr.data[i].timestamps[leftIdx]
+	rightTS := qr.data[j].timestamps[rightIdx]
 	if qr.asc {
-		return bytes.Compare(leftTagValue, rightTagValue) < 0
+		return leftTS < rightTS
 	}
-	return bytes.Compare(leftTagValue, rightTagValue) > 0
+	return leftTS > rightTS
 }
 
 func (qr queryResult) Swap(i, j int) {
@@ -302,7 +297,56 @@ func (qr *queryResult) orderByTimestampDesc() bool {
 	return qr.orderByTS && !qr.asc
 }
 
-func (qr *queryResult) merge() *pbv1.StreamResult {
+func (qr *queryResult) mergeByTagValue() *pbv1.StreamResult {
+	tmp := &pbv1.StreamResult{}
+	prevIdx := 0
+	elementRefToIdx := make(map[elementRef]int)
+	for _, data := range qr.data {
+		data.copyAllTo(tmp, qr.orderByTimestampDesc())
+		var idx int
+		for idx = prevIdx; idx < len(tmp.Timestamps); idx++ {
+			sid, ts := tmp.SIDs[idx], tmp.Timestamps[idx]
+			er := elementRef{
+				seriesID:  sid,
+				timestamp: ts,
+			}
+			elementRefToIdx[er] = idx
+		}
+		prevIdx = idx
+	}
+
+	r := &pbv1.StreamResult{
+		TagFamilies: []pbv1.TagFamily{},
+	}
+	for _, tagFamily := range tmp.TagFamilies {
+		tf := pbv1.TagFamily{
+			Name: tagFamily.Name,
+			Tags: []pbv1.Tag{},
+		}
+		for _, tag := range tagFamily.Tags {
+			t := pbv1.Tag{
+				Name:   tag.Name,
+				Values: []*modelv1.TagValue{},
+			}
+			tf.Tags = append(tf.Tags, t)
+		}
+		r.TagFamilies = append(r.TagFamilies, tf)
+	}
+	for _, er := range qr.elementRefList {
+		idx := elementRefToIdx[*er]
+		r.Timestamps = append(r.Timestamps, tmp.Timestamps[idx])
+		r.ElementIDs = append(r.ElementIDs, tmp.ElementIDs[idx])
+		for i := 0; i < len(r.TagFamilies); i++ {
+			for j := 0; j < len(r.TagFamilies[i].Tags); j++ {
+				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, tmp.TagFamilies[i].Tags[j].Values[idx])
+			}
+		}
+	}
+	qr.data = qr.data[:0]
+	return r
+}
+
+func (qr *queryResult) mergeByTimestamp() *pbv1.StreamResult {
 	step := 1
 	if qr.orderByTimestampDesc() {
 		step = -1
@@ -377,7 +421,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pb
 	if err != nil {
 		return nil, err
 	}
-	sortedRefMap, sortedTagLocation, err := indexSort(s, sqo, tabWrappers, seriesList, filteredRefMap)
+	elementRefList, sortedRefMap, err := indexSort(s, sqo, tabWrappers, seriesList, filteredRefMap)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +504,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pb
 	if sqo.Order.Index == nil {
 		result.orderByTS = true
 	} else {
-		result.sortedTagLocation = sortedTagLocation
+		result.elementRefList = elementRefList
 	}
 	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
 		result.asc = true
@@ -502,61 +546,68 @@ func indexSearch(ctx context.Context, sqo pbv1.StreamQueryOptions,
 
 func indexSort(s *stream, sqo pbv1.StreamQueryOptions, tabWrappers []storage.TSTableWrapper[*tsTable],
 	seriesList pbv1.SeriesList, filteredRefMap map[common.SeriesID][]int64,
-) (map[storage.TSTableWrapper[*tsTable]]map[common.SeriesID][]int64, *tagLocation, error) {
+) ([]*elementRef, map[common.SeriesID][]int64, error) {
 	if sqo.Order == nil || sqo.Order.Index == nil {
 		return nil, nil, nil
 	}
-	elementRefCount := 0
-	sortedRefMap := make(map[storage.TSTableWrapper[*tsTable]]map[common.SeriesID][]int64)
-	iters, stl, err := s.buildItersByIndex(tabWrappers, seriesList, sqo)
+	iters, err := s.buildItersByIndex(tabWrappers, seriesList, sqo)
 	if err != nil {
 		return nil, nil, err
 	}
+	desc := sqo.Order != nil && sqo.Order.Index == nil && sqo.Order.Sort == modelv1.Sort_SORT_DESC
+	itemIter := itersort.NewItemIter[*index.ItemRef](iters, desc)
+
+	var elementRefList []*elementRef
+	sortedRefMap := make(map[common.SeriesID][]int64)
 	for {
-		for i := 0; i < len(iters); i++ {
-			if _, ok := sortedRefMap[tabWrappers[i]]; !ok {
-				sortedRefMap[tabWrappers[i]] = make(map[common.SeriesID][]int64)
-			}
-			srm := sortedRefMap[tabWrappers[i]]
-			var hasNext bool
-			for j := 1; j <= sqo.MaxElementSize; j++ {
-				hasNext = iters[i].Next()
-				if !hasNext {
-					break
-				}
-				val := iters[i].Val()
-				ts, sid, _ := val.DocID, val.SeriesID, val.Term
-				if filteredRefMap != nil && (filteredRefMap[sid] == nil || timestamp.Find(filteredRefMap[sid], int64(ts)) == -1) {
-					continue
-				}
-				if _, ok := srm[sid]; !ok {
-					srm[sid] = []int64{int64(ts)}
-				} else {
-					srm[sid] = append(srm[sid], int64(ts))
-				}
-				elementRefCount++
-			}
-			sortedRefMap[tabWrappers[i]] = srm
-			if !hasNext {
-				iters = append(iters[:i], iters[i+1:]...)
-				i--
-			}
+		if !itemIter.Next() {
+			break
 		}
-		if elementRefCount >= sqo.MaxElementSize || len(iters) == 0 {
+		val := itemIter.Val()
+		ts, sid := val.DocID, val.SeriesID
+		if filteredRefMap != nil && (filteredRefMap[sid] == nil || timestamp.Find(filteredRefMap[sid], int64(ts)) == -1) {
+			continue
+		}
+		if _, ok := sortedRefMap[sid]; !ok {
+			sortedRefMap[sid] = []int64{int64(ts)}
+		} else {
+			sortedRefMap[sid] = append(sortedRefMap[sid], int64(ts))
+		}
+		elementRefList = append(elementRefList, &elementRef{timestamp: int64(ts), seriesID: sid})
+		if len(elementRefList) >= sqo.MaxElementSize {
 			break
 		}
 	}
-	return sortedRefMap, stl, nil
+	return elementRefList, sortedRefMap, nil
 }
 
-func findSeriesID(sid common.SeriesID, filteredRefMap map[common.SeriesID][]int64, sortedRefMap map[storage.TSTableWrapper[*tsTable]]map[common.SeriesID][]int64) bool {
-	if len(sortedRefMap) > 0 {
-		for _, refMap := range sortedRefMap {
-			if _, ok := refMap[sid]; ok {
-				return true
-			}
+func (s *stream) buildItersByIndex(tableWrappers []storage.TSTableWrapper[*tsTable],
+	seriesList pbv1.SeriesList, sqo pbv1.StreamQueryOptions,
+) (iters []itersort.Iterator[*index.ItemRef], err error) {
+	indexRuleForSorting := sqo.Order.Index
+	if len(indexRuleForSorting.Tags) != 1 {
+		return nil, fmt.Errorf("only support one tag for sorting, but got %d", len(indexRuleForSorting.Tags))
+	}
+	sids := seriesList.IDs()
+	for _, tw := range tableWrappers {
+		var iter index.FieldIterator[*index.ItemRef]
+		fieldKey := index.FieldKey{
+			IndexRuleID: indexRuleForSorting.GetMetadata().GetId(),
+			Analyzer:    indexRuleForSorting.GetAnalyzer(),
 		}
-		return false
+		iter, err = tw.Table().Index().Sort(sids, fieldKey, sqo.Order.Sort, sqo.MaxElementSize)
+		if err != nil {
+			return nil, err
+		}
+		iters = append(iters, iter)
+	}
+	return
+}
+
+func findSeriesID(sid common.SeriesID, filteredRefMap map[common.SeriesID][]int64, sortedRefMap map[common.SeriesID][]int64) bool {
+	if sortedRefMap != nil {
+		_, ok := sortedRefMap[sid]
+		return ok
 	}
 	_, ok := filteredRefMap[sid]
 	return ok

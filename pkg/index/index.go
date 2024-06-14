@@ -164,12 +164,14 @@ func (r RangeOpts) Between(value []byte) int {
 	return 0
 }
 
+// ItemRef represents a reference to an item.
 type ItemRef struct {
+	Term     []byte
 	SeriesID common.SeriesID
 	DocID    uint64
-	Term     []byte
 }
 
+// SortedField returns the value of the sorted field.
 func (ir ItemRef) SortedField() []byte {
 	return ir.Term
 }

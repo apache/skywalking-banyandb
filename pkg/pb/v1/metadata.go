@@ -115,6 +115,7 @@ type StreamResult struct {
 	Timestamps  []int64
 	ElementIDs  []string
 	TagFamilies []TagFamily
+	SIDs        []common.SeriesID
 	SID         common.SeriesID
 }
 
