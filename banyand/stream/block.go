@@ -468,7 +468,6 @@ func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
 	if offset <= idx {
 		return
 	}
-	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[idx:offset]...)
 	for i := idx; i < offset; i++ {
@@ -504,7 +503,6 @@ func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
 }
 
 func (bc *blockCursor) copyTo(r *pbv1.StreamResult) {
-	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[bc.idx])
 	r.SIDs = append(r.SIDs, bc.bm.seriesID)

@@ -116,14 +116,6 @@ type StreamResult struct {
 	ElementIDs  []string
 	TagFamilies []TagFamily
 	SIDs        []common.SeriesID
-	SID         common.SeriesID
-}
-
-// StreamColumnResult is the result of a stream sort or filter.
-type StreamColumnResult struct {
-	TagFamilies [][]TagFamily
-	Timestamps  []int64
-	ElementIDs  []string
 }
 
 // TagProjection is the projection of a tag family and its tags.
@@ -147,11 +139,6 @@ type StreamQueryOptions struct {
 type StreamQueryResult interface {
 	Pull() *StreamResult
 	Release()
-}
-
-// StreamSortResult is the result of a stream sort.
-type StreamSortResult interface {
-	Pull() *StreamColumnResult
 }
 
 // OrderByType is the type of order by.

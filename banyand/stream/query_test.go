@@ -58,7 +58,6 @@ func TestQueryResult(t *testing.T) {
 			minTimestamp: 1,
 			maxTimestamp: 1,
 			want: []pbv1.StreamResult{{
-				SID:        1,
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"11"},
@@ -76,13 +75,11 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
 				SIDs:        []common.SeriesID{3, 3},
 				Timestamps:  []int64{1, 1},
 				ElementIDs:  []string{"31", "31"},
 				TagFamilies: nil,
 			}, {
-				SID:        2,
 				SIDs:       []common.SeriesID{2, 2},
 				Timestamps: []int64{1, 1},
 				ElementIDs: []string{"21", "21"},
@@ -93,7 +90,6 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:        1,
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"11"},
@@ -119,7 +115,6 @@ func TestQueryResult(t *testing.T) {
 			minTimestamp: 1,
 			maxTimestamp: 2,
 			want: []pbv1.StreamResult{{
-				SID:        1,
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{2},
 				ElementIDs: []string{"12"},
@@ -137,7 +132,6 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:        2,
 				SIDs:       []common.SeriesID{2},
 				Timestamps: []int64{2},
 				ElementIDs: []string{"22"},
@@ -148,13 +142,11 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
 				SIDs:        []common.SeriesID{3},
 				Timestamps:  []int64{2},
 				ElementIDs:  []string{"32"},
 				TagFamilies: nil,
 			}, {
-				SID:        1,
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"11"},
@@ -172,13 +164,11 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
 				SIDs:        []common.SeriesID{3},
 				Timestamps:  []int64{1},
 				ElementIDs:  []string{"31"},
 				TagFamilies: nil,
 			}, {
-				SID:        2,
 				SIDs:       []common.SeriesID{2},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"21"},
@@ -198,7 +188,6 @@ func TestQueryResult(t *testing.T) {
 			minTimestamp: 1,
 			maxTimestamp: 2,
 			want: []pbv1.StreamResult{{
-				SID:        1,
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"11"},
@@ -216,13 +205,11 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
 				SIDs:        []common.SeriesID{3},
 				Timestamps:  []int64{1},
 				ElementIDs:  []string{"31"},
 				TagFamilies: nil,
 			}, {
-				SID:        2,
 				SIDs:       []common.SeriesID{2, 2},
 				Timestamps: []int64{1, 2},
 				ElementIDs: []string{"21", "22"},
@@ -233,7 +220,6 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:        1,
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{2},
 				ElementIDs: []string{"12"},
@@ -251,7 +237,6 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
 				SIDs:        []common.SeriesID{3},
 				Timestamps:  []int64{2},
 				ElementIDs:  []string{"32"},
