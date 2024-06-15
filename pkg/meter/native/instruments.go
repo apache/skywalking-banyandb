@@ -18,76 +18,58 @@
 // Package native provides a simple meter system for metrics. The metrics are aggregated by the meter provider.
 package native
 
-import (
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
-)
+import "github.com/apache/skywalking-banyandb/pkg/meter"
 
-type counter struct {
+// Counter is the native implementation of meter.Counter.
+type Counter struct {
 	*metricVec
 }
 
-func newCounter(measureName string, pipeline queue.Client, scope meter.Scope) *counter {
-	return &counter{
-		newMetricVec(measureName, pipeline, scope),
+func newCounter(measureName string, scope meter.Scope) *Counter {
+	return &Counter{
+		newMetricVec(measureName, scope),
 	}
 }
 
-func (c *counter) Inc(delta float64, labelValues ...string) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	key := generateKey(labelValues)
-	v, exist := c.metrics[key]
-	if !exist {
-		v = metricWithLabelValues{
-			labelValues: labelValues,
-		}
-	}
-	v.metric += delta
-	c.metrics[key] = v
-}
-
-type gauge struct {
+// Gauge is the native implementation of meter.Gauge.
+type Gauge struct {
 	*metricVec
 }
 
-func newGauge(measureName string, pipeline queue.Client, scope meter.Scope) *gauge {
-	return &gauge{
-		newMetricVec(measureName, pipeline, scope),
+func newGauge(measureName string, scope meter.Scope) *Gauge {
+	return &Gauge{
+		newMetricVec(measureName, scope),
 	}
 }
 
-func (g *gauge) Set(value float64, labelValues ...string) {
+// Add Metric Value in Gauge.
+func (g *Gauge) Add(delta float64, labelValues ...string) {
+	g.metricVec.Inc(delta, labelValues...)
+}
+
+// Set Metric Value in Gauge.
+func (g *Gauge) Set(value float64, labelValues ...string) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	g.metrics[generateKey(labelValues)] = metricWithLabelValues{
-		metric:      value,
-		labelValues: labelValues,
+	tagValues := buildTagValues(g.scope, labelValues...)
+	hash := seriesHash(tagValues)
+	key := string(hash)
+	g.metrics[key] = metricWithLabelValues{
+		metricValue: value,
+		labelValues: tagValues,
 	}
 }
 
-func (g *gauge) Add(delta float64, labelValues ...string) {
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
-	key := generateKey(labelValues)
-	v, exist := g.metrics[key]
-	if !exist {
-		v = metricWithLabelValues{
-			labelValues: labelValues,
-		}
-	}
-	v.metric += delta
-	g.metrics[key] = v
-}
-
-type histogram struct {
+// Histogram is the native implementation of meter.Histogram.
+type Histogram struct {
 	*metricVec
 }
 
-func newHistogram(measureName string, pipeline queue.Client, scope meter.Scope) *histogram {
-	return &histogram{
-		newMetricVec(measureName, pipeline, scope),
+func newHistogram(measureName string, scope meter.Scope) *Histogram {
+	return &Histogram{
+		newMetricVec(measureName, scope),
 	}
 }
 
-func (h *histogram) Observe(_ float64, _ ...string) {}
+// Observe to be implemented.
+func (h *Histogram) Observe(_ float64, _ ...string) {}

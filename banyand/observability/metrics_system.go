@@ -57,12 +57,12 @@ func init() {
 	MetricsCollector.Register("net", collectNet)
 }
 
-func initMetrics(providers []meter.Provider) {
+func initMetrics(modes []string) {
 	initMetricsOnce.Do(func() {
-		cpuStateGauge = NewGauge(providers, "cpu_state", "kind")
-		cpuNumGauge = NewGauge(providers, "cpu_num")
-		memorySateGauge = NewGauge(providers, "memory_state", "kind")
-		netStateGauge = NewGauge(providers, "net_state", "kind", "name")
+		cpuStateGauge = NewGauge(modes, "cpu_state", "kind")
+		cpuNumGauge = NewGauge(modes, "cpu_num")
+		memorySateGauge = NewGauge(modes, "memory_state", "kind")
+		netStateGauge = NewGauge(modes, "net_state", "kind", "name")
 	})
 }
 

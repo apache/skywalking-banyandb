@@ -35,6 +35,8 @@ var (
 
 	once       = sync.Once{}
 	srvMetrics *grpcprom.ServerMetrics
+	// PromMeterProvider is a global promethus meter collector.
+	PromMeterProvider = newPromMeterProvider()
 )
 
 func init() {

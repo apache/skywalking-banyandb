@@ -27,7 +27,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
@@ -46,15 +45,13 @@ var log = logger.GetLogger("observability", "metrics", "system")
 type provider struct {
 	metadata metadata.Repo
 	scope    meter.Scope
-	pipeline queue.Client
 }
 
 // NewProvider returns a native metrics Provider.
-func NewProvider(ctx context.Context, scope meter.Scope, metadata metadata.Repo, pipeline queue.Client) meter.Provider {
+func NewProvider(ctx context.Context, scope meter.Scope, metadata metadata.Repo) meter.Provider {
 	p := &provider{
 		scope:    scope,
 		metadata: metadata,
-		pipeline: pipeline,
 	}
 	err := p.createNativeObservabilityGroup(ctx)
 	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
@@ -63,27 +60,27 @@ func NewProvider(ctx context.Context, scope meter.Scope, metadata metadata.Repo,
 	return p
 }
 
-// Counter returns a no-op implementation of the Counter interface.
+// Counter returns a native implementation of the Counter interface.
 func (p *provider) Counter(name string, labelNames ...string) meter.Counter {
 	name, err := p.createMeasure(name, labelNames...)
 	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
 		log.Error().Err(err).Msgf("Failure to createMeasure for Counter %s, labels: %v", name, labelNames)
 	}
-	return newCounter(name, p.pipeline, p.scope)
+	return newCounter(name, p.scope)
 }
 
-// Gauge returns a no-op implementation of the Gauge interface.
+// Gauge returns a nativeimplementation of the Gauge interface.
 func (p *provider) Gauge(name string, labelNames ...string) meter.Gauge {
 	name, err := p.createMeasure(name, labelNames...)
 	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
 		log.Error().Err(err).Msgf("Failure to createMeasure for Gauge %s, labels: %v", name, labelNames)
 	}
-	return newGauge(name, p.pipeline, p.scope)
+	return newGauge(name, p.scope)
 }
 
-// Histogram returns a no-op implementation of the Histogram interface.
+// Histogram returns a native implementation of the Histogram interface.
 func (p *provider) Histogram(name string, _ meter.Buckets, _ ...string) meter.Histogram {
-	return newHistogram(name, p.pipeline, p.scope)
+	return newHistogram(name, p.scope)
 }
 
 func (p *provider) createNativeObservabilityGroup(ctx context.Context) error {

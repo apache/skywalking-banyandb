@@ -29,7 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -102,17 +102,14 @@ func (p *metricService) PreRun(ctx context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	var providers []meter.Provider
-	for _, mode := range p.modes {
-		switch mode {
-		case flagPromethusMode:
-			MetricsServerInterceptor = promMetricsServerInterceptor
-			providers = append(providers, newPromMeterProvider())
-		case flagNativeMode:
-			providers = append(providers, newNativeMeterProvider(ctx, p.metadata, p.pipeline))
-		}
+	if containsMode(p.modes, flagPromethusMode) {
+		MetricsServerInterceptor = promMetricsServerInterceptor
 	}
-	initMetrics(providers)
+	if containsMode(p.modes, flagNativeMode) {
+		NativeMetricCollection = native.NewMetricsCollection(p.pipeline)
+		NativeMeterProvider = newNativeMeterProvider(ctx, p.metadata)
+	}
+	initMetrics(p.modes)
 	return nil
 }
 
@@ -131,6 +128,15 @@ func (p *metricService) Serve() run.StopNotify {
 	})
 	if err != nil {
 		p.l.Fatal().Err(err).Msg("Failed to register metrics collector")
+	}
+	if containsMode(p.modes, flagNativeMode) {
+		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, "@every 5s", func(_ time.Time, _ *logger.Logger) bool {
+			NativeMetricCollection.FlushMetrics()
+			return true
+		})
+		if err != nil {
+			p.l.Fatal().Err(err).Msg("Failed to register native metric collection")
+		}
 	}
 	p.svr = &http.Server{
 		Addr:              p.listenAddr,
@@ -155,4 +161,13 @@ func (p *metricService) GracefulStop() {
 		_ = p.svr.Close()
 	}
 	p.closer.CloseThenWait()
+}
+
+func containsMode(modes []string, mode string) bool {
+	for _, item := range modes {
+		if item == mode {
+			return true
+		}
+	}
+	return false
 }
