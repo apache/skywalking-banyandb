@@ -42,7 +42,6 @@ type seriesTimestampMap map[common.SeriesID][]int64
 
 type queryOptions struct {
 	filteredRefMap seriesTimestampMap
-	sortedRefMap   seriesTimestampMap
 	pbv1.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -427,13 +426,15 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pb
 	if err != nil {
 		return nil, err
 	}
+	if sortedRefMap != nil {
+		filteredRefMap = sortedRefMap
+	}
 
 	qo := queryOptions{
 		StreamQueryOptions: sqo,
 		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
 		filteredRefMap:     filteredRefMap,
-		sortedRefMap:       sortedRefMap,
 	}
 	var parts []*part
 	var n int
@@ -457,7 +458,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pb
 	var sids []common.SeriesID
 	for i := 0; i < len(seriesList); i++ {
 		sid := seriesList[i].ID
-		if (filteredRefMap != nil || sortedRefMap != nil) && !findSeriesID(sid, filteredRefMap, sortedRefMap) {
+		if filteredRefMap != nil && filteredRefMap[sid] == nil {
 			seriesList = append(seriesList[:i], seriesList[i+1:]...)
 			i--
 			continue
@@ -604,15 +605,6 @@ func (s *stream) buildItersByIndex(tableWrappers []storage.TSTableWrapper[*tsTab
 		iters = append(iters, iter)
 	}
 	return
-}
-
-func findSeriesID(sid common.SeriesID, filteredRefMap map[common.SeriesID][]int64, sortedRefMap map[common.SeriesID][]int64) bool {
-	if sortedRefMap != nil {
-		_, ok := sortedRefMap[sid]
-		return ok
-	}
-	_, ok := filteredRefMap[sid]
-	return ok
 }
 
 func (s *stream) genIndex(seriesList pbv1.SeriesList) (map[string]int, map[common.SeriesID]int) {

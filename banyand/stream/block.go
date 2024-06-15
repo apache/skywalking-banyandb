@@ -410,7 +410,7 @@ var blockPool sync.Pool
 type blockCursor struct {
 	p                  *part
 	timestamps         []int64
-	expectedTimestamps []int64
+	filteredTimestamps []int64
 	elementIDs         []string
 	tagFamilies        []tagFamily
 	tagValuesDecoder   encoding.BytesBlockDecoder
@@ -447,12 +447,8 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.maxTimestamp = opts.maxTimestamp
 	bc.tagProjection = opts.TagProjection
 	seriesID := bc.bm.seriesID
-	if opts.sortedRefMap != nil {
-		bc.expectedTimestamps = opts.sortedRefMap[seriesID]
-		return
-	}
 	if opts.filteredRefMap != nil {
-		bc.expectedTimestamps = opts.filteredRefMap[seriesID]
+		bc.filteredTimestamps = opts.filteredRefMap[seriesID]
 	}
 }
 
@@ -556,8 +552,8 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 
 	idxList := make([]int, 0)
 	var start, end int
-	if bc.expectedTimestamps != nil {
-		for _, ts := range bc.expectedTimestamps {
+	if bc.filteredTimestamps != nil {
+		for _, ts := range bc.filteredTimestamps {
 			idx := timestamp.Find(tmpBlock.timestamps, ts)
 			if idx == -1 {
 				continue
@@ -594,7 +590,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
 						tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
 				}
-				if bc.expectedTimestamps != nil {
+				if bc.filteredTimestamps != nil {
 					for _, idx := range idxList {
 						t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[idx])
 					}
