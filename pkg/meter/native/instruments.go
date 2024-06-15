@@ -18,28 +18,14 @@
 // Package native provides a simple meter system for metrics. The metrics are aggregated by the meter provider.
 package native
 
-import "github.com/apache/skywalking-banyandb/pkg/meter"
-
 // Counter is the native implementation of meter.Counter.
 type Counter struct {
 	*metricVec
 }
 
-func newCounter(measureName string, scope meter.Scope) *Counter {
-	return &Counter{
-		newMetricVec(measureName, scope),
-	}
-}
-
 // Gauge is the native implementation of meter.Gauge.
 type Gauge struct {
 	*metricVec
-}
-
-func newGauge(measureName string, scope meter.Scope) *Gauge {
-	return &Gauge{
-		newMetricVec(measureName, scope),
-	}
 }
 
 // Add Metric Value in Gauge.
@@ -64,12 +50,6 @@ func (g *Gauge) Set(value float64, labelValues ...string) {
 // Histogram is the native implementation of meter.Histogram.
 type Histogram struct {
 	*metricVec
-}
-
-func newHistogram(measureName string, scope meter.Scope) *Histogram {
-	return &Histogram{
-		newMetricVec(measureName, scope),
-	}
 }
 
 // Observe to be implemented.

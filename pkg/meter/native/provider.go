@@ -66,7 +66,9 @@ func (p *provider) Counter(name string, labelNames ...string) meter.Counter {
 	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
 		log.Error().Err(err).Msgf("Failure to createMeasure for Counter %s, labels: %v", name, labelNames)
 	}
-	return newCounter(name, p.scope)
+	return &Counter{
+		newMetricVec(name, p.scope),
+	}
 }
 
 // Gauge returns a nativeimplementation of the Gauge interface.
@@ -75,12 +77,16 @@ func (p *provider) Gauge(name string, labelNames ...string) meter.Gauge {
 	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
 		log.Error().Err(err).Msgf("Failure to createMeasure for Gauge %s, labels: %v", name, labelNames)
 	}
-	return newGauge(name, p.scope)
+	return &Gauge{
+		newMetricVec(name, p.scope),
+	}
 }
 
 // Histogram returns a native implementation of the Histogram interface.
 func (p *provider) Histogram(name string, _ meter.Buckets, _ ...string) meter.Histogram {
-	return newHistogram(name, p.scope)
+	return &Histogram{
+		newMetricVec(name, p.scope),
+	}
 }
 
 func (p *provider) createNativeObservabilityGroup(ctx context.Context) error {
