@@ -58,7 +58,7 @@ func TestQueryResult(t *testing.T) {
 			minTimestamp: 1,
 			maxTimestamp: 1,
 			want: []pbv1.StreamResult{{
-				SID:        1,
+				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"11"},
 				TagFamilies: []pbv1.TagFamily{
@@ -75,12 +75,12 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
+				SIDs:        []common.SeriesID{3, 3},
 				Timestamps:  []int64{1, 1},
 				ElementIDs:  []string{"31", "31"},
 				TagFamilies: nil,
 			}, {
-				SID:        2,
+				SIDs:       []common.SeriesID{2, 2},
 				Timestamps: []int64{1, 1},
 				ElementIDs: []string{"21", "21"},
 				TagFamilies: []pbv1.TagFamily{
@@ -90,7 +90,7 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:        1,
+				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"11"},
 				TagFamilies: []pbv1.TagFamily{
@@ -115,7 +115,7 @@ func TestQueryResult(t *testing.T) {
 			minTimestamp: 1,
 			maxTimestamp: 2,
 			want: []pbv1.StreamResult{{
-				SID:        1,
+				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{2},
 				ElementIDs: []string{"12"},
 				TagFamilies: []pbv1.TagFamily{
@@ -132,7 +132,7 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:        2,
+				SIDs:       []common.SeriesID{2},
 				Timestamps: []int64{2},
 				ElementIDs: []string{"22"},
 				TagFamilies: []pbv1.TagFamily{
@@ -142,12 +142,12 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
+				SIDs:        []common.SeriesID{3},
 				Timestamps:  []int64{2},
 				ElementIDs:  []string{"32"},
 				TagFamilies: nil,
 			}, {
-				SID:        1,
+				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"11"},
 				TagFamilies: []pbv1.TagFamily{
@@ -164,12 +164,12 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
+				SIDs:        []common.SeriesID{3},
 				Timestamps:  []int64{1},
 				ElementIDs:  []string{"31"},
 				TagFamilies: nil,
 			}, {
-				SID:        2,
+				SIDs:       []common.SeriesID{2},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"21"},
 				TagFamilies: []pbv1.TagFamily{
@@ -188,7 +188,7 @@ func TestQueryResult(t *testing.T) {
 			minTimestamp: 1,
 			maxTimestamp: 2,
 			want: []pbv1.StreamResult{{
-				SID:        1,
+				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []string{"11"},
 				TagFamilies: []pbv1.TagFamily{
@@ -205,12 +205,12 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
+				SIDs:        []common.SeriesID{3},
 				Timestamps:  []int64{1},
 				ElementIDs:  []string{"31"},
 				TagFamilies: nil,
 			}, {
-				SID:        2,
+				SIDs:       []common.SeriesID{2, 2},
 				Timestamps: []int64{1, 2},
 				ElementIDs: []string{"21", "22"},
 				TagFamilies: []pbv1.TagFamily{
@@ -220,7 +220,7 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:        1,
+				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{2},
 				ElementIDs: []string{"12"},
 				TagFamilies: []pbv1.TagFamily{
@@ -237,91 +237,9 @@ func TestQueryResult(t *testing.T) {
 					}},
 				},
 			}, {
-				SID:         3,
+				SIDs:        []common.SeriesID{3},
 				Timestamps:  []int64{2},
 				ElementIDs:  []string{"32"},
-				TagFamilies: nil,
-			}},
-		},
-		{
-			name:          "Test with multiple parts with duplicated data order by Series",
-			esList:        []*elements{esTS1, esTS1},
-			sids:          []common.SeriesID{1, 2, 3},
-			orderBySeries: true,
-			minTimestamp:  1,
-			maxTimestamp:  1,
-			want: []pbv1.StreamResult{{
-				SID:        1,
-				Timestamps: []int64{1, 1},
-				ElementIDs: []string{"11", "11"},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
-						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"}), strArrTagValue([]string{"value1", "value2"})}},
-						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30}), int64ArrTagValue([]int64{25, 30})}},
-					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
-						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText), binaryDataTagValue(longText)}},
-					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
-						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1"), strTagValue("value1")}},
-						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10), int64TagValue(10)}},
-					}},
-				},
-			}, {
-				SID:        2,
-				Timestamps: []int64{1, 1},
-				ElementIDs: []string{"21", "21"},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "singleTag", Tags: []pbv1.Tag{
-						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1"), strTagValue("tag1")}},
-						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2"), strTagValue("tag2")}},
-					}},
-				},
-			}, {
-				SID:         3,
-				Timestamps:  []int64{1, 1},
-				ElementIDs:  []string{"31", "31"},
-				TagFamilies: nil,
-			}},
-		},
-		{
-			name:          "Test with multiple parts with multiple data order by Series",
-			esList:        []*elements{esTS1, esTS2},
-			sids:          []common.SeriesID{2, 1, 3},
-			orderBySeries: true,
-			minTimestamp:  1,
-			maxTimestamp:  2,
-			want: []pbv1.StreamResult{{
-				SID:        2,
-				Timestamps: []int64{2, 1},
-				ElementIDs: []string{"22", "21"},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "singleTag", Tags: []pbv1.Tag{
-						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag3"), strTagValue("tag1")}},
-						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag4"), strTagValue("tag2")}},
-					}},
-				},
-			}, {
-				SID:        1,
-				Timestamps: []int64{1, 2},
-				ElementIDs: []string{"11", "12"},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
-						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"}), strArrTagValue([]string{"value5", "value6"})}},
-						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30}), int64ArrTagValue([]int64{35, 40})}},
-					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
-						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText), binaryDataTagValue(longText)}},
-					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
-						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1"), strTagValue("value3")}},
-						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10), int64TagValue(30)}},
-					}},
-				},
-			}, {
-				SID:         3,
-				Timestamps:  []int64{2, 1},
-				ElementIDs:  []string{"32", "31"},
 				TagFamilies: nil,
 			}},
 		},
@@ -365,7 +283,7 @@ func TestQueryResult(t *testing.T) {
 					}
 				} else {
 					result.orderByTS = true
-					result.ascTS = tt.ascTS
+					result.asc = tt.ascTS
 				}
 				var got []pbv1.StreamResult
 				for {

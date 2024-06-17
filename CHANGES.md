@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - Check unregistered nodes in background.
+- Improve sorting performance of stream.
 
 ### Bugs
 

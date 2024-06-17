@@ -54,7 +54,7 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 	return ei, nil
 }
 
-func (e *elementIndex) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preloadSize int) (index.FieldIterator, error) {
+func (e *elementIndex) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preloadSize int) (index.FieldIterator[*index.ItemRef], error) {
 	iter, err := e.store.Sort(sids, fieldKey, order, preloadSize)
 	if err != nil {
 		return nil, err
@@ -72,6 +72,7 @@ func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, fil
 	timeRange *timestamp.TimeRange, order *pbv1.OrderBy,
 ) ([]elementRef, error) {
 	pm := make(map[common.SeriesID][]uint64)
+	desc := order != nil && order.Index == nil && order.Sort == modelv1.Sort_SORT_DESC
 	for _, series := range seriesList {
 		pl, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return e.store, nil
@@ -86,7 +87,7 @@ func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, fil
 			continue
 		}
 		timestamps := pl.ToSlice()
-		if order != nil && order.Index == nil && order.Sort == modelv1.Sort_SORT_DESC {
+		if desc {
 			sort.Slice(timestamps, func(i, j int) bool {
 				return timestamps[i] > timestamps[j]
 			})
@@ -102,7 +103,7 @@ func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, fil
 			pm[series.ID] = timestamps[start : end+1]
 		}
 	}
-	return merge(pm), nil
+	return merge(pm, !desc), nil
 }
 
 func (e *elementIndex) Close() error {
@@ -119,34 +120,43 @@ type indexedElementRef struct {
 	elemIdx int
 }
 
-type priorityQueue []*indexedElementRef
+type priorityQueue struct {
+	elementRefList []*indexedElementRef
+	asc            bool
+}
 
-func (pq priorityQueue) Len() int { return len(pq) }
+func (pq priorityQueue) Len() int { return len(pq.elementRefList) }
 
 func (pq priorityQueue) Less(i, j int) bool {
-	return pq[i].timestamp < pq[j].timestamp
+	if pq.asc {
+		return pq.elementRefList[i].timestamp < pq.elementRefList[j].timestamp
+	}
+	return pq.elementRefList[i].timestamp > pq.elementRefList[j].timestamp
 }
 
 func (pq priorityQueue) Swap(i, j int) {
-	pq[i], pq[j] = pq[j], pq[i]
+	pq.elementRefList[i], pq.elementRefList[j] = pq.elementRefList[j], pq.elementRefList[i]
 }
 
 func (pq *priorityQueue) Push(x interface{}) {
 	item := x.(*indexedElementRef)
-	*pq = append(*pq, item)
+	pq.elementRefList = append(pq.elementRefList, item)
 }
 
 func (pq *priorityQueue) Pop() interface{} {
-	old := *pq
-	n := len(old)
-	item := old[n-1]
-	*pq = old[0 : n-1]
+	n := len(pq.elementRefList)
+	item := pq.elementRefList[n-1]
+	pq.elementRefList = pq.elementRefList[0 : n-1]
 	return item
 }
 
-func merge(postingMap map[common.SeriesID][]uint64) []elementRef {
+func merge(postingMap map[common.SeriesID][]uint64, asc bool) []elementRef {
 	var result []elementRef
-	pq := make(priorityQueue, 0)
+	erl := make([]*indexedElementRef, 0)
+	pq := priorityQueue{
+		elementRefList: erl,
+		asc:            asc,
+	}
 	heap.Init(&pq)
 
 	for seriesID, timestamps := range postingMap {
