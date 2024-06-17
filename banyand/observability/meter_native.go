@@ -27,6 +27,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 )
 
+var (
+	// NativeMetricCollection is a global native metrics collection.
+	NativeMetricCollection native.MetricCollection
+	// NativeMeterProvider is a global native meter provider.
+	NativeMeterProvider meter.Provider
+)
+
 // NewMeterProvider returns a meter.Provider based on the given scope.
 func newNativeMeterProvider(ctx context.Context, metadata metadata.Repo) meter.Provider {
 	return native.NewProvider(ctx, SystemScope, metadata)

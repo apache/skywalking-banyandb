@@ -18,10 +18,39 @@
 // Package native provides a simple meter system for metrics. The metrics are aggregated by the meter provider.
 package native
 
-type nativeInstrument struct{}
+// Counter is the native implementation of meter.Counter.
+type Counter struct {
+	*metricVec
+}
 
-func (nativeInstrument) Inc(_ float64, _ ...string)     {}
-func (nativeInstrument) Set(_ float64, _ ...string)     {}
-func (nativeInstrument) Add(_ float64, _ ...string)     {}
-func (nativeInstrument) Observe(_ float64, _ ...string) {}
-func (nativeInstrument) Delete(_ ...string) bool        { return false }
+// Gauge is the native implementation of meter.Gauge.
+type Gauge struct {
+	*metricVec
+}
+
+// Add Metric Value in Gauge.
+func (g *Gauge) Add(delta float64, labelValues ...string) {
+	g.metricVec.Inc(delta, labelValues...)
+}
+
+// Set Metric Value in Gauge.
+func (g *Gauge) Set(value float64, labelValues ...string) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	tagValues := buildTagValues(g.scope, labelValues...)
+	hash := seriesHash(tagValues)
+	key := string(hash)
+	g.metrics[key] = metricWithLabelValues{
+		metricValue: value,
+		labelValues: tagValues,
+		seriesHash:  hash,
+	}
+}
+
+// Histogram is the native implementation of meter.Histogram.
+type Histogram struct {
+	*metricVec
+}
+
+// Observe to be implemented.
+func (h *Histogram) Observe(_ float64, _ ...string) {}
