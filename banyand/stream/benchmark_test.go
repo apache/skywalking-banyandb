@@ -348,8 +348,9 @@ func BenchmarkFilter(b *testing.B) {
 		db := write(b, p, esList, docsList)
 		s := generateStream(db)
 		sqo := generateStreamQueryOptions(p, idx)
+		sqo.Order = nil
 		b.Run("filter-"+p.scenario, func(b *testing.B) {
-			res, err := s.Filter(context.TODO(), sqo)
+			res, err := s.Query(context.TODO(), sqo)
 			require.NoError(b, err)
 			logicalstream.BuildElementsFromStreamResult(res)
 		})
@@ -364,8 +365,9 @@ func BenchmarkSort(b *testing.B) {
 		s := generateStream(db)
 		sqo := generateStreamQueryOptions(p, idx)
 		b.Run("sort-"+p.scenario, func(b *testing.B) {
-			_, err := s.Sort(context.TODO(), sqo)
+			res, err := s.Query(context.TODO(), sqo)
 			require.NoError(b, err)
+			logicalstream.BuildElementsFromStreamResult(res)
 		})
 	}
 }
