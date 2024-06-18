@@ -2364,7 +2364,8 @@ DataPoint is stored in Measures
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
 | tag_families | [banyandb.model.v1.TagFamily](#banyandb-model-v1-TagFamily) | repeated | tag_families contains tags selected in the projection |
 | fields | [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field) | repeated | fields contains fields selected in the projection |
-| version | [int64](#int64) |  | version is the version of the data point |
+| sid | [uint64](#uint64) |  | sid is the series id of the data point |
+| version | [int64](#int64) |  | version is the version of the data point in a series sid, timestamp and version are used to identify a data point |
 
 
 

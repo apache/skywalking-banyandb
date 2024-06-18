@@ -13,6 +13,7 @@ Release Notes.
 
 - Fix the filtering of stream in descending order by timestamp.
 - Fix querying old data points when the data is in a newer part. A version column is introduced to each data point and stored in the timestamp file.
+- Fix the bug that duplicated data points from different data nodes are returned.
 
 ## 0.6.1
 

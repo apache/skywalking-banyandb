@@ -223,6 +223,7 @@ func (ei *resultMIterator) Next() bool {
 	for i := range r.Timestamps {
 		dp := &measurev1.DataPoint{
 			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+			Sid:       uint64(r.SID),
 			Version:   r.Versions[i],
 		}
 

@@ -40,8 +40,11 @@ message DataPoint {
   }
   // fields contains fields selected in the projection
   repeated Field fields = 3;
-  // version is the version of the data point
-  int64 version = 4;
+  // sid is the series id of the data point
+  uint64 sid = 4;
+  // version is the version of the data point in a series
+  // sid, timestamp and version are used to identify a data point
+  int64 version = 5;
 }
 
 // QueryResponse is the response for a query to the Query module.
