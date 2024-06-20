@@ -21,11 +21,9 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"os"
 	"path"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -100,11 +98,8 @@ func preloadSchema(e schema.Registry) error {
 	return nil
 }
 
-func randomTempDir() string {
-	return path.Join(os.TempDir(), fmt.Sprintf("banyandb-embed-etcd-%s", uuid.New().String()))
-}
-
 func initServerAndRegister(t *testing.T) (schema.Registry, func()) {
+	path, defFn := test.Space(require.New(t))
 	req := require.New(t)
 	ports, err := test.AllocateFreePorts(2)
 	if err != nil {
@@ -113,7 +108,7 @@ func initServerAndRegister(t *testing.T) (schema.Registry, func()) {
 	endpoints := []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
 	server, err := embeddedetcd.NewServer(
 		embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(randomTempDir()))
+		embeddedetcd.RootDir(path))
 	req.NoError(err)
 	req.NotNil(server)
 	<-server.ReadyNotify()
@@ -124,6 +119,7 @@ func initServerAndRegister(t *testing.T) (schema.Registry, func()) {
 		server.Close()
 		<-server.StopNotify()
 		schemaRegistry.Close()
+		defFn()
 	}
 }
 
