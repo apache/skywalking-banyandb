@@ -13,6 +13,7 @@
     - [Group](#banyandb-common-v1-Group)
     - [IntervalRule](#banyandb-common-v1-IntervalRule)
     - [Metadata](#banyandb-common-v1-Metadata)
+    - [Policy](#banyandb-common-v1-Policy)
     - [ResourceOpts](#banyandb-common-v1-ResourceOpts)
   
     - [Catalog](#banyandb-common-v1-Catalog)
@@ -343,6 +344,23 @@ Metadata is for multi-tenant, multi-model use
 
 
 
+<a name="banyandb-common-v1-Policy"></a>
+
+### Policy
+Policy is for data flows among hot, warm, and cold
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hot_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | hot_interval indicates when to change from hot to warm |
+| warm_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | warm_interval indicates when to change from warm to cold |
+| schedule_time | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | schedule_time is the time of data flow |
+
+
+
+
+
+
 <a name="banyandb-common-v1-ResourceOpts"></a>
 
 ### ResourceOpts
@@ -354,6 +372,7 @@ Metadata is for multi-tenant, multi-model use
 | shard_num | [uint32](#uint32) |  | shard_num is the number of shards |
 | segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
 | ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
+| policy | [Policy](#banyandb-common-v1-Policy) |  | policy indicates when data flows among hot, warm, and cold |
 
 
 
