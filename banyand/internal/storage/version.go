@@ -20,8 +20,9 @@ package storage
 import (
 	"embed"
 	"encoding/json"
-	"errors"
+	"strings"
 
+	"github.com/pkg/errors"
 	"sigs.k8s.io/yaml"
 )
 
@@ -34,21 +35,36 @@ const (
 
 var errVersionIncompatible = errors.New("version not compatible")
 
+var compatibleVersions = readCompatibleVersions()
+
 //go:embed versions.yml
 var versionFS embed.FS
 
-func readCompatibleVersions() (map[string][]string, error) {
+func checkVersion(version string) error {
+	for _, v := range compatibleVersions {
+		if v == version {
+			return nil
+		}
+	}
+	return errors.WithMessagef(errVersionIncompatible, "incompatible version %s, supported versions: %s", version, strings.Join(compatibleVersions, ", "))
+}
+
+func readCompatibleVersions() []string {
 	i, err := versionFS.ReadFile(compatibleVersionsFilename)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	j, err := yaml.YAMLToJSON(i)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	var compatibleVersions map[string][]string
 	if err := json.Unmarshal(j, &compatibleVersions); err != nil {
-		return nil, err
+		panic(err)
 	}
-	return compatibleVersions, nil
+	vv, ok := compatibleVersions[compatibleVersionsKey]
+	if !ok {
+		panic("versions not found")
+	}
+	return vv
 }

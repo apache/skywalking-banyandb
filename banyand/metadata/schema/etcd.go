@@ -380,80 +380,149 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 	return false, nil
 }
 
+const leaseDuration = 5 * time.Second
+
 func (e *etcdSchemaRegistry) Register(ctx context.Context, metadata Metadata, forced bool) error {
 	if !e.closer.AddRunning() {
 		return ErrClosed
 	}
 	defer e.closer.Done()
+
+	key, err := e.prepareKey(metadata)
+	if err != nil {
+		return err
+	}
+
+	val, err := e.prepareValue(metadata)
+	if err != nil {
+		return err
+	}
+
+	lease, err := e.client.Grant(ctx, int64(leaseDuration.Seconds()))
+	if err != nil {
+		return fmt.Errorf("failed to grant lease for key %s: %w", key, err)
+	}
+
+	if err := e.putKeyVal(ctx, key, val, lease, forced); err != nil {
+		return err
+	}
+
+	//nolint:contextcheck
+	if err := e.keepLeaseAlive(lease, key, val); err != nil {
+		return fmt.Errorf("failed to keep lease alive for key %s: %w", key, err)
+	}
+
+	return nil
+}
+
+func (e *etcdSchemaRegistry) prepareKey(metadata Metadata) (string, error) {
 	key, err := metadata.key()
 	if err != nil {
-		return err
+		return "", err
 	}
-	key = e.prependNamespace(key)
+	return e.prependNamespace(key), nil
+}
+
+func (e *etcdSchemaRegistry) prepareValue(metadata Metadata) (string, error) {
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
-		return err
+		return "", err
 	}
-	// Create a lease with a short TTL
-	lease, err := e.client.Grant(ctx, 5) // 5 seconds
-	if err != nil {
-		return err
-	}
+	return string(val), nil
+}
+
+func (e *etcdSchemaRegistry) putKeyVal(ctx context.Context, key, val string, lease *clientv3.LeaseGrantResponse, forced bool) error {
 	if forced {
-		if _, err = e.client.Put(ctx, key, string(val), clientv3.WithLease(lease.ID)); err != nil {
-			return err
+		if _, err := e.client.Put(ctx, key, val, clientv3.WithLease(lease.ID)); err != nil {
+			return fmt.Errorf("failed to forcefully put key-value pair for key %s: %w", key, err)
 		}
 	} else {
-		var ops []clientv3.Cmp
-		ops = append(ops, clientv3.Compare(clientv3.CreateRevision(key), "=", 0))
+		ops := []clientv3.Cmp{clientv3.Compare(clientv3.CreateRevision(key), "=", 0)}
 		txn := e.client.Txn(ctx).If(ops...)
-		txn = txn.Then(clientv3.OpPut(key, string(val), clientv3.WithLease(lease.ID)))
+		txn = txn.Then(clientv3.OpPut(key, val, clientv3.WithLease(lease.ID)))
 		txn = txn.Else(clientv3.OpGet(key))
-		response, errCommit := txn.Commit()
-		if errCommit != nil {
-			return errCommit
+		response, err := txn.Commit()
+		if err != nil {
+			return fmt.Errorf("failed to commit transaction for key %s: %w", key, err)
 		}
-
 		if !response.Succeeded {
 			tr := pb.TxnResponse(*response)
-			return errors.Wrapf(ErrGRPCAlreadyExists, "response: %s", tr.String())
+			return errors.Wrapf(ErrGRPCAlreadyExists, "key %s, response: %s", key, tr.String())
 		}
 	}
+	return nil
+}
 
-	// Keep the lease alive
-	// nolint:contextcheck
+func (e *etcdSchemaRegistry) keepLeaseAlive(lease *clientv3.LeaseGrantResponse, key, val string) error {
 	keepAliveChan, err := e.client.KeepAlive(context.Background(), lease.ID)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to keep lease alive for key %s: %w", key, err)
 	}
-	// nolint:contextcheck
+
 	go func() {
 		if !e.closer.AddRunning() {
 			return
 		}
 		defer func() {
-			e.l.Info().Msgf("revoking lease %d", lease.ID)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, err = e.client.Lease.Revoke(ctx, lease.ID)
-			cancel()
-			if err != nil {
-				e.l.Error().Err(err).Msgf("failed to revoke lease %d", lease.ID)
-			}
+			e.revokeLease(lease)
 			e.closer.Done()
 		}()
+
 		for {
 			select {
 			case <-e.closer.CloseNotify():
 				return
 			case keepAliveResp := <-keepAliveChan:
 				if keepAliveResp == nil {
-					// The channel has been closed
-					return
+					keepAliveChan = e.revokeAndReconnectLease(lease, key, val)
 				}
 			}
 		}
 	}()
+
 	return nil
+}
+
+func (e *etcdSchemaRegistry) revokeAndReconnectLease(lease *clientv3.LeaseGrantResponse, key, val string) <-chan *clientv3.LeaseKeepAliveResponse {
+	for {
+		e.revokeLease(lease)
+		select {
+		case <-e.closer.CloseNotify():
+			return nil
+		default:
+			lease, err := e.client.Grant(context.Background(), int64(leaseDuration.Seconds()))
+			if err != nil {
+				e.l.Error().Err(err).Msg("failed to grant lease")
+				time.Sleep(leaseDuration)
+				continue
+			}
+			_, err = e.client.Put(context.Background(), key, val, clientv3.WithLease(lease.ID))
+			if err != nil {
+				e.l.Error().Err(err).Msg("failed to put key-value pair")
+				time.Sleep(leaseDuration)
+				continue
+			}
+			keepAliveChan, err := e.client.KeepAlive(context.Background(), lease.ID)
+			if err != nil {
+				e.l.Error().Err(err).Msg("failed to keep alive")
+				time.Sleep(leaseDuration)
+			} else {
+				return keepAliveChan
+			}
+		}
+	}
+}
+
+func (e *etcdSchemaRegistry) revokeLease(lease *clientv3.LeaseGrantResponse) {
+	if lease == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), leaseDuration)
+	defer cancel()
+	_, err := e.client.Lease.Revoke(ctx, lease.ID)
+	if err != nil {
+		e.l.Error().Err(err).Msgf("failed to revoke lease %d", lease.ID)
+	}
 }
 
 func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, handler watchEventHandler) *watcher {

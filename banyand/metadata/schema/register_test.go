@@ -20,6 +20,8 @@ package schema_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -34,7 +36,9 @@ import (
 )
 
 var _ = ginkgo.Describe("etcd_register", func() {
-	var endpoints []string
+	var path string
+	var defFn func()
+	var endpoints, peers []string
 	var goods []gleak.Goroutine
 	var server embeddedetcd.Server
 	var r schema.Registry
@@ -51,13 +55,17 @@ var _ = ginkgo.Describe("etcd_register", func() {
 		},
 	}
 	ginkgo.BeforeEach(func() {
+		var err error
+		path, defFn, err = test.NewSpace()
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		goods = gleak.Goroutines()
 		ports, err := test.AllocateFreePorts(2)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		endpoints = []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
+		peers = []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}
 		server, err = embeddedetcd.NewServer(
-			embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-			embeddedetcd.RootDir(randomTempDir()))
+			embeddedetcd.ConfigureListener(endpoints, peers),
+			embeddedetcd.RootDir(path))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
 		r, err = schema.NewEtcdSchemaRegistry(
@@ -70,6 +78,7 @@ var _ = ginkgo.Describe("etcd_register", func() {
 		gomega.Expect(r.Close()).ShouldNot(gomega.HaveOccurred())
 		server.Close()
 		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		defFn()
 	})
 
 	ginkgo.It("should revoke the leaser", func() {
@@ -88,5 +97,25 @@ var _ = ginkgo.Describe("etcd_register", func() {
 	ginkgo.It("should register only once", func() {
 		gomega.Expect(r.Register(context.Background(), md, false)).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(r.Register(context.Background(), md, false)).Should(gomega.MatchError(schema.ErrGRPCAlreadyExists))
+	})
+
+	ginkgo.It("should reconnect", func() {
+		gomega.Expect(r.Register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
+		_, err := r.GetNode(context.Background(), node)
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(server.Close()).ShouldNot(gomega.HaveOccurred())
+		time.Sleep(1 * time.Second)
+		os.RemoveAll(path)
+
+		server, err = embeddedetcd.NewServer(
+			embeddedetcd.ConfigureListener(endpoints, peers),
+			embeddedetcd.RootDir(path))
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		<-server.ReadyNotify()
+
+		gomega.Eventually(func() error {
+			_, err := r.GetNode(context.Background(), node)
+			return err
+		}, flags.EventuallyTimeout).ShouldNot(gomega.HaveOccurred())
 	})
 })

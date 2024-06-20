@@ -96,7 +96,16 @@ func (l *Logger) ToZapConfig() zap.Config {
 	}
 	if !l.development {
 		config := zap.NewProductionConfig()
-		config.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+		switch l.GetLevel() {
+		case zerolog.DebugLevel:
+			config.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+		case zerolog.InfoLevel:
+			config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+		case zerolog.WarnLevel:
+			config.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+		default:
+			config.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+		}
 		return config
 	}
 	encoderConfig := zapcore.EncoderConfig{
