@@ -77,7 +77,7 @@ type metricService struct {
 func (p *metricService) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("observability")
 	flagSet.StringVar(&p.listenAddr, "observability-listener-addr", ":2121", "listen addr for observability")
-	flagSet.StringArrayVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
+	flagSet.StringSliceVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
 	return flagSet
 }
 

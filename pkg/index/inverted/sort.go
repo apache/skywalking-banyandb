@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator[*index.ItemRef], err error) {
@@ -72,6 +73,7 @@ type sortIterator struct {
 	err       error
 	reader    *bluge.Reader
 	current   *blugeMatchIterator
+	closer    *run.Closer
 	sortedKey string
 	size      int
 	skipped   int
@@ -132,6 +134,7 @@ func (si *sortIterator) Val() *index.ItemRef {
 }
 
 func (si *sortIterator) Close() error {
+	defer si.closer.Done()
 	if errors.Is(si.err, io.EOF) {
 		si.err = nil
 		if si.current != nil {
