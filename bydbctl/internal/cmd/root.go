@@ -139,7 +139,7 @@ func bindNameAndIDAndTagsFlag(commands ...*cobra.Command) {
 	bindNameFlag(commands...)
 	for _, c := range commands {
 		c.Flags().StringVarP(&id, "id", "i", "", "the property's id")
-		c.Flags().StringArrayVarP(&tags, "tags", "t", nil, "the property's tags")
+		c.Flags().StringSliceVarP(&tags, "tags", "t", nil, "the property's tags")
 		_ = c.MarkFlagRequired("name")
 		_ = c.MarkFlagRequired("id")
 	}

@@ -78,7 +78,7 @@ func (s *clientService) SchemaRegistry() schema.Registry {
 func (s *clientService) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
 	fs.StringVar(&s.namespace, "namespace", DefaultNamespace, "The namespace of the metadata stored in etcd")
-	fs.StringArrayVar(&s.endpoints, FlagEtcdEndpointsName, []string{"http://localhost:2379"}, "A comma-delimited list of etcd endpoints")
+	fs.StringSliceVar(&s.endpoints, FlagEtcdEndpointsName, []string{"http://localhost:2379"}, "A comma-delimited list of etcd endpoints")
 	fs.StringVar(&s.etcdUsername, flagEtcdUsername, "", "A username of etcd")
 	fs.StringVar(&s.etcdPassword, flagEtcdPassword, "", "A password of etcd user")
 	fs.StringVar(&s.etcdTLSCAFile, flagEtcdTLSCAFile, "", "Trusted certificate authority")

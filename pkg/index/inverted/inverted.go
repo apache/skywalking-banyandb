@@ -166,6 +166,9 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
 		return index.DummyFieldIterator, nil
 	}
+	if !s.closer.AddRunning() {
+		return nil, nil
+	}
 
 	reader, err := s.writer.Reader()
 	if err != nil {
@@ -211,6 +214,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		sortedKey: sortedKey,
 		size:      preLoadSize,
 		sid:       fieldKey.SeriesID,
+		closer:    s.closer,
 	}
 	return result, nil
 }

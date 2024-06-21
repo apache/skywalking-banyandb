@@ -15,6 +15,8 @@ Release Notes.
 - Fix querying old data points when the data is in a newer part. A version column is introduced to each data point and stored in the timestamp file.
 - Fix the bug that duplicated data points from different data nodes are returned.
 - Fix the bug that the data node can't re-register to etcd when the connection is lost.
+- Fix memory leak in sorting the stream by the inverted index.
+- Fix the wrong array flags parsing in command line. The array flags should be parsed by "StringSlice" instead of "StringArray".
 
 ## 0.6.1
 
