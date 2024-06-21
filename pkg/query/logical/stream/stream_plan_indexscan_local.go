@@ -71,56 +71,20 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 		}
 	}
 	ec := executor.FromStreamExecutionContext(ctx)
-
-	if i.order != nil && i.order.Index != nil {
-		ssr, err := ec.Sort(ctx, pbv1.StreamQueryOptions{
-			Name:           i.metadata.GetName(),
-			TimeRange:      &i.timeRange,
-			Entities:       i.entities,
-			Filter:         i.filter,
-			Order:          orderBy,
-			TagProjection:  i.projectionTags,
-			MaxElementSize: i.maxElementSize,
-		})
-		if err != nil {
-			return nil, err
-		}
-		if ssr == nil {
-			return nil, nil
-		}
-		r := ssr.Pull()
-		return buildElementsFromColumnResult(r), nil
-	}
-
-	if i.filter != nil && i.filter != logical.ENode {
-		result, err := ec.Filter(ctx, pbv1.StreamQueryOptions{
-			Name:           i.metadata.GetName(),
-			TimeRange:      &i.timeRange,
-			Entities:       i.entities,
-			Filter:         i.filter,
-			Order:          orderBy,
-			TagProjection:  i.projectionTags,
-			MaxElementSize: i.maxElementSize,
-		})
-		if err != nil {
-			return nil, err
-		}
-		if result == nil {
-			return nil, nil
-		}
-		return BuildElementsFromStreamResult(result), nil
-	}
-
 	result, err := ec.Query(ctx, pbv1.StreamQueryOptions{
-		Name:          i.metadata.GetName(),
-		TimeRange:     &i.timeRange,
-		Entities:      i.entities,
-		Filter:        i.filter,
-		Order:         orderBy,
-		TagProjection: i.projectionTags,
+		Name:           i.metadata.GetName(),
+		TimeRange:      &i.timeRange,
+		Entities:       i.entities,
+		Filter:         i.filter,
+		Order:          orderBy,
+		TagProjection:  i.projectionTags,
+		MaxElementSize: i.maxElementSize,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to query stream: %w", err)
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return BuildElementsFromStreamResult(result), nil
 }
@@ -140,30 +104,6 @@ func (i *localIndexScan) Schema() logical.Schema {
 		return i.schema
 	}
 	return i.schema.ProjTags(i.projectionTagRefs...)
-}
-
-func buildElementsFromColumnResult(r *pbv1.StreamColumnResult) (elements []*streamv1.Element) {
-	for i := range r.Timestamps {
-		e := &streamv1.Element{
-			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
-			ElementId: r.ElementIDs[i],
-		}
-
-		for _, tf := range r.TagFamilies[i] {
-			tagFamily := &modelv1.TagFamily{
-				Name: tf.Name,
-			}
-			e.TagFamilies = append(e.TagFamilies, tagFamily)
-			for _, t := range tf.Tags {
-				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-					Key:   t.Name,
-					Value: t.Values[0],
-				})
-			}
-		}
-		elements = append(elements, e)
-	}
-	return
 }
 
 // BuildElementsFromStreamResult builds a slice of elements from the given stream query result.

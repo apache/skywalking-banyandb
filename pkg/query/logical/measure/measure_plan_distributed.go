@@ -18,6 +18,8 @@
 package measure
 
 import (
+	"bytes"
+	"container/list"
 	"context"
 	"fmt"
 	"time"
@@ -179,9 +181,11 @@ func (t *distributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 					t.sortByTime, t.sortTagSpec))
 		}
 	}
-	return &sortedMIterator{
+	smi := &sortedMIterator{
 		Iterator: sort.NewItemIter(see, t.desc),
-	}, allErr
+	}
+	smi.init()
+	return smi, allErr
 }
 
 func (t *distributedPlan) String() string {
@@ -278,8 +282,91 @@ var _ executor.MIterator = (*sortedMIterator)(nil)
 
 type sortedMIterator struct {
 	sort.Iterator[*comparableDataPoint]
+	data        *list.List
+	uniqueData  map[uint64]*measurev1.DataPoint
+	cur         *measurev1.DataPoint
+	initialized bool
+	closed      bool
+}
+
+func (s *sortedMIterator) init() {
+	if s.initialized {
+		return
+	}
+	s.initialized = true
+	if !s.Iterator.Next() {
+		s.closed = true
+		return
+	}
+	s.data = list.New()
+	s.uniqueData = make(map[uint64]*measurev1.DataPoint)
+	s.loadDps()
+}
+
+func (s *sortedMIterator) Next() bool {
+	if s.data == nil {
+		return false
+	}
+	if s.data.Len() == 0 {
+		s.loadDps()
+		if s.data.Len() == 0 {
+			return false
+		}
+	}
+	dp := s.data.Front()
+	s.data.Remove(dp)
+	s.cur = dp.Value.(*measurev1.DataPoint)
+	return true
+}
+
+func (s *sortedMIterator) loadDps() {
+	if s.closed {
+		return
+	}
+	for k := range s.uniqueData {
+		delete(s.uniqueData, k)
+	}
+	first := s.Iterator.Val()
+	s.uniqueData[hashDataPoint(first.DataPoint)] = first.DataPoint
+	for {
+		if !s.Iterator.Next() {
+			s.closed = true
+			break
+		}
+		v := s.Iterator.Val()
+		if bytes.Equal(first.SortedField(), v.SortedField()) {
+			key := hashDataPoint(v.DataPoint)
+			if existed, ok := s.uniqueData[key]; ok {
+				if v.DataPoint.Version > existed.Version {
+					s.uniqueData[key] = v.DataPoint
+				}
+			} else {
+				s.uniqueData[key] = v.DataPoint
+			}
+		} else {
+			break
+		}
+	}
+	for _, v := range s.uniqueData {
+		s.data.PushBack(v)
+	}
 }
 
 func (s *sortedMIterator) Current() []*measurev1.DataPoint {
-	return []*measurev1.DataPoint{s.Val().DataPoint}
+	return []*measurev1.DataPoint{s.cur}
+}
+
+const (
+	offset64 = 14695981039346656037
+	prime64  = 1099511628211
+)
+
+// hashDataPoint calculates the hash value of a data point with fnv64a.
+// https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
+func hashDataPoint(dp *measurev1.DataPoint) uint64 {
+	h := uint64(offset64)
+	h = (h ^ dp.Sid) * prime64
+	h = (h ^ uint64(dp.Timestamp.Seconds)) * prime64
+	h = (h ^ uint64(dp.Timestamp.Nanos)) * prime64
+	return h
 }

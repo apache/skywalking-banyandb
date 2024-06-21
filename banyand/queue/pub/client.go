@@ -115,8 +115,8 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 			}
 			p.log.Info().Str("status", p.dump()).Str("node", name).Msg("node is removed from active queue by the new gRPC address updated event")
 		}
-		p.registered[name] = node
 	}
+	p.registered[name] = node
 
 	if _, ok := p.active[name]; ok {
 		return
@@ -186,12 +186,12 @@ func (p *pub) OnDelete(md schema.Metadata) {
 						elapsed += backoff
 						p.mu.Lock()
 						defer p.mu.Unlock()
-						if p.removeNodeIfUnhealthy(md, node, client) {
-							p.log.Info().Str("status", p.dump()).Stringer("node", node).Dur("after", elapsed).Msg("remove node from active queue by delete event")
-							return true
-						}
 						if _, ok := p.registered[name]; ok {
 							// The client has been added back to registered clients map, just return
+							return true
+						}
+						if p.removeNodeIfUnhealthy(md, node, client) {
+							p.log.Info().Str("status", p.dump()).Stringer("node", node).Dur("after", elapsed).Msg("remove node from active queue by delete event")
 							return true
 						}
 						return false

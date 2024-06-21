@@ -34,7 +34,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -282,25 +281,6 @@ func (tst *tsTable) mustAddElements(es *elements) {
 	case <-ind.applied:
 	case <-tst.loopCloser.CloseNotify():
 	}
-}
-
-func (tst *tsTable) getElement(seriesID common.SeriesID, timestamp int64, tagProjection []pbv1.TagProjection) (*element, int, error) {
-	s := tst.currentSnapshot()
-	if s == nil {
-		return nil, 0, fmt.Errorf("snapshot is absent, cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
-	}
-	defer s.decRef()
-
-	for _, p := range s.parts {
-		if !p.p.containTimestamp(timestamp) {
-			continue
-		}
-		elem, count, err := p.p.getElement(seriesID, timestamp, tagProjection)
-		if err == nil {
-			return elem, count, nil
-		}
-	}
-	return nil, 0, fmt.Errorf("cannot find element with seriesID %d and timestamp %d", seriesID, timestamp)
 }
 
 type tstIter struct {

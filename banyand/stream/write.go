@@ -153,7 +153,8 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 							Analyzer:    r.Analyzer,
 							SeriesID:    series.ID,
 						},
-						Term: encodeTagValue.value,
+						Term:   encodeTagValue.value,
+						NoSort: r.GetNoSort(),
 					})
 				} else {
 					for _, val := range encodeTagValue.valueArr {
@@ -163,7 +164,8 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 								Analyzer:    r.Analyzer,
 								SeriesID:    series.ID,
 							},
-							Term: val,
+							Term:   val,
+							NoSort: r.GetNoSort(),
 						})
 					}
 				}

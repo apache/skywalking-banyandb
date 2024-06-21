@@ -29,9 +29,10 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator, err error) {
+func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator[*index.ItemRef], err error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
@@ -72,6 +73,7 @@ type sortIterator struct {
 	err       error
 	reader    *bluge.Reader
 	current   *blugeMatchIterator
+	closer    *run.Closer
 	sortedKey string
 	size      int
 	skipped   int
@@ -110,7 +112,7 @@ func (si *sortIterator) loadCurrent() bool {
 		return false
 	}
 
-	iter := newBlugeMatchIterator(documentMatchIterator, nil)
+	iter := newBlugeMatchIterator(documentMatchIterator, nil, true)
 	si.current = &iter
 	if si.next() {
 		return true
@@ -127,11 +129,12 @@ func (si *sortIterator) next() bool {
 	return false
 }
 
-func (si *sortIterator) Val() (uint64, common.SeriesID) {
+func (si *sortIterator) Val() *index.ItemRef {
 	return si.current.Val()
 }
 
 func (si *sortIterator) Close() error {
+	defer si.closer.Done()
 	if errors.Is(si.err, io.EOF) {
 		si.err = nil
 		if si.current != nil {

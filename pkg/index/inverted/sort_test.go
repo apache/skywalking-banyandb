@@ -167,8 +167,11 @@ func TestStore_Sort(t *testing.T) {
 			is.NotNil(iter)
 			var got result
 			for iter.Next() {
-				docID, _ := iter.Val()
-				got.items = append(got.items, docID)
+				val := iter.Val()
+				got.items = append(got.items, val.DocID)
+				if val.Term != nil {
+					got.terms = append(got.terms, val.Term)
+				}
 			}
 			for i := 0; i < 10; i++ {
 				is.False(iter.Next())
@@ -178,7 +181,8 @@ func TestStore_Sort(t *testing.T) {
 				pl := data[w]
 				wants.items = append(wants.items, pl.ToSlice()...)
 			}
-			tester.Equal(wants, got, tt.name)
+			tester.Equal(wants.items, got.items, tt.name)
+			tester.Equal(len(got.items), len(got.terms), tt.name)
 		})
 	}
 }
@@ -190,6 +194,7 @@ type args struct {
 
 type result struct {
 	items []uint64
+	terms [][]byte
 }
 
 func setUpDuration(t *require.Assertions, store index.Writer) map[int]posting.List {

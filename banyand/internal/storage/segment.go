@@ -19,8 +19,8 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"path/filepath"
 	"sort"
@@ -29,8 +29,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/bucket"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -209,25 +212,36 @@ func (sc *segmentController[T, O]) Parse(value string) (time.Time, error) {
 func (sc *segmentController[T, O]) open() error {
 	sc.Lock()
 	defer sc.Unlock()
-	return loadSegments(sc.location, segPathPrefix, sc, sc.segmentSize, func(start, end time.Time) error {
-		compatibleVersions, err := readCompatibleVersions()
-		if err != nil {
-			return err
-		}
+	emptySegments := make([]string, 0)
+	err := loadSegments(sc.location, segPathPrefix, sc, sc.segmentSize, func(start, end time.Time) error {
 		suffix := sc.Format(start)
-		metadataPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix), metadataFilename)
+		segmentPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix))
+		metadataPath := path.Join(segmentPath, metadataFilename)
 		version, err := lfs.Read(metadataPath)
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				emptySegments = append(emptySegments, segmentPath)
+				return nil
+			}
 			return err
 		}
-		for _, cv := range compatibleVersions[compatibleVersionsKey] {
-			if string(version) == cv {
-				_, err := sc.load(start, end, sc.location)
-				return err
-			}
+		if len(version) == 0 {
+			emptySegments = append(emptySegments, segmentPath)
+			return nil
 		}
-		return errVersionIncompatible
+		if err = checkVersion(convert.BytesToString(version)); err != nil {
+			return err
+		}
+		_, err = sc.load(start, end, sc.location)
+		return err
 	})
+	if len(emptySegments) > 0 {
+		sc.l.Warn().Strs("segments", emptySegments).Msg("empty segments found, removing them.")
+		for i := range emptySegments {
+			lfs.MustRMAll(emptySegments[i])
+		}
+	}
+	return err
 }
 
 func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) {

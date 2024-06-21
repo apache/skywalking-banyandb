@@ -160,11 +160,14 @@ func (s *store) Write(fields []index.Field, docID uint64) error {
 	return nil
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator, err error) {
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator[*index.ItemRef], err error) {
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
 		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
 		return index.DummyFieldIterator, nil
+	}
+	if !s.closer.AddRunning() {
+		return nil, nil
 	}
 
 	reader, err := s.writer.Reader()
@@ -211,6 +214,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		sortedKey: sortedKey,
 		size:      preLoadSize,
 		sid:       fieldKey.SeriesID,
+		closer:    s.closer,
 	}
 	return result, nil
 }
@@ -235,14 +239,13 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, false)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
 	list = roaring.NewPostingList()
 	for iter.Next() {
-		docID, _ := iter.Val()
-		list.Insert(docID)
+		list.Insert(iter.Val().DocID)
 	}
 	return list, err
 }
@@ -269,14 +272,13 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, false)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
 	list := roaring.NewPostingList()
 	for iter.Next() {
-		docID, _ := iter.Val()
-		list.Insert(docID)
+		list.Insert(iter.Val().DocID)
 	}
 	return list, err
 }
@@ -288,8 +290,7 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	}
 	list = roaring.NewPostingList()
 	for iter.Next() {
-		docID, _ := iter.Val()
-		list.Insert(docID)
+		list.Insert(iter.Val().DocID)
 	}
 	err = multierr.Append(err, iter.Close())
 	return
@@ -363,7 +364,10 @@ func (s *store) run() {
 						docIDBuffer.Write(convert.Uint64ToBytes(d.DocID))
 						doc := bluge.NewDocument(docIDBuffer.String())
 						for _, f := range d.Fields {
-							tf := bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term).Sortable()
+							tf := bluge.NewKeywordFieldBytes(f.Key.MarshalIndexRule(), f.Term)
+							if !f.NoSort {
+								tf.StoreValue().Sortable()
+							}
 							if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
 								tf = tf.WithAnalyzer(analyzers[f.Key.Analyzer])
 							}
@@ -411,14 +415,17 @@ type blugeMatchIterator struct {
 	delegated search.DocumentMatchIterator
 	err       error
 	closer    io.Closer
+	term      []byte
 	docID     uint64
 	seriesID  common.SeriesID
+	sorted    bool
 }
 
-func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer) blugeMatchIterator {
+func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer, sorted bool) blugeMatchIterator {
 	return blugeMatchIterator{
 		delegated: delegated,
 		closer:    closer,
+		sorted:    sorted,
 	}
 }
 
@@ -440,6 +447,9 @@ func (bmi *blugeMatchIterator) Next() bool {
 				// value = seriesID(8bytes)+docID(8bytes)
 				bmi.docID = convert.BytesToUint64(value[8:])
 				bmi.seriesID = common.SeriesID(convert.BytesToUint64(value[:8]))
+				if bmi.sorted {
+					bmi.term = index.UnmarshalTerm(value)
+				}
 			}
 		}
 		return true
@@ -447,8 +457,12 @@ func (bmi *blugeMatchIterator) Next() bool {
 	return bmi.err == nil
 }
 
-func (bmi *blugeMatchIterator) Val() (uint64, common.SeriesID) {
-	return bmi.docID, bmi.seriesID
+func (bmi *blugeMatchIterator) Val() *index.ItemRef {
+	return &index.ItemRef{
+		SeriesID: bmi.seriesID,
+		DocID:    bmi.docID,
+		Term:     bmi.term,
+	}
 }
 
 func (bmi *blugeMatchIterator) Close() error {

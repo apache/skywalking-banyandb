@@ -27,8 +27,9 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -53,10 +54,11 @@ type Service interface {
 }
 
 // NewMetricService returns a metric service.
-func NewMetricService(metadata metadata.Repo) Service {
+func NewMetricService(metadata metadata.Repo, pipeline queue.Client) Service {
 	return &metricService{
 		closer:   run.NewCloser(1),
 		metadata: metadata,
+		pipeline: pipeline,
 	}
 }
 
@@ -66,6 +68,7 @@ type metricService struct {
 	closer     *run.Closer
 	scheduler  *timestamp.Scheduler
 	metadata   metadata.Repo
+	pipeline   queue.Client
 	listenAddr string
 	modes      []string
 	mutex      sync.Mutex
@@ -74,7 +77,7 @@ type metricService struct {
 func (p *metricService) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("observability")
 	flagSet.StringVar(&p.listenAddr, "observability-listener-addr", ":2121", "listen addr for observability")
-	flagSet.StringArrayVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
+	flagSet.StringSliceVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
 	return flagSet
 }
 
@@ -99,17 +102,14 @@ func (p *metricService) PreRun(ctx context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	var providers []meter.Provider
-	for _, mode := range p.modes {
-		switch mode {
-		case flagPromethusMode:
-			MetricsServerInterceptor = promMetricsServerInterceptor
-			providers = append(providers, newPromMeterProvider())
-		case flagNativeMode:
-			providers = append(providers, newNativeMeterProvider(ctx, p.metadata))
-		}
+	if containsMode(p.modes, flagPromethusMode) {
+		MetricsServerInterceptor = promMetricsServerInterceptor
 	}
-	initMetrics(providers)
+	if containsMode(p.modes, flagNativeMode) {
+		NativeMetricCollection = native.NewMetricsCollection(p.pipeline)
+		NativeMeterProvider = newNativeMeterProvider(ctx, p.metadata)
+	}
+	initMetrics(p.modes)
 	return nil
 }
 
@@ -128,6 +128,15 @@ func (p *metricService) Serve() run.StopNotify {
 	})
 	if err != nil {
 		p.l.Fatal().Err(err).Msg("Failed to register metrics collector")
+	}
+	if containsMode(p.modes, flagNativeMode) {
+		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, "@every 5s", func(_ time.Time, _ *logger.Logger) bool {
+			NativeMetricCollection.FlushMetrics()
+			return true
+		})
+		if err != nil {
+			p.l.Fatal().Err(err).Msg("Failed to register native metric collection")
+		}
 	}
 	p.svr = &http.Server{
 		Addr:              p.listenAddr,
@@ -152,4 +161,13 @@ func (p *metricService) GracefulStop() {
 		_ = p.svr.Close()
 	}
 	p.closer.CloseThenWait()
+}
+
+func containsMode(modes []string, mode string) bool {
+	for _, item := range modes {
+		if item == mode {
+			return true
+		}
+	}
+	return false
 }

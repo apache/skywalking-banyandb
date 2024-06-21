@@ -216,11 +216,11 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 
 	var sortedSeriesList pbv1.SeriesList
 	for iter.Next() {
-		seriesID, _ := iter.Val()
-		if !pl.Contains(seriesID) {
+		docID := iter.Val().DocID
+		if !pl.Contains(docID) {
 			continue
 		}
-		sortedSeriesList = appendSeriesList(sortedSeriesList, seriesList, common.SeriesID(seriesID))
+		sortedSeriesList = appendSeriesList(sortedSeriesList, seriesList, common.SeriesID(docID))
 		if err != nil {
 			return nil, err
 		}

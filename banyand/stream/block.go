@@ -410,7 +410,7 @@ var blockPool sync.Pool
 type blockCursor struct {
 	p                  *part
 	timestamps         []int64
-	expectedTimestamps []int64
+	filteredTimestamps []int64
 	elementIDs         []string
 	tagFamilies        []tagFamily
 	tagValuesDecoder   encoding.BytesBlockDecoder
@@ -446,9 +446,9 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.minTimestamp = opts.minTimestamp
 	bc.maxTimestamp = opts.maxTimestamp
 	bc.tagProjection = opts.TagProjection
-	if opts.elementRefMap != nil {
-		seriesID := bc.bm.seriesID
-		bc.expectedTimestamps = opts.elementRefMap[seriesID]
+	seriesID := bc.bm.seriesID
+	if opts.filteredRefMap != nil {
+		bc.filteredTimestamps = opts.filteredRefMap[seriesID]
 	}
 }
 
@@ -464,9 +464,11 @@ func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
 	if offset <= idx {
 		return
 	}
-	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[idx:offset]...)
+	for i := idx; i < offset; i++ {
+		r.SIDs = append(r.SIDs, bc.bm.seriesID)
+	}
 	if len(r.TagFamilies) != len(bc.tagProjection) {
 		for _, tp := range bc.tagProjection {
 			tf := pbv1.TagFamily{
@@ -497,9 +499,9 @@ func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
 }
 
 func (bc *blockCursor) copyTo(r *pbv1.StreamResult) {
-	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[bc.idx])
+	r.SIDs = append(r.SIDs, bc.bm.seriesID)
 	if len(r.TagFamilies) != len(bc.tagProjection) {
 		for _, tp := range bc.tagProjection {
 			tf := pbv1.TagFamily{
@@ -550,8 +552,8 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 
 	idxList := make([]int, 0)
 	var start, end int
-	if bc.expectedTimestamps != nil {
-		for _, ts := range bc.expectedTimestamps {
+	if bc.filteredTimestamps != nil {
+		for _, ts := range bc.filteredTimestamps {
 			idx := timestamp.Find(tmpBlock.timestamps, ts)
 			if idx == -1 {
 				continue
@@ -588,7 +590,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
 						tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
 				}
-				if bc.expectedTimestamps != nil {
+				if bc.filteredTimestamps != nil {
 					for _, idx := range idxList {
 						t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[idx])
 					}

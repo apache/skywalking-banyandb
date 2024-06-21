@@ -18,7 +18,6 @@
 package stream
 
 import (
-	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -29,11 +28,8 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 const (
@@ -47,67 +43,6 @@ const (
 	tagFamiliesFilenameExt         = ".tf"
 )
 
-type columnElements struct {
-	elementID []string
-	// TODO: change it to 1d array after refactoring low-level query
-	tagFamilies [][]pbv1.TagFamily
-	timestamp   []int64
-}
-
-func newColumnElements() *columnElements {
-	ces := &columnElements{}
-	ces.elementID = make([]string, 0)
-	ces.tagFamilies = make([][]pbv1.TagFamily, 0)
-	ces.timestamp = make([]int64, 0)
-	return ces
-}
-
-func (ces *columnElements) BuildFromElement(e *element, tp []pbv1.TagProjection) {
-	tagFamilies := make([]pbv1.TagFamily, 0)
-	for i, tf := range e.tagFamilies {
-		tagFamily := pbv1.TagFamily{
-			Name: tf.name,
-		}
-		for j, t := range tf.tags {
-			tag := pbv1.Tag{
-				Name: t.name,
-			}
-			if tag.Name == "" {
-				tag.Name = tp[i].Names[j]
-				tag.Values = append(tag.Values, pbv1.NullTagValue)
-			} else {
-				tag.Values = append(tag.Values, mustDecodeTagValue(t.valueType, t.values[e.index]))
-			}
-			tagFamily.Tags = append(tagFamily.Tags, tag)
-		}
-		tagFamilies = append(tagFamilies, tagFamily)
-	}
-	ces.tagFamilies = append(ces.tagFamilies, tagFamilies)
-	ces.elementID = append(ces.elementID, e.elementID)
-	ces.timestamp = append(ces.timestamp, e.timestamp)
-}
-
-func (ces *columnElements) Pull() *pbv1.StreamColumnResult {
-	r := &pbv1.StreamColumnResult{}
-	r.Timestamps = make([]int64, 0)
-	r.ElementIDs = make([]string, 0)
-	r.TagFamilies = make([][]pbv1.TagFamily, len(ces.tagFamilies))
-	r.Timestamps = append(r.Timestamps, ces.timestamp...)
-	r.ElementIDs = append(r.ElementIDs, ces.elementID...)
-	for i, tfs := range ces.tagFamilies {
-		r.TagFamilies[i] = make([]pbv1.TagFamily, 0)
-		r.TagFamilies[i] = append(r.TagFamilies[i], tfs...)
-	}
-	return r
-}
-
-type element struct {
-	elementID   string
-	tagFamilies []*tagFamily
-	timestamp   int64
-	index       int
-}
-
 type part struct {
 	primary              fs.Reader
 	timestamps           fs.Reader
@@ -118,10 +53,6 @@ type part struct {
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
-}
-
-func (p *part) containTimestamp(timestamp int64) bool {
-	return timestamp >= p.partMetadata.MinTimestamp && timestamp <= p.partMetadata.MaxTimestamp
 }
 
 func (p *part) close() {
@@ -138,99 +69,6 @@ func (p *part) close() {
 
 func (p *part) String() string {
 	return fmt.Sprintf("part %d", p.partMetadata.ID)
-}
-
-func (p *part) getElement(seriesID common.SeriesID, timestamp int64, tagProjection []pbv1.TagProjection) (*element, int, error) {
-	// TODO: refactor to column-based query
-	// TODO: cache blocks
-	if seriesID < p.primaryBlockMetadata[0].seriesID {
-		return nil, 0, errors.New("element not found")
-	}
-	for i, primaryMeta := range p.primaryBlockMetadata {
-		if seriesID < p.primaryBlockMetadata[i].seriesID {
-			continue
-		}
-
-		compressedPrimaryBuf := make([]byte, primaryMeta.size)
-		fs.MustReadData(p.primary, int64(primaryMeta.offset), compressedPrimaryBuf)
-		var err error
-		primaryBuf := make([]byte, 0)
-		primaryBuf, err = zstd.Decompress(primaryBuf[:0], compressedPrimaryBuf)
-		if err != nil {
-			return nil, 0, fmt.Errorf("cannot decompress index block: %w", err)
-		}
-		bm := make([]blockMetadata, 0)
-		bm, err = unmarshalBlockMetadata(bm, primaryBuf)
-		if err != nil {
-			return nil, 0, fmt.Errorf("cannot unmarshal index block: %w", err)
-		}
-		for i := range bm {
-			if bm[i].seriesID == seriesID && bm[i].timestamps.max >= timestamp && bm[i].timestamps.min <= timestamp {
-				timestamps := make([]int64, 0)
-				timestamps = mustReadTimestampsFrom(timestamps, &bm[i].timestamps, int(bm[i].count), p.timestamps)
-				for j, ts := range timestamps {
-					if timestamp == ts {
-						elementIDs := make([]string, 0)
-						elementIDs = mustReadElementIDsFrom(elementIDs, &bm[i].elementIDs, int(bm[i].count), p.elementIDs)
-						tfs := make([]*tagFamily, 0)
-						for k := range tagProjection {
-							name := tagProjection[k].Family
-							block, ok := bm[i].tagFamilies[name]
-							if !ok {
-								tfs = append(tfs, &tagFamily{name: name, tags: make([]tag, len(tagProjection[k].Names))})
-								continue
-							}
-							decoder := &encoding.BytesBlockDecoder{}
-							tf := unmarshalTagFamily(decoder, name, block, tagProjection[k].Names, p.tagFamilyMetadata[name], p.tagFamilies[name], len(timestamps))
-							tfs = append(tfs, tf)
-						}
-
-						return &element{
-							timestamp:   timestamps[j],
-							elementID:   elementIDs[j],
-							tagFamilies: tfs,
-							index:       j,
-						}, len(timestamps), nil
-					}
-					if ts > timestamp {
-						break
-					}
-				}
-			}
-		}
-	}
-	return nil, 0, errors.New("element not found")
-}
-
-func unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, name string,
-	tagFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader, count int,
-) *tagFamily {
-	if len(tagProjection) < 1 {
-		return &tagFamily{}
-	}
-	bb := bigValuePool.Generate()
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
-	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
-	tfm := generateTagFamilyMetadata()
-	defer releaseTagFamilyMetadata(tfm)
-	err := tfm.unmarshal(bb.Buf)
-	if err != nil {
-		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
-	}
-	bigValuePool.Release(bb)
-	tf := tagFamily{}
-	tf.name = name
-	tf.tags = tf.resizeTags(len(tagProjection))
-
-	for j := range tagProjection {
-		for i := range tfm.tagMetadata {
-			if tagProjection[j] == tfm.tagMetadata[i].name {
-				tf.tags[j].mustReadValues(decoder, valueReader, tfm.tagMetadata[i], uint64(count))
-				break
-			}
-		}
-	}
-	return &tf
 }
 
 func openMemPart(mp *memPart) *part {

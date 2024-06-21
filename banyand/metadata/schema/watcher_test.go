@@ -79,6 +79,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		mockedObj *mockedHandler
 		server    embeddedetcd.Server
 		registry  schema.Registry
+		defFn     func()
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -87,6 +88,11 @@ var _ = ginkgo.Describe("Watcher", func() {
 			Env:   "dev",
 			Level: flags.LogLevel,
 		})).To(gomega.Succeed())
+		var path string
+		var err error
+		path, defFn, err = test.NewSpace()
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+
 		ports, err := test.AllocateFreePorts(2)
 		if err != nil {
 			panic("fail to find free ports")
@@ -94,7 +100,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		endpoints := []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
 		server, err = embeddedetcd.NewServer(
 			embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-			embeddedetcd.RootDir(randomTempDir()))
+			embeddedetcd.RootDir(path))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
 		registry, err = schema.NewEtcdSchemaRegistry(
@@ -107,6 +113,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		registry.Close()
 		server.Close()
 		<-server.StopNotify()
+		defFn()
 	})
 
 	ginkgo.It("should handle all existing key-value pairs on initial load", func() {

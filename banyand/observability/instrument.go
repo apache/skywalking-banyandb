@@ -17,17 +17,25 @@
 
 package observability
 
-import "github.com/apache/skywalking-banyandb/pkg/meter"
+import (
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/meter/native"
+)
 
 type counterCollection struct {
 	counters []meter.Counter
 }
 
 // NewCounter init and return the counterCollection.
-func NewCounter(providers []meter.Provider, name string, labelNames ...string) meter.Counter {
+func NewCounter(modes []string, name string, labelNames ...string) meter.Counter {
 	var counters []meter.Counter
-	for _, provider := range providers {
-		counters = append(counters, provider.Counter(name, labelNames...))
+	if containsMode(modes, flagPromethusMode) {
+		counters = append(counters, PromMeterProvider.Counter(name, labelNames...))
+	}
+	if containsMode(modes, flagNativeMode) {
+		counter := NativeMeterProvider.Counter(name, labelNames...)
+		NativeMetricCollection.AddCollector(counter.(*native.Counter))
+		counters = append(counters, counter)
 	}
 	return &counterCollection{
 		counters: counters,
@@ -53,10 +61,15 @@ type gaugeCollection struct {
 }
 
 // NewGauge init and return the gaugeCollection.
-func NewGauge(providers []meter.Provider, name string, labelNames ...string) meter.Gauge {
+func NewGauge(modes []string, name string, labelNames ...string) meter.Gauge {
 	var gauges []meter.Gauge
-	for _, provider := range providers {
-		gauges = append(gauges, provider.Gauge(name, labelNames...))
+	if containsMode(modes, flagPromethusMode) {
+		gauges = append(gauges, PromMeterProvider.Gauge(name, labelNames...))
+	}
+	if containsMode(modes, flagNativeMode) {
+		gauge := NativeMeterProvider.Gauge(name, labelNames...)
+		NativeMetricCollection.AddCollector(gauge.(*native.Gauge))
+		gauges = append(gauges, gauge)
 	}
 	return &gaugeCollection{
 		gauges: gauges,
@@ -88,10 +101,15 @@ type histogramCollection struct {
 }
 
 // NewHistogram init and return the histogramCollection.
-func NewHistogram(providers []meter.Provider, name string, buckets meter.Buckets, labelNames ...string) meter.Histogram {
+func NewHistogram(modes []string, name string, buckets meter.Buckets, labelNames ...string) meter.Histogram {
 	var histograms []meter.Histogram
-	for _, provider := range providers {
-		histograms = append(histograms, provider.Histogram(name, buckets, labelNames...))
+	if containsMode(modes, flagPromethusMode) {
+		histograms = append(histograms, PromMeterProvider.Histogram(name, buckets, labelNames...))
+	}
+	if containsMode(modes, flagNativeMode) {
+		histogram := NativeMeterProvider.Histogram(name, buckets, labelNames...)
+		NativeMetricCollection.AddCollector(histogram.(*native.Histogram))
+		histograms = append(histograms, histogram)
 	}
 	return &histogramCollection{
 		histograms: histograms,
