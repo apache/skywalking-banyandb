@@ -263,8 +263,9 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 							p.handler.OnAddOrUpdate(md)
 						}
 						delete(p.evictable, name)
-						p.log.Info().Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
+						p.log.Info().Str("status", p.dump()).Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
 					}()
+					return
 				}
 				if errEvict != nil {
 					_ = connEvict.Close()
