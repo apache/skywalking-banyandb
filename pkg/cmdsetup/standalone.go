@@ -59,7 +59,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	}
 	grpcServer := grpc.NewServer(ctx, pipeline, pipeline, metaSvc, grpc.NewLocalNodeRegistry())
 	profSvc := observability.NewProfService()
-	metricSvc := observability.NewMetricService(metaSvc, pipeline)
+	metricSvc := observability.NewMetricService(metaSvc, pipeline, "standalone")
 	httpServer := http.NewServer()
 
 	var units []run.Unit

@@ -19,6 +19,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"google.golang.org/grpc"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -54,11 +56,12 @@ type Service interface {
 }
 
 // NewMetricService returns a metric service.
-func NewMetricService(metadata metadata.Repo, pipeline queue.Client) Service {
+func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType string) Service {
 	return &metricService{
 		closer:   run.NewCloser(1),
 		metadata: metadata,
 		pipeline: pipeline,
+		nodeType: nodeType,
 	}
 }
 
@@ -70,6 +73,7 @@ type metricService struct {
 	metadata   metadata.Repo
 	pipeline   queue.Client
 	listenAddr string
+	nodeType   string
 	modes      []string
 	mutex      sync.Mutex
 }
@@ -107,7 +111,18 @@ func (p *metricService) PreRun(ctx context.Context) error {
 	}
 	if containsMode(p.modes, flagNativeMode) {
 		NativeMetricCollection = native.NewMetricsCollection(p.pipeline)
-		NativeMeterProvider = newNativeMeterProvider(ctx, p.metadata)
+		val := ctx.Value(common.ContextNodeKey)
+		if val == nil {
+			return errors.New("metric service native mode, node id is empty")
+		}
+		node := val.(common.Node)
+		nodeInfo := native.NodeInfo{
+			Type:        p.nodeType,
+			NodeID:      node.NodeID,
+			GrpcAddress: node.GrpcAddress,
+			HTTPAddress: node.HTTPAddress,
+		}
+		NativeMeterProvider = newNativeMeterProvider(ctx, p.metadata, nodeInfo)
 	}
 	initMetrics(p.modes)
 	return nil

@@ -35,8 +35,8 @@ var (
 )
 
 // NewMeterProvider returns a meter.Provider based on the given scope.
-func newNativeMeterProvider(ctx context.Context, metadata metadata.Repo) meter.Provider {
-	return native.NewProvider(ctx, SystemScope, metadata)
+func newNativeMeterProvider(ctx context.Context, metadata metadata.Repo, nodeInfo native.NodeInfo) meter.Provider {
+	return native.NewProvider(ctx, SystemScope, metadata, nodeInfo)
 }
 
 // MetricsServerInterceptor returns a grpc.UnaryServerInterceptor and a grpc.StreamServerInterceptor.

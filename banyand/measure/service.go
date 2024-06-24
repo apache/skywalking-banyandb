@@ -109,7 +109,7 @@ func (s *service) PreRun(_ context.Context) error {
 	// run a serial watcher
 
 	s.writeListener = setUpWriteCallback(s.l, s.schemaRepo)
-	// only subscribe metricPipeline for data node  
+	// only subscribe metricPipeline for data node
 	if s.metricPipeline != nil {
 		err := s.metricPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
 		if err != nil {
