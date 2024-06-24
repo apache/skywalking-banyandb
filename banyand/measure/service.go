@@ -53,14 +53,15 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaRepo    *schemaRepo
-	writeListener bus.MessageListener
-	metadata      metadata.Repo
-	pipeline      queue.Server
-	localPipeline queue.Queue
-	option        option
-	l             *logger.Logger
-	root          string
+	schemaRepo     *schemaRepo
+	writeListener  bus.MessageListener
+	metadata       metadata.Repo
+	pipeline       queue.Server
+	localPipeline  queue.Queue
+	metricPipeline queue.Server
+	option         option
+	l              *logger.Logger
+	root           string
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -108,6 +109,14 @@ func (s *service) PreRun(_ context.Context) error {
 	// run a serial watcher
 
 	s.writeListener = setUpWriteCallback(s.l, s.schemaRepo)
+	// only subscribe metricPipeline for data node  
+	if s.metricPipeline != nil {
+		err := s.metricPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
+		if err != nil {
+			s.l.Err(err).Msgf("Fail to subscribe metricPipeline, %v", err)
+			return err
+		}
+	}
 	err := s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
 	if err != nil {
 		return err
@@ -125,9 +134,10 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server) (Service, error) {
+func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server) (Service, error) {
 	return &service{
-		metadata: metadata,
-		pipeline: pipeline,
+		metadata:       metadata,
+		pipeline:       pipeline,
+		metricPipeline: metricPipeline,
 	}, nil
 }

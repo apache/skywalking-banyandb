@@ -28,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/query"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/sub"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -43,11 +44,12 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
 	pipeline := sub.NewServer()
+	localPipeline := queue.Local() 
 	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
-	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline)
+	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline, localPipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
@@ -57,7 +59,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
 	profSvc := observability.NewProfService()
-	metricSvc := observability.NewMetricService(metaSvc, nil)
+	metricSvc := observability.NewMetricService(metaSvc, localPipeline)
 
 	var units []run.Unit
 	units = append(units, runners...)

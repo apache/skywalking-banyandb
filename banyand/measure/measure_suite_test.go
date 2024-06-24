@@ -77,7 +77,7 @@ func setUp() (*services, func()) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Init Measure Service
-	measureService, err := measure.NewService(context.TODO(), metadataService, pipeline)
+	measureService, err := measure.NewService(context.TODO(), metadataService, pipeline, nil)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadMeasureSvc := &preloadMeasureService{metaSvc: metadataService}
 	var flags []string

@@ -52,7 +52,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	}
 	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, grpc.NewClusterNodeRegistry(pipeline, nodeSel))
 	profSvc := observability.NewProfService()
-	metricSvc := observability.NewMetricService(metaSvc, nil)
+	metricSvc := observability.NewMetricService(metaSvc, pipeline)
 	httpServer := http.NewServer()
 	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline)
 	if err != nil {
