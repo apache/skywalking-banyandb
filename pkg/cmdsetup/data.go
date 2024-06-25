@@ -65,6 +65,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	units = append(units, runners...)
 	units = append(units,
 		metaSvc,
+		localPipeline,
 		pipeline,
 		measureSvc,
 		streamSvc,
