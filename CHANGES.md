@@ -8,6 +8,7 @@ Release Notes.
 
 - Check unregistered nodes in background.
 - Improve sorting performance of stream.
+- Add the measure query trace.
 
 ### Bugs
 

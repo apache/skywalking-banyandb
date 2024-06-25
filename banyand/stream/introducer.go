@@ -40,11 +40,12 @@ func generateIntroduction() *introduction {
 	if v == nil {
 		return &introduction{}
 	}
-	return v.(*introduction)
+	intro := v.(*introduction)
+	intro.reset()
+	return intro
 }
 
 func releaseIntroduction(i *introduction) {
-	i.reset()
 	introductionPool.Put(i)
 }
 
@@ -69,11 +70,12 @@ func generateFlusherIntroduction() *flusherIntroduction {
 			flushed: make(map[uint64]*partWrapper),
 		}
 	}
-	return v.(*flusherIntroduction)
+	fi := v.(*flusherIntroduction)
+	fi.reset()
+	return fi
 }
 
 func releaseFlusherIntroduction(i *flusherIntroduction) {
-	i.reset()
 	flusherIntroductionPool.Put(i)
 }
 
@@ -100,11 +102,12 @@ func generateMergerIntroduction() *mergerIntroduction {
 	if v == nil {
 		return &mergerIntroduction{}
 	}
-	return v.(*mergerIntroduction)
+	mi := v.(*mergerIntroduction)
+	mi.reset()
+	return mi
 }
 
 func releaseMergerIntroduction(i *mergerIntroduction) {
-	i.reset()
 	mergerIntroductionPool.Put(i)
 }
 

@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -39,29 +40,30 @@ func Test_service_RulesBySubject(t *testing.T) {
 		subject *commonv1.Metadata
 	}
 	is := assert.New(t)
+	req := require.New(t)
 	is.NoError(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
 	}))
 	ctx := context.TODO()
 	s, _ := embeddedserver.NewService(ctx)
-	is.NotNil(s)
+	req.NotNil(s)
 	rootDir, deferFn, err := testhelper.NewSpace()
-	is.NoError(err)
+	req.NoError(err)
 	err = s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
-	is.NoError(err)
-	is.NoError(s.Validate())
+	req.NoError(err)
+	req.NoError(s.Validate())
 	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{NodeID: "test"})
 	ctx = context.WithValue(ctx, common.ContextNodeRolesKey, []databasev1.Role{databasev1.Role_ROLE_META})
 	err = s.PreRun(ctx)
-	is.NoError(err)
+	req.NoError(err)
 	defer func() {
 		s.GracefulStop()
 		deferFn()
 	}()
 
 	err = test.PreloadSchema(ctx, s.SchemaRegistry())
-	is.NoError(err)
+	req.NoError(err)
 
 	tests := []struct {
 		name    string

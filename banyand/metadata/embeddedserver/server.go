@@ -86,8 +86,10 @@ func (s *server) Serve() run.StopNotify {
 
 func (s *server) GracefulStop() {
 	s.Service.GracefulStop()
-	s.metaServer.Close()
-	<-s.metaServer.StopNotify()
+	if s.metaServer != nil {
+		s.metaServer.Close()
+		<-s.metaServer.StopNotify()
+	}
 }
 
 // NewService returns a new metadata repository Service.

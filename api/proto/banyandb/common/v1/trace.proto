@@ -48,6 +48,8 @@ message Span {
   string message = 5;
   // children is a list of child spans of the span.
   repeated Span children = 6;
+  // duration is the duration of the span.
+  int64 duration = 7;
 }
 
 // Tag is the key-value pair of a span.

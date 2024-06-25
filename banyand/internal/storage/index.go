@@ -38,6 +38,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -88,14 +90,25 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
+func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series) (sl pbv1.SeriesList, err error) {
 	seriesMatchers := make([]index.SeriesMatcher, len(series))
 	for i := range series {
-		var err error
 		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
 		if err != nil {
 			return nil, err
 		}
+	}
+	tracer := query.GetTracer(ctx)
+	var span *query.Span
+	if tracer != nil {
+		span, _ = tracer.StartSpan(ctx, "seriesIndex.searchPrimary")
+		span.Tagf("matchers", "%v", seriesMatchers)
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			}
+			span.Stop()
+		}()
 	}
 	ss, err := s.store.Search(ctx, seriesMatchers)
 	if err != nil {
@@ -104,6 +117,9 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series) 
 	result, err := convertIndexSeriesToSeriesList(ss)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, matched: %d", seriesMatchers, len(ss))
+	}
+	if span != nil {
+		span.Tagf("matched", "%d", len(result))
 	}
 	return result, nil
 }
@@ -174,26 +190,52 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList
 	return seriesList, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error) {
+func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (sl pbv1.SeriesList, err error) {
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		var span *query.Span
+		span, ctx = tracer.StartSpan(ctx, "seriesIndex.Search")
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			}
+			span.Stop()
+		}()
+	}
 	seriesList, err := s.searchPrimary(ctx, series)
 	if err != nil {
 		return nil, err
 	}
 
 	pl := seriesList.ToList()
-	if filter != nil {
+	if filter != nil && filter != logical.ENode {
 		var plFilter posting.List
 		// TODO: merge searchPrimary and filter
-		plFilter, err = filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
-			return s.store, nil
-		}, 0)
+		func() {
+			if tracer != nil {
+				span, _ := tracer.StartSpan(ctx, "filter")
+				span.Tag("exp", filter.String())
+				defer func() {
+					if err != nil {
+						span.Error(err)
+					} else {
+						span.Tagf("matched", "%d", plFilter.Len())
+						span.Tagf("total", "%d", pl.Len())
+					}
+					span.Stop()
+				}()
+			}
+			if plFilter, err = filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
+				return s.store, nil
+			}, 0); err != nil {
+				return
+			}
+			if plFilter == nil {
+				return
+			}
+			err = pl.Intersect(plFilter)
+		}()
 		if err != nil {
-			return nil, err
-		}
-		if plFilter == nil {
-			return pbv1.SeriesList{}, nil
-		}
-		if err = pl.Intersect(plFilter); err != nil {
 			return nil, err
 		}
 	}
@@ -205,6 +247,17 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 	fieldKey := index.FieldKey{
 		IndexRuleID: order.Index.GetMetadata().Id,
 	}
+	var span *query.Span
+	if tracer != nil {
+		span, _ = tracer.StartSpan(ctx, "sort")
+		span.Tagf("preload", "%d", preloadSize)
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			}
+			span.Stop()
+		}()
+	}
 	// TODO:// merge searchPrimary and sort
 	iter, err := s.store.Iterator(fieldKey, rangeOpts, order.Sort, preloadSize)
 	if err != nil {
@@ -215,7 +268,9 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 	}()
 
 	var sortedSeriesList pbv1.SeriesList
+	var r int
 	for iter.Next() {
+		r++
 		docID := iter.Val().DocID
 		if !pl.Contains(docID) {
 			continue
@@ -224,6 +279,10 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 		if err != nil {
 			return nil, err
 		}
+	}
+	if span != nil {
+		span.Tagf("rounds", "%d", r)
+		span.Tagf("size", "%d", len(sortedSeriesList))
 	}
 	return sortedSeriesList, err
 }
