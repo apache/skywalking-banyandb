@@ -33,7 +33,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -155,29 +157,46 @@ type distributedPlan struct {
 	maxDataPointsSize uint32
 }
 
-func (t *distributedPlan) Execute(ctx context.Context) (executor.MIterator, error) {
+func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, err error) {
 	dctx := executor.FromDistributedExecutionContext(ctx)
-	query := proto.Clone(t.queryTemplate).(*measurev1.QueryRequest)
-	query.TimeRange = dctx.TimeRange()
+	queryRequest := proto.Clone(t.queryTemplate).(*measurev1.QueryRequest)
+	queryRequest.TimeRange = dctx.TimeRange()
 	if t.maxDataPointsSize > 0 {
-		query.Limit = t.maxDataPointsSize
+		queryRequest.Limit = t.maxDataPointsSize
 	}
-	var allErr error
-	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
+	tracer := query.GetTracer(ctx)
+	var span *query.Span
+	if tracer != nil {
+		span, _ = tracer.StartSpan(ctx, "distributed-client")
+		queryRequest.Trace = true
+		span.Tag("request", convert.BytesToString(logger.Proto(queryRequest)))
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			} else {
+				span.Stop()
+			}
+		}()
+	}
+	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), queryRequest))
 	if err != nil {
 		return nil, err
 	}
 	var see []sort.Iterator[*comparableDataPoint]
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
-			allErr = multierr.Append(allErr, getErr)
+			err = multierr.Append(err, getErr)
 		} else {
 			d := m.Data()
 			if d == nil {
 				continue
 			}
+			resp := d.(*measurev1.QueryResponse)
+			if span != nil {
+				span.AddSubTrace(resp.Trace)
+			}
 			see = append(see,
-				newSortableElements(d.(*measurev1.QueryResponse).DataPoints,
+				newSortableElements(resp.DataPoints,
 					t.sortByTime, t.sortTagSpec))
 		}
 	}
@@ -185,7 +204,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		Iterator: sort.NewItemIter(see, t.desc),
 	}
 	smi.init()
-	return smi, allErr
+	return smi, err
 }
 
 func (t *distributedPlan) String() string {
