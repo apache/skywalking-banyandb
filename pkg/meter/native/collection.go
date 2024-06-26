@@ -31,20 +31,27 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
+// NodeSelector has Locate method to select a nodeId.
+type NodeSelector interface {
+	Locate(group, name string, shardID uint32) (string, error)
+}
+
 type collector interface {
 	Collect() (string, []metricWithLabelValues)
 }
 
 // MetricCollection contains all the native implementations of metrics.
 type MetricCollection struct {
-	pipeline   queue.Client
-	collectors []collector
+	pipeline     queue.Client
+	nodeSelector NodeSelector
+	collectors   []collector
 }
 
 // NewMetricsCollection creates a new MetricCollection.
-func NewMetricsCollection(pipeline queue.Client) MetricCollection {
+func NewMetricsCollection(pipeline queue.Client, nodeSelector NodeSelector) MetricCollection {
 	return MetricCollection{
-		pipeline: pipeline,
+		pipeline:     pipeline,
+		nodeSelector: nodeSelector,
 	}
 }
 
@@ -65,7 +72,16 @@ func (m *MetricCollection) FlushMetrics() {
 		name, metrics := collector.Collect()
 		for _, metric := range metrics {
 			iwr := m.buildIWR(name, metric)
-			messages = append(messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "", iwr))
+			nodeID := ""
+			var err error
+			// only liaison node has a non-nil nodeSelector
+			if m.nodeSelector != nil {
+				nodeID, err = m.nodeSelector.Locate(iwr.GetRequest().GetMetadata().GetGroup(), iwr.GetRequest().GetMetadata().GetName(), uint32(0))
+				if err != nil {
+					log.Error().Err(err).Msg("Failed to locate nodeID")
+				}
+			}
+			messages = append(messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr))
 		}
 	}
 	_, err := publisher.Publish(data.TopicMeasureWrite, messages...)
