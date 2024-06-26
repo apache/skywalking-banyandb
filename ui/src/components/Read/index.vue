@@ -194,7 +194,7 @@ function initCode() {
         }
         timeRange = jsonToYaml(timeRange).data
         data.code = ref(
-            `${timeRange}offset: 1
+            `${timeRange}offset: 0
 limit: 10
 orderBy:
   indexRuleName: ""
@@ -315,8 +315,10 @@ function changeTagFamilies() {
 }
 function handleCodeData() {
     const json = yamlToJson(data.code).data
-    param.offset = json.offset ? json.offset : param.offset
-    param.limit = json.limit ? json.limit : param.limit
+    console.log(json)
+    param.offset = (json.offset !== undefined) ? json.offset : 0;
+    console.log(param)
+    param.limit = (json.limit !== undefined) ? json.limit : 0;
     /* json.orderBy ? param.orderBy = json.orderBy : null */
     delete param.timeRange
     if (json.timeRange && !isNaN(Date.parse(json.timeRange.begin)) && !isNaN(Date.parse(json.timeRange.end))) {
