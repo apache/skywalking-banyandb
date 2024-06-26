@@ -34,8 +34,10 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -145,21 +147,36 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 
 var emptyMeasureQueryResponse = &measurev1.QueryResponse{DataPoints: make([]*measurev1.DataPoint, 0)}
 
-func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
-	if err := timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
+func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) (resp *measurev1.QueryResponse, err error) {
+	if err = timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
-	feat, errQuery := ms.broadcaster.Publish(data.TopicMeasureQuery, message)
-	if errQuery != nil {
-		return nil, errQuery
+	now := time.Now()
+	if req.Trace {
+		ctx := context.TODO()
+		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
+		span, _ := tracer.StartSpan(ctx, "measure-grpc")
+		span.Tag("request", convert.BytesToString(logger.Proto(req)))
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			} else {
+				span.AddSubTrace(resp.Trace)
+				resp.Trace = tracer.ToProto()
+			}
+			span.Stop()
+		}()
 	}
-	msg, errFeat := feat.Get()
-	if errFeat != nil {
-		if errors.Is(errFeat, io.EOF) {
+	feat, err := ms.broadcaster.Publish(data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), req))
+	if err != nil {
+		return nil, err
+	}
+	msg, err := feat.Get()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
 			return emptyMeasureQueryResponse, nil
 		}
-		return nil, errFeat
+		return nil, err
 	}
 	data := msg.Data()
 	switch d := data.(type) {

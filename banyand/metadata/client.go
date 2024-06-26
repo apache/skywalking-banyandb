@@ -150,8 +150,10 @@ func (s *clientService) Serve() run.StopNotify {
 func (s *clientService) GracefulStop() {
 	s.closer.Done()
 	s.closer.CloseThenWait()
-	if err := s.schemaRegistry.Close(); err != nil {
-		logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close schema registry")
+	if s.schemaRegistry != nil {
+		if err := s.schemaRegistry.Close(); err != nil {
+			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close schema registry")
+		}
 	}
 }
 
