@@ -316,7 +316,7 @@ function changeTagFamilies() {
 function handleCodeData() {
     const json = yamlToJson(data.code).data
     param.offset = (json.offset !== undefined) ? json.offset : 0;
-    param.limit = (json.limit !== undefined) ? json.limit : 0;
+    param.limit = (json.limit !== undefined) ? json.limit : 10;
     /* json.orderBy ? param.orderBy = json.orderBy : null */
     delete param.timeRange
     if (json.timeRange && !isNaN(Date.parse(json.timeRange.begin)) && !isNaN(Date.parse(json.timeRange.end))) {
