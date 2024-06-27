@@ -38,14 +38,16 @@ type metricWithLabelValues struct {
 }
 
 type metricVec struct {
+	nodeInfo    NodeInfo
 	scope       meter.Scope
 	metrics     map[string]metricWithLabelValues
 	measureName string
 	mutex       sync.Mutex
 }
 
-func newMetricVec(measureName string, scope meter.Scope) *metricVec {
+func newMetricVec(measureName string, scope meter.Scope, nodeInfo NodeInfo) *metricVec {
 	n := &metricVec{
+		nodeInfo:    nodeInfo,
 		scope:       scope,
 		measureName: measureName,
 		metrics:     map[string]metricWithLabelValues{},
@@ -56,7 +58,7 @@ func newMetricVec(measureName string, scope meter.Scope) *metricVec {
 func (n *metricVec) Inc(delta float64, labelValues ...string) {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
-	tagValues := buildTagValues(n.scope, labelValues...)
+	tagValues := buildTagValues(n.nodeInfo, n.scope, labelValues...)
 	hash := seriesHash(tagValues)
 	key := string(hash)
 	v, exist := n.metrics[key]
@@ -73,7 +75,7 @@ func (n *metricVec) Inc(delta float64, labelValues ...string) {
 func (n *metricVec) Delete(labelValues ...string) bool {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
-	key := string(seriesHash(buildTagValues(n.scope, labelValues...)))
+	key := string(seriesHash(buildTagValues(n.nodeInfo, n.scope, labelValues...)))
 	delete(n.metrics, key)
 	return true
 }

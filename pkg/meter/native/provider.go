@@ -36,22 +36,34 @@ const (
 	NativeObservabilityGroupName = "_monitoring"
 	defaultTagFamily             = "default"
 	defaultFieldName             = "value"
-	nodeNameTag                  = "node_name"
-	standaloneNodeName           = "standalone"
+	tagNodeType                  = "node_type"
+	tagNodeID                    = "node_id"
+	tagGRPCAddress               = "grpc_address"
+	tagHTTPAddress               = "http_address"
 )
 
 var log = logger.GetLogger("observability", "metrics", "system")
 
+// NodeInfo is the struct that contains information used in native observability mode.
+type NodeInfo struct {
+	Type        string
+	NodeID      string
+	GrpcAddress string
+	HTTPAddress string
+}
+
 type provider struct {
 	metadata metadata.Repo
 	scope    meter.Scope
+	nodeInfo NodeInfo
 }
 
 // NewProvider returns a native metrics Provider.
-func NewProvider(ctx context.Context, scope meter.Scope, metadata metadata.Repo) meter.Provider {
+func NewProvider(ctx context.Context, scope meter.Scope, metadata metadata.Repo, nodeInfo NodeInfo) meter.Provider {
 	p := &provider{
 		scope:    scope,
 		metadata: metadata,
+		nodeInfo: nodeInfo,
 	}
 	err := p.createNativeObservabilityGroup(ctx)
 	if err != nil && !errors.Is(err, schema.ErrGRPCAlreadyExists) {
@@ -67,7 +79,7 @@ func (p *provider) Counter(name string, labelNames ...string) meter.Counter {
 		log.Error().Err(err).Msgf("Failure to createMeasure for Counter %s, labels: %v", name, labelNames)
 	}
 	return &Counter{
-		newMetricVec(name, p.scope),
+		newMetricVec(name, p.scope, p.nodeInfo),
 	}
 }
 
@@ -78,14 +90,14 @@ func (p *provider) Gauge(name string, labelNames ...string) meter.Gauge {
 		log.Error().Err(err).Msgf("Failure to createMeasure for Gauge %s, labels: %v", name, labelNames)
 	}
 	return &Gauge{
-		newMetricVec(name, p.scope),
+		newMetricVec(name, p.scope, p.nodeInfo),
 	}
 }
 
 // Histogram returns a native implementation of the Histogram interface.
 func (p *provider) Histogram(name string, _ meter.Buckets, _ ...string) meter.Histogram {
 	return &Histogram{
-		newMetricVec(name, p.scope),
+		newMetricVec(name, p.scope, p.nodeInfo),
 	}
 }
 
@@ -151,7 +163,10 @@ func buildTags(scope meter.Scope, labels []string) ([]*databasev1.TagSpec, []str
 			entityTags = append(entityTags, label)
 		}
 	}
-	addTags(nodeNameTag)
+	addTags(tagNodeType)
+	addTags(tagNodeID)
+	addTags(tagGRPCAddress)
+	addTags(tagHTTPAddress)
 	for label := range scope.GetLabels() {
 		addTags(label)
 	}
@@ -159,7 +174,7 @@ func buildTags(scope meter.Scope, labels []string) ([]*databasev1.TagSpec, []str
 	return tags, entityTags
 }
 
-func buildTagValues(scope meter.Scope, labelValues ...string) []*modelv1.TagValue {
+func buildTagValues(nodeInfo NodeInfo, scope meter.Scope, labelValues ...string) []*modelv1.TagValue {
 	var tagValues []*modelv1.TagValue
 	addTagValues := func(labelValues ...string) {
 		for _, value := range labelValues {
@@ -173,7 +188,10 @@ func buildTagValues(scope meter.Scope, labelValues ...string) []*modelv1.TagValu
 			tagValues = append(tagValues, tagValue)
 		}
 	}
-	addTagValues(standaloneNodeName)
+	addTagValues(nodeInfo.Type)
+	addTagValues(nodeInfo.NodeID)
+	addTagValues(nodeInfo.GrpcAddress)
+	addTagValues(nodeInfo.HTTPAddress)
 	for _, labelValue := range scope.GetLabels() {
 		addTagValues(labelValue)
 	}

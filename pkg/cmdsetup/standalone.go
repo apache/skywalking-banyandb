@@ -49,7 +49,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
-	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline)
+	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline, nil)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
@@ -59,7 +59,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	}
 	grpcServer := grpc.NewServer(ctx, pipeline, pipeline, metaSvc, grpc.NewLocalNodeRegistry())
 	profSvc := observability.NewProfService()
-	metricSvc := observability.NewMetricService(metaSvc, pipeline)
+	metricSvc := observability.NewMetricService(metaSvc, pipeline, "standalone", nil)
 	httpServer := http.NewServer()
 
 	var units []run.Unit

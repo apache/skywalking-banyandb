@@ -50,9 +50,10 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate required node selector")
 	}
-	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, grpc.NewClusterNodeRegistry(pipeline, nodeSel))
+	nodeRegistry := grpc.NewClusterNodeRegistry(pipeline, nodeSel)
+	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, nodeRegistry)
 	profSvc := observability.NewProfService()
-	metricSvc := observability.NewMetricService(metaSvc, nil)
+	metricSvc := observability.NewMetricService(metaSvc, pipeline, "liaison", nodeRegistry)
 	httpServer := http.NewServer()
 	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline)
 	if err != nil {
