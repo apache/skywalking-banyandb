@@ -151,5 +151,5 @@ func (s *Span) Error(err error) *Span {
 // Stop stops the span.
 func (s *Span) Stop() {
 	s.data.EndTime = timestamppb.Now()
-	s.data.Duration = s.data.EndTime.AsTime().Sub(s.data.StartTime.AsTime()).Milliseconds()
+	s.data.Duration = s.data.EndTime.AsTime().Sub(s.data.StartTime.AsTime()).Nanoseconds()
 }
