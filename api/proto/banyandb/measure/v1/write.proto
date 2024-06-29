@@ -47,7 +47,7 @@ message DataPointValue {
     // TYPE_DELTA is the delta data
     TYPE_DELTA = 2;
   }
-  Type  type = 5;
+  Type type = 5;
 }
 
 // WriteRequest is the request contract for write
