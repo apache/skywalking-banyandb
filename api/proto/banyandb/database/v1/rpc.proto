@@ -484,9 +484,9 @@ service TopNAggregationRegistryService {
   rpc Exist(TopNAggregationRegistryServiceExistRequest) returns (TopNAggregationRegistryServiceExistResponse);
 }
 
-message MeasureAggregateFunctionServiceSupportRequest{}
+message MeasureAggregateFunctionServiceSupportRequest {}
 
-message MeasureAggregateFunctionServiceSupportResponse{
+message MeasureAggregateFunctionServiceSupportResponse {
   repeated banyandb.database.v1.MeasureAggregateFunction measure_aggregate_function = 1;
 }
 
