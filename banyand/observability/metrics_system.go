@@ -21,8 +21,10 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 
@@ -37,6 +39,7 @@ var (
 	once4CpuCount sync.Once
 	cpuCountsFunc = cpu.Counts
 	cpuTimesFunc  = cpu.Times
+	startTime     = time.Now()
 )
 
 var (
@@ -48,6 +51,8 @@ var (
 	cpuNumGauge     meter.Gauge
 	memorySateGauge meter.Gauge
 	netStateGauge   meter.Gauge
+	upTimeGauge     meter.Gauge
+	diskStateGauge  meter.Gauge
 	initMetricsOnce sync.Once
 )
 
@@ -55,6 +60,8 @@ func init() {
 	MetricsCollector.Register("cpu", collectCPU)
 	MetricsCollector.Register("memory", collectMemory)
 	MetricsCollector.Register("net", collectNet)
+	MetricsCollector.Register("upTime", collectUpTime)
+	MetricsCollector.Register("disk", collectDisk)
 }
 
 func initMetrics(modes []string) {
@@ -63,6 +70,8 @@ func initMetrics(modes []string) {
 		cpuNumGauge = NewGauge(modes, "cpu_num")
 		memorySateGauge = NewGauge(modes, "memory_state", "kind")
 		netStateGauge = NewGauge(modes, "net_state", "kind", "name")
+		upTimeGauge = NewGauge(modes, "up_time")
+		diskStateGauge = NewGauge(modes, "disk", "path", "kind")
 	})
 }
 
@@ -151,4 +160,23 @@ func getNetStat(ctx context.Context) ([]net.IOCountersStat, error) {
 		availableStats = append(availableStats, stat)
 	}
 	return availableStats, nil
+}
+
+func collectUpTime() {
+	upTimeGauge.Set(time.Since(startTime).Seconds())
+}
+
+func collectDisk() {
+	for path := range getPath() {
+		usage, err := disk.Usage(path)
+		if err != nil {
+			// skip logging the case where the data has not been created
+			if err.Error() == "no such file or directory" {
+				log.Error().Err(err).Msgf("failed to get usage for path: %s", path)
+			}
+			return
+		}
+		diskStateGauge.Set(usage.UsedPercent/100, path, "used_percent")
+		diskStateGauge.Set(float64(usage.Used)/float64(usage.Total), path, "used")
+	}
 }
