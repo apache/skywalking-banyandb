@@ -332,7 +332,11 @@ func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 	for i, b := range sc.lst {
 		if b.id == segID {
 			sc.lst = append(sc.lst[:i], sc.lst[i+1:]...)
-			sc.deadline.Store(sc.lst[0].Start.UnixNano())
+			if len(sc.lst) < 1 {
+				sc.deadline.Store(0)
+			} else {
+				sc.deadline.Store(sc.lst[0].Start.UnixNano())
+			}
 			break
 		}
 	}
