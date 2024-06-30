@@ -181,6 +181,8 @@
     - [WriteRequest](#banyandb-measure-v1-WriteRequest)
     - [WriteResponse](#banyandb-measure-v1-WriteResponse)
   
+    - [DataPointValue.Type](#banyandb-measure-v1-DataPointValue-Type)
+  
 - [banyandb/measure/v1/rpc.proto](#banyandb_measure_v1_rpc-proto)
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
@@ -2640,6 +2642,7 @@ DataPointValue is the data point for writing. It only contains values.
 | tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the measure schema |
 | fields | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | the order of fields match the measure schema |
 | version | [int64](#int64) |  | the version of the data point |
+| type | [DataPointValue.Type](#banyandb-measure-v1-DataPointValue-Type) |  |  |
 
 
 
@@ -2698,6 +2701,19 @@ WriteResponse is the response contract for write
 
 
  
+
+
+<a name="banyandb-measure-v1-DataPointValue-Type"></a>
+
+### DataPointValue.Type
+the type of the data point cumulative or delta
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| TYPE_UNSPECIFIED | 0 | TYPE_UNSPECIFIED is the default value. |
+| TYPE_CUMULATIVE | 1 | TYPE_CUMULATIVE is the cumulative data |
+| TYPE_DELTA | 2 | TYPE_DELTA is the delta data |
+
 
  
 

@@ -38,7 +38,7 @@ message DataPointValue {
   repeated model.v1.FieldValue fields = 3;
   // the version of the data point
   int64 version = 4;
-   // the type of the data point cumulative or delta
+  // the type of the data point cumulative or delta
   enum Type {
     // TYPE_UNSPECIFIED is the default value.
     TYPE_UNSPECIFIED = 0;
