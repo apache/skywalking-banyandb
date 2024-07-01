@@ -113,7 +113,8 @@ func collectMemory() {
 		log.Error().Err(err).Msg("cannot get memory stat")
 	}
 	memorySateGauge.Set(m.UsedPercent/100, "used_percent")
-	memorySateGauge.Set(float64(m.Used)/float64(m.Total), "used")
+	memorySateGauge.Set(float64(m.Used), "used")
+	memorySateGauge.Set(float64(m.Total), "total")
 }
 
 func collectNet() {
@@ -177,6 +178,7 @@ func collectDisk() {
 			return
 		}
 		diskStateGauge.Set(usage.UsedPercent/100, path, "used_percent")
-		diskStateGauge.Set(float64(usage.Used)/float64(usage.Total), path, "used")
+		diskStateGauge.Set(float64(usage.Used), path, "used")
+		diskStateGauge.Set(float64(usage.Total), path, "total")
 	}
 }
