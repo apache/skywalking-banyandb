@@ -19,7 +19,6 @@
 package node
 
 import (
-	"strconv"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -96,8 +95,4 @@ func (p *pickFirstSelector) Pick(_, _ string, _ uint32) (string, error) {
 		return "", ErrNoAvailableNode
 	}
 	return p.nodeIDs[0], nil
-}
-
-func formatSearchKey(group, name string, shardID uint32) string {
-	return group + "/" + name + "#" + strconv.FormatUint(uint64(shardID), 10)
 }

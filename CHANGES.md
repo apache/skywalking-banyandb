@@ -9,6 +9,7 @@ Release Notes.
 - Check unregistered nodes in background.
 - Improve sorting performance of stream.
 - Add the measure query trace.
+- Assign a separate lookup table to each group in the maglev selector.
 
 ### Bugs
 
