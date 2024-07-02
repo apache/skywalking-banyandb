@@ -18,36 +18,81 @@
 package node
 
 import (
+	"sort"
+	"strconv"
+	"sync"
+
 	"github.com/kkdai/maglev"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
+const lookupTableSize = 65537
+
 var _ Selector = (*maglevSelector)(nil)
 
 type maglevSelector struct {
-	maglev *maglev.Maglev
+	routers sync.Map
+	nodes   []string
+	mutex   sync.RWMutex
 }
 
 func (m *maglevSelector) AddNode(node *databasev1.Node) {
-	_ = m.maglev.Add(node.GetMetadata().GetName())
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	for i := range m.nodes {
+		if m.nodes[i] == node.GetMetadata().GetName() {
+			return
+		}
+	}
+	m.nodes = append(m.nodes, node.GetMetadata().GetName())
+	sort.StringSlice(m.nodes).Sort()
+	m.routers.Range(func(_, value any) bool {
+		_ = value.(*maglev.Maglev).Set(m.nodes)
+		return true
+	})
 }
 
 func (m *maglevSelector) RemoveNode(node *databasev1.Node) {
-	_ = m.maglev.Remove(node.GetMetadata().GetName())
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	for i := range m.nodes {
+		if m.nodes[i] == node.GetMetadata().GetName() {
+			m.nodes = append(m.nodes[:i], m.nodes[i+1:]...)
+			break
+		}
+	}
+	m.routers.Range(func(_, value any) bool {
+		_ = value.(*maglev.Maglev).Set(m.nodes)
+		return true
+	})
 }
 
 func (m *maglevSelector) Pick(group, name string, shardID uint32) (string, error) {
-	return m.maglev.Get(formatSearchKey(group, name, shardID))
+	router, ok := m.routers.Load(group)
+	if ok {
+		return router.(*maglev.Maglev).Get(formatSearchKey(name, shardID))
+	}
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	router, ok = m.routers.Load(group)
+	if ok {
+		return router.(*maglev.Maglev).Get(formatSearchKey(name, shardID))
+	}
+
+	mTab, err := maglev.NewMaglev(m.nodes, lookupTableSize)
+	if err != nil {
+		return "", err
+	}
+	m.routers.Store(group, mTab)
+	return mTab.Get(formatSearchKey(name, shardID))
 }
 
 // NewMaglevSelector creates a new backend selector based on Maglev hashing algorithm.
-func NewMaglevSelector() (Selector, error) {
-	alg, err := maglev.NewMaglev(nil, 65537)
-	if err != nil {
-		return nil, err
-	}
-	return &maglevSelector{
-		maglev: alg,
-	}, nil
+func NewMaglevSelector() Selector {
+	return &maglevSelector{}
+}
+
+func formatSearchKey(name string, shardID uint32) string {
+	return name + "-" + strconv.FormatUint(uint64(shardID), 10)
 }
