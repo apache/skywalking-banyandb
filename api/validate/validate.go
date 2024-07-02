@@ -64,6 +64,17 @@ func GroupForStreamOrMeasure(group *commonv1.Group) error {
 	if group.ResourceOpts.Ttl.Unit == commonv1.IntervalRule_UNIT_UNSPECIFIED {
 		return errors.New("group ttl unit is unspecified")
 	}
+	if group.ResourceOpts.Policy != nil {
+		if group.ResourceOpts.Policy.HotInterval.Num <= 0 {
+			return errors.New("group policy hot interval num is invalid")
+		}
+		if group.ResourceOpts.Policy.WarmInterval.Num <= 0 {
+			return errors.New("group policy warm interval is invalid")
+		}
+		if group.ResourceOpts.Policy.ScheduleTime != nil && group.ResourceOpts.Policy.ScheduleTime.Num <= 0 {
+			return errors.New("group policy schedule time is invalid")
+		}
+	}
 	return nil
 }
 
