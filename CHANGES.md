@@ -10,6 +10,7 @@ Release Notes.
 - Improve sorting performance of stream.
 - Add the measure query trace.
 - Assign a separate lookup table to each group in the maglev selector.
+- Convert the async local pipeline to a sync pipeline.
 
 ### Bugs
 
