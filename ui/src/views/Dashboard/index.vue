@@ -23,7 +23,7 @@ import { getTableList } from '@/api/index'
 
 const utcTime = ref({
     now: '',
-    thirtySecondsAgo: ''
+    fiftheenSecondsAgo: ''
 });
 const commonParams = {
     groups: ["_monitoring"],
@@ -64,7 +64,7 @@ const tagProjectionDisk = {
 }
 const nodes = ref([]);
 
-async function fetchTableData() {
+async function fetchNodes() {
     getCurrentUTCTime()
     const [upTimeDataPoints, cpuDataPoints, memoryDataPoints, diskDataPoints] = await Promise.all([
         fetchDataPoints("up_time", tagProjectionUptime),
@@ -73,7 +73,7 @@ async function fetchTableData() {
         fetchDataPoints("disk", tagProjectionDisk),
     ]);
     // create table rows using uptime datapoints 
-    const rows = deduplicateByNodeId(upTimeDataPoints).map(item => {
+    const rows = getLatestForEachNode(upTimeDataPoints).map(item => {
         const tags = item.tagFamilies[0].tags;
         const nodeType = tags.find(tag => tag.key === 'node_type').value.str.value;
         const nodeId = tags.find(tag => tag.key === 'node_id').value.str.value;
@@ -94,45 +94,44 @@ async function fetchTableData() {
     // group by other metrics 
     const cpuData = groupBy(cpuDataPoints, "kind");
     const memoryData = groupBy(memoryDataPoints, "kind")
-    const diskDataByPath = groupBy(diskDataPoints, "path")
-    const diskData = Object.keys(diskDataByPath).reduce((acc, path) => {
-        acc[path] = groupBy(diskDataByPath[path], 'kind');
+    const paths = groupBy(diskDataPoints, "path")
+    const diskData = Object.keys(paths).reduce((acc, path) => {
+        acc[path] = groupBy(paths[path], 'kind');
         return acc;
     }, {});
     // attach metrics to table 
-    rows.forEach(node => {
-        node.cpu = getFieldValueByNodeId(cpuData.system, node.node_id);
-        node.memory = {
-            used: getFieldValueByNodeId(memoryData.used, node.node_id),
-            total: getFieldValueByNodeId(memoryData.total, node.node_id),
-            used_percent: getFieldValueByNodeId(memoryData.used_percent, node.node_id),
+    rows.forEach(row => {
+        row.cpu = getLatestField(cpuData.system, row.node_id);
+        row.memory = {
+            used: getLatestField(memoryData.used, row.node_id),
+            total: getLatestField(memoryData.total, row.node_id),
+            used_percent: getLatestField(memoryData.used_percent, row.node_id),
         };
-        node.disk = {}
+        row.disk = {}
         for (const path in diskData) {
-            node.disk[path] = {
-                used: getFieldValueByNodeId(diskData[path].used, node.node_id),
-                total: getFieldValueByNodeId(diskData[path].total, node.node_id),
-                used_percent: getFieldValueByNodeId(diskData[path].used_percent, node.node_id)
+            row.disk[path] = {
+                used: getLatestField(diskData[path].used, row.node_id),
+                total: getLatestField(diskData[path].total, row.node_id),
+                used_percent: getLatestField(diskData[path].used_percent, row.node_id)
             }
         }
     });
     nodes.value = rows
-    console.log(rows)
 }
 
 function getCurrentUTCTime() {
     const now = new Date();
     utcTime.value.now = now.toISOString();
 
-    const FiftheenSecondsAgo = new Date(now.getTime() - 15000);
-    utcTime.value.thirtySecondsAgo = FiftheenSecondsAgo.toISOString();
+    const fiftheenSecondsAgo = new Date(now.getTime() - 15000);
+    utcTime.value.fiftheenSecondsAgo = fiftheenSecondsAgo.toISOString();
 }
 
 async function fetchDataPoints(type, tagProjection) {
     const params = JSON.parse(JSON.stringify(commonParams));
     params.name = type;
     params.timeRange = {
-        begin: utcTime.value.thirtySecondsAgo,
+        begin: utcTime.value.fiftheenSecondsAgo,
         end: utcTime.value.now,
     };
     params.tagProjection = tagProjection
@@ -141,22 +140,6 @@ async function fetchDataPoints(type, tagProjection) {
         return res.data.dataPoints;
     }
     return null; // Handle the case when status is not 200
-}
-
-function deduplicateByNodeId(data) {
-    const nodeDataMap = {};
-    data.forEach(item => {
-        const nodeIdTag = item.tagFamilies[0].tags.find(tag => tag.key === "node_id");
-        const nodeId = nodeIdTag.value.str.value;
-
-        // Only add the item if it hasn't been added before
-        if (!nodeDataMap[nodeId]) {
-            nodeDataMap[nodeId] = item;
-        }
-    });
-
-    // The values in nodeDataMap are the first entries for each node ID
-    return Object.values(nodeDataMap);
 }
 
 function groupBy(data, key) {
@@ -170,26 +153,57 @@ function groupBy(data, key) {
     }, {});
 }
 
-function getFieldValueByNodeId(data, nodeId) {
-    // Find the object with the matching node_id
-    const item = data.find(item => {
-        const nodeIdTag = item.tagFamilies[0].tags.find(tag => tag.key === 'node_id');
-        return nodeIdTag.value.str.value === nodeId;
+// depuplicate by getting the latest data for each node id 
+function getLatestForEachNode(data) {
+    const nodeDataMap = {};
+    data.forEach(item => {
+        const nodeIdTag = item.tagFamilies[0].tags.find(tag => tag.key === "node_id");
+        const nodeId = nodeIdTag.value.str.value;
+        const timestamp = new Date(item.timestamp).getTime();
+
+        if (!nodeDataMap[nodeId] || timestamp > nodeDataMap[nodeId].timestamp) {
+            nodeDataMap[nodeId] = { ...item, timestamp };
+        }
     });
 
-    // Return the first field value if the object is found
-    if (item && item.fields.length > 0) {
-        return item.fields[0].value.float.value;
+    const uniqueNodeData = Object.values(nodeDataMap).map(item => {
+        delete item.timestamp; // Remove the timestamp property added for comparison
+        return item;
+    });
+    return uniqueNodeData
+}
+
+// get latest field value by nodeId 
+function getLatestField(data, nodeId) {
+    let latestItem = null;
+    let latestTimestamp = 0;
+
+    // Iterate through each item in the data array
+    data.forEach(item => {
+        const nodeIdTag = item.tagFamilies[0].tags.find(tag => tag.key === 'node_id');
+        const currentNodeId = nodeIdTag.value.str.value;
+        const timestamp = new Date(item.timestamp).getTime(); // Convert timestamp to milliseconds
+
+        // Check if the current item matches the nodeId and is the latest
+        if (currentNodeId === nodeId && timestamp > latestTimestamp) {
+            latestTimestamp = timestamp;
+            latestItem = item;
+        }
+    });
+
+    // Return the first field value if a matching latest item is found
+    if (latestItem && latestItem.fields.length > 0) {
+        return latestItem.fields[0].value.float.value;
     }
 
-    // Return null if the object is not found or there are no fields
+    // Return null if no matching item is found or there are no fields
     return null;
 }
 
 onMounted(() => {
-    fetchTableData();
+    fetchNodes();
     // Optional: Update the time every 15 seconds
-    setInterval(fetchTableData, 15000);
+    setInterval(fetchNodes, 15000);
 });
 </script>
 
@@ -201,7 +215,7 @@ onMounted(() => {
         <div>
             <h1>Current UTC Time</h1>
             <p>Now: {{ utcTime.now }}</p>
-            <p>30 Seconds Ago: {{ utcTime.thirtySecondsAgo }}</p>
+            <p>15 Seconds Ago: {{ utcTime.fiftheenSecondsAgo }}</p>
         </div>
         <table>
             <thead>
