@@ -25,10 +25,100 @@ const utcTime = ref({
     now: '',
     thirtySecondsAgo: ''
 });
+const commonParams = {
+    groups: ["_monitoring"],
+    offset: 0,
+    orderBy: {
+        indexRuleName: "",
+        sort: "SORT_UNSPECIFIED"
+    },
+    fieldProjection: {
+        names: [
+            "value"
+        ]
+    }
+};
+const tagProjectionUptime = {
+    tagFamilies: [
+        {
+            name: "default",
+            tags: ["node_type", "node_id", "grpc_address", "http_address"]
+        }
+    ]
+}
+const tagProjection = {
+    tagFamilies: [
+        {
+            name: "default",
+            tags: ["node_id", "kind"]
+        }
+    ]
+}
+const tagProjectionDisk = {
+    tagFamilies: [
+        {
+            name: "default",
+            tags: ["node_id", "kind", "path"]
+        }
+    ]
+}
+const nodes = ref([]);
 
-const upTimeDataContent = ref(null);
-const memoryDataContent = ref(null);
-const diskDataContent = ref(null);
+async function fetchTableData() {
+    getCurrentUTCTime()
+    const [upTimeDataPoints, cpuDataPoints, memoryDataPoints, diskDataPoints] = await Promise.all([
+        fetchDataPoints("up_time", tagProjectionUptime),
+        fetchDataPoints("cpu_state", tagProjection),
+        fetchDataPoints("memory_state", tagProjection),
+        fetchDataPoints("disk", tagProjectionDisk),
+    ]);
+    // create table rows using uptime datapoints 
+    const rows = deduplicateByNodeId(upTimeDataPoints).map(item => {
+        const tags = item.tagFamilies[0].tags;
+        const nodeType = tags.find(tag => tag.key === 'node_type').value.str.value;
+        const nodeId = tags.find(tag => tag.key === 'node_id').value.str.value;
+        const grpcAddress = tags.find(tag => tag.key === 'grpc_address').value.str.value;
+        const httpAddress = tags.find(tag => tag.key === 'http_address').value.str.value;
+        const value = item.fields.find(field => field.name === 'value').value.float.value;
+        return {
+            node_id: nodeId,
+            node_type: nodeType,
+            grpc_address: grpcAddress,
+            http_address: httpAddress,
+            uptime: value
+        };
+    });
+    rows.sort((a, b) => {
+        return a.node_id.localeCompare(b.node_id);
+    });
+    // group by other metrics 
+    const cpuData = groupBy(cpuDataPoints, "kind");
+    const memoryData = groupBy(memoryDataPoints, "kind")
+    const diskDataByPath = groupBy(diskDataPoints, "path")
+    const diskData = Object.keys(diskDataByPath).reduce((acc, path) => {
+        acc[path] = groupBy(diskDataByPath[path], 'kind');
+        return acc;
+    }, {});
+    // attach metrics to table 
+    rows.forEach(node => {
+        node.cpu = getFieldValueByNodeId(cpuData.system, node.node_id);
+        node.memory = {
+            used: getFieldValueByNodeId(memoryData.used, node.node_id),
+            total: getFieldValueByNodeId(memoryData.total, node.node_id),
+            used_percent: getFieldValueByNodeId(memoryData.used_percent, node.node_id),
+        };
+        node.disk = {}
+        for (const path in diskData) {
+            node.disk[path] = {
+                used: getFieldValueByNodeId(diskData[path].used, node.node_id),
+                total: getFieldValueByNodeId(diskData[path].total, node.node_id),
+                used_percent: getFieldValueByNodeId(diskData[path].used_percent, node.node_id)
+            }
+        }
+    });
+    nodes.value = rows
+    console.log(rows)
+}
 
 function getCurrentUTCTime() {
     const now = new Date();
@@ -38,118 +128,69 @@ function getCurrentUTCTime() {
     utcTime.value.thirtySecondsAgo = FiftheenSecondsAgo.toISOString();
 }
 
-const commonParams = {
-    groups: ["_monitoring"],
-    offset: 0,
-    limit: 0,
-    orderBy: {
-        indexRuleName: "",
-        sort: "SORT_UNSPECIFIED"
-    },
-    tagProjection: {
-        tagFamilies: [
-            {
-                name: "default",
-                tags: ["node_type", "node_id", "grpc_address", "http_address"]
-            }
-        ]
-    },
-    fieldProjection: {
-        names: [
-            "value"
-        ]
+async function fetchDataPoints(type, tagProjection) {
+    const params = JSON.parse(JSON.stringify(commonParams));
+    params.name = type;
+    params.timeRange = {
+        begin: utcTime.value.thirtySecondsAgo,
+        end: utcTime.value.now,
+    };
+    params.tagProjection = tagProjection
+    const res = await getTableList(params, "measure");
+    if (res.status === 200) {
+        return res.data.dataPoints;
     }
-};
-
-function fetchData() {
-    getCurrentUTCTime();
-    fetchUptime();
-    fetchMemory();
-    fetchDisk();
+    return null; // Handle the case when status is not 200
 }
 
-function fetchUptime() {
-    const params = JSON.parse(JSON.stringify(commonParams));
-    params.name = "up_time"
-    params.timeRange =  {
-        begin: utcTime.value.thirtySecondsAgo,
-        end: utcTime.value.now,
-    },
-    getTableList(params, "measure")
-        .then((res) => {
-            if (res.status === 200) {
-                upTimeDataContent.value = getLatestDataPointsForEachNode(res.data.dataPoints)
-            }
-        })
-}
-
-function fetchMemory() {
-    const params = JSON.parse(JSON.stringify(commonParams));
-    params.name = "memory_state"
-    params.timeRange =  {
-        begin: utcTime.value.thirtySecondsAgo,
-        end: utcTime.value.now,
-    },
-    getTableList(params, "measure")
-        .then((res) => {
-            if (res.status === 200) {
-                memoryDataContent.value = getLatestDataPointsForEachNode(res.data.dataPoints)
-            }
-        })
-}
-
-function fetchDisk() {
-    const params = JSON.parse(JSON.stringify(commonParams));
-    params.name = "disk"
-    params.timeRange =  {
-        begin: utcTime.value.thirtySecondsAgo,
-        end: utcTime.value.now,
-    },
-    getTableList(params, "measure")
-        .then((res) => {
-            if (res.status === 200) {
-                diskDataContent.value = getLatestDataPointsForEachNode(res.data.dataPoints)
-            }
-        })
-}
-
-
-// get the latest data for each node id 
-function getLatestDataPointsForEachNode(data) {
+function deduplicateByNodeId(data) {
     const nodeDataMap = {};
     data.forEach(item => {
         const nodeIdTag = item.tagFamilies[0].tags.find(tag => tag.key === "node_id");
         const nodeId = nodeIdTag.value.str.value;
-        const timestamp = new Date(item.timestamp).getTime();
 
-        if (!nodeDataMap[nodeId] || timestamp > nodeDataMap[nodeId].timestamp) {
-            nodeDataMap[nodeId] = { ...item, timestamp };
+        // Only add the item if it hasn't been added before
+        if (!nodeDataMap[nodeId]) {
+            nodeDataMap[nodeId] = item;
         }
     });
 
-    const uniqueNodeData = Object.values(nodeDataMap).map(item => {
-        delete item.timestamp; // Remove the timestamp property added for comparison
-        return item;
+    // The values in nodeDataMap are the first entries for each node ID
+    return Object.values(nodeDataMap);
+}
+
+function groupBy(data, key) {
+    return data.reduce((acc, obj) => {
+        const keyValue = obj.tagFamilies[0].tags.find(tag => tag.key === key).value.str.value;
+        if (!acc[keyValue]) {
+            acc[keyValue] = [];
+        }
+        acc[keyValue].push(obj);
+        return acc;
+    }, {});
+}
+
+function getFieldValueByNodeId(data, nodeId) {
+    // Find the object with the matching node_id
+    const item = data.find(item => {
+        const nodeIdTag = item.tagFamilies[0].tags.find(tag => tag.key === 'node_id');
+        return nodeIdTag.value.str.value === nodeId;
     });
-    return uniqueNodeData
+
+    // Return the first field value if the object is found
+    if (item && item.fields.length > 0) {
+        return item.fields[0].value.float.value;
+    }
+
+    // Return null if the object is not found or there are no fields
+    return null;
 }
 
 onMounted(() => {
-    fetchData();
+    fetchTableData();
     // Optional: Update the time every 15 seconds
-    setInterval(fetchData, 15000);
+    setInterval(fetchTableData, 15000);
 });
-
-
-function getTagValue(tags, key) {
-    const tag = tags.find(tag => tag.key === key);
-    return tag ? tag.value.str.value : null;
-}
-
-function getFieldValue(fields, name) {
-    const field = fields.find(field => field.name === name);
-    return field ? field.value.float.value : null;
-}
 </script>
 
 <template>
@@ -161,29 +202,42 @@ function getFieldValue(fields, name) {
             <h1>Current UTC Time</h1>
             <p>Now: {{ utcTime.now }}</p>
             <p>30 Seconds Ago: {{ utcTime.thirtySecondsAgo }}</p>
-
-            <h2>Fetched Data</h2>
-            <div v-if="upTimeDataContent && upTimeDataContent.length > 0">
-                <div v-for="(item, index) in upTimeDataContent" :key="index" class="data-row">
-                    <!-- Customize the display of each item as needed -->
-                    <p><strong>Node ID:</strong> {{ getTagValue(item.tagFamilies[0].tags, 'node_id') }}</p>
-                    <p><strong>Node Type:</strong> {{ getTagValue(item.tagFamilies[0].tags, 'node_type') }}</p>
-                    <p><strong>gRPC Address:</strong> {{ getTagValue(item.tagFamilies[0].tags, 'grpc_address') }}</p>
-                    <p><strong>HTTP Address:</strong> {{ getTagValue(item.tagFamilies[0].tags, 'http_address') }}</p>
-                    <p><strong>Up Time:</strong> {{ getFieldValue(item.fields, 'value') }}</p>
-                </div>
-            </div>
-            <div v-if="memoryDataContent && memoryDataContent.length > 0">
-                <div v-for="(item, index) in memoryDataContent" :key="index" class="data-row">
-                    <p><strong>Memory:</strong> {{ getFieldValue(item.fields, 'value') }}</p>
-                </div>
-            </div>
-            <div v-if="diskDataContent && diskDataContent.length > 0">
-                <div v-for="(item, index) in diskDataContent" :key="index" class="data-row">
-                    <p><strong>Disk:</strong> {{ getFieldValue(item.fields, 'value') }}</p>
-                </div>
-            </div>
         </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Node ID</th>
+                    <th>Type</th>
+                    <th>gRPC Address</th>
+                    <th>HTTP Address</th>
+                    <th>Uptime</th>
+                    <th>CPU</th>
+                    <th>Memory Used</th>
+                    <th>Memory Total</th>
+                    <th>Memory Used %</th>
+                    <th>Disk Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr v-for="node in nodes" :key="node.node_id">
+                    <td>{{ node.node_id }}</td>
+                    <td>{{ node.node_type }}</td>
+                    <td>{{ node.grpc_address }}</td>
+                    <td>{{ node.http_address || 'N/A' }}</td>
+                    <td>{{ node.uptime.toFixed(2) }} s</td>
+                    <td>{{ node.cpu }}</td>
+                    <td>{{ node.memory.used }}</td>
+                    <td>{{ node.memory.total }}</td>
+                    <td>{{ (node.memory.used_percent * 100).toFixed(2) }}%</td>
+                    <td>
+                        <div v-for="(value, key) in node.disk" :key="key">
+                            {{ key }}: Used: {{ value.used || 'N/A' }}, Total: {{ value.total || 'N/A' }}, Used %: {{
+                                value.used_percent ? (value.used_percent * 100).toFixed(2) + '%' : 'N/A' }}
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
     </div>
 </template>
 
