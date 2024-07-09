@@ -37,7 +37,7 @@ func (g *Gauge) Add(delta float64, labelValues ...string) {
 func (g *Gauge) Set(value float64, labelValues ...string) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	tagValues := buildTagValues(g.scope, labelValues...)
+	tagValues := buildTagValues(g.nodeInfo, g.scope, labelValues...)
 	hash := seriesHash(tagValues)
 	key := string(hash)
 	g.metrics[key] = metricWithLabelValues{

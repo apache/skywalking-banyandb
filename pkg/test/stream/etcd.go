@@ -45,6 +45,9 @@ var (
 
 // PreloadSchema loads schemas from files in the booting process.
 func PreloadSchema(ctx context.Context, e schema.Registry) error {
+	if e == nil {
+		return nil
+	}
 	g := &commonv1.Group{}
 	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
 		return err

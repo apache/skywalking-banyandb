@@ -48,8 +48,8 @@ func (s *server) Role() databasev1.Role {
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
 	fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
-	fs.StringArrayVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
-	fs.StringArrayVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
+	fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
+	fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
 	return fs
 }
 
@@ -86,8 +86,10 @@ func (s *server) Serve() run.StopNotify {
 
 func (s *server) GracefulStop() {
 	s.Service.GracefulStop()
-	s.metaServer.Close()
-	<-s.metaServer.StopNotify()
+	if s.metaServer != nil {
+		s.metaServer.Close()
+		<-s.metaServer.StopNotify()
+	}
 }
 
 // NewService returns a new metadata repository Service.

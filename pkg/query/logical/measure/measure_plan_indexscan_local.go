@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -153,6 +154,8 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		orderByType = pbv1.OrderByTypeSeries
 	}
 	ec := executor.FromMeasureExecutionContext(ctx)
+	ctx, stop := i.startSpan(ctx, query.GetTracer(ctx), orderByType, orderBy)
+	defer stop(err)
 	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
 		Name:            i.metadata.GetName(),
 		TimeRange:       &i.timeRange,
@@ -209,6 +212,9 @@ type resultMIterator struct {
 }
 
 func (ei *resultMIterator) Next() bool {
+	if ei.result == nil {
+		return false
+	}
 	ei.i++
 	if ei.i < len(ei.current) {
 		return true
@@ -256,6 +262,33 @@ func (ei *resultMIterator) Current() []*measurev1.DataPoint {
 }
 
 func (ei *resultMIterator) Close() error {
-	ei.result.Release()
+	if ei.result != nil {
+		ei.result.Release()
+	}
 	return nil
+}
+
+func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, orderType pbv1.OrderByType, orderBy *pbv1.OrderBy) (context.Context, func(error)) {
+	if tracer == nil {
+		return ctx, func(error) {}
+	}
+
+	span, ctx := tracer.StartSpan(ctx, "indexScan-%s", i.metadata)
+	sortName := modelv1.Sort_name[int32(orderBy.Sort)]
+	switch orderType {
+	case pbv1.OrderByTypeTime:
+		span.Tag("orderBy", "time "+sortName)
+	case pbv1.OrderByTypeIndex:
+		span.Tag("orderBy", fmt.Sprintf("indexRule:%s", orderBy.Index.Metadata.Name))
+	case pbv1.OrderByTypeSeries:
+		span.Tag("orderBy", "series")
+	}
+	span.Tag("details", i.String())
+
+	return ctx, func(err error) {
+		if err != nil {
+			span.Error(err)
+		}
+		span.Stop()
+	}
 }

@@ -295,6 +295,85 @@ tags:
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Property).To(HaveLen(2))
 	})
+
+	It("list properties in a container by id", func() {
+		// create another property for list operation
+		rootCmd.SetArgs([]string{"property", "apply", "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  container:
+    group: ui-template 
+    name: service
+  id: spring
+tags:
+  - key: content
+    value:
+      str:
+        value: bar
+  - key: state
+    value:
+      int:
+        value: 1
+`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("created: true"))
+		Expect(out).To(ContainSubstring("tagsNum: 2"))
+
+		rootCmd.SetArgs([]string{"property", "list", "-g", "ui-template", "-n", "service", "--ids", "spring"})
+		out = capturer.CaptureStdout(func() {
+			cmd.ResetFlags()
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		resp := new(propertyv1.ListResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.Property).To(HaveLen(1))
+		Expect(resp.Property[0].Metadata.GetId()).To(Equal("spring"))
+		Expect(resp.Property[0].Tags).To(HaveLen(2))
+	})
+
+	It("list properties in a container by ids and tags", func() {
+		// create another property for list operation
+		rootCmd.SetArgs([]string{"property", "apply", "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  container:
+    group: ui-template 
+    name: service
+  id: spring
+tags:
+  - key: content
+    value:
+      str:
+        value: bar
+  - key: state
+    value:
+      int:
+        value: 1
+`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("created: true"))
+		Expect(out).To(ContainSubstring("tagsNum: 2"))
+
+		rootCmd.SetArgs([]string{"property", "list", "-g", "ui-template", "-n", "service", "--ids", "spring", "--tags", "content"})
+		out = capturer.CaptureStdout(func() {
+			cmd.ResetFlags()
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		resp := new(propertyv1.ListResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.Property).To(HaveLen(1))
+		Expect(resp.Property[0].Metadata.GetId()).To(Equal("spring"))
+		Expect(resp.Property[0].Tags).To(HaveLen(1))
+	})
+
 	It("keepalive not found", func() {
 		rootCmd.SetArgs([]string{
 			"property", "keepalive", "-i", "111",

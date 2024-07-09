@@ -20,9 +20,11 @@ package dquery
 
 import (
 	"context"
+	"errors"
 
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -42,13 +44,14 @@ const (
 var _ run.Service = (*queryService)(nil)
 
 type queryService struct {
-	log         *logger.Logger
 	metaService metadata.Repo
+	pipeline    queue.Server
+	log         *logger.Logger
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
 	tqp         *topNQueryProcessor
 	closer      *run.Closer
-	pipeline    queue.Server
+	nodeID      string
 }
 
 // NewService return a new query service.
@@ -78,7 +81,13 @@ func (q *queryService) Name() string {
 	return moduleName
 }
 
-func (q *queryService) PreRun(_ context.Context) error {
+func (q *queryService) PreRun(ctx context.Context) error {
+	val := ctx.Value(common.ContextNodeKey)
+	if val == nil {
+		return errors.New("node id is empty")
+	}
+	node := val.(common.Node)
+	q.nodeID = node.NodeID
 	q.log = logger.GetLogger(moduleName)
 	q.sqp.streamService = stream.NewPortableRepository(q.metaService, q.log)
 	q.mqp.measureService = measure.NewPortableRepository(q.metaService, q.log)

@@ -141,28 +141,44 @@ func parseCondition(cond *modelv1.Condition, indexRule *databasev1.IndexRule, ex
 		return newNot(indexRule, newEq(indexRule, expr)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_HAVING:
 		bb := expr.Bytes()
-		and := newAnd(len(bb))
+		l := len(bb)
+		if l < 1 {
+			return ENode, [][]*modelv1.TagValue{entity}, nil
+		}
+		and := newAnd(l)
 		for _, b := range bb {
 			and.append(newEq(indexRule, newBytesLiteral(b)))
 		}
 		return and, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_HAVING:
 		bb := expr.Bytes()
-		and := newAnd(len(bb))
+		l := len(bb)
+		if l < 1 {
+			return ENode, [][]*modelv1.TagValue{entity}, nil
+		}
+		and := newAnd(l)
 		for _, b := range bb {
 			and.append(newEq(indexRule, newBytesLiteral(b)))
 		}
 		return newNot(indexRule, and), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_IN:
 		bb := expr.Bytes()
-		or := newOr(len(bb))
+		l := len(bb)
+		if l < 1 {
+			return ENode, [][]*modelv1.TagValue{entity}, nil
+		}
+		or := newOr(l)
 		for _, b := range bb {
 			or.append(newEq(indexRule, newBytesLiteral(b)))
 		}
 		return or, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_IN:
 		bb := expr.Bytes()
-		or := newOr(len(bb))
+		l := len(bb)
+		if l < 1 {
+			return ENode, [][]*modelv1.TagValue{entity}, nil
+		}
+		or := newOr(l)
 		for _, b := range bb {
 			or.append(newEq(indexRule, newBytesLiteral(b)))
 		}

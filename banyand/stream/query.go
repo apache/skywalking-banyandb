@@ -422,7 +422,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pb
 	if err != nil {
 		return nil, err
 	}
-	elementRefList, sortedRefMap, err := indexSort(s, sqo, tabWrappers, seriesList, filteredRefMap)
+	elementRefList, sortedRefMap, err := s.indexSort(sqo, tabWrappers, seriesList, filteredRefMap)
 	if err != nil {
 		return nil, err
 	}
@@ -547,7 +547,7 @@ func indexSearch(ctx context.Context, sqo pbv1.StreamQueryOptions,
 	return filteredRefMap, nil
 }
 
-func indexSort(s *stream, sqo pbv1.StreamQueryOptions, tabWrappers []storage.TSTableWrapper[*tsTable],
+func (s *stream) indexSort(sqo pbv1.StreamQueryOptions, tabWrappers []storage.TSTableWrapper[*tsTable],
 	seriesList pbv1.SeriesList, filteredRefMap map[common.SeriesID][]int64,
 ) ([]*elementRef, map[common.SeriesID][]int64, error) {
 	if sqo.Order == nil || sqo.Order.Index == nil {
@@ -559,6 +559,11 @@ func indexSort(s *stream, sqo pbv1.StreamQueryOptions, tabWrappers []storage.TST
 	}
 	desc := sqo.Order != nil && sqo.Order.Index == nil && sqo.Order.Sort == modelv1.Sort_SORT_DESC
 	itemIter := itersort.NewItemIter[*index.ItemRef](iters, desc)
+	defer func() {
+		if err := itemIter.Close(); err != nil {
+			s.l.Err(err).Msg("failed to close itemIter")
+		}
+	}()
 
 	var elementRefList []*elementRef
 	sortedRefMap := make(map[common.SeriesID][]int64)

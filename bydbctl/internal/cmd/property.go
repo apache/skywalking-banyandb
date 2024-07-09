@@ -115,8 +115,8 @@ func newPropertyCmd() *cobra.Command {
 		},
 	}
 	listCmd.Flags().StringVarP(&name, "name", "n", "", "the name of the resource")
-	listCmd.Flags().StringArrayVarP(&ids, "ids", "", nil, "id selector")
-	listCmd.Flags().StringArrayVarP(&tags, "tags", "t", nil, "tag selector")
+	listCmd.Flags().StringSliceVarP(&ids, "ids", "", nil, "id selector")
+	listCmd.Flags().StringSliceVarP(&tags, "tags", "t", nil, "tag selector")
 
 	var leaseID int64
 	keepAliveCmd := &cobra.Command{

@@ -63,17 +63,16 @@ type queryOptions struct {
 	maxTimestamp int64
 }
 
-func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1.MeasureQueryResult, error) {
+func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (mqr pbv1.MeasureQueryResult, err error) {
 	if mqo.TimeRange == nil || len(mqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
 	}
-	var result queryResult
 	db := s.databaseSupplier.SupplyTSDB()
 	if db == nil {
-		return &result, nil
+		return mqr, nil
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
 	tabWrappers := tsdb.SelectTSTables(*mqo.TimeRange)
@@ -95,7 +94,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		return nil, err
 	}
 	if len(sl) < 1 {
-		return &result, nil
+		return mqr, nil
 	}
 	var sids []common.SeriesID
 	for i := range sl {
@@ -108,6 +107,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
 	}
 	var n int
+	var result queryResult
 	for i := range tabWrappers {
 		s := tabWrappers[i].Table().currentSnapshot()
 		if s == nil {
@@ -120,48 +120,58 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (pbv1
 		}
 		result.snapshots = append(result.snapshots, s)
 	}
-	bma := generateBlockMetadataArray()
-	defer releaseBlockMetadataArray(bma)
-	// TODO: cache tstIter
-	var tstIter tstIter
-	defer tstIter.reset()
-	originalSids := make([]common.SeriesID, len(sids))
-	copy(originalSids, sids)
-	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
-	if tstIter.Error() != nil {
-		return nil, fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
-	}
-	projectedEntityOffsets, tagProjectionOnPart := s.parseTagProjection(qo, &result)
-	result.tagProjection = qo.TagProjection
-	qo.TagProjection = tagProjectionOnPart
-	for tstIter.nextBlock() {
-		bc := generateBlockCursor()
-		p := tstIter.piHeap[0]
 
-		seriesID := p.curBlock.seriesID
-		if result.entityValues != nil && result.entityValues[seriesID] == nil {
-			for i := range sl {
-				if sl[i].ID == seriesID {
-					tag := make(map[string]*modelv1.TagValue)
-					for name, offset := range projectedEntityOffsets {
-						tag[name] = sl[i].EntityValues[offset]
+	func() {
+		bma := generateBlockMetadataArray()
+		defer releaseBlockMetadataArray(bma)
+		defFn := startBlockScanSpan(ctx, len(sids), parts, &result)
+		defer defFn()
+		// TODO: cache tstIter
+		var tstIter tstIter
+		defer tstIter.reset()
+		originalSids := make([]common.SeriesID, len(sids))
+		copy(originalSids, sids)
+		sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
+		tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+		if tstIter.Error() != nil {
+			err = fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
+			return
+		}
+		projectedEntityOffsets, tagProjectionOnPart := s.parseTagProjection(qo, &result)
+		result.tagProjection = qo.TagProjection
+		qo.TagProjection = tagProjectionOnPart
+
+		for tstIter.nextBlock() {
+			bc := generateBlockCursor()
+			p := tstIter.piHeap[0]
+
+			seriesID := p.curBlock.seriesID
+			if result.entityValues != nil && result.entityValues[seriesID] == nil {
+				for i := range sl {
+					if sl[i].ID == seriesID {
+						tag := make(map[string]*modelv1.TagValue)
+						for name, offset := range projectedEntityOffsets {
+							tag[name] = sl[i].EntityValues[offset]
+						}
+						result.entityValues[seriesID] = tag
 					}
-					result.entityValues[seriesID] = tag
 				}
 			}
+			bc.init(p.p, p.curBlock, qo)
+			result.data = append(result.data, bc)
 		}
-		bc.init(p.p, p.curBlock, qo)
-		result.data = append(result.data, bc)
-	}
-	if tstIter.Error() != nil {
-		return nil, fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
+		if tstIter.Error() != nil {
+			err = fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
+		}
+		result.sidToIndex = make(map[common.SeriesID]int)
+		for i, si := range originalSids {
+			result.sidToIndex[si] = i
+		}
+	}()
+	if err != nil {
+		return nil, err
 	}
 
-	result.sidToIndex = make(map[common.SeriesID]int)
-	for i, si := range originalSids {
-		result.sidToIndex[si] = i
-	}
 	if mqo.Order == nil {
 		result.ascTS = true
 	} else if mqo.Order.Sort == modelv1.Sort_SORT_ASC || mqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {

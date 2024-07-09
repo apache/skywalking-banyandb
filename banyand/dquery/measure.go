@@ -19,6 +19,8 @@ package dquery
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -27,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 )
@@ -39,7 +42,8 @@ type measureQueryProcessor struct {
 
 func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
-	now := time.Now().UnixNano()
+	n := time.Now()
+	now := n.UnixNano()
 	if !ok {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
@@ -79,8 +83,28 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("query plan")
 	}
-
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithDistributedExecutionContext(context.Background(), &distributedContext{
+	ctx := context.Background()
+	var tracer *query.Tracer
+	var span *query.Span
+	if queryCriteria.Trace {
+		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
+		span, ctx = tracer.StartSpan(ctx, "distributed-%s", p.queryService.nodeID)
+		span.Tag("plan", plan.String())
+		defer func() {
+			data := resp.Data()
+			switch d := data.(type) {
+			case *measurev1.QueryResponse:
+				d.Trace = tracer.ToProto()
+			case common.Error:
+				span.Error(errors.New(d.Msg()))
+				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+			default:
+				panic("unexpected data type")
+			}
+			span.Stop()
+		}()
+	}
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithDistributedExecutionContext(ctx, &distributedContext{
 		Broadcaster: p.broadcaster,
 		timeRange:   queryCriteria.TimeRange,
 	}))
@@ -92,18 +116,34 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	defer func() {
 		if err = mIterator.Close(); err != nil {
 			ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
+			if span != nil {
+				span.Error(fmt.Errorf("fail to close the query plan: %w", err))
+			}
 		}
 	}()
 	result := make([]*measurev1.DataPoint, 0)
-	for mIterator.Next() {
-		current := mIterator.Current()
-		if len(current) > 0 {
-			result = append(result, current[0])
+	func() {
+		var r int
+		if tracer != nil {
+			iterSpan, _ := tracer.StartSpan(ctx, "iterator")
+			defer func() {
+				iterSpan.Tag("rounds", fmt.Sprintf("%d", r))
+				iterSpan.Tag("size", fmt.Sprintf("%d", len(result)))
+				iterSpan.Stop()
+			}()
 		}
-	}
+		for mIterator.Next() {
+			r++
+			current := mIterator.Current()
+			if len(current) > 0 {
+				result = append(result, current[0])
+			}
+		}
+	}()
+	qr := &measurev1.QueryResponse{DataPoints: result}
 	if e := ml.Debug(); e.Enabled() {
-		e.RawJSON("ret", logger.Proto(&measurev1.QueryResponse{DataPoints: result})).Msg("got a measure")
+		e.RawJSON("ret", logger.Proto(qr)).Msg("got a measure")
 	}
-	resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{DataPoints: result})
+	resp = bus.NewMessage(bus.MessageID(now), qr)
 	return
 }

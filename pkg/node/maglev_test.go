@@ -34,8 +34,7 @@ const (
 )
 
 func TestMaglevSelector(t *testing.T) {
-	sel, err := NewMaglevSelector()
-	assert.NoError(t, err)
+	sel := NewMaglevSelector()
 	sel.AddNode(&databasev1.Node{
 		Metadata: &commonv1.Metadata{
 			Name: "data-node-1",
@@ -55,8 +54,7 @@ func TestMaglevSelector(t *testing.T) {
 }
 
 func TestMaglevSelector_EvenDistribution(t *testing.T) {
-	sel, err := NewMaglevSelector()
-	assert.NoError(t, err)
+	sel := NewMaglevSelector()
 	dataNodeNum := 10
 	for i := 0; i < dataNodeNum; i++ {
 		sel.AddNode(&databasev1.Node{
@@ -83,8 +81,8 @@ func TestMaglevSelector_EvenDistribution(t *testing.T) {
 }
 
 func TestMaglevSelector_DiffNode(t *testing.T) {
-	fullSel, _ := NewMaglevSelector()
-	brokenSel, _ := NewMaglevSelector()
+	fullSel := NewMaglevSelector()
+	brokenSel := NewMaglevSelector()
 	dataNodeNum := 10
 	for i := 0; i < dataNodeNum; i++ {
 		fullSel.AddNode(&databasev1.Node{
@@ -114,7 +112,7 @@ func TestMaglevSelector_DiffNode(t *testing.T) {
 }
 
 func BenchmarkMaglevSelector_Pick(b *testing.B) {
-	sel, _ := NewMaglevSelector()
+	sel := NewMaglevSelector()
 	dataNodeNum := 10
 	for i := 0; i < dataNodeNum; i++ {
 		sel.AddNode(&databasev1.Node{
