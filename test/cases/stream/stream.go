@@ -67,6 +67,7 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("global index", helpers.Args{Input: "global_index", Duration: 1 * time.Hour}),
 	g.Entry("multi-global index", helpers.Args{Input: "global_indices", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag", helpers.Args{Input: "filter_tag", Duration: 1 * time.Hour}),
+	g.Entry("filter by non-indexed tag order by duration desc with limit 3", helpers.Args{Input: "sort_duration_no_index_limit", Duration: 1 * time.Hour}),
 	g.Entry("get empty result by non-indexed tag", helpers.Args{Input: "filter_tag_empty", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("get results by no non-index tag", helpers.Args{Input: "filter_no_indexed", Duration: 1 * time.Hour}),
 	g.Entry("numeric local index: less", helpers.Args{Input: "less", Duration: 1 * time.Hour}),
@@ -79,4 +80,9 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("indexed only tags", helpers.Args{Input: "indexed_only", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag with or", helpers.Args{Input: "filter_no_indexed_or", Duration: 1 * time.Hour}),
 	g.Entry("filter with desc order", helpers.Args{Input: "filter_order_desc", Duration: 1 * time.Hour}),
+	g.Entry("duplicated all elements", helpers.Args{Input: "duplicated_all", Duration: 1 * time.Hour, DisOrder: true}),
+	g.Entry("duplicated entity filter", helpers.Args{Input: "duplicated_entity_filter", Duration: 1 * time.Hour}),
+	g.Entry("duplicated index filter", helpers.Args{Input: "duplicated_index_filter", Duration: 1 * time.Hour}),
+	g.Entry("duplicated order by index", helpers.Args{Input: "duplicated_order_by_index", Duration: 1 * time.Hour}),
+	g.Entry("duplicated order by index with the index filter", helpers.Args{Input: "duplicated_order_by_filter", Duration: 1 * time.Hour}),
 )

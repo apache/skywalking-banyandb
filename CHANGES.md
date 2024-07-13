@@ -20,6 +20,7 @@ Release Notes.
 - Fix the bug that the data node can't re-register to etcd when the connection is lost.
 - Fix memory leak in sorting the stream by the inverted index.
 - Fix the wrong array flags parsing in command line. The array flags should be parsed by "StringSlice" instead of "StringArray".
+- Fix a bug that the Stream module didn't support duplicated in index-based filtering and sorting
 
 ## 0.6.1
 

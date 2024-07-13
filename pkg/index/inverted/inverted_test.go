@@ -185,35 +185,59 @@ func TestStore_SeriesMatch(t *testing.T) {
 }
 
 func setup(tester *assert.Assertions, s index.Store, serviceName index.FieldKey) {
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName,
-		Term: []byte("GET::/product/order"),
-	}}, 1))
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName,
-		Term: []byte("GET::/root/product"),
-	}}, 2))
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName,
-		Term: []byte("org.apache.skywalking.examples.OrderService.order"),
-	}}, 3))
-	s.(*store).flush()
+	var batch index.Batch
+	batch.Documents = append(batch.Documents,
+		index.Document{
+			Fields: []index.Field{{
+				Key:  serviceName,
+				Term: []byte("GET::/product/order"),
+			}},
+			DocID: 1,
+		},
+		index.Document{
+			Fields: []index.Field{{
+				Key:  serviceName,
+				Term: []byte("GET::/root/product"),
+			}},
+			DocID: 2,
+		},
+		index.Document{
+			Fields: []index.Field{{
+				Key:  serviceName,
+				Term: []byte("org.apache.skywalking.examples.OrderService.order"),
+			}},
+			DocID: 3,
+		},
+	)
+	tester.NoError(s.Batch(batch))
 }
 
 func setupSeries(tester *assert.Assertions, s index.Store, serviceName index.FieldKey) {
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName,
-		Term: []byte("test.a"),
-	}}, 1))
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName,
-		Term: []byte("test.b"),
-	}}, 2))
-	tester.NoError(s.Write([]index.Field{{
-		Key:  serviceName,
-		Term: []byte("test.c"),
-	}}, 3))
-	s.(*store).flush()
+	var batch index.Batch
+	batch.Documents = append(batch.Documents,
+		index.Document{
+			Fields: []index.Field{{
+				Key:  serviceName,
+				Term: []byte("test.a"),
+			}},
+			DocID: 1,
+		},
+		index.Document{
+			Fields: []index.Field{{
+				Key:  serviceName,
+				Term: []byte("test.b"),
+			}},
+			DocID: 2,
+		},
+		index.Document{
+			Fields: []index.Field{{
+				Key:  serviceName,
+				Term: []byte("test.c"),
+			}},
+			DocID: 3,
+		},
+	)
+	tester.NoError(s.Batch(batch))
 }
 
 func TestStore_MatchTerm(t *testing.T) {
@@ -229,7 +253,6 @@ func TestStore_MatchTerm(t *testing.T) {
 	}()
 	tester.NoError(err)
 	testcases.SetUp(tester, s)
-	s.(*store).flush()
 	testcases.RunServiceName(t, s)
 }
 
@@ -246,7 +269,6 @@ func TestStore_Iterator(t *testing.T) {
 	}()
 	tester.NoError(err)
 	data := testcases.SetUpDuration(tester, s)
-	s.(*store).flush()
 	testcases.RunDuration(t, data, s)
 }
 

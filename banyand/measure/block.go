@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"slices"
 	"sort"
 	"sync"
 
@@ -478,6 +479,10 @@ func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, entityValuesAll map[comm
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
 	r.Versions = append(r.Versions, bc.versions[idx:offset]...)
+	if desc {
+		slices.Reverse(r.Timestamps)
+		slices.Reverse(r.Versions)
+	}
 	var entityValues map[string]*modelv1.TagValue
 	if entityValuesAll != nil {
 		entityValues = entityValuesAll[r.SID]
@@ -537,6 +542,8 @@ OUTER:
 				for i := 0; i < size; i++ {
 					t.Values[i] = pbv1.NullTagValue
 				}
+			} else if desc {
+				slices.Reverse(t.Values)
 			}
 			tf.Tags = append(tf.Tags, t)
 		}
@@ -548,6 +555,9 @@ OUTER:
 		}
 		for _, v := range c.values[idx:offset] {
 			f.Values = append(f.Values, mustDecodeFieldValue(c.valueType, v))
+		}
+		if desc {
+			slices.Reverse(f.Values)
 		}
 		r.Fields = append(r.Fields, f)
 	}

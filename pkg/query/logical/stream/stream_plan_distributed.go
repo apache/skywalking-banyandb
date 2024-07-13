@@ -116,6 +116,8 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	return result, nil
 }
 
+var _ executor.StreamExecutable = (*distributedPlan)(nil)
+
 type distributedPlan struct {
 	s              logical.Schema
 	queryTemplate  *streamv1.QueryRequest
@@ -124,6 +126,8 @@ type distributedPlan struct {
 	desc           bool
 	maxElementSize uint32
 }
+
+func (t *distributedPlan) Close() {}
 
 func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
 	dctx := executor.FromDistributedExecutionContext(ctx)
@@ -247,4 +251,65 @@ func (s *sortableElements) iter(fn func(*streamv1.Element) (*comparableElement, 
 	}
 	s.cur = cur
 	return s.index <= len(s.elements)
+}
+
+var _ executor.StreamExecutable = (*distributedLimit)(nil)
+
+type distributedLimit struct {
+	*Parent
+	limit  uint32
+	offset uint32
+}
+
+func (l *distributedLimit) Close() {
+	l.Parent.Input.(executor.StreamExecutable).Close()
+}
+
+func (l *distributedLimit) Execute(ec context.Context) ([]*streamv1.Element, error) {
+	entities, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
+	if err != nil {
+		return nil, err
+	}
+
+	start := int(l.offset)
+	if start > len(entities) {
+		return []*streamv1.Element{}, nil
+	}
+
+	end := start + int(l.limit)
+	if end > len(entities) {
+		end = len(entities)
+	}
+	return entities[start:end], nil
+}
+
+func (l *distributedLimit) Analyze(s logical.Schema) (logical.Plan, error) {
+	var err error
+	l.Input, err = l.UnresolvedInput.Analyze(s)
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+func (l *distributedLimit) Schema() logical.Schema {
+	return l.Input.Schema()
+}
+
+func (l *distributedLimit) String() string {
+	return fmt.Sprintf("%s Distributed Limit: %d, %d", l.Input.String(), l.offset, l.limit)
+}
+
+func (l *distributedLimit) Children() []logical.Plan {
+	return []logical.Plan{l.Input}
+}
+
+func newDistributedLimit(input logical.UnresolvedPlan, offset, limit uint32) logical.UnresolvedPlan {
+	return &distributedLimit{
+		Parent: &Parent{
+			UnresolvedInput: input,
+		},
+		offset: offset,
+		limit:  limit,
+	}
 }

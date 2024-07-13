@@ -112,8 +112,9 @@ type MeasureResult struct {
 
 // StreamResult is the result of a query.
 type StreamResult struct {
+	Error       error
 	Timestamps  []int64
-	ElementIDs  []string
+	ElementIDs  []uint64
 	TagFamilies []TagFamily
 	SIDs        []common.SeriesID
 }

@@ -185,7 +185,7 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 	bw.writers.elementIDsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, elementIDsFilename), filePermission))
 }
 
-func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []string, tagFamilies [][]tagValues) {
+func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {
 	if len(timestamps) == 0 {
 		return
 	}

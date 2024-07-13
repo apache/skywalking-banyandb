@@ -76,16 +76,9 @@ func newSeriesIndex(ctx context.Context, path string, startTime time.Time, flush
 }
 
 func (s *seriesIndex) Write(docs index.Documents) error {
-	applied := make(chan struct{})
-	err := s.store.Batch(index.Batch{
+	return s.store.Batch(index.Batch{
 		Documents: docs,
-		Applied:   applied,
 	})
-	if err != nil {
-		return err
-	}
-	<-applied
-	return nil
 }
 
 var rangeOpts = index.RangeOpts{}
