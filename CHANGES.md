@@ -4,6 +4,10 @@ Release Notes.
 
 ## 0.7.0
 
+### File System Changes
+
+- Bump up the version of the file system to 1.1.0 which is not compatible with the previous version.
+
 ### Features
 
 - Check unregistered nodes in background.
