@@ -118,7 +118,7 @@ type tagValues struct {
 type elements struct {
 	seriesIDs   []common.SeriesID
 	timestamps  []int64
-	elementIDs  []string
+	elementIDs  []uint64
 	tagFamilies [][]tagValues
 }
 

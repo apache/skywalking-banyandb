@@ -51,15 +51,12 @@ func Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commo
 	// parse fields
 	plan := parseTags(criteria, metadata)
 
-	// parse offset
-	plan = newOffset(plan, criteria.GetOffset())
-
 	// parse limit
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
 	}
-	plan = newLimit(plan, limitParameter)
+	plan = newLimit(plan, criteria.GetOffset(), limitParameter)
 
 	p, err := plan.Analyze(s)
 	if err != nil {
@@ -79,21 +76,20 @@ func Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commo
 func DistributedAnalyze(criteria *streamv1.QueryRequest, s logical.Schema) (logical.Plan, error) {
 	// parse fields
 	plan := newUnresolvedDistributed(criteria)
-	// parse offset
-	plan = newOffset(plan, criteria.GetOffset())
 
 	// parse limit
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
 	}
-	plan = newLimit(plan, limitParameter)
+	plan = newDistributedLimit(plan, criteria.Offset, limitParameter)
 	return plan.Analyze(s)
 }
 
 var (
-	_ logical.Plan           = (*limit)(nil)
-	_ logical.UnresolvedPlan = (*limit)(nil)
+	_ logical.Plan              = (*limit)(nil)
+	_ logical.UnresolvedPlan    = (*limit)(nil)
+	_ executor.StreamExecutable = (*limit)(nil)
 )
 
 // Parent refers to a parent node in the execution tree(plan).
@@ -104,20 +100,46 @@ type Parent struct {
 
 type limit struct {
 	*Parent
-	LimitNum uint32
+	limitNum  uint32
+	offsetNum uint32
+}
+
+func (l *limit) Close() {
+	l.Parent.Input.(executor.StreamExecutable).Close()
 }
 
 func (l *limit) Execute(ec context.Context) ([]*streamv1.Element, error) {
-	entities, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
-	if err != nil {
-		return nil, err
+	var allEntities []*streamv1.Element
+	targetCount := int(l.limitNum)
+	offset := int(l.offsetNum)
+
+	for len(allEntities) < targetCount+offset {
+		entities, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
+		if err != nil {
+			return nil, err
+		}
+		if len(entities) == 0 {
+			break
+		}
+
+		needed := targetCount + offset - len(allEntities)
+		if len(entities) > needed {
+			allEntities = append(allEntities, entities[:needed]...)
+		} else {
+			allEntities = append(allEntities, entities...)
+		}
 	}
 
-	if len(entities) > int(l.LimitNum) {
-		return entities[:l.LimitNum], nil
+	if len(allEntities) <= offset {
+		return []*streamv1.Element{}, nil
 	}
 
-	return entities, nil
+	endIndex := offset + targetCount
+	if endIndex > len(allEntities) {
+		endIndex = len(allEntities)
+	}
+
+	return allEntities[offset:endIndex], nil
 }
 
 func (l *limit) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -134,72 +156,20 @@ func (l *limit) Schema() logical.Schema {
 }
 
 func (l *limit) String() string {
-	return fmt.Sprintf("%s Limit: %d", l.Input.String(), l.LimitNum)
+	return fmt.Sprintf("%s Limit: %d", l.Input.String(), l.limitNum)
 }
 
 func (l *limit) Children() []logical.Plan {
 	return []logical.Plan{l.Input}
 }
 
-func newLimit(input logical.UnresolvedPlan, num uint32) logical.UnresolvedPlan {
+func newLimit(input logical.UnresolvedPlan, offset, num uint32) logical.UnresolvedPlan {
 	return &limit{
 		Parent: &Parent{
 			UnresolvedInput: input,
 		},
-		LimitNum: num,
-	}
-}
-
-var (
-	_ logical.Plan           = (*offset)(nil)
-	_ logical.UnresolvedPlan = (*offset)(nil)
-)
-
-type offset struct {
-	*Parent
-	offsetNum uint32
-}
-
-func (l *offset) Execute(ec context.Context) ([]*streamv1.Element, error) {
-	elements, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(elements) > int(l.offsetNum) {
-		return elements[l.offsetNum:], nil
-	}
-
-	return []*streamv1.Element{}, nil
-}
-
-func (l *offset) Analyze(s logical.Schema) (logical.Plan, error) {
-	var err error
-	l.Input, err = l.UnresolvedInput.Analyze(s)
-	if err != nil {
-		return nil, err
-	}
-	return l, nil
-}
-
-func (l *offset) Schema() logical.Schema {
-	return l.Input.Schema()
-}
-
-func (l *offset) String() string {
-	return fmt.Sprintf("%s Offset: %d", l.Input.String(), l.offsetNum)
-}
-
-func (l *offset) Children() []logical.Plan {
-	return []logical.Plan{l.Input}
-}
-
-func newOffset(input logical.UnresolvedPlan, num uint32) logical.UnresolvedPlan {
-	return &offset{
-		Parent: &Parent{
-			UnresolvedInput: input,
-		},
-		offsetNum: num,
+		offsetNum: offset,
+		limitNum:  num,
 	}
 }
 

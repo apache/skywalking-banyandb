@@ -46,6 +46,7 @@ type Args struct {
 	Duration  time.Duration
 	WantEmpty bool
 	WantErr   bool
+	DisOrder  bool
 }
 
 // UnmarshalYAML decodes YAML raw bytes to proto.Message.

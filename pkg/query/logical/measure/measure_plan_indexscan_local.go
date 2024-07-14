@@ -108,9 +108,8 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 }
 
 var (
-	_ logical.Plan          = (*localIndexScan)(nil)
-	_ logical.Sorter        = (*localIndexScan)(nil)
-	_ logical.VolumeLimiter = (*localIndexScan)(nil)
+	_ logical.Plan   = (*localIndexScan)(nil)
+	_ logical.Sorter = (*localIndexScan)(nil)
 )
 
 type localIndexScan struct {
@@ -126,12 +125,7 @@ type localIndexScan struct {
 	projectionFieldsRefs []*logical.FieldRef
 	entities             [][]*modelv1.TagValue
 	projectionFields     []string
-	maxDataPointsSize    int
 	groupByEntity        bool
-}
-
-func (i *localIndexScan) Limit(max int) {
-	i.maxDataPointsSize = max
 }
 
 func (i *localIndexScan) Sort(order *logical.OrderBy) {
@@ -175,9 +169,9 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 }
 
 func (i *localIndexScan) String() string {
-	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; order=%s; limit=%d",
+	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; order=%s;",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		i.filter, logical.FormatTagRefs(", ", i.projectionTagsRefs...), i.order, i.maxDataPointsSize)
+		i.filter, logical.FormatTagRefs(", ", i.projectionTagsRefs...), i.order)
 }
 
 func (i *localIndexScan) Children() []logical.Plan {

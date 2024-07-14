@@ -36,7 +36,7 @@ import (
 func Test_block_reset(t *testing.T) {
 	type fields struct {
 		timestamps  []int64
-		elementIDs  []string
+		elementIDs  []uint64
 		tagFamilies []tagFamily
 	}
 	tests := []struct {
@@ -48,12 +48,12 @@ func Test_block_reset(t *testing.T) {
 			name: "Test reset",
 			fields: fields{
 				timestamps:  []int64{1, 2, 3},
-				elementIDs:  []string{"0", "1", "2"},
+				elementIDs:  []uint64{0, 1, 2},
 				tagFamilies: []tagFamily{{}, {}, {}},
 			},
 			want: block{
 				timestamps:  []int64{},
-				elementIDs:  []string{},
+				elementIDs:  []uint64{},
 				tagFamilies: []tagFamily{},
 			},
 		},
@@ -87,7 +87,7 @@ func toTagProjection(b block) map[string][]string {
 
 var conventionalBlock = block{
 	timestamps: []int64{1, 2},
-	elementIDs: []string{"0", "1"},
+	elementIDs: []uint64{0, 1},
 	tagFamilies: []tagFamily{
 		{
 			name: "arrTag",
@@ -124,7 +124,7 @@ var conventionalBlock = block{
 func Test_block_mustInitFromElements(t *testing.T) {
 	type args struct {
 		timestamps  []int64
-		elementIDs  []string
+		elementIDs  []uint64
 		tagFamilies [][]tagValues
 	}
 	tests := []struct {
@@ -136,7 +136,7 @@ func Test_block_mustInitFromElements(t *testing.T) {
 			name: "Test mustInitFromElements",
 			args: args{
 				timestamps: []int64{1, 2},
-				elementIDs: []string{"0", "1"},
+				elementIDs: []uint64{0, 1},
 				tagFamilies: [][]tagValues{
 					{
 						{
@@ -254,13 +254,13 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 func Test_mustWriteAndReadElementIDs(t *testing.T) {
 	tests := []struct {
 		name      string
-		args      []string
+		args      []uint64
 		wantPanic bool
 		wantTM    elementIDsMetadata
 	}{
 		{
 			name:      "Test mustWriteAndReadElementIDs",
-			args:      []string{"0", "1", "2", "3", "4"},
+			args:      []uint64{0, 1, 2, 3, 4},
 			wantPanic: false,
 		},
 	}
@@ -430,7 +430,7 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 func Test_blockPointer_append(t *testing.T) {
 	type fields struct {
 		timestamps  []int64
-		elementIDs  []string
+		elementIDs  []uint64
 		tagFamilies []tagFamily
 	}
 	type args struct {
@@ -448,7 +448,7 @@ func Test_blockPointer_append(t *testing.T) {
 			name: "Test append with empty block",
 			fields: fields{
 				timestamps: []int64{1, 2},
-				elementIDs: []string{"0", "1"},
+				elementIDs: []uint64{0, 1},
 				tagFamilies: []tagFamily{
 					{
 						name: "arrTag",
@@ -465,7 +465,7 @@ func Test_blockPointer_append(t *testing.T) {
 				b: &blockPointer{
 					block: block{
 						timestamps:  []int64{},
-						elementIDs:  []string{},
+						elementIDs:  []uint64{},
 						tagFamilies: []tagFamily{},
 					},
 					idx: 0,
@@ -475,7 +475,7 @@ func Test_blockPointer_append(t *testing.T) {
 			want: &blockPointer{
 				block: block{
 					timestamps: []int64{1, 2},
-					elementIDs: []string{"0", "1"},
+					elementIDs: []uint64{0, 1},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",
@@ -502,7 +502,7 @@ func Test_blockPointer_append(t *testing.T) {
 				b: &blockPointer{
 					block: block{
 						timestamps: []int64{4, 5},
-						elementIDs: []string{"3", "4"},
+						elementIDs: []uint64{3, 4},
 						tagFamilies: []tagFamily{
 							{
 								name: "arrTag",
@@ -522,7 +522,7 @@ func Test_blockPointer_append(t *testing.T) {
 			want: &blockPointer{
 				block: block{
 					timestamps: []int64{4, 5},
-					elementIDs: []string{"3", "4"},
+					elementIDs: []uint64{3, 4},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",
@@ -542,7 +542,7 @@ func Test_blockPointer_append(t *testing.T) {
 			name: "Test append with offset equals to the data size. All data",
 			fields: fields{
 				timestamps: []int64{1, 2},
-				elementIDs: []string{"0", "1"},
+				elementIDs: []uint64{0, 1},
 				tagFamilies: []tagFamily{
 					{
 						name: "arrTag",
@@ -559,7 +559,7 @@ func Test_blockPointer_append(t *testing.T) {
 				b: &blockPointer{
 					block: block{
 						timestamps: []int64{4, 5},
-						elementIDs: []string{"3", "4"},
+						elementIDs: []uint64{3, 4},
 						tagFamilies: []tagFamily{
 							{
 								name: "arrTag",
@@ -579,7 +579,7 @@ func Test_blockPointer_append(t *testing.T) {
 			want: &blockPointer{
 				block: block{
 					timestamps: []int64{1, 2, 4, 5},
-					elementIDs: []string{"0", "1", "3", "4"},
+					elementIDs: []uint64{0, 1, 3, 4},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",
@@ -603,7 +603,7 @@ func Test_blockPointer_append(t *testing.T) {
 			name: "Test append with non-empty block and offset less than timestamps",
 			fields: fields{
 				timestamps: []int64{1, 2},
-				elementIDs: []string{"0", "1"},
+				elementIDs: []uint64{0, 1},
 				tagFamilies: []tagFamily{
 					{
 						name: "arrTag",
@@ -620,7 +620,7 @@ func Test_blockPointer_append(t *testing.T) {
 				b: &blockPointer{
 					block: block{
 						timestamps: []int64{4, 5},
-						elementIDs: []string{"3", "4"},
+						elementIDs: []uint64{3, 4},
 						tagFamilies: []tagFamily{
 							{
 								name: "arrTag",
@@ -640,7 +640,7 @@ func Test_blockPointer_append(t *testing.T) {
 			want: &blockPointer{
 				block: block{
 					timestamps: []int64{1, 2, 4},
-					elementIDs: []string{"0", "1", "3"},
+					elementIDs: []uint64{0, 1, 3},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",

@@ -51,6 +51,7 @@ func FromStreamExecutionContext(ctx context.Context) StreamExecutionContext {
 // StreamExecutable allows querying in the stream schema.
 type StreamExecutable interface {
 	Execute(context.Context) ([]*streamv1.Element, error)
+	Close()
 }
 
 // MeasureExecutionContext allows retrieving data through the measure module.

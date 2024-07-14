@@ -36,6 +36,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -119,7 +120,7 @@ func generateData(p parameter) ([]*elements, []index.Documents, mockIndex) {
 		es := &elements{
 			seriesIDs:   []common.SeriesID{},
 			timestamps:  []int64{},
-			elementIDs:  []string{},
+			elementIDs:  []uint64{},
 			tagFamilies: [][]tagValues{},
 		}
 		var docs index.Documents
@@ -129,7 +130,7 @@ func generateData(p parameter) ([]*elements, []index.Documents, mockIndex) {
 			for k := 1; k <= p.seriesCount; k++ {
 				elementID := strconv.Itoa(k) + strconv.Itoa(timestamp)
 				es.seriesIDs = append(es.seriesIDs, common.SeriesID(k))
-				es.elementIDs = append(es.elementIDs, elementID)
+				es.elementIDs = append(es.elementIDs, convert.HashStr(elementID))
 				es.timestamps = append(es.timestamps, unixTimestamp)
 				num := generateRandomNumber(int64(p.tagCardinality))
 				value := filterTagValuePrefix + strconv.Itoa(num)

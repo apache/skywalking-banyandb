@@ -211,7 +211,7 @@ var _ = Describe("Stream Data Query", func() {
 		)
 		Expect(err).NotTo(HaveOccurred())
 
-		cases_stream_data.Write(conn, "data.json", now, interval)
+		cases_stream_data.Write(conn, "sw", now, interval)
 		rootCmd.SetArgs([]string{"stream", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
@@ -248,7 +248,7 @@ projection:
 		Expect(err).NotTo(HaveOccurred())
 		now := timestamp.NowMilli()
 		interval := -1 * time.Millisecond
-		cases_stream_data.Write(conn, "data.json", now, interval)
+		cases_stream_data.Write(conn, "sw", now, interval)
 		args := []string{"stream", "query", "-a", addr}
 		args = append(args, timeArgs...)
 		args = append(args, "-f", "-")

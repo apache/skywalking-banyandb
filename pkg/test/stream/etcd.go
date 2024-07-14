@@ -30,15 +30,19 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
-const indexRuleDir = "testdata/index_rules"
+const (
+	streamDir           = "testdata/streams"
+	indexRuleDir        = "testdata/index_rules"
+	indexRuleBindingDir = "testdata/index_rule_bindings"
+)
 
 var (
 	//go:embed testdata/index_rules/*.json
 	indexRuleStore embed.FS
-	//go:embed testdata/index_rule_binding.json
-	indexRuleBindingJSON string
-	//go:embed testdata/stream.json
-	streamJSON string
+	//go:embed testdata/index_rule_bindings/*.json
+	indexRuleBindingStore embed.FS
+	//go:embed testdata/streams/*.json
+	streamStore embed.FS
 	//go:embed testdata/group.json
 	groupJSON string
 )
@@ -56,20 +60,24 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 		return innerErr
 	}
 
-	s := &databasev1.Stream{}
-	if unmarshalErr := protojson.Unmarshal([]byte(streamJSON), s); unmarshalErr != nil {
-		return unmarshalErr
+	streams, err := streamStore.ReadDir(streamDir)
+	if err != nil {
+		return err
 	}
-	if _, innerErr := e.CreateStream(ctx, s); innerErr != nil {
-		return innerErr
-	}
-
-	indexRuleBinding := &databasev1.IndexRuleBinding{}
-	if unmarshalErr := protojson.Unmarshal([]byte(indexRuleBindingJSON), indexRuleBinding); unmarshalErr != nil {
-		return unmarshalErr
-	}
-	if innerErr := e.CreateIndexRuleBinding(ctx, indexRuleBinding); innerErr != nil {
-		return innerErr
+	var data []byte
+	for _, entry := range streams {
+		data, err = streamStore.ReadFile(path.Join(streamDir, entry.Name()))
+		if err != nil {
+			return err
+		}
+		var stream databasev1.Stream
+		err = protojson.Unmarshal(data, &stream)
+		if err != nil {
+			return err
+		}
+		if _, innerErr := e.CreateStream(ctx, &stream); innerErr != nil {
+			return innerErr
+		}
 	}
 
 	entries, err := indexRuleStore.ReadDir(indexRuleDir)
@@ -77,7 +85,7 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 		return err
 	}
 	for _, entry := range entries {
-		data, err := indexRuleStore.ReadFile(path.Join(indexRuleDir, entry.Name()))
+		data, err = indexRuleStore.ReadFile(path.Join(indexRuleDir, entry.Name()))
 		if err != nil {
 			return err
 		}
@@ -87,6 +95,24 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 			return err
 		}
 		if innerErr := e.CreateIndexRule(ctx, &idxRule); innerErr != nil {
+			return innerErr
+		}
+	}
+	indexRulesBindings, err := indexRuleBindingStore.ReadDir(indexRuleBindingDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range indexRulesBindings {
+		data, err = indexRuleBindingStore.ReadFile(path.Join(indexRuleBindingDir, entry.Name()))
+		if err != nil {
+			return err
+		}
+		var idxRuleBinding databasev1.IndexRuleBinding
+		err = protojson.Unmarshal(data, &idxRuleBinding)
+		if err != nil {
+			return err
+		}
+		if innerErr := e.CreateIndexRuleBinding(ctx, &idxRuleBinding); innerErr != nil {
 			return innerErr
 		}
 	}

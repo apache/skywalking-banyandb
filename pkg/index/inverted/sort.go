@@ -30,54 +30,66 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator[*index.ItemRef], err error) {
+func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
+	timeRange *timestamp.TimeRange, preLoadSize int,
+) (iter index.FieldIterator[*index.ItemRef], err error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
 	}
-	fk := fieldKey.MarshalIndexRule()
+
 	tqs := make([]bluge.Query, len(sids))
 	for i := range sids {
 		tq := bluge.NewTermQuery(string(sids[i].Marshal()))
 		tq.SetField(seriesIDField)
 		tqs[i] = tq
 	}
+	drq := bluge.
+		NewDateRangeInclusiveQuery(timeRange.Start, timeRange.End, timeRange.IncludeStart, timeRange.IncludeEnd).
+		SetField(timestampField)
 	var query bluge.Query
 	if len(tqs) == 0 {
-		query = bluge.NewMatchAllQuery()
+		query = drq
 	} else {
-		bq := bluge.NewBooleanQuery()
-		bq.AddShould(tqs...)
-		bq.SetMinShould(1)
-		query = bq
+		ibq := bluge.NewBooleanQuery()
+		ibq.AddShould(tqs...)
+		ibq.SetMinShould(1)
+		obq := bluge.NewBooleanQuery()
+		obq.AddMust(ibq)
+		obq.AddMust(drq)
+		query = obq
 	}
 
+	fk := fieldKey.Marshal()
 	sortedKey := fk
 	if order == modelv1.Sort_SORT_DESC {
 		sortedKey = "-" + sortedKey
 	}
 	result := &sortIterator{
-		query:     query,
-		reader:    reader,
-		sortedKey: sortedKey,
-		size:      preLoadSize,
-		sid:       fieldKey.SeriesID,
+		query:       query,
+		reader:      reader,
+		sortedKey:   sortedKey,
+		sortedField: fk,
+		size:        preLoadSize,
+		sid:         fieldKey.SeriesID,
 	}
 	return result, nil
 }
 
 type sortIterator struct {
-	query     bluge.Query
-	err       error
-	reader    *bluge.Reader
-	current   *blugeMatchIterator
-	closer    *run.Closer
-	sortedKey string
-	size      int
-	skipped   int
-	sid       common.SeriesID
+	query       bluge.Query
+	err         error
+	reader      *bluge.Reader
+	current     *blugeMatchIterator
+	closer      *run.Closer
+	sortedKey   string
+	sortedField string
+	size        int
+	skipped     int
+	sid         common.SeriesID
 }
 
 func (si *sortIterator) Next() bool {
@@ -112,7 +124,7 @@ func (si *sortIterator) loadCurrent() bool {
 		return false
 	}
 
-	iter := newBlugeMatchIterator(documentMatchIterator, nil, true)
+	iter := newBlugeMatchIterator(documentMatchIterator, nil, []string{si.sortedField})
 	si.current = &iter
 	if si.next() {
 		return true
@@ -130,7 +142,17 @@ func (si *sortIterator) next() bool {
 }
 
 func (si *sortIterator) Val() *index.ItemRef {
-	return si.current.Val()
+	v := si.current.Val()
+	sv, ok := v.values[si.sortedField]
+	if !ok {
+		panic("sorted field not found in document")
+	}
+	return &index.ItemRef{
+		SeriesID:  v.seriesID,
+		DocID:     v.docID,
+		Term:      sv,
+		Timestamp: v.timestamp,
+	}
 }
 
 func (si *sortIterator) Close() error {

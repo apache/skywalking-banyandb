@@ -76,7 +76,9 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if p.log.Debug().Enabled() {
 		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
-	entities, err := plan.(executor.StreamExecutable).Execute(executor.WithDistributedExecutionContext(context.Background(), &distributedContext{
+	se := plan.(executor.StreamExecutable)
+	defer se.Close()
+	entities, err := se.Execute(executor.WithDistributedExecutionContext(context.Background(), &distributedContext{
 		Broadcaster: p.broadcaster,
 		timeRange:   queryCriteria.TimeRange,
 	}))
