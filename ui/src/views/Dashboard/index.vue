@@ -64,6 +64,23 @@ const tagProjectionDisk = {
 }
 const nodes = ref([]);
 
+function formatUptime(seconds) {
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${hrs > 0 ? `${hrs}h ` : ''}${mins}m ${secs}s`;
+}
+function extractAddress(fullAddress) {
+    const parts = fullAddress.split(':');
+    return parts[parts.length - 1];
+}
+
+const colors = [
+  { color: '#5cb87a', percentage: 51 },
+  { color: '#edc374', percentage: 81 },
+  { color: '#f56c6c', percentage: 100 },
+];
+
 async function fetchNodes() {
     getCurrentUTCTime()
     const [upTimeDataPoints, cpuDataPoints, memoryDataPoints, diskDataPoints] = await Promise.all([
@@ -77,8 +94,8 @@ async function fetchNodes() {
         const tags = item.tagFamilies[0].tags;
         const nodeType = tags.find(tag => tag.key === 'node_type').value.str.value;
         const nodeId = tags.find(tag => tag.key === 'node_id').value.str.value;
-        const grpcAddress = tags.find(tag => tag.key === 'grpc_address').value.str.value;
-        const httpAddress = tags.find(tag => tag.key === 'http_address').value.str.value;
+        const grpcAddress = extractAddress(tags.find(tag => tag.key === 'grpc_address').value.str.value);
+        const httpAddress = extractAddress(tags.find(tag => tag.key === 'http_address').value.str.value);
         const value = item.fields.find(field => field.name === 'value').value.float.value;
         return {
             node_id: nodeId,
@@ -101,7 +118,7 @@ async function fetchNodes() {
     }, {});
     // attach metrics to table 
     rows.forEach(row => {
-        row.cpu = getLatestField(cpuData.system, row.node_id);
+        row.cpu = getLatestField(cpuData.user, row.node_id);
         row.memory = {
             used: getLatestField(memoryData.used, row.node_id),
             total: getLatestField(memoryData.total, row.node_id),
@@ -115,6 +132,11 @@ async function fetchNodes() {
                 used_percent: getLatestField(diskData[path].used_percent, row.node_id)
             }
         }
+    });
+
+    // Post-process row data
+    rows.forEach(row => {
+        row.uptime = formatUptime(row.uptime);
     });
     nodes.value = rows
 }
@@ -217,42 +239,68 @@ onMounted(() => {
             <p>Now: {{ utcTime.now }}</p>
             <p>15 Seconds Ago: {{ utcTime.fiftheenSecondsAgo }}</p>
         </div>
-        <table>
-            <thead>
-                <tr>
-                    <th>Node ID</th>
-                    <th>Type</th>
-                    <th>gRPC Address</th>
-                    <th>HTTP Address</th>
-                    <th>Uptime</th>
-                    <th>CPU</th>
-                    <th>Memory Used</th>
-                    <th>Memory Total</th>
-                    <th>Memory Used %</th>
-                    <th>Disk Details</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr v-for="node in nodes" :key="node.node_id">
-                    <td>{{ node.node_id }}</td>
-                    <td>{{ node.node_type }}</td>
-                    <td>{{ node.grpc_address }}</td>
-                    <td>{{ node.http_address || 'N/A' }}</td>
-                    <td>{{ node.uptime.toFixed(2) }} s</td>
-                    <td>{{ node.cpu }}</td>
-                    <td>{{ node.memory.used }}</td>
-                    <td>{{ node.memory.total }}</td>
-                    <td>{{ (node.memory.used_percent * 100).toFixed(2) }}%</td>
-                    <td>
-                        <div v-for="(value, key) in node.disk" :key="key">
+        <el-card shadow="always">
+            <el-table v-loading="nodes.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
+                element-loading-background="rgba(0, 0, 0, 0.8)" stripe border highlight-current-row
+                tooltip-effect="dark" empty-text="No data yet" :data="nodes" style="width: 100%;">
+                <el-table-column prop="node_id" label="Node ID" width="150"></el-table-column>
+                <el-table-column prop="node_type" label="Type" width="150"></el-table-column>
+                <el-table-column prop="uptime" label="Uptime" width="150"></el-table-column>
+                <el-table-column label="CPU" width="150">
+        <template #default="scope">
+          <el-progress
+            type="dashboard"
+            :percentage="parseFloat((scope.row.cpu * 100).toFixed(2))"
+            :color="colors"
+          />
+        </template>
+      </el-table-column>
+                <el-table-column label="Memory" width="300">
+                    <template #default="scope">
+                        <div>
+                            Used: {{ scope.row.memory.used || 'N/A' }},
+                            Total: {{ scope.row.memory.total || 'N/A' }},
+                            Used %: {{ scope.row.memory.used_percent ? (scope.row.memory.used_percent * 100).toFixed(2)
+                            + '%' : 'N/A' }}
+                        </div>
+                    </template>
+                </el-table-column>
+                <el-table-column label="Disk Details" width="300">
+                    <template #default="scope">
+                        <div v-for="(value, key) in scope.row.disk" :key="key">
                             {{ key }}: Used: {{ value.used || 'N/A' }}, Total: {{ value.total || 'N/A' }}, Used %: {{
                                 value.used_percent ? (value.used_percent * 100).toFixed(2) + '%' : 'N/A' }}
                         </div>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+                    </template>
+                </el-table-column>
+                <el-table-column label="Port" width="250">
+                    <template #default="scope">
+                        <div>
+                            <div>gRPC: {{ scope.row.grpc_address }}</div>
+                            <div>HTTP: {{ scope.row.http_address || 'N/A' }}</div>
+                        </div>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </el-card>
     </div>
 </template>
 
-<style lang="scss" scoped></style>
+<style lang="scss" scoped>
+::v-deep .el-table td {
+  padding-right: 10px; // Adjust the padding value as needed
+}
+
+::v-deep .el-card {
+  margin: 15px; // Adjust the margin value as needed
+}
+
+.demo-progress .el-progress--line {
+  margin-bottom: 15px;
+  max-width: 600px;
+}
+
+.demo-progress .el-progress--circle {
+  margin-right: 15px;
+}
+</style>
