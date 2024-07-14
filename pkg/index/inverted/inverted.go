@@ -192,7 +192,6 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		if termRange.Lower == nil {
 			termRange.Lower = defaultLower
 		}
-		bluge.NewMatchAllQuery()
 		query.AddMust(bluge.NewTermRangeInclusiveQuery(
 			string(termRange.Lower),
 			string(termRange.Upper),
