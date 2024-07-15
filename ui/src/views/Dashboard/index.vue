@@ -254,19 +254,19 @@ onMounted(() => {
                 <el-table-column prop="node_id" label="Node ID" width="150"></el-table-column>
                 <el-table-column prop="node_type" label="Type" width="150"></el-table-column>
                 <el-table-column prop="uptime" label="Uptime" width="150"></el-table-column>
-                <el-table-column label="CPU" width="150">
+                <el-table-column label="CPU" width="200">
                     <template #default="scope">
                         <el-progress type="dashboard" :percentage="parseFloat((scope.row.cpu * 100).toFixed(2))"
                             :color="colors" />
                     </template>
                 </el-table-column>
-                <el-table-column label="Memory" width="300">
+                <el-table-column label="Memory" width="350">
                     <template #default="scope">
                         <div class="memory-detail">
                             <div class="progress-container">
                                 <el-progress type="line"
                                     :percentage="parseFloat((scope.row.memory.used_percent * 100).toFixed(2))"
-                                    color="#82b0fa" :stroke-width="6" show-text="false" style="flex: 1; margin-right: 10px;" />
+                                    color="#82b0fa" :stroke-width="6" show-text="false" class="fixed-progress-bar" />
                             </div>
                             <div class="memory-stats">
                                 <span>Used: {{ formatBytes(scope.row.memory.used) }}</span>
@@ -275,7 +275,7 @@ onMounted(() => {
                                     Free: {{
                                         scope.row.memory.total && scope.row.memory.used
                                             ? formatBytes(scope.row.memory.total - scope.row.memory.used)
-                                    : 'N/A'
+                                            : 'N/A'
                                     }}
                                 </span>
                             </div>
@@ -283,14 +283,29 @@ onMounted(() => {
                     </template>
                 </el-table-column>
 
-                <el-table-column label="Disk Details" width="300">
+                <el-table-column label="Disk Details" width="450">
                     <template #default="scope">
-                        <div v-for="(value, key) in scope.row.disk" :key="key">
-                            {{ key }}: Used: {{ value.used || 'N/A' }}, Total: {{ value.total || 'N/A' }}, Used %: {{
-                                value.used_percent ? (value.used_percent * 100).toFixed(2) + '%' : 'N/A' }}
+                        <div class="disk-detail" v-for="(value, key) in scope.row.disk" :key="key">
+                            <div class="progress-container">
+                                <span class="disk-key">{{ key }}:</span>
+                                <el-progress type="line" :percentage="parseFloat((value.used_percent * 100).toFixed(2))"
+                                    color="#82b0fa" :stroke-width="6" show-text="false" class="fixed-progress-bar" />
+                            </div>
+                            <div class="disk-stats">
+                                <span>Used: {{ formatBytes(value.used) }}</span>
+                                <span>Total: {{ formatBytes(value.total) }}</span>
+                                <span>
+                                    Free: {{
+                                        value.total && value.used
+                                            ? formatBytes(value.total - value.used)
+                                            : 'N/A'
+                                    }}
+                                </span>
+                            </div>
                         </div>
                     </template>
                 </el-table-column>
+
                 <el-table-column label="Port" width="250">
                     <template #default="scope">
                         <div>
@@ -305,12 +320,26 @@ onMounted(() => {
 </template>
 
 <style lang="scss" scoped>
+
+
+.centered-table {
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Center the table within the card */
+  width: 100%;
+}
+
 ::v-deep .el-table td {
-    padding-right: 10px; // Adjust the padding value as needed
+    margin: 10px; // Adjust the padding value as needed
+
 }
 
 ::v-deep .el-card {
     margin: 15px; // Adjust the margin value as needed
+}
+
+.fixed-progress-bar {
+    width: 220px; // Fixed length for the progress bar
 }
 
 .demo-progress .el-progress--line {
@@ -322,22 +351,34 @@ onMounted(() => {
     margin-right: 15px;
 }
 
-.memory-detail {
+.memory-detail,
+.disk-detail {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
     margin-bottom: 20px;
+}
+
+.disk-key {
+    margin-right: 10px; // Adjust the margin value as needed
+    font-weight: bold;
+    color: #606266; // Adjust the color as needed
 }
 
 .progress-container {
     display: flex;
-    align-items: center;
-    justify-content: center;
+    align-items: left;
     margin-bottom: 10px;
     width: 100%;
 }
 
-.memory-stats {
-  display: flex;
-  justify-content: space-between;
-  gap: 5px;
-  text-align: center;
+.memory-stats,
+.disk-stats {
+    display: flex;
+    justify-content: flex-start;
+    text-align: left;
+    gap: 10px;
+    text-align: left;
+    width: 100%;
 }
 </style>
