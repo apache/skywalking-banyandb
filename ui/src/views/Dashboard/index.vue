@@ -18,10 +18,11 @@
 -->
 
 <script setup>
-import { ref, watchEffect } from 'vue';
+import { ref, watchEffect, computed } from 'vue';
 import { getTableList } from '@/api/index'
 
 const value = ref(15000);
+
 const options = ref([
     { value: 15000, label: '15 seconds' },
     { value: 30000, label: '30 seconds' },
@@ -72,7 +73,75 @@ const tagProjectionDisk = {
 }
 const nodes = ref([]);
 
+const colors = [
+    { color: '#5cb87a', percentage: 51 },
+    { color: '#edc374', percentage: 81 },
+    { color: '#f56c6c', percentage: 100 },
+];
+
 const pickedShortCutTimeRanges = ref(false);
+
+// Time constants
+const last15Minutes = 15 * 60 * 1000;
+const lastWeek = 7 * 24 * 60 * 60 * 1000;
+const lastMonth = 30 * 24 * 60 * 60 * 1000;
+const last3Months = 3 * 30 * 24 * 60 * 60 * 1000;
+
+// Shortcuts for the date picker
+const shortcuts = [
+    {
+        text: 'Last 15 minutes',
+        value: () => {
+            const end = new Date();
+            const start = new Date(end.getTime() - last15Minutes);
+            pickedShortCutTimeRanges.value = true;
+            return [start, end];
+        },
+    },
+    {
+        text: 'Last week',
+        value: () => {
+            const end = new Date();
+            const start = new Date(end.getTime() - lastWeek);
+            pickedShortCutTimeRanges.value = true;
+            return [start, end];
+        },
+    },
+    {
+        text: 'Last month',
+        value: () => {
+            const end = new Date();
+            const start = new Date(end.getTime() - lastMonth);
+            pickedShortCutTimeRanges.value = true;
+            return [start, end];
+        },
+    },
+    {
+        text: 'Last 3 months',
+        value: () => {
+            const end = new Date();
+            const start = new Date(end.getTime() - last3Months);
+            pickedShortCutTimeRanges.value = true;
+            return [start, end];
+        },
+    },
+];
+
+// State for date picker
+const dateRange = ref([new Date(Date.now() - 30 * 60 * 1000), new Date()]); // Default to last 30 minutes
+
+// Compute formatted times
+const formattedStartTime = ref(formatDate(dateRange.value[0]));
+const formattedEndTime = ref(formatDate(dateRange.value[1]));
+
+const timezoneOffset = computed(() => {
+    const offset = new Date().getTimezoneOffset();
+    const hours = Math.floor(Math.abs(offset) / 60);
+    const minutes = Math.abs(offset) % 60;
+    const sign = offset <= 0 ? "+" : "-";
+    return `UTC${sign}${hours}:${minutes.toString().padStart(2, "0")}`;
+});
+
 
 function formatUptime(seconds) {
     const hrs = Math.floor(seconds / 3600);
@@ -93,11 +162,7 @@ function formatBytes(bytes) {
     return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-const colors = [
-    { color: '#5cb87a', percentage: 51 },
-    { color: '#edc374', percentage: 81 },
-    { color: '#f56c6c', percentage: 100 },
-];
+
 
 async function fetchNodes() {
     getCurrentUTCTime()
@@ -130,11 +195,11 @@ async function fetchNodes() {
     const cpuData = groupBy(cpuDataPoints, "kind");
     const memoryData = groupBy(memoryDataPoints, "kind")
     const paths = groupBy(diskDataPoints, "path")
-    const diskData = Object.keys(paths).reduce((acc, path) => {
-        acc[path] = groupBy(paths[path], 'kind');
+    const sortedPaths = sortObject(paths)
+    const diskData = Object.keys(sortedPaths).reduce((acc, path) => {
+        acc[path] = groupBy(sortedPaths[path], 'kind');
         return acc;
     }, {});
-    // attach metrics to table 
     rows.forEach(row => {
         row.cpu = getLatestField(cpuData.user, row.node_id);
         row.memory = {
@@ -142,12 +207,14 @@ async function fetchNodes() {
             total: getLatestField(memoryData.total, row.node_id),
             used_percent: getLatestField(memoryData.used_percent, row.node_id),
         };
-        row.disk = {}
-        for (const path in diskData) {
-            row.disk[path] = {
-                used: getLatestField(diskData[path].used, row.node_id),
-                total: getLatestField(diskData[path].total, row.node_id),
-                used_percent: getLatestField(diskData[path].used_percent, row.node_id)
+        if (row.node_type == "data") {
+            row.disk = {}
+            for (const path in diskData) {
+                row.disk[path] = {
+                    used: getLatestField(diskData[path].used, row.node_id),
+                    total: getLatestField(diskData[path].total, row.node_id),
+                    used_percent: getLatestField(diskData[path].used_percent, row.node_id)
+                }
             }
         }
     });
@@ -191,6 +258,17 @@ function groupBy(data, key) {
         acc[keyValue].push(obj);
         return acc;
     }, {});
+}
+
+function sortObject(groupedObject) {
+    // sort by key
+    const keys = Object.keys(groupedObject);
+    keys.sort();
+    const sortedObject = {};
+    keys.forEach(key => {
+        sortedObject[key] = groupedObject[key];
+    });
+    return sortedObject;
 }
 
 // depuplicate by getting the latest data for each node id 
@@ -250,65 +328,6 @@ function formatDate(date) {
     return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
-// Time constants
-const last15Minutes = 15 * 60 * 1000;
-const lastWeek = 7 * 24 * 60 * 60 * 1000;
-const lastMonth = 30 * 24 * 60 * 60 * 1000;
-const last3Months = 3 * 30 * 24 * 60 * 60 * 1000;
-
-// Shortcuts for the date picker
-const shortcuts = [
-    {
-        text: 'Last 15 minutes',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - last15Minutes);
-            pickedShortCutTimeRanges.value = true;
-            return [start, end];
-        },
-    },
-    {
-        text: 'Last week',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - lastWeek);
-            pickedShortCutTimeRanges.value = true;
-            return [start, end];
-        },
-    },
-    {
-        text: 'Last month',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - lastMonth);
-            pickedShortCutTimeRanges.value = true;
-            return [start, end];
-        },
-    },
-    {
-        text: 'Last 3 months',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - last3Months);
-            pickedShortCutTimeRanges.value = true;
-            return [start, end];
-        },
-    },
-];
-
-// State for date picker
-const dateRange = ref([new Date(Date.now() - 30 * 60 * 1000), new Date()]); // Default to last 30 minutes
-
-// Compute formatted times
-const formattedStartTime = ref(formatDate(dateRange.value[0]));
-const formattedEndTime = ref(formatDate(dateRange.value[1]));
-
-// Update formatted times when dateRange changes
-watchEffect(() => {
-    formattedStartTime.value = formatDate(dateRange.value[0]);
-    formattedEndTime.value = formatDate(dateRange.value[1]);
-});
-
 function changeDatePicker(value) {
     dateRange.value = value;
 }
@@ -320,13 +339,19 @@ function resetDatePicker() {
     pickedShortCutTimeRanges.value = false;
 }
 
-let intervalId;
+// Update formatted times when dateRange changes
+watchEffect(() => {
+    formattedStartTime.value = formatDate(dateRange.value[0]);
+    formattedEndTime.value = formatDate(dateRange.value[1]);
+});
 
+let intervalId;
 watchEffect(() => {
     if (intervalId) clearInterval(intervalId);
     fetchNodes();
     intervalId = setInterval(fetchNodes, value.value);
 });
+
 </script>
 
 <template>
@@ -336,7 +361,7 @@ watchEffect(() => {
                 <el-date-picker @change="changeDatePicker" @visible-change="resetDatePicker" v-model="dateRange"
                     type="datetimerange" :shortcuts="shortcuts" range-separator="to" start-placeholder="begin"
                     end-placeholder="end" align="right" style="margin: 0 10px 0 10px"></el-date-picker>
-                <span class="timestamp-item">UTC+0:0</span>
+                <span class="timestamp-item">{{ timezoneOffset }}</span>
                 <span>Auto Fresh:</span>
             </span>
             <el-select v-model="value" placeholder="Select" class="auto-fresh-select">
@@ -368,7 +393,7 @@ watchEffect(() => {
                             <div class="progress-container">
                                 <el-progress type="line"
                                     :percentage="parseFloat((scope.row.memory.used_percent * 100).toFixed(2))"
-                                    color="#82b0fa" :stroke-width="6" :show-text="false" class="fixed-progress-bar" />
+                                    color="#82b0fa" :stroke-width="6" :show-text="true" class="fixed-progress-bar" />
                             </div>
                             <div class="memory-stats">
                                 <span>Used: {{ formatBytes(scope.row.memory.used) }}</span>
@@ -387,11 +412,14 @@ watchEffect(() => {
 
                 <el-table-column label="Disk Details" width="450">
                     <template #default="scope">
-                        <div class="disk-detail" v-for="(value, key) in scope.row.disk" :key="key">
+                        <div v-if="!scope.row.disk">
+                            N/A
+                        </div>
+                        <div class="disk-detail" v-else v-for="(value, key) in scope.row.disk" :key="key">
                             <div class="progress-container">
                                 <span class="disk-key">{{ key }}:</span>
                                 <el-progress type="line" :percentage="parseFloat((value.used_percent * 100).toFixed(2))"
-                                    color="#82b0fa" :stroke-width="6" :show-text="false" class="fixed-progress-bar" />
+                                    color="#82b0fa" :stroke-width="6" :show-text="true" class="fixed-progress-bar" />
                             </div>
                             <div class="disk-stats">
                                 <span>Used: {{ formatBytes(value.used) }}</span>

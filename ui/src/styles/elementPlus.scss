@@ -254,3 +254,11 @@
     --el-checkbox-checked-input-border-color: var(--color-main) !important;
     --el-checkbox-input-border-color-hover: var(--color-main) !important;
 }
+
+.el-picker-panel__sidebar {
+    width: 120px !important;
+}
+
+.el-date-range-picker .el-picker-panel__body {
+    margin-left: 120px !important;
+}
