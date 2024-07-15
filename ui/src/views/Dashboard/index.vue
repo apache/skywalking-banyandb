@@ -18,8 +18,16 @@
 -->
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, watchEffect } from 'vue';
 import { getTableList } from '@/api/index'
+
+const value = ref(15000);
+const options = ref([
+    { value: 15000, label: '15 seconds' },
+    { value: 30000, label: '30 seconds' },
+    { value: 60000, label: '1 minute' },
+    { value: 300000, label: '5 minutes' },
+]);
 
 const utcTime = ref({
     now: '',
@@ -230,24 +238,56 @@ function getLatestField(data, nodeId) {
     return null;
 }
 
-onMounted(() => {
-    fetchNodes();
-    // Optional: Update the time every 15 seconds
-    setInterval(fetchNodes, 15000);
+// Define a function to format date and time
+function formatDate(date) {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const hours = String(date.getUTCHours()).padStart(2, '0');
+    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
+// Function to get current UTC time and formatted time range
+function getFormattedUTCTimeRange() {
+    const endTime = new Date();
+    const startTime = new Date(endTime.getTime() - 30 * 60 * 1000); // Adding 30 minutes to start time
+    return {
+        formattedStartTime: formatDate(startTime),
+        formattedEndTime: formatDate(endTime),
+    };
+}
+
+const { formattedStartTime, formattedEndTime } = getFormattedUTCTimeRange();
+
+let intervalId;
+
+watchEffect(() => {
+  if (intervalId) clearInterval(intervalId);
+  fetchNodes();
+  intervalId = setInterval(fetchNodes, value.value);
 });
 </script>
 
 <template>
-    <div>
-        <h1 class="home">
-            This is the dashboard page
-        </h1>
-        <div>
-            <h1>Current UTC Time</h1>
-            <p>Now: {{ utcTime.now }}</p>
-            <p>15 Seconds Ago: {{ utcTime.fiftheenSecondsAgo }}</p>
+    <div class="dashboard">
+        <div class="header-container">
+            <span class="timestamp">
+                <span class="timestamp-item">{{ formattedStartTime }} ~ {{ formattedEndTime }}</span>
+                <span class="timestamp-item">UTC+0:0</span>
+                <span>Auto Fresh:</span>
+            </span>
+            <el-select v-model="value" placeholder="Select" class="auto-fresh-select">
+                <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
         </div>
+
         <el-card shadow="always">
+            <template #header>
+                <div class="card-header">
+                    <span>Nodes</span>
+                </div>
+            </template>
             <el-table v-loading="nodes.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
                 element-loading-background="rgba(0, 0, 0, 0.8)" stripe border highlight-current-row
                 tooltip-effect="dark" empty-text="No data yet" :data="nodes" style="width: 100%;">
@@ -266,7 +306,7 @@ onMounted(() => {
                             <div class="progress-container">
                                 <el-progress type="line"
                                     :percentage="parseFloat((scope.row.memory.used_percent * 100).toFixed(2))"
-                                    color="#82b0fa" :stroke-width="6" show-text="false" class="fixed-progress-bar" />
+                                    color="#82b0fa" :stroke-width="6" :show-text="false" class="fixed-progress-bar" />
                             </div>
                             <div class="memory-stats">
                                 <span>Used: {{ formatBytes(scope.row.memory.used) }}</span>
@@ -289,7 +329,7 @@ onMounted(() => {
                             <div class="progress-container">
                                 <span class="disk-key">{{ key }}:</span>
                                 <el-progress type="line" :percentage="parseFloat((value.used_percent * 100).toFixed(2))"
-                                    color="#82b0fa" :stroke-width="6" show-text="false" class="fixed-progress-bar" />
+                                    color="#82b0fa" :stroke-width="6" :show-text="false" class="fixed-progress-bar" />
                             </div>
                             <div class="disk-stats">
                                 <span>Used: {{ formatBytes(value.used) }}</span>
@@ -320,13 +360,59 @@ onMounted(() => {
 </template>
 
 <style lang="scss" scoped>
+.header-container {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    /* Aligns items to the right */
+    margin: 15px 15px 10px 0;
+    /* Space between the header and the card */
+}
 
-::v-deep .el-table td {
+.timestamp {
+    font-size: 16px;
+    /* Adjust the font size as needed */
+    color: #666;
+    /* Adjust the text color as needed */
+    margin-right: 10px;
+    /* Space between the timestamp and the select */
+}
+
+.timestamp-item {
+    margin-right: 12px;
+    /* Add space between each item */
+}
+
+.auto-fresh-select {
+    width: 200px;
+    /* Adjust the width as needed */
+}
+
+.dashboard .el-table {
     margin: 10px; // Adjust the padding value as needed
 }
 
-::v-deep .el-card {
+.dashboard .el-card {
     margin: 15px; // Adjust the margin value as needed
+    padding: 0;
+}
+
+.card-header {
+    font-size: 20px;
+    /* Make the text bigger */
+    height: 10px;
+
+
+}
+
+.header-text {
+    padding: 0;
+    margin: 0;
+
+    hr {
+        margin: 0;
+        border-top: 1px solid grey; // Adjust color as needed
+    }
 }
 
 .fixed-progress-bar {
