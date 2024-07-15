@@ -72,6 +72,8 @@ const tagProjectionDisk = {
 }
 const nodes = ref([]);
 
+const pickedShortCutTimeRanges = ref(false);
+
 function formatUptime(seconds) {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -248,24 +250,82 @@ function formatDate(date) {
     return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
-// Function to get current UTC time and formatted time range
-function getFormattedUTCTimeRange() {
-    const endTime = new Date();
-    const startTime = new Date(endTime.getTime() - 30 * 60 * 1000); // Adding 30 minutes to start time
-    return {
-        formattedStartTime: formatDate(startTime),
-        formattedEndTime: formatDate(endTime),
-    };
+// Time constants
+const last15Minutes = 15 * 60 * 1000;
+const lastWeek = 7 * 24 * 60 * 60 * 1000;
+const lastMonth = 30 * 24 * 60 * 60 * 1000;
+const last3Months = 3 * 30 * 24 * 60 * 60 * 1000;
+
+// Shortcuts for the date picker
+const shortcuts = [
+    {
+        text: 'Last 15 minutes',
+        value: () => {
+            const end = new Date();
+            const start = new Date(end.getTime() - last15Minutes);
+            pickedShortCutTimeRanges.value = true;
+            return [start, end];
+        },
+    },
+    {
+        text: 'Last week',
+        value: () => {
+            const end = new Date();
+            const start = new Date(end.getTime() - lastWeek);
+            pickedShortCutTimeRanges.value = true;
+            return [start, end];
+        },
+    },
+    {
+        text: 'Last month',
+        value: () => {
+            const end = new Date();
+            const start = new Date(end.getTime() - lastMonth);
+            pickedShortCutTimeRanges.value = true;
+            return [start, end];
+        },
+    },
+    {
+        text: 'Last 3 months',
+        value: () => {
+            const end = new Date();
+            const start = new Date(end.getTime() - last3Months);
+            pickedShortCutTimeRanges.value = true;
+            return [start, end];
+        },
+    },
+];
+
+// State for date picker
+const dateRange = ref([new Date(Date.now() - 30 * 60 * 1000), new Date()]); // Default to last 30 minutes
+
+// Compute formatted times
+const formattedStartTime = ref(formatDate(dateRange.value[0]));
+const formattedEndTime = ref(formatDate(dateRange.value[1]));
+
+// Update formatted times when dateRange changes
+watchEffect(() => {
+    formattedStartTime.value = formatDate(dateRange.value[0]);
+    formattedEndTime.value = formatDate(dateRange.value[1]);
+});
+
+function changeDatePicker(value) {
+    dateRange.value = value;
 }
 
-const { formattedStartTime, formattedEndTime } = getFormattedUTCTimeRange();
+function resetDatePicker() {
+    if (!pickedShortCutTimeRanges.value) {
+        dateRange.value = [new Date(Date.now() - 30 * 60 * 1000), new Date()];
+    }
+    pickedShortCutTimeRanges.value = false;
+}
 
 let intervalId;
 
 watchEffect(() => {
-  if (intervalId) clearInterval(intervalId);
-  fetchNodes();
-  intervalId = setInterval(fetchNodes, value.value);
+    if (intervalId) clearInterval(intervalId);
+    fetchNodes();
+    intervalId = setInterval(fetchNodes, value.value);
 });
 </script>
 
@@ -273,7 +333,9 @@ watchEffect(() => {
     <div class="dashboard">
         <div class="header-container">
             <span class="timestamp">
-                <span class="timestamp-item">{{ formattedStartTime }} ~ {{ formattedEndTime }}</span>
+                <el-date-picker @change="changeDatePicker" @visible-change="resetDatePicker" v-model="dateRange"
+                    type="datetimerange" :shortcuts="shortcuts" range-separator="to" start-placeholder="begin"
+                    end-placeholder="end" align="right" style="margin: 0 10px 0 10px"></el-date-picker>
                 <span class="timestamp-item">UTC+0:0</span>
                 <span>Auto Fresh:</span>
             </span>
