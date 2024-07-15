@@ -321,17 +321,8 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 
-
-.centered-table {
-  display: flex;
-  flex-direction: column;
-  align-items: center; /* Center the table within the card */
-  width: 100%;
-}
-
 ::v-deep .el-table td {
     margin: 10px; // Adjust the padding value as needed
-
 }
 
 ::v-deep .el-card {
