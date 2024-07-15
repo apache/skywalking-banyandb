@@ -31,7 +31,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -129,14 +131,28 @@ type distributedPlan struct {
 
 func (t *distributedPlan) Close() {}
 
-func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
+func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, err error) {
 	dctx := executor.FromDistributedExecutionContext(ctx)
-	query := proto.Clone(t.queryTemplate).(*streamv1.QueryRequest)
-	query.TimeRange = dctx.TimeRange()
+	queryRequest := proto.Clone(t.queryTemplate).(*streamv1.QueryRequest)
+	queryRequest.TimeRange = dctx.TimeRange()
 	if t.maxElementSize > 0 {
-		query.Limit = t.maxElementSize
+		queryRequest.Limit = t.maxElementSize
 	}
-	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
+	tracer := query.GetTracer(ctx)
+	var span *query.Span
+	if tracer != nil {
+		span, _ = tracer.StartSpan(ctx, "distributed-client")
+		queryRequest.Trace = true
+		span.Tag("request", convert.BytesToString(logger.Proto(queryRequest)))
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			} else {
+				span.Stop()
+			}
+		}()
+	}
+	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), queryRequest))
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +167,9 @@ func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, err
 				continue
 			}
 			resp := d.(*streamv1.QueryResponse)
+			if span != nil {
+				span.AddSubTrace(resp.Trace)
+			}
 			see = append(see,
 				newSortableElements(resp.Elements, t.sortByTime, t.sortTagSpec))
 		}

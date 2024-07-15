@@ -74,7 +74,7 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 
 func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
 	if i.result != nil {
-		return BuildElementsFromStreamResult(i.result), nil
+		return BuildElementsFromStreamResult(ctx, i.result), nil
 	}
 	var orderBy *pbv1.OrderBy
 	if i.order != nil {
@@ -99,7 +99,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	if i.result == nil {
 		return nil, nil
 	}
-	return BuildElementsFromStreamResult(i.result), nil
+	return BuildElementsFromStreamResult(ctx, i.result), nil
 }
 
 func (i *localIndexScan) String() string {
@@ -120,8 +120,8 @@ func (i *localIndexScan) Schema() logical.Schema {
 }
 
 // BuildElementsFromStreamResult builds a slice of elements from the given stream query result.
-func BuildElementsFromStreamResult(result pbv1.StreamQueryResult) (elements []*streamv1.Element) {
-	r := result.Pull()
+func BuildElementsFromStreamResult(ctx context.Context, result pbv1.StreamQueryResult) (elements []*streamv1.Element) {
+	r := result.Pull(ctx)
 	if r == nil {
 		return nil
 	}

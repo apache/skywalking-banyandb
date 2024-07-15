@@ -15,6 +15,9 @@ Release Notes.
 - Add the measure query trace.
 - Assign a separate lookup table to each group in the maglev selector.
 - Convert the async local pipeline to a sync pipeline.
+- Add the stream query trace.
+- Add the topN query trace.
+- Introduce the round-robin selector to Liaison Node.
 
 ### Bugs
 
