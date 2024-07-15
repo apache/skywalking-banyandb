@@ -39,6 +39,7 @@ type Selector interface {
 	AddNode(node *databasev1.Node)
 	RemoveNode(node *databasev1.Node)
 	Pick(group, name string, shardID uint32) (string, error)
+	Close()
 }
 
 // NewPickFirstSelector returns a simple selector that always returns the first node if exists.
@@ -54,6 +55,8 @@ type pickFirstSelector struct {
 	nodeIDs   []string
 	mu        sync.RWMutex
 }
+
+func (p *pickFirstSelector) Close() {}
 
 func (p *pickFirstSelector) AddNode(node *databasev1.Node) {
 	nodeID := node.GetMetadata().GetName()

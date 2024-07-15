@@ -37,6 +37,8 @@ type maglevSelector struct {
 	mutex   sync.RWMutex
 }
 
+func (m *maglevSelector) Close() {}
+
 func (m *maglevSelector) AddNode(node *databasev1.Node) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
