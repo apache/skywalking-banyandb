@@ -188,12 +188,27 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 	return nil, nil
 }
 
-func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNRequest) (*measurev1.TopNResponse, error) {
-	if err := timestamp.CheckTimeRange(topNRequest.GetTimeRange()); err != nil {
+func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNRequest) (resp *measurev1.TopNResponse, err error) {
+	if err = timestamp.CheckTimeRange(topNRequest.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", topNRequest.GetTimeRange(), err)
 	}
-
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), topNRequest)
+	now := time.Now()
+	if topNRequest.Trace {
+		ctx := context.TODO()
+		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
+		span, _ := tracer.StartSpan(ctx, "topn-grpc")
+		span.Tag("request", convert.BytesToString(logger.Proto(topNRequest)))
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			} else {
+				span.AddSubTrace(resp.Trace)
+				resp.Trace = tracer.ToProto()
+			}
+			span.Stop()
+		}()
+	}
+	message := bus.NewMessage(bus.MessageID(now.UnixNano()), topNRequest)
 	feat, errQuery := ms.broadcaster.Publish(data.TopicTopNQuery, message)
 	if errQuery != nil {
 		return nil, errQuery

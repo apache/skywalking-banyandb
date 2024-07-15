@@ -20,6 +20,8 @@ package query
 import (
 	"container/heap"
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -34,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
@@ -46,7 +49,8 @@ type topNQueryProcessor struct {
 
 func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	request, ok := message.Data().(*measurev1.TopNRequest)
-	now := time.Now().UnixNano()
+	n := time.Now()
+	now := n.UnixNano()
 	if !ok {
 		t.log.Warn().Msg("invalid event data type")
 		return
@@ -114,8 +118,28 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("topn plan")
 	}
-
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(context.Background(), topNResultMeasure))
+	ctx := context.Background()
+	var tracer *query.Tracer
+	var span *query.Span
+	if request.Trace {
+		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
+		span, ctx = tracer.StartSpan(ctx, "data-%s", t.queryService.nodeID)
+		span.Tag("plan", plan.String())
+		defer func() {
+			data := resp.Data()
+			switch d := data.(type) {
+			case *measurev1.TopNResponse:
+				d.Trace = tracer.ToProto()
+			case common.Error:
+				span.Error(errors.New(d.Msg()))
+				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+			default:
+				panic("unexpected data type")
+			}
+			span.Stop()
+		}()
+	}
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(ctx, topNResultMeasure))
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to close the topn plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", topNMetadata.GetName(), err))
@@ -128,12 +152,24 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}()
 
 	result := make([]*measurev1.DataPoint, 0)
-	for mIterator.Next() {
-		current := mIterator.Current()
-		if len(current) > 0 {
-			result = append(result, current[0])
+	func() {
+		var r int
+		if tracer != nil {
+			iterSpan, _ := tracer.StartSpan(ctx, "iterator")
+			defer func() {
+				iterSpan.Tag("rounds", fmt.Sprintf("%d", r))
+				iterSpan.Tag("size", fmt.Sprintf("%d", len(result)))
+				iterSpan.Stop()
+			}()
 		}
-	}
+		for mIterator.Next() {
+			r++
+			current := mIterator.Current()
+			if len(current) > 0 {
+				result = append(result, current[0])
+			}
+		}
+	}()
 
 	resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(result))
 	return

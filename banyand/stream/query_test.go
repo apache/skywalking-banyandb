@@ -315,8 +315,9 @@ func TestQueryResult(t *testing.T) {
 					result.asc = tt.ascTS
 				}
 				var got []pbv1.StreamResult
+				ctx := context.Background()
 				for {
-					r := result.Pull()
+					r := result.Pull(ctx)
 					if r == nil {
 						break
 					}

@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -136,24 +137,24 @@ type queryResult struct {
 	asc              bool
 }
 
-func (qr *queryResult) Pull() *pbv1.StreamResult {
+func (qr *queryResult) Pull(ctx context.Context) *pbv1.StreamResult {
 	if qr.sortingIter == nil {
 		qo := qr.qo
 		sort.Slice(qo.sortedSids, func(i, j int) bool { return qo.sortedSids[i] < qo.sortedSids[j] })
-		return qr.load(qo)
+		return qr.load(ctx, qo)
 	}
 	if !qr.loaded {
 		qr.elementIDsSorted = make([]uint64, 0, qr.qo.MaxElementSize)
-		return qr.loadSortingData()
+		return qr.loadSortingData(ctx)
 	}
 	if v := qr.nextValue(); v != nil {
 		return v
 	}
 	qr.loaded = false
-	return qr.loadSortingData()
+	return qr.loadSortingData(ctx)
 }
 
-func (qr *queryResult) scanParts(qo queryOptions) error {
+func (qr *queryResult) scanParts(ctx context.Context, qo queryOptions) error {
 	var parts []*part
 	var n int
 	for i := range qr.tabWrappers {
@@ -170,6 +171,8 @@ func (qr *queryResult) scanParts(qo queryOptions) error {
 	}
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
+	defFn := startBlockScanSpan(ctx, len(qo.sortedSids), parts, qr)
+	defer defFn()
 	// TODO: cache tstIter
 	var ti tstIter
 	defer ti.reset()
@@ -190,9 +193,9 @@ func (qr *queryResult) scanParts(qo queryOptions) error {
 	return nil
 }
 
-func (qr *queryResult) load(qo queryOptions) *pbv1.StreamResult {
+func (qr *queryResult) load(ctx context.Context, qo queryOptions) *pbv1.StreamResult {
 	if !qr.loaded {
-		if err := qr.scanParts(qo); err != nil {
+		if err := qr.scanParts(ctx, qo); err != nil {
 			return &pbv1.StreamResult{
 				Error: err,
 			}
@@ -293,16 +296,34 @@ func (qr *queryResult) nextValue() *pbv1.StreamResult {
 	return qr.mergeByTimestamp()
 }
 
-func (qr *queryResult) loadSortingData() *pbv1.StreamResult {
+func (qr *queryResult) loadSortingData(ctx context.Context) *pbv1.StreamResult {
 	var qo queryOptions
 	qo.StreamQueryOptions = qr.qo.StreamQueryOptions
-	if qr.qo.elementFilter != nil {
-		qo.elementFilter = roaring.NewPostingList()
-	}
+	qo.elementFilter = roaring.NewPostingList()
 	qo.seriesToEntity = qr.qo.seriesToEntity
 	qr.elementIDsSorted = qr.elementIDsSorted[:0]
-	for count := 1; qr.sortingIter.Next(); count++ {
+	count, searchedSize := 1, 0
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		span, _ := tracer.StartSpan(ctx, "load-sorting-data")
+		span.Tagf("max_element_size", "%d", qo.MaxElementSize)
+		if qr.qo.elementFilter != nil {
+			span.Tag("filter_size", fmt.Sprintf("%d", qr.qo.elementFilter.Len()))
+		}
+		defer func() {
+			span.Tagf("searched_size", "%d", searchedSize)
+			span.Tagf("count", "%d", count)
+			span.Stop()
+		}()
+	}
+	for ; qr.sortingIter.Next(); count++ {
+		searchedSize++
 		val := qr.sortingIter.Val()
+		if qr.qo.elementFilter != nil && !qr.qo.elementFilter.Contains(val.DocID) {
+			count--
+			continue
+		}
+		qo.elementFilter.Insert(val.DocID)
 		if val.Timestamp > qo.maxTimestamp {
 			qo.maxTimestamp = val.Timestamp
 		}
@@ -310,9 +331,6 @@ func (qr *queryResult) loadSortingData() *pbv1.StreamResult {
 			qo.minTimestamp = val.Timestamp
 		}
 		qr.elementIDsSorted = append(qr.elementIDsSorted, val.DocID)
-		if qo.elementFilter != nil {
-			qo.elementFilter.Insert(val.DocID)
-		}
 
 		// Insertion sort
 		insertPos, found := -1, false
@@ -338,10 +356,10 @@ func (qr *queryResult) loadSortingData() *pbv1.StreamResult {
 			break
 		}
 	}
-	if qo.elementFilter != nil {
-		_ = qo.elementFilter.Intersect(qr.qo.elementFilter)
+	if qo.elementFilter.IsEmpty() {
+		return nil
 	}
-	return qr.load(qo)
+	return qr.load(ctx, qo)
 }
 
 func (qr *queryResult) releaseParts() {

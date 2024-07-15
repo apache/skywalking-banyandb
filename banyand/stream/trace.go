@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package measure
+package stream
 
 import (
 	"context"
@@ -57,6 +57,9 @@ func startBlockScanSpan(ctx context.Context, sids int, parts []*part, qr *queryR
 	}
 
 	span, _ := tracer.StartSpan(ctx, "scan-blocks")
+	if qr.qo.elementFilter != nil {
+		span.Tag("filter_size", fmt.Sprintf("%d", qr.qo.elementFilter.Len()))
+	}
 	span.Tag("series_num", fmt.Sprintf("%d", sids))
 	span.Tag("part_header", partMetadataHeader)
 	span.Tag("part_num", fmt.Sprintf("%d", len(parts)))

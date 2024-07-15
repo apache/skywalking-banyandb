@@ -34,8 +34,10 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -139,15 +141,31 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 
 var emptyStreamQueryResponse = &streamv1.QueryResponse{Elements: make([]*streamv1.Element, 0)}
 
-func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
+func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (resp *streamv1.QueryResponse, err error) {
 	timeRange := req.GetTimeRange()
 	if timeRange == nil {
 		req.TimeRange = timestamp.DefaultTimeRange
 	}
-	if err := timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
+	if err = timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req)
+	now := time.Now()
+	if req.Trace {
+		ctx := context.TODO()
+		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
+		span, _ := tracer.StartSpan(ctx, "stream-grpc")
+		span.Tag("request", convert.BytesToString(logger.Proto(req)))
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			} else {
+				span.AddSubTrace(resp.Trace)
+				resp.Trace = tracer.ToProto()
+			}
+			span.Stop()
+		}()
+	}
+	message := bus.NewMessage(bus.MessageID(now.UnixNano()), req)
 	feat, errQuery := s.broadcaster.Publish(data.TopicStreamQuery, message)
 	if errQuery != nil {
 		if errors.Is(errQuery, io.EOF) {
