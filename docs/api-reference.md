@@ -2561,6 +2561,7 @@ TopNRequest is the request contract for query.
 | agg | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | agg aggregates lists grouped by field names in the time_range TODO validate enum defined_only |
 | conditions | [banyandb.model.v1.Condition](#banyandb-model-v1-Condition) | repeated | criteria select counters. Only equals are acceptable. |
 | field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
 
 
 
@@ -2576,6 +2577,7 @@ TopNResponse is the response for a query to the Query module.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | lists | [TopNList](#banyandb-measure-v1-TopNList) | repeated | lists contain a series topN lists ranked by timestamp if agg_func in query request is specified, lists&#39; size should be one. |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
 
 
 

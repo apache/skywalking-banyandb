@@ -424,6 +424,7 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 		bc := qr.data[0]
 		bc.copyAllTo(r, qr.entityValues, qr.tagProjection, qr.orderByTimestampDesc())
 		qr.data = qr.data[:0]
+		releaseBlockCursor(bc)
 		return r
 	}
 	return qr.merge(qr.entityValues, qr.tagProjection)
@@ -490,6 +491,7 @@ func (qr *queryResult) Pop() interface{} {
 	n := len(old)
 	x := old[n-1]
 	qr.data = old[0 : n-1]
+	releaseBlockCursor(x)
 	return x
 }
 

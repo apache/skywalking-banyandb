@@ -71,7 +71,8 @@ type streamQueryProcessor struct {
 }
 
 func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
-	now := time.Now().UnixNano()
+	n := time.Now()
+	now := n.UnixNano()
 	queryCriteria, ok := message.Data().(*streamv1.QueryRequest)
 	if !ok {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
@@ -115,7 +116,30 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if p.log.Debug().Enabled() {
 		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
-	entities, err := plan.(executor.StreamExecutable).Execute(executor.WithStreamExecutionContext(context.Background(), ec))
+	ctx := context.Background()
+	var tracer *query.Tracer
+	var span *query.Span
+	if queryCriteria.Trace {
+		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
+		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
+		span.Tag("plan", plan.String())
+		defer func() {
+			data := resp.Data()
+			switch d := data.(type) {
+			case *streamv1.QueryResponse:
+				d.Trace = tracer.ToProto()
+			case common.Error:
+				span.Error(errors.New(d.Msg()))
+				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+			default:
+				panic("unexpected data type")
+			}
+			span.Stop()
+		}()
+	}
+	se := plan.(executor.StreamExecutable)
+	defer se.Close()
+	entities, err := se.Execute(executor.WithStreamExecutionContext(ctx, ec))
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", meta.GetName(), err))

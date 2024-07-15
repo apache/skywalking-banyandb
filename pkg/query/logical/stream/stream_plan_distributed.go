@@ -31,7 +31,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -116,6 +118,8 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	return result, nil
 }
 
+var _ executor.StreamExecutable = (*distributedPlan)(nil)
+
 type distributedPlan struct {
 	s              logical.Schema
 	queryTemplate  *streamv1.QueryRequest
@@ -125,14 +129,30 @@ type distributedPlan struct {
 	maxElementSize uint32
 }
 
-func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
+func (t *distributedPlan) Close() {}
+
+func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, err error) {
 	dctx := executor.FromDistributedExecutionContext(ctx)
-	query := proto.Clone(t.queryTemplate).(*streamv1.QueryRequest)
-	query.TimeRange = dctx.TimeRange()
+	queryRequest := proto.Clone(t.queryTemplate).(*streamv1.QueryRequest)
+	queryRequest.TimeRange = dctx.TimeRange()
 	if t.maxElementSize > 0 {
-		query.Limit = t.maxElementSize
+		queryRequest.Limit = t.maxElementSize
 	}
-	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), query))
+	tracer := query.GetTracer(ctx)
+	var span *query.Span
+	if tracer != nil {
+		span, _ = tracer.StartSpan(ctx, "distributed-client")
+		queryRequest.Trace = true
+		span.Tag("request", convert.BytesToString(logger.Proto(queryRequest)))
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			} else {
+				span.Stop()
+			}
+		}()
+	}
+	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), queryRequest))
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +167,9 @@ func (t *distributedPlan) Execute(ctx context.Context) ([]*streamv1.Element, err
 				continue
 			}
 			resp := d.(*streamv1.QueryResponse)
+			if span != nil {
+				span.AddSubTrace(resp.Trace)
+			}
 			see = append(see,
 				newSortableElements(resp.Elements, t.sortByTime, t.sortTagSpec))
 		}
@@ -247,4 +270,65 @@ func (s *sortableElements) iter(fn func(*streamv1.Element) (*comparableElement, 
 	}
 	s.cur = cur
 	return s.index <= len(s.elements)
+}
+
+var _ executor.StreamExecutable = (*distributedLimit)(nil)
+
+type distributedLimit struct {
+	*Parent
+	limit  uint32
+	offset uint32
+}
+
+func (l *distributedLimit) Close() {
+	l.Parent.Input.(executor.StreamExecutable).Close()
+}
+
+func (l *distributedLimit) Execute(ec context.Context) ([]*streamv1.Element, error) {
+	entities, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
+	if err != nil {
+		return nil, err
+	}
+
+	start := int(l.offset)
+	if start > len(entities) {
+		return []*streamv1.Element{}, nil
+	}
+
+	end := start + int(l.limit)
+	if end > len(entities) {
+		end = len(entities)
+	}
+	return entities[start:end], nil
+}
+
+func (l *distributedLimit) Analyze(s logical.Schema) (logical.Plan, error) {
+	var err error
+	l.Input, err = l.UnresolvedInput.Analyze(s)
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+func (l *distributedLimit) Schema() logical.Schema {
+	return l.Input.Schema()
+}
+
+func (l *distributedLimit) String() string {
+	return fmt.Sprintf("%s Distributed Limit: %d, %d", l.Input.String(), l.offset, l.limit)
+}
+
+func (l *distributedLimit) Children() []logical.Plan {
+	return []logical.Plan{l.Input}
+}
+
+func newDistributedLimit(input logical.UnresolvedPlan, offset, limit uint32) logical.UnresolvedPlan {
+	return &distributedLimit{
+		Parent: &Parent{
+			UnresolvedInput: input,
+		},
+		offset: offset,
+		limit:  limit,
+	}
 }

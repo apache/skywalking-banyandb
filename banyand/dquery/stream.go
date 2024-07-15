@@ -19,14 +19,17 @@ package dquery
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 )
@@ -38,7 +41,8 @@ type streamQueryProcessor struct {
 }
 
 func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
-	now := time.Now().UnixNano()
+	n := time.Now()
+	now := n.UnixNano()
 	queryCriteria, ok := message.Data().(*streamv1.QueryRequest)
 	if !ok {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
@@ -76,7 +80,30 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if p.log.Debug().Enabled() {
 		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
-	entities, err := plan.(executor.StreamExecutable).Execute(executor.WithDistributedExecutionContext(context.Background(), &distributedContext{
+	ctx := context.Background()
+	var tracer *query.Tracer
+	var span *query.Span
+	if queryCriteria.Trace {
+		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
+		span, ctx = tracer.StartSpan(ctx, "distributed-%s", p.queryService.nodeID)
+		span.Tag("plan", plan.String())
+		defer func() {
+			data := resp.Data()
+			switch d := data.(type) {
+			case *streamv1.QueryResponse:
+				d.Trace = tracer.ToProto()
+			case common.Error:
+				span.Error(errors.New(d.Msg()))
+				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+			default:
+				panic("unexpected data type")
+			}
+			span.Stop()
+		}()
+	}
+	se := plan.(executor.StreamExecutable)
+	defer se.Close()
+	entities, err := se.Execute(executor.WithDistributedExecutionContext(ctx, &distributedContext{
 		Broadcaster: p.broadcaster,
 		timeRange:   queryCriteria.TimeRange,
 	}))

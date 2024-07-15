@@ -20,6 +20,7 @@ package stream
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -47,7 +48,9 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageLis
 	}
 }
 
-func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest) (map[string]*elementsInGroup, error) {
+func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest,
+	docIDBuilder *strings.Builder,
+) (map[string]*elementsInGroup, error) {
 	req := writeEvent.Request
 	t := req.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
@@ -92,7 +95,12 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		eg.tables = append(eg.tables, et)
 	}
 	et.elements.timestamps = append(et.elements.timestamps, ts)
-	et.elements.elementIDs = append(et.elements.elementIDs, writeEvent.Request.Element.GetElementId())
+	docIDBuilder.Reset()
+	docIDBuilder.WriteString(req.Metadata.Name)
+	docIDBuilder.WriteByte('|')
+	docIDBuilder.WriteString(req.Element.ElementId)
+	eID := convert.HashStr(docIDBuilder.String())
+	et.elements.elementIDs = append(et.elements.elementIDs, eID)
 	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
 		return nil, fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
@@ -183,8 +191,9 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
 
 	et.docs = append(et.docs, index.Document{
-		DocID:  uint64(ts),
-		Fields: fields,
+		DocID:     eID,
+		Fields:    fields,
+		Timestamp: ts,
 	})
 
 	eg.docs = append(eg.docs, index.Document{
@@ -205,6 +214,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	groups := make(map[string]*elementsInGroup)
+	var builder strings.Builder
 	for i := range events {
 		var writeEvent *streamv1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -221,7 +231,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 			continue
 		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, &builder); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*elementsInGroup)
 			continue

@@ -59,6 +59,7 @@ func startBlockScanSpan(ctx context.Context, sids int, parts []*part, qr *queryR
 	span, _ := tracer.StartSpan(ctx, "scan-blocks")
 	span.Tag("series_num", fmt.Sprintf("%d", sids))
 	span.Tag("part_header", partMetadataHeader)
+	span.Tag("part_num", fmt.Sprintf("%d", len(parts)))
 	for i := range parts {
 		span.Tag(fmt.Sprintf("part_%d_%s", parts[i].partMetadata.ID, parts[i].path),
 			parts[i].partMetadata.String())
