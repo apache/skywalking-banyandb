@@ -32,7 +32,7 @@ services:
       - 17912
       - 2121
       - 6060
-    command: liaison --etcd-endpoints=http://etcd:2379 
+    command: liaison --etcd-endpoints=http://etcd:2379 --observability-modes=native 
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--addr=http://liaison:17913"]
       interval: 30s
@@ -45,7 +45,7 @@ services:
       - 17912
       - 2121
       - 6060
-    command: data --etcd-endpoints=http://etcd:2379 
+    command: data --etcd-endpoints=http://etcd:2379 --observability-modes=native
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--grpc-addr=data:17912"]
       interval: 30s

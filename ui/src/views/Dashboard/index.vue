@@ -70,15 +70,23 @@ function formatUptime(seconds) {
     const secs = Math.floor(seconds % 60);
     return `${hrs > 0 ? `${hrs}h ` : ''}${mins}m ${secs}s`;
 }
+
 function extractAddress(fullAddress) {
     const parts = fullAddress.split(':');
     return parts[parts.length - 1];
 }
 
+function formatBytes(bytes) {
+    if (bytes === 0 || bytes === undefined) return 'N/A';
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
 const colors = [
-  { color: '#5cb87a', percentage: 51 },
-  { color: '#edc374', percentage: 81 },
-  { color: '#f56c6c', percentage: 100 },
+    { color: '#5cb87a', percentage: 51 },
+    { color: '#edc374', percentage: 81 },
+    { color: '#f56c6c', percentage: 100 },
 ];
 
 async function fetchNodes() {
@@ -247,24 +255,34 @@ onMounted(() => {
                 <el-table-column prop="node_type" label="Type" width="150"></el-table-column>
                 <el-table-column prop="uptime" label="Uptime" width="150"></el-table-column>
                 <el-table-column label="CPU" width="150">
-        <template #default="scope">
-          <el-progress
-            type="dashboard"
-            :percentage="parseFloat((scope.row.cpu * 100).toFixed(2))"
-            :color="colors"
-          />
-        </template>
-      </el-table-column>
+                    <template #default="scope">
+                        <el-progress type="dashboard" :percentage="parseFloat((scope.row.cpu * 100).toFixed(2))"
+                            :color="colors" />
+                    </template>
+                </el-table-column>
                 <el-table-column label="Memory" width="300">
                     <template #default="scope">
-                        <div>
-                            Used: {{ scope.row.memory.used || 'N/A' }},
-                            Total: {{ scope.row.memory.total || 'N/A' }},
-                            Used %: {{ scope.row.memory.used_percent ? (scope.row.memory.used_percent * 100).toFixed(2)
-                            + '%' : 'N/A' }}
+                        <div class="memory-detail">
+                            <div class="progress-container">
+                                <el-progress type="line"
+                                    :percentage="parseFloat((scope.row.memory.used_percent * 100).toFixed(2))"
+                                    color="#82b0fa" :stroke-width="6" show-text="false" style="flex: 1; margin-right: 10px;" />
+                            </div>
+                            <div class="memory-stats">
+                                <span>Used: {{ formatBytes(scope.row.memory.used) }}</span>
+                                <span>Total: {{ formatBytes(scope.row.memory.total) }}</span>
+                                <span>
+                                    Free: {{
+                                        scope.row.memory.total && scope.row.memory.used
+                                            ? formatBytes(scope.row.memory.total - scope.row.memory.used)
+                                    : 'N/A'
+                                    }}
+                                </span>
+                            </div>
                         </div>
                     </template>
                 </el-table-column>
+
                 <el-table-column label="Disk Details" width="300">
                     <template #default="scope">
                         <div v-for="(value, key) in scope.row.disk" :key="key">
@@ -288,19 +306,38 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 ::v-deep .el-table td {
-  padding-right: 10px; // Adjust the padding value as needed
+    padding-right: 10px; // Adjust the padding value as needed
 }
 
 ::v-deep .el-card {
-  margin: 15px; // Adjust the margin value as needed
+    margin: 15px; // Adjust the margin value as needed
 }
 
 .demo-progress .el-progress--line {
-  margin-bottom: 15px;
-  max-width: 600px;
+    margin-bottom: 15px;
+    max-width: 100px;
 }
 
 .demo-progress .el-progress--circle {
-  margin-right: 15px;
+    margin-right: 15px;
+}
+
+.memory-detail {
+    margin-bottom: 20px;
+}
+
+.progress-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+    width: 100%;
+}
+
+.memory-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 5px;
+  text-align: center;
 }
 </style>
