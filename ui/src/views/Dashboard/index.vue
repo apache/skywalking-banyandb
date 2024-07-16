@@ -478,8 +478,12 @@ watchEffect(() => {
     /* Adjust the width as needed */
 }
 
+
 .dashboard .el-table {
-    margin: 10px; // Adjust the padding value as needed
+    max-width: 100%;
+    width: auto; /* Allow the table to shrink or grow based on its content */
+    margin: 0 auto; /* Center the table */
+    // white-space: nowrap; /* Prevent table cells from wrapping */
 }
 
 .dashboard .el-card {
