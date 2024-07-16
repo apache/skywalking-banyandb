@@ -53,8 +53,7 @@ services:
     extends:
       file: ../../docker/base-compose.yml
       service: oap
-    # TODO: use the main repo image once v0.6.0 is released and merged into the main repo
-    image: "ghcr.io/apache/skywalking/data-generator:${SW_OAP_COMMIT}"
+    image: "hanahmily/data-generator:${SW_OAP_COMMIT}"
     environment:
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_FLUSH_INTERVAL: 5

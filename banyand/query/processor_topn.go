@@ -55,7 +55,6 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Warn().Msg("invalid event data type")
 		return
 	}
-	// TODO: support multiple groups
 	if len(request.Groups) > 1 {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
 		return

@@ -115,7 +115,6 @@ func parseFromYAML(tryParseGroup bool, reader io.Reader) (requests []reqBody, er
 		}
 
 		var group string
-		// TODO:// bydbctl should support multiple groups
 		if metadata, ok := data["metadata"].(map[string]interface{}); ok {
 			group, ok = metadata["group"].(string)
 			if !ok && tryParseGroup {

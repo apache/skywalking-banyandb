@@ -31,7 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-// TODO: test more scenarios.
 func Test_partIter_nextBlock(t *testing.T) {
 	tests := []struct {
 		wantErr error

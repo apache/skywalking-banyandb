@@ -38,7 +38,6 @@ func (f *streamingFlow) Map(mapper flow.UnaryOperation[any]) flow.Flow {
 // Transform represents a general unary transformation
 // For example: filter, map, etc.
 func (f *streamingFlow) Transform(op flow.UnaryOperation[any]) flow.Flow {
-	// TODO: support parallelism
 	f.ops = append(f.ops, newUnaryOp(op, 1))
 	return f
 }

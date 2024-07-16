@@ -15,5 +15,3 @@ The Docker image is tagged as "prometheus" to facilitate cloud-native operations
 Banyand, the server of BanyanDB, supports profiling automatically. The profiling data is collected by the `pprof` package and can be accessed through the `/debug/pprof` endpoint. The port of the profiling server is `2122` by default.
 
 ## Tracing
-
-TODO: Add details about the tracing support in BanyanDB, such as how to enable tracing, available tracing tools, and how to analyze tracing data.

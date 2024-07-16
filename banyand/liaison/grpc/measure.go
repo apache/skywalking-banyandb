@@ -122,10 +122,9 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			}
 		}
 		iwr := &measurev1.InternalWriteRequest{
-			Request:    writeRequest,
-			ShardId:    uint32(shardID),
-			SeriesHash: pbv1.HashEntity(entity),
-			// TODO: remove the first value (measure name) of tagValues
+			Request:      writeRequest,
+			ShardId:      uint32(shardID),
+			SeriesHash:   pbv1.HashEntity(entity),
 			EntityValues: tagValues[1:].Encode(),
 		}
 		nodeID, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), uint32(shardID))

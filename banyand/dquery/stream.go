@@ -51,7 +51,6 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if p.log.Debug().Enabled() {
 		p.log.Debug().RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a query request")
 	}
-	// TODO: support multiple groups
 	if len(queryCriteria.Groups) > 1 {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
 		return
