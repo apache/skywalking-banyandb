@@ -87,7 +87,6 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
 		}
 	}()
-	// TODO: support multiple groups
 	if len(queryCriteria.Groups) > 1 {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
 		return
@@ -170,7 +169,6 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
 		}
 	}()
-	// TODO: support multiple groups
 	if len(queryCriteria.Groups) > 1 {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
 		return

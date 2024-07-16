@@ -18,7 +18,6 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.1.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.19.1
 	github.com/hashicorp/golang-lru v1.0.2
-	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kkdai/maglev v0.2.0
 	github.com/montanaflynn/stats v0.7.1
 	github.com/oklog/run v1.1.0

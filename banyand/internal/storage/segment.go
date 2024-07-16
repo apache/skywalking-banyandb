@@ -32,7 +32,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/internal/bucket"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -42,7 +41,6 @@ import (
 var ErrExpiredData = errors.New("expired data")
 
 type segment[T TSTable] struct {
-	bucket.Reporter
 	tsTable  T
 	l        *logger.Logger
 	position common.Position
@@ -55,7 +53,7 @@ type segment[T TSTable] struct {
 }
 
 func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, path, suffix string,
-	segmentSize IntervalRule, scheduler *timestamp.Scheduler, tsTable T, p common.Position,
+	segmentSize IntervalRule, tsTable T, p common.Position,
 ) (s *segment[T], err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
@@ -68,14 +66,12 @@ func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, p
 		path:      path,
 		suffix:    suffix,
 		TimeRange: timeRange,
-		position:  common.GetPosition(ctx),
+		position:  p,
 		tsTable:   tsTable,
 		refCount:  1,
 	}
 	l := logger.Fetch(ctx, s.String())
 	s.l = l
-	clock, _ := timestamp.GetClock(ctx)
-	s.Reporter = bucket.NewTimeBasedReporter(fmt.Sprintf("%s-%s", p.Shard, s.String()), timeRange, clock, scheduler)
 	return s, nil
 }
 
@@ -123,7 +119,6 @@ func (s *segment[T]) String() string {
 type segmentController[T TSTable, O any] struct {
 	clock          timestamp.Clock
 	option         O
-	scheduler      *timestamp.Scheduler
 	l              *logger.Logger
 	tsTableCreator TSTableCreator[T, O]
 	position       common.Position
@@ -135,8 +130,7 @@ type segmentController[T TSTable, O any] struct {
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
-	segmentSize IntervalRule, l *logger.Logger, scheduler *timestamp.Scheduler,
-	tsTableCreator TSTableCreator[T, O], option O,
+	segmentSize IntervalRule, l *logger.Logger, tsTableCreator TSTableCreator[T, O], option O,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	return &segmentController[T, O]{
@@ -144,7 +138,6 @@ func newSegmentController[T TSTable, O any](ctx context.Context, location string
 		segmentSize:    segmentSize,
 		l:              l,
 		clock:          clock,
-		scheduler:      scheduler,
 		position:       common.GetPosition(ctx),
 		tsTableCreator: tsTableCreator,
 		option:         option,
@@ -305,7 +298,7 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 	if tsTable, err = sc.tsTableCreator(lfs, segPath, p, sc.l, timestamp.NewSectionTimeRange(start, end), sc.option); err != nil {
 		return nil, err
 	}
-	seg, err = openSegment[T](context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, sc.segmentSize, sc.scheduler, tsTable, p)
+	seg, err = openSegment[T](context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, sc.segmentSize, tsTable, p)
 	if err != nil {
 		return nil, err
 	}
