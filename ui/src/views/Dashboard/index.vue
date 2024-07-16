@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import { ref, watchEffect, computed } from 'vue';
+import { ref, watchEffect, computed, defineComponent } from 'vue';
 import { getTableList } from '@/api/index'
 
 const value = ref(15000);
@@ -141,6 +141,15 @@ const timezoneOffset = computed(() => {
     const sign = offset <= 0 ? "+" : "-";
     return `UTC${sign}${hours}:${minutes.toString().padStart(2, "0")}`;
 });
+
+const truncatePath = (path) => {
+    if (path.length <= 15) return path;
+    return '...' + path.slice(-15);
+};
+
+const isTruncated = (path) => {
+    return path.length > 15;
+};
 
 
 function formatUptime(seconds) {
@@ -417,7 +426,13 @@ watchEffect(() => {
                         </div>
                         <div class="disk-detail" v-else v-for="(value, key) in scope.row.disk" :key="key">
                             <div class="progress-container">
-                                <span class="disk-key">{{ key }}:</span>
+                                <span v-if="isTruncated(key)" class="disk-key">
+                                    <el-tooltip class="box-item" effect="light" :content="key" placement="top"
+                                        :popper-class="'custom-tooltip'">
+                                        <span>{{ truncatePath(key) }}:</span>
+                                    </el-tooltip>
+                                </span>
+                                <span v-else class="disk-key">{{ key }}:</span>
                                 <el-progress type="line" :percentage="parseFloat((value.used_percent * 100).toFixed(2))"
                                     color="#82b0fa" :stroke-width="6" :show-text="true" class="fixed-progress-bar" />
                             </div>
@@ -481,8 +496,10 @@ watchEffect(() => {
 
 .dashboard .el-table {
     max-width: 100%;
-    width: auto; /* Allow the table to shrink or grow based on its content */
-    margin: 0 auto; /* Center the table */
+    width: auto;
+    /* Allow the table to shrink or grow based on its content */
+    margin: 0 auto;
+    /* Center the table */
     // white-space: nowrap; /* Prevent table cells from wrapping */
 }
 
