@@ -92,7 +92,7 @@ services:
     extends:
       file: ../../docker/base-compose.yml
       service: oap
-    image: "hanahmily/data-generator:${SW_OAP_COMMIT}"
+    image: "ghcr.io/apache/skywalking/data-generator:${SW_OAP_COMMIT}"
     environment:
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_TARGETS: "liaison:17912"
