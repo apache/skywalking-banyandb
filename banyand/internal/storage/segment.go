@@ -244,7 +244,6 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) 
 	for i := range sc.lst {
 		s := sc.lst[last-i]
 		if s.Contains(start.UnixNano()) {
-			s.incRef()
 			return s, nil
 		}
 	}
