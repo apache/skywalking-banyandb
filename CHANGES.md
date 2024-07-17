@@ -28,6 +28,7 @@ Release Notes.
 - Fix memory leak in sorting the stream by the inverted index.
 - Fix the wrong array flags parsing in command line. The array flags should be parsed by "StringSlice" instead of "StringArray".
 - Fix a bug that the Stream module didn't support duplicated in index-based filtering and sorting
+- Fix the bug that segment's reference count is increased twice when the controller try to create an existing segment.
 
 ## 0.6.1
 
