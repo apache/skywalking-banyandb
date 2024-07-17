@@ -106,7 +106,6 @@ func NewServer(options ...Option) (Server, error) {
 	if l, err = zapCfg.Build(); err != nil {
 		return nil, err
 	}
-	// TODO: allow use cluster setting
 	embedConfig, err := newEmbedEtcdConfig(conf, l)
 	if err != nil {
 		return nil, err

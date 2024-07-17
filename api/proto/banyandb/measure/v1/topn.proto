@@ -60,7 +60,6 @@ message TopNRequest {
   // top_n set the how many items should be returned in each list.
   int32 top_n = 4 [(validate.rules).int32.gt = 0];
   // agg aggregates lists grouped by field names in the time_range
-  // TODO validate enum defined_only
   model.v1.AggregationFunction agg = 5;
   // criteria select counters. Only equals are acceptable.
   repeated model.v1.Condition conditions = 6;

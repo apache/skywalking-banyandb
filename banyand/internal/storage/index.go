@@ -203,7 +203,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 	pl := seriesList.ToList()
 	if filter != nil && filter != logical.ENode {
 		var plFilter posting.List
-		// TODO: merge searchPrimary and filter
 		func() {
 			if tracer != nil {
 				span, _ := tracer.StartSpan(ctx, "filter")
@@ -251,7 +250,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 			span.Stop()
 		}()
 	}
-	// TODO:// merge searchPrimary and sort
 	iter, err := s.store.Iterator(fieldKey, rangeOpts, order.Sort, preloadSize)
 	if err != nil {
 		return nil, err
