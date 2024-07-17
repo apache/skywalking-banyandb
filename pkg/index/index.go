@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/blugelabs/bluge"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -188,6 +190,8 @@ type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
 	Search(context.Context, []SeriesMatcher) ([]Series, error)
+	// Execute returns a posting list that matches the given query.
+	Execute(bluge.Query) (posting.List, error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

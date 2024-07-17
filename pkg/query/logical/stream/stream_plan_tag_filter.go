@@ -54,7 +54,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		entity[idx] = pbv1.AnyTagValue
 	}
 	var err error
-	ctx.filter, ctx.entities, err = logical.BuildLocalFilter(uis.criteria, s, entityDict, entity, false)
+	ctx.filter, ctx.entities, err = logical.BuildLocalFilter(uis.criteria, s, entityDict, entity)
 	if err != nil {
 		return nil, err
 	}

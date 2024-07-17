@@ -21,6 +21,8 @@ package v1
 import (
 	"context"
 
+	"github.com/blugelabs/bluge"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -158,7 +160,7 @@ const (
 
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
-	Filter          index.Filter
+	Query           bluge.Query
 	TimeRange       *timestamp.TimeRange
 	Order           *OrderBy
 	Name            string

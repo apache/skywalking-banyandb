@@ -28,18 +28,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blugelabs/bluge"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -183,7 +182,7 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList
 	return seriesList, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (sl pbv1.SeriesList, err error) {
+func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQuery bluge.Query, order *pbv1.OrderBy, preloadSize int) (sl pbv1.SeriesList, err error) {
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		var span *query.Span
@@ -201,13 +200,12 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 	}
 
 	pl := seriesList.ToList()
-	if filter != nil && filter != logical.ENode {
+	if blugeQuery != nil {
 		var plFilter posting.List
 		// TODO: merge searchPrimary and filter
 		func() {
 			if tracer != nil {
 				span, _ := tracer.StartSpan(ctx, "filter")
-				span.Tag("exp", filter.String())
 				defer func() {
 					if err != nil {
 						span.Error(err)
@@ -218,9 +216,7 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 					span.Stop()
 				}()
 			}
-			if plFilter, err = filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
-				return s.store, nil
-			}, 0); err != nil {
+			if plFilter, err = s.store.Execute(blugeQuery); err != nil {
 				return
 			}
 			if plFilter == nil {
@@ -501,19 +497,19 @@ func (sic *seriesIndexController[T, O]) searchPrimary(ctx context.Context, serie
 }
 
 func (sic *seriesIndexController[T, O]) Search(ctx context.Context, series []*pbv1.Series,
-	filter index.Filter, order *pbv1.OrderBy, preloadSize int,
+	query bluge.Query, order *pbv1.OrderBy, preloadSize int,
 ) (pbv1.SeriesList, error) {
 	sic.RLock()
 	defer sic.RUnlock()
 
-	sl, err := sic.hot.Search(ctx, series, filter, order, preloadSize)
+	sl, err := sic.hot.Search(ctx, series, query, order, preloadSize)
 	if err != nil {
 		return nil, err
 	}
 	if len(sl) > 0 || sic.standby == nil {
 		return sl, nil
 	}
-	return sic.standby.Search(ctx, series, filter, order, preloadSize)
+	return sic.standby.Search(ctx, series, query, order, preloadSize)
 }
 
 func (sic *seriesIndexController[T, O]) Close() error {

@@ -89,7 +89,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (mqr 
 		}
 	}
 
-	sl, err := tsdb.IndexDB().Search(ctx, series, mqo.Filter, mqo.Order, preloadSize)
+	sl, err := tsdb.IndexDB().Search(ctx, series, mqo.Query, mqo.Order, preloadSize)
 	if err != nil {
 		return nil, err
 	}

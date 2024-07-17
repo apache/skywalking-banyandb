@@ -22,12 +22,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/blugelabs/bluge"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -86,7 +86,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		// fill AnyEntry by default
 		entity[idx] = pbv1.AnyTagValue
 	}
-	filter, entities, err := logical.BuildLocalFilter(uis.criteria, s, entityMap, entity, true)
+	query, entities, err := logical.BuildLocalQuery(uis.criteria, s, entityMap, entity)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		projectionTagsRefs:   projTagsRefs,
 		projectionFieldsRefs: projFieldRefs,
 		metadata:             uis.metadata,
-		filter:               filter,
+		query:                query,
 		entities:             entities,
 		groupByEntity:        uis.groupByEntity,
 		uis:                  uis,
@@ -113,7 +113,7 @@ var (
 )
 
 type localIndexScan struct {
-	filter               index.Filter
+	query                bluge.Query
 	schema               logical.Schema
 	uis                  *unresolvedIndexScan
 	order                *logical.OrderBy
@@ -154,7 +154,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		Name:            i.metadata.GetName(),
 		TimeRange:       &i.timeRange,
 		Entities:        i.entities,
-		Filter:          i.filter,
+		Query:           i.query,
 		OrderByType:     orderByType,
 		Order:           orderBy,
 		TagProjection:   i.projectionTags,
@@ -171,7 +171,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 func (i *localIndexScan) String() string {
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; order=%s;",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		i.filter, logical.FormatTagRefs(", ", i.projectionTagsRefs...), i.order)
+		i.query, logical.FormatTagRefs(", ", i.projectionTagsRefs...), i.order)
 }
 
 func (i *localIndexScan) Children() []logical.Plan {
