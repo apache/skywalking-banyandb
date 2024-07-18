@@ -24,6 +24,7 @@ import { getTableList } from '@/api/index'
 const value = ref(15000);
 
 const options = ref([
+    { value: 'off', label: 'Off' },
     { value: 15000, label: '15 seconds' },
     { value: 30000, label: '30 seconds' },
     { value: 60000, label: '1 minute' },
@@ -150,6 +151,8 @@ const truncatePath = (path) => {
 const isTruncated = (path) => {
     return path.length > 15;
 };
+
+
 
 
 function formatUptime(seconds) {
@@ -357,10 +360,11 @@ watchEffect(() => {
 let intervalId;
 watchEffect(() => {
     if (intervalId) clearInterval(intervalId);
-    fetchNodes();
-    intervalId = setInterval(fetchNodes, value.value);
+    if (value.value !== 'off') {
+        fetchNodes();
+        intervalId = setInterval(fetchNodes, value.value);
+    }
 });
-
 </script>
 
 <template>
