@@ -171,8 +171,7 @@ func collectDisk() {
 	for path := range getPath() {
 		usage, err := disk.Usage(path)
 		if err != nil {
-			// skip logging the case where the data has not been created
-			if err.Error() == "no such file or directory" {
+			if err.Error() != "no such file or directory" {
 				log.Error().Err(err).Msgf("failed to get usage for path: %s", path)
 			}
 			return
