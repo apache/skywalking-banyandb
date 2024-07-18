@@ -32,8 +32,8 @@ const options = ref([
 ]);
 
 const utcTime = ref({
-    now: '',
-    fiftheenSecondsAgo: ''
+    end: '',
+    oneMinuteAgo: ''
 });
 const commonParams = {
     groups: ["_monitoring"],
@@ -131,10 +131,6 @@ const shortcuts = [
 // State for date picker
 const dateRange = ref([new Date(Date.now() - 30 * 60 * 1000), new Date()]); // Default to last 30 minutes
 
-// Compute formatted times
-const formattedStartTime = ref(formatDate(dateRange.value[0]));
-const formattedEndTime = ref(formatDate(dateRange.value[1]));
-
 const timezoneOffset = computed(() => {
     const offset = new Date().getTimezoneOffset();
     const hours = Math.floor(Math.abs(offset) / 60);
@@ -151,9 +147,6 @@ const truncatePath = (path) => {
 const isTruncated = (path) => {
     return path.length > 15;
 };
-
-
-
 
 function formatUptime(seconds) {
     const hrs = Math.floor(seconds / 3600);
@@ -173,8 +166,6 @@ function formatBytes(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
 }
-
-
 
 async function fetchNodes() {
     getCurrentUTCTime()
@@ -239,19 +230,19 @@ async function fetchNodes() {
 }
 
 function getCurrentUTCTime() {
-    const now = new Date();
-    utcTime.value.now = now.toISOString();
+    const end = dateRange.value[1]; // Get the end time from the date picker
+    utcTime.value.end = end.toISOString();
 
-    const fiftheenSecondsAgo = new Date(now.getTime() - 15000);
-    utcTime.value.fiftheenSecondsAgo = fiftheenSecondsAgo.toISOString();
+    const oneMinuteAgo = new Date(end.getTime() - 60000);
+    utcTime.value.oneMinuteAgo = oneMinuteAgo.toISOString();
 }
 
 async function fetchDataPoints(type, tagProjection) {
     const params = JSON.parse(JSON.stringify(commonParams));
     params.name = type;
     params.timeRange = {
-        begin: utcTime.value.fiftheenSecondsAgo,
-        end: utcTime.value.now,
+        begin: utcTime.value.oneMinuteAgo,
+        end: utcTime.value.end,
     };
     params.tagProjection = tagProjection
     const res = await getTableList(params, "measure");
@@ -330,39 +321,25 @@ function getLatestField(data, nodeId) {
     return null;
 }
 
-// Define a function to format date and time
-function formatDate(date) {
-    const year = date.getUTCFullYear();
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(date.getUTCDate()).padStart(2, '0');
-    const hours = String(date.getUTCHours()).padStart(2, '0');
-    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-    return `${year}-${month}-${day} ${hours}:${minutes}`;
-}
-
 function changeDatePicker(value) {
     dateRange.value = value;
+    fetchNodes();
 }
 
-function resetDatePicker() {
-    if (!pickedShortCutTimeRanges.value) {
-        dateRange.value = [new Date(Date.now() - 30 * 60 * 1000), new Date()];
-    }
-    pickedShortCutTimeRanges.value = false;
-}
-
-// Update formatted times when dateRange changes
-watchEffect(() => {
-    formattedStartTime.value = formatDate(dateRange.value[0]);
-    formattedEndTime.value = formatDate(dateRange.value[1]);
-});
-
+// watch update to auto fresh 
 let intervalId;
 watchEffect(() => {
     if (intervalId) clearInterval(intervalId);
     if (value.value !== 'off') {
         fetchNodes();
-        intervalId = setInterval(fetchNodes, value.value);
+        intervalId = setInterval(() => {
+            const currentStart = dateRange.value[0];
+            const currentEnd = dateRange.value[1];
+            const newEnd = new Date(currentEnd.getTime() + value.value);
+            const newStart = new Date(currentStart.getTime() + value.value);
+            dateRange.value = [newStart, newEnd];
+            fetchNodes();
+        }, value.value);
     }
 });
 </script>
@@ -371,9 +348,9 @@ watchEffect(() => {
     <div class="dashboard">
         <div class="header-container">
             <span class="timestamp">
-                <el-date-picker @change="changeDatePicker" @visible-change="resetDatePicker" v-model="dateRange"
-                    type="datetimerange" :shortcuts="shortcuts" range-separator="to" start-placeholder="begin"
-                    end-placeholder="end" align="right" style="margin: 0 10px 0 10px"></el-date-picker>
+                <el-date-picker @change="changeDatePicker" v-model="dateRange" type="datetimerange"
+                    :shortcuts="shortcuts" range-separator="to" start-placeholder="begin" end-placeholder="end"
+                    align="right" style="margin: 0 10px 0 10px"></el-date-picker>
                 <span class="timestamp-item">{{ timezoneOffset }}</span>
                 <span>Auto Fresh:</span>
             </span>
