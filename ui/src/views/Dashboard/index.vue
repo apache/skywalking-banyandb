@@ -493,21 +493,6 @@ watchEffect(() => {
     /* Adjust the width as needed */
 }
 
-
-.dashboard .el-table {
-    max-width: 100%;
-    width: auto;
-    /* Allow the table to shrink or grow based on its content */
-    margin: 0 auto;
-    /* Center the table */
-    // white-space: nowrap; /* Prevent table cells from wrapping */
-}
-
-.dashboard .el-card {
-    margin: 15px; // Adjust the margin value as needed
-    padding: 0;
-}
-
 .card-header {
     font-size: 20px;
     /* Make the text bigger */
@@ -528,15 +513,6 @@ watchEffect(() => {
 
 .fixed-progress-bar {
     width: 220px; // Fixed length for the progress bar
-}
-
-.demo-progress .el-progress--line {
-    margin-bottom: 15px;
-    max-width: 100px;
-}
-
-.demo-progress .el-progress--circle {
-    margin-right: 15px;
 }
 
 .memory-detail,

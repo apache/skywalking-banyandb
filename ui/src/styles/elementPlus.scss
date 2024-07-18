@@ -262,3 +262,26 @@
 .el-date-range-picker .el-picker-panel__body {
     margin-left: 120px !important;
 }
+
+.dashboard .el-table {
+    max-width: 100%;
+    width: auto;
+    /* Allow the table to shrink or grow based on its content */
+    margin: 0 auto;
+    /* Center the table */
+    // white-space: nowrap; /* Prevent table cells from wrapping */
+}
+
+.dashboard .el-card {
+    margin: 15px; // Adjust the margin value as needed
+    padding: 0;
+}
+
+.demo-progress .el-progress--line {
+    margin-bottom: 15px;
+    max-width: 100px;
+}
+
+.demo-progress .el-progress--circle {
+    margin-right: 15px;
+}
