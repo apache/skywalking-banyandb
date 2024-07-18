@@ -144,7 +144,7 @@ const timezoneOffset = computed(() => {
 
 const truncatePath = (path) => {
     if (path.length <= 15) return path;
-    return '...' + path.slice(-15);
+    return path.slice(0, 5) + '...' + path.slice(-10);
 };
 
 const isTruncated = (path) => {
