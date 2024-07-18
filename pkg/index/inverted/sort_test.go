@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const indexRuleID = 3
@@ -48,8 +50,8 @@ func TestStore_Sort(t *testing.T) {
 		fn()
 	}()
 	tester.NoError(err)
-	data := setUpDuration(require.New(t), s)
-	s.(*store).flush()
+	now := time.Now()
+	data := setUpDuration(require.New(t), now, s)
 
 	tests := []struct {
 		name string
@@ -148,11 +150,12 @@ func TestStore_Sort(t *testing.T) {
 			})
 		}
 	}
+	tr := timestamp.NewInclusiveTimeRange(now, now)
 	for _, tt := range allTests {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := assert.New(t)
 			is := require.New(t)
-			iter, err := s.Sort(tt.args.sids, index.FieldKey{IndexRuleID: indexRuleID}, tt.args.orderType, tt.preloadSize)
+			iter, err := s.Sort(tt.args.sids, index.FieldKey{IndexRuleID: indexRuleID}, tt.args.orderType, &tr, tt.preloadSize)
 			is.NoError(err)
 			if iter == nil {
 				tester.Empty(tt.want)
@@ -197,7 +200,7 @@ type result struct {
 	terms [][]byte
 }
 
-func setUpDuration(t *require.Assertions, store index.Writer) map[int]posting.List {
+func setUpDuration(t *require.Assertions, ts time.Time, store index.Writer) map[int]posting.List {
 	r := map[int]posting.List{
 		50:   roaring.NewPostingList(),
 		200:  roaring.NewPostingList(),
@@ -210,6 +213,8 @@ func setUpDuration(t *require.Assertions, store index.Writer) map[int]posting.Li
 		idx = append(idx, key)
 	}
 	sort.Ints(idx)
+
+	var batch index.Batch
 	for i := 100; i < 200; i++ {
 		id := uint64(i)
 		for i2, term := range idx {
@@ -217,15 +222,20 @@ func setUpDuration(t *require.Assertions, store index.Writer) map[int]posting.Li
 				continue
 			}
 			sid := i2%2 + 1
-			t.NoError(store.Write([]index.Field{{
-				Key: index.FieldKey{
-					SeriesID:    common.SeriesID(sid),
-					IndexRuleID: indexRuleID,
-				},
-				Term: convert.Int64ToBytes(int64(term)),
-			}}, id))
+			batch.Documents = append(batch.Documents, index.Document{
+				Fields: []index.Field{{
+					Key: index.FieldKey{
+						SeriesID:    common.SeriesID(sid),
+						IndexRuleID: indexRuleID,
+					},
+					Term: convert.Int64ToBytes(int64(term)),
+				}},
+				DocID:     id,
+				Timestamp: ts.UnixNano(),
+			})
 			r[term].Insert(id)
 		}
 	}
+	t.NoError(store.Batch(batch))
 	return r
 }

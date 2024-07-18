@@ -235,8 +235,8 @@ func (tst *tsTable) Close() error {
 		tst.loopCloser.Done()
 		tst.loopCloser.CloseThenWait()
 	}
-	tst.RLock()
-	defer tst.RUnlock()
+	tst.Lock()
+	defer tst.Unlock()
 	if tst.snapshot == nil {
 		return nil
 	}

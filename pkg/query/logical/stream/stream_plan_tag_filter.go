@@ -139,6 +139,10 @@ type tagFilterPlan struct {
 	tagFilter logical.TagFilter
 }
 
+func (t *tagFilterPlan) Close() {
+	t.parent.(executor.StreamExecutable).Close()
+}
+
 func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter) logical.Plan {
 	return &tagFilterPlan{
 		s:         s,
@@ -148,20 +152,30 @@ func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFi
 }
 
 func (t *tagFilterPlan) Execute(ec context.Context) ([]*streamv1.Element, error) {
-	entities, err := t.parent.(executor.StreamExecutable).Execute(ec)
-	if err != nil {
-		return nil, err
-	}
-	filteredElements := make([]*streamv1.Element, 0)
-	for _, e := range entities {
-		ok, err := t.tagFilter.Match(logical.TagFamilies(e.TagFamilies), t.s)
+	var filteredElements []*streamv1.Element
+
+	for {
+		entities, err := t.parent.(executor.StreamExecutable).Execute(ec)
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			filteredElements = append(filteredElements, e)
+		if len(entities) == 0 {
+			break
+		}
+		for _, e := range entities {
+			ok, err := t.tagFilter.Match(logical.TagFamilies(e.TagFamilies), t.s)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				filteredElements = append(filteredElements, e)
+			}
+		}
+		if len(filteredElements) > 0 {
+			break
 		}
 	}
+
 	return filteredElements, nil
 }
 

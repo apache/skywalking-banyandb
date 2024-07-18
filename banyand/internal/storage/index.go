@@ -76,16 +76,9 @@ func newSeriesIndex(ctx context.Context, path string, startTime time.Time, flush
 }
 
 func (s *seriesIndex) Write(docs index.Documents) error {
-	applied := make(chan struct{})
-	err := s.store.Batch(index.Batch{
+	return s.store.Batch(index.Batch{
 		Documents: docs,
-		Applied:   applied,
 	})
-	if err != nil {
-		return err
-	}
-	<-applied
-	return nil
 }
 
 var rangeOpts = index.RangeOpts{}
@@ -210,7 +203,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 	pl := seriesList.ToList()
 	if filter != nil && filter != logical.ENode {
 		var plFilter posting.List
-		// TODO: merge searchPrimary and filter
 		func() {
 			if tracer != nil {
 				span, _ := tracer.StartSpan(ctx, "filter")
@@ -258,7 +250,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter 
 			span.Stop()
 		}()
 	}
-	// TODO:// merge searchPrimary and sort
 	iter, err := s.store.Iterator(fieldKey, rangeOpts, order.Sort, preloadSize)
 	if err != nil {
 		return nil, err

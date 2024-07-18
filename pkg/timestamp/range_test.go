@@ -109,6 +109,28 @@ func Test_findRange(t *testing.T) {
 			wantEnd:   0,
 			wantExist: true,
 		},
+		{
+			name: "Test with duplicate timestamps",
+			args: args{
+				timestamps: []int64{1, 1, 1},
+				min:        1,
+				max:        1,
+			},
+			wantStart: 0,
+			wantEnd:   2,
+			wantExist: true,
+		},
+		{
+			name: "Test with duplicate timestamps in a range",
+			args: args{
+				timestamps: []int64{1, 1, 1, 2, 2, 2, 4, 4, 5, 5},
+				min:        2,
+				max:        5,
+			},
+			wantStart: 3,
+			wantEnd:   9,
+			wantExist: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

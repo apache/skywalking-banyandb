@@ -40,7 +40,7 @@ func TestMustInitFromElements(t *testing.T) {
 			name: "Test with empty elements",
 			es: &elements{
 				timestamps:  []int64{},
-				elementIDs:  []string{},
+				elementIDs:  []uint64{},
 				seriesIDs:   []common.SeriesID{},
 				tagFamilies: make([][]tagValues, 0),
 			},
@@ -50,7 +50,7 @@ func TestMustInitFromElements(t *testing.T) {
 			name: "Test with one item in elements",
 			es: &elements{
 				timestamps: []int64{1},
-				elementIDs: []string{"0"},
+				elementIDs: []uint64{0},
 				seriesIDs:  []common.SeriesID{1},
 				tagFamilies: [][]tagValues{
 					{
@@ -120,7 +120,7 @@ func TestMustInitFromElements(t *testing.T) {
 var es = &elements{
 	seriesIDs:  []common.SeriesID{1, 1, 2, 2, 3, 3},
 	timestamps: []int64{1, 2, 8, 10, 100, 220},
-	elementIDs: []string{"0", "1", "2", "3", "4", "5"},
+	elementIDs: []uint64{0, 1, 2, 3, 4, 5},
 	tagFamilies: [][]tagValues{
 		{
 			{

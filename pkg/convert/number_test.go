@@ -18,17 +18,31 @@
 package convert
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 )
 
-// TODO: fix this case.
-func TestInt64ToBytes(_ *testing.T) {
-	fmt.Println(Int64ToBytes(-100))
-	fmt.Println(Int64ToBytes(-2))
-	fmt.Println(Int64ToBytes(-1))
-	fmt.Println(Int64ToBytes(0))
-	fmt.Println(Int64ToBytes(1))
-	fmt.Println(Int64ToBytes(2))
-	fmt.Println(Int64ToBytes(100))
+func TestInt64ToBytes(t *testing.T) {
+	testCases := []struct {
+		expected []byte
+		input    int64
+	}{
+		{[]byte{127, 255, 255, 255, 255, 255, 255, 156}, -100},
+		{[]byte{127, 255, 255, 255, 255, 255, 255, 254}, -2},
+		{[]byte{127, 255, 255, 255, 255, 255, 255, 255}, -1},
+		{[]byte{128, 0, 0, 0, 0, 0, 0, 0}, 0},
+		{[]byte{128, 0, 0, 0, 0, 0, 0, 1}, 1},
+		{[]byte{128, 0, 0, 0, 0, 0, 0, 2}, 2},
+		{[]byte{128, 0, 0, 0, 0, 0, 0, 100}, 100},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("Int64ToBytes(%d)", tc.input), func(t *testing.T) {
+			result := Int64ToBytes(tc.input)
+			if !bytes.Equal(result, tc.expected) {
+				t.Errorf("Expected %v, got %v", tc.expected, result)
+			}
+		})
+	}
 }

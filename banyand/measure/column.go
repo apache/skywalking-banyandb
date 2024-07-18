@@ -57,8 +57,6 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 	cm.name = c.name
 	cm.valueType = c.valueType
 
-	// TODO: encoding values based on value type
-
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
