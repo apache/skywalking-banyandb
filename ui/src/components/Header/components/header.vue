@@ -117,19 +117,29 @@ initData()
 
 <style lang="scss" scoped>
 .image {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     width: 665px;
     height: 100%;
 
     .el-image {
         width: 59px;
         height: 59px;
+        flex-shrink: 0;
+        flex-grow: 0;
     }
 
     .title {
         height: 100%;
         line-height: 59px;
+        flex-shrink: 0;
+        flex-grow: 0;
+        white-space: nowrap;
+        margin-left: 10px; 
     }
 }
+
 
 .el-menu-item {
     font-weight: var(--weight-lt);
