@@ -176,8 +176,8 @@ func collectDisk() {
 				if !os.IsNotExist(err) {
 					log.Error().Err(err).Msgf("failed to get stat for path: %s", path)
 				}
-				return
 			}
+			return
 		}
 		diskStateGauge.Set(usage.UsedPercent/100, path, "used_percent")
 		diskStateGauge.Set(float64(usage.Used), path, "used")
