@@ -352,11 +352,13 @@ watchEffect(() => {
                     :shortcuts="shortcuts" range-separator="to" start-placeholder="begin" end-placeholder="end"
                     align="right" style="margin: 0 10px 0 10px"></el-date-picker>
                 <span class="timestamp-item">{{ timezoneOffset }}</span>
-                <span>Auto Fresh:</span>
             </span>
-            <el-select v-model="value" placeholder="Select" class="auto-fresh-select">
-                <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value" />
-            </el-select>
+            <span class="autofresh">
+                <span class="timestamp-item">Auto Fresh:</span>
+                <el-select v-model="value" placeholder="Select" class="auto-fresh-select">
+                    <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value" />
+                </el-select>
+            </span>
         </div>
 
         <el-card shadow="always">
@@ -365,94 +367,131 @@ watchEffect(() => {
                     <span>Nodes</span>
                 </div>
             </template>
-            <el-table v-loading="nodes.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
-                element-loading-background="rgba(0, 0, 0, 0.8)" stripe border highlight-current-row
-                tooltip-effect="dark" empty-text="No data yet" :data="nodes" style="width: 100%;">
-                <el-table-column prop="node_id" label="Node ID" width="150"></el-table-column>
-                <el-table-column prop="node_type" label="Type" width="150"></el-table-column>
-                <el-table-column prop="uptime" label="Uptime" width="150"></el-table-column>
-                <el-table-column label="CPU" width="200">
-                    <template #default="scope">
-                        <el-progress type="dashboard" :percentage="parseFloat((scope.row.cpu * 100).toFixed(2))"
-                            :color="colors" />
-                    </template>
-                </el-table-column>
-                <el-table-column label="Memory" width="350">
-                    <template #default="scope">
-                        <div class="memory-detail">
-                            <div class="progress-container">
-                                <el-progress type="line"
-                                    :percentage="parseFloat((scope.row.memory.used_percent * 100).toFixed(2))"
-                                    color="#82b0fa" :stroke-width="6" :show-text="true" class="fixed-progress-bar" />
+            <div class="table-container">
+                <el-table v-loading="nodes.loading" element-loading-text="loading"
+                    element-loading-spinner="el-icon-loading" element-loading-background="rgba(0, 0, 0, 0.8)" stripe
+                    border highlight-current-row tooltip-effect="dark" empty-text="No data yet" :data="nodes"
+                    style="width: 100%;">
+                    <el-table-column prop="node_id" label="Node ID" width="150"></el-table-column>
+                    <el-table-column prop="node_type" label="Type" width="150"></el-table-column>
+                    <el-table-column prop="uptime" label="Uptime" width="150"></el-table-column>
+                    <el-table-column label="CPU" width="200">
+                        <template #default="scope">
+                            <el-progress type="dashboard" :percentage="parseFloat((scope.row.cpu * 100).toFixed(2))"
+                                :color="colors" />
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="Memory" width="350">
+                        <template #default="scope">
+                            <div class="memory-detail">
+                                <div class="progress-container">
+                                    <el-progress type="line"
+                                        :percentage="parseFloat((scope.row.memory.used_percent * 100).toFixed(2))"
+                                        color="#82b0fa" :stroke-width="6" :show-text="true"
+                                        class="fixed-progress-bar" />
+                                </div>
+                                <div class="memory-stats">
+                                    <span>Used: {{ formatBytes(scope.row.memory.used) }}</span>
+                                    <span>Total: {{ formatBytes(scope.row.memory.total) }}</span>
+                                    <span>
+                                        Free: {{
+                                            scope.row.memory.total && scope.row.memory.used
+                                                ? formatBytes(scope.row.memory.total - scope.row.memory.used)
+                                                : 'N/A'
+                                        }}
+                                    </span>
+                                </div>
                             </div>
-                            <div class="memory-stats">
-                                <span>Used: {{ formatBytes(scope.row.memory.used) }}</span>
-                                <span>Total: {{ formatBytes(scope.row.memory.total) }}</span>
-                                <span>
-                                    Free: {{
-                                        scope.row.memory.total && scope.row.memory.used
-                                            ? formatBytes(scope.row.memory.total - scope.row.memory.used)
-                                            : 'N/A'
-                                    }}
-                                </span>
-                            </div>
-                        </div>
-                    </template>
-                </el-table-column>
+                        </template>
+                    </el-table-column>
 
-                <el-table-column label="Disk Details" width="450">
-                    <template #default="scope">
-                        <div v-if="!scope.row.disk">
-                            N/A
-                        </div>
-                        <div class="disk-detail" v-else v-for="(value, key) in scope.row.disk" :key="key">
-                            <div class="progress-container">
-                                <span v-if="isTruncated(key)" class="disk-key">
-                                    <el-tooltip class="box-item" effect="light" :content="key" placement="top"
-                                        :popper-class="'custom-tooltip'">
-                                        <span>{{ truncatePath(key) }}:</span>
-                                    </el-tooltip>
-                                </span>
-                                <span v-else class="disk-key">{{ key }}:</span>
-                                <el-progress type="line" :percentage="parseFloat((value.used_percent * 100).toFixed(2))"
-                                    color="#82b0fa" :stroke-width="6" :show-text="true" class="fixed-progress-bar" />
+                    <el-table-column label="Disk Details" width="450">
+                        <template #default="scope">
+                            <div v-if="!scope.row.disk">
+                                N/A
                             </div>
-                            <div class="disk-stats">
-                                <span>Used: {{ formatBytes(value.used) }}</span>
-                                <span>Total: {{ formatBytes(value.total) }}</span>
-                                <span>
-                                    Free: {{
-                                        value.total && value.used
-                                            ? formatBytes(value.total - value.used)
-                                            : 'N/A'
-                                    }}
-                                </span>
+                            <div class="disk-detail" v-else v-for="(value, key) in scope.row.disk" :key="key">
+                                <div class="progress-container">
+                                    <span v-if="isTruncated(key)" class="disk-key">
+                                        <el-tooltip class="box-item" effect="light" :content="key" placement="top"
+                                            :popper-class="'custom-tooltip'">
+                                            <span>{{ truncatePath(key) }}:</span>
+                                        </el-tooltip>
+                                    </span>
+                                    <span v-else class="disk-key">{{ key }}:</span>
+                                    <el-progress type="line"
+                                        :percentage="parseFloat((value.used_percent * 100).toFixed(2))" color="#82b0fa"
+                                        :stroke-width="6" :show-text="true" class="fixed-progress-bar" />
+                                </div>
+                                <div class="disk-stats">
+                                    <span>Used: {{ formatBytes(value.used) }}</span>
+                                    <span>Total: {{ formatBytes(value.total) }}</span>
+                                    <span>
+                                        Free: {{
+                                            value.total && value.used
+                                                ? formatBytes(value.total - value.used)
+                                                : 'N/A'
+                                        }}
+                                    </span>
+                                </div>
                             </div>
-                        </div>
-                    </template>
-                </el-table-column>
+                        </template>
+                    </el-table-column>
 
-                <el-table-column label="Port" width="250">
-                    <template #default="scope">
-                        <div>
-                            <div>gRPC: {{ scope.row.grpc_address }}</div>
-                            <div>HTTP: {{ scope.row.http_address || 'N/A' }}</div>
-                        </div>
-                    </template>
-                </el-table-column>
-            </el-table>
+                    <el-table-column label="Port" width="250">
+                        <template #default="scope">
+                            <div>
+                                <div>gRPC: {{ scope.row.grpc_address }}</div>
+                                <div>HTTP: {{ scope.row.http_address || 'N/A' }}</div>
+                            </div>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </div>
         </el-card>
+
     </div>
 </template>
 
 <style lang="scss" scoped>
+.dashboard {
+    position: relative;
+}
+
+
 .header-container {
     display: flex;
     align-items: center;
     justify-content: flex-end;
     /* Aligns items to the right */
-    margin: 15px 15px 10px 0;
+    margin: 15px 15px 10px 15px;
     /* Space between the header and the card */
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    padding: 10px;
+    background-color: inherit;
+}
+
+@media (max-width: 900px) {
+  .header-container {
+    flex-direction: column;
+    align-items: flex-end; /* Align items to the start for vertical layout */
+  }
+
+  .timestamp,
+  .autofresh {
+    margin-bottom: 10px; /* Add spacing between rows */
+  }
+
+  .autofresh {
+    display: flex;
+    align-items: center;
+  }
+
+  .timestamp-item {
+    margin-right: 5px;
+  }
 }
 
 .timestamp {
@@ -460,8 +499,6 @@ watchEffect(() => {
     /* Adjust the font size as needed */
     color: #666;
     /* Adjust the text color as needed */
-    margin-right: 10px;
-    /* Space between the timestamp and the select */
 }
 
 .timestamp-item {
@@ -478,8 +515,6 @@ watchEffect(() => {
     font-size: 20px;
     /* Make the text bigger */
     height: 10px;
-
-
 }
 
 .header-text {
@@ -494,6 +529,12 @@ watchEffect(() => {
 
 .fixed-progress-bar {
     width: 220px; // Fixed length for the progress bar
+}
+
+.table-container {
+    max-height: 625px;
+    /* Adjust this height as needed */
+    overflow-y: auto;
 }
 
 .memory-detail,
