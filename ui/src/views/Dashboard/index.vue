@@ -75,8 +75,8 @@ const tagProjectionDisk = {
 const nodes = ref([]);
 
 const colors = [
-    { color: '#5cb87a', percentage: 51 },
-    { color: '#edc374', percentage: 81 },
+    { color: '#5cb87a', percentage: 50 },
+    { color: '#edc374', percentage: 80 },
     { color: '#f56c6c', percentage: 100 },
 ];
 
@@ -387,7 +387,7 @@ watchEffect(() => {
                                 <div class="progress-container">
                                     <el-progress type="line"
                                         :percentage="parseFloat((scope.row.memory.used_percent * 100).toFixed(2))"
-                                        color="#82b0fa" :stroke-width="6" :show-text="true"
+                                        :color="colors" :stroke-width="6" :show-text="true"
                                         class="fixed-progress-bar" />
                                 </div>
                                 <div class="memory-stats">
@@ -420,7 +420,7 @@ watchEffect(() => {
                                     </span>
                                     <span v-else class="disk-key">{{ key }}:</span>
                                     <el-progress type="line"
-                                        :percentage="parseFloat((value.used_percent * 100).toFixed(2))" color="#82b0fa"
+                                        :percentage="parseFloat((value.used_percent * 100).toFixed(2))" :color="colors"
                                         :stroke-width="6" :show-text="true" class="fixed-progress-bar" />
                                 </div>
                                 <div class="disk-stats">
