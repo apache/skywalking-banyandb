@@ -142,15 +142,17 @@ func (e *elements) Swap(i, j int) {
 
 type elementsInTable struct {
 	timeRange timestamp.TimeRange
-	tsTable   storage.TSTableWrapper[*tsTable]
+	tsTable   *tsTable
 
 	elements elements
-	docs     index.Documents
+
+	docs index.Documents
 }
 
 type elementsInGroup struct {
 	tsdb     storage.TSDB[*tsTable, option]
 	docs     index.Documents
 	tables   []*elementsInTable
+	segments []storage.Segment[*tsTable, option]
 	latestTS int64
 }

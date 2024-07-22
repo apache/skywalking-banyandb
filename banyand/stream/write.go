@@ -28,6 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -66,8 +67,9 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	eg, ok := dst[gn]
 	if !ok {
 		eg = &elementsInGroup{
-			tsdb:   tsdb,
-			tables: make([]*elementsInTable, 0),
+			tsdb:     tsdb,
+			tables:   make([]*elementsInTable, 0),
+			segments: make([]storage.Segment[*tsTable, option], 0),
 		}
 		dst[gn] = eg
 	}
@@ -84,13 +86,26 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 	shardID := common.ShardID(writeEvent.ShardId)
 	if et == nil {
-		tsdb, err := tsdb.CreateTSTableIfNotExist(shardID, t)
+		var segment storage.Segment[*tsTable, option]
+		for _, seg := range eg.segments {
+			if seg.GetTimeRange().Contains(ts) {
+				segment = seg
+			}
+		}
+		if segment == nil {
+			segment, err = tsdb.CreateSegmentIfNotExist(t)
+			if err != nil {
+				return nil, fmt.Errorf("cannot create segment: %w", err)
+			}
+			eg.segments = append(eg.segments, segment)
+		}
+		tstb, err := segment.CreateTSTableIfNotExist(shardID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
 		et = &elementsInTable{
-			timeRange: tsdb.GetTimeRange(),
-			tsTable:   tsdb,
+			timeRange: segment.GetTimeRange(),
+			tsTable:   tstb,
 		}
 		eg.tables = append(eg.tables, et)
 	}
@@ -239,23 +254,25 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	for i := range groups {
 		g := groups[i]
-		g.tsdb.Tick(g.latestTS)
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.Table().mustAddElements(&es.elements)
+			es.tsTable.mustAddElements(&es.elements)
 			if len(es.docs) > 0 {
-				index := es.tsTable.Table().Index()
+				index := es.tsTable.Index()
 				if err := index.Write(es.docs); err != nil {
 					w.l.Error().Err(err).Msg("cannot write element index")
 				}
 			}
-			es.tsTable.DecRef()
 		}
 		if len(g.docs) > 0 {
-			if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
-				w.l.Error().Err(err).Msg("cannot write series index")
+			for _, segment := range g.segments {
+				if err := segment.IndexDB().Write(g.docs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write index")
+				}
+				segment.DecRef()
 			}
 		}
+		g.tsdb.Tick(g.latestTS)
 	}
 	return
 }

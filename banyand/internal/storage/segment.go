@@ -40,46 +40,80 @@ import (
 // ErrExpiredData is returned when the data is expired.
 var ErrExpiredData = errors.New("expired data")
 
-type segment[T TSTable] struct {
-	tsTable  T
+type segment[T TSTable, O any] struct {
 	l        *logger.Logger
+	index    *seriesIndex
+	sLst     atomic.Pointer[[]*shard[T]]
 	position common.Position
 	timestamp.TimeRange
-	path          string
+	location      string
 	suffix        string
+	opts          TSDBOpts[T, O]
 	refCount      int32
 	mustBeDeleted uint32
 	id            segmentID
 }
 
-func openSegment[T TSTable](ctx context.Context, startTime, endTime time.Time, path, suffix string,
-	segmentSize IntervalRule, tsTable T, p common.Position,
-) (s *segment[T], err error) {
+func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string,
+	p common.Position, opts TSDBOpts[T, O],
+) (s *segment[T, O], err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
 		return nil, err
 	}
-	id := generateSegID(segmentSize.Unit, suffixInteger)
-	timeRange := timestamp.NewSectionTimeRange(startTime, endTime)
-	s = &segment[T]{
-		id:        id,
-		path:      path,
-		suffix:    suffix,
-		TimeRange: timeRange,
-		position:  p,
-		tsTable:   tsTable,
-		refCount:  1,
+	id := generateSegID(sc.opts.SegmentInterval.Unit, suffixInteger)
+	sir, err := newSeriesIndex(ctx, path, sc.opts.SeriesIndexFlushTimeoutSeconds)
+	if err != nil {
+		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
 	}
-	l := logger.Fetch(ctx, s.String())
-	s.l = l
-	return s, nil
+	s = &segment[T, O]{
+		id:        id,
+		location:  path,
+		suffix:    suffix,
+		TimeRange: timestamp.NewSectionTimeRange(startTime, endTime),
+		position:  p,
+		refCount:  1,
+		index:     sir,
+		opts:      opts,
+	}
+	s.l = logger.Fetch(ctx, s.String())
+	return s, s.loadShards()
 }
 
-func (s *segment[T]) incRef() {
+func (s *segment[T, O]) loadShards() error {
+	return walkDir(s.location, shardPathPrefix, func(suffix string) error {
+		shardID, err := strconv.Atoi(suffix)
+		if err != nil {
+			return err
+		}
+		if shardID >= int(s.opts.ShardNum) {
+			return nil
+		}
+		s.l.Info().Int("shard_id", shardID).Msg("loaded a existed shard")
+		_, err = s.CreateTSTableIfNotExist(common.ShardID(shardID))
+		return err
+	})
+}
+
+func (s *segment[T, O]) GetTimeRange() timestamp.TimeRange {
+	return s.TimeRange
+}
+
+func (s *segment[T, O]) Tables() (tt []T) {
+	sLst := s.sLst.Load()
+	if sLst != nil {
+		for _, s := range *sLst {
+			tt = append(tt, s.table)
+		}
+	}
+	return tt
+}
+
+func (s *segment[T, O]) incRef() {
 	atomic.AddInt32(&s.refCount, 1)
 }
 
-func (s *segment[T]) DecRef() {
+func (s *segment[T, O]) DecRef() {
 	n := atomic.AddInt32(&s.refCount, -1)
 	if n > 0 {
 		return
@@ -87,11 +121,18 @@ func (s *segment[T]) DecRef() {
 
 	deletePath := ""
 	if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
-		deletePath = s.path
+		deletePath = s.location
 	}
 
-	if err := s.tsTable.Close(); err != nil {
-		s.l.Panic().Err(err).Msg("failed to close tsTable")
+	if err := s.index.Close(); err != nil {
+		s.l.Panic().Err(err).Msg("failed to close the series index")
+	}
+
+	sLst := s.sLst.Load()
+	if sLst != nil {
+		for _, s := range *sLst {
+			s.close()
+		}
 	}
 
 	if deletePath != "" {
@@ -99,52 +140,75 @@ func (s *segment[T]) DecRef() {
 	}
 }
 
-func (s *segment[T]) Table() T {
-	return s.tsTable
-}
-
-func (s *segment[T]) GetTimeRange() timestamp.TimeRange {
-	return s.TimeRange
-}
-
-func (s *segment[T]) delete() {
+func (s *segment[T, O]) delete() {
 	atomic.StoreUint32(&s.mustBeDeleted, 1)
 	s.DecRef()
 }
 
-func (s *segment[T]) String() string {
+func (s *segment[T, O]) CreateTSTableIfNotExist(id common.ShardID) (T, error) {
+	if s, ok := s.getShard(id); ok {
+		return s.table, nil
+	}
+	ctx := context.WithValue(context.Background(), logger.ContextKey, s.l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return s.position
+	})
+	so, err := s.openShard(ctx, id)
+	if err != nil {
+		var t T
+		return t, err
+	}
+	var shardList []*shard[T]
+	sLst := s.sLst.Load()
+	if sLst != nil {
+		shardList = *sLst
+	}
+	shardList = append(shardList, so)
+	s.sLst.Store(&shardList)
+	return so.table, nil
+}
+
+func (s *segment[T, O]) getShard(shardID common.ShardID) (*shard[T], bool) {
+	sLst := s.sLst.Load()
+	if sLst != nil {
+		for _, s := range *sLst {
+			if s.id == shardID {
+				return s, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (s *segment[T, O]) String() string {
 	return "SegID-" + s.suffix
 }
 
 type segmentController[T TSTable, O any] struct {
-	clock          timestamp.Clock
-	option         O
-	l              *logger.Logger
-	tsTableCreator TSTableCreator[T, O]
-	position       common.Position
-	location       string
-	lst            []*segment[T]
-	segmentSize    IntervalRule
-	deadline       atomic.Int64
+	clock    timestamp.Clock
+	l        *logger.Logger
+	position common.Position
+	location string
+	lst      []*segment[T, O]
+	opts     TSDBOpts[T, O]
+	deadline atomic.Int64
 	sync.RWMutex
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
-	segmentSize IntervalRule, l *logger.Logger, tsTableCreator TSTableCreator[T, O], option O,
+	l *logger.Logger, opts TSDBOpts[T, O],
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	return &segmentController[T, O]{
-		location:       location,
-		segmentSize:    segmentSize,
-		l:              l,
-		clock:          clock,
-		position:       common.GetPosition(ctx),
-		tsTableCreator: tsTableCreator,
-		option:         option,
+		location: location,
+		opts:     opts,
+		l:        l,
+		clock:    clock,
+		position: common.GetPosition(ctx),
 	}
 }
 
-func (sc *segmentController[T, O]) selectTSTables(timeRange timestamp.TimeRange) (tt []TSTableWrapper[T]) {
+func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange) (tt []Segment[T, O]) {
 	sc.RLock()
 	defer sc.RUnlock()
 	last := len(sc.lst) - 1
@@ -158,7 +222,7 @@ func (sc *segmentController[T, O]) selectTSTables(timeRange timestamp.TimeRange)
 	return tt
 }
 
-func (sc *segmentController[T, O]) createTSTable(ts time.Time) (TSTableWrapper[T], error) {
+func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], error) {
 	// Before the first remove old segment run, any segment should be created.
 	if sc.deadline.Load() > ts.UnixNano() {
 		return nil, ErrExpiredData
@@ -171,10 +235,10 @@ func (sc *segmentController[T, O]) createTSTable(ts time.Time) (TSTableWrapper[T
 	return s, nil
 }
 
-func (sc *segmentController[T, O]) segments() (ss []*segment[T]) {
+func (sc *segmentController[T, O]) segments() (ss []*segment[T, O]) {
 	sc.RLock()
 	defer sc.RUnlock()
-	r := make([]*segment[T], len(sc.lst))
+	r := make([]*segment[T, O], len(sc.lst))
 	for i := range sc.lst {
 		sc.lst[i].incRef()
 		r[i] = sc.lst[i]
@@ -182,8 +246,8 @@ func (sc *segmentController[T, O]) segments() (ss []*segment[T]) {
 	return r
 }
 
-func (sc *segmentController[T, O]) Format(tm time.Time) string {
-	switch sc.segmentSize.Unit {
+func (sc *segmentController[T, O]) format(tm time.Time) string {
+	switch sc.opts.SegmentInterval.Unit {
 	case HOUR:
 		return tm.Format(hourFormat)
 	case DAY:
@@ -192,8 +256,8 @@ func (sc *segmentController[T, O]) Format(tm time.Time) string {
 	panic("invalid interval unit")
 }
 
-func (sc *segmentController[T, O]) Parse(value string) (time.Time, error) {
-	switch sc.segmentSize.Unit {
+func (sc *segmentController[T, O]) parse(value string) (time.Time, error) {
+	switch sc.opts.SegmentInterval.Unit {
 	case HOUR:
 		return time.ParseInLocation(hourFormat, value, time.Local)
 	case DAY:
@@ -206,8 +270,8 @@ func (sc *segmentController[T, O]) open() error {
 	sc.Lock()
 	defer sc.Unlock()
 	emptySegments := make([]string, 0)
-	err := loadSegments(sc.location, segPathPrefix, sc, sc.segmentSize, func(start, end time.Time) error {
-		suffix := sc.Format(start)
+	err := loadSegments(sc.location, segPathPrefix, sc, sc.opts.SegmentInterval, func(start, end time.Time) error {
+		suffix := sc.format(start)
 		segmentPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix))
 		metadataPath := path.Join(segmentPath, metadataFilename)
 		version, err := lfs.Read(metadataPath)
@@ -237,7 +301,7 @@ func (sc *segmentController[T, O]) open() error {
 	return err
 }
 
-func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) {
+func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], error) {
 	sc.Lock()
 	defer sc.Unlock()
 	last := len(sc.lst) - 1
@@ -247,8 +311,8 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) 
 			return s, nil
 		}
 	}
-	start = sc.segmentSize.Unit.standard(start)
-	var next *segment[T]
+	start = sc.opts.SegmentInterval.Unit.standard(start)
+	var next *segment[T, O]
 	for _, s := range sc.lst {
 		if s.Contains(start.UnixNano()) {
 			return s, nil
@@ -257,14 +321,14 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T], error) 
 			next = s
 		}
 	}
-	stdEnd := sc.segmentSize.nextTime(start)
+	stdEnd := sc.opts.SegmentInterval.nextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
 		end = next.Start
 	} else {
 		end = stdEnd
 	}
-	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.Format(start)))
+	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.format(start)))
 	lfs.MkdirPanicIfExist(segPath, dirPerm)
 	data := []byte(currentVersion)
 	metadataPath := filepath.Join(segPath, metadataFilename)
@@ -288,16 +352,12 @@ func (sc *segmentController[T, O]) sortLst() {
 	})
 }
 
-func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg *segment[T], err error) {
-	suffix := sc.Format(start)
+func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg *segment[T, O], err error) {
+	suffix := sc.format(start)
 	segPath := path.Join(root, fmt.Sprintf(segTemplate, suffix))
-	var tsTable T
 	p := sc.position
 	p.Segment = suffix
-	if tsTable, err = sc.tsTableCreator(lfs, segPath, p, sc.l, timestamp.NewSectionTimeRange(start, end), sc.option); err != nil {
-		return nil, err
-	}
-	seg, err = openSegment[T](context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, sc.segmentSize, tsTable, p)
+	seg, err = sc.openSegment(context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, p, sc.opts)
 	if err != nil {
 		return nil, err
 	}
@@ -343,17 +403,13 @@ func (sc *segmentController[T, O]) close() {
 	sc.lst = sc.lst[:0]
 }
 
-type parser interface {
-	Parse(value string) (time.Time, error)
-}
-
-func loadSegments(root, prefix string, parser parser, intervalRule IntervalRule, loadFn func(start, end time.Time) error) error {
+func loadSegments[T TSTable, O any](root, prefix string, parser *segmentController[T, O], intervalRule IntervalRule, loadFn func(start, end time.Time) error) error {
 	var startTimeLst []time.Time
 	if err := walkDir(
 		root,
 		prefix,
 		func(suffix string) error {
-			startTime, err := parser.Parse(suffix)
+			startTime, err := parser.parse(suffix)
 			if err != nil {
 				return err
 			}
