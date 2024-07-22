@@ -52,7 +52,7 @@ func (d *database[T, O]) openShard(ctx context.Context, id common.ShardID) (*sha
 		l:        l,
 		position: common.GetPosition(shardCtx),
 		segmentController: newSegmentController[T](shardCtx, location,
-			d.opts.SegmentInterval, l, d.scheduler,
+			d.opts.SegmentInterval, l,
 			d.opts.TSTableCreator, d.opts.Option),
 	}
 	var err error

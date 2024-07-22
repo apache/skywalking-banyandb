@@ -57,8 +57,6 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	tm.name = t.name
 	tm.valueType = t.valueType
 
-	// TODO: encoding values based on value type
-
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 

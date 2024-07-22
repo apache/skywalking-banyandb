@@ -202,7 +202,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQu
 	pl := seriesList.ToList()
 	if blugeQuery != nil {
 		var plFilter posting.List
-		// TODO: merge searchPrimary and filter
 		func() {
 			if tracer != nil {
 				span, _ := tracer.StartSpan(ctx, "filter")
@@ -247,7 +246,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQu
 			span.Stop()
 		}()
 	}
-	// TODO:// merge searchPrimary and sort
 	iter, err := s.store.Iterator(fieldKey, rangeOpts, order.Sort, preloadSize)
 	if err != nil {
 		return nil, err
