@@ -62,7 +62,6 @@ func TestRetention(t *testing.T) {
 		tsdb, c, segCtrl, dfFn := setUpDB(t)
 		defer dfFn()
 		ts := c.Now()
-		indexHotStartTime := tsdb.indexController.hot.startTime
 		for i := 0; i < 4; i++ {
 			ts = ts.Add(23 * time.Hour)
 
@@ -84,12 +83,6 @@ func TestRetention(t *testing.T) {
 		assert.Eventually(t, func() bool {
 			return len(segCtrl.segments()) == 4
 		}, flags.EventuallyTimeout, time.Millisecond, "wait for the 1st segment to be deleted")
-		assert.Eventually(t, func() bool {
-			tsdb.indexController.RLock()
-			defer tsdb.indexController.RUnlock()
-			ttl := tsdb.indexController.hot.startTime.Sub(indexHotStartTime)
-			return ttl >= 3*24*time.Hour
-		}, flags.EventuallyTimeout, time.Millisecond, "wait for the index to be updated")
 	})
 
 	t.Run("keep the segment volume stable", func(t *testing.T) {
@@ -131,15 +124,6 @@ func TestRetention(t *testing.T) {
 					ct.Errorf("expect the segment number never to exceed 4, got %d", len(ss))
 					return
 				}
-				tsdb.indexController.RLock()
-				indexStartTime := tsdb.indexController.hot.startTime
-				defer tsdb.indexController.RUnlock()
-				if ts.Sub(indexStartTime) > 3*24*time.Hour {
-					ct.Errorf("expect the index to be updated, current time %s, index start time %s",
-						ts.Format(time.RFC3339), indexStartTime.Format(time.RFC3339))
-					return
-				}
-				t.Logf("current time: %s, index start time: %s", ts.Format(time.RFC3339), indexStartTime.Format(time.RFC3339))
 				if tsdb.rotationProcessOn.Load() {
 					ct.Errorf("expect the rotation process to be off")
 				}
@@ -166,15 +150,13 @@ func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *
 
 	tsdb, err := OpenTSDB(ctx, TSDBOpts)
 	require.NoError(t, err)
-	tsTable, err := tsdb.CreateTSTableIfNotExist(0, ts)
+	seg, err := tsdb.CreateSegmentIfNotExist(ts)
 	require.NoError(t, err)
-	tsTable.DecRef()
+	defer seg.DecRef()
 
 	db := tsdb.(*database[*MockTSTable, any])
-	shard, ok := db.getShard(0)
-	require.True(t, ok)
-	require.Equal(t, len(shard.segmentController.segments()), 1)
-	return db, mc, shard.segmentController, func() {
+	require.Equal(t, len(db.segmentController.segments()), 1)
+	return db, mc, db.segmentController, func() {
 		tsdb.Close()
 		defFn()
 	}

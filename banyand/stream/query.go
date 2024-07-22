@@ -53,12 +53,16 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pb
 	}
 	var result queryResult
 	tsdb := db.(storage.TSDB[*tsTable, option])
-	result.tabWrappers = tsdb.SelectTSTables(*sqo.TimeRange)
+	result.segments = tsdb.SelectSegments(*sqo.TimeRange)
+	if len(result.segments) < 1 {
+		return &result, nil
+	}
 	defer func() {
-		if sqr == nil {
+		if err != nil {
 			result.Release()
 		}
 	}()
+	var tables []*tsTable
 
 	series := make([]*pbv1.Series, len(sqo.Entities))
 	for i := range sqo.Entities {
@@ -67,12 +71,19 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pb
 			EntityValues: sqo.Entities[i],
 		}
 	}
-	seriesList, err := tsdb.Lookup(ctx, series)
-	if err != nil {
-		return nil, err
+	var seriesList, sl pbv1.SeriesList
+	for i := range result.segments {
+		tables = append(tables, result.segments[i].Tables()...)
+		sl, err = result.segments[i].Lookup(ctx, series)
+		if err != nil {
+			return nil, err
+		}
+		seriesList = append(seriesList, sl...)
+		result.tabs = append(result.tabs, tables...)
 	}
+
 	if len(seriesList) == 0 {
-		return sqr, nil
+		return &result, nil
 	}
 	result.qo = queryOptions{
 		StreamQueryOptions: sqo,
@@ -84,7 +95,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pb
 		result.qo.seriesToEntity[seriesList[i].ID] = seriesList[i].EntityValues
 		result.qo.sortedSids = append(result.qo.sortedSids, seriesList[i].ID)
 	}
-	if result.qo.elementFilter, err = indexSearch(sqo, result.tabWrappers, seriesList); err != nil {
+	if result.qo.elementFilter, err = indexSearch(sqo, result.tabs, seriesList); err != nil {
 		return nil, err
 	}
 	result.tagNameIndex = make(map[string]partition.TagLocator)
@@ -105,7 +116,7 @@ func (s *stream) Query(ctx context.Context, sqo pbv1.StreamQueryOptions) (sqr pb
 
 	if sqo.Order.Index == nil {
 		result.orderByTS = true
-	} else if result.sortingIter, err = s.indexSort(sqo, result.tabWrappers, seriesList); err != nil {
+	} else if result.sortingIter, err = s.indexSort(sqo, result.tabs, seriesList); err != nil {
 		return nil, err
 	}
 	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
@@ -127,10 +138,11 @@ type queryResult struct {
 	sortingIter      itersort.Iterator[*index.ItemRef]
 	tagNameIndex     map[string]partition.TagLocator
 	schema           *databasev1.Stream
-	tabWrappers      []storage.TSTableWrapper[*tsTable]
+	tabs             []*tsTable
 	elementIDsSorted []uint64
 	data             []*blockCursor
 	snapshots        []*snapshot
+	segments         []storage.Segment[*tsTable, option]
 	qo               queryOptions
 	loaded           bool
 	orderByTS        bool
@@ -157,8 +169,8 @@ func (qr *queryResult) Pull(ctx context.Context) *pbv1.StreamResult {
 func (qr *queryResult) scanParts(ctx context.Context, qo queryOptions) error {
 	var parts []*part
 	var n int
-	for i := range qr.tabWrappers {
-		s := qr.tabWrappers[i].Table().currentSnapshot()
+	for i := range qr.tabs {
+		s := qr.tabs[i].currentSnapshot()
 		if s == nil {
 			continue
 		}
@@ -380,8 +392,8 @@ func (qr *queryResult) releaseBlockCursor() {
 
 func (qr *queryResult) Release() {
 	qr.releaseParts()
-	for i := range qr.tabWrappers {
-		qr.tabWrappers[i].DecRef()
+	for i := range qr.segments {
+		qr.segments[i].DecRef()
 	}
 }
 
@@ -504,14 +516,14 @@ func (qr *queryResult) mergeByTimestamp() *pbv1.StreamResult {
 }
 
 func indexSearch(sqo pbv1.StreamQueryOptions,
-	tabWrappers []storage.TSTableWrapper[*tsTable], seriesList pbv1.SeriesList,
+	tabs []*tsTable, seriesList pbv1.SeriesList,
 ) (posting.List, error) {
 	if sqo.Filter == nil || sqo.Filter == logical.ENode {
 		return nil, nil
 	}
 	result := roaring.NewPostingList()
-	for _, tw := range tabWrappers {
-		index := tw.Table().Index()
+	for _, tw := range tabs {
+		index := tw.Index()
 		pl, err := index.Search(seriesList, sqo.Filter)
 		if err != nil {
 			return nil, err
@@ -526,13 +538,13 @@ func indexSearch(sqo pbv1.StreamQueryOptions,
 	return result, nil
 }
 
-func (s *stream) indexSort(sqo pbv1.StreamQueryOptions, tabWrappers []storage.TSTableWrapper[*tsTable],
+func (s *stream) indexSort(sqo pbv1.StreamQueryOptions, tabs []*tsTable,
 	seriesList pbv1.SeriesList,
 ) (itersort.Iterator[*index.ItemRef], error) {
 	if sqo.Order == nil || sqo.Order.Index == nil {
 		return nil, nil
 	}
-	iters, err := s.buildItersByIndex(tabWrappers, seriesList, sqo)
+	iters, err := s.buildItersByIndex(tabs, seriesList, sqo)
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +552,7 @@ func (s *stream) indexSort(sqo pbv1.StreamQueryOptions, tabWrappers []storage.TS
 	return itersort.NewItemIter[*index.ItemRef](iters, desc), nil
 }
 
-func (s *stream) buildItersByIndex(tableWrappers []storage.TSTableWrapper[*tsTable],
+func (s *stream) buildItersByIndex(tables []*tsTable,
 	seriesList pbv1.SeriesList, sqo pbv1.StreamQueryOptions,
 ) (iters []itersort.Iterator[*index.ItemRef], err error) {
 	indexRuleForSorting := sqo.Order.Index
@@ -548,13 +560,13 @@ func (s *stream) buildItersByIndex(tableWrappers []storage.TSTableWrapper[*tsTab
 		return nil, fmt.Errorf("only support one tag for sorting, but got %d", len(indexRuleForSorting.Tags))
 	}
 	sids := seriesList.IDs()
-	for _, tw := range tableWrappers {
+	for _, tw := range tables {
 		var iter index.FieldIterator[*index.ItemRef]
 		fieldKey := index.FieldKey{
 			IndexRuleID: indexRuleForSorting.GetMetadata().GetId(),
 			Analyzer:    indexRuleForSorting.GetAnalyzer(),
 		}
-		iter, err = tw.Table().Index().Sort(sids, fieldKey, sqo.Order.Sort, sqo.TimeRange, sqo.MaxElementSize)
+		iter, err = tw.Index().Sort(sids, fieldKey, sqo.Order.Sort, sqo.TimeRange, sqo.MaxElementSize)
 		if err != nil {
 			return nil, err
 		}

@@ -7,6 +7,8 @@ Release Notes.
 ### File System Changes
 
 - Bump up the version of the file system to 1.1.0 which is not compatible with the previous version.
+- Move the series index into segment.
+- Swap the segment and the shard.
 
 ### Features
 

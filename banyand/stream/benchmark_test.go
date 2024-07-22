@@ -23,7 +23,6 @@ import (
 	"io"
 	"math"
 	"math/big"
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -37,11 +36,9 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -195,41 +192,8 @@ func openDatabase(b *testing.B, path string) storage.TSDB[*tsTable, option] {
 func write(b *testing.B, p parameter, esList []*elements, docsList []index.Documents) storage.TSDB[*tsTable, option] {
 	// Initialize a tstIter object.
 	tmpPath, defFn := test.Space(require.New(b))
-	segmentPath := filepath.Join(tmpPath, "shard-0", "seg-19700101")
-	fileSystem := fs.NewLocalFileSystem()
 	defer defFn()
-	tst, err := newTSTable(fileSystem, segmentPath, common.Position{},
-		// Since Stream deduplicate data in merging process, we need to disable the merging in the test.
-		logger.GetLogger("benchmark"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDisabledMergePolicyForTesting()})
-	require.NoError(b, err)
-	for i := 0; i < len(esList); i++ {
-		tst.mustAddElements(esList[i])
-		tst.index.Write(docsList[i])
-		time.Sleep(100 * time.Millisecond)
-	}
-	// wait until the introducer is done
-	if len(esList) > 0 {
-		for {
-			snp := tst.currentSnapshot()
-			if snp == nil {
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-			if snp.creator != snapshotCreatorMemPart && len(snp.parts) == len(esList) {
-				snp.decRef()
-				tst.Close()
-				break
-			}
-			snp.decRef()
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
-	data := []byte(version)
-	metadataPath := filepath.Join(segmentPath, segmentMetadataFilename)
-	lf, err := fileSystem.CreateLockFile(metadataPath, filePermission)
-	require.NoError(b, err)
-	_, err = lf.Write(data)
-	require.NoError(b, err)
+
 	db := openDatabase(b, tmpPath)
 	var docs index.Documents
 	for i := 1; i <= p.seriesCount; i++ {
@@ -246,13 +210,22 @@ func write(b *testing.B, p parameter, esList []*elements, docsList []index.Docum
 			Subject:      "benchmark",
 			EntityValues: entity,
 		}
-		err = series.Marshal()
+		err := series.Marshal()
 		require.NoError(b, err)
 		docs = append(docs, index.Document{
 			DocID:        uint64(i),
 			EntityValues: series.Buffer,
 		})
-		db.IndexDB().Write(docs)
+	}
+	seg, err := db.CreateSegmentIfNotExist(time.Unix(0, esList[0].timestamps[0]))
+	require.NoError(b, err)
+	seg.IndexDB().Write(docs)
+
+	tst, err := seg.CreateTSTableIfNotExist(common.ShardID(0))
+	require.NoError(b, err)
+	for i := range esList {
+		tst.mustAddElements(esList[i])
+		tst.Index().Write(docsList[i])
 	}
 	return db
 }

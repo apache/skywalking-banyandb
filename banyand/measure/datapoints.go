@@ -144,15 +144,15 @@ func (d *dataPoints) Swap(i, j int) {
 
 type dataPointsInTable struct {
 	timeRange timestamp.TimeRange
-	tsTable   storage.TSTableWrapper[*tsTable]
+	tsTable   *tsTable
 
 	dataPoints dataPoints
 }
 
 type dataPointsInGroup struct {
-	tsdb storage.TSDB[*tsTable, option]
-
+	tsdb     storage.TSDB[*tsTable, option]
 	docs     index.Documents
 	tables   []*dataPointsInTable
+	segments []storage.Segment[*tsTable, option]
 	latestTS int64
 }
