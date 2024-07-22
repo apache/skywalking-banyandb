@@ -380,7 +380,7 @@ watchEffect(() => {
                     <el-table-column label="CPU">
                         <template #default="scope">
                             <el-progress type="dashboard" :percentage="parseFloat((scope.row.cpu * 100).toFixed(2))"
-                                :color="colors" />
+                                :color="colors"/>
                         </template>
                     </el-table-column>
                     <el-table-column label="Memory">
@@ -494,6 +494,7 @@ watchEffect(() => {
   .timestamp-item {
     margin-right: 5px;
   }
+
 }
 
 .timestamp {
@@ -530,7 +531,8 @@ watchEffect(() => {
 }
 
 .fixed-progress-bar {
-    width: 60%;
+    width: 65%;
+    min-width: 150px;
 }
 
 .table-container {
@@ -561,5 +563,18 @@ watchEffect(() => {
     text-align: left;
     width: 100%;
     gap: 10px;
+}
+
+
+@media (max-width: 900px) {
+    .disk-key,
+    .memory-stats,
+    .disk-stats {
+        display: none;
+    }
+
+    .fixed-progress-bar {
+        width: 80%;  /* increase width on smaller screens */
+    }
 }
 </style>
