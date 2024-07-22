@@ -21,7 +21,9 @@
 import { ref, watchEffect, computed, defineComponent } from 'vue';
 import { getTableList } from '@/api/index'
 
-const value = ref(15000);
+const tableLayout = ref('auto')
+
+const autoRefresh = ref(15000);
 
 const options = ref([
     { value: 'off', label: 'Off' },
@@ -330,16 +332,16 @@ function changeDatePicker(value) {
 let intervalId;
 watchEffect(() => {
     if (intervalId) clearInterval(intervalId);
-    if (value.value !== 'off') {
+    if (autoRefresh.value !== 'off') {
         fetchNodes();
         intervalId = setInterval(() => {
             const currentStart = dateRange.value[0];
             const currentEnd = dateRange.value[1];
-            const newEnd = new Date(currentEnd.getTime() + value.value);
-            const newStart = new Date(currentStart.getTime() + value.value);
+            const newEnd = new Date(currentEnd.getTime() + autoRefresh.value);
+            const newStart = new Date(currentStart.getTime() + autoRefresh.value);
             dateRange.value = [newStart, newEnd];
             fetchNodes();
-        }, value.value);
+        }, autoRefresh.value);
     }
 });
 </script>
@@ -355,7 +357,7 @@ watchEffect(() => {
             </span>
             <span class="autofresh">
                 <span class="timestamp-item">Auto Fresh:</span>
-                <el-select v-model="value" placeholder="Select" class="auto-fresh-select">
+                <el-select v-model="autoRefresh" placeholder="Select" class="auto-fresh-select">
                     <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value" />
                 </el-select>
             </span>
@@ -371,17 +373,17 @@ watchEffect(() => {
                 <el-table v-loading="nodes.loading" element-loading-text="loading"
                     element-loading-spinner="el-icon-loading" element-loading-background="rgba(0, 0, 0, 0.8)" stripe
                     border highlight-current-row tooltip-effect="dark" empty-text="No data yet" :data="nodes"
-                    style="width: 100%;">
-                    <el-table-column prop="node_id" label="Node ID" width="150"></el-table-column>
-                    <el-table-column prop="node_type" label="Type" width="150"></el-table-column>
-                    <el-table-column prop="uptime" label="Uptime" width="150"></el-table-column>
-                    <el-table-column label="CPU" width="200">
+                    :table-layout="tableLayout">
+                    <el-table-column prop="node_id" label="Node ID"></el-table-column>
+                    <el-table-column prop="node_type" label="Type"></el-table-column>
+                    <el-table-column prop="uptime" label="Uptime"></el-table-column>
+                    <el-table-column label="CPU">
                         <template #default="scope">
                             <el-progress type="dashboard" :percentage="parseFloat((scope.row.cpu * 100).toFixed(2))"
                                 :color="colors" />
                         </template>
                     </el-table-column>
-                    <el-table-column label="Memory" width="350">
+                    <el-table-column label="Memory">
                         <template #default="scope">
                             <div class="memory-detail">
                                 <div class="progress-container">
@@ -405,7 +407,7 @@ watchEffect(() => {
                         </template>
                     </el-table-column>
 
-                    <el-table-column label="Disk Details" width="450">
+                    <el-table-column label="Disk Details">
                         <template #default="scope">
                             <div v-if="!scope.row.disk">
                                 N/A
@@ -438,7 +440,7 @@ watchEffect(() => {
                         </template>
                     </el-table-column>
 
-                    <el-table-column label="Port" width="250">
+                    <el-table-column label="Port">
                         <template #default="scope">
                             <div>
                                 <div>gRPC: {{ scope.row.grpc_address }}</div>
@@ -528,7 +530,7 @@ watchEffect(() => {
 }
 
 .fixed-progress-bar {
-    width: 220px; // Fixed length for the progress bar
+    width: 60%;
 }
 
 .table-container {
@@ -551,20 +553,13 @@ watchEffect(() => {
     color: #606266; // Adjust the color as needed
 }
 
-.progress-container {
-    display: flex;
-    align-items: left;
-    margin-bottom: 10px;
-    width: 100%;
-}
-
+.progress-container,
 .memory-stats,
 .disk-stats {
     display: flex;
     justify-content: flex-start;
     text-align: left;
-    gap: 10px;
-    text-align: left;
     width: 100%;
+    gap: 10px;
 }
 </style>
