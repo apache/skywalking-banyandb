@@ -21,7 +21,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"math"
 	"strings"
 
 	"github.com/blugelabs/bluge"
@@ -194,15 +194,16 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 		return bluge.NewMatchAllQuery(), [][]*modelv1.TagValue{entity}, nil
 	}
 	term := string(b[0])
+	minTerm, maxTerm := string([][]byte{convert.Int64ToBytes(math.MinInt64)}[0]), string([][]byte{convert.Int64ToBytes(math.MaxInt64)}[0])
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
-		return bluge.NewTermRangeInclusiveQuery(term, fmt.Sprint(bluge.MaxNumeric), false, false).SetField(field), [][]*modelv1.TagValue{entity}, nil
+		return bluge.NewTermRangeInclusiveQuery(term, maxTerm, false, false).SetField(field), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_GE:
-		return bluge.NewTermRangeQuery(term, fmt.Sprint(bluge.MaxNumeric)).SetField(field), [][]*modelv1.TagValue{entity}, nil
+		return bluge.NewTermRangeQuery(term, maxTerm).SetField(field), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_LT:
-		return bluge.NewTermRangeInclusiveQuery(fmt.Sprint(bluge.MinNumeric), term, false, true).SetField(field), [][]*modelv1.TagValue{entity}, nil
+		return bluge.NewTermRangeInclusiveQuery(minTerm, term, false, false).SetField(field), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_LE:
-		return bluge.NewTermRangeQuery(fmt.Sprint(bluge.MaxNumeric), term).SetField(field), [][]*modelv1.TagValue{entity}, nil
+		return bluge.NewTermRangeInclusiveQuery(minTerm, term, false, true).SetField(field), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_EQ:
 		return bluge.NewTermQuery(term).SetField(field), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_MATCH:
