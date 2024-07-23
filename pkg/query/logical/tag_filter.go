@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 var errUnsupportedLogicalOperation = errors.New("unsupported logical operation")
@@ -122,7 +123,7 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, index
 			return or, nil
 		}
 	}
-	return nil, errInvalidCriteriaType
+	return nil, ErrInvalidCriteriaType
 }
 
 func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error) {
@@ -158,7 +159,7 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error
 	case modelv1.Condition_BINARY_OP_NOT_IN:
 		return newNotTag(newInTag(cond.Name, expr)), nil
 	default:
-		return nil, errors.WithMessagef(errUnsupportedConditionOp, "tag filter parses %v", cond)
+		return nil, errors.WithMessagef(ErrUnsupportedConditionOp, "tag filter parses %v", cond)
 	}
 }
 
@@ -181,7 +182,7 @@ func parseExpr(value *modelv1.TagValue) (ComparableExpr, error) {
 	case *modelv1.TagValue_Null:
 		return nullLiteralExpr, nil
 	}
-	return nil, errors.WithMessagef(errUnsupportedConditionValue, "tag filter parses %v", value)
+	return nil, errors.WithMessagef(ErrUnsupportedConditionValue, "tag filter parses %v", value)
 }
 
 // DummyFilter matches any predicate.
@@ -261,7 +262,7 @@ func (an *andLogicalNode) MarshalJSON() ([]byte, error) {
 }
 
 func (an *andLogicalNode) String() string {
-	return jsonToString(an)
+	return convert.JsonToString(an)
 }
 
 type orLogicalNode struct {
@@ -296,7 +297,7 @@ func (on *orLogicalNode) MarshalJSON() ([]byte, error) {
 }
 
 func (on *orLogicalNode) String() string {
-	return jsonToString(on)
+	return convert.JsonToString(on)
 }
 
 type tagLeaf struct {
@@ -338,7 +339,7 @@ func (n *notTag) MarshalJSON() ([]byte, error) {
 }
 
 func (n *notTag) String() string {
-	return jsonToString(n)
+	return convert.JsonToString(n)
 }
 
 type inTag struct {
@@ -390,7 +391,7 @@ func (eq *eqTag) MarshalJSON() ([]byte, error) {
 }
 
 func (eq *eqTag) String() string {
-	return jsonToString(eq)
+	return convert.JsonToString(eq)
 }
 
 type rangeOpts struct {
@@ -480,7 +481,7 @@ func (r *rangeTag) MarshalJSON() ([]byte, error) {
 }
 
 func (r *rangeTag) String() string {
-	return jsonToString(r)
+	return convert.JsonToString(r)
 }
 
 func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName string) (ComparableExpr, error) {
@@ -520,5 +521,5 @@ func (h *havingTag) MarshalJSON() ([]byte, error) {
 }
 
 func (h *havingTag) String() string {
-	return jsonToString(h)
+	return convert.JsonToString(h)
 }

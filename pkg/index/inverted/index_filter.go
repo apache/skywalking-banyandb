@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logical
+package inverted
 
 import (
 	"bytes"
@@ -32,9 +32,9 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 var (
@@ -47,7 +47,7 @@ var (
 // The local filter can't handle it.
 type GlobalIndexError struct {
 	IndexRule *databasev1.IndexRule
-	Expr      LiteralExpr
+	Expr      logical.LiteralExpr
 }
 
 func (g GlobalIndexError) Error() string { return g.IndexRule.String() }
@@ -57,7 +57,7 @@ type blugeQuery struct {
 }
 
 // BuildLocalQuery returns bluge.Query for local indices.
-func BuildLocalQuery(criteria *modelv1.Criteria, schema Schema, entityDict map[string]int,
+func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int,
 	entity []*modelv1.TagValue,
 ) (*blugeQuery, [][]*modelv1.TagValue, error) {
 	if criteria == nil {
@@ -76,7 +76,7 @@ func BuildLocalQuery(criteria *modelv1.Criteria, schema Schema, entityDict map[s
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
 			return parseConditionToQuery(cond, indexRule, expr, entity)
 		}
-		return nil, nil, errors.Wrapf(errUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
+		return nil, nil, errors.Wrapf(logical.ErrUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
 		if le.GetLeft() == nil && le.GetRight() == nil {
@@ -125,11 +125,11 @@ func BuildLocalQuery(criteria *modelv1.Criteria, schema Schema, entityDict map[s
 			return &blugeQuery{query}, entities, nil
 		}
 	}
-	return nil, nil, errInvalidCriteriaType
+	return nil, nil, logical.ErrInvalidCriteriaType
 }
 
 // BuildLocalFilter returns a new index.Filter for local indices.
-func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[string]int, entity []*modelv1.TagValue) (index.Filter, [][]*modelv1.TagValue, error) {
+func BuildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int, entity []*modelv1.TagValue) (index.Filter, [][]*modelv1.TagValue, error) {
 	if criteria == nil {
 		return nil, [][]*modelv1.TagValue{entity}, nil
 	}
@@ -190,11 +190,11 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema Schema, entityDict map[
 			return or, entities, nil
 		}
 	}
-	return nil, nil, errInvalidCriteriaType
+	return nil, nil, logical.ErrInvalidCriteriaType
 }
 
 func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexRule,
-	expr LiteralExpr, entity []*modelv1.TagValue,
+	expr logical.LiteralExpr, entity []*modelv1.TagValue,
 ) (*blugeQuery, [][]*modelv1.TagValue, error) {
 	field := string(convert.Uint32ToBytes(indexRule.Metadata.Id))
 	b := expr.Bytes()
@@ -214,7 +214,7 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 	case modelv1.Condition_BINARY_OP_EQ:
 		return &blugeQuery{bluge.NewTermQuery(term).SetField(field)}, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_MATCH:
-		return &blugeQuery{bluge.NewMatchQuery(term).SetField(field).SetAnalyzer(inverted.Analyzers[indexRule.Analyzer])}, [][]*modelv1.TagValue{entity}, nil
+		return &blugeQuery{bluge.NewMatchQuery(term).SetField(field).SetAnalyzer(Analyzers[indexRule.Analyzer])}, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NE:
 		query := bluge.NewBooleanQuery()
 		query.AddMustNot(bluge.NewTermQuery(term).SetField(field))
@@ -252,11 +252,11 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 		query := bluge.NewBooleanQuery()
 		return &blugeQuery{query.AddMustNot(subQuery)}, [][]*modelv1.TagValue{entity}, nil
 	}
-	return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "index filter parses %v", cond)
+	return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index filter parses %v", cond)
 }
 
 func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.IndexRule,
-	expr LiteralExpr, entity []*modelv1.TagValue,
+	expr logical.LiteralExpr, entity []*modelv1.TagValue,
 ) (index.Filter, [][]*modelv1.TagValue, error) {
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
@@ -291,7 +291,7 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 		}
 		and := newAnd(l)
 		for _, b := range bb {
-			and.append(newEq(indexRule, newBytesLiteral(b)))
+			and.append(newEq(indexRule, logical.NewBytesLiteral(b)))
 		}
 		return and, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_HAVING:
@@ -302,7 +302,7 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 		}
 		and := newAnd(l)
 		for _, b := range bb {
-			and.append(newEq(indexRule, newBytesLiteral(b)))
+			and.append(newEq(indexRule, logical.NewBytesLiteral(b)))
 		}
 		return newNot(indexRule, and), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_IN:
@@ -313,7 +313,7 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 		}
 		or := newOr(l)
 		for _, b := range bb {
-			or.append(newEq(indexRule, newBytesLiteral(b)))
+			or.append(newEq(indexRule, logical.NewBytesLiteral(b)))
 		}
 		return or, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_IN:
@@ -324,17 +324,17 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 		}
 		or := newOr(l)
 		for _, b := range bb {
-			or.append(newEq(indexRule, newBytesLiteral(b)))
+			or.append(newEq(indexRule, logical.NewBytesLiteral(b)))
 		}
 		return newNot(indexRule, or), [][]*modelv1.TagValue{entity}, nil
 	}
-	return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "index filter parses %v", cond)
+	return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index filter parses %v", cond)
 }
 
-func parseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, cond *modelv1.Condition) (LiteralExpr, [][]*modelv1.TagValue, error) {
+func parseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, cond *modelv1.Condition) (logical.LiteralExpr, [][]*modelv1.TagValue, error) {
 	entityIdx, ok := entityDict[cond.Name]
 	if ok && cond.Op != modelv1.Condition_BINARY_OP_EQ && cond.Op != modelv1.Condition_BINARY_OP_IN {
-		return nil, nil, errors.WithMessagef(errUnsupportedConditionOp, "tag belongs to the entity only supports EQ or IN operation in condition(%v)", cond)
+		return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "tag belongs to the entity only supports EQ or IN operation in condition(%v)", cond)
 	}
 	switch v := cond.Value.Value.(type) {
 	case *modelv1.TagValue_Str:
@@ -344,7 +344,7 @@ func parseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, co
 			parsedEntity[entityIdx] = cond.Value
 			return nil, [][]*modelv1.TagValue{parsedEntity}, nil
 		}
-		return str(v.Str.GetValue()), nil, nil
+		return logical.Str(v.Str.GetValue()), nil, nil
 	case *modelv1.TagValue_StrArray:
 		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
 			entities := make([][]*modelv1.TagValue, len(v.StrArray.Value))
@@ -362,9 +362,7 @@ func parseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, co
 			}
 			return nil, entities, nil
 		}
-		return &strArrLiteral{
-			arr: v.StrArray.GetValue(),
-		}, nil, nil
+		return logical.NewStrArrLiteral(v.StrArray.GetValue()), nil, nil
 	case *modelv1.TagValue_Int:
 		if ok {
 			parsedEntity := make([]*modelv1.TagValue, len(entity))
@@ -372,9 +370,7 @@ func parseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, co
 			parsedEntity[entityIdx] = cond.Value
 			return nil, [][]*modelv1.TagValue{parsedEntity}, nil
 		}
-		return &int64Literal{
-			int64: v.Int.GetValue(),
-		}, nil, nil
+		return logical.NewInt64Literal(v.Int.GetValue()), nil, nil
 	case *modelv1.TagValue_IntArray:
 		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
 			entities := make([][]*modelv1.TagValue, len(v.IntArray.Value))
@@ -392,13 +388,11 @@ func parseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, co
 			}
 			return nil, entities, nil
 		}
-		return &int64ArrLiteral{
-			arr: v.IntArray.GetValue(),
-		}, nil, nil
+		return logical.NewInt64ArrLiteral(v.IntArray.GetValue()), nil, nil
 	case *modelv1.TagValue_Null:
-		return nullLiteralExpr, nil, nil
+		return logical.NewNullLiteral(), nil, nil
 	}
-	return nil, nil, errors.WithMessagef(errUnsupportedConditionValue, "index filter parses %v", cond)
+	return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionValue, "index filter parses %v", cond)
 }
 
 func parseEntities(op modelv1.LogicalExpression_LogicalOp, input []*modelv1.TagValue, left, right [][]*modelv1.TagValue) [][]*modelv1.TagValue {
@@ -564,7 +558,7 @@ func (an *andNode) MarshalJSON() ([]byte, error) {
 }
 
 func (an *andNode) String() string {
-	return jsonToString(an)
+	return convert.JsonToString(an)
 }
 
 type orNode struct {
@@ -609,13 +603,13 @@ func (on *orNode) MarshalJSON() ([]byte, error) {
 }
 
 func (on *orNode) String() string {
-	return jsonToString(on)
+	return convert.JsonToString(on)
 }
 
 type leaf struct {
 	index.Filter
 	Key  fieldKey
-	Expr LiteralExpr
+	Expr logical.LiteralExpr
 }
 
 func (l *leaf) MarshalJSON() ([]byte, error) {
@@ -662,14 +656,14 @@ func (n *not) MarshalJSON() ([]byte, error) {
 }
 
 func (n *not) String() string {
-	return jsonToString(n)
+	return convert.JsonToString(n)
 }
 
 type eq struct {
 	*leaf
 }
 
-func newEq(indexRule *databasev1.IndexRule, values LiteralExpr) *eq {
+func newEq(indexRule *databasev1.IndexRule, values logical.LiteralExpr) *eq {
 	return &eq{
 		leaf: &leaf{
 			Key:  newFieldKey(indexRule),
@@ -696,14 +690,14 @@ func (eq *eq) MarshalJSON() ([]byte, error) {
 }
 
 func (eq *eq) String() string {
-	return jsonToString(eq)
+	return convert.JsonToString(eq)
 }
 
 type match struct {
 	*leaf
 }
 
-func newMatch(indexRule *databasev1.IndexRule, values LiteralExpr) *match {
+func newMatch(indexRule *databasev1.IndexRule, values logical.LiteralExpr) *match {
 	return &match{
 		leaf: &leaf{
 			Key:  newFieldKey(indexRule),
@@ -735,7 +729,7 @@ func (match *match) MarshalJSON() ([]byte, error) {
 }
 
 func (match *match) String() string {
-	return jsonToString(match)
+	return convert.JsonToString(match)
 }
 
 type rangeOp struct {
@@ -786,15 +780,7 @@ func (r *rangeOp) MarshalJSON() ([]byte, error) {
 }
 
 func (r *rangeOp) String() string {
-	return jsonToString(r)
-}
-
-func jsonToString(marshaler json.Marshaler) string {
-	bb, err := marshaler.MarshalJSON()
-	if err != nil {
-		return err.Error()
-	}
-	return string(bb)
+	return convert.JsonToString(r)
 }
 
 var (

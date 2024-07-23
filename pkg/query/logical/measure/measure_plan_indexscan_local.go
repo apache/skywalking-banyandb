@@ -22,12 +22,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/blugelabs/bluge"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -86,7 +86,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		// fill AnyEntry by default
 		entity[idx] = pbv1.AnyTagValue
 	}
-	query, entities, err := logical.BuildLocalQuery(uis.criteria, s, entityMap, entity)
+	query, entities, err := inverted.BuildLocalQuery(uis.criteria, s, entityMap, entity)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ var (
 )
 
 type localIndexScan struct {
-	query                bluge.Query
+	query                *BlugeQuery
 	schema               logical.Schema
 	uis                  *unresolvedIndexScan
 	order                *logical.OrderBy

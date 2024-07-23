@@ -39,6 +39,12 @@ type int64Literal struct {
 	int64
 }
 
+func NewInt64Literal(val int64) *int64Literal {
+	return &int64Literal{
+		int64: val,
+	}
+}
+
 func (i *int64Literal) Compare(other LiteralExpr) (int, bool) {
 	if o, ok := other.(*int64Literal); ok {
 		return int(i.int64 - o.int64), true
@@ -95,6 +101,12 @@ var (
 
 type int64ArrLiteral struct {
 	arr []int64
+}
+
+func NewInt64ArrLiteral(val []int64) *int64ArrLiteral {
+	return &int64ArrLiteral{
+		arr: val,
+	}
 }
 
 func (i *int64ArrLiteral) Compare(other LiteralExpr) (int, bool) {
@@ -170,6 +182,12 @@ type strLiteral struct {
 	string
 }
 
+func NewStrLiteral(val string) *strLiteral {
+	return &strLiteral{
+		string: val,
+	}
+}
+
 func (s *strLiteral) Compare(other LiteralExpr) (int, bool) {
 	if o, ok := other.(*strLiteral); ok {
 		return strings.Compare(s.string, o.string), true
@@ -211,7 +229,7 @@ func (s *strLiteral) Equal(expr Expr) bool {
 	return false
 }
 
-func str(str string) LiteralExpr {
+func Str(str string) LiteralExpr {
 	return &strLiteral{str}
 }
 
@@ -230,6 +248,12 @@ var (
 
 type strArrLiteral struct {
 	arr []string
+}
+
+func NewStrArrLiteral(val []string) *strArrLiteral {
+	return &strArrLiteral{
+		arr: val,
+	}
 }
 
 func (s *strArrLiteral) Compare(other LiteralExpr) (int, bool) {
@@ -300,7 +324,7 @@ type bytesLiteral struct {
 	bb []byte
 }
 
-func newBytesLiteral(bb []byte) *bytesLiteral {
+func NewBytesLiteral(bb []byte) *bytesLiteral {
 	return &bytesLiteral{bb: bb}
 }
 
@@ -331,6 +355,10 @@ var (
 )
 
 type nullLiteral struct{}
+
+func NewNullLiteral() *nullLiteral {
+	return nullLiteralExpr
+}
 
 func (s nullLiteral) Compare(_ LiteralExpr) (int, bool) {
 	return 0, false
