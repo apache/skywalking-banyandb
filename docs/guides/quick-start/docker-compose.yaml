@@ -1,0 +1,154 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+services:
+  banyandb:
+    image: ${BANYANDB_IMAGE:-apache/skywalking-banyandb:latest}
+    container_name: banyandb
+    command: standalone
+    expose:
+      - 17912
+    ports:
+    - 17913:17913
+    networks:
+      - demo
+    healthcheck:
+      test: [ "CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913" ]
+      interval: 30s
+      timeout: 30s
+      retries: 120
+
+  oap:
+    image: ${OAP_IMAGE:-apache/skywalking-oap-server:latest}
+    environment:
+      SW_STORAGE: banyandb
+      SW_STORAGE_BANYANDB_TARGETS: banyandb:17912
+    expose:
+      - 11800
+    ports:
+      - 12800:12800
+    networks:
+      - demo
+    depends_on:
+      banyandb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/11800"]
+      interval: 5s
+      timeout: 60s
+      retries: 120
+
+  oap-ui:
+    image: ${OAP_UI_IMAGE:-apache/skywalking-ui:latest}
+    ports:
+      - 8080:8080
+    environment:
+      - SW_OAP_ADDRESS=http://oap:12800
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+
+  agent:
+    image: ${AGENT_IMAGE:-apache/skywalking-java-agent:9.2.0-java11}
+    command: cp -r /skywalking/agent/ /skywalking-java-agent/
+    volumes:
+      - sw_agent:/skywalking-java-agent
+    networks:
+      - demo
+
+  provider:
+    image: "ghcr.io/apache/skywalking/e2e-service-provider:cc7a2c9e97fd2c421adbe3e9c471688459a446d9"
+    volumes:
+      - sw_agent:/sw-java-agent
+    environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/agent/skywalking-agent.jar
+      SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
+      SW_LOGGING_OUTPUT: CONSOLE
+      SW_AGENT_NAME: e2e-service-provider
+      SW_AGENT_INSTANCE_NAME: provider1
+      SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
+      SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
+    ports:
+      - 9090
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9090" ]
+      interval: 5s
+      timeout: 60s
+      retries: 120
+
+  consumer:
+    image: "ghcr.io/apache/skywalking/e2e-service-consumer:cc7a2c9e97fd2c421adbe3e9c471688459a446d9"
+    volumes:
+      - sw_agent:/sw-java-agent
+    environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/agent/skywalking-agent.jar
+      SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
+      SW_LOGGING_OUTPUT: CONSOLE
+      PROVIDER_URL: http://provider:9090
+      SW_AGENT_NAME: e2e-service-consumer
+      SW_AGENT_INSTANCE_NAME: consumer1
+      SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
+      SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
+    ports:
+      - 9092
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9092" ]
+      interval: 5s
+      timeout: 60s
+      retries: 120
+
+  traffic_loader:
+    image: curlimages/curl
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+      consumer:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+      echo 'Starting traffic generation...';
+      while true; do
+        curl -X POST http://consumer:9092/info;
+        sleep 1;
+      done
+      "
+
+networks:
+  demo:
+
+volumes:
+  sw_agent: {}

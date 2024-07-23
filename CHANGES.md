@@ -32,6 +32,10 @@ Release Notes.
 - Fix a bug that the Stream module didn't support duplicated in index-based filtering and sorting
 - Fix the bug that segment's reference count is increased twice when the controller try to create an existing segment.
 
+### Documentation
+- Introduce new doc menu structure.
+- Add installation on Docker and Kubernetes.
+
 ## 0.6.1
 
 ### Features
