@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -423,7 +424,7 @@ type blockCursor struct {
 	versions            []int64
 	tagFamilies         []columnFamily
 	columnValuesDecoder encoding.BytesBlockDecoder
-	tagProjection       []pbv1.TagProjection
+	tagProjection       []model.TagProjection
 	fieldProjection     []string
 	bm                  blockMetadata
 	idx                 int
@@ -461,8 +462,8 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, queryOpts queryOptions) 
 	bc.fieldProjection = queryOpts.FieldProjection
 }
 
-func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
-	tagProjection []pbv1.TagProjection, desc bool,
+func (bc *blockCursor) copyAllTo(r *model.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
+	tagProjection []model.TagProjection, desc bool,
 ) {
 	var idx, offset int
 	if desc {
@@ -489,12 +490,12 @@ func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, entityValuesAll map[comm
 	}
 OUTER:
 	for _, tp := range tagProjection {
-		tf := pbv1.TagFamily{
+		tf := model.TagFamily{
 			Name: tp.Family,
 		}
 		var cf *columnFamily
 		for _, tagName := range tp.Names {
-			t := pbv1.Tag{
+			t := model.Tag{
 				Name: tagName,
 			}
 			if entityValues != nil && entityValues[tagName] != nil {
@@ -515,7 +516,7 @@ OUTER:
 			}
 			if cf == nil {
 				for _, n := range tp.Names {
-					t = pbv1.Tag{
+					t = model.Tag{
 						Name:   n,
 						Values: make([]*modelv1.TagValue, size),
 					}
@@ -550,7 +551,7 @@ OUTER:
 		r.TagFamilies = append(r.TagFamilies, tf)
 	}
 	for _, c := range bc.fields.columns {
-		f := pbv1.Field{
+		f := model.Field{
 			Name: c.name,
 		}
 		for _, v := range c.values[idx:offset] {
@@ -563,8 +564,8 @@ OUTER:
 	}
 }
 
-func (bc *blockCursor) copyTo(r *pbv1.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
-	tagProjection []pbv1.TagProjection,
+func (bc *blockCursor) copyTo(r *model.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
+	tagProjection []model.TagProjection,
 ) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
@@ -575,11 +576,11 @@ func (bc *blockCursor) copyTo(r *pbv1.MeasureResult, entityValuesAll map[common.
 	}
 	if len(r.TagFamilies) == 0 {
 		for _, tp := range tagProjection {
-			tf := pbv1.TagFamily{
+			tf := model.TagFamily{
 				Name: tp.Family,
 			}
 			for _, n := range tp.Names {
-				t := pbv1.Tag{
+				t := model.Tag{
 					Name: n,
 				}
 				tf.Tags = append(tf.Tags, t)
@@ -624,7 +625,7 @@ func (bc *blockCursor) copyTo(r *pbv1.MeasureResult, entityValuesAll map[common.
 
 	if len(r.Fields) == 0 {
 		for _, n := range bc.fieldProjection {
-			f := pbv1.Field{
+			f := model.Field{
 				Name: n,
 			}
 			r.Fields = append(r.Fields, f)

@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -66,7 +67,7 @@ type SupplyTSDB[T TSTable] func() T
 // IndexDB is the interface of index database.
 type IndexDB interface {
 	Write(docs index.Documents) error
-	Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error)
+	Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *model.OrderBy, preloadSize int) (pbv1.SeriesList, error)
 }
 
 // TSDB allows listing and getting shard details.

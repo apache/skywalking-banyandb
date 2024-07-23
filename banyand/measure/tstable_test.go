@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -389,7 +390,7 @@ func Test_tstIter(t *testing.T) {
 	})
 }
 
-var tagProjections = map[int][]pbv1.TagProjection{
+var tagProjections = map[int][]model.TagProjection{
 	1: {
 		{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
 		{Family: "binaryTag", Names: []string{"binaryTag"}},
@@ -400,7 +401,7 @@ var tagProjections = map[int][]pbv1.TagProjection{
 	},
 }
 
-var allTagProjections = []pbv1.TagProjection{
+var allTagProjections = []model.TagProjection{
 	{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
 	{Family: "binaryTag", Names: []string{"binaryTag"}},
 	{Family: "singleTag", Names: []string{"strTag", "intTag", "strTag1", "strTag2"}},
