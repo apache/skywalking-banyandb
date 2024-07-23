@@ -23,7 +23,7 @@ import { getTableList } from '@/api/index'
 
 const tableLayout = ref('auto')
 
-const autoRefresh = ref(15000);
+const autoRefresh = ref('off');
 
 const options = ref([
     { value: 'off', label: 'Off' },
@@ -330,8 +330,8 @@ function changeDatePicker(value) {
 let intervalId;
 watchEffect(() => {
     if (intervalId) clearInterval(intervalId);
+    fetchNodes();
     if (autoRefresh.value !== 'off') {
-        fetchNodes();
         intervalId = setInterval(() => {
             const currentStart = dateRange.value[0];
             const currentEnd = dateRange.value[1];
