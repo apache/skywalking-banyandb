@@ -34,6 +34,7 @@ Release Notes.
 
 ### Documentation
 - Introduce new doc menu structure.
+- Add installation on Docker and Kubernetes.
 
 ## 0.6.1
 
