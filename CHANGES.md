@@ -7,6 +7,8 @@ Release Notes.
 ### File System Changes
 
 - Bump up the version of the file system to 1.1.0 which is not compatible with the previous version.
+- Move the series index into segment.
+- Swap the segment and the shard.
 
 ### Features
 
@@ -29,6 +31,11 @@ Release Notes.
 - Fix memory leak in sorting the stream by the inverted index.
 - Fix the wrong array flags parsing in command line. The array flags should be parsed by "StringSlice" instead of "StringArray".
 - Fix a bug that the Stream module didn't support duplicated in index-based filtering and sorting
+- Fix the bug that segment's reference count is increased twice when the controller try to create an existing segment.
+
+### Documentation
+- Introduce new doc menu structure.
+- Add installation on Docker and Kubernetes.
 
 ## 0.6.1
 

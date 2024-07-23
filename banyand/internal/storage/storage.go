@@ -73,24 +73,24 @@ type IndexDB interface {
 // TSDB allows listing and getting shard details.
 type TSDB[T TSTable, O any] interface {
 	io.Closer
-	Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error)
-	CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error)
-	SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T]
-	IndexDB() IndexDB
+	CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], error)
+	SelectSegments(timeRange timestamp.TimeRange) []Segment[T, O]
 	Tick(ts int64)
+}
+
+// Segment is a time range of data.
+type Segment[T TSTable, O any] interface {
+	DecRef()
+	GetTimeRange() timestamp.TimeRange
+	CreateTSTableIfNotExist(shardID common.ShardID) (T, error)
+	Tables() []T
+	Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error)
+	IndexDB() IndexDB
 }
 
 // TSTable is time series table.
 type TSTable interface {
 	io.Closer
-}
-
-// TSTableWrapper is a wrapper of TSTable.
-// It is used to manage the reference count of TSTable.
-type TSTableWrapper[T TSTable] interface {
-	DecRef()
-	Table() T
-	GetTimeRange() timestamp.TimeRange
 }
 
 // TSTableCreator creates a TSTable.

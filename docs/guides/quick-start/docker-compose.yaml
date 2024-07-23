@@ -15,81 +15,65 @@
 
 services:
   banyandb:
-    expose:
-      - 17912
-      - 2121
-      - 6060
+    image: ${BANYANDB_IMAGE:-apache/skywalking-banyandb:latest}
+    container_name: banyandb
     command: standalone
-    healthcheck:
-      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913"]
-      interval: 30s
-      timeout: 30s
-      retries: 120
-
-  liaison:
-    hostname: liaison
     expose:
       - 17912
-      - 2121
-      - 6060
-    command: liaison --etcd-endpoints=http://etcd:2379 
+    ports:
+    - 17913:17913
+    networks:
+      - demo
     healthcheck:
-      test: ["CMD", "./bydbctl", "health", "--addr=http://liaison:17913"]
+      test: [ "CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913" ]
       interval: 30s
       timeout: 30s
       retries: 120
-  
-  data:
-    hostname: data
-    expose:
-      - 17912
-      - 2121
-      - 6060
-    command: data --etcd-endpoints=http://etcd:2379 
-    healthcheck:
-      test: ["CMD", "./bydbctl", "health", "--grpc-addr=data:17912"]
-      interval: 30s
-      timeout: 30s
-      retries: 120
-  
-  agent:
-    image: "ghcr.io/apache/skywalking-java/skywalking-java:${SW_AGENT_JAVA_COMMIT}-java8"
-    command: cp -r /skywalking/agent/ /skywalking-java-agent/
-    volumes:
-      - sw_agent:/skywalking-java-agent
 
   oap:
-    image: "ghcr.io/apache/skywalking/oap:${SW_OAP_COMMIT}"
+    image: ${OAP_IMAGE:-apache/skywalking-oap-server:latest}
+    environment:
+      SW_STORAGE: banyandb
+      SW_STORAGE_BANYANDB_TARGETS: banyandb:17912
     expose:
       - 11800
-      - 12800
-      - 10051
-      - 5005
-    environment:
-      SW_STORAGE_BANYANDB_TARGETS: banyandb:17912
-      SW_CONFIG_ETCD_PERIOD: 1
-      SW_CONFIG_ETCD_ENDPOINTS: http://etcd:2379
-      SW_CLUSTER_ETCD_ENDPOINTS: http://etcd:2379
+    ports:
+      - 12800:12800
+    networks:
+      - demo
+    depends_on:
+      banyandb:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/11800"]
       interval: 5s
       timeout: 60s
       retries: 120
 
-  ui:
-    image: "ghcr.io/apache/skywalking/ui:${SW_OAP_COMMIT}"
-    expose:
-      - 8080
+  oap-ui:
+    image: ${OAP_UI_IMAGE:-apache/skywalking-ui:latest}
+    ports:
+      - 8080:8080
     environment:
       - SW_OAP_ADDRESS=http://oap:12800
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+
+  agent:
+    image: ${AGENT_IMAGE:-apache/skywalking-java-agent:9.2.0-java11}
+    command: cp -r /skywalking/agent/ /skywalking-java-agent/
+    volumes:
+      - sw_agent:/skywalking-java-agent
+    networks:
+      - demo
 
   provider:
-    image: "ghcr.io/apache/skywalking/e2e-service-provider:${SW_AGENT_E2E_SERVICE_PROVIDER_COMMIT}"
+    image: "ghcr.io/apache/skywalking/e2e-service-provider:cc7a2c9e97fd2c421adbe3e9c471688459a446d9"
     volumes:
       - sw_agent:/sw-java-agent
-    expose:
-      - 9090
-      - 5005
     environment:
       JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/agent/skywalking-agent.jar
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
@@ -98,19 +82,25 @@ services:
       SW_AGENT_INSTANCE_NAME: provider1
       SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
       SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
+    ports:
+      - 9090
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9090"]
+      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9090" ]
       interval: 5s
       timeout: 60s
       retries: 120
 
   consumer:
-    image: "ghcr.io/apache/skywalking/e2e-service-consumer:${SW_AGENT_E2E_SERVICE_PROVIDER_COMMIT}"
+    image: "ghcr.io/apache/skywalking/e2e-service-consumer:cc7a2c9e97fd2c421adbe3e9c471688459a446d9"
     volumes:
       - sw_agent:/sw-java-agent
-    expose:
-      - 9092
-      - 5005
     environment:
       JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/agent/skywalking-agent.jar
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
@@ -120,28 +110,45 @@ services:
       SW_AGENT_INSTANCE_NAME: consumer1
       SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
       SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
+    ports:
+      - 9092
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9092"]
+      test: [ "CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9092" ]
       interval: 5s
       timeout: 60s
       retries: 120
 
   traffic_loader:
-    image: grafana/k6:latest
-    ports:
-      - "6565:6565"
+    image: curlimages/curl
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+      consumer:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+      echo 'Starting traffic generation...';
+      while true; do
+        curl -X POST http://consumer:9092/info;
+        sleep 1;
+      done
+      "
 
-  etcd:
-    image: gcr.io/etcd-development/etcd:v3.5.9
-    ports:
-      - "2379:2379"
-    command: etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://etcd:2379 --max-request-bytes 10485760 --backend-batch-limit 10000 
-    healthcheck:
-      test: ["CMD", "etcdctl", "endpoint", "health"]
-      interval: 1m30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+networks:
+  demo:
 
 volumes:
-  sw_agent:
+  sw_agent: {}

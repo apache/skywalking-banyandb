@@ -19,6 +19,7 @@ package observability
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -171,9 +172,10 @@ func collectDisk() {
 	for path := range getPath() {
 		usage, err := disk.Usage(path)
 		if err != nil {
-			// skip logging the case where the data has not been created
-			if err.Error() == "no such file or directory" {
-				log.Error().Err(err).Msgf("failed to get usage for path: %s", path)
+			if _, err = os.Stat(path); err != nil {
+				if !os.IsNotExist(err) {
+					log.Error().Err(err).Msgf("failed to get stat for path: %s", path)
+				}
 			}
 			return
 		}

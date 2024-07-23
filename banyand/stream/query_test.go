@@ -30,7 +30,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -308,7 +307,7 @@ func TestQueryResult(t *testing.T) {
 						TagProjection: tagProjectionAll,
 					},
 				}
-				result.tabWrappers = []storage.TSTableWrapper[*tsTable]{&tsTableWrapper{tst}}
+				result.tabs = []*tsTable{tst}
 				defer result.Release()
 				if !tt.orderBySeries {
 					result.orderByTS = true
@@ -399,22 +398,6 @@ func TestQueryResult(t *testing.T) {
 			})
 		})
 	}
-}
-
-type tsTableWrapper struct {
-	*tsTable
-}
-
-func (t *tsTableWrapper) Table() *tsTable {
-	return t.tsTable
-}
-
-func (t *tsTableWrapper) GetTimeRange() timestamp.TimeRange {
-	return timestamp.TimeRange{}
-}
-
-func (t *tsTableWrapper) DecRef() {
-	t.tsTable.Close()
 }
 
 func emptyTagFamilies(size int) []pbv1.TagFamily {

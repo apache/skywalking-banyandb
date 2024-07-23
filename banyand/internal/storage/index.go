@@ -19,14 +19,7 @@ package storage
 
 import (
 	"context"
-	"fmt"
 	"path"
-	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/blugelabs/bluge"
 	"github.com/pkg/errors"
@@ -39,33 +32,28 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-func (d *database[T, O]) IndexDB() IndexDB {
-	return d.indexController.getHot()
+func (s *segment[T, O]) IndexDB() IndexDB {
+	return s.index
 }
 
-func (d *database[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
-	return d.indexController.searchPrimary(ctx, series)
+func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
+	return s.index.searchPrimary(ctx, series)
 }
 
 type seriesIndex struct {
-	startTime time.Time
-	store     index.SeriesStore
-	l         *logger.Logger
-	path      string
+	store index.SeriesStore
+	l     *logger.Logger
 }
 
-func newSeriesIndex(ctx context.Context, path string, startTime time.Time, flushTimeoutSeconds int64) (*seriesIndex, error) {
+func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64) (*seriesIndex, error) {
 	si := &seriesIndex{
-		path:      path,
-		startTime: startTime,
-		l:         logger.Fetch(ctx, "series_index"),
+		l: logger.Fetch(ctx, "series_index"),
 	}
 	var err error
 	if si.store, err = inverted.NewStore(inverted.StoreOpts{
-		Path:         path,
+		Path:         path.Join(root, "sidx"),
 		Logger:       si.l,
 		BatchWaitSec: flushTimeoutSeconds,
 	}); err != nil {
@@ -202,7 +190,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQu
 	pl := seriesList.ToList()
 	if blugeQuery != nil {
 		var plFilter posting.List
-		// TODO: merge searchPrimary and filter
 		func() {
 			if tracer != nil {
 				span, _ := tracer.StartSpan(ctx, "filter")
@@ -247,7 +234,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQu
 			span.Stop()
 		}()
 	}
-	// TODO:// merge searchPrimary and sort
 	iter, err := s.store.Iterator(fieldKey, rangeOpts, order.Sort, preloadSize)
 	if err != nil {
 		return nil, err
@@ -298,225 +284,4 @@ func appendSeriesList(dest, src pbv1.SeriesList, target common.SeriesID) pbv1.Se
 
 func (s *seriesIndex) Close() error {
 	return s.store.Close()
-}
-
-type seriesIndexController[T TSTable, O any] struct {
-	clock           timestamp.Clock
-	hot             *seriesIndex
-	standby         *seriesIndex
-	l               *logger.Logger
-	location        string
-	opts            TSDBOpts[T, O]
-	standbyLiveTime time.Duration
-	sync.RWMutex
-}
-
-func newSeriesIndexController[T TSTable, O any](
-	ctx context.Context,
-	opts TSDBOpts[T, O],
-) (*seriesIndexController[T, O], error) {
-	l := logger.Fetch(ctx, "seriesIndexController")
-	clock, ctx := timestamp.GetClock(ctx)
-	var standbyLiveTime time.Duration
-	switch opts.TTL.Unit {
-	case HOUR:
-		standbyLiveTime = time.Hour
-	case DAY:
-		standbyLiveTime = 24 * time.Hour
-	default:
-	}
-	sic := &seriesIndexController[T, O]{
-		opts:            opts,
-		clock:           clock,
-		standbyLiveTime: standbyLiveTime,
-		location:        filepath.Clean(opts.Location),
-		l:               l,
-	}
-	idxName, err := sic.loadIdx()
-	if err != nil {
-		return nil, err
-	}
-	switch len(idxName) {
-	case 0:
-		if sic.hot, err = sic.newIdx(ctx, clock.Now()); err != nil {
-			return nil, err
-		}
-	case 1:
-		if sic.hot, err = sic.openIdx(ctx, idxName[0]); err != nil {
-			return nil, err
-		}
-	case 2:
-		if sic.hot, err = sic.openIdx(ctx, idxName[0]); err != nil {
-			return nil, err
-		}
-		if sic.standby, err = sic.openIdx(ctx, idxName[1]); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, errors.New("unexpected series index count")
-	}
-	return sic, nil
-}
-
-func (sic *seriesIndexController[T, O]) getHot() *seriesIndex {
-	sic.RLock()
-	defer sic.RUnlock()
-	return sic.hot
-}
-
-func (sic *seriesIndexController[T, O]) loadIdx() ([]string, error) {
-	idxName := make([]string, 0)
-	if err := walkDir(
-		sic.location,
-		"idx",
-		func(suffix string) error {
-			idxName = append(idxName, "idx-"+suffix)
-			return nil
-		}); err != nil {
-		return nil, err
-	}
-	sort.StringSlice(idxName).Sort()
-	if len(idxName) > 2 {
-		redundantIdx := idxName[:len(idxName)-2]
-		for i := range redundantIdx {
-			lfs.MustRMAll(filepath.Join(sic.location, redundantIdx[i]))
-		}
-		idxName = idxName[len(idxName)-2:]
-	}
-	return idxName, nil
-}
-
-func (sic *seriesIndexController[T, O]) newIdx(ctx context.Context, now time.Time) (*seriesIndex, error) {
-	ts := sic.opts.TTL.Unit.standard(now)
-	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", ts.UnixNano()))
-}
-
-func (sic *seriesIndexController[T, O]) newNextIdx(ctx context.Context, now time.Time) (*seriesIndex, error) {
-	ts := sic.opts.TTL.Unit.standard(now)
-	ts = ts.Add(sic.standbyLiveTime)
-	return sic.openIdx(ctx, fmt.Sprintf("idx-%016x", ts.UnixNano()))
-}
-
-func (sic *seriesIndexController[T, O]) openIdx(ctx context.Context, name string) (*seriesIndex, error) {
-	p := path.Join(sic.location, name)
-	if ts, ok := strings.CutPrefix(name, "idx-"); ok {
-		t, err := strconv.ParseInt(ts, 16, 64)
-		if err != nil {
-			return nil, err
-		}
-
-		return newSeriesIndex(ctx, p, sic.opts.TTL.Unit.standard(time.Unix(0, t)), sic.opts.SeriesIndexFlushTimeoutSeconds)
-	}
-	return nil, errors.New("unexpected series index name")
-}
-
-func (sic *seriesIndexController[T, O]) run(now, deadline time.Time) (err error) {
-	ctx := context.WithValue(context.Background(), logger.ContextKey, sic.l)
-	if _, err := sic.loadIdx(); err != nil {
-		sic.l.Warn().Err(err).Msg("fail to clear redundant series index")
-	}
-
-	sic.Lock()
-	defer sic.Unlock()
-	if sic.hot.startTime.Compare(deadline) <= 0 {
-		return sic.handleStandby(ctx, now, deadline)
-	}
-
-	if sic.standby != nil {
-		return nil
-	}
-	liveTime := sic.hot.startTime.Sub(deadline)
-	if liveTime <= 0 || liveTime > sic.standbyLiveTime {
-		return nil
-	}
-	return sic.createStandby(ctx, now, deadline)
-}
-
-func (sic *seriesIndexController[T, O]) handleStandby(ctx context.Context, now, deadline time.Time) error {
-	sic.l.Info().Time("deadline", deadline).Msg("start to swap series index")
-
-	if sic.standby == nil {
-		var err error
-		sic.standby, err = sic.newIdx(ctx, now)
-		if err != nil {
-			return err
-		}
-	}
-
-	standby := sic.hot
-	sic.hot = sic.standby
-	sic.standby = nil
-
-	if err := standby.Close(); err != nil {
-		sic.l.Warn().Err(err).Msg("fail to close standby series index")
-	}
-
-	lfs.MustRMAll(standby.path)
-	sic.l.Info().Str("path", standby.path).Msg("dropped series index")
-	lfs.SyncPath(sic.location)
-
-	return nil
-}
-
-func (sic *seriesIndexController[T, O]) createStandby(ctx context.Context, now, deadline time.Time) error {
-	if sic.standby != nil {
-		return nil
-	}
-	sic.l.Info().Time("deadline", deadline).Msg("start to create standby series index")
-	standby, err := sic.newNextIdx(ctx, now)
-	if err != nil {
-		sic.l.Error().Err(err).Msg("fail to create standby series index")
-		return err
-	}
-
-	sic.standby = standby
-	return nil
-}
-
-func (sic *seriesIndexController[T, O]) Write(docs index.Documents) error {
-	sic.RLock()
-	defer sic.RUnlock()
-	if sic.standby != nil {
-		return sic.standby.Write(docs)
-	}
-	return sic.hot.Write(docs)
-}
-
-func (sic *seriesIndexController[T, O]) searchPrimary(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
-	sic.RLock()
-	defer sic.RUnlock()
-
-	sl, err := sic.hot.searchPrimary(ctx, series)
-	if err != nil {
-		return nil, err
-	}
-	if len(sl) > 0 || sic.standby == nil {
-		return sl, nil
-	}
-	return sic.standby.searchPrimary(ctx, series)
-}
-
-func (sic *seriesIndexController[T, O]) Search(ctx context.Context, series []*pbv1.Series,
-	query bluge.Query, order *pbv1.OrderBy, preloadSize int,
-) (pbv1.SeriesList, error) {
-	sic.RLock()
-	defer sic.RUnlock()
-
-	sl, err := sic.hot.Search(ctx, series, query, order, preloadSize)
-	if err != nil {
-		return nil, err
-	}
-	if len(sl) > 0 || sic.standby == nil {
-		return sl, nil
-	}
-	return sic.standby.Search(ctx, series, query, order, preloadSize)
-}
-
-func (sic *seriesIndexController[T, O]) Close() error {
-	sic.Lock()
-	defer sic.Unlock()
-	if sic.standby != nil {
-		return multierr.Combine(sic.hot.Close(), sic.standby.Close())
-	}
-	return sic.hot.Close()
 }

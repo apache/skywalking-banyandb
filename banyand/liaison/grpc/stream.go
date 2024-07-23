@@ -116,10 +116,9 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			}
 		}
 		iwr := &streamv1.InternalWriteRequest{
-			Request:    writeEntity,
-			ShardId:    uint32(shardID),
-			SeriesHash: pbv1.HashEntity(entity),
-			// TODO: remove the first value (stream name) of tagValues
+			Request:      writeEntity,
+			ShardId:      uint32(shardID),
+			SeriesHash:   pbv1.HashEntity(entity),
 			EntityValues: tagValues[1:].Encode(),
 		}
 		nodeID, errPickNode := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID))

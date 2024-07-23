@@ -433,7 +433,6 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 				// save string representation of group values as the key, i.e. v1
 				"",
 				// field value as v2
-				// TODO: we only support int64
 				dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
 				// groupBy tag values as v3
 				nil,
@@ -454,7 +453,6 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 				return stringify(extractTagValue(dpWithEvs.DataPointValue, locator))
 			}), "|"),
 			// field value as v2
-			// TODO: we only support int64
 			dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
 			// groupBy tag values as v3
 			transform(groupLocator, func(locator partition.TagLocator) *modelv1.TagValue {
