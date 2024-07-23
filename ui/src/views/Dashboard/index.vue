@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import { ref, watchEffect, computed, defineComponent } from 'vue';
+import { ref, watchEffect, computed } from 'vue';
 import { getTableList } from '@/api/index'
 
 const tableLayout = ref('auto')
