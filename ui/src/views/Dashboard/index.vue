@@ -130,8 +130,8 @@ const shortcuts = [
     },
 ];
 
-// State for date picker
-const dateRange = ref([new Date(Date.now() - 30 * 60 * 1000), new Date()]); // Default to last 30 minutes
+// State for date picker default 30 mins
+const dateRange = ref([new Date(Date.now() - 30 * 60 * 1000), new Date()]);
 
 const timezoneOffset = computed(() => {
     const offset = new Date().getTimezoneOffset();
@@ -142,12 +142,12 @@ const timezoneOffset = computed(() => {
 });
 
 const truncatePath = (path) => {
-    if (path.length <= 15) return path;
-    return path.slice(0, 5) + '...' + path.slice(-10);
+    if (path.length <= 35) return path;
+    return path.slice(0, 5) + '...' + path.slice(-30);
 };
 
 const isTruncated = (path) => {
-    return path.length > 15;
+    return path.length > 35;
 };
 
 function formatUptime(seconds) {
@@ -232,7 +232,7 @@ async function fetchNodes() {
 }
 
 function getCurrentUTCTime() {
-    const end = dateRange.value[1]; // Get the end time from the date picker
+    const end = dateRange.value[1];
     utcTime.value.end = end.toISOString();
 
     const oneMinuteAgo = new Date(end.getTime() - 60000);
@@ -251,7 +251,7 @@ async function fetchDataPoints(type, tagProjection) {
     if (res.status === 200) {
         return res.data.dataPoints;
     }
-    return null; // Handle the case when status is not 200
+    return null;
 }
 
 function groupBy(data, key) {
@@ -290,7 +290,7 @@ function getLatestForEachNode(data) {
     });
 
     const uniqueNodeData = Object.values(nodeDataMap).map(item => {
-        delete item.timestamp; // Remove the timestamp property added for comparison
+        delete item.timestamp;
         return item;
     });
     return uniqueNodeData
@@ -305,7 +305,7 @@ function getLatestField(data, nodeId) {
     data.forEach(item => {
         const nodeIdTag = item.tagFamilies[0].tags.find(tag => tag.key === 'node_id');
         const currentNodeId = nodeIdTag.value.str.value;
-        const timestamp = new Date(item.timestamp).getTime(); // Convert timestamp to milliseconds
+        const timestamp = new Date(item.timestamp).getTime();
 
         // Check if the current item matches the nodeId and is the latest
         if (currentNodeId === nodeId && timestamp > latestTimestamp) {
@@ -318,8 +318,6 @@ function getLatestField(data, nodeId) {
     if (latestItem && latestItem.fields.length > 0) {
         return latestItem.fields[0].value.float.value;
     }
-
-    // Return null if no matching item is found or there are no fields
     return null;
 }
 
@@ -380,7 +378,7 @@ watchEffect(() => {
                     <el-table-column label="CPU">
                         <template #default="scope">
                             <el-progress type="dashboard" :percentage="parseFloat((scope.row.cpu * 100).toFixed(2))"
-                                :color="colors"/>
+                                :color="colors" />
                         </template>
                     </el-table-column>
                     <el-table-column label="Memory">
@@ -421,6 +419,8 @@ watchEffect(() => {
                                         </el-tooltip>
                                     </span>
                                     <span v-else class="disk-key">{{ key }}:</span>
+                                </div>
+                                <div class="progress-container">
                                     <el-progress type="line"
                                         :percentage="parseFloat((value.used_percent * 100).toFixed(2))" :color="colors"
                                         :stroke-width="6" :show-text="true" class="fixed-progress-bar" />
@@ -465,9 +465,7 @@ watchEffect(() => {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    /* Aligns items to the right */
     margin: 15px 15px 10px 15px;
-    /* Space between the header and the card */
     position: sticky;
     top: 0;
     z-index: 1000;
@@ -476,47 +474,42 @@ watchEffect(() => {
 }
 
 @media (max-width: 900px) {
-  .header-container {
-    flex-direction: column;
-    align-items: flex-end; /* Align items to the start for vertical layout */
-  }
+    .header-container {
+        flex-direction: column;
+        align-items: flex-end;
+    }
 
-  .timestamp,
-  .autofresh {
-    margin-bottom: 10px; /* Add spacing between rows */
-  }
+    .timestamp,
+    .autofresh {
+        margin-bottom: 10px;
+    }
 
-  .autofresh {
-    display: flex;
-    align-items: center;
-  }
+    .autofresh {
+        display: flex;
+        align-items: center;
+    }
 
-  .timestamp-item {
-    margin-right: 5px;
-  }
+    .timestamp-item {
+        margin-right: 5px;
+    }
 
 }
 
 .timestamp {
     font-size: 16px;
-    /* Adjust the font size as needed */
     color: #666;
-    /* Adjust the text color as needed */
 }
 
 .timestamp-item {
     margin-right: 12px;
-    /* Add space between each item */
 }
 
 .auto-fresh-select {
     width: 200px;
-    /* Adjust the width as needed */
 }
 
 .card-header {
     font-size: 20px;
-    /* Make the text bigger */
     height: 10px;
 }
 
@@ -526,7 +519,7 @@ watchEffect(() => {
 
     hr {
         margin: 0;
-        border-top: 1px solid grey; // Adjust color as needed
+        border-top: 1px solid grey;
     }
 }
 
@@ -537,7 +530,6 @@ watchEffect(() => {
 
 .table-container {
     max-height: 625px;
-    /* Adjust this height as needed */
     overflow-y: auto;
 }
 
@@ -550,9 +542,9 @@ watchEffect(() => {
 }
 
 .disk-key {
-    margin-right: 10px; // Adjust the margin value as needed
-    font-weight: bold;
-    color: #606266; // Adjust the color as needed
+    margin-right: 10px;
+    color: #606266;
+
 }
 
 .progress-container,
@@ -563,10 +555,11 @@ watchEffect(() => {
     text-align: left;
     width: 100%;
     gap: 10px;
+    padding-top: 6px;
 }
 
 
-@media (max-width: 900px) {
+@media (max-width: 1200px) {
     .disk-key,
     .memory-stats,
     .disk-stats {
@@ -574,7 +567,7 @@ watchEffect(() => {
     }
 
     .fixed-progress-bar {
-        width: 80%;  /* increase width on smaller screens */
+        width: 80%;
     }
 }
 </style>
