@@ -21,10 +21,15 @@ import (
 	"sort"
 	"sync"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -32,7 +37,7 @@ import (
 
 type block struct {
 	timestamps  []int64
-	elementIDs  []string
+	elementIDs  []uint64
 	tagFamilies []tagFamily
 }
 
@@ -47,7 +52,7 @@ func (b *block) reset() {
 	b.tagFamilies = tff[:0]
 }
 
-func (b *block) mustInitFromElements(timestamps []int64, elementIDs []string, tagFamilies [][]tagValues) {
+func (b *block) mustInitFromElements(timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -320,14 +325,14 @@ func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, read
 	return dst
 }
 
-func mustWriteElementIDsTo(em *elementIDsMetadata, elementIDs []string, elementIDsWriter *writer) {
+func mustWriteElementIDsTo(em *elementIDsMetadata, elementIDs []uint64, elementIDsWriter *writer) {
 	em.reset()
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	elementIDsByteSlice := make([][]byte, len(elementIDs))
 	for i, elementID := range elementIDs {
-		elementIDsByteSlice[i] = []byte(elementID)
+		elementIDsByteSlice[i] = convert.Uint64ToBytes(elementID)
 	}
 	bb.Buf = encoding.EncodeBytesBlock(bb.Buf, elementIDsByteSlice)
 	if len(bb.Buf) > maxElementIDsBlockSize {
@@ -339,7 +344,7 @@ func mustWriteElementIDsTo(em *elementIDsMetadata, elementIDs []string, elementI
 	elementIDsWriter.MustWrite(bb.Buf)
 }
 
-func mustReadElementIDsFrom(dst []string, em *elementIDsMetadata, count int, reader fs.Reader) []string {
+func mustReadElementIDsFrom(dst []uint64, em *elementIDsMetadata, count int, reader fs.Reader) []uint64 {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(em.size))
@@ -351,7 +356,7 @@ func mustReadElementIDsFrom(dst []string, em *elementIDsMetadata, count int, rea
 		logger.Panicf("%s: cannot unmarshal elementIDs: %v", reader.Path(), err)
 	}
 	for _, elementID := range elementIDsByteSlice {
-		dst = append(dst, string(elementID))
+		dst = append(dst, convert.BytesToUint64(elementID))
 	}
 	return dst
 }
@@ -372,7 +377,7 @@ func mustSeqReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, r
 	return dst
 }
 
-func mustSeqReadElementIDsFrom(dst []string, em *elementIDsMetadata, count int, reader *seqReader) []string {
+func mustSeqReadElementIDsFrom(dst []uint64, em *elementIDsMetadata, count int, reader *seqReader) []uint64 {
 	if em.offset != reader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", em.offset, reader.bytesRead)
 	}
@@ -387,7 +392,7 @@ func mustSeqReadElementIDsFrom(dst []string, em *elementIDsMetadata, count int, 
 		logger.Panicf("%s: cannot unmarshal elementIDs: %v", reader.Path(), err)
 	}
 	for _, elementID := range elementIDsByteSlice {
-		dst = append(dst, string(elementID))
+		dst = append(dst, convert.BytesToUint64(elementID))
 	}
 	return dst
 }
@@ -408,17 +413,17 @@ func releaseBlock(b *block) {
 var blockPool sync.Pool
 
 type blockCursor struct {
-	p                  *part
-	timestamps         []int64
-	filteredTimestamps []int64
-	elementIDs         []string
-	tagFamilies        []tagFamily
-	tagValuesDecoder   encoding.BytesBlockDecoder
-	tagProjection      []pbv1.TagProjection
-	bm                 blockMetadata
-	idx                int
-	minTimestamp       int64
-	maxTimestamp       int64
+	p                *part
+	timestamps       []int64
+	elementFilter    posting.List
+	elementIDs       []uint64
+	tagFamilies      []tagFamily
+	tagValuesDecoder encoding.BytesBlockDecoder
+	tagProjection    []pbv1.TagProjection
+	bm               blockMetadata
+	idx              int
+	minTimestamp     int64
+	maxTimestamp     int64
 }
 
 func (bc *blockCursor) reset() {
@@ -446,54 +451,55 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.minTimestamp = opts.minTimestamp
 	bc.maxTimestamp = opts.maxTimestamp
 	bc.tagProjection = opts.TagProjection
-	seriesID := bc.bm.seriesID
-	if opts.filteredRefMap != nil {
-		bc.filteredTimestamps = opts.filteredRefMap[seriesID]
-	}
+	bc.elementFilter = opts.elementFilter
 }
 
 func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
-	var idx, offset int
-	if desc {
-		idx = 0
-		offset = bc.idx + 1
-	} else {
-		idx = bc.idx
-		offset = len(bc.timestamps)
+	start, end := 0, bc.idx+1
+	if !desc {
+		start, end = bc.idx, len(bc.timestamps)
 	}
-	if offset <= idx {
+	if end <= start {
 		return
 	}
-	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
-	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[idx:offset]...)
-	for i := idx; i < offset; i++ {
-		r.SIDs = append(r.SIDs, bc.bm.seriesID)
+
+	r.Timestamps = append(r.Timestamps, bc.timestamps[start:end]...)
+	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[start:end]...)
+	requiredCapacity := end - start
+	r.SIDs = append(r.SIDs, make([]common.SeriesID, requiredCapacity)...)
+	for i := range r.SIDs[len(r.SIDs)-requiredCapacity:] {
+		r.SIDs[len(r.SIDs)-requiredCapacity+i] = bc.bm.seriesID
 	}
+
+	if desc {
+		slices.Reverse(r.Timestamps)
+		slices.Reverse(r.ElementIDs)
+	}
+
 	if len(r.TagFamilies) != len(bc.tagProjection) {
-		for _, tp := range bc.tagProjection {
-			tf := pbv1.TagFamily{
-				Name: tp.Family,
+		r.TagFamilies = make([]pbv1.TagFamily, len(bc.tagProjection))
+		for i, tp := range bc.tagProjection {
+			r.TagFamilies[i] = pbv1.TagFamily{Name: tp.Family, Tags: make([]pbv1.Tag, len(tp.Names))}
+			for j, n := range tp.Names {
+				r.TagFamilies[i].Tags[j] = pbv1.Tag{Name: n}
 			}
-			for _, n := range tp.Names {
-				t := pbv1.Tag{
-					Name: n,
-				}
-				tf.Tags = append(tf.Tags, t)
-			}
-			r.TagFamilies = append(r.TagFamilies, tf)
 		}
 	}
+
 	for i, cf := range bc.tagFamilies {
-		for i2, c := range cf.tags {
-			if c.values != nil {
-				for _, v := range c.values[idx:offset] {
-					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, v))
-				}
-			} else {
-				for j := idx; j < offset; j++ {
-					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
+		for j, c := range cf.tags {
+			values := make([]*modelv1.TagValue, end-start)
+			for k := start; k < end; k++ {
+				if c.values != nil {
+					values[k-start] = mustDecodeTagValue(c.valueType, c.values[k])
+				} else {
+					values[k-start] = pbv1.NullTagValue
 				}
 			}
+			if desc {
+				slices.Reverse(values)
+			}
+			r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, values...)
 		}
 	}
 }
@@ -552,15 +558,13 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 
 	idxList := make([]int, 0)
 	var start, end int
-	if bc.filteredTimestamps != nil {
-		for _, ts := range bc.filteredTimestamps {
-			idx := timestamp.Find(tmpBlock.timestamps, ts)
-			if idx == -1 {
-				continue
+	if bc.elementFilter != nil {
+		for i := range tmpBlock.elementIDs {
+			if bc.elementFilter.Contains(tmpBlock.elementIDs[i]) {
+				idxList = append(idxList, i)
+				bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[i])
+				bc.elementIDs = append(bc.elementIDs, tmpBlock.elementIDs[i])
 			}
-			idxList = append(idxList, idx)
-			bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[idx])
-			bc.elementIDs = append(bc.elementIDs, tmpBlock.elementIDs[idx])
 		}
 		if len(bc.timestamps) == 0 {
 			return false
@@ -590,7 +594,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
 						tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
 				}
-				if bc.filteredTimestamps != nil {
+				if len(idxList) > 0 {
 					for _, idx := range idxList {
 						t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[idx])
 					}

@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "name": "duplicated-rule-binding",
+    "group": "default"
+  },
+  "rules": [
+    "trace_id",
+    "duration"
+  ],
+  "subject":{
+    "catalog": "CATALOG_STREAM",
+    "name": "duplicated"
+  },
+  "begin_at": "2021-04-15T01:30:15.01Z",
+  "expire_at": "2121-04-15T01:30:15.01Z",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

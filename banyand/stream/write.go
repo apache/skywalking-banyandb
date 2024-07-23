@@ -20,6 +20,7 @@ package stream
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -27,6 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -47,7 +49,9 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageLis
 	}
 }
 
-func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest) (map[string]*elementsInGroup, error) {
+func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest,
+	docIDBuilder *strings.Builder,
+) (map[string]*elementsInGroup, error) {
 	req := writeEvent.Request
 	t := req.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
@@ -63,8 +67,9 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	eg, ok := dst[gn]
 	if !ok {
 		eg = &elementsInGroup{
-			tsdb:   tsdb,
-			tables: make([]*elementsInTable, 0),
+			tsdb:     tsdb,
+			tables:   make([]*elementsInTable, 0),
+			segments: make([]storage.Segment[*tsTable, option], 0),
 		}
 		dst[gn] = eg
 	}
@@ -81,18 +86,36 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 	shardID := common.ShardID(writeEvent.ShardId)
 	if et == nil {
-		tsdb, err := tsdb.CreateTSTableIfNotExist(shardID, t)
+		var segment storage.Segment[*tsTable, option]
+		for _, seg := range eg.segments {
+			if seg.GetTimeRange().Contains(ts) {
+				segment = seg
+			}
+		}
+		if segment == nil {
+			segment, err = tsdb.CreateSegmentIfNotExist(t)
+			if err != nil {
+				return nil, fmt.Errorf("cannot create segment: %w", err)
+			}
+			eg.segments = append(eg.segments, segment)
+		}
+		tstb, err := segment.CreateTSTableIfNotExist(shardID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
 		et = &elementsInTable{
-			timeRange: tsdb.GetTimeRange(),
-			tsTable:   tsdb,
+			timeRange: segment.GetTimeRange(),
+			tsTable:   tstb,
 		}
 		eg.tables = append(eg.tables, et)
 	}
 	et.elements.timestamps = append(et.elements.timestamps, ts)
-	et.elements.elementIDs = append(et.elements.elementIDs, writeEvent.Request.Element.GetElementId())
+	docIDBuilder.Reset()
+	docIDBuilder.WriteString(req.Metadata.Name)
+	docIDBuilder.WriteByte('|')
+	docIDBuilder.WriteString(req.Element.ElementId)
+	eID := convert.HashStr(docIDBuilder.String())
+	et.elements.elementIDs = append(et.elements.elementIDs, eID)
 	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
 		return nil, fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
@@ -183,8 +206,9 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
 
 	et.docs = append(et.docs, index.Document{
-		DocID:  uint64(ts),
-		Fields: fields,
+		DocID:     eID,
+		Fields:    fields,
+		Timestamp: ts,
 	})
 
 	eg.docs = append(eg.docs, index.Document{
@@ -205,6 +229,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	groups := make(map[string]*elementsInGroup)
+	var builder strings.Builder
 	for i := range events {
 		var writeEvent *streamv1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -221,7 +246,7 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 			continue
 		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, &builder); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*elementsInGroup)
 			continue
@@ -229,23 +254,25 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	for i := range groups {
 		g := groups[i]
-		g.tsdb.Tick(g.latestTS)
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.Table().mustAddElements(&es.elements)
+			es.tsTable.mustAddElements(&es.elements)
 			if len(es.docs) > 0 {
-				index := es.tsTable.Table().Index()
+				index := es.tsTable.Index()
 				if err := index.Write(es.docs); err != nil {
 					w.l.Error().Err(err).Msg("cannot write element index")
 				}
 			}
-			es.tsTable.DecRef()
 		}
 		if len(g.docs) > 0 {
-			if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
-				w.l.Error().Err(err).Msg("cannot write series index")
+			for _, segment := range g.segments {
+				if err := segment.IndexDB().Write(g.docs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write index")
+				}
+				segment.DecRef()
 			}
 		}
+		g.tsdb.Tick(g.latestTS)
 	}
 	return
 }

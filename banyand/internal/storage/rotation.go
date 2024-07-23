@@ -51,35 +51,30 @@ func (d *database[T, O]) startRotationTask() error {
 				defer d.rotationProcessOn.Store(false)
 				t := time.Unix(0, ts)
 				rt.run(t, d.logger)
-				shardsRef := d.sLst.Load()
-				if shardsRef == nil {
-					return
-				}
-				for _, s := range *shardsRef {
-					func(s *shard[T, O]) {
-						ss := s.segmentController.segments()
-						if len(ss) == 0 {
-							return
+				func() {
+					ss := d.segmentController.segments()
+					if len(ss) == 0 {
+						return
+					}
+					defer func() {
+						for i := 0; i < len(ss); i++ {
+							ss[i].DecRef()
 						}
-						defer func() {
-							for i := 0; i < len(ss); i++ {
-								ss[i].DecRef()
-							}
-						}()
-						latest := ss[len(ss)-1]
-						gap := latest.End.UnixNano() - ts
-						// gap <=0 means the event is from the future
-						// the segment will be created by a written event directly
-						if gap <= 0 || gap > newSegmentTimeGap {
-							return
-						}
-						d.logger.Info().Time("segment_start", s.segmentController.segmentSize.nextTime(t)).Time("event_time", t).Msg("create new segment")
-						_, err := s.segmentController.create(s.segmentController.segmentSize.nextTime(t))
-						if err != nil {
-							d.logger.Error().Err(err).Msgf("failed to create new segment.")
-						}
-					}(s)
-				}
+					}()
+					latest := ss[len(ss)-1]
+					gap := latest.End.UnixNano() - ts
+					// gap <=0 means the event is from the future
+					// the segment will be created by a written event directly
+					if gap <= 0 || gap > newSegmentTimeGap {
+						return
+					}
+					start := d.segmentController.opts.SegmentInterval.nextTime(t)
+					d.logger.Info().Time("segment_start", start).Time("event_time", t).Msg("create new segment")
+					_, err := d.segmentController.create(start)
+					if err != nil {
+						d.logger.Error().Err(err).Msgf("failed to create new segment.")
+					}
+				}()
 			}(ts)
 		}
 	}(rt)
@@ -115,19 +110,8 @@ func (rc *retentionTask[T, O]) run(now time.Time, l *logger.Logger) bool {
 		<-rc.running
 	}()
 
-	shardList := rc.database.sLst.Load()
-	if shardList == nil {
-		return false
-	}
 	deadline := now.Add(-rc.duration)
-
-	for _, shard := range *shardList {
-		if err := shard.segmentController.remove(deadline); err != nil {
-			l.Error().Err(err)
-		}
-	}
-	stdDeadline := rc.database.opts.TTL.Unit.standard(deadline)
-	if err := rc.database.indexController.run(now, stdDeadline); err != nil {
+	if err := rc.database.segmentController.remove(deadline); err != nil {
 		l.Error().Err(err)
 	}
 	return true

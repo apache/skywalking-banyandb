@@ -20,7 +20,6 @@ package stream
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -51,7 +50,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 			esList: []*elements{
 				{
 					timestamps:  []int64{},
-					elementIDs:  []string{},
+					elementIDs:  []uint64{},
 					seriesIDs:   []common.SeriesID{},
 					tagFamilies: make([][]tagValues, 0),
 				},
@@ -63,7 +62,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 			esList: []*elements{
 				{
 					timestamps: []int64{1},
-					elementIDs: []string{"0"},
+					elementIDs: []uint64{0},
 					seriesIDs:  []common.SeriesID{1},
 					tagFamilies: [][]tagValues{
 						{
@@ -400,21 +399,16 @@ func Test_tstIter(t *testing.T) {
 	})
 }
 
-var tagProjections = map[int][]pbv1.TagProjection{
-	1: {
-		{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
-		{Family: "binaryTag", Names: []string{"binaryTag"}},
-		{Family: "singleTag", Names: []string{"strTag", "intTag"}},
-	},
-	2: {
-		{Family: "singleTag", Names: []string{"strTag1", "strTag2"}},
-	},
+var tagProjectionAll = []pbv1.TagProjection{
+	{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
+	{Family: "binaryTag", Names: []string{"binaryTag"}},
+	{Family: "singleTag", Names: []string{"strTag", "intTag", "strTag1", "strTag2"}},
 }
 
 var esTS1 = &elements{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{1, 1, 1},
-	elementIDs: []string{"11", "21", "31"},
+	elementIDs: []uint64{11, 21, 31},
 	tagFamilies: [][]tagValues{
 		{
 			{
@@ -450,7 +444,7 @@ var esTS1 = &elements{
 var esTS2 = &elements{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{2, 2, 2},
-	elementIDs: []string{"12", "22", "32"},
+	elementIDs: []uint64{12, 22, 32},
 	tagFamilies: [][]tagValues{
 		{
 			{
@@ -487,13 +481,13 @@ func generateHugeEs(startTimestamp, endTimestamp, timestamp int64) *elements {
 	hugeEs := &elements{
 		seriesIDs:   []common.SeriesID{},
 		timestamps:  []int64{},
-		elementIDs:  []string{},
+		elementIDs:  []uint64{},
 		tagFamilies: [][]tagValues{},
 	}
 	for i := startTimestamp; i <= endTimestamp; i++ {
 		hugeEs.seriesIDs = append(hugeEs.seriesIDs, 1)
 		hugeEs.timestamps = append(hugeEs.timestamps, i)
-		hugeEs.elementIDs = append(hugeEs.elementIDs, "1"+fmt.Sprint(i))
+		hugeEs.elementIDs = append(hugeEs.elementIDs, 10+uint64(i))
 		hugeEs.tagFamilies = append(hugeEs.tagFamilies, []tagValues{
 			{
 				tag: "arrTag", values: []*tagValue{
@@ -516,7 +510,7 @@ func generateHugeEs(startTimestamp, endTimestamp, timestamp int64) *elements {
 	}
 	hugeEs.seriesIDs = append(hugeEs.seriesIDs, []common.SeriesID{2, 3}...)
 	hugeEs.timestamps = append(hugeEs.timestamps, []int64{timestamp, timestamp}...)
-	hugeEs.elementIDs = append(hugeEs.elementIDs, []string{"2" + fmt.Sprint(timestamp), "3" + fmt.Sprint(timestamp)}...)
+	hugeEs.elementIDs = append(hugeEs.elementIDs, []uint64{20 + uint64(timestamp), 30 + uint64(timestamp)}...)
 	hugeEs.tagFamilies = append(hugeEs.tagFamilies, [][]tagValues{{
 		{
 			tag: "singleTag", values: []*tagValue{

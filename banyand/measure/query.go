@@ -74,13 +74,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (mqr 
 	if db == nil {
 		return mqr, nil
 	}
-	tsdb := db.(storage.TSDB[*tsTable, option])
-	tabWrappers := tsdb.SelectTSTables(*mqo.TimeRange)
-	defer func() {
-		for i := range tabWrappers {
-			tabWrappers[i].DecRef()
-		}
-	}()
+
 	series := make([]*pbv1.Series, len(mqo.Entities))
 	for i := range mqo.Entities {
 		series[i] = &pbv1.Series{
@@ -88,13 +82,24 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (mqr 
 			EntityValues: mqo.Entities[i],
 		}
 	}
+	var result queryResult
+	tsdb := db.(storage.TSDB[*tsTable, option])
+	result.segments = tsdb.SelectSegments(*mqo.TimeRange)
+	if len(result.segments) < 1 {
+		return &result, nil
+	}
+	defer func() {
+		if err != nil {
+			result.Release()
+		}
+	}()
 
-	sl, err := tsdb.IndexDB().Search(ctx, series, mqo.Filter, mqo.Order, preloadSize)
+	sl, tables, err := s.searchSeriesList(ctx, series, mqo, result.segments)
 	if err != nil {
 		return nil, err
 	}
 	if len(sl) < 1 {
-		return mqr, nil
+		return &result, nil
 	}
 	var sids []common.SeriesID
 	for i := range sl {
@@ -107,9 +112,8 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (mqr 
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
 	}
 	var n int
-	var result queryResult
-	for i := range tabWrappers {
-		s := tabWrappers[i].Table().currentSnapshot()
+	for i := range tables {
+		s := tables[i].currentSnapshot()
 		if s == nil {
 			continue
 		}
@@ -121,54 +125,7 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (mqr 
 		result.snapshots = append(result.snapshots, s)
 	}
 
-	func() {
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-		defFn := startBlockScanSpan(ctx, len(sids), parts, &result)
-		defer defFn()
-		// TODO: cache tstIter
-		var tstIter tstIter
-		defer tstIter.reset()
-		originalSids := make([]common.SeriesID, len(sids))
-		copy(originalSids, sids)
-		sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-		tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
-		if tstIter.Error() != nil {
-			err = fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
-			return
-		}
-		projectedEntityOffsets, tagProjectionOnPart := s.parseTagProjection(qo, &result)
-		result.tagProjection = qo.TagProjection
-		qo.TagProjection = tagProjectionOnPart
-
-		for tstIter.nextBlock() {
-			bc := generateBlockCursor()
-			p := tstIter.piHeap[0]
-
-			seriesID := p.curBlock.seriesID
-			if result.entityValues != nil && result.entityValues[seriesID] == nil {
-				for i := range sl {
-					if sl[i].ID == seriesID {
-						tag := make(map[string]*modelv1.TagValue)
-						for name, offset := range projectedEntityOffsets {
-							tag[name] = sl[i].EntityValues[offset]
-						}
-						result.entityValues[seriesID] = tag
-					}
-				}
-			}
-			bc.init(p.p, p.curBlock, qo)
-			result.data = append(result.data, bc)
-		}
-		if tstIter.Error() != nil {
-			err = fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
-		}
-		result.sidToIndex = make(map[common.SeriesID]int)
-		for i, si := range originalSids {
-			result.sidToIndex[si] = i
-		}
-	}()
-	if err != nil {
+	if err = s.searchBlocks(ctx, &result, sl, sids, parts, qo); err != nil {
 		return nil, err
 	}
 
@@ -186,6 +143,68 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (mqr 
 		result.orderByTS = false
 	}
 	return &result, nil
+}
+
+func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, mqo pbv1.MeasureQueryOptions,
+	segments []storage.Segment[*tsTable, option],
+) (sl pbv1.SeriesList, tables []*tsTable, err error) {
+	for i := range segments {
+		tables = append(tables, segments[i].Tables()...)
+		sll, err := segments[i].IndexDB().Search(ctx, series, mqo.Filter, mqo.Order, preloadSize)
+		if err != nil {
+			return nil, nil, err
+		}
+		sl = append(sl, sll...)
+	}
+	return sl, tables, nil
+}
+
+func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sl pbv1.SeriesList, sids []common.SeriesID, parts []*part, qo queryOptions) error {
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+	defFn := startBlockScanSpan(ctx, len(sids), parts, result)
+	defer defFn()
+	// TODO: cache tstIter
+	var tstIter tstIter
+	defer tstIter.reset()
+	originalSids := make([]common.SeriesID, len(sids))
+	copy(originalSids, sids)
+	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
+	tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	if tstIter.Error() != nil {
+		return fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
+	}
+	projectedEntityOffsets, tagProjectionOnPart := s.parseTagProjection(qo, result)
+	result.tagProjection = qo.TagProjection
+	qo.TagProjection = tagProjectionOnPart
+
+	for tstIter.nextBlock() {
+		bc := generateBlockCursor()
+		p := tstIter.piHeap[0]
+
+		seriesID := p.curBlock.seriesID
+		if result.entityValues != nil && result.entityValues[seriesID] == nil {
+			for i := range sl {
+				if sl[i].ID == seriesID {
+					tag := make(map[string]*modelv1.TagValue)
+					for name, offset := range projectedEntityOffsets {
+						tag[name] = sl[i].EntityValues[offset]
+					}
+					result.entityValues[seriesID] = tag
+				}
+			}
+		}
+		bc.init(p.p, p.curBlock, qo)
+		result.data = append(result.data, bc)
+	}
+	if tstIter.Error() != nil {
+		return fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
+	}
+	result.sidToIndex = make(map[common.SeriesID]int)
+	for i, si := range originalSids {
+		result.sidToIndex[si] = i
+	}
+	return nil
 }
 
 func (s *measure) parseTagProjection(qo queryOptions, result *queryResult) (projectedEntityOffsets map[string]int, tagProjectionOnPart []pbv1.TagProjection) {
@@ -373,6 +392,7 @@ type queryResult struct {
 	tagProjection []pbv1.TagProjection
 	data          []*blockCursor
 	snapshots     []*snapshot
+	segments      []storage.Segment[*tsTable, option]
 	loaded        bool
 	orderByTS     bool
 	ascTS         bool
@@ -424,6 +444,7 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 		bc := qr.data[0]
 		bc.copyAllTo(r, qr.entityValues, qr.tagProjection, qr.orderByTimestampDesc())
 		qr.data = qr.data[:0]
+		releaseBlockCursor(bc)
 		return r
 	}
 	return qr.merge(qr.entityValues, qr.tagProjection)
@@ -439,6 +460,9 @@ func (qr *queryResult) Release() {
 		qr.snapshots[i].decRef()
 	}
 	qr.snapshots = qr.snapshots[:0]
+	for i := range qr.segments {
+		qr.segments[i].DecRef()
+	}
 }
 
 func (qr queryResult) Len() int {
@@ -490,6 +514,7 @@ func (qr *queryResult) Pop() interface{} {
 	n := len(old)
 	x := old[n-1]
 	qr.data = old[0 : n-1]
+	releaseBlockCursor(x)
 	return x
 }
 

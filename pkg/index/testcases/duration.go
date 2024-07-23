@@ -336,18 +336,23 @@ func setUpPartialDuration(t *assert.Assertions, store index.Writer, r map[int]po
 		idx = append(idx, key)
 	}
 	sort.Ints(idx)
+	var batch index.Batch
 	for i := 100; i < 200; i++ {
 		id := uint64(i)
 		for i2, term := range idx {
 			if i%len(idx) != i2 || r[term] == nil {
 				continue
 			}
-			t.NoError(store.Write([]index.Field{{
-				Key:  duration,
-				Term: convert.Int64ToBytes(int64(term)),
-			}}, id))
+			batch.Documents = append(batch.Documents, index.Document{
+				Fields: []index.Field{{
+					Key:  duration,
+					Term: convert.Int64ToBytes(int64(term)),
+				}},
+				DocID: id,
+			})
 			r[term].Insert(id)
 		}
 	}
+	t.NoError(store.Batch(batch))
 	return r
 }

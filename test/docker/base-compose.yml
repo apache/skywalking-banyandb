@@ -59,7 +59,6 @@ services:
       - sw_agent:/skywalking-java-agent
 
   oap:
-    # TODO: use the main repo image once v0.6.0 is released and merged into the main repo
     image: "ghcr.io/apache/skywalking/oap:${SW_OAP_COMMIT}"
     expose:
       - 11800

@@ -4,6 +4,12 @@ Release Notes.
 
 ## 0.7.0
 
+### File System Changes
+
+- Bump up the version of the file system to 1.1.0 which is not compatible with the previous version.
+- Move the series index into segment.
+- Swap the segment and the shard.
+
 ### Features
 
 - Check unregistered nodes in background.
@@ -11,6 +17,9 @@ Release Notes.
 - Add the measure query trace.
 - Assign a separate lookup table to each group in the maglev selector.
 - Convert the async local pipeline to a sync pipeline.
+- Add the stream query trace.
+- Add the topN query trace.
+- Introduce the round-robin selector to Liaison Node.
 
 ### Bugs
 
@@ -20,6 +29,12 @@ Release Notes.
 - Fix the bug that the data node can't re-register to etcd when the connection is lost.
 - Fix memory leak in sorting the stream by the inverted index.
 - Fix the wrong array flags parsing in command line. The array flags should be parsed by "StringSlice" instead of "StringArray".
+- Fix a bug that the Stream module didn't support duplicated in index-based filtering and sorting
+- Fix the bug that segment's reference count is increased twice when the controller try to create an existing segment.
+
+### Documentation
+- Introduce new doc menu structure.
+- Add installation on Docker and Kubernetes.
 
 ## 0.6.1
 

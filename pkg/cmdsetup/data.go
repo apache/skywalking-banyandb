@@ -53,7 +53,6 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
-	// TODO: remove streamSVC and measureSvc from query processor. To use metaSvc instead.
 	q, err := query.NewService(ctx, streamSvc, measureSvc, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")

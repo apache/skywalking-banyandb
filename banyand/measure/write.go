@@ -28,6 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -64,8 +65,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	dpg, ok := dst[gn]
 	if !ok {
 		dpg = &dataPointsInGroup{
-			tsdb:   tsdb,
-			tables: make([]*dataPointsInTable, 0),
+			tsdb:     tsdb,
+			tables:   make([]*dataPointsInTable, 0),
+			segments: make([]storage.Segment[*tsTable, option], 0),
 		}
 		dst[gn] = dpg
 	}
@@ -82,15 +84,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	shardID := common.ShardID(writeEvent.ShardId)
 	if dpt == nil {
-		tstb, err := tsdb.CreateTSTableIfNotExist(shardID, t)
-		if err != nil {
-			return nil, fmt.Errorf("cannot create ts table: %w", err)
+		if dpt, err = w.newDpt(tsdb, dpg, t, ts, shardID); err != nil {
+			return nil, fmt.Errorf("cannot create data points in table: %w", err)
 		}
-		dpt = &dataPointsInTable{
-			timeRange: tstb.GetTimeRange(),
-			tsTable:   tstb,
-		}
-		dpg.tables = append(dpg.tables, dpt)
 	}
 	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, ts)
 	dpt.dataPoints.versions = append(dpt.dataPoints.versions, req.DataPoint.Version)
@@ -211,6 +207,33 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	return dst, nil
 }
 
+func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPointsInGroup, t time.Time, ts int64, shardID common.ShardID) (*dataPointsInTable, error) {
+	var segment storage.Segment[*tsTable, option]
+	for _, seg := range dpg.segments {
+		if seg.GetTimeRange().Contains(ts) {
+			segment = seg
+		}
+	}
+	if segment == nil {
+		var err error
+		segment, err = tsdb.CreateSegmentIfNotExist(t)
+		if err != nil {
+			return nil, fmt.Errorf("cannot create segment: %w", err)
+		}
+		dpg.segments = append(dpg.segments, segment)
+	}
+	tstb, err := segment.CreateTSTableIfNotExist(shardID)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create ts table: %w", err)
+	}
+	dpt := &dataPointsInTable{
+		timeRange: segment.GetTimeRange(),
+		tsTable:   tstb,
+	}
+	dpg.tables = append(dpg.tables, dpt)
+	return dpt, nil
+}
+
 func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
@@ -246,15 +269,17 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	for i := range groups {
 		g := groups[i]
-		g.tsdb.Tick(g.latestTS)
 		for j := range g.tables {
 			dps := g.tables[j]
-			dps.tsTable.Table().mustAddDataPoints(&dps.dataPoints)
-			dps.tsTable.DecRef()
+			dps.tsTable.mustAddDataPoints(&dps.dataPoints)
 		}
-		if err := g.tsdb.IndexDB().Write(g.docs); err != nil {
-			w.l.Error().Err(err).Msg("cannot write index")
+		for _, segment := range g.segments {
+			if err := segment.IndexDB().Write(g.docs); err != nil {
+				w.l.Error().Err(err).Msg("cannot write index")
+			}
+			segment.DecRef()
 		}
+		g.tsdb.Tick(g.latestTS)
 	}
 	return
 }

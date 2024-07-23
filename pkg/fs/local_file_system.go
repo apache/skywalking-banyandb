@@ -282,7 +282,6 @@ func (fs *localFileSystem) MustGetFreeSpace(path string) uint64 {
 
 // Write adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
-	// TODO: use bufio.Writer to optimize performance.
 	size, err := file.file.Write(buffer)
 	switch {
 	case err == nil:
@@ -307,7 +306,6 @@ func (file *LocalFile) Write(buffer []byte) (int, error) {
 }
 
 // Writev supports appending consecutive buffers to the end of the file.
-// TODO: Optimizing under Linux.
 func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 	var size int
 	for _, buffer := range *iov {
@@ -353,7 +351,6 @@ func (file *LocalFile) Read(offset int64, buffer []byte) (int, error) {
 }
 
 // Readv is used to read contiguous regions of a file and disperse them into discontinuous buffers.
-// TODO: Optimizing under Linux.
 func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 	var size int
 	for _, buffer := range *iov {

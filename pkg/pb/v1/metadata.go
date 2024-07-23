@@ -19,6 +19,8 @@
 package v1
 
 import (
+	"context"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -112,8 +114,9 @@ type MeasureResult struct {
 
 // StreamResult is the result of a query.
 type StreamResult struct {
+	Error       error
 	Timestamps  []int64
-	ElementIDs  []string
+	ElementIDs  []uint64
 	TagFamilies []TagFamily
 	SIDs        []common.SeriesID
 }
@@ -137,7 +140,7 @@ type StreamQueryOptions struct {
 
 // StreamQueryResult is the result of a stream query.
 type StreamQueryResult interface {
-	Pull() *StreamResult
+	Pull(context.Context) *StreamResult
 	Release()
 }
 
