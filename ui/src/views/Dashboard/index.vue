@@ -560,6 +560,7 @@ watchEffect(() => {
 
 
 @media (max-width: 1200px) {
+
     .disk-key,
     .memory-stats,
     .disk-stats {
