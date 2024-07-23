@@ -2,19 +2,23 @@
 
 TSDB is a time-series storage engine designed to store and query large volumes of time-series data. One of the key features of TSDB is its ability to automatically manage data storage over time, optimize performance and ensure that the system can scale to handle large workloads. TSDB empowers `Measure` and `Stream` relevant data.
 
-## Shard
+In TSDB, the data in a group is partitioned base on the time range of the data. The segment size is determined by the `segment_interval` of a group. The number of segments in a group is determined by the `ttl` of a group. A new segment is created when the written data exceeds the time range of the current segment. The expired segment will be deleted after the `ttl` of the group.
 
-In TSDB, the data in a group is partitioned into shards based on a configurable sharding scheme. Each shard is assigned to a specific set of storage nodes, and those nodes store and process the data within that shard. This allows BanyanDB to scale horizontally by adding more storage nodes to the cluster as needed.
-
-Within each shard, data is stored in different [segments](#Segment) based on time ranges. The series indexes are generated based on entities, and the indexes generated based on indexing rules of the `Measure` types are also stored under the shard.
-
-![shard](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/shard.png)
+![tsdb](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/tsdb.png)
 
 ## Segment
 
-Each segment is composed of multiple [parts](#Part). Whenever SkyWalking sends a batch of data, BanyanDB writes this batch of data into a new part. For data of the `Stream` type, the inverted indexes generated based on the indexing rules are also stored in the segment. Since BanyanDB adopts a snapshot approach for data read and write operations, the segment also needs to maintain additional snapshot information to record the validity of the parts.
+In each segment, the data is spread into shards based on `entity`. The series index is stored in the segment, which is used to locate the data in the shard.
 
-![segment](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/segment.png)
+![segment](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/segment.png)
+
+## Shard
+
+Each shard is assigned to a specific set of storage nodes, and those nodes store and process the data within that shard. This allows BanyanDB to scale horizontally by adding more storage nodes to the cluster as needed.
+
+Each shard is composed of multiple [parts](#Part). Whenever SkyWalking sends a batch of data, BanyanDB writes this batch of data into a new part. For data of the `Stream` type, the inverted indexes generated based on the indexing rules are also stored in the segment. Since BanyanDB adopts a snapshot approach for data read and write operations, the segment also needs to maintain additional snapshot information to record the validity of the parts.
+
+![shard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/shard.png)
 
 ## Part
 
@@ -37,8 +41,12 @@ Each block holds data with the same series ID.
 The max size of the measure block is controlled by data volume and the number of rows. Meanwhile, the max size of the stream block is controlled by data volume.
 The diagram below shows the detailed fields within each block. The block is the minimal unit of TSDB, which contains several rows of data. Due to the column-based design, each block is spread over several files.
 
-![measure-block](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/measure-block.png)
-![stream-block](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/stream-block.png)
+In measure's timestamp file, there are version fields to record the version of the data. The version field is used to deduplicate. It determine the latest data when the data's timestamp are identical. Only the latest data will be returned to the user.
+
+![measure-block](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/measure-block.png)
+
+Unlike the measure, there are element ids in the stream's timestamp file. The element id is used to identify the data of the same series. The data with the same timestamp but different element id will both be stored in the TSDB.
+![stream-block](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/stream-block.png)
 
 ## Write Path
 
