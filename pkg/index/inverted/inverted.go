@@ -310,9 +310,6 @@ func (s *store) Execute(query bluge.Query) (posting.List, error) {
 	defer func() {
 		err = multierr.Append(err, reader.Close())
 	}()
-	if err != nil {
-		return nil, err
-	}
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
 		return nil, err
