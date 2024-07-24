@@ -21,7 +21,6 @@ import (
 	"context"
 	"path"
 
-	"github.com/blugelabs/bluge"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 func (s *segment[T, O]) IndexDB() IndexDB {
@@ -170,7 +170,7 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList
 	return seriesList, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQuery bluge.Query, order *pbv1.OrderBy, preloadSize int) (sl pbv1.SeriesList, err error) {
+func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *model.OrderBy, preloadSize int) (sl pbv1.SeriesList, err error) {
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		var span *query.Span

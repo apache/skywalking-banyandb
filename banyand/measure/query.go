@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -50,7 +51,7 @@ type Query interface {
 // Measure allows inspecting measure data points' details.
 type Measure interface {
 	io.Closer
-	Query(ctx context.Context, opts pbv1.MeasureQueryOptions) (pbv1.MeasureQueryResult, error)
+	Query(ctx context.Context, opts model.MeasureQueryOptions) (model.MeasureQueryResult, error)
 	GetSchema() *databasev1.Measure
 	GetIndexRules() []*databasev1.IndexRule
 }
@@ -58,12 +59,12 @@ type Measure interface {
 var _ Measure = (*measure)(nil)
 
 type queryOptions struct {
-	pbv1.MeasureQueryOptions
+	model.MeasureQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
 }
 
-func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (mqr pbv1.MeasureQueryResult, err error) {
+func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
 	if mqo.TimeRange == nil || len(mqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
 	}
@@ -135,17 +136,17 @@ func (s *measure) Query(ctx context.Context, mqo pbv1.MeasureQueryOptions) (mqr 
 		result.ascTS = true
 	}
 	switch mqo.OrderByType {
-	case pbv1.OrderByTypeTime:
+	case model.OrderByTypeTime:
 		result.orderByTS = true
-	case pbv1.OrderByTypeIndex:
+	case model.OrderByTypeIndex:
 		result.orderByTS = false
-	case pbv1.OrderByTypeSeries:
+	case model.OrderByTypeSeries:
 		result.orderByTS = false
 	}
 	return &result, nil
 }
 
-func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, mqo pbv1.MeasureQueryOptions,
+func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
 	segments []storage.Segment[*tsTable, option],
 ) (sl pbv1.SeriesList, tables []*tsTable, err error) {
 	for i := range segments {
@@ -207,7 +208,7 @@ func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sl pbv1
 	return nil
 }
 
-func (s *measure) parseTagProjection(qo queryOptions, result *queryResult) (projectedEntityOffsets map[string]int, tagProjectionOnPart []pbv1.TagProjection) {
+func (s *measure) parseTagProjection(qo queryOptions, result *queryResult) (projectedEntityOffsets map[string]int, tagProjectionOnPart []model.TagProjection) {
 	projectedEntityOffsets = make(map[string]int)
 	for i := range qo.TagProjection {
 		var found bool
@@ -221,7 +222,7 @@ func (s *measure) parseTagProjection(qo queryOptions, result *queryResult) (proj
 				} else {
 					if !found {
 						found = true
-						tagProjectionOnPart = append(tagProjectionOnPart, pbv1.TagProjection{
+						tagProjectionOnPart = append(tagProjectionOnPart, model.TagProjection{
 							Family: qo.TagProjection[i].Family,
 						})
 					}
@@ -389,7 +390,7 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 type queryResult struct {
 	sidToIndex    map[common.SeriesID]int
 	entityValues  map[common.SeriesID]map[string]*modelv1.TagValue
-	tagProjection []pbv1.TagProjection
+	tagProjection []model.TagProjection
 	data          []*blockCursor
 	snapshots     []*snapshot
 	segments      []storage.Segment[*tsTable, option]
@@ -398,7 +399,7 @@ type queryResult struct {
 	ascTS         bool
 }
 
-func (qr *queryResult) Pull() *pbv1.MeasureResult {
+func (qr *queryResult) Pull() *model.MeasureResult {
 	if !qr.loaded {
 		if len(qr.data) == 0 {
 			return nil
@@ -440,7 +441,7 @@ func (qr *queryResult) Pull() *pbv1.MeasureResult {
 		return nil
 	}
 	if len(qr.data) == 1 {
-		r := &pbv1.MeasureResult{}
+		r := &model.MeasureResult{}
 		bc := qr.data[0]
 		bc.copyAllTo(r, qr.entityValues, qr.tagProjection, qr.orderByTimestampDesc())
 		qr.data = qr.data[:0]
@@ -523,13 +524,13 @@ func (qr *queryResult) orderByTimestampDesc() bool {
 }
 
 func (qr *queryResult) merge(entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
-	tagProjection []pbv1.TagProjection,
-) *pbv1.MeasureResult {
+	tagProjection []model.TagProjection,
+) *model.MeasureResult {
 	step := 1
 	if qr.orderByTimestampDesc() {
 		step = -1
 	}
-	result := &pbv1.MeasureResult{}
+	result := &model.MeasureResult{}
 	var lastVersion int64
 	var lastSid common.SeriesID
 

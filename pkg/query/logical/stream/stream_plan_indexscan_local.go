@@ -31,9 +31,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -47,13 +47,13 @@ var (
 type localIndexScan struct {
 	schema            logical.Schema
 	filter            index.Filter
-	result            pbv1.StreamQueryResult
+	result            model.StreamQueryResult
 	order             *logical.OrderBy
 	metadata          *commonv1.Metadata
 	l                 *logger.Logger
 	timeRange         timestamp.TimeRange
 	projectionTagRefs [][]*logical.TagRef
-	projectionTags    []pbv1.TagProjection
+	projectionTags    []model.TagProjection
 	entities          [][]*modelv1.TagValue
 	maxElementSize    int
 }
@@ -76,16 +76,16 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	if i.result != nil {
 		return BuildElementsFromStreamResult(ctx, i.result), nil
 	}
-	var orderBy *pbv1.OrderBy
+	var orderBy *model.OrderBy
 	if i.order != nil {
-		orderBy = &pbv1.OrderBy{
+		orderBy = &model.OrderBy{
 			Index: i.order.Index,
 			Sort:  i.order.Sort,
 		}
 	}
 	ec := executor.FromStreamExecutionContext(ctx)
 	var err error
-	if i.result, err = ec.Query(ctx, pbv1.StreamQueryOptions{
+	if i.result, err = ec.Query(ctx, model.StreamQueryOptions{
 		Name:           i.metadata.GetName(),
 		TimeRange:      &i.timeRange,
 		Entities:       i.entities,
@@ -120,7 +120,7 @@ func (i *localIndexScan) Schema() logical.Schema {
 }
 
 // BuildElementsFromStreamResult builds a slice of elements from the given stream query result.
-func BuildElementsFromStreamResult(ctx context.Context, result pbv1.StreamQueryResult) (elements []*streamv1.Element) {
+func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQueryResult) (elements []*streamv1.Element) {
 	r := result.Pull(ctx)
 	if r == nil {
 		return nil

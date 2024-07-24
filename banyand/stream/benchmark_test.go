@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -263,7 +264,7 @@ func generateStream(db storage.TSDB[*tsTable, option]) *stream {
 	}
 }
 
-func generateStreamQueryOptions(p parameter, index mockIndex) pbv1.StreamQueryOptions {
+func generateStreamQueryOptions(p parameter, index mockIndex) model.StreamQueryOptions {
 	timeRange := timestamp.TimeRange{
 		Start:        time.Unix(int64(p.startTimestamp), 0),
 		End:          time.Unix(int64(p.endTimestamp), 0),
@@ -296,21 +297,21 @@ func generateStreamQueryOptions(p parameter, index mockIndex) pbv1.StreamQueryOp
 		Tags: []string{"filter-tag"},
 		Type: databasev1.IndexRule_TYPE_INVERTED,
 	}
-	order := &pbv1.OrderBy{
+	order := &model.OrderBy{
 		Index: indexRule,
 		Sort:  modelv1.Sort_SORT_ASC,
 	}
-	tagProjection := pbv1.TagProjection{
+	tagProjection := model.TagProjection{
 		Family: "benchmark-family",
 		Names:  []string{"entity-tag", "filter-tag"},
 	}
-	return pbv1.StreamQueryOptions{
+	return model.StreamQueryOptions{
 		Name:           "benchmark",
 		TimeRange:      &timeRange,
 		Entities:       entities,
 		Filter:         filter,
 		Order:          order,
-		TagProjection:  []pbv1.TagProjection{tagProjection},
+		TagProjection:  []model.TagProjection{tagProjection},
 		MaxElementSize: math.MaxInt32,
 	}
 }

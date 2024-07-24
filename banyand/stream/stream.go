@@ -28,7 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -60,7 +60,7 @@ type Stream interface {
 	io.Closer
 	GetSchema() *databasev1.Stream
 	GetIndexRules() []*databasev1.IndexRule
-	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
+	Query(ctx context.Context, opts model.StreamQueryOptions) (model.StreamQueryResult, error)
 }
 
 var _ Stream = (*stream)(nil)
