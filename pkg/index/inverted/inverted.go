@@ -307,9 +307,9 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 
 func (s *store) Execute(query bluge.Query) (posting.List, error) {
 	reader, err := s.writer.Reader()
-	defer func() {
-		err = multierr.Append(err, reader.Close())
-	}()
+	if err != nil {
+		return nil, err
+	}
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
 		return nil, err
