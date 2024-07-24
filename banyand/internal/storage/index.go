@@ -170,7 +170,7 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList
 	return seriesList, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *model.OrderBy, preloadSize int) (sl pbv1.SeriesList, err error) {
+func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQuery *inverted.BlugeQuery, order *model.OrderBy, preloadSize int) (sl pbv1.SeriesList, err error) {
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		var span *query.Span

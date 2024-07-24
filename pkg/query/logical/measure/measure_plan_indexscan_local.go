@@ -114,7 +114,7 @@ var (
 )
 
 type localIndexScan struct {
-	query                *BlugeQuery
+	query                *inverted.BlugeQuery
 	schema               logical.Schema
 	uis                  *unresolvedIndexScan
 	order                *logical.OrderBy
