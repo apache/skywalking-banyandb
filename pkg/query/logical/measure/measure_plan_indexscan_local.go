@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -91,6 +92,10 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 	if err != nil {
 		return nil, err
 	}
+	filter, _, err := inverted.BuildLocalFilter(uis.criteria, s, entityMap, entity)
+	if err != nil {
+		return nil, err
+	}
 
 	return &localIndexScan{
 		timeRange:            timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
@@ -101,6 +106,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		projectionFieldsRefs: projFieldRefs,
 		metadata:             uis.metadata,
 		query:                query,
+		filter:               filter,
 		entities:             entities,
 		groupByEntity:        uis.groupByEntity,
 		uis:                  uis,
@@ -115,6 +121,7 @@ var (
 
 type localIndexScan struct {
 	query                *inverted.BlugeQuery
+	filter               index.Filter
 	schema               logical.Schema
 	uis                  *unresolvedIndexScan
 	order                *logical.OrderBy
@@ -156,6 +163,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		TimeRange:       &i.timeRange,
 		Entities:        i.entities,
 		Query:           i.query,
+		Filter:          i.filter,
 		OrderByType:     orderByType,
 		Order:           orderBy,
 		TagProjection:   i.projectionTags,

@@ -166,17 +166,17 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error
 func parseExpr(value *modelv1.TagValue) (ComparableExpr, error) {
 	switch v := value.Value.(type) {
 	case *modelv1.TagValue_Str:
-		return &strLiteral{v.Str.GetValue()}, nil
+		return &StrLiteral{v.Str.GetValue()}, nil
 	case *modelv1.TagValue_StrArray:
-		return &strArrLiteral{
+		return &StrArrLiteral{
 			arr: v.StrArray.GetValue(),
 		}, nil
 	case *modelv1.TagValue_Int:
-		return &int64Literal{
+		return &Int64Literal{
 			int64: v.Int.GetValue(),
 		}, nil
 	case *modelv1.TagValue_IntArray:
-		return &int64ArrLiteral{
+		return &Int64ArrLiteral{
 			arr: v.IntArray.GetValue(),
 		}, nil
 	case *modelv1.TagValue_Null:
@@ -262,7 +262,7 @@ func (an *andLogicalNode) MarshalJSON() ([]byte, error) {
 }
 
 func (an *andLogicalNode) String() string {
-	return convert.JsonToString(an)
+	return convert.JSONToString(an)
 }
 
 type orLogicalNode struct {
@@ -297,7 +297,7 @@ func (on *orLogicalNode) MarshalJSON() ([]byte, error) {
 }
 
 func (on *orLogicalNode) String() string {
-	return convert.JsonToString(on)
+	return convert.JSONToString(on)
 }
 
 type tagLeaf struct {
@@ -339,7 +339,7 @@ func (n *notTag) MarshalJSON() ([]byte, error) {
 }
 
 func (n *notTag) String() string {
-	return convert.JsonToString(n)
+	return convert.JSONToString(n)
 }
 
 type inTag struct {
@@ -391,7 +391,7 @@ func (eq *eqTag) MarshalJSON() ([]byte, error) {
 }
 
 func (eq *eqTag) String() string {
-	return convert.JsonToString(eq)
+	return convert.JSONToString(eq)
 }
 
 type rangeOpts struct {
@@ -481,7 +481,7 @@ func (r *rangeTag) MarshalJSON() ([]byte, error) {
 }
 
 func (r *rangeTag) String() string {
-	return convert.JsonToString(r)
+	return convert.JSONToString(r)
 }
 
 func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName string) (ComparableExpr, error) {
@@ -521,5 +521,5 @@ func (h *havingTag) MarshalJSON() ([]byte, error) {
 }
 
 func (h *havingTag) String() string {
-	return convert.JsonToString(h)
+	return convert.JSONToString(h)
 }

@@ -19,7 +19,8 @@ package convert
 
 import "encoding/json"
 
-func JsonToString(marshaler json.Marshaler) string {
+// JSONToString converts a JSON marshaler to its JSON string representation.
+func JSONToString(marshaler json.Marshaler) string {
 	bb, err := marshaler.MarshalJSON()
 	if err != nil {
 		return err.Error()

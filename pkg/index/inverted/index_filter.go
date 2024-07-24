@@ -52,6 +52,7 @@ type GlobalIndexError struct {
 
 func (g GlobalIndexError) Error() string { return g.IndexRule.String() }
 
+// BlugeQuery is a wrapper for bluge.Query.
 type BlugeQuery struct {
 	bluge.Query
 }
@@ -135,7 +136,9 @@ func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDi
 }
 
 // BuildLocalFilter returns a new index.Filter for local indices.
-func BuildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int, entity []*modelv1.TagValue) (index.Filter, [][]*modelv1.TagValue, error) {
+func BuildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
+	entityDict map[string]int, entity []*modelv1.TagValue,
+) (index.Filter, [][]*modelv1.TagValue, error) {
 	if criteria == nil {
 		return nil, [][]*modelv1.TagValue{entity}, nil
 	}
@@ -564,7 +567,7 @@ func (an *andNode) MarshalJSON() ([]byte, error) {
 }
 
 func (an *andNode) String() string {
-	return convert.JsonToString(an)
+	return convert.JSONToString(an)
 }
 
 type orNode struct {
@@ -609,7 +612,7 @@ func (on *orNode) MarshalJSON() ([]byte, error) {
 }
 
 func (on *orNode) String() string {
-	return convert.JsonToString(on)
+	return convert.JSONToString(on)
 }
 
 type leaf struct {
@@ -662,7 +665,7 @@ func (n *not) MarshalJSON() ([]byte, error) {
 }
 
 func (n *not) String() string {
-	return convert.JsonToString(n)
+	return convert.JSONToString(n)
 }
 
 type eq struct {
@@ -696,7 +699,7 @@ func (eq *eq) MarshalJSON() ([]byte, error) {
 }
 
 func (eq *eq) String() string {
-	return convert.JsonToString(eq)
+	return convert.JSONToString(eq)
 }
 
 type match struct {
@@ -735,7 +738,7 @@ func (match *match) MarshalJSON() ([]byte, error) {
 }
 
 func (match *match) String() string {
-	return convert.JsonToString(match)
+	return convert.JSONToString(match)
 }
 
 type rangeOp struct {
@@ -786,7 +789,7 @@ func (r *rangeOp) MarshalJSON() ([]byte, error) {
 }
 
 func (r *rangeOp) String() string {
-	return convert.JsonToString(r)
+	return convert.JSONToString(r)
 }
 
 var (

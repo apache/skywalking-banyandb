@@ -74,6 +74,7 @@ const (
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
 	Query           *inverted.BlugeQuery
+	Filter          index.Filter
 	TimeRange       *timestamp.TimeRange
 	Order           *OrderBy
 	Name            string

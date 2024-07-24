@@ -151,7 +151,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 ) (sl pbv1.SeriesList, tables []*tsTable, err error) {
 	for i := range segments {
 		tables = append(tables, segments[i].Tables()...)
-		sll, err := segments[i].IndexDB().Search(ctx, series, mqo.Query, mqo.Order, preloadSize)
+		sll, err := segments[i].IndexDB().Search(ctx, series, mqo.Query, mqo.Filter, mqo.Order, preloadSize)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -31,32 +31,33 @@ import (
 )
 
 var (
-	_ LiteralExpr    = (*int64Literal)(nil)
-	_ ComparableExpr = (*int64Literal)(nil)
+	_ LiteralExpr    = (*Int64Literal)(nil)
+	_ ComparableExpr = (*Int64Literal)(nil)
 )
 
-type int64Literal struct {
+type Int64Literal struct {
 	int64
 }
 
-func NewInt64Literal(val int64) *int64Literal {
-	return &int64Literal{
+// NewInt64Literal creates a new instance of int64Literal with the provided int64 value.
+func NewInt64Literal(val int64) *Int64Literal {
+	return &Int64Literal{
 		int64: val,
 	}
 }
 
-func (i *int64Literal) Compare(other LiteralExpr) (int, bool) {
-	if o, ok := other.(*int64Literal); ok {
+func (i *Int64Literal) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*Int64Literal); ok {
 		return int(i.int64 - o.int64), true
 	}
 	return 0, false
 }
 
-func (i *int64Literal) Contains(other LiteralExpr) bool {
-	if o, ok := other.(*int64Literal); ok {
+func (i *Int64Literal) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*Int64Literal); ok {
 		return i == o
 	}
-	if o, ok := other.(*int64ArrLiteral); ok {
+	if o, ok := other.(*Int64ArrLiteral); ok {
 		if len(o.arr) == 1 && o.arr[0] == i.int64 {
 			return true
 		}
@@ -64,63 +65,64 @@ func (i *int64Literal) Contains(other LiteralExpr) bool {
 	return false
 }
 
-func (i *int64Literal) BelongTo(other LiteralExpr) bool {
-	if o, ok := other.(*int64Literal); ok {
+func (i *Int64Literal) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*Int64Literal); ok {
 		return i == o
 	}
-	if o, ok := other.(*int64ArrLiteral); ok {
+	if o, ok := other.(*Int64ArrLiteral); ok {
 		return slices.Contains(o.arr, i.int64)
 	}
 	return false
 }
 
-func (i *int64Literal) Bytes() [][]byte {
+func (i *Int64Literal) Bytes() [][]byte {
 	return [][]byte{convert.Int64ToBytes(i.int64)}
 }
 
-func (i *int64Literal) Equal(expr Expr) bool {
-	if other, ok := expr.(*int64Literal); ok {
+func (i *Int64Literal) Equal(expr Expr) bool {
+	if other, ok := expr.(*Int64Literal); ok {
 		return other.int64 == i.int64
 	}
 
 	return false
 }
 
-func (i *int64Literal) DataType() int32 {
+func (i *Int64Literal) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_INT)
 }
 
-func (i *int64Literal) String() string {
+func (i *Int64Literal) String() string {
 	return strconv.FormatInt(i.int64, 10)
 }
 
 var (
-	_ LiteralExpr    = (*int64ArrLiteral)(nil)
-	_ ComparableExpr = (*int64ArrLiteral)(nil)
+	_ LiteralExpr    = (*Int64ArrLiteral)(nil)
+	_ ComparableExpr = (*Int64ArrLiteral)(nil)
 )
 
-type int64ArrLiteral struct {
+type Int64ArrLiteral struct {
 	arr []int64
 }
 
-func NewInt64ArrLiteral(val []int64) *int64ArrLiteral {
-	return &int64ArrLiteral{
+// NewInt64ArrLiteral creates a new instance of int64ArrLiteral with the provided slice of int64 values.
+func NewInt64ArrLiteral(val []int64) *Int64ArrLiteral {
+	return &Int64ArrLiteral{
 		arr: val,
 	}
 }
 
-func (i *int64ArrLiteral) Compare(other LiteralExpr) (int, bool) {
-	if o, ok := other.(*int64ArrLiteral); ok {
+func (i *Int64ArrLiteral) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*Int64ArrLiteral); ok {
 		return 0, slices.Equal(i.arr, o.arr)
 	}
 	return 0, false
 }
 
-func (i *int64ArrLiteral) Contains(other LiteralExpr) bool {
-	if o, ok := other.(*int64Literal); ok {
+func (i *Int64ArrLiteral) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*Int64Literal); ok {
 		return slices.Contains(i.arr, o.int64)
 	}
-	if o, ok := other.(*int64ArrLiteral); ok {
+	if o, ok := other.(*Int64ArrLiteral); ok {
 		for _, v := range o.arr {
 			if !slices.Contains(i.arr, v) {
 				return false
@@ -131,14 +133,14 @@ func (i *int64ArrLiteral) Contains(other LiteralExpr) bool {
 	return false
 }
 
-func (i *int64ArrLiteral) BelongTo(other LiteralExpr) bool {
-	if o, ok := other.(*int64Literal); ok {
+func (i *Int64ArrLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*Int64Literal); ok {
 		if len(i.arr) == 1 && i.arr[0] == o.int64 {
 			return true
 		}
 		return false
 	}
-	if o, ok := other.(*int64ArrLiteral); ok {
+	if o, ok := other.(*Int64ArrLiteral); ok {
 		for _, v := range i.arr {
 			if !slices.Contains(o.arr, v) {
 				return false
@@ -149,7 +151,7 @@ func (i *int64ArrLiteral) BelongTo(other LiteralExpr) bool {
 	return false
 }
 
-func (i *int64ArrLiteral) Bytes() [][]byte {
+func (i *Int64ArrLiteral) Bytes() [][]byte {
 	b := make([][]byte, 0, len(i.arr))
 	for _, i := range i.arr {
 		b = append(b, convert.Int64ToBytes(i))
@@ -157,49 +159,50 @@ func (i *int64ArrLiteral) Bytes() [][]byte {
 	return b
 }
 
-func (i *int64ArrLiteral) Equal(expr Expr) bool {
-	if other, ok := expr.(*int64ArrLiteral); ok {
+func (i *Int64ArrLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*Int64ArrLiteral); ok {
 		return slices.Equal(other.arr, i.arr)
 	}
 
 	return false
 }
 
-func (i *int64ArrLiteral) DataType() int32 {
+func (i *Int64ArrLiteral) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_INT_ARRAY)
 }
 
-func (i *int64ArrLiteral) String() string {
+func (i *Int64ArrLiteral) String() string {
 	return fmt.Sprintf("%v", i.arr)
 }
 
 var (
-	_ LiteralExpr    = (*strLiteral)(nil)
-	_ ComparableExpr = (*strLiteral)(nil)
+	_ LiteralExpr    = (*StrLiteral)(nil)
+	_ ComparableExpr = (*StrLiteral)(nil)
 )
 
-type strLiteral struct {
+type StrLiteral struct {
 	string
 }
 
-func NewStrLiteral(val string) *strLiteral {
-	return &strLiteral{
+// NewStrLiteral creates a new instance of strLiteral with the provided string value.
+func NewStrLiteral(val string) *StrLiteral {
+	return &StrLiteral{
 		string: val,
 	}
 }
 
-func (s *strLiteral) Compare(other LiteralExpr) (int, bool) {
-	if o, ok := other.(*strLiteral); ok {
+func (s *StrLiteral) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*StrLiteral); ok {
 		return strings.Compare(s.string, o.string), true
 	}
 	return 0, false
 }
 
-func (s *strLiteral) Contains(other LiteralExpr) bool {
-	if o, ok := other.(*strLiteral); ok {
+func (s *StrLiteral) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*StrLiteral); ok {
 		return s == o
 	}
-	if o, ok := other.(*strArrLiteral); ok {
+	if o, ok := other.(*StrArrLiteral); ok {
 		if len(o.arr) == 1 && o.arr[0] == s.string {
 			return true
 		}
@@ -207,22 +210,22 @@ func (s *strLiteral) Contains(other LiteralExpr) bool {
 	return false
 }
 
-func (s *strLiteral) BelongTo(other LiteralExpr) bool {
-	if o, ok := other.(*strLiteral); ok {
+func (s *StrLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*StrLiteral); ok {
 		return s == o
 	}
-	if o, ok := other.(*strArrLiteral); ok {
+	if o, ok := other.(*StrArrLiteral); ok {
 		return slices.Contains(o.arr, s.string)
 	}
 	return false
 }
 
-func (s *strLiteral) Bytes() [][]byte {
+func (s *StrLiteral) Bytes() [][]byte {
 	return [][]byte{[]byte(s.string)}
 }
 
-func (s *strLiteral) Equal(expr Expr) bool {
-	if other, ok := expr.(*strLiteral); ok {
+func (s *StrLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*StrLiteral); ok {
 		return other.string == s.string
 	}
 
@@ -230,44 +233,45 @@ func (s *strLiteral) Equal(expr Expr) bool {
 }
 
 func Str(str string) LiteralExpr {
-	return &strLiteral{str}
+	return &StrLiteral{str}
 }
 
-func (s *strLiteral) DataType() int32 {
+func (s *StrLiteral) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_STRING)
 }
 
-func (s *strLiteral) String() string {
+func (s *StrLiteral) String() string {
 	return s.string
 }
 
 var (
-	_ LiteralExpr    = (*strArrLiteral)(nil)
-	_ ComparableExpr = (*strArrLiteral)(nil)
+	_ LiteralExpr    = (*StrArrLiteral)(nil)
+	_ ComparableExpr = (*StrArrLiteral)(nil)
 )
 
-type strArrLiteral struct {
+type StrArrLiteral struct {
 	arr []string
 }
 
-func NewStrArrLiteral(val []string) *strArrLiteral {
-	return &strArrLiteral{
+// NewStrArrLiteral creates a new instance of strArrLiteral with the provided slice of string values.
+func NewStrArrLiteral(val []string) *StrArrLiteral {
+	return &StrArrLiteral{
 		arr: val,
 	}
 }
 
-func (s *strArrLiteral) Compare(other LiteralExpr) (int, bool) {
-	if o, ok := other.(*strArrLiteral); ok {
+func (s *StrArrLiteral) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*StrArrLiteral); ok {
 		return 0, StringSlicesEqual(s.arr, o.arr)
 	}
 	return 0, false
 }
 
-func (s *strArrLiteral) Contains(other LiteralExpr) bool {
-	if o, ok := other.(*strLiteral); ok {
+func (s *StrArrLiteral) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*StrLiteral); ok {
 		return slices.Contains(s.arr, o.string)
 	}
-	if o, ok := other.(*strArrLiteral); ok {
+	if o, ok := other.(*StrArrLiteral); ok {
 		for _, v := range o.arr {
 			if !slices.Contains(s.arr, v) {
 				return false
@@ -278,14 +282,14 @@ func (s *strArrLiteral) Contains(other LiteralExpr) bool {
 	return false
 }
 
-func (s *strArrLiteral) BelongTo(other LiteralExpr) bool {
-	if o, ok := other.(*strLiteral); ok {
+func (s *StrArrLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*StrLiteral); ok {
 		if len(s.arr) == 1 && s.arr[0] == o.string {
 			return true
 		}
 		return false
 	}
-	if o, ok := other.(*strArrLiteral); ok {
+	if o, ok := other.(*StrArrLiteral); ok {
 		for _, v := range s.arr {
 			if !slices.Contains(o.arr, v) {
 				return false
@@ -296,7 +300,7 @@ func (s *strArrLiteral) BelongTo(other LiteralExpr) bool {
 	return false
 }
 
-func (s *strArrLiteral) Bytes() [][]byte {
+func (s *StrArrLiteral) Bytes() [][]byte {
 	b := make([][]byte, 0, len(s.arr))
 	for _, str := range s.arr {
 		b = append(b, []byte(str))
@@ -304,86 +308,88 @@ func (s *strArrLiteral) Bytes() [][]byte {
 	return b
 }
 
-func (s *strArrLiteral) Equal(expr Expr) bool {
-	if other, ok := expr.(*strArrLiteral); ok {
+func (s *StrArrLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*StrArrLiteral); ok {
 		return slices.Equal(other.arr, s.arr)
 	}
 
 	return false
 }
 
-func (s *strArrLiteral) DataType() int32 {
+func (s *StrArrLiteral) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_STRING_ARRAY)
 }
 
-func (s *strArrLiteral) String() string {
+func (s *StrArrLiteral) String() string {
 	return fmt.Sprintf("%v", s.arr)
 }
 
-type bytesLiteral struct {
+type BytesLiteral struct {
 	bb []byte
 }
 
-func NewBytesLiteral(bb []byte) *bytesLiteral {
-	return &bytesLiteral{bb: bb}
+// NewBytesLiteral creates a new instance of BytesLiteral with the provided slice of bytes.
+func NewBytesLiteral(bb []byte) *BytesLiteral {
+	return &BytesLiteral{bb: bb}
 }
 
-func (b *bytesLiteral) Bytes() [][]byte {
+func (b *BytesLiteral) Bytes() [][]byte {
 	return [][]byte{b.bb}
 }
 
-func (b *bytesLiteral) Equal(expr Expr) bool {
-	if other, ok := expr.(*bytesLiteral); ok {
+func (b *BytesLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*BytesLiteral); ok {
 		return bytes.Equal(other.bb, b.bb)
 	}
 
 	return false
 }
 
-func (b *bytesLiteral) DataType() int32 {
+func (b *BytesLiteral) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_DATA_BINARY)
 }
 
-func (b *bytesLiteral) String() string {
+func (b *BytesLiteral) String() string {
 	return hex.EncodeToString(b.bb)
 }
 
 var (
-	_               LiteralExpr    = (*nullLiteral)(nil)
-	_               ComparableExpr = (*nullLiteral)(nil)
-	nullLiteralExpr                = &nullLiteral{}
+	_               LiteralExpr    = (*NullLiteral)(nil)
+	_               ComparableExpr = (*NullLiteral)(nil)
+	nullLiteralExpr                = &NullLiteral{}
 )
 
-type nullLiteral struct{}
+type NullLiteral struct{}
 
-func NewNullLiteral() *nullLiteral {
+// NewNullLiteral returns a new instance of nullLiteral.
+func NewNullLiteral() *NullLiteral {
 	return nullLiteralExpr
 }
 
-func (s nullLiteral) Compare(_ LiteralExpr) (int, bool) {
+func (s NullLiteral) Compare(_ LiteralExpr) (int, bool) {
 	return 0, false
 }
 
-func (s nullLiteral) BelongTo(_ LiteralExpr) bool {
+func (s NullLiteral) BelongTo(_ LiteralExpr) bool {
 	return false
 }
 
-func (s nullLiteral) Contains(_ LiteralExpr) bool {
+func (s NullLiteral) Contains(_ LiteralExpr) bool {
 	return false
 }
 
-func (s nullLiteral) Bytes() [][]byte {
+func (s NullLiteral) Bytes() [][]byte {
 	return nil
 }
 
-func (s nullLiteral) Equal(_ Expr) bool {
+func (s NullLiteral) Equal(_ Expr) bool {
 	return false
 }
 
-func (s nullLiteral) DataType() int32 {
+func (s NullLiteral) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_UNSPECIFIED)
 }
 
-func (s nullLiteral) String() string {
+func (s NullLiteral) String() string {
 	return "null"
 }
