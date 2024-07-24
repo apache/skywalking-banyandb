@@ -360,7 +360,7 @@ func (h *inTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) 
 	if err != nil {
 		return false, err
 	}
-	return expr.BelongTo(h.Expr), nil
+	return expr.belongTo(h.Expr), nil
 }
 
 type eqTag struct {
@@ -381,7 +381,7 @@ func (eq *eqTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry)
 	if err != nil {
 		return false, err
 	}
-	return eq.Expr.Equal(expr), nil
+	return eq.Expr.equal(expr), nil
 }
 
 func (eq *eqTag) MarshalJSON() ([]byte, error) {
@@ -422,7 +422,7 @@ func (r *rangeTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistr
 	}
 	if r.Opts.Lower != nil {
 		lower := r.Opts.Lower
-		c, b := lower.Compare(expr)
+		c, b := lower.compare(expr)
 		if !b {
 			return false, nil
 		}
@@ -438,7 +438,7 @@ func (r *rangeTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistr
 	}
 	if r.Opts.Upper != nil {
 		upper := r.Opts.Upper
-		c, b := upper.Compare(expr)
+		c, b := upper.compare(expr)
 		if !b {
 			return false, nil
 		}
@@ -511,7 +511,7 @@ func (h *havingTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegist
 	if err != nil {
 		return false, err
 	}
-	return expr.Contains(h.Expr), nil
+	return expr.contains(h.Expr), nil
 }
 
 func (h *havingTag) MarshalJSON() ([]byte, error) {
