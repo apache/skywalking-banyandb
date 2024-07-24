@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -419,7 +420,7 @@ type blockCursor struct {
 	elementIDs       []uint64
 	tagFamilies      []tagFamily
 	tagValuesDecoder encoding.BytesBlockDecoder
-	tagProjection    []pbv1.TagProjection
+	tagProjection    []model.TagProjection
 	bm               blockMetadata
 	idx              int
 	minTimestamp     int64
@@ -454,7 +455,7 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.elementFilter = opts.elementFilter
 }
 
-func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
+func (bc *blockCursor) copyAllTo(r *model.StreamResult, desc bool) {
 	start, end := 0, bc.idx+1
 	if !desc {
 		start, end = bc.idx, len(bc.timestamps)
@@ -477,11 +478,11 @@ func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
 	}
 
 	if len(r.TagFamilies) != len(bc.tagProjection) {
-		r.TagFamilies = make([]pbv1.TagFamily, len(bc.tagProjection))
+		r.TagFamilies = make([]model.TagFamily, len(bc.tagProjection))
 		for i, tp := range bc.tagProjection {
-			r.TagFamilies[i] = pbv1.TagFamily{Name: tp.Family, Tags: make([]pbv1.Tag, len(tp.Names))}
+			r.TagFamilies[i] = model.TagFamily{Name: tp.Family, Tags: make([]model.Tag, len(tp.Names))}
 			for j, n := range tp.Names {
-				r.TagFamilies[i].Tags[j] = pbv1.Tag{Name: n}
+				r.TagFamilies[i].Tags[j] = model.Tag{Name: n}
 			}
 		}
 	}
@@ -504,17 +505,17 @@ func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
 	}
 }
 
-func (bc *blockCursor) copyTo(r *pbv1.StreamResult) {
+func (bc *blockCursor) copyTo(r *model.StreamResult) {
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[bc.idx])
 	r.SIDs = append(r.SIDs, bc.bm.seriesID)
 	if len(r.TagFamilies) != len(bc.tagProjection) {
 		for _, tp := range bc.tagProjection {
-			tf := pbv1.TagFamily{
+			tf := model.TagFamily{
 				Name: tp.Family,
 			}
 			for _, n := range tp.Names {
-				t := pbv1.Tag{
+				t := model.Tag{
 					Name: n,
 				}
 				tf.Tags = append(tf.Tags, t)

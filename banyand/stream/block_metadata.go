@@ -26,7 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 type dataBlock struct {
@@ -67,7 +67,7 @@ func (d *dataBlock) unmarshal(src []byte) ([]byte, error) {
 
 type blockMetadata struct {
 	tagFamilies           map[string]*dataBlock
-	tagProjection         []pbv1.TagProjection
+	tagProjection         []model.TagProjection
 	timestamps            timestampsMetadata
 	elementIDs            elementIDsMetadata
 	seriesID              common.SeriesID

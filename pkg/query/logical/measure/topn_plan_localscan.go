@@ -31,6 +31,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -48,7 +49,7 @@ type unresolvedLocalScan struct {
 
 func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) {
 	var projTagsRefs [][]*logical.TagRef
-	projTags := make([]pbv1.TagProjection, len(uls.projectionTags))
+	projTags := make([]model.TagProjection, len(uls.projectionTags))
 	if len(uls.projectionTags) > 0 {
 		for i := range uls.projectionTags {
 			for _, tag := range uls.projectionTags[i] {
@@ -145,7 +146,7 @@ type localScan struct {
 	timeRange            timestamp.TimeRange
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
-	projectionTags       []pbv1.TagProjection
+	projectionTags       []model.TagProjection
 	projectionFields     []string
 	entity               []*modelv1.TagValue
 	sort                 modelv1.Sort
@@ -153,11 +154,11 @@ type localScan struct {
 
 func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
 	ec := executor.FromMeasureExecutionContext(ctx)
-	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
+	result, err := ec.Query(ctx, model.MeasureQueryOptions{
 		Name:            i.metadata.GetName(),
 		TimeRange:       &i.timeRange,
 		Entities:        [][]*modelv1.TagValue{i.entity},
-		Order:           &pbv1.OrderBy{Sort: i.sort},
+		Order:           &model.OrderBy{Sort: i.sort},
 		TagProjection:   i.projectionTags,
 		FieldProjection: i.projectionFields,
 	})
