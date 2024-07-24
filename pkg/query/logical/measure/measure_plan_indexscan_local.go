@@ -87,7 +87,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		// fill AnyEntry by default
 		entity[idx] = pbv1.AnyTagValue
 	}
-	query, entities, err := inverted.BuildLocalQuery(uis.criteria, s, entityMap, entity)
+	query, entities, _, err := inverted.BuildLocalQuery(uis.criteria, s, entityMap, entity)
 	if err != nil {
 		return nil, err
 	}
