@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 func Test_block_reset(t *testing.T) {
@@ -396,9 +397,9 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	unmarshaled := generateBlock()
 	defer releaseBlock(unmarshaled)
 
-	var tp []pbv1.TagProjection
+	var tp []model.TagProjection
 	for family, names := range tagProjection {
-		tp = append(tp, pbv1.TagProjection{
+		tp = append(tp, model.TagProjection{
 			Family: family,
 			Names:  names,
 		})
