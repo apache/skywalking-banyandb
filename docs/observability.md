@@ -12,7 +12,6 @@ Prometheus is auto enabled at run time, if no flag is passed or if `promethus` i
 
 When the Prometheus metrics provider is enabled, the metrics server listens on port `2121`. This allows Prometheus to scrape metrics data from BanyanDB for monitoring and analysis.
 
-The Docker image is tagged as "prometheus" to facilitate cloud-native operations and simplify deployment on Kubernetes. This allows users to directly deploy the Docker image onto their Kubernetes cluster without having to rebuild it with the "prometheus" tag.
 
 ### Self-observability 
 
