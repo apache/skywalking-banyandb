@@ -23,6 +23,8 @@ If the `observability-modes` flag is set to `native`, the self-observability met
 
 In self-observability, the metrics data is stored in BanyanDB within the ` _monitoring` internal group. Each metric will be created as a new `measure` within this group.
 
+You can use BanyanDB-UI or bydbctl to retrieve the data.
+
 #### Write Flow
 
 ![self-observability-write](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/self-observability-write.png)
