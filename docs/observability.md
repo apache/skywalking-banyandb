@@ -18,7 +18,7 @@ The Docker image is tagged as "prometheus" to facilitate cloud-native operations
 
 If the `observability-modes` flag is set to `native`, the self-observability metrics provider will be enabled. The metrics will be displayed in the dashboard of [skywalking-banyandb-webapp](http://localhost:17913/) 
 
-<img src="dashboard.png" alt="Description of the image" width="700" height="350">
+![dashboard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/dashboard.png)
 
 #### Metrics storage 
 
@@ -26,7 +26,7 @@ In self-observability, the metrics data is stored in BanyanDB within the ` _moni
 
 #### Write Flow
 
-<img src="self-observability-write.png" alt="Description of the image" width="500" height="300">
+![self-observability-write](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/self-observability-write.png)
 
 #### Read Flow
 The read flow is the same as reading data from `measure`, with each metric being a new measure.
