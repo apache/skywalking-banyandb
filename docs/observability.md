@@ -15,7 +15,7 @@ When the Prometheus metrics provider is enabled, the metrics server listens on p
 
 ### Self-observability 
 
-If the `observability-modes` flag is set to `native`, the self-observability metrics provider will be enabled. The metrics will be displayed in the dashboard of [skywalking-banyandb-webapp](http://localhost:17913/) 
+If the `observability-modes` flag is set to `native`, the self-observability metrics provider will be enabled. The some of metrics will be displayed in the dashboard of [banyandb-ui](http://localhost:17913/) 
 
 ![dashboard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/dashboard.png)
 
