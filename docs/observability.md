@@ -4,7 +4,7 @@ This document outlines the observability features of BanyanDB, which include met
 
 ## Metrics
 
-BanyanDB has built-in support for metrics collection. Currently, there are two supported metrics provider: `prometheus` and `native`. These can be enabled through `observability-modes` flag. 
+BanyanDB has built-in support for metrics collection. Currently, there are two supported metrics provider: `prometheus` and `native`. These can be enabled through `observability-modes` flag, allowing you to activate one or both of them. 
 
 ### Prometheus
 
