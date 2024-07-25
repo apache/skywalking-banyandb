@@ -27,6 +27,8 @@ You can use BanyanDB-UI or bydbctl to retrieve the data.
 
 #### Write Flow
 
+When starting any node, the `_monitoring` internal group will be created, and the metrics will be created as measures within this group. All metric values will be collected and written together at a configurable fixed interval. For a data node, it will write metric values to its own shard using a local pipeline. For a liaison node, it will use nodeSelector to select a data node to write its metric data.
+
 ![self-observability-write](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/self-observability-write.png)
 
 #### Read Flow
