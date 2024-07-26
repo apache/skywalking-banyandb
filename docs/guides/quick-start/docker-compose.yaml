@@ -78,7 +78,7 @@ services:
       JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/agent/skywalking-agent.jar
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       SW_LOGGING_OUTPUT: CONSOLE
-      SW_AGENT_NAME: e2e-service-provider
+      SW_AGENT_NAME: service-provider
       SW_AGENT_INSTANCE_NAME: provider1
       SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
       SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
@@ -106,7 +106,7 @@ services:
       SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
       SW_LOGGING_OUTPUT: CONSOLE
       PROVIDER_URL: http://provider:9090
-      SW_AGENT_NAME: e2e-service-consumer
+      SW_AGENT_NAME: service-consumer
       SW_AGENT_INSTANCE_NAME: consumer1
       SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
       SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
