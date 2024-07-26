@@ -63,8 +63,6 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 			result.Release()
 		}
 	}()
-	var tables []*tsTable
-
 	series := make([]*pbv1.Series, len(sqo.Entities))
 	for i := range sqo.Entities {
 		series[i] = &pbv1.Series{
@@ -73,14 +71,20 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		}
 	}
 	var seriesList, sl pbv1.SeriesList
+	seriesFilter := roaring.NewPostingList()
 	for i := range result.segments {
-		tables = append(tables, result.segments[i].Tables()...)
 		sl, err = result.segments[i].Lookup(ctx, series)
 		if err != nil {
 			return nil, err
 		}
-		seriesList = append(seriesList, sl...)
-		result.tabs = append(result.tabs, tables...)
+		for j := range sl {
+			if seriesFilter.Contains(uint64(sl[j].ID)) {
+				continue
+			}
+			seriesList = append(seriesList, sl[j])
+			seriesFilter.Insert(uint64(sl[j].ID))
+		}
+		result.tabs = append(result.tabs, result.segments[i].Tables()...)
 	}
 
 	if len(seriesList) == 0 {

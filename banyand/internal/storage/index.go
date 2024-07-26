@@ -111,8 +111,10 @@ var emptySeriesMatcher = index.SeriesMatcher{}
 func convertEntityValuesToSeriesMatcher(series *pbv1.Series) (index.SeriesMatcher, error) {
 	var hasAny, hasWildcard bool
 	var prefixIndex int
+	var localSeries pbv1.Series
+	series.CopyTo(&localSeries)
 
-	for i, tv := range series.EntityValues {
+	for i, tv := range localSeries.EntityValues {
 		if tv == nil {
 			return emptySeriesMatcher, errors.New("unexpected nil tag value")
 		}
@@ -133,29 +135,29 @@ func convertEntityValuesToSeriesMatcher(series *pbv1.Series) (index.SeriesMatche
 
 	if hasAny {
 		if hasWildcard {
-			if err = series.MarshalWithWildcard(); err != nil {
+			if err = localSeries.MarshalWithWildcard(); err != nil {
 				return emptySeriesMatcher, err
 			}
 			return index.SeriesMatcher{
 				Type:  index.SeriesMatcherTypeWildcard,
-				Match: series.Buffer,
+				Match: localSeries.Buffer,
 			}, nil
 		}
-		series.EntityValues = series.EntityValues[:prefixIndex]
-		if err = series.Marshal(); err != nil {
+		localSeries.EntityValues = localSeries.EntityValues[:prefixIndex]
+		if err = localSeries.Marshal(); err != nil {
 			return emptySeriesMatcher, err
 		}
 		return index.SeriesMatcher{
 			Type:  index.SeriesMatcherTypePrefix,
-			Match: series.Buffer,
+			Match: localSeries.Buffer,
 		}, nil
 	}
-	if err = series.Marshal(); err != nil {
+	if err = localSeries.Marshal(); err != nil {
 		return emptySeriesMatcher, err
 	}
 	return index.SeriesMatcher{
 		Type:  index.SeriesMatcherTypeExact,
-		Match: series.Buffer,
+		Match: localSeries.Buffer,
 	}, nil
 }
 
