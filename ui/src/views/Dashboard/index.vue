@@ -212,7 +212,7 @@ async function fetchNodes() {
             total: getLatestField(memoryData.total, row.node_id),
             used_percent: getLatestField(memoryData.used_percent, row.node_id),
         };
-        if (row.node_type == "data") {
+        if (row.node_type != "liason") {
             row.disk = {}
             for (const path in diskData) {
                 row.disk[path] = {
