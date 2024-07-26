@@ -32,6 +32,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -149,13 +150,20 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
 	segments []storage.Segment[*tsTable, option],
 ) (sl pbv1.SeriesList, tables []*tsTable, err error) {
+	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
 		tables = append(tables, segments[i].Tables()...)
 		sll, err := segments[i].IndexDB().Search(ctx, series, mqo.Filter, mqo.Order, preloadSize)
 		if err != nil {
 			return nil, nil, err
 		}
-		sl = append(sl, sll...)
+		for j := range sll {
+			if seriesFilter.Contains(uint64(sll[j].ID)) {
+				continue
+			}
+			sl = append(sl, sll[j])
+			seriesFilter.Insert(uint64(sll[j].ID))
+		}
 	}
 	return sl, tables, nil
 }
