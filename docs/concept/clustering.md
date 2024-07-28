@@ -97,11 +97,11 @@ Futhermore, the storage system might be cheaper. For instance, S3 can be more co
 
 ### 5.2 Data Sharding
 
-Data distribution across the cluster is determined based on the `shard_num` setting for a group and the specified `entity` in each resource, be it a stream or measure. The resource’s `name` with its `entity` is the sharding key, guiding data distribution to the appropriate Data Node during write operations.
+Data distribution across the cluster is determined by the `shard_num` setting for a group and the specified `entity` in each resource, whether it is a stream or a measure. The combination of the resource’s `name` and its `entity` forms the sharding key, which guides data distribution to the appropriate Data Node during write operations.
 
-Liaison Nodes retrieve shard mapping information from Meta Nodes to achieve efficient data routing. This information is used to route data to the appropriate Data Nodes based on the sharding key of the data.
+Liaison Nodes play a crucial role in this process by retrieving the `Group` list from Meta Nodes. This information is essential for efficient data routing, as it allows Liaison Nodes to direct data to the appropriate Data Nodes based on the sharding key.
 
-This sharding strategy ensures the write load is evenly distributed across the cluster, enhancing write performance and overall system efficiency. BanyanDB uses a hash algorithm for sharding. The hash function maps the sharding key (resource name and entity) to a node in the cluster. Each shard is assigned to the node returned by the hash function.
+This sharding strategy ensures that the write load is evenly distributed across the cluster, thereby enhancing write performance and overall system efficiency. BanyanDB sorts the shards by the `Group` name and the shard ID, then assigns the shards to the Data Nodes in a round-robin fashion. This method guarantees an even distribution of data across the cluster, preventing any single node from becoming a bottleneck.
 
 ### 5.3 Data Write Path
 
