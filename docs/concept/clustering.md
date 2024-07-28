@@ -99,9 +99,31 @@ Futhermore, the storage system might be cheaper. For instance, S3 can be more co
 
 Data distribution across the cluster is determined by the `shard_num` setting for a group and the specified `entity` in each resource, whether it is a stream or a measure. The combination of the resource’s `name` and its `entity` forms the sharding key, which guides data distribution to the appropriate Data Node during write operations.
 
+For example, if a group has 5 shards, the data is distributed across these shards based on the sharding key:
+
+- Group `measure-minute` Shard 0
+- Group `measure-minute` Shard 1
+- Group `stream-log` Shard 0
+- Group `stream-log` Shard 1
+- Group `stream-log` Shard 2
+
+A measure named `service_cpm` belonging to `measure-minute` with an entity of `service_id` "frontend" will be written to a specific shard based on the hashed value of the sharding key `service_cpm:frontend`.
+
+Similarly, a stream named `system_log` belonging to `stream-log` with an entity combination of `service_id` "frontend" and `instance_id` "10.0.0.1" will be written to a specific shard based on the hashed value of the sharding key `system_log:frontend|10.0.0.1`.
+
+> Note: If there are ":" or "|" in the entity, they will be prefixed with a backslash "\".
+
 Liaison Nodes play a crucial role in this process by retrieving the `Group` list from Meta Nodes. This information is essential for efficient data routing, as it allows Liaison Nodes to direct data to the appropriate Data Nodes based on the sharding key.
 
 This sharding strategy ensures that the write load is evenly distributed across the cluster, thereby enhancing write performance and overall system efficiency. BanyanDB sorts the shards by the `Group` name and the shard ID, then assigns the shards to the Data Nodes in a round-robin fashion. This method guarantees an even distribution of data across the cluster, preventing any single node from becoming a bottleneck.
+
+For example, consider a group with 5 shards and a cluster with 3 Data Nodes. The shards are distributed as follows:
+
+- Group `measure-minute` Shard 0: Data Node 1
+- Group `measure-minute` Shard 1: Data Node 2
+- Group `stream-log` Shard 0: Data Node 3
+- Group `stream-log` Shard 1: Data Node 1
+- Group `stream-log` Shard 2: Data Node 2
 
 ### 5.3 Data Write Path
 
