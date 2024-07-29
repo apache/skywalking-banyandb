@@ -46,7 +46,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	}
 	pipeline := pub.New(metaSvc)
 	localPipeline := queue.Local()
-	nodeSel := node.NewRoundRobinSelector()
+	nodeSel := node.NewRoundRobinSelector(metaSvc)
 	nodeRegistry := grpc.NewClusterNodeRegistry(pipeline, nodeSel)
 	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, nodeRegistry)
 	profSvc := observability.NewProfService()
@@ -62,6 +62,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		metaSvc,
 		localPipeline,
 		pipeline,
+		nodeSel,
 		dQuery,
 		grpcServer,
 		httpServer,
@@ -77,7 +78,6 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the liaison server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			defer nodeSel.Close()
 			node, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort())
 			if err != nil {
 				return err
