@@ -119,6 +119,7 @@ var groupSchema = schema.Metadata{
 		Metadata: &commonv1.Metadata{
 			Name: "group1",
 		},
+		Catalog: commonv1.Catalog_CATALOG_MEASURE,
 		ResourceOpts: &commonv1.ResourceOpts{
 			ShardNum: 2,
 		},
