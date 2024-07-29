@@ -33,20 +33,3 @@ dataPoints:
         str:
           value: entity_4
   timestamp: "2023-06-26T01:01:00Z"
-- fields:
-  - name: total
-    value:
-      int:
-        value: "50"
-  - name: value
-    value:
-      int:
-        value: "4"
-  tagFamilies:
-  - name: default
-    tags:
-    - key: entity_id
-      value:
-        str:
-          value: entity_5
-  timestamp: "2023-06-26T01:02:00Z"
