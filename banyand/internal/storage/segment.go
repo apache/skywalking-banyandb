@@ -52,6 +52,7 @@ type segment[T TSTable, O any] struct {
 	refCount      int32
 	mustBeDeleted uint32
 	id            segmentID
+	mu            sync.Mutex
 }
 
 func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string,
@@ -118,6 +119,8 @@ func (s *segment[T, O]) DecRef() {
 	if n > 0 {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	deletePath := ""
 	if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
@@ -146,6 +149,11 @@ func (s *segment[T, O]) delete() {
 }
 
 func (s *segment[T, O]) CreateTSTableIfNotExist(id common.ShardID) (T, error) {
+	if s, ok := s.getShard(id); ok {
+		return s.table, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s, ok := s.getShard(id); ok {
 		return s.table, nil
 	}

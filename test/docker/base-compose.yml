@@ -22,8 +22,8 @@ services:
     command: standalone
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913"]
-      interval: 30s
-      timeout: 30s
+      interval: 5s
+      timeout: 120s
       retries: 120
 
   liaison:
@@ -32,11 +32,11 @@ services:
       - 17912
       - 2121
       - 6060
-    command: liaison --etcd-endpoints=http://etcd:2379 
+    command: liaison --etcd-endpoints=http://etcd:2379
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--addr=http://liaison:17913"]
-      interval: 30s
-      timeout: 30s
+      interval: 5s
+      timeout: 120s
       retries: 120
   
   data:
@@ -45,11 +45,11 @@ services:
       - 17912
       - 2121
       - 6060
-    command: data --etcd-endpoints=http://etcd:2379 
+    command: data --etcd-endpoints=http://etcd:2379
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--grpc-addr=data:17912"]
-      interval: 30s
-      timeout: 30s
+      interval: 5s
+      timeout: 120s
       retries: 120
   
   agent:
@@ -73,7 +73,7 @@ services:
     healthcheck:
       test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/11800"]
       interval: 5s
-      timeout: 60s
+      timeout: 120s
       retries: 120
 
   ui:

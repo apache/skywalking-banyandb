@@ -13,7 +13,7 @@ Create operation adds a new group to the database's metadata registry repository
 ### Examples of creating
 
 ```shell
-$ bydbctl group create -f - <<EOF
+bydbctl group create -f - <<EOF
 metadata:
   name: sw_metric
 catalog: CATALOG_MEASURE
@@ -39,7 +39,7 @@ Get operation gets a group's schema.
 ### Examples of getting
 
 ```shell
-$ bydbctl group get -g sw_metric
+bydbctl group get -g sw_metric
 ```
 
 ## Update operation
@@ -51,7 +51,7 @@ Update operation updates a group's schema.
 If we want to change the `ttl` of the data in this group to be 1 day, use the command:
 
 ```shell
-$ bydbctl group update -f - <<EOF
+bydbctl group update -f - <<EOF
 metadata:
   name: sw_metric
 catalog: CATALOG_MEASURE
@@ -73,7 +73,7 @@ Delete operation deletes a group's schema.
 ### Examples of deleting
 
 ```shell
-$ bydbctl group delete -g sw_metric
+bydbctl group delete -g sw_metric
 ```
 
 ## List operation
@@ -83,7 +83,7 @@ The list operation shows all groups' schema.
 ### Examples
 
 ```shell
-$ bydbctl group list
+bydbctl group list
 ```
 
 ## API Reference

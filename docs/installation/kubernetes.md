@@ -1,6 +1,6 @@
 # Installation On Kubernetes
 
-To install BanyanDB on Kubernetes, you can use our Helm chart, which simplifies the deployment process.  You can find detailed installation instructions in [our official documentation](https://github.com/apache/skywalking-helm/tree/master).
+To install BanyanDB on Kubernetes, you can use our Helm chart, which simplifies the deployment process.  You can find detailed installation instructions in [our official documentation](https://github.com/apache/skywalking-banyandb-helm/blob/master/README.md).
 
 This step-by-step guide assumes you have a basic understanding of Kubernetes and Helm, the package manager for Kubernetes. If you're new to Helm, you might want to familiarize yourself with Helm basics before proceeding.
 

@@ -38,6 +38,13 @@ type Series struct {
 	ID           common.SeriesID
 }
 
+// CopyTo copies the content of the series to the destination series.
+func (s *Series) CopyTo(dst *Series) {
+	dst.Subject = s.Subject
+	dst.EntityValues = make([]*modelv1.TagValue, len(s.EntityValues))
+	copy(dst.EntityValues, s.EntityValues)
+}
+
 // Marshal encodes series to internal Buffer and generates ID.
 func (s *Series) Marshal() error {
 	s.Buffer = marshalEntityValue(s.Buffer, convert.StringToBytes(s.Subject))

@@ -30,14 +30,13 @@ e.g. "start = 2022-11-09T12:04:00Z", so "end = start + 30 minutes = 2022-11-09T1
 To retrieve elements in a stream named `sw` between `2022-10-15T22:32:48Z` and `2022-10-15T23:32:48Z` could use the below command. These elements also choose a tag `trace_id` which lives in a family named `searchable`.
 
 ```shell
-$ bydbctl stream query -f - <<EOF
-metadata:
-  group: "default"
-  name: "sw"
+bydbctl stream query -f - <<EOF
+groups: ["stream-segment"]
+name: "segment"
 projection:
   tagFamilies:
-  - name: "searchable"
-    tags: ["trace_id"]
+    - name: "searchable"
+      tags: ["trace_id"]
 timeRange:
   begin: 2022-10-15T22:32:48+08:00
   end: 2022-10-15T23:32:48+08:00
@@ -47,14 +46,13 @@ EOF
 The below command could query data in the last 30 minutes using relative time duration :
 
 ```shell
-$ bydbctl stream query --start -30m -f - <<EOF
-metadata:
-  group: "default"
-  name: "sw"
+bydbctl stream query --start -30m -f - <<EOF
+groups: ["stream-segment"]
+name: "segment"
 projection:
   tagFamilies:
-  - name: "searchable"
-    tags: ["trace_id"]
+    - name: "searchable"
+      tags: ["trace_id"]
 EOF
 ```
 

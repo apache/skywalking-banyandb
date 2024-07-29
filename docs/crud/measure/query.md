@@ -30,14 +30,13 @@ e.g. "start = 2022-11-09T12:04:00Z", so "end = start + 30 minutes = 2022-11-09T1
 To retrieve a series of data points between `2022-10-15T22:32:48Z` and `2022-10-15T23:32:48Z` could use the below command. These data points contain tags: `id` and `entity_id` that belong to a family `default`. They also choose fields: `total` and `value`.
 
 ```shell
-$ bydbctl measure query -f - <<EOF
-metadata:
-  name: "service_cpm_minute"
-  group: "sw_metric"
+bydbctl measure query -f - <<EOF
+name: "service_cpm_minute"
+groups: ["measure-minute"]
 tagProjection:
   tagFamilies:
-  - name: "default"
-    tags: ["id", "entity_id"]
+    - name: "default"
+      tags: ["entity_id"]
 fieldProjection:
   names: ["total", "value"]
 timeRange:
@@ -46,17 +45,16 @@ timeRange:
 EOF
 ```
 
-The below command could query data in the last 30 minutes using relative time duration :
+The below command could query data in the last 10 minutes using relative time duration :
 
 ```shell
-$ bydbctl measure query --start -30m -f - <<EOF
-metadata:
-  name: "service_cpm_minute"
-  group: "sw_metric"
+bydbctl measure query --start -10m -f - <<EOF
+name: "service_cpm_minute"
+groups: ["measure-minute"]
 tagProjection:
   tagFamilies:
-  - name: "default"
-    tags: ["id", "entity_id"]
+    - name: "default"
+      tags: ["entity_id"]
 fieldProjection:
   names: ["total", "value"]
 EOF

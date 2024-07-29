@@ -23,5 +23,5 @@ tagProjection:
     tags: ["entity_id"]
 fieldProjection:
   names: ["total", "value"]
-limit: 2
+limit: 1
 offset: 3

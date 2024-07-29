@@ -18,6 +18,7 @@
 package node
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"sync"
@@ -37,7 +38,13 @@ type maglevSelector struct {
 	mutex   sync.RWMutex
 }
 
-func (m *maglevSelector) Close() {}
+func (m *maglevSelector) Name() string {
+	return "maglev-selector"
+}
+
+func (m *maglevSelector) PreRun(context.Context) error {
+	return nil
+}
 
 func (m *maglevSelector) AddNode(node *databasev1.Node) {
 	m.mutex.Lock()
