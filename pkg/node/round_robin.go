@@ -65,7 +65,10 @@ func (r *roundRobinSelector) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	if schemaMetadata.Kind != schema.KindGroup {
 		return
 	}
-	group := schemaMetadata.Spec.(*commonv1.Group)
+	group, ok := schemaMetadata.Spec.(*commonv1.Group)
+	if !ok || !validateGroup(group) {
+		return
+	}
 	for i := uint32(0); i < group.ResourceOpts.ShardNum; i++ {
 		k := key{group: group.Metadata.Name, shardID: i}
 		r.lookupTable.Store(k, 0)
@@ -101,6 +104,9 @@ func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {
 	var revision int64
 	r.lookupTable = sync.Map{}
 	for _, g := range gg {
+		if !validateGroup(g) {
+			continue
+		}
 		if g.Metadata.ModRevision > revision {
 			revision = g.Metadata.ModRevision
 		}
@@ -170,6 +176,16 @@ func (r *roundRobinSelector) Close() {
 func (r *roundRobinSelector) selectNode(entry any) string {
 	index := entry.(int)
 	return r.nodes[index%len(r.nodes)]
+}
+
+func validateGroup(group *commonv1.Group) bool {
+	if group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
+		return false
+	}
+	if group.ResourceOpts == nil {
+		return false
+	}
+	return true
 }
 
 type key struct {
