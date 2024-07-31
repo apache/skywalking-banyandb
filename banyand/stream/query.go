@@ -140,7 +140,7 @@ type queryOptions struct {
 }
 
 type queryResult struct {
-	sortingIter      itersort.Iterator[*index.ItemRef]
+	sortingIter      itersort.Iterator[*index.DocumentResult]
 	tagNameIndex     map[string]partition.TagLocator
 	schema           *databasev1.Stream
 	tabs             []*tsTable
@@ -545,7 +545,7 @@ func indexSearch(sqo model.StreamQueryOptions,
 
 func (s *stream) indexSort(sqo model.StreamQueryOptions, tabs []*tsTable,
 	seriesList pbv1.SeriesList,
-) (itersort.Iterator[*index.ItemRef], error) {
+) (itersort.Iterator[*index.DocumentResult], error) {
 	if sqo.Order == nil || sqo.Order.Index == nil {
 		return nil, nil
 	}
@@ -554,19 +554,19 @@ func (s *stream) indexSort(sqo model.StreamQueryOptions, tabs []*tsTable,
 		return nil, err
 	}
 	desc := sqo.Order != nil && sqo.Order.Index == nil && sqo.Order.Sort == modelv1.Sort_SORT_DESC
-	return itersort.NewItemIter[*index.ItemRef](iters, desc), nil
+	return itersort.NewItemIter[*index.DocumentResult](iters, desc), nil
 }
 
 func (s *stream) buildItersByIndex(tables []*tsTable,
 	seriesList pbv1.SeriesList, sqo model.StreamQueryOptions,
-) (iters []itersort.Iterator[*index.ItemRef], err error) {
+) (iters []itersort.Iterator[*index.DocumentResult], err error) {
 	indexRuleForSorting := sqo.Order.Index
 	if len(indexRuleForSorting.Tags) != 1 {
 		return nil, fmt.Errorf("only support one tag for sorting, but got %d", len(indexRuleForSorting.Tags))
 	}
 	sids := seriesList.IDs()
 	for _, tw := range tables {
-		var iter index.FieldIterator[*index.ItemRef]
+		var iter index.FieldIterator[*index.DocumentResult]
 		fieldKey := index.FieldKey{
 			IndexRuleID: indexRuleForSorting.GetMetadata().GetId(),
 			Analyzer:    indexRuleForSorting.GetAnalyzer(),

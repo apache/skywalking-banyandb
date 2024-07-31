@@ -20,7 +20,7 @@ groups: ["sw_metric"]
 tagProjection:
   tagFamilies:
   - name: "default"
-    tags: ["id", "service_id"]
+    tags: ["name", "short_name"]
 criteria:
   le:
     op: "LOGICAL_OP_AND"

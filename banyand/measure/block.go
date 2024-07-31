@@ -462,7 +462,7 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, queryOpts queryOptions) 
 	bc.fieldProjection = queryOpts.FieldProjection
 }
 
-func (bc *blockCursor) copyAllTo(r *model.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
+func (bc *blockCursor) copyAllTo(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
 	tagProjection []model.TagProjection, desc bool,
 ) {
 	var idx, offset int
@@ -484,9 +484,9 @@ func (bc *blockCursor) copyAllTo(r *model.MeasureResult, entityValuesAll map[com
 		slices.Reverse(r.Timestamps)
 		slices.Reverse(r.Versions)
 	}
-	var entityValues map[string]*modelv1.TagValue
-	if entityValuesAll != nil {
-		entityValues = entityValuesAll[r.SID]
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[r.SID]
 	}
 OUTER:
 	for _, tp := range tagProjection {
@@ -498,10 +498,10 @@ OUTER:
 			t := model.Tag{
 				Name: tagName,
 			}
-			if entityValues != nil && entityValues[tagName] != nil {
+			if indexValue != nil && indexValue[tagName] != nil {
 				t.Values = make([]*modelv1.TagValue, size)
 				for i := 0; i < size; i++ {
-					t.Values[i] = entityValues[tagName]
+					t.Values[i] = indexValue[tagName]
 				}
 				tf.Tags = append(tf.Tags, t)
 				continue
@@ -564,15 +564,15 @@ OUTER:
 	}
 }
 
-func (bc *blockCursor) copyTo(r *model.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
+func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
 	tagProjection []model.TagProjection,
 ) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.Versions = append(r.Versions, bc.versions[bc.idx])
-	var entityValues map[string]*modelv1.TagValue
-	if entityValuesAll != nil {
-		entityValues = entityValuesAll[r.SID]
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[r.SID]
 	}
 	if len(r.TagFamilies) == 0 {
 		for _, tp := range tagProjection {
@@ -593,8 +593,8 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, entityValuesAll map[common
 		var cf *columnFamily
 		for j := range r.TagFamilies[i].Tags {
 			tagName := r.TagFamilies[i].Tags[j].Name
-			if entityValues != nil && entityValues[tagName] != nil {
-				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, entityValues[tagName])
+			if indexValue != nil && indexValue[tagName] != nil {
+				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, indexValue[tagName])
 				continue
 			}
 			if cf == nil {

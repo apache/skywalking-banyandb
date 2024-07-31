@@ -35,7 +35,7 @@ import (
 
 func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
 	timeRange *timestamp.TimeRange, preLoadSize int,
-) (iter index.FieldIterator[*index.ItemRef], err error) {
+) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
@@ -69,27 +69,23 @@ func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order mode
 		sortedKey = "-" + sortedKey
 	}
 	result := &sortIterator{
-		query:       query,
-		reader:      reader,
-		sortedKey:   sortedKey,
-		sortedField: fk,
-		size:        preLoadSize,
-		sid:         fieldKey.SeriesID,
+		query:     query,
+		reader:    reader,
+		sortedKey: sortedKey,
+		size:      preLoadSize,
 	}
 	return result, nil
 }
 
 type sortIterator struct {
-	query       bluge.Query
-	err         error
-	reader      *bluge.Reader
-	current     *blugeMatchIterator
-	closer      *run.Closer
-	sortedKey   string
-	sortedField string
-	size        int
-	skipped     int
-	sid         common.SeriesID
+	query     bluge.Query
+	err       error
+	reader    *bluge.Reader
+	current   *blugeMatchIterator
+	closer    *run.Closer
+	sortedKey string
+	size      int
+	skipped   int
 }
 
 func (si *sortIterator) Next() bool {
@@ -124,7 +120,7 @@ func (si *sortIterator) loadCurrent() bool {
 		return false
 	}
 
-	iter := newBlugeMatchIterator(documentMatchIterator, nil, []string{si.sortedField})
+	iter := newBlugeMatchIterator(documentMatchIterator, nil, nil)
 	si.current = &iter
 	if si.next() {
 		return true
@@ -141,18 +137,12 @@ func (si *sortIterator) next() bool {
 	return false
 }
 
-func (si *sortIterator) Val() *index.ItemRef {
+func (si *sortIterator) Val() *index.DocumentResult {
 	v := si.current.Val()
-	sv, ok := v.values[si.sortedField]
-	if !ok {
+	if v.SortedValue == nil {
 		panic("sorted field not found in document")
 	}
-	return &index.ItemRef{
-		SeriesID:  v.seriesID,
-		DocID:     v.docID,
-		Term:      sv,
-		Timestamp: v.timestamp,
-	}
+	return &v
 }
 
 func (si *sortIterator) Close() error {

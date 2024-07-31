@@ -64,10 +64,24 @@ var (
 // SupplyTSDB allows getting a tsdb's runtime.
 type SupplyTSDB[T TSTable] func() T
 
+// IndexSearchOpts is the options for searching index.
+type IndexSearchOpts struct {
+	Filter      index.Filter
+	Order       *model.OrderBy
+	Projection  []index.FieldKey
+	PreloadSize int
+}
+
+// FieldResult is the result of a field.
+type FieldResult map[string][]byte
+
+// FieldResultList is a list of FieldResult.
+type FieldResultList []FieldResult
+
 // IndexDB is the interface of index database.
 type IndexDB interface {
 	Write(docs index.Documents) error
-	Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *model.OrderBy, preloadSize int) (pbv1.SeriesList, error)
+	Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (pbv1.SeriesList, FieldResultList, error)
 }
 
 // TSDB allows listing and getting shard details.

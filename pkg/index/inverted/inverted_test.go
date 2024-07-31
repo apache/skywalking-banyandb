@@ -36,8 +36,8 @@ import (
 )
 
 func TestStore_Match(t *testing.T) {
-	tester := assert.New(t)
-	path, fn := setUp(require.New(t))
+	tester := require.New(t)
+	path, fn := setUp(tester)
 	s, err := NewStore(StoreOpts{
 		Path:   path,
 		Logger: logger.GetLogger("test"),
@@ -119,7 +119,8 @@ func TestStore_Match(t *testing.T) {
 	}
 	for _, tt := range tests {
 		name := strings.Join(tt.matches, "-")
-		t.Run(name, func(_ *testing.T) {
+		t.Run(name, func(t *testing.T) {
+			tester := assert.New(t)
 			list, err := s.Match(serviceName, tt.matches)
 			if tt.wantErr {
 				tester.Error(err)
@@ -184,7 +185,7 @@ func TestStore_SeriesMatch(t *testing.T) {
 	}
 }
 
-func setup(tester *assert.Assertions, s index.Store, serviceName index.FieldKey) {
+func setup(tester *require.Assertions, s index.Store, serviceName index.FieldKey) {
 	var batch index.Batch
 	batch.Documents = append(batch.Documents,
 		index.Document{

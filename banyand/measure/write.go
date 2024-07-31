@@ -162,7 +162,8 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 							IndexRuleID: r.GetMetadata().GetId(),
 							Analyzer:    r.Analyzer,
 						},
-						Term: encodeTagValue.value,
+						Term:  encodeTagValue.value,
+						Store: true,
 					})
 				} else {
 					for _, val := range encodeTagValue.valueArr {
@@ -171,10 +172,12 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 								IndexRuleID: r.GetMetadata().GetId(),
 								Analyzer:    r.Analyzer,
 							},
-							Term: val,
+							Term:  val,
+							Store: true,
 						})
 					}
 				}
+				continue
 			}
 			_, isEntity := stm.indexRuleLocators.EntitySet[t.Name]
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
