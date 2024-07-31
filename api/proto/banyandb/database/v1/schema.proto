@@ -121,7 +121,7 @@ message MeasureAggregateFunction {
   // type indicates the type of function argument
   FieldType type = 1 [(validate.rules).enum.defined_only = true];
   // aggregate_function indicates specific function for measure data
-  model.v1.AggregationFunction aggregate_function = 2;
+  model.v1.MeasureAggregate aggregate_function = 2;
 }
 
 // TopNAggregation generates offline TopN statistics for a measure's TopN approximation

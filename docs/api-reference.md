@@ -40,6 +40,7 @@
     - [TagValue](#banyandb-model-v1-TagValue)
   
     - [AggregationFunction](#banyandb-model-v1-AggregationFunction)
+    - [MeasureAggregate](#banyandb-model-v1-MeasureAggregate)
   
 - [banyandb/model/v1/query.proto](#banyandb_model_v1_query-proto)
     - [Condition](#banyandb-model-v1-Condition)
@@ -692,6 +693,27 @@ Trace is the top level message of a trace.
 | AGGREGATION_FUNCTION_SUM | 5 |  |
 
 
+
+<a name="banyandb-model-v1-MeasureAggregate"></a>
+
+### MeasureAggregate
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| MEASURE_AGGREGATE_UNSPECIFIED | 0 |  |
+| MEASURE_AGGREGATE_MIN | 1 |  |
+| MEASURE_AGGREGATE_MAX | 2 |  |
+| MEASURE_AGGREGATE_COUNT | 3 |  |
+| MEASURE_AGGREGATE_SUM | 4 |  |
+| MEASURE_AGGREGATE_AVG | 5 |  |
+| MEASURE_AGGREGATE_PERCENT | 6 |  |
+| MEASURE_AGGREGATE_RATE | 7 |  |
+| MEASURE_AGGREGATE_HISTOGRAM | 8 |  |
+| MEASURE_AGGREGATE_PERCENTILE2 | 9 |  |
+| MEASURE_AGGREGATE_APDEX | 10 |  |
+
+
  
 
  
@@ -1035,7 +1057,7 @@ Measure intends to store data point
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | type | [FieldType](#banyandb-database-v1-FieldType) |  | type indicates the type of function argument |
-| aggregate_function | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | aggregate_function indicates specific function for measure data |
+| aggregate_function | [banyandb.model.v1.MeasureAggregate](#banyandb-model-v1-MeasureAggregate) |  | aggregate_function indicates specific function for measure data |
 
 
 
