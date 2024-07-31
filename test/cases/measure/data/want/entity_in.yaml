@@ -19,23 +19,22 @@ dataPoints:
 - tagFamilies:
   - name: default
     tags:
-    - key: id
+    - key: name
       value:
         str:
-          value: "1"
-    - key: service_id
+          value: service_name_1
+    - key: short_name
       value:
         str:
-          value: service_1
+          value: service_short_name_1
 - tagFamilies:
   - name: default
     tags:
-    - key: id
+    - key: name
       value:
         str:
-          value: "2"
-    - key: service_id
+          value: service_name_2
+    - key: short_name
       value:
         str:
-          value: service_2
-          
+          value: service_short_name_2

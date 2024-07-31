@@ -25,13 +25,23 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+var (
+	fieldKeyDuration = index.FieldKey{
+		IndexRuleID: indexRuleID,
+	}
+	fieldKeyServiceName = index.FieldKey{
+		IndexRuleID: 6,
+	}
+)
+
 func TestStore_Search(t *testing.T) {
-	tester := assert.New(t)
-	path, fn := setUp(require.New(t))
+	tester := require.New(t)
+	path, fn := setUp(tester)
 	s, err := NewStore(StoreOpts{
 		Path:   path,
 		Logger: logger.GetLogger("test"),
@@ -47,32 +57,120 @@ func TestStore_Search(t *testing.T) {
 
 	// Test cases
 	tests := []struct {
-		term [][]byte
-		want []index.Series
+		term       [][]byte
+		want       []index.SeriesDocument
+		projection []index.FieldKey
 	}{
 		{
 			term: [][]byte{[]byte("test1")},
-			want: []index.Series{
+			want: []index.SeriesDocument{
 				{
-					ID:           common.SeriesID(1),
-					EntityValues: []byte("test1"),
+					Key: index.Series{
+						ID:           common.SeriesID(1),
+						EntityValues: []byte("test1"),
+					},
 				},
 			},
 		},
 		{
-			term: [][]byte{[]byte("test1"), []byte("test2"), []byte("test3"), []byte("foo")},
-			want: []index.Series{
+			term:       [][]byte{[]byte("test1"), []byte("test2"), []byte("test3"), []byte("foo")},
+			projection: []index.FieldKey{fieldKeyDuration, fieldKeyServiceName},
+			want: []index.SeriesDocument{
 				{
-					ID:           common.SeriesID(1),
-					EntityValues: []byte("test1"),
+					Key: index.Series{
+						ID:           common.SeriesID(1),
+						EntityValues: []byte("test1"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal():    nil,
+						fieldKeyServiceName.Marshal(): nil,
+					},
 				},
 				{
-					ID:           common.SeriesID(2),
-					EntityValues: []byte("test2"),
+					Key: index.Series{
+						ID:           common.SeriesID(2),
+						EntityValues: []byte("test2"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal():    convert.Int64ToBytes(int64(100)),
+						fieldKeyServiceName.Marshal(): []byte("svc2"),
+					},
 				},
 				{
-					ID:           common.SeriesID(3),
-					EntityValues: []byte("test3"),
+					Key: index.Series{
+						ID:           common.SeriesID(3),
+						EntityValues: []byte("test3"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal():    convert.Int64ToBytes(int64(500)),
+						fieldKeyServiceName.Marshal(): nil,
+					},
+				},
+			},
+		},
+		{
+			term:       [][]byte{[]byte("test1"), []byte("test2"), []byte("test3"), []byte("foo")},
+			projection: []index.FieldKey{fieldKeyDuration},
+			want: []index.SeriesDocument{
+				{
+					Key: index.Series{
+						ID:           common.SeriesID(1),
+						EntityValues: []byte("test1"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal(): nil,
+					},
+				},
+				{
+					Key: index.Series{
+						ID:           common.SeriesID(2),
+						EntityValues: []byte("test2"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal(): convert.Int64ToBytes(int64(100)),
+					},
+				},
+				{
+					Key: index.Series{
+						ID:           common.SeriesID(3),
+						EntityValues: []byte("test3"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal(): convert.Int64ToBytes(int64(500)),
+					},
+				},
+			},
+		},
+		{
+			term:       [][]byte{[]byte("test1"), []byte("test2"), []byte("test3"), []byte("foo")},
+			projection: []index.FieldKey{fieldKeyServiceName},
+			want: []index.SeriesDocument{
+				{
+					Key: index.Series{
+						ID:           common.SeriesID(1),
+						EntityValues: []byte("test1"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyServiceName.Marshal(): nil,
+					},
+				},
+				{
+					Key: index.Series{
+						ID:           common.SeriesID(2),
+						EntityValues: []byte("test2"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyServiceName.Marshal(): []byte("svc2"),
+					},
+				},
+				{
+					Key: index.Series{
+						ID:           common.SeriesID(3),
+						EntityValues: []byte("test3"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyServiceName.Marshal(): nil,
+					},
 				},
 			},
 		},
@@ -92,17 +190,17 @@ func TestStore_Search(t *testing.T) {
 			})
 			name += string(term) + "-"
 		}
-		t.Run(name, func(_ *testing.T) {
-			got, err := s.Search(context.Background(), matchers)
-			tester.NoError(err)
-			tester.Equal(tt.want, got)
+		t.Run(name, func(t *testing.T) {
+			got, err := s.Search(context.Background(), matchers, tt.projection)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestStore_SearchWildcard(t *testing.T) {
-	tester := assert.New(t)
-	path, fn := setUp(require.New(t))
+	tester := require.New(t)
+	path, fn := setUp(tester)
 	s, err := NewStore(StoreOpts{
 		Path:   path,
 		Logger: logger.GetLogger("test"),
@@ -118,67 +216,78 @@ func TestStore_SearchWildcard(t *testing.T) {
 
 	// Test cases
 	tests := []struct {
-		wildcard []byte
-		want     []index.Series
+		wildcard   []byte
+		projection []index.FieldKey
+		want       []index.SeriesDocument
 	}{
 		{
 			wildcard: []byte("test*"),
-			want: []index.Series{
+			want: []index.SeriesDocument{
 				{
-					ID:           common.SeriesID(1),
-					EntityValues: []byte("test1"),
+					Key: index.Series{
+						ID:           common.SeriesID(1),
+						EntityValues: []byte("test1"),
+					},
 				},
 				{
-					ID:           common.SeriesID(2),
-					EntityValues: []byte("test2"),
+					Key: index.Series{
+						ID:           common.SeriesID(2),
+						EntityValues: []byte("test2"),
+					},
 				},
 				{
-					ID:           common.SeriesID(3),
-					EntityValues: []byte("test3"),
+					Key: index.Series{
+						ID:           common.SeriesID(3),
+						EntityValues: []byte("test3"),
+					},
 				},
 			},
 		},
 		{
 			wildcard: []byte("*2"),
-			want: []index.Series{
+			want: []index.SeriesDocument{
 				{
-					ID:           common.SeriesID(2),
-					EntityValues: []byte("test2"),
+					Key: index.Series{
+						ID:           common.SeriesID(2),
+						EntityValues: []byte("test2"),
+					},
 				},
 			},
 		},
 		{
 			wildcard: []byte("t*st1"),
-			want: []index.Series{
+			want: []index.SeriesDocument{
 				{
-					ID:           common.SeriesID(1),
-					EntityValues: []byte("test1"),
+					Key: index.Series{
+						ID:           common.SeriesID(1),
+						EntityValues: []byte("test1"),
+					},
 				},
 			},
 		},
 		{
 			wildcard: []byte("foo*"),
-			want:     []index.Series{},
+			want:     []index.SeriesDocument{},
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.wildcard), func(_ *testing.T) {
+		t.Run(string(tt.wildcard), func(t *testing.T) {
 			got, err := s.Search(context.Background(), []index.SeriesMatcher{
 				{
 					Type:  index.SeriesMatcherTypeWildcard,
 					Match: tt.wildcard,
 				},
-			})
-			tester.NoError(err)
-			tester.ElementsMatch(tt.want, got)
+			}, tt.projection)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.want, got)
 		})
 	}
 }
 
 func TestStore_SearchPrefix(t *testing.T) {
-	tester := assert.New(t)
-	path, fn := setUp(require.New(t))
+	tester := require.New(t)
+	path, fn := setUp(tester)
 	s, err := NewStore(StoreOpts{
 		Path:   path,
 		Logger: logger.GetLogger("test"),
@@ -194,47 +303,54 @@ func TestStore_SearchPrefix(t *testing.T) {
 
 	// Test cases
 	tests := []struct {
-		prefix []byte
-		want   []index.Series
+		prefix     []byte
+		projection []index.FieldKey
+		want       []index.SeriesDocument
 	}{
 		{
 			prefix: []byte("test"),
-			want: []index.Series{
+			want: []index.SeriesDocument{
 				{
-					ID:           common.SeriesID(1),
-					EntityValues: []byte("test1"),
+					Key: index.Series{
+						ID:           common.SeriesID(1),
+						EntityValues: []byte("test1"),
+					},
 				},
 				{
-					ID:           common.SeriesID(2),
-					EntityValues: []byte("test2"),
+					Key: index.Series{
+						ID:           common.SeriesID(2),
+						EntityValues: []byte("test2"),
+					},
 				},
 				{
-					ID:           common.SeriesID(3),
-					EntityValues: []byte("test3"),
+					Key: index.Series{
+						ID:           common.SeriesID(3),
+						EntityValues: []byte("test3"),
+					},
 				},
 			},
 		},
 		{
 			prefix: []byte("foo"),
-			want:   []index.Series{},
+			want:   []index.SeriesDocument{},
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.prefix), func(_ *testing.T) {
+		t.Run(string(tt.prefix), func(t *testing.T) {
 			got, err := s.Search(context.Background(), []index.SeriesMatcher{
 				{
 					Type:  index.SeriesMatcherTypePrefix,
 					Match: tt.prefix,
 				},
-			})
-			tester.NoError(err)
-			tester.ElementsMatch(tt.want, got)
+			}, tt.projection)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.want, got)
 		})
 	}
 }
 
-func setupData(tester *assert.Assertions, s index.SeriesStore) {
+func setupData(tester *require.Assertions, s index.SeriesStore) {
 	series1 := index.Document{
 		DocID:        1,
 		EntityValues: []byte("test1"),
@@ -243,11 +359,30 @@ func setupData(tester *assert.Assertions, s index.SeriesStore) {
 	series2 := index.Document{
 		DocID:        2,
 		EntityValues: []byte("test2"),
+		Fields: []index.Field{
+			{
+				Key:   fieldKeyDuration,
+				Term:  convert.Int64ToBytes(int64(100)),
+				Store: true,
+			},
+			{
+				Key:   fieldKeyServiceName,
+				Term:  []byte("svc2"),
+				Store: true,
+			},
+		},
 	}
 
 	series3 := index.Document{
 		DocID:        3,
 		EntityValues: []byte("test3"),
+		Fields: []index.Field{
+			{
+				Key:   fieldKeyDuration,
+				Term:  convert.Int64ToBytes(int64(500)),
+				Store: true,
+			},
+		},
 	}
 	tester.NoError(s.Batch(index.Batch{
 		Documents: []index.Document{series1, series2, series3, series3},

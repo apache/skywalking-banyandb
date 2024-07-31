@@ -59,6 +59,7 @@ var (
 	defaultUpper            = convert.Uint64ToBytes(math.MaxUint64)
 	defaultLower            = convert.Uint64ToBytes(0)
 	defaultRangePreloadSize = 1000
+	defaultProjection       = []string{docIDField}
 )
 
 var analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
@@ -119,6 +120,9 @@ func (s *store) Batch(batch index.Batch) error {
 			if !f.NoSort {
 				tf.StoreValue().Sortable()
 			}
+			if f.Store {
+				tf.StoreValue()
+			}
 			if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
 				tf = tf.WithAnalyzer(analyzers[f.Key.Analyzer])
 			}
@@ -169,7 +173,9 @@ func (s *store) Close() error {
 	return s.writer.Close()
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort, preLoadSize int) (iter index.FieldIterator[*index.ItemRef], err error) {
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
+	order modelv1.Sort, preLoadSize int,
+) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
 		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
@@ -221,7 +227,6 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		reader:    reader,
 		sortedKey: sortedKey,
 		size:      preLoadSize,
-		sid:       fieldKey.SeriesID,
 		closer:    s.closer,
 	}
 	return result, nil
@@ -247,13 +252,13 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader, nil)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, defaultProjection)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
 	list = roaring.NewPostingList()
 	for iter.Next() {
-		list.Insert(iter.Val().docID)
+		list.Insert(iter.Val().DocID)
 	}
 	return list, err
 }
@@ -280,13 +285,13 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader, nil)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, defaultProjection)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
 	list := roaring.NewPostingList()
 	for iter.Next() {
-		list.Insert(iter.Val().docID)
+		list.Insert(iter.Val().DocID)
 	}
 	return list, err
 }
@@ -309,28 +314,25 @@ func (s *store) SizeOnDisk() int64 {
 	return int64(bytes)
 }
 
-type searchResult struct {
-	values    map[string][]byte
-	seriesID  common.SeriesID
-	docID     uint64
-	timestamp int64
-}
-
 type blugeMatchIterator struct {
-	delegated search.DocumentMatchIterator
-	err       error
-	closer    io.Closer
-	current   searchResult
+	delegated        search.DocumentMatchIterator
+	err              error
+	closer           io.Closer
+	needToLoadFields []string
+	current          index.DocumentResult
 }
 
-func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer, needToLoadFields []string) blugeMatchIterator {
+func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer,
+	needToLoadFields []string,
+) blugeMatchIterator {
 	bmi := blugeMatchIterator{
-		delegated: delegated,
-		closer:    closer,
-		current:   searchResult{values: make(map[string][]byte, len(needToLoadFields))},
+		delegated:        delegated,
+		closer:           closer,
+		needToLoadFields: needToLoadFields,
+		current:          index.DocumentResult{Values: make(map[string][]byte, len(needToLoadFields))},
 	}
-	for i := range needToLoadFields {
-		bmi.current.values[needToLoadFields[i]] = nil
+	for _, f := range needToLoadFields {
+		bmi.current.Values[f] = nil
 	}
 	return bmi
 }
@@ -345,25 +347,32 @@ func (bmi *blugeMatchIterator) Next() bool {
 		bmi.err = io.EOF
 		return false
 	}
-	for i := range bmi.current.values {
-		bmi.current.values[i] = nil
+	for i := range bmi.current.Values {
+		bmi.current.Values[i] = nil
+	}
+	bmi.current.DocID = 0
+	bmi.current.SeriesID = 0
+	bmi.current.Timestamp = 0
+	bmi.current.SortedValue = nil
+	if len(match.SortValue) > 0 {
+		bmi.current.SortedValue = match.SortValue[0]
 	}
 	err := match.VisitStoredFields(func(field string, value []byte) bool {
 		switch field {
 		case docIDField:
-			bmi.current.docID = convert.BytesToUint64(value)
+			bmi.current.DocID = convert.BytesToUint64(value)
 		case seriesIDField:
-			bmi.current.seriesID = common.SeriesID(convert.BytesToUint64(value))
+			bmi.current.SeriesID = common.SeriesID(convert.BytesToUint64(value))
 		case timestampField:
 			ts, err := bluge.DecodeDateTime(value)
 			if err != nil {
 				bmi.err = err
 				return false
 			}
-			bmi.current.timestamp = ts.UnixNano()
+			bmi.current.Timestamp = ts.UnixNano()
 		default:
-			if _, ok := bmi.current.values[field]; ok {
-				bmi.current.values[field] = bytes.Clone(value)
+			if _, ok := bmi.current.Values[field]; ok {
+				bmi.current.Values[field] = bytes.Clone(value)
 			}
 		}
 		return true
@@ -372,7 +381,7 @@ func (bmi *blugeMatchIterator) Next() bool {
 	return bmi.err == nil
 }
 
-func (bmi *blugeMatchIterator) Val() searchResult {
+func (bmi *blugeMatchIterator) Val() index.DocumentResult {
 	return bmi.current
 }
 

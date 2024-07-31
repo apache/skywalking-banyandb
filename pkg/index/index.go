@@ -55,6 +55,7 @@ type Field struct {
 	Term   []byte
 	Key    FieldKey
 	NoSort bool
+	Store  bool
 }
 
 // RangeOpts contains options to performance a continuous scan.
@@ -92,17 +93,18 @@ func (r RangeOpts) Between(value []byte) int {
 	return 0
 }
 
-// ItemRef represents a reference to an item.
-type ItemRef struct {
-	Term      []byte
-	SeriesID  common.SeriesID
-	DocID     uint64
-	Timestamp int64
+// DocumentResult represents a document in a index.
+type DocumentResult struct {
+	Values      map[string][]byte
+	SortedValue []byte
+	SeriesID    common.SeriesID
+	DocID       uint64
+	Timestamp   int64
 }
 
 // SortedField returns the value of the sorted field.
-func (ir ItemRef) SortedField() []byte {
-	return ir.Term
+func (ir DocumentResult) SortedField() []byte {
+	return ir.SortedValue
 }
 
 // FieldIterator allows iterating over a field's posting values.
@@ -121,8 +123,8 @@ func (i *dummyIterator) Next() bool {
 	return false
 }
 
-func (i *dummyIterator) Val() *ItemRef {
-	return &ItemRef{}
+func (i *dummyIterator) Val() *DocumentResult {
+	return &DocumentResult{}
 }
 
 func (i *dummyIterator) Close() error {
@@ -152,8 +154,8 @@ type Writer interface {
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator[*ItemRef], err error)
-	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*ItemRef], error)
+	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator[*DocumentResult], err error)
+	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
 }
 
 // Searcher allows searching a field either by its key or by its key and term.
@@ -183,11 +185,17 @@ func (s Series) String() string {
 	return fmt.Sprintf("%s:%d", s.EntityValues, s.ID)
 }
 
+// SeriesDocument represents a series document in a index.
+type SeriesDocument struct {
+	Fields map[string][]byte
+	Key    Series
+}
+
 // SeriesStore is an abstract of a series repository.
 type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
-	Search(context.Context, []SeriesMatcher) ([]Series, error)
+	Search(context.Context, []SeriesMatcher, []FieldKey) ([]SeriesDocument, error)
 }
 
 // SeriesMatcherType represents the type of series matcher.
