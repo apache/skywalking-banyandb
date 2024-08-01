@@ -68,7 +68,7 @@ type SupplyTSDB[T TSTable] func() T
 // IndexDB is the interface of index database.
 type IndexDB interface {
 	Write(docs index.Documents) error
-	Search(ctx context.Context, series []*pbv1.Series, query *inverted.BlugeQuery, filter index.Filter, order *model.OrderBy, preloadSize int) (pbv1.SeriesList, error)
+	Search(ctx context.Context, series []*pbv1.Series, query *inverted.Query, order *model.OrderBy, preloadSize int) (pbv1.SeriesList, error)
 }
 
 // TSDB allows listing and getting shard details.

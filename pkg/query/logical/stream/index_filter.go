@@ -1,30 +1,11 @@
-// Licensed to Apache Software Foundation (ASF) under one or more contributor
-// license agreements. See the NOTICE file distributed with
-// this work for additional information regarding copyright
-// ownership. Apache Software Foundation (ASF) licenses this file to you under
-// the Apache License, Version 2.0 (the "License"); you may
-// not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
-
-package inverted
+package stream
 
 import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"math"
 	"strings"
 
-	"github.com/blugelabs/bluge"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -33,110 +14,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-var (
-	minTerm                     = string([][]byte{convert.Int64ToBytes(math.MinInt64)}[0])
-	maxTerm                     = string([][]byte{convert.Int64ToBytes(math.MaxInt64)}[0])
-	errInvalidLogicalExpression = errors.New("invalid logical expression")
-)
-
-// GlobalIndexError represents a index rule is "global".
-// The local filter can't handle it.
-type GlobalIndexError struct {
-	IndexRule *databasev1.IndexRule
-	Expr      logical.LiteralExpr
-}
-
-func (g GlobalIndexError) Error() string { return g.IndexRule.String() }
-
-// BlugeQuery is a wrapper for bluge.Query.
-type BlugeQuery struct {
-	bluge.Query
-}
-
-// BuildLocalQuery returns blugeQuery for local indices.
-func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int,
-	entity []*modelv1.TagValue,
-) (*BlugeQuery, [][]*modelv1.TagValue, bool, error) {
-	if criteria == nil {
-		return nil, [][]*modelv1.TagValue{entity}, false, nil
-	}
-	switch criteria.GetExp().(type) {
-	case *modelv1.Criteria_Condition:
-		cond := criteria.GetCondition()
-		expr, parsedEntity, err := parseExprOrEntity(entityDict, entity, cond)
-		if err != nil {
-			return nil, nil, false, err
-		}
-		if parsedEntity != nil {
-			return nil, parsedEntity, false, nil
-		}
-		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
-			return parseConditionToQuery(cond, indexRule, expr, entity)
-		}
-		return nil, nil, false, errors.Wrapf(logical.ErrUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
-	case *modelv1.Criteria_Le:
-		le := criteria.GetLe()
-		if le.GetLeft() == nil && le.GetRight() == nil {
-			return nil, nil, false, errors.WithMessagef(errInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
-		}
-		if le.GetLeft() == nil {
-			return BuildLocalQuery(le.Right, schema, entityDict, entity)
-		}
-		if le.GetRight() == nil {
-			return BuildLocalQuery(le.Left, schema, entityDict, entity)
-		}
-		left, leftEntities, leftIsMatchAllQuery, err := BuildLocalQuery(le.Left, schema, entityDict, entity)
-		if err != nil {
-			return nil, nil, false, err
-		}
-		right, rightEntities, rightIsMatchAllQuery, err := BuildLocalQuery(le.Right, schema, entityDict, entity)
-		if err != nil {
-			return nil, nil, false, err
-		}
-		entities := parseEntities(le.Op, entity, leftEntities, rightEntities)
-		if entities == nil {
-			return nil, nil, false, nil
-		}
-		if left == nil && right == nil {
-			return nil, entities, false, nil
-		}
-		if leftIsMatchAllQuery && rightIsMatchAllQuery {
-			return &BlugeQuery{bluge.NewMatchAllQuery()}, entities, true, nil
-		}
-		switch le.Op {
-		case modelv1.LogicalExpression_LOGICAL_OP_AND:
-			query := bluge.NewBooleanQuery()
-			if left != nil {
-				query.AddMust(left.Query)
-			}
-			if right != nil {
-				query.AddMust(right.Query)
-			}
-			return &BlugeQuery{query}, entities, false, nil
-		case modelv1.LogicalExpression_LOGICAL_OP_OR:
-			if leftIsMatchAllQuery || rightIsMatchAllQuery {
-				return &BlugeQuery{bluge.NewMatchAllQuery()}, entities, true, nil
-			}
-			query := bluge.NewBooleanQuery()
-			query.SetMinShould(1)
-			if left != nil {
-				query.AddShould(left.Query)
-			}
-			if right != nil {
-				query.AddShould(right.Query)
-			}
-			return &BlugeQuery{query}, entities, false, nil
-		}
-	}
-	return nil, nil, false, logical.ErrInvalidCriteriaType
-}
-
-// BuildLocalFilter returns a new index.Filter for local indices.
-func BuildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
+// buildLocalFilter returns a new index.Filter for local indices.
+func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 	entityDict map[string]int, entity []*modelv1.TagValue,
 ) (index.Filter, [][]*modelv1.TagValue, error) {
 	if criteria == nil {
@@ -145,7 +27,7 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
-		expr, parsedEntity, err := parseExprOrEntity(entityDict, entity, cond)
+		expr, parsedEntity, err := logical.ParseExprOrEntity(entityDict, entity, cond)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -159,23 +41,23 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
 		if le.GetLeft() == nil && le.GetRight() == nil {
-			return nil, nil, errors.WithMessagef(errInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
+			return nil, nil, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
-			return BuildLocalFilter(le.Right, schema, entityDict, entity)
+			return buildLocalFilter(le.Right, schema, entityDict, entity)
 		}
 		if le.GetRight() == nil {
-			return BuildLocalFilter(le.Left, schema, entityDict, entity)
+			return buildLocalFilter(le.Left, schema, entityDict, entity)
 		}
-		left, leftEntities, err := BuildLocalFilter(le.Left, schema, entityDict, entity)
+		left, leftEntities, err := buildLocalFilter(le.Left, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
-		right, rightEntities, err := BuildLocalFilter(le.Right, schema, entityDict, entity)
+		right, rightEntities, err := buildLocalFilter(le.Right, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
-		entities := parseEntities(le.Op, entity, leftEntities, rightEntities)
+		entities := logical.ParseEntities(le.Op, entity, leftEntities, rightEntities)
 		if entities == nil {
 			return nil, nil, nil
 		}
@@ -200,68 +82,6 @@ func BuildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 		}
 	}
 	return nil, nil, logical.ErrInvalidCriteriaType
-}
-
-func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexRule,
-	expr logical.LiteralExpr, entity []*modelv1.TagValue,
-) (*BlugeQuery, [][]*modelv1.TagValue, bool, error) {
-	field := string(convert.Uint32ToBytes(indexRule.Metadata.Id))
-	b := expr.Bytes()
-	if len(b) < 1 {
-		return &BlugeQuery{bluge.NewMatchAllQuery()}, [][]*modelv1.TagValue{entity}, true, nil
-	}
-	term := string(b[0])
-	switch cond.Op {
-	case modelv1.Condition_BINARY_OP_GT:
-		return &BlugeQuery{bluge.NewTermRangeInclusiveQuery(term, maxTerm, false, false).SetField(field)}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_GE:
-		return &BlugeQuery{bluge.NewTermRangeQuery(term, maxTerm).SetField(field)}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_LT:
-		return &BlugeQuery{bluge.NewTermRangeInclusiveQuery(minTerm, term, false, false).SetField(field)}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_LE:
-		return &BlugeQuery{bluge.NewTermRangeInclusiveQuery(minTerm, term, false, true).SetField(field)}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_EQ:
-		return &BlugeQuery{bluge.NewTermQuery(term).SetField(field)}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_MATCH:
-		return &BlugeQuery{bluge.NewMatchQuery(term).SetField(field).SetAnalyzer(Analyzers[indexRule.Analyzer])}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_NE:
-		query := bluge.NewBooleanQuery()
-		query.AddMustNot(bluge.NewTermQuery(term).SetField(field))
-		return &BlugeQuery{query}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_HAVING:
-		bb := expr.Bytes()
-		query := bluge.NewBooleanQuery()
-		for _, b := range bb {
-			query.AddMust(bluge.NewTermQuery(string(b)).SetField(field))
-		}
-		return &BlugeQuery{query}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_NOT_HAVING:
-		bb := expr.Bytes()
-		subQuery := bluge.NewBooleanQuery()
-		for _, b := range bb {
-			subQuery.AddMust(bluge.NewTermQuery(string(b)).SetField(field))
-		}
-		query := bluge.NewBooleanQuery()
-		return &BlugeQuery{query.AddMustNot(subQuery)}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_IN:
-		bb := expr.Bytes()
-		query := bluge.NewBooleanQuery()
-		query.SetMinShould(1)
-		for _, b := range bb {
-			query.AddShould(bluge.NewTermQuery(string(b)).SetField(field))
-		}
-		return &BlugeQuery{query}, [][]*modelv1.TagValue{entity}, false, nil
-	case modelv1.Condition_BINARY_OP_NOT_IN:
-		bb := expr.Bytes()
-		subQuery := bluge.NewBooleanQuery()
-		subQuery.SetMinShould(1)
-		for _, b := range bb {
-			subQuery.AddShould(bluge.NewTermQuery(string(b)).SetField(field))
-		}
-		query := bluge.NewBooleanQuery()
-		return &BlugeQuery{query.AddMustNot(subQuery)}, [][]*modelv1.TagValue{entity}, false, nil
-	}
-	return nil, nil, false, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index filter parses %v", cond)
 }
 
 func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.IndexRule,
@@ -338,138 +158,6 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 		return newNot(indexRule, or), [][]*modelv1.TagValue{entity}, nil
 	}
 	return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index filter parses %v", cond)
-}
-
-func parseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, cond *modelv1.Condition) (logical.LiteralExpr, [][]*modelv1.TagValue, error) {
-	entityIdx, ok := entityDict[cond.Name]
-	if ok && cond.Op != modelv1.Condition_BINARY_OP_EQ && cond.Op != modelv1.Condition_BINARY_OP_IN {
-		return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "tag belongs to the entity only supports EQ or IN operation in condition(%v)", cond)
-	}
-	switch v := cond.Value.Value.(type) {
-	case *modelv1.TagValue_Str:
-		if ok {
-			parsedEntity := make([]*modelv1.TagValue, len(entity))
-			copy(parsedEntity, entity)
-			parsedEntity[entityIdx] = cond.Value
-			return nil, [][]*modelv1.TagValue{parsedEntity}, nil
-		}
-		return logical.Str(v.Str.GetValue()), nil, nil
-	case *modelv1.TagValue_StrArray:
-		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
-			entities := make([][]*modelv1.TagValue, len(v.StrArray.Value))
-			for i, va := range v.StrArray.Value {
-				parsedEntity := make([]*modelv1.TagValue, len(entity))
-				copy(parsedEntity, entity)
-				parsedEntity[entityIdx] = &modelv1.TagValue{
-					Value: &modelv1.TagValue_Str{
-						Str: &modelv1.Str{
-							Value: va,
-						},
-					},
-				}
-				entities[i] = parsedEntity
-			}
-			return nil, entities, nil
-		}
-		return logical.NewStrArrLiteral(v.StrArray.GetValue()), nil, nil
-	case *modelv1.TagValue_Int:
-		if ok {
-			parsedEntity := make([]*modelv1.TagValue, len(entity))
-			copy(parsedEntity, entity)
-			parsedEntity[entityIdx] = cond.Value
-			return nil, [][]*modelv1.TagValue{parsedEntity}, nil
-		}
-		return logical.NewInt64Literal(v.Int.GetValue()), nil, nil
-	case *modelv1.TagValue_IntArray:
-		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
-			entities := make([][]*modelv1.TagValue, len(v.IntArray.Value))
-			for i, va := range v.IntArray.Value {
-				parsedEntity := make([]*modelv1.TagValue, len(entity))
-				copy(parsedEntity, entity)
-				parsedEntity[entityIdx] = &modelv1.TagValue{
-					Value: &modelv1.TagValue_Int{
-						Int: &modelv1.Int{
-							Value: va,
-						},
-					},
-				}
-				entities[i] = parsedEntity
-			}
-			return nil, entities, nil
-		}
-		return logical.NewInt64ArrLiteral(v.IntArray.GetValue()), nil, nil
-	case *modelv1.TagValue_Null:
-		return logical.NewNullLiteral(), nil, nil
-	}
-	return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionValue, "index filter parses %v", cond)
-}
-
-func parseEntities(op modelv1.LogicalExpression_LogicalOp, input []*modelv1.TagValue, left, right [][]*modelv1.TagValue) [][]*modelv1.TagValue {
-	count := len(input)
-	result := make([]*modelv1.TagValue, count)
-	anyEntity := func(entities [][]*modelv1.TagValue) bool {
-		for _, entity := range entities {
-			for _, entry := range entity {
-				if entry != pbv1.AnyTagValue {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	leftAny := anyEntity(left)
-	rightAny := anyEntity(right)
-
-	mergedEntities := make([][]*modelv1.TagValue, 0, len(left)+len(right))
-
-	switch op {
-	case modelv1.LogicalExpression_LOGICAL_OP_AND:
-		if leftAny && !rightAny {
-			return right
-		}
-		if !leftAny && rightAny {
-			return left
-		}
-		mergedEntities = append(mergedEntities, left...)
-		mergedEntities = append(mergedEntities, right...)
-		for i := 0; i < count; i++ {
-			entry := pbv1.AnyTagValue
-			for j := 0; j < len(mergedEntities); j++ {
-				e := mergedEntities[j][i]
-				if e == pbv1.AnyTagValue {
-					continue
-				}
-				if entry == pbv1.AnyTagValue {
-					entry = e
-				} else if pbv1.MustCompareTagValue(entry, e) != 0 {
-					return nil
-				}
-			}
-			result[i] = entry
-		}
-	case modelv1.LogicalExpression_LOGICAL_OP_OR:
-		if leftAny {
-			return left
-		}
-		if rightAny {
-			return right
-		}
-		mergedEntities = append(mergedEntities, left...)
-		mergedEntities = append(mergedEntities, right...)
-		for i := 0; i < count; i++ {
-			entry := pbv1.AnyTagValue
-			for j := 0; j < len(mergedEntities); j++ {
-				e := mergedEntities[j][i]
-				if entry == pbv1.AnyTagValue {
-					entry = e
-				} else if pbv1.MustCompareTagValue(entry, e) != 0 {
-					return mergedEntities
-				}
-			}
-			result[i] = entry
-		}
-	}
-	return [][]*modelv1.TagValue{result}
 }
 
 type fieldKey struct {

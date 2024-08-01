@@ -20,11 +20,8 @@ package index
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
-
-	"github.com/blugelabs/bluge"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -183,15 +180,6 @@ type Series struct {
 
 func (s Series) String() string {
 	return fmt.Sprintf("%s:%d", s.EntityValues, s.ID)
-}
-
-// SeriesStore is an abstract of a series repository.
-type SeriesStore interface {
-	Store
-	// Search returns a list of series that match the given matchers.
-	Search(context.Context, []SeriesMatcher) ([]Series, error)
-	// Execute returns a posting list that matches the given query.
-	Execute(bluge.Query) (posting.List, error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

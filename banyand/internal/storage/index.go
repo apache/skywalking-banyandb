@@ -43,7 +43,7 @@ func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1
 }
 
 type seriesIndex struct {
-	store index.SeriesStore
+	store *inverted.Store
 	l     *logger.Logger
 }
 
@@ -172,8 +172,8 @@ func convertIndexSeriesToSeriesList(indexSeries []index.Series) (pbv1.SeriesList
 	return seriesList, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQuery *inverted.BlugeQuery,
-	filter index.Filter, order *model.OrderBy, preloadSize int,
+func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series,
+	blugeQuery *inverted.Query, order *model.OrderBy, preloadSize int,
 ) (sl pbv1.SeriesList, err error) {
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
@@ -197,7 +197,7 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQu
 		func() {
 			if tracer != nil {
 				span, _ := tracer.StartSpan(ctx, "filter")
-				span.Tag("exp", filter.String())
+				span.Tag("exp", blugeQuery.String())
 				defer func() {
 					if err != nil {
 						span.Error(err)
@@ -208,7 +208,7 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, blugeQu
 					span.Stop()
 				}()
 			}
-			if plFilter, err = s.store.Execute(blugeQuery); err != nil {
+			if plFilter, err = s.store.Execute(ctx, blugeQuery); err != nil {
 				return
 			}
 			if plFilter == nil {

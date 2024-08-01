@@ -234,7 +234,7 @@ func TestStore_SearchPrefix(t *testing.T) {
 	}
 }
 
-func setupData(tester *assert.Assertions, s index.SeriesStore) {
+func setupData(tester *assert.Assertions, s *Store) {
 	series1 := index.Document{
 		DocID:        1,
 		EntityValues: []byte("test1"),

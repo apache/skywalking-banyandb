@@ -166,17 +166,17 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error
 func parseExpr(value *modelv1.TagValue) (ComparableExpr, error) {
 	switch v := value.Value.(type) {
 	case *modelv1.TagValue_Str:
-		return &StrLiteral{v.Str.GetValue()}, nil
+		return &strLiteral{v.Str.GetValue()}, nil
 	case *modelv1.TagValue_StrArray:
-		return &StrArrLiteral{
+		return &strArrLiteral{
 			arr: v.StrArray.GetValue(),
 		}, nil
 	case *modelv1.TagValue_Int:
-		return &Int64Literal{
+		return &int64Literal{
 			int64: v.Int.GetValue(),
 		}, nil
 	case *modelv1.TagValue_IntArray:
-		return &Int64ArrLiteral{
+		return &int64ArrLiteral{
 			arr: v.IntArray.GetValue(),
 		}, nil
 	case *modelv1.TagValue_Null:

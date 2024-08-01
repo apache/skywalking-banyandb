@@ -37,6 +37,7 @@ type Plan interface {
 // Expr represents a predicate in criteria.
 type Expr interface {
 	fmt.Stringer
+	Elements() []string
 	dataType() int32
 	equal(Expr) bool
 }

@@ -30,7 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
@@ -38,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -523,7 +523,7 @@ func (qr *queryResult) mergeByTimestamp() *model.StreamResult {
 func indexSearch(sqo model.StreamQueryOptions,
 	tabs []*tsTable, seriesList pbv1.SeriesList,
 ) (posting.List, error) {
-	if sqo.Filter == nil || sqo.Filter == inverted.ENode {
+	if sqo.Filter == nil || sqo.Filter == logicalstream.ENode {
 		return nil, nil
 	}
 	result := roaring.NewPostingList()

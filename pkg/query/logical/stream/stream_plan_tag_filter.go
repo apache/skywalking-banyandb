@@ -26,7 +26,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
@@ -56,7 +55,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		entity[idx] = pbv1.AnyTagValue
 	}
 	var err error
-	ctx.filter, ctx.entities, err = inverted.BuildLocalFilter(uis.criteria, s, entityDict, entity)
+	ctx.filter, ctx.entities, err = buildLocalFilter(uis.criteria, s, entityDict, entity)
 	if err != nil {
 		return nil, err
 	}
