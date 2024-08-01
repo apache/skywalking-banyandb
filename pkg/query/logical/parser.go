@@ -21,7 +21,7 @@ func ParseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, co
 			parsedEntity[entityIdx] = cond.Value
 			return nil, [][]*modelv1.TagValue{parsedEntity}, nil
 		}
-		return Str(v.Str.GetValue()), nil, nil
+		return str(v.Str.GetValue()), nil, nil
 	case *modelv1.TagValue_StrArray:
 		if ok && cond.Op == modelv1.Condition_BINARY_OP_IN {
 			entities := make([][]*modelv1.TagValue, len(v.StrArray.Value))

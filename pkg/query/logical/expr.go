@@ -34,16 +34,16 @@ type TagRef struct {
 	Spec *TagSpec
 }
 
-// equal reports whether f and expr have the same name and data type.
-func (f *TagRef) equal(expr Expr) bool {
+// Equal reports whether f and expr have the same name and data type.
+func (f *TagRef) Equal(expr Expr) bool {
 	if other, ok := expr.(*TagRef); ok {
 		return other.Tag.GetTagName() == f.Tag.GetTagName() && other.Spec.Spec.GetType() == f.Spec.Spec.GetType()
 	}
 	return false
 }
 
-// dataType shows the type of the tag's value.
-func (f *TagRef) dataType() int32 {
+// DataType shows the type of the tag's value.
+func (f *TagRef) DataType() int32 {
 	if f.Spec == nil {
 		panic("should be resolved first")
 	}
@@ -95,16 +95,16 @@ func (f *FieldRef) Elements() []string {
 	return []string{fmt.Sprintf("#%s<%s>", f.Spec.Spec.GetName(), f.Spec.Spec.GetFieldType().String())}
 }
 
-// dataType shows the type of the filed's value.
-func (f *FieldRef) dataType() int32 {
+// DataType shows the type of the filed's value.
+func (f *FieldRef) DataType() int32 {
 	if f.Spec == nil {
 		panic("should be resolved first")
 	}
 	return int32(f.Spec.Spec.GetFieldType())
 }
 
-// equal reports whether f and expr have the same name and data type.
-func (f *FieldRef) equal(expr Expr) bool {
+// Equal reports whether f and expr have the same name and data type.
+func (f *FieldRef) Equal(expr Expr) bool {
 	if other, ok := expr.(*FieldRef); ok {
 		return other.Field.Name == f.Field.Name && other.Spec.Spec.GetFieldType() == f.Spec.Spec.GetFieldType()
 	}

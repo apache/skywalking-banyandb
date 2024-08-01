@@ -38,8 +38,8 @@ type Plan interface {
 type Expr interface {
 	fmt.Stringer
 	Elements() []string
-	dataType() int32
-	equal(Expr) bool
+	DataType() int32
+	Equal(Expr) bool
 }
 
 // LiteralExpr allows getting raw data represented as bytes.
@@ -51,7 +51,7 @@ type LiteralExpr interface {
 // ComparableExpr allows comparing Expr and Expr arrays.
 type ComparableExpr interface {
 	LiteralExpr
-	compare(LiteralExpr) (int, bool)
-	belongTo(LiteralExpr) bool
-	contains(LiteralExpr) bool
+	Compare(LiteralExpr) (int, bool)
+	BelongTo(LiteralExpr) bool
+	Contains(LiteralExpr) bool
 }
