@@ -240,9 +240,10 @@ func releaseBlockMetadataArray(bma *blockMetadataArray) {
 
 type timestampsMetadata struct {
 	dataBlock
-	min        int64
-	max        int64
-	encodeType encoding.EncodeType
+	min              int64
+	max              int64
+	elementIDsOffset uint64
+	encodeType       encoding.EncodeType
 }
 
 func (tm *timestampsMetadata) reset() {
@@ -250,6 +251,7 @@ func (tm *timestampsMetadata) reset() {
 	tm.min = 0
 	tm.max = 0
 	tm.encodeType = 0
+	tm.elementIDsOffset = 0
 }
 
 func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
@@ -257,6 +259,7 @@ func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
 	tm.min = src.min
 	tm.max = src.max
 	tm.encodeType = src.encodeType
+	tm.elementIDsOffset = src.elementIDsOffset
 }
 
 func (tm *timestampsMetadata) marshal(dst []byte) []byte {
@@ -264,20 +267,27 @@ func (tm *timestampsMetadata) marshal(dst []byte) []byte {
 	dst = encoding.Uint64ToBytes(dst, uint64(tm.min))
 	dst = encoding.Uint64ToBytes(dst, uint64(tm.max))
 	dst = append(dst, byte(tm.encodeType))
+	dst = encoding.VarUint64ToBytes(dst, tm.elementIDsOffset)
 	return dst
 }
 
 func (tm *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
 	src, err := tm.dataBlock.unmarshal(src)
 	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
+		return nil, fmt.Errorf("cannot unmarshal ts blockData: %w", err)
 	}
 	tm.min = int64(encoding.BytesToUint64(src))
 	src = src[8:]
 	tm.max = int64(encoding.BytesToUint64(src))
 	src = src[8:]
 	tm.encodeType = encoding.EncodeType(src[0])
-	return src[1:], nil
+	src = src[1:]
+	src, n, err := encoding.BytesToVarUint64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal ts offset: %w", err)
+	}
+	tm.elementIDsOffset = n
+	return src, nil
 }
 
 type elementIDsMetadata struct {

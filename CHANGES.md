@@ -10,6 +10,7 @@ Release Notes.
 - Move the series index into segment.
 - Swap the segment and the shard.
 - Move indexed values in a measure from data files to index files.
+- Merge elementIDs.bin and timestamps.bin into a single file.
 
 ### Features
 
