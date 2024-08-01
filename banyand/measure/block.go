@@ -380,25 +380,21 @@ func mustSeqReadTimestampsFrom(timestamps, versions []int64, tm *timestampsMetad
 
 func mustDecodeTimestampsWithVersions(timestamps, versions []int64, tm *timestampsMetadata, count int, path string, src []byte) ([]int64, []int64) {
 	var err error
-	if t := encoding.GetCommonType(tm.encodeType); t != encoding.EncodeTypeUnknown {
-		if tm.size < tm.versionOffset {
-			logger.Panicf("size %d must be greater than versionOffset %d", tm.size, tm.versionOffset)
-		}
-		timestamps, err = encoding.BytesToInt64List(timestamps, src[:tm.versionOffset], t, tm.min, count)
-		if err != nil {
-			logger.Panicf("%s: cannot unmarshal timestamps with versions: %v", path, err)
-		}
-		versions, err = encoding.BytesToInt64List(versions, src[tm.versionOffset:], tm.versionEncodeType, tm.versionFirst, count)
-		if err != nil {
-			logger.Panicf("%s: cannot unmarshal versions: %v", path, err)
-		}
-		return timestamps, versions
+	t := encoding.GetCommonType(tm.encodeType)
+	if t == encoding.EncodeTypeUnknown {
+		logger.Panicf("unexpected encodeType %d", tm.encodeType)
 	}
-	timestamps, err = encoding.BytesToInt64List(timestamps, src, tm.encodeType, tm.min, count)
+	if tm.size < tm.versionOffset {
+		logger.Panicf("size %d must be greater than versionOffset %d", tm.size, tm.versionOffset)
+	}
+	timestamps, err = encoding.BytesToInt64List(timestamps, src[:tm.versionOffset], t, tm.min, count)
 	if err != nil {
-		logger.Panicf("%s: cannot unmarshal timestamps: %v", path, err)
+		logger.Panicf("%s: cannot unmarshal timestamps with versions: %v", path, err)
 	}
-	versions = encoding.ExtendInt64ListCapacity(versions, count)
+	versions, err = encoding.BytesToInt64List(versions, src[tm.versionOffset:], tm.versionEncodeType, tm.versionFirst, count)
+	if err != nil {
+		logger.Panicf("%s: cannot unmarshal versions: %v", path, err)
+	}
 	return timestamps, versions
 }
 

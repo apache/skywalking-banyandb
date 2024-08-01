@@ -26,7 +26,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -128,8 +127,7 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 	bm.uncompressedSizeBytes = b.uncompressedSizeBytes()
 	bm.count = uint64(b.Len())
 
-	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, &ww.timestampsWriter)
-	mustWriteElementIDsTo(&bm.elementIDs, b.elementIDs, &ww.elementIDsWriter)
+	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, b.elementIDs, &ww.timestampsWriter)
 
 	for ti := range b.tagFamilies {
 		b.marshalTagFamily(b.tagFamilies[ti], bm, ww)
@@ -256,8 +254,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
 	b.reset()
 
-	b.timestamps = mustReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), p.timestamps)
-	b.elementIDs = mustReadElementIDsFrom(b.elementIDs, &bm.elementIDs, int(bm.count), p.elementIDs)
+	b.timestamps, b.elementIDs = mustReadTimestampsFrom(b.timestamps, b.elementIDs, &bm.timestamps, int(bm.count), p.timestamps)
 
 	_ = b.resizeTagFamilies(len(bm.tagProjection))
 	for i := range bm.tagProjection {
@@ -275,8 +272,7 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
 	b.reset()
 
-	b.timestamps = mustSeqReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
-	b.elementIDs = mustSeqReadElementIDsFrom(b.elementIDs, &bm.elementIDs, int(bm.count), &seqReaders.elementIDs)
+	b.timestamps, b.elementIDs = mustSeqReadTimestampsFrom(b.timestamps, b.elementIDs, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
 
 	_ = b.resizeTagFamilies(len(bm.tagFamilies))
 	keys := make([]string, 0, len(bm.tagFamilies))
@@ -298,71 +294,48 @@ func (b *block) sortTagFamilies() {
 	})
 }
 
-func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, timestampsWriter *writer) {
+func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, elementIDs []uint64, timestampsWriter *writer) {
 	tm.reset()
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf, tm.encodeType, tm.min = encoding.Int64ListToBytes(bb.Buf[:0], timestamps)
-	if len(bb.Buf) > maxTimestampsBlockSize {
-		logger.Panicf("too big block with timestamps: %d bytes; the maximum supported size is %d bytes", len(bb.Buf), maxTimestampsBlockSize)
-	}
 	tm.max = timestamps[len(timestamps)-1]
 	tm.offset = timestampsWriter.bytesWritten
-	tm.size = uint64(len(bb.Buf))
+	tm.elementIDsOffset = uint64(len(bb.Buf))
+	timestampsWriter.MustWrite(bb.Buf)
+	bb.Buf = encoding.VarUint64sToBytes(bb.Buf[:0], elementIDs)
+	tm.size = tm.elementIDsOffset + uint64(len(bb.Buf))
 	timestampsWriter.MustWrite(bb.Buf)
 }
 
-func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader fs.Reader) []int64 {
+func mustReadTimestampsFrom(timestamps []int64, elementIDs []uint64, tm *timestampsMetadata, count int, reader fs.Reader) ([]int64, []uint64) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
+	return mustDecodeTimestampsWithVersions(timestamps, elementIDs, tm, count, reader.Path(), bb.Buf)
+}
+
+func mustDecodeTimestampsWithVersions(timestamps []int64, elementIDs []uint64, tm *timestampsMetadata, count int, path string, src []byte) ([]int64, []uint64) {
+	if tm.size < tm.elementIDsOffset {
+		logger.Panicf("size %d must be greater than elementIDsOffset %d", tm.size, tm.elementIDsOffset)
+	}
 	var err error
-	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
+	timestamps, err = encoding.BytesToInt64List(timestamps, src[:tm.elementIDsOffset], tm.encodeType, tm.min, count)
 	if err != nil {
-		logger.Panicf("%s: cannot unmarshal timestamps: %v", reader.Path(), err)
+		logger.Panicf("%s: cannot unmarshal timestamps: %v", path, err)
 	}
-	return dst
-}
-
-func mustWriteElementIDsTo(em *elementIDsMetadata, elementIDs []uint64, elementIDsWriter *writer) {
-	em.reset()
-
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-	elementIDsByteSlice := make([][]byte, len(elementIDs))
-	for i, elementID := range elementIDs {
-		elementIDsByteSlice[i] = convert.Uint64ToBytes(elementID)
-	}
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf, elementIDsByteSlice)
-	if len(bb.Buf) > maxElementIDsBlockSize {
-		logger.Panicf("too big block with elementIDs: %d bytes; the maximum supported size is %d bytes", len(bb.Buf), maxElementIDsBlockSize)
-	}
-	em.encodeType = encoding.EncodeTypeUnknown
-	em.offset = elementIDsWriter.bytesWritten
-	em.size = uint64(len(bb.Buf))
-	elementIDsWriter.MustWrite(bb.Buf)
-}
-
-func mustReadElementIDsFrom(dst []uint64, em *elementIDsMetadata, count int, reader fs.Reader) []uint64 {
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(em.size))
-	fs.MustReadData(reader, int64(em.offset), bb.Buf)
-	decoder := encoding.BytesBlockDecoder{}
-	var elementIDsByteSlice [][]byte
-	elementIDsByteSlice, err := decoder.Decode(elementIDsByteSlice, bb.Buf, uint64(count))
+	elementIDs = encoding.ExtendListCapacity(elementIDs, count)
+	elementIDs = elementIDs[:count]
+	_, err = encoding.BytesToVarUint64s(elementIDs, src[tm.elementIDsOffset:])
 	if err != nil {
-		logger.Panicf("%s: cannot unmarshal elementIDs: %v", reader.Path(), err)
+		logger.Panicf("%s: cannot unmarshal element ids: %v", path, err)
 	}
-	for _, elementID := range elementIDsByteSlice {
-		dst = append(dst, convert.BytesToUint64(elementID))
-	}
-	return dst
+	return timestamps, elementIDs
 }
 
-func mustSeqReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader *seqReader) []int64 {
+func mustSeqReadTimestampsFrom(timestamps []int64, elementIDs []uint64, tm *timestampsMetadata, count int, reader *seqReader) ([]int64, []uint64) {
 	if tm.offset != reader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", tm.offset, reader.bytesRead)
 	}
@@ -370,32 +343,7 @@ func mustSeqReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, r
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	reader.mustReadFull(bb.Buf)
-	var err error
-	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
-	if err != nil {
-		logger.Panicf("%s: cannot unmarshal timestamps: %v", reader.Path(), err)
-	}
-	return dst
-}
-
-func mustSeqReadElementIDsFrom(dst []uint64, em *elementIDsMetadata, count int, reader *seqReader) []uint64 {
-	if em.offset != reader.bytesRead {
-		logger.Panicf("offset %d must be equal to bytesRead %d", em.offset, reader.bytesRead)
-	}
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(em.size))
-	reader.mustReadFull(bb.Buf)
-	decoder := encoding.BytesBlockDecoder{}
-	var elementIDsByteSlice [][]byte
-	elementIDsByteSlice, err := decoder.Decode(elementIDsByteSlice, bb.Buf, uint64(count))
-	if err != nil {
-		logger.Panicf("%s: cannot unmarshal elementIDs: %v", reader.Path(), err)
-	}
-	for _, elementID := range elementIDsByteSlice {
-		dst = append(dst, convert.BytesToUint64(elementID))
-	}
-	return dst
+	return mustDecodeTimestampsWithVersions(timestamps, elementIDs, tm, count, reader.Path(), bb.Buf)
 }
 
 func generateBlock() *block {

@@ -18,8 +18,6 @@
 package stream
 
 import (
-	"crypto/rand"
-	"encoding/binary"
 	"reflect"
 	"testing"
 
@@ -215,20 +213,16 @@ func marshalIntArr(arr [][]byte) []byte {
 
 func Test_mustWriteAndReadTimestamps(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      []int64
-		wantPanic bool
-		wantTM    timestampsMetadata
+		name       string
+		timestamps []int64
+		elementIDs []uint64
+		wantPanic  bool
+		wantTM     timestampsMetadata
 	}{
 		{
-			name:      "Test mustWriteAndReadTimestamps",
-			args:      []int64{1, 2, 3, 4, 5},
-			wantPanic: false,
-		},
-		{
-			name:      "Test mustWriteAndReadTimestamps with panic",
-			args:      getBitInt64Arr(),
-			wantPanic: true,
+			name:       "Test mustWriteAndReadTimestamps",
+			timestamps: []int64{1, 2, 3, 4, 5},
+			elementIDs: []uint64{0, 1, 2, 3, 4},
 		},
 	}
 	for _, tt := range tests {
@@ -243,58 +237,16 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 			b := &bytes.Buffer{}
 			w := new(writer)
 			w.init(b)
-			mustWriteTimestampsTo(tm, tt.args, w)
-			timestamps := mustReadTimestampsFrom(nil, tm, len(tt.args), b)
-			if !reflect.DeepEqual(timestamps, tt.args) {
-				t.Errorf("mustReadTimestampsFrom() = %v, want %v", timestamps, tt.args)
+			mustWriteTimestampsTo(tm, tt.timestamps, tt.elementIDs, w)
+			timestamps, elementIDs := mustReadTimestampsFrom(nil, nil, tm, len(tt.timestamps), b)
+			if !reflect.DeepEqual(timestamps, tt.timestamps) {
+				t.Errorf("mustReadTimestampsFrom() timestamps = %v, want %v", timestamps, tt.timestamps)
+			}
+			if !reflect.DeepEqual(elementIDs, tt.elementIDs) {
+				t.Errorf("mustReadTimestampsFrom() elementIDs = %v, want %v", elementIDs, tt.elementIDs)
 			}
 		})
 	}
-}
-
-func Test_mustWriteAndReadElementIDs(t *testing.T) {
-	tests := []struct {
-		name      string
-		args      []uint64
-		wantPanic bool
-		wantTM    elementIDsMetadata
-	}{
-		{
-			name:      "Test mustWriteAndReadElementIDs",
-			args:      []uint64{0, 1, 2, 3, 4},
-			wantPanic: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			defer func() {
-				r := recover()
-				if (r != nil) != tt.wantPanic {
-					t.Errorf("mustWriteElementIDs() recover = %v, wantPanic = %v", r, tt.wantPanic)
-				}
-			}()
-			em := &elementIDsMetadata{}
-			b := &bytes.Buffer{}
-			w := new(writer)
-			w.init(b)
-			mustWriteElementIDsTo(em, tt.args, w)
-			elementIDs := mustReadElementIDsFrom(nil, em, len(tt.args), b)
-			if !reflect.DeepEqual(elementIDs, tt.args) {
-				t.Errorf("mustReadElementIDsFrom() = %v, want %v", elementIDs, tt.args)
-			}
-		})
-	}
-}
-
-func getBitInt64Arr() []int64 {
-	size := maxTimestampsBlockSize + 1
-	randSlice := make([]int64, size)
-	for i := range randSlice {
-		b := make([]byte, 8)
-		_, _ = rand.Read(b)
-		randSlice[i] = int64(binary.BigEndian.Uint64(b))
-	}
-	return randSlice
 }
 
 func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
@@ -361,10 +313,9 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 }
 
 func Test_marshalAndUnmarshalBlock(t *testing.T) {
-	timestampBuffer, elementIDsBuffer := &bytes.Buffer{}, &bytes.Buffer{}
-	timestampWriter, elementIDsWriter := &writer{}, &writer{}
+	timestampBuffer := &bytes.Buffer{}
+	timestampWriter := &writer{}
 	timestampWriter.init(timestampBuffer)
-	elementIDsWriter.init(elementIDsBuffer)
 	ww := &writers{
 		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer) {
 			return &bytes.Buffer{}, &bytes.Buffer{}
@@ -372,12 +323,10 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
 		timestampsWriter:         *timestampWriter,
-		elementIDsWriter:         *elementIDsWriter,
 	}
 	p := &part{
 		primary:    &bytes.Buffer{},
 		timestamps: timestampBuffer,
-		elementIDs: elementIDsBuffer,
 	}
 	b := &conventionalBlock
 	tagProjection := toTagProjection(*b)
