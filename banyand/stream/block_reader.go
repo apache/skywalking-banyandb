@@ -87,13 +87,11 @@ type seqReaders struct {
 	tagFamilies       map[string]*seqReader
 	primary           seqReader
 	timestamps        seqReader
-	elementIDs        seqReader
 }
 
 func (sr *seqReaders) reset() {
 	sr.primary.reset()
 	sr.timestamps.reset()
-	sr.elementIDs.reset()
 	if sr.tagFamilyMetadata != nil {
 		for k, r := range sr.tagFamilyMetadata {
 			releaseSeqReader(r)
@@ -112,7 +110,6 @@ func (sr *seqReaders) init(p *part) {
 	sr.reset()
 	sr.primary.init(p.primary)
 	sr.timestamps.init(p.timestamps)
-	sr.elementIDs.init(p.elementIDs)
 	if sr.tagFamilies == nil {
 		sr.tagFamilies = make(map[string]*seqReader)
 		sr.tagFamilyMetadata = make(map[string]*seqReader)

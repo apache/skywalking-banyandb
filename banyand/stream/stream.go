@@ -34,7 +34,6 @@ import (
 
 const (
 	maxValuesBlockSize              = 8 * 1024 * 1024
-	maxTimestampsBlockSize          = 8 * 1024 * 1024
 	maxElementIDsBlockSize          = 8 * 1024 * 1024
 	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
 	maxUncompressedBlockSize        = 2 * 1024 * 1024
@@ -90,7 +89,7 @@ func (s *stream) Close() error {
 
 func (s *stream) parseSpec() {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules)
+	s.indexRuleLocators, _ = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules)
 }
 
 type streamSpec struct {

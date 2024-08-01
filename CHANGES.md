@@ -9,6 +9,8 @@ Release Notes.
 - Bump up the version of the file system to 1.1.0 which is not compatible with the previous version.
 - Move the series index into segment.
 - Swap the segment and the shard.
+- Move indexed values in a measure from data files to index files.
+- Merge elementIDs.bin and timestamps.bin into a single file.
 
 ### Features
 

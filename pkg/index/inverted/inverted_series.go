@@ -19,6 +19,7 @@
 package inverted
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/blugelabs/bluge"
@@ -30,10 +31,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
-var emptySeries = make([]index.Series, 0)
+var emptySeries = make([]index.SeriesDocument, 0)
 
 // Search implements index.SeriesStore.
-func (s *Store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher) ([]index.Series, error) {
+func (s *Store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher, projection []index.FieldKey) ([]index.SeriesDocument, error) {
 	if len(seriesMatchers) == 0 {
 		return emptySeries, nil
 	}
@@ -77,33 +78,47 @@ func (s *Store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher
 	if err != nil {
 		return nil, err
 	}
-	return parseResult(dmi)
+	return parseResult(dmi, projection)
 }
 
-func parseResult(dmi search.DocumentMatchIterator) ([]index.Series, error) {
-	result := make([]index.Series, 0, 10)
+func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey) ([]index.SeriesDocument, error) {
+	result := make([]index.SeriesDocument, 0, 10)
 	next, err := dmi.Next()
 	docIDMap := make(map[uint64]struct{})
+	fields := make([]string, 0, len(loadedFields))
+	for i := range loadedFields {
+		fields = append(fields, loadedFields[i].Marshal())
+	}
 	for err == nil && next != nil {
-		var series index.Series
+		var doc index.SeriesDocument
+		if len(loadedFields) > 0 {
+			doc.Fields = make(map[string][]byte)
+			for i := range loadedFields {
+				doc.Fields[fields[i]] = nil
+			}
+		}
 		err = next.VisitStoredFields(func(field string, value []byte) bool {
-			if field == docIDField {
+			switch field {
+			case docIDField:
 				id := convert.BytesToUint64(value)
 				if _, ok := docIDMap[id]; !ok {
-					series.ID = common.SeriesID(convert.BytesToUint64(value))
+					doc.Key.ID = common.SeriesID(convert.BytesToUint64(value))
 					docIDMap[id] = struct{}{}
 				}
-			}
-			if field == entityField {
-				series.EntityValues = value
+			case entityField:
+				doc.Key.EntityValues = value
+			default:
+				if _, ok := doc.Fields[field]; ok {
+					doc.Fields[field] = bytes.Clone(value)
+				}
 			}
 			return true
 		})
 		if err != nil {
 			return nil, errors.WithMessage(err, "visit stored fields")
 		}
-		if series.ID > 0 {
-			result = append(result, series)
+		if doc.Key.ID > 0 {
+			result = append(result, doc)
 		}
 		next, err = dmi.Next()
 	}

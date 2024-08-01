@@ -380,25 +380,21 @@ func mustSeqReadTimestampsFrom(timestamps, versions []int64, tm *timestampsMetad
 
 func mustDecodeTimestampsWithVersions(timestamps, versions []int64, tm *timestampsMetadata, count int, path string, src []byte) ([]int64, []int64) {
 	var err error
-	if t := encoding.GetCommonType(tm.encodeType); t != encoding.EncodeTypeUnknown {
-		if tm.size < tm.versionOffset {
-			logger.Panicf("size %d must be greater than versionOffset %d", tm.size, tm.versionOffset)
-		}
-		timestamps, err = encoding.BytesToInt64List(timestamps, src[:tm.versionOffset], t, tm.min, count)
-		if err != nil {
-			logger.Panicf("%s: cannot unmarshal timestamps with versions: %v", path, err)
-		}
-		versions, err = encoding.BytesToInt64List(versions, src[tm.versionOffset:], tm.versionEncodeType, tm.versionFirst, count)
-		if err != nil {
-			logger.Panicf("%s: cannot unmarshal versions: %v", path, err)
-		}
-		return timestamps, versions
+	t := encoding.GetCommonType(tm.encodeType)
+	if t == encoding.EncodeTypeUnknown {
+		logger.Panicf("unexpected encodeType %d", tm.encodeType)
 	}
-	timestamps, err = encoding.BytesToInt64List(timestamps, src, tm.encodeType, tm.min, count)
+	if tm.size < tm.versionOffset {
+		logger.Panicf("size %d must be greater than versionOffset %d", tm.size, tm.versionOffset)
+	}
+	timestamps, err = encoding.BytesToInt64List(timestamps, src[:tm.versionOffset], t, tm.min, count)
 	if err != nil {
-		logger.Panicf("%s: cannot unmarshal timestamps: %v", path, err)
+		logger.Panicf("%s: cannot unmarshal timestamps with versions: %v", path, err)
 	}
-	versions = encoding.ExtendInt64ListCapacity(versions, count)
+	versions, err = encoding.BytesToInt64List(versions, src[tm.versionOffset:], tm.versionEncodeType, tm.versionFirst, count)
+	if err != nil {
+		logger.Panicf("%s: cannot unmarshal versions: %v", path, err)
+	}
 	return timestamps, versions
 }
 
@@ -462,7 +458,7 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, queryOpts queryOptions) 
 	bc.fieldProjection = queryOpts.FieldProjection
 }
 
-func (bc *blockCursor) copyAllTo(r *model.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
+func (bc *blockCursor) copyAllTo(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
 	tagProjection []model.TagProjection, desc bool,
 ) {
 	var idx, offset int
@@ -484,9 +480,9 @@ func (bc *blockCursor) copyAllTo(r *model.MeasureResult, entityValuesAll map[com
 		slices.Reverse(r.Timestamps)
 		slices.Reverse(r.Versions)
 	}
-	var entityValues map[string]*modelv1.TagValue
-	if entityValuesAll != nil {
-		entityValues = entityValuesAll[r.SID]
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[r.SID]
 	}
 OUTER:
 	for _, tp := range tagProjection {
@@ -498,10 +494,10 @@ OUTER:
 			t := model.Tag{
 				Name: tagName,
 			}
-			if entityValues != nil && entityValues[tagName] != nil {
+			if indexValue != nil && indexValue[tagName] != nil {
 				t.Values = make([]*modelv1.TagValue, size)
 				for i := 0; i < size; i++ {
-					t.Values[i] = entityValues[tagName]
+					t.Values[i] = indexValue[tagName]
 				}
 				tf.Tags = append(tf.Tags, t)
 				continue
@@ -564,15 +560,15 @@ OUTER:
 	}
 }
 
-func (bc *blockCursor) copyTo(r *model.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
+func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
 	tagProjection []model.TagProjection,
 ) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.Versions = append(r.Versions, bc.versions[bc.idx])
-	var entityValues map[string]*modelv1.TagValue
-	if entityValuesAll != nil {
-		entityValues = entityValuesAll[r.SID]
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[r.SID]
 	}
 	if len(r.TagFamilies) == 0 {
 		for _, tp := range tagProjection {
@@ -593,8 +589,8 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, entityValuesAll map[common
 		var cf *columnFamily
 		for j := range r.TagFamilies[i].Tags {
 			tagName := r.TagFamilies[i].Tags[j].Name
-			if entityValues != nil && entityValues[tagName] != nil {
-				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, entityValues[tagName])
+			if indexValue != nil && indexValue[tagName] != nil {
+				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, indexValue[tagName])
 				continue
 			}
 			if cf == nil {
