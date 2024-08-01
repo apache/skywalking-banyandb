@@ -193,7 +193,9 @@ var _ = Describe("Measure Data Query", func() {
 	var startStr, endStr string
 	var interval time.Duration
 	BeforeEach(func() {
-		now = timestamp.NowMilli()
+		var err error
+		now, err = time.ParseInLocation("2006-01-02T15:04:05", "2021-09-01T23:30:00", time.Local)
+		Expect(err).NotTo(HaveOccurred())
 		startStr = now.Add(-20 * time.Minute).Format(time.RFC3339)
 		interval = 1 * time.Millisecond
 		endStr = now.Add(5 * time.Minute).Format(time.RFC3339)

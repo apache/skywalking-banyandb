@@ -79,9 +79,10 @@ func Test_timestampsMetadata_reset(t *testing.T) {
 			offset: 1,
 			size:   1,
 		},
-		min:        1,
-		max:        1,
-		encodeType: encoding.EncodeTypeConst,
+		min:              1,
+		max:              1,
+		encodeType:       encoding.EncodeTypeConst,
+		elementIDsOffset: 1,
 	}
 
 	tm.reset()
@@ -90,6 +91,7 @@ func Test_timestampsMetadata_reset(t *testing.T) {
 	assert.Equal(t, uint64(0), tm.dataBlock.size)
 	assert.Equal(t, int64(0), tm.min)
 	assert.Equal(t, int64(0), tm.max)
+	assert.Equal(t, uint64(0), tm.elementIDsOffset)
 	assert.Equal(t, encoding.EncodeTypeUnknown, tm.encodeType)
 }
 
@@ -99,9 +101,10 @@ func Test_timestampsMetadata_copyFrom(t *testing.T) {
 			offset: 1,
 			size:   1,
 		},
-		min:        1,
-		max:        1,
-		encodeType: encoding.EncodeTypeConst,
+		min:              1,
+		max:              1,
+		encodeType:       encoding.EncodeTypeConst,
+		elementIDsOffset: 1,
 	}
 
 	dest := &timestampsMetadata{
@@ -109,9 +112,10 @@ func Test_timestampsMetadata_copyFrom(t *testing.T) {
 			offset: 2,
 			size:   2,
 		},
-		min:        2,
-		max:        2,
-		encodeType: encoding.EncodeTypeDelta,
+		min:              2,
+		max:              2,
+		encodeType:       encoding.EncodeTypeDelta,
+		elementIDsOffset: 2,
 	}
 
 	dest.copyFrom(src)
@@ -121,6 +125,7 @@ func Test_timestampsMetadata_copyFrom(t *testing.T) {
 	assert.Equal(t, src.min, dest.min)
 	assert.Equal(t, src.max, dest.max)
 	assert.Equal(t, src.encodeType, dest.encodeType)
+	assert.Equal(t, src.elementIDsOffset, dest.elementIDsOffset)
 }
 
 func Test_timestampsMetadata_marshal_unmarshal(t *testing.T) {
@@ -129,9 +134,10 @@ func Test_timestampsMetadata_marshal_unmarshal(t *testing.T) {
 			offset: 1,
 			size:   1,
 		},
-		min:        1,
-		max:        1,
-		encodeType: encoding.EncodeTypeConst,
+		min:              1,
+		max:              1,
+		encodeType:       encoding.EncodeTypeConst,
+		elementIDsOffset: 1,
 	}
 
 	marshaled := original.marshal(nil)
@@ -146,6 +152,7 @@ func Test_timestampsMetadata_marshal_unmarshal(t *testing.T) {
 	assert.Equal(t, original.min, unmarshaled.min)
 	assert.Equal(t, original.max, unmarshaled.max)
 	assert.Equal(t, original.encodeType, unmarshaled.encodeType)
+	assert.Equal(t, original.elementIDsOffset, unmarshaled.elementIDsOffset)
 }
 
 func Test_blockMetadata_marshal_unmarshal(t *testing.T) {

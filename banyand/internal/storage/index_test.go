@@ -20,10 +20,7 @@ package storage
 import (
 	"context"
 	"fmt"
-	"os"
-	"path"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,7 +38,7 @@ var testSeriesPool pbv1.SeriesPool
 func TestSeriesIndex_Primary(t *testing.T) {
 	ctx := context.Background()
 	path, fn := setUp(require.New(t))
-	si, err := newSeriesIndex(ctx, path, time.Now(), 0)
+	si, err := newSeriesIndex(ctx, path, 0)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, si.Close())
@@ -72,7 +69,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 	require.NoError(t, si.Write(docs))
 	// Restart the index
 	require.NoError(t, si.Close())
-	si, err = newSeriesIndex(ctx, path, time.Now(), 0)
+	si, err = newSeriesIndex(ctx, path, 0)
 	require.NoError(t, err)
 	tests := []struct {
 		name         string
@@ -164,7 +161,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 				seriesQuery.EntityValues = tt.entityValues[i]
 				seriesQueries = append(seriesQueries, seriesQuery)
 			}
-			sl, err := si.searchPrimary(ctx, seriesQueries)
+			sl, _, err := si.searchPrimary(ctx, seriesQueries, nil)
 			require.NoError(t, err)
 			require.Equal(t, len(tt.entityValues), len(sl))
 			assert.Equal(t, tt.subject, sl[0].Subject)
@@ -184,56 +181,4 @@ func setUp(t *require.Assertions) (tempDir string, deferFunc func()) {
 	}))
 	tempDir, deferFunc = test.Space(t)
 	return tempDir, deferFunc
-}
-
-func TestSeriesIndexController(t *testing.T) {
-	ttl := IntervalRule{
-		Unit: DAY,
-		Num:  3,
-	}
-	t.Run("Test setup", func(t *testing.T) {
-		ctx := context.Background()
-		tmpDir, dfFn, err := test.NewSpace()
-		require.NoError(t, err)
-		defer dfFn()
-
-		opts := TSDBOpts[TSTable, any]{
-			Location: tmpDir,
-			TTL:      ttl,
-		}
-
-		sic, err := newSeriesIndexController(ctx, opts)
-		assert.NoError(t, err)
-		assert.NotNil(t, sic)
-		idxNames := make([]string, 0)
-		walkDir(tmpDir, "idx-", func(suffix string) error {
-			idxNames = append(idxNames, suffix)
-			return nil
-		})
-		assert.Equal(t, 1, len(idxNames))
-		require.NoError(t, sic.Close())
-		sic, err = newSeriesIndexController(ctx, opts)
-		assert.NoError(t, err)
-		assert.NotNil(t, sic)
-		idxNames = idxNames[:0]
-		walkDir(tmpDir, "idx-", func(suffix string) error {
-			idxNames = append(idxNames, suffix)
-			return nil
-		})
-		assert.Equal(t, 1, len(idxNames))
-		require.NoError(t, sic.Close())
-
-		require.NoError(t, os.MkdirAll(path.Join(tmpDir, fmt.Sprintf("idx-%016x", time.Now().UnixNano()-20000)), 0o755))
-		require.NoError(t, os.MkdirAll(path.Join(tmpDir, fmt.Sprintf("idx-%016x", time.Now().UnixNano()-10000)), 0o755))
-		sic, err = newSeriesIndexController(ctx, opts)
-		assert.NoError(t, err)
-		assert.NotNil(t, sic)
-		idxNames = idxNames[:0]
-		walkDir(tmpDir, "idx-", func(suffix string) error {
-			idxNames = append(idxNames, suffix)
-			return nil
-		})
-		assert.Equal(t, 2, len(idxNames))
-		require.NoError(t, sic.Close())
-	})
 }

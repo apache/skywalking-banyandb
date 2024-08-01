@@ -19,13 +19,14 @@
 package node
 
 import (
-	"strconv"
+	"context"
 	"sync"
 
 	"github.com/pkg/errors"
 	"golang.org/x/exp/slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -40,6 +41,7 @@ type Selector interface {
 	AddNode(node *databasev1.Node)
 	RemoveNode(node *databasev1.Node)
 	Pick(group, name string, shardID uint32) (string, error)
+	run.PreRunner
 }
 
 // NewPickFirstSelector returns a simple selector that always returns the first node if exists.
@@ -54,6 +56,14 @@ type pickFirstSelector struct {
 	nodeIDMap map[string]struct{}
 	nodeIDs   []string
 	mu        sync.RWMutex
+}
+
+func (p *pickFirstSelector) PreRun(context.Context) error {
+	return nil
+}
+
+func (p *pickFirstSelector) Name() string {
+	return "pick-first"
 }
 
 func (p *pickFirstSelector) AddNode(node *databasev1.Node) {
@@ -96,8 +106,4 @@ func (p *pickFirstSelector) Pick(_, _ string, _ uint32) (string, error) {
 		return "", ErrNoAvailableNode
 	}
 	return p.nodeIDs[0], nil
-}
-
-func formatSearchKey(group, name string, shardID uint32) string {
-	return group + "/" + name + "#" + strconv.FormatUint(uint64(shardID), 10)
 }

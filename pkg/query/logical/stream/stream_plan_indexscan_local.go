@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -27,31 +28,40 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
-	_ logical.Plan          = (*localIndexScan)(nil)
-	_ logical.Sorter        = (*localIndexScan)(nil)
-	_ logical.VolumeLimiter = (*localIndexScan)(nil)
+	_ logical.Plan              = (*localIndexScan)(nil)
+	_ logical.Sorter            = (*localIndexScan)(nil)
+	_ logical.VolumeLimiter     = (*localIndexScan)(nil)
+	_ executor.StreamExecutable = (*localIndexScan)(nil)
 )
 
 type localIndexScan struct {
 	schema            logical.Schema
 	filter            index.Filter
+	result            model.StreamQueryResult
 	order             *logical.OrderBy
 	metadata          *commonv1.Metadata
 	l                 *logger.Logger
 	timeRange         timestamp.TimeRange
 	projectionTagRefs [][]*logical.TagRef
-	projectionTags    []pbv1.TagProjection
+	projectionTags    []model.TagProjection
 	entities          [][]*modelv1.TagValue
 	maxElementSize    int
+}
+
+func (i *localIndexScan) Close() {
+	if i.result != nil {
+		i.result.Release()
+	}
 }
 
 func (i *localIndexScan) Limit(max int) {
@@ -63,15 +73,19 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 }
 
 func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
-	var orderBy *pbv1.OrderBy
+	if i.result != nil {
+		return BuildElementsFromStreamResult(ctx, i.result), nil
+	}
+	var orderBy *model.OrderBy
 	if i.order != nil {
-		orderBy = &pbv1.OrderBy{
+		orderBy = &model.OrderBy{
 			Index: i.order.Index,
 			Sort:  i.order.Sort,
 		}
 	}
 	ec := executor.FromStreamExecutionContext(ctx)
-	result, err := ec.Query(ctx, pbv1.StreamQueryOptions{
+	var err error
+	if i.result, err = ec.Query(ctx, model.StreamQueryOptions{
 		Name:           i.metadata.GetName(),
 		TimeRange:      &i.timeRange,
 		Entities:       i.entities,
@@ -79,14 +93,13 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 		Order:          orderBy,
 		TagProjection:  i.projectionTags,
 		MaxElementSize: i.maxElementSize,
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
-	if result == nil {
+	if i.result == nil {
 		return nil, nil
 	}
-	return BuildElementsFromStreamResult(result), nil
+	return BuildElementsFromStreamResult(ctx, i.result), nil
 }
 
 func (i *localIndexScan) String() string {
@@ -107,37 +120,30 @@ func (i *localIndexScan) Schema() logical.Schema {
 }
 
 // BuildElementsFromStreamResult builds a slice of elements from the given stream query result.
-func BuildElementsFromStreamResult(result pbv1.StreamQueryResult) (elements []*streamv1.Element) {
-	deduplication := make(map[string]struct{})
-	for {
-		r := result.Pull()
-		if r == nil {
-			break
-		}
-		for i := range r.Timestamps {
-			if _, ok := deduplication[r.ElementIDs[i]]; ok {
-				continue
-			}
-			deduplication[r.ElementIDs[i]] = struct{}{}
-			e := &streamv1.Element{
-				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
-				ElementId: r.ElementIDs[i],
-			}
-
-			for _, tf := range r.TagFamilies {
-				tagFamily := &modelv1.TagFamily{
-					Name: tf.Name,
-				}
-				e.TagFamilies = append(e.TagFamilies, tagFamily)
-				for _, t := range tf.Tags {
-					tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-						Key:   t.Name,
-						Value: t.Values[i],
-					})
-				}
-			}
-			elements = append(elements, e)
-		}
+func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQueryResult) (elements []*streamv1.Element) {
+	r := result.Pull(ctx)
+	if r == nil {
+		return nil
 	}
-	return
+	for i := range r.Timestamps {
+		e := &streamv1.Element{
+			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+			ElementId: hex.EncodeToString(convert.Uint64ToBytes(r.ElementIDs[i])),
+		}
+
+		for _, tf := range r.TagFamilies {
+			tagFamily := &modelv1.TagFamily{
+				Name: tf.Name,
+			}
+			e.TagFamilies = append(e.TagFamilies, tagFamily)
+			for _, t := range tf.Tags {
+				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+					Key:   t.Name,
+					Value: t.Values[i],
+				})
+			}
+		}
+		elements = append(elements, e)
+	}
+	return elements
 }

@@ -46,10 +46,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	}
 	pipeline := pub.New(metaSvc)
 	localPipeline := queue.Local()
-	nodeSel, err := node.NewMaglevSelector()
-	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate required node selector")
-	}
+	nodeSel := node.NewRoundRobinSelector(metaSvc)
 	nodeRegistry := grpc.NewClusterNodeRegistry(pipeline, nodeSel)
 	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, nodeRegistry)
 	profSvc := observability.NewProfService()
@@ -65,6 +62,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		metaSvc,
 		localPipeline,
 		pipeline,
+		nodeSel,
 		dQuery,
 		grpcServer,
 		httpServer,

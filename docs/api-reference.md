@@ -186,6 +186,8 @@
     - [WriteRequest](#banyandb-measure-v1-WriteRequest)
     - [WriteResponse](#banyandb-measure-v1-WriteResponse)
   
+    - [DataPointValue.Type](#banyandb-measure-v1-DataPointValue-Type)
+  
 - [banyandb/measure/v1/rpc.proto](#banyandb_measure_v1_rpc-proto)
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
@@ -2634,9 +2636,10 @@ TopNRequest is the request contract for query.
 | name | [string](#string) |  | name is the identity of a measure. |
 | time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
 | top_n | [int32](#int32) |  | top_n set the how many items should be returned in each list. |
-| agg | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | agg aggregates lists grouped by field names in the time_range TODO validate enum defined_only |
+| agg | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | agg aggregates lists grouped by field names in the time_range |
 | conditions | [banyandb.model.v1.Condition](#banyandb-model-v1-Condition) | repeated | criteria select counters. Only equals are acceptable. |
 | field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
 
 
 
@@ -2652,6 +2655,7 @@ TopNResponse is the response for a query to the Query module.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | lists | [TopNList](#banyandb-measure-v1-TopNList) | repeated | lists contain a series topN lists ranked by timestamp if agg_func in query request is specified, lists&#39; size should be one. |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
 
 
 
@@ -2718,6 +2722,7 @@ DataPointValue is the data point for writing. It only contains values.
 | tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the measure schema |
 | fields | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | the order of fields match the measure schema |
 | version | [int64](#int64) |  | the version of the data point |
+| type | [DataPointValue.Type](#banyandb-measure-v1-DataPointValue-Type) |  |  |
 
 
 
@@ -2776,6 +2781,19 @@ WriteResponse is the response contract for write
 
 
  
+
+
+<a name="banyandb-measure-v1-DataPointValue-Type"></a>
+
+### DataPointValue.Type
+the type of the data point cumulative or delta
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| TYPE_UNSPECIFIED | 0 | TYPE_UNSPECIFIED is the default value. |
+| TYPE_CUMULATIVE | 1 | TYPE_CUMULATIVE is the cumulative data |
+| TYPE_DELTA | 2 | TYPE_DELTA is the delta data |
+
 
  
 

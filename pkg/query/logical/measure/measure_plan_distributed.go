@@ -87,7 +87,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		Name:            ud.originalQuery.Name,
 		Groups:          ud.originalQuery.Groups,
 		Criteria:        ud.originalQuery.Criteria,
-		Limit:           limit,
+		Limit:           limit + ud.originalQuery.Offset,
 		OrderBy:         ud.originalQuery.OrderBy,
 	}
 	if ud.groupByEntity {

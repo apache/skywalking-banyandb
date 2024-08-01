@@ -37,8 +37,9 @@ func Initialize(addr string, now time.Time) {
 	defer conn.Close()
 	interval := 500 * time.Millisecond
 	// stream
-	casesstreamdata.Write(conn, "data.json", now, interval)
-	// measure
+	casesstreamdata.Write(conn, "sw", now, interval)
+	casesstreamdata.Write(conn, "duplicated", now, 0)
+	// // measure
 	interval = time.Minute
 	casesmeasuredata.Write(conn, "service_traffic", "sw_metric", "service_traffic_data.json", now, interval)
 	casesmeasuredata.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)

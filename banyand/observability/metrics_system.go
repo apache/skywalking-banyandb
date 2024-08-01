@@ -19,10 +19,13 @@ package observability
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 
@@ -37,6 +40,7 @@ var (
 	once4CpuCount sync.Once
 	cpuCountsFunc = cpu.Counts
 	cpuTimesFunc  = cpu.Times
+	startTime     = time.Now()
 )
 
 var (
@@ -48,6 +52,8 @@ var (
 	cpuNumGauge     meter.Gauge
 	memorySateGauge meter.Gauge
 	netStateGauge   meter.Gauge
+	upTimeGauge     meter.Gauge
+	diskStateGauge  meter.Gauge
 	initMetricsOnce sync.Once
 )
 
@@ -55,6 +61,8 @@ func init() {
 	MetricsCollector.Register("cpu", collectCPU)
 	MetricsCollector.Register("memory", collectMemory)
 	MetricsCollector.Register("net", collectNet)
+	MetricsCollector.Register("upTime", collectUpTime)
+	MetricsCollector.Register("disk", collectDisk)
 }
 
 func initMetrics(modes []string) {
@@ -63,6 +71,8 @@ func initMetrics(modes []string) {
 		cpuNumGauge = NewGauge(modes, "cpu_num")
 		memorySateGauge = NewGauge(modes, "memory_state", "kind")
 		netStateGauge = NewGauge(modes, "net_state", "kind", "name")
+		upTimeGauge = NewGauge(modes, "up_time")
+		diskStateGauge = NewGauge(modes, "disk", "path", "kind")
 	})
 }
 
@@ -104,7 +114,8 @@ func collectMemory() {
 		log.Error().Err(err).Msg("cannot get memory stat")
 	}
 	memorySateGauge.Set(m.UsedPercent/100, "used_percent")
-	memorySateGauge.Set(float64(m.Used)/float64(m.Total), "used")
+	memorySateGauge.Set(float64(m.Used), "used")
+	memorySateGauge.Set(float64(m.Total), "total")
 }
 
 func collectNet() {
@@ -151,4 +162,25 @@ func getNetStat(ctx context.Context) ([]net.IOCountersStat, error) {
 		availableStats = append(availableStats, stat)
 	}
 	return availableStats, nil
+}
+
+func collectUpTime() {
+	upTimeGauge.Set(time.Since(startTime).Seconds())
+}
+
+func collectDisk() {
+	for path := range getPath() {
+		usage, err := disk.Usage(path)
+		if err != nil {
+			if _, err = os.Stat(path); err != nil {
+				if !os.IsNotExist(err) {
+					log.Error().Err(err).Msgf("failed to get stat for path: %s", path)
+				}
+			}
+			return
+		}
+		diskStateGauge.Set(usage.UsedPercent/100, path, "used_percent")
+		diskStateGauge.Set(float64(usage.Used), path, "used")
+		diskStateGauge.Set(float64(usage.Total), path, "total")
+	}
 }

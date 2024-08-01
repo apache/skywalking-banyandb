@@ -87,17 +87,25 @@ func RunServiceName(t *testing.T, store SimpleStore) {
 
 // SetUp initializes a index repository.
 func SetUp(t *assert.Assertions, store SimpleStore) {
+	var batch index.Batch
 	for i := 0; i < 100; i++ {
 		if i < 100/2 {
-			t.NoError(store.Write([]index.Field{{
-				Key:  serviceName,
-				Term: []byte("gateway"),
-			}}, uint64(i)))
+			batch.Documents = append(batch.Documents, index.Document{
+				Fields: []index.Field{{
+					Key:  serviceName,
+					Term: []byte("gateway"),
+				}},
+				DocID: uint64(i),
+			})
 		} else {
-			t.NoError(store.Write([]index.Field{{
-				Key:  serviceName,
-				Term: []byte("webpage"),
-			}}, uint64(i)))
+			batch.Documents = append(batch.Documents, index.Document{
+				Fields: []index.Field{{
+					Key:  serviceName,
+					Term: []byte("webpage"),
+				}},
+				DocID: uint64(i),
+			})
 		}
 	}
+	t.NoError(store.Batch(batch))
 }

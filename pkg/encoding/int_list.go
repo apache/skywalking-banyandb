@@ -55,7 +55,7 @@ func Int64ListToBytes(dst []byte, a []int64) (result []byte, mt EncodeType, firs
 
 // BytesToInt64List decodes bytes into a list of int64.
 func BytesToInt64List(dst []int64, src []byte, mt EncodeType, firstValue int64, itemsCount int) ([]int64, error) {
-	dst = ExtendInt64ListCapacity(dst, itemsCount)
+	dst = ExtendListCapacity(dst, itemsCount)
 
 	var err error
 	switch mt {
@@ -100,11 +100,11 @@ func BytesToInt64List(dst []int64, src []byte, mt EncodeType, firstValue int64, 
 	}
 }
 
-// ExtendInt64ListCapacity extends the capacity of the int64 list.
-func ExtendInt64ListCapacity(dst []int64, additionalItems int) []int64 {
+// ExtendListCapacity extends the capacity of the given list.
+func ExtendListCapacity[T any](dst []T, additionalItems int) []T {
 	dstLen := len(dst)
 	if n := dstLen + additionalItems - cap(dst); n > 0 {
-		dst = append(dst[:cap(dst)], make([]int64, n)...)
+		dst = append(dst[:cap(dst)], make([]T, n)...)
 	}
 	return dst[:dstLen]
 }

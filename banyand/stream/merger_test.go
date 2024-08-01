@@ -61,7 +61,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			left: &blockPointer{
 				block: block{
 					timestamps: []int64{1, 2},
-					elementIDs: []string{"0", "1"},
+					elementIDs: []uint64{0, 1},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",
@@ -78,7 +78,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			right: &blockPointer{
 				block: block{
 					timestamps: []int64{3, 4},
-					elementIDs: []string{"2", "3"},
+					elementIDs: []uint64{2, 3},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",
@@ -99,7 +99,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			left: &blockPointer{
 				block: block{
 					timestamps: []int64{1, 3},
-					elementIDs: []string{"0", "2"},
+					elementIDs: []uint64{0, 2},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",
@@ -116,7 +116,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			right: &blockPointer{
 				block: block{
 					timestamps: []int64{2, 4},
-					elementIDs: []string{"1", "3"},
+					elementIDs: []uint64{1, 3},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",
@@ -137,7 +137,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			left: &blockPointer{
 				block: block{
 					timestamps: []int64{1, 2, 3},
-					elementIDs: []string{"0", "1", "2"},
+					elementIDs: []uint64{0, 1, 2},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",
@@ -158,7 +158,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			right: &blockPointer{
 				block: block{
 					timestamps: []int64{2, 3, 4},
-					elementIDs: []string{"1", "2", "3"},
+					elementIDs: []uint64{1, 2, 3},
 					tagFamilies: []tagFamily{
 						{
 							name: "arrTag",
@@ -192,7 +192,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 
 var mergedBlock = block{
 	timestamps: []int64{1, 2, 3, 4},
-	elementIDs: []string{"0", "1", "2", "3"},
+	elementIDs: []uint64{0, 1, 2, 3},
 	tagFamilies: []tagFamily{
 		{
 			name: "arrTag",
@@ -211,7 +211,7 @@ var mergedBlock = block{
 
 var duplicatedMergedBlock = block{
 	timestamps: []int64{1, 2, 2, 3, 3, 4},
-	elementIDs: []string{"0", "1", "1", "2", "2", "3"},
+	elementIDs: []uint64{0, 1, 1, 2, 2, 3},
 	tagFamilies: []tagFamily{
 		{
 			name: "arrTag",

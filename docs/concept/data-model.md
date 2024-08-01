@@ -81,7 +81,7 @@ interval: 1m
 
 `Measure` consists of a sequence of data points. Each data point contains tags and fields.
 
-`Tags` are key-value pairs. The database engine can index tag values by referring to the index rules and rule bindings, confining the query to filtering data points based on tags bound to an index rule.
+`Tags` are key-value pairs. The database engine can index tag values by referring to the [index rules and rule bindings](#indexrule--indexrulebinding), confining the query to filtering data points based on tags bound to an index rule.
 
 `Tags` are grouped into unique `tag_families` which are the logical and physical grouping of tags.
 

@@ -18,7 +18,7 @@ An index rule belongs to its subjects' group. We should create such a group if t
 The command supposes that the index rule will bind to streams. So it creates a `CATALOG_STREAM` group here.
 
 ```shell
-$ bydbctl group create -f - <<EOF
+bydbctl group create -f - <<EOF
 metadata:
   name: sw_stream
 catalog: CATALOG_STREAM
@@ -41,7 +41,7 @@ The data in this group will keep 7 days.
 Then, the next command will create a new index rule:
 
 ```shell
-$ bydbctl indexRule create -f - <<EOF
+bydbctl indexRule create -f - <<EOF
 metadata:
   name: trace_id
   group: sw_stream
@@ -60,7 +60,7 @@ Get(Read) operation gets an index rule's schema.
 ### Examples of getting
 
 ```shell
-$ bydbctl indexRule get -g sw_stream -n trace_id
+bydbctl indexRule get -g sw_stream -n trace_id
 ```
 
 ## Update operation
@@ -72,7 +72,7 @@ Update operation updates an index rule's schema.
 This example changes the type from `TREE` to `INVERTED`.
 
 ```shell
-$ bydbctl indexRule update -f - <<EOF
+bydbctl indexRule update -f - <<EOF
 metadata:
   name: trace_id
   group: sw_stream
@@ -90,7 +90,7 @@ Delete operation deletes an index rule's schema.
 ### Examples of deleting
 
 ```shell
-$ bydbctl indexRule delete -g sw_stream -n trace_id
+bydbctl indexRule delete -g sw_stream -n trace_id
 ```
 
 ## List operation
@@ -100,7 +100,7 @@ List operation list all index rules' schema in a group.
 ### Examples of listing
 
 ```shell
-$ bydbctl indexRule list -g sw_stream
+bydbctl indexRule list -g sw_stream
 ```
 
 ## API Reference

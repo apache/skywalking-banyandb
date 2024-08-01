@@ -24,3 +24,4 @@ projection:
   - name: "data"
     tags: ["data_binary"]
 offset: 3
+limit: 1

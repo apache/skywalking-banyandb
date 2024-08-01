@@ -390,7 +390,6 @@ func TestSnapshotRemove(t *testing.T) {
 					{p: &part{
 						partMetadata: partMetadata{ID: 1},
 						timestamps:   &bytes.Buffer{},
-						elementIDs:   &bytes.Buffer{},
 						primary:      &bytes.Buffer{},
 					}, ref: 1},
 					{p: &part{partMetadata: partMetadata{ID: 2}}, ref: 2},

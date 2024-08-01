@@ -100,7 +100,6 @@ func (m *schema) ProjFields(fieldRefs ...*logical.FieldRef) logical.Schema {
 
 func (m *schema) Equal(s2 logical.Schema) bool {
 	if other, ok := s2.(*schema); ok {
-		// TODO: add more equality checks
 		return cmp.Equal(other.common.TagSpecMap, m.common.TagSpecMap)
 	}
 	return false

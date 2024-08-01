@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"slices"
 	"sort"
 	"sync"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -378,25 +380,21 @@ func mustSeqReadTimestampsFrom(timestamps, versions []int64, tm *timestampsMetad
 
 func mustDecodeTimestampsWithVersions(timestamps, versions []int64, tm *timestampsMetadata, count int, path string, src []byte) ([]int64, []int64) {
 	var err error
-	if t := encoding.GetCommonType(tm.encodeType); t != encoding.EncodeTypeUnknown {
-		if tm.size < tm.versionOffset {
-			logger.Panicf("size %d must be greater than versionOffset %d", tm.size, tm.versionOffset)
-		}
-		timestamps, err = encoding.BytesToInt64List(timestamps, src[:tm.versionOffset], t, tm.min, count)
-		if err != nil {
-			logger.Panicf("%s: cannot unmarshal timestamps with versions: %v", path, err)
-		}
-		versions, err = encoding.BytesToInt64List(versions, src[tm.versionOffset:], tm.versionEncodeType, tm.versionFirst, count)
-		if err != nil {
-			logger.Panicf("%s: cannot unmarshal versions: %v", path, err)
-		}
-		return timestamps, versions
+	t := encoding.GetCommonType(tm.encodeType)
+	if t == encoding.EncodeTypeUnknown {
+		logger.Panicf("unexpected encodeType %d", tm.encodeType)
 	}
-	timestamps, err = encoding.BytesToInt64List(timestamps, src, tm.encodeType, tm.min, count)
+	if tm.size < tm.versionOffset {
+		logger.Panicf("size %d must be greater than versionOffset %d", tm.size, tm.versionOffset)
+	}
+	timestamps, err = encoding.BytesToInt64List(timestamps, src[:tm.versionOffset], t, tm.min, count)
 	if err != nil {
-		logger.Panicf("%s: cannot unmarshal timestamps: %v", path, err)
+		logger.Panicf("%s: cannot unmarshal timestamps with versions: %v", path, err)
 	}
-	versions = encoding.ExtendInt64ListCapacity(versions, count)
+	versions, err = encoding.BytesToInt64List(versions, src[tm.versionOffset:], tm.versionEncodeType, tm.versionFirst, count)
+	if err != nil {
+		logger.Panicf("%s: cannot unmarshal versions: %v", path, err)
+	}
 	return timestamps, versions
 }
 
@@ -422,7 +420,7 @@ type blockCursor struct {
 	versions            []int64
 	tagFamilies         []columnFamily
 	columnValuesDecoder encoding.BytesBlockDecoder
-	tagProjection       []pbv1.TagProjection
+	tagProjection       []model.TagProjection
 	fieldProjection     []string
 	bm                  blockMetadata
 	idx                 int
@@ -460,8 +458,8 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, queryOpts queryOptions) 
 	bc.fieldProjection = queryOpts.FieldProjection
 }
 
-func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
-	tagProjection []pbv1.TagProjection, desc bool,
+func (bc *blockCursor) copyAllTo(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+	tagProjection []model.TagProjection, desc bool,
 ) {
 	var idx, offset int
 	if desc {
@@ -478,24 +476,28 @@ func (bc *blockCursor) copyAllTo(r *pbv1.MeasureResult, entityValuesAll map[comm
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
 	r.Versions = append(r.Versions, bc.versions[idx:offset]...)
-	var entityValues map[string]*modelv1.TagValue
-	if entityValuesAll != nil {
-		entityValues = entityValuesAll[r.SID]
+	if desc {
+		slices.Reverse(r.Timestamps)
+		slices.Reverse(r.Versions)
+	}
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[r.SID]
 	}
 OUTER:
 	for _, tp := range tagProjection {
-		tf := pbv1.TagFamily{
+		tf := model.TagFamily{
 			Name: tp.Family,
 		}
 		var cf *columnFamily
 		for _, tagName := range tp.Names {
-			t := pbv1.Tag{
+			t := model.Tag{
 				Name: tagName,
 			}
-			if entityValues != nil && entityValues[tagName] != nil {
+			if indexValue != nil && indexValue[tagName] != nil {
 				t.Values = make([]*modelv1.TagValue, size)
 				for i := 0; i < size; i++ {
-					t.Values[i] = entityValues[tagName]
+					t.Values[i] = indexValue[tagName]
 				}
 				tf.Tags = append(tf.Tags, t)
 				continue
@@ -510,7 +512,7 @@ OUTER:
 			}
 			if cf == nil {
 				for _, n := range tp.Names {
-					t = pbv1.Tag{
+					t = model.Tag{
 						Name:   n,
 						Values: make([]*modelv1.TagValue, size),
 					}
@@ -537,39 +539,44 @@ OUTER:
 				for i := 0; i < size; i++ {
 					t.Values[i] = pbv1.NullTagValue
 				}
+			} else if desc {
+				slices.Reverse(t.Values)
 			}
 			tf.Tags = append(tf.Tags, t)
 		}
 		r.TagFamilies = append(r.TagFamilies, tf)
 	}
 	for _, c := range bc.fields.columns {
-		f := pbv1.Field{
+		f := model.Field{
 			Name: c.name,
 		}
 		for _, v := range c.values[idx:offset] {
 			f.Values = append(f.Values, mustDecodeFieldValue(c.valueType, v))
 		}
+		if desc {
+			slices.Reverse(f.Values)
+		}
 		r.Fields = append(r.Fields, f)
 	}
 }
 
-func (bc *blockCursor) copyTo(r *pbv1.MeasureResult, entityValuesAll map[common.SeriesID]map[string]*modelv1.TagValue,
-	tagProjection []pbv1.TagProjection,
+func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+	tagProjection []model.TagProjection,
 ) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.Versions = append(r.Versions, bc.versions[bc.idx])
-	var entityValues map[string]*modelv1.TagValue
-	if entityValuesAll != nil {
-		entityValues = entityValuesAll[r.SID]
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[r.SID]
 	}
 	if len(r.TagFamilies) == 0 {
 		for _, tp := range tagProjection {
-			tf := pbv1.TagFamily{
+			tf := model.TagFamily{
 				Name: tp.Family,
 			}
 			for _, n := range tp.Names {
-				t := pbv1.Tag{
+				t := model.Tag{
 					Name: n,
 				}
 				tf.Tags = append(tf.Tags, t)
@@ -582,8 +589,8 @@ func (bc *blockCursor) copyTo(r *pbv1.MeasureResult, entityValuesAll map[common.
 		var cf *columnFamily
 		for j := range r.TagFamilies[i].Tags {
 			tagName := r.TagFamilies[i].Tags[j].Name
-			if entityValues != nil && entityValues[tagName] != nil {
-				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, entityValues[tagName])
+			if indexValue != nil && indexValue[tagName] != nil {
+				r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, indexValue[tagName])
 				continue
 			}
 			if cf == nil {
@@ -614,7 +621,7 @@ func (bc *blockCursor) copyTo(r *pbv1.MeasureResult, entityValuesAll map[common.
 
 	if len(r.Fields) == 0 {
 		for _, n := range bc.fieldProjection {
-			f := pbv1.Field{
+			f := model.Field{
 				Name: n,
 			}
 			r.Fields = append(r.Fields, f)

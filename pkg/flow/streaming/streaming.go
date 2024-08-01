@@ -59,8 +59,6 @@ func (f *streamingFlow) prepareContext() {
 	if f.ctx == nil {
 		f.ctx = context.TODO()
 	}
-
-	// TODO: add more runtime utilities
 }
 
 func (f *streamingFlow) To(sink flow.Sink) flow.Flow {
