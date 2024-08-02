@@ -34,7 +34,7 @@ import (
 var emptySeries = make([]index.SeriesDocument, 0)
 
 // Search implements index.SeriesStore.
-func (s *Store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher, projection []index.FieldKey) ([]index.SeriesDocument, error) {
+func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher, projection []index.FieldKey) ([]index.SeriesDocument, error) {
 	if len(seriesMatchers) == 0 {
 		return emptySeries, nil
 	}

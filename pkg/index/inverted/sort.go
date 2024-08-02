@@ -33,8 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// Sort creates a sorted iterator based on a given set of seriesIDs and field key, with specified sorting order, time range and preload size.
-func (s *Store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
+func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
 	timeRange *timestamp.TimeRange, preLoadSize int,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	reader, err := s.writer.Reader()

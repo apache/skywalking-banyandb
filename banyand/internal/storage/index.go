@@ -43,7 +43,7 @@ func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1
 }
 
 type seriesIndex struct {
-	store *inverted.Store
+	store index.SeriesStore
 	l     *logger.Logger
 }
 

@@ -73,7 +73,7 @@ func init() {
 	}
 }
 
-var _ index.Store = (*Store)(nil)
+var _ index.Store = (*store)(nil)
 
 // StoreOpts wraps options to create an inverted index repository.
 type StoreOpts struct {
@@ -82,8 +82,7 @@ type StoreOpts struct {
 	BatchWaitSec int64
 }
 
-// Store is an inverted index repository.
-type Store struct {
+type store struct {
 	writer *bluge.Writer
 	closer *run.Closer
 	l      *logger.Logger
@@ -104,8 +103,7 @@ func releaseBatch(b *blugeIndex.Batch) {
 	batchPool.Put(b)
 }
 
-// Batch inserts a batch of documents into the inverted index repository.
-func (s *Store) Batch(batch index.Batch) error {
+func (s *store) Batch(batch index.Batch) error {
 	if !s.closer.AddRunning() {
 		return nil
 	}
@@ -146,7 +144,7 @@ func (s *Store) Batch(batch index.Batch) error {
 }
 
 // NewStore create a new inverted index repository.
-func NewStore(opts StoreOpts) (*Store, error) {
+func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	if opts.Logger == nil {
 		opts.Logger = logger.GetLogger("inverted")
 	}
@@ -162,7 +160,7 @@ func NewStore(opts StoreOpts) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{
+	s := &store{
 		writer: w,
 		l:      opts.Logger,
 		closer: run.NewCloser(1),
@@ -170,15 +168,13 @@ func NewStore(opts StoreOpts) (*Store, error) {
 	return s, nil
 }
 
-// Close closes the inverted index repository.
-func (s *Store) Close() error {
+func (s *store) Close() error {
 	s.closer.Done()
 	s.closer.CloseThenWait()
 	return s.writer.Close()
 }
 
-// Iterator returns an iterator for the inverted index repository.
-func (s *Store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 	order modelv1.Sort, preLoadSize int,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	if termRange.Lower != nil &&
@@ -237,13 +233,11 @@ func (s *Store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 	return result, nil
 }
 
-// MatchField retrieves a posting list based on the given field key.
-func (s *Store) MatchField(fieldKey index.FieldKey) (list posting.List, err error) {
+func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err error) {
 	return s.Range(fieldKey, index.RangeOpts{})
 }
 
-// MatchTerms retrieves a posting list based on the given field.
-func (s *Store) MatchTerms(field index.Field) (list posting.List, err error) {
+func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
@@ -270,8 +264,7 @@ func (s *Store) MatchTerms(field index.Field) (list posting.List, err error) {
 	return list, err
 }
 
-// Match retrieves a posting list based on the given field key and matches.
-func (s *Store) Match(fieldKey index.FieldKey, matches []string) (posting.List, error) {
+func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, error) {
 	if len(matches) == 0 || fieldKey.Analyzer == databasev1.IndexRule_ANALYZER_UNSPECIFIED {
 		return roaring.DummyPostingList, nil
 	}
@@ -304,8 +297,7 @@ func (s *Store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	return list, err
 }
 
-// Range retrieves a posting list based on the given field key and range options.
-func (s *Store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
+func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
 	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize)
 	if err != nil {
 		return roaring.DummyPostingList, err
@@ -318,13 +310,12 @@ func (s *Store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	return
 }
 
-// Execute executes a query and returns a list of docIDs.
-func (s *Store) Execute(ctx context.Context, query *Query) (posting.List, error) {
+func (s *store) Execute(ctx context.Context, query index.Query) (posting.List, error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
 	}
-	documentMatchIterator, err := reader.Search(ctx, bluge.NewAllMatches(query.query))
+	documentMatchIterator, err := reader.Search(ctx, bluge.NewAllMatches(query.Query()))
 	if err != nil {
 		return nil, err
 	}
@@ -339,8 +330,7 @@ func (s *Store) Execute(ctx context.Context, query *Query) (posting.List, error)
 	return list, err
 }
 
-// SizeOnDisk returns the size of the inverted index repository on disk.
-func (s *Store) SizeOnDisk() int64 {
+func (s *store) SizeOnDisk() int64 {
 	_, bytes := s.writer.DirectoryStats()
 	return int64(bytes)
 }
