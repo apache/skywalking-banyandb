@@ -20,20 +20,17 @@ package storage
 import (
 	"context"
 	"path"
-	"strings"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 func (s *segment[T, O]) IndexDB() IndexDB {
@@ -200,24 +197,12 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 	}
 
 	pl := seriesList.ToList()
-	if opts.Filter != nil && opts.Filter != logical.ENode {
+	if opts.Query != nil {
 		var plFilter posting.List
 		func() {
 			if tracer != nil {
 				span, _ := tracer.StartSpan(ctx, "filter")
-				span.Tag("exp", opts.Filter.String())
-				var projectionStrBuilder strings.Builder
-				if len(opts.Projection) > 0 {
-					projectionStrBuilder.WriteString("[")
-					for i, p := range opts.Projection {
-						if i > 0 {
-							projectionStrBuilder.WriteString(", ")
-						}
-						projectionStrBuilder.WriteRune(rune(p.IndexRuleID))
-					}
-					projectionStrBuilder.WriteString("]")
-					span.Tagf("projection", "%s", projectionStrBuilder.String())
-				}
+				span.Tag("exp", opts.Query.String())
 				defer func() {
 					if err != nil {
 						span.Error(err)
@@ -228,9 +213,7 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 					span.Stop()
 				}()
 			}
-			if plFilter, err = opts.Filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
-				return s.store, nil
-			}, 0); err != nil {
+			if plFilter, err = s.store.Execute(ctx, opts.Query); err != nil {
 				return
 			}
 			if plFilter == nil {

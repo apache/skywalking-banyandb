@@ -15,43 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package logical
+package convert
 
-import (
-	"fmt"
-)
+import "encoding/json"
 
-// UnresolvedPlan denotes an logical expression.
-// It could be analyzed to a Plan(executable operation) with the Schema.
-type UnresolvedPlan interface {
-	Analyze(Schema) (Plan, error)
-}
-
-// Plan is the executable operation. It belongs to a execution tree.
-type Plan interface {
-	fmt.Stringer
-	Children() []Plan
-	Schema() Schema
-}
-
-// Expr represents a predicate in criteria.
-type Expr interface {
-	fmt.Stringer
-	Elements() []string
-	DataType() int32
-	Equal(Expr) bool
-}
-
-// LiteralExpr allows getting raw data represented as bytes.
-type LiteralExpr interface {
-	Expr
-	Bytes() [][]byte
-}
-
-// ComparableExpr allows comparing Expr and Expr arrays.
-type ComparableExpr interface {
-	LiteralExpr
-	Compare(LiteralExpr) (int, bool)
-	BelongTo(LiteralExpr) bool
-	Contains(LiteralExpr) bool
+// JSONToString converts a JSON marshaler to its JSON string representation.
+func JSONToString(marshaler json.Marshaler) string {
+	bb, err := marshaler.MarshalJSON()
+	if err != nil {
+		return err.Error()
+	}
+	return string(bb)
 }

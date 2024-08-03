@@ -37,7 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -523,7 +523,7 @@ func (qr *queryResult) mergeByTimestamp() *model.StreamResult {
 func indexSearch(sqo model.StreamQueryOptions,
 	tabs []*tsTable, seriesList pbv1.SeriesList,
 ) (posting.List, error) {
-	if sqo.Filter == nil || sqo.Filter == logical.ENode {
+	if sqo.Filter == nil || sqo.Filter == logicalstream.ENode {
 		return nil, nil
 	}
 	result := roaring.NewPostingList()

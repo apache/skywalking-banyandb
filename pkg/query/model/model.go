@@ -25,6 +25,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -72,7 +73,7 @@ const (
 
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
-	Filter          index.Filter
+	Query           *inverted.Query
 	TimeRange       *timestamp.TimeRange
 	Order           *OrderBy
 	Name            string
