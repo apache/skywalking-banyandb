@@ -79,6 +79,7 @@ func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order mode
 
 type sortIterator struct {
 	query     bluge.Query
+	fields    []string
 	err       error
 	reader    *bluge.Reader
 	current   *blugeMatchIterator
@@ -120,7 +121,7 @@ func (si *sortIterator) loadCurrent() bool {
 		return false
 	}
 
-	iter := newBlugeMatchIterator(documentMatchIterator, nil, nil)
+	iter := newBlugeMatchIterator(documentMatchIterator, nil, si.fields)
 	si.current = &iter
 	if si.next() {
 		return true

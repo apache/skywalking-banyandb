@@ -19,6 +19,7 @@ package storage
 
 import (
 	"context"
+	"maps"
 	"path"
 
 	"github.com/pkg/errors"
@@ -79,8 +80,9 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, project
 	}
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
-		span, _ := tracer.StartSpan(ctx, "seriesIndex.searchPrimary")
+		span, _ := tracer.StartSpan(ctx, "seriesIndex.search")
 		span.Tagf("matchers", "%v", seriesMatchers)
+		span.Tagf("query", "%v", secondaryQuery)
 		defer func() {
 			span.Tagf("matched", "%d", len(sl))
 			if len(fields) > 0 {
@@ -190,18 +192,18 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 			span.Stop()
 		}()
 	}
-	var seriesList pbv1.SeriesList
-	var fieldResultList FieldResultList
-	if opts.Query != nil {
-		seriesList, fieldResultList, err = s.search(ctx, series, opts.Projection, opts.Query)
-	} else {
-		seriesList, fieldResultList, err = s.search(ctx, series, opts.Projection, nil)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
 
 	if opts.Order == nil || opts.Order.Index == nil {
+		var seriesList pbv1.SeriesList
+		var fieldResultList FieldResultList
+		if opts.Query != nil {
+			seriesList, fieldResultList, err = s.search(ctx, series, opts.Projection, opts.Query)
+		} else {
+			seriesList, fieldResultList, err = s.search(ctx, series, opts.Projection, nil)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
 		return seriesList, fieldResultList, nil
 	}
 
@@ -219,8 +221,28 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 			span.Stop()
 		}()
 	}
+	seriesMatchers := make([]index.SeriesMatcher, len(series))
+	for i := range series {
+		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	var query index.Query
+	if opts.Query != nil {
+		query, err = s.store.Query(ctx, seriesMatchers, opts.Projection, opts.Query)
+	} else {
+		query, err = s.store.Query(ctx, seriesMatchers, opts.Projection, nil)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	fields := make([]string, 0, len(opts.Projection))
+	for i := range opts.Projection {
+		fields = append(fields, opts.Projection[i].Marshal())
+	}
 	iter, err := s.store.Iterator(fieldKey, rangeOpts,
-		opts.Order.Sort, opts.PreloadSize)
+		opts.Order.Sort, opts.PreloadSize, query, fields)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -228,42 +250,26 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 		err = multierr.Append(err, iter.Close())
 	}()
 
-	var sortedSeriesList pbv1.SeriesList
-	var sortedFieldResultList FieldResultList
 	var r int
-	pl := seriesList.ToList()
+	result := make([]index.SeriesDocument, 0, 10)
 	for iter.Next() {
 		r++
-		docID := iter.Val().DocID
-		if !pl.Contains(docID) {
-			continue
-		}
-		sortedSeriesList, sortedFieldResultList = appendSeriesList(
-			sortedSeriesList, seriesList,
-			sortedFieldResultList, fieldResultList,
-			common.SeriesID(docID))
-		if err != nil {
-			return nil, nil, err
-		}
+		val := iter.Val()
+		var doc index.SeriesDocument
+		doc.Fields = maps.Clone(val.Values)
+		doc.Key.ID = common.SeriesID(val.DocID)
+		doc.Key.EntityValues = val.EntityValues
+		result = append(result, doc)
+	}
+	sortedSeriesList, sortedFieldResultList, err := convertIndexSeriesToSeriesList(result, len(fields) > 0)
+	if err != nil {
+		return nil, nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, matched: %d", seriesMatchers, len(result))
 	}
 	if span != nil {
 		span.Tagf("rounds", "%d", r)
 		span.Tagf("size", "%d", len(sortedSeriesList))
 	}
 	return sortedSeriesList, sortedFieldResultList, err
-}
-
-func appendSeriesList(dest, src pbv1.SeriesList, destFRL, srcFRL FieldResultList, target common.SeriesID) (pbv1.SeriesList, FieldResultList) {
-	for i := 0; i < len(src); i++ {
-		if target == src[i].ID {
-			dest = append(dest, src[i])
-			if srcFRL != nil {
-				destFRL = append(destFRL, srcFRL[i])
-			}
-			break
-		}
-	}
-	return dest, destFRL
 }
 
 func (s *seriesIndex) Close() error {

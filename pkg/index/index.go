@@ -97,11 +97,12 @@ func (r RangeOpts) Between(value []byte) int {
 
 // DocumentResult represents a document in an index.
 type DocumentResult struct {
-	Values      map[string][]byte
-	SortedValue []byte
-	SeriesID    common.SeriesID
-	DocID       uint64
-	Timestamp   int64
+	EntityValues []byte
+	Values       map[string][]byte
+	SortedValue  []byte
+	SeriesID     common.SeriesID
+	DocID        uint64
+	Timestamp    int64
 }
 
 // SortedField returns the value of the sorted field.
@@ -156,7 +157,8 @@ type Writer interface {
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator[*DocumentResult], err error)
+	Query(ctx context.Context, seriesMatchers []SeriesMatcher, projection []FieldKey, secondaryQuery Query) (Query, error)
+	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int, query Query, fields []string) (iter FieldIterator[*DocumentResult], err error)
 	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
 }
 

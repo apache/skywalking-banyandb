@@ -174,8 +174,8 @@ func (s *store) Close() error {
 	return s.writer.Close()
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
-	order modelv1.Sort, preLoadSize int,
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
+	preLoadSize int, indexQuery index.Query, fields []string,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
@@ -191,7 +191,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 		return nil, err
 	}
 	fk := fieldKey.Marshal()
-	query := bluge.NewBooleanQuery()
+	rangeQuery := bluge.NewBooleanQuery()
 	addRange := func(query *bluge.BooleanQuery, termRange index.RangeOpts) *bluge.BooleanQuery {
 		if termRange.Upper == nil {
 			termRange.Upper = defaultUpper
@@ -210,21 +210,26 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 	}
 
 	if fieldKey.HasSeriesID() {
-		query = query.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
+		rangeQuery = rangeQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
 			SetField(seriesIDField))
 		if termRange.Lower != nil || termRange.Upper != nil {
-			query = addRange(query, termRange)
+			rangeQuery = addRange(rangeQuery, termRange)
 		}
 	} else {
-		query = addRange(query, termRange)
+		rangeQuery = addRange(rangeQuery, termRange)
 	}
 
 	sortedKey := fk
 	if order == modelv1.Sort_SORT_DESC {
 		sortedKey = "-" + sortedKey
 	}
+	query := bluge.NewBooleanQuery().AddMust(rangeQuery)
+	if indexQuery != nil && indexQuery.Query() != nil {
+		query.AddMust(indexQuery)
+	}
 	result := &sortIterator{
 		query:     query,
+		fields:    fields,
 		reader:    reader,
 		sortedKey: sortedKey,
 		size:      preLoadSize,
@@ -298,7 +303,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize)
+	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize, nil, nil)
 	if err != nil {
 		return roaring.DummyPostingList, err
 	}
@@ -360,6 +365,8 @@ func (bmi *blugeMatchIterator) Next() bool {
 	}
 	err := match.VisitStoredFields(func(field string, value []byte) bool {
 		switch field {
+		case entityField:
+			bmi.current.EntityValues = value
 		case docIDField:
 			bmi.current.DocID = convert.BytesToUint64(value)
 		case seriesIDField:
