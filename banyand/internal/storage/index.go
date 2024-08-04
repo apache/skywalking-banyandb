@@ -70,7 +70,9 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, projection []index.FieldKey, secondaryQuery index.Query) (sl pbv1.SeriesList, fields FieldResultList, err error) {
+func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series,
+	projection []index.FieldKey, secondaryQuery index.Query,
+) (sl pbv1.SeriesList, fields FieldResultList, err error) {
 	seriesMatchers := make([]index.SeriesMatcher, len(series))
 	for i := range series {
 		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
@@ -230,9 +232,9 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 	}
 	var query index.Query
 	if opts.Query != nil {
-		query, err = s.store.Query(ctx, seriesMatchers, opts.Projection, opts.Query)
+		query, err = s.store.Query(seriesMatchers, opts.Query)
 	} else {
-		query, err = s.store.Query(ctx, seriesMatchers, opts.Projection, nil)
+		query, err = s.store.Query(seriesMatchers, nil)
 	}
 	if err != nil {
 		return nil, nil, err

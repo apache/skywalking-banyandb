@@ -33,7 +33,8 @@ import (
 
 var emptySeries = make([]index.SeriesDocument, 0)
 
-func (s *store) Query(ctx context.Context, seriesMatchers []index.SeriesMatcher, projection []index.FieldKey, secondaryQuery index.Query) (index.Query, error) {
+// Query implements index.SeriesStore.
+func (s *store) Query(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query) (index.Query, error) {
 	if len(seriesMatchers) == 0 {
 		return secondaryQuery, nil
 	}
@@ -81,7 +82,9 @@ func (s *store) Query(ctx context.Context, seriesMatchers []index.SeriesMatcher,
 }
 
 // Search implements index.SeriesStore.
-func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher, projection []index.FieldKey, secondaryQuery index.Query) ([]index.SeriesDocument, error) {
+func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher,
+	projection []index.FieldKey, secondaryQuery index.Query,
+) ([]index.SeriesDocument, error) {
 	if len(seriesMatchers) == 0 {
 		return emptySeries, nil
 	}

@@ -157,7 +157,7 @@ type Writer interface {
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	Query(ctx context.Context, seriesMatchers []SeriesMatcher, projection []FieldKey, secondaryQuery Query) (Query, error)
+	Query(seriesMatchers []SeriesMatcher, secondaryQuery Query) (Query, error)
 	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int, query Query, fields []string) (iter FieldIterator[*DocumentResult], err error)
 	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
 }
