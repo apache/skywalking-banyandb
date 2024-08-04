@@ -191,7 +191,6 @@ func (s *server) Validate() error {
 	if s.enableIngestionAccessLog && s.accessLogRootPath == "" {
 		return errAccessLogRootPath
 	}
-	observability.UpdateAddress("grpc", s.addr)
 	if !s.tls {
 		return nil
 	}

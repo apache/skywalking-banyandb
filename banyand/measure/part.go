@@ -150,11 +150,18 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 	var sidPrev common.SeriesID
 	uncompressedBlockSizeBytes := uint64(0)
 	var indexPrev int
-	for i := range dps.timestamps {
+	var prevTS int64
+	for i := 0; i < len(dps.timestamps); i++ {
 		sid := dps.seriesIDs[i]
 		if sidPrev == 0 {
 			sidPrev = sid
 		}
+		if prevTS == dps.timestamps[i] {
+			dps.skip(i)
+			i--
+			continue
+		}
+		prevTS = dps.timestamps[i]
 
 		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize ||
 			(i-indexPrev) > maxBlockLength || sid != sidPrev {

@@ -127,6 +127,7 @@ func (p *metricService) PreRun(ctx context.Context) error {
 		NativeMeterProvider = newNativeMeterProvider(ctx, p.metadata, nodeInfo)
 	}
 	initMetrics(p.modes)
+	metricsMux.HandleFunc("/_route", p.routeTableHandler)
 	return nil
 }
 
@@ -178,6 +179,12 @@ func (p *metricService) GracefulStop() {
 		_ = p.svr.Close()
 	}
 	p.closer.CloseThenWait()
+}
+
+func (p *metricService) routeTableHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(p.nodeSelector.String()))
 }
 
 func containsMode(modes []string, mode string) bool {
