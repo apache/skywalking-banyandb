@@ -204,8 +204,7 @@ type SeriesDocument struct {
 type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
-	Search(context.Context, []SeriesMatcher, []FieldKey) ([]SeriesDocument, error)
-	Execute(context.Context, Query) (posting.List, error)
+	Search(context.Context, []SeriesMatcher, []FieldKey, Query) ([]SeriesDocument, error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

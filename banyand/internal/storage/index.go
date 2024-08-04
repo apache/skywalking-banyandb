@@ -27,7 +27,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -38,7 +37,7 @@ func (s *segment[T, O]) IndexDB() IndexDB {
 }
 
 func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
-	sl, _, err := s.index.searchPrimary(ctx, series, nil)
+	sl, _, err := s.index.search(ctx, series, nil, nil)
 	return sl, err
 }
 
@@ -70,7 +69,7 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series, projection []index.FieldKey) (sl pbv1.SeriesList, fields FieldResultList, err error) {
+func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, projection []index.FieldKey, secondaryQuery index.Query) (sl pbv1.SeriesList, fields FieldResultList, err error) {
 	seriesMatchers := make([]index.SeriesMatcher, len(series))
 	for i := range series {
 		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
@@ -93,7 +92,7 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series, 
 			span.Stop()
 		}()
 	}
-	ss, err := s.store.Search(ctx, seriesMatchers, projection)
+	ss, err := s.store.Search(ctx, seriesMatchers, projection, secondaryQuery)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -191,44 +190,19 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 			span.Stop()
 		}()
 	}
-	seriesList, fieldResultList, err := s.searchPrimary(ctx, series, opts.Projection)
+	var seriesList pbv1.SeriesList
+	var fieldResultList FieldResultList
+	if opts.Query != nil {
+		seriesList, fieldResultList, err = s.search(ctx, series, opts.Projection, opts.Query)
+	} else {
+		seriesList, fieldResultList, err = s.search(ctx, series, opts.Projection, nil)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 
-	pl := seriesList.ToList()
-	if opts.Query != nil {
-		var plFilter posting.List
-		func() {
-			if tracer != nil {
-				span, _ := tracer.StartSpan(ctx, "filter")
-				span.Tag("exp", opts.Query.String())
-				defer func() {
-					if err != nil {
-						span.Error(err)
-					} else {
-						span.Tagf("matched", "%d", plFilter.Len())
-						span.Tagf("total", "%d", pl.Len())
-					}
-					span.Stop()
-				}()
-			}
-			if plFilter, err = s.store.Execute(ctx, opts.Query); err != nil {
-				return
-			}
-			if plFilter == nil {
-				return
-			}
-			err = pl.Intersect(plFilter)
-		}()
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
 	if opts.Order == nil || opts.Order.Index == nil {
-		sl, frl = filterSeriesList(seriesList, fieldResultList, pl)
-		return sl, frl, nil
+		return seriesList, fieldResultList, nil
 	}
 
 	fieldKey := index.FieldKey{
@@ -257,6 +231,7 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 	var sortedSeriesList pbv1.SeriesList
 	var sortedFieldResultList FieldResultList
 	var r int
+	pl := seriesList.ToList()
 	for iter.Next() {
 		r++
 		docID := iter.Val().DocID
@@ -276,19 +251,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 		span.Tagf("size", "%d", len(sortedSeriesList))
 	}
 	return sortedSeriesList, sortedFieldResultList, err
-}
-
-func filterSeriesList(seriesList pbv1.SeriesList, fieldResultList FieldResultList, filter posting.List) (pbv1.SeriesList, FieldResultList) {
-	for i := 0; i < len(seriesList); i++ {
-		if !filter.Contains(uint64(seriesList[i].ID)) {
-			seriesList = append(seriesList[:i], seriesList[i+1:]...)
-			if fieldResultList != nil {
-				fieldResultList = append(fieldResultList[:i], fieldResultList[i+1:]...)
-			}
-			i--
-		}
-	}
-	return seriesList, fieldResultList
 }
 
 func appendSeriesList(dest, src pbv1.SeriesList, destFRL, srcFRL FieldResultList, target common.SeriesID) (pbv1.SeriesList, FieldResultList) {

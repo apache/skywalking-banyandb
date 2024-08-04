@@ -191,7 +191,7 @@ func TestStore_Search(t *testing.T) {
 			name += string(term) + "-"
 		}
 		t.Run(name, func(t *testing.T) {
-			got, err := s.Search(context.Background(), matchers, tt.projection)
+			got, err := s.Search(context.Background(), matchers, tt.projection, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -278,7 +278,7 @@ func TestStore_SearchWildcard(t *testing.T) {
 					Type:  index.SeriesMatcherTypeWildcard,
 					Match: tt.wildcard,
 				},
-			}, tt.projection)
+			}, tt.projection, nil)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, tt.want, got)
 		})
@@ -343,7 +343,7 @@ func TestStore_SearchPrefix(t *testing.T) {
 					Type:  index.SeriesMatcherTypePrefix,
 					Match: tt.prefix,
 				},
-			}, tt.projection)
+			}, tt.projection, nil)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, tt.want, got)
 		})

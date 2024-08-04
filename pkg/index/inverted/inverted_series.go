@@ -34,7 +34,7 @@ import (
 var emptySeries = make([]index.SeriesDocument, 0)
 
 // Search implements index.SeriesStore.
-func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher, projection []index.FieldKey) ([]index.SeriesDocument, error) {
+func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher, projection []index.FieldKey, secondaryQuery index.Query) ([]index.SeriesDocument, error) {
 	if len(seriesMatchers) == 0 {
 		return emptySeries, nil
 	}
@@ -64,16 +64,20 @@ func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher
 			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
 		}
 	}
-	var query bluge.Query
+	var primaryQuery bluge.Query
 	if len(qs) > 1 {
 		bq := bluge.NewBooleanQuery()
 		bq.AddShould(qs...)
 		bq.SetMinShould(1)
-		query = bq
+		primaryQuery = bq
 	} else {
-		query = qs[0]
+		primaryQuery = qs[0]
 	}
 
+	query := bluge.NewBooleanQuery().AddMust(primaryQuery)
+	if secondaryQuery != nil && secondaryQuery.Query() != nil {
+		query.AddMust(secondaryQuery.Query())
+	}
 	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query))
 	if err != nil {
 		return nil, err

@@ -310,26 +310,6 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	return
 }
 
-func (s *store) Execute(ctx context.Context, query index.Query) (posting.List, error) {
-	reader, err := s.writer.Reader()
-	if err != nil {
-		return nil, err
-	}
-	documentMatchIterator, err := reader.Search(ctx, bluge.NewAllMatches(query.Query()))
-	if err != nil {
-		return nil, err
-	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader, nil)
-	defer func() {
-		err = multierr.Append(err, iter.Close())
-	}()
-	list := roaring.NewPostingList()
-	for iter.Next() {
-		list.Insert(iter.Val().DocID)
-	}
-	return list, err
-}
-
 func (s *store) SizeOnDisk() int64 {
 	_, bytes := s.writer.DirectoryStats()
 	return int64(bytes)
