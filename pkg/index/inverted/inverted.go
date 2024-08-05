@@ -231,6 +231,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	for i := range fieldKeys {
 		fields = append(fields, fieldKeys[i].Marshal())
 	}
+	// TODO: add trace information
 	result := &sortIterator{
 		query:     query,
 		fields:    fields,

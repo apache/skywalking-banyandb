@@ -83,6 +83,7 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series,
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		span, _ := tracer.StartSpan(ctx, "seriesIndex.search")
+		// TODO: modify trace information
 		span.Tagf("matchers", "%v", seriesMatchers)
 		span.Tagf("query", "%v", secondaryQuery)
 		defer func() {

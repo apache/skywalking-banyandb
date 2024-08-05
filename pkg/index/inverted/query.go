@@ -24,7 +24,6 @@ import (
 	"strings"
 
 	"github.com/blugelabs/bluge"
-	"github.com/blugelabs/bluge/search"
 	"github.com/pkg/errors"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -58,18 +57,8 @@ type Query struct {
 	node
 }
 
-// Searcher implements index.Query.
-func (q *Query) Searcher(i search.Reader, options search.SearcherOptions) (search.Searcher, error) {
-	return q.query.Searcher(i, options)
-}
-
 func (q *Query) String() string {
 	return q.node.String()
-}
-
-// Query implements index.Query.
-func (q *Query) Query() bluge.Query {
-	return q.query
 }
 
 // BuildLocalQuery returns blugeQuery for local indices.
