@@ -6,7 +6,7 @@ This chapter introduces BanyanDB's data models and covers the following:
 * data model
 * data retrieval
 
-You can also find [examples](../crud/) of how to interact with BanyanDB using [bydbctl](../clients.md#command-line), how to create and drop groups, or how to create, read, update and drop streams/measures.
+You can also find [examples](../interacting/bydbctl/schema) of how to interact with BanyanDB using [bydbctl](../interacting/bydbctl/bydbctl.md), how to create and drop groups, or how to create, read, update and drop streams/measures.
 
 ## Structure of BanyanDB
 
