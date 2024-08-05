@@ -191,7 +191,9 @@ func TestStore_Search(t *testing.T) {
 			name += string(term) + "-"
 		}
 		t.Run(name, func(t *testing.T) {
-			got, err := s.Search(context.Background(), matchers, tt.projection, nil)
+			query, err := s.BuildQuery(matchers, nil)
+			require.NoError(t, err)
+			got, err := s.Search(context.Background(), tt.projection, query)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -273,12 +275,14 @@ func TestStore_SearchWildcard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.wildcard), func(t *testing.T) {
-			got, err := s.Search(context.Background(), []index.SeriesMatcher{
+			query, err := s.BuildQuery([]index.SeriesMatcher{
 				{
 					Type:  index.SeriesMatcherTypeWildcard,
 					Match: tt.wildcard,
 				},
-			}, tt.projection, nil)
+			}, nil)
+			require.NoError(t, err)
+			got, err := s.Search(context.Background(), tt.projection, query)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, tt.want, got)
 		})
@@ -338,12 +342,14 @@ func TestStore_SearchPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.prefix), func(t *testing.T) {
-			got, err := s.Search(context.Background(), []index.SeriesMatcher{
+			query, err := s.BuildQuery([]index.SeriesMatcher{
 				{
 					Type:  index.SeriesMatcherTypePrefix,
 					Match: tt.prefix,
 				},
-			}, tt.projection, nil)
+			}, nil)
+			require.NoError(t, err)
+			got, err := s.Search(context.Background(), tt.projection, query)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, tt.want, got)
 		})

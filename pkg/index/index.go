@@ -202,7 +202,7 @@ type SeriesDocument struct {
 type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
-	Search(context.Context, []SeriesMatcher, []FieldKey, Query) ([]SeriesDocument, error)
+	Search(context.Context, []FieldKey, Query) ([]SeriesDocument, error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

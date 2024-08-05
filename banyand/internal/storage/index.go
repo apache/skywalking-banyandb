@@ -96,7 +96,11 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series,
 			span.Stop()
 		}()
 	}
-	ss, err := s.store.Search(ctx, seriesMatchers, projection, secondaryQuery)
+	query, err := s.store.BuildQuery(seriesMatchers, secondaryQuery)
+	if err != nil {
+		return nil, nil, err
+	}
+	ss, err := s.store.Search(ctx, projection, query)
 	if err != nil {
 		return nil, nil, err
 	}

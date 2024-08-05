@@ -38,13 +38,7 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 	if len(seriesMatchers) == 0 {
 		return secondaryQuery, nil
 	}
-	reader, err := s.writer.Reader()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = reader.Close()
-	}()
+
 	qs := make([]bluge.Query, len(seriesMatchers))
 	for i := range seriesMatchers {
 		switch seriesMatchers[i].Type {
@@ -82,12 +76,9 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 }
 
 // Search implements index.SeriesStore.
-func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher,
-	projection []index.FieldKey, secondaryQuery index.Query,
+func (s *store) Search(ctx context.Context,
+	projection []index.FieldKey, query index.Query,
 ) ([]index.SeriesDocument, error) {
-	if len(seriesMatchers) == 0 {
-		return emptySeries, nil
-	}
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
@@ -95,40 +86,8 @@ func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher
 	defer func() {
 		_ = reader.Close()
 	}()
-	qs := make([]bluge.Query, len(seriesMatchers))
-	for i := range seriesMatchers {
-		switch seriesMatchers[i].Type {
-		case index.SeriesMatcherTypeExact:
-			q := bluge.NewTermQuery(convert.BytesToString(seriesMatchers[i].Match))
-			q.SetField(entityField)
-			qs[i] = q
-		case index.SeriesMatcherTypePrefix:
-			q := bluge.NewPrefixQuery(convert.BytesToString(seriesMatchers[i].Match))
-			q.SetField(entityField)
-			qs[i] = q
-		case index.SeriesMatcherTypeWildcard:
-			q := bluge.NewWildcardQuery(convert.BytesToString(seriesMatchers[i].Match))
-			q.SetField(entityField)
-			qs[i] = q
-		default:
-			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
-		}
-	}
-	var primaryQuery bluge.Query
-	if len(qs) > 1 {
-		bq := bluge.NewBooleanQuery()
-		bq.AddShould(qs...)
-		bq.SetMinShould(1)
-		primaryQuery = bq
-	} else {
-		primaryQuery = qs[0]
-	}
 
-	query := bluge.NewBooleanQuery().AddMust(primaryQuery)
-	if secondaryQuery != nil && secondaryQuery.(*Query).query != nil {
-		query.AddMust(secondaryQuery.(*Query).query)
-	}
-	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query))
+	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query.(*Query).query))
 	if err != nil {
 		return nil, err
 	}
