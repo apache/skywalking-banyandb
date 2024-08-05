@@ -231,20 +231,12 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 		}
 	}
 	var query index.Query
-	if opts.Query != nil {
-		query, err = s.store.Query(seriesMatchers, opts.Query)
-	} else {
-		query, err = s.store.Query(seriesMatchers, nil)
-	}
+	query, err = s.store.BuildQuery(seriesMatchers, opts.Query)
 	if err != nil {
 		return nil, nil, err
 	}
-	fields := make([]string, 0, len(opts.Projection))
-	for i := range opts.Projection {
-		fields = append(fields, opts.Projection[i].Marshal())
-	}
 	iter, err := s.store.Iterator(fieldKey, rangeOpts,
-		opts.Order.Sort, opts.PreloadSize, query, fields)
+		opts.Order.Sort, opts.PreloadSize, query, opts.Projection)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -263,7 +255,7 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 		doc.Key.EntityValues = val.EntityValues
 		result = append(result, doc)
 	}
-	sortedSeriesList, sortedFieldResultList, err := convertIndexSeriesToSeriesList(result, len(fields) > 0)
+	sortedSeriesList, sortedFieldResultList, err := convertIndexSeriesToSeriesList(result, len(opts.Projection) > 0)
 	if err != nil {
 		return nil, nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, matched: %d", seriesMatchers, len(result))
 	}

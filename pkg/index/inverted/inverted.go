@@ -175,7 +175,7 @@ func (s *store) Close() error {
 }
 
 func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
-	preLoadSize int, indexQuery index.Query, fields []string,
+	preLoadSize int, indexQuery index.Query, fieldKeys []index.FieldKey,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
@@ -224,8 +224,12 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		sortedKey = "-" + sortedKey
 	}
 	query := bluge.NewBooleanQuery().AddMust(rangeQuery)
-	if indexQuery != nil && indexQuery.Query() != nil {
-		query.AddMust(indexQuery)
+	if indexQuery != nil && indexQuery.(*Query).query != nil {
+		query.AddMust(indexQuery.(*Query).query)
+	}
+	fields := make([]string, 0, len(fieldKeys))
+	for i := range fieldKeys {
+		fields = append(fields, fieldKeys[i].Marshal())
 	}
 	result := &sortIterator{
 		query:     query,

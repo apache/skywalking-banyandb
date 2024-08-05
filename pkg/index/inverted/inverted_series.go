@@ -33,8 +33,8 @@ import (
 
 var emptySeries = make([]index.SeriesDocument, 0)
 
-// Query implements index.SeriesStore.
-func (s *store) Query(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query) (index.Query, error) {
+// BuildQuery implements index.SeriesStore.
+func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query) (index.Query, error) {
 	if len(seriesMatchers) == 0 {
 		return secondaryQuery, nil
 	}
@@ -75,8 +75,8 @@ func (s *store) Query(seriesMatchers []index.SeriesMatcher, secondaryQuery index
 	}
 
 	query := bluge.NewBooleanQuery().AddMust(primaryQuery)
-	if secondaryQuery != nil && secondaryQuery.Query() != nil {
-		query.AddMust(secondaryQuery.Query())
+	if secondaryQuery != nil && secondaryQuery.(*Query).query != nil {
+		query.AddMust(secondaryQuery.(*Query).query)
 	}
 	return &Query{query: query}, nil
 }
@@ -125,8 +125,8 @@ func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher
 	}
 
 	query := bluge.NewBooleanQuery().AddMust(primaryQuery)
-	if secondaryQuery != nil && secondaryQuery.Query() != nil {
-		query.AddMust(secondaryQuery.Query())
+	if secondaryQuery != nil && secondaryQuery.(*Query).query != nil {
+		query.AddMust(secondaryQuery.(*Query).query)
 	}
 	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query))
 	if err != nil {

@@ -30,6 +30,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -48,6 +49,8 @@ type GlobalIndexError struct {
 }
 
 func (g GlobalIndexError) Error() string { return g.IndexRule.String() }
+
+var _ index.Query = (*Query)(nil)
 
 // Query is a wrapper for bluge.Query.
 type Query struct {
@@ -72,7 +75,7 @@ func (q *Query) Query() bluge.Query {
 // BuildLocalQuery returns blugeQuery for local indices.
 func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int,
 	entity []*modelv1.TagValue,
-) (*Query, [][]*modelv1.TagValue, bool, error) {
+) (index.Query, [][]*modelv1.TagValue, bool, error) {
 	if criteria == nil {
 		return nil, [][]*modelv1.TagValue{entity}, false, nil
 	}
@@ -126,12 +129,12 @@ func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDi
 		case modelv1.LogicalExpression_LOGICAL_OP_AND:
 			query, node := bluge.NewBooleanQuery(), newMustNode()
 			if left != nil {
-				query.AddMust(left.query)
-				node.Append(left.node)
+				query.AddMust(left.(*Query).query)
+				node.Append(left.(*Query).node)
 			}
 			if right != nil {
-				query.AddMust(right.query)
-				node.Append(right.node)
+				query.AddMust(right.(*Query).query)
+				node.Append(right.(*Query).node)
 			}
 			return &Query{query, node}, entities, false, nil
 		case modelv1.LogicalExpression_LOGICAL_OP_OR:
@@ -144,12 +147,12 @@ func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDi
 			query, node := bluge.NewBooleanQuery(), newShouldNode()
 			query.SetMinShould(1)
 			if left != nil {
-				query.AddShould(left.query)
-				node.Append(left.node)
+				query.AddShould(left.(*Query).query)
+				node.Append(left.(*Query).node)
 			}
 			if right != nil {
-				query.AddShould(right.query)
-				node.Append(right.node)
+				query.AddShould(right.(*Query).query)
+				node.Append(right.(*Query).node)
 			}
 			return &Query{query, node}, entities, false, nil
 		}
