@@ -72,6 +72,7 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 	if secondaryQuery != nil && secondaryQuery.(*Query).query != nil {
 		query.AddMust(secondaryQuery.(*Query).query)
 	}
+	// TODO: add node for Query
 	return &Query{query: query}, nil
 }
 
