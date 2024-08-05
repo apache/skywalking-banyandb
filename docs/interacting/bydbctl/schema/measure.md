@@ -120,4 +120,4 @@ bydbctl measure list -g sw_metric
 
 ## API Reference
 
-[MeasureService v1](../../../api-reference.md#MeasureService)
+[Measure Registration Operations](../../../api-reference.md#measureregistryservice)

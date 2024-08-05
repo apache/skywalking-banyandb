@@ -109,4 +109,4 @@ bydbctl stream list -g default
 
 ## API Reference
 
-[StreamService v1](../../../api-reference.md#streamservice)
+[Stream Registration Operations](../../../api-reference.md#streamregistryservice)

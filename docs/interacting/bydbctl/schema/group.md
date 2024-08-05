@@ -87,4 +87,4 @@ bydbctl group list
 ```
 
 ## API Reference
-[GroupService v1](../api-reference.md#groupservice)
+[Group Registration Operations](../../../api-reference.md#groupregistryservice)

@@ -105,4 +105,4 @@ bydbctl indexRule list -g sw_stream
 
 ## API Reference
 
-[indexRuleService v1](../api-reference.md#IndexRuleRegistryService)
+[IndexRule Registration Operations](../../../api-reference.md#indexruleregistryservice)

@@ -134,4 +134,4 @@ bydbctl indexRuleBinding list -g sw_stream
 
 ## API Reference
 
-[indexRuleBindingService v1](../api-reference.md#IndexRuleBindingRegistryService)
+[IndexRuleBinding Registration Operations](../../../api-reference.md#indexrulebindingregistryservice)
