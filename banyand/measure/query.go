@@ -194,7 +194,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
 		sll, fieldResultList, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
-			Filter:      mqo.Filter,
+			Query:       mqo.Query,
 			Order:       mqo.Order,
 			PreloadSize: preloadSize,
 			Projection:  indexProjection,

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package inverted implements a inverted index repository.
+// Package inverted implements an inverted index repository.
 package inverted
 
 import (
@@ -62,10 +62,11 @@ var (
 	defaultProjection       = []string{docIDField}
 )
 
-var analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
+// Analyzers is a map that associates each IndexRule_Analyzer type with a corresponding Analyzer.
+var Analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
 
 func init() {
-	analyzers = map[databasev1.IndexRule_Analyzer]*analysis.Analyzer{
+	Analyzers = map[databasev1.IndexRule_Analyzer]*analysis.Analyzer{
 		databasev1.IndexRule_ANALYZER_KEYWORD:  analyzer.NewKeywordAnalyzer(),
 		databasev1.IndexRule_ANALYZER_SIMPLE:   analyzer.NewSimpleAnalyzer(),
 		databasev1.IndexRule_ANALYZER_STANDARD: analyzer.NewStandardAnalyzer(),
@@ -74,7 +75,7 @@ func init() {
 
 var _ index.Store = (*store)(nil)
 
-// StoreOpts wraps options to create a inverted index repository.
+// StoreOpts wraps options to create an inverted index repository.
 type StoreOpts struct {
 	Logger       *logger.Logger
 	Path         string
@@ -124,7 +125,7 @@ func (s *store) Batch(batch index.Batch) error {
 				tf.StoreValue()
 			}
 			if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
-				tf = tf.WithAnalyzer(analyzers[f.Key.Analyzer])
+				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
 			}
 			doc.AddField(tf)
 		}
@@ -153,7 +154,7 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 			WithPersisterNapTimeMSec(int(opts.BatchWaitSec * 1000))
 	}
 	config := bluge.DefaultConfigWithIndexConfig(indexConfig)
-	config.DefaultSearchAnalyzer = analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
+	config.DefaultSearchAnalyzer = Analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
 	w, err := bluge.OpenWriter(config)
 	if err != nil {
@@ -271,7 +272,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	analyzer := analyzers[fieldKey.Analyzer]
+	analyzer := Analyzers[fieldKey.Analyzer]
 	fk := fieldKey.Marshal()
 	query := bluge.NewBooleanQuery()
 	if fieldKey.HasSeriesID() {
@@ -307,6 +308,26 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	}
 	err = multierr.Append(err, iter.Close())
 	return
+}
+
+func (s *store) Execute(ctx context.Context, query index.Query) (posting.List, error) {
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return nil, err
+	}
+	documentMatchIterator, err := reader.Search(ctx, bluge.NewAllMatches(query.Query()))
+	if err != nil {
+		return nil, err
+	}
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, nil)
+	defer func() {
+		err = multierr.Append(err, iter.Close())
+	}()
+	list := roaring.NewPostingList()
+	for iter.Next() {
+		list.Insert(iter.Val().DocID)
+	}
+	return list, err
 }
 
 func (s *store) SizeOnDisk() int64 {

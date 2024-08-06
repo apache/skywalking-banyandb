@@ -22,6 +22,7 @@ Release Notes.
 - Add the stream query trace.
 - Add the topN query trace.
 - Introduce the round-robin selector to Liaison Node.
+- Optimize query performance of series index.
 
 ### Bugs
 
