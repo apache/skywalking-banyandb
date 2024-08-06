@@ -40,20 +40,27 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 	}
 
 	qs := make([]bluge.Query, len(seriesMatchers))
+	primaryNode := newShouldNode()
 	for i := range seriesMatchers {
 		switch seriesMatchers[i].Type {
 		case index.SeriesMatcherTypeExact:
-			q := bluge.NewTermQuery(convert.BytesToString(seriesMatchers[i].Match))
+			match := convert.BytesToString(seriesMatchers[i].Match)
+			q := bluge.NewTermQuery(match)
 			q.SetField(entityField)
 			qs[i] = q
+			primaryNode.Append(newTermNode(match, nil))
 		case index.SeriesMatcherTypePrefix:
-			q := bluge.NewPrefixQuery(convert.BytesToString(seriesMatchers[i].Match))
+			match := convert.BytesToString(seriesMatchers[i].Match)
+			q := bluge.NewPrefixQuery(match)
 			q.SetField(entityField)
 			qs[i] = q
+			primaryNode.Append(newPrefixNode(match, nil))
 		case index.SeriesMatcherTypeWildcard:
-			q := bluge.NewWildcardQuery(convert.BytesToString(seriesMatchers[i].Match))
+			match := convert.BytesToString(seriesMatchers[i].Match)
+			q := bluge.NewWildcardQuery(match)
 			q.SetField(entityField)
 			qs[i] = q
+			primaryNode.Append(newWildcardNode(match, nil))
 		default:
 			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
 		}
@@ -69,11 +76,13 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 	}
 
 	query := bluge.NewBooleanQuery().AddMust(primaryQuery)
-	if secondaryQuery != nil && secondaryQuery.(*Query).query != nil {
-		query.AddMust(secondaryQuery.(*Query).query)
+	node := newMustNode()
+	node.Append(primaryNode)
+	if secondaryQuery != nil && secondaryQuery.(*queryNode).query != nil {
+		query.AddMust(secondaryQuery.(*queryNode).query)
+		node.Append(secondaryQuery.(*queryNode).node)
 	}
-	// TODO: add node for Query
-	return &Query{query: query}, nil
+	return &queryNode{query, node}, nil
 }
 
 // Search implements index.SeriesStore.
@@ -88,7 +97,7 @@ func (s *store) Search(ctx context.Context,
 		_ = reader.Close()
 	}()
 
-	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query.(*Query).query))
+	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query.(*queryNode).query))
 	if err != nil {
 		return nil, err
 	}

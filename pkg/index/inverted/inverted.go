@@ -192,6 +192,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 	}
 	fk := fieldKey.Marshal()
 	rangeQuery := bluge.NewBooleanQuery()
+	rangeNode := newMustNode()
 	addRange := func(query *bluge.BooleanQuery, termRange index.RangeOpts) *bluge.BooleanQuery {
 		if termRange.Upper == nil {
 			termRange.Upper = defaultUpper
@@ -206,12 +207,14 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 			termRange.IncludesUpper,
 		).
 			SetField(fk))
+		rangeNode.Append(newTermRangeInclusiveNode(string(termRange.Lower), string(termRange.Upper), termRange.IncludesLower, termRange.IncludesUpper, nil))
 		return query
 	}
 
 	if fieldKey.HasSeriesID() {
 		rangeQuery = rangeQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
 			SetField(seriesIDField))
+		rangeNode.Append(newTermNode(string(fieldKey.SeriesID.Marshal()), nil))
 		if termRange.Lower != nil || termRange.Upper != nil {
 			rangeQuery = addRange(rangeQuery, termRange)
 		}
@@ -224,14 +227,16 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		sortedKey = "-" + sortedKey
 	}
 	query := bluge.NewBooleanQuery().AddMust(rangeQuery)
-	if indexQuery != nil && indexQuery.(*Query).query != nil {
-		query.AddMust(indexQuery.(*Query).query)
+	node := newMustNode()
+	node.Append(rangeNode)
+	if indexQuery != nil && indexQuery.(*queryNode).query != nil {
+		query.AddMust(indexQuery.(*queryNode).query)
+		node.Append(indexQuery.(*queryNode).node)
 	}
 	fields := make([]string, 0, len(fieldKeys))
 	for i := range fieldKeys {
 		fields = append(fields, fieldKeys[i].Marshal())
 	}
-	// TODO: add trace information
 	result := &sortIterator{
 		query:     query,
 		fields:    fields,

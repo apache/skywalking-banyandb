@@ -80,12 +80,14 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series,
 			return nil, nil, err
 		}
 	}
+	indexQuery, err := s.store.BuildQuery(seriesMatchers, secondaryQuery)
+	if err != nil {
+		return nil, nil, err
+	}
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		span, _ := tracer.StartSpan(ctx, "seriesIndex.search")
-		// TODO: modify trace information
-		span.Tagf("matchers", "%v", seriesMatchers)
-		span.Tagf("query", "%v", secondaryQuery)
+		span.Tagf("query", "%v", indexQuery)
 		defer func() {
 			span.Tagf("matched", "%d", len(sl))
 			if len(fields) > 0 {
@@ -97,11 +99,7 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series,
 			span.Stop()
 		}()
 	}
-	query, err := s.store.BuildQuery(seriesMatchers, secondaryQuery)
-	if err != nil {
-		return nil, nil, err
-	}
-	ss, err := s.store.Search(ctx, projection, query)
+	ss, err := s.store.Search(ctx, projection, indexQuery)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -235,8 +233,7 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 			return nil, nil, err
 		}
 	}
-	var query index.Query
-	query, err = s.store.BuildQuery(seriesMatchers, opts.Query)
+	query, err := s.store.BuildQuery(seriesMatchers, opts.Query)
 	if err != nil {
 		return nil, nil, err
 	}
