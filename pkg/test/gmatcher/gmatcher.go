@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package gmatcher provides custom Gomega matchers.
 package gmatcher
 
 import (
@@ -30,6 +31,7 @@ func HaveZeroRef() gomega.OmegaMatcher {
 
 var _ gomega.OmegaMatcher = &ZeroRefMatcher{}
 
+// ZeroRefMatcher is a matcher that checks if all pools have 0 references.
 type ZeroRefMatcher struct{}
 
 // FailureMessage implements types.GomegaMatcher.

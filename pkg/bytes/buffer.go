@@ -107,6 +107,7 @@ func (r *reader) Close() error {
 	return nil
 }
 
+// NewBufferPool creates a new BufferPool.
 func NewBufferPool(name string) *BufferPool {
 	return &BufferPool{
 		p: pool.Register[*Buffer](name),

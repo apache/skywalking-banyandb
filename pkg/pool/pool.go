@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package pool provides a pool for reusing objects.
 package pool
 
 import (
@@ -25,6 +26,7 @@ import (
 
 var poolMap = sync.Map{}
 
+// Register registers a new pool with the given name.
 func Register[T any](name string) *Synced[T] {
 	p := new(Synced[T])
 	if _, ok := poolMap.LoadOrStore(name, p); ok {
@@ -33,6 +35,7 @@ func Register[T any](name string) *Synced[T] {
 	return p
 }
 
+// AllRefsCount returns the reference count of all pools.
 func AllRefsCount() map[string]int {
 	result := make(map[string]int)
 	poolMap.Range(func(key, value any) bool {
@@ -42,15 +45,20 @@ func AllRefsCount() map[string]int {
 	return result
 }
 
+// Trackable is the interface that wraps the RefsCount method.
 type Trackable interface {
+	// RefsCount returns the reference count of the pool.
 	RefsCount() int
 }
 
+// Synced is a pool that is safe for concurrent use.
 type Synced[T any] struct {
 	sync.Pool
 	refs atomic.Int32
 }
 
+// Get returns an object from the pool.
+// If the pool is empty, nil is returned.
 func (p *Synced[T]) Get() T {
 	v := p.Pool.Get()
 	p.refs.Add(1)
@@ -61,11 +69,13 @@ func (p *Synced[T]) Get() T {
 	return v.(T)
 }
 
+// Put puts an object back to the pool.
 func (p *Synced[T]) Put(v T) {
 	p.Pool.Put(v)
 	p.refs.Add(-1)
 }
 
+// RefsCount returns the reference count of the pool.
 func (p *Synced[T]) RefsCount() int {
 	return int(p.refs.Load())
 }
