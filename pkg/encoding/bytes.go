@@ -297,4 +297,4 @@ func decompressBlock(dst, src []byte) ([]byte, []byte, error) {
 	}
 }
 
-var bbPool bytes.BufferPool
+var bbPool = bytes.NewBufferPool("encoding.bytesBlock")

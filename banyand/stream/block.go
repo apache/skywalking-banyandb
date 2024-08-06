@@ -19,7 +19,6 @@ package stream
 
 import (
 	"sort"
-	"sync"
 
 	"golang.org/x/exp/slices"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -351,7 +351,7 @@ func generateBlock() *block {
 	if v == nil {
 		return &block{}
 	}
-	return v.(*block)
+	return v
 }
 
 func releaseBlock(b *block) {
@@ -359,7 +359,7 @@ func releaseBlock(b *block) {
 	blockPool.Put(b)
 }
 
-var blockPool sync.Pool
+var blockPool = pool.Register[*block]("stream-block")
 
 type blockCursor struct {
 	p                *part
@@ -559,14 +559,14 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	return true
 }
 
-var blockCursorPool sync.Pool
+var blockCursorPool = pool.Register[*blockCursor]("stream-blockCursor")
 
 func generateBlockCursor() *blockCursor {
 	v := blockCursorPool.Get()
 	if v == nil {
 		return &blockCursor{}
 	}
-	return v.(*blockCursor)
+	return v
 }
 
 func releaseBlockCursor(bc *blockCursor) {
@@ -668,7 +668,7 @@ func generateBlockPointer() *blockPointer {
 	if v == nil {
 		return &blockPointer{}
 	}
-	return v.(*blockPointer)
+	return v
 }
 
 func releaseBlockPointer(bi *blockPointer) {
@@ -676,4 +676,4 @@ func releaseBlockPointer(bi *blockPointer) {
 	blockPointerPool.Put(bi)
 }
 
-var blockPointerPool sync.Pool
+var blockPointerPool = pool.Register[*blockPointer]("stream-blockPointer")

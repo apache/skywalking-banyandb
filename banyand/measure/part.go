@@ -22,7 +22,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 const (
@@ -150,23 +150,29 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 	var sidPrev common.SeriesID
 	uncompressedBlockSizeBytes := uint64(0)
 	var indexPrev int
-	var prevTS int64
+	var tsPrev int64
 	for i := 0; i < len(dps.timestamps); i++ {
 		sid := dps.seriesIDs[i]
 		if sidPrev == 0 {
 			sidPrev = sid
 		}
-		if prevTS == dps.timestamps[i] {
-			dps.skip(i)
-			i--
-			continue
+
+		if sid == sidPrev {
+			if tsPrev == dps.timestamps[i] {
+				dps.skip(i)
+				i--
+				continue
+			}
+			tsPrev = dps.timestamps[i]
+		} else {
+			tsPrev = 0
 		}
-		prevTS = dps.timestamps[i]
 
 		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize ||
 			(i-indexPrev) > maxBlockLength || sid != sidPrev {
 			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.versions[indexPrev:i], dps.tagFamilies[indexPrev:i], dps.fields[indexPrev:i])
 			sidPrev = sid
+			tsPrev = 0
 			indexPrev = i
 			uncompressedBlockSizeBytes = 0
 		}
@@ -216,7 +222,7 @@ func generateMemPart() *memPart {
 	if v == nil {
 		return &memPart{}
 	}
-	return v.(*memPart)
+	return v
 }
 
 func releaseMemPart(mp *memPart) {
@@ -224,7 +230,7 @@ func releaseMemPart(mp *memPart) {
 	memPartPool.Put(mp)
 }
 
-var memPartPool sync.Pool
+var memPartPool = pool.Register[*memPart]("measure-memPart")
 
 type partWrapper struct {
 	mp        *memPart
@@ -244,6 +250,12 @@ func (pw *partWrapper) incRef() {
 func (pw *partWrapper) decRef() {
 	n := atomic.AddInt32(&pw.ref, -1)
 	if n > 0 {
+		return
+	}
+	if pw.mp != nil {
+		releaseMemPart(pw.mp)
+		pw.mp = nil
+		pw.p = nil
 		return
 	}
 	pw.p.close()

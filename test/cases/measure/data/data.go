@@ -108,14 +108,12 @@ func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClien
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	gm.Expect(err).ShouldNot(gm.HaveOccurred())
 	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
-	nano := baseTime.UnixNano()
 	for i, template := range templates {
 		rawDataPointValue, errMarshal := json.Marshal(template)
 		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
 		dataPointValue := &measurev1.DataPointValue{}
 		gm.Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(gm.HaveOccurred())
 		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(-time.Duration(len(templates)-i-1) * interval))
-		dataPointValue.Version = nano + int64(i)
 		gm.Expect(measure.Send(&measurev1.WriteRequest{Metadata: md, DataPoint: dataPointValue, MessageId: uint64(time.Now().UnixNano())})).
 			Should(gm.Succeed())
 	}

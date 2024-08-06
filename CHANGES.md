@@ -35,6 +35,7 @@ Release Notes.
 - Fix the bug that segment's reference count is increased twice when the controller try to create an existing segment.
 - Fix a bug where a distributed query would return an empty result if the "limit" was set much lower than the "offset".
 - Fix duplicated measure data in a single part.
+- Fix several "sync.Pool" leak issues by adding a tracker to the pool.
 
 ### Documentation
 

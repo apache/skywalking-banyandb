@@ -42,9 +42,8 @@ const (
 )
 
 var (
-	_          run.Service = (*metricService)(nil)
-	_          run.Config  = (*metricService)(nil)
-	metricsMux             = http.NewServeMux()
+	_ run.Service = (*metricService)(nil)
+	_ run.Config  = (*metricService)(nil)
 	// MetricsServerInterceptor is the function to obtain grpc metrics interceptor.
 	MetricsServerInterceptor func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) = emptyMetricsServerInterceptor
 )
@@ -127,7 +126,6 @@ func (p *metricService) PreRun(ctx context.Context) error {
 		NativeMeterProvider = newNativeMeterProvider(ctx, p.metadata, nodeInfo)
 	}
 	initMetrics(p.modes)
-	metricsMux.HandleFunc("/_route", p.routeTableHandler)
 	return nil
 }
 
@@ -146,6 +144,11 @@ func (p *metricService) Serve() run.StopNotify {
 	})
 	if err != nil {
 		p.l.Fatal().Err(err).Msg("Failed to register metrics collector")
+	}
+	metricsMux := http.NewServeMux()
+	metricsMux.HandleFunc("/_route", p.routeTableHandler)
+	if containsMode(p.modes, flagPromethusMode) {
+		registerMetricsEndpoint(metricsMux)
 	}
 	if containsMode(p.modes, flagNativeMode) {
 		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, "@every 5s", func(_ time.Time, _ *logger.Logger) bool {
