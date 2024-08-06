@@ -36,11 +36,11 @@ package measure
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type columnMetadata struct {
@@ -148,7 +148,7 @@ func generateColumnFamilyMetadata() *columnFamilyMetadata {
 	if v == nil {
 		return &columnFamilyMetadata{}
 	}
-	return v.(*columnFamilyMetadata)
+	return v
 }
 
 func releaseColumnFamilyMetadata(cfm *columnFamilyMetadata) {
@@ -156,4 +156,4 @@ func releaseColumnFamilyMetadata(cfm *columnFamilyMetadata) {
 	columnFamilyMetadataPool.Put(cfm)
 }
 
-var columnFamilyMetadataPool sync.Pool
+var columnFamilyMetadataPool = pool.Register[*columnFamilyMetadata]("measure-columnFamilyMetadata")

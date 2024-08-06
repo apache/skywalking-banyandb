@@ -20,6 +20,7 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -42,6 +43,7 @@ type Selector interface {
 	RemoveNode(node *databasev1.Node)
 	Pick(group, name string, shardID uint32) (string, error)
 	run.PreRunner
+	fmt.Stringer
 }
 
 // NewPickFirstSelector returns a simple selector that always returns the first node if exists.
@@ -56,6 +58,17 @@ type pickFirstSelector struct {
 	nodeIDMap map[string]struct{}
 	nodeIDs   []string
 	mu        sync.RWMutex
+}
+
+// String implements Selector.
+func (p *pickFirstSelector) String() string {
+	n, err := p.Pick("", "", 0)
+	if err != nil {
+		return fmt.Sprintf("%v", err)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return fmt.Sprintf("pick [%s] from %s", n, p.nodeIDs)
 }
 
 func (p *pickFirstSelector) PreRun(context.Context) error {

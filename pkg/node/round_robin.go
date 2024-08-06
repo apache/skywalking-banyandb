@@ -19,6 +19,7 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -32,14 +33,38 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 type roundRobinSelector struct {
 	schemaRegistry metadata.Repo
 	closeCh        chan struct{}
-	lookupTable    sync.Map
+	lookupTable    []key
 	nodes          []string
 	mu             sync.RWMutex
+}
+
+func (r *roundRobinSelector) String() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]string)
+	for _, entry := range r.lookupTable {
+		n, err := r.Pick(entry.group, "", entry.shardID)
+		key := fmt.Sprintf("%s-%d", entry.group, entry.shardID)
+		if err != nil {
+			result[key] = fmt.Sprintf("%v", err)
+			continue
+		}
+		result[key] = n
+	}
+	if len(result) < 1 {
+		return ""
+	}
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Sprintf("%v", err)
+	}
+	return convert.BytesToString(jsonBytes)
 }
 
 // NewRoundRobinSelector creates a new round-robin selector.
@@ -48,6 +73,7 @@ func NewRoundRobinSelector(schemaRegistry metadata.Repo) Selector {
 		nodes:          make([]string, 0),
 		closeCh:        make(chan struct{}),
 		schemaRegistry: schemaRegistry,
+		lookupTable:    make([]key, 0),
 	}
 	return rrs
 }
@@ -69,9 +95,11 @@ func (r *roundRobinSelector) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	if !ok || !validateGroup(group) {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for i := uint32(0); i < group.ResourceOpts.ShardNum; i++ {
 		k := key{group: group.Metadata.Name, shardID: i}
-		r.lookupTable.Store(k, 0)
+		r.lookupTable = append(r.lookupTable, k)
 	}
 	r.sortEntries()
 }
@@ -80,12 +108,18 @@ func (r *roundRobinSelector) OnDelete(schemaMetadata schema.Metadata) {
 	if schemaMetadata.Kind != schema.KindGroup {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	group := schemaMetadata.Spec.(*commonv1.Group)
 	for i := uint32(0); i < group.ResourceOpts.ShardNum; i++ {
 		k := key{group: group.Metadata.Name, shardID: i}
-		r.lookupTable.Delete(k)
+		for j := range r.lookupTable {
+			if r.lookupTable[j] == k {
+				r.lookupTable = append(r.lookupTable[:j], r.lookupTable[j+1:]...)
+				break
+			}
+		}
 	}
-	r.sortEntries()
 }
 
 func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {
@@ -101,8 +135,10 @@ func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {
 	if err != nil {
 		panic(fmt.Sprintf("failed to list group: %v", err))
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var revision int64
-	r.lookupTable = sync.Map{}
+	r.lookupTable = r.lookupTable[:0]
 	for _, g := range gg {
 		if !validateGroup(g) {
 			continue
@@ -112,7 +148,7 @@ func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {
 		}
 		for i := uint32(0); i < g.ResourceOpts.ShardNum; i++ {
 			k := key{group: g.Metadata.Name, shardID: i}
-			r.lookupTable.Store(k, 0)
+			r.lookupTable = append(r.lookupTable, k)
 		}
 	}
 	r.sortEntries()
@@ -144,29 +180,26 @@ func (r *roundRobinSelector) Pick(group, _ string, shardID uint32) (string, erro
 	if len(r.nodes) == 0 {
 		return "", errors.New("no nodes available")
 	}
-	entry, ok := r.lookupTable.Load(k)
-	if ok {
-		return r.selectNode(entry), nil
+	i := sort.Search(len(r.lookupTable), func(i int) bool {
+		if r.lookupTable[i].group == group {
+			return r.lookupTable[i].shardID >= shardID
+		}
+		return r.lookupTable[i].group > group
+	})
+	if i < len(r.lookupTable) && r.lookupTable[i] == k {
+		return r.selectNode(i), nil
 	}
 	return "", fmt.Errorf("%s-%d is a unknown shard", group, shardID)
 }
 
 func (r *roundRobinSelector) sortEntries() {
-	var keys []key
-	r.lookupTable.Range(func(k, _ any) bool {
-		keys = append(keys, k.(key))
-		return true
-	})
-	slices.SortFunc(keys, func(a, b key) int {
+	slices.SortFunc(r.lookupTable, func(a, b key) int {
 		n := strings.Compare(a.group, b.group)
 		if n != 0 {
 			return n
 		}
 		return int(a.shardID) - int(b.shardID)
 	})
-	for i := range keys {
-		r.lookupTable.Store(keys[i], i)
-	}
 }
 
 func (r *roundRobinSelector) Close() {

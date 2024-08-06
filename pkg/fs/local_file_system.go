@@ -25,12 +25,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 const defaultIOSize = 256 * 1024
@@ -465,7 +465,7 @@ func generateReader(f *os.File) *bufio.Reader {
 	if v == nil {
 		return bufio.NewReaderSize(f, defaultIOSize)
 	}
-	br := v.(*bufio.Reader)
+	br := v
 	br.Reset(f)
 	return br
 }
@@ -475,14 +475,14 @@ func releaseReader(br *bufio.Reader) {
 	bufReaderPool.Put(br)
 }
 
-var bufReaderPool sync.Pool
+var bufReaderPool = pool.Register[*bufio.Reader]("fs-bufReader")
 
 func generateWriter(f *os.File) *bufio.Writer {
 	v := bufWriterPool.Get()
 	if v == nil {
 		return bufio.NewWriterSize(f, defaultIOSize)
 	}
-	bw := v.(*bufio.Writer)
+	bw := v
 	bw.Reset(f)
 	return bw
 }
@@ -492,4 +492,4 @@ func releaseWriter(bw *bufio.Writer) {
 	bufWriterPool.Put(bw)
 }
 
-var bufWriterPool sync.Pool
+var bufWriterPool = pool.Register[*bufio.Writer]("fs-bufWriter")
