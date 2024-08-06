@@ -190,9 +190,8 @@ func (qr *queryResult) scanParts(ctx context.Context, qo queryOptions) error {
 	defer releaseBlockMetadataArray(bma)
 	defFn := startBlockScanSpan(ctx, len(qo.sortedSids), parts, qr)
 	defer defFn()
-	// TODO: cache tstIter
-	var ti tstIter
-	defer ti.reset()
+	ti := generateTstIter()
+	defer releaseTstIter(ti)
 	sids := qo.sortedSids
 	ti.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
 	if ti.Error() != nil {
@@ -288,6 +287,7 @@ func (qr *queryResult) load(ctx context.Context, qo queryOptions) *model.StreamR
 			return blankCursorList[i] > blankCursorList[j]
 		})
 		for _, index := range blankCursorList {
+			releaseBlockCursor(qr.data[index])
 			qr.data = append(qr.data[:index], qr.data[index+1:]...)
 		}
 		qr.loaded = true
@@ -610,6 +610,7 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 	case pbv1.ValueTypeStrArr:
 		var values []string
 		bb := bigValuePool.Generate()
+		defer bigValuePool.Release(bb)
 		var err error
 		for len(value) > 0 {
 			bb.Buf, value, err = unmarshalVarArray(bb.Buf[:0], value)

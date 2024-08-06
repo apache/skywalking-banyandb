@@ -22,11 +22,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type seqReader struct {
@@ -70,7 +70,7 @@ func (sr *seqReader) mustReadFull(data []byte) {
 
 func generateSeqReader() *seqReader {
 	if v := seqReaderPool.Get(); v != nil {
-		return v.(*seqReader)
+		return v
 	}
 	return &seqReader{}
 }
@@ -80,7 +80,7 @@ func releaseSeqReader(sr *seqReader) {
 	seqReaderPool.Put(sr)
 }
 
-var seqReaderPool sync.Pool
+var seqReaderPool = pool.Register[*seqReader]("stream-seqReader")
 
 type seqReaders struct {
 	tagFamilyMetadata map[string]*seqReader
@@ -216,11 +216,11 @@ func (br *blockReader) error() error {
 	return br.err
 }
 
-var blockReaderPool sync.Pool
+var blockReaderPool = pool.Register[*blockReader]("stream-blockReader")
 
 func generateBlockReader() *blockReader {
 	if v := blockReaderPool.Get(); v != nil {
-		return v.(*blockReader)
+		return v
 	}
 	return &blockReader{}
 }

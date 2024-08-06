@@ -42,9 +42,8 @@ const (
 )
 
 var (
-	_          run.Service = (*metricService)(nil)
-	_          run.Config  = (*metricService)(nil)
-	metricsMux             = http.NewServeMux()
+	_ run.Service = (*metricService)(nil)
+	_ run.Config  = (*metricService)(nil)
 	// MetricsServerInterceptor is the function to obtain grpc metrics interceptor.
 	MetricsServerInterceptor func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) = emptyMetricsServerInterceptor
 )
@@ -146,6 +145,11 @@ func (p *metricService) Serve() run.StopNotify {
 	if err != nil {
 		p.l.Fatal().Err(err).Msg("Failed to register metrics collector")
 	}
+	metricsMux := http.NewServeMux()
+	metricsMux.HandleFunc("/_route", p.routeTableHandler)
+	if containsMode(p.modes, flagPromethusMode) {
+		registerMetricsEndpoint(metricsMux)
+	}
 	if containsMode(p.modes, flagNativeMode) {
 		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, "@every 5s", func(_ time.Time, _ *logger.Logger) bool {
 			NativeMetricCollection.FlushMetrics()
@@ -178,6 +182,12 @@ func (p *metricService) GracefulStop() {
 		_ = p.svr.Close()
 	}
 	p.closer.CloseThenWait()
+}
+
+func (p *metricService) routeTableHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(p.nodeSelector.String()))
 }
 
 func containsMode(modes []string, mode string) bool {

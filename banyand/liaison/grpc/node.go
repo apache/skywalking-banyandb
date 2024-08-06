@@ -18,6 +18,7 @@
 package grpc
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -37,6 +38,7 @@ var (
 // together with the shardID calculated from the incoming data.
 type NodeRegistry interface {
 	Locate(group, name string, shardID uint32) (string, error)
+	fmt.Stringer
 }
 
 type clusterNodeService struct {
@@ -94,7 +96,15 @@ func (n *clusterNodeService) OnDelete(metadata schema.Metadata) {
 	}
 }
 
+func (n *clusterNodeService) String() string {
+	return n.sel.String()
+}
+
 type localNodeService struct{}
+
+func (l localNodeService) String() string {
+	return "local"
+}
 
 // NewLocalNodeRegistry creates a local(fake) node registry.
 func NewLocalNodeRegistry() NodeRegistry {

@@ -19,11 +19,11 @@ package stream
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type tagMetadata struct {
@@ -131,7 +131,7 @@ func generateTagFamilyMetadata() *tagFamilyMetadata {
 	if v == nil {
 		return &tagFamilyMetadata{}
 	}
-	return v.(*tagFamilyMetadata)
+	return v
 }
 
 func releaseTagFamilyMetadata(tfm *tagFamilyMetadata) {
@@ -139,4 +139,4 @@ func releaseTagFamilyMetadata(tfm *tagFamilyMetadata) {
 	tagFamilyMetadataPool.Put(tfm)
 }
 
-var tagFamilyMetadataPool sync.Pool
+var tagFamilyMetadataPool = pool.Register[*tagFamilyMetadata]("stream-tagFamilyMetadata")

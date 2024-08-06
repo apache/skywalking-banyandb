@@ -55,7 +55,21 @@ var (
 	upTimeGauge     meter.Gauge
 	diskStateGauge  meter.Gauge
 	initMetricsOnce sync.Once
+	diskMap         = sync.Map{}
 )
+
+// UpdatePath updates a path to monitoring its disk usage.
+func UpdatePath(path string) {
+	diskMap.Store(path, nil)
+}
+
+func getPath() (paths []string) {
+	diskMap.Range(func(key, _ any) bool {
+		paths = append(paths, key.(string))
+		return true
+	})
+	return paths
+}
 
 func init() {
 	MetricsCollector.Register("cpu", collectCPU)
@@ -169,7 +183,7 @@ func collectUpTime() {
 }
 
 func collectDisk() {
-	for path := range getPath() {
+	for _, path := range getPath() {
 		usage, err := disk.Usage(path)
 		if err != nil {
 			if _, err = os.Stat(path); err != nil {
