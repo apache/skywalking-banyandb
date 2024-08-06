@@ -43,6 +43,10 @@ Release Notes.
 - Add installation on Docker and Kubernetes.
 - Add quick-start guide.
 
+### Chores
+
+Bump up the version of infra e2e framework.
+
 ## 0.6.1
 
 ### Features
