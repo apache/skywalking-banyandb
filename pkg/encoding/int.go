@@ -20,7 +20,8 @@ package encoding
 import (
 	"encoding/binary"
 	"fmt"
-	"sync"
+
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 // Uint16ToBytes appends the bytes of the given uint16 to the given byte slice.
@@ -224,7 +225,7 @@ func GenerateInt64List(size int) *Int64List {
 			L: make([]int64, size),
 		}
 	}
-	is := v.(*Int64List)
+	is := v
 	if n := size - cap(is.L); n > 0 {
 		is.L = append(is.L[:cap(is.L)], make([]int64, n)...)
 	}
@@ -243,7 +244,7 @@ type Int64List struct {
 	L []int64
 }
 
-var int64ListPool sync.Pool
+var int64ListPool = pool.Register[*Int64List]("encoding-int64List")
 
 // GenerateUint64List generates a list of uint64 with the given size.
 // The returned list may be from a pool and should be released after use.
@@ -254,7 +255,7 @@ func GenerateUint64List(size int) *Uint64List {
 			L: make([]uint64, size),
 		}
 	}
-	is := v.(*Uint64List)
+	is := v
 	if n := size - cap(is.L); n > 0 {
 		is.L = append(is.L[:cap(is.L)], make([]uint64, n)...)
 	}
@@ -273,4 +274,4 @@ type Uint64List struct {
 	L []uint64
 }
 
-var uint64ListPool sync.Pool
+var uint64ListPool = pool.Register[*Uint64List]("encoding-uin64List")

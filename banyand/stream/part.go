@@ -22,7 +22,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 const (
@@ -198,7 +198,7 @@ func generateMemPart() *memPart {
 	if v == nil {
 		return &memPart{}
 	}
-	return v.(*memPart)
+	return v
 }
 
 func releaseMemPart(mp *memPart) {
@@ -206,7 +206,7 @@ func releaseMemPart(mp *memPart) {
 	memPartPool.Put(mp)
 }
 
-var memPartPool sync.Pool
+var memPartPool = pool.Register[*memPart]("stream-memPart")
 
 type partWrapper struct {
 	mp        *memPart

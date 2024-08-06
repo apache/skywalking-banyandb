@@ -25,7 +25,6 @@ import (
 	"io"
 	"log"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/blugelabs/bluge"
@@ -43,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -88,14 +88,14 @@ type store struct {
 	l      *logger.Logger
 }
 
-var batchPool sync.Pool
+var batchPool = pool.Register[*blugeIndex.Batch]("index-bluge-batch")
 
 func generateBatch() *blugeIndex.Batch {
 	b := batchPool.Get()
 	if b == nil {
 		return bluge.NewBatch()
 	}
-	return b.(*blugeIndex.Batch)
+	return b
 }
 
 func releaseBatch(b *blugeIndex.Batch) {
