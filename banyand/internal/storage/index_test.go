@@ -33,8 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var testSeriesPool pbv1.SeriesPool
-
 func TestSeriesIndex_Primary(t *testing.T) {
 	ctx := context.Background()
 	path, fn := setUp(require.New(t))
@@ -46,7 +44,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 	}()
 	var docs index.Documents
 	for i := 0; i < 100; i++ {
-		series := testSeriesPool.Generate()
+		var series pbv1.Series
 		series.Subject = "service_instance_latency"
 		series.EntityValues = []*modelv1.TagValue{
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprintf("svc_%d", i)}}},
@@ -64,7 +62,6 @@ func TestSeriesIndex_Primary(t *testing.T) {
 		}
 		copy(doc.EntityValues, series.Buffer)
 		docs = append(docs, doc)
-		testSeriesPool.Release(series)
 	}
 	require.NoError(t, si.Write(docs))
 	// Restart the index
@@ -155,11 +152,10 @@ func TestSeriesIndex_Primary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var seriesQueries []*pbv1.Series
 			for i := range tt.entityValues {
-				seriesQuery := testSeriesPool.Generate()
-				defer testSeriesPool.Release(seriesQuery)
+				var seriesQuery pbv1.Series
 				seriesQuery.Subject = tt.subject
 				seriesQuery.EntityValues = tt.entityValues[i]
-				seriesQueries = append(seriesQueries, seriesQuery)
+				seriesQueries = append(seriesQueries, &seriesQuery)
 			}
 			sl, _, err := si.searchPrimary(ctx, seriesQueries, nil)
 			require.NoError(t, err)

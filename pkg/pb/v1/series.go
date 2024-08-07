@@ -19,7 +19,6 @@ package v1
 
 import (
 	"sort"
-	"sync"
 
 	"github.com/pkg/errors"
 
@@ -95,26 +94,6 @@ func (s *Series) reset() {
 	s.Subject = ""
 	s.EntityValues = s.EntityValues[:0]
 	s.Buffer = s.Buffer[:0]
-}
-
-// SeriesPool is a pool of Series.
-type SeriesPool struct {
-	pool sync.Pool
-}
-
-// Generate creates a new Series or gets one from the pool.
-func (sp *SeriesPool) Generate() *Series {
-	sv := sp.pool.Get()
-	if sv == nil {
-		return &Series{}
-	}
-	return sv.(*Series)
-}
-
-// Release puts a Series back to the pool.
-func (sp *SeriesPool) Release(s *Series) {
-	s.reset()
-	sp.pool.Put(s)
 }
 
 // SeriesList is a collection of Series.
