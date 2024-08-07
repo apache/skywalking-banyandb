@@ -1,4 +1,4 @@
-# CRUD Property
+# CRUD [Property](../../concept/data-model.md#properties)
 
 CRUD operations create/update, read and delete property.
 

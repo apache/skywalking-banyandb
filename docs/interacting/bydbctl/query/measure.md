@@ -122,6 +122,8 @@ criteria:
 EOF
 ```
 
+More filter operations can be found in [here](filter-operation.md).
+
 ### Query ordered by time-series
 The below command could query data order by time-series in descending [order](../../../api-reference.md#sort) :
 

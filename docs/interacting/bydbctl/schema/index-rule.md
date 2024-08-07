@@ -53,6 +53,20 @@ EOF
 
 This YAML creates an index rule which uses the tag `trace_id` to generate a `TYPE_INVERTED` index.
 
+The `analyzer` field is optional. If it is not set, the default value is `ANALYZER_UNSPECIFIED`.
+We can set it to `ANALYZER_KEYWORD` to specify the analyzer. More analyzers can refer to the [API Reference](../../../api-reference.md#indexruleanalyzer).
+```shell
+bydbctl indexRule create -f - <<EOF
+metadata:
+  name: trace_id
+  group: sw_stream
+tags:
+- trace_id
+type: TYPE_INVERTED
+analyzer: ANALYZER_KEYWORD
+EOF
+```
+
 ## Get operation
 
 Get(Read) operation gets an index rule's schema.
