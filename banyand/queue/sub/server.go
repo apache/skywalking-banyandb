@@ -112,7 +112,6 @@ func (s *server) Validate() error {
 	if s.addr == ":" {
 		return errNoAddr
 	}
-	observability.UpdateAddress("grpc", s.addr)
 	if !s.tls {
 		return nil
 	}
