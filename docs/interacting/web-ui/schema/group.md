@@ -5,7 +5,7 @@ The Web UI is hosted at [skywalking-banyandb-webapp](http://localhost:17913/) wh
 When you select the `Stream`, `Measure`, or `Property` on the top tab, the left side menu will show the list of groups.
 
 You can click the right button of the mouse on the group to `creat/update/refresh/delete` the group.
-![group-button.png](group-button.png)
+![group-button.png](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/web-ui/group-button.png)
 
 ## Create Group
 You can click the `new group` button to add a group. The group type can be `stream`, `measure`, or `property`.
