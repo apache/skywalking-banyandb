@@ -38,7 +38,7 @@ func (s *segment[T, O]) IndexDB() IndexDB {
 }
 
 func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
-	sl, _, err := s.index.search(ctx, series, nil, nil)
+	sl, _, err := s.index.filter(ctx, series, nil, nil)
 	return sl, err
 }
 
@@ -70,7 +70,7 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series,
+func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 	projection []index.FieldKey, secondaryQuery index.Query,
 ) (sl pbv1.SeriesList, fields FieldResultList, err error) {
 	seriesMatchers := make([]index.SeriesMatcher, len(series))
@@ -87,7 +87,7 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series,
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		span, _ := tracer.StartSpan(ctx, "seriesIndex.search")
-		span.Tagf("query", "%v", indexQuery)
+		span.Tagf("query", "%s", indexQuery.String())
 		defer func() {
 			span.Tagf("matched", "%d", len(sl))
 			if len(fields) > 0 {
@@ -202,9 +202,9 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 		var seriesList pbv1.SeriesList
 		var fieldResultList FieldResultList
 		if opts.Query != nil {
-			seriesList, fieldResultList, err = s.search(ctx, series, opts.Projection, opts.Query)
+			seriesList, fieldResultList, err = s.filter(ctx, series, opts.Projection, opts.Query)
 		} else {
-			seriesList, fieldResultList, err = s.search(ctx, series, opts.Projection, nil)
+			seriesList, fieldResultList, err = s.filter(ctx, series, opts.Projection, nil)
 		}
 		if err != nil {
 			return nil, nil, err
@@ -262,6 +262,7 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 		return nil, nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, matched: %d", seriesMatchers, len(result))
 	}
 	if span != nil {
+		span.Tagf("query", "%s", iter.Query().String())
 		span.Tagf("rounds", "%d", r)
 		span.Tagf("size", "%d", len(sortedSeriesList))
 	}

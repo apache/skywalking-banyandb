@@ -113,6 +113,7 @@ type FieldIterator[T sort.Comparable] interface {
 	Next() bool
 	Val() T
 	Close() error
+	Query() Query
 }
 
 // DummyFieldIterator never iterates.
@@ -129,6 +130,10 @@ func (i *dummyIterator) Val() *DocumentResult {
 }
 
 func (i *dummyIterator) Close() error {
+	return nil
+}
+
+func (i *dummyIterator) Query() Query {
 	return nil
 }
 

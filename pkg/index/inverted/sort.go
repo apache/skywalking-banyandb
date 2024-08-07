@@ -69,7 +69,7 @@ func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order mode
 		sortedKey = "-" + sortedKey
 	}
 	result := &sortIterator{
-		query:     query,
+		query:     &queryNode{query: query},
 		reader:    reader,
 		sortedKey: sortedKey,
 		size:      preLoadSize,
@@ -78,7 +78,7 @@ func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order mode
 }
 
 type sortIterator struct {
-	query     bluge.Query
+	query     index.Query
 	err       error
 	reader    *bluge.Reader
 	current   *blugeMatchIterator
@@ -110,7 +110,7 @@ func (si *sortIterator) loadCurrent() bool {
 		// overflow
 		size = math.MaxInt64
 	}
-	topNSearch := bluge.NewTopNSearch(size, si.query).SortBy([]string{si.sortedKey})
+	topNSearch := bluge.NewTopNSearch(size, si.query.(*queryNode).query).SortBy([]string{si.sortedKey})
 	if si.skipped > 0 {
 		topNSearch = topNSearch.SetFrom(si.skipped)
 	}
@@ -159,4 +159,8 @@ func (si *sortIterator) Close() error {
 		return errors.Join(si.err, si.reader.Close())
 	}
 	return errors.Join(si.err, si.current.Close(), si.reader.Close())
+}
+
+func (si *sortIterator) Query() index.Query {
+	return si.query
 }

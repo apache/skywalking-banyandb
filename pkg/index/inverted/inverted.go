@@ -238,7 +238,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		fields = append(fields, fieldKeys[i].Marshal())
 	}
 	result := &sortIterator{
-		query:     query,
+		query:     &queryNode{query, node},
 		fields:    fields,
 		reader:    reader,
 		sortedKey: sortedKey,
