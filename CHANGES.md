@@ -43,6 +43,8 @@ Release Notes.
 - Introduce new doc menu structure.
 - Add installation on Docker and Kubernetes.
 - Add quick-start guide.
+- Add web-ui interacting guide.
+- Add bydbctl interacting guide.
 
 ### Chores
 
