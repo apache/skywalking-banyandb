@@ -24,8 +24,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/blugelabs/bluge"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -97,11 +95,12 @@ func (r RangeOpts) Between(value []byte) int {
 
 // DocumentResult represents a document in an index.
 type DocumentResult struct {
-	Values      map[string][]byte
-	SortedValue []byte
-	SeriesID    common.SeriesID
-	DocID       uint64
-	Timestamp   int64
+	EntityValues []byte
+	Values       map[string][]byte
+	SortedValue  []byte
+	SeriesID     common.SeriesID
+	DocID        uint64
+	Timestamp    int64
 }
 
 // SortedField returns the value of the sorted field.
@@ -114,6 +113,7 @@ type FieldIterator[T sort.Comparable] interface {
 	Next() bool
 	Val() T
 	Close() error
+	Query() Query
 }
 
 // DummyFieldIterator never iterates.
@@ -130,6 +130,10 @@ func (i *dummyIterator) Val() *DocumentResult {
 }
 
 func (i *dummyIterator) Close() error {
+	return nil
+}
+
+func (i *dummyIterator) Query() Query {
 	return nil
 }
 
@@ -156,7 +160,8 @@ type Writer interface {
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator[*DocumentResult], err error)
+	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query) (Query, error)
+	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
 	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
 }
 
@@ -171,9 +176,7 @@ type Searcher interface {
 
 // Query is an abstract of an index query.
 type Query interface {
-	bluge.Query
 	fmt.Stringer
-	Query() bluge.Query
 }
 
 // Store is an abstract of an index repository.
@@ -204,8 +207,7 @@ type SeriesDocument struct {
 type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
-	Search(context.Context, []SeriesMatcher, []FieldKey) ([]SeriesDocument, error)
-	Execute(context.Context, Query) (posting.List, error)
+	Search(context.Context, []FieldKey, Query) ([]SeriesDocument, error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

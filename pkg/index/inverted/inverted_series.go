@@ -33,11 +33,62 @@ import (
 
 var emptySeries = make([]index.SeriesDocument, 0)
 
-// Search implements index.SeriesStore.
-func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher, projection []index.FieldKey) ([]index.SeriesDocument, error) {
+// BuildQuery implements index.SeriesStore.
+func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query) (index.Query, error) {
 	if len(seriesMatchers) == 0 {
-		return emptySeries, nil
+		return secondaryQuery, nil
 	}
+
+	qs := make([]bluge.Query, len(seriesMatchers))
+	primaryNode := newShouldNode()
+	for i := range seriesMatchers {
+		switch seriesMatchers[i].Type {
+		case index.SeriesMatcherTypeExact:
+			match := convert.BytesToString(seriesMatchers[i].Match)
+			q := bluge.NewTermQuery(match)
+			q.SetField(entityField)
+			qs[i] = q
+			primaryNode.Append(newTermNode(match, nil))
+		case index.SeriesMatcherTypePrefix:
+			match := convert.BytesToString(seriesMatchers[i].Match)
+			q := bluge.NewPrefixQuery(match)
+			q.SetField(entityField)
+			qs[i] = q
+			primaryNode.Append(newPrefixNode(match, nil))
+		case index.SeriesMatcherTypeWildcard:
+			match := convert.BytesToString(seriesMatchers[i].Match)
+			q := bluge.NewWildcardQuery(match)
+			q.SetField(entityField)
+			qs[i] = q
+			primaryNode.Append(newWildcardNode(match, nil))
+		default:
+			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
+		}
+	}
+	var primaryQuery bluge.Query
+	if len(qs) > 1 {
+		bq := bluge.NewBooleanQuery()
+		bq.AddShould(qs...)
+		bq.SetMinShould(1)
+		primaryQuery = bq
+	} else {
+		primaryQuery = qs[0]
+	}
+
+	query := bluge.NewBooleanQuery().AddMust(primaryQuery)
+	node := newMustNode()
+	node.Append(primaryNode)
+	if secondaryQuery != nil && secondaryQuery.(*queryNode).query != nil {
+		query.AddMust(secondaryQuery.(*queryNode).query)
+		node.Append(secondaryQuery.(*queryNode).node)
+	}
+	return &queryNode{query, node}, nil
+}
+
+// Search implements index.SeriesStore.
+func (s *store) Search(ctx context.Context,
+	projection []index.FieldKey, query index.Query,
+) ([]index.SeriesDocument, error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
@@ -45,36 +96,8 @@ func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher
 	defer func() {
 		_ = reader.Close()
 	}()
-	qs := make([]bluge.Query, len(seriesMatchers))
-	for i := range seriesMatchers {
-		switch seriesMatchers[i].Type {
-		case index.SeriesMatcherTypeExact:
-			q := bluge.NewTermQuery(convert.BytesToString(seriesMatchers[i].Match))
-			q.SetField(entityField)
-			qs[i] = q
-		case index.SeriesMatcherTypePrefix:
-			q := bluge.NewPrefixQuery(convert.BytesToString(seriesMatchers[i].Match))
-			q.SetField(entityField)
-			qs[i] = q
-		case index.SeriesMatcherTypeWildcard:
-			q := bluge.NewWildcardQuery(convert.BytesToString(seriesMatchers[i].Match))
-			q.SetField(entityField)
-			qs[i] = q
-		default:
-			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
-		}
-	}
-	var query bluge.Query
-	if len(qs) > 1 {
-		bq := bluge.NewBooleanQuery()
-		bq.AddShould(qs...)
-		bq.SetMinShould(1)
-		query = bq
-	} else {
-		query = qs[0]
-	}
 
-	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query))
+	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query.(*queryNode).query))
 	if err != nil {
 		return nil, err
 	}

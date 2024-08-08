@@ -34,7 +34,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -67,7 +66,7 @@ type SupplyTSDB[T TSTable] func() T
 
 // IndexSearchOpts is the options for searching index.
 type IndexSearchOpts struct {
-	Query       *inverted.Query
+	Query       index.Query
 	Order       *model.OrderBy
 	Projection  []index.FieldKey
 	PreloadSize int

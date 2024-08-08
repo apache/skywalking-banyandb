@@ -174,8 +174,8 @@ func (s *store) Close() error {
 	return s.writer.Close()
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
-	order modelv1.Sort, preLoadSize int,
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
+	preLoadSize int, indexQuery index.Query, fieldKeys []index.FieldKey,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
@@ -191,7 +191,8 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 		return nil, err
 	}
 	fk := fieldKey.Marshal()
-	query := bluge.NewBooleanQuery()
+	rangeQuery := bluge.NewBooleanQuery()
+	rangeNode := newMustNode()
 	addRange := func(query *bluge.BooleanQuery, termRange index.RangeOpts) *bluge.BooleanQuery {
 		if termRange.Upper == nil {
 			termRange.Upper = defaultUpper
@@ -206,25 +207,39 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 			termRange.IncludesUpper,
 		).
 			SetField(fk))
+		rangeNode.Append(newTermRangeInclusiveNode(string(termRange.Lower), string(termRange.Upper), termRange.IncludesLower, termRange.IncludesUpper, nil))
 		return query
 	}
 
 	if fieldKey.HasSeriesID() {
-		query = query.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
+		rangeQuery = rangeQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
 			SetField(seriesIDField))
+		rangeNode.Append(newTermNode(string(fieldKey.SeriesID.Marshal()), nil))
 		if termRange.Lower != nil || termRange.Upper != nil {
-			query = addRange(query, termRange)
+			rangeQuery = addRange(rangeQuery, termRange)
 		}
 	} else {
-		query = addRange(query, termRange)
+		rangeQuery = addRange(rangeQuery, termRange)
 	}
 
 	sortedKey := fk
 	if order == modelv1.Sort_SORT_DESC {
 		sortedKey = "-" + sortedKey
 	}
+	query := bluge.NewBooleanQuery().AddMust(rangeQuery)
+	node := newMustNode()
+	node.Append(rangeNode)
+	if indexQuery != nil && indexQuery.(*queryNode).query != nil {
+		query.AddMust(indexQuery.(*queryNode).query)
+		node.Append(indexQuery.(*queryNode).node)
+	}
+	fields := make([]string, 0, len(fieldKeys))
+	for i := range fieldKeys {
+		fields = append(fields, fieldKeys[i].Marshal())
+	}
 	result := &sortIterator{
-		query:     query,
+		query:     &queryNode{query, node},
+		fields:    fields,
 		reader:    reader,
 		sortedKey: sortedKey,
 		size:      preLoadSize,
@@ -298,7 +313,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize)
+	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize, nil, nil)
 	if err != nil {
 		return roaring.DummyPostingList, err
 	}
@@ -308,26 +323,6 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	}
 	err = multierr.Append(err, iter.Close())
 	return
-}
-
-func (s *store) Execute(ctx context.Context, query index.Query) (posting.List, error) {
-	reader, err := s.writer.Reader()
-	if err != nil {
-		return nil, err
-	}
-	documentMatchIterator, err := reader.Search(ctx, bluge.NewAllMatches(query.Query()))
-	if err != nil {
-		return nil, err
-	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader, nil)
-	defer func() {
-		err = multierr.Append(err, iter.Close())
-	}()
-	list := roaring.NewPostingList()
-	for iter.Next() {
-		list.Insert(iter.Val().DocID)
-	}
-	return list, err
 }
 
 func (s *store) SizeOnDisk() int64 {
@@ -380,6 +375,8 @@ func (bmi *blugeMatchIterator) Next() bool {
 	}
 	err := match.VisitStoredFields(func(field string, value []byte) bool {
 		switch field {
+		case entityField:
+			bmi.current.EntityValues = value
 		case docIDField:
 			bmi.current.DocID = convert.BytesToUint64(value)
 		case seriesIDField:
