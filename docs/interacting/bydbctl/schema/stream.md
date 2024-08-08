@@ -1,8 +1,8 @@
-# CRUD Streams
+# CRUD [Streams](../../../concept/data-model.md#streams)
 
 CRUD operations create, read, update and delete streams.
 
-[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
+[bydbctl](../bydbctl.md) is the command line tool in examples.
 
 Stream intends to store streaming data, for example, traces or logs.
 ## Create operation
@@ -109,4 +109,4 @@ bydbctl stream list -g default
 
 ## API Reference
 
-[StreamService v1](../../api-reference.md#streamservice)
+[Stream Registration Operations](../../../api-reference.md#streamregistryservice)
