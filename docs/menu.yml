@@ -66,8 +66,6 @@ catalog:
                 path: "/interacting/bydbctl/query/filter-operation"
           - name: "CRUD Property"
             path: "/interacting/bydbctl/property"
-      - name: "Java Client"
-        path: "/interacting/java-client"
       - name: "Web UI"
         catalog:
           - name: "Dashboard"
@@ -94,10 +92,8 @@ catalog:
                 path: "/interacting/web-ui/query/stream"
           - name: "CRUD Property"
             path: "/interacting/web-ui/property"
-          - name: "Java Client"
-            path: "/interacting/java-client"
-          - name: "Web UI"
-        path: "/interacting/web-ui"
+      - name: "Java Client"
+        path: "/interacting/java-client"
   - name: "Operation and Maintenance"
     catalog:
       - name: "Configure BanyanDB"
