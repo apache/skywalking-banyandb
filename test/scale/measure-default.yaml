@@ -1,0 +1,11 @@
+catalog: CATALOG_MEASURE
+metadata:
+  name: measure-default
+resourceOpts:
+  segmentInterval:
+    num: 8
+    unit: UNIT_DAY
+  shardNum: 2
+  ttl:
+    num: 7
+    unit: UNIT_DAY

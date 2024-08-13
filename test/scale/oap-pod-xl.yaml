@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    component: oap
+  name: data-generator
+  namespace: default
+spec:
+  containers:
+  - env:
+    - name: JAVA_OPTS
+      value: -Xmx2g -Xms2g
+    - name: SW_STORAGE
+      value: banyandb
+    - name: SW_STORAGE_BANYANDB_TARGETS
+      value: banyandb-grpc:17912
+    - name: SW_STORAGE_BANYANDB_METRICS_SHARDS_NUMBER
+      value: "10"
+    - name: SW_STORAGE_BANYANDB_RECORD_SHARDS_NUMBER
+      value: "10"
+    - name: SW_STORAGE_BANYANDB_SUPERDATASET_SHARDS_FACTOR
+      value: "1"
+    image: ghcr.io/apache/skywalking/data-generator:9b17ff1efeab7a20c870839f59eb0e6af485cd3f
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 3
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      successThreshold: 1
+      tcpSocket:
+        port: 12800
+      timeoutSeconds: 1
+    name: oap
+    ports:
+    - containerPort: 11800
+      name: grpc
+      protocol: TCP
+    - containerPort: 12800
+      name: rest
+      protocol: TCP
+      hostPort: 12800
+    readinessProbe:
+      failureThreshold: 3
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      successThreshold: 1
+      tcpSocket:
+        port: 12800
+      timeoutSeconds: 1
+    resources: {}
+    startupProbe:
+      failureThreshold: 9
+      periodSeconds: 10
+      successThreshold: 1
+      tcpSocket:
+        port: 12800
+      timeoutSeconds: 1
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  initContainers:
+  - command:
+    - sh
+    - -c
+    - for i in $(seq 1 60); do curl banyandb-http:17913/api/healthz && exit 0 || sleep 5; done; exit 1
+    image: curlimages/curl
+    imagePullPolicy: IfNotPresent
+    name: wait-for-banyandb
+    resources: {}
