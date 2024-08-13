@@ -1,8 +1,8 @@
-# CRUD Measures
+# CRUD [Measures](../../../concept/data-model.md#measures)
 
 CRUD operations create, read, update and delete measures.
 
-[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
+[bydbctl](../bydbctl.md) is the command line tool in examples.
 
 ## Create operation
 
@@ -120,4 +120,4 @@ bydbctl measure list -g sw_metric
 
 ## API Reference
 
-[MeasureService v1](../../api-reference.md#MeasureService)
+[Measure Registration Operations](../../../api-reference.md#measureregistryservice)

@@ -22,6 +22,7 @@ Release Notes.
 - Add the stream query trace.
 - Add the topN query trace.
 - Introduce the round-robin selector to Liaison Node.
+- Optimize query performance of series index.
 
 ### Bugs
 
@@ -34,11 +35,20 @@ Release Notes.
 - Fix a bug that the Stream module didn't support duplicated in index-based filtering and sorting
 - Fix the bug that segment's reference count is increased twice when the controller try to create an existing segment.
 - Fix a bug where a distributed query would return an empty result if the "limit" was set much lower than the "offset".
+- Fix duplicated measure data in a single part.
+- Fix several "sync.Pool" leak issues by adding a tracker to the pool.
 
 ### Documentation
+
 - Introduce new doc menu structure.
 - Add installation on Docker and Kubernetes.
 - Add quick-start guide.
+- Add web-ui interacting guide.
+- Add bydbctl interacting guide.
+
+### Chores
+
+Bump up the version of infra e2e framework.
 
 ## 0.6.1
 

@@ -111,6 +111,28 @@ func TestCleanupGroup(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestSortNodeEntries(t *testing.T) {
+	selector := &roundRobinSelector{
+		nodes: make([]string, 0),
+	}
+	setupGroup(selector)
+	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node3"}})
+	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
+	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
+	assert.EqualValues(t, []string{"node1", "node2", "node3"}, selector.nodes)
+}
+
+func TestStringer(t *testing.T) {
+	selector := NewRoundRobinSelector(nil)
+	assert.Empty(t, selector.String())
+	setupGroup(selector)
+	assert.NotEmpty(t, selector.String())
+	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node3"}})
+	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
+	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
+	assert.NotEmpty(t, selector.String())
+}
+
 var groupSchema = schema.Metadata{
 	TypeMeta: schema.TypeMeta{
 		Kind: schema.KindGroup,

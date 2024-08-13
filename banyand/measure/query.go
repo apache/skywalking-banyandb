@@ -194,7 +194,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
 		sll, fieldResultList, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
-			Filter:      mqo.Filter,
+			Query:       mqo.Query,
 			Order:       mqo.Order,
 			PreloadSize: preloadSize,
 			Projection:  indexProjection,
@@ -242,9 +242,8 @@ func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	defer releaseBlockMetadataArray(bma)
 	defFn := startBlockScanSpan(ctx, len(sids), parts, result)
 	defer defFn()
-	// TODO: cache tstIter
-	var tstIter tstIter
-	defer tstIter.reset()
+	tstIter := generateTstIter()
+	defer releaseTstIter(tstIter)
 	originalSids := make([]common.SeriesID, len(sids))
 	copy(originalSids, sids)
 	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })

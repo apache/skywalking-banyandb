@@ -55,6 +55,11 @@ func (f *TagRef) String() string {
 	return fmt.Sprintf("#%s<%s>", f.Tag.GetCompoundName(), f.Spec.Spec.GetType().String())
 }
 
+// Elements returns a slice containing the string representation of TagRef.
+func (f *TagRef) Elements() []string {
+	return []string{fmt.Sprintf("#%s<%s>", f.Tag.GetCompoundName(), f.Spec.Spec.GetType().String())}
+}
+
 // NewTagRef returns a new TagRef.
 func NewTagRef(familyName, tagName string) *TagRef {
 	return &TagRef{
@@ -83,6 +88,11 @@ type FieldRef struct {
 // String shows the string representation.
 func (f *FieldRef) String() string {
 	return fmt.Sprintf("#%s<%s>", f.Spec.Spec.GetName(), f.Spec.Spec.GetFieldType().String())
+}
+
+// Elements returns a slice containing the string representation of FieldRef.
+func (f *FieldRef) Elements() []string {
+	return []string{fmt.Sprintf("#%s<%s>", f.Spec.Spec.GetName(), f.Spec.Spec.GetFieldType().String())}
 }
 
 // DataType shows the type of the filed's value.

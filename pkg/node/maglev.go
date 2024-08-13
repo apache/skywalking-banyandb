@@ -19,6 +19,7 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"sync"
@@ -36,6 +37,18 @@ type maglevSelector struct {
 	routers sync.Map
 	nodes   []string
 	mutex   sync.RWMutex
+}
+
+// String implements Selector.
+func (m *maglevSelector) String() string {
+	var groups []string
+	m.routers.Range(func(key, _ any) bool {
+		groups = append(groups, key.(string))
+		return true
+	})
+	m.mutex.RLock()
+	defer m.mutex.Unlock()
+	return fmt.Sprintf("nodes:%s groups:%s", m.nodes, groups)
 }
 
 func (m *maglevSelector) Name() string {

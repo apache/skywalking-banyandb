@@ -32,7 +32,9 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
@@ -57,6 +59,7 @@ var _ = Describe("Property application", func() {
 		Expect(conn.Close()).To(Succeed())
 		deferFn()
 		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	})
 	It("applies properties", func() {
 		md := &propertyv1.Metadata{

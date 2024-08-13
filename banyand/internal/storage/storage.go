@@ -66,7 +66,7 @@ type SupplyTSDB[T TSTable] func() T
 
 // IndexSearchOpts is the options for searching index.
 type IndexSearchOpts struct {
-	Filter      index.Filter
+	Query       index.Query
 	Order       *model.OrderBy
 	Projection  []index.FieldKey
 	PreloadSize int

@@ -18,6 +18,7 @@
 package observability
 
 import (
+	"net/http"
 	"sync"
 
 	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
@@ -42,15 +43,18 @@ var (
 func init() {
 	reg.MustRegister(collectors.NewGoCollector())
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	metricsMux.Handle("/metrics", promhttp.HandlerFor(
-		reg,
-		promhttp.HandlerOpts{},
-	))
 }
 
 // NewMeterProvider returns a meter.Provider based on the given scope.
 func newPromMeterProvider() meter.Provider {
 	return prom.NewProvider(SystemScope, reg)
+}
+
+func registerMetricsEndpoint(metricsMux *http.ServeMux) {
+	metricsMux.Handle("/metrics", promhttp.HandlerFor(
+		reg,
+		promhttp.HandlerOpts{},
+	))
 }
 
 // MetricsServerInterceptor returns a server interceptor for metrics.

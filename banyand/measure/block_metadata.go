@@ -21,11 +21,11 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -170,7 +170,6 @@ func (bm *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("cannot unmarshal tagFamily name: %w", err)
 			}
-			// TODO: cache dataBlock
 			tf := &dataBlock{}
 			src, err = tf.unmarshal(src)
 			if err != nil {
@@ -198,7 +197,7 @@ func generateBlockMetadata() *blockMetadata {
 	if v == nil {
 		return &blockMetadata{}
 	}
-	return v.(*blockMetadata)
+	return v
 }
 
 func releaseBlockMetadata(bm *blockMetadata) {
@@ -206,7 +205,7 @@ func releaseBlockMetadata(bm *blockMetadata) {
 	blockMetadataPool.Put(bm)
 }
 
-var blockMetadataPool sync.Pool
+var blockMetadataPool = pool.Register[*blockMetadata]("measure-blockMetadata")
 
 type blockMetadataArray struct {
 	arr []blockMetadata
@@ -219,14 +218,14 @@ func (bma *blockMetadataArray) reset() {
 	bma.arr = bma.arr[:0]
 }
 
-var blockMetadataArrayPool sync.Pool
+var blockMetadataArrayPool = pool.Register[*blockMetadataArray]("measure-blockMetadataArray")
 
 func generateBlockMetadataArray() *blockMetadataArray {
 	v := blockMetadataArrayPool.Get()
 	if v == nil {
 		return &blockMetadataArray{}
 	}
-	return v.(*blockMetadataArray)
+	return v
 }
 
 func releaseBlockMetadataArray(bma *blockMetadataArray) {

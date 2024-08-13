@@ -1,11 +1,11 @@
-# CRUD IndexRuleBindings
+# CRUD [IndexRuleBindings](../../../concept/data-model.md#indexrule--indexrulebinding)
 
 CRUD operations create, read, update and delete index rule bindings.
 
 An index rule binding is a bridge to connect several index rules to a subject.
 This binding is valid between `begin_at_nanoseconds` and `expire_at_nanoseconds`, that provides flexible strategies to control how to generate time series indices.
 
-[`bydbctl`](../clients.md#command-line) is the command line tool in examples.
+[bydbctl](../bydbctl.md) is the command line tool in examples.
 
 ## Create operation
 
@@ -134,4 +134,4 @@ bydbctl indexRuleBinding list -g sw_stream
 
 ## API Reference
 
-[indexRuleBindingService v1](../api-reference.md#IndexRuleBindingRegistryService)
+[IndexRuleBinding Registration Operations](../../../api-reference.md#indexrulebindingregistryservice)

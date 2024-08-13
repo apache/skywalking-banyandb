@@ -19,12 +19,12 @@ package stream
 
 import (
 	"path/filepath"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type writer struct {
@@ -279,7 +279,7 @@ func generateBlockWriter() *blockWriter {
 			},
 		}
 	}
-	return v.(*blockWriter)
+	return v
 }
 
 func releaseBlockWriter(bsw *blockWriter) {
@@ -287,4 +287,4 @@ func releaseBlockWriter(bsw *blockWriter) {
 	blockWriterPool.Put(bsw)
 }
 
-var blockWriterPool sync.Pool
+var blockWriterPool = pool.Register[*blockWriter]("stream-blockWriter")

@@ -288,7 +288,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := assert.New(t)
 			is := require.New(t)
-			iter, err := store.Iterator(tt.args.fieldKey, tt.args.termRange, tt.args.orderType, tt.preloadSize)
+			iter, err := store.Iterator(tt.args.fieldKey, tt.args.termRange, tt.args.orderType, tt.preloadSize, nil, nil)
 			is.NoError(err)
 			if iter == nil {
 				tester.Empty(tt.want)

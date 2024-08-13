@@ -72,7 +72,7 @@ const (
 
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
-	Filter          index.Filter
+	Query           index.Query
 	TimeRange       *timestamp.TimeRange
 	Order           *OrderBy
 	Name            string

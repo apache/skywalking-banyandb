@@ -19,21 +19,18 @@ package storage
 
 import (
 	"context"
+	"maps"
 	"path"
-	"strings"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 func (s *segment[T, O]) IndexDB() IndexDB {
@@ -41,7 +38,7 @@ func (s *segment[T, O]) IndexDB() IndexDB {
 }
 
 func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
-	sl, _, err := s.index.searchPrimary(ctx, series, nil)
+	sl, _, err := s.index.filter(ctx, series, nil, nil)
 	return sl, err
 }
 
@@ -73,7 +70,9 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 
 var rangeOpts = index.RangeOpts{}
 
-func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series, projection []index.FieldKey) (sl pbv1.SeriesList, fields FieldResultList, err error) {
+func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
+	projection []index.FieldKey, secondaryQuery index.Query,
+) (sl pbv1.SeriesList, fields FieldResultList, err error) {
 	seriesMatchers := make([]index.SeriesMatcher, len(series))
 	for i := range series {
 		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
@@ -81,10 +80,14 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series, 
 			return nil, nil, err
 		}
 	}
+	indexQuery, err := s.store.BuildQuery(seriesMatchers, secondaryQuery)
+	if err != nil {
+		return nil, nil, err
+	}
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
-		span, _ := tracer.StartSpan(ctx, "seriesIndex.searchPrimary")
-		span.Tagf("matchers", "%v", seriesMatchers)
+		span, _ := tracer.StartSpan(ctx, "seriesIndex.search")
+		span.Tagf("query", "%s", indexQuery.String())
 		defer func() {
 			span.Tagf("matched", "%d", len(sl))
 			if len(fields) > 0 {
@@ -96,7 +99,7 @@ func (s *seriesIndex) searchPrimary(ctx context.Context, series []*pbv1.Series, 
 			span.Stop()
 		}()
 	}
-	ss, err := s.store.Search(ctx, seriesMatchers, projection)
+	ss, err := s.store.Search(ctx, projection, indexQuery)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -194,58 +197,19 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 			span.Stop()
 		}()
 	}
-	seriesList, fieldResultList, err := s.searchPrimary(ctx, series, opts.Projection)
-	if err != nil {
-		return nil, nil, err
-	}
 
-	pl := seriesList.ToList()
-	if opts.Filter != nil && opts.Filter != logical.ENode {
-		var plFilter posting.List
-		func() {
-			if tracer != nil {
-				span, _ := tracer.StartSpan(ctx, "filter")
-				span.Tag("exp", opts.Filter.String())
-				var projectionStrBuilder strings.Builder
-				if len(opts.Projection) > 0 {
-					projectionStrBuilder.WriteString("[")
-					for i, p := range opts.Projection {
-						if i > 0 {
-							projectionStrBuilder.WriteString(", ")
-						}
-						projectionStrBuilder.WriteRune(rune(p.IndexRuleID))
-					}
-					projectionStrBuilder.WriteString("]")
-					span.Tagf("projection", "%s", projectionStrBuilder.String())
-				}
-				defer func() {
-					if err != nil {
-						span.Error(err)
-					} else {
-						span.Tagf("matched", "%d", plFilter.Len())
-						span.Tagf("total", "%d", pl.Len())
-					}
-					span.Stop()
-				}()
-			}
-			if plFilter, err = opts.Filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
-				return s.store, nil
-			}, 0); err != nil {
-				return
-			}
-			if plFilter == nil {
-				return
-			}
-			err = pl.Intersect(plFilter)
-		}()
+	if opts.Order == nil || opts.Order.Index == nil {
+		var seriesList pbv1.SeriesList
+		var fieldResultList FieldResultList
+		if opts.Query != nil {
+			seriesList, fieldResultList, err = s.filter(ctx, series, opts.Projection, opts.Query)
+		} else {
+			seriesList, fieldResultList, err = s.filter(ctx, series, opts.Projection, nil)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
-	}
-
-	if opts.Order == nil || opts.Order.Index == nil {
-		sl, frl = filterSeriesList(seriesList, fieldResultList, pl)
-		return sl, frl, nil
+		return seriesList, fieldResultList, nil
 	}
 
 	fieldKey := index.FieldKey{
@@ -262,8 +226,19 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 			span.Stop()
 		}()
 	}
+	seriesMatchers := make([]index.SeriesMatcher, len(series))
+	for i := range series {
+		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	query, err := s.store.BuildQuery(seriesMatchers, opts.Query)
+	if err != nil {
+		return nil, nil, err
+	}
 	iter, err := s.store.Iterator(fieldKey, rangeOpts,
-		opts.Order.Sort, opts.PreloadSize)
+		opts.Order.Sort, opts.PreloadSize, query, opts.Projection)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -271,54 +246,27 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 		err = multierr.Append(err, iter.Close())
 	}()
 
-	var sortedSeriesList pbv1.SeriesList
-	var sortedFieldResultList FieldResultList
 	var r int
+	result := make([]index.SeriesDocument, 0, 10)
 	for iter.Next() {
 		r++
-		docID := iter.Val().DocID
-		if !pl.Contains(docID) {
-			continue
-		}
-		sortedSeriesList, sortedFieldResultList = appendSeriesList(
-			sortedSeriesList, seriesList,
-			sortedFieldResultList, fieldResultList,
-			common.SeriesID(docID))
-		if err != nil {
-			return nil, nil, err
-		}
+		val := iter.Val()
+		var doc index.SeriesDocument
+		doc.Fields = maps.Clone(val.Values)
+		doc.Key.ID = common.SeriesID(val.DocID)
+		doc.Key.EntityValues = val.EntityValues
+		result = append(result, doc)
+	}
+	sortedSeriesList, sortedFieldResultList, err := convertIndexSeriesToSeriesList(result, len(opts.Projection) > 0)
+	if err != nil {
+		return nil, nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, matched: %d", seriesMatchers, len(result))
 	}
 	if span != nil {
+		span.Tagf("query", "%s", iter.Query().String())
 		span.Tagf("rounds", "%d", r)
 		span.Tagf("size", "%d", len(sortedSeriesList))
 	}
 	return sortedSeriesList, sortedFieldResultList, err
-}
-
-func filterSeriesList(seriesList pbv1.SeriesList, fieldResultList FieldResultList, filter posting.List) (pbv1.SeriesList, FieldResultList) {
-	for i := 0; i < len(seriesList); i++ {
-		if !filter.Contains(uint64(seriesList[i].ID)) {
-			seriesList = append(seriesList[:i], seriesList[i+1:]...)
-			if fieldResultList != nil {
-				fieldResultList = append(fieldResultList[:i], fieldResultList[i+1:]...)
-			}
-			i--
-		}
-	}
-	return seriesList, fieldResultList
-}
-
-func appendSeriesList(dest, src pbv1.SeriesList, destFRL, srcFRL FieldResultList, target common.SeriesID) (pbv1.SeriesList, FieldResultList) {
-	for i := 0; i < len(src); i++ {
-		if target == src[i].ID {
-			dest = append(dest, src[i])
-			if srcFRL != nil {
-				destFRL = append(destFRL, srcFRL[i])
-			}
-			break
-		}
-	}
-	return dest, destFRL
 }
 
 func (s *seriesIndex) Close() error {

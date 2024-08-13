@@ -93,13 +93,14 @@ func (r RangeOpts) Between(value []byte) int {
 	return 0
 }
 
-// DocumentResult represents a document in a index.
+// DocumentResult represents a document in an index.
 type DocumentResult struct {
-	Values      map[string][]byte
-	SortedValue []byte
-	SeriesID    common.SeriesID
-	DocID       uint64
-	Timestamp   int64
+	EntityValues []byte
+	Values       map[string][]byte
+	SortedValue  []byte
+	SeriesID     common.SeriesID
+	DocID        uint64
+	Timestamp    int64
 }
 
 // SortedField returns the value of the sorted field.
@@ -112,6 +113,7 @@ type FieldIterator[T sort.Comparable] interface {
 	Next() bool
 	Val() T
 	Close() error
+	Query() Query
 }
 
 // DummyFieldIterator never iterates.
@@ -131,7 +133,11 @@ func (i *dummyIterator) Close() error {
 	return nil
 }
 
-// Document represents a document in a index.
+func (i *dummyIterator) Query() Query {
+	return nil
+}
+
+// Document represents a document in an index.
 type Document struct {
 	Fields       []Field
 	EntityValues []byte
@@ -147,14 +153,15 @@ type Batch struct {
 	Documents Documents
 }
 
-// Writer allows writing fields and docID in a document to a index.
+// Writer allows writing fields and docID in a document to an index.
 type Writer interface {
 	Batch(batch Batch) error
 }
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator[*DocumentResult], err error)
+	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query) (Query, error)
+	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
 	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
 }
 
@@ -167,7 +174,12 @@ type Searcher interface {
 	Range(fieldKey FieldKey, opts RangeOpts) (list posting.List, err error)
 }
 
-// Store is an abstract of a index repository.
+// Query is an abstract of an index query.
+type Query interface {
+	fmt.Stringer
+}
+
+// Store is an abstract of an index repository.
 type Store interface {
 	io.Closer
 	Writer
@@ -175,7 +187,7 @@ type Store interface {
 	SizeOnDisk() int64
 }
 
-// Series represents a series in a index.
+// Series represents a series in an index.
 type Series struct {
 	EntityValues []byte
 	ID           common.SeriesID
@@ -185,7 +197,7 @@ func (s Series) String() string {
 	return fmt.Sprintf("%s:%d", s.EntityValues, s.ID)
 }
 
-// SeriesDocument represents a series document in a index.
+// SeriesDocument represents a series document in an index.
 type SeriesDocument struct {
 	Fields map[string][]byte
 	Key    Series
@@ -195,7 +207,7 @@ type SeriesDocument struct {
 type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
-	Search(context.Context, []SeriesMatcher, []FieldKey) ([]SeriesDocument, error)
+	Search(context.Context, []FieldKey, Query) ([]SeriesDocument, error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

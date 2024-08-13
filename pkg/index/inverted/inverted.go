@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package inverted implements a inverted index repository.
+// Package inverted implements an inverted index repository.
 package inverted
 
 import (
@@ -25,7 +25,6 @@ import (
 	"io"
 	"log"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/blugelabs/bluge"
@@ -43,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -62,10 +62,11 @@ var (
 	defaultProjection       = []string{docIDField}
 )
 
-var analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
+// Analyzers is a map that associates each IndexRule_Analyzer type with a corresponding Analyzer.
+var Analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
 
 func init() {
-	analyzers = map[databasev1.IndexRule_Analyzer]*analysis.Analyzer{
+	Analyzers = map[databasev1.IndexRule_Analyzer]*analysis.Analyzer{
 		databasev1.IndexRule_ANALYZER_KEYWORD:  analyzer.NewKeywordAnalyzer(),
 		databasev1.IndexRule_ANALYZER_SIMPLE:   analyzer.NewSimpleAnalyzer(),
 		databasev1.IndexRule_ANALYZER_STANDARD: analyzer.NewStandardAnalyzer(),
@@ -74,7 +75,7 @@ func init() {
 
 var _ index.Store = (*store)(nil)
 
-// StoreOpts wraps options to create a inverted index repository.
+// StoreOpts wraps options to create an inverted index repository.
 type StoreOpts struct {
 	Logger       *logger.Logger
 	Path         string
@@ -87,14 +88,14 @@ type store struct {
 	l      *logger.Logger
 }
 
-var batchPool sync.Pool
+var batchPool = pool.Register[*blugeIndex.Batch]("index-bluge-batch")
 
 func generateBatch() *blugeIndex.Batch {
 	b := batchPool.Get()
 	if b == nil {
 		return bluge.NewBatch()
 	}
-	return b.(*blugeIndex.Batch)
+	return b
 }
 
 func releaseBatch(b *blugeIndex.Batch) {
@@ -124,7 +125,7 @@ func (s *store) Batch(batch index.Batch) error {
 				tf.StoreValue()
 			}
 			if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
-				tf = tf.WithAnalyzer(analyzers[f.Key.Analyzer])
+				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
 			}
 			doc.AddField(tf)
 		}
@@ -153,7 +154,7 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 			WithPersisterNapTimeMSec(int(opts.BatchWaitSec * 1000))
 	}
 	config := bluge.DefaultConfigWithIndexConfig(indexConfig)
-	config.DefaultSearchAnalyzer = analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
+	config.DefaultSearchAnalyzer = Analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
 	w, err := bluge.OpenWriter(config)
 	if err != nil {
@@ -173,8 +174,8 @@ func (s *store) Close() error {
 	return s.writer.Close()
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
-	order modelv1.Sort, preLoadSize int,
+func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
+	preLoadSize int, indexQuery index.Query, fieldKeys []index.FieldKey,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
@@ -190,7 +191,8 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 		return nil, err
 	}
 	fk := fieldKey.Marshal()
-	query := bluge.NewBooleanQuery()
+	rangeQuery := bluge.NewBooleanQuery()
+	rangeNode := newMustNode()
 	addRange := func(query *bluge.BooleanQuery, termRange index.RangeOpts) *bluge.BooleanQuery {
 		if termRange.Upper == nil {
 			termRange.Upper = defaultUpper
@@ -205,25 +207,39 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts,
 			termRange.IncludesUpper,
 		).
 			SetField(fk))
+		rangeNode.Append(newTermRangeInclusiveNode(string(termRange.Lower), string(termRange.Upper), termRange.IncludesLower, termRange.IncludesUpper, nil))
 		return query
 	}
 
 	if fieldKey.HasSeriesID() {
-		query = query.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
+		rangeQuery = rangeQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
 			SetField(seriesIDField))
+		rangeNode.Append(newTermNode(string(fieldKey.SeriesID.Marshal()), nil))
 		if termRange.Lower != nil || termRange.Upper != nil {
-			query = addRange(query, termRange)
+			rangeQuery = addRange(rangeQuery, termRange)
 		}
 	} else {
-		query = addRange(query, termRange)
+		rangeQuery = addRange(rangeQuery, termRange)
 	}
 
 	sortedKey := fk
 	if order == modelv1.Sort_SORT_DESC {
 		sortedKey = "-" + sortedKey
 	}
+	query := bluge.NewBooleanQuery().AddMust(rangeQuery)
+	node := newMustNode()
+	node.Append(rangeNode)
+	if indexQuery != nil && indexQuery.(*queryNode).query != nil {
+		query.AddMust(indexQuery.(*queryNode).query)
+		node.Append(indexQuery.(*queryNode).node)
+	}
+	fields := make([]string, 0, len(fieldKeys))
+	for i := range fieldKeys {
+		fields = append(fields, fieldKeys[i].Marshal())
+	}
 	result := &sortIterator{
-		query:     query,
+		query:     &queryNode{query, node},
+		fields:    fields,
 		reader:    reader,
 		sortedKey: sortedKey,
 		size:      preLoadSize,
@@ -271,7 +287,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	if err != nil {
 		return nil, err
 	}
-	analyzer := analyzers[fieldKey.Analyzer]
+	analyzer := Analyzers[fieldKey.Analyzer]
 	fk := fieldKey.Marshal()
 	query := bluge.NewBooleanQuery()
 	if fieldKey.HasSeriesID() {
@@ -297,7 +313,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize)
+	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize, nil, nil)
 	if err != nil {
 		return roaring.DummyPostingList, err
 	}
@@ -359,6 +375,8 @@ func (bmi *blugeMatchIterator) Next() bool {
 	}
 	err := match.VisitStoredFields(func(field string, value []byte) bool {
 		switch field {
+		case entityField:
+			bmi.current.EntityValues = value
 		case docIDField:
 			bmi.current.DocID = convert.BytesToUint64(value)
 		case seriesIDField:

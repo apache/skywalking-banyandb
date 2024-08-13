@@ -112,7 +112,7 @@ func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seq
 	}
 }
 
-var bigValuePool bytes.BufferPool
+var bigValuePool = bytes.NewBufferPool("stream-big-value")
 
 type tagFamily struct {
 	name string
