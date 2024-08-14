@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 catalog:
   - name: "Welcome"
     path: "/readme"
@@ -113,7 +112,7 @@ catalog:
       - name: "Observability"
         path: "/observability"
       - name: "Cluster Management"
-        path: ""
+        path: "/operation/cluster"
       - name: "Security"
         catalog:
           - name: "TLS Configuration"
