@@ -34,8 +34,8 @@ import (
 )
 
 const (
+	// PRFIX Identification of incremental columns.
 	PRFIX = "_"
-	//todo解决冲突，和测试用例，
 )
 
 type block struct {

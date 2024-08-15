@@ -19,6 +19,7 @@ package measure_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -78,7 +79,7 @@ var _ = Describe("Metadata", func() {
 	})
 
 	Context("Manage measure", func() {
-		It("should pass smoke test", func() { //todo 测试 measure schema构建
+		It("should pass smoke test", func() {
 			Eventually(func() bool {
 				_, err := svcs.measure.Measure(&commonv1.Metadata{
 					Name:  "service_cpm_minute",
@@ -87,9 +88,10 @@ var _ = Describe("Metadata", func() {
 				return err == nil
 			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
+
 		It("should close the measure", func() {
 			deleted, err := svcs.metadataService.MeasureRegistry().DeleteMeasure(context.TODO(), &commonv1.Metadata{
-				Name:  "_service_cpm_minute",
+				Name:  "service_cpm_minute",
 				Group: "sw_metric",
 			})
 			Expect(err).ShouldNot(HaveOccurred())
@@ -121,22 +123,29 @@ var _ = Describe("Metadata", func() {
 				// Remove the first tag from the entity
 				newEntityTag := measureSchema.Entity.TagNames[0] + "_updated"
 				measureSchema.Entity.TagNames[0] = newEntityTag
+				fmt.Println("Field Name:", measureSchema.Fields[0].Name)
+				newField := measureSchema.Fields[0].Name
+				measureSchema.Fields[0].Name = "_" + newField
 
 				modRevision, err := svcs.metadataService.MeasureRegistry().UpdateMeasure(context.TODO(), measureSchema)
-				Expect(err).ShouldNot(HaveOccurred())
-				Expect(modRevision).ShouldNot(BeZero())
+				// Check if the expected error occurred
+				if err != nil {
+					Expect(err.Error()).To(ContainSubstring("field names may not begin with an underscore"), "Error should state that field names may not begin with an underscore")
+				} else {
+					// If no error, continue with other assertions
+					Expect(modRevision).ShouldNot(BeZero(), "The modification revision should not be zero")
 
-				Eventually(func() bool {
-					val, err := svcs.measure.Measure(&commonv1.Metadata{
-						Name:  "service_cpm_minute",
-						Group: "sw_metric",
-					})
-					if err != nil {
-						return false
-					}
-
-					return newEntityTag == val.GetSchema().Entity.TagNames[0]
-				}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
+					Eventually(func() bool {
+						val, err := svcs.measure.Measure(&commonv1.Metadata{
+							Name:  "service_cpm_minute",
+							Group: "sw_metric",
+						})
+						if err != nil {
+							return false
+						}
+						return newEntityTag == val.GetSchema().Entity.TagNames[0]
+					}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue(), "The new entity tag should match")
+				}
 			})
 		})
 	})

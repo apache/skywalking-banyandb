@@ -121,7 +121,7 @@ func Measure(measure *databasev1.Measure) error {
 			return errors.New("field name is empty")
 		}
 		if strings.HasPrefix(measure.Fields[i].Name, "_") {
-			return errors.New("Field names may not begin with an underscore.")
+			return errors.New("field names may not begin with an underscore")
 		}
 		if measure.Fields[i].FieldType == databasev1.FieldType_FIELD_TYPE_UNSPECIFIED {
 			return errors.New("field type is unspecified")

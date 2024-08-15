@@ -66,7 +66,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 					timestamps: []int64{1},
 					versions:   []int64{1},
 					seriesIDs:  []common.SeriesID{1},
-					types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeDelta},
+					types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeUnspecified},
 
 					tagFamilies: [][]nameValues{
 						{
@@ -199,7 +199,7 @@ func Test_tstIter(t *testing.T) {
 				want: []blockMetadata{
 					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
 				},
 			},
 			{
@@ -213,8 +213,8 @@ func Test_tstIter(t *testing.T) {
 					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
 				},
 			},
 			{
@@ -238,8 +238,8 @@ func Test_tstIter(t *testing.T) {
 					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
 				},
 			},
 		}
@@ -478,7 +478,7 @@ var dpsTS1 = &dataPoints{
 	},
 }
 
-var dpsTS11 = &dataPoints{ //todo dointtype
+var dpsTS11 = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{1, 1, 1},
 	versions:   []int64{0, 1, 2},
@@ -531,7 +531,7 @@ var dpsTS11 = &dataPoints{ //todo dointtype
 	},
 }
 
-var dpsTS2 = &dataPoints{ //todo dointtype
+var dpsTS2 = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{2, 2, 2},
 	versions:   []int64{4, 5, 6},
@@ -566,7 +566,7 @@ var dpsTS2 = &dataPoints{ //todo dointtype
 		},
 		{}, // empty tagFamilies for seriesID 6
 	},
-	fields: []nameValues{ //todo dointtype
+	fields: []nameValues{
 		{
 			name: "skipped", values: []*nameValue{
 				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field3"), valueArr: nil},
@@ -588,6 +588,7 @@ var duplicatedDps = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 1, 1},
 	timestamps: []int64{1, 1, 1},
 	versions:   []int64{1, 2, 3},
+	types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeUnspecified, pbv1.DataPointValueTypeCumulative, pbv1.DataPointValueTypeCumulative},
 	tagFamilies: [][]nameValues{
 		{
 			{

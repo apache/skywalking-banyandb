@@ -19,7 +19,6 @@ package measure
 
 import (
 	"errors"
-	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"sort"
 	"testing"
 	"time"
@@ -33,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -604,7 +604,7 @@ func TestQueryResult(t *testing.T) {
 					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
-					{Name: "singleTag", Tags: []model.Tag{ //todo dointtype
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},

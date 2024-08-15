@@ -44,6 +44,7 @@ func TestMustInitFromDataPoints(t *testing.T) {
 				seriesIDs:   []common.SeriesID{},
 				tagFamilies: make([][]nameValues, 0),
 				fields:      make([]nameValues, 0),
+				types:       []pbv1.DataPointValueType{},
 			},
 			want: partMetadata{},
 		},
@@ -53,6 +54,7 @@ func TestMustInitFromDataPoints(t *testing.T) {
 				timestamps: []int64{1},
 				versions:   []int64{1},
 				seriesIDs:  []common.SeriesID{1},
+				types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeUnspecified},
 				tagFamilies: [][]nameValues{
 					{
 						{
@@ -129,6 +131,11 @@ var dps = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 1, 2, 2, 3, 3},
 	timestamps: []int64{1, 2, 8, 10, 100, 220},
 	versions:   []int64{1, 2, 3, 4, 5, 6},
+	types: []pbv1.DataPointValueType{
+		pbv1.DataPointValueTypeUnspecified, pbv1.DataPointValueTypeUnspecified,
+		pbv1.DataPointValueTypeUnspecified, pbv1.DataPointValueTypeUnspecified,
+		pbv1.DataPointValueTypeUnspecified, pbv1.DataPointValueTypeUnspecified,
+	},
 	tagFamilies: [][]nameValues{
 		{
 			{

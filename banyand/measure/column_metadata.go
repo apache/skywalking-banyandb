@@ -55,7 +55,6 @@ func (cm *columnMetadata) reset() {
 	cm.valueType = 0
 	cm.dataBlock.reset()
 	cm.dataPointType = 0
-
 }
 
 func (cm *columnMetadata) copyFrom(src *columnMetadata) {
@@ -67,8 +66,7 @@ func (cm *columnMetadata) copyFrom(src *columnMetadata) {
 
 func (cm *columnMetadata) marshal(dst []byte) []byte {
 	dst = encoding.EncodeBytes(dst, convert.StringToBytes(cm.name))
-	dst = append(dst, byte(cm.valueType))
-	dst = append(dst, byte(cm.dataPointType))
+	dst = append(dst, byte(cm.valueType), byte(cm.dataPointType))
 	dst = cm.dataBlock.marshal(dst)
 	return dst
 }
