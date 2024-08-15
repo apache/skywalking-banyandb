@@ -60,7 +60,7 @@ func (b *block) reset() {
 	b.field.reset()
 }
 
-func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tagFamilies [][]nameValues, fields []nameValues, types []pbv1.DataPointValueType) { //
+func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tagFamilies [][]nameValues, fields []nameValues) {
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -76,7 +76,7 @@ func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tag
 	assertTimestampsSorted(timestamps)
 	b.timestamps = append(b.timestamps, timestamps...)
 	b.versions = append(b.versions, versions...)
-	b.mustInitFromTagsAndFields(tagFamilies, fields, types)
+	b.mustInitFromTagsAndFields(tagFamilies, fields)
 }
 
 func assertTimestampsSorted(timestamps []int64) {
@@ -88,7 +88,7 @@ func assertTimestampsSorted(timestamps []int64) {
 	}
 }
 
-func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []nameValues, types []pbv1.DataPointValueType) {
+func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []nameValues) {
 	dataPointsLen := len(tagFamilies)
 	if dataPointsLen == 0 {
 		return
@@ -99,15 +99,10 @@ func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []n
 	for i, f := range fields {
 		columns := b.field.resizeColumns(len(f.values))
 		for j, t := range f.values {
-			if types[i] == pbv1.DataPointValueTypeDelta {
-				columns[j].name = PRFIX + t.name
-			} else {
-				columns[j].name = t.name
-			}
+			columns[j].name = t.name
 			columns[j].resizeValues(dataPointsLen)
 			columns[j].valueType = t.valueType
 			columns[j].values[i] = t.marshal()
-			columns[j].datapointType = types[i]
 		}
 	}
 }
@@ -157,6 +152,7 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 	for ti := range b.tagFamilies {
 		b.marshalTagFamily(b.tagFamilies[ti], bm, ww)
 	}
+
 	f := b.field
 	cc := f.columns
 	cmm := bm.field.resizeColumnMetadata(len(cc))

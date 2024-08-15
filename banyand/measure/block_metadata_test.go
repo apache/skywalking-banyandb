@@ -254,6 +254,7 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 							},
 							name:      "field1",
 							valueType: pbv1.ValueTypeInt64,
+							//todo 增加datapointtype
 						},
 					},
 				},
@@ -296,6 +297,7 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 							},
 							name:      "field1",
 							valueType: pbv1.ValueTypeInt64,
+							//todo 增加datapointtype
 						},
 						{
 							dataBlock: dataBlock{
@@ -304,6 +306,7 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 							},
 							name:      "field2",
 							valueType: pbv1.ValueTypeInt64,
+							//todo 增加datapointtype
 						},
 					},
 				},

@@ -79,7 +79,7 @@ var _ = Describe("Metadata", func() {
 	})
 
 	Context("Manage measure", func() {
-		It("should pass smoke test", func() {
+		It("should pass smoke test", func() { //todo 测试 measure schema构建
 			Eventually(func() bool {
 				_, err := svcs.measure.Measure(&commonv1.Metadata{
 					Name:  "service_cpm_minute",
@@ -91,7 +91,7 @@ var _ = Describe("Metadata", func() {
 
 		It("should close the measure", func() {
 			deleted, err := svcs.metadataService.MeasureRegistry().DeleteMeasure(context.TODO(), &commonv1.Metadata{
-				Name:  "service_cpm_minute",
+				Name:  "_service_cpm_minute",
 				Group: "sw_metric",
 			})
 			Expect(err).ShouldNot(HaveOccurred())
