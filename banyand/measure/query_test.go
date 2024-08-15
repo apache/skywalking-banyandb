@@ -154,7 +154,7 @@ func TestQueryResult(t *testing.T) {
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06)}},
-					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
+					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}}, //todo dointtype
 				},
 			}, {
 				SID:        2,
@@ -225,7 +225,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06)}},
@@ -250,7 +250,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{strTagValue("tag2")}},
 					}},
 				},
-				Fields: nil,
+				Fields: nil, //todo dointtype
 			}, {
 				SID:        3,
 				Timestamps: []int64{1},
@@ -270,7 +270,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 				},
 			}},
@@ -300,7 +300,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field3")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(3330)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(3663699.029)}},
@@ -345,7 +345,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(4440)}},
 				},
 			}, {
@@ -367,7 +367,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1221233.343)}},
@@ -412,7 +412,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 				},
 			}},
@@ -442,7 +442,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field3")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(3330)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(3663699.029)}},
@@ -487,7 +487,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(4440)}},
 				},
 			}, {
@@ -554,7 +554,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 				},
 			}},
@@ -585,7 +585,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1221233.343)}},
@@ -603,7 +603,7 @@ func TestQueryResult(t *testing.T) {
 					{Name: "binaryTag", Tags: []pbv1.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []pbv1.Tag{ //todo dointtype
 						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
@@ -630,7 +630,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 				},
 			}, {
@@ -652,7 +652,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field3")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(3330)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(3663699.029)}},
@@ -697,7 +697,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(4440)}},
 				},
 			}},
@@ -728,7 +728,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1221233.343)}},
@@ -773,7 +773,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 				},
 			}, {
@@ -795,7 +795,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field3")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(3330)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(3663699.029)}},
@@ -840,7 +840,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(4440)}},
 				},
 			}},
@@ -871,7 +871,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06)}},
@@ -916,7 +916,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 				},
 			}},
@@ -1023,7 +1023,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06)}},
@@ -1068,7 +1068,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
 				},
 			}},
@@ -1119,7 +1119,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1"), strFieldValue("field3")}},
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110), int64FieldValue(3330)}},
 					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06), float64FieldValue(3663699.029)}},
@@ -1144,7 +1144,7 @@ func TestQueryResult(t *testing.T) {
 						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 					}},
 				},
-				Fields: []pbv1.Field{
+				Fields: []pbv1.Field{ //todo dointtype
 					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110), int64FieldValue(4440)}},
 				},
 			}},

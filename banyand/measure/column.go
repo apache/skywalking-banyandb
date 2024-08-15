@@ -26,9 +26,10 @@ import (
 )
 
 type column struct {
-	name      string
-	values    [][]byte
-	valueType pbv1.ValueType
+	name          string
+	values        [][]byte
+	valueType     pbv1.ValueType
+	datapointType pbv1.DataPointValueType
 }
 
 func (c *column) reset() {
@@ -56,11 +57,9 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 
 	cm.name = c.name
 	cm.valueType = c.valueType
-
+	cm.dataPointType = c.datapointType
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
-
-	// marshal values
 	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
 	cm.size = uint64(len(bb.Buf))
 	if cm.size > maxValuesBlockSize {
@@ -73,6 +72,7 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm columnMetadata, count uint64) {
 	c.name = cm.name
 	c.valueType = cm.valueType
+	c.datapointType = cm.dataPointType
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
@@ -92,6 +92,7 @@ func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seqReader, cm columnMetadata, count uint64) {
 	c.name = cm.name
 	c.valueType = cm.valueType
+	c.datapointType = cm.dataPointType
 	if cm.offset != reader.bytesRead {
 		logger.Panicf("%s: offset mismatch: %d vs %d", reader.Path(), cm.offset, reader.bytesRead)
 	}
@@ -99,7 +100,6 @@ func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *
 	if valuesSize > maxValuesBlockSize {
 		logger.Panicf("%s: block size cannot exceed %d bytes; got %d bytes", reader.Path(), maxValuesBlockSize, valuesSize)
 	}
-
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 

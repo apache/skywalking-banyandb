@@ -20,6 +20,7 @@ package v1
 import (
 	"bytes"
 	"fmt"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 
 	"github.com/pkg/errors"
 
@@ -28,6 +29,27 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+type DataPointValueType byte
+
+const (
+	DataPointValueTypeUnspecified DataPointValueType = iota
+	DataPointValueTypeCumulative
+	DataPointValueTypeDelta
+)
+
+func ConvertDataPointValueType(protoType measurev1.DataPointValue_Type) DataPointValueType {
+	switch protoType {
+	case measurev1.DataPointValue_TYPE_UNSPECIFIED:
+		return DataPointValueTypeUnspecified
+	case measurev1.DataPointValue_TYPE_CUMULATIVE:
+		return DataPointValueTypeCumulative
+	case measurev1.DataPointValue_TYPE_DELTA:
+		return DataPointValueTypeDelta
+	default:
+		panic("unknown field type")
+	}
+}
 
 // ValueType is the type of the tag and field value.
 type ValueType byte

@@ -19,7 +19,6 @@ package measure
 
 import (
 	"bytes"
-
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -121,6 +120,7 @@ type dataPoints struct {
 	versions    []int64
 	tagFamilies [][]nameValues
 	fields      []nameValues
+	types       []pbv1.DataPointValueType
 }
 
 func (d *dataPoints) Len() int {
@@ -140,6 +140,7 @@ func (d *dataPoints) Swap(i, j int) {
 	d.versions[i], d.versions[j] = d.versions[j], d.versions[i]
 	d.tagFamilies[i], d.tagFamilies[j] = d.tagFamilies[j], d.tagFamilies[i]
 	d.fields[i], d.fields[j] = d.fields[j], d.fields[i]
+	d.types[i], d.types[j] = d.types[j], d.types[i]
 }
 
 type dataPointsInTable struct {

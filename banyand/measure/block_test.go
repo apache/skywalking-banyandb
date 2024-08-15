@@ -120,7 +120,7 @@ var conventionalBlock = block{
 				{name: "intTag", valueType: pbv1.ValueTypeInt64, values: [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
 			},
 		},
-	},
+	}, //todo 增加filedtype
 	field: columnFamily{
 		columns: []column{
 			{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field1"), []byte("field2")}},
@@ -137,6 +137,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 		versions    []int64
 		tagFamilies [][]nameValues
 		fields      []nameValues
+		types       []pbv1.DataPointValueType //todo types
 	}
 	tests := []struct {
 		name string
@@ -148,6 +149,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 			args: args{
 				timestamps: []int64{1, 2},
 				versions:   []int64{1, 1},
+				types:      []pbv1.DataPointValueType{1, 2}, //todo types
 				tagFamilies: [][]nameValues{
 					{
 						{
@@ -213,7 +215,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{}
-			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.versions, tt.args.tagFamilies, tt.args.fields)
+			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.versions, tt.args.tagFamilies, tt.args.fields, tt.args.types)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromDataPoints() = %+v, want %+v", *b, tt.want)
 			}
@@ -462,6 +464,7 @@ func Test_blockPointer_append(t *testing.T) {
 				field: columnFamily{
 					columns: []column{
 						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+						//todo 增加filedtype
 					},
 				},
 			},
@@ -495,6 +498,7 @@ func Test_blockPointer_append(t *testing.T) {
 					field: columnFamily{
 						columns: []column{
 							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+							//todo 增加filedtype
 						},
 					},
 				},
@@ -531,6 +535,7 @@ func Test_blockPointer_append(t *testing.T) {
 						field: columnFamily{
 							columns: []column{
 								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+								//todo 增加filedtype
 							},
 						},
 					},
@@ -556,6 +561,7 @@ func Test_blockPointer_append(t *testing.T) {
 					field: columnFamily{
 						columns: []column{
 							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+							//todo 增加filedtype
 						},
 					},
 				},
@@ -581,6 +587,7 @@ func Test_blockPointer_append(t *testing.T) {
 				field: columnFamily{
 					columns: []column{
 						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+						//todo 增加filedtype
 					},
 				},
 				partID: 1,
@@ -604,6 +611,7 @@ func Test_blockPointer_append(t *testing.T) {
 						field: columnFamily{
 							columns: []column{
 								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+								//todo 增加filedtype
 							},
 						},
 					},
@@ -633,6 +641,7 @@ func Test_blockPointer_append(t *testing.T) {
 					field: columnFamily{
 						columns: []column{
 							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4"), []byte("field5"), []byte("field6")}},
+							//todo 增加filedtype
 						},
 					},
 				},
@@ -658,6 +667,7 @@ func Test_blockPointer_append(t *testing.T) {
 				field: columnFamily{
 					columns: []column{
 						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+						//todo 增加filedtype
 					},
 				},
 				partID: 3,
@@ -681,6 +691,7 @@ func Test_blockPointer_append(t *testing.T) {
 						field: columnFamily{
 							columns: []column{
 								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+								//todo 增加filedtype
 							},
 						},
 					},
@@ -709,6 +720,7 @@ func Test_blockPointer_append(t *testing.T) {
 					field: columnFamily{
 						columns: []column{
 							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4"), []byte("field5")}},
+							//todo 增加filedtype
 						},
 					},
 				},

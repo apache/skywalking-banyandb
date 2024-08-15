@@ -44,9 +44,10 @@ import (
 
 func Test_columnMetadata_reset(t *testing.T) {
 	cm := &columnMetadata{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		dataBlock: dataBlock{offset: 1, size: 10},
+		name:          "test",
+		valueType:     pbv1.ValueTypeStr,
+		dataBlock:     dataBlock{offset: 1, size: 10}, //todo cm 测试用例
+		dataPointType: pbv1.DataPointValueTypeDelta,
 	}
 
 	cm.reset()
@@ -54,13 +55,15 @@ func Test_columnMetadata_reset(t *testing.T) {
 	assert.Equal(t, "", cm.name)
 	assert.Equal(t, pbv1.ValueType(0), cm.valueType)
 	assert.Equal(t, dataBlock{}, cm.dataBlock)
+	assert.Equal(t, pbv1.DataPointValueType(0), cm.dataPointType)
 }
 
 func Test_columnMetadata_copyFrom(t *testing.T) {
 	src := &columnMetadata{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		dataBlock: dataBlock{offset: 1, size: 10},
+		name:          "test",
+		valueType:     pbv1.ValueTypeStr,
+		dataBlock:     dataBlock{offset: 1, size: 10},
+		dataPointType: pbv1.DataPointValueTypeDelta, //todo cm 测试用例
 	}
 
 	dest := &columnMetadata{}
@@ -72,9 +75,10 @@ func Test_columnMetadata_copyFrom(t *testing.T) {
 
 func Test_columnMetadata_marshal(t *testing.T) {
 	original := &columnMetadata{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		dataBlock: dataBlock{offset: 1, size: 10},
+		name:          "test",
+		valueType:     pbv1.ValueTypeStr,
+		dataBlock:     dataBlock{offset: 1, size: 10},
+		dataPointType: pbv1.DataPointValueTypeDelta, //todo cm 测试用例
 	}
 
 	marshaled := original.marshal(nil)
@@ -91,14 +95,16 @@ func Test_columnFamilyMetadata_reset(t *testing.T) {
 	cfm := &columnFamilyMetadata{
 		columnMetadata: []columnMetadata{
 			{
-				name:      "test1",
-				valueType: pbv1.ValueTypeStr,
-				dataBlock: dataBlock{offset: 1, size: 10},
+				name:          "test1",
+				valueType:     pbv1.ValueTypeStr,
+				dataBlock:     dataBlock{offset: 1, size: 10},
+				dataPointType: pbv1.DataPointValueTypeDelta, //todo cm 测试用例
 			},
 			{
-				name:      "test2",
-				valueType: pbv1.ValueTypeInt64,
-				dataBlock: dataBlock{offset: 2, size: 20},
+				name:          "test2",
+				valueType:     pbv1.ValueTypeInt64,
+				dataBlock:     dataBlock{offset: 2, size: 20},
+				dataPointType: pbv1.DataPointValueTypeCumulative, //todo	cm 测试用例
 			},
 		},
 	}
@@ -112,14 +118,16 @@ func Test_columnFamilyMetadata_copyFrom(t *testing.T) {
 	src := &columnFamilyMetadata{
 		columnMetadata: []columnMetadata{
 			{
-				name:      "test1",
-				valueType: pbv1.ValueTypeStr,
-				dataBlock: dataBlock{offset: 1, size: 10},
+				name:          "test1",
+				valueType:     pbv1.ValueTypeStr,
+				dataBlock:     dataBlock{offset: 1, size: 10},
+				dataPointType: pbv1.DataPointValueTypeDelta, //todo	cm 测试用例
 			},
 			{
-				name:      "test2",
-				valueType: pbv1.ValueTypeInt64,
-				dataBlock: dataBlock{offset: 2, size: 20},
+				name:          "test2",
+				valueType:     pbv1.ValueTypeInt64,
+				dataBlock:     dataBlock{offset: 2, size: 20},
+				dataPointType: pbv1.DataPointValueTypeCumulative, //todo	cm 测试用例
 			},
 		},
 	}
@@ -156,14 +164,16 @@ func Test_columnFamilyMetadata_marshalUnmarshal(t *testing.T) {
 			original: &columnFamilyMetadata{
 				columnMetadata: []columnMetadata{
 					{
-						name:      "test1",
-						valueType: pbv1.ValueTypeStr,
-						dataBlock: dataBlock{offset: 1, size: 10},
+						name:          "test1",
+						valueType:     pbv1.ValueTypeStr,
+						dataBlock:     dataBlock{offset: 1, size: 10},
+						dataPointType: pbv1.DataPointValueTypeDelta, //todo	cm 测试用例
 					},
 					{
-						name:      "test2",
-						valueType: pbv1.ValueTypeInt64,
-						dataBlock: dataBlock{offset: 2, size: 20},
+						name:          "test2",
+						valueType:     pbv1.ValueTypeInt64,
+						dataBlock:     dataBlock{offset: 2, size: 20},
+						dataPointType: pbv1.DataPointValueTypeCumulative, //todo	cm 测试用例
 					},
 				},
 			},

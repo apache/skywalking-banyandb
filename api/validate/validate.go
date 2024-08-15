@@ -20,6 +20,7 @@ package validate
 
 import (
 	"errors"
+	"strings"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -118,6 +119,9 @@ func Measure(measure *databasev1.Measure) error {
 	for i := range measure.Fields {
 		if measure.Fields[i].Name == "" {
 			return errors.New("field name is empty")
+		}
+		if strings.HasPrefix(measure.Fields[i].Name, "_") {
+			return errors.New("Field names may not begin with an underscore.")
 		}
 		if measure.Fields[i].FieldType == databasev1.FieldType_FIELD_TYPE_UNSPECIFIED {
 			return errors.New("field type is unspecified")

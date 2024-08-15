@@ -32,6 +32,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const (
+	PRFIX = "_"
+	//todo解决冲突，和测试用例，
+)
+
 type block struct {
 	timestamps []int64
 
@@ -54,7 +59,7 @@ func (b *block) reset() {
 	b.field.reset()
 }
 
-func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tagFamilies [][]nameValues, fields []nameValues) {
+func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tagFamilies [][]nameValues, fields []nameValues, types []pbv1.DataPointValueType) { //
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -70,7 +75,7 @@ func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tag
 	assertTimestampsSorted(timestamps)
 	b.timestamps = append(b.timestamps, timestamps...)
 	b.versions = append(b.versions, versions...)
-	b.mustInitFromTagsAndFields(tagFamilies, fields)
+	b.mustInitFromTagsAndFields(tagFamilies, fields, types)
 }
 
 func assertTimestampsSorted(timestamps []int64) {
@@ -82,7 +87,7 @@ func assertTimestampsSorted(timestamps []int64) {
 	}
 }
 
-func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []nameValues) {
+func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []nameValues, types []pbv1.DataPointValueType) {
 	dataPointsLen := len(tagFamilies)
 	if dataPointsLen == 0 {
 		return
@@ -93,10 +98,15 @@ func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []n
 	for i, f := range fields {
 		columns := b.field.resizeColumns(len(f.values))
 		for j, t := range f.values {
-			columns[j].name = t.name
+			if types[i] == pbv1.DataPointValueTypeDelta {
+				columns[j].name = PRFIX + t.name
+			} else {
+				columns[j].name = t.name
+			}
 			columns[j].resizeValues(dataPointsLen)
 			columns[j].valueType = t.valueType
 			columns[j].values[i] = t.marshal()
+			columns[j].datapointType = types[i]
 		}
 	}
 }
@@ -146,7 +156,6 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 	for ti := range b.tagFamilies {
 		b.marshalTagFamily(b.tagFamilies[ti], bm, ww)
 	}
-
 	f := b.field
 	cc := f.columns
 	cmm := bm.field.resizeColumnMetadata(len(cc))

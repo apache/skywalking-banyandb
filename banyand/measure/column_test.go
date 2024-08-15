@@ -29,9 +29,10 @@ import (
 
 func TestColumn_reset(t *testing.T) {
 	c := &column{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		values:    [][]byte{[]byte("value1"), []byte("value2")},
+		name:          "test",
+		valueType:     pbv1.ValueTypeStr,
+		values:        [][]byte{[]byte("value1"), []byte("value2")},
+		datapointType: pbv1.DataPointValueTypeDelta,
 	}
 
 	c.reset()
@@ -56,9 +57,10 @@ func TestColumn_resizeValues(t *testing.T) {
 
 func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
 	original := &column{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		values:    [][]byte{[]byte("value1"), nil, []byte("value2"), nil},
+		name:          "test",
+		valueType:     pbv1.ValueTypeStr,
+		values:        [][]byte{[]byte("value1"), nil, []byte("value2"), nil},
+		datapointType: pbv1.DataPointValueTypeDelta,
 	}
 
 	cm := &columnMetadata{}
@@ -89,14 +91,16 @@ func TestColumnFamily_reset(t *testing.T) {
 		name: "test",
 		columns: []column{
 			{
-				name:      "test1",
-				valueType: pbv1.ValueTypeStr,
-				values:    [][]byte{[]byte("value1"), []byte("value2")},
+				name:          "test1",
+				valueType:     pbv1.ValueTypeStr,
+				values:        [][]byte{[]byte("value1"), []byte("value2")},
+				datapointType: pbv1.DataPointValueTypeDelta,
 			},
 			{
-				name:      "test2",
-				valueType: pbv1.ValueTypeInt64,
-				values:    [][]byte{[]byte("value3"), []byte("value4")},
+				name:          "test2",
+				valueType:     pbv1.ValueTypeInt64,
+				values:        [][]byte{[]byte("value3"), []byte("value4")},
+				datapointType: pbv1.DataPointValueTypeCumulative,
 			},
 		},
 	}

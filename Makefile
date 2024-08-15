@@ -73,7 +73,7 @@ test-ci: $(GINKGO) ## Run the unit tests in CI
 	  -ldflags \
 	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
 	  $(TEST_CI_OPTS) \
-	  ./... 
+	  ./...
 
 ##@ Code quality targets
 
@@ -130,7 +130,7 @@ license-check: TARGET=license-check
 license-check: PROJECTS:=ui
 license-check: default ## Check license header
 	$(LICENSE_EYE) header check
- 
+
 license-fix: $(LICENSE_EYE)
 license-fix: TARGET=license-fix
 license-fix: PROJECTS:=ui
@@ -158,7 +158,7 @@ docker.build:
 
 docker.push: TARGET=docker.push
 docker.push: DIR=docker
-docker.push: 
+docker.push:
 	$(MAKE) $(TARGET) -C $(DIR); \
 	if [ $$? -ne 0 ]; then \
 		exit 1; \

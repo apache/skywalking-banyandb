@@ -2708,7 +2708,7 @@ WriteResponse is the response contract for write
 <a name="banyandb-measure-v1-DataPointValue-Type"></a>
 
 ### DataPointValue.Type
-the type of the data point cumulative or delta
+
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |

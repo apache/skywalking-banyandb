@@ -46,24 +46,29 @@ import (
 type columnMetadata struct {
 	name string
 	dataBlock
-	valueType pbv1.ValueType
+	valueType     pbv1.ValueType
+	dataPointType pbv1.DataPointValueType
 }
 
 func (cm *columnMetadata) reset() {
 	cm.name = ""
 	cm.valueType = 0
 	cm.dataBlock.reset()
+	cm.dataPointType = 0
+
 }
 
 func (cm *columnMetadata) copyFrom(src *columnMetadata) {
 	cm.name = src.name
 	cm.valueType = src.valueType
+	cm.dataPointType = src.dataPointType
 	cm.dataBlock.copyFrom(&src.dataBlock)
 }
 
 func (cm *columnMetadata) marshal(dst []byte) []byte {
 	dst = encoding.EncodeBytes(dst, convert.StringToBytes(cm.name))
 	dst = append(dst, byte(cm.valueType))
+	dst = append(dst, byte(cm.dataPointType))
 	dst = cm.dataBlock.marshal(dst)
 	return dst
 }
@@ -78,7 +83,8 @@ func (cm *columnMetadata) unmarshal(src []byte) ([]byte, error) {
 		return nil, fmt.Errorf("cannot unmarshal columnMetadata.valueType: src is too short")
 	}
 	cm.valueType = pbv1.ValueType(src[0])
-	src = src[1:]
+	cm.dataPointType = pbv1.DataPointValueType(src[1])
+	src = src[2:]
 	src, err = cm.dataBlock.unmarshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal columnMetadata.dataBlock: %w", err)

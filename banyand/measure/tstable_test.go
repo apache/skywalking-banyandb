@@ -53,6 +53,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 					seriesIDs:   []common.SeriesID{},
 					tagFamilies: make([][]nameValues, 0),
 					fields:      make([]nameValues, 0),
+					types:       []pbv1.DataPointValueType{},
 				},
 			},
 			want: 0,
@@ -64,6 +65,8 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 					timestamps: []int64{1},
 					versions:   []int64{1},
 					seriesIDs:  []common.SeriesID{1},
+					types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeDelta},
+
 					tagFamilies: [][]nameValues{
 						{
 							{
@@ -195,7 +198,7 @@ func Test_tstIter(t *testing.T) {
 				want: []blockMetadata{
 					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
 				},
 			},
 			{
@@ -209,8 +212,8 @@ func Test_tstIter(t *testing.T) {
 					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
 				},
 			},
 			{
@@ -224,8 +227,8 @@ func Test_tstIter(t *testing.T) {
 					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
 				},
 			},
 		}
@@ -415,6 +418,7 @@ var dpsTS1 = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{1, 1, 1},
 	versions:   []int64{1, 2, 3},
+	types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeUnspecified, pbv1.DataPointValueTypeCumulative, pbv1.DataPointValueTypeCumulative},
 	tagFamilies: [][]nameValues{
 		{
 			{
@@ -463,10 +467,11 @@ var dpsTS1 = &dataPoints{
 	},
 }
 
-var dpsTS11 = &dataPoints{
+var dpsTS11 = &dataPoints{ //todo dointtype
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{1, 1, 1},
 	versions:   []int64{0, 1, 2},
+	types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeUnspecified, pbv1.DataPointValueTypeCumulative, pbv1.DataPointValueTypeCumulative},
 	tagFamilies: [][]nameValues{
 		{
 			{
@@ -515,10 +520,11 @@ var dpsTS11 = &dataPoints{
 	},
 }
 
-var dpsTS2 = &dataPoints{
+var dpsTS2 = &dataPoints{ //todo dointtype
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{2, 2, 2},
 	versions:   []int64{4, 5, 6},
+	types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeUnspecified, pbv1.DataPointValueTypeCumulative, pbv1.DataPointValueTypeCumulative},
 	tagFamilies: [][]nameValues{
 		{
 			{
@@ -549,7 +555,7 @@ var dpsTS2 = &dataPoints{
 		},
 		{}, // empty tagFamilies for seriesID 6
 	},
-	fields: []nameValues{
+	fields: []nameValues{ //todo dointtype
 		{
 			name: "skipped", values: []*nameValue{
 				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field3"), valueArr: nil},
@@ -574,12 +580,14 @@ func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints 
 		versions:    []int64{},
 		tagFamilies: [][]nameValues{},
 		fields:      []nameValues{},
+		types:       []pbv1.DataPointValueType{},
 	}
 	now := time.Now().UnixNano()
 	for i := startTimestamp; i <= endTimestamp; i++ {
 		hugeDps.seriesIDs = append(hugeDps.seriesIDs, 1)
 		hugeDps.timestamps = append(hugeDps.timestamps, i)
 		hugeDps.versions = append(hugeDps.versions, now+i)
+		hugeDps.types = append(hugeDps.types, pbv1.DataPointValueTypeCumulative)
 		hugeDps.tagFamilies = append(hugeDps.tagFamilies, []nameValues{
 			{
 				name: "arrTag", values: []*nameValue{
@@ -611,6 +619,7 @@ func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints 
 	hugeDps.seriesIDs = append(hugeDps.seriesIDs, []common.SeriesID{2, 3}...)
 	hugeDps.timestamps = append(hugeDps.timestamps, []int64{timestamp, timestamp}...)
 	hugeDps.versions = append(hugeDps.versions, []int64{now + timestamp, now + timestamp}...)
+	hugeDps.types = append(hugeDps.types, pbv1.DataPointValueTypeUnspecified, pbv1.DataPointValueTypeCumulative)
 	hugeDps.tagFamilies = append(hugeDps.tagFamilies, [][]nameValues{{
 		{
 			name: "singleTag", values: []*nameValue{

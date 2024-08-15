@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+// 个用于查询特定时间范围内的度量数据的索引扫描操作。
 var _ logical.UnresolvedPlan = (*unresolvedIndexScan)(nil)
 
 type unresolvedIndexScan struct {
@@ -206,6 +207,7 @@ type resultMIterator struct {
 }
 
 func (ei *resultMIterator) Next() bool {
+	//对其进行迭代处理
 	if ei.result == nil {
 		return false
 	}
