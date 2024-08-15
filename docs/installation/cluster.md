@@ -72,3 +72,9 @@ The etcd client certificates can be setup by the [etcd transport security model]
 $ ./banyand-server-static storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
 $ ./banyand-server-static liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
 ```
+
+### Self-observability dashboard
+
+If self-observability mode is on, there will be a dashboard in [banyandb-ui](http://localhost:17913/) to monitor the nodes status in the cluster.  
+
+![dashboard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/dashboard.png) 

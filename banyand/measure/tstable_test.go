@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -217,6 +218,16 @@ func Test_tstIter(t *testing.T) {
 				},
 			},
 			{
+				name:         "Test with a single part with same ts",
+				dpsList:      []*dataPoints{duplicatedDps},
+				sids:         []common.SeriesID{1},
+				minTimestamp: 1,
+				maxTimestamp: 1,
+				want: []blockMetadata{
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 24},
+				},
+			},
+			{
 				name:         "Test with multiple parts with same ts",
 				dpsList:      []*dataPoints{dpsTS1, dpsTS1},
 				sids:         []common.SeriesID{1, 2, 3},
@@ -392,7 +403,7 @@ func Test_tstIter(t *testing.T) {
 	})
 }
 
-var tagProjections = map[int][]pbv1.TagProjection{
+var tagProjections = map[int][]model.TagProjection{
 	1: {
 		{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
 		{Family: "binaryTag", Names: []string{"binaryTag"}},
@@ -403,7 +414,7 @@ var tagProjections = map[int][]pbv1.TagProjection{
 	},
 }
 
-var allTagProjections = []pbv1.TagProjection{
+var allTagProjections = []model.TagProjection{
 	{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
 	{Family: "binaryTag", Names: []string{"binaryTag"}},
 	{Family: "singleTag", Names: []string{"strTag", "intTag", "strTag1", "strTag2"}},
@@ -568,6 +579,58 @@ var dpsTS2 = &dataPoints{ //todo dointtype
 		{
 			name: "onlyFields", values: []*nameValue{
 				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(4440), valueArr: nil},
+			},
+		},
+	},
+}
+
+var duplicatedDps = &dataPoints{
+	seriesIDs:  []common.SeriesID{1, 1, 1},
+	timestamps: []int64{1, 1, 1},
+	versions:   []int64{1, 2, 3},
+	tagFamilies: [][]nameValues{
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+			{
+				name: "binaryTag", values: []*nameValue{
+					{name: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+				},
+			},
+			{
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
+					{name: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
+				},
+			},
+		},
+		{
+			{
+				name: "singleTag", values: []*nameValue{
+					{name: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
+					{name: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag2"), valueArr: nil},
+				},
+			},
+		},
+		{}, // empty tagFamilies for seriesID 3
+	},
+	fields: []nameValues{
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+		{}, // empty fields for seriesID 2
+		{
+			name: "onlyFields", values: []*nameValue{
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
 			},
 		},
 	},

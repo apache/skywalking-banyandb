@@ -21,9 +21,9 @@ package bytes
 import (
 	"fmt"
 	"io"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 var (
@@ -107,9 +107,16 @@ func (r *reader) Close() error {
 	return nil
 }
 
+// NewBufferPool creates a new BufferPool.
+func NewBufferPool(name string) *BufferPool {
+	return &BufferPool{
+		p: pool.Register[*Buffer](name),
+	}
+}
+
 // BufferPool is a pool of Buffer.
 type BufferPool struct {
-	p sync.Pool
+	p *pool.Synced[*Buffer]
 }
 
 // Generate generates a Buffer.
@@ -118,7 +125,7 @@ func (bp *BufferPool) Generate() *Buffer {
 	if bbv == nil {
 		return &Buffer{}
 	}
-	return bbv.(*Buffer)
+	return bbv
 }
 
 // Release releases a Buffer.

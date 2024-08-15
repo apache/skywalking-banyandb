@@ -30,10 +30,10 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -46,7 +46,7 @@ func TestQueryResult(t *testing.T) {
 		name          string
 		esList        []*elements
 		sids          []common.SeriesID
-		want          []pbv1.StreamResult
+		want          []model.StreamResult
 		minTimestamp  int64
 		maxTimestamp  int64
 		orderBySeries bool
@@ -58,19 +58,19 @@ func TestQueryResult(t *testing.T) {
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 1,
-			want: []pbv1.StreamResult{{
+			want: []model.StreamResult{{
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []uint64{11},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
 						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -86,15 +86,15 @@ func TestQueryResult(t *testing.T) {
 				SIDs:       []common.SeriesID{2, 2},
 				Timestamps: []int64{1, 1},
 				ElementIDs: []uint64{21, 21},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1"), strTagValue("tag1")}},
@@ -105,15 +105,15 @@ func TestQueryResult(t *testing.T) {
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []uint64{11},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
 						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -128,19 +128,19 @@ func TestQueryResult(t *testing.T) {
 			sids:         []common.SeriesID{1, 2, 3},
 			minTimestamp: 1,
 			maxTimestamp: 2,
-			want: []pbv1.StreamResult{{
+			want: []model.StreamResult{{
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{2},
 				ElementIDs: []uint64{12},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value5", "value6"})}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{35, 40})}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value3")}},
 						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(30)}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -151,15 +151,15 @@ func TestQueryResult(t *testing.T) {
 				SIDs:       []common.SeriesID{2},
 				Timestamps: []int64{2},
 				ElementIDs: []uint64{22},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag3")}},
@@ -175,15 +175,15 @@ func TestQueryResult(t *testing.T) {
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []uint64{11},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
 						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -199,15 +199,15 @@ func TestQueryResult(t *testing.T) {
 				SIDs:       []common.SeriesID{2},
 				Timestamps: []int64{1},
 				ElementIDs: []uint64{21},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1")}},
@@ -223,19 +223,19 @@ func TestQueryResult(t *testing.T) {
 			ascTS:        true,
 			minTimestamp: 1,
 			maxTimestamp: 2,
-			want: []pbv1.StreamResult{{
+			want: []model.StreamResult{{
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{1},
 				ElementIDs: []uint64{11},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
 						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -251,15 +251,15 @@ func TestQueryResult(t *testing.T) {
 				SIDs:       []common.SeriesID{2, 2},
 				Timestamps: []int64{1, 2},
 				ElementIDs: []uint64{21, 22},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 						{Name: "intTag", Values: []*modelv1.TagValue{pbv1.NullTagValue, pbv1.NullTagValue}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{strTagValue("tag1"), strTagValue("tag3")}},
@@ -270,15 +270,15 @@ func TestQueryResult(t *testing.T) {
 				SIDs:       []common.SeriesID{1},
 				Timestamps: []int64{2},
 				ElementIDs: []uint64{12},
-				TagFamilies: []pbv1.TagFamily{
-					{Name: "arrTag", Tags: []pbv1.Tag{
+				TagFamilies: []model.TagFamily{
+					{Name: "arrTag", Tags: []model.Tag{
 						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value5", "value6"})}},
 						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{35, 40})}},
 					}},
-					{Name: "binaryTag", Tags: []pbv1.Tag{
+					{Name: "binaryTag", Tags: []model.Tag{
 						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
 					}},
-					{Name: "singleTag", Tags: []pbv1.Tag{
+					{Name: "singleTag", Tags: []model.Tag{
 						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value3")}},
 						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(30)}},
 						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
@@ -304,17 +304,17 @@ func TestQueryResult(t *testing.T) {
 					minTimestamp: tt.minTimestamp,
 					maxTimestamp: tt.maxTimestamp,
 					sortedSids:   tt.sids,
-					StreamQueryOptions: pbv1.StreamQueryOptions{
+					StreamQueryOptions: model.StreamQueryOptions{
 						TagProjection: tagProjectionAll,
 					},
 				}
-				result.tabWrappers = []storage.TSTableWrapper[*tsTable]{&tsTableWrapper{tst}}
+				result.tabs = []*tsTable{tst}
 				defer result.Release()
 				if !tt.orderBySeries {
 					result.orderByTS = true
 					result.asc = tt.ascTS
 				}
-				var got []pbv1.StreamResult
+				var got []model.StreamResult
 				ctx := context.Background()
 				for {
 					r := result.Pull(ctx)
@@ -401,36 +401,20 @@ func TestQueryResult(t *testing.T) {
 	}
 }
 
-type tsTableWrapper struct {
-	*tsTable
-}
-
-func (t *tsTableWrapper) Table() *tsTable {
-	return t.tsTable
-}
-
-func (t *tsTableWrapper) GetTimeRange() timestamp.TimeRange {
-	return timestamp.TimeRange{}
-}
-
-func (t *tsTableWrapper) DecRef() {
-	t.tsTable.Close()
-}
-
-func emptyTagFamilies(size int) []pbv1.TagFamily {
+func emptyTagFamilies(size int) []model.TagFamily {
 	var values []*modelv1.TagValue
 	for i := 0; i < size; i++ {
 		values = append(values, pbv1.NullTagValue)
 	}
-	return []pbv1.TagFamily{
-		{Name: "arrTag", Tags: []pbv1.Tag{
+	return []model.TagFamily{
+		{Name: "arrTag", Tags: []model.Tag{
 			{Name: "strArrTag", Values: values},
 			{Name: "intArrTag", Values: values},
 		}},
-		{Name: "binaryTag", Tags: []pbv1.Tag{
+		{Name: "binaryTag", Tags: []model.Tag{
 			{Name: "binaryTag", Values: values},
 		}},
-		{Name: "singleTag", Tags: []pbv1.Tag{
+		{Name: "singleTag", Tags: []model.Tag{
 			{Name: "strTag", Values: values},
 			{Name: "intTag", Values: values},
 			{Name: "strTag1", Values: values},

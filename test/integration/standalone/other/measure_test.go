@@ -27,7 +27,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -57,6 +59,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		gm.Expect(conn.Close()).To(gm.Succeed())
 		deferFn()
 		gm.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		gm.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	})
 	g.It("queries service_cpm_minute by id after updating", func() {
 		casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data1.json", baseTime, interval)

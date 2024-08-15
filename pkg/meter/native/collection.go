@@ -19,6 +19,7 @@
 package native
 
 import (
+	"fmt"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -34,6 +35,7 @@ import (
 // NodeSelector has Locate method to select a nodeId.
 type NodeSelector interface {
 	Locate(group, name string, shardID uint32) (string, error)
+	fmt.Stringer
 }
 
 type collector interface {

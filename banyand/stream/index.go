@@ -54,7 +54,7 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 
 func (e *elementIndex) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
 	timeRange *timestamp.TimeRange, preloadSize int,
-) (index.FieldIterator[*index.ItemRef], error) {
+) (index.FieldIterator[*index.DocumentResult], error) {
 	iter, err := e.store.Sort(sids, fieldKey, order, timeRange, preloadSize)
 	if err != nil {
 		return nil, err

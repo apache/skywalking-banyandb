@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -63,33 +64,47 @@ var (
 // SupplyTSDB allows getting a tsdb's runtime.
 type SupplyTSDB[T TSTable] func() T
 
+// IndexSearchOpts is the options for searching index.
+type IndexSearchOpts struct {
+	Query       index.Query
+	Order       *model.OrderBy
+	Projection  []index.FieldKey
+	PreloadSize int
+}
+
+// FieldResult is the result of a field.
+type FieldResult map[string][]byte
+
+// FieldResultList is a list of FieldResult.
+type FieldResultList []FieldResult
+
 // IndexDB is the interface of index database.
 type IndexDB interface {
 	Write(docs index.Documents) error
-	Search(ctx context.Context, series []*pbv1.Series, filter index.Filter, order *pbv1.OrderBy, preloadSize int) (pbv1.SeriesList, error)
+	Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (pbv1.SeriesList, FieldResultList, error)
 }
 
 // TSDB allows listing and getting shard details.
 type TSDB[T TSTable, O any] interface {
 	io.Closer
-	Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error)
-	CreateTSTableIfNotExist(shardID common.ShardID, ts time.Time) (TSTableWrapper[T], error)
-	SelectTSTables(timeRange timestamp.TimeRange) []TSTableWrapper[T]
-	IndexDB() IndexDB
+	CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], error)
+	SelectSegments(timeRange timestamp.TimeRange) []Segment[T, O]
 	Tick(ts int64)
+}
+
+// Segment is a time range of data.
+type Segment[T TSTable, O any] interface {
+	DecRef()
+	GetTimeRange() timestamp.TimeRange
+	CreateTSTableIfNotExist(shardID common.ShardID) (T, error)
+	Tables() []T
+	Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error)
+	IndexDB() IndexDB
 }
 
 // TSTable is time series table.
 type TSTable interface {
 	io.Closer
-}
-
-// TSTableWrapper is a wrapper of TSTable.
-// It is used to manage the reference count of TSTable.
-type TSTableWrapper[T TSTable] interface {
-	DecRef()
-	Table() T
-	GetTimeRange() timestamp.TimeRange
 }
 
 // TSTableCreator creates a TSTable.

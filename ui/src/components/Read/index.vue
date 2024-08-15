@@ -413,28 +413,28 @@ function changeFields() {
                 </div>
             </template>
             <el-row>
-                <el-col :span="12">
+                <el-col :span="16">
                     <div class="flex align-item-center" style="height: 40px; width: 100%;">
                         <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable
-                            placeholder="Please select">
+                            placeholder="Please select" style="flex: 0 0 300px;">
                             <el-option v-for="item in data.options" :key="item.value" :label="item.label"
                                 :value="item.value">
                             </el-option>
                         </el-select>
                         <el-select v-if="data.type == 'measure'" v-model="data.handleFields" collapse-tags
-                            style="margin: 0 0 0 10px; width: 400px;" @change="changeFields" filterable multiple
+                            style="margin: 0 0 0 10px; flex: 0 0 300px;" @change="changeFields" filterable multiple
                             placeholder="Please select Fields">
                             <el-option v-for="item in data.fields" :key="item.name" :label="item.name" :value="item.name">
                             </el-option>
                         </el-select>
-                        <el-date-picker @change="changeDatePicker" @visible-change="resetDatePicker" style="margin: 0 10px 0 10px" v-model="data.timeValue"
+                        <el-date-picker @change="changeDatePicker" @visible-change="resetDatePicker" style="margin: 0 10px 0 10px; flex: 1 1 0;" v-model="data.timeValue"
                             type="datetimerange" :shortcuts="shortcuts" range-separator="to" start-placeholder="begin"
                             end-placeholder="end" align="right">
                         </el-date-picker>
-                        <el-button :icon="Search" @click="searchTableData" color="#6E38F7" plain></el-button>
+                        <el-button :icon="Search" @click="searchTableData" style="flex: 0 0 auto;" color="#6E38F7" plain></el-button>
                     </div>
                 </el-col>
-                <el-col :span="12">
+                <el-col :span="8">
                     <div class="flex align-item-center justify-end" style="height: 30px;">
                         <el-button :icon="RefreshRight" @click="getTableData" plain></el-button>
                     </div>

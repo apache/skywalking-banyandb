@@ -19,12 +19,12 @@ package stream
 
 import (
 	"path/filepath"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type writer struct {
@@ -65,7 +65,6 @@ type writers struct {
 	tagFamilyMetadataWriters   map[string]*writer
 	tagFamilyWriters           map[string]*writer
 	timestampsWriter           writer
-	elementIDsWriter           writer
 }
 
 func (sw *writers) reset() {
@@ -73,7 +72,6 @@ func (sw *writers) reset() {
 	sw.metaWriter.reset()
 	sw.primaryWriter.reset()
 	sw.timestampsWriter.reset()
-	sw.elementIDsWriter.reset()
 
 	for i, w := range sw.tagFamilyMetadataWriters {
 		w.reset()
@@ -87,7 +85,7 @@ func (sw *writers) reset() {
 
 func (sw *writers) totalBytesWritten() uint64 {
 	n := sw.metaWriter.bytesWritten + sw.primaryWriter.bytesWritten +
-		sw.timestampsWriter.bytesWritten + sw.elementIDsWriter.bytesWritten
+		sw.timestampsWriter.bytesWritten
 	for _, w := range sw.tagFamilyMetadataWriters {
 		n += w.bytesWritten
 	}
@@ -101,7 +99,6 @@ func (sw *writers) MustClose() {
 	sw.metaWriter.MustClose()
 	sw.primaryWriter.MustClose()
 	sw.timestampsWriter.MustClose()
-	sw.elementIDsWriter.MustClose()
 
 	for _, w := range sw.tagFamilyMetadataWriters {
 		w.MustClose()
@@ -169,7 +166,6 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.writers.metaWriter.init(&mp.meta)
 	bw.writers.primaryWriter.init(&mp.primary)
 	bw.writers.timestampsWriter.init(&mp.timestamps)
-	bw.writers.elementIDsWriter.init(&mp.elementIDs)
 }
 
 func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string) {
@@ -182,7 +178,6 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), filePermission))
 	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), filePermission))
 	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), filePermission))
-	bw.writers.elementIDsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, elementIDsFilename), filePermission))
 }
 
 func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {
@@ -284,7 +279,7 @@ func generateBlockWriter() *blockWriter {
 			},
 		}
 	}
-	return v.(*blockWriter)
+	return v
 }
 
 func releaseBlockWriter(bsw *blockWriter) {
@@ -292,4 +287,4 @@ func releaseBlockWriter(bsw *blockWriter) {
 	blockWriterPool.Put(bsw)
 }
 
-var blockWriterPool sync.Pool
+var blockWriterPool = pool.Register[*blockWriter]("stream-blockWriter")

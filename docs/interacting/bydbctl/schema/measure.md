@@ -1,8 +1,8 @@
-# CRUD Measures
+# CRUD [Measures](../../../concept/data-model.md#measures)
 
 CRUD operations create, read, update and delete measures.
 
-[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
+[bydbctl](../bydbctl.md) is the command line tool in examples.
 
 ## Create operation
 
@@ -14,7 +14,7 @@ A measure belongs to a unique group. We should create such a group with a catalo
 before creating a measure.
 
 ```shell
-$ bydbctl group create -f - <<EOF
+bydbctl group create -f - <<EOF
 metadata:
   name: sw_metric
 catalog: CATALOG_MEASURE
@@ -37,7 +37,7 @@ The data in this group will keep 7 days.
 Then, the below command will create a new measure:
 
 ```shell
-$ bydbctl measure create -f - <<EOF
+bydbctl measure create -f - <<EOF
 metadata:
   name: service_cpm_minute
   group: sw_metric
@@ -73,7 +73,7 @@ Get(Read) operation gets a measure's schema.
 ### Examples of getting
 
 ```shell
-$ bydbctl measure get -g sw_metric -n service_cpm_minute
+bydbctl measure get -g sw_metric -n service_cpm_minute
 ```
 
 ## Update operation
@@ -83,7 +83,7 @@ Update operation changes a measure's schema.
 ### Examples of updating
 
 ```shell
-$ bydbctl measure update -f - <<EOF
+bydbctl measure update -f - <<EOF
 metadata:
   name: service_cpm_minute
   group: sw_metric
@@ -105,7 +105,7 @@ Delete operation removes a measure's schema.
 ### Examples of deleting
 
 ```shell
-$ bydbctl measure delete -g sw_metric -n service_cpm_minute
+bydbctl measure delete -g sw_metric -n service_cpm_minute
 ```
 
 ## List operation
@@ -115,9 +115,9 @@ The list operation shows all measures' schema in a group.
 ### Examples of listing
 
 ```shell
-$ bydbctl measure list -g sw_metric
+bydbctl measure list -g sw_metric
 ```
 
 ## API Reference
 
-[MeasureService v1](../../api-reference.md#MeasureService)
+[Measure Registration Operations](../../../api-reference.md#measureregistryservice)

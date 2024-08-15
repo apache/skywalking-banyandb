@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -248,8 +249,8 @@ func (tst *tsTable) Close() error {
 		tst.loopCloser.Done()
 		tst.loopCloser.CloseThenWait()
 	}
-	tst.RLock()
-	defer tst.RUnlock()
+	tst.Lock()
+	defer tst.Unlock()
 	if tst.snapshot == nil {
 		return tst.index.Close()
 	}
@@ -387,6 +388,21 @@ func (ti *tstIter) Error() error {
 	}
 	return ti.err
 }
+
+func generateTstIter() *tstIter {
+	v := tstIterPool.Get()
+	if v == nil {
+		return &tstIter{}
+	}
+	return v
+}
+
+func releaseTstIter(ti *tstIter) {
+	ti.reset()
+	tstIterPool.Put(ti)
+}
+
+var tstIterPool = pool.Register[*tstIter]("stream-tstIter")
 
 type partIterHeap []*partIter
 

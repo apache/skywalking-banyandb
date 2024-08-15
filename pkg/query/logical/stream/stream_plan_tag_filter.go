@@ -30,6 +30,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -54,12 +55,12 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		entity[idx] = pbv1.AnyTagValue
 	}
 	var err error
-	ctx.filter, ctx.entities, err = logical.BuildLocalFilter(uis.criteria, s, entityDict, entity, false)
+	ctx.filter, ctx.entities, err = buildLocalFilter(uis.criteria, s, entityDict, entity)
 	if err != nil {
 		return nil, err
 	}
 
-	projTags := make([]pbv1.TagProjection, len(uis.projectionTags))
+	projTags := make([]model.TagProjection, len(uis.projectionTags))
 	if len(uis.projectionTags) > 0 {
 		for i := range uis.projectionTags {
 			for _, tag := range uis.projectionTags[i] {
@@ -116,7 +117,7 @@ type analyzeContext struct {
 	s                logical.Schema
 	filter           index.Filter
 	entities         [][]*modelv1.TagValue
-	projectionTags   []pbv1.TagProjection
+	projectionTags   []model.TagProjection
 	globalConditions []interface{}
 	projTagsRefs     [][]*logical.TagRef
 }

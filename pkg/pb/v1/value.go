@@ -24,6 +24,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -79,6 +80,24 @@ func MustTagValueToValueType(tag *modelv1.TagValue) ValueType {
 	case *modelv1.TagValue_StrArray:
 		return ValueTypeStrArr
 	case *modelv1.TagValue_IntArray:
+		return ValueTypeInt64Arr
+	default:
+		panic("unknown tag value type")
+	}
+}
+
+// MustTagValueSpecToValueType converts databasev1.TagType to ValueType.
+func MustTagValueSpecToValueType(tag databasev1.TagType) ValueType {
+	switch tag {
+	case databasev1.TagType_TAG_TYPE_STRING:
+		return ValueTypeStr
+	case databasev1.TagType_TAG_TYPE_INT:
+		return ValueTypeInt64
+	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
+		return ValueTypeBinaryData
+	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
+		return ValueTypeStrArr
+	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
 		return ValueTypeInt64Arr
 	default:
 		panic("unknown tag value type")

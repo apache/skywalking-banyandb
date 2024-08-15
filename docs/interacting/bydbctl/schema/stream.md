@@ -1,8 +1,8 @@
-# CRUD Streams
+# CRUD [Streams](../../../concept/data-model.md#streams)
 
 CRUD operations create, read, update and delete streams.
 
-[`bydbctl`](../../clients.md#command-line) is the command line tool in examples.
+[bydbctl](../bydbctl.md) is the command line tool in examples.
 
 Stream intends to store streaming data, for example, traces or logs.
 ## Create operation
@@ -15,7 +15,7 @@ A stream belongs to a unique group. We should create such a group with a catalog
 before creating a stream.
 
 ```shell
-$ bydbctl group create -f - <<EOF
+bydbctl group create -f - <<EOF
 metadata:
   name: default
 catalog: CATALOG_STREAM
@@ -38,7 +38,7 @@ The data in this group will keep 7 days.
 Then, below command will create a new stream:
 
 ```shell
-$ bydbctl stream create -f - <<EOF
+bydbctl stream create -f - <<EOF
 metadata:
   name: sw
   group: default
@@ -60,7 +60,7 @@ Get(Read) operation get a stream's schema.
 ### Examples of getting
 
 ```shell
-$ bydbctl stream get -g default -n sw
+bydbctl stream get -g default -n sw
 ```
 
 ## Update operation
@@ -71,7 +71,7 @@ Update operation update a stream's schema.
 
 `bydbctl` is the command line tool to update a stream in this example.
 ```shell
-$ bydbctl stream update -f - <<EOF
+bydbctl stream update -f - <<EOF
 metadata:
   name: sw
   group: default
@@ -95,7 +95,7 @@ Delete operation delete a stream's schema.
 
 `bydbctl` is the command line tool to delete a stream in this example.
 ```shell
-$ bydbctl stream delete -g default -n sw
+bydbctl stream delete -g default -n sw
 ```
 
 ## List operation
@@ -104,9 +104,9 @@ List operation list all streams' schema in a group.
 ### Examples of listing
 
 ```shell
-$ bydbctl stream list -g default
+bydbctl stream list -g default
 ```
 
 ## API Reference
 
-[StreamService v1](../../api-reference.md#streamservice)
+[Stream Registration Operations](../../../api-reference.md#streamregistryservice)

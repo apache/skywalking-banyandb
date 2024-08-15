@@ -28,11 +28,13 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -50,7 +52,7 @@ type unresolvedIndexScan struct {
 }
 
 func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
-	projTags := make([]pbv1.TagProjection, len(uis.projectionTags))
+	projTags := make([]model.TagProjection, len(uis.projectionTags))
 	var projTagsRefs [][]*logical.TagRef
 	if len(uis.projectionTags) > 0 {
 		for i := range uis.projectionTags {
@@ -87,7 +89,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		// fill AnyEntry by default
 		entity[idx] = pbv1.AnyTagValue
 	}
-	filter, entities, err := logical.BuildLocalFilter(uis.criteria, s, entityMap, entity, true)
+	query, entities, _, err := inverted.BuildLocalQuery(uis.criteria, s, entityMap, entity)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +102,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		projectionTagsRefs:   projTagsRefs,
 		projectionFieldsRefs: projFieldRefs,
 		metadata:             uis.metadata,
-		filter:               filter,
+		query:                query,
 		entities:             entities,
 		groupByEntity:        uis.groupByEntity,
 		uis:                  uis,
@@ -114,14 +116,14 @@ var (
 )
 
 type localIndexScan struct {
-	filter               index.Filter
+	query                index.Query
 	schema               logical.Schema
 	uis                  *unresolvedIndexScan
 	order                *logical.OrderBy
 	metadata             *commonv1.Metadata
 	l                    *logger.Logger
 	timeRange            timestamp.TimeRange
-	projectionTags       []pbv1.TagProjection
+	projectionTags       []model.TagProjection
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
 	entities             [][]*modelv1.TagValue
@@ -134,28 +136,28 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 }
 
 func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
-	var orderBy *pbv1.OrderBy
-	orderByType := pbv1.OrderByTypeTime
+	var orderBy *model.OrderBy
+	orderByType := model.OrderByTypeTime
 	if i.order != nil {
 		if i.order.Index != nil {
-			orderByType = pbv1.OrderByTypeIndex
+			orderByType = model.OrderByTypeIndex
 		}
-		orderBy = &pbv1.OrderBy{
+		orderBy = &model.OrderBy{
 			Index: i.order.Index,
 			Sort:  i.order.Sort,
 		}
 	}
 	if i.groupByEntity {
-		orderByType = pbv1.OrderByTypeSeries
+		orderByType = model.OrderByTypeSeries
 	}
 	ec := executor.FromMeasureExecutionContext(ctx)
 	ctx, stop := i.startSpan(ctx, query.GetTracer(ctx), orderByType, orderBy)
 	defer stop(err)
-	result, err := ec.Query(ctx, pbv1.MeasureQueryOptions{
+	result, err := ec.Query(ctx, model.MeasureQueryOptions{
 		Name:            i.metadata.GetName(),
 		TimeRange:       &i.timeRange,
 		Entities:        i.entities,
-		Filter:          i.filter,
+		Query:           i.query,
 		OrderByType:     orderByType,
 		Order:           orderBy,
 		TagProjection:   i.projectionTags,
@@ -172,7 +174,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 func (i *localIndexScan) String() string {
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; order=%s;",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		i.filter, logical.FormatTagRefs(", ", i.projectionTagsRefs...), i.order)
+		i.query, logical.FormatTagRefs(", ", i.projectionTagsRefs...), i.order)
 }
 
 func (i *localIndexScan) Children() []logical.Plan {
@@ -201,7 +203,7 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 }
 
 type resultMIterator struct {
-	result  pbv1.MeasureQueryResult
+	result  model.MeasureQueryResult
 	current []*measurev1.DataPoint
 	i       int
 }
@@ -264,7 +266,7 @@ func (ei *resultMIterator) Close() error {
 	return nil
 }
 
-func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, orderType pbv1.OrderByType, orderBy *pbv1.OrderBy) (context.Context, func(error)) {
+func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, orderType model.OrderByType, orderBy *model.OrderBy) (context.Context, func(error)) {
 	if tracer == nil {
 		return ctx, func(error) {}
 	}
@@ -272,11 +274,11 @@ func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, or
 	span, ctx := tracer.StartSpan(ctx, "indexScan-%s", i.metadata)
 	sortName := modelv1.Sort_name[int32(orderBy.Sort)]
 	switch orderType {
-	case pbv1.OrderByTypeTime:
+	case model.OrderByTypeTime:
 		span.Tag("orderBy", "time "+sortName)
-	case pbv1.OrderByTypeIndex:
+	case model.OrderByTypeIndex:
 		span.Tag("orderBy", fmt.Sprintf("indexRule:%s", orderBy.Index.Metadata.Name))
-	case pbv1.OrderByTypeSeries:
+	case model.OrderByTypeSeries:
 		span.Tag("orderBy", "series")
 	}
 	span.Tag("details", i.String())

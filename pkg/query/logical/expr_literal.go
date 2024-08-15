@@ -39,6 +39,12 @@ type int64Literal struct {
 	int64
 }
 
+func newInt64Literal(val int64) *int64Literal {
+	return &int64Literal{
+		int64: val,
+	}
+}
+
 func (i *int64Literal) Compare(other LiteralExpr) (int, bool) {
 	if o, ok := other.(*int64Literal); ok {
 		return int(i.int64 - o.int64), true
@@ -88,6 +94,10 @@ func (i *int64Literal) String() string {
 	return strconv.FormatInt(i.int64, 10)
 }
 
+func (i *int64Literal) Elements() []string {
+	return []string{strconv.FormatInt(i.int64, 10)}
+}
+
 var (
 	_ LiteralExpr    = (*int64ArrLiteral)(nil)
 	_ ComparableExpr = (*int64ArrLiteral)(nil)
@@ -95,6 +105,12 @@ var (
 
 type int64ArrLiteral struct {
 	arr []int64
+}
+
+func newInt64ArrLiteral(val []int64) *int64ArrLiteral {
+	return &int64ArrLiteral{
+		arr: val,
+	}
 }
 
 func (i *int64ArrLiteral) Compare(other LiteralExpr) (int, bool) {
@@ -161,6 +177,14 @@ func (i *int64ArrLiteral) String() string {
 	return fmt.Sprintf("%v", i.arr)
 }
 
+func (i *int64ArrLiteral) Elements() []string {
+	var elements []string
+	for _, v := range i.arr {
+		elements = append(elements, strconv.FormatInt(v, 10))
+	}
+	return elements
+}
+
 var (
 	_ LiteralExpr    = (*strLiteral)(nil)
 	_ ComparableExpr = (*strLiteral)(nil)
@@ -223,6 +247,10 @@ func (s *strLiteral) String() string {
 	return s.string
 }
 
+func (s *strLiteral) Elements() []string {
+	return []string{s.string}
+}
+
 var (
 	_ LiteralExpr    = (*strArrLiteral)(nil)
 	_ ComparableExpr = (*strArrLiteral)(nil)
@@ -230,6 +258,12 @@ var (
 
 type strArrLiteral struct {
 	arr []string
+}
+
+func newStrArrLiteral(val []string) *strArrLiteral {
+	return &strArrLiteral{
+		arr: val,
+	}
 }
 
 func (s *strArrLiteral) Compare(other LiteralExpr) (int, bool) {
@@ -296,32 +330,47 @@ func (s *strArrLiteral) String() string {
 	return fmt.Sprintf("%v", s.arr)
 }
 
-type bytesLiteral struct {
+func (s *strArrLiteral) Elements() []string {
+	return s.arr
+}
+
+// BytesLiteral represents a wrapper for a slice of bytes.
+type BytesLiteral struct {
 	bb []byte
 }
 
-func newBytesLiteral(bb []byte) *bytesLiteral {
-	return &bytesLiteral{bb: bb}
+// NewBytesLiteral creates a new instance of BytesLiteral with the provided slice of bytes.
+func NewBytesLiteral(bb []byte) *BytesLiteral {
+	return &BytesLiteral{bb: bb}
 }
 
-func (b *bytesLiteral) Bytes() [][]byte {
+// Bytes returns a 2D slice of bytes where the inner slice contains the byte slice stored in the BytesLiteral.
+func (b *BytesLiteral) Bytes() [][]byte {
 	return [][]byte{b.bb}
 }
 
-func (b *bytesLiteral) Equal(expr Expr) bool {
-	if other, ok := expr.(*bytesLiteral); ok {
+// Equal checks if the current BytesLiteral is equal to the provided Expr.
+func (b *BytesLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*BytesLiteral); ok {
 		return bytes.Equal(other.bb, b.bb)
 	}
 
 	return false
 }
 
-func (b *bytesLiteral) DataType() int32 {
+// DataType returns the data type of BytesLiteral.
+func (b *BytesLiteral) DataType() int32 {
 	return int32(databasev1.TagType_TAG_TYPE_DATA_BINARY)
 }
 
-func (b *bytesLiteral) String() string {
+// String converts the BytesLiteral's slice of bytes to a string representation.
+func (b *BytesLiteral) String() string {
 	return hex.EncodeToString(b.bb)
+}
+
+// Elements returns a slice containing the string representation of the byte slice.
+func (b *BytesLiteral) Elements() []string {
+	return []string{hex.EncodeToString(b.bb)}
 }
 
 var (
@@ -331,6 +380,10 @@ var (
 )
 
 type nullLiteral struct{}
+
+func newNullLiteral() *nullLiteral {
+	return nullLiteralExpr
+}
 
 func (s nullLiteral) Compare(_ LiteralExpr) (int, bool) {
 	return 0, false
@@ -358,4 +411,8 @@ func (s nullLiteral) DataType() int32 {
 
 func (s nullLiteral) String() string {
 	return "null"
+}
+
+func (s nullLiteral) Elements() []string {
+	return []string{"null"}
 }

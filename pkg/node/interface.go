@@ -19,12 +19,15 @@
 package node
 
 import (
+	"context"
+	"fmt"
 	"sync"
 
 	"github.com/pkg/errors"
 	"golang.org/x/exp/slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -39,7 +42,8 @@ type Selector interface {
 	AddNode(node *databasev1.Node)
 	RemoveNode(node *databasev1.Node)
 	Pick(group, name string, shardID uint32) (string, error)
-	Close()
+	run.PreRunner
+	fmt.Stringer
 }
 
 // NewPickFirstSelector returns a simple selector that always returns the first node if exists.
@@ -56,7 +60,24 @@ type pickFirstSelector struct {
 	mu        sync.RWMutex
 }
 
-func (p *pickFirstSelector) Close() {}
+// String implements Selector.
+func (p *pickFirstSelector) String() string {
+	n, err := p.Pick("", "", 0)
+	if err != nil {
+		return fmt.Sprintf("%v", err)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return fmt.Sprintf("pick [%s] from %s", n, p.nodeIDs)
+}
+
+func (p *pickFirstSelector) PreRun(context.Context) error {
+	return nil
+}
+
+func (p *pickFirstSelector) Name() string {
+	return "pick-first"
+}
 
 func (p *pickFirstSelector) AddNode(node *databasev1.Node) {
 	nodeID := node.GetMetadata().GetName()

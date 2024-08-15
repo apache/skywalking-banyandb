@@ -112,7 +112,7 @@ func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *
 	}
 }
 
-var bigValuePool bytes.BufferPool
+var bigValuePool = bytes.NewBufferPool("measure-big-value")
 
 type columnFamily struct {
 	name    string

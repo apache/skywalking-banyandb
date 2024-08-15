@@ -21,12 +21,12 @@ setup:
   timeout: 20m
   init-system-environment: ../../script/env
   steps:
-    - name: set PATH
-      command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
-    - name: install yq
-      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh yq
-    - name: install swctl
-      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
+  - name: set PATH
+    command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
+  - name: install yq
+    command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh yq
+  - name: install swctl
+    command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
 
 trigger:
   action: http
@@ -46,5 +46,5 @@ verify:
     # the interval between two retries, in millisecond.
     interval: 10s
   cases:
-    - includes:
-      - storage-cases.yaml
+  - includes:
+    - storage-cases.yaml

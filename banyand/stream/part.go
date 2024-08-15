@@ -22,7 +22,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 const (
@@ -37,7 +37,6 @@ const (
 	primaryFilename                = "primary.bin"
 	metaFilename                   = "meta.bin"
 	timestampsFilename             = "timestamps.bin"
-	elementIDsFilename             = "elementIDs.bin"
 	elementIndexFilename           = "idx"
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
@@ -46,7 +45,6 @@ const (
 type part struct {
 	primary              fs.Reader
 	timestamps           fs.Reader
-	elementIDs           fs.Reader
 	fileSystem           fs.FileSystem
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
@@ -58,7 +56,6 @@ type part struct {
 func (p *part) close() {
 	fs.MustClose(p.primary)
 	fs.MustClose(p.timestamps)
-	fs.MustClose(p.elementIDs)
 	for _, tf := range p.tagFamilies {
 		fs.MustClose(tf)
 	}
@@ -80,7 +77,6 @@ func openMemPart(mp *memPart) *part {
 	// Open data files
 	p.primary = &mp.primary
 	p.timestamps = &mp.timestamps
-	p.elementIDs = &mp.elementIDs
 	if mp.tagFamilies != nil {
 		p.tagFamilies = make(map[string]fs.Reader)
 		p.tagFamilyMetadata = make(map[string]fs.Reader)
@@ -98,7 +94,6 @@ type memPart struct {
 	meta              bytes.Buffer
 	primary           bytes.Buffer
 	timestamps        bytes.Buffer
-	elementIDs        bytes.Buffer
 	partMetadata      partMetadata
 }
 
@@ -124,7 +119,6 @@ func (mp *memPart) reset() {
 	mp.meta.Reset()
 	mp.primary.Reset()
 	mp.timestamps.Reset()
-	mp.elementIDs.Reset()
 	if mp.tagFamilies != nil {
 		for _, tf := range mp.tagFamilies {
 			tf.Reset()
@@ -176,7 +170,6 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(path, metaFilename), filePermission)
 	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(path, primaryFilename), filePermission)
 	fs.MustFlush(fileSystem, mp.timestamps.Buf, filepath.Join(path, timestampsFilename), filePermission)
-	fs.MustFlush(fileSystem, mp.elementIDs.Buf, filepath.Join(path, elementIDsFilename), filePermission)
 	for name, tf := range mp.tagFamilies {
 		fs.MustFlush(fileSystem, tf.Buf, filepath.Join(path, name+tagFamiliesFilenameExt), filePermission)
 	}
@@ -205,7 +198,7 @@ func generateMemPart() *memPart {
 	if v == nil {
 		return &memPart{}
 	}
-	return v.(*memPart)
+	return v
 }
 
 func releaseMemPart(mp *memPart) {
@@ -213,7 +206,7 @@ func releaseMemPart(mp *memPart) {
 	memPartPool.Put(mp)
 }
 
-var memPartPool sync.Pool
+var memPartPool = pool.Register[*memPart]("stream-memPart")
 
 type partWrapper struct {
 	mp        *memPart
@@ -268,7 +261,6 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 
 	p.primary = mustOpenReader(path.Join(partPath, primaryFilename), fileSystem)
 	p.timestamps = mustOpenReader(path.Join(partPath, timestampsFilename), fileSystem)
-	p.elementIDs = mustOpenReader(path.Join(partPath, elementIDsFilename), fileSystem)
 	ee := fileSystem.ReadDir(partPath)
 	for _, e := range ee {
 		if e.IsDir() {

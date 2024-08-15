@@ -22,11 +22,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type seqReader struct {
@@ -70,7 +70,7 @@ func (sr *seqReader) mustReadFull(data []byte) {
 
 func generateSeqReader() *seqReader {
 	if v := seqReaderPool.Get(); v != nil {
-		return v.(*seqReader)
+		return v
 	}
 	return &seqReader{}
 }
@@ -80,20 +80,18 @@ func releaseSeqReader(sr *seqReader) {
 	seqReaderPool.Put(sr)
 }
 
-var seqReaderPool sync.Pool
+var seqReaderPool = pool.Register[*seqReader]("stream-seqReader")
 
 type seqReaders struct {
 	tagFamilyMetadata map[string]*seqReader
 	tagFamilies       map[string]*seqReader
 	primary           seqReader
 	timestamps        seqReader
-	elementIDs        seqReader
 }
 
 func (sr *seqReaders) reset() {
 	sr.primary.reset()
 	sr.timestamps.reset()
-	sr.elementIDs.reset()
 	if sr.tagFamilyMetadata != nil {
 		for k, r := range sr.tagFamilyMetadata {
 			releaseSeqReader(r)
@@ -112,7 +110,6 @@ func (sr *seqReaders) init(p *part) {
 	sr.reset()
 	sr.primary.init(p.primary)
 	sr.timestamps.init(p.timestamps)
-	sr.elementIDs.init(p.elementIDs)
 	if sr.tagFamilies == nil {
 		sr.tagFamilies = make(map[string]*seqReader)
 		sr.tagFamilyMetadata = make(map[string]*seqReader)
@@ -219,11 +216,11 @@ func (br *blockReader) error() error {
 	return br.err
 }
 
-var blockReaderPool sync.Pool
+var blockReaderPool = pool.Register[*blockReader]("stream-blockReader")
 
 func generateBlockReader() *blockReader {
 	if v := blockReaderPool.Get(); v != nil {
-		return v.(*blockReader)
+		return v
 	}
 	return &blockReader{}
 }

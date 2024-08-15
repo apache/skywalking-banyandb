@@ -18,47 +18,145 @@
 package node
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-)
-
-const (
-	expiredKeyCleanupInterval = 1 * time.Hour
-	keyTTL                    = 24 * time.Hour
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 type roundRobinSelector struct {
-	clock       timestamp.Clock
-	closeCh     chan struct{}
-	lookupTable sync.Map
-	nodes       []string
-	mu          sync.RWMutex
-	once        sync.Once
-	tMu         sync.Mutex
+	schemaRegistry metadata.Repo
+	closeCh        chan struct{}
+	lookupTable    []key
+	nodes          []string
+	mu             sync.RWMutex
 }
 
-func (r *roundRobinSelector) Close() {
-	close(r.closeCh)
+func (r *roundRobinSelector) String() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]string)
+	for _, entry := range r.lookupTable {
+		n, err := r.Pick(entry.group, "", entry.shardID)
+		key := fmt.Sprintf("%s-%d", entry.group, entry.shardID)
+		if err != nil {
+			result[key] = fmt.Sprintf("%v", err)
+			continue
+		}
+		result[key] = n
+	}
+	if len(result) < 1 {
+		return ""
+	}
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Sprintf("%v", err)
+	}
+	return convert.BytesToString(jsonBytes)
 }
 
 // NewRoundRobinSelector creates a new round-robin selector.
-func NewRoundRobinSelector() Selector {
+func NewRoundRobinSelector(schemaRegistry metadata.Repo) Selector {
 	rrs := &roundRobinSelector{
-		nodes:   make([]string, 0),
-		clock:   timestamp.NewClock(),
-		closeCh: make(chan struct{}),
+		nodes:          make([]string, 0),
+		closeCh:        make(chan struct{}),
+		schemaRegistry: schemaRegistry,
+		lookupTable:    make([]key, 0),
 	}
 	return rrs
+}
+
+func (r *roundRobinSelector) Name() string {
+	return "round-robin-selector"
+}
+
+func (r *roundRobinSelector) PreRun(context.Context) error {
+	r.schemaRegistry.RegisterHandler("liaison", schema.KindGroup, r)
+	return nil
+}
+
+func (r *roundRobinSelector) OnAddOrUpdate(schemaMetadata schema.Metadata) {
+	if schemaMetadata.Kind != schema.KindGroup {
+		return
+	}
+	group, ok := schemaMetadata.Spec.(*commonv1.Group)
+	if !ok || !validateGroup(group) {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.removeGroup(group.Metadata.Name)
+	for i := uint32(0); i < group.ResourceOpts.ShardNum; i++ {
+		k := key{group: group.Metadata.Name, shardID: i}
+		r.lookupTable = append(r.lookupTable, k)
+	}
+	r.sortEntries()
+}
+
+func (r *roundRobinSelector) removeGroup(group string) {
+	for i := 0; i < len(r.lookupTable); {
+		if r.lookupTable[i].group == group {
+			copy(r.lookupTable[i:], r.lookupTable[i+1:])
+			r.lookupTable = r.lookupTable[:len(r.lookupTable)-1]
+		} else {
+			i++
+		}
+	}
+}
+
+func (r *roundRobinSelector) OnDelete(schemaMetadata schema.Metadata) {
+	if schemaMetadata.Kind != schema.KindGroup {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	group := schemaMetadata.Spec.(*commonv1.Group)
+	r.removeGroup(group.Metadata.Name)
+}
+
+func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {
+	if len(kinds) != 1 {
+		return false, nil
+	}
+	if kinds[0] != schema.KindGroup {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+	gg, err := r.schemaRegistry.GroupRegistry().ListGroup(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("failed to list group: %v", err))
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var revision int64
+	r.lookupTable = r.lookupTable[:0]
+	for _, g := range gg {
+		if !validateGroup(g) {
+			continue
+		}
+		if g.Metadata.ModRevision > revision {
+			revision = g.Metadata.ModRevision
+		}
+		for i := uint32(0); i < g.ResourceOpts.ShardNum; i++ {
+			k := key{group: g.Metadata.Name, shardID: i}
+			r.lookupTable = append(r.lookupTable, k)
+		}
+	}
+	r.sortEntries()
+	return true, []int64{revision}
 }
 
 func (r *roundRobinSelector) AddNode(node *databasev1.Node) {
@@ -86,92 +184,48 @@ func (r *roundRobinSelector) Pick(group, _ string, shardID uint32) (string, erro
 	if len(r.nodes) == 0 {
 		return "", errors.New("no nodes available")
 	}
-	entry, ok := r.lookupTable.Load(k)
-	if ok {
-		return r.selectNode(entry), nil
-	}
-	r.tMu.Lock()
-	defer r.tMu.Unlock()
-	if entry, ok := r.lookupTable.Load(k); ok {
-		return r.selectNode(entry), nil
-	}
-
-	keys := []key{k}
-	r.lookupTable.Range(func(k, _ any) bool {
-		keys = append(keys, k.(key))
-		return true
+	i := sort.Search(len(r.lookupTable), func(i int) bool {
+		if r.lookupTable[i].group == group {
+			return r.lookupTable[i].shardID >= shardID
+		}
+		return r.lookupTable[i].group > group
 	})
-	slices.SortFunc(keys, func(a, b key) int {
+	if i < len(r.lookupTable) && r.lookupTable[i] == k {
+		return r.selectNode(i), nil
+	}
+	return "", fmt.Errorf("%s-%d is a unknown shard", group, shardID)
+}
+
+func (r *roundRobinSelector) sortEntries() {
+	slices.SortFunc(r.lookupTable, func(a, b key) int {
 		n := strings.Compare(a.group, b.group)
 		if n != 0 {
 			return n
 		}
 		return int(a.shardID) - int(b.shardID)
 	})
-	for i := range keys {
-		if entry, ok := r.lookupTable.Load(keys[i]); ok {
-			entry.(*tableEntry).index = i
-		} else {
-			r.lookupTable.Store(keys[i], r.newTableEntry(i))
-		}
-	}
-	r.once.Do(r.startCleanupTicker)
-	if entry, ok := r.lookupTable.Load(k); ok {
-		return r.selectNode(entry), nil
-	}
-	panic(fmt.Sprintf("key %v not found", k))
+}
+
+func (r *roundRobinSelector) Close() {
+	close(r.closeCh)
 }
 
 func (r *roundRobinSelector) selectNode(entry any) string {
-	e := entry.(*tableEntry)
-	now := r.clock.Now()
-	e.lastAccess.Store(&now)
-	return r.nodes[e.index%len(r.nodes)]
+	index := entry.(int)
+	return r.nodes[index%len(r.nodes)]
+}
+
+func validateGroup(group *commonv1.Group) bool {
+	if group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
+		return false
+	}
+	if group.ResourceOpts == nil {
+		return false
+	}
+	return true
 }
 
 type key struct {
 	group   string
 	shardID uint32
-}
-
-type tableEntry struct {
-	lastAccess *atomic.Pointer[time.Time]
-	index      int
-}
-
-func (r *roundRobinSelector) newTableEntry(index int) *tableEntry {
-	p := atomic.Pointer[time.Time]{}
-	now := r.clock.Now()
-	p.Store(&now)
-	return &tableEntry{
-		index:      index,
-		lastAccess: &p,
-	}
-}
-
-func (r *roundRobinSelector) cleanupExpiredEntries() {
-	now := r.clock.Now()
-	r.tMu.Lock()
-	defer r.tMu.Unlock()
-
-	r.lookupTable.Range(func(k, value any) bool {
-		e := value.(*tableEntry)
-		if now.Sub(*e.lastAccess.Load()) > keyTTL {
-			r.lookupTable.Delete(k)
-		}
-		return true
-	})
-}
-
-func (r *roundRobinSelector) startCleanupTicker() {
-	ticker := r.clock.Ticker(expiredKeyCleanupInterval)
-	go func() {
-		select {
-		case <-r.closeCh:
-			ticker.Stop()
-			return
-		case <-ticker.C:
-			r.cleanupExpiredEntries()
-		}
-	}()
 }
