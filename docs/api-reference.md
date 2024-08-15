@@ -714,6 +714,7 @@ Trace is the top level message of a trace.
 | MEASURE_AGGREGATE_HISTOGRAM | 8 |  |
 | MEASURE_AGGREGATE_PERCENTILE2 | 9 |  |
 | MEASURE_AGGREGATE_APDEX | 10 |  |
+| MEASURE_AGGREGATE_PERCENTILE | 11 |  |
 
 
  
