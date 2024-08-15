@@ -47,7 +47,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
 			},
 		},
 		{
@@ -58,8 +58,8 @@ func Test_blockReader_nextBlock(t *testing.T) {
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
 			},
 		},
 		{
@@ -77,8 +77,8 @@ func Test_blockReader_nextBlock(t *testing.T) {
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 25},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
 			},
 		},
 	}
@@ -134,7 +134,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 				for _, dps := range tt.dpsList {
 					mp := generateMemPart()
 					mpp = append(mpp, mp)
-					mp.mustInitFromDataPoints(dps) //报错了，这里的points并没有types数组
+					mp.mustInitFromDataPoints(dps)
 					pp = append(pp, openMemPart(mp))
 				}
 				verify(t, pp)

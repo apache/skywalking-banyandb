@@ -76,7 +76,6 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					field: columnFamily{
 						columns: []column{
 							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field1"), []byte("field2")}},
-							//todo fied type
 						},
 					},
 				},
@@ -99,7 +98,6 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					field: columnFamily{
 						columns: []column{
 							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
-							//todo fied type
 						},
 					},
 				},
@@ -126,7 +124,6 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					field: columnFamily{
 						columns: []column{
 							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field1"), []byte("field3")}},
-							//todo fied type
 						},
 					},
 				},
@@ -149,7 +146,6 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					field: columnFamily{
 						columns: []column{
 							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field2"), []byte("field4")}},
-							//todo fied type
 						},
 					},
 				},
@@ -205,7 +201,6 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					field: columnFamily{
 						columns: []column{
 							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field2"), []byte("field3"), []byte("field4")}},
-							//todo field type
 						},
 					},
 				},
@@ -245,7 +240,6 @@ var mergedBlock = block{
 	field: columnFamily{
 		columns: []column{
 			{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field1"), []byte("field2"), []byte("field3"), []byte("field4")}},
-			//todo field type
 		},
 	},
 }
@@ -264,7 +258,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:    "Test with single part",
-			dpsList: []*dataPoints{dpsTS1}, //todo dps数据
+			dpsList: []*dataPoints{dpsTS1},
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
@@ -273,7 +267,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:    "Test with multiple parts with different ts",
-			dpsList: []*dataPoints{dpsTS1, dpsTS2, dpsTS2}, // todo dps数据
+			dpsList: []*dataPoints{dpsTS1, dpsTS2, dpsTS2},
 			want: []blockMetadata{
 				{seriesID: 1, count: 2, uncompressedSizeBytes: 3352},
 				{seriesID: 2, count: 2, uncompressedSizeBytes: 110},

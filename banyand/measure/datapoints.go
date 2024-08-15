@@ -19,6 +19,7 @@ package measure
 
 import (
 	"bytes"
+
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
