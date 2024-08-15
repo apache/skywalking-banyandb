@@ -22,9 +22,13 @@ import (
 	"context"
 	"embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -40,6 +44,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
@@ -81,6 +86,17 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &streamv1.QueryResponse{}
 	helpers.UnmarshalYAML(ww, want)
+	for i := range want.Elements {
+		want.Elements[i].ElementId = hex.EncodeToString(convert.Uint64ToBytes(convert.HashStr(query.Name + "|" + want.Elements[i].ElementId)))
+	}
+	if args.DisOrder {
+		slices.SortFunc(want.Elements, func(a, b *streamv1.Element) int {
+			return strings.Compare(a.ElementId, b.ElementId)
+		})
+		slices.SortFunc(resp.Elements, func(a, b *streamv1.Element) int {
+			return strings.Compare(a.ElementId, b.ElementId)
+		})
+	}
 	innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&streamv1.Element{}, "timestamp"),
@@ -136,9 +152,9 @@ func loadData(stream streamv1.StreamService_WriteClient, metadata *commonv1.Meta
 }
 
 // Write data into the server.
-func Write(conn *grpclib.ClientConn, dataFile string, baseTime time.Time, interval time.Duration) {
+func Write(conn *grpclib.ClientConn, name string, baseTime time.Time, interval time.Duration) {
 	metadata := &commonv1.Metadata{
-		Name:  "sw",
+		Name:  name,
 		Group: "default",
 	}
 	schema := databasev1.NewStreamRegistryServiceClient(conn)
@@ -150,7 +166,7 @@ func Write(conn *grpclib.ClientConn, dataFile string, baseTime time.Time, interv
 	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadData(writeClient, metadata, dataFile, baseTime, interval)
+	loadData(writeClient, metadata, fmt.Sprintf("%s.json", name), baseTime, interval)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
 	gm.Eventually(func() error {
 		_, err := writeClient.Recv()

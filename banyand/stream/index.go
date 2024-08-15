@@ -18,17 +18,15 @@
 package stream
 
 import (
-	"container/heap"
 	"context"
 	"path"
-	"sort"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -54,8 +52,10 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 	return ei, nil
 }
 
-func (e *elementIndex) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort, preloadSize int) (index.FieldIterator[*index.ItemRef], error) {
-	iter, err := e.store.Sort(sids, fieldKey, order, preloadSize)
+func (e *elementIndex) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
+	timeRange *timestamp.TimeRange, preloadSize int,
+) (index.FieldIterator[*index.DocumentResult], error) {
+	iter, err := e.store.Sort(sids, fieldKey, order, timeRange, preloadSize)
 	if err != nil {
 		return nil, err
 	}
@@ -68,11 +68,8 @@ func (e *elementIndex) Write(docs index.Documents) error {
 	})
 }
 
-func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, filter index.Filter,
-	timeRange *timestamp.TimeRange, order *pbv1.OrderBy,
-) ([]elementRef, error) {
-	pm := make(map[common.SeriesID][]uint64)
-	desc := order != nil && order.Index == nil && order.Sort == modelv1.Sort_SORT_DESC
+func (e *elementIndex) Search(seriesList pbv1.SeriesList, filter index.Filter) (posting.List, error) {
+	var result posting.List
 	for _, series := range seriesList {
 		pl, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return e.store, nil
@@ -80,103 +77,20 @@ func (e *elementIndex) Search(_ context.Context, seriesList pbv1.SeriesList, fil
 		if err != nil {
 			return nil, err
 		}
-		if pl == nil {
-			pl = roaring.DummyPostingList
-		}
-		if pl.IsEmpty() {
+		if pl == nil || pl.IsEmpty() {
 			continue
 		}
-		timestamps := pl.ToSlice()
-		if desc {
-			sort.Slice(timestamps, func(i, j int) bool {
-				return timestamps[i] > timestamps[j]
-			})
+		if result == nil {
+			result = pl
 		} else {
-			sort.Slice(timestamps, func(i, j int) bool {
-				return timestamps[i] < timestamps[j]
-			})
-		}
-		start, end, ok := timestamp.FindRange(timestamps, uint64(timeRange.Start.UnixNano()), uint64(timeRange.End.UnixNano()))
-		if !ok {
-			pm[series.ID] = []uint64{}
-		} else {
-			pm[series.ID] = timestamps[start : end+1]
+			if err := result.Union(pl); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return merge(pm, !desc), nil
+	return result, nil
 }
 
 func (e *elementIndex) Close() error {
 	return e.store.Close()
-}
-
-type elementRef struct {
-	seriesID  common.SeriesID
-	timestamp int64
-}
-
-type indexedElementRef struct {
-	elementRef
-	elemIdx int
-}
-
-type priorityQueue struct {
-	elementRefList []*indexedElementRef
-	asc            bool
-}
-
-func (pq priorityQueue) Len() int { return len(pq.elementRefList) }
-
-func (pq priorityQueue) Less(i, j int) bool {
-	if pq.asc {
-		return pq.elementRefList[i].timestamp < pq.elementRefList[j].timestamp
-	}
-	return pq.elementRefList[i].timestamp > pq.elementRefList[j].timestamp
-}
-
-func (pq priorityQueue) Swap(i, j int) {
-	pq.elementRefList[i], pq.elementRefList[j] = pq.elementRefList[j], pq.elementRefList[i]
-}
-
-func (pq *priorityQueue) Push(x interface{}) {
-	item := x.(*indexedElementRef)
-	pq.elementRefList = append(pq.elementRefList, item)
-}
-
-func (pq *priorityQueue) Pop() interface{} {
-	n := len(pq.elementRefList)
-	item := pq.elementRefList[n-1]
-	pq.elementRefList = pq.elementRefList[0 : n-1]
-	return item
-}
-
-func merge(postingMap map[common.SeriesID][]uint64, asc bool) []elementRef {
-	var result []elementRef
-	erl := make([]*indexedElementRef, 0)
-	pq := priorityQueue{
-		elementRefList: erl,
-		asc:            asc,
-	}
-	heap.Init(&pq)
-
-	for seriesID, timestamps := range postingMap {
-		if len(timestamps) > 0 {
-			er := elementRef{seriesID: seriesID, timestamp: int64(timestamps[0])}
-			item := &indexedElementRef{elementRef: er, elemIdx: 0}
-			heap.Push(&pq, item)
-		}
-	}
-	for pq.Len() > 0 {
-		item := heap.Pop(&pq).(*indexedElementRef)
-		result = append(result, item.elementRef)
-
-		if item.elemIdx+1 < len(postingMap[item.seriesID]) {
-			nextTS := postingMap[item.seriesID][item.elemIdx+1]
-			nextEr := elementRef{seriesID: item.seriesID, timestamp: int64(nextTS)}
-			nextItem := &indexedElementRef{elementRef: nextEr, elemIdx: item.elemIdx + 1}
-			heap.Push(&pq, nextItem)
-		}
-	}
-
-	return result
 }

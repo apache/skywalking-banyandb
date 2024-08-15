@@ -25,12 +25,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 const defaultIOSize = 256 * 1024
@@ -282,7 +282,6 @@ func (fs *localFileSystem) MustGetFreeSpace(path string) uint64 {
 
 // Write adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
-	// TODO: use bufio.Writer to optimize performance.
 	size, err := file.file.Write(buffer)
 	switch {
 	case err == nil:
@@ -307,7 +306,6 @@ func (file *LocalFile) Write(buffer []byte) (int, error) {
 }
 
 // Writev supports appending consecutive buffers to the end of the file.
-// TODO: Optimizing under Linux.
 func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 	var size int
 	for _, buffer := range *iov {
@@ -353,7 +351,6 @@ func (file *LocalFile) Read(offset int64, buffer []byte) (int, error) {
 }
 
 // Readv is used to read contiguous regions of a file and disperse them into discontinuous buffers.
-// TODO: Optimizing under Linux.
 func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 	var size int
 	for _, buffer := range *iov {
@@ -468,7 +465,7 @@ func generateReader(f *os.File) *bufio.Reader {
 	if v == nil {
 		return bufio.NewReaderSize(f, defaultIOSize)
 	}
-	br := v.(*bufio.Reader)
+	br := v
 	br.Reset(f)
 	return br
 }
@@ -478,14 +475,14 @@ func releaseReader(br *bufio.Reader) {
 	bufReaderPool.Put(br)
 }
 
-var bufReaderPool sync.Pool
+var bufReaderPool = pool.Register[*bufio.Reader]("fs-bufReader")
 
 func generateWriter(f *os.File) *bufio.Writer {
 	v := bufWriterPool.Get()
 	if v == nil {
 		return bufio.NewWriterSize(f, defaultIOSize)
 	}
-	bw := v.(*bufio.Writer)
+	bw := v
 	bw.Reset(f)
 	return bw
 }
@@ -495,4 +492,4 @@ func releaseWriter(bw *bufio.Writer) {
 	bufWriterPool.Put(bw)
 }
 
-var bufWriterPool sync.Pool
+var bufWriterPool = pool.Register[*bufio.Writer]("fs-bufWriter")

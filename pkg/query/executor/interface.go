@@ -25,12 +25,12 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 // StreamExecutionContext allows retrieving data through the stream module.
 type StreamExecutionContext interface {
-	Query(ctx context.Context, opts pbv1.StreamQueryOptions) (pbv1.StreamQueryResult, error)
+	Query(ctx context.Context, opts model.StreamQueryOptions) (model.StreamQueryResult, error)
 }
 
 // StreamExecutionContextKey is the key of stream execution context in context.Context.
@@ -51,11 +51,12 @@ func FromStreamExecutionContext(ctx context.Context) StreamExecutionContext {
 // StreamExecutable allows querying in the stream schema.
 type StreamExecutable interface {
 	Execute(context.Context) ([]*streamv1.Element, error)
+	Close()
 }
 
 // MeasureExecutionContext allows retrieving data through the measure module.
 type MeasureExecutionContext interface {
-	Query(ctx context.Context, opts pbv1.MeasureQueryOptions) (pbv1.MeasureQueryResult, error)
+	Query(ctx context.Context, opts model.MeasureQueryOptions) (model.MeasureQueryResult, error)
 }
 
 // MeasureExecutionContextKey is the key of measure execution context in context.Context.

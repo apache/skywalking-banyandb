@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
@@ -30,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type partIter struct {
@@ -327,7 +327,7 @@ func generatePartMergeIter() *partMergeIter {
 	if v == nil {
 		return &partMergeIter{}
 	}
-	return v.(*partMergeIter)
+	return v
 }
 
 func releasePartMergeIter(pmi *partMergeIter) {
@@ -335,7 +335,7 @@ func releasePartMergeIter(pmi *partMergeIter) {
 	pmiPool.Put(pmi)
 }
 
-var pmiPool sync.Pool
+var pmiPool = pool.Register[*partMergeIter]("measure-partMergeIter")
 
 type partMergeIterHeap []*partMergeIter
 
@@ -369,7 +369,7 @@ func generateColumnValuesDecoder() *encoding.BytesBlockDecoder {
 	if v == nil {
 		return &encoding.BytesBlockDecoder{}
 	}
-	return v.(*encoding.BytesBlockDecoder)
+	return v
 }
 
 func releaseColumnValuesDecoder(d *encoding.BytesBlockDecoder) {
@@ -377,4 +377,4 @@ func releaseColumnValuesDecoder(d *encoding.BytesBlockDecoder) {
 	columnValuesDecoderPool.Put(d)
 }
 
-var columnValuesDecoderPool sync.Pool
+var columnValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("measure-columnValuesDecoder")

@@ -16,14 +16,18 @@
 # under the License.
 
 dataPoints:
-  - tagFamilies:
-    - name: default
-      tags:
-      - key: id
-        value:
-          str:
-            value: "1"
-      - key: service_id
-        value:
-          str:
-            value: service_1
+- tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: "1"
+    - key: service_id
+      value:
+        str:
+          value: service_1
+    - key: layer
+      value:
+        int:
+          value: "1"

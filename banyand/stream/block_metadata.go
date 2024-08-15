@@ -21,12 +21,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 type dataBlock struct {
@@ -67,7 +67,7 @@ func (d *dataBlock) unmarshal(src []byte) ([]byte, error) {
 
 type blockMetadata struct {
 	tagFamilies           map[string]*dataBlock
-	tagProjection         []pbv1.TagProjection
+	tagProjection         []model.TagProjection
 	timestamps            timestampsMetadata
 	elementIDs            elementIDsMetadata
 	seriesID              common.SeriesID
@@ -175,7 +175,6 @@ func (bm *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("cannot unmarshal tagFamily name: %w", err)
 			}
-			// TODO: cache dataBlock
 			tf := &dataBlock{}
 			src, err = tf.unmarshal(src)
 			if err != nil {
@@ -202,7 +201,7 @@ func generateBlockMetadata() *blockMetadata {
 	if v == nil {
 		return &blockMetadata{}
 	}
-	return v.(*blockMetadata)
+	return v
 }
 
 func releaseBlockMetadata(bm *blockMetadata) {
@@ -210,7 +209,7 @@ func releaseBlockMetadata(bm *blockMetadata) {
 	blockMetadataPool.Put(bm)
 }
 
-var blockMetadataPool sync.Pool
+var blockMetadataPool = pool.Register[*blockMetadata]("stream-blockMetadata")
 
 type blockMetadataArray struct {
 	arr []blockMetadata
@@ -223,14 +222,14 @@ func (bma *blockMetadataArray) reset() {
 	bma.arr = bma.arr[:0]
 }
 
-var blockMetadataArrayPool sync.Pool
+var blockMetadataArrayPool = pool.Register[*blockMetadataArray]("stream-blockMetadataArray")
 
 func generateBlockMetadataArray() *blockMetadataArray {
 	v := blockMetadataArrayPool.Get()
 	if v == nil {
 		return &blockMetadataArray{}
 	}
-	return v.(*blockMetadataArray)
+	return v
 }
 
 func releaseBlockMetadataArray(bma *blockMetadataArray) {
@@ -240,9 +239,10 @@ func releaseBlockMetadataArray(bma *blockMetadataArray) {
 
 type timestampsMetadata struct {
 	dataBlock
-	min        int64
-	max        int64
-	encodeType encoding.EncodeType
+	min              int64
+	max              int64
+	elementIDsOffset uint64
+	encodeType       encoding.EncodeType
 }
 
 func (tm *timestampsMetadata) reset() {
@@ -250,6 +250,7 @@ func (tm *timestampsMetadata) reset() {
 	tm.min = 0
 	tm.max = 0
 	tm.encodeType = 0
+	tm.elementIDsOffset = 0
 }
 
 func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
@@ -257,6 +258,7 @@ func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
 	tm.min = src.min
 	tm.max = src.max
 	tm.encodeType = src.encodeType
+	tm.elementIDsOffset = src.elementIDsOffset
 }
 
 func (tm *timestampsMetadata) marshal(dst []byte) []byte {
@@ -264,20 +266,27 @@ func (tm *timestampsMetadata) marshal(dst []byte) []byte {
 	dst = encoding.Uint64ToBytes(dst, uint64(tm.min))
 	dst = encoding.Uint64ToBytes(dst, uint64(tm.max))
 	dst = append(dst, byte(tm.encodeType))
+	dst = encoding.VarUint64ToBytes(dst, tm.elementIDsOffset)
 	return dst
 }
 
 func (tm *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
 	src, err := tm.dataBlock.unmarshal(src)
 	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
+		return nil, fmt.Errorf("cannot unmarshal ts blockData: %w", err)
 	}
 	tm.min = int64(encoding.BytesToUint64(src))
 	src = src[8:]
 	tm.max = int64(encoding.BytesToUint64(src))
 	src = src[8:]
 	tm.encodeType = encoding.EncodeType(src[0])
-	return src[1:], nil
+	src = src[1:]
+	src, n, err := encoding.BytesToVarUint64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal ts offset: %w", err)
+	}
+	tm.elementIDsOffset = n
+	return src, nil
 }
 
 type elementIDsMetadata struct {

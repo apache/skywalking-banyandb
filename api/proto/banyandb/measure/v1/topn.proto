@@ -19,6 +19,7 @@ syntax = "proto3";
 
 package banyandb.measure.v1;
 
+import "banyandb/common/v1/trace.proto";
 import "banyandb/model/v1/common.proto";
 import "banyandb/model/v1/query.proto";
 import "google/protobuf/timestamp.proto";
@@ -44,6 +45,8 @@ message TopNResponse {
   // lists contain a series topN lists ranked by timestamp
   // if agg_func in query request is specified, lists' size should be one.
   repeated TopNList lists = 1;
+  // trace contains the trace information of the query when trace is enabled
+  common.v1.Trace trace = 2;
 }
 
 // TopNRequest is the request contract for query.
@@ -57,10 +60,11 @@ message TopNRequest {
   // top_n set the how many items should be returned in each list.
   int32 top_n = 4 [(validate.rules).int32.gt = 0];
   // agg aggregates lists grouped by field names in the time_range
-  // TODO validate enum defined_only
   model.v1.AggregationFunction agg = 5;
   // criteria select counters. Only equals are acceptable.
   repeated model.v1.Condition conditions = 6;
   // field_value_sort indicates how to sort fields
   model.v1.Sort field_value_sort = 7;
+  // trace is used to enable trace for the query
+  bool trace = 8;
 }

@@ -123,6 +123,19 @@ type dataPoints struct {
 	fields      []nameValues
 }
 
+func (d *dataPoints) skip(i int) {
+	if len(d.timestamps) <= i {
+		return
+	}
+	d.seriesIDs = append(d.seriesIDs[:i], d.seriesIDs[i+1:]...)
+	d.timestamps = append(d.timestamps[:i], d.timestamps[i+1:]...)
+	d.versions = append(d.versions[:i], d.versions[i+1:]...)
+	d.tagFamilies = append(d.tagFamilies[:i], d.tagFamilies[i+1:]...)
+	if len(d.fields) > 0 {
+		d.fields = append(d.fields[:i], d.fields[i+1:]...)
+	}
+}
+
 func (d *dataPoints) Len() int {
 	return len(d.seriesIDs)
 }
@@ -131,7 +144,10 @@ func (d *dataPoints) Less(i, j int) bool {
 	if d.seriesIDs[i] != d.seriesIDs[j] {
 		return d.seriesIDs[i] < d.seriesIDs[j]
 	}
-	return d.timestamps[i] < d.timestamps[j]
+	if d.timestamps[i] != d.timestamps[j] {
+		return d.timestamps[i] < d.timestamps[j]
+	}
+	return d.versions[i] > d.versions[j]
 }
 
 func (d *dataPoints) Swap(i, j int) {
@@ -144,15 +160,15 @@ func (d *dataPoints) Swap(i, j int) {
 
 type dataPointsInTable struct {
 	timeRange timestamp.TimeRange
-	tsTable   storage.TSTableWrapper[*tsTable]
+	tsTable   *tsTable
 
 	dataPoints dataPoints
 }
 
 type dataPointsInGroup struct {
-	tsdb storage.TSDB[*tsTable, option]
-
+	tsdb     storage.TSDB[*tsTable, option]
 	docs     index.Documents
 	tables   []*dataPointsInTable
+	segments []storage.Segment[*tsTable, option]
 	latestTS int64
 }

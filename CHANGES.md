@@ -4,12 +4,25 @@ Release Notes.
 
 ## 0.7.0
 
+### File System Changes
+
+- Bump up the version of the file system to 1.1.0 which is not compatible with the previous version.
+- Move the series index into segment.
+- Swap the segment and the shard.
+- Move indexed values in a measure from data files to index files.
+- Merge elementIDs.bin and timestamps.bin into a single file.
+
 ### Features
 
 - Check unregistered nodes in background.
 - Improve sorting performance of stream.
 - Add the measure query trace.
 - Assign a separate lookup table to each group in the maglev selector.
+- Convert the async local pipeline to a sync pipeline.
+- Add the stream query trace.
+- Add the topN query trace.
+- Introduce the round-robin selector to Liaison Node.
+- Optimize query performance of series index.
 
 ### Bugs
 
@@ -19,6 +32,24 @@ Release Notes.
 - Fix the bug that the data node can't re-register to etcd when the connection is lost.
 - Fix memory leak in sorting the stream by the inverted index.
 - Fix the wrong array flags parsing in command line. The array flags should be parsed by "StringSlice" instead of "StringArray".
+- Fix a bug that the Stream module didn't support duplicated in index-based filtering and sorting
+- Fix the bug that segment's reference count is increased twice when the controller try to create an existing segment.
+- Fix a bug where a distributed query would return an empty result if the "limit" was set much lower than the "offset".
+- Fix duplicated measure data in a single part.
+- Fix several "sync.Pool" leak issues by adding a tracker to the pool.
+
+### Documentation
+
+- Introduce new doc menu structure.
+- Add installation on Docker and Kubernetes.
+- Add quick-start guide.
+- Add web-ui interacting guide.
+- Add bydbctl interacting guide.
+- Add cluster management guide.
+
+### Chores
+
+Bump up the version of infra e2e framework.
 
 ## 0.6.1
 

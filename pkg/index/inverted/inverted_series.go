@@ -19,6 +19,7 @@
 package inverted
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/blugelabs/bluge"
@@ -30,13 +31,64 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
-var emptySeries = make([]index.Series, 0)
+var emptySeries = make([]index.SeriesDocument, 0)
+
+// BuildQuery implements index.SeriesStore.
+func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query) (index.Query, error) {
+	if len(seriesMatchers) == 0 {
+		return secondaryQuery, nil
+	}
+
+	qs := make([]bluge.Query, len(seriesMatchers))
+	primaryNode := newShouldNode()
+	for i := range seriesMatchers {
+		switch seriesMatchers[i].Type {
+		case index.SeriesMatcherTypeExact:
+			match := convert.BytesToString(seriesMatchers[i].Match)
+			q := bluge.NewTermQuery(match)
+			q.SetField(entityField)
+			qs[i] = q
+			primaryNode.Append(newTermNode(match, nil))
+		case index.SeriesMatcherTypePrefix:
+			match := convert.BytesToString(seriesMatchers[i].Match)
+			q := bluge.NewPrefixQuery(match)
+			q.SetField(entityField)
+			qs[i] = q
+			primaryNode.Append(newPrefixNode(match, nil))
+		case index.SeriesMatcherTypeWildcard:
+			match := convert.BytesToString(seriesMatchers[i].Match)
+			q := bluge.NewWildcardQuery(match)
+			q.SetField(entityField)
+			qs[i] = q
+			primaryNode.Append(newWildcardNode(match, nil))
+		default:
+			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
+		}
+	}
+	var primaryQuery bluge.Query
+	if len(qs) > 1 {
+		bq := bluge.NewBooleanQuery()
+		bq.AddShould(qs...)
+		bq.SetMinShould(1)
+		primaryQuery = bq
+	} else {
+		primaryQuery = qs[0]
+	}
+
+	query := bluge.NewBooleanQuery().AddMust(primaryQuery)
+	node := newMustNode()
+	node.Append(primaryNode)
+	if secondaryQuery != nil && secondaryQuery.(*queryNode).query != nil {
+		query.AddMust(secondaryQuery.(*queryNode).query)
+		node.Append(secondaryQuery.(*queryNode).node)
+	}
+	return &queryNode{query, node}, nil
+}
 
 // Search implements index.SeriesStore.
-func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher) ([]index.Series, error) {
-	if len(seriesMatchers) == 0 {
-		return emptySeries, nil
-	}
+func (s *store) Search(ctx context.Context,
+	projection []index.FieldKey, query index.Query,
+) ([]index.SeriesDocument, error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
@@ -44,66 +96,52 @@ func (s *store) Search(ctx context.Context, seriesMatchers []index.SeriesMatcher
 	defer func() {
 		_ = reader.Close()
 	}()
-	qs := make([]bluge.Query, len(seriesMatchers))
-	for i := range seriesMatchers {
-		switch seriesMatchers[i].Type {
-		case index.SeriesMatcherTypeExact:
-			q := bluge.NewTermQuery(convert.BytesToString(seriesMatchers[i].Match))
-			q.SetField(entityField)
-			qs[i] = q
-		case index.SeriesMatcherTypePrefix:
-			q := bluge.NewPrefixQuery(convert.BytesToString(seriesMatchers[i].Match))
-			q.SetField(entityField)
-			qs[i] = q
-		case index.SeriesMatcherTypeWildcard:
-			q := bluge.NewWildcardQuery(convert.BytesToString(seriesMatchers[i].Match))
-			q.SetField(entityField)
-			qs[i] = q
-		default:
-			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
-		}
-	}
-	var query bluge.Query
-	if len(qs) > 1 {
-		bq := bluge.NewBooleanQuery()
-		bq.AddShould(qs...)
-		bq.SetMinShould(1)
-		query = bq
-	} else {
-		query = qs[0]
-	}
 
-	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query))
+	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query.(*queryNode).query))
 	if err != nil {
 		return nil, err
 	}
-	return parseResult(dmi)
+	return parseResult(dmi, projection)
 }
 
-func parseResult(dmi search.DocumentMatchIterator) ([]index.Series, error) {
-	result := make([]index.Series, 0, 10)
+func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey) ([]index.SeriesDocument, error) {
+	result := make([]index.SeriesDocument, 0, 10)
 	next, err := dmi.Next()
 	docIDMap := make(map[uint64]struct{})
+	fields := make([]string, 0, len(loadedFields))
+	for i := range loadedFields {
+		fields = append(fields, loadedFields[i].Marshal())
+	}
 	for err == nil && next != nil {
-		var series index.Series
+		var doc index.SeriesDocument
+		if len(loadedFields) > 0 {
+			doc.Fields = make(map[string][]byte)
+			for i := range loadedFields {
+				doc.Fields[fields[i]] = nil
+			}
+		}
 		err = next.VisitStoredFields(func(field string, value []byte) bool {
-			if field == docIDField {
+			switch field {
+			case docIDField:
 				id := convert.BytesToUint64(value)
 				if _, ok := docIDMap[id]; !ok {
-					series.ID = common.SeriesID(convert.BytesToUint64(value))
+					doc.Key.ID = common.SeriesID(convert.BytesToUint64(value))
 					docIDMap[id] = struct{}{}
 				}
-			}
-			if field == entityField {
-				series.EntityValues = value
+			case entityField:
+				doc.Key.EntityValues = value
+			default:
+				if _, ok := doc.Fields[field]; ok {
+					doc.Fields[field] = bytes.Clone(value)
+				}
 			}
 			return true
 		})
 		if err != nil {
 			return nil, errors.WithMessage(err, "visit stored fields")
 		}
-		if series.ID > 0 {
-			result = append(result, series)
+		if doc.Key.ID > 0 {
+			result = append(result, doc)
 		}
 		next, err = dmi.Next()
 	}

@@ -19,11 +19,8 @@
 package v1
 
 import (
-	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // FindTagByName finds TagSpec in several tag families by its name.
@@ -74,104 +71,10 @@ func FieldValueTypeConv(fieldValue *modelv1.FieldValue) (tagType databasev1.Fiel
 	return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, false
 }
 
-// OrderBy is the order by rule.
-type OrderBy struct {
-	Index *databasev1.IndexRule
-	Sort  modelv1.Sort
-}
-
-// AnyTagValue is the `*` for a regular expression. It could match "any" Entry in an Entity.
-var AnyTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
-
-// Tag is a tag name and its values.
-type Tag struct {
-	Name   string
-	Values []*modelv1.TagValue
-}
-
-// TagFamily is a tag family name and its tags.
-type TagFamily struct {
-	Name string
-	Tags []Tag
-}
-
-// Field is a field name and its values.
-type Field struct {
-	Name   string
-	Values []*modelv1.FieldValue
-}
-
-// MeasureResult is the result of a query.
-type MeasureResult struct {
-	Timestamps  []int64
-	Versions    []int64
-	TagFamilies []TagFamily
-	Fields      []Field
-	SID         common.SeriesID
-}
-
-// StreamResult is the result of a query.
-type StreamResult struct {
-	Timestamps  []int64
-	ElementIDs  []string
-	TagFamilies []TagFamily
-	SIDs        []common.SeriesID
-}
-
-// TagProjection is the projection of a tag family and its tags.
-type TagProjection struct {
-	Family string
-	Names  []string
-}
-
-// StreamQueryOptions is the options of a stream query.
-type StreamQueryOptions struct {
-	Name           string
-	TimeRange      *timestamp.TimeRange
-	Entities       [][]*modelv1.TagValue
-	Filter         index.Filter
-	Order          *OrderBy
-	TagProjection  []TagProjection
-	MaxElementSize int
-}
-
-// StreamQueryResult is the result of a stream query.
-type StreamQueryResult interface {
-	Pull() *StreamResult
-	Release()
-}
-
-// OrderByType is the type of order by.
-type OrderByType int
-
-const (
-	// OrderByTypeTime is the order by time.
-	OrderByTypeTime OrderByType = iota
-	// OrderByTypeIndex is the order by index.
-	OrderByTypeIndex
-	// OrderByTypeSeries is the order by series.
-	OrderByTypeSeries
-)
-
-// MeasureQueryOptions is the options of a measure query.
-type MeasureQueryOptions struct {
-	Filter          index.Filter
-	TimeRange       *timestamp.TimeRange
-	Order           *OrderBy
-	Name            string
-	Entities        [][]*modelv1.TagValue
-	TagProjection   []TagProjection
-	FieldProjection []string
-	OrderByType     OrderByType
-}
-
-// MeasureQueryResult is the result of a measure query.
-type MeasureQueryResult interface {
-	Pull() *MeasureResult
-	Release()
-}
-
 var (
+	// AnyTagValue is the `*` for a regular expression. It could match "any" Entry in an Entity.
+	AnyTagValue = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+
 	// NullFieldValue represents a null field value in the model.
 	NullFieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
 

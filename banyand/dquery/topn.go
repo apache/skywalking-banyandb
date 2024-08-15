@@ -46,8 +46,13 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Warn().Msg("invalid event data type")
 		return
 	}
+	now := bus.MessageID(request.TimeRange.Begin.Nanos)
 	if request.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
-		t.log.Warn().Msg("invalid requested sort direction")
+		resp = bus.NewMessage(now, common.NewError("unspecified requested sort direction"))
+		return
+	}
+	if request.GetAgg() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+		resp = bus.NewMessage(now, common.NewError("unspecified requested aggregation function"))
 		return
 	}
 	if e := t.log.Debug(); e.Enabled() {
@@ -55,7 +60,6 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
-	now := bus.MessageID(request.TimeRange.Begin.Nanos)
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessage(now, request))
 	if err != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), err))

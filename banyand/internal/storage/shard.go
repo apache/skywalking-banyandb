@@ -22,48 +22,45 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-type shard[T TSTable, O any] struct {
-	l                 *logger.Logger
-	segmentController *segmentController[T, O]
-	position          common.Position
-	closeOnce         sync.Once
-	id                common.ShardID
+type shard[T TSTable] struct {
+	table     T
+	l         *logger.Logger
+	timeRange timestamp.TimeRange
+	location  string
+	id        common.ShardID
 }
 
-func (d *database[T, O]) openShard(ctx context.Context, id common.ShardID) (*shard[T, O], error) {
-	location := path.Join(d.location, fmt.Sprintf(shardTemplate, int(id)))
+func (s *segment[T, O]) openShard(ctx context.Context, id common.ShardID) (*shard[T], error) {
+	location := path.Join(s.location, fmt.Sprintf(shardTemplate, int(id)))
 	lfs.MkdirIfNotExist(location, dirPerm)
 	l := logger.Fetch(ctx, "shard"+strconv.Itoa(int(id)))
 	l.Info().Int("shard_id", int(id)).Str("path", location).Msg("creating a shard")
-	shardCtx := context.WithValue(ctx, logger.ContextKey, l)
-	shardCtx = common.SetPosition(shardCtx, func(p common.Position) common.Position {
-		p.Shard = strconv.Itoa(int(id))
-		return p
-	})
-
-	s := &shard[T, O]{
-		id:       id,
-		l:        l,
-		position: common.GetPosition(shardCtx),
-		segmentController: newSegmentController[T](shardCtx, location,
-			d.opts.SegmentInterval, l, d.scheduler,
-			d.opts.TSTableCreator, d.opts.Option),
-	}
-	var err error
-	if err = s.segmentController.open(); err != nil {
+	p := common.GetPosition(ctx)
+	p.Shard = strconv.Itoa(int(id))
+	t, err := s.opts.TSTableCreator(lfs, location, p, l, s.TimeRange, s.opts.Option)
+	if err != nil {
 		return nil, err
 	}
-	return s, nil
+
+	return &shard[T]{
+		id:        id,
+		l:         l,
+		table:     t,
+		timeRange: s.TimeRange,
+		location:  location,
+	}, nil
 }
 
-func (s *shard[T, O]) close() {
-	s.closeOnce.Do(func() {
-		s.segmentController.close()
-	})
+func (s *shard[T]) Table() T {
+	return s.table
+}
+
+func (s *shard[T]) close() error {
+	return s.table.Close()
 }

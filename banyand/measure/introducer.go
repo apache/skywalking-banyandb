@@ -18,8 +18,7 @@
 package measure
 
 import (
-	"sync"
-
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -33,14 +32,14 @@ func (i *introduction) reset() {
 	i.applied = nil
 }
 
-var introductionPool = sync.Pool{}
+var introductionPool = pool.Register[*introduction]("measure-introduction")
 
 func generateIntroduction() *introduction {
 	v := introductionPool.Get()
 	if v == nil {
 		return &introduction{}
 	}
-	i := v.(*introduction)
+	i := v
 	i.reset()
 	return i
 }
@@ -61,7 +60,7 @@ func (i *flusherIntroduction) reset() {
 	i.applied = nil
 }
 
-var flusherIntroductionPool = sync.Pool{}
+var flusherIntroductionPool = pool.Register[*flusherIntroduction]("measure-flusher-introduction")
 
 func generateFlusherIntroduction() *flusherIntroduction {
 	v := flusherIntroductionPool.Get()
@@ -70,7 +69,7 @@ func generateFlusherIntroduction() *flusherIntroduction {
 			flushed: make(map[uint64]*partWrapper),
 		}
 	}
-	i := v.(*flusherIntroduction)
+	i := v
 	i.reset()
 	return i
 }
@@ -95,14 +94,14 @@ func (i *mergerIntroduction) reset() {
 	i.creator = 0
 }
 
-var mergerIntroductionPool = sync.Pool{}
+var mergerIntroductionPool = pool.Register[*mergerIntroduction]("measure-merger-introduction")
 
 func generateMergerIntroduction() *mergerIntroduction {
 	v := mergerIntroductionPool.Get()
 	if v == nil {
 		return &mergerIntroduction{}
 	}
-	i := v.(*mergerIntroduction)
+	i := v
 	i.reset()
 	return i
 }

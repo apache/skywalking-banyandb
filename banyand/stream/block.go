@@ -19,20 +19,25 @@ package stream
 
 import (
 	"sort"
-	"sync"
+
+	"golang.org/x/exp/slices"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type block struct {
 	timestamps  []int64
-	elementIDs  []string
+	elementIDs  []uint64
 	tagFamilies []tagFamily
 }
 
@@ -47,7 +52,7 @@ func (b *block) reset() {
 	b.tagFamilies = tff[:0]
 }
 
-func (b *block) mustInitFromElements(timestamps []int64, elementIDs []string, tagFamilies [][]tagValues) {
+func (b *block) mustInitFromElements(timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -122,8 +127,7 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 	bm.uncompressedSizeBytes = b.uncompressedSizeBytes()
 	bm.count = uint64(b.Len())
 
-	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, &ww.timestampsWriter)
-	mustWriteElementIDsTo(&bm.elementIDs, b.elementIDs, &ww.elementIDsWriter)
+	mustWriteTimestampsTo(&bm.timestamps, b.timestamps, b.elementIDs, &ww.timestampsWriter)
 
 	for ti := range b.tagFamilies {
 		b.marshalTagFamily(b.tagFamilies[ti], bm, ww)
@@ -250,8 +254,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
 	b.reset()
 
-	b.timestamps = mustReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), p.timestamps)
-	b.elementIDs = mustReadElementIDsFrom(b.elementIDs, &bm.elementIDs, int(bm.count), p.elementIDs)
+	b.timestamps, b.elementIDs = mustReadTimestampsFrom(b.timestamps, b.elementIDs, &bm.timestamps, int(bm.count), p.timestamps)
 
 	_ = b.resizeTagFamilies(len(bm.tagProjection))
 	for i := range bm.tagProjection {
@@ -269,8 +272,7 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
 	b.reset()
 
-	b.timestamps = mustSeqReadTimestampsFrom(b.timestamps, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
-	b.elementIDs = mustSeqReadElementIDsFrom(b.elementIDs, &bm.elementIDs, int(bm.count), &seqReaders.elementIDs)
+	b.timestamps, b.elementIDs = mustSeqReadTimestampsFrom(b.timestamps, b.elementIDs, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
 
 	_ = b.resizeTagFamilies(len(bm.tagFamilies))
 	keys := make([]string, 0, len(bm.tagFamilies))
@@ -292,71 +294,48 @@ func (b *block) sortTagFamilies() {
 	})
 }
 
-func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, timestampsWriter *writer) {
+func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, elementIDs []uint64, timestampsWriter *writer) {
 	tm.reset()
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf, tm.encodeType, tm.min = encoding.Int64ListToBytes(bb.Buf[:0], timestamps)
-	if len(bb.Buf) > maxTimestampsBlockSize {
-		logger.Panicf("too big block with timestamps: %d bytes; the maximum supported size is %d bytes", len(bb.Buf), maxTimestampsBlockSize)
-	}
 	tm.max = timestamps[len(timestamps)-1]
 	tm.offset = timestampsWriter.bytesWritten
-	tm.size = uint64(len(bb.Buf))
+	tm.elementIDsOffset = uint64(len(bb.Buf))
+	timestampsWriter.MustWrite(bb.Buf)
+	bb.Buf = encoding.VarUint64sToBytes(bb.Buf[:0], elementIDs)
+	tm.size = tm.elementIDsOffset + uint64(len(bb.Buf))
 	timestampsWriter.MustWrite(bb.Buf)
 }
 
-func mustReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader fs.Reader) []int64 {
+func mustReadTimestampsFrom(timestamps []int64, elementIDs []uint64, tm *timestampsMetadata, count int, reader fs.Reader) ([]int64, []uint64) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
+	return mustDecodeTimestampsWithVersions(timestamps, elementIDs, tm, count, reader.Path(), bb.Buf)
+}
+
+func mustDecodeTimestampsWithVersions(timestamps []int64, elementIDs []uint64, tm *timestampsMetadata, count int, path string, src []byte) ([]int64, []uint64) {
+	if tm.size < tm.elementIDsOffset {
+		logger.Panicf("size %d must be greater than elementIDsOffset %d", tm.size, tm.elementIDsOffset)
+	}
 	var err error
-	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
+	timestamps, err = encoding.BytesToInt64List(timestamps, src[:tm.elementIDsOffset], tm.encodeType, tm.min, count)
 	if err != nil {
-		logger.Panicf("%s: cannot unmarshal timestamps: %v", reader.Path(), err)
+		logger.Panicf("%s: cannot unmarshal timestamps: %v", path, err)
 	}
-	return dst
-}
-
-func mustWriteElementIDsTo(em *elementIDsMetadata, elementIDs []string, elementIDsWriter *writer) {
-	em.reset()
-
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-	elementIDsByteSlice := make([][]byte, len(elementIDs))
-	for i, elementID := range elementIDs {
-		elementIDsByteSlice[i] = []byte(elementID)
-	}
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf, elementIDsByteSlice)
-	if len(bb.Buf) > maxElementIDsBlockSize {
-		logger.Panicf("too big block with elementIDs: %d bytes; the maximum supported size is %d bytes", len(bb.Buf), maxElementIDsBlockSize)
-	}
-	em.encodeType = encoding.EncodeTypeUnknown
-	em.offset = elementIDsWriter.bytesWritten
-	em.size = uint64(len(bb.Buf))
-	elementIDsWriter.MustWrite(bb.Buf)
-}
-
-func mustReadElementIDsFrom(dst []string, em *elementIDsMetadata, count int, reader fs.Reader) []string {
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(em.size))
-	fs.MustReadData(reader, int64(em.offset), bb.Buf)
-	decoder := encoding.BytesBlockDecoder{}
-	var elementIDsByteSlice [][]byte
-	elementIDsByteSlice, err := decoder.Decode(elementIDsByteSlice, bb.Buf, uint64(count))
+	elementIDs = encoding.ExtendListCapacity(elementIDs, count)
+	elementIDs = elementIDs[:count]
+	_, err = encoding.BytesToVarUint64s(elementIDs, src[tm.elementIDsOffset:])
 	if err != nil {
-		logger.Panicf("%s: cannot unmarshal elementIDs: %v", reader.Path(), err)
+		logger.Panicf("%s: cannot unmarshal element ids: %v", path, err)
 	}
-	for _, elementID := range elementIDsByteSlice {
-		dst = append(dst, string(elementID))
-	}
-	return dst
+	return timestamps, elementIDs
 }
 
-func mustSeqReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, reader *seqReader) []int64 {
+func mustSeqReadTimestampsFrom(timestamps []int64, elementIDs []uint64, tm *timestampsMetadata, count int, reader *seqReader) ([]int64, []uint64) {
 	if tm.offset != reader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", tm.offset, reader.bytesRead)
 	}
@@ -364,32 +343,7 @@ func mustSeqReadTimestampsFrom(dst []int64, tm *timestampsMetadata, count int, r
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	reader.mustReadFull(bb.Buf)
-	var err error
-	dst, err = encoding.BytesToInt64List(dst, bb.Buf, tm.encodeType, tm.min, count)
-	if err != nil {
-		logger.Panicf("%s: cannot unmarshal timestamps: %v", reader.Path(), err)
-	}
-	return dst
-}
-
-func mustSeqReadElementIDsFrom(dst []string, em *elementIDsMetadata, count int, reader *seqReader) []string {
-	if em.offset != reader.bytesRead {
-		logger.Panicf("offset %d must be equal to bytesRead %d", em.offset, reader.bytesRead)
-	}
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(em.size))
-	reader.mustReadFull(bb.Buf)
-	decoder := encoding.BytesBlockDecoder{}
-	var elementIDsByteSlice [][]byte
-	elementIDsByteSlice, err := decoder.Decode(elementIDsByteSlice, bb.Buf, uint64(count))
-	if err != nil {
-		logger.Panicf("%s: cannot unmarshal elementIDs: %v", reader.Path(), err)
-	}
-	for _, elementID := range elementIDsByteSlice {
-		dst = append(dst, string(elementID))
-	}
-	return dst
+	return mustDecodeTimestampsWithVersions(timestamps, elementIDs, tm, count, reader.Path(), bb.Buf)
 }
 
 func generateBlock() *block {
@@ -397,7 +351,7 @@ func generateBlock() *block {
 	if v == nil {
 		return &block{}
 	}
-	return v.(*block)
+	return v
 }
 
 func releaseBlock(b *block) {
@@ -405,20 +359,20 @@ func releaseBlock(b *block) {
 	blockPool.Put(b)
 }
 
-var blockPool sync.Pool
+var blockPool = pool.Register[*block]("stream-block")
 
 type blockCursor struct {
-	p                  *part
-	timestamps         []int64
-	filteredTimestamps []int64
-	elementIDs         []string
-	tagFamilies        []tagFamily
-	tagValuesDecoder   encoding.BytesBlockDecoder
-	tagProjection      []pbv1.TagProjection
-	bm                 blockMetadata
-	idx                int
-	minTimestamp       int64
-	maxTimestamp       int64
+	p                *part
+	timestamps       []int64
+	elementFilter    posting.List
+	elementIDs       []uint64
+	tagFamilies      []tagFamily
+	tagValuesDecoder encoding.BytesBlockDecoder
+	tagProjection    []model.TagProjection
+	bm               blockMetadata
+	idx              int
+	minTimestamp     int64
+	maxTimestamp     int64
 }
 
 func (bc *blockCursor) reset() {
@@ -446,69 +400,70 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.minTimestamp = opts.minTimestamp
 	bc.maxTimestamp = opts.maxTimestamp
 	bc.tagProjection = opts.TagProjection
-	seriesID := bc.bm.seriesID
-	if opts.filteredRefMap != nil {
-		bc.filteredTimestamps = opts.filteredRefMap[seriesID]
-	}
+	bc.elementFilter = opts.elementFilter
 }
 
-func (bc *blockCursor) copyAllTo(r *pbv1.StreamResult, desc bool) {
-	var idx, offset int
-	if desc {
-		idx = 0
-		offset = bc.idx + 1
-	} else {
-		idx = bc.idx
-		offset = len(bc.timestamps)
+func (bc *blockCursor) copyAllTo(r *model.StreamResult, desc bool) {
+	start, end := 0, bc.idx+1
+	if !desc {
+		start, end = bc.idx, len(bc.timestamps)
 	}
-	if offset <= idx {
+	if end <= start {
 		return
 	}
-	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
-	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[idx:offset]...)
-	for i := idx; i < offset; i++ {
-		r.SIDs = append(r.SIDs, bc.bm.seriesID)
+
+	r.Timestamps = append(r.Timestamps, bc.timestamps[start:end]...)
+	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[start:end]...)
+	requiredCapacity := end - start
+	r.SIDs = append(r.SIDs, make([]common.SeriesID, requiredCapacity)...)
+	for i := range r.SIDs[len(r.SIDs)-requiredCapacity:] {
+		r.SIDs[len(r.SIDs)-requiredCapacity+i] = bc.bm.seriesID
 	}
+
+	if desc {
+		slices.Reverse(r.Timestamps)
+		slices.Reverse(r.ElementIDs)
+	}
+
 	if len(r.TagFamilies) != len(bc.tagProjection) {
-		for _, tp := range bc.tagProjection {
-			tf := pbv1.TagFamily{
-				Name: tp.Family,
+		r.TagFamilies = make([]model.TagFamily, len(bc.tagProjection))
+		for i, tp := range bc.tagProjection {
+			r.TagFamilies[i] = model.TagFamily{Name: tp.Family, Tags: make([]model.Tag, len(tp.Names))}
+			for j, n := range tp.Names {
+				r.TagFamilies[i].Tags[j] = model.Tag{Name: n}
 			}
-			for _, n := range tp.Names {
-				t := pbv1.Tag{
-					Name: n,
-				}
-				tf.Tags = append(tf.Tags, t)
-			}
-			r.TagFamilies = append(r.TagFamilies, tf)
 		}
 	}
+
 	for i, cf := range bc.tagFamilies {
-		for i2, c := range cf.tags {
-			if c.values != nil {
-				for _, v := range c.values[idx:offset] {
-					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, v))
-				}
-			} else {
-				for j := idx; j < offset; j++ {
-					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
+		for j, c := range cf.tags {
+			values := make([]*modelv1.TagValue, end-start)
+			for k := start; k < end; k++ {
+				if c.values != nil {
+					values[k-start] = mustDecodeTagValue(c.valueType, c.values[k])
+				} else {
+					values[k-start] = pbv1.NullTagValue
 				}
 			}
+			if desc {
+				slices.Reverse(values)
+			}
+			r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, values...)
 		}
 	}
 }
 
-func (bc *blockCursor) copyTo(r *pbv1.StreamResult) {
+func (bc *blockCursor) copyTo(r *model.StreamResult) {
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[bc.idx])
 	r.SIDs = append(r.SIDs, bc.bm.seriesID)
 	if len(r.TagFamilies) != len(bc.tagProjection) {
 		for _, tp := range bc.tagProjection {
-			tf := pbv1.TagFamily{
+			tf := model.TagFamily{
 				Name: tp.Family,
 			}
 			for _, n := range tp.Names {
-				t := pbv1.Tag{
+				t := model.Tag{
 					Name: n,
 				}
 				tf.Tags = append(tf.Tags, t)
@@ -552,15 +507,13 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 
 	idxList := make([]int, 0)
 	var start, end int
-	if bc.filteredTimestamps != nil {
-		for _, ts := range bc.filteredTimestamps {
-			idx := timestamp.Find(tmpBlock.timestamps, ts)
-			if idx == -1 {
-				continue
+	if bc.elementFilter != nil {
+		for i := range tmpBlock.elementIDs {
+			if bc.elementFilter.Contains(tmpBlock.elementIDs[i]) {
+				idxList = append(idxList, i)
+				bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[i])
+				bc.elementIDs = append(bc.elementIDs, tmpBlock.elementIDs[i])
 			}
-			idxList = append(idxList, idx)
-			bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[idx])
-			bc.elementIDs = append(bc.elementIDs, tmpBlock.elementIDs[idx])
 		}
 		if len(bc.timestamps) == 0 {
 			return false
@@ -590,7 +543,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
 						tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
 				}
-				if bc.filteredTimestamps != nil {
+				if len(idxList) > 0 {
 					for _, idx := range idxList {
 						t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[idx])
 					}
@@ -606,14 +559,14 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	return true
 }
 
-var blockCursorPool sync.Pool
+var blockCursorPool = pool.Register[*blockCursor]("stream-blockCursor")
 
 func generateBlockCursor() *blockCursor {
 	v := blockCursorPool.Get()
 	if v == nil {
 		return &blockCursor{}
 	}
-	return v.(*blockCursor)
+	return v
 }
 
 func releaseBlockCursor(bc *blockCursor) {
@@ -715,7 +668,7 @@ func generateBlockPointer() *blockPointer {
 	if v == nil {
 		return &blockPointer{}
 	}
-	return v.(*blockPointer)
+	return v
 }
 
 func releaseBlockPointer(bi *blockPointer) {
@@ -723,4 +676,4 @@ func releaseBlockPointer(bi *blockPointer) {
 	blockPointerPool.Put(bi)
 }
 
-var blockPointerPool sync.Pool
+var blockPointerPool = pool.Register[*blockPointer]("stream-blockPointer")

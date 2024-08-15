@@ -24,12 +24,17 @@ import (
 )
 
 var (
-	errTagNotDefined             = errors.New("tag is not defined")
-	errUnsupportedConditionOp    = errors.New("unsupported condition operation")
-	errUnsupportedConditionValue = errors.New("unsupported condition value type")
-	errInvalidCriteriaType       = errors.New("invalid criteria type")
-	errIndexNotDefined           = errors.New("index is not define for the tag")
-	errIndexSortingUnsupported   = errors.New("index does not support sorting")
+	// ErrUnsupportedConditionOp indicates an unsupported condition operation.
+	ErrUnsupportedConditionOp = errors.New("unsupported condition operation")
+	// ErrUnsupportedConditionValue indicates an unsupported condition value type.
+	ErrUnsupportedConditionValue = errors.New("unsupported condition value type")
+	// ErrInvalidCriteriaType indicates an invalid criteria type.
+	ErrInvalidCriteriaType = errors.New("invalid criteria type")
+	// ErrInvalidLogicalExpression indicates an invalid logical expression.
+	ErrInvalidLogicalExpression = errors.New("invalid logical expression")
+	errTagNotDefined            = errors.New("tag is not defined")
+	errIndexNotDefined          = errors.New("index is not define for the tag")
+	errIndexSortingUnsupported  = errors.New("index does not support sorting")
 )
 
 // Tag represents the combination of  tag family and tag name.

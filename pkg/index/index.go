@@ -24,17 +24,14 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/pkg/errors"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
-
-var errMalformed = errors.New("the data is malformed")
 
 // FieldKey is the key of field in a document.
 type FieldKey struct {
@@ -43,22 +40,9 @@ type FieldKey struct {
 	Analyzer    databasev1.IndexRule_Analyzer
 }
 
-// MarshalIndexRule encodes the index rule id to string representation.
-func (f FieldKey) MarshalIndexRule() string {
+// Marshal encodes f to string.
+func (f FieldKey) Marshal() string {
 	return string(convert.Uint32ToBytes(f.IndexRuleID))
-}
-
-// Marshal encodes f to bytes.
-func (f FieldKey) Marshal() []byte {
-	var s []byte
-	if f.HasSeriesID() {
-		s = f.SeriesID.Marshal()
-	}
-	i := []byte(f.MarshalIndexRule())
-	b := make([]byte, len(s)+len(i))
-	copy(b, s)
-	copy(b[len(s):], i)
-	return b
 }
 
 // HasSeriesID reports whether f has a series id.
@@ -66,67 +50,12 @@ func (f FieldKey) HasSeriesID() bool {
 	return f.SeriesID > 0
 }
 
-// MarshalToStr encodes f to string.
-func (f FieldKey) MarshalToStr() string {
-	return string(f.Marshal())
-}
-
-// Unmarshal decodes bytes to f.
-func (f *FieldKey) Unmarshal(raw []byte) error {
-	f.SeriesID = common.SeriesID(convert.BytesToUint64(raw[0:8]))
-	f.IndexRuleID = convert.BytesToUint32(raw[8:])
-	return nil
-}
-
-// Equal reports whether f and other have the same series id and index rule id.
-func (f FieldKey) Equal(other FieldKey) bool {
-	return f.SeriesID == other.SeriesID && f.IndexRuleID == other.IndexRuleID
-}
-
 // Field is a indexed item in a document.
 type Field struct {
 	Term   []byte
 	Key    FieldKey
 	NoSort bool
-}
-
-// Marshal encodes f to bytes.
-func (f Field) Marshal() []byte {
-	s := f.Key.SeriesID.Marshal()
-	i := []byte(f.Key.MarshalIndexRule())
-	b := make([]byte, len(s)+len(i)+len(f.Term))
-	bp := copy(b, s)
-	bp += copy(b[bp:], i)
-	copy(b[bp:], f.Term)
-	return b
-}
-
-// FieldStr return a string represent of Field which is composed by key and term.
-func FieldStr(key FieldKey, term []byte) string {
-	f := Field{Key: key, Term: term}
-	return string(f.Marshal())
-}
-
-// Unmarshal decodes bytes to f.
-func (f *Field) Unmarshal(raw []byte) error {
-	if len(raw) < 13 {
-		return errors.WithMessagef(errMalformed, "malformed field: expected more than 12, got %d", len(raw))
-	}
-	fk := &f.Key
-	err := fk.Unmarshal(raw[:12])
-	if err != nil {
-		return errors.Wrap(err, "unmarshal a field")
-	}
-	f.Term = UnmarshalTerm(raw)
-	return nil
-}
-
-// UnmarshalTerm decodes term from a encoded field.
-func UnmarshalTerm(raw []byte) []byte {
-	term := raw[12:]
-	result := make([]byte, len(term))
-	copy(result, term)
-	return result
+	Store  bool
 }
 
 // RangeOpts contains options to performance a continuous scan.
@@ -164,16 +93,19 @@ func (r RangeOpts) Between(value []byte) int {
 	return 0
 }
 
-// ItemRef represents a reference to an item.
-type ItemRef struct {
-	Term     []byte
-	SeriesID common.SeriesID
-	DocID    uint64
+// DocumentResult represents a document in an index.
+type DocumentResult struct {
+	EntityValues []byte
+	Values       map[string][]byte
+	SortedValue  []byte
+	SeriesID     common.SeriesID
+	DocID        uint64
+	Timestamp    int64
 }
 
 // SortedField returns the value of the sorted field.
-func (ir ItemRef) SortedField() []byte {
-	return ir.Term
+func (ir DocumentResult) SortedField() []byte {
+	return ir.SortedValue
 }
 
 // FieldIterator allows iterating over a field's posting values.
@@ -181,6 +113,7 @@ type FieldIterator[T sort.Comparable] interface {
 	Next() bool
 	Val() T
 	Close() error
+	Query() Query
 }
 
 // DummyFieldIterator never iterates.
@@ -192,18 +125,23 @@ func (i *dummyIterator) Next() bool {
 	return false
 }
 
-func (i *dummyIterator) Val() *ItemRef {
-	return &ItemRef{}
+func (i *dummyIterator) Val() *DocumentResult {
+	return &DocumentResult{}
 }
 
 func (i *dummyIterator) Close() error {
 	return nil
 }
 
-// Document represents a document in a index.
+func (i *dummyIterator) Query() Query {
+	return nil
+}
+
+// Document represents a document in an index.
 type Document struct {
 	Fields       []Field
 	EntityValues []byte
+	Timestamp    int64
 	DocID        uint64
 }
 
@@ -212,20 +150,19 @@ type Documents []Document
 
 // Batch is a collection of documents.
 type Batch struct {
-	Applied   chan struct{}
 	Documents Documents
 }
 
-// Writer allows writing fields and docID in a document to a index.
+// Writer allows writing fields and docID in a document to an index.
 type Writer interface {
-	Write(fields []Field, docID uint64) error
 	Batch(batch Batch) error
 }
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int) (iter FieldIterator[*ItemRef], err error)
-	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, preLoadSize int) (FieldIterator[*ItemRef], error)
+	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query) (Query, error)
+	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
+	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
 }
 
 // Searcher allows searching a field either by its key or by its key and term.
@@ -237,7 +174,12 @@ type Searcher interface {
 	Range(fieldKey FieldKey, opts RangeOpts) (list posting.List, err error)
 }
 
-// Store is an abstract of a index repository.
+// Query is an abstract of an index query.
+type Query interface {
+	fmt.Stringer
+}
+
+// Store is an abstract of an index repository.
 type Store interface {
 	io.Closer
 	Writer
@@ -245,7 +187,7 @@ type Store interface {
 	SizeOnDisk() int64
 }
 
-// Series represents a series in a index.
+// Series represents a series in an index.
 type Series struct {
 	EntityValues []byte
 	ID           common.SeriesID
@@ -255,11 +197,17 @@ func (s Series) String() string {
 	return fmt.Sprintf("%s:%d", s.EntityValues, s.ID)
 }
 
+// SeriesDocument represents a series document in an index.
+type SeriesDocument struct {
+	Fields map[string][]byte
+	Key    Series
+}
+
 // SeriesStore is an abstract of a series repository.
 type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
-	Search(context.Context, []SeriesMatcher) ([]Series, error)
+	Search(context.Context, []FieldKey, Query) ([]SeriesDocument, error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

@@ -57,8 +57,6 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 	cm.name = c.name
 	cm.valueType = c.valueType
 
-	// TODO: encoding values based on value type
-
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
@@ -114,7 +112,7 @@ func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *
 	}
 }
 
-var bigValuePool bytes.BufferPool
+var bigValuePool = bytes.NewBufferPool("measure-big-value")
 
 type columnFamily struct {
 	name    string

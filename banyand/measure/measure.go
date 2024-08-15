@@ -50,17 +50,18 @@ type option struct {
 }
 
 type measure struct {
-	databaseSupplier  schema.Supplier
-	l                 *logger.Logger
-	schema            *databasev1.Measure
-	processorManager  *topNProcessorManager
-	name              string
-	group             string
-	indexRules        []*databasev1.IndexRule
-	indexRuleLocators partition.IndexRuleLocator
-	topNAggregations  []*databasev1.TopNAggregation
-	interval          time.Duration
-	shardNum          uint32
+	databaseSupplier   schema.Supplier
+	l                  *logger.Logger
+	schema             *databasev1.Measure
+	processorManager   *topNProcessorManager
+	name               string
+	group              string
+	indexRules         []*databasev1.IndexRule
+	indexRuleLocators  partition.IndexRuleLocator
+	fieldIndexLocation partition.FieldIndexLocation
+	topNAggregations   []*databasev1.TopNAggregation
+	interval           time.Duration
+	shardNum           uint32
 }
 
 func (s *measure) startSteamingManager(pipeline queue.Queue) error {
@@ -102,7 +103,7 @@ func (s *measure) parseSpec() (err error) {
 	if s.schema.Interval != "" {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
-	s.indexRuleLocators = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules)
+	s.indexRuleLocators, s.fieldIndexLocation = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules)
 
 	return err
 }

@@ -57,8 +57,6 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	tm.name = t.name
 	tm.valueType = t.valueType
 
-	// TODO: encoding values based on value type
-
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
@@ -114,7 +112,7 @@ func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seq
 	}
 }
 
-var bigValuePool bytes.BufferPool
+var bigValuePool = bytes.NewBufferPool("stream-big-value")
 
 type tagFamily struct {
 	name string

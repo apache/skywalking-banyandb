@@ -27,7 +27,7 @@ import Header from './components/header.vue'
             <el-header>
                 <Header class="size"></Header>
             </el-header>
-            <el-main>
+            <el-main class="no-scroll">
                 <RouterView></RouterView>
             </el-main>
         </el-container>
@@ -37,6 +37,10 @@ import Header from './components/header.vue'
 
 
 <style lang="scss" scoped>
+.no-scroll {
+  overflow: hidden;
+}
+
 .el-container {
   height: 100%;
   padding: 0;

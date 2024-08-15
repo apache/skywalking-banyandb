@@ -19,6 +19,8 @@ package partition
 
 import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 // IndexRuleLocator is a helper struct to locate the index rule by tag name.
@@ -27,9 +29,21 @@ type IndexRuleLocator struct {
 	TagFamilyTRule []map[string]*databasev1.IndexRule
 }
 
+// FieldWithType is a helper struct to store the field type.
+type FieldWithType struct {
+	Key  index.FieldKey
+	Type pbv1.ValueType
+}
+
+// FieldIndexLocation is a helper struct to store the field index location.
+type FieldIndexLocation map[string]map[string]FieldWithType
+
 // ParseIndexRuleLocators returns a IndexRuleLocator based on the tag family spec and index rules.
-func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.TagFamilySpec, indexRules []*databasev1.IndexRule) (locators IndexRuleLocator) {
+func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.TagFamilySpec,
+	indexRules []*databasev1.IndexRule,
+) (locators IndexRuleLocator, fil FieldIndexLocation) {
 	locators.EntitySet = make(map[string]struct{}, len(entity.TagNames))
+	fil = make(FieldIndexLocation)
 	for i := range entity.TagNames {
 		locators.EntitySet[entity.TagNames[i]] = struct{}{}
 	}
@@ -50,8 +64,19 @@ func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.Ta
 			ir := findIndexRuleByTagName(families[i].Tags[j].Name)
 			if ir != nil {
 				ttr[families[i].Tags[j].Name] = ir
+				tagFamily, ok := fil[families[i].Name]
+				if !ok {
+					tagFamily = make(map[string]FieldWithType)
+					fil[families[i].Name] = tagFamily
+				}
+				tagFamily[families[i].Tags[j].Name] = FieldWithType{
+					Key: index.FieldKey{
+						IndexRuleID: ir.Metadata.Id,
+					},
+					Type: pbv1.MustTagValueSpecToValueType(families[i].Tags[j].Type),
+				}
 			}
 		}
 	}
-	return locators
+	return locators, fil
 }
