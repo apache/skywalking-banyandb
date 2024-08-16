@@ -704,17 +704,17 @@ Trace is the top level message of a trace.
 | Name | Number | Description |
 | ---- | ------ | ----------- |
 | MEASURE_AGGREGATE_UNSPECIFIED | 0 |  |
-| MEASURE_AGGREGATE_MIN | 1 |  |
-| MEASURE_AGGREGATE_MAX | 2 |  |
-| MEASURE_AGGREGATE_COUNT | 3 |  |
-| MEASURE_AGGREGATE_SUM | 4 |  |
-| MEASURE_AGGREGATE_AVG | 5 |  |
-| MEASURE_AGGREGATE_PERCENT | 6 |  |
-| MEASURE_AGGREGATE_RATE | 7 |  |
-| MEASURE_AGGREGATE_HISTOGRAM | 8 |  |
-| MEASURE_AGGREGATE_PERCENTILE2 | 9 |  |
-| MEASURE_AGGREGATE_APDEX | 10 |  |
-| MEASURE_AGGREGATE_PERCENTILE | 11 |  |
+| MEASURE_AGGREGATE_MIN | 1 | Calculate the minimum value of delta measures. |
+| MEASURE_AGGREGATE_MAX | 2 | Calculate the maximum value of delta measures. |
+| MEASURE_AGGREGATE_COUNT | 3 | Count the number of delta measures. |
+| MEASURE_AGGREGATE_SUM | 4 | Calculate the sum value of delta measures. |
+| MEASURE_AGGREGATE_AVG | 5 | Calculate the average value of delta measures. |
+| MEASURE_AGGREGATE_PERCENT | 6 | Calculate the percentage of delta measures, where the input matches with the condition. |
+| MEASURE_AGGREGATE_RATE | 7 | Calculate the ratio for measures, where the input matches with the condition. |
+| MEASURE_AGGREGATE_HISTOGRAM | 8 | Calculate the histogram for delta measures. |
+| MEASURE_AGGREGATE_PERCENTILE2 | 9 | Calculate the {p99, p95, p90, p75, p50} for delta measures. |
+| MEASURE_AGGREGATE_APDEX | 10 | Calculate the apdex for delta measures. |
+| MEASURE_AGGREGATE_PERCENTILE | 11 | Same like PERCENTILE2, little different on algorithm. |
 
 
  
