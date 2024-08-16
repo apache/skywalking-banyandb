@@ -55,3 +55,40 @@ The new added data nodes can be automatically discovered by the existing liaison
 The cluster's availability is also improved by increasing the number of data nodes, as active data nodes need to handle a lower additional workload when some data nodes become unavailable. For example, if one node out of 2 nodes is unavailable, then 50% of the load is re-distributed across the remaining node, resulting in a 100% per-node workload increase. If one node out of 10 nodes is unavailable, then 10% of the load is re-distributed across the 9 remaining nodes, resulting in only an 11% per-node workload increase.
 
 Increasing the number of etcd nodes can increase the cluster's metadata capacity and improve the cluster's metadata query performance. It can also improve the cluster's metadata availability, as the metadata is replicated across all the etcd nodes. However, the cluster size should be odd to avoid split-brain situations.
+
+The steps of adding more data nodes:
+
+1. Boot up the new data node. They will register themselves to the etcd cluster. The liaison nodes will discover the new data node automatically.
+2. If the shards are not balanced, the new data node will receive the shards from the existing data nodes. The shards are balanced automatically.
+3. Or if the shards are too few to balance, more shards should be created by increasing `shard_num` of the `group`. Seeing the [CRUD Groups](../interacting/bydbctl/schema/group.md) for more details.
+4. The new data node will start to ingest data and serve queries.
+
+## Availability
+
+The BanyanDB cluster remains available for data ingestion and data querying even if some of its components are temporarily unavailable.
+
+### Liaison Node Failure
+
+In the event of a liaison node failure, the cluster remains available when the gRPC load balancer can stop sending requests to the failed liaison node and start sending requests to the remaining liaison nodes. The failed liaison node is replaced by the remaining liaison nodes, and the cluster continues to ingest data and serve queries. However, if the remaining liaison nodes are overloaded, the cluster might face performance degradation.
+
+It is recommended to monitor the cluster's performance and add more liaison nodes in case of performance degradation. A workload management platform, such as Kubernetes, can be used to automatically scale the liaison nodes based on the cluster's performance metrics.
+
+### Data Node Failure
+
+If a data node fails, the cluster remains available. The failed data node is replaced by the remaining data nodes, and the cluster continues to ingest new data and serve queries. If the remaining data nodes are overloaded, the cluster might face performance degradation.
+
+The liaison nodes automatically discover the failed data node through the etcd cluster. They will perform a health check on the failed data node. If the failed data node is not healthy, the liaison nodes will stop sending requests to the failed data node and start sending requests to the remaining data nodes. Otherwise, the liaison nodes will continue sending requests to the failed data node in case of a temporary failure between the etcd cluster and the data node.
+
+Liaison nodes continue serving queries if at least one data node is available. However, the responses might lose some data points that are stored in the failed data node. The lost data points are automatically recovered when the failed data node is back online.
+
+The client might face a "grpc: the client connection is closing" error temporarily when the liaison nodes are switching the requests from the failed data node to the remaining data nodes. The client should retry the request in case of this error.
+
+A workload management platform, such as Kubernetes, can be used to automatically scale the data nodes based on the cluster's performance metrics. But the shard number of the group should be increased manually. A proper practice is to set a expected maximum shard number for the group when creating the group. The shard number should match the maximum number of data nodes that the group can have.
+
+### etcd Node Failure
+
+If an etcd node fails, the cluster can still ingest new data and serve queries of `Stream` and `Measure`. `Property` operations are not available during the etcd node failure.
+
+When the etcd node is back online, the cluster automatically recovers without any manual intervention. If the etcd cluster lost the data, the client should rerun the metadata initialization process to recover the metadata.
+
+You might see some etcd-related errors in the logs of the liaison nodes and data nodes. These errors are automatically recovered when the failed etcd node is back online.
