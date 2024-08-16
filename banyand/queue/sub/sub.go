@@ -68,7 +68,10 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			return nil
 		}
 		if err != nil {
-			if status.Code(err) == codes.Canceled {
+			// If the context is canceled or the deadline is exceeded, the stream will be closed.
+			// In this case, we should return nil to avoid logging the error.
+			// Deadline exceeded will be raised when other data nodes are not available, and the client timeout context is triggered.
+			if status.Code(err) == codes.Canceled || status.Code(err) == codes.DeadlineExceeded {
 				return nil
 			}
 			s.log.Error().Err(err).Msg("failed to receive message")
