@@ -45,6 +45,7 @@ Release Notes.
 - Add quick-start guide.
 - Add web-ui interacting guide.
 - Add bydbctl interacting guide.
+- Add cluster management guide.
 
 ### Chores
 

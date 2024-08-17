@@ -97,11 +97,23 @@ func (r *roundRobinSelector) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.removeGroup(group.Metadata.Name)
 	for i := uint32(0); i < group.ResourceOpts.ShardNum; i++ {
 		k := key{group: group.Metadata.Name, shardID: i}
 		r.lookupTable = append(r.lookupTable, k)
 	}
 	r.sortEntries()
+}
+
+func (r *roundRobinSelector) removeGroup(group string) {
+	for i := 0; i < len(r.lookupTable); {
+		if r.lookupTable[i].group == group {
+			copy(r.lookupTable[i:], r.lookupTable[i+1:])
+			r.lookupTable = r.lookupTable[:len(r.lookupTable)-1]
+		} else {
+			i++
+		}
+	}
 }
 
 func (r *roundRobinSelector) OnDelete(schemaMetadata schema.Metadata) {
@@ -111,15 +123,7 @@ func (r *roundRobinSelector) OnDelete(schemaMetadata schema.Metadata) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	group := schemaMetadata.Spec.(*commonv1.Group)
-	for i := uint32(0); i < group.ResourceOpts.ShardNum; i++ {
-		k := key{group: group.Metadata.Name, shardID: i}
-		for j := range r.lookupTable {
-			if r.lookupTable[j] == k {
-				r.lookupTable = append(r.lookupTable[:j], r.lookupTable[j+1:]...)
-				break
-			}
-		}
-	}
+	r.removeGroup(group.Metadata.Name)
 }
 
 func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {

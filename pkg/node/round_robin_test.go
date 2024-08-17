@@ -133,20 +133,61 @@ func TestStringer(t *testing.T) {
 	assert.NotEmpty(t, selector.String())
 }
 
-var groupSchema = schema.Metadata{
-	TypeMeta: schema.TypeMeta{
-		Kind: schema.KindGroup,
-	},
-	Spec: &commonv1.Group{
-		Metadata: &commonv1.Metadata{
-			Name: "group1",
-		},
-		Catalog: commonv1.Catalog_CATALOG_MEASURE,
-		ResourceOpts: &commonv1.ResourceOpts{
-			ShardNum: 2,
-		},
-	},
+func TestChangeShard(t *testing.T) {
+	s := NewRoundRobinSelector(nil)
+	selector := s.(*roundRobinSelector)
+	setupGroup(selector)
+	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
+	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
+	_, err := selector.Pick("group1", "", 0)
+	assert.NoError(t, err)
+	_, err = selector.Pick("group1", "", 1)
+	assert.NoError(t, err)
+	// Reduce shard number to 1
+	selector.OnAddOrUpdate(groupSchema1)
+	_, err = selector.Pick("group1", "", 0)
+	assert.NoError(t, err)
+	_, err = selector.Pick("group1", "", 1)
+	assert.Error(t, err)
+	// Restore shard number to 2
+	setupGroup(selector)
+	node1, err := selector.Pick("group1", "", 0)
+	assert.NoError(t, err)
+	node2, err := selector.Pick("group1", "", 1)
+	assert.NoError(t, err)
+	assert.NotEqual(t, node1, node2)
 }
+
+var (
+	groupSchema = schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind: schema.KindGroup,
+		},
+		Spec: &commonv1.Group{
+			Metadata: &commonv1.Metadata{
+				Name: "group1",
+			},
+			Catalog: commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+			},
+		},
+	}
+	groupSchema1 = schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind: schema.KindGroup,
+		},
+		Spec: &commonv1.Group{
+			Metadata: &commonv1.Metadata{
+				Name: "group1",
+			},
+			Catalog: commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 1,
+			},
+		},
+	}
+)
 
 func setupGroup(selector Selector) {
 	selector.(*roundRobinSelector).OnAddOrUpdate(groupSchema)
