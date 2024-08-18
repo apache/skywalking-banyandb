@@ -97,4 +97,5 @@ $ ls bydbctl/build/bin
 bydbctl  bydbctl--darwin-amd64  bydbctl--darwin-arm64  bydbctl--linux-386  bydbctl--linux-amd64  bydbctl--linux-arm64  bydbctl--windows-386  bydbctl--windows-amd64
 ```
 
-> The build script now checks if the binary file exists before rebuilding. If you want to rebuild, please remove the binary file manually.
+> 1. The build script now checks if the binary file exists before rebuilding. If you want to rebuild, please remove the binary file manually.
+> 2. `make -C banyand release` will automatically match your OS and platform. If you run it on macOS, you will get the `banyand-server-static` binary for `darwin-arm64`.
