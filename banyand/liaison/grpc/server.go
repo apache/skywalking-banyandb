@@ -41,7 +41,6 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -219,20 +218,13 @@ func (s *server) Serve() run.StopNotify {
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 
-	unaryMetrics, streamMetrics := observability.MetricsServerInterceptor()
 	streamChain := []grpclib.StreamServerInterceptor{
 		grpc_validator.StreamServerInterceptor(),
 		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
-	if streamMetrics != nil {
-		streamChain = append(streamChain, streamMetrics)
-	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
 		grpc_validator.UnaryServerInterceptor(),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
-	}
-	if unaryMetrics != nil {
-		unaryChain = append(unaryChain, unaryMetrics)
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),

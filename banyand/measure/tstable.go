@@ -46,7 +46,7 @@ const (
 )
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, _ timestamp.TimeRange, option option,
+	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	tst := tsTable{
 		fileSystem: fileSystem,
@@ -54,6 +54,9 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		option:     option,
 		l:          l,
 		p:          p,
+	}
+	if m != nil {
+		tst.metrics = m.(*metrics)
 	}
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
@@ -115,15 +118,16 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 
 type tsTable struct {
 	fileSystem    fs.FileSystem
-	option        option
 	l             *logger.Logger
 	snapshot      *snapshot
 	introductions chan *introduction
 	loopCloser    *run.Closer
-	p             common.Position
-	root          string
-	gc            garbageCleaner
-	curPartID     uint64
+	*metrics
+	p         common.Position
+	option    option
+	root      string
+	gc        garbageCleaner
+	curPartID uint64
 	sync.RWMutex
 }
 

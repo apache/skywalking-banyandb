@@ -23,6 +23,7 @@ Release Notes.
 - Add the topN query trace.
 - Introduce the round-robin selector to Liaison Node.
 - Optimize query performance of series index.
+- Add storage metrics.
 
 ### Bugs
 

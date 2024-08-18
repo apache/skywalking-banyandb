@@ -15,24 +15,35 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+package stream
 
 import (
-	"context"
-	"time"
-
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
-	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 )
 
-type nativeProviderFactory struct {
-	metadata metadata.Repo
-	nodeInfo native.NodeInfo
+var streamScope = observability.RootScope.SubScope("stream")
+
+type metrics struct {
+	totalWritten meter.Counter
 }
 
-func (f nativeProviderFactory) provider(scope meter.Scope) meter.Provider {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return native.NewProvider(ctx, scope, f.metadata, f.nodeInfo)
+func (m *metrics) incTotalWritten(delta int) {
+	if m == nil {
+		return
+	}
+	m.totalWritten.Inc(float64(delta))
+}
+
+func (m *metrics) DeleteAll() {
+	m.totalWritten.Delete()
+}
+
+func (s *supplier) newMetrics(p common.Position) storage.Metrics {
+	factory := s.omr.With(streamScope.ConstLabels(meter.LabelPairs{"group": p.Database}))
+	return &metrics{
+		totalWritten: factory.NewCounter("total_written"),
+	}
 }

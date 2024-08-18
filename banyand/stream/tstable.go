@@ -47,15 +47,16 @@ const (
 )
 
 type tsTable struct {
-	index         *elementIndex
 	fileSystem    fs.FileSystem
-	option        option
+	loopCloser    *run.Closer
 	l             *logger.Logger
 	snapshot      *snapshot
 	introductions chan *introduction
-	loopCloser    *run.Closer
+	index         *elementIndex
+	metrics       *metrics
 	p             common.Position
 	root          string
+	option        option
 	gc            garbageCleaner
 	curPartID     uint64
 	sync.RWMutex
@@ -166,7 +167,7 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 }
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, _ timestamp.TimeRange, option option,
+	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second))
 	if err != nil {
@@ -179,6 +180,9 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		option:     option,
 		l:          l,
 		p:          p,
+	}
+	if m != nil {
+		tst.metrics = m.(*metrics)
 	}
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
@@ -282,6 +286,7 @@ func (tst *tsTable) mustAddElements(es *elements) {
 	case <-ind.applied:
 	case <-tst.loopCloser.CloseNotify():
 	}
+	tst.metrics.incTotalWritten(len(es.timestamps))
 }
 
 type tstIter struct {

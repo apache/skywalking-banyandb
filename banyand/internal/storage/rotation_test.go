@@ -140,6 +140,7 @@ func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *
 		TTL:             IntervalRule{Unit: DAY, Num: 3},
 		ShardNum:        1,
 		TSTableCreator:  MockTSTableCreator,
+		MetricsCreator:  MockMetricsCreator,
 	}
 	ctx := context.Background()
 	mc := timestamp.NewMockClock()
@@ -169,7 +170,13 @@ func (m *MockTSTable) Close() error {
 }
 
 var MockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
-	_ *logger.Logger, _ timestamp.TimeRange, _ any,
+	_ *logger.Logger, _ timestamp.TimeRange, _, _ any,
 ) (*MockTSTable, error) {
 	return &MockTSTable{}, nil
 }
+
+type MockMetrics struct{}
+
+func (m *MockMetrics) DeleteAll() {}
+
+var MockMetricsCreator = func(_ common.Position) Metrics { return &MockMetrics{} }

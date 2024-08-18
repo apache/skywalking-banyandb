@@ -109,7 +109,16 @@ type TSTable interface {
 
 // TSTableCreator creates a TSTable.
 type TSTableCreator[T TSTable, O any] func(fileSystem fs.FileSystem, root string, position common.Position,
-	l *logger.Logger, timeRange timestamp.TimeRange, option O) (T, error)
+	l *logger.Logger, timeRange timestamp.TimeRange, option O, metrics any) (T, error)
+
+// Metrics is the interface of metrics.
+type Metrics interface {
+	// DeleteAll deletes all metrics.
+	DeleteAll()
+}
+
+// MetricsCreator creates a Metrics.
+type MetricsCreator func(position common.Position) Metrics
 
 // IntervalUnit denotes the unit of a time point.
 type IntervalUnit int

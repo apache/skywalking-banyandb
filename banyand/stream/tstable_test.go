@@ -306,7 +306,7 @@ func Test_tstIter(t *testing.T) {
 					defer defFn()
 
 					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, elementIndexFlushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()})
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, elementIndexFlushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
 					require.NoError(t, err)
 					for i, es := range tt.esList {
 						tst.mustAddElements(es)
@@ -359,7 +359,7 @@ func Test_tstIter(t *testing.T) {
 							flushTimeout:             defaultFlushTimeout,
 							elementIndexFlushTimeout: defaultFlushTimeout,
 							mergePolicy:              newDefaultMergePolicyForTesting(),
-						})
+						}, nil)
 					require.NoError(t, err)
 					for _, es := range tt.esList {
 						tst.mustAddElements(es)
@@ -391,7 +391,7 @@ func Test_tstIter(t *testing.T) {
 							flushTimeout:             defaultFlushTimeout,
 							elementIndexFlushTimeout: defaultFlushTimeout,
 							mergePolicy:              newDefaultMergePolicyForTesting(),
-						})
+						}, nil)
 					require.NoError(t, err)
 					verify(t, tt, tst)
 				})

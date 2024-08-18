@@ -50,8 +50,8 @@ type MetricCollection struct {
 }
 
 // NewMetricsCollection creates a new MetricCollection.
-func NewMetricsCollection(pipeline queue.Client, nodeSelector NodeSelector) MetricCollection {
-	return MetricCollection{
+func NewMetricsCollection(pipeline queue.Client, nodeSelector NodeSelector) *MetricCollection {
+	return &MetricCollection{
 		pipeline:     pipeline,
 		nodeSelector: nodeSelector,
 	}
@@ -96,7 +96,7 @@ func (m *MetricCollection) buildIWR(metricName string, metric metricWithLabelVal
 	writeRequest := &measurev1.WriteRequest{
 		MessageId: uint64(time.Now().UnixNano()),
 		Metadata: &commonv1.Metadata{
-			Group: NativeObservabilityGroupName,
+			Group: ObservabilityGroupName,
 			Name:  metricName,
 		},
 		DataPoint: &measurev1.DataPointValue{

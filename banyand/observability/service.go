@@ -24,8 +24,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/robfig/cron/v3"
-	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -44,8 +45,6 @@ const (
 var (
 	_ run.Service = (*metricService)(nil)
 	_ run.Config  = (*metricService)(nil)
-	// MetricsServerInterceptor is the function to obtain grpc metrics interceptor.
-	MetricsServerInterceptor func() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) = emptyMetricsServerInterceptor
 )
 
 // Service type for Metric Service.
@@ -55,7 +54,7 @@ type Service interface {
 }
 
 // NewMetricService returns a metric service.
-func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType string, nodeSelector native.NodeSelector) Service {
+func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType string, nodeSelector native.NodeSelector) MetricsRegistry {
 	return &metricService{
 		closer:       run.NewCloser(1),
 		metadata:     metadata,
@@ -66,13 +65,16 @@ func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType st
 }
 
 type metricService struct {
-	l            *logger.Logger
-	svr          *http.Server
-	closer       *run.Closer
-	scheduler    *timestamp.Scheduler
 	metadata     metadata.Repo
-	pipeline     queue.Client
 	nodeSelector native.NodeSelector
+	pipeline     queue.Client
+	scheduler    *timestamp.Scheduler
+	l            *logger.Logger
+	closer       *run.Closer
+	svr          *http.Server
+	nCollection  *native.MetricCollection
+	promReg      *prometheus.Registry
+	npf          nativeProviderFactory
 	listenAddr   string
 	nodeType     string
 	modes        []string
@@ -105,13 +107,13 @@ func (p *metricService) Validate() error {
 
 func (p *metricService) PreRun(ctx context.Context) error {
 	p.l = logger.GetLogger(p.Name())
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
 	if containsMode(p.modes, flagPromethusMode) {
-		MetricsServerInterceptor = promMetricsServerInterceptor
+		p.promReg = prometheus.NewRegistry()
+		p.promReg.MustRegister(collectors.NewGoCollector())
+		p.promReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	}
 	if containsMode(p.modes, flagNativeMode) {
-		NativeMetricCollection = native.NewMetricsCollection(p.pipeline, p.nodeSelector)
+		p.nCollection = native.NewMetricsCollection(p.pipeline, p.nodeSelector)
 		val := ctx.Value(common.ContextNodeKey)
 		if val == nil {
 			return errors.New("metric service native mode, node id is empty")
@@ -123,9 +125,11 @@ func (p *metricService) PreRun(ctx context.Context) error {
 			GrpcAddress: node.GrpcAddress,
 			HTTPAddress: node.HTTPAddress,
 		}
-		NativeMeterProvider = newNativeMeterProvider(ctx, p.metadata, nodeInfo)
+		p.npf = nativeProviderFactory{
+			metadata: p.metadata,
+			nodeInfo: nodeInfo,
+		}
 	}
-	initMetrics(p.modes)
 	return nil
 }
 
@@ -136,6 +140,7 @@ func (p *metricService) Name() string {
 func (p *metricService) Serve() run.StopNotify {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
+	p.initMetrics()
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
 	err := p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
@@ -148,11 +153,11 @@ func (p *metricService) Serve() run.StopNotify {
 	metricsMux := http.NewServeMux()
 	metricsMux.HandleFunc("/_route", p.routeTableHandler)
 	if containsMode(p.modes, flagPromethusMode) {
-		registerMetricsEndpoint(metricsMux)
+		registerMetricsEndpoint(p.promReg, metricsMux)
 	}
 	if containsMode(p.modes, flagNativeMode) {
 		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, "@every 5s", func(_ time.Time, _ *logger.Logger) bool {
-			NativeMetricCollection.FlushMetrics()
+			p.nCollection.FlushMetrics()
 			return true
 		})
 		if err != nil {
@@ -182,6 +187,10 @@ func (p *metricService) GracefulStop() {
 		_ = p.svr.Close()
 	}
 	p.closer.CloseThenWait()
+}
+
+func (p *metricService) NativeEnabled() bool {
+	return containsMode(p.modes, flagNativeMode)
 }
 
 func (p *metricService) routeTableHandler(w http.ResponseWriter, _ *http.Request) {

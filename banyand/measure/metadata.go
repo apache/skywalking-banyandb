@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -258,8 +259,9 @@ var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 type supplier struct {
 	metadata metadata.Repo
 	pipeline queue.Queue
-	option   option
+	omr      observability.MetricsRegistry
 	l        *logger.Logger
+	option   option
 	path     string
 }
 
@@ -270,6 +272,7 @@ func newSupplier(path string, svc *service) *supplier {
 		l:        svc.l,
 		pipeline: svc.localPipeline,
 		option:   svc.option,
+		omr:      svc.omr,
 	}
 }
 
@@ -293,6 +296,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
 		ShardNum:                       groupSchema.ResourceOpts.ShardNum,
 		Location:                       path.Join(s.path, groupSchema.Metadata.Name),
 		TSTableCreator:                 newTSTable,
+		MetricsCreator:                 s.newMetrics,
 		SegmentInterval:                storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
 		TTL:                            storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
 		Option:                         s.option,

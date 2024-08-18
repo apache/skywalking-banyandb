@@ -62,12 +62,11 @@ type Position struct {
 	Database string
 	Shard    string
 	Segment  string
-	Block    string
 }
 
 // LabelNames returns the label names of Position.
 func LabelNames() []string {
-	return []string{"module", "database", "shard", "seg", "block"}
+	return []string{"module", "database", "shard", "seg"}
 }
 
 // ShardLabelNames returns the label names of Position. It is used for shard level metrics.
@@ -77,7 +76,7 @@ func ShardLabelNames() []string {
 
 // LabelValues returns the label values of Position.
 func (p Position) LabelValues() []string {
-	return []string{p.Module, p.Database, p.Shard, p.Segment, p.Block}
+	return []string{p.Module, p.Database, p.Shard, p.Segment}
 }
 
 // ShardLabelValues returns the label values of Position. It is used for shard level metrics.

@@ -51,6 +51,7 @@ const (
 type TSDBOpts[T TSTable, O any] struct {
 	Option                         O
 	TSTableCreator                 TSTableCreator[T, O]
+	MetricsCreator                 MetricsCreator
 	Location                       string
 	SegmentInterval                IntervalRule
 	TTL                            IntervalRule
@@ -116,7 +117,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		tsEventCh: make(chan int64),
 		p:         p,
 		segmentController: newSegmentController[T](ctx, location,
-			l, opts),
+			l, opts, opts.MetricsCreator(p)),
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	lockPath := filepath.Join(opts.Location, lockFilename)

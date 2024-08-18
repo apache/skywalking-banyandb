@@ -41,18 +41,19 @@ import (
 var ErrExpiredData = errors.New("expired data")
 
 type segment[T TSTable, O any] struct {
+	metrics  any
 	l        *logger.Logger
 	index    *seriesIndex
 	sLst     atomic.Pointer[[]*shard[T]]
 	position common.Position
 	timestamp.TimeRange
-	location      string
 	suffix        string
+	location      string
 	opts          TSDBOpts[T, O]
+	mu            sync.Mutex
 	refCount      int32
 	mustBeDeleted uint32
 	id            segmentID
-	mu            sync.Mutex
 }
 
 func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string,
@@ -76,6 +77,7 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 		refCount:  1,
 		index:     sir,
 		opts:      opts,
+		metrics:   sc.metrics,
 	}
 	s.l = logger.Fetch(ctx, s.String())
 	return s, s.loadShards()
@@ -194,6 +196,7 @@ func (s *segment[T, O]) String() string {
 
 type segmentController[T TSTable, O any] struct {
 	clock    timestamp.Clock
+	metrics  Metrics
 	l        *logger.Logger
 	position common.Position
 	location string
@@ -204,7 +207,7 @@ type segmentController[T TSTable, O any] struct {
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
-	l *logger.Logger, opts TSDBOpts[T, O],
+	l *logger.Logger, opts TSDBOpts[T, O], metrics Metrics,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	return &segmentController[T, O]{
@@ -213,6 +216,7 @@ func newSegmentController[T TSTable, O any](ctx context.Context, location string
 		l:        l,
 		clock:    clock,
 		position: common.GetPosition(ctx),
+		metrics:  metrics,
 	}
 }
 
@@ -409,6 +413,7 @@ func (sc *segmentController[T, O]) close() {
 		s.DecRef()
 	}
 	sc.lst = sc.lst[:0]
+	sc.metrics.DeleteAll()
 }
 
 func loadSegments[T TSTable, O any](root, prefix string, parser *segmentController[T, O], intervalRule IntervalRule, loadFn func(start, end time.Time) error) error {
