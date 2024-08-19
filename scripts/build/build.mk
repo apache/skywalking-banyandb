@@ -61,7 +61,7 @@ $(addprefix $(BUILD_DIR)/,$(STATIC_BINARIES)): $(BUILD_DIR)/$(NAME)-%-static:
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 	        -buildvcs=false \
 		-a --ldflags '${GO_LINK_VERSION} -extldflags "-static"' -tags "netgo $(BUILD_TAGS)" -installsuffix netgo \
-		-o $(BUILD_DIR)/$(NAME)-$*-static github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/$*
+		-o $(BUILD_DIR)/$(NAME)-$*-static github.com/apache/skywalking-banyandb/$(SOURCE_DIR)/cmd/server
 	chmod +x $(BUILD_DIR)/$(NAME)-$*-static
 	@echo "Done building static $(NAME) $*"
 

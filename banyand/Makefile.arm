@@ -16,18 +16,12 @@
 # under the License.
 #
 
-release:
-	$(MAKE) -f Makefile.x86 release
-	$(MAKE) -f Makefile.arm release
+NAME := banyand
+SERVER := $(NAME)-server
+BINARIES := $(SERVER)-arm
+DEBUG_BINARIES := $(SERVER)-debug
 
+GOOS := linux
+GOARCH := arm64
 
-include Makefile.x86
-include Makefile.arm
-
-include ../scripts/build/version.mk
-include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-include ../scripts/build/vendor.mk
-include ../scripts/build/help.mk
+include ../scripts/build/build.mk
