@@ -93,8 +93,8 @@ catalog:
             path: "/interacting/web-ui/property"
       - name: "Java Client"
         path: "/interacting/java-client"
-      - name: "Deleting Data"
-        path: "/interacting/deleting-data"
+      - name: "Data Lifecycle"
+        path: "/interacting/data-lifecycle"
   - name: "Operation and Maintenance"
     catalog:
       - name: "Configure BanyanDB"
