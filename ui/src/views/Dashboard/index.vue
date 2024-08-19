@@ -389,7 +389,8 @@ watchEffect(() => {
         </div>
         <div class="error-alert">
             <!-- Conditionally display the alert if hasMonitoring is false -->
-            <el-alert v-if="!hasMonitoring" title="Self-monitoring not available, please turn it on by setting \"--observability-modes=native\"."
+            <el-alert v-if="!hasMonitoring"
+                title="Self-monitoring not available, please turn it on by setting &quot;--observability-modes=native&quot;."
                 type="error" center show-icon :closable="false" />
         </div>
         <el-card shadow="always">
