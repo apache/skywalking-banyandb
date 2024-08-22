@@ -242,6 +242,7 @@ func (tst *tsTable) Close() error {
 	}
 	tst.Lock()
 	defer tst.Unlock()
+	tst.deleteMetrics()
 	if tst.snapshot == nil {
 		return nil
 	}
@@ -265,6 +266,7 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	ind.memPart = newPartWrapper(mp, p)
 	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
 
+	startTime := time.Now()
 	select {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
@@ -274,6 +276,9 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	case <-ind.applied:
 	case <-tst.loopCloser.CloseNotify():
 	}
+	tst.incTotalWritten(len(dps.timestamps))
+	tst.incTotalBatch(1)
+	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
 }
 
 type tstIter struct {
