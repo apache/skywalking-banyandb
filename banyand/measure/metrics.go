@@ -41,10 +41,16 @@ func (m *metrics) DeleteAll() {
 	m.totalWritten.Delete()
 }
 
-func (s *supplier) newMetrics(p common.Position) storage.Metrics {
+func (s *supplier) newMetrics(p common.Position) (storage.Metrics, *observability.Factory) {
 	factory := s.omr.With(measureScope.ConstLabels(meter.LabelPairs{"group": p.Database}))
 	return &metrics{
 		totalWritten: factory.NewCounter("total_written"),
+	}, factory
+}
+
+func (tst *tsTable) Collect(m storage.Metrics) {
+	if m == nil {
+		return
 	}
 }
 

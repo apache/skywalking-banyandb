@@ -33,6 +33,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -169,21 +170,23 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
-	index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second))
-	if err != nil {
-		return nil, err
-	}
 	tst := tsTable{
-		index:      index,
 		fileSystem: fileSystem,
 		root:       rootPath,
 		option:     option,
 		l:          l,
 		p:          p,
 	}
+	var indexMetrics *inverted.Metrics
 	if m != nil {
 		tst.metrics = m.(*metrics)
+		indexMetrics = tst.metrics.indexMetrics
 	}
+	index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics)
+	if err != nil {
+		return nil, err
+	}
+	tst.index = index
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
@@ -255,6 +258,7 @@ func (tst *tsTable) Close() error {
 	}
 	tst.Lock()
 	defer tst.Unlock()
+	tst.deleteMetrics()
 	if tst.snapshot == nil {
 		return tst.index.Close()
 	}
@@ -277,6 +281,7 @@ func (tst *tsTable) mustAddElements(es *elements) {
 	ind.applied = make(chan struct{})
 	ind.memPart = newPartWrapper(mp, p)
 	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
+	startTime := time.Now()
 	select {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
@@ -286,7 +291,9 @@ func (tst *tsTable) mustAddElements(es *elements) {
 	case <-ind.applied:
 	case <-tst.loopCloser.CloseNotify():
 	}
-	tst.metrics.incTotalWritten(len(es.timestamps))
+	tst.incTotalWritten(len(es.timestamps))
+	tst.incTotalBatch(1)
+	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
 }
 
 type tstIter struct {

@@ -64,24 +64,34 @@ type Position struct {
 	Segment  string
 }
 
-// LabelNames returns the label names of Position.
-func LabelNames() []string {
-	return []string{"module", "database", "shard", "seg"}
+// DBLabelNames returns the label names of Position in the database level.
+func DBLabelNames() []string {
+	return []string{"group"}
+}
+
+// SegLabelNames returns the label names of Position in the segment level.
+func SegLabelNames() []string {
+	return []string{"seg"}
 }
 
 // ShardLabelNames returns the label names of Position. It is used for shard level metrics.
 func ShardLabelNames() []string {
-	return []string{"module", "database", "shard"}
+	return []string{"seg", "shard"}
 }
 
-// LabelValues returns the label values of Position.
-func (p Position) LabelValues() []string {
-	return []string{p.Module, p.Database, p.Shard, p.Segment}
+// DBLabelValues returns the label values of Position in the database level.
+func (p Position) DBLabelValues() []string {
+	return []string{p.Database}
+}
+
+// SegLabelValues returns the label values of Position.
+func (p Position) SegLabelValues() []string {
+	return []string{p.Segment}
 }
 
 // ShardLabelValues returns the label values of Position. It is used for shard level metrics.
 func (p Position) ShardLabelValues() []string {
-	return []string{p.Module, p.Database, p.Shard}
+	return []string{p.Segment, p.Shard}
 }
 
 // SetPosition sets a position returned from fn to attach it to ctx, then return a new context.

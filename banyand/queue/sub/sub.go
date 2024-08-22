@@ -21,6 +21,7 @@ package sub
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
@@ -37,17 +38,25 @@ import (
 func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	reply := func(writeEntity *clusterv1.SendRequest, err error, message string) {
 		s.log.Error().Stringer("written", writeEntity).Err(err).Msg(message)
+		s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
+		s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		if errResp := stream.Send(&clusterv1.SendResponse{
 			MessageId: writeEntity.MessageId,
 			Error:     message,
 		}); errResp != nil {
 			s.log.Err(errResp).Msg("failed to send response")
+			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		}
 	}
 	ctx := stream.Context()
 	var topic *bus.Topic
 	var m bus.Message
 	var dataCollection []any
+	var start time.Time
+	defer func() {
+		s.metrics.totalFinished.Inc(1, topic.String())
+		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), topic.String())
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -77,6 +86,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			s.log.Error().Err(err).Msg("failed to receive message")
 			return err
 		}
+		s.metrics.totalMsgReceived.Inc(1, writeEntity.Topic)
 		if writeEntity.Topic != "" && topic == nil {
 			t, ok := data.TopicMap[writeEntity.Topic]
 			if !ok {
@@ -102,14 +112,22 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			continue
 		}
 		if writeEntity.BatchMod {
+			if len(dataCollection) == 0 {
+				s.metrics.totalStarted.Inc(1, writeEntity.Topic)
+				start = time.Now()
+			}
 			dataCollection = append(dataCollection, writeEntity.Body)
 			if errSend := stream.Send(&clusterv1.SendResponse{
 				MessageId: writeEntity.MessageId,
 			}); errSend != nil {
 				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send response")
+				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+				continue
 			}
+			s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
 			continue
 		}
+		s.metrics.totalStarted.Inc(1, writeEntity.Topic)
 		listener := s.getListeners(*topic)
 		if listener == nil {
 			reply(writeEntity, err, "no listener found")
@@ -122,7 +140,10 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 				MessageId: writeEntity.MessageId,
 			}); errSend != nil {
 				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send response")
+				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+				continue
 			}
+			s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
 			continue
 		}
 		var message proto.Message
@@ -146,7 +167,10 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			Body:      anyMessage,
 		}); err != nil {
 			s.log.Error().Stringer("written", writeEntity).Err(err).Msg("failed to send response")
+			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+			continue
 		}
+		s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
 	}
 }
 

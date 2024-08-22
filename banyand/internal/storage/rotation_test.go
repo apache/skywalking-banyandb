@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -140,7 +141,6 @@ func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *
 		TTL:             IntervalRule{Unit: DAY, Num: 3},
 		ShardNum:        1,
 		TSTableCreator:  MockTSTableCreator,
-		MetricsCreator:  MockMetricsCreator,
 	}
 	ctx := context.Background()
 	mc := timestamp.NewMockClock()
@@ -169,6 +169,8 @@ func (m *MockTSTable) Close() error {
 	return nil
 }
 
+func (m *MockTSTable) Collect(_ Metrics) {}
+
 var MockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
 	_ *logger.Logger, _ timestamp.TimeRange, _, _ any,
 ) (*MockTSTable, error) {
@@ -178,5 +180,9 @@ var MockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
 type MockMetrics struct{}
 
 func (m *MockMetrics) DeleteAll() {}
+
+func (m *MockMetrics) Factory() *observability.Factory {
+	return nil
+}
 
 var MockMetricsCreator = func(_ common.Position) Metrics { return &MockMetrics{} }

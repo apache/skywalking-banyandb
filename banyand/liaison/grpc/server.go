@@ -41,6 +41,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -54,6 +55,8 @@ var (
 	errNoAddr            = errors.New("no address")
 	errQueryMsg          = errors.New("invalid query message")
 	errAccessLogRootPath = errors.New("access log root path is required")
+
+	liaisonGrpcScope = observability.RootScope.SubScope("liaison_grpc")
 )
 
 // Server defines the gRPC server.
@@ -63,24 +66,25 @@ type Server interface {
 }
 
 type server struct {
-	creds credentials.TransportCredentials
-	*streamRegistryServer
-	log *logger.Logger
-	*indexRuleBindingRegistryServer
-	ser *grpclib.Server
+	creds      credentials.TransportCredentials
+	omr        observability.MetricsRegistry
+	measureSVC *measureService
+	ser        *grpclib.Server
+	log        *logger.Logger
 	*propertyServer
 	*topNAggregationRegistryServer
 	*groupRegistryServer
 	stopCh chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
-	streamSVC                *streamService
-	measureSVC               *measureService
-	host                     string
+	streamSVC *streamService
+	*streamRegistryServer
+	*indexRuleBindingRegistryServer
 	keyFile                  string
 	certFile                 string
 	accessLogRootPath        string
 	addr                     string
+	host                     string
 	accessLogRecorders       []accessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	port                     uint32
@@ -89,7 +93,7 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry) Server {
+func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry, omr observability.MetricsRegistry) Server {
 	streamSVC := &streamService{
 		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nodeRegistry),
 		pipeline:         pipeline,
@@ -101,6 +105,7 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 		broadcaster:      broadcaster,
 	}
 	s := &server{
+		omr:        omr,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		streamRegistryServer: &streamRegistryServer{
@@ -151,6 +156,16 @@ func (s *server) PreRun(_ context.Context) error {
 			}
 		}
 	}
+	metrics := newMetrics(s.omr.With(liaisonGrpcScope))
+	s.streamSVC.metrics = metrics
+	s.measureSVC.metrics = metrics
+	s.propertyServer.metrics = metrics
+	s.streamRegistryServer.metrics = metrics
+	s.indexRuleBindingRegistryServer.metrics = metrics
+	s.indexRuleRegistryServer.metrics = metrics
+	s.measureRegistryServer.metrics = metrics
+	s.groupRegistryServer.metrics = metrics
+	s.topNAggregationRegistryServer.metrics = metrics
 	return nil
 }
 

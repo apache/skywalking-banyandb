@@ -21,6 +21,7 @@ import (
 	"context"
 	"os"
 
+	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -50,6 +51,9 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
+	var srvMetrics *grpcprom.ServerMetrics
+	srvMetrics.UnaryServerInterceptor()
+	srvMetrics.UnaryServerInterceptor()
 	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline, nil, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
@@ -58,7 +62,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
-	grpcServer := grpc.NewServer(ctx, pipeline, pipeline, metaSvc, grpc.NewLocalNodeRegistry())
+	grpcServer := grpc.NewServer(ctx, pipeline, pipeline, metaSvc, grpc.NewLocalNodeRegistry(), metricSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer()
 

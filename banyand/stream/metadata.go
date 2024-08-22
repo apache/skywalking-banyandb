@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -275,21 +276,25 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
+	name := groupSchema.Metadata.Name
+	p := common.Position{
+		Module:   "stream",
+		Database: name,
+	}
+
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:                       groupSchema.ResourceOpts.ShardNum,
 		Location:                       path.Join(s.path, groupSchema.Metadata.Name),
 		TSTableCreator:                 newTSTable,
-		MetricsCreator:                 s.newMetrics,
+		TableMetrics:                   s.newMetrics(p),
 		SegmentInterval:                storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
 		TTL:                            storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
 		Option:                         s.option,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
+		StorageMetricsFactory:          s.omr.With(storageScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
 	}
-	name := groupSchema.Metadata.Name
 	return storage.OpenTSDB(
-		common.SetPosition(context.Background(), func(p common.Position) common.Position {
-			p.Module = "stream"
-			p.Database = name
+		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
 			return p
 		}),
 		opts)

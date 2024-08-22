@@ -292,21 +292,25 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
+	name := groupSchema.Metadata.Name
+	p := common.Position{
+		Module:   "measure",
+		Database: name,
+	}
+	metrics, factory := s.newMetrics(p)
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:                       groupSchema.ResourceOpts.ShardNum,
 		Location:                       path.Join(s.path, groupSchema.Metadata.Name),
 		TSTableCreator:                 newTSTable,
-		MetricsCreator:                 s.newMetrics,
+		TableMetrics:                   metrics,
 		SegmentInterval:                storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
 		TTL:                            storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
 		Option:                         s.option,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
+		StorageMetricsFactory:          factory,
 	}
-	name := groupSchema.Metadata.Name
 	return storage.OpenTSDB(
-		common.SetPosition(context.Background(), func(p common.Position) common.Position {
-			p.Module = "measure"
-			p.Database = name
+		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
 			return p
 		}),
 		opts)

@@ -37,9 +37,11 @@ import (
 
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -52,18 +54,22 @@ var (
 
 	_ run.PreRunner = (*server)(nil)
 	_ run.Service   = (*server)(nil)
+
+	queueSubScope = observability.RootScope.SubScope("queue_sub")
 )
 
 type server struct {
+	omr       observability.MetricsRegistry
 	creds     credentials.TransportCredentials
 	log       *logger.Logger
 	ser       *grpclib.Server
 	listeners map[bus.Topic]bus.MessageListener
 	*clusterv1.UnimplementedServiceServer
-	addr           string
+	metrics        *metrics
 	certFile       string
-	keyFile        string
 	host           string
+	keyFile        string
+	addr           string
 	maxRecvMsgSize run.Bytes
 	listenersLock  sync.RWMutex
 	port           uint32
@@ -71,14 +77,16 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer() queue.Server {
+func NewServer(omr observability.MetricsRegistry) queue.Server {
 	return &server{
 		listeners: make(map[bus.Topic]bus.MessageListener),
+		omr:       omr,
 	}
 }
 
 func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("server-queue")
+	s.metrics = newMetrics(s.omr.With(queueSubScope))
 	return nil
 }
 
@@ -189,5 +197,30 @@ func (s *server) GracefulStop() {
 	case <-stopped:
 		t.Stop()
 		s.log.Info().Msg("stopped gracefully")
+	}
+}
+
+type metrics struct {
+	totalStarted  meter.Counter
+	totalFinished meter.Counter
+	totalErr      meter.Counter
+	totalLatency  meter.Counter
+
+	totalMsgReceived    meter.Counter
+	totalMsgReceivedErr meter.Counter
+	totalMsgSent        meter.Counter
+	totalMsgSentErr     meter.Counter
+}
+
+func newMetrics(factory *observability.Factory) *metrics {
+	return &metrics{
+		totalStarted:        factory.NewCounter("total_started", "topic"),
+		totalFinished:       factory.NewCounter("total_finished", "topic"),
+		totalErr:            factory.NewCounter("total_err", "topic"),
+		totalLatency:        factory.NewCounter("total_latency", "topic"),
+		totalMsgReceived:    factory.NewCounter("total_msg_received", "topic"),
+		totalMsgReceivedErr: factory.NewCounter("total_msg_received_err", "topic"),
+		totalMsgSent:        factory.NewCounter("total_msg_sent", "topic"),
+		totalMsgSentErr:     factory.NewCounter("total_msg_sent_err", "topic"),
 	}
 }

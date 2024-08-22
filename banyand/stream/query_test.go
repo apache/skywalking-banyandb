@@ -339,7 +339,7 @@ func TestQueryResult(t *testing.T) {
 			t.Run("memory snapshot", func(t *testing.T) {
 				tmpPath, defFn := test.Space(require.New(t))
 				defer defFn()
-				index, _ := newElementIndex(context.TODO(), tmpPath, 0)
+				index, _ := newElementIndex(context.TODO(), tmpPath, 0, nil)
 				tst := &tsTable{
 					index:         index,
 					loopCloser:    run.NewCloser(2),

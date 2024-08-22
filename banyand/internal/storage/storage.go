@@ -105,6 +105,7 @@ type Segment[T TSTable, O any] interface {
 // TSTable is time series table.
 type TSTable interface {
 	io.Closer
+	Collect(Metrics)
 }
 
 // TSTableCreator creates a TSTable.
@@ -116,9 +117,6 @@ type Metrics interface {
 	// DeleteAll deletes all metrics.
 	DeleteAll()
 }
-
-// MetricsCreator creates a Metrics.
-type MetricsCreator func(position common.Position) Metrics
 
 // IntervalUnit denotes the unit of a time point.
 type IntervalUnit int

@@ -43,9 +43,9 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	pipeline := sub.NewServer()
 	localPipeline := queue.Local()
 	metricSvc := observability.NewMetricService(metaSvc, localPipeline, "data", nil)
+	pipeline := sub.NewServer(metricSvc)
 	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
@@ -65,8 +65,8 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	units = append(units,
 		metaSvc,
 		localPipeline,
-		pipeline,
 		metricSvc,
+		pipeline,
 		measureSvc,
 		streamSvc,
 		q,
