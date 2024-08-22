@@ -19,11 +19,13 @@
 
 <script setup>
 import { ref, watchEffect, computed } from 'vue';
-import { getTableList } from '@/api/index'
+import { getGroupList, getTableList } from '@/api/index'
 
 const tableLayout = ref('auto')
 
 const autoRefresh = ref('off');
+
+const hasMonitoring = ref(true);
 
 const options = ref([
     { value: 'off', label: 'Off' },
@@ -169,7 +171,25 @@ function formatBytes(bytes) {
     return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+function checkMonitoring(data) {
+    if (!data.group || !Array.isArray(data.group)) {
+        return false;
+    }
+    for (let item of data.group) {
+        if (item.metadata && item.metadata.name === "_monitoring") {
+            return true;
+        }
+    }
+    return false;
+}
+
 async function fetchNodes() {
+    const groupList = await fetchGroupList()
+    if (!checkMonitoring(groupList)) {
+        hasMonitoring.value = false;
+        return;
+    }
+
     getCurrentUTCTime()
     const [upTimeDataPoints, cpuDataPoints, memoryDataPoints, diskDataPoints] = await Promise.all([
         fetchDataPoints("up_time", tagProjectionUptime),
@@ -223,7 +243,6 @@ async function fetchNodes() {
             }
         }
     });
-
     // Post-process row data
     rows.forEach(row => {
         row.uptime = formatUptime(row.uptime);
@@ -250,6 +269,14 @@ async function fetchDataPoints(type, tagProjection) {
     const res = await getTableList(params, "measure");
     if (res.status === 200) {
         return res.data.dataPoints;
+    }
+    return null;
+}
+
+async function fetchGroupList() {
+    const res = await getGroupList();
+    if (res.status === 200) {
+        return res.data;
     }
     return null;
 }
@@ -360,7 +387,12 @@ watchEffect(() => {
                 </el-select>
             </span>
         </div>
-
+        <div class="error-alert">
+            <!-- Conditionally display the alert if hasMonitoring is false -->
+            <el-alert v-if="!hasMonitoring"
+                title="Self-monitoring not available, please turn it on by setting &quot;--observability-modes=native&quot;."
+                type="error" center show-icon :closable="false" />
+        </div>
         <el-card shadow="always">
             <template #header>
                 <div class="card-header">
@@ -460,6 +492,9 @@ watchEffect(() => {
     position: relative;
 }
 
+.error-alert {
+    margin: 20px 15px 5px 15px;
+}
 
 .header-container {
     display: flex;
