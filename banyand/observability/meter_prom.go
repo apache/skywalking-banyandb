@@ -19,53 +19,14 @@ package observability
 
 import (
 	"net/http"
-	"sync"
 
-	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"google.golang.org/grpc"
-
-	"github.com/apache/skywalking-banyandb/pkg/meter"
-	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
 )
 
-var (
-	reg = prometheus.NewRegistry()
-
-	once       = sync.Once{}
-	srvMetrics *grpcprom.ServerMetrics
-	// PromMeterProvider is a global promethus meter collector.
-	PromMeterProvider = newPromMeterProvider()
-)
-
-func init() {
-	reg.MustRegister(collectors.NewGoCollector())
-	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-}
-
-// NewMeterProvider returns a meter.Provider based on the given scope.
-func newPromMeterProvider() meter.Provider {
-	return prom.NewProvider(SystemScope, reg)
-}
-
-func registerMetricsEndpoint(metricsMux *http.ServeMux) {
+func registerMetricsEndpoint(reg *prometheus.Registry, metricsMux *http.ServeMux) {
 	metricsMux.Handle("/metrics", promhttp.HandlerFor(
 		reg,
 		promhttp.HandlerOpts{},
 	))
-}
-
-// MetricsServerInterceptor returns a server interceptor for metrics.
-func promMetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
-	once.Do(func() {
-		srvMetrics = grpcprom.NewServerMetrics(
-			grpcprom.WithServerHandlingTimeHistogram(
-				grpcprom.WithHistogramBuckets([]float64{0.001, 0.01, 0.1, 0.3, 0.6, 1, 3, 6, 9, 20, 30, 60, 90, 120}),
-			),
-		)
-		reg.MustRegister(srvMetrics)
-	})
-	return srvMetrics.UnaryServerInterceptor(), srvMetrics.StreamServerInterceptor()
 }

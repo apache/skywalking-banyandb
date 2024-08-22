@@ -53,14 +53,15 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaRepo     *schemaRepo
 	writeListener  bus.MessageListener
 	metadata       metadata.Repo
 	pipeline       queue.Server
 	localPipeline  queue.Queue
 	metricPipeline queue.Server
-	option         option
+	omr            observability.MetricsRegistry
+	schemaRepo     *schemaRepo
 	l              *logger.Logger
+	option         option
 	root           string
 }
 
@@ -100,13 +101,16 @@ func (s *service) Role() databasev1.Role {
 	return databasev1.Role_ROLE_DATA
 }
 
-func (s *service) PreRun(_ context.Context) error {
+func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
 	s.localPipeline = queue.Local()
 	s.schemaRepo = newSchemaRepo(path, s)
-	// run a serial watcher
+
+	if err := s.createNativeObservabilityGroup(ctx); err != nil {
+		return err
+	}
 
 	s.writeListener = setUpWriteCallback(s.l, s.schemaRepo)
 	// only subscribe metricPipeline for data node
@@ -134,10 +138,11 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server) (Service, error) {
+func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server, omr observability.MetricsRegistry) (Service, error) {
 	return &service{
 		metadata:       metadata,
 		pipeline:       pipeline,
 		metricPipeline: metricPipeline,
+		omr:            omr,
 	}, nil
 }

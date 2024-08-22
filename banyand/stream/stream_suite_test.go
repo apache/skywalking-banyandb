@@ -23,10 +23,10 @@ import (
 
 	g "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"go.uber.org/mock/gomock"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -65,8 +65,6 @@ type services struct {
 }
 
 func setUp() (*services, func()) {
-	ctrl := gomock.NewController(g.GinkgoT())
-	gomega.Expect(ctrl).ShouldNot(gomega.BeNil())
 	// Init Pipeline
 	pipeline := queue.Local()
 
@@ -75,8 +73,10 @@ func setUp() (*services, func()) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+	metricSvc := observability.NewMetricService(metadataService, pipeline, "test", nil)
+
 	// Init Stream Service
-	streamService, err := stream.NewService(context.TODO(), metadataService, pipeline)
+	streamService, err := stream.NewService(context.TODO(), metadataService, pipeline, metricSvc)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
 	var flags []string

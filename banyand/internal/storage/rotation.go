@@ -68,11 +68,14 @@ func (d *database[T, O]) startRotationTask() error {
 					if gap <= 0 || gap > newSegmentTimeGap {
 						return
 					}
+					d.incTotalRotationStarted(1)
+					defer d.incTotalRotationFinished(1)
 					start := d.segmentController.opts.SegmentInterval.nextTime(t)
 					d.logger.Info().Time("segment_start", start).Time("event_time", t).Msg("create new segment")
 					_, err := d.segmentController.create(start)
 					if err != nil {
 						d.logger.Error().Err(err).Msgf("failed to create new segment.")
+						d.incTotalRotationErr(1)
 					}
 				}()
 			}(ts)
@@ -110,9 +113,18 @@ func (rc *retentionTask[T, O]) run(now time.Time, l *logger.Logger) bool {
 		<-rc.running
 	}()
 
+	rc.database.incTotalRetentionStarted(1)
+	defer rc.database.incTotalRetentionFinished(1)
 	deadline := now.Add(-rc.duration)
-	if err := rc.database.segmentController.remove(deadline); err != nil {
+	start := time.Now()
+	hasData, err := rc.database.segmentController.remove(deadline)
+	if hasData {
+		rc.database.incTotalRetentionHasData(1)
+		rc.database.incTotalRetentionHasDataLatency(time.Since(start).Seconds())
+	}
+	if err != nil {
 		l.Error().Err(err)
+		rc.database.incTotalRetentionErr(1)
 	}
 	return true
 }

@@ -47,26 +47,29 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case <-ew.Watch():
-			curSnapshot := tst.currentSnapshot()
-			if curSnapshot == nil {
-				continue
-			}
-			if curSnapshot.epoch != epoch {
-				var err error
-				if pwsChunk, err = tst.mergeSnapshot(curSnapshot, merges, pwsChunk[:0]); err != nil {
-					if errors.Is(err, errClosed) {
-						curSnapshot.decRef()
-						return
-					}
-					tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
-					curSnapshot.decRef()
-					continue
+			if func() bool {
+				curSnapshot := tst.currentSnapshot()
+				if curSnapshot == nil {
+					return false
 				}
-				epoch = curSnapshot.epoch
-			}
-			curSnapshot.decRef()
-			ew = flusherNotifier.Add(epoch, tst.loopCloser.CloseNotify())
-			if ew == nil {
+				defer curSnapshot.decRef()
+				if curSnapshot.epoch != epoch {
+					tst.incTotalMergeLoopStarted(1)
+					defer tst.incTotalMergeLoopFinished(1)
+					var err error
+					if pwsChunk, err = tst.mergeSnapshot(curSnapshot, merges, pwsChunk[:0]); err != nil {
+						if errors.Is(err, errClosed) {
+							return true
+						}
+						tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
+						tst.incTotalMergeLoopErr(1)
+						return false
+					}
+					epoch = curSnapshot.epoch
+				}
+				ew = flusherNotifier.Add(epoch, tst.loopCloser.CloseNotify())
+				return ew == nil
+			}() {
 				return
 			}
 		}
@@ -81,14 +84,14 @@ func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntr
 		return nil, nil
 	}
 	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, dst,
-		toBeMerged, merges, tst.loopCloser.CloseNotify()); err != nil {
+		toBeMerged, merges, tst.loopCloser.CloseNotify(), "file"); err != nil {
 		return dst, err
 	}
 	return dst, nil
 }
 
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
-	closeCh <-chan struct{},
+	closeCh <-chan struct{}, typ string,
 ) (*partWrapper, error) {
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
@@ -98,6 +101,9 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		return nil, err
 	}
 	elapsed := time.Since(start)
+	tst.incTotalMergeLatency(elapsed.Seconds(), typ)
+	tst.incTotalMerged(1, typ)
+	tst.incTotalMergedParts(len(parts), typ)
 	if elapsed > 30*time.Second {
 		var totalCount uint64
 		for _, pw := range parts {

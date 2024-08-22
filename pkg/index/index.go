@@ -184,7 +184,7 @@ type Store interface {
 	io.Closer
 	Writer
 	Searcher
-	SizeOnDisk() int64
+	CollectMetrics(...string)
 }
 
 // Series represents a series in an index.

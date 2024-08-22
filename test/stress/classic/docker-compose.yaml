@@ -27,6 +27,8 @@ services:
     extends:
       file: ../../docker/base-compose.yml
       service: banyandb
+    environment:
+      BYDB_OBSERVABILITY_MODES: "prometheus,native"
     build:
       dockerfile: ./docker/Dockerfile
       context: ../../..
