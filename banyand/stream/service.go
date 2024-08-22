@@ -58,6 +58,7 @@ type service struct {
 	metadata      metadata.Repo
 	pipeline      queue.Server
 	localPipeline queue.Queue
+	omr           observability.MetricsRegistry
 	l             *logger.Logger
 	root          string
 	option        option
@@ -126,9 +127,10 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server) (Service, error) {
+func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,
+		omr:      omr,
 	}, nil
 }

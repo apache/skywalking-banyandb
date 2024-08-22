@@ -91,7 +91,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpPath, _ := test.Space(require.New(t))
-			index, _ := newElementIndex(context.TODO(), tmpPath, 0)
+			index, _ := newElementIndex(context.TODO(), tmpPath, 0, nil)
 			tst := &tsTable{
 				index:         index,
 				loopCloser:    run.NewCloser(2),
@@ -229,7 +229,7 @@ func Test_tstIter(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				tmpPath, defFn := test.Space(require.New(t))
-				index, _ := newElementIndex(context.TODO(), tmpPath, 0)
+				index, _ := newElementIndex(context.TODO(), tmpPath, 0, nil)
 				defer defFn()
 				tst := &tsTable{
 					index:         index,
@@ -306,7 +306,7 @@ func Test_tstIter(t *testing.T) {
 					defer defFn()
 
 					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, elementIndexFlushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()})
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, elementIndexFlushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
 					require.NoError(t, err)
 					for i, es := range tt.esList {
 						tst.mustAddElements(es)
@@ -359,7 +359,7 @@ func Test_tstIter(t *testing.T) {
 							flushTimeout:             defaultFlushTimeout,
 							elementIndexFlushTimeout: defaultFlushTimeout,
 							mergePolicy:              newDefaultMergePolicyForTesting(),
-						})
+						}, nil)
 					require.NoError(t, err)
 					for _, es := range tt.esList {
 						tst.mustAddElements(es)
@@ -391,7 +391,7 @@ func Test_tstIter(t *testing.T) {
 							flushTimeout:             defaultFlushTimeout,
 							elementIndexFlushTimeout: defaultFlushTimeout,
 							mergePolicy:              newDefaultMergePolicyForTesting(),
-						})
+						}, nil)
 					require.NoError(t, err)
 					verify(t, tt, tst)
 				})

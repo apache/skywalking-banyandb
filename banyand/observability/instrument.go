@@ -20,21 +20,41 @@ package observability
 import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
+	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
 )
+
+// Factory is the factory for creating metrics.
+type Factory struct {
+	promProvider   meter.Provider
+	nativeProvider meter.Provider
+	nCollection    *native.MetricCollection
+}
+
+func (p *metricService) With(scope meter.Scope) *Factory {
+	f := &Factory{}
+	if containsMode(p.modes, flagPromethusMode) {
+		f.promProvider = prom.NewProvider(scope, p.promReg)
+	}
+	if containsMode(p.modes, flagNativeMode) {
+		f.nativeProvider = p.npf.provider(scope)
+		f.nCollection = p.nCollection
+	}
+	return f
+}
 
 type counterCollection struct {
 	counters []meter.Counter
 }
 
 // NewCounter init and return the counterCollection.
-func NewCounter(modes []string, name string, labelNames ...string) meter.Counter {
+func (f *Factory) NewCounter(name string, labelNames ...string) meter.Counter {
 	var counters []meter.Counter
-	if containsMode(modes, flagPromethusMode) {
-		counters = append(counters, PromMeterProvider.Counter(name, labelNames...))
+	if f.promProvider != nil {
+		counters = append(counters, f.promProvider.Counter(name, labelNames...))
 	}
-	if containsMode(modes, flagNativeMode) {
-		counter := NativeMeterProvider.Counter(name, labelNames...)
-		NativeMetricCollection.AddCollector(counter.(*native.Counter))
+	if f.nativeProvider != nil {
+		counter := f.nativeProvider.Counter(name, labelNames...)
+		f.nCollection.AddCollector(counter.(*native.Counter))
 		counters = append(counters, counter)
 	}
 	return &counterCollection{
@@ -61,14 +81,14 @@ type gaugeCollection struct {
 }
 
 // NewGauge init and return the gaugeCollection.
-func NewGauge(modes []string, name string, labelNames ...string) meter.Gauge {
+func (f *Factory) NewGauge(name string, labelNames ...string) meter.Gauge {
 	var gauges []meter.Gauge
-	if containsMode(modes, flagPromethusMode) {
-		gauges = append(gauges, PromMeterProvider.Gauge(name, labelNames...))
+	if f.promProvider != nil {
+		gauges = append(gauges, f.promProvider.Gauge(name, labelNames...))
 	}
-	if containsMode(modes, flagNativeMode) {
-		gauge := NativeMeterProvider.Gauge(name, labelNames...)
-		NativeMetricCollection.AddCollector(gauge.(*native.Gauge))
+	if f.nativeProvider != nil {
+		gauge := f.nativeProvider.Gauge(name, labelNames...)
+		f.nCollection.AddCollector(gauge.(*native.Gauge))
 		gauges = append(gauges, gauge)
 	}
 	return &gaugeCollection{
@@ -101,14 +121,14 @@ type histogramCollection struct {
 }
 
 // NewHistogram init and return the histogramCollection.
-func NewHistogram(modes []string, name string, buckets meter.Buckets, labelNames ...string) meter.Histogram {
+func (f *Factory) NewHistogram(name string, buckets meter.Buckets, labelNames ...string) meter.Histogram {
 	var histograms []meter.Histogram
-	if containsMode(modes, flagPromethusMode) {
-		histograms = append(histograms, PromMeterProvider.Histogram(name, buckets, labelNames...))
+	if f.promProvider != nil {
+		histograms = append(histograms, f.promProvider.Histogram(name, buckets, labelNames...))
 	}
-	if containsMode(modes, flagNativeMode) {
-		histogram := NativeMeterProvider.Histogram(name, buckets, labelNames...)
-		NativeMetricCollection.AddCollector(histogram.(*native.Histogram))
+	if f.nativeProvider != nil {
+		histogram := f.nativeProvider.Histogram(name, buckets, labelNames...)
+		f.nCollection.AddCollector(histogram.(*native.Histogram))
 		histograms = append(histograms, histogram)
 	}
 	return &histogramCollection{
