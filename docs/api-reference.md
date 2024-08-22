@@ -981,7 +981,7 @@ FieldSpec is the specification of field
 | field_type | [FieldType](#banyandb-database-v1-FieldType) |  | field_type denotes the type of field value |
 | encoding_method | [EncodingMethod](#banyandb-database-v1-EncodingMethod) |  | encoding_method indicates how to encode data during writing |
 | compression_method | [CompressionMethod](#banyandb-database-v1-CompressionMethod) |  | compression_method indicates how to compress data during writing |
-| aggregate_function | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | aggregate_function indicates how to aggregate data |
+| aggregate_function | [banyandb.model.v1.MeasureAggregate](#banyandb-model-v1-MeasureAggregate) |  | aggregate_function indicates how to aggregate data |
 
 
 
