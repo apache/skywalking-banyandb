@@ -110,7 +110,7 @@ catalog:
           - name: "Rollback"
             path: ""
       - name: "Observability"
-        path: "/observability"
+        path: "/operation/observability"
       - name: "Cluster Management"
         path: "/operation/cluster"
       - name: "Security"

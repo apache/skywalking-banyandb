@@ -4,7 +4,7 @@ This document outlines the observability features of BanyanDB, which include met
 
 ## Metrics
 
-BanyanDB has built-in support for metrics collection. Currently, there are two supported metrics provider: `prometheus` and `native`. These can be enabled through `observability-modes` flag, allowing you to activate one or both of them. 
+BanyanDB has built-in support for metrics collection. Currently, there are two supported metrics provider: `prometheus` and `native`. These can be enabled through `observability-modes` flag, allowing you to activate one or both of them.
 
 ### Prometheus
 
@@ -12,14 +12,13 @@ Prometheus is auto enabled at run time, if no flag is passed or if `promethus` i
 
 When the Prometheus metrics provider is enabled, the metrics server listens on port `2121`. This allows Prometheus to scrape metrics data from BanyanDB for monitoring and analysis.
 
-
-### Self-observability 
+### Self-observability
 
 If the `observability-modes` flag is set to `native`, the self-observability metrics provider will be enabled. The some of metrics will be displayed in the dashboard of [banyandb-ui](http://localhost:17913/) 
 
 ![dashboard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/dashboard.png)
 
-#### Metrics storage 
+#### Metrics storage
 
 In self-observability, the metrics data is stored in BanyanDB within the ` _monitoring` internal group. Each metric will be created as a new `measure` within this group.
 
@@ -32,6 +31,7 @@ When starting any node, the `_monitoring` internal group will be created, and th
 ![self-observability-write](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/self-observability-write.png)
 
 #### Read Flow
+
 The read flow is the same as reading data from `measure`, with each metric being a new measure.
 
 ## Profiling
