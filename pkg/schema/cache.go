@@ -108,12 +108,12 @@ type schemaRepo struct {
 	l                      *logger.Logger
 	closer                 *run.ChannelCloser
 	eventCh                chan MetadataEvent
+	metrics                *Metrics
 	groupMap               sync.Map
 	resourceMap            sync.Map
 	workerNum              int
 	resourceMutex          sync.Mutex
 	groupMux               sync.Mutex
-	metrics                *Metrics
 }
 
 func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {

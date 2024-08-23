@@ -53,13 +53,13 @@ var (
 type queryService struct {
 	metaService metadata.Repo
 	pipeline    queue.Server
+	omr         observability.MetricsRegistry
 	log         *logger.Logger
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
 	tqp         *topNQueryProcessor
 	closer      *run.Closer
 	nodeID      string
-	omr         observability.MetricsRegistry
 }
 
 // NewService return a new query service.

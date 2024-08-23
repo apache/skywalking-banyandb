@@ -71,18 +71,18 @@ type metricService struct {
 	metadata         metadata.Repo
 	nodeSelector     native.NodeSelector
 	pipeline         queue.Client
-	scheduler        *timestamp.Scheduler
+	svr              *http.Server
 	l                *logger.Logger
 	closer           *run.Closer
-	svr              *http.Server
+	scheduler        *timestamp.Scheduler
 	nCollection      *native.MetricCollection
 	promReg          *prometheus.Registry
+	schedulerMetrics *SchedulerMetrics
 	npf              nativeProviderFactory
 	listenAddr       string
 	nodeType         string
 	modes            []string
 	mutex            sync.Mutex
-	schedulerMetrics *SchedulerMetrics
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
@@ -217,6 +217,7 @@ func containsMode(modes []string, mode string) bool {
 	return false
 }
 
+// SchedulerMetrics is the metrics for scheduler.
 type SchedulerMetrics struct {
 	totalJobsStarted   meter.Gauge
 	totalJobsFinished  meter.Gauge
@@ -226,6 +227,7 @@ type SchedulerMetrics struct {
 	totalTaskLatency   meter.Gauge
 }
 
+// NewSchedulerMetrics creates a new scheduler metrics.
 func NewSchedulerMetrics(factory *Factory) *SchedulerMetrics {
 	return &SchedulerMetrics{
 		totalJobsStarted:   factory.NewGauge("scheduler_jobs_started", "job"),
@@ -237,6 +239,7 @@ func NewSchedulerMetrics(factory *Factory) *SchedulerMetrics {
 	}
 }
 
+// Collect collects the scheduler metrics.
 func (sm *SchedulerMetrics) Collect(job string, m *timestamp.SchedulerMetrics) {
 	sm.totalJobsStarted.Set(float64(m.TotalJobsStarted.Load()), job)
 	sm.totalJobsFinished.Set(float64(m.TotalJobsFinished.Load()), job)

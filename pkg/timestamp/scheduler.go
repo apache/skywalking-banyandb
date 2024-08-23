@@ -142,6 +142,7 @@ func (s *Scheduler) Close() {
 	}
 }
 
+// Metrics returns the metrics of all registered tasks.
 func (s *Scheduler) Metrics() map[string]*SchedulerMetrics {
 	s.RLock()
 	defer s.RUnlock()
@@ -158,8 +159,8 @@ type task struct {
 	closer   *run.Closer
 	l        *logger.Logger
 	action   SchedulerAction
-	name     string
 	metrics  *SchedulerMetrics
+	name     string
 }
 
 func newTask(l *logger.Logger, name string, clock clock.Clock, schedule cron.Schedule, action SchedulerAction) *task {
@@ -221,6 +222,7 @@ func (t *task) close() {
 	t.closer.CloseThenWait()
 }
 
+// SchedulerMetrics collects the metrics of a Scheduler.
 type SchedulerMetrics struct {
 	TotalJobsStarted              atomic.Uint64
 	TotalJobsFinished             atomic.Uint64

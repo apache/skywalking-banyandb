@@ -22,12 +22,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
+// Metrics is a collection of metrics.
 type Metrics struct {
 	totalErrs    meter.Counter
 	totalRetries meter.Counter
 	totalPanics  meter.Counter
 }
 
+// NewMetrics creates a new Metrics.
 func NewMetrics(factory *observability.Factory) *Metrics {
 	return &Metrics{
 		totalErrs:    factory.NewCounter("total_err"),
