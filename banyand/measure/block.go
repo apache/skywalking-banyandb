@@ -632,6 +632,46 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 	}
 }
 
+func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+	tagProjection []model.TagProjection,
+) {
+	r.SID = bc.bm.seriesID
+	r.Timestamps[len(r.Timestamps)-1] = bc.timestamps[bc.idx]
+	r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[r.SID]
+	}
+	for i := range r.TagFamilies {
+		tfName := r.TagFamilies[i].Name
+		var cf *columnFamily
+		for j := range r.TagFamilies[i].Tags {
+			tagName := r.TagFamilies[i].Tags[j].Name
+			if indexValue != nil && indexValue[tagName] != nil {
+				r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = indexValue[tagName]
+				continue
+			}
+			if cf == nil {
+				for i := range bc.tagFamilies {
+					if bc.tagFamilies[i].name == tfName {
+						cf = &bc.tagFamilies[i]
+						break
+					}
+				}
+			}
+			for _, c := range cf.columns {
+				if c.name == tagName {
+					r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = mustDecodeTagValue(c.valueType, c.values[bc.idx])
+					break
+				}
+			}
+		}
+	}
+	for i, c := range bc.fields.columns {
+		r.Fields[i].Values[len(r.Fields[i].Values)-1] = mustDecodeFieldValue(c.valueType, c.values[bc.idx])
+	}
+}
+
 func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	tmpBlock.reset()
 	cfm := make([]columnMetadata, 0, len(bc.fieldProjection))

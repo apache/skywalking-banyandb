@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -45,6 +46,8 @@ const (
 var (
 	_ run.Service = (*metricService)(nil)
 	_ run.Config  = (*metricService)(nil)
+
+	obScope = RootScope.SubScope("observability")
 )
 
 // Service type for Metric Service.
@@ -65,20 +68,21 @@ func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType st
 }
 
 type metricService struct {
-	metadata     metadata.Repo
-	nodeSelector native.NodeSelector
-	pipeline     queue.Client
-	scheduler    *timestamp.Scheduler
-	l            *logger.Logger
-	closer       *run.Closer
-	svr          *http.Server
-	nCollection  *native.MetricCollection
-	promReg      *prometheus.Registry
-	npf          nativeProviderFactory
-	listenAddr   string
-	nodeType     string
-	modes        []string
-	mutex        sync.Mutex
+	metadata         metadata.Repo
+	nodeSelector     native.NodeSelector
+	pipeline         queue.Client
+	scheduler        *timestamp.Scheduler
+	l                *logger.Logger
+	closer           *run.Closer
+	svr              *http.Server
+	nCollection      *native.MetricCollection
+	promReg          *prometheus.Registry
+	npf              nativeProviderFactory
+	listenAddr       string
+	nodeType         string
+	modes            []string
+	mutex            sync.Mutex
+	schedulerMetrics *SchedulerMetrics
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
@@ -143,8 +147,13 @@ func (p *metricService) Serve() run.StopNotify {
 	p.initMetrics()
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
+	p.schedulerMetrics = NewSchedulerMetrics(p.With(obScope))
 	err := p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
 		MetricsCollector.collect()
+		metrics := p.scheduler.Metrics()
+		for job, m := range metrics {
+			p.schedulerMetrics.Collect(job, m)
+		}
 		return true
 	})
 	if err != nil {
@@ -206,4 +215,33 @@ func containsMode(modes []string, mode string) bool {
 		}
 	}
 	return false
+}
+
+type SchedulerMetrics struct {
+	totalJobsStarted   meter.Gauge
+	totalJobsFinished  meter.Gauge
+	totalTasksStarted  meter.Gauge
+	totalTasksFinished meter.Gauge
+	totalTasksPanic    meter.Gauge
+	totalTaskLatency   meter.Gauge
+}
+
+func NewSchedulerMetrics(factory *Factory) *SchedulerMetrics {
+	return &SchedulerMetrics{
+		totalJobsStarted:   factory.NewGauge("scheduler_jobs_started", "job"),
+		totalJobsFinished:  factory.NewGauge("scheduler_jobs_finished", "job"),
+		totalTasksStarted:  factory.NewGauge("scheduler_tasks_started", "job"),
+		totalTasksFinished: factory.NewGauge("scheduler_tasks_finished", "job"),
+		totalTasksPanic:    factory.NewGauge("scheduler_tasks_panic", "job"),
+		totalTaskLatency:   factory.NewGauge("scheduler_task_latency", "job"),
+	}
+}
+
+func (sm *SchedulerMetrics) Collect(job string, m *timestamp.SchedulerMetrics) {
+	sm.totalJobsStarted.Set(float64(m.TotalJobsStarted.Load()), job)
+	sm.totalJobsFinished.Set(float64(m.TotalJobsFinished.Load()), job)
+	sm.totalTasksStarted.Set(float64(m.TotalTasksStarted.Load()), job)
+	sm.totalTasksFinished.Set(float64(m.TotalTasksFinished.Load()), job)
+	sm.totalTasksPanic.Set(float64(m.TotalTasksPanic.Load()), job)
+	sm.totalTaskLatency.Set(float64(m.TotalTaskLatencyInNanoseconds.Load()/int64(time.Second)), job)
 }

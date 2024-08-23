@@ -167,6 +167,10 @@ func (d *database[T, O]) collect() {
 		refCount += atomic.LoadInt32(&s.refCount)
 	}
 	d.totalSegRefs.Set(float64(refCount))
+	metrics := d.scheduler.Metrics()
+	for job, m := range metrics {
+		d.metrics.schedulerMetrics.Collect(job, m)
+	}
 }
 
 type walkFn func(suffix string) error

@@ -29,19 +29,26 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 const (
 	moduleName = "distributed-query"
 )
 
-var _ run.Service = (*queryService)(nil)
+var (
+	_                     run.Service = (*queryService)(nil)
+	distributedQueryScope             = observability.RootScope.SubScope("dquery")
+	streamScope                       = distributedQueryScope.SubScope("stream")
+	measureScope                      = distributedQueryScope.SubScope("measure")
+)
 
 type queryService struct {
 	metaService metadata.Repo
@@ -52,15 +59,17 @@ type queryService struct {
 	tqp         *topNQueryProcessor
 	closer      *run.Closer
 	nodeID      string
+	omr         observability.MetricsRegistry
 }
 
 // NewService return a new query service.
-func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bus.Broadcaster,
+func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bus.Broadcaster, omr observability.MetricsRegistry,
 ) (run.Unit, error) {
 	svc := &queryService{
 		metaService: metaService,
 		closer:      run.NewCloser(1),
 		pipeline:    pipeline,
+		omr:         omr,
 	}
 	svc.sqp = &streamQueryProcessor{
 		queryService: svc,
@@ -89,8 +98,10 @@ func (q *queryService) PreRun(ctx context.Context) error {
 	node := val.(common.Node)
 	q.nodeID = node.NodeID
 	q.log = logger.GetLogger(moduleName)
-	q.sqp.streamService = stream.NewPortableRepository(q.metaService, q.log)
-	q.mqp.measureService = measure.NewPortableRepository(q.metaService, q.log)
+	q.sqp.streamService = stream.NewPortableRepository(q.metaService, q.log,
+		schema.NewMetrics(q.omr.With(streamScope)))
+	q.mqp.measureService = measure.NewPortableRepository(q.metaService, q.log,
+		schema.NewMetrics(q.omr.With(measureScope)))
 	return multierr.Combine(
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
 		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),

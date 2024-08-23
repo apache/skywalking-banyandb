@@ -113,6 +113,7 @@ type schemaRepo struct {
 	workerNum              int
 	resourceMutex          sync.Mutex
 	groupMux               sync.Mutex
+	metrics                *Metrics
 }
 
 func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
@@ -136,6 +137,7 @@ func NewRepository(
 	metadata metadata.Repo,
 	l *logger.Logger,
 	resourceSupplier ResourceSupplier,
+	metrics *Metrics,
 ) Repository {
 	workNum := getWorkerNum()
 	return &schemaRepo{
@@ -146,6 +148,7 @@ func NewRepository(
 		eventCh:                make(chan MetadataEvent, workNum),
 		workerNum:              workNum,
 		closer:                 run.NewChannelCloser(),
+		metrics:                metrics,
 	}
 }
 
@@ -154,6 +157,7 @@ func NewPortableRepository(
 	metadata metadata.Repo,
 	l *logger.Logger,
 	supplier ResourceSchemaSupplier,
+	metrics *Metrics,
 ) Repository {
 	workNum := getWorkerNum()
 	return &schemaRepo{
@@ -163,6 +167,7 @@ func NewPortableRepository(
 		eventCh:                make(chan MetadataEvent, workNum),
 		workerNum:              workNum,
 		closer:                 run.NewChannelCloser(),
+		metrics:                metrics,
 	}
 }
 
@@ -177,6 +182,7 @@ func (sr *schemaRepo) Watcher() {
 				if err := recover(); err != nil {
 					sr.l.Warn().Interface("err", err).Msg("watching the events")
 				}
+				sr.metrics.totalPanics.Inc(1)
 			}()
 			for {
 				select {
@@ -224,8 +230,10 @@ func (sr *schemaRepo) Watcher() {
 						default:
 						}
 						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
+						sr.metrics.totalErrs.Inc(1)
 						go func() {
 							sr.SendMetadataEvent(evt)
+							sr.metrics.totalRetries.Inc(1)
 						}()
 					}
 				case <-sr.closer.CloseNotify():
