@@ -20,6 +20,7 @@ package timestamp
 import (
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/benbjohnson/clock"
@@ -141,12 +142,24 @@ func (s *Scheduler) Close() {
 	}
 }
 
+// Metrics returns the metrics of all registered tasks.
+func (s *Scheduler) Metrics() map[string]*SchedulerMetrics {
+	s.RLock()
+	defer s.RUnlock()
+	m := make(map[string]*SchedulerMetrics, len(s.tasks))
+	for k, t := range s.tasks {
+		m[k] = t.metrics
+	}
+	return m
+}
+
 type task struct {
 	clock    Clock
 	schedule cron.Schedule
 	closer   *run.Closer
 	l        *logger.Logger
 	action   SchedulerAction
+	metrics  *SchedulerMetrics
 	name     string
 }
 
@@ -158,6 +171,7 @@ func newTask(l *logger.Logger, name string, clock clock.Clock, schedule cron.Sch
 		schedule: schedule,
 		action:   action,
 		closer:   run.NewCloser(1),
+		metrics:  &SchedulerMetrics{},
 	}
 }
 
@@ -165,6 +179,8 @@ func (t *task) run() {
 	defer t.closer.Done()
 	now := t.clock.Now()
 	t.l.Info().Str("name", t.name).Time("now", now).Msg("start")
+	t.metrics.TotalJobsStarted.Add(1)
+	defer t.metrics.TotalJobsFinished.Add(1)
 	for {
 		next := t.schedule.Next(now)
 		d := next.Sub(now)
@@ -178,10 +194,15 @@ func (t *task) run() {
 				e.Str("name", t.name).Time("now", now).Msg("wake")
 			}
 			if !func() (ret bool) {
+				t.metrics.TotalTasksStarted.Add(1)
+				start := time.Now()
 				defer func() {
+					t.metrics.TotalTasksFinished.Add(1)
+					t.metrics.TotalTaskLatencyInNanoseconds.Add(time.Since(start).Nanoseconds())
 					if r := recover(); r != nil {
 						t.l.Error().Str("name", t.name).Interface("panic", r).Str("stack", string(debug.Stack())).Msg("panic")
 						ret = true
+						t.metrics.TotalTasksPanic.Add(1)
 					}
 				}()
 				return t.action(now, t.l)
@@ -199,4 +220,14 @@ func (t *task) run() {
 
 func (t *task) close() {
 	t.closer.CloseThenWait()
+}
+
+// SchedulerMetrics collects the metrics of a Scheduler.
+type SchedulerMetrics struct {
+	TotalJobsStarted              atomic.Uint64
+	TotalJobsFinished             atomic.Uint64
+	TotalTasksStarted             atomic.Uint64
+	TotalTasksFinished            atomic.Uint64
+	TotalTasksPanic               atomic.Uint64
+	TotalTaskLatencyInNanoseconds atomic.Int64
 }

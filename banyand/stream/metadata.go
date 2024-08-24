@@ -40,6 +40,8 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
+var metadataScope = streamScope.SubScope("metadata")
+
 // SchemaService allows querying schema information.
 type SchemaService interface {
 	Query
@@ -59,6 +61,7 @@ func newSchemaRepo(path string, svc *service) schemaRepo {
 			svc.metadata,
 			svc.l,
 			newSupplier(path, svc),
+			resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 		),
 	}
 	sr.start()
@@ -66,7 +69,7 @@ func newSchemaRepo(path string, svc *service) schemaRepo {
 }
 
 // NewPortableRepository creates a new portable repository.
-func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaService {
+func NewPortableRepository(metadata metadata.Repo, l *logger.Logger, metrics *resourceSchema.Metrics) SchemaService {
 	r := &schemaRepo{
 		l:        l,
 		metadata: metadata,
@@ -74,6 +77,7 @@ func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaServi
 			metadata,
 			l,
 			newPortableSupplier(metadata, l),
+			metrics,
 		),
 	}
 	r.start()

@@ -391,9 +391,10 @@ func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, 
 	for _, s := range sc.segments() {
 		if s.Before(deadline) {
 			hasSegment = true
+			id := s.id
 			s.delete()
 			sc.Lock()
-			sc.removeSeg(s.id)
+			sc.removeSeg(id)
 			sc.Unlock()
 			sc.l.Info().Stringer("segment", s).Msg("removed a segment")
 		}

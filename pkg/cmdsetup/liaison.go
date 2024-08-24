@@ -52,7 +52,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, nodeRegistry, metricSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer()
-	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline)
+	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
 	}

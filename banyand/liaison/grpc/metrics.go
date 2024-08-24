@@ -26,6 +26,7 @@ type metrics struct {
 	totalStarted  meter.Counter
 	totalFinished meter.Counter
 	totalErr      meter.Counter
+	totalPanic    meter.Counter
 	totalLatency  meter.Counter
 
 	totalStreamStarted  meter.Counter
@@ -49,6 +50,7 @@ func newMetrics(factory *observability.Factory) *metrics {
 		totalStarted:              factory.NewCounter("total_started", "group", "service", "method"),
 		totalFinished:             factory.NewCounter("total_finished", "group", "service", "method"),
 		totalErr:                  factory.NewCounter("total_err", "group", "service", "method"),
+		totalPanic:                factory.NewCounter("total_panic"),
 		totalLatency:              factory.NewCounter("total_latency", "group", "service", "method"),
 		totalStreamStarted:        factory.NewCounter("total_stream_started", "service", "method"),
 		totalStreamFinished:       factory.NewCounter("total_stream_finished", "service", "method"),

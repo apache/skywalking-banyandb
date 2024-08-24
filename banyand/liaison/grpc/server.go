@@ -80,6 +80,7 @@ type server struct {
 	streamSVC *streamService
 	*streamRegistryServer
 	*indexRuleBindingRegistryServer
+	metrics                  *metrics
 	keyFile                  string
 	certFile                 string
 	accessLogRootPath        string
@@ -157,6 +158,7 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}
 	metrics := newMetrics(s.omr.With(liaisonGrpcScope))
+	s.metrics = metrics
 	s.streamSVC.metrics = metrics
 	s.measureSVC.metrics = metrics
 	s.propertyServer.metrics = metrics
@@ -229,7 +231,7 @@ func (s *server) Serve() run.StopNotify {
 	}
 	grpcPanicRecoveryHandler := func(p any) (err error) {
 		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
-
+		s.metrics.totalPanic.Inc(1)
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 
