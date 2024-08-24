@@ -246,5 +246,5 @@ func (sm *SchedulerMetrics) Collect(job string, m *timestamp.SchedulerMetrics) {
 	sm.totalTasksStarted.Set(float64(m.TotalTasksStarted.Load()), job)
 	sm.totalTasksFinished.Set(float64(m.TotalTasksFinished.Load()), job)
 	sm.totalTasksPanic.Set(float64(m.TotalTasksPanic.Load()), job)
-	sm.totalTaskLatency.Set(float64(m.TotalTaskLatencyInNanoseconds.Load()/int64(time.Second)), job)
+	sm.totalTaskLatency.Set(float64(m.TotalTaskLatencyInNanoseconds.Load())/float64(time.Second), job)
 }
