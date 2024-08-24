@@ -276,7 +276,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:    "Test with multiple parts with same ts",
-			dpsList: []*dataPoints{dpsTS1, dpsTS1, dpsTS1},
+			dpsList: []*dataPoints{dpsTS11, dpsTS1},
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},

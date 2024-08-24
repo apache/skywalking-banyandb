@@ -35,6 +35,8 @@ type metrics struct {
 	totalRetentionHasData        meter.Counter
 	totalRetentionErr            meter.Counter
 	totalRetentionHasDataLatency meter.Counter
+
+	schedulerMetrics *observability.SchedulerMetrics
 }
 
 func newMetrics(factory *observability.Factory) *metrics {
@@ -52,6 +54,7 @@ func newMetrics(factory *observability.Factory) *metrics {
 		totalRetentionErr:            factory.NewCounter("total_retention_err"),
 		totalRetentionHasDataLatency: factory.NewCounter("total_retention_has_data_latency"),
 		totalRetentionHasData:        factory.NewCounter("total_retention_has_data"),
+		schedulerMetrics:             observability.NewSchedulerMetrics(factory),
 	}
 }
 
