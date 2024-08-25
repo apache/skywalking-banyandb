@@ -96,6 +96,8 @@ message FieldSpec {
   EncodingMethod encoding_method = 3 [(validate.rules).enum.defined_only = true];
   // compression_method indicates how to compress data during writing
   CompressionMethod compression_method = 4 [(validate.rules).enum.defined_only = true];
+  // aggregate_function indicates how to aggregate data
+  model.v1.MeasureAggregate aggregate_function = 5;
 }
 
 // Measure intends to store data point
@@ -113,6 +115,13 @@ message Measure {
   string interval = 5;
   // updated_at indicates when the measure is updated
   google.protobuf.Timestamp updated_at = 6;
+}
+
+message MeasureAggregateFunction {
+  // type indicates the type of function argument
+  FieldType type = 1 [(validate.rules).enum.defined_only = true];
+  // aggregate_function indicates specific function for measure data
+  model.v1.MeasureAggregate aggregate_function = 2;
 }
 
 // TopNAggregation generates offline TopN statistics for a measure's TopN approximation

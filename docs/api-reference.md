@@ -63,6 +63,7 @@
     - [IndexRule](#banyandb-database-v1-IndexRule)
     - [IndexRuleBinding](#banyandb-database-v1-IndexRuleBinding)
     - [Measure](#banyandb-database-v1-Measure)
+    - [MeasureAggregateFunction](#banyandb-database-v1-MeasureAggregateFunction)
     - [Stream](#banyandb-database-v1-Stream)
     - [Subject](#banyandb-database-v1-Subject)
     - [TagFamilySpec](#banyandb-database-v1-TagFamilySpec)
@@ -113,6 +114,8 @@
     - [IndexRuleRegistryServiceListResponse](#banyandb-database-v1-IndexRuleRegistryServiceListResponse)
     - [IndexRuleRegistryServiceUpdateRequest](#banyandb-database-v1-IndexRuleRegistryServiceUpdateRequest)
     - [IndexRuleRegistryServiceUpdateResponse](#banyandb-database-v1-IndexRuleRegistryServiceUpdateResponse)
+    - [MeasureAggregateFunctionServiceSupportRequest](#banyandb-database-v1-MeasureAggregateFunctionServiceSupportRequest)
+    - [MeasureAggregateFunctionServiceSupportResponse](#banyandb-database-v1-MeasureAggregateFunctionServiceSupportResponse)
     - [MeasureRegistryServiceCreateRequest](#banyandb-database-v1-MeasureRegistryServiceCreateRequest)
     - [MeasureRegistryServiceCreateResponse](#banyandb-database-v1-MeasureRegistryServiceCreateResponse)
     - [MeasureRegistryServiceDeleteRequest](#banyandb-database-v1-MeasureRegistryServiceDeleteRequest)
@@ -153,6 +156,7 @@
     - [GroupRegistryService](#banyandb-database-v1-GroupRegistryService)
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
     - [IndexRuleRegistryService](#banyandb-database-v1-IndexRuleRegistryService)
+    - [MeasureAggregateFunctionService](#banyandb-database-v1-MeasureAggregateFunctionService)
     - [MeasureRegistryService](#banyandb-database-v1-MeasureRegistryService)
     - [StreamRegistryService](#banyandb-database-v1-StreamRegistryService)
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
@@ -691,6 +695,28 @@ Trace is the top level message of a trace.
 | AGGREGATION_FUNCTION_SUM | 5 |  |
 
 
+
+<a name="banyandb-model-v1-MeasureAggregate"></a>
+
+### MeasureAggregate
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| MEASURE_AGGREGATE_UNSPECIFIED | 0 |  |
+| MEASURE_AGGREGATE_MIN | 1 | Calculate the minimum value of delta measures. |
+| MEASURE_AGGREGATE_MAX | 2 | Calculate the maximum value of delta measures. |
+| MEASURE_AGGREGATE_COUNT | 3 | Count the number of delta measures. |
+| MEASURE_AGGREGATE_SUM | 4 | Calculate the sum value of delta measures. |
+| MEASURE_AGGREGATE_AVG | 5 | Calculate the average value of delta measures. |
+| MEASURE_AGGREGATE_PERCENT | 6 | Calculate the percentage of delta measures, where the input matches with the condition. |
+| MEASURE_AGGREGATE_RATE | 7 | Calculate the ratio for measures, where the input matches with the condition. |
+| MEASURE_AGGREGATE_HISTOGRAM | 8 | Calculate the histogram for delta measures. |
+| MEASURE_AGGREGATE_PERCENTILE2 | 9 | Calculate the {p99, p95, p90, p75, p50} for delta measures. |
+| MEASURE_AGGREGATE_APDEX | 10 | Calculate the apdex for delta measures. |
+| MEASURE_AGGREGATE_PERCENTILE | 11 | Same like PERCENTILE2, little different on algorithm. |
+
+
  
 
  
@@ -955,6 +981,7 @@ FieldSpec is the specification of field
 | field_type | [FieldType](#banyandb-database-v1-FieldType) |  | field_type denotes the type of field value |
 | encoding_method | [EncodingMethod](#banyandb-database-v1-EncodingMethod) |  | encoding_method indicates how to encode data during writing |
 | compression_method | [CompressionMethod](#banyandb-database-v1-CompressionMethod) |  | compression_method indicates how to compress data during writing |
+| aggregate_function | [banyandb.model.v1.MeasureAggregate](#banyandb-model-v1-MeasureAggregate) |  | aggregate_function indicates how to aggregate data |
 
 
 
@@ -1018,6 +1045,22 @@ Measure intends to store data point
 | entity | [Entity](#banyandb-database-v1-Entity) |  | entity indicates which tags will be to generate a series and shard a measure |
 | interval | [string](#string) |  | interval indicates how frequently to send a data point valid time units are &#34;ns&#34;, &#34;us&#34; (or &#34;µs&#34;), &#34;ms&#34;, &#34;s&#34;, &#34;m&#34;, &#34;h&#34;, &#34;d&#34;. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the measure is updated |
+
+
+
+
+
+
+<a name="banyandb-database-v1-MeasureAggregateFunction"></a>
+
+### MeasureAggregateFunction
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| type | [FieldType](#banyandb-database-v1-FieldType) |  | type indicates the type of function argument |
+| aggregate_function | [banyandb.model.v1.MeasureAggregate](#banyandb-model-v1-MeasureAggregate) |  | aggregate_function indicates specific function for measure data |
 
 
 
@@ -1718,6 +1761,31 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-MeasureAggregateFunctionServiceSupportRequest"></a>
+
+### MeasureAggregateFunctionServiceSupportRequest
+
+
+
+
+
+
+
+<a name="banyandb-database-v1-MeasureAggregateFunctionServiceSupportResponse"></a>
+
+### MeasureAggregateFunctionServiceSupportResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| measure_aggregate_function | [MeasureAggregateFunction](#banyandb-database-v1-MeasureAggregateFunction) | repeated |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-MeasureRegistryServiceCreateRequest"></a>
 
 ### MeasureRegistryServiceCreateRequest
@@ -2300,6 +2368,16 @@ Type determine the index structure under the hood
 | Get | [IndexRuleRegistryServiceGetRequest](#banyandb-database-v1-IndexRuleRegistryServiceGetRequest) | [IndexRuleRegistryServiceGetResponse](#banyandb-database-v1-IndexRuleRegistryServiceGetResponse) |  |
 | List | [IndexRuleRegistryServiceListRequest](#banyandb-database-v1-IndexRuleRegistryServiceListRequest) | [IndexRuleRegistryServiceListResponse](#banyandb-database-v1-IndexRuleRegistryServiceListResponse) |  |
 | Exist | [IndexRuleRegistryServiceExistRequest](#banyandb-database-v1-IndexRuleRegistryServiceExistRequest) | [IndexRuleRegistryServiceExistResponse](#banyandb-database-v1-IndexRuleRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+
+
+<a name="banyandb-database-v1-MeasureAggregateFunctionService"></a>
+
+### MeasureAggregateFunctionService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Support | [MeasureAggregateFunctionServiceSupportRequest](#banyandb-database-v1-MeasureAggregateFunctionServiceSupportRequest) | [MeasureAggregateFunctionServiceSupportResponse](#banyandb-database-v1-MeasureAggregateFunctionServiceSupportResponse) | Support doesn&#39;t need metadata, it&#39;s static and stateless. |
 
 
 <a name="banyandb-database-v1-MeasureRegistryService"></a>
