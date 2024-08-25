@@ -21,6 +21,7 @@ package native
 import (
 	"context"
 	"errors"
+	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -32,14 +33,14 @@ import (
 )
 
 const (
-	// NativeObservabilityGroupName is the native observability group name.
-	NativeObservabilityGroupName = "_monitoring"
-	defaultTagFamily             = "default"
-	defaultFieldName             = "value"
-	tagNodeType                  = "node_type"
-	tagNodeID                    = "node_id"
-	tagGRPCAddress               = "grpc_address"
-	tagHTTPAddress               = "http_address"
+	// ObservabilityGroupName is the native observability group name.
+	ObservabilityGroupName = "_monitoring"
+	defaultTagFamily       = "default"
+	defaultFieldName       = "value"
+	tagNodeType            = "node_type"
+	tagNodeID              = "node_id"
+	tagGRPCAddress         = "grpc_address"
+	tagHTTPAddress         = "http_address"
 )
 
 var log = logger.GetLogger("observability", "metrics", "system")
@@ -104,7 +105,7 @@ func (p *provider) Histogram(name string, _ meter.Buckets, _ ...string) meter.Hi
 func (p *provider) createNativeObservabilityGroup(ctx context.Context) error {
 	g := &commonv1.Group{
 		Metadata: &commonv1.Metadata{
-			Name: NativeObservabilityGroupName,
+			Name: ObservabilityGroupName,
 		},
 		Catalog: commonv1.Catalog_CATALOG_MEASURE,
 		ResourceOpts: &commonv1.ResourceOpts{
@@ -124,10 +125,12 @@ func (p *provider) createNativeObservabilityGroup(ctx context.Context) error {
 
 func (p *provider) createMeasure(metric string, labels ...string) (string, error) {
 	tags, entityTags := buildTags(p.scope, labels)
-	_, err := p.metadata.MeasureRegistry().CreateMeasure(context.Background(), &databasev1.Measure{
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := p.metadata.MeasureRegistry().CreateMeasure(ctx, &databasev1.Measure{
 		Metadata: &commonv1.Metadata{
 			Name:  metric,
-			Group: NativeObservabilityGroupName,
+			Group: ObservabilityGroupName,
 		},
 		Entity: &databasev1.Entity{
 			TagNames: entityTags,

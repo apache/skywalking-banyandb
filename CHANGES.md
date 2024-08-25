@@ -23,6 +23,7 @@ Release Notes.
 - Add the topN query trace.
 - Introduce the round-robin selector to Liaison Node.
 - Optimize query performance of series index.
+- Add liaison, remote queue, storage(rotation), time-series tables, metadata cache and scheduler metrics.
 
 ### Bugs
 
@@ -37,6 +38,8 @@ Release Notes.
 - Fix a bug where a distributed query would return an empty result if the "limit" was set much lower than the "offset".
 - Fix duplicated measure data in a single part.
 - Fix several "sync.Pool" leak issues by adding a tracker to the pool.
+- Fix panic when removing a expired segment.
+- Fix panic when reading a disorder block of measure. This block's versions are not sorted in descending order.
 
 ### Documentation
 

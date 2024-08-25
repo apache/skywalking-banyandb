@@ -28,7 +28,9 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -50,12 +52,14 @@ const (
 // TSDBOpts wraps options to create a tsdb.
 type TSDBOpts[T TSTable, O any] struct {
 	Option                         O
+	TableMetrics                   Metrics
 	TSTableCreator                 TSTableCreator[T, O]
+	StorageMetricsFactory          *observability.Factory
 	Location                       string
 	SegmentInterval                IntervalRule
 	TTL                            IntervalRule
-	ShardNum                       uint32
 	SeriesIndexFlushTimeoutSeconds int64
+	ShardNum                       uint32
 }
 
 type (
@@ -72,10 +76,11 @@ type database[T TSTable, O any] struct {
 	scheduler         *timestamp.Scheduler
 	tsEventCh         chan int64
 	segmentController *segmentController[T, O]
-	p                 common.Position
-	location          string
-	opts              TSDBOpts[T, O]
-	latestTickTime    atomic.Int64
+	*metrics
+	p              common.Position
+	location       string
+	opts           TSDBOpts[T, O]
+	latestTickTime atomic.Int64
 	sync.RWMutex
 	rotationProcessOn atomic.Bool
 }
@@ -108,6 +113,11 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	l := logger.Fetch(ctx, p.Database)
 	clock, _ := timestamp.GetClock(ctx)
 	scheduler := timestamp.NewScheduler(l, clock)
+
+	var indexMetrics *inverted.Metrics
+	if opts.StorageMetricsFactory != nil {
+		indexMetrics = inverted.NewMetrics(opts.StorageMetricsFactory, common.SegLabelNames()...)
+	}
 	db := &database[T, O]{
 		location:  location,
 		scheduler: scheduler,
@@ -116,7 +126,8 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		tsEventCh: make(chan int64),
 		p:         p,
 		segmentController: newSegmentController[T](ctx, location,
-			l, opts),
+			l, opts, indexMetrics, opts.TableMetrics),
+		metrics: newMetrics(opts.StorageMetricsFactory),
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	lockPath := filepath.Join(opts.Location, lockFilename)
@@ -128,6 +139,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	if err := db.segmentController.open(); err != nil {
 		return nil, err
 	}
+	observability.MetricsCollector.Register(location, db.collect)
 	return db, db.startRotationTask()
 }
 
@@ -137,6 +149,28 @@ func (d *database[T, O]) CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], e
 
 func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange) []Segment[T, O] {
 	return d.segmentController.selectSegments(timeRange)
+}
+
+func (d *database[T, O]) collect() {
+	if d.metrics == nil {
+		return
+	}
+	d.metrics.lastTickTime.Set(float64(d.latestTickTime.Load()))
+	refCount := int32(0)
+	ss := d.segmentController.segments()
+	for _, s := range ss {
+		for _, t := range s.Tables() {
+			t.Collect(d.segmentController.metrics)
+		}
+		s.index.store.CollectMetrics(s.index.p.SegLabelValues()...)
+		s.DecRef()
+		refCount += atomic.LoadInt32(&s.refCount)
+	}
+	d.totalSegRefs.Set(float64(refCount))
+	metrics := d.scheduler.Metrics()
+	for job, m := range metrics {
+		d.metrics.schedulerMetrics.Collect(job, m)
+	}
 }
 
 type walkFn func(suffix string) error

@@ -55,6 +55,8 @@ var (
 	errNoAddr            = errors.New("no address")
 	errQueryMsg          = errors.New("invalid query message")
 	errAccessLogRootPath = errors.New("access log root path is required")
+
+	liaisonGrpcScope = observability.RootScope.SubScope("liaison_grpc")
 )
 
 // Server defines the gRPC server.
@@ -64,24 +66,26 @@ type Server interface {
 }
 
 type server struct {
-	creds credentials.TransportCredentials
-	*streamRegistryServer
-	log *logger.Logger
-	*indexRuleBindingRegistryServer
-	ser *grpclib.Server
+	creds      credentials.TransportCredentials
+	omr        observability.MetricsRegistry
+	measureSVC *measureService
+	ser        *grpclib.Server
+	log        *logger.Logger
 	*propertyServer
 	*topNAggregationRegistryServer
 	*groupRegistryServer
 	stopCh chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
-	streamSVC                *streamService
-	measureSVC               *measureService
-	host                     string
+	streamSVC *streamService
+	*streamRegistryServer
+	*indexRuleBindingRegistryServer
+	metrics                  *metrics
 	keyFile                  string
 	certFile                 string
 	accessLogRootPath        string
 	addr                     string
+	host                     string
 	accessLogRecorders       []accessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	port                     uint32
@@ -90,7 +94,7 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry) Server {
+func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry, omr observability.MetricsRegistry) Server {
 	streamSVC := &streamService{
 		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nodeRegistry),
 		pipeline:         pipeline,
@@ -102,6 +106,7 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 		broadcaster:      broadcaster,
 	}
 	s := &server{
+		omr:        omr,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		streamRegistryServer: &streamRegistryServer{
@@ -152,6 +157,17 @@ func (s *server) PreRun(_ context.Context) error {
 			}
 		}
 	}
+	metrics := newMetrics(s.omr.With(liaisonGrpcScope))
+	s.metrics = metrics
+	s.streamSVC.metrics = metrics
+	s.measureSVC.metrics = metrics
+	s.propertyServer.metrics = metrics
+	s.streamRegistryServer.metrics = metrics
+	s.indexRuleBindingRegistryServer.metrics = metrics
+	s.indexRuleRegistryServer.metrics = metrics
+	s.measureRegistryServer.metrics = metrics
+	s.groupRegistryServer.metrics = metrics
+	s.topNAggregationRegistryServer.metrics = metrics
 	return nil
 }
 
@@ -215,24 +231,17 @@ func (s *server) Serve() run.StopNotify {
 	}
 	grpcPanicRecoveryHandler := func(p any) (err error) {
 		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
-
+		s.metrics.totalPanic.Inc(1)
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 
-	unaryMetrics, streamMetrics := observability.MetricsServerInterceptor()
 	streamChain := []grpclib.StreamServerInterceptor{
 		grpc_validator.StreamServerInterceptor(),
 		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
-	if streamMetrics != nil {
-		streamChain = append(streamChain, streamMetrics)
-	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
 		grpc_validator.UnaryServerInterceptor(),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
-	}
-	if unaryMetrics != nil {
-		unaryChain = append(unaryChain, unaryMetrics)
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),

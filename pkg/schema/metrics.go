@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -15,24 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+package schema
 
 import (
-	"context"
-	"time"
-
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
-	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 )
 
-type nativeProviderFactory struct {
-	metadata metadata.Repo
-	nodeInfo native.NodeInfo
+// Metrics is a collection of metrics.
+type Metrics struct {
+	totalErrs    meter.Counter
+	totalRetries meter.Counter
+	totalPanics  meter.Counter
 }
 
-func (f nativeProviderFactory) provider(scope meter.Scope) meter.Provider {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return native.NewProvider(ctx, scope, f.metadata, f.nodeInfo)
+// NewMetrics creates a new Metrics.
+func NewMetrics(factory *observability.Factory) *Metrics {
+	return &Metrics{
+		totalErrs:    factory.NewCounter("total_err"),
+		totalRetries: factory.NewCounter("total_retries"),
+		totalPanics:  factory.NewCounter("total_panics"),
+	}
 }

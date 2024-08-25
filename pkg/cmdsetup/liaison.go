@@ -48,11 +48,11 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	localPipeline := queue.Local()
 	nodeSel := node.NewRoundRobinSelector(metaSvc)
 	nodeRegistry := grpc.NewClusterNodeRegistry(pipeline, nodeSel)
-	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, nodeRegistry)
-	profSvc := observability.NewProfService()
 	metricSvc := observability.NewMetricService(metaSvc, pipeline, "liaison", nodeRegistry)
+	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, nodeRegistry, metricSvc)
+	profSvc := observability.NewProfService()
 	httpServer := http.NewServer()
-	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline)
+	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
 	}
@@ -63,14 +63,12 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		localPipeline,
 		pipeline,
 		nodeSel,
+		metricSvc,
 		dQuery,
 		grpcServer,
 		httpServer,
 		profSvc,
 	)
-	if metricSvc != nil {
-		units = append(units, metricSvc)
-	}
 	liaisonGroup := run.NewGroup("liaison")
 	liaisonGroup.Register(units...)
 	liaisonCmd := &cobra.Command{

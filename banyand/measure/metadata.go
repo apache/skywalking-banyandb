@@ -33,10 +33,13 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
+
+var metadataScope = measureScope.SubScope("metadata")
 
 // SchemaService allows querying schema information.
 type SchemaService interface {
@@ -57,6 +60,7 @@ func newSchemaRepo(path string, svc *service) *schemaRepo {
 			svc.metadata,
 			svc.l,
 			newSupplier(path, svc),
+			resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 		),
 	}
 	sr.start()
@@ -64,7 +68,7 @@ func newSchemaRepo(path string, svc *service) *schemaRepo {
 }
 
 // NewPortableRepository creates a new portable repository.
-func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaService {
+func NewPortableRepository(metadata metadata.Repo, l *logger.Logger, metrics *resourceSchema.Metrics) SchemaService {
 	r := &schemaRepo{
 		l:        l,
 		metadata: metadata,
@@ -72,6 +76,7 @@ func NewPortableRepository(metadata metadata.Repo, l *logger.Logger) SchemaServi
 			metadata,
 			l,
 			newPortableSupplier(metadata, l),
+			metrics,
 		),
 	}
 	r.start()
@@ -258,8 +263,9 @@ var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 type supplier struct {
 	metadata metadata.Repo
 	pipeline queue.Queue
-	option   option
+	omr      observability.MetricsRegistry
 	l        *logger.Logger
+	option   option
 	path     string
 }
 
@@ -270,6 +276,7 @@ func newSupplier(path string, svc *service) *supplier {
 		l:        svc.l,
 		pipeline: svc.localPipeline,
 		option:   svc.option,
+		omr:      svc.omr,
 	}
 }
 
@@ -289,20 +296,25 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
+	name := groupSchema.Metadata.Name
+	p := common.Position{
+		Module:   "measure",
+		Database: name,
+	}
+	metrics, factory := s.newMetrics(p)
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:                       groupSchema.ResourceOpts.ShardNum,
 		Location:                       path.Join(s.path, groupSchema.Metadata.Name),
 		TSTableCreator:                 newTSTable,
+		TableMetrics:                   metrics,
 		SegmentInterval:                storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
 		TTL:                            storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
 		Option:                         s.option,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
+		StorageMetricsFactory:          factory,
 	}
-	name := groupSchema.Metadata.Name
 	return storage.OpenTSDB(
-		common.SetPosition(context.Background(), func(p common.Position) common.Position {
-			p.Module = "measure"
-			p.Database = name
+		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
 			return p
 		}),
 		opts)

@@ -43,13 +43,14 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	pipeline := sub.NewServer()
 	localPipeline := queue.Local()
-	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline)
+	metricSvc := observability.NewMetricService(metaSvc, localPipeline, "data", nil)
+	pipeline := sub.NewServer(metricSvc)
+	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
-	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline, localPipeline)
+	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline, localPipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
@@ -58,22 +59,19 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
 	profSvc := observability.NewProfService()
-	metricSvc := observability.NewMetricService(metaSvc, localPipeline, "data", nil)
 
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,
 		metaSvc,
 		localPipeline,
+		metricSvc,
 		pipeline,
 		measureSvc,
 		streamSvc,
 		q,
 		profSvc,
 	)
-	if metricSvc != nil {
-		units = append(units, metricSvc)
-	}
 	dataGroup := run.NewGroup("data")
 	dataGroup.Register(units...)
 	dataCmd := &cobra.Command{

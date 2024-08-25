@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync/atomic"
-	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
@@ -183,7 +182,9 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 }
 
 func uncompressedElementSizeBytes(index int, es *elements) uint64 {
-	n := uint64(len(time.RFC3339Nano))
+	// 8 bytes for timestamp
+	// 8 bytes for elementID
+	n := uint64(8 + 8)
 	for i := range es.tagFamilies[index] {
 		n += uint64(len(es.tagFamilies[index][i].tag))
 		for j := range es.tagFamilies[index][i].values {

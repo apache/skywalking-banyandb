@@ -23,11 +23,11 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"go.uber.org/mock/gomock"
 
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -66,9 +66,6 @@ type services struct {
 }
 
 func setUp() (*services, func()) {
-	ctrl := gomock.NewController(ginkgo.GinkgoT())
-	gomega.Expect(ctrl).ShouldNot(gomega.BeNil())
-
 	// Init Pipeline
 	pipeline := queue.Local()
 
@@ -76,8 +73,9 @@ func setUp() (*services, func()) {
 	metadataService, err := embeddedserver.NewService(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+	metricSvc := observability.NewMetricService(metadataService, pipeline, "test", nil)
 	// Init Measure Service
-	measureService, err := measure.NewService(context.TODO(), metadataService, pipeline, nil)
+	measureService, err := measure.NewService(context.TODO(), metadataService, pipeline, nil, metricSvc)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadMeasureSvc := &preloadMeasureService{metaSvc: metadataService}
 	var flags []string

@@ -40,40 +40,49 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 		case e := <-flusherWatcher:
 			flusherWatchers.Add(e)
 		case <-epochWatcher.Watch():
-			curSnapshot := tst.currentSnapshot()
-			if curSnapshot != nil {
-				flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, flusherWatchers)
-				curSnapshot.decRef()
-				curSnapshot = nil
-			}
-			tst.RLock()
-			if tst.snapshot != nil && tst.snapshot.epoch > epoch {
-				curSnapshot = tst.snapshot
-				curSnapshot.incRef()
-			}
-			tst.RUnlock()
-			if curSnapshot != nil {
-				merged, err := tst.mergeMemParts(curSnapshot, mergeCh)
-				if err != nil {
-					tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
+			if func() bool {
+				tst.incTotalFlushLoopStarted(1)
+				start := time.Now()
+				defer func() {
+					tst.incTotalFlushLoopFinished(1)
+					tst.incTotalFlushLatency(time.Since(start).Seconds())
+				}()
+				curSnapshot := tst.currentSnapshot()
+				if curSnapshot != nil {
+					flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, flusherWatchers)
 					curSnapshot.decRef()
-					continue
+					curSnapshot = nil
 				}
-				if !merged {
-					tst.flush(curSnapshot, flushCh)
+				tst.RLock()
+				if tst.snapshot != nil && tst.snapshot.epoch > epoch {
+					curSnapshot = tst.snapshot
+					curSnapshot.incRef()
 				}
-				epoch = curSnapshot.epoch
-				// Notify merger to start a new round of merge.
-				// This round might have be triggered in pauseFlusherToPileupMemParts.
-				flusherWatchers.Notify(math.MaxUint64)
-				flusherWatchers = nil
-				curSnapshot.decRef()
-				if tst.currentEpoch() != epoch {
-					continue
+				tst.RUnlock()
+				if curSnapshot != nil {
+					defer curSnapshot.decRef()
+					merged, err := tst.mergeMemParts(curSnapshot, mergeCh)
+					if err != nil {
+						tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
+						tst.incTotalFlushLoopErr(1)
+						return false
+					}
+					if !merged {
+						tst.flush(curSnapshot, flushCh)
+					}
+					epoch = curSnapshot.epoch
+					// Notify merger to start a new round of merge.
+					// This round might have be triggered in pauseFlusherToPileupMemParts.
+					flusherWatchers.Notify(math.MaxUint64)
+					flusherWatchers = nil
+					if tst.currentEpoch() != epoch {
+						tst.incTotalFlushLoopProgress(1)
+						return false
+					}
 				}
-			}
-			epochWatcher = introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
-			if epochWatcher == nil {
+				epochWatcher = introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
+				return epochWatcher == nil
+			}() {
 				return
 			}
 		}
@@ -93,9 +102,11 @@ func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher watc
 	select {
 	case <-tst.loopCloser.CloseNotify():
 	case <-time.After(tst.option.flushTimeout):
+		tst.incTotalFlushPauseCompleted(1)
 	case e := <-flushWatcher:
 		flusherWatchers.Add(e)
 		flusherWatchers.Notify(epoch)
+		tst.incTotalFlushPauseBreak(1)
 	}
 	return flusherWatchers
 }
@@ -115,7 +126,8 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 	}
 	// merge memory must not be closed by the tsTable.close
 	closeCh := make(chan struct{})
-	newPart, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMergedFlusher, memParts, mergedIDs, mergeCh, closeCh)
+	newPart, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMergedFlusher, memParts,
+		mergedIDs, mergeCh, closeCh, "mem")
 	close(closeCh)
 	if err != nil {
 		if errors.Is(err, errClosed) {
@@ -132,10 +144,13 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction) {
 	ind := generateFlusherIntroduction()
 	defer releaseFlusherIntroduction(ind)
+	start := time.Now()
+	partsCount := 0
 	for _, pw := range snapshot.parts {
 		if pw.mp == nil || pw.mp.partMetadata.TotalCount < 1 {
 			continue
 		}
+		partsCount++
 		partPath := partPath(tst.root, pw.ID())
 		pw.mp.mustFlush(tst.fileSystem, partPath)
 		newPW := newPartWrapper(nil, mustOpenFilePart(pw.ID(), tst.root, tst.fileSystem))
@@ -145,6 +160,10 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	if len(ind.flushed) < 1 {
 		return
 	}
+	end := time.Now()
+	tst.incTotalFlushed(1)
+	tst.incTotalFlushedMemParts(partsCount)
+	tst.incTotalFlushLatency(end.Sub(start).Seconds())
 	ind.applied = make(chan struct{})
 	select {
 	case flushCh <- ind:
@@ -155,6 +174,7 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	case <-ind.applied:
 	case <-tst.loopCloser.CloseNotify():
 	}
+	tst.incTotalFlushIntroLatency(time.Since(end).Seconds())
 }
 
 func (tst *tsTable) persistSnapshot(snapshot *snapshot) {
