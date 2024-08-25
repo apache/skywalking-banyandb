@@ -30,6 +30,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/api/validate"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -90,6 +91,11 @@ func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, container *common
 		return nil, err
 	}
 	entities := make([]*propertyv1.Property, 0, len(messages))
+
+	if err := validate.Properties(entities); err != nil {
+		return nil, err
+	}
+
 	for _, message := range messages {
 		p := message.(*propertyv1.Property)
 		if len(ids) < 1 || ids[0] == all {

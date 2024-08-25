@@ -23,6 +23,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
 // GroupForStreamOrMeasure validates the provided Group object for Stream or Measure.
@@ -238,6 +239,45 @@ func TopNAggregation(topNAggregation *databasev1.TopNAggregation) error {
 	}
 	if topNAggregation.FieldName == "" {
 		return errors.New("topNAggregation fieldName is empty")
+	}
+	return nil
+}
+
+// Measures validates the provided Measure object.
+// It checks for duplicate data.
+func Measures(measures []*databasev1.Measure) error {
+	m := make(map[uint32]bool)
+	for _, measure := range measures {
+		if m[measure.Metadata.Id] {
+			return errors.New("measure is duplicated")
+		}
+		m[measure.Metadata.Id] = true
+	}
+	return nil
+}
+
+// Streams validates the provided Stream object.
+// It checks for duplicate data.
+func Streams(streams []*databasev1.Stream) error {
+	m := make(map[uint32]bool)
+	for _, stream := range streams {
+		if m[stream.Metadata.Id] {
+			return errors.New("stream is duplicated")
+		}
+		m[stream.Metadata.Id] = true
+	}
+	return nil
+}
+
+// Properties validates the provided Property object.
+// It checks for duplicate data.
+func Properties(properties []*propertyv1.Property) error {
+	m := make(map[string]bool)
+	for _, property := range properties {
+		if m[property.Metadata.Id] {
+			return errors.New("property is duplicated")
+		}
+		m[property.Metadata.Id] = true
 	}
 	return nil
 }

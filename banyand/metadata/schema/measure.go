@@ -51,6 +51,11 @@ func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*d
 		return nil, err
 	}
 	entities := make([]*databasev1.Measure, 0, len(messages))
+
+	if err := validate.Measures(entities); err != nil {
+		return nil, err
+	}
+
 	for _, message := range messages {
 		entities = append(entities, message.(*databasev1.Measure))
 	}

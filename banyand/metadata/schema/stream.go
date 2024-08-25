@@ -46,6 +46,11 @@ func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*da
 		return nil, err
 	}
 	entities := make([]*databasev1.Stream, 0, len(messages))
+
+	if err := validate.Streams(entities); err != nil {
+		return nil, err
+	}
+
 	for _, message := range messages {
 		entities = append(entities, message.(*databasev1.Stream))
 	}
