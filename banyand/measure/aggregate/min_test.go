@@ -31,9 +31,9 @@ func TestMin(t *testing.T) {
 	// case1: input int64 elements
 	minInt64, _ := NewMeasureAggregateFunction[int64, Void, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
 	err = minInt64.Combine(MAFArguments[int64, Void, Void]{
-		arg0: MAFArgument[int64]{[]int64{1, 2, 3}},
-		arg1: MAFArgument[Void]{},
-		arg2: MAFArgument[Void]{},
+		arg0: []int64{1, 2, 3},
+		arg1: nil,
+		arg2: nil,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), minInt64.Result())
@@ -41,9 +41,9 @@ func TestMin(t *testing.T) {
 	// case2: input float64 elements
 	minFloat64, _ := NewMeasureAggregateFunction[float64, Void, Void, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
 	err = minFloat64.Combine(MAFArguments[float64, Void, Void]{
-		arg0: MAFArgument[float64]{[]float64{1.0, 2.0, 3.0}},
-		arg1: MAFArgument[Void]{},
-		arg2: MAFArgument[Void]{},
+		arg0: []float64{1.0, 2.0, 3.0},
+		arg1: nil,
+		arg2: nil,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, minFloat64.Result())
@@ -51,9 +51,9 @@ func TestMin(t *testing.T) {
 	// case3: input []int64 elements
 	minInt64Arr, _ := NewMeasureAggregateFunction[[]int64, Void, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
 	err = minInt64Arr.Combine(MAFArguments[[]int64, Void, Void]{
-		arg0: MAFArgument[[]int64]{[][]int64{{1, 2}, {10, 20}}},
-		arg1: MAFArgument[Void]{},
-		arg2: MAFArgument[Void]{},
+		arg0: [][]int64{{1, 2}, {10, 20}},
+		arg1: nil,
+		arg2: nil,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), minInt64Arr.Result())
@@ -62,9 +62,18 @@ func TestMin(t *testing.T) {
 	minStr, _ := NewMeasureAggregateFunction[string, Void, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
 	err = minStr.Combine(MAFArguments[string, Void, Void]{
 		// fixme If there is no element, can't recognize the wrong input type. It needs at least one variable.
-		arg0: MAFArgument[string]{[]string{"a"}},
-		arg1: MAFArgument[Void]{},
-		arg2: MAFArgument[Void]{},
+		arg0: []string{"a"},
+		arg1: nil,
+		arg2: nil,
 	})
 	assert.Errorf(t, err, errFieldValueType.Error())
+
+	// case5: input nothing, always OK
+	minStrArr, _ := NewMeasureAggregateFunction[[]string, Void, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
+	err = minStrArr.Combine(MAFArguments[[]string, Void, Void]{
+		arg0: [][]string{},
+		arg1: nil,
+		arg2: nil,
+	})
+	assert.NoError(t, err)
 }

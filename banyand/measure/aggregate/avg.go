@@ -26,7 +26,7 @@ type Avg[A, B, C MAFInput, K MAFKeep] struct {
 // Combine takes elements to do the aggregation.
 // Avg uses type parameter A and B.
 func (a *Avg[A, B, C, K]) Combine(arguments MAFArguments[A, B, C]) error {
-	for _, arg0 := range arguments.arg0.elements {
+	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
 			a.summation += K(arg0)
@@ -41,7 +41,7 @@ func (a *Avg[A, B, C, K]) Combine(arguments MAFArguments[A, B, C]) error {
 		}
 	}
 
-	for _, arg1 := range arguments.arg1.elements {
+	for _, arg1 := range arguments.arg1 {
 		switch arg1 := any(arg1).(type) {
 		case int64:
 			a.count += arg1

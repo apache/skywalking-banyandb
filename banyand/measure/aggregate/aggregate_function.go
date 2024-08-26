@@ -31,7 +31,7 @@ type Void struct{}
 // MAFInput synchronizes with `pbv1.ValueType`, excluding `ValueTypeUnknown`
 // and `ValueTypeBinaryData`.
 type MAFInput interface {
-	~string | ~int64 | ~float64 | ~[]string | ~[]int64 | Void
+	Void | ~string | ~int64 | ~float64 | ~[]string | ~[]int64
 }
 
 // MAFKeep represents the only two types of value hold by MAF.
@@ -41,16 +41,11 @@ type MAFKeep interface {
 
 var errFieldValueType = fmt.Errorf("unsupported input value type on this field")
 
-// MAFArgument represents a segment of elements as an argument.
-type MAFArgument[T MAFInput] struct {
-	elements []T
-}
-
 // MAFArguments represents the argument array, with at most three arguments.
 type MAFArguments[A, B, C MAFInput] struct {
-	arg0 MAFArgument[A]
-	arg1 MAFArgument[B]
-	arg2 MAFArgument[C]
+	arg0 []A
+	arg1 []B
+	arg2 []C
 }
 
 // MAF describes two stages of aggregation.

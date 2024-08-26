@@ -25,7 +25,7 @@ type Min[A, B, C MAFInput, K MAFKeep] struct {
 // Combine takes elements to do the aggregation.
 // Min uses type parameter A.
 func (m *Min[A, B, C, K]) Combine(arguments MAFArguments[A, B, C]) error {
-	for _, arg0 := range arguments.arg0.elements {
+	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
 			if K(arg0) < m.minimum {
