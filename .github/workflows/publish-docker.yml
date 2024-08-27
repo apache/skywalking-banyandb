@@ -75,12 +75,16 @@ jobs:
         run: make generate
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
+      - name: Build Linux binaries
+        run: |
+          TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release
       - name: Build Windows binaries
         run: |
-          GOOS=windows GOARCH=amd64 make -C banyand banyand-server-static
-          GOOS=windows GOARCH=amd64 make -C bydbctl build
+          TARGET_OS=windows PLATFORMS=windows/amd64 make release
       - name: Build docker image
         if: github.ref != 'refs/heads/main' # Only build docker image on PR(Push image when pushed to main branch)
+        env:
+          CI: false
         run: |
           make docker.build || make docker.build
           docker image ls

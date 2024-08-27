@@ -149,20 +149,12 @@ license-dep: default ## Fix license header issues
 ##@ Docker targets
 
 docker.build: TARGET=docker
-docker.build: DIR=docker
-docker.build:
-	$(MAKE) $(TARGET) -C $(DIR); \
-	if [ $$? -ne 0 ]; then \
-		exit 1; \
-	fi; \
+docker.build: PROJECTS:= banyand bydbctl
+docker.build: default ## Build docker images
 
 docker.push: TARGET=docker.push
-docker.push: DIR=docker
-docker.push: 
-	$(MAKE) $(TARGET) -C $(DIR); \
-	if [ $$? -ne 0 ]; then \
-		exit 1; \
-	fi; \
+docker.push: PROJECTS:= banyand bydbctl
+docker.push: default ## Push docker images
 
 default:
 	@for PRJ in $(PROJECTS); do \
