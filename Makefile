@@ -181,7 +181,8 @@ release-source: clean ## Package source archive
 	${RELEASE_SCRIPTS} -s
 
 release-sign: ## Sign artifacts
-	${RELEASE_SCRIPTS} -k bin
+	${RELEASE_SCRIPTS} -k banyand
+	${RELEASE_SCRIPTS} -k bydbctl
 	${RELEASE_SCRIPTS} -k src
 
 release-assembly: release-binary release-sign ## Generate release package

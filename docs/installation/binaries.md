@@ -6,17 +6,18 @@ This page shows how to get binaries of Banyand.
                            
 Go to the [SkyWalking download page](https://skywalking.apache.org/downloads/#Database) .
 
-Select and download the distribution from the suggested location for your platform, such as `skywalking-banyandb-x.x.x-bin.tgz` and `skywalking-bydbctl-x.x.x-bin.tgz`.
+Select and download the distribution from the suggested location for your platform, such as `skywalking-banyandb-x.x.x-banyand.tgz` and `skywalking-bydbctl-x.x.x-bydbctl.tgz`.
 
 > It is essential that you verify the integrity of the downloaded file using the PGP signature ( .asc file) or a hash ( .md5 or .sha* file).
 
 unpack and extract the package.
 
 ```shell
-$ tar -zxvf skywalking-banyandb-x.y.z-bin.tgz
+tar -zxvf skywalking-banyandb-x.y.z-banyand.tgz
+tar -zxvf skywalking-bydbctl-x.y.z-bydbctl.tgz
 ```
 
-The directory structure is as follows.
+The banyand and bydbctl directory structure is as follows.
 
 ```shell
 ├── CHANGES.md
@@ -25,14 +26,25 @@ The directory structure is as follows.
 ├── NOTICE
 ├── README.md
 ├── bin
-│   ├── banyand-server-static
-│   ├── bydbctl-x.y.z-darwin-amd64
-│   ├── bydbctl-x.y.z-darwin-arm64
-│   ├── bydbctl-x.y.z-linux-386
-│   ├── bydbctl-x.y.z-linux-amd64
-│   ├── bydbctl-x.y.z-linux-arm64
-│   ├── bydbctl-x.y.z-windows-386
-│   └── bydbctl-x.y.z-windows-amd64
+│   ├── banyand-linux-arm64
+│   └── banyand-linux-amd64
+└── licenses
+```
+
+```shell
+├── CHANGES.md
+├── LICENSE
+├── LICENSE.tpl
+├── NOTICE
+├── README.md
+├── bin
+│   ├── bydbctl-linux-386
+│   ├── bydbctl-linux-amd64
+│   ├── bydbctl-linux-arm64
+│   ├── bydbctl-windows-386
+│   ├── bydbctl-windows-amd64
+│   ├── bydbctl-darwin-amd64
+│   └── bydbctl-darwin-arm64
 └── licenses
 ```
 

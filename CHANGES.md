@@ -53,6 +53,10 @@ Release Notes.
 ### Chores
 
 Bump up the version of infra e2e framework.
+Separate the monolithic release package into two packages: banyand and bydbctl.
+Separate the monolithic Docker image into two images: banyand and bydbctl.
+Update CI to publish linux/amd64 and linux/arm64 Docker images.
+Make the build system compiles the binary based on the platform which is running on.
 
 ## 0.6.1
 
