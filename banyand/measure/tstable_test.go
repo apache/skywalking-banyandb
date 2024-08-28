@@ -67,7 +67,6 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 					versions:   []int64{1},
 					seriesIDs:  []common.SeriesID{1},
 					types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeUnspecified},
-
 					tagFamilies: [][]nameValues{
 						{
 							{

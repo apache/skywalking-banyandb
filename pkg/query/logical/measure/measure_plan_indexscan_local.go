@@ -40,7 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-//暂时进行mock自己实现了一个聚合函数
+//For the time being, the mock implements an aggregation function of its own
 
 type Number interface {
 	~float64
@@ -91,7 +91,7 @@ func (m *MinAggregator) Combine(values []float64) {
 
 func (m *MinAggregator) Result() float64 {
 	if !m.isInitiated {
-		return 0 // 或者返回一个默认值或错误，根据你的需求决定
+		return 0
 	}
 	return m.minimum
 }
@@ -126,7 +126,7 @@ func (m *MaxAggregator) Combine(values []float64) {
 
 func (m *MaxAggregator) Result() float64 {
 	if !m.isInitiated {
-		return 0 // 或者返回一个默认值或错误，根据你的需求决定
+		return 0
 	}
 	return m.maximum
 }
@@ -154,7 +154,6 @@ func NewAggregator(aggFunc modelv1.MeasureAggregate) Aggregator {
 	}
 }
 
-// 个用于查询特定时间范围内的度量数据的索引扫描操作。
 var _ logical.UnresolvedPlan = (*unresolvedIndexScan)(nil)
 
 type unresolvedIndexScan struct {
@@ -423,7 +422,7 @@ func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, or
 	}
 }
 
-// todo 重写一个resultMitetier，参考agge的实现
+// deltaResultMIterator is a MIterator that calculates the delta of the data points
 type deltaResultMIterator struct {
 	result      model.MeasureQueryResult
 	aggregators map[string]Aggregator

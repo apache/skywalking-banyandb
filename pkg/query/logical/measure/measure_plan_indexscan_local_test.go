@@ -219,7 +219,7 @@ func TestDeltaResultMIterator(t *testing.T) {
 			}
 
 			for fieldName, aggFunc := range tc.aggFuncs {
-				iter.aggregators[fieldName] = NewAggregator(aggFunc) // Ensure initial value is float64
+				iter.aggregators[fieldName] = NewAggregator(aggFunc)
 			}
 
 			got := make([]*measurev1.DataPoint, 0)
