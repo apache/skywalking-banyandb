@@ -24,6 +24,7 @@ Release Notes.
 - Introduce the round-robin selector to Liaison Node.
 - Optimize query performance of series index.
 - Add liaison, remote queue, storage(rotation), time-series tables, metadata cache and scheduler metrics.
+- Add HTTP health check endpoint for the data node.
 
 ### Bugs
 
@@ -53,6 +54,11 @@ Release Notes.
 ### Chores
 
 Bump up the version of infra e2e framework.
+Separate the monolithic release package into two packages: banyand and bydbctl.
+Separate the monolithic Docker image into two images: banyand and bydbctl.
+Update CI to publish linux/amd64 and linux/arm64 Docker images.
+Make the build system compiles the binary based on the platform which is running on.
+Push "skywalking-banyandb-test" image for e2e and stress test. This image contains bydbctl to do a health check.
 
 ## 0.6.1
 

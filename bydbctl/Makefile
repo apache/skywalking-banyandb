@@ -17,41 +17,18 @@
 #
 
 NAME := bydbctl
-BUILD_DIR ?= build/bin
+BINARIES := $(NAME)-cli
+
+IMG_NAME := skywalking-bydbctl
 
 include ../scripts/build/version.mk
 include ../scripts/build/base.mk
 include ../scripts/build/generate_go.mk
-
-GOOS ?= linux
-GOARCH ?= amd64
-
-.PHONY: all
-all: build
-
-.PHONY: build
-build: 
-	@echo "Building binary"
-	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -v --ldflags '${GO_LINK_VERSION}' -o $(BUILD_DIR)/$(NAME) github.com/apache/skywalking-banyandb/bydbctl/cmd/bydbctl/$*
-	chmod +x $(BUILD_DIR)/$(NAME)
-	@echo "Done building $(NAME)"
-
-BUILDS := darwin-amd64 darwin-arm64 linux-386 linux-amd64 linux-arm64 windows-386 windows-amd64
-BUILD_RULE = GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -v --ldflags '$(GO_LINK_VERSION)' \
-		-o $(BUILD_DIR)/$(NAME)-$(VERSION_STRING)-$(GOOS)-$(GOARCH) \
-		github.com/apache/skywalking-banyandb/bydbctl/cmd/bydbctl/$*
-
-.PHONY: $(BUILDS)
-$(BUILDS): GOOS = $(word 1,$(subst -, ,$@))
-$(BUILDS): GOARCH = $(word 2,$(subst -, ,$@))
-$(BUILDS):
-	$(BUILD_RULE)
-
-.PHONY: release 
-release: $(BUILDS)
-
+include ../scripts/build/build.mk
+include ../scripts/build/docker.mk
 include ../scripts/build/test.mk
 include ../scripts/build/lint.mk
 include ../scripts/build/vendor.mk
 include ../scripts/build/help.mk
+
+prepare-build: generate
