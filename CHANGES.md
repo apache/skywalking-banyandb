@@ -24,6 +24,7 @@ Release Notes.
 - Introduce the round-robin selector to Liaison Node.
 - Optimize query performance of series index.
 - Add liaison, remote queue, storage(rotation), time-series tables, metadata cache and scheduler metrics.
+- Add HTTP health check endpoint for the data node.
 
 ### Bugs
 
