@@ -60,7 +60,7 @@ func (b *block) reset() {
 	b.field.reset()
 }
 
-func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tagFamilies [][]nameValues, fields []nameValues) {
+func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tagFamilies [][]nameValues, fields []nameValues, types []pbv1.DataPointValueType) {
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -76,7 +76,7 @@ func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tag
 	assertTimestampsSorted(timestamps)
 	b.timestamps = append(b.timestamps, timestamps...)
 	b.versions = append(b.versions, versions...)
-	b.mustInitFromTagsAndFields(tagFamilies, fields)
+	b.mustInitFromTagsAndFields(tagFamilies, fields, types)
 }
 
 func assertTimestampsSorted(timestamps []int64) {
@@ -88,7 +88,7 @@ func assertTimestampsSorted(timestamps []int64) {
 	}
 }
 
-func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []nameValues) {
+func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []nameValues, types []pbv1.DataPointValueType) {
 	dataPointsLen := len(tagFamilies)
 	if dataPointsLen == 0 {
 		return
@@ -97,14 +97,54 @@ func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []n
 		b.processTagFamilies(tff, i, dataPointsLen)
 	}
 	for i, f := range fields {
-		columns := b.field.resizeColumns(len(f.values))
+		columns := b.field.resizeColumnsAtEnd(len(f.values))
 		for j, t := range f.values {
-			columns[j].name = t.name
-			columns[j].resizeValues(dataPointsLen)
-			columns[j].valueType = t.valueType
-			columns[j].values[i] = t.marshal()
+			if types[i] == pbv1.DataPointValueTypeDelta {
+				columnName := PRFIX + t.name
+				if i == 0 {
+					columns[j].name = columnName
+					columns[j].resizeValues(dataPointsLen)
+					columns[j].valueType = t.valueType
+					columns[j].values[i] = t.marshal()
+					columns[j].datapointType = pbv1.DataPointValueTypeDelta
+				}
+				existingColumn := b.findColumnByName(columnName)
+				if existingColumn == nil {
+					// If the column does not exist, create a new column
+					newColumn := column{
+						name:          columnName,
+						valueType:     t.valueType,
+						datapointType: types[i],
+					}
+					newColumn.resizeValues(dataPointsLen)
+					newColumn.values[i] = t.marshal()
+					b.field.columns = append(b.field.columns, newColumn)
+				} else {
+					// column already exists, update the value
+					existingColumn.values[i] = t.marshal()
+				}
+			} else {
+				if types[i] == pbv1.DataPointValueTypeDelta {
+					columns[j].datapointType = pbv1.DataPointValueTypeCumulative
+				}
+				// If not delta in the original way
+				columns[j].name = t.name
+				columns[j].resizeValues(dataPointsLen)
+				columns[j].valueType = t.valueType
+				columns[j].values[i] = t.marshal()
+				columns[j].datapointType = pbv1.DataPointValueTypeUnspecified
+			}
 		}
 	}
+}
+
+func (b *block) findColumnByName(name string) *column {
+	for i := range b.field.columns {
+		if b.field.columns[i].name == name {
+			return &b.field.columns[i]
+		}
+	}
+	return nil
 }
 
 func (b *block) processTagFamilies(tff []nameValues, i int, dataPointsLen int) {
@@ -700,8 +740,9 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 				tmpBlock.field.columns[i].name, len(tmpBlock.field.columns[i].values), len(tmpBlock.timestamps))
 		}
 		c := column{
-			name:      tmpBlock.field.columns[i].name,
-			valueType: tmpBlock.field.columns[i].valueType,
+			name:          tmpBlock.field.columns[i].name,
+			valueType:     tmpBlock.field.columns[i].valueType,
+			datapointType: tmpBlock.field.columns[i].datapointType,
 		}
 
 		c.values = append(c.values, tmpBlock.field.columns[i].values[start:end+1]...)

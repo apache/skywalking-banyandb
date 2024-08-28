@@ -135,6 +135,7 @@ func (d *dataPoints) skip(i int) {
 	if len(d.fields) > 0 {
 		d.fields = append(d.fields[:i], d.fields[i+1:]...)
 	}
+	d.types = append(d.types[:i], d.types[i+1:]...)
 }
 
 func (d *dataPoints) Len() int {

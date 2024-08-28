@@ -150,7 +150,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 			args: args{
 				timestamps: []int64{1, 2},
 				versions:   []int64{1, 1},
-				types:      []pbv1.DataPointValueType{0, 0},
+				types:      []pbv1.DataPointValueType{1, 1},
 				tagFamilies: [][]nameValues{
 					{
 						{
@@ -219,6 +219,154 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.versions, tt.args.tagFamilies, tt.args.fields, tt.args.types)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromDataPoints() = %+v, want %+v", *b, tt.want)
+			}
+		})
+	}
+}
+
+func Test_block_mustInitFromDataPoints_WithIncrementalData(t *testing.T) {
+	type args struct {
+		timestamps  []int64
+		versions    []int64
+		tagFamilies [][]nameValues
+		fields      []nameValues
+		types       []pbv1.DataPointValueType
+	}
+	tests := []struct {
+		name string
+		args args
+		want block
+	}{
+		{
+			name: "Test mustInitFromDataPoints with incremental data - scalar to delta",
+			args: args{
+				timestamps: []int64{1, 2, 3, 3},
+				versions:   []int64{1, 1, 2, 2},
+				types: []pbv1.DataPointValueType{
+					pbv1.DataPointValueTypeDelta,
+					pbv1.DataPointValueTypeDelta,
+					pbv1.DataPointValueTypeDelta,
+					pbv1.DataPointValueTypeDelta,
+				},
+				tagFamilies: [][]nameValues{
+					{
+						{"tag1", []*nameValue{{name: "tag1", valueType: pbv1.ValueTypeStr, value: []byte("value1")}}},
+					},
+					{
+						{"tag1", []*nameValue{{name: "tag1", valueType: pbv1.ValueTypeStr, value: []byte("value2")}}},
+					},
+					{
+						{"tag1", []*nameValue{{name: "tag1", valueType: pbv1.ValueTypeStr, value: []byte("value3")}}},
+					},
+					{
+						{"tag1", []*nameValue{{name: "tag1", valueType: pbv1.ValueTypeStr, value: []byte("value4")}}},
+					},
+				},
+				fields: []nameValues{
+					{
+						"metrics", []*nameValue{
+							{name: "value", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(100.0), valueArr: nil},
+						},
+					},
+					{
+						"metrics", []*nameValue{
+							{name: "value", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(150.0), valueArr: nil},
+						},
+					},
+					{
+						"metrics", []*nameValue{
+							{name: "akavalue", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(25.0), valueArr: nil},
+						},
+					},
+					{
+						"metrics", []*nameValue{
+							{name: "bkbvalue", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(30.0), valueArr: nil},
+						},
+					},
+				},
+			},
+			want: block{
+				timestamps: []int64{1, 2, 3, 3},
+				versions:   []int64{1, 1, 2, 2},
+				tagFamilies: []columnFamily{
+					{
+						name: "tag1",
+						columns: []column{
+							{
+								name:      "tag1",
+								valueType: pbv1.ValueTypeStr,
+								values:    [][]byte{[]byte("value1"), []byte("value2"), []byte("value3"), []byte("value4")},
+							},
+						},
+					},
+				},
+				field: columnFamily{
+					columns: []column{
+						{
+							name:      "_value",
+							valueType: pbv1.ValueTypeFloat64,
+							values: [][]byte{
+								convert.Float64ToBytes(100.0),
+								convert.Float64ToBytes(150.0),
+								nil,
+								nil,
+							},
+						},
+						{
+							name:      "_akavalue",
+							valueType: pbv1.ValueTypeFloat64,
+							values: [][]byte{
+								nil,
+								nil,
+								convert.Float64ToBytes(25.0),
+								nil,
+							},
+						},
+						{
+							name:      "_bkbvalue",
+							valueType: pbv1.ValueTypeFloat64,
+							values: [][]byte{
+								nil,
+								nil,
+								nil,
+								convert.Float64ToBytes(30.0),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &block{}
+			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.versions, tt.args.tagFamilies, tt.args.fields, tt.args.types)
+
+			// 验证时间戳和版本
+			if !reflect.DeepEqual(b.timestamps, tt.want.timestamps) {
+				t.Errorf("timestamps mismatch. got %v, want %v", b.timestamps, tt.want.timestamps)
+			}
+			if !reflect.DeepEqual(b.versions, tt.want.versions) {
+				t.Errorf("versions mismatch. got %v, want %v", b.versions, tt.want.versions)
+			}
+
+			// 验证字段列
+			if len(b.field.columns) != len(tt.want.field.columns) {
+				t.Errorf("field columns count mismatch. got %d, want %d", len(b.field.columns), len(tt.want.field.columns))
+			}
+
+			for i, col := range b.field.columns {
+				wantCol := tt.want.field.columns[i]
+				if col.name != wantCol.name {
+					t.Errorf("column %d name mismatch. got %s, want %s", i, col.name, wantCol.name)
+				}
+				if col.valueType != wantCol.valueType {
+					t.Errorf("column %d valueType mismatch. got %v, want %v", i, col.valueType, wantCol.valueType)
+				}
+				if !reflect.DeepEqual(col.values, wantCol.values) {
+					t.Errorf("column %d values mismatch. got %v, want %v", i, col.values, wantCol.values)
+				}
 			}
 		})
 	}

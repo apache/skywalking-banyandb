@@ -138,3 +138,11 @@ func (cf *columnFamily) resizeColumns(columnsLen int) []column {
 	cf.columns = columns
 	return columns
 }
+
+func (cf *columnFamily) resizeColumnsAtEnd(size int) []column {
+	if len(cf.columns) < size {
+		additionalColumns := make([]column, size-len(cf.columns))
+		cf.columns = append(cf.columns, additionalColumns...)
+	}
+	return cf.columns
+}

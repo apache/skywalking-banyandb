@@ -487,7 +487,7 @@ service TopNAggregationRegistryService {
 message MeasureAggregateFunctionServiceSupportRequest {}
 
 message MeasureAggregateFunctionServiceSupportResponse {
-  repeated banyandb.database.v1.MeasureAggregateFunction measure_aggregate_function = 1;
+  repeated banyandb.database.v1. MeasureAggregateFunction measure_aggregate_function = 1;
 }
 
 service MeasureAggregateFunctionService {

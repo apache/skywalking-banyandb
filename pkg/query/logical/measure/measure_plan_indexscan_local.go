@@ -20,6 +20,8 @@ package measure
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -37,6 +39,120 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+//暂时进行mock自己实现了一个聚合函数
+
+type Number interface {
+	~float64
+}
+
+func FromFieldValue[N Number](fieldValue *modelv1.FieldValue) (N, error) {
+	switch v := fieldValue.GetValue().(type) {
+	case *modelv1.FieldValue_Int:
+		return N(v.Int.Value), nil
+	case *modelv1.FieldValue_Float:
+		return N(v.Float.Value), nil
+	default:
+		var zero N
+		return zero, fmt.Errorf("unsupported field value type: %T", v)
+	}
+}
+
+func ToFieldValue[N Number](value N) *modelv1.FieldValue {
+	return &modelv1.FieldValue{
+		Value: &modelv1.FieldValue_Float{
+			Float: &modelv1.Float{Value: float64(value)},
+		},
+	}
+}
+
+// Aggregator interface
+type Aggregator interface {
+	Combine(values []float64)
+	Result() float64
+	Reset()
+}
+
+type MinAggregator struct {
+	minimum     float64
+	isInitiated bool
+}
+
+func (m *MinAggregator) Combine(values []float64) {
+	for _, value := range values {
+		if !m.isInitiated {
+			m.minimum = value
+			m.isInitiated = true
+		} else if value < m.minimum {
+			m.minimum = value
+		}
+	}
+}
+
+func (m *MinAggregator) Result() float64 {
+	if !m.isInitiated {
+		return 0 // 或者返回一个默认值或错误，根据你的需求决定
+	}
+	return m.minimum
+}
+
+func (m *MinAggregator) Reset() {
+	m.minimum = 0
+	m.isInitiated = false
+}
+
+func NewMinAggregator() *MinAggregator {
+	return &MinAggregator{
+		isInitiated: false,
+	}
+}
+
+// MaxAggregator calculates the maximum value.
+type MaxAggregator struct {
+	maximum     float64
+	isInitiated bool
+}
+
+func (m *MaxAggregator) Combine(values []float64) {
+	for _, value := range values {
+		if !m.isInitiated {
+			m.maximum = value
+			m.isInitiated = true
+		} else if value > m.maximum {
+			m.maximum = value
+		}
+	}
+}
+
+func (m *MaxAggregator) Result() float64 {
+	if !m.isInitiated {
+		return 0 // 或者返回一个默认值或错误，根据你的需求决定
+	}
+	return m.maximum
+}
+
+func (m *MaxAggregator) Reset() {
+	m.maximum = 0
+	m.isInitiated = false
+}
+
+func NewMaxAggregator() *MaxAggregator {
+	return &MaxAggregator{
+		isInitiated: false,
+	}
+}
+
+// NewAggregator creates a new aggregator based on the specified function
+func NewAggregator(aggFunc modelv1.MeasureAggregate) Aggregator {
+	switch aggFunc {
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
+		return NewMinAggregator()
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX:
+		return NewMaxAggregator()
+	default:
+		return nil
+	}
+}
 
 // 个用于查询特定时间范围内的度量数据的索引扫描操作。
 var _ logical.UnresolvedPlan = (*unresolvedIndexScan)(nil)
@@ -166,9 +282,26 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
+	isDelta := false
+	aggregators := make(map[string]Aggregator)
+	for _, fieldSpec := range i.projectionFieldsRefs {
+		if fieldSpec.Spec.Spec.AggregateFunction != modelv1.MeasureAggregate_MEASURE_AGGREGATE_UNSPECIFIED {
+			isDelta = true
+			aggregators["_"+fieldSpec.Field.Name] = NewAggregator(fieldSpec.Spec.Spec.AggregateFunction)
+		}
+	}
+
+	if isDelta {
+		return &deltaResultMIterator{
+			result:      result,
+			aggregators: aggregators,
+		}, nil
+	}
+
 	return &resultMIterator{
 		result: result,
 	}, nil
+	//todo 这里对于MIiter进行切换，通过什么进行区分呢，是否可以通过是否传递聚合函数类型呢，也就是
 }
 
 func (i *localIndexScan) String() string {
@@ -209,7 +342,6 @@ type resultMIterator struct {
 }
 
 func (ei *resultMIterator) Next() bool {
-	//对其进行迭代处理
 	if ei.result == nil {
 		return false
 	}
@@ -289,4 +421,104 @@ func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, or
 		}
 		span.Stop()
 	}
+}
+
+// todo 重写一个resultMitetier，参考agge的实现
+type deltaResultMIterator struct {
+	result      model.MeasureQueryResult
+	aggregators map[string]Aggregator
+	current     []*measurev1.DataPoint
+	i           int
+}
+
+func (di *deltaResultMIterator) Next() bool {
+	// If we have exhausted the current batch of data points, fetch the next batch
+	if di.i >= len(di.current) {
+		if di.result == nil {
+			return false
+		}
+
+		mr := di.result.Pull()
+		if mr == nil {
+			return false
+		}
+
+		di.current = di.current[:0]
+		di.i = 0
+
+		// Group fields by timestamp
+		groupedFields := make(map[int64]map[string][]*modelv1.FieldValue)
+		for i, ts := range mr.Timestamps {
+			if groupedFields[ts] == nil {
+				groupedFields[ts] = make(map[string][]*modelv1.FieldValue)
+			}
+			for _, f := range mr.Fields {
+				if strings.HasPrefix(f.Name, "_") {
+					groupedFields[ts][f.Name] = append(groupedFields[ts][f.Name], f.Values[i])
+				}
+			}
+		}
+
+		// Sort timestamps
+		timestamps := make([]int64, 0, len(groupedFields))
+		for ts := range groupedFields {
+			timestamps = append(timestamps, ts)
+		}
+		sort.Slice(timestamps, func(i, j int) bool { return timestamps[i] < timestamps[j] })
+
+		// Process each timestamp
+		for _, ts := range timestamps {
+			dataPoint := &measurev1.DataPoint{
+				Timestamp: timestamppb.New(time.Unix(0, ts)),
+				Fields:    make([]*measurev1.DataPoint_Field, 0, len(groupedFields[ts])),
+			}
+
+			for fieldName, values := range groupedFields[ts] {
+				aggregator := di.aggregators[fieldName]
+				aggregator.Reset() // Reset aggregator for each field
+
+				// Aggregate values for this field at this timestamp
+				for _, value := range values {
+					floatValue, _ := FromFieldValue[float64](value)
+					aggregator.Combine([]float64{floatValue})
+				}
+
+				aggregatedValue := aggregator.Result()
+				dataPoint.Fields = append(dataPoint.Fields, &measurev1.DataPoint_Field{
+					Name:  fieldName[1:], // Remove leading underscore
+					Value: ToFieldValue(aggregatedValue),
+				})
+			}
+
+			// Sort fields by name to ensure consistent order
+			sort.Slice(dataPoint.Fields, func(i, j int) bool {
+				return dataPoint.Fields[i].Name < dataPoint.Fields[j].Name
+			})
+
+			di.current = append(di.current, dataPoint)
+		}
+	}
+
+	// If we still have no data points after fetching, return false
+	if len(di.current) == 0 {
+		return false
+	}
+
+	// Move to the next data point
+	di.i++
+
+	return true
+}
+
+func (di *deltaResultMIterator) Current() []*measurev1.DataPoint {
+	if di.i > 0 && di.i <= len(di.current) {
+		return []*measurev1.DataPoint{di.current[di.i-1]}
+	}
+	return nil
+}
+func (di *deltaResultMIterator) Close() error {
+	if di.result != nil {
+		di.result.Release()
+	}
+	return nil
 }
