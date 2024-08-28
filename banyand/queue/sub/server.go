@@ -64,8 +64,9 @@ var (
 )
 
 type server struct {
-	omr       observability.MetricsRegistry
 	creds     credentials.TransportCredentials
+	omr       observability.MetricsRegistry
+	healthSrv *http.Server
 	log       *logger.Logger
 	ser       *grpclib.Server
 	listeners map[bus.Topic]bus.MessageListener
@@ -73,10 +74,10 @@ type server struct {
 	metrics        *metrics
 	clientCloser   context.CancelFunc
 	host           string
-	keyFile        string
 	addr           string
 	healthAddr     string
 	certFile       string
+	keyFile        string
 	maxRecvMsgSize run.Bytes
 	listenersLock  sync.RWMutex
 	port           uint32
@@ -176,8 +177,32 @@ func (s *server) Serve() run.StopNotify {
 	clusterv1.RegisterServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
+	var ctx context.Context
+	ctx, s.clientCloser = context.WithCancel(context.Background())
+	clientOpts := make([]grpclib.DialOption, 0, 1)
+	if s.creds == nil {
+		clientOpts = append(clientOpts, grpclib.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		clientOpts = append(clientOpts, grpclib.WithTransportCredentials(s.creds))
+	}
 	stopCh := make(chan struct{})
-	go func(stopCh chan struct{}) {
+	client, err := healthcheck.NewClient(ctx, s.log, s.addr, clientOpts)
+	if err != nil {
+		s.log.Error().Err(err).Msg("Failed to health check client")
+		close(stopCh)
+		return stopCh
+	}
+	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
+	mux := chi.NewRouter()
+	mux.Mount("/api", gwMux)
+	s.healthSrv = &http.Server{
+		Addr:              s.healthAddr,
+		Handler:           chi.NewRouter(),
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
@@ -189,40 +214,21 @@ func (s *server) Serve() run.StopNotify {
 		if err != nil {
 			s.log.Error().Err(err).Msg("server is interrupted")
 		}
-		close(stopCh)
-	}(stopCh)
-
-	var ctx context.Context
-	ctx, s.clientCloser = context.WithCancel(context.Background())
-	clientOpts := make([]grpclib.DialOption, 0, 1)
-	if s.creds == nil {
-		clientOpts = append(clientOpts, grpclib.WithTransportCredentials(insecure.NewCredentials()))
-	} else {
-		clientOpts = append(clientOpts, grpclib.WithTransportCredentials(s.creds))
-	}
-	client, err := healthcheck.NewClient(ctx, s.log, s.addr, clientOpts)
-	if err != nil {
-		s.log.Error().Err(err).Msg("Failed to health check client")
-		close(stopCh)
-		return stopCh
-	}
-	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
-	mux := chi.NewRouter()
-	mux.Mount("/api", gwMux)
-	healthSrv := &http.Server{
-		Addr:              s.healthAddr,
-		Handler:           chi.NewRouter(),
-		ReadHeaderTimeout: 3 * time.Second,
-	}
-	go func(stopCh chan struct{}) {
+		wg.Done()
+	}()
+	go func() {
 		s.log.Info().Str("listenAddr", s.healthAddr).Msg("Start healthz http server")
-		err := healthSrv.ListenAndServe()
+		err := s.healthSrv.ListenAndServe()
 		if err != http.ErrServerClosed {
 			s.log.Error().Err(err)
 		}
-
+		wg.Done()
+	}()
+	go func() {
+		wg.Wait()
+		s.log.Info().Msg("All servers are stopped")
 		close(stopCh)
-	}(stopCh)
+	}()
 	return stopCh
 }
 
@@ -230,6 +236,9 @@ func (s *server) GracefulStop() {
 	s.log.Info().Msg("stopping")
 	stopped := make(chan struct{})
 	s.clientCloser()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.healthSrv.Shutdown(ctx)
 	go func() {
 		s.ser.GracefulStop()
 		close(stopped)
