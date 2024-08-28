@@ -34,14 +34,13 @@ ifeq (true,$(CI))
 	DOCKER_BUILD_ARGS := $(DOCKER_BUILD_ARGS) --no-cache
 endif
 
-docker: PLATFORMS =
 docker: LOAD_OR_PUSH = --load
 docker: DOCKER_TYPE = "Build"
-docker.push: PLATFORMS = --platform linux/amd64,linux/arm64,windows/amd64
 docker.push: LOAD_OR_PUSH = --push
 docker.push: DOCKER_TYPE = "Push"
 
 docker docker.push:
-	@echo "$(DOCKER_TYPE) $(IMG)"
-	@time docker buildx build $(DOCKER_BUILD_ARGS) $(PLATFORMS) $(LOAD_OR_PUSH) -t $(IMG) -f Dockerfile --provenance=false ..
+	@echo "$(DOCKER_TYPE) $(IMG) with platform $(PLATFORMS)"
+	@pwd
+	time docker buildx build $(DOCKER_BUILD_ARGS) --platform $(PLATFORMS) $(LOAD_OR_PUSH) -t $(IMG) -f Dockerfile --provenance=false .
 
