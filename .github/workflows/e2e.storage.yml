@@ -91,10 +91,8 @@ jobs:
       - name: Build binary
         run: make release
       - name: Build docker image
-        env:
-          CI: false
         run: |
-          make docker.build || make docker.build
+          make -C test/docker build | make -C test/docker build
           docker image ls
       - name: ${{ matrix.test.name }}
         uses: apache/skywalking-infra-e2e@cf589b4a0b9f8e6f436f78e9cfd94a1ee5494180

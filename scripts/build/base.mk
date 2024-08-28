@@ -66,7 +66,7 @@ endif
 # A comma-separated list of platforms for which the
 # docker images should be built. Builds for linux/<local-arch> for dev purposes
 # and multiple archs when run as part of the CI pipeline.
-PLATFORMS ?= $(if $(filter-out $(CI),true),linux/$(TARGET_ARCH),linux/amd64,linux/arm64,windows/amd64)
+PLATFORMS ?= linux/$(TARGET_ARCH)
 
 # Force using docker buildkit for all docker builds,
 # where not enabled by default.

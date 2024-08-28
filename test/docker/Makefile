@@ -16,25 +16,21 @@
 # under the License.
 #
 
-NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
+# The hub of the docker image. The default value is skywalking-.
+# For github registry, it would be ghcr.io/apache/skywalking-
+HUB ?= apache
 
-IMG_NAME := skywalking-banyandb
+# The tag of the docker image. The default value if latest.
+TAG ?= latest
 
-include ../scripts/build/version.mk
-include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
-include ../scripts/build/docker.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-include ../scripts/build/vendor.mk
-include ../scripts/build/help.mk
+IMG := $(HUB)/skywalking-banyandb-test:$(TAG)
 
-prepare-build: generate
-
-docker.dev:
-	@echo "Building $(IMG) with platform $(PLATFORMS)"
+build:
+	@echo "Building $(IMG)"
 	@pwd
-	time docker buildx build $(DOCKER_BUILD_ARGS) --platform $(PLATFORMS) --load --no-cache -t $(IMG) -f Dockerfile.dev --provenance=false .
+	time docker buildx build --load --no-cache -t $(IMG) -f Dockerfile --provenance=false ../../
+
+push:
+	@echo "Pushing $(IMG) with platform linux/amd64,linux/arm64"
+	@pwd
+	time docker buildx build --platform linux/amd64,linux/arm64 --push -t $(IMG) -f Dockerfile --provenance=false ../../

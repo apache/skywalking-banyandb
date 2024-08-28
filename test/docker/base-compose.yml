@@ -38,7 +38,7 @@ services:
       interval: 5s
       timeout: 120s
       retries: 120
-  
+
   data:
     hostname: data
     expose:
@@ -47,11 +47,11 @@ services:
       - 6060
     command: data --etcd-endpoints=http://etcd:2379
     healthcheck:
-      test: ["CMD", "./bydbctl", "health", "--grpc-addr=data:17912"]
+      test: ["CMD", "./bydbctl", "health", "--addr=http://127.0.0.1:17913"]
       interval: 5s
       timeout: 120s
       retries: 120
-  
+
   agent:
     image: "ghcr.io/apache/skywalking-java/skywalking-java:${SW_AGENT_JAVA_COMMIT}-java8"
     command: cp -r /skywalking/agent/ /skywalking-java-agent/
@@ -135,7 +135,7 @@ services:
     image: gcr.io/etcd-development/etcd:v3.5.9
     ports:
       - "2379:2379"
-    command: etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://etcd:2379 --max-request-bytes 10485760 --backend-batch-limit 10000 
+    command: etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://etcd:2379 --max-request-bytes 10485760 --backend-batch-limit 10000
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 1m30s

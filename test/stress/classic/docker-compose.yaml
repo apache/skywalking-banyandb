@@ -30,7 +30,7 @@ services:
     environment:
       BYDB_OBSERVABILITY_MODES: "prometheus,native"
     build:
-      dockerfile: ./docker/Dockerfile
+      dockerfile: ./test/docker/Dockerfile
       context: ../../..
     volumes:
     - /tmp/banyandb-stress-agent:/tmp:rw,delgated
