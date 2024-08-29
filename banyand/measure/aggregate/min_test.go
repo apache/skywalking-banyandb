@@ -30,7 +30,7 @@ func TestMin(t *testing.T) {
 
 	// case1: input int64 elements
 	minInt64, _ := NewMeasureAggregateFunction[int64, Void, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
-	err = minInt64.Combine(MAFArguments[int64, Void, Void]{
+	err = minInt64.Combine(Arguments[int64, Void, Void]{
 		arg0: []int64{1, 2, 3},
 		arg1: nil,
 		arg2: nil,
@@ -40,7 +40,7 @@ func TestMin(t *testing.T) {
 
 	// case2: input float64 elements
 	minFloat64, _ := NewMeasureAggregateFunction[float64, Void, Void, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
-	err = minFloat64.Combine(MAFArguments[float64, Void, Void]{
+	err = minFloat64.Combine(Arguments[float64, Void, Void]{
 		arg0: []float64{1.0, 2.0, 3.0},
 		arg1: nil,
 		arg2: nil,
@@ -50,7 +50,7 @@ func TestMin(t *testing.T) {
 
 	// case3: input []int64 elements
 	minInt64Arr, _ := NewMeasureAggregateFunction[[]int64, Void, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
-	err = minInt64Arr.Combine(MAFArguments[[]int64, Void, Void]{
+	err = minInt64Arr.Combine(Arguments[[]int64, Void, Void]{
 		arg0: [][]int64{{1, 2}, {10, 20}},
 		arg1: nil,
 		arg2: nil,
@@ -60,7 +60,7 @@ func TestMin(t *testing.T) {
 
 	// case4: unexpected input type
 	minStr, _ := NewMeasureAggregateFunction[string, Void, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
-	err = minStr.Combine(MAFArguments[string, Void, Void]{
+	err = minStr.Combine(Arguments[string, Void, Void]{
 		// fixme If there is no element, can't recognize the wrong input type. It needs at least one variable.
 		arg0: []string{"a"},
 		arg1: nil,
@@ -70,7 +70,7 @@ func TestMin(t *testing.T) {
 
 	// case5: input nothing, always OK
 	minStrArr, _ := NewMeasureAggregateFunction[[]string, Void, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
-	err = minStrArr.Combine(MAFArguments[[]string, Void, Void]{
+	err = minStrArr.Combine(Arguments[[]string, Void, Void]{
 		arg0: [][]string{},
 		arg1: nil,
 		arg2: nil,

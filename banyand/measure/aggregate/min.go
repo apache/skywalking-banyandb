@@ -18,13 +18,13 @@
 package aggregate
 
 // Min calculates the minimum value of elements.
-type Min[A, B, C MAFInput, K MAFKeep] struct {
+type Min[A, B, C Input, K Output] struct {
 	minimum K
 }
 
 // Combine takes elements to do the aggregation.
 // Min uses type parameter A.
-func (m *Min[A, B, C, K]) Combine(arguments MAFArguments[A, B, C]) error {
+func (m *Min[A, B, C, K]) Combine(arguments Arguments[A, B, C]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:

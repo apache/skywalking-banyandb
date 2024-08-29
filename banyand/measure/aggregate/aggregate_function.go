@@ -25,43 +25,44 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-// Void type contains nothing. It works as a placeholder for type parameter.
+// Void type contains nothing. It works as a placeholder for type parameters of `Arguments`.
 type Void struct{}
 
-// MAFInput synchronizes with `pbv1.ValueType`, excluding `ValueTypeUnknown`
-// and `ValueTypeBinaryData`.
-type MAFInput interface {
-	Void | ~string | ~int64 | ~float64 | ~[]string | ~[]int64
+// Input covers possible types of Function's arguments. It synchronizes with
+// `pbv1.ValueType`, excluding `ValueTypeUnknown` and `ValueTypeBinaryData`.
+type Input interface {
+	Void | ~int64 | ~[]int64 | ~float64 | ~string | ~[]string
 }
 
-// MAFKeep represents the only two types of value hold by MAF.
-type MAFKeep interface {
+// Output covers possible types of Function's return value.
+// todo It doesn't cover string type.
+type Output interface {
 	~int64 | ~float64
 }
 
 var errFieldValueType = fmt.Errorf("unsupported input value type on this field")
 
-// MAFArguments represents the argument array, with at most three arguments.
-type MAFArguments[A, B, C MAFInput] struct {
+// Arguments represents the argument array, with at most three arguments.
+type Arguments[A, B, C Input] struct {
 	arg0 []A
 	arg1 []B
 	arg2 []C
 }
 
-// MAF describes two stages of aggregation.
-type MAF[A, B, C MAFInput, K MAFKeep] interface {
+// Function describes two stages of aggregation.
+type Function[A, B, C Input, K Output] interface {
 	// Combine takes elements to do the aggregation.
 	// It uses a two-dimensional array to represent the argument array.
-	Combine(arguments MAFArguments[A, B, C]) error
+	Combine(arguments Arguments[A, B, C]) error
 
 	// Result gives the result for the aggregation.
 	// It uses "keep" value type to represent output value type.
 	Result() K
 }
 
-// NewMeasureAggregateFunction is the factory for MAF.
-func NewMeasureAggregateFunction[A, B, C MAFInput, K MAFKeep](aggregate modelv1.MeasureAggregate) (MAF[A, B, C, K], error) {
-	var function MAF[A, B, C, K]
+// NewMeasureAggregateFunction is the factory for Function.
+func NewMeasureAggregateFunction[A, B, C Input, K Output](aggregate modelv1.MeasureAggregate) (Function[A, B, C, K], error) {
+	var function Function[A, B, C, K]
 	switch aggregate {
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
 		function = &Min[A, B, C, K]{minimum: maxValue[K]()}
@@ -74,17 +75,19 @@ func NewMeasureAggregateFunction[A, B, C MAFInput, K MAFKeep](aggregate modelv1.
 	return function, nil
 }
 
-func zeroValue[K MAFKeep]() K {
+func zeroValue[K Output]() K {
 	var z K
 	return z
 }
 
-func maxValue[K MAFKeep]() (r K) {
+func maxValue[K Output]() (r K) {
 	switch x := any(&r).(type) {
 	case *int64:
 		*x = math.MaxInt64
 	case *float64:
 		*x = math.MaxFloat64
+	case *string:
+		*x = ""
 	default:
 		panic("unreachable")
 	}

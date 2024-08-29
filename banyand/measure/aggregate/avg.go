@@ -18,14 +18,14 @@
 package aggregate
 
 // Avg calculates the average value of elements.
-type Avg[A, B, C MAFInput, K MAFKeep] struct {
+type Avg[A, B, C Input, K Output] struct {
 	summation K
 	count     int64
 }
 
 // Combine takes elements to do the aggregation.
 // Avg uses type parameter A and B.
-func (a *Avg[A, B, C, K]) Combine(arguments MAFArguments[A, B, C]) error {
+func (a *Avg[A, B, C, K]) Combine(arguments Arguments[A, B, C]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
