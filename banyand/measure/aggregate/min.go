@@ -46,3 +46,11 @@ func (m *Min[A, B, R]) Combine(arguments Arguments[A, B]) error {
 func (m *Min[A, B, R]) Result() R {
 	return m.minimum
 }
+
+// NewMinArguments constructs arguments.
+func NewMinArguments[A Input](a []A) Arguments[A, Void] {
+	return Arguments[A, Void]{
+		arg0: a,
+		arg1: nil,
+	}
+}

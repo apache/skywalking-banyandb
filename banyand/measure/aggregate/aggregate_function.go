@@ -56,10 +56,10 @@ type Function[A, B Input, R Output] interface {
 	Result() R
 }
 
-// NewMeasureAggregateFunction is the factory for Function.
-func NewMeasureAggregateFunction[A, B Input, R Output](aggregate modelv1.MeasureAggregate) (Function[A, B, R], error) {
+// NewFunction constructs the aggregate function with given kind and parameter types.
+func NewFunction[A, B Input, R Output](kind modelv1.MeasureAggregate) (Function[A, B, R], error) {
 	var function Function[A, B, R]
-	switch aggregate {
+	switch kind {
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
 		function = &Min[A, B, R]{minimum: maxValue[R]()}
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:

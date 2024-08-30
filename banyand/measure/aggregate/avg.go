@@ -60,4 +60,10 @@ func (a *Avg[A, B, R]) Result() R {
 	return a.summation / R(a.count)
 }
 
-// todo add NewAvgArg
+// NewAvgArguments constructs arguments.
+func NewAvgArguments[A Input](a []A, b []int64) Arguments[A, int64] {
+	return Arguments[A, int64]{
+		arg0: a,
+		arg1: b,
+	}
+}

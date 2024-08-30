@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package aggregate
+package aggregate_test
 
 import (
 	"testing"
@@ -23,26 +23,25 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure/aggregate"
 )
 
 func TestMin(t *testing.T) {
 	var err error
 
-	// case1: input int64 elements
-	minInt64, _ := NewMeasureAggregateFunction[int64, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
-	err = minInt64.Combine(Arguments[int64, Void]{
-		arg0: []int64{1, 2, 3}, // mock the "minimum" column
-		arg1: nil,
-	})
+	// case1: input int64 values
+	minInt64, _ := aggregate.NewFunction[int64, aggregate.Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
+	err = minInt64.Combine(aggregate.NewMinArguments[int64](
+		[]int64{1, 2, 3}, // mock the "minimum" column
+	))
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), minInt64.Result())
 
-	// case2: input float64 elements
-	minFloat64, _ := NewMeasureAggregateFunction[float64, Void, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
-	err = minFloat64.Combine(Arguments[float64, Void]{
-		arg0: []float64{1.0, 2.0, 3.0}, // mock the "minimum" column
-		arg1: nil,
-	})
+	// case2: input float64 values
+	minFloat64, _ := aggregate.NewFunction[float64, aggregate.Void, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
+	err = minFloat64.Combine(aggregate.NewMinArguments[float64](
+		[]float64{1.0, 2.0, 3.0}, // mock the "minimum" column
+	))
 	assert.NoError(t, err)
 	assert.Equal(t, 1.0, minFloat64.Result())
 }
