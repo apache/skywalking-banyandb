@@ -18,24 +18,20 @@
 package aggregate
 
 // Avg calculates the average value of elements.
-type Avg[A, B, C Input, K Output] struct {
-	summation K
+type Avg[A, B Input, R Output] struct {
+	summation R
 	count     int64
 }
 
 // Combine takes elements to do the aggregation.
 // Avg uses type parameter A and B.
-func (a *Avg[A, B, C, K]) Combine(arguments Arguments[A, B, C]) error {
+func (a *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			a.summation += K(arg0)
+			a.summation += R(arg0)
 		case float64:
-			a.summation += K(arg0)
-		case []int64:
-			for _, v := range arg0 {
-				a.summation += K(v)
-			}
+			a.summation += R(arg0)
 		default:
 			return errFieldValueType
 		}
@@ -54,12 +50,14 @@ func (a *Avg[A, B, C, K]) Combine(arguments Arguments[A, B, C]) error {
 }
 
 // Result gives the result for the aggregation.
-func (a *Avg[A, B, C, K]) Result() K {
+func (a *Avg[A, B, R]) Result() R {
 	// In unusual situations it returns the zero value.
 	if a.count == 0 {
-		return zeroValue[K]()
+		return zeroValue[R]()
 	}
 	// According to the semantics of GoLang, the division of one int by another int
 	// returns an int, instead of a float.
-	return a.summation / K(a.count)
+	return a.summation / R(a.count)
 }
+
+// todo add NewAvgArg

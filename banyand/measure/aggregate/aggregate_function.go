@@ -28,46 +28,42 @@ import (
 // Void type contains nothing. It works as a placeholder for type parameters of `Arguments`.
 type Void struct{}
 
-// Input covers possible types of Function's arguments. It synchronizes with
-// `pbv1.ValueType`, excluding `ValueTypeUnknown` and `ValueTypeBinaryData`.
+// Input covers possible types of Function's arguments. It synchronizes with `FieldType` in schema.
 type Input interface {
-	Void | ~int64 | ~[]int64 | ~float64 | ~string | ~[]string
+	Void | ~int64 | ~float64
 }
 
 // Output covers possible types of Function's return value.
-// todo It doesn't cover string type.
 type Output interface {
 	~int64 | ~float64
 }
 
 var errFieldValueType = fmt.Errorf("unsupported input value type on this field")
 
-// Arguments represents the argument array, with at most three arguments.
-type Arguments[A, B, C Input] struct {
+// Arguments represents the argument array, with one argument or two arguments.
+type Arguments[A, B Input] struct {
 	arg0 []A
 	arg1 []B
-	arg2 []C
 }
 
 // Function describes two stages of aggregation.
-type Function[A, B, C Input, K Output] interface {
+type Function[A, B Input, R Output] interface {
 	// Combine takes elements to do the aggregation.
 	// It uses a two-dimensional array to represent the argument array.
-	Combine(arguments Arguments[A, B, C]) error
+	Combine(arguments Arguments[A, B]) error
 
 	// Result gives the result for the aggregation.
-	// It uses "keep" value type to represent output value type.
-	Result() K
+	Result() R
 }
 
 // NewMeasureAggregateFunction is the factory for Function.
-func NewMeasureAggregateFunction[A, B, C Input, K Output](aggregate modelv1.MeasureAggregate) (Function[A, B, C, K], error) {
-	var function Function[A, B, C, K]
+func NewMeasureAggregateFunction[A, B Input, R Output](aggregate modelv1.MeasureAggregate) (Function[A, B, R], error) {
+	var function Function[A, B, R]
 	switch aggregate {
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
-		function = &Min[A, B, C, K]{minimum: maxValue[K]()}
+		function = &Min[A, B, R]{minimum: maxValue[R]()}
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:
-		function = &Avg[A, B, C, K]{summation: zeroValue[K](), count: 0}
+		function = &Avg[A, B, R]{summation: zeroValue[R](), count: 0}
 	default:
 		return nil, fmt.Errorf("MeasureAggregate unknown")
 	}
@@ -75,19 +71,19 @@ func NewMeasureAggregateFunction[A, B, C Input, K Output](aggregate modelv1.Meas
 	return function, nil
 }
 
-func zeroValue[K Output]() K {
-	var z K
-	return z
+func zeroValue[R Output]() R {
+	var r R
+	return r
 }
 
-func maxValue[K Output]() (r K) {
-	switch x := any(&r).(type) {
+func maxValue[R Output]() (r R) {
+	switch a := any(&r).(type) {
 	case *int64:
-		*x = math.MaxInt64
+		*a = math.MaxInt64
 	case *float64:
-		*x = math.MaxFloat64
+		*a = math.MaxFloat64
 	case *string:
-		*x = ""
+		*a = ""
 	default:
 		panic("unreachable")
 	}

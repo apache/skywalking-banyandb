@@ -28,12 +28,21 @@ import (
 func TestAvg(t *testing.T) {
 	var err error
 
-	avgInt64, _ := NewMeasureAggregateFunction[int64, int64, Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG)
-	err = avgInt64.Combine(Arguments[int64, int64, Void]{
+	// case1: input int64 elements
+	avgInt64, _ := NewMeasureAggregateFunction[int64, int64, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG)
+	err = avgInt64.Combine(Arguments[int64, int64]{
 		arg0: []int64{1, 3, 3}, // mock the "summation" column
 		arg1: []int64{1, 1, 1}, // mock the "count" column
-		arg2: nil,              // mock an empty column
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), avgInt64.Result()) // note that 7/3 becomes 2 as int
+
+	// case2: input float64 elements
+	avgFloat64, _ := NewMeasureAggregateFunction[float64, int64, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG)
+	err = avgFloat64.Combine(Arguments[float64, int64]{
+		arg0: []float64{1.0, 3.0, 3.0}, // mock the "summation" column
+		arg1: []int64{1, 1, 1},         // mock the "count" column
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 7.0/3, avgFloat64.Result())
 }

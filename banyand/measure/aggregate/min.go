@@ -18,28 +18,22 @@
 package aggregate
 
 // Min calculates the minimum value of elements.
-type Min[A, B, C Input, K Output] struct {
-	minimum K
+type Min[A, B Input, R Output] struct {
+	minimum R
 }
 
 // Combine takes elements to do the aggregation.
 // Min uses type parameter A.
-func (m *Min[A, B, C, K]) Combine(arguments Arguments[A, B, C]) error {
+func (m *Min[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			if K(arg0) < m.minimum {
-				m.minimum = K(arg0)
+			if R(arg0) < m.minimum {
+				m.minimum = R(arg0)
 			}
 		case float64:
-			if K(arg0) < m.minimum {
-				m.minimum = K(arg0)
-			}
-		case []int64:
-			for _, v := range arg0 {
-				if K(v) < m.minimum {
-					m.minimum = K(v)
-				}
+			if R(arg0) < m.minimum {
+				m.minimum = R(arg0)
 			}
 		default:
 			return errFieldValueType
@@ -49,6 +43,6 @@ func (m *Min[A, B, C, K]) Combine(arguments Arguments[A, B, C]) error {
 }
 
 // Result gives the result for the aggregation.
-func (m *Min[A, B, C, K]) Result() K {
+func (m *Min[A, B, R]) Result() R {
 	return m.minimum
 }
