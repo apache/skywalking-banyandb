@@ -52,4 +52,4 @@ If you don't have enough resource to perform a rolling upgrade or you have a lar
 
 ## Rollback
 
-If you encounter any issues during the upgrade process, you can rollback to the previous version by following the same procedure as the upgrade process. If file format is backward compatible, you can rollback to the previous version without any data loss. Please check the [CHANGELOG.md](https://https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md) to ensure that old version is compatible with the new data files.
+If you encounter any issues during the upgrade process, you can rollback to the previous version by following the same procedure as the upgrade process. If file format is backward compatible, you can rollback to the previous version without any data loss. Please check the [CHANGELOG.md](https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md) to ensure that old version is compatible with the new data files.
