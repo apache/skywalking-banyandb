@@ -1,6 +1,6 @@
 # Configuration
 
-BanyanD is the BanyanDB server. There are two ways to configure BanyanD: using a bootstrap flag or using environment variables. The environment variable name has a prefix "BYDB_" followed by the flag name in uppercase. For example, the flag `--port` can be set using the environment variable `BYDB_PORT`.
+BanyanD is the BanyanDB server. There are two ways to configure BanyanD: using a bootstrap flag or using environment variables. The environment variable name has a prefix `BYDB_` followed by the flag name in uppercase. For example, the flag `--port` can be set using the environment variable `BYDB_PORT`.
 
 ## Commands
 
