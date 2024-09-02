@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -177,7 +178,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	if registryConfig.serverEndpoints == nil {
 		return nil, errors.New("server address is not set")
 	}
-	log := logger.GetLogger("etcd")
+	log := logger.GetLogger("etcd-client").DefaultLevel(zerolog.ErrorLevel)
 	zapCfg := log.ToZapConfig()
 
 	var l *zap.Logger
@@ -205,7 +206,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		namespace: registryConfig.namespace,
 		client:    client,
 		closer:    run.NewCloser(1),
-		l:         log,
+		l:         logger.GetLogger("schema-registry"),
 	}
 	return reg, nil
 }

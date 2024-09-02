@@ -54,12 +54,13 @@ Release Notes.
 
 ### Chores
 
-Bump up the version of infra e2e framework.
-Separate the monolithic release package into two packages: banyand and bydbctl.
-Separate the monolithic Docker image into two images: banyand and bydbctl.
-Update CI to publish linux/amd64 and linux/arm64 Docker images.
-Make the build system compiles the binary based on the platform which is running on.
-Push "skywalking-banyandb-test" image for e2e and stress test. This image contains bydbctl to do a health check.
+- Bump up the version of infra e2e framework.
+- Separate the monolithic release package into two packages: banyand and bydbctl.
+- Separate the monolithic Docker image into two images: banyand and bydbctl.
+- Update CI to publish linux/amd64 and linux/arm64 Docker images.
+- Make the build system compiles the binary based on the platform which is running on.
+- Push "skywalking-banyandb-test" image for e2e and stress test. This image contains bydbctl to do a health check.
+- Set etcd-client log level to "error" and etcd-server log level to "warn".
 
 ## 0.6.1
 
