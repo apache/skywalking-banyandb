@@ -94,7 +94,7 @@ func NewServer(omr observability.MetricsRegistry) queue.Server {
 }
 
 func (s *server) PreRun(_ context.Context) error {
-	s.log = logger.GetLogger("server-queue")
+	s.log = logger.GetLogger("server-queue-sub")
 	s.metrics = newMetrics(s.omr.With(queueSubScope))
 	return nil
 }
@@ -129,7 +129,7 @@ func (s *server) Validate() error {
 	if s.addr == ":" {
 		return errNoAddr
 	}
-	s.healthAddr = net.JoinHostPort("127.0.0.1", strconv.FormatUint(uint64(s.healthPort), 10))
+	s.healthAddr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.healthPort), 10))
 	if s.healthAddr == ":" {
 		return errNoAddr
 	}
@@ -194,10 +194,10 @@ func (s *server) Serve() run.StopNotify {
 	}
 	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
 	mux := chi.NewRouter()
-	mux.Mount("/api", gwMux)
+	mux.Mount("/api", http.StripPrefix("/api", gwMux))
 	s.healthSrv = &http.Server{
 		Addr:              s.healthAddr,
-		Handler:           chi.NewRouter(),
+		Handler:           mux,
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 	var wg sync.WaitGroup

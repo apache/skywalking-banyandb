@@ -39,7 +39,7 @@ var (
 	cfgFile   string
 	enableTLS bool
 	insecure  bool
-	grpcCert  string
+	cert      string
 	rootCmd   = &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
@@ -149,6 +149,6 @@ func bindTLSRelatedFlag(commands ...*cobra.Command) {
 	for _, c := range commands {
 		c.Flags().BoolVarP(&enableTLS, "enable-tls", "", false, "Used to enable tls")
 		c.Flags().BoolVarP(&insecure, "insecure", "", false, "Used to skip server's cert")
-		c.Flags().StringVarP(&grpcCert, "grpc-cert", "", "", "Grpc certificate for tls")
+		c.Flags().StringVarP(&cert, "cert", "", "", "Certificate for tls")
 	}
 }

@@ -61,7 +61,7 @@ func newGroupCmd() *cobra.Command {
 					fmt.Printf("group %s is created", reqBody.name)
 					fmt.Println()
 					return nil
-				}, enableTLS, insecure, grpcCert)
+				}, enableTLS, insecure, cert)
 		},
 	}
 
@@ -90,7 +90,7 @@ func newGroupCmd() *cobra.Command {
 					fmt.Printf("group %s is updated", reqBody.name)
 					fmt.Println()
 					return nil
-				}, enableTLS, insecure, grpcCert)
+				}, enableTLS, insecure, cert)
 		},
 	}
 	bindFileFlag(createCmd, updateCmd)
@@ -102,7 +102,7 @@ func newGroupCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/group/schema/{group}"))
-			}, yamlPrinter, enableTLS, insecure, grpcCert)
+			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
 
@@ -118,7 +118,7 @@ func newGroupCmd() *cobra.Command {
 					fmt.Printf("group %s is deleted", reqBody.group)
 					fmt.Println()
 					return nil
-				}, enableTLS, insecure, grpcCert)
+				}, enableTLS, insecure, cert)
 		},
 	}
 
@@ -129,7 +129,7 @@ func newGroupCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(nil, func(request request) (*resty.Response, error) {
 				return request.req.Get(getPath("/api/v1/group/schema/lists"))
-			}, yamlPrinter, enableTLS, insecure, grpcCert)
+			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
 

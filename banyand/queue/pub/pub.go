@@ -200,7 +200,7 @@ func (*pub) Name() string {
 }
 
 func (p *pub) PreRun(context.Context) error {
-	p.log = logger.GetLogger("server-queue")
+	p.log = logger.GetLogger("server-queue-pub")
 	p.metadata.RegisterHandler("queue-client", schema.KindNode, p)
 	return nil
 }
