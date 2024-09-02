@@ -18,7 +18,11 @@
 package helpers
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -27,12 +31,28 @@ import (
 )
 
 // HTTPHealthCheck returns a function for ginkgo "Eventually" poll it repeatedly to check whether a HTTP server is ready.
-func HTTPHealthCheck(addr string) func() error {
+func HTTPHealthCheck(addr, cert string) func() error {
 	return func() error {
 		client := resty.New()
+		schema := "http"
+		if cert != "" {
+			// #nosec G402
+			config := tls.Config{}
+			cert, err := os.ReadFile(cert)
+			if err != nil {
+				return err
+			}
+			certPool := x509.NewCertPool()
+			if !certPool.AppendCertsFromPEM(cert) {
+				return errors.New("failed to add server's certificate")
+			}
+			config.RootCAs = certPool
+			client.SetTLSClientConfig(&config)
+			schema = "https"
+		}
 		resp, err := client.R().
 			SetHeader("Accept", "application/json").
-			Get(fmt.Sprintf("http://%s/api/healthz", addr))
+			Get(fmt.Sprintf("%s://%s/api/healthz", schema, addr))
 		if err != nil {
 			time.Sleep(1 * time.Second)
 			return err

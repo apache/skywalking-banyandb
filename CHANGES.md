@@ -50,6 +50,7 @@ Release Notes.
 - Add web-ui interacting guide.
 - Add bydbctl interacting guide.
 - Add cluster management guide.
+- Add operation related documents: configuration, troubleshooting, system, upgrade, and observability.
 
 ### Chores
 

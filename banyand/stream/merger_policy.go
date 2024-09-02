@@ -20,6 +20,8 @@ package stream
 import (
 	"math"
 	"sort"
+
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // MergePolicy aims to choose an optimal combination
@@ -27,16 +29,16 @@ import (
 type mergePolicy struct {
 	maxParts           int
 	minMergeMultiplier float64
-	maxFanOutSize      uint64
+	maxFanOutSize      run.Bytes
 }
 
 // NewDefaultMergePolicy create a MergePolicy with default parameters.
 func newDefaultMergePolicy() *mergePolicy {
-	return newMergePolicy(15, 1.7, math.MaxUint64)
+	return newMergePolicy(15, 1.7, run.Bytes(math.MaxInt64))
 }
 
 func newDefaultMergePolicyForTesting() *mergePolicy {
-	return newMergePolicy(4, 1.7, math.MaxUint64)
+	return newMergePolicy(4, 1.7, run.Bytes(math.MaxInt64))
 }
 
 func newDisabledMergePolicyForTesting() *mergePolicy {
@@ -44,7 +46,7 @@ func newDisabledMergePolicyForTesting() *mergePolicy {
 }
 
 // NewMergePolicy creates a MergePolicy with given parameters.
-func newMergePolicy(maxParts int, minMergeMul float64, maxFanOutSize uint64) *mergePolicy {
+func newMergePolicy(maxParts int, minMergeMul float64, maxFanOutSize run.Bytes) *mergePolicy {
 	return &mergePolicy{
 		maxParts:           maxParts,
 		minMergeMultiplier: minMergeMul,
@@ -57,7 +59,7 @@ func (l *mergePolicy) getPartsToMerge(dst, src []*partWrapper, freeDiskSize uint
 		return dst
 	}
 
-	maxFanOut := min(freeDiskSize, l.maxFanOutSize)
+	maxFanOut := min(freeDiskSize, uint64(l.maxFanOutSize))
 	// Filter out too big parts.
 	// This should reduce N for O(N^2) algorithm below.
 	maxInPartBytes := uint64(float64(maxFanOut) / l.minMergeMultiplier)
