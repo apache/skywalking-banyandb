@@ -126,7 +126,7 @@ var _ = Describe("Client Test", func() {
 			"--etcd-password", password)
 		defer closeFn()
 
-		Eventually(helpers.HTTPHealthCheck(httpAddr), flags.EventuallyTimeout).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
 			return listKeys(etcdEndpoint, username, password, clientConfig, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
 		}, flags.EventuallyTimeout).Should(HaveLen(1))
@@ -167,7 +167,7 @@ var _ = Describe("Client Test", func() {
 			"--etcd-tls-ca-file", caFilePath)
 		defer closeFn()
 
-		Eventually(helpers.HTTPHealthCheck(httpAddr), flags.EventuallyTimeout).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
 			return listKeys(etcdEndpoint, "", "", clientConfig, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
 		}, flags.EventuallyTimeout).Should(HaveLen(1))
@@ -214,7 +214,7 @@ var _ = Describe("Client Test", func() {
 			"--etcd-tls-key-file", clientKeyFilePath)
 		defer closeFn()
 
-		Eventually(helpers.HTTPHealthCheck(httpAddr), flags.EventuallyTimeout).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
 			return listKeys(etcdEndpoint, "", "", clientConfig, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
 		}, flags.EventuallyTimeout).Should(HaveLen(1))

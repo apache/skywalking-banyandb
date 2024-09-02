@@ -69,7 +69,7 @@ func newStreamCmd() *cobra.Command {
 					fmt.Printf("stream %s.%s is created", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
-				}, enableTLS, insecure, grpcCert)
+				}, enableTLS, insecure, cert)
 		},
 	}
 
@@ -100,7 +100,7 @@ func newStreamCmd() *cobra.Command {
 					fmt.Printf("stream %s.%s is updated", reqBody.group, reqBody.name)
 					fmt.Println()
 					return nil
-				}, enableTLS, insecure, grpcCert)
+				}, enableTLS, insecure, cert)
 		},
 	}
 
@@ -111,7 +111,7 @@ func newStreamCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(streamSchemaPathWithParams))
-			}, yamlPrinter, enableTLS, insecure, grpcCert)
+			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
 
@@ -126,7 +126,7 @@ func newStreamCmd() *cobra.Command {
 				fmt.Printf("stream %s.%s is deleted", reqBody.group, reqBody.name)
 				fmt.Println()
 				return nil
-			}, enableTLS, insecure, grpcCert)
+			}, enableTLS, insecure, cert)
 		},
 	}
 	bindNameFlag(getCmd, deleteCmd)
@@ -138,7 +138,7 @@ func newStreamCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/stream/schema/lists/{group}"))
-			}, yamlPrinter, enableTLS, insecure, grpcCert)
+			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
 
@@ -151,7 +151,7 @@ func newStreamCmd() *cobra.Command {
 			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					return request.req.SetBody(request.data).Post(getPath("/api/v1/stream/data"))
-				}, yamlPrinter, enableTLS, insecure, grpcCert)
+				}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
 	bindFileFlag(createCmd, updateCmd, queryCmd)

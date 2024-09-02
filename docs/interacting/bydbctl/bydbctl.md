@@ -18,3 +18,7 @@ group: ""
 ## HTTP client
 
 Users could select any HTTP client to access the HTTP based endpoints. The default address is `localhost:17913/api`
+
+## TLS
+
+TLS is supported by `bydbctl`.`--tls=true` and `--cert <cert_file>` are the flags to enable TLS and specify the certificate file. If you want to ignore the certificate verification, use `--insecure=true`.
