@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/rs/zerolog"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 
@@ -99,7 +100,7 @@ func NewServer(options ...Option) (Server, error) {
 	for _, opt := range options {
 		opt(conf)
 	}
-	zapCfg := logger.GetLogger("etcd").ToZapConfig()
+	zapCfg := logger.GetLogger("etcd-server").DefaultLevel(zerolog.WarnLevel).ToZapConfig()
 
 	var l *zap.Logger
 	var err error
