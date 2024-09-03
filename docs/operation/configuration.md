@@ -87,6 +87,8 @@ The following flags are used to configure the embedded etcd storage engine which
 - `--observability-listener-addr string`: Listen address for observability (default: ":2121").
 - `--observability-modes strings`: Modes for observability (default: [prometheus]).
 - `--pprof-listener-addr string`: Listen address for pprof (default: ":6060").
+- `--dst-slow-query duration`: distributed slow query threshold, 0 means no slow query log. This is only used for the liaison server (default: 0).
+- `--slow-query duration`: slow query threshold, 0 means no slow query log. This is only used for the data and standalone server (default: 0).
 
 ### Other
 

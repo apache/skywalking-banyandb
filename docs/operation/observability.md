@@ -14,6 +14,14 @@ BanyanDB uses the [zerolo](https://github.com/rs/zerolog) library for logging. T
 --logging-modules=storage --logging-levels=debug
 ```
 
+### Slow Query Logging
+
+BanyanDB supports slow query logging. The `slow-query` flag is used to set the slow query threshold. If a query takes longer than the threshold, it will be logged as a slow query. The default value is `0`, which means no slow query logging. This flag is only used for the data and standalone servers.
+
+The `dst-slow-query` flag is used to set the distributed slow query threshold. This flag is only used for the liaison server. The default value is `0`, which means no distributed slow query logging.
+
+When query tracing is enabled, the slow query log won't be generated.
+
 ## Metrics
 
 BanyanDB has built-in support for metrics collection. Currently, there are two supported metrics provider: `prometheus` and `native`. These can be enabled through `observability-modes` flag, allowing you to activate one or both of them.

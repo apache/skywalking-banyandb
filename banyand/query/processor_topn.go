@@ -171,6 +171,12 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}()
 
 	resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(result))
+	if !request.Trace && t.slowQuery > 0 {
+		latency := time.Since(n)
+		if latency > t.slowQuery {
+			t.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(request)).Int("resp_count", len(result)).Msg("top_n slow query")
+		}
+	}
 	return
 }
 
