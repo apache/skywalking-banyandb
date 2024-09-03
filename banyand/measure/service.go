@@ -19,7 +19,6 @@ package measure
 
 import (
 	"context"
-	"math"
 	"path"
 
 	"github.com/pkg/errors"
@@ -82,7 +81,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
 	s.option.mergePolicy = newDefaultMergePolicy()
-	flagS.Uint64Var(&s.option.mergePolicy.maxFanOutSize, "max-fan-out-size", math.MaxUint64, "the upper bound of a single file size after merge")
+	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "measure-max-fan-out-size", "", "the upper bound of a single file size after merge of measure")
 	return flagS
 }
 

@@ -149,20 +149,12 @@ license-dep: default ## Fix license header issues
 ##@ Docker targets
 
 docker.build: TARGET=docker
-docker.build: DIR=docker
-docker.build:
-	$(MAKE) $(TARGET) -C $(DIR); \
-	if [ $$? -ne 0 ]; then \
-		exit 1; \
-	fi; \
+docker.build: PROJECTS:= banyand bydbctl
+docker.build: default ## Build docker images
 
 docker.push: TARGET=docker.push
-docker.push: DIR=docker
-docker.push: 
-	$(MAKE) $(TARGET) -C $(DIR); \
-	if [ $$? -ne 0 ]; then \
-		exit 1; \
-	fi; \
+docker.push: PROJECTS:= banyand bydbctl
+docker.push: default ## Push docker images
 
 default:
 	@for PRJ in $(PROJECTS); do \
@@ -189,7 +181,8 @@ release-source: clean ## Package source archive
 	${RELEASE_SCRIPTS} -s
 
 release-sign: ## Sign artifacts
-	${RELEASE_SCRIPTS} -k bin
+	${RELEASE_SCRIPTS} -k banyand
+	${RELEASE_SCRIPTS} -k bydbctl
 	${RELEASE_SCRIPTS} -k src
 
 release-assembly: release-binary release-sign ## Generate release package

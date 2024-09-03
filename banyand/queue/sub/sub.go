@@ -37,14 +37,14 @@ import (
 
 func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	reply := func(writeEntity *clusterv1.SendRequest, err error, message string) {
-		s.log.Error().Stringer("written", writeEntity).Err(err).Msg(message)
+		s.log.Error().Stringer("request", writeEntity).Err(err).Msg(message)
 		s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
 		s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		if errResp := stream.Send(&clusterv1.SendResponse{
 			MessageId: writeEntity.MessageId,
 			Error:     message,
 		}); errResp != nil {
-			s.log.Err(errResp).Msg("failed to send response")
+			s.log.Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
 			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		}
 	}
@@ -120,7 +120,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			if errSend := stream.Send(&clusterv1.SendResponse{
 				MessageId: writeEntity.MessageId,
 			}); errSend != nil {
-				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send response")
+				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send write response")
 				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 				continue
 			}
@@ -139,7 +139,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			if errSend := stream.Send(&clusterv1.SendResponse{
 				MessageId: writeEntity.MessageId,
 			}); errSend != nil {
-				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send response")
+				s.log.Error().Stringer("request", writeEntity).Err(errSend).Msg("failed to send empty response")
 				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 				continue
 			}
@@ -166,7 +166,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			MessageId: writeEntity.MessageId,
 			Body:      anyMessage,
 		}); err != nil {
-			s.log.Error().Stringer("written", writeEntity).Err(err).Msg("failed to send response")
+			s.log.Error().Stringer("request", writeEntity).Dur("latency", time.Since(start)).Err(err).Msg("failed to send query response")
 			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 			continue
 		}

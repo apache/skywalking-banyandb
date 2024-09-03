@@ -127,7 +127,7 @@ OUTER:
 		for {
 			select {
 			case <-w.closer.CloseNotify():
-				w.l.Warn().Msgf("watcher closed")
+				w.l.Info().Msgf("watcher closed")
 				return
 			case watchResp, ok := <-wch:
 				if !ok {

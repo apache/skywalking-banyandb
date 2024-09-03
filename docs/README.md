@@ -21,7 +21,7 @@ You might also find these links interesting:
 
 - The latest and old releases are all available
   at [Apache SkyWalking release page](https://skywalking.apache.org/downloads/). The change logs can be
-  found [here](https://github.com/apache/skywalking/tree/master/changes).
+  found [here](https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md).
 
 - [SkyWalking WIKI](https://cwiki.apache.org/confluence/display/SKYWALKING/Home) hosts the context of some changes and
   events.

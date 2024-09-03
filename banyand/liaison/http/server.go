@@ -40,6 +40,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/ui"
@@ -161,7 +162,7 @@ func (p *server) Serve() run.StopNotify {
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(p.creds))
 	}
-	client, err := newHealthCheckClient(ctx, p.l, p.grpcAddr, opts)
+	client, err := healthcheck.NewClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
 		p.l.Error().Err(err).Msg("Failed to health check client")
 		close(p.stopCh)

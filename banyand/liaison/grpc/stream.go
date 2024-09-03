@@ -71,7 +71,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "stream", "write")
 		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
-			logger.Debug().Err(errResp).Msg("failed to send response")
+			logger.Debug().Err(errResp).Msg("failed to send stream write response")
 			s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "stream", "write")
 		}
 	}

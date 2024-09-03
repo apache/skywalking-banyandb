@@ -18,6 +18,8 @@
 package dquery
 
 import (
+	"context"
+	"errors"
 	"time"
 
 	"go.uber.org/multierr"
@@ -30,7 +32,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	pkgquery "github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 const defaultTopNQueryTimeout = 10 * time.Second
@@ -46,6 +50,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		t.log.Warn().Msg("invalid event data type")
 		return
 	}
+	n := time.Now()
 	now := bus.MessageID(request.TimeRange.Begin.Nanos)
 	if request.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
 		resp = bus.NewMessage(now, common.NewError("unspecified requested sort direction"))
@@ -56,7 +61,25 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 	if e := t.log.Debug(); e.Enabled() {
-		e.Stringer("req", request).Msg("received a topN query event")
+		e.RawJSON("req", logger.Proto(request)).Msg("received a topN query event")
+	}
+	if request.Trace {
+		tracer, ctx := pkgquery.NewTracer(context.TODO(), n.Format(time.RFC3339Nano))
+		span, _ := tracer.StartSpan(ctx, "distributed-client")
+		span.Tag("request", convert.BytesToString(logger.Proto(request)))
+		defer func() {
+			data := resp.Data()
+			switch d := data.(type) {
+			case *measurev1.TopNResponse:
+				d.Trace = tracer.ToProto()
+			case common.Error:
+				span.Error(errors.New(d.Msg()))
+				resp = bus.NewMessage(now, &measurev1.TopNResponse{Trace: tracer.ToProto()})
+			default:
+				panic("unexpected data type")
+			}
+			span.Stop()
+		}()
 	}
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
@@ -103,9 +126,16 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		resp = bus.NewMessage(now, &measurev1.TopNResponse{})
 		return
 	}
+	lists := aggregator.Val(tags)
 	resp = bus.NewMessage(now, &measurev1.TopNResponse{
-		Lists: aggregator.Val(tags),
+		Lists: lists,
 	})
+	if !request.Trace && t.slowQuery > 0 {
+		latency := time.Since(n)
+		if latency > t.slowQuery {
+			t.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(request)).Int("resp_count", len(lists)).Msg("top_n slow query")
+		}
+	}
 	return
 }
 

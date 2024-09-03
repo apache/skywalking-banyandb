@@ -21,6 +21,7 @@ package dquery
 import (
 	"context"
 	"errors"
+	"time"
 
 	"go.uber.org/multierr"
 
@@ -60,6 +61,7 @@ type queryService struct {
 	tqp         *topNQueryProcessor
 	closer      *run.Closer
 	nodeID      string
+	slowQuery   time.Duration
 }
 
 // NewService return a new query service.
@@ -88,6 +90,16 @@ func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bu
 
 func (q *queryService) Name() string {
 	return moduleName
+}
+
+func (q *queryService) FlagSet() *run.FlagSet {
+	fs := run.NewFlagSet("distributed-query")
+	fs.DurationVar(&q.slowQuery, "dst-slow-query", 0, "distributed slow query threshold, 0 means no slow query log")
+	return fs
+}
+
+func (q *queryService) Validate() error {
+	return nil
 }
 
 func (q *queryService) PreRun(ctx context.Context) error {

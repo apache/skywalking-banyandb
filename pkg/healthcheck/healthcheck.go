@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package http
+// Package healthcheck provides a health check client.
+package healthcheck
 
 import (
 	"context"
@@ -30,7 +31,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-func newHealthCheckClient(ctx context.Context, l *logger.Logger, addr string, opts []grpc.DialOption) (client *healthCheckClient, err error) {
+// NewClient creates a new health check client.
+func NewClient(ctx context.Context, l *logger.Logger, addr string, opts []grpc.DialOption) (client *Client, err error) {
 	conn, err := grpc.Dial(addr, opts...)
 	if err != nil {
 		return nil, err
@@ -49,14 +51,16 @@ func newHealthCheckClient(ctx context.Context, l *logger.Logger, addr string, op
 			}
 		}()
 	}()
-	return &healthCheckClient{conn: conn}, nil
+	return &Client{conn: conn}, nil
 }
 
-type healthCheckClient struct {
+// Client is a health check client.
+type Client struct {
 	conn *grpc.ClientConn
 }
 
-func (g *healthCheckClient) Check(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
+// Check checks the health of the service.
+func (g *Client) Check(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
 	var resp *grpc_health_v1.HealthCheckResponse
 	if err := grpchelper.Request(ctx, 10*time.Second, func(rpcCtx context.Context) (err error) {
 		resp, err = grpc_health_v1.NewHealthClient(g.conn).Check(rpcCtx,
@@ -70,6 +74,7 @@ func (g *healthCheckClient) Check(ctx context.Context, _ *grpc_health_v1.HealthC
 	return resp, nil
 }
 
-func (g *healthCheckClient) Watch(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {
+// Watch is not implemented.
+func (g *Client) Watch(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {
 	return nil, status.Error(codes.Unimplemented, "unimplemented")
 }

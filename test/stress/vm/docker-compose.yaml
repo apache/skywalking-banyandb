@@ -30,7 +30,7 @@ services:
       file: ../../docker/base-compose.yml
       service: banyandb
     build:
-      dockerfile: ./docker/Dockerfile
+      dockerfile: ./test/docker/Dockerfile
       context: ../../..
     volumes:
     - /tmp/banyandb-stress-vm:/tmp:rw,delgated
