@@ -62,6 +62,8 @@ func NewFunction[A, B Input, R Output](kind modelv1.MeasureAggregate) (Function[
 	switch kind {
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
 		function = &Min[A, B, R]{minimum: maxValue[R]()}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX:
+		function = &Max[A, B, R]{maximum: minValue[R]()}
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:
 		function = &Avg[A, B, R]{summation: zeroValue[R](), count: 0}
 	default:
@@ -74,6 +76,20 @@ func NewFunction[A, B Input, R Output](kind modelv1.MeasureAggregate) (Function[
 func zeroValue[R Output]() R {
 	var r R
 	return r
+}
+
+func minValue[R Output]() (r R) {
+	switch a := any(&r).(type) {
+	case *int64:
+		*a = math.MinInt64
+	case *float64:
+		*a = -math.MaxFloat64
+	case *string:
+		*a = ""
+	default:
+		panic("unreachable")
+	}
+	return
 }
 
 func maxValue[R Output]() (r R) {
