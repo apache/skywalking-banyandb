@@ -64,6 +64,8 @@ func NewFunction[A, B Input, R Output](kind modelv1.MeasureAggregate) (Function[
 		function = &Min[A, B, R]{minimum: maxValue[R]()}
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX:
 		function = &Max[A, B, R]{maximum: minValue[R]()}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_COUNT:
+		function = &Count[A, B, R]{count: 0}
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:
 		function = &Avg[A, B, R]{summation: zeroValue[R](), count: 0}
 	default:
