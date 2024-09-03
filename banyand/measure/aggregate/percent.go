@@ -24,12 +24,12 @@ type Percent[A, B Input, R Output] struct {
 }
 
 // Combine takes elements to do the aggregation.
-// Percent uses type parameter A and B.
-func (a *Percent[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Percent uses none of type parameters.
+func (f *Percent[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			a.total += arg0
+			f.total += arg0
 		default:
 			return errFieldValueType
 		}
@@ -38,7 +38,7 @@ func (a *Percent[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg1 := range arguments.arg1 {
 		switch arg1 := any(arg1).(type) {
 		case int64:
-			a.match += arg1
+			f.match += arg1
 		default:
 			return errFieldValueType
 		}
@@ -48,13 +48,13 @@ func (a *Percent[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (a *Percent[A, B, R]) Result() R {
+func (f *Percent[A, B, R]) Result() R {
 	// In unusual situations it returns the zero value.
-	if a.total == 0 {
+	if f.total == 0 {
 		return zeroValue[R]()
 	}
 	// Factory 100 is used to improve accuracy.
-	return R(a.match) * 100 / R(a.total)
+	return R(f.match) * 100 / R(f.total)
 }
 
 // NewPercentArguments constructs arguments.

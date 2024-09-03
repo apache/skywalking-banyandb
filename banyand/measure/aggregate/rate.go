@@ -24,12 +24,12 @@ type Rate[A, B Input, R Output] struct {
 }
 
 // Combine takes elements to do the aggregation.
-// Rate uses type parameter A and B.
-func (a *Rate[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Rate uses none of type parameters.
+func (f *Rate[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			a.denominator += arg0
+			f.denominator += arg0
 		default:
 			return errFieldValueType
 		}
@@ -38,7 +38,7 @@ func (a *Rate[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg1 := range arguments.arg1 {
 		switch arg1 := any(arg1).(type) {
 		case int64:
-			a.numerator += arg1
+			f.numerator += arg1
 		default:
 			return errFieldValueType
 		}
@@ -48,13 +48,13 @@ func (a *Rate[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (a *Rate[A, B, R]) Result() R {
+func (f *Rate[A, B, R]) Result() R {
 	// In unusual situations it returns the zero value.
-	if a.denominator == 0 {
+	if f.denominator == 0 {
 		return zeroValue[R]()
 	}
 	// Factory 100 is used to improve accuracy.
-	return R(a.numerator) * 100 / R(a.denominator)
+	return R(f.numerator) * 100 / R(f.denominator)
 }
 
 // NewRateArguments constructs arguments.

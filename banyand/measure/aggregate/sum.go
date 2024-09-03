@@ -24,13 +24,13 @@ type Sum[A, B Input, R Output] struct {
 
 // Combine takes elements to do the aggregation.
 // Sum uses type parameter A.
-func (a *Sum[A, B, R]) Combine(arguments Arguments[A, B]) error {
+func (f *Sum[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			a.summation += R(arg0)
+			f.summation += R(arg0)
 		case float64:
-			a.summation += R(arg0)
+			f.summation += R(arg0)
 		default:
 			return errFieldValueType
 		}
@@ -40,10 +40,10 @@ func (a *Sum[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (a *Sum[A, B, R]) Result() R {
+func (f *Sum[A, B, R]) Result() R {
 	// According to the semantics of GoLang, the division of one int by another int
-	// returns an int, instead of a float.
-	return a.summation
+	// returns an int, instead of f float.
+	return f.summation
 }
 
 // NewSumArguments constructs arguments.

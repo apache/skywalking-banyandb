@@ -23,12 +23,12 @@ type Count[A, B Input, R Output] struct {
 }
 
 // Combine takes elements to do the aggregation.
-// Count uses type parameter A.
-func (m *Count[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Count uses none of type parameters.
+func (f *Count[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			m.count += arg0
+			f.count += arg0
 		default:
 			return errFieldValueType
 		}
@@ -37,8 +37,8 @@ func (m *Count[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (m *Count[A, B, R]) Result() R {
-	return R(m.count)
+func (f *Count[A, B, R]) Result() R {
+	return R(f.count)
 }
 
 // NewCountArguments constructs arguments.

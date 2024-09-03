@@ -24,14 +24,14 @@ type Avg[A, B Input, R Output] struct {
 }
 
 // Combine takes elements to do the aggregation.
-// Avg uses type parameter A and B.
-func (a *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Avg uses type parameter A.
+func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			a.summation += R(arg0)
+			f.summation += R(arg0)
 		case float64:
-			a.summation += R(arg0)
+			f.summation += R(arg0)
 		default:
 			return errFieldValueType
 		}
@@ -40,7 +40,7 @@ func (a *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg1 := range arguments.arg1 {
 		switch arg1 := any(arg1).(type) {
 		case int64:
-			a.count += arg1
+			f.count += arg1
 		default:
 			return errFieldValueType
 		}
@@ -50,14 +50,14 @@ func (a *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (a *Avg[A, B, R]) Result() R {
+func (f *Avg[A, B, R]) Result() R {
 	// In unusual situations it returns the zero value.
-	if a.count == 0 {
+	if f.count == 0 {
 		return zeroValue[R]()
 	}
 	// According to the semantics of GoLang, the division of one int by another int
-	// returns an int, instead of a float.
-	return a.summation / R(a.count)
+	// returns an int, instead of f float.
+	return f.summation / R(f.count)
 }
 
 // NewAvgArguments constructs arguments.

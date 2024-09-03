@@ -24,16 +24,16 @@ type Max[A, B Input, R Output] struct {
 
 // Combine takes elements to do the aggregation.
 // Max uses type parameter A.
-func (m *Max[A, B, R]) Combine(arguments Arguments[A, B]) error {
+func (f *Max[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			if R(arg0) > m.maximum {
-				m.maximum = R(arg0)
+			if R(arg0) > f.maximum {
+				f.maximum = R(arg0)
 			}
 		case float64:
-			if R(arg0) > m.maximum {
-				m.maximum = R(arg0)
+			if R(arg0) > f.maximum {
+				f.maximum = R(arg0)
 			}
 		default:
 			return errFieldValueType
@@ -43,8 +43,8 @@ func (m *Max[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (m *Max[A, B, R]) Result() R {
-	return m.maximum
+func (f *Max[A, B, R]) Result() R {
+	return f.maximum
 }
 
 // NewMaxArguments constructs arguments.
