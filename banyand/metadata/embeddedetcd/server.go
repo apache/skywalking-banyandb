@@ -100,7 +100,7 @@ func NewServer(options ...Option) (Server, error) {
 	for _, opt := range options {
 		opt(conf)
 	}
-	zapCfg := logger.GetLogger("etcd-server").DefaultLevel(zerolog.WarnLevel).ToZapConfig()
+	zapCfg := logger.GetLogger("etcd-server").DefaultLevel(zerolog.ErrorLevel).ToZapConfig()
 
 	var l *zap.Logger
 	var err error
