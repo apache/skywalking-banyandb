@@ -72,6 +72,8 @@ func NewFunction[A, B Input, R Output](kind modelv1.MeasureAggregate) (Function[
 		function = &Avg[A, B, R]{summation: zeroValue[R](), count: 0}
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_PERCENT:
 		function = &Percent[A, B, R]{total: 0, match: 0}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_RATE:
+		function = &Rate[A, B, R]{denominator: 0, numerator: 0}
 	default:
 		return nil, fmt.Errorf("MeasureAggregate unknown")
 	}
