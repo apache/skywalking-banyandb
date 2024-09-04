@@ -19,27 +19,20 @@ package observability
 
 import (
 	"context"
-
-	"google.golang.org/grpc"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 )
 
-var (
-	// NativeMetricCollection is a global native metrics collection.
-	NativeMetricCollection native.MetricCollection
-	// NativeMeterProvider is a global native meter provider.
-	NativeMeterProvider meter.Provider
-)
-
-// NewMeterProvider returns a meter.Provider based on the given scope.
-func newNativeMeterProvider(ctx context.Context, metadata metadata.Repo, nodeInfo native.NodeInfo) meter.Provider {
-	return native.NewProvider(ctx, SystemScope, metadata, nodeInfo)
+type nativeProviderFactory struct {
+	metadata metadata.Repo
+	nodeInfo native.NodeInfo
 }
 
-// MetricsServerInterceptor returns a grpc.UnaryServerInterceptor and a grpc.StreamServerInterceptor.
-func emptyMetricsServerInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
-	return nil, nil
+func (f nativeProviderFactory) provider(scope meter.Scope) meter.Provider {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return native.NewProvider(ctx, scope, f.metadata, f.nodeInfo)
 }

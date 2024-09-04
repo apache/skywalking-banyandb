@@ -21,6 +21,7 @@ package sub
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
@@ -36,18 +37,26 @@ import (
 
 func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	reply := func(writeEntity *clusterv1.SendRequest, err error, message string) {
-		s.log.Error().Stringer("written", writeEntity).Err(err).Msg(message)
+		s.log.Error().Stringer("request", writeEntity).Err(err).Msg(message)
+		s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
+		s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		if errResp := stream.Send(&clusterv1.SendResponse{
 			MessageId: writeEntity.MessageId,
 			Error:     message,
 		}); errResp != nil {
-			s.log.Err(errResp).Msg("failed to send response")
+			s.log.Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
+			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		}
 	}
 	ctx := stream.Context()
 	var topic *bus.Topic
 	var m bus.Message
 	var dataCollection []any
+	var start time.Time
+	defer func() {
+		s.metrics.totalFinished.Inc(1, topic.String())
+		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), topic.String())
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -68,12 +77,16 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			return nil
 		}
 		if err != nil {
-			if status.Code(err) == codes.Canceled {
+			// If the context is canceled or the deadline is exceeded, the stream will be closed.
+			// In this case, we should return nil to avoid logging the error.
+			// Deadline exceeded will be raised when other data nodes are not available, and the client timeout context is triggered.
+			if status.Code(err) == codes.Canceled || status.Code(err) == codes.DeadlineExceeded {
 				return nil
 			}
 			s.log.Error().Err(err).Msg("failed to receive message")
 			return err
 		}
+		s.metrics.totalMsgReceived.Inc(1, writeEntity.Topic)
 		if writeEntity.Topic != "" && topic == nil {
 			t, ok := data.TopicMap[writeEntity.Topic]
 			if !ok {
@@ -99,14 +112,22 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			continue
 		}
 		if writeEntity.BatchMod {
+			if len(dataCollection) == 0 {
+				s.metrics.totalStarted.Inc(1, writeEntity.Topic)
+				start = time.Now()
+			}
 			dataCollection = append(dataCollection, writeEntity.Body)
 			if errSend := stream.Send(&clusterv1.SendResponse{
 				MessageId: writeEntity.MessageId,
 			}); errSend != nil {
-				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send response")
+				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send write response")
+				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+				continue
 			}
+			s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
 			continue
 		}
+		s.metrics.totalStarted.Inc(1, writeEntity.Topic)
 		listener := s.getListeners(*topic)
 		if listener == nil {
 			reply(writeEntity, err, "no listener found")
@@ -118,8 +139,11 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			if errSend := stream.Send(&clusterv1.SendResponse{
 				MessageId: writeEntity.MessageId,
 			}); errSend != nil {
-				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send response")
+				s.log.Error().Stringer("request", writeEntity).Err(errSend).Msg("failed to send empty response")
+				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+				continue
 			}
+			s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
 			continue
 		}
 		var message proto.Message
@@ -142,8 +166,11 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			MessageId: writeEntity.MessageId,
 			Body:      anyMessage,
 		}); err != nil {
-			s.log.Error().Stringer("written", writeEntity).Err(err).Msg("failed to send response")
+			s.log.Error().Stringer("request", writeEntity).Dur("latency", time.Since(start)).Err(err).Msg("failed to send query response")
+			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+			continue
 		}
+		s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
 	}
 }
 

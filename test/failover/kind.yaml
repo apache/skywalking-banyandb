@@ -13,22 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-build:
-  banyand:
-    image: apache/skywalking-banyandb:v0.0.0-dev
-    context: ..
-
-deploy:
-  - kubectl apply -f k8s.yml
-
-dev:
-  banyand:
-    image: okteto/golang:1
-    command: bash
-    sync:
-      - ..:/usr/src/app
-    volumes:
-      - /go
-      - /root/.cache
-    forward:
-      - 2345:2345
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+  - containerPort: 12800
+    hostPort: 12800
+    protocol: TCP

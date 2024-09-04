@@ -28,8 +28,10 @@ services:
       file: ../../docker/base-compose.yml
       service: data
     build:
-      dockerfile: ./docker/Dockerfile
+      dockerfile: ./test/docker/Dockerfile
       context: ../../..
+    ports:
+    - 17913:17913
     deploy:
       resources:
         limits:
@@ -42,7 +44,7 @@ services:
       file: ../../docker/base-compose.yml
       service: data
     build:
-      dockerfile: ./docker/Dockerfile
+      dockerfile: ./test/docker/Dockerfile
       context: ../../..
     hostname: data1
     deploy:
@@ -58,7 +60,7 @@ services:
       file: ../../docker/base-compose.yml
       service: data
     build:
-      dockerfile: ./docker/Dockerfile
+      dockerfile: ./test/docker/Dockerfile
       context: ../../..
     hostname: data2
     deploy:
@@ -74,10 +76,9 @@ services:
       file: ../../docker/base-compose.yml
       service: liaison
     build:
-      dockerfile: ./docker/Dockerfile
+      dockerfile: ./test/docker/Dockerfile
       context: ../../..
     ports:
-    - 17913:17913
     - 6060:6060
     - 2121:2121
     deploy:

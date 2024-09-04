@@ -37,7 +37,7 @@ type elementIndex struct {
 	l     *logger.Logger
 }
 
-func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64) (*elementIndex, error) {
+func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64, metrics *inverted.Metrics) (*elementIndex, error) {
 	ei := &elementIndex{
 		l: logger.Fetch(ctx, "element_index"),
 	}
@@ -46,6 +46,7 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 		Path:         path.Join(root, elementIndexFilename),
 		Logger:       ei.l,
 		BatchWaitSec: flushTimeoutSeconds,
+		Metrics:      metrics,
 	}); err != nil {
 		return nil, err
 	}
@@ -93,4 +94,8 @@ func (e *elementIndex) Search(seriesList pbv1.SeriesList, filter index.Filter) (
 
 func (e *elementIndex) Close() error {
 	return e.store.Close()
+}
+
+func (e *elementIndex) collectMetrics(labelValues ...string) {
+	e.store.CollectMetrics(labelValues...)
 }

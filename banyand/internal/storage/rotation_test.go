@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -168,8 +169,20 @@ func (m *MockTSTable) Close() error {
 	return nil
 }
 
+func (m *MockTSTable) Collect(_ Metrics) {}
+
 var MockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
-	_ *logger.Logger, _ timestamp.TimeRange, _ any,
+	_ *logger.Logger, _ timestamp.TimeRange, _, _ any,
 ) (*MockTSTable, error) {
 	return &MockTSTable{}, nil
 }
+
+type MockMetrics struct{}
+
+func (m *MockMetrics) DeleteAll() {}
+
+func (m *MockMetrics) Factory() *observability.Factory {
+	return nil
+}
+
+var MockMetricsCreator = func(_ common.Position) Metrics { return &MockMetrics{} }

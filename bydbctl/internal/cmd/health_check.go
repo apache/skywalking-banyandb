@@ -49,15 +49,15 @@ func newHealthCheckCmd() *cobra.Command {
 			if grpcAddr == "" {
 				return rest(nil, func(request request) (*resty.Response, error) {
 					return request.req.Get(getPath("/api/healthz"))
-				}, yamlPrinter, enableTLS, insecure, grpcCert)
+				}, yamlPrinter, enableTLS, insecure, cert)
 			}
 			if enableTLS {
 				config := &tls.Config{
 					// #nosec G402
 					InsecureSkipVerify: insecure,
 				}
-				if grpcCert != "" {
-					cert, errRead := os.ReadFile(grpcCert)
+				if cert != "" {
+					cert, errRead := os.ReadFile(cert)
 					if errRead != nil {
 						return errRead
 					}

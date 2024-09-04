@@ -43,20 +43,28 @@ func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1
 }
 
 type seriesIndex struct {
-	store index.SeriesStore
-	l     *logger.Logger
+	store   index.SeriesStore
+	l       *logger.Logger
+	metrics *inverted.Metrics
+	p       common.Position
 }
 
-func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64) (*seriesIndex, error) {
+func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64, metrics *inverted.Metrics) (*seriesIndex, error) {
 	si := &seriesIndex{
 		l: logger.Fetch(ctx, "series_index"),
+		p: common.GetPosition(ctx),
 	}
-	var err error
-	if si.store, err = inverted.NewStore(inverted.StoreOpts{
+	opts := inverted.StoreOpts{
 		Path:         path.Join(root, "sidx"),
 		Logger:       si.l,
 		BatchWaitSec: flushTimeoutSeconds,
-	}); err != nil {
+	}
+	if metrics != nil {
+		opts.Metrics = metrics
+		si.metrics = opts.Metrics
+	}
+	var err error
+	if si.store, err = inverted.NewStore(opts); err != nil {
 		return nil, err
 	}
 	return si, nil
@@ -270,5 +278,6 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 }
 
 func (s *seriesIndex) Close() error {
+	s.metrics.DeleteAll(s.p.SegLabelValues()...)
 	return s.store.Close()
 }

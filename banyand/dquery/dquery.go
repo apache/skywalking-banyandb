@@ -21,6 +21,7 @@ package dquery
 import (
 	"context"
 	"errors"
+	"time"
 
 	"go.uber.org/multierr"
 
@@ -29,38 +30,48 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 const (
 	moduleName = "distributed-query"
 )
 
-var _ run.Service = (*queryService)(nil)
+var (
+	_                     run.Service = (*queryService)(nil)
+	distributedQueryScope             = observability.RootScope.SubScope("dquery")
+	streamScope                       = distributedQueryScope.SubScope("stream")
+	measureScope                      = distributedQueryScope.SubScope("measure")
+)
 
 type queryService struct {
 	metaService metadata.Repo
 	pipeline    queue.Server
+	omr         observability.MetricsRegistry
 	log         *logger.Logger
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
 	tqp         *topNQueryProcessor
 	closer      *run.Closer
 	nodeID      string
+	slowQuery   time.Duration
 }
 
 // NewService return a new query service.
-func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bus.Broadcaster,
+func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bus.Broadcaster, omr observability.MetricsRegistry,
 ) (run.Unit, error) {
 	svc := &queryService{
 		metaService: metaService,
 		closer:      run.NewCloser(1),
 		pipeline:    pipeline,
+		omr:         omr,
 	}
 	svc.sqp = &streamQueryProcessor{
 		queryService: svc,
@@ -81,6 +92,16 @@ func (q *queryService) Name() string {
 	return moduleName
 }
 
+func (q *queryService) FlagSet() *run.FlagSet {
+	fs := run.NewFlagSet("distributed-query")
+	fs.DurationVar(&q.slowQuery, "dst-slow-query", 0, "distributed slow query threshold, 0 means no slow query log")
+	return fs
+}
+
+func (q *queryService) Validate() error {
+	return nil
+}
+
 func (q *queryService) PreRun(ctx context.Context) error {
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
@@ -89,8 +110,10 @@ func (q *queryService) PreRun(ctx context.Context) error {
 	node := val.(common.Node)
 	q.nodeID = node.NodeID
 	q.log = logger.GetLogger(moduleName)
-	q.sqp.streamService = stream.NewPortableRepository(q.metaService, q.log)
-	q.mqp.measureService = measure.NewPortableRepository(q.metaService, q.log)
+	q.sqp.streamService = stream.NewPortableRepository(q.metaService, q.log,
+		schema.NewMetrics(q.omr.With(streamScope)))
+	q.mqp.measureService = measure.NewPortableRepository(q.metaService, q.log,
+		schema.NewMetrics(q.omr.With(measureScope)))
 	return multierr.Combine(
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
 		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),

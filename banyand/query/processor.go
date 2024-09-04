@@ -24,16 +24,11 @@ import (
 	"runtime/debug"
 	"time"
 
-	"go.uber.org/multierr"
-
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -54,16 +49,6 @@ var (
 	_ bus.MessageListener = (*measureQueryProcessor)(nil)
 	_ bus.MessageListener = (*topNQueryProcessor)(nil)
 )
-
-type queryService struct {
-	metaService metadata.Repo
-	pipeline    queue.Server
-	log         *logger.Logger
-	sqp         *streamQueryProcessor
-	mqp         *measureQueryProcessor
-	tqp         *topNQueryProcessor
-	nodeID      string
-}
 
 type streamQueryProcessor struct {
 	streamService stream.Service
@@ -147,6 +132,12 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 	resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: entities})
 
+	if !queryCriteria.Trace && p.slowQuery > 0 {
+		latency := time.Since(n)
+		if latency > p.slowQuery {
+			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", len(entities)).Msg("stream slow query")
+		}
+	}
 	return
 }
 
@@ -227,13 +218,13 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 
 	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(ctx, ec))
 	if err != nil {
-		ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
+		ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", meta.GetName(), err))
 		return
 	}
 	defer func() {
 		if err = mIterator.Close(); err != nil {
-			ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
+			ml.Error().Err(err).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
 			if span != nil {
 				span.Error(fmt.Errorf("fail to close the query plan: %w", err))
 			}
@@ -264,24 +255,11 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		e.RawJSON("ret", logger.Proto(qr)).Msg("got a measure")
 	}
 	resp = bus.NewMessage(bus.MessageID(now), qr)
-	return
-}
-
-func (q *queryService) Name() string {
-	return moduleName
-}
-
-func (q *queryService) PreRun(ctx context.Context) error {
-	val := ctx.Value(common.ContextNodeKey)
-	if val == nil {
-		return errors.New("node id is empty")
+	if !queryCriteria.Trace && p.slowQuery > 0 {
+		latency := time.Since(n)
+		if latency > p.slowQuery {
+			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", len(result)).Msg("measure slow query")
+		}
 	}
-	node := val.(common.Node)
-	q.nodeID = node.NodeID
-	q.log = logger.GetLogger(moduleName)
-	return multierr.Combine(
-		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
-		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
-		q.pipeline.Subscribe(data.TopicTopNQuery, q.tqp),
-	)
+	return
 }
