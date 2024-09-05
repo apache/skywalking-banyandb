@@ -21,4 +21,3 @@ The BanyanDB server would be listening on the `0.0.0.0:17912` to access gRPC req
 At the same time, the BanyanDB server would be listening on the `0.0.0.0:17913` to access HTTP requests. if no errors occurred. The HTTP server is used for CLI and Web UI.
 
 The Web UI is hosted at `http://localhost:17913/`.
-

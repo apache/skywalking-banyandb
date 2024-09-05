@@ -24,11 +24,6 @@ services:
     - 17913:17913
     networks:
       - demo
-    healthcheck:
-      test: [ "CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913" ]
-      interval: 30s
-      timeout: 30s
-      retries: 120
 
   oap:
     image: ${OAP_IMAGE:-apache/skywalking-oap-server:latest}

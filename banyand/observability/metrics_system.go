@@ -33,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
-var log = logger.GetLogger("observability", "metrics", "system")
+var log = logger.GetLogger("metrics")
 
 var (
 	cpuCount      = 0

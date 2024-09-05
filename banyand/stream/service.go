@@ -19,7 +19,6 @@ package stream
 
 import (
 	"context"
-	"math"
 	"path"
 
 	"github.com/pkg/errors"
@@ -82,7 +81,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
 	flagS.DurationVar(&s.option.elementIndexFlushTimeout, "element-index-flush-timeout", defaultFlushTimeout, "the elementIndex timeout of stream")
 	s.option.mergePolicy = newDefaultMergePolicy()
-	flagS.Uint64Var(&s.option.mergePolicy.maxFanOutSize, "max-fan-out-size", math.MaxUint64, "the upper bound of a single file size after merge")
+	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "stream-max-fan-out-size", "", "the upper bound of a single file size after merge of stream")
 	return flagS
 }
 

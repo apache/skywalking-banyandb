@@ -20,17 +20,21 @@ package sub
 import (
 	"context"
 	"net"
+	"net/http"
 	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
 	grpc_validator "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/validator"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
@@ -40,6 +44,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -59,20 +64,24 @@ var (
 )
 
 type server struct {
-	omr       observability.MetricsRegistry
 	creds     credentials.TransportCredentials
+	omr       observability.MetricsRegistry
+	healthSrv *http.Server
 	log       *logger.Logger
 	ser       *grpclib.Server
 	listeners map[bus.Topic]bus.MessageListener
 	*clusterv1.UnimplementedServiceServer
 	metrics        *metrics
-	certFile       string
+	clientCloser   context.CancelFunc
 	host           string
-	keyFile        string
 	addr           string
+	healthAddr     string
+	certFile       string
+	keyFile        string
 	maxRecvMsgSize run.Bytes
 	listenersLock  sync.RWMutex
 	port           uint32
+	healthPort     uint32
 	tls            bool
 }
 
@@ -85,7 +94,7 @@ func NewServer(omr observability.MetricsRegistry) queue.Server {
 }
 
 func (s *server) PreRun(_ context.Context) error {
-	s.log = logger.GetLogger("server-queue")
+	s.log = logger.GetLogger("server-queue-sub")
 	s.metrics = newMetrics(s.omr.With(queueSubScope))
 	return nil
 }
@@ -111,12 +120,17 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
+	fs.Uint32Var(&s.healthPort, "health-port", 17913, "the port of banyand health check listens")
 	return fs
 }
 
 func (s *server) Validate() error {
 	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
 	if s.addr == ":" {
+		return errNoAddr
+	}
+	s.healthAddr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.healthPort), 10))
+	if s.healthAddr == ":" {
 		return errNoAddr
 	}
 	if !s.tls {
@@ -163,8 +177,32 @@ func (s *server) Serve() run.StopNotify {
 	clusterv1.RegisterServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
+	var ctx context.Context
+	ctx, s.clientCloser = context.WithCancel(context.Background())
+	clientOpts := make([]grpclib.DialOption, 0, 1)
+	if s.creds == nil {
+		clientOpts = append(clientOpts, grpclib.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		clientOpts = append(clientOpts, grpclib.WithTransportCredentials(s.creds))
+	}
 	stopCh := make(chan struct{})
-	go func(stopCh chan struct{}) {
+	client, err := healthcheck.NewClient(ctx, s.log, s.addr, clientOpts)
+	if err != nil {
+		s.log.Error().Err(err).Msg("Failed to health check client")
+		close(stopCh)
+		return stopCh
+	}
+	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
+	mux := chi.NewRouter()
+	mux.Mount("/api", http.StripPrefix("/api", gwMux))
+	s.healthSrv = &http.Server{
+		Addr:              s.healthAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
@@ -176,14 +214,31 @@ func (s *server) Serve() run.StopNotify {
 		if err != nil {
 			s.log.Error().Err(err).Msg("server is interrupted")
 		}
+		wg.Done()
+	}()
+	go func() {
+		s.log.Info().Str("listenAddr", s.healthAddr).Msg("Start healthz http server")
+		err := s.healthSrv.ListenAndServe()
+		if err != http.ErrServerClosed {
+			s.log.Error().Err(err)
+		}
+		wg.Done()
+	}()
+	go func() {
+		wg.Wait()
+		s.log.Info().Msg("All servers are stopped")
 		close(stopCh)
-	}(stopCh)
+	}()
 	return stopCh
 }
 
 func (s *server) GracefulStop() {
 	s.log.Info().Msg("stopping")
 	stopped := make(chan struct{})
+	s.clientCloser()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.healthSrv.Shutdown(ctx)
 	go func() {
 		s.ser.GracefulStop()
 		close(stopped)

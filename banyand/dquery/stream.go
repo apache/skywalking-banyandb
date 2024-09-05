@@ -24,7 +24,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -80,9 +79,9 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
 	ctx := context.Background()
-	var tracer *query.Tracer
-	var span *query.Span
 	if queryCriteria.Trace {
+		var tracer *query.Tracer
+		var span *query.Span
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "distributed-%s", p.queryService.nodeID)
 		span.Tag("plan", plan.String())
@@ -93,7 +92,7 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 				d.Trace = tracer.ToProto()
 			case common.Error:
 				span.Error(errors.New(d.Msg()))
-				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+				resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
 			}
@@ -113,6 +112,11 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	}
 
 	resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: entities})
-
+	if !queryCriteria.Trace && p.slowQuery > 0 {
+		latency := time.Since(n)
+		if latency > p.slowQuery {
+			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", len(entities)).Msg("stream slow query")
+		}
+	}
 	return
 }
