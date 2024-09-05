@@ -36,5 +36,4 @@ func TestCount(t *testing.T) {
 	))
 	assert.NoError(t, err)
 	assert.Equal(t, int64(6), countInt64.Result())
-
 }

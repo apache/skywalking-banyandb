@@ -36,6 +36,5 @@ func TestRate(t *testing.T) {
 		[]int64{1, 10, 100},    // mock the "numerator" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, int64(10), rateInt64.Result())
-
+	assert.Equal(t, int64(1000), rateInt64.Result())
 }

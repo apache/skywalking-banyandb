@@ -36,6 +36,5 @@ func TestPercent(t *testing.T) {
 		[]int64{1, 10, 100},    // mock the "match" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, int64(10), PercentInt64.Result())
-
+	assert.Equal(t, int64(1000), PercentInt64.Result())
 }

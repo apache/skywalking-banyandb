@@ -53,8 +53,8 @@ func (f *Rate[A, B, R]) Result() R {
 	if f.denominator == 0 {
 		return zeroValue[R]()
 	}
-	// Factory 100 is used to improve accuracy.
-	return R(f.numerator) * 100 / R(f.denominator)
+	// Factory 10000 is used to improve accuracy. This factory is same as OAP.
+	return R(f.numerator) * 10000 / R(f.denominator)
 }
 
 // NewRateArguments constructs arguments.

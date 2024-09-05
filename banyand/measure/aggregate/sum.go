@@ -41,8 +41,6 @@ func (f *Sum[A, B, R]) Combine(arguments Arguments[A, B]) error {
 
 // Result gives the result for the aggregation.
 func (f *Sum[A, B, R]) Result() R {
-	// According to the semantics of GoLang, the division of one int by another int
-	// returns an int, instead of f float.
 	return f.summation
 }
 

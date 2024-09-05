@@ -53,8 +53,9 @@ func (f *Percent[A, B, R]) Result() R {
 	if f.total == 0 {
 		return zeroValue[R]()
 	}
-	// Factory 100 is used to improve accuracy.
-	return R(f.match) * 100 / R(f.total)
+	// Factory 10000 is used to improve accuracy. This factory is same as OAP.
+	// For example, "10 percent" will return 1000.
+	return R(f.match) * 10000 / R(f.total)
 }
 
 // NewPercentArguments constructs arguments.
