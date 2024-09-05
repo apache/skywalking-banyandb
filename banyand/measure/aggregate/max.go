@@ -17,53 +17,40 @@
 
 package aggregate
 
-// Avg calculates the average value of elements.
-type Avg[A, B Input, R Output] struct {
-	summation R
-	count     int64
+// Max calculates the maximum value of elements.
+type Max[A, B Input, R Output] struct {
+	maximum R
 }
 
 // Combine takes elements to do the aggregation.
-// Avg uses type parameter A.
-func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Max uses type parameter A.
+func (f *Max[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			f.summation += R(arg0)
+			if R(arg0) > f.maximum {
+				f.maximum = R(arg0)
+			}
 		case float64:
-			f.summation += R(arg0)
+			if R(arg0) > f.maximum {
+				f.maximum = R(arg0)
+			}
 		default:
 			return errFieldValueType
 		}
 	}
-
-	for _, arg1 := range arguments.arg1 {
-		switch arg1 := any(arg1).(type) {
-		case int64:
-			f.count += arg1
-		default:
-			return errFieldValueType
-		}
-	}
-
 	return nil
 }
 
 // Result gives the result for the aggregation.
-func (f *Avg[A, B, R]) Result() R {
-	// In unusual situations it returns the zero value.
-	if f.count == 0 {
-		return zeroValue[R]()
-	}
-	// According to the semantics of GoLang, the division of one int by another int
-	// returns an int, instead of f float.
-	return f.summation / R(f.count)
+func (f *Max[A, B, R]) Result() R {
+	return f.maximum
 }
 
-// NewAvgArguments constructs arguments.
-func NewAvgArguments[A Input](a []A, b []int64) Arguments[A, int64] {
-	return Arguments[A, int64]{
+// NewMaxArguments constructs arguments.
+func NewMaxArguments[A Input](a []A) Arguments[A, Void] {
+	return Arguments[A, Void]{
 		arg0: a,
-		arg1: b,
+		arg1: nil,
 	}
 }

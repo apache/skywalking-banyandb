@@ -62,8 +62,18 @@ func NewFunction[A, B Input, R Output](kind modelv1.MeasureAggregate) (Function[
 	switch kind {
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
 		function = &Min[A, B, R]{minimum: maxValue[R]()}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX:
+		function = &Max[A, B, R]{maximum: minValue[R]()}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_COUNT:
+		function = &Count[A, B, R]{count: 0}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_SUM:
+		function = &Sum[A, B, R]{summation: zeroValue[R]()}
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:
 		function = &Avg[A, B, R]{summation: zeroValue[R](), count: 0}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_PERCENT:
+		function = &Percent[A, B, R]{total: 0, match: 0}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_RATE:
+		function = &Rate[A, B, R]{denominator: 0, numerator: 0}
 	default:
 		return nil, fmt.Errorf("MeasureAggregate unknown")
 	}
@@ -74,6 +84,20 @@ func NewFunction[A, B Input, R Output](kind modelv1.MeasureAggregate) (Function[
 func zeroValue[R Output]() R {
 	var r R
 	return r
+}
+
+func minValue[R Output]() (r R) {
+	switch a := any(&r).(type) {
+	case *int64:
+		*a = math.MinInt64
+	case *float64:
+		*a = -math.MaxFloat64
+	case *string:
+		*a = ""
+	default:
+		panic("unreachable")
+	}
+	return
 }
 
 func maxValue[R Output]() (r R) {

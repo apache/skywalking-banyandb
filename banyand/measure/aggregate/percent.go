@@ -17,21 +17,19 @@
 
 package aggregate
 
-// Avg calculates the average value of elements.
-type Avg[A, B Input, R Output] struct {
-	summation R
-	count     int64
+// Percent calculates the average value of elements.
+type Percent[A, B Input, R Output] struct {
+	total int64
+	match int64
 }
 
 // Combine takes elements to do the aggregation.
-// Avg uses type parameter A.
-func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Percent uses none of type parameters.
+func (f *Percent[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			f.summation += R(arg0)
-		case float64:
-			f.summation += R(arg0)
+			f.total += arg0
 		default:
 			return errFieldValueType
 		}
@@ -40,7 +38,7 @@ func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg1 := range arguments.arg1 {
 		switch arg1 := any(arg1).(type) {
 		case int64:
-			f.count += arg1
+			f.match += arg1
 		default:
 			return errFieldValueType
 		}
@@ -50,19 +48,19 @@ func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (f *Avg[A, B, R]) Result() R {
+func (f *Percent[A, B, R]) Result() R {
 	// In unusual situations it returns the zero value.
-	if f.count == 0 {
+	if f.total == 0 {
 		return zeroValue[R]()
 	}
-	// According to the semantics of GoLang, the division of one int by another int
-	// returns an int, instead of f float.
-	return f.summation / R(f.count)
+	// Factory 10000 is used to improve accuracy. This factory is same as OAP.
+	// For example, "10 percent" will return 1000.
+	return R(f.match) * 10000 / R(f.total)
 }
 
-// NewAvgArguments constructs arguments.
-func NewAvgArguments[A Input](a []A, b []int64) Arguments[A, int64] {
-	return Arguments[A, int64]{
+// NewPercentArguments constructs arguments.
+func NewPercentArguments(a []int64, b []int64) Arguments[int64, int64] {
+	return Arguments[int64, int64]{
 		arg0: a,
 		arg1: b,
 	}

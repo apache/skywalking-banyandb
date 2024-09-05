@@ -17,53 +17,34 @@
 
 package aggregate
 
-// Avg calculates the average value of elements.
-type Avg[A, B Input, R Output] struct {
-	summation R
-	count     int64
+// Count calculates the count value of elements.
+type Count[A, B Input, R Output] struct {
+	count int64
 }
 
 // Combine takes elements to do the aggregation.
-// Avg uses type parameter A.
-func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Count uses none of type parameters.
+func (f *Count[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
 		switch arg0 := any(arg0).(type) {
 		case int64:
-			f.summation += R(arg0)
-		case float64:
-			f.summation += R(arg0)
+			f.count += arg0
 		default:
 			return errFieldValueType
 		}
 	}
-
-	for _, arg1 := range arguments.arg1 {
-		switch arg1 := any(arg1).(type) {
-		case int64:
-			f.count += arg1
-		default:
-			return errFieldValueType
-		}
-	}
-
 	return nil
 }
 
 // Result gives the result for the aggregation.
-func (f *Avg[A, B, R]) Result() R {
-	// In unusual situations it returns the zero value.
-	if f.count == 0 {
-		return zeroValue[R]()
-	}
-	// According to the semantics of GoLang, the division of one int by another int
-	// returns an int, instead of f float.
-	return f.summation / R(f.count)
+func (f *Count[A, B, R]) Result() R {
+	return R(f.count)
 }
 
-// NewAvgArguments constructs arguments.
-func NewAvgArguments[A Input](a []A, b []int64) Arguments[A, int64] {
-	return Arguments[A, int64]{
+// NewCountArguments constructs arguments.
+func NewCountArguments(a []int64) Arguments[int64, Void] {
+	return Arguments[int64, Void]{
 		arg0: a,
-		arg1: b,
+		arg1: nil,
 	}
 }

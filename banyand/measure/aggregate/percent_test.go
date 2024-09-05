@@ -15,42 +15,26 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package aggregate
+package aggregate_test
 
-// Min calculates the minimum value of elements.
-type Min[A, B Input, R Output] struct {
-	minimum R
-}
+import (
+	"testing"
 
-// Combine takes elements to do the aggregation.
-// Min uses type parameter A.
-func (f *Min[A, B, R]) Combine(arguments Arguments[A, B]) error {
-	for _, arg0 := range arguments.arg0 {
-		switch arg0 := any(arg0).(type) {
-		case int64:
-			if R(arg0) < f.minimum {
-				f.minimum = R(arg0)
-			}
-		case float64:
-			if R(arg0) < f.minimum {
-				f.minimum = R(arg0)
-			}
-		default:
-			return errFieldValueType
-		}
-	}
-	return nil
-}
+	"github.com/stretchr/testify/assert"
 
-// Result gives the result for the aggregation.
-func (f *Min[A, B, R]) Result() R {
-	return f.minimum
-}
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure/aggregate"
+)
 
-// NewMinArguments constructs arguments.
-func NewMinArguments[A Input](a []A) Arguments[A, Void] {
-	return Arguments[A, Void]{
-		arg0: a,
-		arg1: nil,
-	}
+func TestPercent(t *testing.T) {
+	var err error
+
+	// case1: input int64 values
+	PercentInt64, _ := aggregate.NewFunction[int64, int64, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_PERCENT)
+	err = PercentInt64.Combine(aggregate.NewPercentArguments(
+		[]int64{10, 100, 1000}, // mock the "total" column
+		[]int64{1, 10, 100},    // mock the "match" column
+	))
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1000), PercentInt64.Result())
 }
