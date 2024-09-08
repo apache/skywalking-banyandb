@@ -71,7 +71,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 		ms.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "measure", "write")
 		if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
-			logger.Debug().Err(errResp).Msg("failed to send response")
+			logger.Debug().Err(errResp).Msg("failed to send measure write response")
 			ms.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "measure", "write")
 		}
 	}

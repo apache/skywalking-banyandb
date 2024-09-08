@@ -25,6 +25,7 @@ Release Notes.
 - Optimize query performance of series index.
 - Add liaison, remote queue, storage(rotation), time-series tables, metadata cache and scheduler metrics.
 - Add HTTP health check endpoint for the data node.
+- Add slow query log for the distributed query and local query.
 
 ### Bugs
 
