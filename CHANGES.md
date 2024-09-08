@@ -59,8 +59,9 @@ Release Notes.
 - Separate the monolithic Docker image into two images: banyand and bydbctl.
 - Update CI to publish linux/amd64 and linux/arm64 Docker images.
 - Make the build system compiles the binary based on the platform which is running on.
-- Push "skywalking-banyandb-test" image for e2e and stress test. This image contains bydbctl to do a health check.
+- Push "skywalking-banyandb:<tag>-testing" image for e2e and stress test. This image contains bydbctl to do a health check.
 - Set etcd-client log level to "error" and etcd-server log level to "warn".
+- Push "skywalking-banyandb:<tag>-slim" image for the production environment. This image doesn't contain bydbctl and Web UI.
 
 ## 0.6.1
 
