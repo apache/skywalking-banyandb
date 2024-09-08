@@ -67,7 +67,6 @@ copy_binaries() {
         # Extract os and arch from the path
         os_arch=$(echo ${binary} | awk -F'/' '{print $(NF-2)"/"$(NF-1)}')
         binary_name=$(basename ${binary})
-        binary_name=${binary_name%-*-*}
         cp -Rfv ${binary} ${bindir}/bin/${binary_name}-${os_arch//\//-}
     done
 }

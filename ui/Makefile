@@ -37,7 +37,6 @@ all: build
 
 .PHONY: generate
 generate: install
-generate: $(DIST_INDEX)
 
 $(DIST_INDEX):
 	@echo "Building $(NAME)"
@@ -45,8 +44,12 @@ $(DIST_INDEX):
 	@echo "Done building $(NAME)"
 
 .PHONY: build
-build: 
-	@echo "Run generate to build the UI"
+build: $(DIST_INDEX)
+
+.PHONY: clean-build
+clean-build:
+	@echo "Cleaning build artifacts"
+	rm -rf dist
 
 .PHONY: test
 test:

@@ -21,7 +21,6 @@ package http
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"net"
 	"net/http"
 	"strconv"
@@ -43,7 +42,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/ui"
 )
 
 var (
@@ -137,14 +135,9 @@ func (p *server) PreRun(_ context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mux = chi.NewRouter()
 
-	fSys, err := fs.Sub(ui.DistContent, "dist")
-	if err != nil {
+	if err := p.setRootPath(); err != nil {
 		return err
 	}
-	httpFS := http.FS(fSys)
-	fileServer := http.FileServer(http.FS(fSys))
-	serveIndex := serveFileContents("index.html", httpFS)
-	p.mux.Mount("/", intercept404(fileServer, serveIndex))
 	p.srv = &http.Server{
 		Addr:              p.listenAddr,
 		Handler:           p.mux,
