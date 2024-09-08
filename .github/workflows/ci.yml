@@ -68,6 +68,8 @@ jobs:
         run: make check-req
       - name: Generate codes
         run: make generate
+      - name: Build
+        run: make build
       - name: Lint
         run: make lint
       - name: Generate dependencies licenses

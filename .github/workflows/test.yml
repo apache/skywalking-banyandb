@@ -72,6 +72,8 @@ jobs:
         run: GOPROXY=https://proxy.golang.org go mod download
       - name: Generate mocks
         run: make generate
+      - name: Build
+        run: make build
       - name: Test integration and banyand
         run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci
       - name: Upload coverage to Codecov

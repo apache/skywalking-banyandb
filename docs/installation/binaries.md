@@ -26,8 +26,10 @@ The banyand and bydbctl directory structure is as follows.
 ├── NOTICE
 ├── README.md
 ├── bin
-│   ├── banyand-linux-arm64
-│   └── banyand-linux-amd64
+│   ├──banyand-server-slim-linux-amd64 
+│   ├──banyand-server-slim-linux-arm64 
+│   ├──banyand-server-static-linux-amd64 
+│   └──banyand-server-static-linux-arm64
 └── licenses
 ```
 
@@ -38,13 +40,13 @@ The banyand and bydbctl directory structure is as follows.
 ├── NOTICE
 ├── README.md
 ├── bin
-│   ├── bydbctl-linux-386
-│   ├── bydbctl-linux-amd64
-│   ├── bydbctl-linux-arm64
-│   ├── bydbctl-windows-386
-│   ├── bydbctl-windows-amd64
-│   ├── bydbctl-darwin-amd64
-│   └── bydbctl-darwin-arm64
+│   ├── bydbctl-cli-static-linux-386
+│   ├── bydbctl-cli-static-linux-amd64
+│   ├── bydbctl-cli-static-linux-arm64
+│   ├── bydbctl-cli-static-windows-386
+│   ├── bydbctl-cli-static-windows-amd64
+│   ├── bydbctl-cli-static-darwin-amd64
+│   └── bydbctl-cli-static-darwin-arm64
 └── licenses
 ```
 
@@ -72,7 +74,9 @@ To issue the below command to get basic binaries of banyand and bydbctl.
 make generate
 ...
 make build
+--- ui: all ---
 ...
+Done building ui
 --- banyand: all ---
 ...
 chmod +x build/bin/banyand-server;
@@ -84,26 +88,26 @@ chmod +x build/bin/dev/bydbctl-cli;
 Done building build/bin/dev/bydbctl-cli
 ```
 
-The build system provides a series of binary options as well.
-
-* `make -C banyand banyand-server` generates a basic `banyand-server`.
-* `make -C banyand release` or `make -C banyand banyand-server-static` builds out a static binary `banyand-server-static` for releasing.
-* `make -C bydbctl bydbctl-cli` generates a basic `bydbctl-cli`.
-* `make -C bydbctl release` or `make -C banyand bydbctl-cli-static` builds out a static binary `bydbctl-cli-static` for releasing.
-
 Then users get binaries as below
 
 ``` shell
 ls banyand/build/bin/dev
 banyand-server  
-banyand-server-static
 
 ls bydbctl/build/bin/dev
 bydbctl-cli
-bydbctl-cli-static
 ```
 
-> The build script now checks if the binary file exists before rebuilding. If you want to rebuild, please remove the binary file manually.
+The build system provides a series of binary options as well.
+
+* `make -C banyand banyand-server` generates a basic `banyand-server`.
+* `make -C banyand banyand-server-static` builds out a static binary `banyand-server-static` which is statically linked with all dependencies.
+* `make -C banyand banyand-server-slim` builds out a slim binary `banyand-server-slim` which doesn't include `UI`.
+* `make -C banyand release` builds out the static and slim binaries for releasing.
+* `make -C bydbctl bydbctl-cli` generates a basic `bydbctl-cli`.
+* `make -C bydbctl release` or `make -C banyand bydbctl-cli-static` builds out a static binary `bydbctl-cli-static` for releasing. This binary is statically linked with all dependencies.
+
+> The build script now checks if the binary file exists before rebuilding. If you want to rebuild, please remove the binary file manually by running `make clean-build`.
 
 ### Cross-compile Binaries
 
@@ -113,7 +117,7 @@ The build system supports cross-compiling binaries for different platforms. For 
 TARGET_OS=windows PLATFORMS=windows/amd64 make release
 ```
 
-The `PLATFORMS` variable is a list of platforms separated by commas. The `TARGET_OS` variable is the target operating system. You could specify several platforms at once: 
+The `PLATFORMS` variable is a list of platforms separated by commas. The `TARGET_OS` variable is the target operating system. You could specify several platforms at once:
 
 ```shell
 TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release
