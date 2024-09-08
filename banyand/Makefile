@@ -17,8 +17,7 @@
 #
 
 NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
+BINARIES := $(NAME)-server
 
 IMG_NAME := skywalking-banyandb
 
@@ -34,7 +33,4 @@ include ../scripts/build/help.mk
 
 prepare-build: generate
 
-docker.dev:
-	@echo "Building $(IMG) with platform $(PLATFORMS)"
-	@pwd
-	time docker buildx build $(DOCKER_BUILD_ARGS) --platform $(PLATFORMS) --load --no-cache -t $(IMG) -f Dockerfile.dev --provenance=false .
+release: $(STATIC_BINARIES) $(SLIM_BINARIES)

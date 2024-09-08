@@ -40,6 +40,9 @@ clean: default  ## Clean artifacts in all projects
 	rm -f .env
 	rm -f *.out
 
+clean-build: TARGET=clean-build
+clean-build: default  ## Clean build artifacts in all projects
+
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
 generate: default  ## Generate API codes

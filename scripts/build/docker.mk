@@ -27,6 +27,12 @@ endif
 # The tag of the docker image. The default value if latest.
 TAG ?= latest
 
+BINARYTYPE ?= static
+
+ifeq ($(BINARYTYPE),slim)
+	TAG := $(TAG)-slim
+endif
+
 IMG := $(HUB)/$(IMG_NAME):$(TAG)
 
 # Disable cache in CI environment
@@ -42,5 +48,5 @@ docker.push: DOCKER_TYPE = "Push"
 docker docker.push:
 	@echo "$(DOCKER_TYPE) $(IMG) with platform $(PLATFORMS)"
 	@pwd
-	time docker buildx build $(DOCKER_BUILD_ARGS) --platform $(PLATFORMS) $(LOAD_OR_PUSH) -t $(IMG) -f Dockerfile --provenance=false .
+	time docker buildx build $(DOCKER_BUILD_ARGS) --platform $(PLATFORMS) $(LOAD_OR_PUSH) -t $(IMG) -f Dockerfile --provenance=false --build-arg BINARYTYPE=$(BINARYTYPE) .
 

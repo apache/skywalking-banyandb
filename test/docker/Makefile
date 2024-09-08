@@ -23,7 +23,7 @@ HUB ?= apache
 # The tag of the docker image. The default value if latest.
 TAG ?= latest
 
-IMG := $(HUB)/skywalking-banyandb-test:$(TAG)
+IMG := $(HUB)/skywalking-banyandb:$(TAG)-testing
 
 build:
 	@echo "Building $(IMG)"
