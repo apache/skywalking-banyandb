@@ -27,21 +27,11 @@ type Percent[A, B Input, R Output] struct {
 // Percent uses none of type parameters.
 func (f *Percent[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
-		switch arg0 := any(arg0).(type) {
-		case int64:
-			f.total += arg0
-		default:
-			return errFieldValueType
-		}
+		f.total += int64(arg0)
 	}
 
 	for _, arg1 := range arguments.arg1 {
-		switch arg1 := any(arg1).(type) {
-		case int64:
-			f.match += arg1
-		default:
-			return errFieldValueType
-		}
+		f.match += int64(arg1)
 	}
 
 	return nil

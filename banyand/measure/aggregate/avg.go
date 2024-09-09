@@ -27,23 +27,11 @@ type Avg[A, B Input, R Output] struct {
 // Avg uses type parameter A.
 func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
-		switch arg0 := any(arg0).(type) {
-		case int64:
-			f.summation += R(arg0)
-		case float64:
-			f.summation += R(arg0)
-		default:
-			return errFieldValueType
-		}
+		f.summation += R(arg0)
 	}
 
 	for _, arg1 := range arguments.arg1 {
-		switch arg1 := any(arg1).(type) {
-		case int64:
-			f.count += arg1
-		default:
-			return errFieldValueType
-		}
+		f.count += int64(arg1)
 	}
 
 	return nil

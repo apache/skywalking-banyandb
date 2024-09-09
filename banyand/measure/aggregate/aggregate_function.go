@@ -26,19 +26,19 @@ import (
 )
 
 // Void type contains nothing. It works as a placeholder for type parameters of `Arguments`.
-type Void struct{}
+// It's implemented as int64, but it won't be used as an int64.
+type Void int64
 
-// Input covers possible types of Function's arguments. It synchronizes with `FieldType` in schema.
+// Input covers possible types of Function's arguments. It synchronizes with `FieldType`.
+// It also covers Void type.
 type Input interface {
-	Void | ~int64 | ~float64
+	~int64 | ~float64
 }
 
 // Output covers possible types of Function's return value.
 type Output interface {
 	~int64 | ~float64
 }
-
-var errFieldValueType = fmt.Errorf("unsupported input value type on this field")
 
 // Arguments represents the argument array, with one argument or two arguments.
 type Arguments[A, B Input] struct {

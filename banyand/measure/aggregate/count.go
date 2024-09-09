@@ -26,12 +26,7 @@ type Count[A, B Input, R Output] struct {
 // Count uses none of type parameters.
 func (f *Count[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
-		switch arg0 := any(arg0).(type) {
-		case int64:
-			f.count += arg0
-		default:
-			return errFieldValueType
-		}
+		f.count += int64(arg0)
 	}
 	return nil
 }

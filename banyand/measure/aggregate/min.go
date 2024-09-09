@@ -26,17 +26,8 @@ type Min[A, B Input, R Output] struct {
 // Min uses type parameter A.
 func (f *Min[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
-		switch arg0 := any(arg0).(type) {
-		case int64:
-			if R(arg0) < f.minimum {
-				f.minimum = R(arg0)
-			}
-		case float64:
-			if R(arg0) < f.minimum {
-				f.minimum = R(arg0)
-			}
-		default:
-			return errFieldValueType
+		if R(arg0) < f.minimum {
+			f.minimum = R(arg0)
 		}
 	}
 	return nil

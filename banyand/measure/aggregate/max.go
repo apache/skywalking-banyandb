@@ -26,17 +26,8 @@ type Max[A, B Input, R Output] struct {
 // Max uses type parameter A.
 func (f *Max[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
-		switch arg0 := any(arg0).(type) {
-		case int64:
-			if R(arg0) > f.maximum {
-				f.maximum = R(arg0)
-			}
-		case float64:
-			if R(arg0) > f.maximum {
-				f.maximum = R(arg0)
-			}
-		default:
-			return errFieldValueType
+		if R(arg0) > f.maximum {
+			f.maximum = R(arg0)
 		}
 	}
 	return nil
