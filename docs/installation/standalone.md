@@ -4,13 +4,14 @@ The standalone mode is the simplest way to run Banyand. It is suitable for the d
 
 Follow these steps to install BanyanDB and start up in standalone mode.
 
-
 - Download or build the BanyanDB packages.
-- unpack and extract the `skywalking-banyandb-x.x.x-bin.tgz`.
-- start up BanyanDB standalone server.
+- Unpack and extract the `skywalking-banyandb-x.x.x-bin.tgz`.
+- Select the binary for your platform, such as `banyand-linux-amd64` or `banyand-darwin-amd64`.
+- Move the binary to the directory you want to run BanyanDB. For instance, `mv banyand-linux-amd64 /usr/local/bin/banyand`. The following steps assume that the binary is in the `/usr/local/bin` directory.
+- Start up BanyanDB standalone server.
 
 ```shell
-$ ./bin/banyand-server-static standalone
+banyand standalone
 ```
 
 Then the server running as a standalone process.

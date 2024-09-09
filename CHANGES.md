@@ -23,6 +23,9 @@ Release Notes.
 - Add the topN query trace.
 - Introduce the round-robin selector to Liaison Node.
 - Optimize query performance of series index.
+- Add liaison, remote queue, storage(rotation), time-series tables, metadata cache and scheduler metrics.
+- Add HTTP health check endpoint for the data node.
+- Add slow query log for the distributed query and local query.
 
 ### Bugs
 
@@ -37,6 +40,8 @@ Release Notes.
 - Fix a bug where a distributed query would return an empty result if the "limit" was set much lower than the "offset".
 - Fix duplicated measure data in a single part.
 - Fix several "sync.Pool" leak issues by adding a tracker to the pool.
+- Fix panic when removing a expired segment.
+- Fix panic when reading a disorder block of measure. This block's versions are not sorted in descending order.
 
 ### Documentation
 
@@ -46,10 +51,18 @@ Release Notes.
 - Add web-ui interacting guide.
 - Add bydbctl interacting guide.
 - Add cluster management guide.
+- Add operation related documents: configuration, troubleshooting, system, upgrade, and observability.
 
 ### Chores
 
-Bump up the version of infra e2e framework.
+- Bump up the version of infra e2e framework.
+- Separate the monolithic release package into two packages: banyand and bydbctl.
+- Separate the monolithic Docker image into two images: banyand and bydbctl.
+- Update CI to publish linux/amd64 and linux/arm64 Docker images.
+- Make the build system compiles the binary based on the platform which is running on.
+- Push "skywalking-banyandb:<tag>-testing" image for e2e and stress test. This image contains bydbctl to do a health check.
+- Set etcd-client log level to "error" and etcd-server log level to "warn".
+- Push "skywalking-banyandb:<tag>-slim" image for the production environment. This image doesn't contain bydbctl and Web UI.
 
 ## 0.6.1
 

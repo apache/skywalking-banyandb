@@ -78,14 +78,16 @@ var _ index.Store = (*store)(nil)
 // StoreOpts wraps options to create an inverted index repository.
 type StoreOpts struct {
 	Logger       *logger.Logger
+	Metrics      *Metrics
 	Path         string
 	BatchWaitSec int64
 }
 
 type store struct {
-	writer *bluge.Writer
-	closer *run.Closer
-	l      *logger.Logger
+	writer  *bluge.Writer
+	closer  *run.Closer
+	l       *logger.Logger
+	metrics *Metrics
 }
 
 var batchPool = pool.Register[*blugeIndex.Batch]("index-bluge-batch")
@@ -161,9 +163,10 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 		return nil, err
 	}
 	s := &store{
-		writer: w,
-		l:      opts.Logger,
-		closer: run.NewCloser(1),
+		writer:  w,
+		l:       opts.Logger,
+		closer:  run.NewCloser(1),
+		metrics: opts.Metrics,
 	}
 	return s, nil
 }
@@ -323,11 +326,6 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	}
 	err = multierr.Append(err, iter.Close())
 	return
-}
-
-func (s *store) SizeOnDisk() int64 {
-	_, bytes := s.writer.DirectoryStats()
-	return int64(bytes)
 }
 
 type blugeMatchIterator struct {

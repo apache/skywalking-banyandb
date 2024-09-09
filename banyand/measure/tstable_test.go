@@ -320,7 +320,7 @@ func Test_tstIter(t *testing.T) {
 					defer defFn()
 
 					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()})
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
 					require.NoError(t, err)
 					for i, dps := range tt.dpsList {
 						tst.mustAddDataPoints(dps)
@@ -368,7 +368,7 @@ func Test_tstIter(t *testing.T) {
 					defer defFn()
 
 					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()})
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()}, &metrics{})
 					require.NoError(t, err)
 					for _, dps := range tt.dpsList {
 						tst.mustAddDataPoints(dps)
@@ -393,7 +393,7 @@ func Test_tstIter(t *testing.T) {
 					}
 					// reopen the table
 					tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()})
+						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
 					require.NoError(t, err)
 					verify(t, tt, tst)
 				})

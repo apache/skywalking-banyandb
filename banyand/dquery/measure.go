@@ -108,7 +108,7 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		timeRange:   queryCriteria.TimeRange,
 	}))
 	if err != nil {
-		ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
+		ml.Error().Err(err).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", meta.GetName(), err))
 		return
 	}
@@ -144,5 +144,11 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		e.RawJSON("ret", logger.Proto(qr)).Msg("got a measure")
 	}
 	resp = bus.NewMessage(bus.MessageID(now), qr)
+	if !queryCriteria.Trace && p.slowQuery > 0 {
+		latency := time.Since(n)
+		if latency > p.slowQuery {
+			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", len(result)).Msg("measure slow query")
+		}
+	}
 	return
 }

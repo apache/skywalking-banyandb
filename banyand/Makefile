@@ -17,9 +17,7 @@
 #
 
 NAME := banyand
-SERVER := $(NAME)-server
-BINARIES := $(SERVER)
-DEBUG_BINARIES := $(SERVER)-debug
+BINARIES := $(NAME)-server
 
 IMG_NAME := skywalking-banyandb
 
@@ -27,7 +25,12 @@ include ../scripts/build/version.mk
 include ../scripts/build/base.mk
 include ../scripts/build/generate_go.mk
 include ../scripts/build/build.mk
+include ../scripts/build/docker.mk
 include ../scripts/build/test.mk
 include ../scripts/build/lint.mk
 include ../scripts/build/vendor.mk
 include ../scripts/build/help.mk
+
+prepare-build: generate
+
+release: $(STATIC_BINARIES) $(SLIM_BINARIES)

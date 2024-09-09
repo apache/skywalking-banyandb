@@ -33,6 +33,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -41,29 +42,35 @@ import (
 var ErrExpiredData = errors.New("expired data")
 
 type segment[T TSTable, O any] struct {
+	metrics  any
 	l        *logger.Logger
 	index    *seriesIndex
 	sLst     atomic.Pointer[[]*shard[T]]
 	position common.Position
 	timestamp.TimeRange
-	location      string
 	suffix        string
+	location      string
 	opts          TSDBOpts[T, O]
+	mu            sync.Mutex
 	refCount      int32
 	mustBeDeleted uint32
 	id            segmentID
-	mu            sync.Mutex
 }
 
 func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string,
-	p common.Position, opts TSDBOpts[T, O],
+	opts TSDBOpts[T, O],
 ) (s *segment[T, O], err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
 		return nil, err
 	}
+	p := common.GetPosition(ctx)
+	p.Segment = suffix
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return p
+	})
 	id := generateSegID(sc.opts.SegmentInterval.Unit, suffixInteger)
-	sir, err := newSeriesIndex(ctx, path, sc.opts.SeriesIndexFlushTimeoutSeconds)
+	sir, err := newSeriesIndex(ctx, path, sc.opts.SeriesIndexFlushTimeoutSeconds, sc.indexMetrics)
 	if err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
 	}
@@ -76,6 +83,7 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 		refCount:  1,
 		index:     sir,
 		opts:      opts,
+		metrics:   sc.metrics,
 	}
 	s.l = logger.Fetch(ctx, s.String())
 	return s, s.loadShards()
@@ -193,26 +201,30 @@ func (s *segment[T, O]) String() string {
 }
 
 type segmentController[T TSTable, O any] struct {
-	clock    timestamp.Clock
-	l        *logger.Logger
-	position common.Position
-	location string
-	lst      []*segment[T, O]
-	opts     TSDBOpts[T, O]
-	deadline atomic.Int64
+	clock        timestamp.Clock
+	metrics      Metrics
+	l            *logger.Logger
+	indexMetrics *inverted.Metrics
+	position     common.Position
+	location     string
+	lst          []*segment[T, O]
+	opts         TSDBOpts[T, O]
+	deadline     atomic.Int64
 	sync.RWMutex
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
-	l *logger.Logger, opts TSDBOpts[T, O],
+	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	return &segmentController[T, O]{
-		location: location,
-		opts:     opts,
-		l:        l,
-		clock:    clock,
-		position: common.GetPosition(ctx),
+		location:     location,
+		opts:         opts,
+		l:            l,
+		clock:        clock,
+		position:     common.GetPosition(ctx),
+		metrics:      metrics,
+		indexMetrics: indexMetrics,
 	}
 }
 
@@ -363,9 +375,10 @@ func (sc *segmentController[T, O]) sortLst() {
 func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg *segment[T, O], err error) {
 	suffix := sc.format(start)
 	segPath := path.Join(root, fmt.Sprintf(segTemplate, suffix))
-	p := sc.position
-	p.Segment = suffix
-	seg, err = sc.openSegment(context.WithValue(context.Background(), logger.ContextKey, sc.l), start, end, segPath, suffix, p, sc.opts)
+	ctx := common.SetPosition(context.WithValue(context.Background(), logger.ContextKey, sc.l), func(_ common.Position) common.Position {
+		return sc.position
+	})
+	seg, err = sc.openSegment(ctx, start, end, segPath, suffix, sc.opts)
 	if err != nil {
 		return nil, err
 	}
@@ -374,18 +387,20 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 	return seg, nil
 }
 
-func (sc *segmentController[T, O]) remove(deadline time.Time) (err error) {
+func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, err error) {
 	for _, s := range sc.segments() {
 		if s.Before(deadline) {
+			hasSegment = true
+			id := s.id
 			s.delete()
 			sc.Lock()
-			sc.removeSeg(s.id)
+			sc.removeSeg(id)
 			sc.Unlock()
 			sc.l.Info().Stringer("segment", s).Msg("removed a segment")
 		}
 		s.DecRef()
 	}
-	return err
+	return hasSegment, err
 }
 
 func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
@@ -409,6 +424,9 @@ func (sc *segmentController[T, O]) close() {
 		s.DecRef()
 	}
 	sc.lst = sc.lst[:0]
+	if sc.metrics != nil {
+		sc.metrics.DeleteAll()
+	}
 }
 
 func loadSegments[T TSTable, O any](root, prefix string, parser *segmentController[T, O], intervalRule IntervalRule, loadFn func(start, end time.Time) error) error {

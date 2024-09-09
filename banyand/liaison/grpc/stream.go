@@ -43,12 +43,13 @@ import (
 
 type streamService struct {
 	streamv1.UnimplementedStreamServiceServer
-	*discoveryService
-	sampled            *logger.Logger
 	ingestionAccessLog accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
-	writeTimeout       time.Duration
+	*discoveryService
+	sampled      *logger.Logger
+	metrics      *metrics
+	writeTimeout time.Duration
 }
 
 func (s *streamService) setLogger(log *logger.Logger) {
@@ -65,12 +66,23 @@ func (s *streamService) activeIngestionAccessLog(root string) (err error) {
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
+		if status != modelv1.Status_STATUS_SUCCEED {
+			s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "stream", "write")
+		}
+		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "stream", "write")
 		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
-			logger.Debug().Err(errResp).Msg("failed to send response")
+			logger.Debug().Err(errResp).Msg("failed to send stream write response")
+			s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "stream", "write")
 		}
 	}
+	s.metrics.totalStreamStarted.Inc(1, "stream", "write")
 	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
-	defer publisher.Close()
+	start := time.Now()
+	defer func() {
+		publisher.Close()
+		s.metrics.totalStreamFinished.Inc(1, "stream", "write")
+		s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "stream", "write")
+	}()
 	ctx := stream.Context()
 	for {
 		select {
@@ -83,9 +95,12 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			return nil
 		}
 		if err != nil {
-			s.sampled.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
+			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+				s.sampled.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
+			}
 			return err
 		}
+		s.metrics.totalStreamMsgReceived.Inc(1, writeEntity.Metadata.Group, "stream", "write")
 		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
 			s.sampled.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
 			reply(nil, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream, s.sampled)
@@ -134,13 +149,26 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
-		reply(nil, modelv1.Status_STATUS_SUCCEED, writeEntity.GetMessageId(), stream, s.sampled)
+		reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_SUCCEED, writeEntity.GetMessageId(), stream, s.sampled)
 	}
 }
 
 var emptyStreamQueryResponse = &streamv1.QueryResponse{Elements: make([]*streamv1.Element, 0)}
 
 func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (resp *streamv1.QueryResponse, err error) {
+	for _, g := range req.Groups {
+		s.metrics.totalStarted.Inc(1, g, "stream", "query")
+	}
+	start := time.Now()
+	defer func() {
+		for _, g := range req.Groups {
+			s.metrics.totalFinished.Inc(1, g, "stream", "query")
+			if err != nil {
+				s.metrics.totalErr.Inc(1, g, "stream", "query")
+			}
+			s.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "stream", "query")
+		}
+	}()
 	timeRange := req.GetTimeRange()
 	if timeRange == nil {
 		req.TimeRange = timestamp.DefaultTimeRange

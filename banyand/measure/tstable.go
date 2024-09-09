@@ -46,7 +46,7 @@ const (
 )
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, _ timestamp.TimeRange, option option,
+	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	tst := tsTable{
 		fileSystem: fileSystem,
@@ -54,6 +54,9 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		option:     option,
 		l:          l,
 		p:          p,
+	}
+	if m != nil {
+		tst.metrics = m.(*metrics)
 	}
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
@@ -115,15 +118,16 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 
 type tsTable struct {
 	fileSystem    fs.FileSystem
-	option        option
 	l             *logger.Logger
 	snapshot      *snapshot
 	introductions chan *introduction
 	loopCloser    *run.Closer
-	p             common.Position
-	root          string
-	gc            garbageCleaner
-	curPartID     uint64
+	*metrics
+	p         common.Position
+	option    option
+	root      string
+	gc        garbageCleaner
+	curPartID uint64
 	sync.RWMutex
 }
 
@@ -238,6 +242,7 @@ func (tst *tsTable) Close() error {
 	}
 	tst.Lock()
 	defer tst.Unlock()
+	tst.deleteMetrics()
 	if tst.snapshot == nil {
 		return nil
 	}
@@ -261,6 +266,7 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	ind.memPart = newPartWrapper(mp, p)
 	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
 
+	startTime := time.Now()
 	select {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
@@ -270,6 +276,9 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	case <-ind.applied:
 	case <-tst.loopCloser.CloseNotify():
 	}
+	tst.incTotalWritten(len(dps.timestamps))
+	tst.incTotalBatch(1)
+	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
 }
 
 type tstIter struct {

@@ -18,10 +18,24 @@
 // Package observability provides metrics, profiling, and etc.
 package observability
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/run"
+)
 
 var (
 	errNoAddr         = errors.New("no address")
 	errInvalidMode    = errors.New("invalid observability mode")
 	errDuplicatedMode = errors.New("duplicated observability mode")
 )
+
+// MetricsRegistry is the interface for metrics registry.
+type MetricsRegistry interface {
+	run.Service
+	// With returns a factory with the given scope.
+	With(scope meter.Scope) *Factory
+	// NativeEnabled returns whether the native mode is enabled.
+	NativeEnabled() bool
+}

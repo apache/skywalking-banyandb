@@ -105,11 +105,18 @@ type Segment[T TSTable, O any] interface {
 // TSTable is time series table.
 type TSTable interface {
 	io.Closer
+	Collect(Metrics)
 }
 
 // TSTableCreator creates a TSTable.
 type TSTableCreator[T TSTable, O any] func(fileSystem fs.FileSystem, root string, position common.Position,
-	l *logger.Logger, timeRange timestamp.TimeRange, option O) (T, error)
+	l *logger.Logger, timeRange timestamp.TimeRange, option O, metrics any) (T, error)
+
+// Metrics is the interface of metrics.
+type Metrics interface {
+	// DeleteAll deletes all metrics.
+	DeleteAll()
+}
 
 // IntervalUnit denotes the unit of a time point.
 type IntervalUnit int

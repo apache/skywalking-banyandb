@@ -308,7 +308,7 @@ func yamlPrinter(index int, _ reqBody, body []byte) error {
 	return nil
 }
 
-func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool, grpcCert string) (err error) {
+func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool, cert string) (err error) {
 	var requests []reqBody
 	if pfn == nil {
 		requests = []reqBody{{}}
@@ -326,8 +326,8 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 				// #nosec G402
 				InsecureSkipVerify: insecure,
 			}
-			if grpcCert != "" {
-				cert, err := os.ReadFile(grpcCert)
+			if cert != "" {
+				cert, err := os.ReadFile(cert)
 				if err != nil {
 					return err
 				}

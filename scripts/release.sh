@@ -36,20 +36,39 @@ binary(){
     pushd ${tmpdir}
     tar -xvf ${SOURCE_FILE}
     make generate
-    make release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C banyand release
     bindir=./build
     mkdir -p ${bindir}/bin
     # Copy relevant files
-    for module in "banyand" "bydbctl"
-    do
-        cp -Rfv ./${module}/build/bin/* ${bindir}/bin
-    done
+    copy_binaries banyand
     cp -Rfv ./CHANGES.md ${bindir}
     cp -Rfv ./README.md ${bindir}
     cp -Rfv ./dist/* ${bindir}
     # Package
-    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-bin.tgz -C ${bindir} .
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-banyand.tgz -C ${bindir} .
+
+    # Cross compile bydbctl
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64,linux/386 make -C bydbctl release
+    TARGET_OS=windows PLATFORMS=windows/amd64,windows/386 make -C bydbctl release
+    TARGET_OS=darwin PLATFORMS=darwin/amd64,darwin/arm64 make -C bydbctl release
+    rm -rf ${bindir}/bin
+    mkdir -p ${bindir}/bin
+    # Copy relevant files
+    copy_binaries bydbctl
+    # Package
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-bydbctl.tgz -C ${bindir} .
     popd
+}
+
+copy_binaries() {
+    local module=$1
+    find ./${module}/build/bin -type f -not -name "*.lock" | while read -r binary
+    do
+        # Extract os and arch from the path
+        os_arch=$(echo ${binary} | awk -F'/' '{print $(NF-2)"/"$(NF-1)}')
+        binary_name=$(basename ${binary})
+        cp -Rfv ${binary} ${bindir}/bin/${binary_name}-${os_arch//\//-}
+    done
 }
 
 source(){
@@ -60,13 +79,11 @@ source(){
     echo "RELEASE_VERSION=${RELEASE_VERSION}" > .env
     tar \
     --exclude=".DS_Store" \
-    --exclude=".git" \
     --exclude=".github" \
     --exclude=".gitignore" \
     --exclude=".asf.yaml" \
     --exclude=".idea" \
     --exclude=".vscode" \
-    --exclude="./build" \
     --exclude="bin" \
     -czf ${SOURCE_FILE} \
     .

@@ -33,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
-var log = logger.GetLogger("observability", "metrics", "system")
+var log = logger.GetLogger("metrics")
 
 var (
 	cpuCount      = 0
@@ -54,7 +54,6 @@ var (
 	netStateGauge   meter.Gauge
 	upTimeGauge     meter.Gauge
 	diskStateGauge  meter.Gauge
-	initMetricsOnce sync.Once
 	diskMap         = sync.Map{}
 )
 
@@ -79,15 +78,14 @@ func init() {
 	MetricsCollector.Register("disk", collectDisk)
 }
 
-func initMetrics(modes []string) {
-	initMetricsOnce.Do(func() {
-		cpuStateGauge = NewGauge(modes, "cpu_state", "kind")
-		cpuNumGauge = NewGauge(modes, "cpu_num")
-		memorySateGauge = NewGauge(modes, "memory_state", "kind")
-		netStateGauge = NewGauge(modes, "net_state", "kind", "name")
-		upTimeGauge = NewGauge(modes, "up_time")
-		diskStateGauge = NewGauge(modes, "disk", "path", "kind")
-	})
+func (p *metricService) initMetrics() {
+	factory := p.With(SystemScope)
+	cpuStateGauge = factory.NewGauge("cpu_state", "kind")
+	cpuNumGauge = factory.NewGauge("cpu_num")
+	memorySateGauge = factory.NewGauge("memory_state", "kind")
+	netStateGauge = factory.NewGauge("net_state", "kind", "name")
+	upTimeGauge = factory.NewGauge("up_time")
+	diskStateGauge = factory.NewGauge("disk", "path", "kind")
 }
 
 func collectCPU() {

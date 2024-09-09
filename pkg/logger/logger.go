@@ -46,9 +46,10 @@ type Logging struct {
 // Logger is wrapper for rs/zerolog logger with module, it is singleton.
 type Logger struct {
 	*zerolog.Logger
-	modules     map[string]zerolog.Level
-	module      string
-	development bool
+	modules        map[string]zerolog.Level
+	module         string
+	development    bool
+	isDefaultLevel bool
 }
 
 // Module returns logger's module name.
@@ -67,6 +68,7 @@ func (l *Logger) Named(name ...string) *Logger {
 	var moduleBuilder strings.Builder
 	var module string
 	level := l.GetLevel()
+	isDefaultLevel := true
 	for i, m := range mm {
 		if i != 0 {
 			moduleBuilder.WriteString(".")
@@ -75,10 +77,12 @@ func (l *Logger) Named(name ...string) *Logger {
 		module = moduleBuilder.String()
 		if ml, ok := l.modules[module]; ok {
 			level = ml
+			isDefaultLevel = false
+			break
 		}
 	}
 	subLogger := root.get().With().Str("module", moduleBuilder.String()).Logger().Level(level)
-	return &Logger{module: module, modules: l.modules, development: l.development, Logger: &subLogger}
+	return &Logger{module: module, modules: l.modules, development: l.development, Logger: &subLogger, isDefaultLevel: isDefaultLevel}
 }
 
 // Sampled return a Logger with a sampler that will send every Nth events.
@@ -136,6 +140,15 @@ func (l *Logger) ToZapConfig() zap.Config {
 		OutputPaths:      []string{"stderr"},
 		ErrorOutputPaths: []string{"stderr"},
 	}
+}
+
+// DefaultLevel sets the default level for the logger.
+func (l *Logger) DefaultLevel(level zerolog.Level) *Logger {
+	if l.isDefaultLevel {
+		nl := l.Logger.Level(level)
+		l.Logger = &nl
+	}
+	return l
 }
 
 // Loggable indicates the implement supports logging.

@@ -21,7 +21,6 @@ package http
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"net"
 	"net/http"
 	"strconv"
@@ -40,9 +39,9 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/ui"
 )
 
 var (
@@ -136,14 +135,9 @@ func (p *server) PreRun(_ context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mux = chi.NewRouter()
 
-	fSys, err := fs.Sub(ui.DistContent, "dist")
-	if err != nil {
+	if err := p.setRootPath(); err != nil {
 		return err
 	}
-	httpFS := http.FS(fSys)
-	fileServer := http.FileServer(http.FS(fSys))
-	serveIndex := serveFileContents("index.html", httpFS)
-	p.mux.Mount("/", intercept404(fileServer, serveIndex))
 	p.srv = &http.Server{
 		Addr:              p.listenAddr,
 		Handler:           p.mux,
@@ -161,7 +155,7 @@ func (p *server) Serve() run.StopNotify {
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(p.creds))
 	}
-	client, err := newHealthCheckClient(ctx, p.l, p.grpcAddr, opts)
+	client, err := healthcheck.NewClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
 		p.l.Error().Err(err).Msg("Failed to health check client")
 		close(p.stopCh)

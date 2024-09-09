@@ -80,3 +80,12 @@ type Histogram interface {
 	Instrument
 	Observe(value float64, labelValues ...string)
 }
+
+// ToLabelPairs converts the given label names and label values to a map of label names to label values.
+func ToLabelPairs(labelNames, labelValues []string) LabelPairs {
+	labelPairs := make(LabelPairs, len(labelNames))
+	for i := range labelNames {
+		labelPairs[labelNames[i]] = labelValues[i]
+	}
+	return labelPairs
+}

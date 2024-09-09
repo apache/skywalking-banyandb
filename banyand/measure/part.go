@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync/atomic"
-	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
@@ -203,7 +202,9 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 }
 
 func uncompressedDataPointSizeBytes(index int, dps *dataPoints) uint64 {
-	n := uint64(len(time.RFC3339Nano))
+	// 8 bytes for timestamp
+	// 8 bytes for version
+	n := uint64(8 + 8)
 	n += uint64(len(dps.fields[index].name))
 	for i := range dps.fields[index].values {
 		n += uint64(dps.fields[index].values[i].size())

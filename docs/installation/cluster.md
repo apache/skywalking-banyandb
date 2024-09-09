@@ -8,22 +8,27 @@ The etcd cluster can be setup by the [etcd installation guide](https://etcd.io/d
 
 ## Role-base Banyand Cluster
 
+- Download or build the BanyanDB packages.
+- Unpack and extract the `skywalking-banyandb-x.x.x-bin.tgz`.
+- Select the binary for your platform, such as `banyand-linux-amd64` or `banyand-darwin-amd64`.
+- Move the binary to the directory you want to run BanyanDB. For instance, `mv banyand-linux-amd64 /usr/local/bin/banyand`. The following steps assume that the binary is in the `/usr/local/bin` directory.
+
 There is an example: The etcd cluster is spread across three nodes with the addresses `10.0.0.1:2379`, `10.0.0.2:2379`, and `10.0.0.3:2379`.
 
 Data nodes and liaison nodes are running as independent processes by
 
 ```shell
-$ ./banyand-server-static storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
-$ ./banyand-server-static storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
-$ ./banyand-server-static storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
-$ ./banyand-server-static liaison --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+banyand storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+banyand storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+banyand storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+banyand liaison --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
 ```
 
 ## Node Discovery
 
 The node discovery is based on the etcd cluster. The etcd cluster is required for the metadata module to provide the metadata service and nodes discovery service for the whole cluster.
 
-The host is registered to the etcd cluster by the `banyand-server-static` automatically based on `node-host-provider` :
+The host is registered to the etcd cluster by the `banyand` automatically based on `node-host-provider` :
 
 - `node-host-provider=hostname` : Default. The OS's hostname is registered as the host part in the address.
 - `node-host-provider=ip` : The OS's the first non-loopback active IP address(IPv4) is registered as the host part in the address.
@@ -45,8 +50,8 @@ The username/password is configured in the following command:
 ***Note: recommended using environment variables to set username/password for higher security.***
 
 ```shell
-$ ./banyand-server-static storage --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
-$ ./banyand-server-static liaison --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
+banyand storage --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
+banyand liaison --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
 ```
 
 ### Transport security with HTTPS
@@ -56,8 +61,8 @@ The etcd trusted certificate file can be setup by the [etcd transport security m
 - `etcd-tls-ca-file`: The path of the trusted certificate file.
 
 ```shell
-$ ./banyand-server-static storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
-$ ./banyand-server-static liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
+banyand storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
+banyand liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
 ```
 
 ### Authentication with HTTPS client certificates
@@ -69,8 +74,8 @@ The etcd client certificates can be setup by the [etcd transport security model]
 - `etcd-tls-key-file`: Key for the certificate. Must be unencrypted.
 
 ```shell
-$ ./banyand-server-static storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
-$ ./banyand-server-static liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
+banyand storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
+banyand liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
 ```
 
 ### Self-observability dashboard

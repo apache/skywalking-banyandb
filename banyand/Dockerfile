@@ -14,5 +14,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-IMG_NAME := skywalking-banyandb
-include ../scripts/build/docker.mk
+
+FROM alpine:edge AS certs
+RUN apk add --no-cache ca-certificates && update-ca-certificates
+
+FROM busybox:stable-glibc AS build-linux
+
+ARG TARGETARCH
+ARG BINARYTYPE
+
+COPY build/bin/linux/${TARGETARCH}/banyand-server-${BINARYTYPE} /banyand
+COPY --from=certs /etc/ssl/certs /etc/ssl/certs
+
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build-windows
+
+ARG TARGETARCH
+
+COPY build/bin/windows/${TARGETARCH}/banyand-server-static "/banyand"
+
+FROM build-${TARGETOS} AS final
+
+EXPOSE 17912
+EXPOSE 17913
+EXPOSE 6060
+EXPOSE 2121
+
+ENTRYPOINT ["/banyand"]

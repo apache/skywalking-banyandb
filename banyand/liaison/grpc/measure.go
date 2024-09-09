@@ -43,12 +43,13 @@ import (
 
 type measureService struct {
 	measurev1.UnimplementedMeasureServiceServer
-	*discoveryService
-	sampled            *logger.Logger
 	ingestionAccessLog accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
-	writeTimeout       time.Duration
+	*discoveryService
+	sampled      *logger.Logger
+	metrics      *metrics
+	writeTimeout time.Duration
 }
 
 func (ms *measureService) setLogger(log *logger.Logger) {
@@ -65,13 +66,24 @@ func (ms *measureService) activeIngestionAccessLog(root string) (err error) {
 
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
 	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, measure measurev1.MeasureService_WriteServer, logger *logger.Logger) {
+		if status != modelv1.Status_STATUS_SUCCEED {
+			ms.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "measure", "write")
+		}
+		ms.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "measure", "write")
 		if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
-			logger.Debug().Err(errResp).Msg("failed to send response")
+			logger.Debug().Err(errResp).Msg("failed to send measure write response")
+			ms.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "measure", "write")
 		}
 	}
 	ctx := measure.Context()
 	publisher := ms.pipeline.NewBatchPublisher(ms.writeTimeout)
-	defer publisher.Close()
+	ms.metrics.totalStreamStarted.Inc(1, "measure", "write")
+	start := time.Now()
+	defer func() {
+		publisher.Close()
+		ms.metrics.totalStreamFinished.Inc(1, "measure", "write")
+		ms.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "measure", "write")
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -83,9 +95,12 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			return nil
 		}
 		if err != nil {
-			ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
+			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+				ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
+			}
 			return err
 		}
+		ms.metrics.totalStreamMsgReceived.Inc(1, writeRequest.Metadata.Group, "measure", "write")
 		if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
 			ms.sampled.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
 			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeRequest.GetMessageId(), measure, ms.sampled)
@@ -140,13 +155,26 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
-		reply(nil, modelv1.Status_STATUS_SUCCEED, writeRequest.GetMessageId(), measure, ms.sampled)
+		reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_SUCCEED, writeRequest.GetMessageId(), measure, ms.sampled)
 	}
 }
 
 var emptyMeasureQueryResponse = &measurev1.QueryResponse{DataPoints: make([]*measurev1.DataPoint, 0)}
 
 func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) (resp *measurev1.QueryResponse, err error) {
+	for _, g := range req.Groups {
+		ms.metrics.totalStarted.Inc(1, g, "measure", "query")
+	}
+	start := time.Now()
+	defer func() {
+		for _, g := range req.Groups {
+			ms.metrics.totalFinished.Inc(1, g, "measure", "query")
+			if err != nil {
+				ms.metrics.totalErr.Inc(1, g, "measure", "query")
+			}
+			ms.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "measure", "query")
+		}
+	}()
 	if err = timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
