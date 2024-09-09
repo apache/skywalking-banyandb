@@ -97,32 +97,13 @@ func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []n
 		b.processTagFamilies(tff, i, dataPointsLen)
 	}
 	for i, f := range fields {
-		columns := b.field.resizeColumnsAtEnd(len(f.values))
+		columns := b.field.resizeColumns(len(f.values))
 		for j, t := range f.values {
 			if types[i] == pbv1.DataPointValueTypeDelta {
-				columnName := PRFIX + t.name
-				if i == 0 {
-					columns[j].name = columnName
-					columns[j].resizeValues(dataPointsLen)
-					columns[j].valueType = t.valueType
-					columns[j].values[i] = t.marshal()
-					columns[j].datapointType = pbv1.DataPointValueTypeDelta
-				}
-				existingColumn := b.findColumnByName(columnName)
-				if existingColumn == nil {
-					// If the column does not exist, create a new column
-					newColumn := column{
-						name:          columnName,
-						valueType:     t.valueType,
-						datapointType: types[i],
-					}
-					newColumn.resizeValues(dataPointsLen)
-					newColumn.values[i] = t.marshal()
-					b.field.columns = append(b.field.columns, newColumn)
-				} else {
-					// column already exists, update the value
-					existingColumn.values[i] = t.marshal()
-				}
+				deltaColumnName := PRFIX + t.name
+				deltaColumn := b.findOrCreateColumn(deltaColumnName, t.valueType, dataPointsLen)
+				deltaColumn.values[i] = t.marshal()
+
 			} else {
 				if types[i] == pbv1.DataPointValueTypeDelta {
 					columns[j].datapointType = pbv1.DataPointValueTypeCumulative
@@ -138,15 +119,21 @@ func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []n
 	}
 }
 
-func (b *block) findColumnByName(name string) *column {
+func (b *block) findOrCreateColumn(name string, valueType pbv1.ValueType, dataPointsLen int) *column {
 	for i := range b.field.columns {
 		if b.field.columns[i].name == name {
 			return &b.field.columns[i]
 		}
 	}
-	return nil
+	newColumn := column{
+		name:          name,
+		valueType:     valueType,
+		datapointType: pbv1.DataPointValueTypeDelta,
+	}
+	newColumn.resizeValues(dataPointsLen)
+	b.field.columns = append(b.field.columns, newColumn)
+	return &b.field.columns[len(b.field.columns)-1]
 }
-
 func (b *block) processTagFamilies(tff []nameValues, i int, dataPointsLen int) {
 	tagFamilies := b.resizeTagFamilies(len(tff))
 	for j, tf := range tff {

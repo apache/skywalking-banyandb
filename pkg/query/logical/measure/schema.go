@@ -112,3 +112,6 @@ func (m *schema) registerField(fieldIdx int, spec *databasev1.FieldSpec) {
 		Spec:     spec,
 	}
 }
+func (s *schema) GetInterval() string {
+	return s.measure.Interval
+}

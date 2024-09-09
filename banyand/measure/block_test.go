@@ -223,8 +223,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 		})
 	}
 }
-
-func Test_block_mustInitFromDataPoints_WithIncrementalData(t *testing.T) {
+func Test_block_mustInitFromDataPointsWithDelta(t *testing.T) {
 	type args struct {
 		timestamps  []int64
 		versions    []int64
@@ -238,104 +237,115 @@ func Test_block_mustInitFromDataPoints_WithIncrementalData(t *testing.T) {
 		want block
 	}{
 		{
-			name: "Test mustInitFromDataPoints with incremental data - scalar to delta",
+			name: "Test mustInitFromDataPoints with Delta values",
 			args: args{
-				timestamps: []int64{1, 2, 3, 3},
-				versions:   []int64{1, 1, 2, 2},
-				types: []pbv1.DataPointValueType{
-					pbv1.DataPointValueTypeDelta,
-					pbv1.DataPointValueTypeDelta,
-					pbv1.DataPointValueTypeDelta,
-					pbv1.DataPointValueTypeDelta,
-				},
+				timestamps: []int64{1, 2, 3},
+				versions:   []int64{1, 1, 1},
 				tagFamilies: [][]nameValues{
 					{
-						{"tag1", []*nameValue{{name: "tag1", valueType: pbv1.ValueTypeStr, value: []byte("value1")}}},
+						{
+							"singleTag", []*nameValue{
+								{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
+							},
+						},
 					},
 					{
-						{"tag1", []*nameValue{{name: "tag1", valueType: pbv1.ValueTypeStr, value: []byte("value2")}}},
+						{
+							"singleTag", []*nameValue{
+								{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
+							},
+						},
 					},
 					{
-						{"tag1", []*nameValue{{name: "tag1", valueType: pbv1.ValueTypeStr, value: []byte("value3")}}},
-					},
-					{
-						{"tag1", []*nameValue{{name: "tag1", valueType: pbv1.ValueTypeStr, value: []byte("value4")}}},
+						{
+							"singleTag", []*nameValue{
+								{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value3"), valueArr: nil},
+							},
+						},
 					},
 				},
 				fields: []nameValues{
 					{
-						"metrics", []*nameValue{
-							{name: "value", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(100.0), valueArr: nil},
+						"skipped", []*nameValue{
+							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(100), valueArr: nil},
+							{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(10.5), valueArr: nil},
 						},
 					},
 					{
-						"metrics", []*nameValue{
-							{name: "value", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(150.0), valueArr: nil},
+						"skipped", []*nameValue{
+							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(50), valueArr: nil},
+							{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(5.5), valueArr: nil},
 						},
 					},
 					{
-						"metrics", []*nameValue{
-							{name: "akavalue", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(25.0), valueArr: nil},
-						},
-					},
-					{
-						"metrics", []*nameValue{
-							{name: "bkbvalue", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(30.0), valueArr: nil},
+						"skipped", []*nameValue{
+							{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(25), valueArr: nil},
+							{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(2.5), valueArr: nil},
 						},
 					},
 				},
+				types: []pbv1.DataPointValueType{
+					pbv1.DataPointValueTypeCumulative,
+					pbv1.DataPointValueTypeDelta,
+					pbv1.DataPointValueTypeDelta,
+				},
 			},
 			want: block{
-				timestamps: []int64{1, 2, 3, 3},
-				versions:   []int64{1, 1, 2, 2},
+				timestamps: []int64{1, 2, 3},
+				versions:   []int64{1, 1, 1},
 				tagFamilies: []columnFamily{
 					{
-						name: "tag1",
+						name: "singleTag",
 						columns: []column{
-							{
-								name:      "tag1",
-								valueType: pbv1.ValueTypeStr,
-								values:    [][]byte{[]byte("value1"), []byte("value2"), []byte("value3"), []byte("value4")},
-							},
+							{name: "strTag", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("value1"), []byte("value2"), []byte("value3")}},
 						},
 					},
 				},
 				field: columnFamily{
 					columns: []column{
-						{
-							name:      "_value",
-							valueType: pbv1.ValueTypeFloat64,
-							values: [][]byte{
-								convert.Float64ToBytes(100.0),
-								convert.Float64ToBytes(150.0),
-								nil,
-								nil,
-							},
-						},
-						{
-							name:      "_akavalue",
-							valueType: pbv1.ValueTypeFloat64,
-							values: [][]byte{
-								nil,
-								nil,
-								convert.Float64ToBytes(25.0),
-								nil,
-							},
-						},
-						{
-							name:      "_bkbvalue",
-							valueType: pbv1.ValueTypeFloat64,
-							values: [][]byte{
-								nil,
-								nil,
-								nil,
-								convert.Float64ToBytes(30.0),
-							},
-						},
+						{name: "intField", valueType: pbv1.ValueTypeInt64, values: [][]byte{
+							convert.Int64ToBytes(100),
+							convert.Int64ToBytes(50),
+							convert.Int64ToBytes(25),
+						}, datapointType: pbv1.DataPointValueTypeCumulative},
+						{name: "floatField", valueType: pbv1.ValueTypeFloat64, values: [][]byte{
+							convert.Float64ToBytes(10.5),
+							convert.Float64ToBytes(5.5),
+							convert.Float64ToBytes(2.5),
+						}, datapointType: pbv1.DataPointValueTypeCumulative},
+						{name: "_intField", valueType: pbv1.ValueTypeInt64, values: [][]byte{
+							nil,
+							convert.Int64ToBytes(50),
+							convert.Int64ToBytes(25),
+						}, datapointType: pbv1.DataPointValueTypeDelta},
+						{name: "_floatField", valueType: pbv1.ValueTypeFloat64, values: [][]byte{
+							nil,
+							convert.Float64ToBytes(5.5),
+							convert.Float64ToBytes(2.5),
+						}, datapointType: pbv1.DataPointValueTypeDelta},
 					},
 				},
 			},
 		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &block{}
+			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.versions, tt.args.tagFamilies, tt.args.fields, tt.args.types)
+			if !reflect.DeepEqual(*b, tt.want) {
+				t.Errorf("block.mustInitFromDataPoints() = %+v, want %+v", *b, tt.want)
+			}
+		})
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &block{}
+			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.versions, tt.args.tagFamilies, tt.args.fields, tt.args.types)
+			if !reflect.DeepEqual(*b, tt.want) {
+				t.Errorf("block.mustInitFromDataPoints() = %+v, want %+v", *b, tt.want)
+			}
+		})
 	}
 
 	for _, tt := range tests {

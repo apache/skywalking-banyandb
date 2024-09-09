@@ -281,6 +281,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
+	var interval string
 	isDelta := false
 	aggregators := make(map[string]Aggregator)
 	for _, fieldSpec := range i.projectionFieldsRefs {
@@ -289,11 +290,18 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 			aggregators["_"+fieldSpec.Field.Name] = NewAggregator(fieldSpec.Spec.Spec.AggregateFunction)
 		}
 	}
+	if ms, ok := i.schema.(*schema); ok {
+		interval := ms.GetInterval()
+		fmt.Println("Interval:", interval)
+	} else {
+		fmt.Println("Error: Schema does not support getting the interval directly")
+	}
 
 	if isDelta {
 		return &deltaResultMIterator{
 			result:      result,
 			aggregators: aggregators,
+			interval:    interval,
 		}, nil
 	}
 
@@ -428,6 +436,7 @@ type deltaResultMIterator struct {
 	aggregators map[string]Aggregator
 	current     []*measurev1.DataPoint
 	i           int
+	interval    string
 }
 
 func (di *deltaResultMIterator) Next() bool {
