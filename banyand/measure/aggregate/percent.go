@@ -48,6 +48,16 @@ func (f *Percent[A, B, R]) Result() R {
 	return R(f.match) * 10000 / R(f.total)
 }
 
+// FirstCumulation gives `total`.
+func (f *Percent[A, B, R]) FirstCumulation() A {
+	return A(f.total)
+}
+
+// SecondCumulation gives `match`.
+func (f *Percent[A, B, R]) SecondCumulation() B {
+	return B(f.match)
+}
+
 // NewPercentArguments constructs arguments.
 func NewPercentArguments(a []int64, b []int64) Arguments[int64, int64] {
 	return Arguments[int64, int64]{

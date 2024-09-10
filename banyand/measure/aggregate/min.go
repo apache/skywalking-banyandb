@@ -38,6 +38,16 @@ func (f *Min[A, B, R]) Result() R {
 	return f.minimum
 }
 
+// FirstCumulation gives `minimum`.
+func (f *Min[A, B, R]) FirstCumulation() A {
+	return A(f.minimum)
+}
+
+// SecondCumulation always gives 0.
+func (f *Min[A, B, R]) SecondCumulation() B {
+	return zeroValue[B]()
+}
+
 // NewMinArguments constructs arguments.
 func NewMinArguments[A Input](a []A) Arguments[A, Void] {
 	return Arguments[A, Void]{

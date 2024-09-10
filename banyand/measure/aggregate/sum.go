@@ -37,6 +37,16 @@ func (f *Sum[A, B, R]) Result() R {
 	return f.summation
 }
 
+// FirstCumulation gives `summation`.
+func (f *Sum[A, B, R]) FirstCumulation() A {
+	return A(f.summation)
+}
+
+// SecondCumulation always gives 0.
+func (f *Sum[A, B, R]) SecondCumulation() B {
+	return zeroValue[B]()
+}
+
 // NewSumArguments constructs arguments.
 func NewSumArguments[A Input](a []A) Arguments[A, Void] {
 	return Arguments[A, Void]{
