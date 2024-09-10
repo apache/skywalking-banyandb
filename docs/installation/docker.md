@@ -42,3 +42,49 @@ The BanyanDB server would be listening on the `0.0.0.0:17912` to access gRPC req
 At the same time, the BanyanDB server would be listening on the `0.0.0.0:17913` to access HTTP requests. if no errors occurred. The HTTP server is used for CLI and Web UI.
 
 The Web UI is hosted at `http://localhost:17913/`.
+
+## Build and Push the Custom Docker image
+
+The BanyanDB Docker image can be built from the source code. You can build the Docker image by running the following commands:
+
+```shell
+make generate
+make release
+HUB=<private_hub> IMG_NAME=<private_name> TAG=<private_tag> make docker.build
+```
+
+The `make release` command builds binaries and generates the necessary files for building the Docker image. The `make docker.build` command builds the Docker image with the architecture aligned with the host machine.
+
+`HUB` is the Docker Hub username or the Docker Hub organization name. `IMG_NAME` is the Docker image name. `TAG` is the Docker image tag.
+
+Note: You can't build other OS or architecture images not identical to the host machine. That's because the docker build command fails to load the image after the build process.
+
+The `make docker.push` command pushes the Docker image to the Docker Hub. You need to log in to the Docker Hub before running this command.
+
+```shell
+docker login
+make generate
+make release
+make docker.push
+```
+
+If you want to push other OS or architecture images, you can run the following commands:
+
+```shell
+docker login
+make generate
+TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release
+PLATFORMS=linux/amd64,linux/arm64 make docker.push
+```
+
+The `TARGET_OS` environment variable specifies the target OS. The `PLATFORMS` environment variable specifies the target architectures. The `PLATFORMS` environment variable is a comma-separated list of the target architectures.
+
+If you want to build and publish slim images, you can run the following commands:
+
+```shell
+docker login
+make generate
+make release
+BINARYTYPE=slim make docker.build
+BINARYTYPE=slim make docker.push
+```
