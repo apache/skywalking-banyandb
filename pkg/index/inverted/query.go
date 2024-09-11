@@ -361,7 +361,9 @@ func (t *termRangeInclusiveNode) MarshalJSON() ([]byte, error) {
 		builder.WriteString(")")
 	}
 	inner["range"] = builder.String()
-	inner["index"] = t.indexRule.Metadata.Name + ":" + t.indexRule.Metadata.Group
+	if t.indexRule != nil {
+		inner["index"] = t.indexRule.Metadata.Name + ":" + t.indexRule.Metadata.Group
+	}
 	data := make(map[string]interface{}, 1)
 	data["termRangeInclusive"] = inner
 	return json.Marshal(data)
@@ -385,7 +387,9 @@ func newTermNode(term string, indexRule *databasev1.IndexRule) *termNode {
 
 func (t *termNode) MarshalJSON() ([]byte, error) {
 	inner := make(map[string]interface{}, 1)
-	inner["index"] = t.indexRule.Metadata.Name + ":" + t.indexRule.Metadata.Group
+	if t.indexRule != nil {
+		inner["index"] = t.indexRule.Metadata.Name + ":" + t.indexRule.Metadata.Group
+	}
 	inner["value"] = t.term
 	data := make(map[string]interface{}, 1)
 	data["term"] = inner
@@ -423,23 +427,18 @@ func (m *matchNode) String() string {
 }
 
 type prefixNode struct {
-	indexRule *databasev1.IndexRule
-	prefix    string
+	prefix string
 }
 
-func newPrefixNode(prefix string, indexRule *databasev1.IndexRule) *prefixNode {
+func newPrefixNode(prefix string) *prefixNode {
 	return &prefixNode{
-		indexRule: indexRule,
-		prefix:    prefix,
+		prefix: prefix,
 	}
 }
 
 func (m *prefixNode) MarshalJSON() ([]byte, error) {
-	inner := make(map[string]interface{}, 1)
-	inner["index"] = m.indexRule.Metadata.Name + ":" + m.indexRule.Metadata.Group
-	inner["value"] = m.prefix
 	data := make(map[string]interface{}, 1)
-	data["prefix"] = inner
+	data["prefix"] = m.prefix
 	return json.Marshal(data)
 }
 
@@ -448,23 +447,18 @@ func (m *prefixNode) String() string {
 }
 
 type wildcardNode struct {
-	indexRule *databasev1.IndexRule
-	wildcard  string
+	wildcard string
 }
 
-func newWildcardNode(wildcard string, indexRule *databasev1.IndexRule) *wildcardNode {
+func newWildcardNode(wildcard string) *wildcardNode {
 	return &wildcardNode{
-		indexRule: indexRule,
-		wildcard:  wildcard,
+		wildcard: wildcard,
 	}
 }
 
 func (m *wildcardNode) MarshalJSON() ([]byte, error) {
-	inner := make(map[string]interface{}, 1)
-	inner["index"] = m.indexRule.Metadata.Name + ":" + m.indexRule.Metadata.Group
-	inner["value"] = m.wildcard
 	data := make(map[string]interface{}, 1)
-	data["wildcard"] = inner
+	data["wildcard"] = m.wildcard
 	return json.Marshal(data)
 }
 
