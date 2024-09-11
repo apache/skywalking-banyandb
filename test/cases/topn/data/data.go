@@ -67,19 +67,29 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &measurev1.TopNResponse{}
 	helpers.UnmarshalYAML(ww, want)
-	innerGm.Expect(cmp.Equal(resp, want,
+	success := innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&measurev1.TopNList{}, "timestamp"),
 		protocmp.Transform())).
 		To(gm.BeTrue(), func() string {
-			j, err := protojson.Marshal(resp)
+			var j []byte
+			j, err = protojson.Marshal(resp)
 			if err != nil {
 				return err.Error()
 			}
-			y, err := yaml.JSONToYAML(j)
+			var y []byte
+			y, err = yaml.JSONToYAML(j)
 			if err != nil {
 				return err.Error()
 			}
 			return string(y)
 		})
+	if !success {
+		return
+	}
+	query.Trace = true
+	resp, err = c.TopN(ctx, query)
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
+	innerGm.Expect(resp.Trace).NotTo(gm.BeNil())
+	innerGm.Expect(resp.Trace.GetSpans()).NotTo(gm.BeEmpty())
 }

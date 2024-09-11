@@ -54,13 +54,13 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 			q := bluge.NewPrefixQuery(match)
 			q.SetField(entityField)
 			qs[i] = q
-			primaryNode.Append(newPrefixNode(match, nil))
+			primaryNode.Append(newPrefixNode(match))
 		case index.SeriesMatcherTypeWildcard:
 			match := convert.BytesToString(seriesMatchers[i].Match)
 			q := bluge.NewWildcardQuery(match)
 			q.SetField(entityField)
 			qs[i] = q
-			primaryNode.Append(newWildcardNode(match, nil))
+			primaryNode.Append(newWildcardNode(match))
 		default:
 			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
 		}
