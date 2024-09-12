@@ -35,7 +35,8 @@ func TestSum(t *testing.T) {
 		[]int64{1, 2, 3}, // mock the "summation" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, int64(6), sumInt64.Result())
+	_, _, r1 := sumInt64.Result()
+	assert.Equal(t, int64(6), r1)
 
 	// case2: input float64 values
 	sumFloat64, _ := aggregate.NewFunction[float64, aggregate.Void, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_SUM)
@@ -43,5 +44,6 @@ func TestSum(t *testing.T) {
 		[]float64{1.0, 2.0, 3.0}, // mock the "summation" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, 6.0, sumFloat64.Result())
+	_, _, r2 := sumFloat64.Result()
+	assert.Equal(t, 6.0, r2)
 }

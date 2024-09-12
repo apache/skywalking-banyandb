@@ -35,7 +35,8 @@ func TestMax(t *testing.T) {
 		[]int64{1, 2, 3}, // mock the "maximum" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, int64(3), maxInt64.Result())
+	_, _, r1 := maxInt64.Result()
+	assert.Equal(t, int64(3), r1)
 
 	// case2: input float64 values
 	maxFloat64, _ := aggregate.NewFunction[float64, aggregate.Void, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX)
@@ -43,5 +44,6 @@ func TestMax(t *testing.T) {
 		[]float64{1.0, 2.0, 3.0}, // mock the "maximum" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, 3.0, maxFloat64.Result())
+	_, _, r2 := maxFloat64.Result()
+	assert.Equal(t, 3.0, r2)
 }

@@ -35,5 +35,6 @@ func TestCount(t *testing.T) {
 		[]int64{1, 2, 3}, // mock the "count" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, int64(6), countInt64.Result())
+	_, _, r1 := countInt64.Result()
+	assert.Equal(t, int64(6), r1)
 }

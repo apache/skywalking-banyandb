@@ -52,8 +52,9 @@ type Function[A, B Input, R Output] interface {
 	// It uses a two-dimensional array to represent the argument array.
 	Combine(arguments Arguments[A, B]) error
 
-	// Result gives the result for the aggregation.
-	Result() R
+	// Result gives the result for the aggregation. R is the aggregating result,
+	// A is the first aggregating state, and B is the second aggregating state.
+	Result() (A, B, R)
 }
 
 // NewFunction constructs the aggregate function with given kind and parameter types.

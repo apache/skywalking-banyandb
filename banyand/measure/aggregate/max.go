@@ -34,8 +34,8 @@ func (f *Max[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (f *Max[A, B, R]) Result() R {
-	return f.maximum
+func (f *Max[A, B, R]) Result() (A, B, R) {
+	return A(f.maximum), zeroValue[B](), f.maximum
 }
 
 // NewMaxArguments constructs arguments.

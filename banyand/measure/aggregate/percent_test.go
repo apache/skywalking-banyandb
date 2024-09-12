@@ -30,11 +30,12 @@ func TestPercent(t *testing.T) {
 	var err error
 
 	// case1: input int64 values
-	PercentInt64, _ := aggregate.NewFunction[int64, int64, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_PERCENT)
-	err = PercentInt64.Combine(aggregate.NewPercentArguments(
+	percentInt64, _ := aggregate.NewFunction[int64, int64, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_PERCENT)
+	err = percentInt64.Combine(aggregate.NewPercentArguments(
 		[]int64{10, 100, 1000}, // mock the "total" column
 		[]int64{1, 10, 100},    // mock the "match" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, int64(1000), PercentInt64.Result())
+	_, _, r1 := percentInt64.Result()
+	assert.Equal(t, int64(1000), r1)
 }

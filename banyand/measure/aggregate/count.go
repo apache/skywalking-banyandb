@@ -32,8 +32,8 @@ func (f *Count[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (f *Count[A, B, R]) Result() R {
-	return R(f.count)
+func (f *Count[A, B, R]) Result() (A, B, R) {
+	return A(f.count), zeroValue[B](), R(f.count)
 }
 
 // NewCountArguments constructs arguments.

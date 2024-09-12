@@ -34,8 +34,8 @@ func (f *Min[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (f *Min[A, B, R]) Result() R {
-	return f.minimum
+func (f *Min[A, B, R]) Result() (A, B, R) {
+	return A(f.minimum), zeroValue[B](), f.minimum
 }
 
 // NewMinArguments constructs arguments.

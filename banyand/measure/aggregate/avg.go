@@ -38,14 +38,16 @@ func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (f *Avg[A, B, R]) Result() R {
+func (f *Avg[A, B, R]) Result() (A, B, R) {
+	var average R
 	// In unusual situations it returns the zero value.
 	if f.count == 0 {
-		return zeroValue[R]()
+		average = zeroValue[R]()
 	}
 	// According to the semantics of GoLang, the division of one int by another int
 	// returns an int, instead of f float.
-	return f.summation / R(f.count)
+	average = f.summation / R(f.count)
+	return A(f.summation), B(f.count), average
 }
 
 // NewAvgArguments constructs arguments.

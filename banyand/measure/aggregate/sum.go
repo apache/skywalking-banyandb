@@ -33,8 +33,8 @@ func (f *Sum[A, B, R]) Combine(arguments Arguments[A, B]) error {
 }
 
 // Result gives the result for the aggregation.
-func (f *Sum[A, B, R]) Result() R {
-	return f.summation
+func (f *Sum[A, B, R]) Result() (A, B, R) {
+	return A(f.summation), zeroValue[B](), f.summation
 }
 
 // NewSumArguments constructs arguments.
