@@ -122,28 +122,28 @@ func NewTimeRangeDuration(start time.Time, duration time.Duration, includeStart,
 }
 
 // FindRange returns the indices of the first and last elements in a sorted 'timestamps' slice that are within the min and max range.
-func FindRange[T int64 | uint64](timestamps []T, min, max T) (int, int, bool) {
+func FindRange[T int64 | uint64](timestamps []T, minVal, maxVal T) (int, int, bool) {
 	if len(timestamps) == 0 {
 		return -1, -1, false
 	}
 	isAsc := timestamps[0] <= timestamps[len(timestamps)-1]
-	if isAsc && (timestamps[0] > max || timestamps[len(timestamps)-1] < min) {
+	if isAsc && (timestamps[0] > maxVal || timestamps[len(timestamps)-1] < minVal) {
 		return -1, -1, false
 	}
-	if !isAsc && (timestamps[0] < min || timestamps[len(timestamps)-1] > max) {
+	if !isAsc && (timestamps[0] < minVal || timestamps[len(timestamps)-1] > maxVal) {
 		return -1, -1, false
 	}
 
 	start, end := -1, len(timestamps)
 	for start < len(timestamps)-1 {
 		start++
-		if isAsc && timestamps[start] >= min || !isAsc && timestamps[start] <= max {
+		if isAsc && timestamps[start] >= minVal || !isAsc && timestamps[start] <= maxVal {
 			break
 		}
 	}
 	for end > 0 {
 		end--
-		if isAsc && timestamps[end] <= max || !isAsc && timestamps[end] >= min {
+		if isAsc && timestamps[end] <= maxVal || !isAsc && timestamps[end] >= minVal {
 			break
 		}
 	}

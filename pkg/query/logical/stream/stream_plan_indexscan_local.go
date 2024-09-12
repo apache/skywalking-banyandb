@@ -64,8 +64,8 @@ func (i *localIndexScan) Close() {
 	}
 }
 
-func (i *localIndexScan) Limit(max int) {
-	i.maxElementSize = max
+func (i *localIndexScan) Limit(maxVal int) {
+	i.maxElementSize = maxVal
 }
 
 func (i *localIndexScan) Sort(order *logical.OrderBy) {
@@ -113,7 +113,7 @@ func (i *localIndexScan) Children() []logical.Plan {
 }
 
 func (i *localIndexScan) Schema() logical.Schema {
-	if i.projectionTagRefs == nil || len(i.projectionTagRefs) == 0 {
+	if len(i.projectionTagRefs) == 0 {
 		return i.schema
 	}
 	return i.schema.ProjTags(i.projectionTagRefs...)

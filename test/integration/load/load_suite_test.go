@@ -164,13 +164,13 @@ var _ = Describe("Load Test Suit", func() {
 })
 
 func analysis(name string, data []float64) {
-	min, _ := stats.Min(data)
-	max, _ := stats.Max(data)
+	minVal, _ := stats.Min(data)
+	maxVal, _ := stats.Max(data)
 	mean, _ := stats.Mean(data)
 	median, _ := stats.Median(data)
 	p90, _ := stats.Percentile(data, 90)
 	p95, _ := stats.Percentile(data, 95)
 	p98, _ := stats.Percentile(data, 98)
 	p99, _ := stats.Percentile(data, 99)
-	logger.Infof("%s: min: %f, max: %f, mean: %f, median: %f, p90: %f, p95: %f, p98: %f, p99: %f\n", name, min, max, mean, median, p90, p95, p98, p99)
+	logger.Infof("%s: min: %f, max: %f, mean: %f, median: %f, p90: %f, p95: %f, p98: %f, p99: %f\n", name, minVal, maxVal, mean, median, p90, p95, p98, p99)
 }

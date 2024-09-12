@@ -21,7 +21,7 @@ include $(mk_dir)lint-bin.mk
 ##@ Code quality targets
 
 .PHONY: lint
-lint: $(LINTER) $(REVIVE) ## Run all linters
+lint: $(BUF) $(LINTER) $(REVIVE) ## Run all linters
 	@PATH=$(tool_bin):$(proto_dir) $(BUF) lint
 	$(LINTER) run -v --config $(root_dir)/.golangci.yml ./... && \
 	  $(REVIVE) -config $(root_dir)/revive.toml -formatter friendly ./...

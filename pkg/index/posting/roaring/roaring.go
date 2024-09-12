@@ -173,15 +173,15 @@ func (p *postingsList) AddIterator(iter posting.Iterator) error {
 	return nil
 }
 
-func (p *postingsList) AddRange(min, max uint64) error {
-	for i := min; i < max; i++ {
+func (p *postingsList) AddRange(minVal, maxVal uint64) error {
+	for i := minVal; i < maxVal; i++ {
 		p.bitmap.Add(i)
 	}
 	return nil
 }
 
-func (p *postingsList) RemoveRange(min, max uint64) error {
-	for i := min; i < max; i++ {
+func (p *postingsList) RemoveRange(minVal, maxVal uint64) error {
+	for i := minVal; i < maxVal; i++ {
 		p.bitmap.Remove(i)
 	}
 	return nil
