@@ -38,16 +38,6 @@ func (f *Max[A, B, R]) Result() R {
 	return f.maximum
 }
 
-// FirstCumulation gives `maximum`.
-func (f *Max[A, B, R]) FirstCumulation() A {
-	return A(f.maximum)
-}
-
-// SecondCumulation always gives 0.
-func (f *Max[A, B, R]) SecondCumulation() B {
-	return zeroValue[B]()
-}
-
 // NewMaxArguments constructs arguments.
 func NewMaxArguments[A Input](a []A) Arguments[A, Void] {
 	return Arguments[A, Void]{

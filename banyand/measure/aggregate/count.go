@@ -36,16 +36,6 @@ func (f *Count[A, B, R]) Result() R {
 	return R(f.count)
 }
 
-// FirstCumulation gives `count`.
-func (f *Count[A, B, R]) FirstCumulation() A {
-	return A(f.count)
-}
-
-// SecondCumulation always gives 0.
-func (f *Count[A, B, R]) SecondCumulation() B {
-	return zeroValue[B]()
-}
-
 // NewCountArguments constructs arguments.
 func NewCountArguments(a []int64) Arguments[int64, Void] {
 	return Arguments[int64, Void]{

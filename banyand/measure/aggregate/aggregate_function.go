@@ -54,12 +54,6 @@ type Function[A, B Input, R Output] interface {
 
 	// Result gives the result for the aggregation.
 	Result() R
-
-	// FirstCumulation gives the first cumulative state for the aggregation.
-	FirstCumulation() A
-
-	// SecondCumulation gives the second cumulative state for the aggregation.
-	SecondCumulation() B
 }
 
 // NewFunction constructs the aggregate function with given kind and parameter types.

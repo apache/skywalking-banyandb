@@ -48,16 +48,6 @@ func (f *Avg[A, B, R]) Result() R {
 	return f.summation / R(f.count)
 }
 
-// FirstCumulation gives `summation`.
-func (f *Avg[A, B, R]) FirstCumulation() A {
-	return A(f.summation)
-}
-
-// SecondCumulation gives `count`.
-func (f *Avg[A, B, R]) SecondCumulation() B {
-	return B(f.count)
-}
-
 // NewAvgArguments constructs arguments.
 func NewAvgArguments[A Input](a []A, b []int64) Arguments[A, int64] {
 	return Arguments[A, int64]{

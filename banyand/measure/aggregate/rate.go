@@ -47,16 +47,6 @@ func (f *Rate[A, B, R]) Result() R {
 	return R(f.numerator) * 10000 / R(f.denominator)
 }
 
-// FirstCumulation gives `denominator`.
-func (f *Rate[A, B, R]) FirstCumulation() A {
-	return A(f.denominator)
-}
-
-// SecondCumulation gives `numerator`.
-func (f *Rate[A, B, R]) SecondCumulation() B {
-	return B(f.numerator)
-}
-
 // NewRateArguments constructs arguments.
 func NewRateArguments(a []int64, b []int64) Arguments[int64, int64] {
 	return Arguments[int64, int64]{
