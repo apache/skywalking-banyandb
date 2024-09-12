@@ -76,4 +76,8 @@ var _ = Describe("Query", func() {
 	It("TopN", func() {
 		query.TopN(basePath, timeout, 1, fs)
 	})
+
+	It("Topology", func() {
+		query.Topology(basePath, timeout, 1, fs)
+	})
 })
