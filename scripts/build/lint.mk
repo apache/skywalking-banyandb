@@ -20,8 +20,6 @@ include $(mk_dir)lint-bin.mk
 
 ##@ Code quality targets
 
-
-
 .PHONY: lint
 lint: $(LINTER) $(REVIVE) ## Run all linters
 	$(LINTER) run -v --config $(root_dir)/.golangci.yml --timeout 10m ./... && \

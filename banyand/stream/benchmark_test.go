@@ -105,8 +105,8 @@ func (dbs *databaseSupplier) SupplyTSDB() io.Closer {
 	return nil
 }
 
-func generateRandomNumber(max int64) int {
-	n, _ := rand.Int(rand.Reader, big.NewInt(max))
+func generateRandomNumber(maxValue int64) int {
+	n, _ := rand.Int(rand.Reader, big.NewInt(maxValue))
 	return int(n.Int64()) + 1
 }
 

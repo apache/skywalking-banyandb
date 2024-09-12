@@ -194,8 +194,8 @@ func (t *distributedPlan) Schema() logical.Schema {
 	return t.s
 }
 
-func (t *distributedPlan) Limit(max int) {
-	t.maxElementSize = uint32(max)
+func (t *distributedPlan) Limit(maxVal int) {
+	t.maxElementSize = uint32(maxVal)
 }
 
 var _ sort.Comparable = (*comparableElement)(nil)
