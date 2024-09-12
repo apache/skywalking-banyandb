@@ -63,6 +63,7 @@ Release Notes.
 - Push "skywalking-banyandb:<tag>-testing" image for e2e and stress test. This image contains bydbctl to do a health check.
 - Set etcd-client log level to "error" and etcd-server log level to "warn".
 - Push "skywalking-banyandb:<tag>-slim" image for the production environment. This image doesn't contain bydbctl and Web UI.
+- Bump go to 1.23.
 
 ## 0.6.1
 
@@ -122,6 +123,7 @@ Release Notes.
 - Bump all dependencies of Go and Node.
 - Combine banyand and bydbctl Dockerfile.
 - Update readme for bydbctl
+- Introduce the go vulnerability check to "pre-push" task.
 
 ## 0.5.0
 

@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"math"
 	"path"
 	"time"
 
@@ -180,11 +181,27 @@ func (e *etcdSchemaRegistry) replaceProperty(ctx context.Context, key string, pr
 	if err != nil {
 		return false, 0, 0, err
 	}
-	return true, uint32(len(property.Tags)), leaseID, nil
+	var tagCount uint32
+	if tagCount, err = tagLen(property); err != nil {
+		return false, 0, 0, err
+	}
+	return true, tagCount, leaseID, nil
+}
+
+func tagLen(property *propertyv1.Property) (uint32, error) {
+	tagsCount := len(property.Tags)
+	if tagsCount < 0 || tagsCount > math.MaxUint32 {
+		return 0, errors.New("integer overflow: tags count exceeds uint32 range")
+	}
+	tagsNum := uint32(tagsCount)
+	return tagsNum, nil
 }
 
 func (e *etcdSchemaRegistry) mergeProperty(ctx context.Context, key string, property *propertyv1.Property, ttl int64) (bool, uint32, int64, error) {
-	tagsNum := uint32(len(property.Tags))
+	tagCount, err := tagLen(property)
+	if err != nil {
+		return false, 0, 0, err
+	}
 	existed, err := e.GetProperty(ctx, property.Metadata, nil)
 	if errors.Is(err, ErrGRPCResourceNotFound) {
 		return e.replaceProperty(ctx, key, property, ttl)
@@ -199,7 +216,7 @@ func (e *etcdSchemaRegistry) mergeProperty(ctx context.Context, key string, prop
 	}
 	merge := func(existed *propertyv1.Property) (*propertyv1.Property, error) {
 		tags := make([]*modelv1.Tag, 0)
-		for i := 0; i < int(tagsNum); i++ {
+		for i := 0; i < int(tagCount); i++ {
 			t := property.Tags[i]
 			tagExisted := false
 			for _, et := range existed.Tags {
@@ -262,7 +279,7 @@ func (e *etcdSchemaRegistry) mergeProperty(ctx context.Context, key string, prop
 	if prevLeaseID > 0 {
 		_, _ = e.client.Revoke(ctx, clientv3.LeaseID(prevLeaseID))
 	}
-	return false, tagsNum, leaseID, nil
+	return false, tagCount, leaseID, nil
 }
 
 func (e *etcdSchemaRegistry) grant(ctx context.Context, ttl int64) (int64, error) {

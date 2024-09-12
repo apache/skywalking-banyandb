@@ -124,7 +124,7 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	if _, ok := p.evictable[name]; ok {
 		return
 	}
-	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
 	if err != nil {
 		p.log.Error().Err(err).Msg("failed to connect to grpc server")
 		return
@@ -248,7 +248,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 		for {
 			select {
 			case <-time.After(backoff):
-				connEvict, errEvict := grpc.Dial(node.GrpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
+				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
 				if errEvict == nil && p.healthCheck(en.n, connEvict) {
 					func() {
 						p.mu.Lock()

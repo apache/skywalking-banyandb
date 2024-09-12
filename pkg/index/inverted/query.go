@@ -335,11 +335,11 @@ type termRangeInclusiveNode struct {
 	maxInclusive bool
 }
 
-func newTermRangeInclusiveNode(min, max string, minInclusive, maxInclusive bool, indexRule *databasev1.IndexRule) *termRangeInclusiveNode {
+func newTermRangeInclusiveNode(minVal, maxVal string, minInclusive, maxInclusive bool, indexRule *databasev1.IndexRule) *termRangeInclusiveNode {
 	return &termRangeInclusiveNode{
 		indexRule:    indexRule,
-		min:          min,
-		max:          max,
+		min:          minVal,
+		max:          maxVal,
 		minInclusive: minInclusive,
 		maxInclusive: maxInclusive,
 	}
