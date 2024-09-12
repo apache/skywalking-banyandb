@@ -103,6 +103,11 @@ check-req: ## Check the requirements
 	@$(MAKE) -C scripts/ci/check test
 	@$(MAKE) -C ui check-version
 
+include scripts/build/vuln.mk
+
+vuln-check: $(GOVULNCHECK)
+	$(GOVULNCHECK) -show color,verbose ./...	
+
 check: ## Check that the status is consistent with CI
 	$(MAKE) license-check
 	$(MAKE) format
@@ -123,6 +128,7 @@ pre-push: ## Check source files before pushing to the remote repo
 	$(MAKE) lint
 	$(MAKE) license-dep
 	$(MAKE) check
+	$(MAKE) vuln-check
 
 ##@ License targets
 

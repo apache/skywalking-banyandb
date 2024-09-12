@@ -1,8 +1,8 @@
 module github.com/apache/skywalking-banyandb
 
-go 1.22.0
+go 1.23.0
 
-toolchain go1.22.6
+toolchain go1.23.1
 
 require (
 	github.com/RoaringBitmap/roaring v1.9.4
