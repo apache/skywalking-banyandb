@@ -215,8 +215,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 
-async, cli_util, collection, mime, source_map_stack_trace, stream_channel and
-typed_data license:
+async, cli_util, collection, mime, stream_channel and typed_data license:
 
 Copyright 2015, the Dart project authors. 
 
@@ -583,7 +582,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 
-convert, crypto, shelf_static and vm_service license:
+convert, crypto, shelf_static, source_map_stack_trace and vm_service license:
 
 Copyright 2015, the Dart project authors.
 

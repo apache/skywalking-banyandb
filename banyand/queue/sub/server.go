@@ -70,7 +70,7 @@ type server struct {
 	log       *logger.Logger
 	ser       *grpclib.Server
 	listeners map[bus.Topic]bus.MessageListener
-	*clusterv1.UnimplementedServiceServer
+	clusterv1.UnimplementedServiceServer
 	metrics        *metrics
 	clientCloser   context.CancelFunc
 	host           string

@@ -29,7 +29,6 @@ linters:
     - exhaustive
     # TODO:// enable this lint
     # - exhaustruct
-    - exportloopref
     - gci
     - goconst
     - gocritic
@@ -88,7 +87,7 @@ linters-settings:
     sections:
       - standard
       - default
-      - prefix(github.com/apache/skywalking-banyandb/) 
+      - prefix(github.com/apache/skywalking-banyandb/)
   gocritic:
     enabled-checks:
       - appendCombine
@@ -116,6 +115,9 @@ linters-settings:
     #   toplevel     - for top level comments;
     #   all          - for all comments.
     scope: toplevel
+  gosec:
+    excludes:
+      - G115 # integer overflow conversion (TODO: verify these)
   staticcheck:
     checks: ["all", "-ST1000", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
   exhaustive:

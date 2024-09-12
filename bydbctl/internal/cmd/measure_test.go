@@ -206,7 +206,7 @@ var _ = Describe("Measure Data Query", func() {
 	})
 
 	It("query all measure data", func() {
-		conn, err := grpclib.Dial(
+		conn, err := grpclib.NewClient(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
 		)
@@ -242,7 +242,7 @@ tagProjection:
 	})
 
 	DescribeTable("query measure data with time range flags", func(timeArgs ...string) {
-		conn, err := grpclib.Dial(
+		conn, err := grpclib.NewClient(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
 		)

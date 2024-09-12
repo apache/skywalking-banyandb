@@ -24,7 +24,7 @@ deps:
   - buf.build/envoyproxy/protoc-gen-validate
 lint:
   use:
-    - DEFAULT
+    - STANDARD
 breaking:
   use:
     - FILE
