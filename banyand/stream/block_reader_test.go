@@ -45,39 +45,39 @@ func Test_blockReader_nextBlock(t *testing.T) {
 			name:   "Test with single part",
 			esList: []*elements{esTS1},
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 			},
 		},
 		{
 			name:   "Test with multiple parts with different ts",
 			esList: []*elements{esTS1, esTS2},
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 			},
 		},
 		{
 			name:   "Test with multiple parts with same ts",
 			esList: []*elements{esTS1, esTS1},
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
-				{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			verify := func(pp []*part) {
+			verify := func(t *testing.T, pp []*part) {
 				var pii []*partMergeIter
 				for _, p := range pp {
 					pmi := &partMergeIter{}
@@ -116,7 +116,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 				}
 			}
 
-			t.Run("memory parts", func(_ *testing.T) {
+			t.Run("memory parts", func(t *testing.T) {
 				var mpp []*memPart
 				defer func() {
 					for _, mp := range mpp {
@@ -130,7 +130,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 					mp.mustInitFromElements(es)
 					pp = append(pp, openMemPart(mp))
 				}
-				verify(pp)
+				verify(t, pp)
 			})
 
 			t.Run("file parts", func(t *testing.T) {
@@ -158,7 +158,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 					fpp = append(fpp, filePW)
 					pp = append(pp, filePW.p)
 				}
-				verify(pp)
+				verify(t, pp)
 			})
 		})
 	}

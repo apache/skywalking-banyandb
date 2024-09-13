@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -194,9 +195,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 1,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
 				},
 			},
 			{
@@ -206,22 +207,24 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
 				},
 			},
 			{
 				name:         "Test with a single part with same ts",
-				dpsList:      []*dataPoints{duplicatedDps},
-				sids:         []common.SeriesID{1},
+				dpsList:      []*dataPoints{duplicatedDps1},
+				sids:         []common.SeriesID{1, 2, 3},
 				minTimestamp: 1,
 				maxTimestamp: 1,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 16},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 16},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 				},
 			},
 			{
@@ -231,12 +234,12 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
 				},
 			},
 		}
@@ -280,9 +283,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 1,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
 				},
 			},
 			{
@@ -292,9 +295,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 2, uncompressedSizeBytes: 3352},
-					{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
-					{seriesID: 3, count: 2, uncompressedSizeBytes: 48},
+					{seriesID: 1, count: 2, uncompressedSizeBytes: 3368},
+					{seriesID: 2, count: 2, uncompressedSizeBytes: 126},
+					{seriesID: 3, count: 2, uncompressedSizeBytes: 64},
 				},
 			},
 			{
@@ -304,9 +307,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 1676},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 24},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
 				},
 			},
 		}
@@ -322,38 +325,52 @@ func Test_tstIter(t *testing.T) {
 					require.NoError(t, err)
 					for i, dps := range tt.dpsList {
 						tst.mustAddDataPoints(dps)
+						timeout := time.After(flags.EventuallyTimeout) // Set the timeout duration
+					OUTER:
 						for {
-							snp := tst.currentSnapshot()
-							if snp == nil {
-								t.Logf("waiting for snapshot %d to be introduced", i)
-								time.Sleep(100 * time.Millisecond)
-								continue
-							}
-							if snp.creator != snapshotCreatorMemPart {
+							select {
+							case <-timeout:
+								t.Fatalf("timeout waiting for snapshot %d to be introduced", i)
+							default:
+								snp := tst.currentSnapshot()
+								if snp == nil {
+									t.Logf("waiting for snapshot %d to be introduced", i)
+									time.Sleep(100 * time.Millisecond)
+									continue
+								}
+								if snp.creator != snapshotCreatorMemPart {
+									snp.decRef()
+									break OUTER
+								}
+								t.Logf("waiting for snapshot %d to be flushed or merged: current creator:%d, parts: %+v",
+									i, snp.creator, snp.parts)
 								snp.decRef()
-								break
+								time.Sleep(100 * time.Millisecond)
 							}
-							t.Logf("waiting for snapshot %d to be flushed or merged: current creator:%d, parts: %+v",
-								i, snp.creator, snp.parts)
-							snp.decRef()
-							time.Sleep(100 * time.Millisecond)
 						}
 					}
 					// wait until some parts are merged
 					if len(tt.dpsList) > 0 {
+						timeout := time.After(flags.EventuallyTimeout) // Set the timeout duration
+					OUTER1:
 						for {
-							snp := tst.currentSnapshot()
-							if snp == nil {
-								time.Sleep(100 * time.Millisecond)
-								continue
-							}
-							if len(snp.parts) == 1 {
+							select {
+							case <-timeout:
+								t.Fatalf("timeout waiting for snapshot to be merged")
+							default:
+								snp := tst.currentSnapshot()
+								if snp == nil {
+									time.Sleep(100 * time.Millisecond)
+									continue
+								}
+								if len(snp.parts) == 1 {
+									snp.decRef()
+									break OUTER1
+								}
+								t.Logf("waiting for snapshot to be merged: current creator:%d, parts: %+v", snp.creator, snp.parts)
 								snp.decRef()
-								break
+								time.Sleep(100 * time.Millisecond)
 							}
-							t.Logf("waiting for snapshot to be merged: current creator:%d, parts: %+v", snp.creator, snp.parts)
-							snp.decRef()
-							time.Sleep(100 * time.Millisecond)
 						}
 					}
 					verify(t, tt, tst)
@@ -627,6 +644,34 @@ var duplicatedDps = &dataPoints{
 				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
 			},
 		},
+	},
+}
+
+var duplicatedDps1 = &dataPoints{
+	seriesIDs:  []common.SeriesID{2, 2, 2, 1, 1, 1, 3, 3, 3},
+	timestamps: []int64{1, 1, 1, 1, 1, 1, 1, 1, 1},
+	versions:   []int64{1, 2, 3, 3, 2, 1, 2, 1, 3},
+	tagFamilies: [][]nameValues{
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	fields: []nameValues{
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
 	},
 }
 
