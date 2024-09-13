@@ -258,7 +258,7 @@ func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDec
 func (b *block) uncompressedSizeBytes() uint64 {
 	dataPointsCount := uint64(b.Len())
 
-	n := dataPointsCount * 8
+	n := dataPointsCount * (8 + 8) // 8 bytes for timestamp and 8 bytes for version
 
 	tff := b.tagFamilies
 	for i := range tff {

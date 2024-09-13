@@ -38,7 +38,7 @@ func newDefaultMergePolicy() *mergePolicy {
 }
 
 func newDefaultMergePolicyForTesting() *mergePolicy {
-	return newMergePolicy(4, 1.7, run.Bytes(math.MaxInt64))
+	return newMergePolicy(3, 1, run.Bytes(math.MaxInt64))
 }
 
 func newDisabledMergePolicyForTesting() *mergePolicy {
