@@ -53,7 +53,6 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 					return false
 				}
 				defer curSnapshot.decRef()
-				tst.l.Logger.Warn().Msgf("mergeLoop: cur %d merge %d", curSnapshot.epoch, epoch)
 				if curSnapshot.epoch != epoch {
 					tst.incTotalMergeLoopStarted(1)
 					defer tst.incTotalMergeLoopFinished(1)
