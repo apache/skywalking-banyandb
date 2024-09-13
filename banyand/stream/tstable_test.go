@@ -328,8 +328,8 @@ func Test_tstIter(t *testing.T) {
 									snp.decRef()
 									break OUTER
 								}
-								t.Logf("waiting for snapshot %d to be flushed or merged: current creator:%d, parts: %+v",
-									i, snp.creator, snp.parts)
+								t.Logf("waiting for snapshot %d(%d) to be flushed or merged: current creator:%d, parts: %+v",
+									i, snp.creator, snp.epoch, snp.parts)
 								snp.decRef()
 								time.Sleep(100 * time.Millisecond)
 							}
@@ -353,7 +353,7 @@ func Test_tstIter(t *testing.T) {
 									snp.decRef()
 									break OUTER1
 								}
-								t.Logf("waiting for snapshot to be merged: current creator:%d, parts: %+v", snp.creator, snp.parts)
+								t.Logf("waiting for snapshot to be merged: current creator:%d(%d), parts: %+v", snp.creator, snp.epoch, snp.parts)
 								snp.decRef()
 								time.Sleep(100 * time.Millisecond)
 							}
