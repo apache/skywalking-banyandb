@@ -112,6 +112,7 @@ func (s *store) CollectMetrics(labelValues ...string) {
 	if s.metrics == nil {
 		return
 	}
+	// fixme: data race here
 	status := s.writer.Status()
 	s.metrics.totalUpdates.Set(float64(status.TotUpdates), labelValues...)
 	s.metrics.totalDeletes.Set(float64(status.TotDeletes), labelValues...)

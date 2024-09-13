@@ -186,7 +186,7 @@ RELEASE_SCRIPTS := $(mk_dir)/scripts/release.sh
 release-binary: release-source ## Package binary archive
 	${RELEASE_SCRIPTS} -b
 
-release-source: clean ## Package source archive
+release-source: ## Package source archive
 	${RELEASE_SCRIPTS} -s
 
 release-sign: ## Sign artifacts
@@ -196,7 +196,11 @@ release-sign: ## Sign artifacts
 
 release-assembly: release-binary release-sign ## Generate release package
 
+PUSH_RELEASE_SCRIPTS := $(mk_dir)/scripts/push-release.sh
 
+release-push-candidate: ## Push release candidate
+	${PUSH_RELEASE_SCRIPTS}
+	
 .PHONY: all $(PROJECTS) clean build  default nuke
 .PHONY: lint check tidy format pre-push
 .PHONY: test test-race test-coverage test-ci

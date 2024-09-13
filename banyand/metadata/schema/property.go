@@ -190,7 +190,7 @@ func (e *etcdSchemaRegistry) replaceProperty(ctx context.Context, key string, pr
 
 func tagLen(property *propertyv1.Property) (uint32, error) {
 	tagsCount := len(property.Tags)
-	if tagsCount < 0 || tagsCount > math.MaxUint32 {
+	if tagsCount < 0 || uint64(tagsCount) > math.MaxUint32 {
 		return 0, errors.New("integer overflow: tags count exceeds uint32 range")
 	}
 	tagsNum := uint32(tagsCount)

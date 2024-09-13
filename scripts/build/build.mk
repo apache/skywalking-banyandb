@@ -86,7 +86,7 @@ clean-build:  ## Clean all artifacts
 # be rebuilt again.
 $(BUILD_LOCK):
 	@echo "cleaning up stale build artifacts..."
-	$(MAKE) clean
+	$(MAKE) clean-build
 	mkdir -p $(BUILD_DIR)
 	touch $@
 
