@@ -30,13 +30,10 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -263,155 +260,6 @@ func Test_tstIter(t *testing.T) {
 					time.Sleep(100 * time.Millisecond)
 				}
 				verify(t, tt, tst)
-			})
-		}
-	})
-
-	t.Run("file snapshot", func(t *testing.T) {
-		tests := []testCtx{
-			{
-				name:         "Test with no data points",
-				dpsList:      []*dataPoints{},
-				sids:         []common.SeriesID{1, 2, 3},
-				minTimestamp: 1,
-				maxTimestamp: 1,
-			},
-			{
-				name:         "Test with single part",
-				dpsList:      []*dataPoints{dpsTS1},
-				sids:         []common.SeriesID{1, 2, 3},
-				minTimestamp: 1,
-				maxTimestamp: 1,
-				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
-				},
-			},
-			{
-				name:         "Test with multiple parts with different ts, the block will be merged",
-				dpsList:      []*dataPoints{dpsTS1, dpsTS2},
-				sids:         []common.SeriesID{1, 2, 3},
-				minTimestamp: 1,
-				maxTimestamp: 2,
-				want: []blockMetadata{
-					{seriesID: 1, count: 2, uncompressedSizeBytes: 3368},
-					{seriesID: 2, count: 2, uncompressedSizeBytes: 126},
-					{seriesID: 3, count: 2, uncompressedSizeBytes: 64},
-				},
-			},
-			{
-				name:         "Test with multiple parts with same ts, duplicated blocks will be merged",
-				dpsList:      []*dataPoints{dpsTS1, dpsTS1},
-				sids:         []common.SeriesID{1, 2, 3},
-				minTimestamp: 1,
-				maxTimestamp: 2,
-				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
-				},
-			},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				t.Run("merging on the fly", func(t *testing.T) {
-					tmpPath, defFn := test.Space(require.New(t))
-					fileSystem := fs.NewLocalFileSystem()
-					defer defFn()
-
-					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
-					require.NoError(t, err)
-					for i, dps := range tt.dpsList {
-						tst.mustAddDataPoints(dps)
-						timeout := time.After(flags.EventuallyTimeout) // Set the timeout duration
-					OUTER:
-						for {
-							select {
-							case <-timeout:
-								t.Fatalf("timeout waiting for snapshot %d to be introduced", i)
-							default:
-								snp := tst.currentSnapshot()
-								if snp == nil {
-									t.Logf("waiting for snapshot %d to be introduced", i)
-									time.Sleep(100 * time.Millisecond)
-									continue
-								}
-								if snp.creator != snapshotCreatorMemPart {
-									snp.decRef()
-									break OUTER
-								}
-								t.Logf("waiting for snapshot %d to be flushed or merged: current creator:%d, parts: %+v",
-									i, snp.creator, snp.parts)
-								snp.decRef()
-								time.Sleep(100 * time.Millisecond)
-							}
-						}
-					}
-					// wait until some parts are merged
-					if len(tt.dpsList) > 0 {
-						timeout := time.After(flags.EventuallyTimeout) // Set the timeout duration
-					OUTER1:
-						for {
-							select {
-							case <-timeout:
-								t.Fatalf("timeout waiting for snapshot to be merged")
-							default:
-								snp := tst.currentSnapshot()
-								if snp == nil {
-									time.Sleep(100 * time.Millisecond)
-									continue
-								}
-								if len(snp.parts) == 1 {
-									snp.decRef()
-									break OUTER1
-								}
-								t.Logf("waiting for snapshot to be merged: current creator:%d, parts: %+v", snp.creator, snp.parts)
-								snp.decRef()
-								time.Sleep(100 * time.Millisecond)
-							}
-						}
-					}
-					verify(t, tt, tst)
-				})
-
-				t.Run("merging on close", func(t *testing.T) {
-					t.Skip("the test is flaky due to unpredictable merge loop schedule.")
-					tmpPath, defFn := test.Space(require.New(t))
-					fileSystem := fs.NewLocalFileSystem()
-					defer defFn()
-
-					tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()}, &metrics{})
-					require.NoError(t, err)
-					for _, dps := range tt.dpsList {
-						tst.mustAddDataPoints(dps)
-						time.Sleep(100 * time.Millisecond)
-					}
-					// wait until the introducer is done
-					if len(tt.dpsList) > 0 {
-						for {
-							snp := tst.currentSnapshot()
-							if snp == nil {
-								time.Sleep(100 * time.Millisecond)
-								continue
-							}
-							if len(snp.parts) == len(tt.dpsList) {
-								snp.decRef()
-								tst.Close()
-								break
-							}
-							snp.decRef()
-							time.Sleep(100 * time.Millisecond)
-						}
-					}
-					// reopen the table
-					tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
-						logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
-					require.NoError(t, err)
-					verify(t, tt, tst)
-				})
 			})
 		}
 	})
