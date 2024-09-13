@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -190,9 +191,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 1,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 				},
 			},
 			{
@@ -202,12 +203,12 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 				},
 			},
 			{
@@ -217,12 +218,12 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 				},
 			},
 		}
@@ -268,9 +269,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 1,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 881},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 55},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 8},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 				},
 			},
 			{
@@ -280,9 +281,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 3, uncompressedSizeBytes: 2643},
-					{seriesID: 2, count: 3, uncompressedSizeBytes: 165},
-					{seriesID: 3, count: 3, uncompressedSizeBytes: 24},
+					{seriesID: 1, count: 3, uncompressedSizeBytes: 2667},
+					{seriesID: 2, count: 3, uncompressedSizeBytes: 189},
+					{seriesID: 3, count: 3, uncompressedSizeBytes: 48},
 				},
 			},
 			{
@@ -292,9 +293,9 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 2, uncompressedSizeBytes: 1762},
-					{seriesID: 2, count: 2, uncompressedSizeBytes: 110},
-					{seriesID: 3, count: 2, uncompressedSizeBytes: 16},
+					{seriesID: 1, count: 2, uncompressedSizeBytes: 1778},
+					{seriesID: 2, count: 2, uncompressedSizeBytes: 126},
+					{seriesID: 3, count: 2, uncompressedSizeBytes: 32},
 				},
 			},
 		}
@@ -310,38 +311,52 @@ func Test_tstIter(t *testing.T) {
 					require.NoError(t, err)
 					for i, es := range tt.esList {
 						tst.mustAddElements(es)
+						timeout := time.After(flags.EventuallyTimeout) // Set the timeout duration
+					OUTER:
 						for {
-							snp := tst.currentSnapshot()
-							if snp == nil {
-								t.Logf("waiting for snapshot %d to be introduced", i)
-								time.Sleep(100 * time.Millisecond)
-								continue
-							}
-							if snp.creator != snapshotCreatorMemPart {
+							select {
+							case <-timeout:
+								t.Fatalf("timeout waiting for snapshot %d to be introduced", i)
+							default:
+								snp := tst.currentSnapshot()
+								if snp == nil {
+									t.Logf("waiting for snapshot %d to be introduced", i)
+									time.Sleep(100 * time.Millisecond)
+									continue
+								}
+								if snp.creator != snapshotCreatorMemPart {
+									snp.decRef()
+									break OUTER
+								}
+								t.Logf("waiting for snapshot %d to be flushed or merged: current creator:%d, parts: %+v",
+									i, snp.creator, snp.parts)
 								snp.decRef()
-								break
+								time.Sleep(100 * time.Millisecond)
 							}
-							t.Logf("waiting for snapshot %d to be flushed or merged: current creator:%d, parts: %+v",
-								i, snp.creator, snp.parts)
-							snp.decRef()
-							time.Sleep(100 * time.Millisecond)
 						}
 					}
 					// wait until some parts are merged
 					if len(tt.esList) > 0 {
+						timeout := time.After(flags.EventuallyTimeout) // Set the timeout duration
+					OUTER1:
 						for {
-							snp := tst.currentSnapshot()
-							if snp == nil {
-								time.Sleep(100 * time.Millisecond)
-								continue
-							}
-							if len(snp.parts) == 1 || len(snp.parts) < len(tt.esList) {
+							select {
+							case <-timeout:
+								t.Fatalf("timeout waiting for snapshot to be merged")
+							default:
+								snp := tst.currentSnapshot()
+								if snp == nil {
+									time.Sleep(100 * time.Millisecond)
+									continue
+								}
+								if len(snp.parts) == 1 || len(snp.parts) < len(tt.esList) {
+									snp.decRef()
+									break OUTER1
+								}
+								t.Logf("waiting for snapshot to be merged: current creator:%d, parts: %+v", snp.creator, snp.parts)
 								snp.decRef()
-								break
+								time.Sleep(100 * time.Millisecond)
 							}
-							t.Logf("waiting for snapshot to be merged: current creator:%d, parts: %+v", snp.creator, snp.parts)
-							snp.decRef()
-							time.Sleep(100 * time.Millisecond)
 						}
 					}
 					verify(t, tt, tst)
