@@ -26,12 +26,28 @@ type Avg[A, B Input, R Output] struct {
 // Combine takes elements to do the aggregation.
 // Avg uses type parameter A.
 func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
-	for _, arg0 := range arguments.arg0 {
-		f.summation += R(arg0)
+	i := 0
+	n := len(arguments.arg0)
+	// step-4 aggregate
+	for ; i <= n-4; i += 4 {
+		f.summation += R(arguments.arg0[i]) + R(arguments.arg0[i+1]) +
+			R(arguments.arg0[i+2]) + R(arguments.arg0[i+3])
+	}
+	// tail aggregate
+	for ; i < n; i++ {
+		f.summation += R(arguments.arg0[i])
 	}
 
-	for _, arg1 := range arguments.arg1 {
-		f.count += int64(arg1)
+	i = 0
+	n = len(arguments.arg1)
+	// step-4 aggregate
+	for ; i <= n-4; i += 4 {
+		f.count += int64(arguments.arg1[i]) + int64(arguments.arg1[i+1]) +
+			int64(arguments.arg1[i+2]) + int64(arguments.arg1[i+3])
+	}
+	// tail aggregate
+	for ; i < n; i++ {
+		f.count += int64(arguments.arg1[i])
 	}
 
 	return nil

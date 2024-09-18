@@ -25,8 +25,16 @@ type Count[A, B Input, R Output] struct {
 // Combine takes elements to do the aggregation.
 // Count uses none of type parameters.
 func (f *Count[A, B, R]) Combine(arguments Arguments[A, B]) error {
-	for _, arg0 := range arguments.arg0 {
-		f.count += int64(arg0)
+	i := 0
+	n := len(arguments.arg0)
+	// step-4 aggregate
+	for ; i <= n-4; i += 4 {
+		f.count += int64(arguments.arg0[i]) + int64(arguments.arg0[i+1]) +
+			int64(arguments.arg0[i+2]) + int64(arguments.arg0[i+3])
+	}
+	// tail aggregate
+	for ; i < n; i++ {
+		f.count += int64(arguments.arg0[i])
 	}
 	return nil
 }

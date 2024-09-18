@@ -25,8 +25,16 @@ type Sum[A, B Input, R Output] struct {
 // Combine takes elements to do the aggregation.
 // Sum uses type parameter A.
 func (f *Sum[A, B, R]) Combine(arguments Arguments[A, B]) error {
-	for _, arg0 := range arguments.arg0 {
-		f.summation += R(arg0)
+	i := 0
+	n := len(arguments.arg0)
+	// step-4 aggregate
+	for ; i <= n-4; i += 4 {
+		f.summation += R(arguments.arg0[i]) + R(arguments.arg0[i+1]) +
+			R(arguments.arg0[i+2]) + R(arguments.arg0[i+3])
+	}
+	// tail aggregate
+	for ; i < n; i++ {
+		f.summation += R(arguments.arg0[i])
 	}
 
 	return nil
