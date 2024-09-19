@@ -45,6 +45,7 @@ cp ${PRODUCT_NAME}-*.tgz.asc skywalking/banyandb/"$VERSION"
 cp ${PRODUCT_NAME}-*.tgz.sha512 skywalking/banyandb/"$VERSION"
 
 cd skywalking/banyandb && svn add "$VERSION" && svn commit -m "Draft Apache SkyWalking BanyanDB release $VERSION"
+cd "$VERSION"
 
 cat << EOF
 =========================================================================
