@@ -21,8 +21,9 @@ RUN apk add --no-cache ca-certificates && update-ca-certificates
 FROM busybox:stable-glibc AS build-linux
 
 ARG TARGETARCH
+ARG BINARYTYPE
 
-COPY build/bin/linux/${TARGETARCH}/banyand-server-static /banyand
+COPY build/bin/linux/${TARGETARCH}/banyand-server-${BINARYTYPE} /banyand
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build-windows

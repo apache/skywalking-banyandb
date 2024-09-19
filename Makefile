@@ -40,6 +40,9 @@ clean: default  ## Clean artifacts in all projects
 	rm -f .env
 	rm -f *.out
 
+clean-build: TARGET=clean-build
+clean-build: default  ## Clean build artifacts in all projects
+
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
 generate: default  ## Generate API codes
@@ -100,6 +103,11 @@ check-req: ## Check the requirements
 	@$(MAKE) -C scripts/ci/check test
 	@$(MAKE) -C ui check-version
 
+include scripts/build/vuln.mk
+
+vuln-check: $(GOVULNCHECK)
+	$(GOVULNCHECK) -show color,verbose ./...	
+
 check: ## Check that the status is consistent with CI
 	$(MAKE) license-check
 	$(MAKE) format
@@ -120,6 +128,7 @@ pre-push: ## Check source files before pushing to the remote repo
 	$(MAKE) lint
 	$(MAKE) license-dep
 	$(MAKE) check
+	$(MAKE) vuln-check
 
 ##@ License targets
 
@@ -177,7 +186,7 @@ RELEASE_SCRIPTS := $(mk_dir)/scripts/release.sh
 release-binary: release-source ## Package binary archive
 	${RELEASE_SCRIPTS} -b
 
-release-source: clean ## Package source archive
+release-source: ## Package source archive
 	${RELEASE_SCRIPTS} -s
 
 release-sign: ## Sign artifacts
@@ -187,7 +196,11 @@ release-sign: ## Sign artifacts
 
 release-assembly: release-binary release-sign ## Generate release package
 
+PUSH_RELEASE_SCRIPTS := $(mk_dir)/scripts/push-release.sh
 
+release-push-candidate: ## Push release candidate
+	${PUSH_RELEASE_SCRIPTS}
+	
 .PHONY: all $(PROJECTS) clean build  default nuke
 .PHONY: lint check tidy format pre-push
 .PHONY: test test-race test-coverage test-ci

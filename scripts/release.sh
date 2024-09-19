@@ -24,7 +24,8 @@ BUILDDIR=${ROOTDIR}/build
 RELEASE_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
 RELEASE_VERSION=${RELEASE_TAG#"v"}
 
-SOURCE_FILE=${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-src.tgz
+SOURCE_FILE_NAME=skywalking-banyandb-${RELEASE_VERSION}-src.tgz
+SOURCE_FILE=${BUILDDIR}/${SOURCE_FILE_NAME}
 
 binary(){
     if [ ! -f "${SOURCE_FILE}" ]; then
@@ -34,8 +35,9 @@ binary(){
     tmpdir=`mktemp -d`
     trap "rm -rf ${tmpdir}" EXIT
     pushd ${tmpdir}
+    trap 'popd' EXIT
     tar -xvf ${SOURCE_FILE}
-    make generate
+    make generate && make -C ui build
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C banyand release
     bindir=./build
     mkdir -p ${bindir}/bin
@@ -57,7 +59,6 @@ binary(){
     copy_binaries bydbctl
     # Package
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-bydbctl.tgz -C ${bindir} .
-    popd
 }
 
 copy_binaries() {
@@ -67,14 +68,14 @@ copy_binaries() {
         # Extract os and arch from the path
         os_arch=$(echo ${binary} | awk -F'/' '{print $(NF-2)"/"$(NF-1)}')
         binary_name=$(basename ${binary})
-        binary_name=${binary_name%-*-*}
         cp -Rfv ${binary} ${bindir}/bin/${binary_name}-${os_arch//\//-}
     done
 }
 
 source(){
     # Package
-    mkdir -p ${BUILDDIR}
+    tmpdir=`mktemp -d`
+    trap "rm -rf ${tmpdir}" EXIT
     rm -rf ${SOURCE_FILE}
     pushd ${ROOTDIR}
     echo "RELEASE_VERSION=${RELEASE_VERSION}" > .env
@@ -86,8 +87,11 @@ source(){
     --exclude=".idea" \
     --exclude=".vscode" \
     --exclude="bin" \
-    -czf ${SOURCE_FILE} \
+    -czf ${tmpdir}/${SOURCE_FILE_NAME} \
     .
+
+    mkdir -p ${BUILDDIR}
+    mv ${tmpdir}/${SOURCE_FILE_NAME} ${BUILDDIR}
     popd
 }
 

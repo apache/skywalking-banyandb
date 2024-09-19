@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	GoVersion = "1.22"
+	GoVersion = "1.23.0"
 	CPUType   = 8
 )
 
@@ -71,9 +71,11 @@ func TestGoVersion(t *testing.T) {
 
 	m := parseGoMod(t, root+"/go.mod")
 
-	require.Equal(t, expectedMajorMinor, m.Go.Version,
+	goMajorVersion, _ := splitVersion(m.Go.Version)
+
+	require.Equal(t, expectedMajorMinor, goMajorVersion,
 		"go.mod version mismatch: current[%s], want[%s]",
-		m.Go.Version, expectedMajorMinor)
+		goMajorVersion, expectedMajorMinor)
 }
 
 func splitVersion(v string) (string, string) {

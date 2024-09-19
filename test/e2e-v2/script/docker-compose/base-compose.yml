@@ -20,7 +20,7 @@ services:
     extends:
       file: ../../../docker/base-compose.yml
       service: banyandb
-    image: "apache/skywalking-banyandb-test:${TAG}"
+    image: "apache/skywalking-banyandb:${TAG}-testing"
     networks:
       - e2e
 
@@ -28,7 +28,7 @@ services:
     extends:
       file: ../../../docker/base-compose.yml
       service: liaison
-    image: "apache/skywalking-banyandb-test:${TAG}"
+    image: "apache/skywalking-banyandb:${TAG}-testing"
     networks:
       - e2e
 
@@ -36,7 +36,7 @@ services:
     extends:
       file: ../../../docker/base-compose.yml
       service: data
-    image: "apache/skywalking-banyandb-test:${TAG}"
+    image: "apache/skywalking-banyandb:${TAG}-testing"
     networks:
       - e2e
 

@@ -42,6 +42,7 @@ Release Notes.
 - Fix several "sync.Pool" leak issues by adding a tracker to the pool.
 - Fix panic when removing a expired segment.
 - Fix panic when reading a disorder block of measure. This block's versions are not sorted in descending order.
+- Fix the bug that the etcd client doesn't reconnect when facing the context timeout in the startup phase.
 
 ### Documentation
 
@@ -60,8 +61,10 @@ Release Notes.
 - Separate the monolithic Docker image into two images: banyand and bydbctl.
 - Update CI to publish linux/amd64 and linux/arm64 Docker images.
 - Make the build system compiles the binary based on the platform which is running on.
-- Push "skywalking-banyandb-test" image for e2e and stress test. This image contains bydbctl to do a health check.
-- Set etcd-client log level to "error" and etcd-server log level to "error".
+- Push "skywalking-banyandb:<tag>-testing" image for e2e and stress test. This image contains bydbctl to do a health check.
+- Set etcd-client log level to "error" and etcd-server log level to "warn".
+- Push "skywalking-banyandb:<tag>-slim" image for the production environment. This image doesn't contain bydbctl and Web UI.
+- Bump go to 1.23.
 
 ## 0.6.1
 
@@ -121,6 +124,7 @@ Release Notes.
 - Bump all dependencies of Go and Node.
 - Combine banyand and bydbctl Dockerfile.
 - Update readme for bydbctl
+- Introduce the go vulnerability check to "pre-push" task.
 
 ## 0.5.0
 

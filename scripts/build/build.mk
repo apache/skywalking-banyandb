@@ -25,6 +25,7 @@ $(error The BINARIES variable should be set to the name binaries to produce)
 endif
 
 STATIC_BINARIES ?= $(addsuffix -static,$(BINARIES))
+SLIM_BINARIES ?= $(addsuffix -slim,$(BINARIES))
 BUILD_DIR ?= build/bin
 TARGET_OS ?= linux
 OS := ${TARGET_OS}
@@ -61,8 +62,19 @@ $(STATIC_BINARIES_GOBUILD_TARGET): $(BUILD_DIR)/$(OS)/%-static: $(BUILD_LOCK)
 	$(call go_build_static_executable,,-s -w)
 	@echo "Done building static $*"
 
+SLIM_BINARIES_GOBUILD_TARGET_PATTERN := $(foreach goarch,$(GOBUILD_ARCHS),$(BUILD_DIR)/$(OS)/$(goarch)/$(NAME)-%-slim)
+SLIM_BINARIES_GOBUILD_TARGET := $(foreach goarch,$(GOBUILD_ARCHS),$(addprefix $(BUILD_DIR)/$(OS)/$(goarch)/,$(SLIM_BINARIES)))
+$(SLIM_BINARIES): $(NAME)-%-slim: $(SLIM_BINARIES_GOBUILD_TARGET_PATTERN)
+$(SLIM_BINARIES_GOBUILD_TARGET): $(BUILD_DIR)/$(OS)/%-slim: $(BUILD_LOCK)
+	$(call set_build_package,$*,$@)
+	@echo "Building slim $*"
+	$(MAKE) prepare-build
+	$(eval BUILD_TAGS := $(BUILD_TAGS) slim)
+	$(call go_build_static_executable,,-s -w)
+	@echo "Done building static $*"
+
 .PHONY: release
-release: $(STATIC_BINARIES)   ## Build the release binaries
+release: $(STATIC_BINARIES) ## Build the release binaries
 
 .PHONY: clean-build
 clean-build:  ## Clean all artifacts
@@ -74,7 +86,7 @@ clean-build:  ## Clean all artifacts
 # be rebuilt again.
 $(BUILD_LOCK):
 	@echo "cleaning up stale build artifacts..."
-	$(MAKE) clean
+	$(MAKE) clean-build
 	mkdir -p $(BUILD_DIR)
 	touch $@
 

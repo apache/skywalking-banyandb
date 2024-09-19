@@ -192,6 +192,7 @@ func TestStore_Search(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			query, err := s.BuildQuery(matchers, nil)
+			require.NotEmpty(t, query.String())
 			require.NoError(t, err)
 			got, err := s.Search(context.Background(), tt.projection, query)
 			require.NoError(t, err)
@@ -282,6 +283,7 @@ func TestStore_SearchWildcard(t *testing.T) {
 				},
 			}, nil)
 			require.NoError(t, err)
+			require.NotEmpty(t, query.String())
 			got, err := s.Search(context.Background(), tt.projection, query)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, tt.want, got)
@@ -349,6 +351,7 @@ func TestStore_SearchPrefix(t *testing.T) {
 				},
 			}, nil)
 			require.NoError(t, err)
+			require.NotEmpty(t, query.String())
 			got, err := s.Search(context.Background(), tt.projection, query)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, tt.want, got)

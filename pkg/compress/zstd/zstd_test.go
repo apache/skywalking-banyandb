@@ -32,8 +32,8 @@ func randString(n int) []byte {
 
 	b := make([]byte, n)
 	for i := range b {
-		max := big.NewInt(int64(len(letters)))
-		randIndex, err := rand.Int(rand.Reader, max)
+		maxVal := big.NewInt(int64(len(letters)))
+		randIndex, err := rand.Int(rand.Reader, maxVal)
 		if err != nil {
 			panic(err)
 		}
