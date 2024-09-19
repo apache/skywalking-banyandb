@@ -39,8 +39,9 @@ func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (lo
 			TagSpecMap: make(map[string]*logical.TagSpec),
 			EntityList: md.GetEntity().GetTagNames(),
 		},
-		measure:  md,
-		fieldMap: make(map[string]*logical.FieldSpec),
+		measure:         md,
+		fieldMap:        make(map[string]*logical.FieldSpec),
+		aggregateFields: md.GetAggregateField(),
 	}
 
 	ms.common.RegisterTagFamilies(md.GetTagFamilies())
@@ -48,7 +49,8 @@ func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (lo
 	for fieldIdx, spec := range md.GetFields() {
 		ms.registerField(fieldIdx, spec)
 	}
-
+	// 如果需要，对 aggregateFields 进行处理，例如注册或验证
+	ms.registerAggregateFields()
 	return ms, nil
 }
 

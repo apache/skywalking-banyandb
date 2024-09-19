@@ -86,6 +86,22 @@ enum CompressionMethod {
   COMPRESSION_METHOD_ZSTD = 1;
 }
 
+
+
+message AggregateField {
+  // aggregate_function indicates how to aggregate data
+  model.v1.MeasureAggregate aggregate_function = 1 [(validate.rules).enum.defined_only = true];
+
+  // input_field1 is the required input field
+  string input_field1 = 2 [(validate.rules).string.min_len = 1];
+
+  // input_field2 is an optional input field, only needed for certain functions
+  string input_field2 = 3;
+
+  // output_field is the required field where the aggregation result will be stored
+  string output_field = 4 [(validate.rules).string.min_len = 1];
+}
+
 // FieldSpec is the specification of field
 message FieldSpec {
   // name is the identity of a field
@@ -115,6 +131,7 @@ message Measure {
   string interval = 5;
   // updated_at indicates when the measure is updated
   google.protobuf.Timestamp updated_at = 6;
+  repeated AggregateField aggregate_field = 7 [(validate.rules).repeated.min_items = 1];
 }
 
 message MeasureAggregateFunction {

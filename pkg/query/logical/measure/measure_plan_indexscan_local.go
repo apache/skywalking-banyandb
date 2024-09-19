@@ -20,8 +20,9 @@ package measure
 import (
 	"context"
 	"fmt"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure/aggregate"
 	"sort"
-	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -39,120 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
-
-//For the time being, the mock implements an aggregation function of its own
-
-type Number interface {
-	~float64
-}
-
-func FromFieldValue[N Number](fieldValue *modelv1.FieldValue) (N, error) {
-	switch v := fieldValue.GetValue().(type) {
-	case *modelv1.FieldValue_Int:
-		return N(v.Int.Value), nil
-	case *modelv1.FieldValue_Float:
-		return N(v.Float.Value), nil
-	default:
-		var zero N
-		return zero, fmt.Errorf("unsupported field value type: %T", v)
-	}
-}
-
-func ToFieldValue[N Number](value N) *modelv1.FieldValue {
-	return &modelv1.FieldValue{
-		Value: &modelv1.FieldValue_Float{
-			Float: &modelv1.Float{Value: float64(value)},
-		},
-	}
-}
-
-// Aggregator interface
-type Aggregator interface {
-	Combine(values []float64)
-	Result() float64
-	Reset()
-}
-
-type MinAggregator struct {
-	minimum     float64
-	isInitiated bool
-}
-
-func (m *MinAggregator) Combine(values []float64) {
-	for _, value := range values {
-		if !m.isInitiated {
-			m.minimum = value
-			m.isInitiated = true
-		} else if value < m.minimum {
-			m.minimum = value
-		}
-	}
-}
-
-func (m *MinAggregator) Result() float64 {
-	if !m.isInitiated {
-		return 0
-	}
-	return m.minimum
-}
-
-func (m *MinAggregator) Reset() {
-	m.minimum = 0
-	m.isInitiated = false
-}
-
-func NewMinAggregator() *MinAggregator {
-	return &MinAggregator{
-		isInitiated: false,
-	}
-}
-
-// MaxAggregator calculates the maximum value.
-type MaxAggregator struct {
-	maximum     float64
-	isInitiated bool
-}
-
-func (m *MaxAggregator) Combine(values []float64) {
-	for _, value := range values {
-		if !m.isInitiated {
-			m.maximum = value
-			m.isInitiated = true
-		} else if value > m.maximum {
-			m.maximum = value
-		}
-	}
-}
-
-func (m *MaxAggregator) Result() float64 {
-	if !m.isInitiated {
-		return 0
-	}
-	return m.maximum
-}
-
-func (m *MaxAggregator) Reset() {
-	m.maximum = 0
-	m.isInitiated = false
-}
-
-func NewMaxAggregator() *MaxAggregator {
-	return &MaxAggregator{
-		isInitiated: false,
-	}
-}
-
-// NewAggregator creates a new aggregator based on the specified function
-func NewAggregator(aggFunc modelv1.MeasureAggregate) Aggregator {
-	switch aggFunc {
-	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
-		return NewMinAggregator()
-	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX:
-		return NewMaxAggregator()
-	default:
-		return nil
-	}
-}
 
 var _ logical.UnresolvedPlan = (*unresolvedIndexScan)(nil)
 
@@ -281,15 +168,26 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
+
+	// 获取聚合字段和间隔
+	var aggregateFields []*databasev1.AggregateField
 	var interval string
-	isDelta := false
-	aggregators := make(map[string]Aggregator)
-	for _, fieldSpec := range i.projectionFieldsRefs {
-		if fieldSpec.Spec.Spec.AggregateFunction != modelv1.MeasureAggregate_MEASURE_AGGREGATE_UNSPECIFIED {
-			isDelta = true
-			aggregators["_"+fieldSpec.Field.Name] = NewAggregator(fieldSpec.Spec.Spec.AggregateFunction)
-		}
+	var isDelta bool
+	if measureSchema, ok := i.schema.(*schema); ok {
+		aggregateFields = measureSchema.GetAggregateFields()
+		interval = measureSchema.measure.GetInterval()
 	}
+
+	aggregatorConfigs, err := buildAggregatorConfigs(aggregateFields, i.projectionFieldsRefs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query measure: %w", err)
+	}
+	if aggregatorConfigs != nil {
+		isDelta = true
+	}
+
+	// 创建聚合字段选项
+
 	if ms, ok := i.schema.(*schema); ok {
 		interval := ms.GetInterval()
 		fmt.Println("Interval:", interval)
@@ -299,9 +197,9 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 
 	if isDelta {
 		return &deltaResultMIterator{
-			result:      result,
-			aggregators: aggregators,
-			interval:    interval,
+			result:           result,
+			interval:         interval,
+			aggregatorConfig: aggregatorConfigs,
 		}, nil
 	}
 
@@ -311,6 +209,19 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 	//todo 这里对于MIiter进行切换，通过什么进行区分呢，是否可以通过是否传递聚合函数类型呢，也就是
 }
 
+func (i *localIndexScan) getAggregateFields() []*databasev1.AggregateField {
+	if measureSchema, ok := i.schema.(*schema); ok {
+		return measureSchema.measure.GetAggregateField()
+	}
+	return nil
+}
+
+func (i *localIndexScan) getAggregateInterval() []*databasev1.AggregateField {
+	if measureSchema, ok := i.schema.(*schema); ok {
+		return measureSchema.measure.GetAggregateField()
+	}
+	return nil
+}
 func (i *localIndexScan) String() string {
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; order=%s;",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
@@ -430,92 +341,394 @@ func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, or
 	}
 }
 
-// deltaResultMIterator is a MIterator that calculates the delta of the data points
+func createAggregateFunctions(configs []AggregatorConfig) ([]interface{}, error) {
+	functions := make([]interface{}, 0, len(configs))
+
+	for _, config := range configs {
+		function, err := createSingleAggregateFunction(config)
+		if err != nil {
+			return nil, fmt.Errorf("创建聚合函数时出错: %w", err)
+		}
+		functions = append(functions, function)
+	}
+
+	return functions, nil
+}
+
+func createSingleAggregateFunction(config AggregatorConfig) (interface{}, error) {
+	switch config.InputField.Type {
+	case databasev1.FieldType_FIELD_TYPE_INT:
+		return createInt64AggregateFunction(config)
+	case databasev1.FieldType_FIELD_TYPE_FLOAT:
+		return createDoubleAggregateFunction(config)
+	// 可以根据需要添加其他类型
+	default:
+		return nil, fmt.Errorf("不支持的字段类型: %v", config.InputField.Type)
+	}
+}
+
+func createInt64AggregateFunction(config AggregatorConfig) (interface{}, error) {
+	switch config.Function {
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
+		return aggregate.NewFunction[int64, aggregate.Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:
+		return aggregate.NewFunction[int64, int64, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG)
+	// 可以根据需要添加其他聚合函数
+	default:
+		return nil, fmt.Errorf("不支持的聚合函数: %v", config.Function)
+	}
+}
+
+func createDoubleAggregateFunction(config AggregatorConfig) (interface{}, error) {
+	switch config.Function {
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
+		return aggregate.NewFunction[float64, aggregate.Void, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:
+		return aggregate.NewFunction[float64, float64, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG)
+	// 可以根据需要添加其他聚合函数
+	default:
+		return nil, fmt.Errorf("不支持的聚合函数: %v", config.Function)
+	}
+}
+
+func convertToAggregateValue(fieldValue *modelv1.FieldValue) (interface{}, error) {
+	switch v := fieldValue.GetValue().(type) {
+	case *modelv1.FieldValue_Int:
+		return v.Int.GetValue(), nil
+	case *modelv1.FieldValue_Float:
+		return v.Float.GetValue(), nil
+	default:
+		return nil, fmt.Errorf("unsupported field type for aggregation")
+	}
+}
+
+func findFieldRef(fieldName string, fieldRefs []*logical.FieldRef) (*logical.FieldRef, error) {
+	for _, ref := range fieldRefs {
+		if ref.Field.Name == fieldName {
+			return ref, nil
+		}
+	}
+	return nil, fmt.Errorf("未找到字段: %s", fieldName)
+}
+
+func buildAggregatorConfigs(fieldAggregation []*databasev1.AggregateField, fieldRefs []*logical.FieldRef) ([]AggregatorConfig, error) {
+	configs := make([]AggregatorConfig, 0, len(fieldAggregation))
+
+	for _, agg := range fieldAggregation {
+		inputFieldRef, err := findFieldRef(agg.InputField1, fieldRefs)
+		if err != nil {
+			return nil, fmt.Errorf("构建聚合配置时出错: %w", err)
+		}
+
+		inputField := FieldInfo{
+			Name: agg.InputField1,
+			Type: inputFieldRef.Spec.Spec.GetFieldType(),
+		}
+
+		outputFieldRef, err := findFieldRef(agg.OutputField, fieldRefs)
+		if err != nil {
+			return nil, fmt.Errorf("构建聚合配置时出错: %w", err)
+		}
+		outputField := FieldInfo{
+			Name: agg.OutputField,
+			Type: outputFieldRef.Spec.Spec.GetFieldType(),
+		}
+
+		config := AggregatorConfig{
+			InputField:  inputField,
+			OutputField: outputField,
+			Function:    agg.AggregateFunction,
+		}
+
+		if agg.AggregateFunction == modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG {
+			inputFieldRef2, err := findFieldRef(agg.InputField2, fieldRefs)
+			if err != nil {
+				return nil, fmt.Errorf("构建聚合配置时出错: %w", err)
+			}
+			inputField2 := FieldInfo{
+				Name: agg.InputField2,
+				Type: inputFieldRef2.Spec.Spec.GetFieldType(),
+			}
+			config.ExtraFields = inputField2
+		}
+
+		configs = append(configs, config)
+	}
+
+	return configs, nil
+}
+
+type AggregatorConfig struct {
+	InputField  FieldInfo
+	ExtraFields FieldInfo //Used to store additional required fields, such as the count field for AVG
+	OutputField FieldInfo
+
+	Function modelv1.MeasureAggregate // This Should Store TheSpecificFunctionName
+}
+type FieldInfo struct {
+	Name string
+	Type databasev1.FieldType
+}
+
 type deltaResultMIterator struct {
-	result      model.MeasureQueryResult
-	aggregators map[string]Aggregator
-	current     []*measurev1.DataPoint
-	i           int
-	interval    string
+	result           model.MeasureQueryResult
+	current          []*measurev1.DataPoint
+	i                int
+	interval         string
+	aggregatorConfig []AggregatorConfig
 }
 
 func (di *deltaResultMIterator) Next() bool {
 	// If we have exhausted the current batch of data points, fetch the next batch
-	if di.i >= len(di.current) {
-		if di.result == nil {
-			return false
-		}
-
-		mr := di.result.Pull()
-		if mr == nil {
-			return false
-		}
-
-		di.current = di.current[:0]
-		di.i = 0
-
-		// Group fields by timestamp
-		groupedFields := make(map[int64]map[string][]*modelv1.FieldValue)
-		for i, ts := range mr.Timestamps {
-			if groupedFields[ts] == nil {
-				groupedFields[ts] = make(map[string][]*modelv1.FieldValue)
-			}
-			for _, f := range mr.Fields {
-				if strings.HasPrefix(f.Name, "_") {
-					groupedFields[ts][f.Name] = append(groupedFields[ts][f.Name], f.Values[i])
-				}
-			}
-		}
-
-		// Sort timestamps
-		timestamps := make([]int64, 0, len(groupedFields))
-		for ts := range groupedFields {
-			timestamps = append(timestamps, ts)
-		}
-		sort.Slice(timestamps, func(i, j int) bool { return timestamps[i] < timestamps[j] })
-
-		// Process each timestamp
-		for _, ts := range timestamps {
-			dataPoint := &measurev1.DataPoint{
-				Timestamp: timestamppb.New(time.Unix(0, ts)),
-				Fields:    make([]*measurev1.DataPoint_Field, 0, len(groupedFields[ts])),
-			}
-
-			for fieldName, values := range groupedFields[ts] {
-				aggregator := di.aggregators[fieldName]
-				aggregator.Reset() // Reset aggregator for each field
-
-				// Aggregate values for this field at this timestamp
-				for _, value := range values {
-					floatValue, _ := FromFieldValue[float64](value)
-					aggregator.Combine([]float64{floatValue})
-				}
-
-				aggregatedValue := aggregator.Result()
-				dataPoint.Fields = append(dataPoint.Fields, &measurev1.DataPoint_Field{
-					Name:  fieldName[1:], // Remove leading underscore
-					Value: ToFieldValue(aggregatedValue),
-				})
-			}
-
-			// Sort fields by name to ensure consistent order
-			sort.Slice(dataPoint.Fields, func(i, j int) bool {
-				return dataPoint.Fields[i].Name < dataPoint.Fields[j].Name
-			})
-
-			di.current = append(di.current, dataPoint)
-		}
-	}
-
-	// If we still have no data points after fetching, return false
-	if len(di.current) == 0 {
+	if di.result == nil {
 		return false
 	}
-
-	// Move to the next data point
 	di.i++
+	if di.i < len(di.current) {
+		return true
+	}
+
+	r := di.result.Pull()
+	if r == nil {
+		return false
+	}
+	di.current = di.current[:0]
+	di.i = 0
+	duration, err := time.ParseDuration(di.interval)
+	if err != nil {
+		fmt.Printf("Error parsing '%s': %v\n", di.interval, err)
+	}
+	groupAndAggregate(di.aggregatorConfig, duration, r)
+	for i := range r.Timestamps {
+		dp := &measurev1.DataPoint{
+			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+			Sid:       uint64(r.SID),
+			Version:   r.Versions[i],
+		}
+
+		for _, tf := range r.TagFamilies {
+			tagFamily := &modelv1.TagFamily{
+				Name: tf.Name,
+			}
+			dp.TagFamilies = append(dp.TagFamilies, tagFamily)
+			for _, t := range tf.Tags {
+				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+					Key:   t.Name,
+					Value: t.Values[i],
+				})
+			}
+		}
+		for _, f := range r.Fields {
+			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+				Name:  f.Name,
+				Value: f.Values[i],
+			})
+		}
+		di.current = append(di.current, dp)
+	}
 
 	return true
+}
+
+func groupAndAggregate(configs []AggregatorConfig, interval time.Duration, r *model.MeasureResult) []*measurev1.DataPoint {
+	// 按时间戳排序
+	sort.Slice(r.Timestamps, func(i, j int) bool {
+		return r.Timestamps[i] < r.Timestamps[j]
+	})
+
+	groups := make(map[int64][]*measurev1.DataPoint)
+	for i, ts := range r.Timestamps {
+		groupKey := ts / int64(interval)
+		dp := createDataPoint(r, i)
+		groups[groupKey] = append(groups[groupKey], dp)
+	}
+
+	result := make([]*measurev1.DataPoint, 0, len(groups))
+	for _, dps := range groups {
+		aggregatedDP, _ := aggregateDataPoints(dps, configs)
+		result = append(result, aggregatedDP)
+	}
+
+	return result
+}
+
+func createDataPoint(r *model.MeasureResult, index int) *measurev1.DataPoint {
+	dp := &measurev1.DataPoint{
+		Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[index])),
+		Sid:       uint64(r.SID),
+		Version:   r.Versions[index],
+	}
+
+	for _, tf := range r.TagFamilies {
+		tagFamily := &modelv1.TagFamily{Name: tf.Name}
+		for _, t := range tf.Tags {
+			tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+				Key:   t.Name,
+				Value: t.Values[index],
+			})
+		}
+		dp.TagFamilies = append(dp.TagFamilies, tagFamily)
+	}
+
+	for _, f := range r.Fields {
+		addFieldToDataPoint(dp, f.Name, f.Values[index])
+	}
+
+	return dp
+}
+
+func aggregateDataPoints(dps []*measurev1.DataPoint, configs []AggregatorConfig) (*measurev1.DataPoint, error) {
+	if len(dps) == 0 {
+		return nil, fmt.Errorf("no point")
+	}
+
+	// 使用最新的 DataPoint 作为基础
+	result := dps[len(dps)-1]
+
+	for _, config := range configs {
+		aggregateFunc, err := createSingleAggregateFunction(config)
+		if err != nil {
+			return nil, fmt.Errorf("fail create: %w", err)
+		}
+
+		values := make([]interface{}, 0, len(dps))
+		for _, dp := range dps {
+			value, err := getFieldValue(dp, config.InputField.Name)
+			if err != nil {
+				continue
+			}
+			values = append(values, value)
+		}
+
+		var aggregatedValue interface{}
+
+		switch f := aggregateFunc.(type) {
+		case aggregate.Function[int64, int64, int64]:
+			intValues := make([]int64, len(values))
+			for i, v := range values {
+				intValues[i] = v.(int64)
+			}
+			var args aggregate.Arguments[int64, int64]
+			if config.Function == modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG {
+				counts := make([]int64, len(values))
+				for i := range counts {
+					counts[i] = 1
+				}
+				args, err = CreateArguments[int64, int64](config.InputField.Type, config.Function, intValues, counts)
+			} else {
+				args, err = CreateArguments[int64, int64](config.InputField.Type, config.Function, intValues, nil)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("Failed to create int64 aggregate parameter: %w", err)
+			}
+			err = f.Combine(args)
+			if err != nil {
+				return nil, fmt.Errorf("Failed to create int64 aggregate parameter: %w", err)
+			}
+			aggregatedValue = f.Result()
+		case aggregate.Function[float64, float64, float64]:
+			floatValues := make([]float64, len(values))
+			for i, v := range values {
+				floatValues[i] = v.(float64)
+			}
+			var args aggregate.Arguments[float64, float64]
+			if config.Function == modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG {
+				counts := make([]int64, len(values))
+				for i := range counts {
+					counts[i] = 1
+				}
+				args, err = CreateArguments[float64, float64](config.InputField.Type, config.Function, floatValues, counts)
+			} else {
+				args, err = CreateArguments[float64, float64](config.InputField.Type, config.Function, floatValues, nil)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("Failed to create float64 aggregate parameter: %w", err)
+			}
+			err = f.Combine(args)
+			if err != nil {
+				return nil, fmt.Errorf("Failed to create float64 aggregate parameter: %w", err)
+			}
+			aggregatedValue = f.Result()
+		default:
+			return nil, fmt.Errorf("No support field type")
+		}
+
+		if aggregatedValue != nil {
+			err = addFieldToDataPoint(result, config.OutputField.Name, aggregatedValue)
+			if err != nil {
+				return nil, fmt.Errorf("failedToAddAggregateResultField: %w", err)
+			}
+			if config.Function == modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG {
+				count := int64(len(values))
+				err = addFieldToDataPoint(result, config.OutputField.Name+"_count", count)
+				if err != nil {
+					return nil, fmt.Errorf("failed To AddThe AverageCountField: %w", err)
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+func addFieldToDataPoint(dp *measurev1.DataPoint, name string, value interface{}) error {
+	var fieldValue *modelv1.FieldValue
+	switch v := value.(type) {
+	case int64:
+		fieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: v}}}
+	case float64:
+		fieldValue = &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: v}}}
+	default:
+		return fmt.Errorf("unsupportedFieldTypes")
+	}
+
+	dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+		Name:  name,
+		Value: fieldValue,
+	})
+	return nil
+}
+
+func getFieldValue(dp *measurev1.DataPoint, name string) (interface{}, error) {
+	for _, field := range dp.Fields {
+		if field.Name == name {
+			return convertToAggregateValue(field.Value)
+		}
+	}
+	return nil, fmt.Errorf("fieldNotFound: %s", name)
+}
+
+func CreateArguments[A, B aggregate.Input](
+	fieldType databasev1.FieldType,
+	aggregateType modelv1.MeasureAggregate,
+	arg0 interface{},
+	arg1 interface{},
+) (aggregate.Arguments[A, B], error) {
+	switch fieldType {
+	case databasev1.FieldType_FIELD_TYPE_INT:
+		switch aggregateType {
+		case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
+			args := aggregate.NewMinArguments(arg0.([]int64))
+			return any(args).(aggregate.Arguments[A, B]), nil
+		case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:
+			args := aggregate.NewAvgArguments(arg0.([]int64), arg1.([]int64))
+			return any(args).(aggregate.Arguments[A, B]), nil
+		default:
+			return aggregate.Arguments[A, B]{}, fmt.Errorf("unsupported aggregate type for int: %v", aggregateType)
+		}
+	case databasev1.FieldType_FIELD_TYPE_FLOAT:
+		switch aggregateType {
+		case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
+			args := aggregate.NewMinArguments(arg0.([]float64))
+			return any(args).(aggregate.Arguments[A, B]), nil
+		case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:
+			args := aggregate.NewAvgArguments(arg0.([]float64), arg1.([]int64))
+			return any(args).(aggregate.Arguments[A, B]), nil
+		default:
+			return aggregate.Arguments[A, B]{}, fmt.Errorf("unsupported aggregate type for float: %v", aggregateType)
+		}
+	default:
+		return aggregate.Arguments[A, B]{}, fmt.Errorf("unsupported field type for aggregation: %v", fieldType)
+	}
 }
 
 func (di *deltaResultMIterator) Current() []*measurev1.DataPoint {

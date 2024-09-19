@@ -30,15 +30,18 @@ import (
 var errFieldNotDefined = errors.New("field is not defined")
 
 type schema struct {
-	measure  *databasev1.Measure
-	fieldMap map[string]*logical.FieldSpec
-	common   *logical.CommonSchema
+	measure         *databasev1.Measure
+	fieldMap        map[string]*logical.FieldSpec
+	common          *logical.CommonSchema
+	aggregateFields []*databasev1.AggregateField
 }
 
 func (m *schema) EntityList() []string {
 	return m.common.EntityList
 }
-
+func (s *schema) GetAggregateFields() []*databasev1.AggregateField {
+	return s.aggregateFields
+}
 func (m *schema) FindTagSpecByName(name string) *logical.TagSpec {
 	return m.common.FindTagSpecByName(name)
 }

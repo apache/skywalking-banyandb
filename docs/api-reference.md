@@ -58,6 +58,7 @@
     - [Sort](#banyandb-model-v1-Sort)
   
 - [banyandb/database/v1/schema.proto](#banyandb_database_v1_schema-proto)
+    - [AggregateField](#banyandb-database-v1-AggregateField)
     - [Entity](#banyandb-database-v1-Entity)
     - [FieldSpec](#banyandb-database-v1-FieldSpec)
     - [IndexRule](#banyandb-database-v1-IndexRule)
@@ -954,6 +955,24 @@ Each item in a string array is seen as a token instead of a query expression.
 
 
 
+<a name="banyandb-database-v1-AggregateField"></a>
+
+### AggregateField
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| aggregate_function | [banyandb.model.v1.MeasureAggregate](#banyandb-model-v1-MeasureAggregate) |  | aggregate_function indicates how to aggregate data |
+| input_field1 | [string](#string) |  | input_field1 is the required input field |
+| input_field2 | [string](#string) |  | input_field2 is an optional input field, only needed for certain functions |
+| output_field | [string](#string) |  | output_field is the required field where the aggregation result will be stored |
+
+
+
+
+
+
 <a name="banyandb-database-v1-Entity"></a>
 
 ### Entity
@@ -1045,6 +1064,7 @@ Measure intends to store data point
 | entity | [Entity](#banyandb-database-v1-Entity) |  | entity indicates which tags will be to generate a series and shard a measure |
 | interval | [string](#string) |  | interval indicates how frequently to send a data point valid time units are &#34;ns&#34;, &#34;us&#34; (or &#34;µs&#34;), &#34;ms&#34;, &#34;s&#34;, &#34;m&#34;, &#34;h&#34;, &#34;d&#34;. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the measure is updated |
+| aggregate_field | [AggregateField](#banyandb-database-v1-AggregateField) | repeated |  |
 
 
 
