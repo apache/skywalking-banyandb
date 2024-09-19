@@ -42,6 +42,7 @@ Release Notes.
 - Fix several "sync.Pool" leak issues by adding a tracker to the pool.
 - Fix panic when removing a expired segment.
 - Fix panic when reading a disorder block of measure. This block's versions are not sorted in descending order.
+- Fix the bug that the etcd client doesn't reconnect when facing the context timeout in the startup phase.
 
 ### Documentation
 
