@@ -26,6 +26,7 @@ Release Notes.
 - Add liaison, remote queue, storage(rotation), time-series tables, metadata cache and scheduler metrics.
 - Add HTTP health check endpoint for the data node.
 - Add slow query log for the distributed query and local query.
+- Support applying the index rule to the tag belonging to the entity.
 
 ### Bugs
 
