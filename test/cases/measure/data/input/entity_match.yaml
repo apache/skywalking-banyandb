@@ -30,7 +30,7 @@ criteria:
         op: "BINARY_OP_MATCH"
         value:
           str:
-            value: "endpoint1"
+            value: "foo"
     left:
       condition:
         name: "service_id"

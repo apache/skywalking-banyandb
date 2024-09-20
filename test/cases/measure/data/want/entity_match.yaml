@@ -16,25 +16,14 @@
 # under the License.
 
 dataPoints:
-- tagFamilies:
-  - name: default
-    tags:
-    - key: name
-      value:
-        str:
-          value: service_name_1
-    - key: short_name
-      value:
-        str:
-          value: service_short_name_1
-- tagFamilies:
-  - name: default
-    tags:
-    - key: name
-      value:
-        str:
-          value: service_name_2
-    - key: short_name
-      value:
-        str:
-          value: service_short_name_2
+  - tagFamilies:
+      - name: default
+        tags:
+          - key: service_id
+            value:
+              str:
+                value: service_1
+          - key: endpoint_name
+            value:
+              str:
+                value: /api/v1/foo

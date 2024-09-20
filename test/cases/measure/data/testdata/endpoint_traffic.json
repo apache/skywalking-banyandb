@@ -10,7 +10,7 @@
           },
           {
             "str": {
-              "value": "/api/v1/endpoint1"
+              "value": "/api/v1/foo"
             }
           }
         ]
@@ -28,7 +28,7 @@
           },
           {
             "str": {
-              "value": "/api/v1/endpoint2"
+              "value": "/api/v1/bar"
             }
           }
         ]
@@ -46,7 +46,7 @@
           },
           {
             "str": {
-              "value": "/api/v1/endpoint1"
+              "value": "/api/v1/foo"
             }
           }
         ]
@@ -64,7 +64,7 @@
           },
           {
             "str": {
-              "value": "/api/v1/endpoint2"
+              "value": "/api/v1/bar"
             }
           }
         ]

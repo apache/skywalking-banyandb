@@ -40,7 +40,7 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 	}
 
 	qs := make([]bluge.Query, len(seriesMatchers))
-	primaryNode := newShouldNode()
+	nodes := make([]node, len(seriesMatchers))
 	for i := range seriesMatchers {
 		switch seriesMatchers[i].Type {
 		case index.SeriesMatcherTypeExact:
@@ -48,36 +48,42 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 			q := bluge.NewTermQuery(match)
 			q.SetField(entityField)
 			qs[i] = q
-			primaryNode.Append(newTermNode(match, nil))
+			nodes = append(nodes, newTermNode(match, nil))
 		case index.SeriesMatcherTypePrefix:
 			match := convert.BytesToString(seriesMatchers[i].Match)
 			q := bluge.NewPrefixQuery(match)
 			q.SetField(entityField)
 			qs[i] = q
-			primaryNode.Append(newPrefixNode(match))
+			nodes = append(nodes, newPrefixNode(match))
 		case index.SeriesMatcherTypeWildcard:
 			match := convert.BytesToString(seriesMatchers[i].Match)
 			q := bluge.NewWildcardQuery(match)
 			q.SetField(entityField)
 			qs[i] = q
-			primaryNode.Append(newWildcardNode(match))
+			nodes = append(nodes, newWildcardNode(match))
 		default:
 			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
 		}
 	}
 	var primaryQuery bluge.Query
+	var n node
 	if len(qs) > 1 {
 		bq := bluge.NewBooleanQuery()
 		bq.AddShould(qs...)
 		bq.SetMinShould(1)
 		primaryQuery = bq
+		n = newShouldNode()
+		for i := range nodes {
+			n.(*shouldNode).Append(nodes[i])
+		}
 	} else {
 		primaryQuery = qs[0]
+		n = nodes[0]
 	}
 
 	query := bluge.NewBooleanQuery().AddMust(primaryQuery)
 	node := newMustNode()
-	node.Append(primaryNode)
+	node.Append(n)
 	if secondaryQuery != nil && secondaryQuery.(*queryNode).query != nil {
 		query.AddMust(secondaryQuery.(*queryNode).query)
 		node.Append(secondaryQuery.(*queryNode).node)
