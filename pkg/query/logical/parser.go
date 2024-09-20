@@ -28,7 +28,7 @@ import (
 func ParseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, cond *modelv1.Condition) (LiteralExpr, [][]*modelv1.TagValue, error) {
 	entityIdx, ok := entityDict[cond.Name]
 	if ok && cond.Op != modelv1.Condition_BINARY_OP_EQ && cond.Op != modelv1.Condition_BINARY_OP_IN {
-		return nil, nil, errors.WithMessagef(ErrUnsupportedConditionOp, "tag belongs to the entity only supports EQ or IN operation in condition(%v)", cond)
+		ok = false
 	}
 	switch v := cond.Value.Value.(type) {
 	case *modelv1.TagValue_Str:
