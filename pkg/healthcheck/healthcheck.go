@@ -33,7 +33,7 @@ import (
 
 // NewClient creates a new health check client.
 func NewClient(ctx context.Context, l *logger.Logger, addr string, opts []grpc.DialOption) (client *Client, err error) {
-	conn, err := grpc.Dial(addr, opts...)
+	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, err
 	}

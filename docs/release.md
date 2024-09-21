@@ -29,16 +29,12 @@ The `skywalking-banyandb-${VERSION}-bin.tgz`, `skywalking-banyandb-${VERSION}-sr
 ## Upload to Apache svn
 
 ```shell
-svn co https://dist.apache.org/repos/dist/dev/skywalking/
-mkdir -p skywalking/banyandb/"$VERSION"
-cp skywalking-banyandb/build/skywalking-banyandb*.tgz skywalking/banyandb/"$VERSION"
-cp skywalking-banyandb/build/skywalking-banyandb*.tgz.asc skywalking/banyandb/"$VERSION"
-cp skywalking-banyandb/build/skywalking-banyandb*.tgz.sha512 skywalking/banyandb/"$VERSION"
-
-cd skywalking/banyandb && svn add "$VERSION" && svn commit -m "Draft Apache SkyWalking BanyanDB release $VERSION"
+make release-push-candidate
 ```
 
-## Call for vote in dev@ mailing list
+The script will upload the source code package and binary package to the Apache SVN staging repository. The script will ask for your Apache ID and password. **You can do this only if you are a PMC member**.
+
+After the script is finished, you will get the vote mail subject and content based on the following template.
 
 Call for vote in `dev@skywalking.apache.org`
 

@@ -247,6 +247,13 @@ func (pw *partWrapper) ID() uint64 {
 	return pw.p.partMetadata.ID
 }
 
+func (pw *partWrapper) String() string {
+	if pw.mp != nil {
+		return fmt.Sprintf("mem part %v", pw.mp.partMetadata)
+	}
+	return fmt.Sprintf("part %v", pw.p.partMetadata)
+}
+
 func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	var p part
 	partPath := partPath(root, id)

@@ -91,14 +91,14 @@ func analyze(metricNames []string, rootPath string) {
 		}
 
 		// Calculate the statistics.
-		min, _ := stats.Min(data)
-		max, _ := stats.Max(data)
+		minVal, _ := stats.Min(data)
+		maxVal, _ := stats.Max(data)
 		mean, _ := stats.Mean(data)
 		median, _ := stats.Median(data)
 		p95, _ := stats.Percentile(data, 95)
 
 		// Write the results to another file and print them to the console.
-		writeResults(resultsFile, metricNames[i], min, max, mean, median, p95)
+		writeResults(resultsFile, metricNames[i], minVal, maxVal, mean, median, p95)
 	}
 }
 
@@ -111,9 +111,9 @@ func writeHeader(file *os.File) {
 	}
 }
 
-func writeResults(file *os.File, metricName string, min, max, mean, median, p95 float64) {
+func writeResults(file *os.File, metricName string, minVal, maxVal, mean, median, p95 float64) {
 	results := fmt.Sprintf("%s, %f, %f, %f, %f, %f\n",
-		metricName, min, max, mean, median, p95)
+		metricName, minVal, maxVal, mean, median, p95)
 
 	_, err := file.WriteString(results)
 	if err != nil {

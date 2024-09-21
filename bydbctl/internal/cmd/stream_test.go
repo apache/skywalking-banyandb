@@ -207,7 +207,7 @@ var _ = Describe("Stream Data Query", func() {
 	})
 
 	It("query stream all data", func() {
-		conn, err := grpclib.Dial(
+		conn, err := grpclib.NewClient(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
 		)
@@ -243,7 +243,7 @@ projection:
 	})
 
 	DescribeTable("query stream data with time range flags", func(timeArgs ...string) {
-		conn, err := grpclib.Dial(
+		conn, err := grpclib.NewClient(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
 		)

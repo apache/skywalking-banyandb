@@ -20,11 +20,11 @@ package grpchelper
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -32,28 +32,30 @@ import (
 )
 
 // Conn returns a gRPC client connection once connecting the server.
-func Conn(addr string, connTimeout time.Duration, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	defaultOpts := []grpc.DialOption{
-		grpc.WithBlock(),
-	}
-	opts = append(opts, defaultOpts...)
+func Conn(addr string, healthCheckTimeout time.Duration, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	l := logger.GetLogger("grpc-helper")
 
-	connStart := time.Now()
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), connTimeout)
-	defer dialCancel()
-	conn, err := grpc.DialContext(dialCtx, addr, opts...)
+	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			l.Warn().Str("addr", addr).Dur("timeout", connTimeout).Msg("timeout: failed to connect service")
-		} else {
-			l.Warn().Str("addr", addr).Err(err).Msg("error: failed to connect service")
-		}
+		l.Warn().Str("addr", addr).Err(err).Msg("error: failed to connect service")
 		return nil, err
 	}
-	connDuration := time.Since(connStart)
-	if e := l.Debug(); e.Enabled() {
-		e.Dur("conn", connDuration).Msg("time elapsed")
+	healthClient := grpc_health_v1.NewHealthClient(conn)
+	deadline := time.Now().Add(healthCheckTimeout)
+	for {
+		if time.Now().After(deadline) {
+			l.Warn().Str("addr", addr).Msg("error: health check timeout reached")
+			_ = conn.Close()
+			return nil, err
+		}
+		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+		_, err = healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
+		cancel()
+		if err == nil {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 	return conn, nil
 }

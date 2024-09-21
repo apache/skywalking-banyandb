@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/skywalking-cli/pkg/graphql/dependency"
 	"github.com/apache/skywalking-cli/pkg/graphql/metrics"
 	"github.com/apache/skywalking-cli/pkg/graphql/utils"
 	"github.com/urfave/cli/v2"
@@ -187,6 +188,67 @@ func sortMetrics(name, svc string, limit int, order api.Order, fs *flag.FlagSet)
 		return 0, err
 	}
 	if len(result) < 1 {
+		return 0, fmt.Errorf("no result")
+	}
+	return elapsed, nil
+}
+
+// Topology verifies the topology.
+func Topology(basePath string, timeout time.Duration, groupNum int, fs *flag.FlagSet) {
+	basePath = path.Join(basePath, "topology")
+	err := os.MkdirAll(basePath, 0o755)
+	if err != nil {
+		panic(err)
+	}
+	stopCh := make(chan struct{})
+	go func() {
+		time.Sleep(timeout)
+		close(stopCh)
+	}()
+	header := make([]string, groupNum)
+	for i := 0; i < groupNum; i++ {
+		header[i] = fmt.Sprintf("topology-%d", i)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		collect(basePath, func() ([]float64, error) {
+			data := make([]float64, groupNum)
+			var subWg sync.WaitGroup
+			for i := 0; i < groupNum; i++ {
+				subWg.Add(1)
+				go func() {
+					defer subWg.Done()
+					d, err := globalTopology(fs)
+					if err != nil {
+						fmt.Printf("query topology error: %v \n", err)
+					}
+					data[i] = d.Seconds()
+				}()
+			}
+			subWg.Wait()
+			return data, nil
+		}, 500*time.Millisecond, stopCh)
+		analyze(header, basePath)
+	}()
+	wg.Wait()
+}
+
+func globalTopology(fs *flag.FlagSet) (time.Duration, error) {
+	ctx := cli.NewContext(cli.NewApp(), fs, nil)
+	duration := api.Duration{
+		Start: time.Now().Add(-200 * time.Minute).Format(utils.StepFormats[api.StepMinute]),
+		End:   time.Now().Format(utils.StepFormats[api.StepMinute]),
+		Step:  api.StepMinute,
+	}
+	start := time.Now()
+	result, err := dependency.GlobalTopologyWithoutLayer(ctx, duration)
+	elapsed := time.Since(start)
+	if err != nil {
+		return 0, err
+	}
+	if len(result.Nodes) < 1 {
 		return 0, fmt.Errorf("no result")
 	}
 	return elapsed, nil

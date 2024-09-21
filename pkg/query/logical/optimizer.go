@@ -89,8 +89,8 @@ type PushDownMaxSize struct {
 }
 
 // NewPushDownMaxSize returns a new PushDownMaxSize.
-func NewPushDownMaxSize(max int) PushDownMaxSize {
-	return PushDownMaxSize{max: max}
+func NewPushDownMaxSize(maxVal int) PushDownMaxSize {
+	return PushDownMaxSize{max: maxVal}
 }
 
 // Optimize a Plan by pushing down the max volume.
