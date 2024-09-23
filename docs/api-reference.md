@@ -1032,7 +1032,7 @@ IndexRule should bind to a subject through an IndexRuleBinding to generate prope
 | tags | [string](#string) | repeated | tags are the combination that refers to an indexed object If the elements in tags are more than 1, the object will generate a multi-tag index Caveat: All tags in a multi-tag MUST have an identical IndexType |
 | type | [IndexRule.Type](#banyandb-database-v1-IndexRule-Type) |  | type is the IndexType of this IndexObject. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRule is updated |
-| analyzer | [string](#string) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. available analyzers are: - &#34;standard&#34; provides grammar based tokenization - &#34;simple&#34; breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. - &#34;keyword&#34; is a “noop” analyzer which returns the entire input string as a single token. |
+| analyzer | [string](#string) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. available analyzers are: - &#34;standard&#34; provides grammar based tokenization - &#34;simple&#34; breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. - &#34;keyword&#34; is a “noop” analyzer which returns the entire input string as a single token. - &#34;url&#34; breaks test into tokens at any non-letter and non-digit character. |
 | no_sort | [bool](#bool) |  | no_sort indicates whether the index is not for sorting. |
 
 
