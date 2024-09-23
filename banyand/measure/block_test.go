@@ -138,6 +138,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 		versions    []int64
 		tagFamilies [][]nameValues
 		fields      []nameValues
+		types       []pbv1.DataPointValueType
 	}
 	tests := []struct {
 		name string
@@ -149,6 +150,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 			args: args{
 				timestamps: []int64{1, 2},
 				versions:   []int64{1, 1},
+				types:      []pbv1.DataPointValueType{pbv1.DataPointValueTypeUnspecified, pbv1.DataPointValueTypeUnspecified},
 				tagFamilies: [][]nameValues{
 					{
 						{
@@ -214,7 +216,7 @@ func Test_block_mustInitFromDataPoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{}
-			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.versions, tt.args.tagFamilies, tt.args.fields)
+			b.mustInitFromDataPoints(tt.args.timestamps, tt.args.versions, tt.args.tagFamilies, tt.args.fields, tt.args.types)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromDataPoints() = %+v, want %+v", *b, tt.want)
 			}

@@ -19,6 +19,7 @@ package measure
 
 import (
 	"fmt"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"path"
 	"path/filepath"
 	"sort"
@@ -150,6 +151,12 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 	uncompressedBlockSizeBytes := uint64(0)
 	var indexPrev int
 	var tsPrev int64
+	if len(dps.types) == 0 {
+		dps.types = make([]pbv1.DataPointValueType, len(dps.timestamps))
+		for i := range dps.types {
+			dps.types[i] = pbv1.DataPointValueTypeUnspecified
+		}
+	}
 	for i := 0; i < len(dps.timestamps); i++ {
 		sid := dps.seriesIDs[i]
 		if sidPrev == 0 {
@@ -167,7 +174,7 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 
 		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize ||
 			(i-indexPrev) > maxBlockLength || sid != sidPrev {
-			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.versions[indexPrev:i], dps.tagFamilies[indexPrev:i], dps.fields[indexPrev:i])
+			bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:i], dps.versions[indexPrev:i], dps.tagFamilies[indexPrev:i], dps.fields[indexPrev:i], dps.types[indexPrev:i])
 			sidPrev = sid
 			indexPrev = i
 			tsPrev = dps.timestamps[indexPrev]
@@ -175,7 +182,7 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 		}
 		uncompressedBlockSizeBytes += uncompressedDataPointSizeBytes(i, dps)
 	}
-	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.versions[indexPrev:], dps.tagFamilies[indexPrev:], dps.fields[indexPrev:])
+	bsw.MustWriteDataPoints(sidPrev, dps.timestamps[indexPrev:], dps.versions[indexPrev:], dps.tagFamilies[indexPrev:], dps.fields[indexPrev:], dps.types[indexPrev:])
 	bsw.Flush(&mp.partMetadata)
 	releaseBlockWriter(bsw)
 }
@@ -202,6 +209,7 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 func uncompressedDataPointSizeBytes(index int, dps *dataPoints) uint64 {
 	// 8 bytes for timestamp
 	// 8 bytes for version
+	// 1 byte for type
 	n := uint64(8 + 8)
 	n += uint64(len(dps.fields[index].name))
 	for i := range dps.fields[index].values {

@@ -46,7 +46,8 @@ import (
 type columnMetadata struct {
 	name string
 	dataBlock
-	valueType pbv1.ValueType
+	valueType     pbv1.ValueType
+	datapointType pbv1.DataPointValueType
 }
 
 func (cm *columnMetadata) reset() {

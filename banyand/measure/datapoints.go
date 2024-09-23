@@ -121,6 +121,7 @@ type dataPoints struct {
 	versions    []int64
 	tagFamilies [][]nameValues
 	fields      []nameValues
+	types       []pbv1.DataPointValueType
 }
 
 func (d *dataPoints) skip(i int) {

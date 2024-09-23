@@ -33,6 +33,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const PREFIX = "_"
+
 type block struct {
 	timestamps []int64
 
@@ -55,7 +57,7 @@ func (b *block) reset() {
 	b.field.reset()
 }
 
-func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tagFamilies [][]nameValues, fields []nameValues) {
+func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tagFamilies [][]nameValues, fields []nameValues, types []pbv1.DataPointValueType) {
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -71,7 +73,7 @@ func (b *block) mustInitFromDataPoints(timestamps []int64, versions []int64, tag
 	assertTimestampsSorted(timestamps)
 	b.timestamps = append(b.timestamps, timestamps...)
 	b.versions = append(b.versions, versions...)
-	b.mustInitFromTagsAndFields(tagFamilies, fields)
+	b.mustInitFromTagsAndFields(tagFamilies, fields, types)
 }
 
 func assertTimestampsSorted(timestamps []int64) {
@@ -83,7 +85,7 @@ func assertTimestampsSorted(timestamps []int64) {
 	}
 }
 
-func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []nameValues) {
+func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []nameValues, types []pbv1.DataPointValueType) {
 	dataPointsLen := len(tagFamilies)
 	if dataPointsLen == 0 {
 		return
@@ -91,17 +93,47 @@ func (b *block) mustInitFromTagsAndFields(tagFamilies [][]nameValues, fields []n
 	for i, tff := range tagFamilies {
 		b.processTagFamilies(tff, i, dataPointsLen)
 	}
+	multiplier := 1
+	containsDelta, allDelta := containsDelta(types)
+	if containsDelta {
+		multiplier = 2
+	}
+
 	for i, f := range fields {
-		columns := b.field.resizeColumns(len(f.values))
+		columns := b.field.resizeColumns(len(f.values) * multiplier)
 		for j, t := range f.values {
-			columns[j].name = t.name
-			columns[j].resizeValues(dataPointsLen)
-			columns[j].valueType = t.valueType
-			columns[j].values[i] = t.marshal()
+			columnIndex := j
+			if types[i] == pbv1.DataPointValueTypeDelta && !allDelta {
+				columnIndex = len(f.values) + j
+			}
+			columns[columnIndex].resizeValues(dataPointsLen)
+			columns[columnIndex].valueType = t.valueType
+			columns[columnIndex].values[i] = t.marshal()
+
+			switch types[i] {
+			case pbv1.DataPointValueTypeDelta:
+				columns[columnIndex].name = PREFIX + t.name
+				columns[columnIndex].datapointType = pbv1.DataPointValueTypeDelta
+			case pbv1.DataPointValueTypeCumulative:
+				columns[columnIndex].datapointType = pbv1.DataPointValueTypeCumulative
+				columns[columnIndex].name = t.name
+			default:
+				columns[columnIndex].datapointType = pbv1.DataPointValueTypeUnspecified
+				columns[columnIndex].name = t.name
+			}
 		}
 	}
 }
 
+func containsDelta(types []pbv1.DataPointValueType) (hasDelta bool, allDelta bool) {
+	deltaCount := 0
+	for _, t := range types {
+		if t == pbv1.DataPointValueTypeDelta {
+			deltaCount++
+		}
+	}
+	return deltaCount > 0, deltaCount == len(types)
+}
 func (b *block) processTagFamilies(tff []nameValues, i int, dataPointsLen int) {
 	tagFamilies := b.resizeTagFamilies(len(tff))
 	for j, tf := range tff {

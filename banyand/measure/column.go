@@ -26,9 +26,10 @@ import (
 )
 
 type column struct {
-	name      string
-	values    [][]byte
-	valueType pbv1.ValueType
+	name          string
+	values        [][]byte
+	valueType     pbv1.ValueType
+	datapointType pbv1.DataPointValueType
 }
 
 func (c *column) reset() {
@@ -56,6 +57,7 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 
 	cm.name = c.name
 	cm.valueType = c.valueType
+	cm.datapointType = c.datapointType
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
