@@ -168,19 +168,16 @@ message IndexRule {
   Type type = 3 [(validate.rules).enum.defined_only = true];
   // updated_at indicates when the IndexRule is updated
   google.protobuf.Timestamp updated_at = 4;
-  enum Analyzer {
-    ANALYZER_UNSPECIFIED = 0;
-    // Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token.
-    ANALYZER_KEYWORD = 1;
-    // Standard analyzer provides grammar based tokenization
-    ANALYZER_STANDARD = 2;
-    // Simple analyzer breaks text into tokens at any non-letter character,
-    // such as numbers, spaces, hyphens and apostrophes, discards non-letter characters,
-    // and changes uppercase to lowercase.
-    ANALYZER_SIMPLE = 3;
-  }
+
   // analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices.
-  Analyzer analyzer = 5;
+  // available analyzers are:
+  // - "standard" provides grammar based tokenization
+  // - "simple" breaks text into tokens at any non-letter character,
+  //            such as numbers, spaces, hyphens and apostrophes, discards non-letter characters,
+  //            and changes uppercase to lowercase.
+  // - "keyword" is a “noop” analyzer which returns the entire input string as a single token.
+  // - "url" breaks test into tokens at any non-letter and non-digit character.
+  string analyzer = 5;
   // no_sort indicates whether the index is not for sorting.
   bool no_sort = 6;
 }

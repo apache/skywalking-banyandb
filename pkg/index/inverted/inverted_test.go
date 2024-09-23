@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -51,14 +51,15 @@ func TestStore_Match(t *testing.T) {
 		// http_method
 		IndexRuleID: 6,
 		SeriesID:    common.SeriesID(11),
-		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
+		Analyzer:    index.AnalyzerURL,
 	}
 	setup(tester, s, serviceName)
 
 	tests := []struct {
-		want    posting.List
-		matches []string
-		wantErr bool
+		want     posting.List
+		matches  []string
+		operator modelv1.Condition_MatchOption_Operator
+		wantErr  bool
 	}{
 		{
 			matches: []string{"root"},
@@ -77,8 +78,18 @@ func TestStore_Match(t *testing.T) {
 			want:    roaring.NewPostingListWithInitialData(1, 2),
 		},
 		{
+			matches:  []string{"/root/product"},
+			operator: modelv1.Condition_MatchOption_OPERATOR_AND,
+			want:     roaring.NewPostingListWithInitialData(2),
+		},
+		{
 			matches: []string{"/product/order"},
 			want:    roaring.NewPostingListWithInitialData(1, 2, 3),
+		},
+		{
+			matches:  []string{"/product/order"},
+			operator: modelv1.Condition_MatchOption_OPERATOR_AND,
+			want:     roaring.NewPostingListWithInitialData(1),
 		},
 		{
 			matches: []string{"GET"},
@@ -116,12 +127,22 @@ func TestStore_Match(t *testing.T) {
 			matches: []string{"test"},
 			want:    roaring.NewPostingListWithInitialData(),
 		},
+		{
+			matches: []string{"v1"},
+			want:    roaring.NewPostingListWithInitialData(4),
+		},
+		{
+			matches: []string{"v2"},
+			want:    roaring.NewPostingListWithInitialData(5),
+		},
 	}
 	for _, tt := range tests {
 		name := strings.Join(tt.matches, "-")
 		t.Run(name, func(t *testing.T) {
 			tester := assert.New(t)
-			list, err := s.Match(serviceName, tt.matches)
+			list, err := s.Match(serviceName, tt.matches, &modelv1.Condition_MatchOption{
+				Operator: tt.operator,
+			})
 			if tt.wantErr {
 				tester.Error(err)
 				return
@@ -148,14 +169,15 @@ func TestStore_SeriesMatch(t *testing.T) {
 	serviceName := index.FieldKey{
 		// http_method
 		IndexRuleID: 6,
-		Analyzer:    databasev1.IndexRule_ANALYZER_SIMPLE,
+		Analyzer:    index.AnalyzerURL,
 	}
 	setupSeries(tester, s, serviceName)
 
 	tests := []struct {
-		want    posting.List
-		matches []string
-		wantErr bool
+		want     posting.List
+		matches  []string
+		operator modelv1.Condition_MatchOption_Operator
+		wantErr  bool
 	}{
 		{
 			matches: []string{"test"},
@@ -173,7 +195,9 @@ func TestStore_SeriesMatch(t *testing.T) {
 	for _, tt := range tests {
 		name := strings.Join(tt.matches, " and ")
 		t.Run(name, func(t *testing.T) {
-			list, err := s.Match(serviceName, tt.matches)
+			list, err := s.Match(serviceName, tt.matches, &modelv1.Condition_MatchOption{
+				Operator: tt.operator,
+			})
 			if tt.wantErr {
 				tester.Error(err)
 				return
@@ -208,6 +232,20 @@ func setup(tester *require.Assertions, s index.Store, serviceName index.FieldKey
 				Term: []byte("org.apache.skywalking.examples.OrderService.order"),
 			}},
 			DocID: 3,
+		},
+		index.Document{
+			Fields: []index.Field{{
+				Key:  serviceName,
+				Term: []byte("/svc1/v1/user"),
+			}},
+			DocID: 4,
+		},
+		index.Document{
+			Fields: []index.Field{{
+				Key:  serviceName,
+				Term: []byte("/svc1/v2/user"),
+			}},
+			DocID: 5,
 		},
 	)
 	tester.NoError(s.Batch(batch))
