@@ -33,11 +33,24 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const (
+	// AnalyzerUnspecified represents an unspecified analyzer.
+	AnalyzerUnspecified = ""
+	// AnalyzerKeyword is a “noop” analyzer which returns the entire input string as a single token.
+	AnalyzerKeyword = "keyword"
+	// AnalyzerSimple breaks text into tokens at any non-letter character.
+	AnalyzerSimple = "simple"
+	// AnalyzerStandard provides grammar based tokenization.
+	AnalyzerStandard = "standard"
+	// AnalyzerURL breaks test into tokens at any non-letter and non-digit character.
+	AnalyzerURL = "url"
+)
+
 // FieldKey is the key of field in a document.
 type FieldKey struct {
+	Analyzer    string
 	SeriesID    common.SeriesID
 	IndexRuleID uint32
-	Analyzer    databasev1.IndexRule_Analyzer
 }
 
 // Marshal encodes f to string.
@@ -168,7 +181,7 @@ type FieldIterable interface {
 // Searcher allows searching a field either by its key or by its key and term.
 type Searcher interface {
 	FieldIterable
-	Match(fieldKey FieldKey, match []string) (list posting.List, err error)
+	Match(fieldKey FieldKey, match []string, opts *modelv1.Condition_MatchOption) (list posting.List, err error)
 	MatchField(fieldKey FieldKey) (list posting.List, err error)
 	MatchTerms(field Field) (list posting.List, err error)
 	Range(fieldKey FieldKey, opts RangeOpts) (list posting.List, err error)

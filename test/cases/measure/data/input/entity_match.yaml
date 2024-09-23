@@ -28,9 +28,11 @@ criteria:
       condition:
         name: "endpoint_name"
         op: "BINARY_OP_MATCH"
+        match_option:
+          operator: "OPERATOR_AND"
         value:
           str:
-            value: "foo"
+            value: "endpoint-1"
     left:
       condition:
         name: "service_id"

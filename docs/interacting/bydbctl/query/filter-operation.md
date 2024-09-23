@@ -65,6 +65,41 @@ criteria:
         value: "us"
 ```
 
+You can set a `match_option` to control the behavior of the match operation. The following are the available options:
+
+- `analyzer`: The analyzer to use for the match operation. If not set, the analyzer defined in the index rule will be used. Available options are defined in the [IndexRules](../schema/index-rule.md).
+- `operator`: The operator to use for the match operation. The default value is `OPERATOR_OR`. Available options are `OPERATOR_OR` and `OPERATOR_AND`.
+
+If you want to use a different analyzer and operator, you can set the `match_option` as follows:
+
+```shell
+criteria:
+  condition:
+    name: "name"
+    op: "BINARY_OP_MATCH"
+    value:
+      str:
+        value: "service-1"
+    match_option:
+      analyzer: "url"
+      operator: "OPERATOR_AND"
+```
+
+Considering the data with the following tags:
+
+```shell
+{
+  "name": "service-1"
+}
+{
+  "name": "service-2"
+}
+```
+
+The above query will return the data with the tag `name` that contains both `service` and `1`, which is `service-1`.
+
+If you set the `operator` to `OPERATOR_OR`, the query will return the data with the tag `name` that contains either `service` or `1`, which is `service-1` and `service-2`.
+
 ## [LogicalExpression.LogicalOp](../../../api-reference.md#logicalexpressionlogicalop)
 Logical operation is used to combine multiple conditions.
 

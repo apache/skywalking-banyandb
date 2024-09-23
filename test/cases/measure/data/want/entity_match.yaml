@@ -26,4 +26,4 @@ dataPoints:
           - key: endpoint_name
             value:
               str:
-                value: /api/v1/foo
+                value: /api/v1/endpoint-1
