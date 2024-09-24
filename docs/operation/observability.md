@@ -264,6 +264,10 @@ Prometheus is auto enabled at run time, if no flag is passed or if `promethus` i
 
 When the Prometheus metrics provider is enabled, the metrics server listens on port `2121`. This allows Prometheus to scrape metrics data from BanyanDB for monitoring and analysis.
 
+#### Grafana Dashboard
+
+Check out the [BanyanDB Cluster Dashboard](grafana-cluster.json) for monitoring BanyanDB metrics.
+
 ### Native
 
 If the `observability-modes` flag is set to `native`, the self-observability metrics provider will be enabled. The some of metrics will be displayed in the dashboard of [banyandb-ui](http://localhost:17913/) 
