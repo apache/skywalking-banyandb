@@ -19,7 +19,6 @@ package measure
 
 import (
 	"fmt"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"path"
 	"path/filepath"
 	"sort"
@@ -29,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 

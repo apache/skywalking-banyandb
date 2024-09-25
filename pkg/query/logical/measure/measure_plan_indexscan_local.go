@@ -20,16 +20,16 @@ package measure
 import (
 	"context"
 	"fmt"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/measure/aggregate"
 	"sort"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure/aggregate"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -322,21 +322,7 @@ func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, or
 	}
 }
 
-func createAggregateFunctions(configs []AggregatorConfig) ([]interface{}, error) {
-	functions := make([]interface{}, 0, len(configs))
-
-	for _, config := range configs {
-		function, err := createSingleAggregateFunction(config)
-		if err != nil {
-			return nil, fmt.Errorf("error creating aggregate function: %w", err)
-		}
-		functions = append(functions, function)
-	}
-
-	return functions, nil
-}
-
-// create aggregate function
+// create aggregate function.
 func createSingleAggregateFunction(config AggregatorConfig) (interface{}, error) {
 	switch config.InputField.Type {
 	case databasev1.FieldType_FIELD_TYPE_INT:
@@ -349,7 +335,7 @@ func createSingleAggregateFunction(config AggregatorConfig) (interface{}, error)
 	}
 }
 
-// create int64 aggregate function
+// create int64 aggregate function.
 func createInt64AggregateFunction(config AggregatorConfig) (interface{}, error) {
 	switch config.Function {
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
@@ -362,7 +348,7 @@ func createInt64AggregateFunction(config AggregatorConfig) (interface{}, error) 
 	}
 }
 
-// create float 64 aggregate function
+// create float 64 aggregate function.
 func createDoubleAggregateFunction(config AggregatorConfig) (interface{}, error) {
 	switch config.Function {
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
@@ -375,7 +361,7 @@ func createDoubleAggregateFunction(config AggregatorConfig) (interface{}, error)
 	}
 }
 
-// convert field value to can be aggregated value
+// convert field value to can be aggregated value.
 func convertToAggregateValue(fieldValue *modelv1.FieldValue) (interface{}, error) {
 	switch v := fieldValue.GetValue().(type) {
 	case *modelv1.FieldValue_Int:
@@ -443,25 +429,26 @@ func buildAggregatorConfigs(fieldAggregation []*databasev1.AggregateField, field
 	return configs, nil
 }
 
-// AggregatorConfig  use to config the aggregator
+// AggregatorConfig  use to config the aggregator.
 type AggregatorConfig struct {
 	InputField  FieldInfo
-	ExtraFields FieldInfo //Used to store additional required fields, such as the count field for AVG
+	ExtraFields FieldInfo // Used to store additional required fields, such as the count field for AVG.
 	OutputField FieldInfo
 
 	Function modelv1.MeasureAggregate // This Should Store TheSpecificFunctionName
 }
+
+// FieldInfo  use to store the field information.
 type FieldInfo struct {
 	Name string
 	Type databasev1.FieldType
 }
-
 type deltaResultMIterator struct {
-	result           model.MeasureQueryResult
-	current          []*measurev1.DataPoint
-	i                int
 	interval         string
+	current          []*measurev1.DataPoint
+	result           model.MeasureQueryResult
 	aggregatorConfig []AggregatorConfig
+	i                int
 }
 
 func (di *deltaResultMIterator) Next() bool {
@@ -571,7 +558,7 @@ func aggregateDataPoints(dps []*measurev1.DataPoint, configs []AggregatorConfig)
 		return nil, fmt.Errorf("no point")
 	}
 
-	//Use the latest datapoint
+	// Use the latest datapoint.
 	result := dps[len(dps)-1]
 
 	for _, config := range configs {
@@ -579,15 +566,14 @@ func aggregateDataPoints(dps []*measurev1.DataPoint, configs []AggregatorConfig)
 		if err != nil {
 			return nil, fmt.Errorf("fail create: %w", err)
 		}
-		//inputValue, err := getFieldValue(result, config.InputField.Name)
 		if err != nil {
 			return nil, fmt.Errorf("fail get inputvalue: %w", err)
 		}
 
 		values := make([]interface{}, 0, len(dps))
 		for _, dp := range dps {
-			value, err := getFieldValue(dp, config.InputField.Name)
-			if err != nil {
+			value, valueErr := getFieldValue(dp, config.InputField.Name)
+			if valueErr != nil {
 				continue
 			}
 
@@ -648,7 +634,6 @@ func aggregateDataPoints(dps []*measurev1.DataPoint, configs []AggregatorConfig)
 		}
 
 		if aggregatedValue != nil {
-
 			err = addFieldToDataPoint(result, config.OutputField.Name, aggregatedValue)
 			if err != nil {
 				return nil, fmt.Errorf("failedToAddAggregateResultField: %w", err)
@@ -665,6 +650,7 @@ func aggregateDataPoints(dps []*measurev1.DataPoint, configs []AggregatorConfig)
 
 	return result, nil
 }
+
 func addFieldToDataPoint(dp *measurev1.DataPoint, name string, value interface{}) error {
 	var fieldValue *modelv1.FieldValue
 	switch v := value.(type) {
@@ -692,6 +678,7 @@ func getFieldValue(dp *measurev1.DataPoint, name string) (interface{}, error) {
 	return nil, fmt.Errorf("fieldNotFound: %s", name)
 }
 
+// CreateArguments creates the arguments for the aggregation function.
 func CreateArguments[A, B aggregate.Input](
 	fieldType databasev1.FieldType,
 	aggregateType modelv1.MeasureAggregate,
@@ -732,6 +719,7 @@ func (di *deltaResultMIterator) Current() []*measurev1.DataPoint {
 	}
 	return nil
 }
+
 func (di *deltaResultMIterator) Close() error {
 	if di.result != nil {
 		di.result.Release()

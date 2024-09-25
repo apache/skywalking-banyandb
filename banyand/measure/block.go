@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+// PREFIX is used to identify delta fields.
 const PREFIX = "_"
 
 type block struct {
@@ -134,6 +135,7 @@ func containsDelta(types []pbv1.DataPointValueType) (hasDelta bool, allDelta boo
 	}
 	return deltaCount > 0, deltaCount == len(types)
 }
+
 func (b *block) processTagFamilies(tff []nameValues, i int, dataPointsLen int) {
 	tagFamilies := b.resizeTagFamilies(len(tff))
 	for j, tf := range tff {

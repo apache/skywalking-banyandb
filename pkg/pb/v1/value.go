@@ -20,25 +20,28 @@ package v1
 import (
 	"bytes"
 	"fmt"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 
 	"github.com/pkg/errors"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// DataPointValueType is the type of the delta or cumulative value.
 type DataPointValueType byte
 
+// DataPointValueTypeUnspecified is undefined type.
 const (
 	DataPointValueTypeUnspecified DataPointValueType = iota
 	DataPointValueTypeCumulative
 	DataPointValueTypeDelta
 )
 
+// ConvertDataPointValueType converts measurev1.DataPointValue_Type to DataPointValueType.
 func ConvertDataPointValueType(protoType measurev1.DataPointValue_Type) DataPointValueType {
 	switch protoType {
 	case measurev1.DataPointValue_TYPE_UNSPECIFIED:

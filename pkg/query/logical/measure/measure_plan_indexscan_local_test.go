@@ -1,25 +1,27 @@
 package measure
 
 import (
+	"math"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"google.golang.org/protobuf/testing/protocmp"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
-	"github.com/google/go-cmp/cmp"
-	"google.golang.org/protobuf/testing/protocmp"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"math"
-	"testing"
-	"time"
 )
 
 func TestGroupAndAggregate(t *testing.T) {
 	testCases := []struct {
 		name     string
-		configs  []AggregatorConfig
-		interval time.Duration
 		input    *model.MeasureResult
 		want     []*measurev1.DataPoint
+		configs  []AggregatorConfig
+		interval time.Duration
 	}{
 		{
 			name: "simple aggregation",
