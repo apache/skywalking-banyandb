@@ -1,0 +1,74 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "service_1"
+            }
+          },
+          {
+            "str": {
+              "value": "/api/v1/endpoint-1"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "service_1"
+            }
+          },
+          {
+            "str": {
+              "value": "/api/v1/endpoint-2"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "service_2"
+            }
+          },
+          {
+            "str": {
+              "value": "/api/v1/endpoint-1"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "service_2"
+            }
+          },
+          {
+            "str": {
+              "value": "/api/v1/endpoint-2"
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

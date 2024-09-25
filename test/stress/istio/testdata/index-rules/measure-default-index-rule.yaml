@@ -1,4 +1,4 @@
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "43"
     group: measure-default
@@ -6,10 +6,10 @@
     modRevision: "43"
     name: agent_id
   tags:
-  - agent_id
+    - agent_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "49"
     group: measure-default
@@ -17,10 +17,10 @@
     modRevision: "49"
     name: dest_endpoint
   tags:
-  - dest_endpoint
+    - dest_endpoint
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "62"
     group: measure-default
@@ -28,10 +28,10 @@
     modRevision: "62"
     name: dest_service_id
   tags:
-  - dest_service_id
+    - dest_service_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "63"
     group: measure-default
@@ -39,10 +39,10 @@
     modRevision: "63"
     name: dest_service_instance_id
   tags:
-  - dest_service_instance_id
+    - dest_service_instance_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "42"
     group: measure-default
@@ -50,10 +50,10 @@
     modRevision: "42"
     name: detect_type
   tags:
-  - detect_type
+    - detect_type
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "136"
     group: measure-default
@@ -61,10 +61,10 @@
     modRevision: "136"
     name: end_time
   tags:
-  - end_time
+    - end_time
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "131"
     group: measure-default
@@ -72,10 +72,10 @@
     modRevision: "131"
     name: endpoint
   tags:
-  - endpoint
+    - endpoint
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "21"
     group: measure-default
@@ -83,10 +83,10 @@
     modRevision: "21"
     name: id
   tags:
-  - id
+    - id
   type: TYPE_INVERTED
   updatedAt: "2023-05-22T18:03:28.011340226Z"
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "23"
     group: measure-default
@@ -94,10 +94,10 @@
     modRevision: "23"
     name: last_ping
   tags:
-  - last_ping
+    - last_ping
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "38"
     group: measure-default
@@ -105,10 +105,10 @@
     modRevision: "38"
     name: last_update_time_bucket
   tags:
-  - last_update_time_bucket
+    - last_update_time_bucket
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "137"
     group: measure-default
@@ -116,10 +116,10 @@
     modRevision: "137"
     name: layer
   tags:
-  - layer
+    - layer
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "134"
     group: measure-default
@@ -127,10 +127,10 @@
     modRevision: "134"
     name: message
   tags:
-  - message
+    - message
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "132"
     group: measure-default
@@ -138,10 +138,10 @@
     modRevision: "132"
     name: name
   tags:
-  - name
+    - name
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "156"
     group: measure-default
@@ -149,10 +149,10 @@
     modRevision: "156"
     name: process_id
   tags:
-  - process_id
+    - process_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "44"
     group: measure-default
@@ -160,10 +160,10 @@
     modRevision: "44"
     name: profiling_support_status
   tags:
-  - profiling_support_status
+    - profiling_support_status
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "36"
     group: measure-default
@@ -171,10 +171,10 @@
     modRevision: "36"
     name: represent_service_id
   tags:
-  - represent_service_id
+    - represent_service_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "37"
     group: measure-default
@@ -182,10 +182,10 @@
     modRevision: "37"
     name: represent_service_instance_id
   tags:
-  - represent_service_instance_id
+    - represent_service_instance_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "129"
     group: measure-default
@@ -193,10 +193,10 @@
     modRevision: "129"
     name: service
   tags:
-  - service
+    - service
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "110"
     group: measure-default
@@ -204,10 +204,10 @@
     modRevision: "110"
     name: service_group
   tags:
-  - service_group
+    - service_group
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "41"
     group: measure-default
@@ -215,10 +215,10 @@
     modRevision: "41"
     name: service_id
   tags:
-  - service_id
+    - service_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "130"
     group: measure-default
@@ -226,10 +226,10 @@
     modRevision: "130"
     name: service_instance
   tags:
-  - service_instance
+    - service_instance
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "109"
     group: measure-default
@@ -237,10 +237,10 @@
     modRevision: "109"
     name: short_name
   tags:
-  - short_name
+    - short_name
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "48"
     group: measure-default
@@ -248,10 +248,10 @@
     modRevision: "48"
     name: source_endpoint
   tags:
-  - source_endpoint
+    - source_endpoint
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "60"
     group: measure-default
@@ -259,10 +259,10 @@
     modRevision: "60"
     name: source_service_id
   tags:
-  - source_service_id
+    - source_service_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "61"
     group: measure-default
@@ -270,10 +270,10 @@
     modRevision: "61"
     name: source_service_instance_id
   tags:
-  - source_service_instance_id
+    - source_service_instance_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "135"
     group: measure-default
@@ -281,10 +281,10 @@
     modRevision: "135"
     name: start_time
   tags:
-  - start_time
+    - start_time
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "155"
     group: measure-default
@@ -292,10 +292,10 @@
     modRevision: "155"
     name: task_id
   tags:
-  - task_id
+    - task_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "133"
     group: measure-default
@@ -303,7 +303,7 @@
     modRevision: "133"
     name: type
   tags:
-  - type
+    - type
   type: TYPE_INVERTED
   updatedAt: null
 

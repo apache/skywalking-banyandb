@@ -67,6 +67,16 @@ message Condition {
   string name = 1;
   BinaryOp op = 2;
   TagValue value = 3;
+  message MatchOption {
+    string analyzer = 1;
+    enum Operator {
+      OPERATOR_UNSPECIFIED = 0;
+      OPERATOR_AND = 1;
+      OPERATOR_OR = 2;
+    }
+    Operator operator = 2;
+  }
+  MatchOption match_option = 4;
 }
 
 // tag_families are indexed.

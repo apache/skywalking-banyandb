@@ -1,11 +1,11 @@
 {
   "metadata": {
-    "id": 1,
-    "name": "db.instance",
-    "group": "default"
+    "id": 5,
+    "name": "endpoint_name",
+    "group": "sw_metric"
   },
   "tags": [
-    "db.instance"
+    "endpoint_name"
   ],
   "type": "TYPE_INVERTED",
   "analyzer": "url",

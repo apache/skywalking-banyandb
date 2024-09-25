@@ -53,8 +53,8 @@ EOF
 
 This YAML creates an index rule which uses the tag `trace_id` to generate a `TYPE_INVERTED` index.
 
-The `analyzer` field is optional. If it is not set, the default value is `ANALYZER_UNSPECIFIED`.
-We can set it to `ANALYZER_KEYWORD` to specify the analyzer. More analyzers can refer to the [API Reference](../../../api-reference.md#indexruleanalyzer).
+The `analyzer` field is optional. If it is not set, the default value is an empty string.
+We can set it to `url` to specify the analyzer. More analyzers can refer to the [API Reference](../../../api-reference.md#indexruleanalyzer).
 ```shell
 bydbctl indexRule create -f - <<EOF
 metadata:
@@ -63,7 +63,7 @@ metadata:
 tags:
 - trace_id
 type: TYPE_INVERTED
-analyzer: ANALYZER_KEYWORD
+analyzer: url
 EOF
 ```
 
