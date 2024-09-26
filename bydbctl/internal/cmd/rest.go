@@ -141,7 +141,7 @@ func parseFromYAML(tryParseGroup bool, reader io.Reader) (requests []reqBody, er
 				data["groups"] = []string{group}
 			}
 		} else {
-			return nil, errors.WithMessage(errMalformedInput, "absent node: metadata or name&group")
+			return nil, errors.WithMessage(errMalformedInput, "absent node: name or groups")
 		}
 		j, err = json.Marshal(data)
 		if err != nil {
