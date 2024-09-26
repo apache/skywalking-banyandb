@@ -6,13 +6,13 @@ When facing issues with BanyanDB, follow this checklist to effectively troublesh
 
 Gather detailed information about the error to assist in diagnosing the issue:
 
-- **Logs**: Collect relevant log files from the BanyanDB system. See the [Logging](./observability.md#logging) section for more information.
-- **Query Tracing**: If the error is related to a query, enable query tracing to capture detailed information about the query execution. See the [Query Tracing](./observability.md#query-tracing) section for more information.
+- **Logs**: Collect relevant log files from the BanyanDB system. See the [Logging](../observability.md#logging) section for more information.
+- **Query Tracing**: If the error is related to a query, enable query tracing to capture detailed information about the query execution. See the [Query Tracing](../observability.md#query-tracing) section for more information.
 - **Environment**: Document the environment details, including OS, BanyanDB version, and hardware specifications.
-- **Database Schema**: Provide the schema details related to the error. See the [Schema Management](../interacting/bydbctl/schema/) section for more information.
+- **Database Schema**: Provide the schema details related to the error. See the [Schema Management](../../interacting/bydbctl/schema/) section for more information.
 - **Data Sample**: If applicable, include a sample of the data causing the error.
 - **Configuration Settings**: Share the relevant configuration settings.
-- **Data Files**: Attach any relevant data files. See the [Configuration](./configuration.md) section to find where the date files is stored.
+- **Data Files**: Attach any relevant data files. See the [Configuration](../configuration.md) section to find where the date files is stored.
 - **Reproduction Steps**: Describe the steps to reproduce the error.
 
 ## 2. Define Error Type
