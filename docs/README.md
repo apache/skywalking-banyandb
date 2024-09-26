@@ -9,11 +9,11 @@ There’s room to improve the performance and resource usage based on the nature
 
 Here you can learn all you need to know about BanyanDB. Let's get started with it.
 
+- **Guides**. Learn how to install, configure, and use BanyanDB by real-world examples.
 - **Installation**. Instruments about how to download and onboard BanyanDB server, Banyand.
-- **Clients**. Some native clients to access Banyand.
-- **Observability**. Learn how to effectively monitor, diagnose and optimize Banyand.
+- **Interacting**. Learn how to interact with Banyand, including schema management, data ingestion, data retrieving and so on.
+- **Operation**. Learn how to operate Banyand, including observability, troubleshooting, and so on.
 - **Concept**. Learn the concepts of Banyand. Includes the architecture, data model, and so on.
-- **CRUD Operations**. To create, read, update, and delete data points or entities on resources in the schema.
 
 ### Useful Links
 
