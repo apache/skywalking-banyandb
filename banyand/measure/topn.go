@@ -216,7 +216,7 @@ func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, event
 		ShardId:      uint32(shardID),
 	}
 	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "local", iwr)
-	_, errWritePub := publisher.Publish(apiData.TopicMeasureWrite, message)
+	_, errWritePub := publisher.Publish(context.TODO(), apiData.TopicMeasureWrite, message)
 	return errWritePub
 }
 

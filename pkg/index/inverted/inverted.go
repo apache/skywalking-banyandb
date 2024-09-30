@@ -21,7 +21,6 @@ package inverted
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"log"
 	"math"
@@ -32,6 +31,7 @@ import (
 	"github.com/blugelabs/bluge/analysis/analyzer"
 	blugeIndex "github.com/blugelabs/bluge/index"
 	"github.com/blugelabs/bluge/search"
+	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -177,7 +177,7 @@ func (s *store) Close() error {
 	return s.writer.Close()
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
+func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
 	preLoadSize int, indexQuery index.Query, fieldKeys []index.FieldKey,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	if termRange.Lower != nil &&
@@ -247,6 +247,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		sortedKey: sortedKey,
 		size:      preLoadSize,
 		closer:    s.closer,
+		ctx:       ctx,
 	}
 	return result, nil
 }
@@ -332,7 +333,7 @@ func getMatchOptions(analyzerOnIndexRule string, opts *modelv1.Condition_MatchOp
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize, nil, nil)
+	iter, err := s.Iterator(context.TODO(), fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize, nil, nil)
 	if err != nil {
 		return roaring.DummyPostingList, err
 	}
@@ -350,6 +351,7 @@ type blugeMatchIterator struct {
 	closer           io.Closer
 	needToLoadFields []string
 	current          index.DocumentResult
+	hit              int
 }
 
 func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer,
@@ -371,12 +373,14 @@ func (bmi *blugeMatchIterator) Next() bool {
 	var match *search.DocumentMatch
 	match, bmi.err = bmi.delegated.Next()
 	if bmi.err != nil {
+		bmi.err = errors.WithMessagef(bmi.err, "failed to get next document, hit: %d", bmi.hit)
 		return false
 	}
 	if match == nil {
 		bmi.err = io.EOF
 		return false
 	}
+	bmi.hit++
 	for i := range bmi.current.Values {
 		bmi.current.Values[i] = nil
 	}
@@ -409,7 +413,7 @@ func (bmi *blugeMatchIterator) Next() bool {
 		}
 		return true
 	})
-	bmi.err = multierr.Combine(bmi.err, err)
+	bmi.err = errors.WithMessagef(err, "visit stored fields, hit: %d", bmi.hit)
 	return bmi.err == nil
 }
 
@@ -428,5 +432,5 @@ func (bmi *blugeMatchIterator) Close() error {
 	if errors.Is(bmi.err, io.EOF) {
 		return err
 	}
-	return errors.Join(bmi.err, bmi.closer.Close())
+	return multierr.Combine(bmi.err, bmi.closer.Close())
 }

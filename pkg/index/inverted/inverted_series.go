@@ -144,7 +144,7 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 			return true
 		})
 		if err != nil {
-			return nil, errors.WithMessage(err, "visit stored fields")
+			return nil, errors.WithMessagef(err, "visit stored fields, hit: %d", len(result))
 		}
 		if doc.Key.ID > 0 {
 			result = append(result, doc)
@@ -152,7 +152,7 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 		next, err = dmi.Next()
 	}
 	if err != nil {
-		return nil, errors.WithMessage(err, "iterate document match iterator")
+		return nil, errors.WithMessagef(err, "iterate document match iterator, hit: %d", len(result))
 	}
 	return result, nil
 }

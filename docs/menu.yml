@@ -133,3 +133,5 @@ catalog:
         path: "/concept/clustering"
       - name: "TSDB"
         path: "/concept/tsdb"
+      - name: "Data Rotation"
+        path: "/concept/rotation"
