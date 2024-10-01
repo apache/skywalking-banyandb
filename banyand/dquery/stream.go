@@ -39,7 +39,7 @@ type streamQueryProcessor struct {
 	*queryService
 }
 
-func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
+func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	n := time.Now()
 	now := n.UnixNano()
 	queryCriteria, ok := message.Data().(*streamv1.QueryRequest)
@@ -78,7 +78,6 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if p.log.Debug().Enabled() {
 		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
-	ctx := context.Background()
 	if queryCriteria.Trace {
 		var tracer *query.Tracer
 		var span *query.Span

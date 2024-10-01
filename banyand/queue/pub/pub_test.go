@@ -18,6 +18,7 @@
 package pub
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -62,8 +63,9 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 
 			bp := p.NewBatchPublisher(3 * time.Second)
 			defer bp.Close()
+			ctx := context.TODO()
 			for i := 0; i < 10; i++ {
-				_, err := bp.Publish(data.TopicStreamWrite,
+				_, err := bp.Publish(ctx, data.TopicStreamWrite,
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
 				)
@@ -88,8 +90,9 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			p.OnAddOrUpdate(node2)
 
 			bp := p.NewBatchPublisher(3 * time.Second)
+			ctx := context.TODO()
 			for i := 0; i < 10; i++ {
-				_, err := bp.Publish(data.TopicStreamWrite,
+				_, err := bp.Publish(ctx, data.TopicStreamWrite,
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
 				)
@@ -131,8 +134,9 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			p.OnAddOrUpdate(node2)
 
 			bp := p.NewBatchPublisher(3 * time.Second)
+			ctx := context.TODO()
 			for i := 0; i < 10; i++ {
-				_, err := bp.Publish(data.TopicStreamWrite,
+				_, err := bp.Publish(ctx, data.TopicStreamWrite,
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
 				)

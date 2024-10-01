@@ -522,7 +522,9 @@ func (e *etcdSchemaRegistry) revokeLease(lease *clientv3.LeaseGrantResponse) {
 	defer cancel()
 	_, err := e.client.Lease.Revoke(ctx, lease.ID)
 	if err != nil {
-		e.l.Error().Err(err).Msgf("failed to revoke lease %d", lease.ID)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			e.l.Error().Err(err).Msgf("failed to revoke lease %d", lease.ID)
+		}
 	}
 }
 

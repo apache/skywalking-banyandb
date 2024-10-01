@@ -19,6 +19,7 @@ package measure
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
@@ -237,7 +238,7 @@ func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPoi
 	return dpt, nil
 }
 
-func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -249,6 +250,12 @@ func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
 	}
 	groups := make(map[string]*dataPointsInGroup)
 	for i := range events {
+		select {
+		case <-ctx.Done():
+			w.l.Warn().Msgf("context is done, handled %d events", i)
+			break
+		default:
+		}
 		var writeEvent *measurev1.InternalWriteRequest
 		switch e := events[i].(type) {
 		case *measurev1.InternalWriteRequest:

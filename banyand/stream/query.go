@@ -20,9 +20,10 @@ package stream
 import (
 	"container/heap"
 	"context"
-	"errors"
 	"fmt"
 	"sort"
+
+	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -100,7 +101,7 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		result.qo.seriesToEntity[seriesList[i].ID] = seriesList[i].EntityValues
 		result.qo.sortedSids = append(result.qo.sortedSids, seriesList[i].ID)
 	}
-	if result.qo.elementFilter, err = indexSearch(sqo, result.tabs, seriesList); err != nil {
+	if result.qo.elementFilter, err = indexSearch(ctx, sqo, result.tabs, seriesList); err != nil {
 		return nil, err
 	}
 	result.tagNameIndex = make(map[string]partition.TagLocator)
@@ -121,7 +122,7 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 
 	if sqo.Order.Index == nil {
 		result.orderByTS = true
-	} else if result.sortingIter, err = s.indexSort(sqo, result.tabs, seriesList); err != nil {
+	} else if result.sortingIter, err = s.indexSort(ctx, sqo, result.tabs, seriesList); err != nil {
 		return nil, err
 	}
 	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
@@ -198,6 +199,11 @@ func (qr *queryResult) scanParts(ctx context.Context, qo queryOptions) error {
 		return fmt.Errorf("cannot init tstIter: %w", ti.Error())
 	}
 	for ti.nextBlock() {
+		select {
+		case <-ctx.Done():
+			return errors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan", len(qr.data), len(ti.piHeap), len(ti.piPool))
+		default:
+		}
 		bc := generateBlockCursor()
 		p := ti.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
@@ -278,9 +284,15 @@ func (qr *queryResult) load(ctx context.Context, qo queryOptions) *model.StreamR
 
 		blankCursorList := []int{}
 		for completed := 0; completed < len(qr.data); completed++ {
-			result := <-cursorChan
-			if result != -1 {
-				blankCursorList = append(blankCursorList, result)
+			select {
+			case <-ctx.Done():
+				return &model.StreamResult{
+					Error: errors.WithMessagef(ctx.Err(), "interrupt: loaded %d/%d cursors", completed, len(qr.data)),
+				}
+			case result := <-cursorChan:
+				if result != -1 {
+					blankCursorList = append(blankCursorList, result)
+				}
 			}
 		}
 		sort.Slice(blankCursorList, func(i, j int) bool {
@@ -520,7 +532,7 @@ func (qr *queryResult) mergeByTimestamp() *model.StreamResult {
 	return result
 }
 
-func indexSearch(sqo model.StreamQueryOptions,
+func indexSearch(ctx context.Context, sqo model.StreamQueryOptions,
 	tabs []*tsTable, seriesList pbv1.SeriesList,
 ) (posting.List, error) {
 	if sqo.Filter == nil || sqo.Filter == logicalstream.ENode {
@@ -529,7 +541,7 @@ func indexSearch(sqo model.StreamQueryOptions,
 	result := roaring.NewPostingList()
 	for _, tw := range tabs {
 		index := tw.Index()
-		pl, err := index.Search(seriesList, sqo.Filter)
+		pl, err := index.Search(ctx, seriesList, sqo.Filter)
 		if err != nil {
 			return nil, err
 		}
@@ -543,13 +555,13 @@ func indexSearch(sqo model.StreamQueryOptions,
 	return result, nil
 }
 
-func (s *stream) indexSort(sqo model.StreamQueryOptions, tabs []*tsTable,
+func (s *stream) indexSort(ctx context.Context, sqo model.StreamQueryOptions, tabs []*tsTable,
 	seriesList pbv1.SeriesList,
 ) (itersort.Iterator[*index.DocumentResult], error) {
 	if sqo.Order == nil || sqo.Order.Index == nil {
 		return nil, nil
 	}
-	iters, err := s.buildItersByIndex(tabs, seriesList, sqo)
+	iters, err := s.buildItersByIndex(ctx, tabs, seriesList, sqo)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +569,7 @@ func (s *stream) indexSort(sqo model.StreamQueryOptions, tabs []*tsTable,
 	return itersort.NewItemIter[*index.DocumentResult](iters, desc), nil
 }
 
-func (s *stream) buildItersByIndex(tables []*tsTable,
+func (s *stream) buildItersByIndex(ctx context.Context, tables []*tsTable,
 	seriesList pbv1.SeriesList, sqo model.StreamQueryOptions,
 ) (iters []itersort.Iterator[*index.DocumentResult], err error) {
 	indexRuleForSorting := sqo.Order.Index
@@ -571,7 +583,7 @@ func (s *stream) buildItersByIndex(tables []*tsTable,
 			IndexRuleID: indexRuleForSorting.GetMetadata().GetId(),
 			Analyzer:    indexRuleForSorting.GetAnalyzer(),
 		}
-		iter, err = tw.Index().Sort(sids, fieldKey, sqo.Order.Sort, sqo.TimeRange, sqo.MaxElementSize)
+		iter, err = tw.Index().Sort(ctx, sids, fieldKey, sqo.Order.Sort, sqo.TimeRange, sqo.MaxElementSize)
 		if err != nil {
 			return nil, err
 		}

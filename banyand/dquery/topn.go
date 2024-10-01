@@ -44,7 +44,7 @@ type topNQueryProcessor struct {
 	*queryService
 }
 
-func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
+func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	request, ok := message.Data().(*measurev1.TopNRequest)
 	if !ok {
 		t.log.Warn().Msg("invalid event data type")
@@ -64,7 +64,8 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		e.RawJSON("req", logger.Proto(request)).Msg("received a topN query event")
 	}
 	if request.Trace {
-		tracer, ctx := pkgquery.NewTracer(context.TODO(), n.Format(time.RFC3339Nano))
+		var tracer *pkgquery.Tracer
+		tracer, ctx = pkgquery.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, _ := tracer.StartSpan(ctx, "distributed-client")
 		span.Tag("request", convert.BytesToString(logger.Proto(request)))
 		defer func() {

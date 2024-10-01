@@ -40,7 +40,7 @@ type measureQueryProcessor struct {
 	*queryService
 }
 
-func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
+func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	n := time.Now()
 	now := n.UnixNano()
@@ -82,7 +82,6 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("query plan")
 	}
-	ctx := context.Background()
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {

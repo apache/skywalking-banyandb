@@ -245,7 +245,7 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 	if err != nil {
 		return nil, nil, err
 	}
-	iter, err := s.store.Iterator(fieldKey, rangeOpts,
+	iter, err := s.store.Iterator(ctx, fieldKey, rangeOpts,
 		opts.Order.Sort, opts.PreloadSize, query, opts.Projection)
 	if err != nil {
 		return nil, nil, err
