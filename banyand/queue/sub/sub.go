@@ -39,12 +39,11 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	reply := func(writeEntity *clusterv1.SendRequest, err error, message string) {
 		s.log.Error().Stringer("request", writeEntity).Err(err).Msg(message)
 		s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
-		s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		if errResp := stream.Send(&clusterv1.SendResponse{
 			MessageId: writeEntity.MessageId,
 			Error:     message,
 		}); errResp != nil {
-			s.log.Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
+			s.log.Error().Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
 			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		}
 	}
@@ -153,6 +152,12 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		case proto.Message:
 			message = d
 		case common.Error:
+			select {
+			case <-ctx.Done():
+				s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
+				return ctx.Err()
+			default:
+			}
 			reply(writeEntity, nil, d.Msg())
 			continue
 		default:

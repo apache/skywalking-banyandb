@@ -219,7 +219,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	return dst, nil
 }
 
-func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -232,12 +232,6 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	groups := make(map[string]*elementsInGroup)
 	var builder strings.Builder
 	for i := range events {
-		select {
-		case <-ctx.Done():
-			w.l.Warn().Msgf("context is done, handled %d events", i)
-			break
-		default:
-		}
 		var writeEvent *streamv1.InternalWriteRequest
 		switch e := events[i].(type) {
 		case *streamv1.InternalWriteRequest:

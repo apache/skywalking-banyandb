@@ -73,6 +73,11 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 }
 
 func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	if i.result != nil {
 		return BuildElementsFromStreamResult(ctx, i.result), nil
 	}

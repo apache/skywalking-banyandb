@@ -380,7 +380,7 @@ func (bmi *blugeMatchIterator) Next() bool {
 		bmi.err = io.EOF
 		return false
 	}
-	bmi.hit++
+	bmi.hit = match.HitNumber
 	for i := range bmi.current.Values {
 		bmi.current.Values[i] = nil
 	}
