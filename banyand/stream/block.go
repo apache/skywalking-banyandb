@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"fmt"
 	"sort"
 
 	"golang.org/x/exp/slices"
@@ -603,45 +604,133 @@ func (bi *blockPointer) appendAll(b *blockPointer) {
 	bi.append(b, len(b.timestamps))
 }
 
+var log = logger.GetLogger("stream").Named("block")
+
 func (bi *blockPointer) append(b *blockPointer, offset int) {
 	if offset <= b.idx {
 		return
 	}
 	if len(bi.tagFamilies) == 0 && len(b.tagFamilies) > 0 {
-		for _, tf := range b.tagFamilies {
-			tFamily := tagFamily{name: tf.name}
-			for _, c := range tf.tags {
-				col := tag{name: c.name, valueType: c.valueType}
-				assertIdxAndOffset(col.name, len(c.values), b.idx, offset)
-				col.values = append(col.values, c.values[b.idx:offset]...)
-				tFamily.tags = append(tFamily.tags, col)
-			}
-			bi.tagFamilies = append(bi.tagFamilies, tFamily)
-		}
+		fullTagAppend(bi, b, offset)
 	} else {
-		if len(bi.tagFamilies) != len(b.tagFamilies) {
-			logger.Panicf("unexpected number of tag families: got %d; want %d", len(bi.tagFamilies), len(b.tagFamilies))
-		}
-		for i := range bi.tagFamilies {
-			if bi.tagFamilies[i].name != b.tagFamilies[i].name {
-				logger.Panicf("unexpected tag family name: got %q; want %q", bi.tagFamilies[i].name, b.tagFamilies[i].name)
+		if err := fastTagAppend(bi, b, offset); err != nil {
+			if log.Debug().Enabled() {
+				log.Debug().Msgf("fastTagMerge failed: %v; falling back to fullTagMerge", err)
 			}
-			if len(bi.tagFamilies[i].tags) != len(b.tagFamilies[i].tags) {
-				logger.Panicf("unexpected number of tags for tag family %q: got %d; want %d", bi.tagFamilies[i].name, len(bi.tagFamilies[i].tags), len(b.tagFamilies[i].tags))
-			}
-			for j := range bi.tagFamilies[i].tags {
-				if bi.tagFamilies[i].tags[j].name != b.tagFamilies[i].tags[j].name {
-					logger.Panicf("unexpected tag name for tag family %q: got %q; want %q", bi.tagFamilies[i].name, bi.tagFamilies[i].tags[j].name, b.tagFamilies[i].tags[j].name)
-				}
-				assertIdxAndOffset(b.tagFamilies[i].tags[j].name, len(b.tagFamilies[i].tags[j].values), b.idx, offset)
-				bi.tagFamilies[i].tags[j].values = append(bi.tagFamilies[i].tags[j].values, b.tagFamilies[i].tags[j].values[b.idx:offset]...)
-			}
+			fullTagAppend(bi, b, offset)
 		}
 	}
 
 	assertIdxAndOffset("timestamps", len(b.timestamps), bi.idx, offset)
 	bi.timestamps = append(bi.timestamps, b.timestamps[b.idx:offset]...)
 	bi.elementIDs = append(bi.elementIDs, b.elementIDs[b.idx:offset]...)
+}
+
+func fastTagAppend(bi, b *blockPointer, offset int) error {
+	if len(bi.tagFamilies) != len(b.tagFamilies) {
+		return fmt.Errorf("unexpected number of tag families: got %d; want %d", len(b.tagFamilies), len(bi.tagFamilies))
+	}
+	for i := range bi.tagFamilies {
+		if bi.tagFamilies[i].name != b.tagFamilies[i].name {
+			return fmt.Errorf("unexpected tag family name: got %q; want %q", b.tagFamilies[i].name, bi.tagFamilies[i].name)
+		}
+		if len(bi.tagFamilies[i].tags) != len(b.tagFamilies[i].tags) {
+			return fmt.Errorf("unexpected number of tags for tag family %q: got %d; want %d",
+				bi.tagFamilies[i].name, len(b.tagFamilies[i].tags), len(bi.tagFamilies[i].tags))
+		}
+		for j := range bi.tagFamilies[i].tags {
+			if bi.tagFamilies[i].tags[j].name != b.tagFamilies[i].tags[j].name {
+				return fmt.Errorf("unexpected tag name for tag family %q: got %q; want %q",
+					bi.tagFamilies[i].name, b.tagFamilies[i].tags[j].name, bi.tagFamilies[i].tags[j].name)
+			}
+			assertIdxAndOffset(b.tagFamilies[i].tags[j].name, len(b.tagFamilies[i].tags[j].values), b.idx, offset)
+			bi.tagFamilies[i].tags[j].values = append(bi.tagFamilies[i].tags[j].values, b.tagFamilies[i].tags[j].values[b.idx:offset]...)
+		}
+	}
+	return nil
+}
+
+func fullTagAppend(bi, b *blockPointer, offset int) {
+	existDataSize := len(bi.timestamps)
+	appendTagFamilies := func(tf tagFamily) {
+		tfv := tagFamily{name: tf.name}
+		for i := range tf.tags {
+			assertIdxAndOffset(tf.tags[i].name, len(tf.tags[i].values), b.idx, offset)
+			col := tag{name: tf.tags[i].name, valueType: tf.tags[i].valueType}
+			for j := 0; j < existDataSize; j++ {
+				col.values = append(col.values, nil)
+			}
+			col.values = append(col.values, tf.tags[i].values[b.idx:offset]...)
+			tfv.tags = append(tfv.tags, col)
+		}
+		bi.tagFamilies = append(bi.tagFamilies, tfv)
+	}
+	if len(bi.tagFamilies) == 0 {
+		for _, tf := range b.tagFamilies {
+			appendTagFamilies(tf)
+		}
+		return
+	}
+
+	tagFamilyMap := make(map[string]*tagFamily)
+	for i := range bi.tagFamilies {
+		tagFamilyMap[bi.tagFamilies[i].name] = &bi.tagFamilies[i]
+	}
+
+	for _, tf := range b.tagFamilies {
+		if existingTagFamily, exists := tagFamilyMap[tf.name]; exists {
+			columnMap := make(map[string]*tag)
+			for i := range existingTagFamily.tags {
+				columnMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
+			}
+
+			for _, c := range tf.tags {
+				if existingColumn, exists := columnMap[c.name]; exists {
+					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
+					existingColumn.values = append(existingColumn.values, c.values[b.idx:offset]...)
+				} else {
+					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
+					col := tag{name: c.name, valueType: c.valueType}
+					for j := 0; j < existDataSize; j++ {
+						col.values = append(col.values, nil)
+					}
+					col.values = append(col.values, c.values[b.idx:offset]...)
+					existingTagFamily.tags = append(existingTagFamily.tags, col)
+				}
+			}
+		} else {
+			appendTagFamilies(tf)
+		}
+	}
+	for k := range tagFamilyMap {
+		delete(tagFamilyMap, k)
+	}
+	for i := range b.tagFamilies {
+		tagFamilyMap[b.tagFamilies[i].name] = &b.tagFamilies[i]
+	}
+	emptySize := offset - b.idx
+	for _, tf := range bi.tagFamilies {
+		if _, exists := tagFamilyMap[tf.name]; !exists {
+			for i := range tf.tags {
+				for j := 0; j < emptySize; j++ {
+					tf.tags[i].values = append(tf.tags[i].values, nil)
+				}
+			}
+		} else {
+			existingTagFamily := tagFamilyMap[tf.name]
+			columnMap := make(map[string]*tag)
+			for i := range existingTagFamily.tags {
+				columnMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
+			}
+			for i := range tf.tags {
+				if _, exists := columnMap[tf.tags[i].name]; !exists {
+					for j := 0; j < emptySize; j++ {
+						tf.tags[i].values = append(tf.tags[i].values, nil)
+					}
+				}
+			}
+		}
+	}
 }
 
 func assertIdxAndOffset(name string, length int, idx int, offset int) {

@@ -716,6 +716,362 @@ func Test_blockPointer_append(t *testing.T) {
 				idx: 0,
 			},
 		},
+		{
+			name: "Test append with missing tag family",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				versions:   []int64{1, 1},
+				tagFamilies: []columnFamily{
+					{
+						name: "arrTag",
+						columns: []column{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+				field: columnFamily{
+					columns: []column{
+						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+					},
+				},
+				partID: 1,
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps:  []int64{4, 5},
+						versions:    []int64{1, 1},
+						tagFamilies: []columnFamily{},
+						field: columnFamily{
+							columns: []column{
+								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					versions:   []int64{1, 1, 1, 1},
+					tagFamilies: []columnFamily{
+						{
+							name: "arrTag",
+							columns: []column{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+										nil, nil,
+									},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4"), []byte("field5"), []byte("field6")}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with additional tag family",
+			fields: fields{
+				timestamps:  []int64{1, 2},
+				versions:    []int64{1, 1},
+				tagFamilies: []columnFamily{},
+				field: columnFamily{
+					columns: []column{
+						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+					},
+				},
+				partID: 1,
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps: []int64{4, 5},
+						versions:   []int64{1, 1},
+						tagFamilies: []columnFamily{
+							{
+								name: "arrTag",
+								columns: []column{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+									},
+								},
+							},
+						},
+						field: columnFamily{
+							columns: []column{
+								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					versions:   []int64{1, 1, 1, 1},
+					tagFamilies: []columnFamily{
+						{
+							name: "arrTag",
+							columns: []column{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{
+										nil, nil,
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+									},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4"), []byte("field5"), []byte("field6")}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with missing tag",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				versions:   []int64{1, 1},
+				tagFamilies: []columnFamily{
+					{
+						name: "arrTag",
+						columns: []column{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+				field: columnFamily{
+					columns: []column{
+						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+					},
+				},
+				partID: 1,
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps: []int64{4, 5},
+						versions:   []int64{1, 1},
+						tagFamilies: []columnFamily{
+							{
+								name:    "arrTag",
+								columns: []column{},
+							},
+						},
+						field: columnFamily{
+							columns: []column{
+								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					versions:   []int64{1, 1, 1, 1},
+					tagFamilies: []columnFamily{
+						{
+							name: "arrTag",
+							columns: []column{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+										nil, nil,
+									},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4"), []byte("field5"), []byte("field6")}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with additional tag",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				versions:   []int64{1, 1},
+				tagFamilies: []columnFamily{
+					{
+						name:    "arrTag",
+						columns: []column{},
+					},
+				},
+				field: columnFamily{
+					columns: []column{
+						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+					},
+				},
+				partID: 1,
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps: []int64{4, 5},
+						versions:   []int64{1, 1},
+						tagFamilies: []columnFamily{
+							{
+								name: "arrTag",
+								columns: []column{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+									},
+								},
+							},
+						},
+						field: columnFamily{
+							columns: []column{
+								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					versions:   []int64{1, 1, 1, 1},
+					tagFamilies: []columnFamily{
+						{
+							name: "arrTag",
+							columns: []column{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{
+										nil, nil,
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+									},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4"), []byte("field5"), []byte("field6")}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with missing field",
+			fields: fields{
+				timestamps:  []int64{1, 2},
+				versions:    []int64{1, 1},
+				tagFamilies: []columnFamily{},
+				field: columnFamily{
+					columns: []column{
+						{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4")}},
+					},
+				},
+				partID: 1,
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps:  []int64{4, 5},
+						versions:    []int64{1, 1},
+						tagFamilies: []columnFamily{},
+						field:       columnFamily{},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps:  []int64{1, 2, 4, 5},
+					versions:    []int64{1, 1, 1, 1},
+					tagFamilies: []columnFamily{},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field3"), []byte("field4"), nil, nil}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with additional field",
+			fields: fields{
+				timestamps:  []int64{1, 2},
+				versions:    []int64{1, 1},
+				tagFamilies: []columnFamily{},
+				field:       columnFamily{},
+				partID:      1,
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps:  []int64{4, 5},
+						versions:    []int64{1, 1},
+						tagFamilies: []columnFamily{},
+						field: columnFamily{
+							columns: []column{
+								{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field5"), []byte("field6")}},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps:  []int64{1, 2, 4, 5},
+					versions:    []int64{1, 1, 1, 1},
+					tagFamilies: []columnFamily{},
+					field: columnFamily{
+						columns: []column{
+							{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{nil, nil, []byte("field5"), []byte("field6")}},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

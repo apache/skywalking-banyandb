@@ -431,13 +431,13 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 
 type queryResult struct {
 	ctx              context.Context
-	hit              int
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
 	tagProjection    []model.TagProjection
 	data             []*blockCursor
 	snapshots        []*snapshot
 	segments         []storage.Segment[*tsTable, option]
+	hit              int
 	loaded           bool
 	orderByTS        bool
 	ascTS            bool
