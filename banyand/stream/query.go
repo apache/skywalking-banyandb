@@ -296,16 +296,17 @@ func (qr *queryResult) load(ctx context.Context, qo queryOptions) *model.StreamR
 
 		blankCursorList := []int{}
 		for completed := 0; completed < len(qr.data); completed++ {
-			select {
-			case <-ctx.Done():
-				return &model.StreamResult{
-					Error: errors.WithMessagef(ctx.Err(), "interrupt: loaded %d/%d cursors", completed, len(qr.data)),
-				}
-			case result := <-cursorChan:
-				if result != -1 {
-					blankCursorList = append(blankCursorList, result)
-				}
+			result := <-cursorChan
+			if result != -1 {
+				blankCursorList = append(blankCursorList, result)
 			}
+		}
+		select {
+		case <-ctx.Done():
+			return &model.StreamResult{
+				Error: errors.WithMessagef(ctx.Err(), "interrupt: blank/total=%d/%d", len(blankCursorList), len(qr.data)),
+			}
+		default:
 		}
 		sort.Slice(blankCursorList, func(i, j int) bool {
 			return blankCursorList[i] > blankCursorList[j]

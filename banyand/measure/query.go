@@ -480,16 +480,17 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 
 		blankCursorList := []int{}
 		for completed := 0; completed < len(qr.data); completed++ {
-			select {
-			case <-qr.ctx.Done():
-				return &model.MeasureResult{
-					Error: errors.WithMessagef(qr.ctx.Err(), "interrupt: loaded %d/%d cursors", completed, len(qr.data)),
-				}
-			case result := <-cursorChan:
-				if result != -1 {
-					blankCursorList = append(blankCursorList, result)
-				}
+			result := <-cursorChan
+			if result != -1 {
+				blankCursorList = append(blankCursorList, result)
 			}
+		}
+		select {
+		case <-qr.ctx.Done():
+			return &model.MeasureResult{
+				Error: errors.WithMessagef(qr.ctx.Err(), "interrupt: blank/total=%d/%d", len(blankCursorList), len(qr.data)),
+			}
+		default:
 		}
 		sort.Slice(blankCursorList, func(i, j int) bool {
 			return blankCursorList[i] > blankCursorList[j]
