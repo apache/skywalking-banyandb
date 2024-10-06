@@ -42,6 +42,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
+const checkDoneEvery = 128
+
 func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
 	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
@@ -198,12 +200,16 @@ func (qr *queryResult) scanParts(ctx context.Context, qo queryOptions) error {
 	if ti.Error() != nil {
 		return fmt.Errorf("cannot init tstIter: %w", ti.Error())
 	}
+	var hit int
 	for ti.nextBlock() {
-		select {
-		case <-ctx.Done():
-			return errors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan", len(qr.data), len(ti.piHeap), len(ti.piPool))
-		default:
+		if hit%checkDoneEvery == 0 {
+			select {
+			case <-ctx.Done():
+				return errors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan", len(qr.data), len(ti.piHeap), len(ti.piPool))
+			default:
+			}
 		}
+		hit++
 		bc := generateBlockCursor()
 		p := ti.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
@@ -229,6 +235,12 @@ func (qr *queryResult) load(ctx context.Context, qo queryOptions) *model.StreamR
 		cursorChan := make(chan int, len(qr.data))
 		for i := 0; i < len(qr.data); i++ {
 			go func(i int) {
+				select {
+				case <-ctx.Done():
+					cursorChan <- i
+					return
+				default:
+				}
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
 				if !qr.data[i].loadData(tmpBlock) {
@@ -284,16 +296,17 @@ func (qr *queryResult) load(ctx context.Context, qo queryOptions) *model.StreamR
 
 		blankCursorList := []int{}
 		for completed := 0; completed < len(qr.data); completed++ {
-			select {
-			case <-ctx.Done():
-				return &model.StreamResult{
-					Error: errors.WithMessagef(ctx.Err(), "interrupt: loaded %d/%d cursors", completed, len(qr.data)),
-				}
-			case result := <-cursorChan:
-				if result != -1 {
-					blankCursorList = append(blankCursorList, result)
-				}
+			result := <-cursorChan
+			if result != -1 {
+				blankCursorList = append(blankCursorList, result)
 			}
+		}
+		select {
+		case <-ctx.Done():
+			return &model.StreamResult{
+				Error: errors.WithMessagef(ctx.Err(), "interrupt: blank/total=%d/%d", len(blankCursorList), len(qr.data)),
+			}
+		default:
 		}
 		sort.Slice(blankCursorList, func(i, j int) bool {
 			return blankCursorList[i] > blankCursorList[j]

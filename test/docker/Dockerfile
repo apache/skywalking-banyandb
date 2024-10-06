@@ -26,6 +26,8 @@ COPY banyand/build/bin/linux/${TARGETARCH}/banyand-server-static /banyand
 COPY bydbctl/build/bin/linux/${TARGETARCH}/bydbctl-cli-static /bydbctl
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
+ENV GRPC_GO_LOG_SEVERITY_LEVEL=INFO
+ENV GRPC_GO_LOG_FORMATTER=json
 
 EXPOSE 17912
 EXPOSE 17913

@@ -126,7 +126,7 @@ catalog:
   - name: "File Format"
     catalog:
       - name: "v1.1.0"
-        path: ""
+        path: "/concept/tsdb"
   - name: "Concepts"
     catalog:
       - name: "Clustering"
