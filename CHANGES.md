@@ -48,6 +48,7 @@ Release Notes.
 - Fix the bug that the etcd client doesn't reconnect when facing the context timeout in the startup phase.
 - Fix the bug that the long running query doesn't stop when the context is canceled.
 - Fix the bug that merge block with different tags or fields.
+- Fix the bug that the pending measure block is not released when a full block is merged.
 
 ### Documentation
 

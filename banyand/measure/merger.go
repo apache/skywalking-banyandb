@@ -292,7 +292,6 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			(pendingBlock.isFull() && pendingBlock.bm.timestamps.max <= b.bm.timestamps.min) {
 			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
 			releaseDecoder()
-			pendingBlock.reset()
 			br.loadBlockData(getDecoder())
 			pendingBlock.copyFrom(b)
 			continue
@@ -316,6 +315,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 
 		if len(tmpBlock.timestamps) <= maxBlockLength {
 			bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
+			pendingBlock.reset()
+			pendingBlockIsEmpty = true
 			releaseDecoder()
 			continue
 		}

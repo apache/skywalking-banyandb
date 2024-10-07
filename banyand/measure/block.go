@@ -776,7 +776,7 @@ func (bi *blockPointer) updateMetadata() {
 }
 
 func (bi *blockPointer) copyFrom(src *blockPointer) {
-	bi.idx = 0
+	bi.reset()
 	bi.bm.copyFrom(&src.bm)
 	bi.appendAll(src)
 }
@@ -1006,7 +1006,7 @@ func (bi *blockPointer) isFull() bool {
 func (bi *blockPointer) reset() {
 	bi.idx = 0
 	bi.block.reset()
-	bi.bm = blockMetadata{}
+	bi.bm.reset()
 }
 
 func generateBlockPointer() *blockPointer {
