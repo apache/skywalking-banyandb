@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.8.0
+
+### Chores
+
+- Fix metrics system typo.
+
 ## 0.7.0
 
 ### File System Changes
