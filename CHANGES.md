@@ -4,6 +4,10 @@ Release Notes.
 
 ## 0.8.0
 
+### Documentation
+
+- Improve the description of the memory in observability doc.
+
 ### Chores
 
 - Fix metrics system typo.
