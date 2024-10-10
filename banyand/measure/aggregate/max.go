@@ -17,29 +17,29 @@
 
 package aggregate
 
-// Min calculates the minimum value of elements.
-type Min[A, B Input, R Output] struct {
-	minimum R
+// Max calculates the maximum value of elements.
+type Max[A, B Input, R Output] struct {
+	maximum R
 }
 
 // Combine takes elements to do the aggregation.
-// Min uses type parameter A.
-func (f *Min[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Max uses type parameter A.
+func (f *Max[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	for _, arg0 := range arguments.arg0 {
-		if R(arg0) < f.minimum {
-			f.minimum = R(arg0)
+		if R(arg0) > f.maximum {
+			f.maximum = R(arg0)
 		}
 	}
 	return nil
 }
 
 // Result gives the result for the aggregation.
-func (f *Min[A, B, R]) Result() (A, B, R) {
-	return A(f.minimum), zeroValue[B](), f.minimum
+func (f *Max[A, B, R]) Result() (A, B, R) {
+	return A(f.maximum), zeroValue[B](), f.maximum
 }
 
-// NewMinArguments constructs arguments.
-func NewMinArguments[A Input](a []A) Arguments[A, Void] {
+// NewMaxArguments constructs arguments.
+func NewMaxArguments[A Input](a []A) Arguments[A, Void] {
 	return Arguments[A, Void]{
 		arg0: a,
 		arg1: nil,

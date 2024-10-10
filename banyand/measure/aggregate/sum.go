@@ -17,29 +17,36 @@
 
 package aggregate
 
-// Min calculates the minimum value of elements.
-type Min[A, B Input, R Output] struct {
-	minimum R
+// Sum calculates the summation value of elements.
+type Sum[A, B Input, R Output] struct {
+	summation R
 }
 
 // Combine takes elements to do the aggregation.
-// Min uses type parameter A.
-func (f *Min[A, B, R]) Combine(arguments Arguments[A, B]) error {
-	for _, arg0 := range arguments.arg0 {
-		if R(arg0) < f.minimum {
-			f.minimum = R(arg0)
-		}
+// Sum uses type parameter A.
+func (f *Sum[A, B, R]) Combine(arguments Arguments[A, B]) error {
+	i := 0
+	n := len(arguments.arg0)
+	// step-4 aggregate
+	for ; i <= n-4; i += 4 {
+		f.summation += R(arguments.arg0[i]) + R(arguments.arg0[i+1]) +
+			R(arguments.arg0[i+2]) + R(arguments.arg0[i+3])
 	}
+	// tail aggregate
+	for ; i < n; i++ {
+		f.summation += R(arguments.arg0[i])
+	}
+
 	return nil
 }
 
 // Result gives the result for the aggregation.
-func (f *Min[A, B, R]) Result() (A, B, R) {
-	return A(f.minimum), zeroValue[B](), f.minimum
+func (f *Sum[A, B, R]) Result() (A, B, R) {
+	return A(f.summation), zeroValue[B](), f.summation
 }
 
-// NewMinArguments constructs arguments.
-func NewMinArguments[A Input](a []A) Arguments[A, Void] {
+// NewSumArguments constructs arguments.
+func NewSumArguments[A Input](a []A) Arguments[A, Void] {
 	return Arguments[A, Void]{
 		arg0: a,
 		arg1: nil,
