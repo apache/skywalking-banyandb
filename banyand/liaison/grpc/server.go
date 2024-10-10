@@ -73,6 +73,7 @@ type server struct {
 	log        *logger.Logger
 	*propertyServer
 	*topNAggregationRegistryServer
+	*measureAggregateFunctionServer
 	*groupRegistryServer
 	stopCh chan struct{}
 	*indexRuleRegistryServer
@@ -127,6 +128,7 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 		topNAggregationRegistryServer: &topNAggregationRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
+		measureAggregateFunctionServer: newMeasureAggregateFunctionServer(),
 		propertyServer: &propertyServer{
 			schemaRegistry: schemaRegistry,
 		},
