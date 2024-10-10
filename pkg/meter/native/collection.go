@@ -19,6 +19,7 @@
 package native
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -86,7 +87,7 @@ func (m *MetricCollection) FlushMetrics() {
 			messages = append(messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr))
 		}
 	}
-	_, err := publisher.Publish(data.TopicMeasureWrite, messages...)
+	_, err := publisher.Publish(context.TODO(), data.TopicMeasureWrite, messages...)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to publish messasges")
 	}

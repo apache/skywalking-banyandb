@@ -21,6 +21,8 @@ import (
 	"context"
 	"path"
 
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -53,10 +55,10 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 	return ei, nil
 }
 
-func (e *elementIndex) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
+func (e *elementIndex) Sort(ctx context.Context, sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
 	timeRange *timestamp.TimeRange, preloadSize int,
 ) (index.FieldIterator[*index.DocumentResult], error) {
-	iter, err := e.store.Sort(sids, fieldKey, order, timeRange, preloadSize)
+	iter, err := e.store.Sort(ctx, sids, fieldKey, order, timeRange, preloadSize)
 	if err != nil {
 		return nil, err
 	}
@@ -69,9 +71,14 @@ func (e *elementIndex) Write(docs index.Documents) error {
 	})
 }
 
-func (e *elementIndex) Search(seriesList pbv1.SeriesList, filter index.Filter) (posting.List, error) {
+func (e *elementIndex) Search(ctx context.Context, seriesList pbv1.SeriesList, filter index.Filter) (posting.List, error) {
 	var result posting.List
-	for _, series := range seriesList {
+	for i, series := range seriesList {
+		select {
+		case <-ctx.Done():
+			return nil, errors.WithMessagef(ctx.Err(), "search series %d/%d", i, len(seriesList))
+		default:
+		}
 		pl, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return e.store, nil
 		}, series.ID)

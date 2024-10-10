@@ -21,7 +21,6 @@ package inverted
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"log"
 	"math"
@@ -32,10 +31,10 @@ import (
 	"github.com/blugelabs/bluge/analysis/analyzer"
 	blugeIndex "github.com/blugelabs/bluge/index"
 	"github.com/blugelabs/bluge/search"
+	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -63,13 +62,14 @@ var (
 )
 
 // Analyzers is a map that associates each IndexRule_Analyzer type with a corresponding Analyzer.
-var Analyzers map[databasev1.IndexRule_Analyzer]*analysis.Analyzer
+var Analyzers map[string]*analysis.Analyzer
 
 func init() {
-	Analyzers = map[databasev1.IndexRule_Analyzer]*analysis.Analyzer{
-		databasev1.IndexRule_ANALYZER_KEYWORD:  analyzer.NewKeywordAnalyzer(),
-		databasev1.IndexRule_ANALYZER_SIMPLE:   analyzer.NewSimpleAnalyzer(),
-		databasev1.IndexRule_ANALYZER_STANDARD: analyzer.NewStandardAnalyzer(),
+	Analyzers = map[string]*analysis.Analyzer{
+		index.AnalyzerKeyword:  analyzer.NewKeywordAnalyzer(),
+		index.AnalyzerSimple:   analyzer.NewSimpleAnalyzer(),
+		index.AnalyzerStandard: analyzer.NewStandardAnalyzer(),
+		index.AnalyzerURL:      newURLAnalyzer(),
 	}
 }
 
@@ -126,7 +126,7 @@ func (s *store) Batch(batch index.Batch) error {
 			if f.Store {
 				tf.StoreValue()
 			}
-			if f.Key.Analyzer != databasev1.IndexRule_ANALYZER_UNSPECIFIED {
+			if f.Key.Analyzer != index.AnalyzerUnspecified {
 				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
 			}
 			doc.AddField(tf)
@@ -156,7 +156,7 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 			WithPersisterNapTimeMSec(int(opts.BatchWaitSec * 1000))
 	}
 	config := bluge.DefaultConfigWithIndexConfig(indexConfig)
-	config.DefaultSearchAnalyzer = Analyzers[databasev1.IndexRule_ANALYZER_KEYWORD]
+	config.DefaultSearchAnalyzer = Analyzers[index.AnalyzerKeyword]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
 	w, err := bluge.OpenWriter(config)
 	if err != nil {
@@ -177,7 +177,7 @@ func (s *store) Close() error {
 	return s.writer.Close()
 }
 
-func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
+func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
 	preLoadSize int, indexQuery index.Query, fieldKeys []index.FieldKey,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	if termRange.Lower != nil &&
@@ -247,6 +247,7 @@ func (s *store) Iterator(fieldKey index.FieldKey, termRange index.RangeOpts, ord
 		sortedKey: sortedKey,
 		size:      preLoadSize,
 		closer:    s.closer,
+		ctx:       ctx,
 	}
 	return result, nil
 }
@@ -282,15 +283,15 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	return list, err
 }
 
-func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, error) {
-	if len(matches) == 0 || fieldKey.Analyzer == databasev1.IndexRule_ANALYZER_UNSPECIFIED {
+func (s *store) Match(fieldKey index.FieldKey, matches []string, opts *modelv1.Condition_MatchOption) (posting.List, error) {
+	if len(matches) == 0 || fieldKey.Analyzer == index.AnalyzerUnspecified {
 		return roaring.DummyPostingList, nil
 	}
 	reader, err := s.writer.Reader()
 	if err != nil {
 		return nil, err
 	}
-	analyzer := Analyzers[fieldKey.Analyzer]
+	analyzer, operator := getMatchOptions(fieldKey.Analyzer, opts)
 	fk := fieldKey.Marshal()
 	query := bluge.NewBooleanQuery()
 	if fieldKey.HasSeriesID() {
@@ -298,7 +299,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	}
 	for _, m := range matches {
 		query.AddMust(bluge.NewMatchQuery(m).SetField(fk).
-			SetAnalyzer(analyzer))
+			SetAnalyzer(analyzer).SetOperator(operator))
 	}
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
@@ -315,8 +316,24 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string) (posting.List, 
 	return list, err
 }
 
+func getMatchOptions(analyzerOnIndexRule string, opts *modelv1.Condition_MatchOption) (*analysis.Analyzer, bluge.MatchQueryOperator) {
+	analyzer := Analyzers[analyzerOnIndexRule]
+	operator := bluge.MatchQueryOperatorOr
+	if opts != nil {
+		if opts.Analyzer != index.AnalyzerUnspecified {
+			analyzer = Analyzers[opts.Analyzer]
+		}
+		if opts.Operator != modelv1.Condition_MatchOption_OPERATOR_UNSPECIFIED {
+			if opts.Operator == modelv1.Condition_MatchOption_OPERATOR_AND {
+				operator = bluge.MatchQueryOperatorAnd
+			}
+		}
+	}
+	return analyzer, bluge.MatchQueryOperator(operator)
+}
+
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize, nil, nil)
+	iter, err := s.Iterator(context.TODO(), fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize, nil, nil)
 	if err != nil {
 		return roaring.DummyPostingList, err
 	}
@@ -334,6 +351,7 @@ type blugeMatchIterator struct {
 	closer           io.Closer
 	needToLoadFields []string
 	current          index.DocumentResult
+	hit              int
 }
 
 func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer,
@@ -355,12 +373,14 @@ func (bmi *blugeMatchIterator) Next() bool {
 	var match *search.DocumentMatch
 	match, bmi.err = bmi.delegated.Next()
 	if bmi.err != nil {
+		bmi.err = errors.WithMessagef(bmi.err, "failed to get next document, hit: %d", bmi.hit)
 		return false
 	}
 	if match == nil {
 		bmi.err = io.EOF
 		return false
 	}
+	bmi.hit = match.HitNumber
 	for i := range bmi.current.Values {
 		bmi.current.Values[i] = nil
 	}
@@ -393,7 +413,7 @@ func (bmi *blugeMatchIterator) Next() bool {
 		}
 		return true
 	})
-	bmi.err = multierr.Combine(bmi.err, err)
+	bmi.err = errors.WithMessagef(err, "visit stored fields, hit: %d", bmi.hit)
 	return bmi.err == nil
 }
 
@@ -412,5 +432,5 @@ func (bmi *blugeMatchIterator) Close() error {
 	if errors.Is(bmi.err, io.EOF) {
 		return err
 	}
-	return errors.Join(bmi.err, bmi.closer.Close())
+	return multierr.Combine(bmi.err, bmi.closer.Close())
 }

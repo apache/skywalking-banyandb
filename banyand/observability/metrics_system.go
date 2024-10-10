@@ -47,14 +47,14 @@ var (
 	// RootScope is the root scope for all metrics.
 	RootScope = meter.NewHierarchicalScope("banyandb", "_")
 	// SystemScope is the system scope for all metrics.
-	SystemScope     = RootScope.SubScope("system")
-	cpuStateGauge   meter.Gauge
-	cpuNumGauge     meter.Gauge
-	memorySateGauge meter.Gauge
-	netStateGauge   meter.Gauge
-	upTimeGauge     meter.Gauge
-	diskStateGauge  meter.Gauge
-	diskMap         = sync.Map{}
+	SystemScope      = RootScope.SubScope("system")
+	cpuStateGauge    meter.Gauge
+	cpuNumGauge      meter.Gauge
+	memoryStateGauge meter.Gauge
+	netStateGauge    meter.Gauge
+	upTimeGauge      meter.Gauge
+	diskStateGauge   meter.Gauge
+	diskMap          = sync.Map{}
 )
 
 // UpdatePath updates a path to monitoring its disk usage.
@@ -82,7 +82,7 @@ func (p *metricService) initMetrics() {
 	factory := p.With(SystemScope)
 	cpuStateGauge = factory.NewGauge("cpu_state", "kind")
 	cpuNumGauge = factory.NewGauge("cpu_num")
-	memorySateGauge = factory.NewGauge("memory_state", "kind")
+	memoryStateGauge = factory.NewGauge("memory_state", "kind")
 	netStateGauge = factory.NewGauge("net_state", "kind", "name")
 	upTimeGauge = factory.NewGauge("up_time")
 	diskStateGauge = factory.NewGauge("disk", "path", "kind")
@@ -118,16 +118,16 @@ func collectCPU() {
 }
 
 func collectMemory() {
-	if memorySateGauge == nil {
-		log.Error().Msg("memorySateGauge is not registered")
+	if memoryStateGauge == nil {
+		log.Error().Msg("memoryStateGauge is not registered")
 	}
 	m, err := mem.VirtualMemory()
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get memory stat")
 	}
-	memorySateGauge.Set(m.UsedPercent/100, "used_percent")
-	memorySateGauge.Set(float64(m.Used), "used")
-	memorySateGauge.Set(float64(m.Total), "total")
+	memoryStateGauge.Set(m.UsedPercent/100, "used_percent")
+	memoryStateGauge.Set(float64(m.Used), "used")
+	memoryStateGauge.Set(float64(m.Total), "total")
 }
 
 func collectNet() {

@@ -126,7 +126,7 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 	case modelv1.Condition_BINARY_OP_EQ:
 		return newEq(indexRule, expr), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_MATCH:
-		return newMatch(indexRule, expr), [][]*modelv1.TagValue{entity}, nil
+		return newMatch(indexRule, expr, cond.MatchOption), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NE:
 		return newNot(indexRule, newEq(indexRule, expr)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_HAVING:
@@ -409,14 +409,16 @@ func (eq *eq) String() string {
 
 type match struct {
 	*leaf
+	opts *modelv1.Condition_MatchOption
 }
 
-func newMatch(indexRule *databasev1.IndexRule, values logical.LiteralExpr) *match {
+func newMatch(indexRule *databasev1.IndexRule, values logical.LiteralExpr, opts *modelv1.Condition_MatchOption) *match {
 	return &match{
 		leaf: &leaf{
 			Key:  newFieldKey(indexRule),
 			Expr: values,
 		},
+		opts: opts,
 	}
 }
 
@@ -433,6 +435,7 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 	return s.Match(
 		match.Key.toIndex(seriesID),
 		matches,
+		match.opts,
 	)
 }
 

@@ -20,6 +20,7 @@
 package bus
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sync"
@@ -84,7 +85,7 @@ func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
 
 // MessageListener is the signature of functions that can handle an EventMessage.
 type MessageListener interface {
-	Rev(message Message) Message
+	Rev(ctx context.Context, message Message) Message
 }
 
 // Subscriber allow subscribing a Topic's messages.
@@ -94,7 +95,7 @@ type Subscriber interface {
 
 // Publisher allow sending Messages to a Topic.
 type Publisher interface {
-	Publish(topic Topic, message ...Message) (Future, error)
+	Publish(ctx context.Context, topic Topic, message ...Message) (Future, error)
 }
 
 // Broadcaster allow sending Messages to a Topic and receiving the responses.
@@ -180,7 +181,7 @@ func (l *localFuture) GetAll() ([]Message, error) {
 }
 
 // Publish sends Messages to a Topic.
-func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
+func (b *Bus) Publish(ctx context.Context, topic Topic, message ...Message) (Future, error) {
 	if topic.id == "" {
 		return nil, errTopicEmpty
 	}
@@ -200,9 +201,9 @@ func (b *Bus) Publish(topic Topic, message ...Message) (Future, error) {
 	for _, ml := range mll {
 		for _, m := range message {
 			if f != nil {
-				f.messages = append(f.messages, ml.Rev(m))
+				f.messages = append(f.messages, ml.Rev(ctx, m))
 			} else {
-				ml.Rev(m)
+				ml.Rev(ctx, m)
 			}
 		}
 	}

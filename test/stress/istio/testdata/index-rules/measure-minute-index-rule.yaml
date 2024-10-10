@@ -1,4 +1,4 @@
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "57"
     group: measure-minute
@@ -6,10 +6,10 @@
     modRevision: "57"
     name: dest_endpoint
   tags:
-  - dest_endpoint
+    - dest_endpoint
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "82"
     group: measure-minute
@@ -17,10 +17,10 @@
     modRevision: "82"
     name: dest_process_id
   tags:
-  - dest_process_id
+    - dest_process_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "70"
     group: measure-minute
@@ -28,10 +28,10 @@
     modRevision: "70"
     name: dest_service_id
   tags:
-  - dest_service_id
+    - dest_service_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "71"
     group: measure-minute
@@ -39,10 +39,10 @@
     modRevision: "71"
     name: dest_service_instance_id
   tags:
-  - dest_service_instance_id
+    - dest_service_instance_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "55"
     group: measure-minute
@@ -50,10 +50,10 @@
     modRevision: "55"
     name: id
   tags:
-  - id
+    - id
   type: TYPE_INVERTED
   updatedAt: "2023-05-22T18:03:28.196387339Z"
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "412"
     group: measure-minute
@@ -61,10 +61,10 @@
     modRevision: "412"
     name: service_id
   tags:
-  - service_id
+    - service_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "80"
     group: measure-minute
@@ -72,10 +72,10 @@
     modRevision: "80"
     name: service_instance_id
   tags:
-  - service_instance_id
+    - service_instance_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "56"
     group: measure-minute
@@ -83,10 +83,10 @@
     modRevision: "56"
     name: source_endpoint
   tags:
-  - source_endpoint
+    - source_endpoint
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "81"
     group: measure-minute
@@ -94,10 +94,10 @@
     modRevision: "81"
     name: source_process_id
   tags:
-  - source_process_id
+    - source_process_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "68"
     group: measure-minute
@@ -105,10 +105,10 @@
     modRevision: "68"
     name: source_service_id
   tags:
-  - source_service_id
+    - source_service_id
   type: TYPE_INVERTED
   updatedAt: null
-- analyzer: ANALYZER_UNSPECIFIED
+- analyzer: ""
   metadata:
     createRevision: "69"
     group: measure-minute
@@ -116,7 +116,7 @@
     modRevision: "69"
     name: source_service_instance_id
   tags:
-  - source_service_instance_id
+    - source_service_instance_id
   type: TYPE_INVERTED
   updatedAt: null
 

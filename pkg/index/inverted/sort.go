@@ -33,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
+func (s *store) Sort(ctx context.Context, sids []common.SeriesID, fieldKey index.FieldKey, order modelv1.Sort,
 	timeRange *timestamp.TimeRange, preLoadSize int,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	reader, err := s.writer.Reader()
@@ -73,6 +73,7 @@ func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order mode
 		reader:    reader,
 		sortedKey: sortedKey,
 		size:      preLoadSize,
+		ctx:       ctx,
 	}
 	return result, nil
 }
@@ -80,6 +81,7 @@ func (s *store) Sort(sids []common.SeriesID, fieldKey index.FieldKey, order mode
 type sortIterator struct {
 	query     index.Query
 	err       error
+	ctx       context.Context
 	reader    *bluge.Reader
 	current   *blugeMatchIterator
 	closer    *run.Closer
@@ -115,7 +117,7 @@ func (si *sortIterator) loadCurrent() bool {
 		topNSearch = topNSearch.SetFrom(si.skipped)
 	}
 
-	documentMatchIterator, err := si.reader.Search(context.Background(), topNSearch)
+	documentMatchIterator, err := si.reader.Search(si.ctx, topNSearch)
 	if err != nil {
 		si.err = err
 		return false

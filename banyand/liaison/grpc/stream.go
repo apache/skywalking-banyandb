@@ -143,7 +143,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			continue
 		}
 		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-		_, errWritePub := publisher.Publish(data.TopicStreamWrite, message)
+		_, errWritePub := publisher.Publish(ctx, data.TopicStreamWrite, message)
 		if errWritePub != nil {
 			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Str("nodeID", nodeID).Msg("failed to send a message")
 			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
@@ -155,7 +155,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 
 var emptyStreamQueryResponse = &streamv1.QueryResponse{Elements: make([]*streamv1.Element, 0)}
 
-func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (resp *streamv1.QueryResponse, err error) {
+func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (resp *streamv1.QueryResponse, err error) {
 	for _, g := range req.Groups {
 		s.metrics.totalStarted.Inc(1, g, "stream", "query")
 	}
@@ -178,7 +178,6 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (re
 	}
 	now := time.Now()
 	if req.Trace {
-		ctx := context.TODO()
 		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
 		span, _ := tracer.StartSpan(ctx, "stream-grpc")
 		span.Tag("request", convert.BytesToString(logger.Proto(req)))
@@ -193,7 +192,7 @@ func (s *streamService) Query(_ context.Context, req *streamv1.QueryRequest) (re
 		}()
 	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), req)
-	feat, errQuery := s.broadcaster.Publish(data.TopicStreamQuery, message)
+	feat, errQuery := s.broadcaster.Publish(ctx, data.TopicStreamQuery, message)
 	if errQuery != nil {
 		if errors.Is(errQuery, io.EOF) {
 			return emptyStreamQueryResponse, nil

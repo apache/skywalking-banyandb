@@ -39,12 +39,11 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	reply := func(writeEntity *clusterv1.SendRequest, err error, message string) {
 		s.log.Error().Stringer("request", writeEntity).Err(err).Msg(message)
 		s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
-		s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		if errResp := stream.Send(&clusterv1.SendResponse{
 			MessageId: writeEntity.MessageId,
 			Error:     message,
 		}); errResp != nil {
-			s.log.Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
+			s.log.Error().Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
 			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 		}
 	}
@@ -52,10 +51,12 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	var topic *bus.Topic
 	var m bus.Message
 	var dataCollection []any
-	var start time.Time
+	start := time.Now()
 	defer func() {
-		s.metrics.totalFinished.Inc(1, topic.String())
-		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), topic.String())
+		if topic != nil {
+			s.metrics.totalFinished.Inc(1, topic.String())
+			s.metrics.totalLatency.Inc(time.Since(start).Seconds(), topic.String())
+		}
 	}()
 	for {
 		select {
@@ -73,7 +74,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 				reply(writeEntity, err, "no listener found")
 				return nil
 			}
-			_ = listener.Rev(bus.NewMessage(bus.MessageID(0), dataCollection))
+			_ = listener.Rev(ctx, bus.NewMessage(bus.MessageID(0), dataCollection))
 			return nil
 		}
 		if err != nil {
@@ -134,7 +135,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			continue
 		}
 
-		m = listener.Rev(m)
+		m = listener.Rev(ctx, m)
 		if m.Data() == nil {
 			if errSend := stream.Send(&clusterv1.SendResponse{
 				MessageId: writeEntity.MessageId,
@@ -151,6 +152,12 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		case proto.Message:
 			message = d
 		case common.Error:
+			select {
+			case <-ctx.Done():
+				s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
+				return ctx.Err()
+			default:
+			}
 			reply(writeEntity, nil, d.Msg())
 			continue
 		default:

@@ -33,11 +33,24 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const (
+	// AnalyzerUnspecified represents an unspecified analyzer.
+	AnalyzerUnspecified = ""
+	// AnalyzerKeyword is a “noop” analyzer which returns the entire input string as a single token.
+	AnalyzerKeyword = "keyword"
+	// AnalyzerSimple breaks text into tokens at any non-letter character.
+	AnalyzerSimple = "simple"
+	// AnalyzerStandard provides grammar based tokenization.
+	AnalyzerStandard = "standard"
+	// AnalyzerURL breaks test into tokens at any non-letter and non-digit character.
+	AnalyzerURL = "url"
+)
+
 // FieldKey is the key of field in a document.
 type FieldKey struct {
+	Analyzer    string
 	SeriesID    common.SeriesID
 	IndexRuleID uint32
-	Analyzer    databasev1.IndexRule_Analyzer
 }
 
 // Marshal encodes f to string.
@@ -161,14 +174,16 @@ type Writer interface {
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
 	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query) (Query, error)
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
-	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
+	Iterator(ctx context.Context, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort,
+		preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
+	Sort(ctx context.Context, sids []common.SeriesID, fieldKey FieldKey,
+		order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
 }
 
 // Searcher allows searching a field either by its key or by its key and term.
 type Searcher interface {
 	FieldIterable
-	Match(fieldKey FieldKey, match []string) (list posting.List, err error)
+	Match(fieldKey FieldKey, match []string, opts *modelv1.Condition_MatchOption) (list posting.List, err error)
 	MatchField(fieldKey FieldKey) (list posting.List, err error)
 	MatchTerms(field Field) (list posting.List, err error)
 	Range(fieldKey FieldKey, opts RangeOpts) (list posting.List, err error)

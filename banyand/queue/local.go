@@ -19,6 +19,7 @@
 package queue
 
 import (
+	context "context"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -61,12 +62,14 @@ func (l *local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
 	return l.local.Subscribe(topic, listener)
 }
 
-func (l *local) Publish(topic bus.Topic, message ...bus.Message) (bus.Future, error) {
-	return l.local.Publish(topic, message...)
+func (l *local) Publish(ctx context.Context, topic bus.Topic, message ...bus.Message) (bus.Future, error) {
+	return l.local.Publish(ctx, topic, message...)
 }
 
-func (l *local) Broadcast(_ time.Duration, topic bus.Topic, message bus.Message) ([]bus.Future, error) {
-	f, err := l.Publish(topic, message)
+func (l *local) Broadcast(timeout time.Duration, topic bus.Topic, message bus.Message) ([]bus.Future, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	f, err := l.Publish(ctx, topic, message)
 	if err != nil {
 		return nil, err
 	}
@@ -91,14 +94,18 @@ func (*local) Register(schema.EventHandler) {
 }
 
 type localBatchPublisher struct {
+	ctx      context.Context
 	local    *bus.Bus
 	topic    *bus.Topic
 	messages []any
 }
 
-func (l *localBatchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
+func (l *localBatchPublisher) Publish(ctx context.Context, topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
 	if l.topic == nil {
 		l.topic = &topic
+	}
+	if l.ctx == nil {
+		l.ctx = ctx
 	}
 	for i := range messages {
 		l.messages = append(l.messages, messages[i].Data())
@@ -111,7 +118,7 @@ func (l *localBatchPublisher) Close() error {
 		return nil
 	}
 	newMessage := bus.NewMessage(1, l.messages)
-	_, err := l.local.Publish(*l.topic, newMessage)
+	_, err := l.local.Publish(l.ctx, *l.topic, newMessage)
 	if err != nil {
 		return err
 	}

@@ -183,7 +183,8 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 		node := newTermNode(str, indexRule)
 		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
 	case modelv1.Condition_BINARY_OP_MATCH:
-		query := bluge.NewMatchQuery(term).SetField(field).SetAnalyzer(Analyzers[indexRule.Analyzer])
+		analyzer, operator := getMatchOptions(indexRule.Analyzer, cond.MatchOption)
+		query := bluge.NewMatchQuery(term).SetField(field).SetAnalyzer(analyzer).SetOperator(operator)
 		node := newMatchNode(str, indexRule)
 		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
 	case modelv1.Condition_BINARY_OP_NE:
@@ -416,7 +417,7 @@ func (m *matchNode) MarshalJSON() ([]byte, error) {
 	inner := make(map[string]interface{}, 1)
 	inner["index"] = m.indexRule.Metadata.Name + ":" + m.indexRule.Metadata.Group
 	inner["value"] = m.match
-	inner["analyzer"] = databasev1.IndexRule_Analyzer_name[int32(m.indexRule.Analyzer)]
+	inner["analyzer"] = m.indexRule.Analyzer
 	data := make(map[string]interface{}, 1)
 	data["match"] = inner
 	return json.Marshal(data)

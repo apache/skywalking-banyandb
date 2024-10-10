@@ -44,6 +44,7 @@
   
 - [banyandb/model/v1/query.proto](#banyandb_model_v1_query-proto)
     - [Condition](#banyandb-model-v1-Condition)
+    - [Condition.MatchOption](#banyandb-model-v1-Condition-MatchOption)
     - [Criteria](#banyandb-model-v1-Criteria)
     - [LogicalExpression](#banyandb-model-v1-LogicalExpression)
     - [QueryOrder](#banyandb-model-v1-QueryOrder)
@@ -54,6 +55,7 @@
     - [TimeRange](#banyandb-model-v1-TimeRange)
   
     - [Condition.BinaryOp](#banyandb-model-v1-Condition-BinaryOp)
+    - [Condition.MatchOption.Operator](#banyandb-model-v1-Condition-MatchOption-Operator)
     - [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp)
     - [Sort](#banyandb-model-v1-Sort)
   
@@ -73,7 +75,6 @@
     - [CompressionMethod](#banyandb-database-v1-CompressionMethod)
     - [EncodingMethod](#banyandb-database-v1-EncodingMethod)
     - [FieldType](#banyandb-database-v1-FieldType)
-    - [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer)
     - [IndexRule.Type](#banyandb-database-v1-IndexRule-Type)
     - [TagType](#banyandb-database-v1-TagType)
   
@@ -745,6 +746,23 @@ while for 1:N BinaryOp, values can be an array with length &gt;= 1.
 | name | [string](#string) |  |  |
 | op | [Condition.BinaryOp](#banyandb-model-v1-Condition-BinaryOp) |  |  |
 | value | [TagValue](#banyandb-model-v1-TagValue) |  |  |
+| match_option | [Condition.MatchOption](#banyandb-model-v1-Condition-MatchOption) |  |  |
+
+
+
+
+
+
+<a name="banyandb-model-v1-Condition-MatchOption"></a>
+
+### Condition.MatchOption
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| analyzer | [string](#string) |  |  |
+| operator | [Condition.MatchOption.Operator](#banyandb-model-v1-Condition-MatchOption-Operator) |  |  |
 
 
 
@@ -914,6 +932,19 @@ Each item in a string array is seen as a token instead of a query expression.
 
 
 
+<a name="banyandb-model-v1-Condition-MatchOption-Operator"></a>
+
+### Condition.MatchOption.Operator
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| OPERATOR_UNSPECIFIED | 0 |  |
+| OPERATOR_AND | 1 |  |
+| OPERATOR_OR | 2 |  |
+
+
+
 <a name="banyandb-model-v1-LogicalExpression-LogicalOp"></a>
 
 ### LogicalExpression.LogicalOp
@@ -1001,7 +1032,7 @@ IndexRule should bind to a subject through an IndexRuleBinding to generate prope
 | tags | [string](#string) | repeated | tags are the combination that refers to an indexed object If the elements in tags are more than 1, the object will generate a multi-tag index Caveat: All tags in a multi-tag MUST have an identical IndexType |
 | type | [IndexRule.Type](#banyandb-database-v1-IndexRule-Type) |  | type is the IndexType of this IndexObject. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRule is updated |
-| analyzer | [IndexRule.Analyzer](#banyandb-database-v1-IndexRule-Analyzer) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. |
+| analyzer | [string](#string) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. available analyzers are: - &#34;standard&#34; provides grammar based tokenization - &#34;simple&#34; breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. - &#34;keyword&#34; is a “noop” analyzer which returns the entire input string as a single token. - &#34;url&#34; breaks test into tokens at any non-letter and non-digit character. |
 | no_sort | [bool](#bool) |  | no_sort indicates whether the index is not for sorting. |
 
 
@@ -1195,20 +1226,6 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | FIELD_TYPE_INT | 2 |  |
 | FIELD_TYPE_DATA_BINARY | 3 |  |
 | FIELD_TYPE_FLOAT | 4 |  |
-
-
-
-<a name="banyandb-database-v1-IndexRule-Analyzer"></a>
-
-### IndexRule.Analyzer
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| ANALYZER_UNSPECIFIED | 0 |  |
-| ANALYZER_KEYWORD | 1 | Keyword analyzer is a “noop” analyzer which returns the entire input string as a single token. |
-| ANALYZER_STANDARD | 2 | Standard analyzer provides grammar based tokenization |
-| ANALYZER_SIMPLE | 3 | Simple analyzer breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. |
 
 
 

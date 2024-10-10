@@ -66,20 +66,20 @@ const typeList = [
 ]
 const analyzerList = [
   {
-    label: "ANALYZER_UNSPECIFIED",
-    value: "ANALYZER_UNSPECIFIED"
+    label: "unspecified",
+    value: ""
   },
   {
-    label: "ANALYZER_KEYWORD",
-    value: "ANALYZER_KEYWORD"
+    label: "keyword",
+    value: "keyword"
   },
   {
-    label: "ANALYZER_STANDARD",
-    value: "ANALYZER_STANDARD"
+    label: "standard",
+    value: "standard"
   },
   {
-    label: "ANALYZER_SIMPLE",
-    value: "ANALYZER_SIMPLE"
+    label: "simple",
+    value: "simple"
   }
 ]
 const data = reactive({
