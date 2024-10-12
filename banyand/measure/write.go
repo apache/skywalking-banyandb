@@ -19,6 +19,7 @@ package measure
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
@@ -238,7 +239,7 @@ func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPoi
 	return dpt, nil
 }
 
-func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")

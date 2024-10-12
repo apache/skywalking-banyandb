@@ -19,6 +19,7 @@ package stream
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 
@@ -218,7 +219,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	return dst, nil
 }
 
-func (w *writeCallback) Rev(message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")

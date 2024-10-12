@@ -18,6 +18,7 @@
 package inverted
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"testing"
@@ -155,7 +156,7 @@ func TestStore_Sort(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tester := assert.New(t)
 			is := require.New(t)
-			iter, err := s.Sort(tt.args.sids, index.FieldKey{IndexRuleID: indexRuleID}, tt.args.orderType, &tr, tt.preloadSize)
+			iter, err := s.Sort(context.TODO(), tt.args.sids, index.FieldKey{IndexRuleID: indexRuleID}, tt.args.orderType, &tr, tt.preloadSize)
 			is.NoError(err)
 			if iter == nil {
 				tester.Empty(tt.want)

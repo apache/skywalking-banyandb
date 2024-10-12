@@ -170,8 +170,8 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 	return f, err
 }
 
-func (p *pub) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
-	return p.publish(5*time.Second, topic, messages...)
+func (p *pub) Publish(_ context.Context, _ bus.Topic, _ ...bus.Message) (bus.Future, error) {
+	panic("should not be called")
 }
 
 // NewBatchPublisher returns a new batch publisher.
@@ -235,7 +235,7 @@ func (bp *batchPublisher) Close() (err error) {
 	return err
 }
 
-func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
+func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
 	var err error
 	for _, m := range messages {
 		r, errM2R := messageToRequest(topic, m)
@@ -252,6 +252,8 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 					}
 				}()
 				select {
+				case <-ctx.Done():
+					return false
 				case <-stream.client.Context().Done():
 					return false
 				default:
@@ -269,6 +271,12 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 			continue
 		}
 
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		bp.pub.mu.RLock()
 		client, ok := bp.pub.active[node]
 		bp.pub.mu.RUnlock()
@@ -276,17 +284,17 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 			err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), bp.timeout)
+		streamCtx, cancel := context.WithTimeout(ctx, bp.timeout)
 		// this assignment is for getting around the go vet lint
 		deferFn := cancel
-		stream, errCreateStream := client.client.Send(ctx)
+		stream, errCreateStream := client.client.Send(streamCtx)
 		if errCreateStream != nil {
 			err = multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 			continue
 		}
 		bp.streams[node] = writeStream{
 			client:    stream,
-			ctxDoneCh: ctx.Done(),
+			ctxDoneCh: streamCtx.Done(),
 		}
 		bp.f.events = append(bp.f.events, make(chan batchEvent))
 		_ = sendData()
@@ -296,6 +304,11 @@ func (bp *batchPublisher) Publish(topic bus.Topic, messages ...bus.Message) (bus
 				deferFn()
 			}()
 			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 				_, errRecv := s.Recv()
 				if errRecv == nil {
 					continue

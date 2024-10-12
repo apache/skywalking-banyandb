@@ -18,6 +18,7 @@
 package bus
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"sort"
@@ -175,7 +176,7 @@ func TestBus_PubAndSub(t *testing.T) {
 				for _, id := range m.messageIDs {
 					mm = append(mm, NewMessage(id, nil))
 				}
-				f, err := e.Publish(m.topic, mm...)
+				f, err := e.Publish(context.TODO(), m.topic, mm...)
 				if err != nil && !m.wantErr {
 					t.Errorf("Publish() error = %v, wantErr %v", err, m.wantErr)
 					continue
@@ -239,7 +240,7 @@ type mockListener struct {
 	queue   []MessageID
 }
 
-func (m *mockListener) Rev(message Message) Message {
+func (m *mockListener) Rev(_ context.Context, message Message) Message {
 	m.queue = append(m.queue, message.id)
 	sort.SliceStable(m.queue, func(i, j int) bool {
 		return uint64(m.queue[i]) < uint64(m.queue[j])

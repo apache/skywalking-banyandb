@@ -40,7 +40,7 @@ The write rate is the number of write operations per second. It is calculated by
 
 #### Total Memory
 
-The total memory is the total memory available on the system.
+The total memory is the total physical memory available on the system, which means total amount of RAM on the system.
 
 **Expression**: `sum(banyandb_system_memory_state{job=~\"$job\", instance=~\"$instance\",kind=\"total\"})`
 
@@ -293,6 +293,8 @@ The read flow is the same as reading data from `measure`, with each metric being
 ## Profiling
 
 Banyand, the server of BanyanDB, supports profiling automatically. The profiling data is collected by the `pprof` package and can be accessed through the `/debug/pprof` endpoint. The port of the profiling server is `2122` by default.
+
+Refer to the [pprof documentation](https://golang.org/pkg/net/http/pprof/) for more information on how to use the profiling data.
 
 ## Query Tracing
 

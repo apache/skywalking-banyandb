@@ -95,6 +95,13 @@ func GetLogger(scope ...string) *Logger {
 
 // Init initializes a rs/zerolog logger from user config.
 func Init(cfg Logging) (err error) {
+	switch cfg.Env {
+	case "prob", "":
+		os.Setenv("GRPC_GO_LOG_SEVERITY_LEVEL", "ERROR")
+		os.Setenv("GRPC_GO_LOG_FORMATTER", "json")
+	case "dev":
+		os.Setenv("GRPC_GO_LOG_SEVERITY_LEVEL", "INFO")
+	}
 	return root.set(cfg)
 }
 

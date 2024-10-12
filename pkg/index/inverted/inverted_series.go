@@ -113,12 +113,17 @@ func (s *store) Search(ctx context.Context,
 func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey) ([]index.SeriesDocument, error) {
 	result := make([]index.SeriesDocument, 0, 10)
 	next, err := dmi.Next()
+	if err != nil {
+		return nil, errors.WithMessage(err, "iterate document match iterator")
+	}
 	docIDMap := make(map[uint64]struct{})
 	fields := make([]string, 0, len(loadedFields))
 	for i := range loadedFields {
 		fields = append(fields, loadedFields[i].Marshal())
 	}
+	var hitNumber int
 	for err == nil && next != nil {
+		hitNumber = next.HitNumber
 		var doc index.SeriesDocument
 		if len(loadedFields) > 0 {
 			doc.Fields = make(map[string][]byte)
@@ -144,7 +149,7 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 			return true
 		})
 		if err != nil {
-			return nil, errors.WithMessage(err, "visit stored fields")
+			return nil, errors.WithMessagef(err, "visit stored fields, hit: %d", hitNumber)
 		}
 		if doc.Key.ID > 0 {
 			result = append(result, doc)
@@ -152,7 +157,7 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 		next, err = dmi.Next()
 	}
 	if err != nil {
-		return nil, errors.WithMessage(err, "iterate document match iterator")
+		return nil, errors.WithMessagef(err, "iterate document match iterator, hit: %d", hitNumber)
 	}
 	return result, nil
 }

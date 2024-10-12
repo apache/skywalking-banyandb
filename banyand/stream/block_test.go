@@ -609,6 +609,220 @@ func Test_blockPointer_append(t *testing.T) {
 				idx: 0,
 			},
 		},
+		{
+			name: "Test append with missing tag family",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				elementIDs: []uint64{0, 1},
+				tagFamilies: []tagFamily{
+					{
+						name: "arrTag",
+						tags: []tag{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps:  []int64{4, 5},
+						elementIDs:  []uint64{2, 3},
+						tagFamilies: []tagFamily{},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					elementIDs: []uint64{0, 1, 2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "arrTag",
+							tags: []tag{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+										nil, nil,
+									},
+								},
+							},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with additional tag family",
+			fields: fields{
+				timestamps:  []int64{1, 2},
+				elementIDs:  []uint64{0, 1},
+				tagFamilies: []tagFamily{},
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps: []int64{4, 5},
+						elementIDs: []uint64{2, 3},
+						tagFamilies: []tagFamily{
+							{
+								name: "arrTag",
+								tags: []tag{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+									},
+								},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					elementIDs: []uint64{0, 1, 2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "arrTag",
+							tags: []tag{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{
+										nil, nil,
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+									},
+								},
+							},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with missing tag",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				elementIDs: []uint64{0, 1},
+				tagFamilies: []tagFamily{
+					{
+						name: "arrTag",
+						tags: []tag{
+							{
+								name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+								values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+							},
+						},
+					},
+				},
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps: []int64{4, 5},
+						elementIDs: []uint64{2, 3},
+						tagFamilies: []tagFamily{
+							{
+								name: "arrTag",
+								tags: []tag{},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					elementIDs: []uint64{0, 1, 2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "arrTag",
+							tags: []tag{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+										nil, nil,
+									},
+								},
+							},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
+		{
+			name: "Test append with additional tag",
+			fields: fields{
+				timestamps: []int64{1, 2},
+				elementIDs: []uint64{0, 1},
+				tagFamilies: []tagFamily{
+					{
+						name: "arrTag",
+						tags: []tag{},
+					},
+				},
+			},
+			args: args{
+				b: &blockPointer{
+					block: block{
+						timestamps: []int64{4, 5},
+						elementIDs: []uint64{2, 3},
+						tagFamilies: []tagFamily{
+							{
+								name: "arrTag",
+								tags: []tag{
+									{
+										name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+										values: [][]byte{marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}), marshalStrArr([][]byte{[]byte("value7"), []byte("value8")})},
+									},
+								},
+							},
+						},
+					},
+					idx: 0,
+				},
+				offset: 2,
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 4, 5},
+					elementIDs: []uint64{0, 1, 2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "arrTag",
+							tags: []tag{
+								{
+									name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
+									values: [][]byte{
+										nil, nil,
+										marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+										marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+									},
+								},
+							},
+						},
+					},
+				},
+				idx: 0,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

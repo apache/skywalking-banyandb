@@ -47,7 +47,7 @@ type topNQueryProcessor struct {
 	*queryService
 }
 
-func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
+func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	request, ok := message.Data().(*measurev1.TopNRequest)
 	n := time.Now()
 	now := n.UnixNano()
@@ -74,7 +74,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		Name:  request.Name,
 		Group: request.Groups[0],
 	}
-	topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(context.TODO(), topNMetadata)
+	topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(ctx, topNMetadata)
 	if err != nil {
 		t.log.Error().Err(err).
 			Str("topN", topNMetadata.GetName()).
@@ -108,7 +108,7 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 			Str("topN", topNMetadata.GetName()).
 			Msg("fail to build schema")
 	}
-	plan, err := logical_measure.TopNAnalyze(context.TODO(), request, topNResultMeasure.GetSchema(), sourceMeasure.GetSchema(), s)
+	plan, err := logical_measure.TopNAnalyze(ctx, request, topNResultMeasure.GetSchema(), sourceMeasure.GetSchema(), s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", topNMetadata.GetName(), err))
 		return
@@ -117,7 +117,6 @@ func (t *topNQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("topn plan")
 	}
-	ctx := context.Background()
 	var tracer *query.Tracer
 	var span *query.Span
 	if request.Trace {

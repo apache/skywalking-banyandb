@@ -582,3 +582,35 @@ func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints 
 	}}...)
 	return hugeDps
 }
+
+func generateHugeSmallDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints {
+	hugeDps := &dataPoints{
+		seriesIDs:   []common.SeriesID{},
+		timestamps:  []int64{},
+		versions:    []int64{},
+		tagFamilies: [][]nameValues{},
+		fields:      []nameValues{},
+	}
+	now := time.Now().UnixNano()
+	for i := startTimestamp; i <= endTimestamp; i++ {
+		hugeDps.seriesIDs = append(hugeDps.seriesIDs, 1)
+		hugeDps.timestamps = append(hugeDps.timestamps, i)
+		hugeDps.versions = append(hugeDps.versions, now+i)
+		hugeDps.tagFamilies = append(hugeDps.tagFamilies, []nameValues{})
+		hugeDps.fields = append(hugeDps.fields, nameValues{
+			name: "skipped", values: []*nameValue{
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(3330), valueArr: nil},
+			},
+		})
+	}
+	hugeDps.seriesIDs = append(hugeDps.seriesIDs, []common.SeriesID{2, 3}...)
+	hugeDps.timestamps = append(hugeDps.timestamps, []int64{timestamp, timestamp}...)
+	hugeDps.versions = append(hugeDps.versions, []int64{now + timestamp, now + timestamp}...)
+	hugeDps.tagFamilies = append(hugeDps.tagFamilies, [][]nameValues{{}, {}}...)
+	hugeDps.fields = append(hugeDps.fields, []nameValues{{}, {
+		name: "onlyFields", values: []*nameValue{
+			{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(4440), valueArr: nil},
+		},
+	}}...)
+	return hugeDps
+}

@@ -41,7 +41,8 @@ import (
 )
 
 const (
-	preloadSize = 100
+	preloadSize    = 100
+	checkDoneEvery = 128
 )
 
 // Query allow to retrieve measure data points.
@@ -86,6 +87,7 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}
 	var result queryResult
+	result.ctx = ctx
 	tsdb := db.(storage.TSDB[*tsTable, option])
 	result.segments = tsdb.SelectSegments(*mqo.TimeRange)
 	if len(result.segments) < 1 {
@@ -251,7 +253,16 @@ func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	if tstIter.Error() != nil {
 		return fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
 	}
+	var hit int
 	for tstIter.nextBlock() {
+		if hit%checkDoneEvery == 0 {
+			select {
+			case <-ctx.Done():
+				return errors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan", len(result.data), len(tstIter.piHeap), len(tstIter.piPool))
+			default:
+			}
+		}
+		hit++
 		bc := generateBlockCursor()
 		p := tstIter.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
@@ -419,18 +430,27 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 }
 
 type queryResult struct {
+	ctx              context.Context
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
 	tagProjection    []model.TagProjection
 	data             []*blockCursor
 	snapshots        []*snapshot
 	segments         []storage.Segment[*tsTable, option]
+	hit              int
 	loaded           bool
 	orderByTS        bool
 	ascTS            bool
 }
 
 func (qr *queryResult) Pull() *model.MeasureResult {
+	select {
+	case <-qr.ctx.Done():
+		return &model.MeasureResult{
+			Error: errors.WithMessagef(qr.ctx.Err(), "interrupt: hit %d", qr.hit),
+		}
+	default:
+	}
 	if !qr.loaded {
 		if len(qr.data) == 0 {
 			return nil
@@ -439,6 +459,12 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 		cursorChan := make(chan int, len(qr.data))
 		for i := 0; i < len(qr.data); i++ {
 			go func(i int) {
+				select {
+				case <-qr.ctx.Done():
+					cursorChan <- i
+					return
+				default:
+				}
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
 				if !qr.data[i].loadData(tmpBlock) {
@@ -458,6 +484,13 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 			if result != -1 {
 				blankCursorList = append(blankCursorList, result)
 			}
+		}
+		select {
+		case <-qr.ctx.Done():
+			return &model.MeasureResult{
+				Error: errors.WithMessagef(qr.ctx.Err(), "interrupt: blank/total=%d/%d", len(blankCursorList), len(qr.data)),
+			}
+		default:
 		}
 		sort.Slice(blankCursorList, func(i, j int) bool {
 			return blankCursorList[i] > blankCursorList[j]

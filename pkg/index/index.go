@@ -174,8 +174,10 @@ type Writer interface {
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
 	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query) (Query, error)
-	Iterator(fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort, preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
-	Sort(sids []common.SeriesID, fieldKey FieldKey, order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
+	Iterator(ctx context.Context, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort,
+		preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
+	Sort(ctx context.Context, sids []common.SeriesID, fieldKey FieldKey,
+		order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
 }
 
 // Searcher allows searching a field either by its key or by its key and term.

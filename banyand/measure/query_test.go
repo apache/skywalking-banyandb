@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"context"
 	"errors"
 	"sort"
 	"testing"
@@ -1251,6 +1252,7 @@ func TestQueryResult(t *testing.T) {
 				ti.init(bma, pp, sids, tt.minTimestamp, tt.maxTimestamp)
 
 				var result queryResult
+				result.ctx = context.TODO()
 				// Query all tags
 				result.tagProjection = allTagProjections
 				for ti.nextBlock() {

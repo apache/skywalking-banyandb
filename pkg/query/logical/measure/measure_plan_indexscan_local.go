@@ -236,6 +236,7 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 
 type resultMIterator struct {
 	result  model.MeasureQueryResult
+	err     error
 	current []*measurev1.DataPoint
 	i       int
 }
@@ -251,6 +252,10 @@ func (ei *resultMIterator) Next() bool {
 
 	r := ei.result.Pull()
 	if r == nil {
+		return false
+	}
+	if r.Error != nil {
+		ei.err = r.Error
 		return false
 	}
 	ei.current = ei.current[:0]
@@ -294,7 +299,7 @@ func (ei *resultMIterator) Close() error {
 	if ei.result != nil {
 		ei.result.Release()
 	}
-	return nil
+	return ei.err
 }
 
 func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, orderType model.OrderByType, orderBy *model.OrderBy) (context.Context, func(error)) {

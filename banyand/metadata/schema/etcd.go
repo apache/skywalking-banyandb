@@ -521,8 +521,8 @@ func (e *etcdSchemaRegistry) revokeLease(lease *clientv3.LeaseGrantResponse) {
 	ctx, cancel := context.WithTimeout(context.Background(), leaseDuration)
 	defer cancel()
 	_, err := e.client.Lease.Revoke(ctx, lease.ID)
-	if err != nil {
-		e.l.Error().Err(err).Msgf("failed to revoke lease %d", lease.ID)
+	if err != nil && e.l.Debug().Enabled() {
+		e.l.Debug().Err(err).Msgf("failed to revoke lease %d", lease.ID)
 	}
 }
 

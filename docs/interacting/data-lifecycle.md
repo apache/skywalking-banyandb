@@ -48,6 +48,8 @@ More ttl units can be found in the [IntervalRule.Unit](../api-reference.md#inter
 
 You can also manage the Group by other clients such as [Web-UI](./web-ui/schema/group.md) or [Java-Client](java-client.md).
 
+For more details about how they works, please refer to the [data rotation](../concept/rotation.md).
+
 ## [Property](../concept/data-model.md#properties)
 
 `Property` data provides both [CRUD](./bydbctl/property.md) operations and TTL mechanism.
