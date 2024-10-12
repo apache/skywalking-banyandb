@@ -55,7 +55,7 @@ type streamQueryProcessor struct {
 	*queryService
 }
 
-func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
+func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	n := time.Now()
 	now := n.UnixNano()
 	queryCriteria, ok := message.Data().(*streamv1.QueryRequest)
@@ -91,7 +91,7 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	plan, err := logical_stream.Analyze(context.TODO(), queryCriteria, meta, s)
+	plan, err := logical_stream.Analyze(ctx, queryCriteria, meta, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", meta.GetName(), err))
 		return
@@ -100,7 +100,6 @@ func (p *streamQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 	if p.log.Debug().Enabled() {
 		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
-	ctx := context.Background()
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {
@@ -146,7 +145,7 @@ type measureQueryProcessor struct {
 	*queryService
 }
 
-func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
+func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	n := time.Now()
 	now := n.UnixNano()
@@ -185,12 +184,11 @@ func (p *measureQueryProcessor) Rev(message bus.Message) (resp bus.Message) {
 		return
 	}
 
-	plan, err := logical_measure.Analyze(context.TODO(), queryCriteria, meta, s)
+	plan, err := logical_measure.Analyze(ctx, queryCriteria, meta, s)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", meta.GetName(), err))
 		return
 	}
-	ctx := context.Background()
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {

@@ -21,6 +21,24 @@ There are three bootstrap commands: `data`, `liaison`, and `standalone`. You cou
 
 Below are the available flags for configuring BanyanDB:
 
+### Service Discovery
+
+BanyanDB Liaison reads the endpoints of the data servers from the etcd server. The following flags are used to configure:
+
+`node-host-provider`: the node host provider, can be "hostname", "ip" or "flag", default is hostname.
+
+If the `node-host-provider` is "flag", you can use `node-host` to configure the node host:
+
+```sh
+./banyand liaison --node-host=foo.bar.com --node-host-provider=flag
+```
+
+If the `node-host-provider` is "hostname", BanyanDB will use the hostname of the server as the node host. The hostname is parsed from the go library `os.Hostname()`.
+
+If the `node-host-provider` is "ip", BanyanDB will use the IP address of the server as the node host. The IP address is parsed from the go library `net.Interfaces()`. BanyanDB will use the first non-loopback IPv4 address as the node host.
+
+The official Helm chart uses the `node-host-provider` as "ip" as the default value.
+
 ### Liaison & Network
 
 BanyanDB uses gRPC for communication between the servers. The following flags are used to configure the network settings.

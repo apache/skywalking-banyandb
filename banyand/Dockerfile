@@ -34,6 +34,9 @@ COPY build/bin/windows/${TARGETARCH}/banyand-server-static "/banyand"
 
 FROM build-${TARGETOS} AS final
 
+ENV GRPC_GO_LOG_SEVERITY_LEVEL=ERROR
+ENV GRPC_GO_LOG_FORMATTER=json
+
 EXPOSE 17912
 EXPOSE 17913
 EXPOSE 6060

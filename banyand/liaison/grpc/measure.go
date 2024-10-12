@@ -69,7 +69,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		if status != modelv1.Status_STATUS_SUCCEED {
 			ms.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "measure", "write")
 		}
-		ms.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "measure", "write")
+		ms.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "measure", "write")
 		if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
 			logger.Debug().Err(errResp).Msg("failed to send measure write response")
 			ms.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "measure", "write")
@@ -149,7 +149,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			continue
 		}
 		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-		_, errWritePub := publisher.Publish(data.TopicMeasureWrite, message)
+		_, errWritePub := publisher.Publish(ctx, data.TopicMeasureWrite, message)
 		if errWritePub != nil {
 			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
 			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
@@ -161,7 +161,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 
 var emptyMeasureQueryResponse = &measurev1.QueryResponse{DataPoints: make([]*measurev1.DataPoint, 0)}
 
-func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) (resp *measurev1.QueryResponse, err error) {
+func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest) (resp *measurev1.QueryResponse, err error) {
 	for _, g := range req.Groups {
 		ms.metrics.totalStarted.Inc(1, g, "measure", "query")
 	}
@@ -180,7 +180,6 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 	}
 	now := time.Now()
 	if req.Trace {
-		ctx := context.TODO()
 		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
 		span, _ := tracer.StartSpan(ctx, "measure-grpc")
 		span.Tag("request", convert.BytesToString(logger.Proto(req)))
@@ -194,7 +193,7 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 			span.Stop()
 		}()
 	}
-	feat, err := ms.broadcaster.Publish(data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), req))
+	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), req))
 	if err != nil {
 		return nil, err
 	}
@@ -215,13 +214,12 @@ func (ms *measureService) Query(_ context.Context, req *measurev1.QueryRequest) 
 	return nil, nil
 }
 
-func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNRequest) (resp *measurev1.TopNResponse, err error) {
+func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNRequest) (resp *measurev1.TopNResponse, err error) {
 	if err = timestamp.CheckTimeRange(topNRequest.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", topNRequest.GetTimeRange(), err)
 	}
 	now := time.Now()
 	if topNRequest.Trace {
-		ctx := context.TODO()
 		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
 		span, _ := tracer.StartSpan(ctx, "topn-grpc")
 		span.Tag("request", convert.BytesToString(logger.Proto(topNRequest)))
@@ -236,7 +234,7 @@ func (ms *measureService) TopN(_ context.Context, topNRequest *measurev1.TopNReq
 		}()
 	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), topNRequest)
-	feat, errQuery := ms.broadcaster.Publish(data.TopicTopNQuery, message)
+	feat, errQuery := ms.broadcaster.Publish(ctx, data.TopicTopNQuery, message)
 	if errQuery != nil {
 		return nil, errQuery
 	}
