@@ -56,13 +56,11 @@ func (f *Percent[A, B, R]) Combine(arguments Arguments[A, B]) error {
 // Result gives the result for the aggregation.
 func (f *Percent[A, B, R]) Result() (A, B, R) {
 	var percent R
-	// In unusual situations it returns the zero value.
-	if f.total == 0 {
-		percent = zeroValue[R]()
+	if f.total != 0 {
+		// Factory 10000 is used to improve accuracy. This factory is same as OAP.
+		// For example, "10 percent" will return 1000.
+		percent = R(f.match) * 10000 / R(f.total)
 	}
-	// Factory 10000 is used to improve accuracy. This factory is same as OAP.
-	// For example, "10 percent" will return 1000.
-	percent = R(f.match) * 10000 / R(f.total)
 	return A(f.total), B(f.match), percent
 }
 

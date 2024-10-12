@@ -52,5 +52,4 @@ func TestAvg(t *testing.T) {
 	assert.Equal(t, 7.0, a2)
 	assert.Equal(t, int64(3), b2)
 	assert.Equal(t, 7.0/3, r2)
-
 }

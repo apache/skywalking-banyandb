@@ -64,5 +64,4 @@ func TestSum(t *testing.T) {
 	assert.NoError(t, err)
 	_, _, r4 := sumFloat64.Result()
 	assert.Equal(t, 10.0, r4)
-
 }

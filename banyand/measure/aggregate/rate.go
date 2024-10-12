@@ -56,12 +56,10 @@ func (f *Rate[A, B, R]) Combine(arguments Arguments[A, B]) error {
 // Result gives the result for the aggregation.
 func (f *Rate[A, B, R]) Result() (A, B, R) {
 	var rate R
-	// In unusual situations it returns the zero value.
-	if f.denominator == 0 {
-		rate = zeroValue[R]()
+	if f.denominator != 0 {
+		// Factory 10000 is used to improve accuracy. This factory is same as OAP.
+		rate = R(f.numerator) * 10000 / R(f.denominator)
 	}
-	// Factory 10000 is used to improve accuracy. This factory is same as OAP.
-	rate = R(f.numerator) * 10000 / R(f.denominator)
 	return A(f.denominator), B(f.numerator), rate
 }
 
