@@ -40,7 +40,7 @@ The write rate is the number of write operations per second. It is calculated by
 
 #### Total Memory
 
-The total memory is the total memory available on the system.
+The total memory is the total physical memory available on the system, which means total amount of RAM on the system.
 
 **Expression**: `sum(banyandb_system_memory_state{job=~\"$job\", instance=~\"$instance\",kind=\"total\"})`
 
