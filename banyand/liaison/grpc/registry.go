@@ -882,7 +882,9 @@ func newMeasureAggregateFunctionServer() *measureAggregateFunctionServer {
 	return &measureAggregateFunctionServer{supports: functions}
 }
 
-func (ms *measureAggregateFunctionServer) Support(ctx context.Context, req *databasev1.MeasureAggregateFunctionServiceSupportRequest) (*databasev1.MeasureAggregateFunctionServiceSupportResponse, error) {
+func (ms *measureAggregateFunctionServer) Support(_ context.Context, _ *databasev1.MeasureAggregateFunctionServiceSupportRequest) (
+	*databasev1.MeasureAggregateFunctionServiceSupportResponse, error,
+) {
 	return &databasev1.MeasureAggregateFunctionServiceSupportResponse{
 		MeasureAggregateFunction: ms.supports,
 	}, nil
