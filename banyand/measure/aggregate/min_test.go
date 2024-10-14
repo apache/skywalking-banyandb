@@ -35,7 +35,8 @@ func TestMin(t *testing.T) {
 		[]int64{1, 2, 3}, // mock the "minimum" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, int64(1), minInt64.Result())
+	_, _, r1 := minInt64.Result()
+	assert.Equal(t, int64(1), r1)
 
 	// case2: input float64 values
 	minFloat64, _ := aggregate.NewFunction[float64, aggregate.Void, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN)
@@ -43,5 +44,6 @@ func TestMin(t *testing.T) {
 		[]float64{1.0, 2.0, 3.0}, // mock the "minimum" column
 	))
 	assert.NoError(t, err)
-	assert.Equal(t, 1.0, minFloat64.Result())
+	_, _, r2 := minFloat64.Result()
+	assert.Equal(t, 1.0, r2)
 }
