@@ -17,56 +17,56 @@
 
 package aggregate
 
-// Avg calculates the average value of elements.
-type Avg[A, B Input, R Output] struct {
-	summation R
-	count     int64
+// Percent calculates the average value of elements.
+type Percent[A, B Input, R Output] struct {
+	total int64
+	match int64
 }
 
 // Combine takes elements to do the aggregation.
-// Avg uses type parameter A.
-func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Percent uses none of type parameters.
+func (f *Percent[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	i := 0
 	n := len(arguments.arg0)
 	// step-4 aggregate
 	for ; i <= n-4; i += 4 {
-		f.summation += R(arguments.arg0[i]) + R(arguments.arg0[i+1]) +
-			R(arguments.arg0[i+2]) + R(arguments.arg0[i+3])
+		f.total += int64(arguments.arg0[i]) + int64(arguments.arg0[i+1]) +
+			int64(arguments.arg0[i+2]) + int64(arguments.arg0[i+3])
 	}
 	// tail aggregate
 	for ; i < n; i++ {
-		f.summation += R(arguments.arg0[i])
+		f.total += int64(arguments.arg0[i])
 	}
 
 	i = 0
 	n = len(arguments.arg1)
 	// step-4 aggregate
 	for ; i <= n-4; i += 4 {
-		f.count += int64(arguments.arg1[i]) + int64(arguments.arg1[i+1]) +
+		f.match += int64(arguments.arg1[i]) + int64(arguments.arg1[i+1]) +
 			int64(arguments.arg1[i+2]) + int64(arguments.arg1[i+3])
 	}
 	// tail aggregate
 	for ; i < n; i++ {
-		f.count += int64(arguments.arg1[i])
+		f.match += int64(arguments.arg1[i])
 	}
 
 	return nil
 }
 
 // Result gives the result for the aggregation.
-func (f *Avg[A, B, R]) Result() (A, B, R) {
-	var average R
-	if f.count != 0 {
-		// According to the semantics of GoLang, the division of one int by another int
-		// returns an int, instead of f float.
-		average = f.summation / R(f.count)
+func (f *Percent[A, B, R]) Result() (A, B, R) {
+	var percent R
+	if f.total != 0 {
+		// Factory 10000 is used to improve accuracy. This factory is same as OAP.
+		// For example, "10 percent" will return 1000.
+		percent = R(f.match) * 10000 / R(f.total)
 	}
-	return A(f.summation), B(f.count), average
+	return A(f.total), B(f.match), percent
 }
 
-// NewAvgArguments constructs arguments.
-func NewAvgArguments[A Input](a []A, b []int64) Arguments[A, int64] {
-	return Arguments[A, int64]{
+// NewPercentArguments constructs arguments.
+func NewPercentArguments(a []int64, b []int64) Arguments[int64, int64] {
+	return Arguments[int64, int64]{
 		arg0: a,
 		arg1: b,
 	}

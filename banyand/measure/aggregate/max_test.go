@@ -26,30 +26,24 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure/aggregate"
 )
 
-func TestAvg(t *testing.T) {
+func TestMax(t *testing.T) {
 	var err error
 
 	// case1: input int64 values
-	avgInt64, _ := aggregate.NewFunction[int64, int64, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG)
-	err = avgInt64.Combine(aggregate.NewAvgArguments[int64](
-		[]int64{1, 3, 3}, // mock the "summation" column
-		[]int64{1, 1, 1}, // mock the "count" column
+	maxInt64, _ := aggregate.NewFunction[int64, aggregate.Void, int64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX)
+	err = maxInt64.Combine(aggregate.NewMaxArguments[int64](
+		[]int64{1, 2, 3}, // mock the "maximum" column
 	))
 	assert.NoError(t, err)
-	a1, b1, r1 := avgInt64.Result()
-	assert.Equal(t, int64(7), a1)
-	assert.Equal(t, int64(3), b1)
-	assert.Equal(t, int64(2), r1) // note that 7/3 becomes 2 as int
+	_, _, r1 := maxInt64.Result()
+	assert.Equal(t, int64(3), r1)
 
-	// case2: input float64 elements
-	avgFloat64, _ := aggregate.NewFunction[float64, int64, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG)
-	err = avgFloat64.Combine(aggregate.NewAvgArguments[float64](
-		[]float64{1.0, 3.0, 3.0}, // mock the "summation" column
-		[]int64{1, 1, 1},         // mock the "count" column
+	// case2: input float64 values
+	maxFloat64, _ := aggregate.NewFunction[float64, aggregate.Void, float64](modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX)
+	err = maxFloat64.Combine(aggregate.NewMaxArguments[float64](
+		[]float64{1.0, 2.0, 3.0}, // mock the "maximum" column
 	))
 	assert.NoError(t, err)
-	a2, b2, r2 := avgFloat64.Result()
-	assert.Equal(t, 7.0, a2)
-	assert.Equal(t, int64(3), b2)
-	assert.Equal(t, 7.0/3, r2)
+	_, _, r2 := maxFloat64.Result()
+	assert.Equal(t, 3.0, r2)
 }

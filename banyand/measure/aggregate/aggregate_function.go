@@ -26,19 +26,19 @@ import (
 )
 
 // Void type contains nothing. It works as a placeholder for type parameters of `Arguments`.
-type Void struct{}
+// It's implemented as int64, but it won't be used as an int64.
+type Void int64
 
-// Input covers possible types of Function's arguments. It synchronizes with `FieldType` in schema.
+// Input covers possible types of Function's arguments. It synchronizes with `FieldType`.
+// It also covers Void type.
 type Input interface {
-	Void | ~int64 | ~float64
+	~int64 | ~float64
 }
 
 // Output covers possible types of Function's return value.
 type Output interface {
 	~int64 | ~float64
 }
-
-var errFieldValueType = fmt.Errorf("unsupported input value type on this field")
 
 // Arguments represents the argument array, with one argument or two arguments.
 type Arguments[A, B Input] struct {
@@ -52,8 +52,9 @@ type Function[A, B Input, R Output] interface {
 	// It uses a two-dimensional array to represent the argument array.
 	Combine(arguments Arguments[A, B]) error
 
-	// Result gives the result for the aggregation.
-	Result() R
+	// Result gives the result for the aggregation. R is the aggregating result,
+	// A is the first aggregating state, and B is the second aggregating state.
+	Result() (A, B, R)
 }
 
 // NewFunction constructs the aggregate function with given kind and parameter types.
@@ -62,8 +63,18 @@ func NewFunction[A, B Input, R Output](kind modelv1.MeasureAggregate) (Function[
 	switch kind {
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN:
 		function = &Min[A, B, R]{minimum: maxValue[R]()}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX:
+		function = &Max[A, B, R]{maximum: minValue[R]()}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_COUNT:
+		function = &Count[A, B, R]{count: 0}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_SUM:
+		function = &Sum[A, B, R]{summation: zeroValue[R]()}
 	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG:
 		function = &Avg[A, B, R]{summation: zeroValue[R](), count: 0}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_PERCENT:
+		function = &Percent[A, B, R]{total: 0, match: 0}
+	case modelv1.MeasureAggregate_MEASURE_AGGREGATE_RATE:
+		function = &Rate[A, B, R]{denominator: 0, numerator: 0}
 	default:
 		return nil, fmt.Errorf("MeasureAggregate unknown")
 	}
@@ -74,6 +85,20 @@ func NewFunction[A, B Input, R Output](kind modelv1.MeasureAggregate) (Function[
 func zeroValue[R Output]() R {
 	var r R
 	return r
+}
+
+func minValue[R Output]() (r R) {
+	switch a := any(&r).(type) {
+	case *int64:
+		*a = math.MinInt64
+	case *float64:
+		*a = -math.MaxFloat64
+	case *string:
+		*a = ""
+	default:
+		panic("unreachable")
+	}
+	return
 }
 
 func maxValue[R Output]() (r R) {
