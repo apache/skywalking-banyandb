@@ -17,56 +17,55 @@
 
 package aggregate
 
-// Avg calculates the average value of elements.
-type Avg[A, B Input, R Output] struct {
-	summation R
-	count     int64
+// Rate calculates the average value of elements.
+type Rate[A, B Input, R Output] struct {
+	denominator int64
+	numerator   int64
 }
 
 // Combine takes elements to do the aggregation.
-// Avg uses type parameter A.
-func (f *Avg[A, B, R]) Combine(arguments Arguments[A, B]) error {
+// Rate uses none of type parameters.
+func (f *Rate[A, B, R]) Combine(arguments Arguments[A, B]) error {
 	i := 0
 	n := len(arguments.arg0)
 	// step-4 aggregate
 	for ; i <= n-4; i += 4 {
-		f.summation += R(arguments.arg0[i]) + R(arguments.arg0[i+1]) +
-			R(arguments.arg0[i+2]) + R(arguments.arg0[i+3])
+		f.denominator += int64(arguments.arg0[i]) + int64(arguments.arg0[i+1]) +
+			int64(arguments.arg0[i+2]) + int64(arguments.arg0[i+3])
 	}
 	// tail aggregate
 	for ; i < n; i++ {
-		f.summation += R(arguments.arg0[i])
+		f.denominator += int64(arguments.arg0[i])
 	}
 
 	i = 0
 	n = len(arguments.arg1)
 	// step-4 aggregate
 	for ; i <= n-4; i += 4 {
-		f.count += int64(arguments.arg1[i]) + int64(arguments.arg1[i+1]) +
+		f.numerator += int64(arguments.arg1[i]) + int64(arguments.arg1[i+1]) +
 			int64(arguments.arg1[i+2]) + int64(arguments.arg1[i+3])
 	}
 	// tail aggregate
 	for ; i < n; i++ {
-		f.count += int64(arguments.arg1[i])
+		f.numerator += int64(arguments.arg1[i])
 	}
 
 	return nil
 }
 
 // Result gives the result for the aggregation.
-func (f *Avg[A, B, R]) Result() (A, B, R) {
-	var average R
-	if f.count != 0 {
-		// According to the semantics of GoLang, the division of one int by another int
-		// returns an int, instead of f float.
-		average = f.summation / R(f.count)
+func (f *Rate[A, B, R]) Result() (A, B, R) {
+	var rate R
+	if f.denominator != 0 {
+		// Factory 10000 is used to improve accuracy. This factory is same as OAP.
+		rate = R(f.numerator) * 10000 / R(f.denominator)
 	}
-	return A(f.summation), B(f.count), average
+	return A(f.denominator), B(f.numerator), rate
 }
 
-// NewAvgArguments constructs arguments.
-func NewAvgArguments[A Input](a []A, b []int64) Arguments[A, int64] {
-	return Arguments[A, int64]{
+// NewRateArguments constructs arguments.
+func NewRateArguments(a []int64, b []int64) Arguments[int64, int64] {
+	return Arguments[int64, int64]{
 		arg0: a,
 		arg1: b,
 	}
