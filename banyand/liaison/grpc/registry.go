@@ -27,6 +27,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
@@ -823,4 +824,68 @@ func (ts *topNAggregationRegistryServer) Exist(ctx context.Context, req *databas
 		return nil, errGroup
 	}
 	return &databasev1.TopNAggregationRegistryServiceExistResponse{HasGroup: exist, HasTopNAggregation: false}, nil
+}
+
+type measureAggregateFunctionServer struct {
+	databasev1.UnimplementedMeasureAggregateFunctionServiceServer
+	supports []*databasev1.MeasureAggregateFunction
+}
+
+func newMeasureAggregateFunctionServer() *measureAggregateFunctionServer {
+	functions := []*databasev1.MeasureAggregateFunction{
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_INT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_FLOAT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_MIN,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_INT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_FLOAT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_MAX,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_INT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_COUNT,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_INT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_SUM,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_FLOAT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_SUM,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_INT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_FLOAT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_AVG,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_INT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_PERCENT,
+		},
+		{
+			Type:              databasev1.FieldType_FIELD_TYPE_INT,
+			AggregateFunction: modelv1.MeasureAggregate_MEASURE_AGGREGATE_RATE,
+		},
+	}
+
+	return &measureAggregateFunctionServer{supports: functions}
+}
+
+func (ms *measureAggregateFunctionServer) Support(_ context.Context, _ *databasev1.MeasureAggregateFunctionServiceSupportRequest) (
+	*databasev1.MeasureAggregateFunctionServiceSupportResponse, error,
+) {
+	return &databasev1.MeasureAggregateFunctionServiceSupportResponse{
+		MeasureAggregateFunction: ms.supports,
+	}, nil
 }
