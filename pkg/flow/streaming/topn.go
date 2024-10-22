@@ -76,6 +76,7 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 
 type topNAggregatorGroup struct {
 	aggregatorGroup   map[string]*topNAggregator
+	keyExtractor      func(flow.StreamRecord) uint64
 	sortKeyExtractor  func(flow.StreamRecord) int64
 	groupKeyExtractor func(flow.StreamRecord) string
 	comparator        utils.Comparator
@@ -86,9 +87,9 @@ type topNAggregatorGroup struct {
 
 type topNAggregator struct {
 	*topNAggregatorGroup
-	treeMap       *treemap.Map
-	currentTopNum int
-	dirty         bool
+	treeMap *treemap.Map
+	dict    map[uint64]int64
+	dirty   bool
 }
 
 // TopNOption is the option to set up a top-n aggregator group.
@@ -98,6 +99,13 @@ type TopNOption func(aggregator *topNAggregatorGroup)
 func WithSortKeyExtractor(sortKeyExtractor func(flow.StreamRecord) int64) TopNOption {
 	return func(aggregator *topNAggregatorGroup) {
 		aggregator.sortKeyExtractor = sortKeyExtractor
+	}
+}
+
+// WithKeyExtractor sets a closure to extract the key.
+func WithKeyExtractor(keyExtractor func(flow.StreamRecord) uint64) TopNOption {
+	return func(aggregator *topNAggregatorGroup) {
+		aggregator.keyExtractor = keyExtractor
 	}
 }
 
@@ -117,14 +125,16 @@ func OrderBy(sort TopNSort) TopNOption {
 
 func (t *topNAggregatorGroup) Add(input []flow.StreamRecord) {
 	for _, item := range input {
+		key := t.keyExtractor(item)
 		sortKey := t.sortKeyExtractor(item)
 		groupKey := t.groupKeyExtractor(item)
 		aggregator := t.getOrCreateGroup(groupKey)
+		aggregator.removeExistedItem(key)
 		if aggregator.checkSortKeyInBufferRange(sortKey) {
 			if e := t.l.Debug(); e.Enabled() {
-				e.Str("group", groupKey).Time("elem_ts", time.Unix(0, item.TimestampMillis()*int64(time.Millisecond))).Msg("put into topN buffer")
+				e.Str("group", groupKey).Uint64("key", key).Time("elem_ts", time.Unix(0, item.TimestampMillis()*int64(time.Millisecond))).Msg("put into topN buffer")
 			}
-			aggregator.put(sortKey, item)
+			aggregator.put(key, sortKey, item)
 			aggregator.doCleanUp()
 		}
 	}
@@ -138,7 +148,7 @@ func (t *topNAggregatorGroup) Snapshot() interface{} {
 		}
 		aggregator.dirty = false
 		iter := aggregator.treeMap.Iterator()
-		items := make([]*Tuple2, 0, aggregator.currentTopNum)
+		items := make([]*Tuple2, 0, aggregator.size())
 		for iter.Next() {
 			list := iter.Value().([]interface{})
 			for _, item := range list {
@@ -180,28 +190,27 @@ func (t *topNAggregatorGroup) getOrCreateGroup(group string) *topNAggregator {
 	t.aggregatorGroup[group] = &topNAggregator{
 		topNAggregatorGroup: t,
 		treeMap:             treemap.NewWith(t.comparator),
+		dict:                make(map[uint64]int64),
 	}
 	return t.aggregatorGroup[group]
 }
 
 func (t *topNAggregator) doCleanUp() {
 	// do cleanup: maintain the treeMap windowSize
-	if t.currentTopNum > t.cacheSize {
+	if t.size() > t.cacheSize {
 		lastKey, lastValues := t.treeMap.Max()
-		size := len(lastValues.([]interface{}))
+		l := lastValues.([]interface{})
+		delete(t.dict, t.keyExtractor(l[len(l)-1].(flow.StreamRecord)))
 		// remove last one
-		if size <= 1 {
-			t.currentTopNum -= size
+		if len(l) <= 1 {
 			t.treeMap.Remove(lastKey)
 		} else {
-			t.currentTopNum--
-			t.treeMap.Put(lastKey, lastValues.([]interface{})[0:size-1])
+			t.treeMap.Put(lastKey, l[:len(l)-1])
 		}
 	}
 }
 
-func (t *topNAggregator) put(sortKey int64, data flow.StreamRecord) {
-	t.currentTopNum++
+func (t *topNAggregator) put(key uint64, sortKey int64, data flow.StreamRecord) {
 	t.dirty = true
 	if existingList, ok := t.treeMap.Get(sortKey); ok {
 		existingList = append(existingList.([]interface{}), data)
@@ -209,6 +218,7 @@ func (t *topNAggregator) put(sortKey int64, data flow.StreamRecord) {
 	} else {
 		t.treeMap.Put(sortKey, []interface{}{data})
 	}
+	t.dict[key] = sortKey
 }
 
 func (t *topNAggregator) checkSortKeyInBufferRange(sortKey int64) bool {
@@ -223,7 +233,50 @@ func (t *topNAggregator) checkSortKeyInBufferRange(sortKey int64) bool {
 	if t.comparator(sortKey, worstKey.(int64)) < 0 {
 		return true
 	}
-	return t.currentTopNum < t.cacheSize
+	return t.size() < t.cacheSize
+}
+
+func (t *topNAggregator) removeExistedItem(key uint64) {
+	existed, ok := t.dict[key]
+	if !ok {
+		return
+	}
+	delete(t.dict, key)
+	list, ok := t.treeMap.Get(existed)
+	if !ok {
+		return
+	}
+	l := list.([]interface{})
+	for i := 0; i < len(l); i++ {
+		if t.keyExtractor(l[i].(flow.StreamRecord)) == key {
+			l = append(l[:i], l[i+1:]...)
+		}
+	}
+	if len(l) == 0 {
+		t.treeMap.Remove(existed)
+		return
+	}
+	t.treeMap.Put(existed, l)
+}
+
+func (t *topNAggregator) size() int {
+	return len(t.dict)
+}
+
+func (t *topNAggregatorGroup) leakCheck() {
+	for g, agg := range t.aggregatorGroup {
+		if agg.size() > t.cacheSize {
+			panic(g + "leak detected: topN buffer size exceed the cache size")
+		}
+		iter := agg.treeMap.Iterator()
+		count := 0
+		for iter.Next() {
+			count += len(iter.Value().([]interface{}))
+		}
+		if count != agg.size() {
+			panic(g + "leak detected: treeMap size not match dictionary size")
+		}
+	}
 }
 
 // Tuple2 is a tuple with 2 fields. Each field may be a separate type.

@@ -193,7 +193,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
 
 	if stm.processorManager != nil {
-		stm.processorManager.onMeasureWrite(&measurev1.InternalWriteRequest{
+		stm.processorManager.onMeasureWrite(uint64(series.ID), &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
 				Metadata:  stm.GetSchema().Metadata,
 				DataPoint: req.DataPoint,

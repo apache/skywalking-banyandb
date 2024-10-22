@@ -64,6 +64,7 @@ var (
 type dataPointWithEntityValues struct {
 	*measurev1.DataPointValue
 	entityValues []*modelv1.TagValue
+	seriesID     uint64
 }
 
 type topNStreamingProcessor struct {
@@ -272,6 +273,9 @@ func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
 	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.interval, flushInterval)).
 		AllowedMaxWindows(int(t.topNSchema.GetLruSize())).
 		TopN(int(t.topNSchema.GetCountersNumber()),
+			streaming.WithKeyExtractor(func(record flow.StreamRecord) uint64 {
+				return record.Data().(flow.Data)[4].(uint64)
+			}),
 			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
 				return record.Data().(flow.Data)[2].(int64)
 			}),
@@ -322,7 +326,7 @@ func (manager *topNProcessorManager) Close() error {
 	return err
 }
 
-func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.InternalWriteRequest) {
+func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, request *measurev1.InternalWriteRequest) {
 	go func() {
 		manager.RLock()
 		defer manager.RUnlock()
@@ -331,6 +335,7 @@ func (manager *topNProcessorManager) onMeasureWrite(request *measurev1.InternalW
 				processor.src <- flow.NewStreamRecordWithTimestampPb(&dataPointWithEntityValues{
 					request.GetRequest().GetDataPoint(),
 					request.GetEntityValues(),
+					seriesID,
 				}, request.GetRequest().GetDataPoint().GetTimestamp())
 			}
 		}
@@ -436,6 +441,7 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 				dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
 				// groupBy tag values as v3
 				nil,
+				dpWithEvs.seriesID,
 			}
 		}, nil
 	}
@@ -458,6 +464,7 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			transform(groupLocator, func(locator partition.TagLocator) *modelv1.TagValue {
 				return extractTagValue(dpWithEvs.DataPointValue, locator)
 			}),
+			dpWithEvs.seriesID,
 		}
 	}, nil
 }
