@@ -4,6 +4,10 @@ Release Notes.
 
 ## 0.8.0
 
+### Bug Fixes
+
+- Fix the bug that TopN processing item leak. The item can not be updated but as a new item.
+
 ### Documentation
 
 - Improve the description of the memory in observability doc.
