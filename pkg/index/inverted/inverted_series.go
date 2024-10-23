@@ -24,7 +24,9 @@ import (
 
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/search"
+	segment "github.com/blugelabs/bluge_segment_api"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -160,4 +162,66 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 		return nil, errors.WithMessagef(err, "iterate document match iterator, hit: %d", hitNumber)
 	}
 	return result, nil
+}
+
+func (s *store) SeriesIterator(ctx context.Context) (index.FieldIterator[index.Series], error) {
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = reader.Close()
+	}()
+	dict, err := reader.DictionaryIterator(entityField, nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &dictIterator{dict: dict, ctx: ctx}, nil
+}
+
+type dictIterator struct {
+	dict   segment.DictionaryIterator
+	ctx    context.Context
+	err    error
+	series index.Series
+	i      int
+}
+
+func (d *dictIterator) Next() bool {
+	if d.err != nil {
+		return false
+	}
+	if d.i%1000 == 0 {
+		select {
+		case <-d.ctx.Done():
+			d.err = d.ctx.Err()
+			return false
+		default:
+		}
+	}
+	de, err := d.dict.Next()
+	if err != nil {
+		d.err = err
+		return false
+	}
+	if de == nil {
+		return false
+	}
+	d.series = index.Series{
+		EntityValues: convert.StringToBytes(de.Term()),
+	}
+	d.i++
+	return true
+}
+
+func (d *dictIterator) Query() index.Query {
+	return nil
+}
+
+func (d *dictIterator) Val() index.Series {
+	return d.series
+}
+
+func (d *dictIterator) Close() error {
+	return multierr.Combine(d.err, d.dict.Close())
 }
