@@ -106,7 +106,7 @@ func newAnalyzeCmd() *cobra.Command {
 			if subject != "" {
 				fmt.Printf("%s, %d\n", subject, count)
 			}
-			fmt.Printf("total: %d\n", total)
+			fmt.Printf("total, %d\n", total)
 			return nil
 		},
 	}
