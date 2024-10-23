@@ -212,6 +212,11 @@ func (s Series) String() string {
 	return fmt.Sprintf("%s:%d", s.EntityValues, s.ID)
 }
 
+// SortedField returns the value of the sorted field.
+func (s Series) SortedField() []byte {
+	return s.EntityValues
+}
+
 // SeriesDocument represents a series document in an index.
 type SeriesDocument struct {
 	Fields map[string][]byte
@@ -223,6 +228,7 @@ type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
 	Search(context.Context, []FieldKey, Query) ([]SeriesDocument, error)
+	SeriesIterator(context.Context) (FieldIterator[Series], error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

@@ -65,6 +65,8 @@ catalog:
                 path: "/interacting/bydbctl/query/filter-operation"
           - name: "CRUD Property"
             path: "/interacting/bydbctl/property"
+          - name: "Analyzing Data"
+            path: "/interacting/bydbctl/analyze"
       - name: "Web UI"
         catalog:
           - name: "Dashboard"

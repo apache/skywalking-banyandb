@@ -20,6 +20,7 @@ package v1
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 
 	"github.com/pkg/errors"
 
@@ -77,6 +78,20 @@ func MustTagValueSpecToValueType(tag databasev1.TagType) ValueType {
 		return ValueTypeStrArr
 	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
 		return ValueTypeInt64Arr
+	default:
+		panic("unknown tag value type")
+	}
+}
+
+// MustTagValueToStr converts modelv1.TagValue to string.
+func MustTagValueToStr(tag *modelv1.TagValue) string {
+	switch tag.Value.(type) {
+	case *modelv1.TagValue_Str:
+		return `"` + tag.GetStr().Value + `"`
+	case *modelv1.TagValue_Int:
+		return strconv.FormatInt(tag.GetInt().Value, 10)
+	case *modelv1.TagValue_BinaryData:
+		return fmt.Sprintf("%x", tag.GetBinaryData())
 	default:
 		panic("unknown tag value type")
 	}

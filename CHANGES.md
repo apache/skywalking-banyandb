@@ -4,6 +4,10 @@ Release Notes.
 
 ## 0.8.0
 
+### Features
+
+- Add the `bydbctl analyze series` command to analyze the series data.
+
 ### Bug Fixes
 
 - Fix the bug that TopN processing item leak. The item can not be updated but as a new item.
