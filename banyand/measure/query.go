@@ -86,29 +86,36 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 			EntityValues: mqo.Entities[i],
 		}
 	}
-	var result queryResult
-	result.ctx = ctx
+
 	tsdb := db.(storage.TSDB[*tsTable, option])
-	result.segments = tsdb.SelectSegments(*mqo.TimeRange)
-	if len(result.segments) < 1 {
-		return &result, nil
+	segments := tsdb.SelectSegments(*mqo.TimeRange)
+	if len(segments) < 1 {
+		return model.BypassResult, nil
+	}
+
+	if s.schema.NonTimeSeries {
+		return s.buildIndexQueryResult(ctx, series, mqo, segments)
+	}
+
+	sids, tables, storedIndexValue, newTagProjection, err := s.searchSeriesList(ctx, series, mqo, segments)
+	if err != nil {
+		return nil, err
+	}
+	if len(sids) < 1 {
+		return model.BypassResult, nil
+	}
+	result := queryResult{
+		ctx:              ctx,
+		segments:         segments,
+		tagProjection:    newTagProjection,
+		storedIndexValue: storedIndexValue,
 	}
 	defer func() {
 		if err != nil {
 			result.Release()
 		}
 	}()
-
-	sids, tables, storedIndexValue, newTagProjection, err := s.searchSeriesList(ctx, series, mqo, result.segments)
-	if err != nil {
-		return nil, err
-	}
-	if len(sids) < 1 {
-		return &result, nil
-	}
-	result.tagProjection = mqo.TagProjection
 	mqo.TagProjection = newTagProjection
-	result.storedIndexValue = storedIndexValue
 	var parts []*part
 	qo := queryOptions{
 		MeasureQueryOptions: mqo,
@@ -195,7 +202,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 	}
 	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
-		sll, fieldResultList, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
+		sll, fieldResultList, _, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
 			Query:       mqo.Query,
 			Order:       mqo.Order,
 			PreloadSize: preloadSize,
@@ -237,6 +244,46 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 		}
 	}
 	return sl, tables, storedIndexValue, newTagProjection, nil
+}
+
+func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
+	segments []storage.Segment[*tsTable, option],
+) (*indexQueryResult, error) {
+	r := &indexQueryResult{
+		ctx:      ctx,
+		series:   series,
+		mqo:      mqo,
+		segments: segments,
+	}
+	for _, tp := range mqo.TagProjection {
+		tagFamilyLocation := tagFamilyLocation{
+			name:                   tp.Family,
+			fieldToValueType:       make(map[string]tagNameWithType),
+			projectedEntityOffsets: make(map[string]int),
+		}
+	TAG:
+		for _, n := range tp.Names {
+			for i := range s.schema.GetEntity().GetTagNames() {
+				if n == s.schema.GetEntity().GetTagNames()[i] {
+					tagFamilyLocation.projectedEntityOffsets[n] = i
+					continue TAG
+				}
+			}
+			if fields, ok := s.fieldIndexLocation[tp.Family]; ok {
+				if field, ok := fields[n]; ok {
+					r.indexProjection = append(r.indexProjection, field.Key)
+					tagFamilyLocation.fieldToValueType[field.Key.Marshal()] = tagNameWithType{
+						name: n,
+						typ:  field.Type,
+					}
+					continue TAG
+				}
+			}
+			return nil, fmt.Errorf("tag %s not found in schema", n)
+		}
+		r.tfl = append(r.tfl, tagFamilyLocation)
+	}
+	return r, nil
 }
 
 func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []*part, qo queryOptions) error {
@@ -633,4 +680,95 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	}
 
 	return result
+}
+
+var (
+	bypassVersions = []int64{0}
+	bypassFields   = []model.Field{}
+)
+
+type indexQueryResult struct {
+	mqo             model.MeasureQueryOptions
+	tfl             []tagFamilyLocation
+	indexProjection []index.FieldKey
+	ctx             context.Context
+	series          []*pbv1.Series
+
+	segments []storage.Segment[*tsTable, option]
+
+	i          int
+	sll        pbv1.SeriesList
+	frl        storage.FieldResultList
+	timestamps []int64
+	err        error
+}
+
+// Pull implements model.MeasureQueryResult.
+func (i *indexQueryResult) Pull() *model.MeasureResult {
+	if i.i < 0 {
+		if len(i.segments) < 1 {
+			return nil
+		}
+		i.sll, i.frl, i.timestamps, i.err = i.segments[0].IndexDB().Search(i.ctx, i.series, storage.IndexSearchOpts{
+			Query:       i.mqo.Query,
+			Order:       i.mqo.Order,
+			PreloadSize: preloadSize,
+			Projection:  i.indexProjection,
+		})
+		if i.err != nil {
+			return &model.MeasureResult{
+				Error: i.err,
+			}
+		}
+		i.segments = i.segments[1:]
+		if len(i.sll) < 1 {
+			return i.Pull()
+		}
+		i.i = 0
+	}
+	if i.i >= len(i.sll) {
+		i.i = -1
+		return i.Pull()
+	}
+	r := &model.MeasureResult{
+		SID:        i.sll[i.i].ID,
+		Timestamps: []int64{i.timestamps[i.i]},
+		Versions:   bypassVersions,
+	}
+	for j := range i.tfl {
+		tagFamily := model.TagFamily{Name: i.tfl[j].name}
+		for name, offset := range i.tfl[j].projectedEntityOffsets {
+			tagFamily.Tags = append(tagFamily.Tags, model.Tag{
+				Name:   name,
+				Values: []*modelv1.TagValue{i.sll[i.i].EntityValues[offset]},
+			})
+		}
+		if i.frl == nil {
+			continue
+		}
+		for f, v := range i.frl[j] {
+			if tnt, ok := i.tfl[j].fieldToValueType[f]; ok {
+				tagFamily.Tags = append(tagFamily.Tags, model.Tag{
+					Name:   tnt.name,
+					Values: []*modelv1.TagValue{mustDecodeTagValue(tnt.typ, v)},
+				})
+			} else {
+				return &model.MeasureResult{
+					Error: errors.Errorf("unknown field %s not found in fieldToValueType", f),
+				}
+			}
+		}
+		r.TagFamilies = append(r.TagFamilies, tagFamily)
+	}
+	i.i++
+	return r
+}
+
+func (i *indexQueryResult) Release() {
+}
+
+type tagFamilyLocation struct {
+	name                   string
+	fieldToValueType       map[string]tagNameWithType
+	projectedEntityOffsets map[string]int
 }

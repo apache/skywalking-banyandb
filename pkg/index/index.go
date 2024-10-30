@@ -51,10 +51,14 @@ type FieldKey struct {
 	Analyzer    string
 	SeriesID    common.SeriesID
 	IndexRuleID uint32
+	TagName     string
 }
 
 // Marshal encodes f to string.
 func (f FieldKey) Marshal() string {
+	if len(f.TagName) > 0 {
+		return f.TagName
+	}
 	return string(convert.Uint32ToBytes(f.IndexRuleID))
 }
 
@@ -69,6 +73,7 @@ type Field struct {
 	Key    FieldKey
 	NoSort bool
 	Store  bool
+	Index  bool
 }
 
 // RangeOpts contains options to performance a continuous scan.
@@ -214,8 +219,9 @@ func (s Series) String() string {
 
 // SeriesDocument represents a series document in an index.
 type SeriesDocument struct {
-	Fields map[string][]byte
-	Key    Series
+	Fields    map[string][]byte
+	Timestamp int64
+	Key       Series
 }
 
 // SeriesStore is an abstract of a series repository.

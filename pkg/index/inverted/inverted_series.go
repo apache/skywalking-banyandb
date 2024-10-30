@@ -21,6 +21,7 @@ package inverted
 import (
 	"bytes"
 	"context"
+	"fmt"
 
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/search"
@@ -117,11 +118,13 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 		return nil, errors.WithMessage(err, "iterate document match iterator")
 	}
 	docIDMap := make(map[uint64]struct{})
-	fields := make([]string, 0, len(loadedFields))
+	fields := make([]string, 0, len(loadedFields)+3)
+	fields = append(fields, docIDField, entityField, timestampField)
 	for i := range loadedFields {
 		fields = append(fields, loadedFields[i].Marshal())
 	}
 	var hitNumber int
+	ctx := search.NewSearchContext(1, 0)
 	for err == nil && next != nil {
 		hitNumber = next.HitNumber
 		var doc index.SeriesDocument
@@ -131,8 +134,17 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 				doc.Fields[fields[i]] = nil
 			}
 		}
-		err = next.VisitStoredFields(func(field string, value []byte) bool {
-			switch field {
+		err = next.LoadDocumentValues(ctx, fields)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "visit stored fields, hit: %d", hitNumber)
+		}
+		for i := range fields {
+			vv := next.DocValues(fields[i])
+			if vv == nil {
+				continue
+			}
+			value := vv[0]
+			switch fields[i] {
 			case docIDField:
 				id := convert.BytesToUint64(value)
 				if _, ok := docIDMap[id]; !ok {
@@ -140,16 +152,19 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 					docIDMap[id] = struct{}{}
 				}
 			case entityField:
+				fmt.Printf("entityField: %v\n", vv)
 				doc.Key.EntityValues = value
+			case timestampField:
+				ts, errTime := bluge.DecodeDateTime(value)
+				if errTime != nil {
+					return nil, err
+				}
+				doc.Timestamp = ts.UnixNano()
 			default:
-				if _, ok := doc.Fields[field]; ok {
-					doc.Fields[field] = bytes.Clone(value)
+				if _, ok := doc.Fields[fields[i]]; ok {
+					doc.Fields[fields[i]] = bytes.Clone(value)
 				}
 			}
-			return true
-		})
-		if err != nil {
-			return nil, errors.WithMessagef(err, "visit stored fields, hit: %d", hitNumber)
 		}
 		if doc.Key.ID > 0 {
 			result = append(result, doc)

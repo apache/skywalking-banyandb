@@ -58,7 +58,6 @@ var (
 	defaultUpper            = convert.Uint64ToBytes(math.MaxUint64)
 	defaultLower            = convert.Uint64ToBytes(0)
 	defaultRangePreloadSize = 1000
-	defaultProjection       = []string{docIDField}
 )
 
 // Analyzers is a map that associates each IndexRule_Analyzer type with a corresponding Analyzer.
@@ -272,7 +271,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader, defaultProjection)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, nil)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
@@ -305,7 +304,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string, opts *modelv1.C
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader, defaultProjection)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, nil)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
@@ -352,16 +351,19 @@ type blugeMatchIterator struct {
 	needToLoadFields []string
 	current          index.DocumentResult
 	hit              int
+	ctx              *search.Context
 }
 
 func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer,
 	needToLoadFields []string,
 ) blugeMatchIterator {
+	needToLoadFields = append(needToLoadFields, entityField, docIDField, seriesIDField, timestampField)
 	bmi := blugeMatchIterator{
 		delegated:        delegated,
 		closer:           closer,
 		needToLoadFields: needToLoadFields,
 		current:          index.DocumentResult{Values: make(map[string][]byte, len(needToLoadFields))},
+		ctx:              search.NewSearchContext(1, 0),
 	}
 	for _, f := range needToLoadFields {
 		bmi.current.Values[f] = nil
@@ -391,8 +393,19 @@ func (bmi *blugeMatchIterator) Next() bool {
 	if len(match.SortValue) > 0 {
 		bmi.current.SortedValue = match.SortValue[0]
 	}
-	err := match.VisitStoredFields(func(field string, value []byte) bool {
-		switch field {
+	err := match.LoadDocumentValues(bmi.ctx, bmi.needToLoadFields)
+
+	if err != nil {
+		bmi.err = errors.WithMessagef(err, "load document values, hit: %d", bmi.hit)
+		return false
+	}
+	for i := range bmi.needToLoadFields {
+		vv := match.DocValues(bmi.needToLoadFields[i])
+		if vv == nil {
+			continue
+		}
+		value := vv[0]
+		switch bmi.needToLoadFields[i] {
 		case entityField:
 			bmi.current.EntityValues = value
 		case docIDField:
@@ -407,13 +420,11 @@ func (bmi *blugeMatchIterator) Next() bool {
 			}
 			bmi.current.Timestamp = ts.UnixNano()
 		default:
-			if _, ok := bmi.current.Values[field]; ok {
-				bmi.current.Values[field] = bytes.Clone(value)
+			if _, ok := bmi.current.Values[bmi.needToLoadFields[i]]; ok {
+				bmi.current.Values[bmi.needToLoadFields[i]] = bytes.Clone(value)
 			}
 		}
-		return true
-	})
-	bmi.err = errors.WithMessagef(err, "visit stored fields, hit: %d", bmi.hit)
+	}
 	return bmi.err == nil
 }
 
