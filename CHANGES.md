@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - Add the `bydbctl analyze series` command to analyze the series data.
+- Index: Remove sortable field from the stored field. If a field is sortable only, it won't be stored.
 
 ### Bug Fixes
 
@@ -15,6 +16,7 @@ Release Notes.
 ### Documentation
 
 - Improve the description of the memory in observability doc.
+- Update kubernetes install document to align the banyandb helm v0.3.0.
 
 ### Chores
 

@@ -25,6 +25,7 @@ import (
 	"math"
 
 	"github.com/blugelabs/bluge"
+	"github.com/blugelabs/bluge/search"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -69,26 +70,34 @@ func (s *store) Sort(ctx context.Context, sids []common.SeriesID, fieldKey index
 		sortedKey = "-" + sortedKey
 	}
 	result := &sortIterator{
-		query:     &queryNode{query: query},
-		reader:    reader,
-		sortedKey: sortedKey,
-		size:      preLoadSize,
-		ctx:       ctx,
+		query:       &queryNode{query: query},
+		reader:      reader,
+		sortedKey:   sortedKey,
+		size:        preLoadSize,
+		ctx:         ctx,
+		newIterator: newBlugeMatchIterator,
 	}
 	return result, nil
 }
 
+type blugeIterator interface {
+	Next() bool
+	Val() index.DocumentResult
+	Close() error
+}
+
 type sortIterator struct {
-	query     index.Query
-	err       error
-	ctx       context.Context
-	reader    *bluge.Reader
-	current   *blugeMatchIterator
-	closer    *run.Closer
-	sortedKey string
-	fields    []string
-	size      int
-	skipped   int
+	query       index.Query
+	err         error
+	ctx         context.Context
+	current     blugeIterator
+	reader      *bluge.Reader
+	closer      *run.Closer
+	newIterator func(delegated search.DocumentMatchIterator, closer io.Closer, needToLoadFields []string) blugeIterator
+	sortedKey   string
+	fields      []string
+	size        int
+	skipped     int
 }
 
 func (si *sortIterator) Next() bool {
@@ -123,8 +132,7 @@ func (si *sortIterator) loadCurrent() bool {
 		return false
 	}
 
-	iter := newBlugeMatchIterator(documentMatchIterator, nil, si.fields)
-	si.current = &iter
+	si.current = si.newIterator(documentMatchIterator, nil, si.fields)
 	if si.next() {
 		return true
 	}

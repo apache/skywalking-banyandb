@@ -121,7 +121,7 @@ func (s *store) Batch(batch index.Batch) error {
 		for _, f := range d.Fields {
 			tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
 			if !f.NoSort {
-				tf.StoreValue().Sortable()
+				tf.Sortable()
 			}
 			if f.Store {
 				tf.StoreValue()
@@ -178,7 +178,7 @@ func (s *store) Close() error {
 }
 
 func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
-	preLoadSize int, indexQuery index.Query, fieldKeys []index.FieldKey,
+	preLoadSize int,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
 	if termRange.Lower != nil &&
 		termRange.Upper != nil &&
@@ -229,25 +229,14 @@ func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange
 	if order == modelv1.Sort_SORT_DESC {
 		sortedKey = "-" + sortedKey
 	}
-	query := bluge.NewBooleanQuery().AddMust(rangeQuery)
-	node := newMustNode()
-	node.Append(rangeNode)
-	if indexQuery != nil && indexQuery.(*queryNode).query != nil {
-		query.AddMust(indexQuery.(*queryNode).query)
-		node.Append(indexQuery.(*queryNode).node)
-	}
-	fields := make([]string, 0, len(fieldKeys))
-	for i := range fieldKeys {
-		fields = append(fields, fieldKeys[i].Marshal())
-	}
 	result := &sortIterator{
-		query:     &queryNode{query, node},
-		fields:    fields,
-		reader:    reader,
-		sortedKey: sortedKey,
-		size:      preLoadSize,
-		closer:    s.closer,
-		ctx:       ctx,
+		query:       &queryNode{rangeQuery, rangeNode},
+		reader:      reader,
+		sortedKey:   sortedKey,
+		size:        preLoadSize,
+		closer:      s.closer,
+		ctx:         ctx,
+		newIterator: newBlugeMatchIterator,
 	}
 	return result, nil
 }
@@ -333,7 +322,7 @@ func getMatchOptions(analyzerOnIndexRule string, opts *modelv1.Condition_MatchOp
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
-	iter, err := s.Iterator(context.TODO(), fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize, nil, nil)
+	iter, err := s.Iterator(context.TODO(), fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize)
 	if err != nil {
 		return roaring.DummyPostingList, err
 	}
@@ -346,25 +335,22 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 type blugeMatchIterator struct {
-	delegated        search.DocumentMatchIterator
-	err              error
-	closer           io.Closer
-	needToLoadFields []string
-	current          index.DocumentResult
-	hit              int
+	delegated search.DocumentMatchIterator
+	err       error
+	closer    io.Closer
+	ctx       *search.Context
+	current   index.DocumentResult
+	hit       int
 }
 
 func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer,
-	needToLoadFields []string,
-) blugeMatchIterator {
-	bmi := blugeMatchIterator{
-		delegated:        delegated,
-		closer:           closer,
-		needToLoadFields: needToLoadFields,
-		current:          index.DocumentResult{Values: make(map[string][]byte, len(needToLoadFields))},
-	}
-	for _, f := range needToLoadFields {
-		bmi.current.Values[f] = nil
+	_ []string,
+) blugeIterator {
+	bmi := &blugeMatchIterator{
+		delegated: delegated,
+		closer:    closer,
+		current:   index.DocumentResult{},
+		ctx:       search.NewSearchContext(1, 0),
 	}
 	return bmi
 }
@@ -391,30 +377,28 @@ func (bmi *blugeMatchIterator) Next() bool {
 	if len(match.SortValue) > 0 {
 		bmi.current.SortedValue = match.SortValue[0]
 	}
-	err := match.VisitStoredFields(func(field string, value []byte) bool {
-		switch field {
-		case entityField:
-			bmi.current.EntityValues = value
-		case docIDField:
-			bmi.current.DocID = convert.BytesToUint64(value)
-		case seriesIDField:
-			bmi.current.SeriesID = common.SeriesID(convert.BytesToUint64(value))
-		case timestampField:
-			ts, err := bluge.DecodeDateTime(value)
-			if err != nil {
-				bmi.err = err
-				return false
-			}
-			bmi.current.Timestamp = ts.UnixNano()
-		default:
-			if _, ok := bmi.current.Values[field]; ok {
-				bmi.current.Values[field] = bytes.Clone(value)
-			}
-		}
-		return true
-	})
-	bmi.err = errors.WithMessagef(err, "visit stored fields, hit: %d", bmi.hit)
+	err := match.VisitStoredFields(bmi.setVal)
+	bmi.err = multierr.Combine(bmi.err, err)
 	return bmi.err == nil
+}
+
+func (bmi *blugeMatchIterator) setVal(field string, value []byte) bool {
+	switch field {
+	case docIDField:
+		bmi.current.DocID = convert.BytesToUint64(value)
+	case seriesIDField:
+		bmi.current.SeriesID = common.SeriesID(convert.BytesToUint64(value))
+	case timestampField:
+		ts, errTime := bluge.DecodeDateTime(value)
+		if errTime != nil {
+			bmi.err = errTime
+			return false
+		}
+		bmi.current.Timestamp = ts.UnixNano()
+	default:
+		bmi.err = errors.Errorf("unexpected field: %s", field)
+	}
+	return true
 }
 
 func (bmi *blugeMatchIterator) Val() index.DocumentResult {

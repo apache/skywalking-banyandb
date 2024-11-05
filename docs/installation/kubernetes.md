@@ -35,8 +35,8 @@ kubectl create ns sw
 ```shell
 helm install banyandb \
     oci://registry-1.docker.io/apache/skywalking-banyandb-helm \
-    --version 0.2.0 \
-    --set image.tag=0.6.1 \
+    --version 0.3.0 \
+    --set image.tag=0.7.0 \
     --set standalone.enabled=true \
     --set cluster.enabled=false \
     --set etcd.enabled=false \
@@ -84,8 +84,8 @@ At the same time, the BanyanDB server would be listening on the `0.0.0.0:17913` 
 ```shell
 helm install banyandb \
     oci://registry-1.docker.io/apache/skywalking-banyandb-helm \
-    --version 0.2.0 \
-    --set image.tag=0.6.1 \
+    --version 0.3.0 \
+    --set image.tag=0.7.0 \
     --set standalone.enabled=false \
     --set cluster.enabled=true \
     --set etcd.enabled=true \
