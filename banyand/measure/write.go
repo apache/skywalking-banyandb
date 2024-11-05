@@ -163,8 +163,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 							IndexRuleID: r.GetMetadata().GetId(),
 							Analyzer:    r.Analyzer,
 						},
-						Term:  encodeTagValue.value,
-						Store: true,
+						Term:   encodeTagValue.value,
+						Store:  true,
+						NoSort: r.GetNoSort(),
 					})
 				} else {
 					for _, val := range encodeTagValue.valueArr {
@@ -173,8 +174,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 								IndexRuleID: r.GetMetadata().GetId(),
 								Analyzer:    r.Analyzer,
 							},
-							Term:  val,
-							Store: true,
+							Term:   val,
+							Store:  true,
+							NoSort: r.GetNoSort(),
 						})
 					}
 				}

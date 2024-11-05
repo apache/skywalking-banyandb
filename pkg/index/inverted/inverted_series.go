@@ -21,6 +21,7 @@ package inverted
 import (
 	"bytes"
 	"context"
+	"io"
 
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/search"
@@ -29,6 +30,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
@@ -162,6 +164,157 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 		return nil, errors.WithMessagef(err, "iterate document match iterator, hit: %d", hitNumber)
 	}
 	return result, nil
+}
+
+func (s *store) SeriesSort(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
+	preLoadSize int, indexQuery index.Query, fieldKeys []index.FieldKey,
+) (iter index.FieldIterator[*index.DocumentResult], err error) {
+	if termRange.Lower != nil &&
+		termRange.Upper != nil &&
+		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
+		return index.DummyFieldIterator, nil
+	}
+	if !s.closer.AddRunning() {
+		return nil, nil
+	}
+
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return nil, err
+	}
+	fk := fieldKey.Marshal()
+	rangeQuery := bluge.NewBooleanQuery()
+	rangeNode := newMustNode()
+	addRange := func(query *bluge.BooleanQuery, termRange index.RangeOpts) *bluge.BooleanQuery {
+		if termRange.Upper == nil {
+			termRange.Upper = defaultUpper
+		}
+		if termRange.Lower == nil {
+			termRange.Lower = defaultLower
+		}
+		query.AddMust(bluge.NewTermRangeInclusiveQuery(
+			string(termRange.Lower),
+			string(termRange.Upper),
+			termRange.IncludesLower,
+			termRange.IncludesUpper,
+		).
+			SetField(fk))
+		rangeNode.Append(newTermRangeInclusiveNode(string(termRange.Lower), string(termRange.Upper), termRange.IncludesLower, termRange.IncludesUpper, nil))
+		return query
+	}
+
+	if fieldKey.HasSeriesID() {
+		rangeQuery = rangeQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
+			SetField(seriesIDField))
+		rangeNode.Append(newTermNode(string(fieldKey.SeriesID.Marshal()), nil))
+		if termRange.Lower != nil || termRange.Upper != nil {
+			rangeQuery = addRange(rangeQuery, termRange)
+		}
+	} else {
+		rangeQuery = addRange(rangeQuery, termRange)
+	}
+
+	sortedKey := fk
+	if order == modelv1.Sort_SORT_DESC {
+		sortedKey = "-" + sortedKey
+	}
+	query := bluge.NewBooleanQuery().AddMust(rangeQuery)
+	node := newMustNode()
+	node.Append(rangeNode)
+	if indexQuery != nil && indexQuery.(*queryNode).query != nil {
+		query.AddMust(indexQuery.(*queryNode).query)
+		node.Append(indexQuery.(*queryNode).node)
+	}
+	fields := make([]string, 0, len(fieldKeys))
+	for i := range fieldKeys {
+		fields = append(fields, fieldKeys[i].Marshal())
+	}
+	result := &sortIterator{
+		query:       &queryNode{query, node},
+		fields:      fields,
+		reader:      reader,
+		sortedKey:   sortedKey,
+		size:        preLoadSize,
+		closer:      s.closer,
+		ctx:         ctx,
+		newIterator: newSeriesIterator,
+	}
+	return result, nil
+}
+
+type seriesIterator struct {
+	*blugeMatchIterator
+	needToLoadFields []string
+}
+
+func newSeriesIterator(delegated search.DocumentMatchIterator, closer io.Closer,
+	needToLoadFields []string,
+) blugeIterator {
+	si := &seriesIterator{
+		blugeMatchIterator: &blugeMatchIterator{
+			delegated: delegated,
+			closer:    closer,
+			ctx:       search.NewSearchContext(1, 0),
+			current:   index.DocumentResult{Values: make(map[string][]byte, len(needToLoadFields))},
+		},
+		needToLoadFields: append(needToLoadFields, entityField, docIDField, seriesIDField, timestampField),
+	}
+	for _, f := range needToLoadFields {
+		si.current.Values[f] = nil
+	}
+	return si
+}
+
+func (si *seriesIterator) Next() bool {
+	var match *search.DocumentMatch
+	match, si.err = si.delegated.Next()
+	if si.err != nil {
+		si.err = errors.WithMessagef(si.err, "failed to get next document, hit: %d", si.hit)
+		return false
+	}
+	if match == nil {
+		si.err = io.EOF
+		return false
+	}
+	si.hit = match.HitNumber
+	for i := range si.current.Values {
+		si.current.Values[i] = nil
+	}
+	si.current.DocID = 0
+	si.current.SeriesID = 0
+	si.current.Timestamp = 0
+	si.current.SortedValue = nil
+	if len(match.SortValue) > 0 {
+		si.current.SortedValue = match.SortValue[0]
+	}
+
+	err := match.VisitStoredFields(si.setVal)
+	si.err = multierr.Combine(si.err, err)
+	if si.err != nil {
+		return false
+	}
+	return si.err == nil
+}
+
+func (si *seriesIterator) setVal(field string, value []byte) bool {
+	switch field {
+	case entityField:
+		si.current.EntityValues = value
+	case docIDField:
+		si.current.DocID = convert.BytesToUint64(value)
+	case timestampField:
+		ts, errTime := bluge.DecodeDateTime(value)
+		if errTime != nil {
+			si.err = errTime
+			return false
+		}
+		si.current.Timestamp = ts.UnixNano()
+	default:
+		if _, ok := si.current.Values[field]; ok {
+			si.current.Values[field] = bytes.Clone(value)
+		}
+	}
+	return true
 }
 
 func (s *store) SeriesIterator(ctx context.Context) (index.FieldIterator[index.Series], error) {

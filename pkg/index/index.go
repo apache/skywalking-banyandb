@@ -175,7 +175,7 @@ type Writer interface {
 type FieldIterable interface {
 	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query) (Query, error)
 	Iterator(ctx context.Context, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort,
-		preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
+		preLoadSize int) (iter FieldIterator[*DocumentResult], err error)
 	Sort(ctx context.Context, sids []common.SeriesID, fieldKey FieldKey,
 		order modelv1.Sort, timeRange *timestamp.TimeRange, preLoadSize int) (FieldIterator[*DocumentResult], error)
 }
@@ -229,6 +229,8 @@ type SeriesStore interface {
 	// Search returns a list of series that match the given matchers.
 	Search(context.Context, []FieldKey, Query) ([]SeriesDocument, error)
 	SeriesIterator(context.Context) (FieldIterator[Series], error)
+	SeriesSort(ctx context.Context, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort,
+		preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
 }
 
 // SeriesMatcherType represents the type of series matcher.
