@@ -113,12 +113,8 @@ func (s *store) Batch(batch index.Batch) error {
 	b := generateBatch()
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
-		var fk *index.FieldKey
-		if len(d.Fields) > 0 {
-			fk = &d.Fields[0].Key
-		}
 		doc := bluge.NewDocument(convert.BytesToString(convert.Uint64ToBytes(d.DocID)))
-		for _, f := range d.Fields {
+		for i, f := range d.Fields {
 			tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
 			if !f.NoSort {
 				tf.Sortable()
@@ -130,17 +126,15 @@ func (s *store) Batch(batch index.Batch) error {
 				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
 			}
 			doc.AddField(tf)
+			if i == 0 {
+				doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, f.Key.SeriesID.Marshal()).StoreValue())
+			}
 		}
 
-		if d.EntityValues != nil {
-			doc.AddField(bluge.NewKeywordFieldBytes(entityField, d.EntityValues).StoreValue())
-		} else if fk != nil && fk.HasSeriesID() {
-			doc.AddField(bluge.NewKeywordFieldBytes(seriesIDField, fk.SeriesID.Marshal()).StoreValue())
-		}
 		if d.Timestamp > 0 {
 			doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
 		}
-		b.Update(doc.ID(), doc)
+		b.Insert(doc)
 	}
 	return s.writer.Batch(b)
 }
@@ -196,14 +190,18 @@ func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange
 	fk := fieldKey.Marshal()
 	rangeQuery := bluge.NewBooleanQuery()
 	rangeNode := newMustNode()
-	addRange := func(query *bluge.BooleanQuery, termRange index.RangeOpts) *bluge.BooleanQuery {
+
+	rangeQuery = rangeQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
+		SetField(seriesIDField))
+	rangeNode.Append(newTermNode(string(fieldKey.SeriesID.Marshal()), nil))
+	if termRange.Lower != nil || termRange.Upper != nil {
 		if termRange.Upper == nil {
 			termRange.Upper = defaultUpper
 		}
 		if termRange.Lower == nil {
 			termRange.Lower = defaultLower
 		}
-		query.AddMust(bluge.NewTermRangeInclusiveQuery(
+		rangeQuery.AddMust(bluge.NewTermRangeInclusiveQuery(
 			string(termRange.Lower),
 			string(termRange.Upper),
 			termRange.IncludesLower,
@@ -211,18 +209,6 @@ func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange
 		).
 			SetField(fk))
 		rangeNode.Append(newTermRangeInclusiveNode(string(termRange.Lower), string(termRange.Upper), termRange.IncludesLower, termRange.IncludesUpper, nil))
-		return query
-	}
-
-	if fieldKey.HasSeriesID() {
-		rangeQuery = rangeQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
-			SetField(seriesIDField))
-		rangeNode.Append(newTermNode(string(fieldKey.SeriesID.Marshal()), nil))
-		if termRange.Lower != nil || termRange.Upper != nil {
-			rangeQuery = addRange(rangeQuery, termRange)
-		}
-	} else {
-		rangeQuery = addRange(rangeQuery, termRange)
 	}
 
 	sortedKey := fk
@@ -252,11 +238,9 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	}
 	fk := field.Key.Marshal()
 	query := bluge.NewBooleanQuery().
-		AddMust(bluge.NewTermQuery(string(field.Term)).SetField(fk))
-	if field.Key.HasSeriesID() {
-		query = query.AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).
+		AddMust(bluge.NewTermQuery(string(field.Term)).SetField(fk)).
+		AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).
 			SetField(seriesIDField))
-	}
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
 		return nil, err
@@ -283,9 +267,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string, opts *modelv1.C
 	analyzer, operator := getMatchOptions(fieldKey.Analyzer, opts)
 	fk := fieldKey.Marshal()
 	query := bluge.NewBooleanQuery()
-	if fieldKey.HasSeriesID() {
-		query.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).SetField(seriesIDField))
-	}
+	query.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).SetField(seriesIDField))
 	for _, m := range matches {
 		query.AddMust(bluge.NewMatchQuery(m).SetField(fk).
 			SetAnalyzer(analyzer).SetOperator(operator))

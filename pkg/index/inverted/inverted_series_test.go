@@ -393,7 +393,7 @@ func setupData(tester *require.Assertions, s index.SeriesStore) {
 			},
 		},
 	}
-	tester.NoError(s.Batch(index.Batch{
+	tester.NoError(s.SeriesBatch(index.Batch{
 		Documents: []index.Document{series1, series2, series3, series3},
 	}))
 }

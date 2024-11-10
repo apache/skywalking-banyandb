@@ -58,11 +58,6 @@ func (f FieldKey) Marshal() string {
 	return string(convert.Uint32ToBytes(f.IndexRuleID))
 }
 
-// HasSeriesID reports whether f has a series id.
-func (f FieldKey) HasSeriesID() bool {
-	return f.SeriesID > 0
-}
-
 // Field is a indexed item in a document.
 type Field struct {
 	Term   []byte
@@ -169,6 +164,7 @@ type Batch struct {
 // Writer allows writing fields and docID in a document to an index.
 type Writer interface {
 	Batch(batch Batch) error
+	SeriesBatch(batch Batch) error
 }
 
 // FieldIterable allows building a FieldIterator.
