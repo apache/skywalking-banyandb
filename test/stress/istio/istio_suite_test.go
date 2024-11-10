@@ -132,35 +132,43 @@ func ReadAndWriteFromFile(filePath string, conn *grpc.ClientConn) (int, error) {
 	bulkSize := 2000
 	c := measurev1.NewMeasureServiceClient(conn)
 	ctx := context.Background()
-	client, err := c.Write(ctx)
-	if err != nil {
+	var client grpc.BidiStreamingClient[measurev1.WriteRequest, measurev1.WriteResponse]
+	createClient := func() error {
+		var err error
+		client, err = c.Write(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create write client: %w", err)
+		}
+		go func(c grpc.BidiStreamingClient[measurev1.WriteRequest, measurev1.WriteResponse]) {
+			for {
+				_, err = c.Recv()
+				if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+					return
+				}
+				if err != nil {
+					l.Error().Err(err).Msg("failed to receive response from measureService")
+					return
+				}
+			}
+		}(client)
+		return nil
+	}
+	if err := createClient(); err != nil {
 		return 0, fmt.Errorf("failed to create write client: %w", err)
 	}
 	writeCount := 0
-	flush := func(createClient bool) error {
+	flush := func(newClient bool) error {
 		if errClose := client.CloseSend(); errClose != nil {
 			return fmt.Errorf("failed to close send: %w", errClose)
 		}
 		bulkSize = 2000
 		writeCount += 2000
-		for i := 0; i < 2000; i++ {
-			_, err = client.Recv()
-			if err != nil && !errors.Is(err, io.EOF) {
-				return fmt.Errorf("failed to receive client: %w", err)
-			}
-			if errors.Is(err, io.EOF) {
-				break
-			}
-		}
-		if !createClient {
+		if !newClient {
 			return nil
 		}
-		client, err = c.Write(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to create write client: %w", err)
-		}
-		return nil
+		return createClient()
 	}
+	var err error
 	loop := func(round int) error {
 		currentTime := startTime.Add(time.Duration(round) * time.Minute)
 		minute = currentTime.Truncate(time.Minute)

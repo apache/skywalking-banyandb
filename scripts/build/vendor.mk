@@ -21,5 +21,5 @@
 
 .PHONY: vendor-update
 vendor-update: ## Update vendors
-	go get -u -d ./...
+	go get -u ./...
 	go mod tidy -compat=1.23

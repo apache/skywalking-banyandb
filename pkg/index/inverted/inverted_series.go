@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"time"
 
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/search"
@@ -36,6 +37,41 @@ import (
 )
 
 var emptySeries = make([]index.SeriesDocument, 0)
+
+func (s *store) SeriesBatch(batch index.Batch) error {
+	if len(batch.Documents) == 0 {
+		return nil
+	}
+	if !s.closer.AddRunning() {
+		return nil
+	}
+	defer s.closer.Done()
+	b := generateBatch()
+	defer releaseBatch(b)
+	for _, d := range batch.Documents {
+		doc := bluge.NewDocument(convert.BytesToString(convert.Uint64ToBytes(d.DocID)))
+		for _, f := range d.Fields {
+			tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
+			if !f.NoSort {
+				tf.Sortable()
+			}
+			if f.Store {
+				tf.StoreValue()
+			}
+			if f.Key.Analyzer != index.AnalyzerUnspecified {
+				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
+			}
+			doc.AddField(tf)
+		}
+
+		doc.AddField(bluge.NewKeywordFieldBytes(entityField, d.EntityValues).StoreValue())
+		if d.Timestamp > 0 {
+			doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
+		}
+		b.InsertIfAbsent(doc.ID(), doc)
+	}
+	return s.writer.Batch(b)
+}
 
 // BuildQuery implements index.SeriesStore.
 func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query) (index.Query, error) {
@@ -104,6 +140,10 @@ func (s *store) Search(ctx context.Context,
 		return nil, err
 	}
 	defer func() {
+		if err := recover(); err != nil {
+			_ = reader.Close()
+			panic(err)
+		}
 		_ = reader.Close()
 	}()
 
@@ -183,36 +223,23 @@ func (s *store) SeriesSort(ctx context.Context, fieldKey index.FieldKey, termRan
 		return nil, err
 	}
 	fk := fieldKey.Marshal()
-	rangeQuery := bluge.NewBooleanQuery()
-	rangeNode := newMustNode()
-	addRange := func(query *bluge.BooleanQuery, termRange index.RangeOpts) *bluge.BooleanQuery {
-		if termRange.Upper == nil {
-			termRange.Upper = defaultUpper
-		}
-		if termRange.Lower == nil {
-			termRange.Lower = defaultLower
-		}
-		query.AddMust(bluge.NewTermRangeInclusiveQuery(
-			string(termRange.Lower),
-			string(termRange.Upper),
-			termRange.IncludesLower,
-			termRange.IncludesUpper,
-		).
-			SetField(fk))
-		rangeNode.Append(newTermRangeInclusiveNode(string(termRange.Lower), string(termRange.Upper), termRange.IncludesLower, termRange.IncludesUpper, nil))
-		return query
-	}
 
-	if fieldKey.HasSeriesID() {
-		rangeQuery = rangeQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
-			SetField(seriesIDField))
-		rangeNode.Append(newTermNode(string(fieldKey.SeriesID.Marshal()), nil))
-		if termRange.Lower != nil || termRange.Upper != nil {
-			rangeQuery = addRange(rangeQuery, termRange)
-		}
-	} else {
-		rangeQuery = addRange(rangeQuery, termRange)
+	if termRange.Upper == nil {
+		termRange.Upper = defaultUpper
 	}
+	if termRange.Lower == nil {
+		termRange.Lower = defaultLower
+	}
+	rangeQuery := bluge.NewBooleanQuery()
+	rangeQuery.AddMust(bluge.NewTermRangeInclusiveQuery(
+		string(termRange.Lower),
+		string(termRange.Upper),
+		termRange.IncludesLower,
+		termRange.IncludesUpper,
+	).
+		SetField(fk))
+	rangeNode := newMustNode()
+	rangeNode.Append(newTermRangeInclusiveNode(string(termRange.Lower), string(termRange.Upper), termRange.IncludesLower, termRange.IncludesUpper, nil))
 
 	sortedKey := fk
 	if order == modelv1.Sort_SORT_DESC {
