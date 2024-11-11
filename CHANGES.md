@@ -8,10 +8,12 @@ Release Notes.
 
 - Add the `bydbctl analyze series` command to analyze the series data.
 - Index: Remove sortable field from the stored field. If a field is sortable only, it won't be stored.
+- Index: Support InsertIfAbsent functionality which ensures documents are only inserted if their docIDs are not already present in the current index
 
 ### Bug Fixes
 
 - Fix the bug that TopN processing item leak. The item can not be updated but as a new item.
+- Resolve data race in Stats methods of the inverted index.
 
 ### Documentation
 
