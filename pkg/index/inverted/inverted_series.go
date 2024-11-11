@@ -68,7 +68,11 @@ func (s *store) SeriesBatch(batch index.Batch) error {
 		if d.Timestamp > 0 {
 			doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
 		}
-		b.InsertIfAbsent(doc.ID(), doc)
+		if len(d.Fields) == 0 {
+			b.InsertIfAbsent(doc.ID(), doc)
+		} else {
+			b.Update(doc.ID(), doc)
+		}
 	}
 	return s.writer.Batch(b)
 }

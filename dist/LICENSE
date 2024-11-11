@@ -178,7 +178,7 @@
 Apache-2.0 licenses
 ========================================================================
 
-    github.com/SkyAPM/bluge v0.0.0-20241110125856-046bc03b30ab Apache-2.0
+    github.com/SkyAPM/bluge v0.0.0-20241111124917-c317df1af201 Apache-2.0
     github.com/SkyAPM/ice v0.0.0-20241108011032-c3d8eea75118 Apache-2.0
     github.com/apache/skywalking-cli v0.0.0-20240227151024-ee371a210afe Apache-2.0
     github.com/blevesearch/segment v0.9.1 Apache-2.0
