@@ -16,100 +16,100 @@
 linters:
   disable-all: true
   enable:
-    - asasalint
-    - asciicheck
-    # - containedctx
-    - contextcheck
-    - decorder
-    - dogsled
-    - errname
-    - errcheck
-    - errchkjson
-    - errorlint
-    - exhaustive
-    # TODO:// enable this lint
-    # - exhaustruct
-    - gci
-    - goconst
-    - gocritic
-    - gocyclo
-    - godot
-    - gofumpt
-    - goprintffuncname
-    - gosec
-    - gosimple
-    - govet
-    - importas
-    - ineffassign
-    - lll
-    - misspell
-    - staticcheck
-    - stylecheck
-    - typecheck
-    - unconvert
-    - unparam
-    - unused
-    - usestdlibvars
-    - whitespace
+  - asasalint
+  - asciicheck
+  # - containedctx
+  - contextcheck
+  - decorder
+  - dogsled
+  - errname
+  - errcheck
+  - errchkjson
+  - errorlint
+  - exhaustive
+  # TODO:// enable this lint
+  # - exhaustruct
+  - gci
+  - goconst
+  - gocritic
+  - gocyclo
+  - godot
+  - gofumpt
+  - goprintffuncname
+  - gosec
+  - gosimple
+  - govet
+  - importas
+  - ineffassign
+  - lll
+  - misspell
+  - staticcheck
+  - stylecheck
+  - typecheck
+  - unconvert
+  - unparam
+  - unused
+  - usestdlibvars
+  - whitespace
 linters-settings:
   importas:
     no-unaliased: true
     alias:
-      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1
-        alias: commonv1
-      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1
-        alias: databasev1
-      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1
-        alias: modelv1
-      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1
-        alias: propertyv1
-      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1
-        alias: measurev1
-      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1
-        alias: streamv1
-      - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1
-        alias: clusterv1
-      - pkg: github.com/apache/skywalking-banyandb/pkg/pb/v1
-        alias: pbv1
+    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1
+      alias: commonv1
+    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1
+      alias: databasev1
+    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1
+      alias: modelv1
+    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1
+      alias: propertyv1
+    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1
+      alias: measurev1
+    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1
+      alias: streamv1
+    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1
+      alias: clusterv1
+    - pkg: github.com/apache/skywalking-banyandb/pkg/pb/v1
+      alias: pbv1
   lll:
     line-length: 170
   goconst:
     min-occurrences: 4
   govet:
     enable:
-      - fieldalignment
-      - shadow
+    - fieldalignment
+    - shadow
   misspell:
     locale: US
   unparam:
     check-exported: false
   gci:
     sections:
-      - standard
-      - default
-      - prefix(github.com/apache/skywalking-banyandb/)
+    - standard
+    - default
+    - prefix(github.com/apache/skywalking-banyandb/)
   gocritic:
     enabled-checks:
-      - appendCombine
-      - boolExprSimplify
-      - builtinShadow
-      - commentedOutCode
-      - commentedOutImport
-      - docStub
-      - emptyFallthrough
-      - equalFold
-      - hexLiteral
-      - indexAlloc
-      - initClause
-      - methodExprCall
-      - nilValReturn
-      - octalLiteral
-      - rangeExprCopy
-      - stringXbytes
-      - typeAssertChain
-      - typeUnparen
-      - unnecessaryBlock
-      - weakCond
+    - appendCombine
+    - boolExprSimplify
+    - builtinShadow
+    - commentedOutCode
+    - commentedOutImport
+    - docStub
+    - emptyFallthrough
+    - equalFold
+    - hexLiteral
+    - indexAlloc
+    - initClause
+    - methodExprCall
+    - nilValReturn
+    - octalLiteral
+    - rangeExprCopy
+    - stringXbytes
+    - typeAssertChain
+    - typeUnparen
+    - unnecessaryBlock
+    - weakCond
   godot:
     #   declarations - for top level declaration comments (default);
     #   toplevel     - for top level comments;
@@ -117,38 +117,37 @@ linters-settings:
     scope: toplevel
   gosec:
     excludes:
-      - G115 # integer overflow conversion (TODO: verify these)
+    - G115 # integer overflow conversion (TODO: verify these)
   staticcheck:
-    checks: ["all", "-ST1000", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
+    checks: [ "all", "-ST1000", "-ST1016", "-ST1020", "-ST1021", "-ST1022" ]
   exhaustive:
     check:
-      - switch
-      - map
+    - switch
+    - map
     default-signifies-exhaustive: true
     ignore-enum-members: ".+UNSPECIFIED$"
   exhaustruct:
     exclude:
-      - 'cobra\.Command$'
+    - 'cobra\.Command$'
 
 run:
   go: "1.23"
 issues:
   exclude-rules:
-    - path: ".*\\.pb\\.go"
-      linters:
-        - "*"
-    - path: ".*\\.pb\\.validate\\.go"
-      linters:
-        - "*"
-    - path: ".*\\.gen\\.go"
-      linters:
-        - "*"
-    - path: _test\.go$|^tests/|^samples/
-      linters:
-        - errcheck
-        - maligned
-    - linters:
-        - staticcheck
-      text: "SA1019: package github.com/golang/protobuf"
-  max-per-linter: 0
+  - path: ".*\\.pb\\.go"
+    linters:
+    - "*"
+  - path: ".*\\.pb\\.validate\\.go"
+    linters:
+    - "*"
+  - path: ".*\\.gen\\.go"
+    linters:
+    - "*"
+  - path: _test\.go$|^tests/|^samples/
+    linters:
+    - errcheck
+    - maligned
+  - linters:
+    - staticcheck
+    text: "SA1019: package github.com/golang/protobuf"
   max-same-issues: 0

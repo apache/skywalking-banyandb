@@ -71,7 +71,7 @@ func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64,
 }
 
 func (s *seriesIndex) Write(docs index.Documents) error {
-	return s.store.Batch(index.Batch{
+	return s.store.SeriesBatch(index.Batch{
 		Documents: docs,
 	})
 }
