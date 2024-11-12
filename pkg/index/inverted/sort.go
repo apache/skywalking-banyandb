@@ -119,7 +119,7 @@ func (si *sortIterator) loadCurrent() bool {
 	size := si.size + si.skipped
 	if size < 0 {
 		// overflow
-		size = math.MaxInt64
+		size = math.MaxInt
 	}
 	topNSearch := bluge.NewTopNSearch(size, si.query.(*queryNode).query).SortBy([]string{si.sortedKey})
 	if si.skipped > 0 {
