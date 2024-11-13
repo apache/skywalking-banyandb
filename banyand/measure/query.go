@@ -90,10 +90,10 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	tsdb := db.(storage.TSDB[*tsTable, option])
 	segments := tsdb.SelectSegments(*mqo.TimeRange)
 	if len(segments) < 1 {
-		return model.BypassResult, nil
+		return nil, nil
 	}
 
-	if s.schema.NonTimeSeries {
+	if s.schema.IndexMode {
 		return s.buildIndexQueryResult(ctx, series, mqo, segments)
 	}
 
@@ -102,12 +102,15 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		return nil, err
 	}
 	if len(sids) < 1 {
-		return model.BypassResult, nil
+		for i := range segments {
+			segments[i].DecRef()
+		}
+		return nil, nil
 	}
 	result := queryResult{
 		ctx:              ctx,
 		segments:         segments,
-		tagProjection:    newTagProjection,
+		tagProjection:    mqo.TagProjection,
 		storedIndexValue: storedIndexValue,
 	}
 	defer func() {
@@ -682,25 +685,20 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	return result
 }
 
-var (
-	bypassVersions = []int64{0}
-	bypassFields   = []model.Field{}
-)
+var bypassVersions = []int64{0}
 
 type indexQueryResult struct {
-	mqo             model.MeasureQueryOptions
+	ctx             context.Context
+	err             error
 	tfl             []tagFamilyLocation
 	indexProjection []index.FieldKey
-	ctx             context.Context
 	series          []*pbv1.Series
-
-	segments []storage.Segment[*tsTable, option]
-
-	i          int
-	sll        pbv1.SeriesList
-	frl        storage.FieldResultList
-	timestamps []int64
-	err        error
+	segments        []storage.Segment[*tsTable, option]
+	sll             pbv1.SeriesList
+	frl             storage.FieldResultList
+	timestamps      []int64
+	mqo             model.MeasureQueryOptions
+	i               int
 }
 
 // Pull implements model.MeasureQueryResult.
@@ -768,7 +766,7 @@ func (i *indexQueryResult) Release() {
 }
 
 type tagFamilyLocation struct {
-	name                   string
 	fieldToValueType       map[string]tagNameWithType
 	projectedEntityOffsets map[string]int
+	name                   string
 }

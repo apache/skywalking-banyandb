@@ -98,26 +98,6 @@ type MeasureQueryResult interface {
 	Release()
 }
 
-var (
-	BypassResult = &bypassResult{}
-	dummyResult  = &MeasureResult{}
-)
-
-// bypassResult struct.
-type bypassResult struct {
-	// Add fields as necessary
-}
-
-// Implement Pull method.
-func (b *bypassResult) Pull() *MeasureResult {
-	return dummyResult
-}
-
-// Implement Release method.
-func (b *bypassResult) Release() {
-	// No operation
-}
-
 // StreamQueryOptions is the options of a stream query.
 type StreamQueryOptions struct {
 	Name           string

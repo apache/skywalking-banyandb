@@ -40,7 +40,7 @@ type FieldIndexLocation map[string]map[string]FieldWithType
 
 // ParseIndexRuleLocators returns a IndexRuleLocator based on the tag family spec and index rules.
 func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.TagFamilySpec,
-	indexRules []*databasev1.IndexRule,
+	indexRules []*databasev1.IndexRule, indexMode bool,
 ) (locators IndexRuleLocator, fil FieldIndexLocation) {
 	locators.EntitySet = make(map[string]struct{}, len(entity.TagNames))
 	fil = make(FieldIndexLocation)
@@ -64,6 +64,9 @@ func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.Ta
 			ir := findIndexRuleByTagName(families[i].Tags[j].Name)
 			if ir != nil {
 				ttr[families[i].Tags[j].Name] = ir
+			}
+			if ir == nil && !indexMode {
+				continue
 			}
 			tagFamily, ok := fil[families[i].Name]
 			if !ok {

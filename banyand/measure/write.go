@@ -125,82 +125,8 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		))
 	}
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
-	tagFamilies := make([]nameValues, 0, len(stm.schema.TagFamilies))
-	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
-		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
-			len(stm.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
-	}
-	var fields []index.Field
-	for i := range stm.GetSchema().GetTagFamilies() {
-		var tagFamily *modelv1.TagFamilyForWrite
-		if len(req.DataPoint.TagFamilies) <= i {
-			tagFamily = pbv1.NullTagFamily
-		} else {
-			tagFamily = req.DataPoint.TagFamilies[i]
-		}
-		tfr := stm.indexRuleLocators.TagFamilyTRule[i]
-		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
-		tf := nameValues{
-			name: tagFamilySpec.Name,
-		}
-		for j := range tagFamilySpec.Tags {
-			var tagValue *modelv1.TagValue
-			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
-				tagValue = pbv1.NullTagValue
-			} else {
-				tagValue = tagFamily.Tags[j]
-			}
-
-			t := tagFamilySpec.Tags[j]
-			encodeTagValue := encodeTagValue(
-				t.Name,
-				t.Type,
-				tagValue)
-			r, ok := tfr[t.Name]
-			if ok || stm.schema.NonTimeSeries {
-				fieldKey := index.FieldKey{}
-				switch {
-				case ok:
-					fieldKey.IndexRuleID = r.GetMetadata().GetId()
-					fieldKey.Analyzer = r.Analyzer
-				case stm.schema.NonTimeSeries:
-					fieldKey.TagName = t.Name
-				default:
-					logger.Panicf("metadata crashed, tag family rule %s not found", t.Name)
-				}
-				toIndex := ok || !stm.schema.NonTimeSeries
-				if encodeTagValue.value != nil {
-					fields = append(fields, index.Field{
-						Key:    fieldKey,
-						Term:   encodeTagValue.value,
-						Store:  true,
-						Index:  toIndex,
-						NoSort: r.GetNoSort(),
-					})
-				} else {
-					for _, val := range encodeTagValue.valueArr {
-						fields = append(fields, index.Field{
-							Key:    fieldKey,
-							Term:   val,
-							Store:  true,
-							Index:  toIndex,
-							NoSort: r.GetNoSort(),
-						})
-					}
-				}
-				continue
-			}
-			_, isEntity := stm.indexRuleLocators.EntitySet[t.Name]
-			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
-				continue
-			}
-			tf.values = append(tf.values, encodeTagValue)
-		}
-		if len(tf.values) > 0 {
-			tagFamilies = append(tagFamilies, tf)
-		}
-	}
-	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
+	tagFamily, fields := w.handleTagFamily(stm, req)
+	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamily)
 
 	if stm.processorManager != nil {
 		stm.processorManager.onMeasureWrite(uint64(series.ID), &measurev1.InternalWriteRequest{
@@ -218,7 +144,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		EntityValues: series.Buffer,
 		Fields:       fields,
 	}
-	if stm.schema.NonTimeSeries {
+	if stm.schema.IndexMode {
 		doc.Timestamp = ts
 	}
 	dpg.docs = append(dpg.docs, doc)
@@ -251,6 +177,85 @@ func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPoi
 	}
 	dpg.tables = append(dpg.tables, dpt)
 	return dpt, nil
+}
+
+func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteRequest) ([]nameValues, []index.Field) {
+	tagFamilies := make([]nameValues, 0, len(stm.schema.TagFamilies))
+	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
+		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
+			len(stm.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
+	}
+	var fields []index.Field
+	for i := range stm.GetSchema().GetTagFamilies() {
+		var tagFamily *modelv1.TagFamilyForWrite
+		if len(req.DataPoint.TagFamilies) <= i {
+			tagFamily = pbv1.NullTagFamily
+		} else {
+			tagFamily = req.DataPoint.TagFamilies[i]
+		}
+		tfr := stm.indexRuleLocators.TagFamilyTRule[i]
+		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
+		tf := nameValues{
+			name: tagFamilySpec.Name,
+		}
+		for j := range tagFamilySpec.Tags {
+			var tagValue *modelv1.TagValue
+			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
+				tagValue = pbv1.NullTagValue
+			} else {
+				tagValue = tagFamily.Tags[j]
+			}
+
+			t := tagFamilySpec.Tags[j]
+			encodeTagValue := encodeTagValue(
+				t.Name,
+				t.Type,
+				tagValue)
+			r, ok := tfr[t.Name]
+			if ok || stm.schema.IndexMode {
+				fieldKey := index.FieldKey{}
+				switch {
+				case ok:
+					fieldKey.IndexRuleID = r.GetMetadata().GetId()
+					fieldKey.Analyzer = r.Analyzer
+				case stm.schema.IndexMode:
+					fieldKey.TagName = t.Name
+				default:
+					logger.Panicf("metadata crashed, tag family rule %s not found", t.Name)
+				}
+				toIndex := ok || !stm.schema.IndexMode
+				if encodeTagValue.value != nil {
+					fields = append(fields, index.Field{
+						Key:    fieldKey,
+						Term:   encodeTagValue.value,
+						Store:  true,
+						Index:  toIndex,
+						NoSort: r.GetNoSort(),
+					})
+				} else {
+					for _, val := range encodeTagValue.valueArr {
+						fields = append(fields, index.Field{
+							Key:    fieldKey,
+							Term:   val,
+							Store:  true,
+							Index:  toIndex,
+							NoSort: r.GetNoSort(),
+						})
+					}
+				}
+				continue
+			}
+			_, isEntity := stm.indexRuleLocators.EntitySet[t.Name]
+			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
+				continue
+			}
+			tf.values = append(tf.values, encodeTagValue)
+		}
+		if len(tf.values) > 0 {
+			tagFamilies = append(tagFamilies, tf)
+		}
+	}
+	return tagFamilies, fields
 }
 
 func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {

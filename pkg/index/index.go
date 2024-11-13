@@ -49,9 +49,9 @@ const (
 // FieldKey is the key of field in a document.
 type FieldKey struct {
 	Analyzer    string
+	TagName     string
 	SeriesID    common.SeriesID
 	IndexRuleID uint32
-	TagName     string
 }
 
 // Marshal encodes f to string.
@@ -221,8 +221,8 @@ func (s Series) SortedField() []byte {
 // SeriesDocument represents a series document in an index.
 type SeriesDocument struct {
 	Fields    map[string][]byte
-	Timestamp int64
 	Key       Series
+	Timestamp int64
 }
 
 // SeriesStore is an abstract of a series repository.

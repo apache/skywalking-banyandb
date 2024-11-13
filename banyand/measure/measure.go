@@ -103,7 +103,7 @@ func (s *measure) parseSpec() (err error) {
 	if s.schema.Interval != "" {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
-	s.indexRuleLocators, s.fieldIndexLocation = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules)
+	s.indexRuleLocators, s.fieldIndexLocation = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules, s.schema.IndexMode)
 
 	return err
 }
