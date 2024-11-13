@@ -58,7 +58,6 @@ var (
 	defaultUpper            = convert.Uint64ToBytes(math.MaxUint64)
 	defaultLower            = convert.Uint64ToBytes(0)
 	defaultRangePreloadSize = 1000
-	defaultProjection       = []string{docIDField}
 )
 
 // Analyzers is a map that associates each IndexRule_Analyzer type with a corresponding Analyzer.
@@ -245,7 +244,7 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader, defaultProjection)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, nil)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
@@ -276,7 +275,7 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string, opts *modelv1.C
 	if err != nil {
 		return nil, err
 	}
-	iter := newBlugeMatchIterator(documentMatchIterator, reader, defaultProjection)
+	iter := newBlugeMatchIterator(documentMatchIterator, reader, nil)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()

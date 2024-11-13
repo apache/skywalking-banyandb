@@ -156,26 +156,34 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 				t.Name,
 				t.Type,
 				tagValue)
-			if r, ok := tfr[t.Name]; ok {
+			r, ok := tfr[t.Name]
+			if ok || stm.schema.NonTimeSeries {
+				fieldKey := index.FieldKey{}
+				switch {
+				case ok:
+					fieldKey.IndexRuleID = r.GetMetadata().GetId()
+					fieldKey.Analyzer = r.Analyzer
+				case stm.schema.NonTimeSeries:
+					fieldKey.TagName = t.Name
+				default:
+					logger.Panicf("metadata crashed, tag family rule %s not found", t.Name)
+				}
+				toIndex := ok || !stm.schema.NonTimeSeries
 				if encodeTagValue.value != nil {
 					fields = append(fields, index.Field{
-						Key: index.FieldKey{
-							IndexRuleID: r.GetMetadata().GetId(),
-							Analyzer:    r.Analyzer,
-						},
+						Key:    fieldKey,
 						Term:   encodeTagValue.value,
 						Store:  true,
+						Index:  toIndex,
 						NoSort: r.GetNoSort(),
 					})
 				} else {
 					for _, val := range encodeTagValue.valueArr {
 						fields = append(fields, index.Field{
-							Key: index.FieldKey{
-								IndexRuleID: r.GetMetadata().GetId(),
-								Analyzer:    r.Analyzer,
-							},
+							Key:    fieldKey,
 							Term:   val,
 							Store:  true,
+							Index:  toIndex,
 							NoSort: r.GetNoSort(),
 						})
 					}
@@ -205,11 +213,16 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		})
 	}
 
-	dpg.docs = append(dpg.docs, index.Document{
+	doc := index.Document{
 		DocID:        uint64(series.ID),
 		EntityValues: series.Buffer,
 		Fields:       fields,
-	})
+	}
+	if stm.schema.NonTimeSeries {
+		doc.Timestamp = ts
+	}
+	dpg.docs = append(dpg.docs, doc)
+
 	return dst, nil
 }
 
