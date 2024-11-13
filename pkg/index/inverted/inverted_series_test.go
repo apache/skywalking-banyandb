@@ -78,16 +78,6 @@ func TestStore_Search(t *testing.T) {
 			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(1),
-						EntityValues: []byte("test1"),
-					},
-					Fields: map[string][]byte{
-						fieldKeyDuration.Marshal():    nil,
-						fieldKeyServiceName.Marshal(): nil,
-					},
-				},
-				{
-					Key: index.Series{
 						ID:           common.SeriesID(2),
 						EntityValues: []byte("test2"),
 					},
@@ -106,21 +96,22 @@ func TestStore_Search(t *testing.T) {
 						fieldKeyServiceName.Marshal(): nil,
 					},
 				},
-			},
-		},
-		{
-			term:       [][]byte{[]byte("test1"), []byte("test2"), []byte("test3"), []byte("foo")},
-			projection: []index.FieldKey{fieldKeyDuration},
-			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
 						ID:           common.SeriesID(1),
 						EntityValues: []byte("test1"),
 					},
 					Fields: map[string][]byte{
-						fieldKeyDuration.Marshal(): nil,
+						fieldKeyDuration.Marshal():    nil,
+						fieldKeyServiceName.Marshal(): nil,
 					},
 				},
+			},
+		},
+		{
+			term:       [][]byte{[]byte("test1"), []byte("test2"), []byte("test3"), []byte("foo")},
+			projection: []index.FieldKey{fieldKeyDuration},
+			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
 						ID:           common.SeriesID(2),
@@ -139,21 +130,21 @@ func TestStore_Search(t *testing.T) {
 						fieldKeyDuration.Marshal(): convert.Int64ToBytes(int64(500)),
 					},
 				},
-			},
-		},
-		{
-			term:       [][]byte{[]byte("test1"), []byte("test2"), []byte("test3"), []byte("foo")},
-			projection: []index.FieldKey{fieldKeyServiceName},
-			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
 						ID:           common.SeriesID(1),
 						EntityValues: []byte("test1"),
 					},
 					Fields: map[string][]byte{
-						fieldKeyServiceName.Marshal(): nil,
+						fieldKeyDuration.Marshal(): nil,
 					},
 				},
+			},
+		},
+		{
+			term:       [][]byte{[]byte("test1"), []byte("test2"), []byte("test3"), []byte("foo")},
+			projection: []index.FieldKey{fieldKeyServiceName},
+			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
 						ID:           common.SeriesID(2),
@@ -167,6 +158,15 @@ func TestStore_Search(t *testing.T) {
 					Key: index.Series{
 						ID:           common.SeriesID(3),
 						EntityValues: []byte("test3"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyServiceName.Marshal(): nil,
+					},
+				},
+				{
+					Key: index.Series{
+						ID:           common.SeriesID(1),
+						EntityValues: []byte("test1"),
 					},
 					Fields: map[string][]byte{
 						fieldKeyServiceName.Marshal(): nil,
