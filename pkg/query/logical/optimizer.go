@@ -74,7 +74,8 @@ func NewPushDownOrder(order *modelv1.QueryOrder) PushDownOrder {
 // Optimize a Plan by pushing down the query order.
 func (pdo PushDownOrder) Optimize(plan Plan) (Plan, error) {
 	if v, ok := plan.(Sorter); ok {
-		if order, err := ParseOrderBy(v.Schema(), pdo.order.GetIndexRuleName(), pdo.order.GetSort()); err == nil {
+		if order, err := ParseOrderBy(v.Schema(),
+			pdo.order.GetIndexRuleName(), pdo.order.GetSort()); err == nil && order != nil {
 			v.Sort(order)
 		} else {
 			return nil, err

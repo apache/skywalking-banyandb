@@ -16,122 +16,120 @@ VUS: 8192
 
 Machine and OS information:
 
-- CPU: CPU: AMD EPYC 7B12, VendorID: AuthenticAMD, Family: 23, Model: 49, Cores: 8
-- Memory: Total: 47176 MB
-- OS: OS: linux, Platform: ubuntu, Platform Family: debian, Platform Version: 21.04
+- CPU: CPU: AMD EPYC 7B13, VendorID: AuthenticAMD, Family: 25, Model: 1, Cores: 16
+- Memory: Total: 15986 MB
+- OS: OS: linux, Platform: ubuntu, Platform Family: debian, Platform Version: 24.04
 
 ## Result
 
-written 16186000 items in 38m38.657047557s
-throughput: 6980.765015 items/s
-throughput(kb/s) 1786.494948
-latency: 2ns
+written 16186000 items in 38m25.757182449s
+throughput: 7019.819833 items/s
+throughput(kb/s) 1796.489734
+latency: 167.193µs
 
-The Memory and Disk usage is improved due to moving indexed value from data files to index files. 
+CPU and Memory usage are improved due to reducing the updates of the index.
 
 ### Problem
 
-Memory: Series Index(bluge) index building took most of the memory.
-
-CPU: As memory's part, Series Index(bluge) index building took most of the CPU.
-
-Next step: Optimize the Series Index(bluge) index building.
+Series Index Searching took most of the time. Add a cache would be helpful.
 
 ## CPU
 
-CPU 95th-percentile: 1.24 cores (8 cores in total)
+CPU 95th-percentile: 0.75 cores (16 cores in total)
 
 ```bash
-Showing top 10 nodes out of 326
+Showing top 10 nodes out of 301
       flat  flat%   sum%        cum   cum%
-   229.15s  7.80%  7.80%    229.15s  7.80%  runtime/internal/syscall.Syscall6
-   152.36s  5.18% 12.98%    436.89s 14.86%  runtime.mallocgc
-   107.72s  3.66% 16.64%    321.02s 10.92%  runtime.scanobject
-    93.73s  3.19% 19.83%    179.11s  6.09%  github.com/blevesearch/vellum.registryCache.entry
-    87.88s  2.99% 22.82%    104.15s  3.54%  runtime.findObject
-    68.76s  2.34% 25.16%     68.96s  2.35%  github.com/blevesearch/vellum.(*builderNode).equiv (inline)
-    56.29s  1.91% 27.08%     56.29s  1.91%  runtime.nextFreeFast (inline)
-    49.87s  1.70% 28.77%     49.87s  1.70%  runtime.memmove
-    46.09s  1.57% 30.34%     69.86s  2.38%  runtime.(*mspan).writeHeapBitsSmall
-    45.67s  1.55% 31.89%     45.67s  1.55%  runtime.memclrNoHeapPointers
+   335.22s 18.10% 18.10%    335.22s 18.10%  internal/runtime/syscall.Syscall6
+    75.99s  4.10% 22.20%    225.86s 12.19%  runtime.mallocgc
+    43.86s  2.37% 24.57%     48.40s  2.61%  github.com/blevesearch/vellum.(*fstStateV1).atSingle
+    39.80s  2.15% 26.72%     39.80s  2.15%  runtime.memmove
+    39.45s  2.13% 28.85%     39.45s  2.13%  runtime.usleep
+    36.23s  1.96% 30.80%    218.49s 11.80%  github.com/blevesearch/vellum.(*FST).get
+    32.43s  1.75% 32.56%     32.43s  1.75%  runtime.nextFreeFast (inline)
+    30.64s  1.65% 34.21%     30.64s  1.65%  runtime.futex
+    28.75s  1.55% 35.76%    148.49s  8.02%  github.com/blevesearch/vellum.(*decoderV1).stateAt
+    27.72s  1.50% 37.26%     27.72s  1.50%  runtime.memclrNoHeapPointers
 ```
 
 ## Heap Profile
 
-`alloc_bytes` 95th-percentile: 947.97 MB.
-`heap_inuse_bytes` 95th-percentile: 1.10 GB.
-`sys_bytes` 95th-percentile: 1.75 GB.
-`stack_inuse_bytes` 95th-percentile: 20.58 MB.
+`alloc_bytes` 95th-percentile: 431.5 MB.
+`heap_inuse_bytes` 95th-percentile: 452.97 GB.
+`sys_bytes` 95th-percentile: 892.03 GB.
+`stack_inuse_bytes` 95th-percentile: 2.35 MB.
 
 ```bash
-Showing top 10 nodes out of 225
+Showing top 10 nodes out of 238
       flat  flat%   sum%        cum   cum%
-   32.36GB  9.63%  9.63%    32.36GB  9.63%  github.com/blevesearch/vellum.(*unfinishedNodes).get
-   26.01GB  7.74% 17.36%    26.01GB  7.74%  reflect.New
-   16.32GB  4.86% 22.22%    16.32GB  4.86%  github.com/blevesearch/vellum.(*builderNodePool).Get
-   13.81GB  4.11% 26.33%    13.81GB  4.11%  github.com/apache/skywalking-banyandb/banyand/measure.(*blockPointer).append
-   13.74GB  4.09% 30.42%    13.74GB  4.09%  github.com/blugelabs/bluge/analysis.TokenFrequency
-   12.63GB  3.76% 34.17%    12.63GB  3.76%  github.com/blugelabs/ice.(*interim).processDocument.func1.1
-   10.44GB  3.11% 37.28%    10.44GB  3.11%  github.com/blevesearch/vellum.(*builderNodeUnfinished).lastCompiled
-    9.42GB  2.80% 40.08%     9.42GB  2.80%  bytes.growSlice
-    8.57GB  2.55% 42.63%    22.18GB  6.60%  github.com/apache/skywalking-banyandb/banyand/measure.(*writeCallback).handle
-    8.40GB  2.50% 45.13%     8.40GB  2.50%  github.com/RoaringBitmap/roaring.(*Bitmap).Iterator
+   27.77GB 12.09% 12.09%    27.77GB 12.09%  reflect.New
+   22.72GB  9.89% 21.98%    22.72GB  9.89%  github.com/blugelabs/bluge.Identifier.Term
+    8.50GB  3.70% 25.68%     8.50GB  3.70%  github.com/blevesearch/vellum.(*decoderV1).stateAt
+    7.54GB  3.28% 28.96%    54.19GB 23.59%  github.com/apache/skywalking-banyandb/test/stress/istio.ReadAndWriteFromFile.func4
+    7.53GB  3.28% 32.23%    22.32GB  9.72%  github.com/apache/skywalking-banyandb/banyand/measure.(*writeCallback).handle
+    6.57GB  2.86% 35.09%     6.57GB  2.86%  strings.(*Builder).grow
+    5.39GB  2.34% 37.44%     5.69GB  2.48%  google.golang.org/protobuf/proto.MarshalOptions.marshal
+    5.30GB  2.30% 39.74%     5.30GB  2.30%  google.golang.org/protobuf/internal/encoding/json.(*Decoder).parseString
+    4.95GB  2.15% 41.90%     4.95GB  2.16%  github.com/klauspost/compress/s2.encodeBlockBetter
+    4.71GB  2.05% 43.95%     4.71GB  2.05%  github.com/apache/skywalking-banyandb/banyand/measure.fastFieldAppend
 ```
 
 ## Disk Usage
 
 ```bash
-measure: 368 MB
-measure/measure-default: 182 MB
-measure/measure-default/seg-20240731: 182 MB
-measure/measure-default/seg-20240731/shard-0: 147 MB
-measure/measure-default/seg-20240731/shard-0/0000000000001b5c: 75 MB
-measure/measure-default/seg-20240731/shard-0/0000000000001c0b: 76 kB
-measure/measure-default/seg-20240731/shard-0/0000000000001c6c: 41 kB
-measure/measure-default/seg-20240731/shard-0/0000000000001d37: 24 MB
-measure/measure-default/seg-20240731/shard-0/0000000000001dae: 80 kB
-measure/measure-default/seg-20240731/shard-0/0000000000001edc: 22 MB
-measure/measure-default/seg-20240731/shard-0/0000000000001fad: 91 kB
-measure/measure-default/seg-20240731/shard-0/0000000000001fb1: 218 kB
-measure/measure-default/seg-20240731/shard-0/0000000000002018: 588 kB
-measure/measure-default/seg-20240731/shard-0/0000000000002078: 23 MB
-measure/measure-default/seg-20240731/shard-0/0000000000002081: 879 kB
-measure/measure-default/seg-20240731/sidx: 36 MB
-measure/measure-minute: 185 MB
-measure/measure-minute/seg-20240731: 185 MB
-measure/measure-minute/seg-20240731/shard-0: 80 MB
-measure/measure-minute/seg-20240731/shard-0/0000000000000e4d: 52 MB
-measure/measure-minute/seg-20240731/shard-0/0000000000000f21: 9.3 MB
-measure/measure-minute/seg-20240731/shard-0/0000000000000ff8: 9.4 MB
-measure/measure-minute/seg-20240731/shard-0/0000000000001068: 296 kB
-measure/measure-minute/seg-20240731/shard-0/00000000000010cd: 9.1 MB
-measure/measure-minute/seg-20240731/shard-1: 82 MB
-measure/measure-minute/seg-20240731/shard-1/0000000000000de3: 51 MB
-measure/measure-minute/seg-20240731/shard-1/0000000000000ead: 9.6 MB
-measure/measure-minute/seg-20240731/shard-1/0000000000000f82: 9.1 MB
-measure/measure-minute/seg-20240731/shard-1/0000000000000fb0: 2.1 MB
-measure/measure-minute/seg-20240731/shard-1/0000000000000fe0: 2.3 MB
-measure/measure-minute/seg-20240731/shard-1/0000000000000fe6: 1.4 MB
-measure/measure-minute/seg-20240731/shard-1/0000000000000fe9: 162 kB
-measure/measure-minute/seg-20240731/shard-1/0000000000000ff1: 383 kB
-measure/measure-minute/seg-20240731/shard-1/0000000000001017: 1.8 MB
-measure/measure-minute/seg-20240731/shard-1/000000000000101b: 229 kB
-measure/measure-minute/seg-20240731/shard-1/0000000000001053: 2.8 MB
-measure/measure-minute/seg-20240731/shard-1/0000000000001057: 231 kB
-measure/measure-minute/seg-20240731/shard-1/0000000000001058: 74 kB
-measure/measure-minute/seg-20240731/shard-1/0000000000001063: 477 kB
-measure/measure-minute/seg-20240731/sidx: 24 MB
+measure: 562 MB
+measure/measure-default: 303 MB
+measure/measure-default/seg-20241115: 303 MB
+measure/measure-default/seg-20241115/shard-0: 271 MB
+measure/measure-default/seg-20241115/shard-0/0000000000000b08: 83 MB
+measure/measure-default/seg-20241115/shard-0/00000000000014bb: 80 MB
+measure/measure-default/seg-20241115/shard-0/0000000000001e6b: 143 kB
+measure/measure-default/seg-20241115/shard-0/0000000000001e6d: 329 kB
+measure/measure-default/seg-20241115/shard-0/0000000000001e6e: 78 kB
+measure/measure-default/seg-20241115/shard-0/0000000000001f35: 83 MB
+measure/measure-default/seg-20241115/shard-0/0000000000001f75: 4.5 MB
+measure/measure-default/seg-20241115/shard-0/0000000000001ff7: 9.2 MB
+measure/measure-default/seg-20241115/shard-0/0000000000002009: 150 kB
+measure/measure-default/seg-20241115/shard-0/0000000000002045: 11 MB
+measure/measure-default/seg-20241115/sidx: 32 MB
+measure/measure-minute: 259 MB
+measure/measure-minute/seg-20241115: 259 MB
+measure/measure-minute/seg-20241115/shard-0: 120 MB
+measure/measure-minute/seg-20241115/shard-0/00000000000004d4: 33 MB
+measure/measure-minute/seg-20241115/shard-0/00000000000009c5: 34 MB
+measure/measure-minute/seg-20241115/shard-0/0000000000000bc9: 59 kB
+measure/measure-minute/seg-20241115/shard-0/0000000000000f2c: 35 MB
+measure/measure-minute/seg-20241115/shard-0/0000000000000f8f: 2.9 MB
+measure/measure-minute/seg-20241115/shard-0/0000000000000f96: 60 kB
+measure/measure-minute/seg-20241115/shard-0/0000000000000fb8: 5.5 MB
+measure/measure-minute/seg-20241115/shard-0/0000000000000ff6: 2.8 MB
+measure/measure-minute/seg-20241115/shard-0/0000000000000ff7: 60 kB
+measure/measure-minute/seg-20241115/shard-0/000000000000101e: 1.8 MB
+measure/measure-minute/seg-20241115/shard-0/0000000000001067: 3.3 MB
+measure/measure-minute/seg-20241115/shard-0/000000000000106a: 114 kB
+measure/measure-minute/seg-20241115/shard-0/000000000000107f: 1.2 MB
+measure/measure-minute/seg-20241115/shard-1: 116 MB
+measure/measure-minute/seg-20241115/shard-1/0000000000000515: 35 MB
+measure/measure-minute/seg-20241115/shard-1/0000000000000a5c: 36 MB
+measure/measure-minute/seg-20241115/shard-1/0000000000000da4: 369 kB
+measure/measure-minute/seg-20241115/shard-1/0000000000000e67: 116 kB
+measure/measure-minute/seg-20241115/shard-1/0000000000000f34: 34 MB
+measure/measure-minute/seg-20241115/shard-1/0000000000000fa1: 264 kB
+measure/measure-minute/seg-20241115/shard-1/0000000000000ffc: 116 kB
+measure/measure-minute/seg-20241115/shard-1/0000000000000ffd: 59 kB
+measure/measure-minute/seg-20241115/shard-1/0000000000001030: 11 MB
+measure/measure-minute/seg-20241115/sidx: 23 MB
 ```
 
 ## Disk IO
 
-| Metric              | 95th-percentile per second  |
-|---------------------|-----------------------------|
-| read_count          | 0.010000                    |
-| merged_read_count   | 0.000000                    |
-| write_count         | 20.978333                   |
-| merged_write_count  | 25.373333                   |
-| read_bytes          | 40.960000                   |
-| write_bytes         | 2603731.626667              |
-| io_time(ms)         | 13.360000                   |
-| weighted_io(ms)     | 60.828333                   |
+| Metric              | 95th-percentile per second |
+|---------------------|----------------------------|
+| read_count          | 0.06333                    |
+| merged_read_count   | 0.000000                   |
+| write_count         | 14.873333                  |
+| merged_write_count  | 16.700000                  |
+| read_bytes          | 996.693333                 |
+| write_bytes         | 1689586.346667             |
+| io_time(ms)         | 7.486667                   |
+| weighted_io(ms)     | 121.133333                 |

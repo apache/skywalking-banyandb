@@ -135,29 +135,33 @@ func (i *localIndexScan) Sort(order *logical.OrderBy) {
 }
 
 func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
-	var orderBy *model.OrderBy
-	orderByType := model.OrderByTypeTime
+	var orderBy *index.OrderBy
+
 	if i.order != nil {
-		if i.order.Index != nil {
-			orderByType = model.OrderByTypeIndex
-		}
-		orderBy = &model.OrderBy{
-			Index: i.order.Index,
+		orderBy = &index.OrderBy{
 			Sort:  i.order.Sort,
+			Index: i.order.Index,
+		}
+		if orderBy.Index == nil {
+			orderBy.Type = index.OrderByTypeTime
+		} else {
+			orderBy.Type = index.OrderByTypeIndex
 		}
 	}
 	if i.groupByEntity {
-		orderByType = model.OrderByTypeSeries
+		if orderBy == nil {
+			orderBy = &index.OrderBy{}
+		}
+		orderBy.Type = index.OrderByTypeSeries
 	}
 	ec := executor.FromMeasureExecutionContext(ctx)
-	ctx, stop := i.startSpan(ctx, query.GetTracer(ctx), orderByType, orderBy)
+	ctx, stop := i.startSpan(ctx, query.GetTracer(ctx), orderBy)
 	defer stop(err)
 	result, err := ec.Query(ctx, model.MeasureQueryOptions{
 		Name:            i.metadata.GetName(),
 		TimeRange:       &i.timeRange,
 		Entities:        i.entities,
 		Query:           i.query,
-		OrderByType:     orderByType,
 		Order:           orderBy,
 		TagProjection:   i.projectionTags,
 		FieldProjection: i.projectionFields,
@@ -269,20 +273,24 @@ func (ei *resultMIterator) Close() error {
 	return ei.err
 }
 
-func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, orderType model.OrderByType, orderBy *model.OrderBy) (context.Context, func(error)) {
+func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, orderBy *index.OrderBy) (context.Context, func(error)) {
 	if tracer == nil {
 		return ctx, func(error) {}
 	}
 
 	span, ctx := tracer.StartSpan(ctx, "indexScan-%s", i.metadata)
-	sortName := modelv1.Sort_name[int32(orderBy.Sort)]
-	switch orderType {
-	case model.OrderByTypeTime:
-		span.Tag("orderBy", "time "+sortName)
-	case model.OrderByTypeIndex:
-		span.Tag("orderBy", fmt.Sprintf("indexRule:%s", orderBy.Index.Metadata.Name))
-	case model.OrderByTypeSeries:
-		span.Tag("orderBy", "series")
+	if orderBy != nil {
+		sortName := modelv1.Sort_name[int32(orderBy.Sort)]
+		switch orderBy.Type {
+		case index.OrderByTypeTime:
+			span.Tag("orderBy", "time-"+sortName)
+		case index.OrderByTypeIndex:
+			span.Tag("orderBy", fmt.Sprintf("indexRule:%s-%s", orderBy.Index.Metadata.Name, sortName))
+		case index.OrderByTypeSeries:
+			span.Tag("orderBy", "series")
+		}
+	} else {
+		span.Tag("orderBy", "time-asc(default)")
 	}
 	span.Tag("details", i.String())
 

@@ -115,6 +115,9 @@ message Measure {
   string interval = 5;
   // updated_at indicates when the measure is updated
   google.protobuf.Timestamp updated_at = 6;
+  // index_mode specifies whether the data should be stored exclusively in the index,
+  // meaning it will not be stored in the data storage system.
+  bool index_mode = 7;
 }
 
 message MeasureAggregateFunction {

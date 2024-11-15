@@ -19,15 +19,22 @@ package inverted
 
 import (
 	"context"
+	"maps"
 	"testing"
+	"time"
 
+	"github.com/blugelabs/bluge"
+	"github.com/blugelabs/bluge/numeric"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -36,6 +43,9 @@ var (
 	}
 	fieldKeyServiceName = index.FieldKey{
 		IndexRuleID: 6,
+	}
+	fieldKeyStartTime = index.FieldKey{
+		IndexRuleID: 21,
 	}
 )
 
@@ -66,7 +76,6 @@ func TestStore_Search(t *testing.T) {
 			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(1),
 						EntityValues: []byte("test1"),
 					},
 				},
@@ -78,33 +87,32 @@ func TestStore_Search(t *testing.T) {
 			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(2),
 						EntityValues: []byte("test2"),
 					},
 					Fields: map[string][]byte{
 						fieldKeyDuration.Marshal():    convert.Int64ToBytes(int64(100)),
 						fieldKeyServiceName.Marshal(): []byte("svc2"),
 					},
+					Timestamp: int64(101),
 				},
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(3),
-						EntityValues: []byte("test3"),
-					},
-					Fields: map[string][]byte{
-						fieldKeyDuration.Marshal():    convert.Int64ToBytes(int64(500)),
-						fieldKeyServiceName.Marshal(): nil,
-					},
-				},
-				{
-					Key: index.Series{
-						ID:           common.SeriesID(1),
 						EntityValues: []byte("test1"),
 					},
 					Fields: map[string][]byte{
 						fieldKeyDuration.Marshal():    nil,
 						fieldKeyServiceName.Marshal(): nil,
 					},
+				},
+				{
+					Key: index.Series{
+						EntityValues: []byte("test3"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal():    convert.Int64ToBytes(int64(500)),
+						fieldKeyServiceName.Marshal(): nil,
+					},
+					Timestamp: int64(1001),
 				},
 			},
 		},
@@ -114,30 +122,30 @@ func TestStore_Search(t *testing.T) {
 			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(2),
 						EntityValues: []byte("test2"),
 					},
 					Fields: map[string][]byte{
 						fieldKeyDuration.Marshal(): convert.Int64ToBytes(int64(100)),
 					},
+					Timestamp: int64(101),
 				},
+
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(3),
-						EntityValues: []byte("test3"),
-					},
-					Fields: map[string][]byte{
-						fieldKeyDuration.Marshal(): convert.Int64ToBytes(int64(500)),
-					},
-				},
-				{
-					Key: index.Series{
-						ID:           common.SeriesID(1),
 						EntityValues: []byte("test1"),
 					},
 					Fields: map[string][]byte{
 						fieldKeyDuration.Marshal(): nil,
 					},
+				},
+				{
+					Key: index.Series{
+						EntityValues: []byte("test3"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal(): convert.Int64ToBytes(int64(500)),
+					},
+					Timestamp: int64(1001),
 				},
 			},
 		},
@@ -147,30 +155,29 @@ func TestStore_Search(t *testing.T) {
 			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(2),
 						EntityValues: []byte("test2"),
 					},
 					Fields: map[string][]byte{
 						fieldKeyServiceName.Marshal(): []byte("svc2"),
 					},
+					Timestamp: int64(101),
 				},
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(3),
-						EntityValues: []byte("test3"),
-					},
-					Fields: map[string][]byte{
-						fieldKeyServiceName.Marshal(): nil,
-					},
-				},
-				{
-					Key: index.Series{
-						ID:           common.SeriesID(1),
 						EntityValues: []byte("test1"),
 					},
 					Fields: map[string][]byte{
 						fieldKeyServiceName.Marshal(): nil,
 					},
+				},
+				{
+					Key: index.Series{
+						EntityValues: []byte("test3"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyServiceName.Marshal(): nil,
+					},
+					Timestamp: int64(1001),
 				},
 			},
 		},
@@ -191,7 +198,7 @@ func TestStore_Search(t *testing.T) {
 			name += string(term) + "-"
 		}
 		t.Run(name, func(t *testing.T) {
-			query, err := s.BuildQuery(matchers, nil)
+			query, err := s.BuildQuery(matchers, nil, nil)
 			require.NotEmpty(t, query.String())
 			require.NoError(t, err)
 			got, err := s.Search(context.Background(), tt.projection, query)
@@ -228,21 +235,26 @@ func TestStore_SearchWildcard(t *testing.T) {
 			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(1),
 						EntityValues: []byte("test1"),
 					},
 				},
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(2),
 						EntityValues: []byte("test2"),
 					},
+					Timestamp: int64(101),
 				},
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(3),
 						EntityValues: []byte("test3"),
 					},
+					Timestamp: int64(1001),
+				},
+				{
+					Key: index.Series{
+						EntityValues: []byte("test4"),
+					},
+					Timestamp: int64(2001),
 				},
 			},
 		},
@@ -251,9 +263,9 @@ func TestStore_SearchWildcard(t *testing.T) {
 			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(2),
 						EntityValues: []byte("test2"),
 					},
+					Timestamp: int64(101),
 				},
 			},
 		},
@@ -262,7 +274,6 @@ func TestStore_SearchWildcard(t *testing.T) {
 			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(1),
 						EntityValues: []byte("test1"),
 					},
 				},
@@ -281,7 +292,7 @@ func TestStore_SearchWildcard(t *testing.T) {
 					Type:  index.SeriesMatcherTypeWildcard,
 					Match: tt.wildcard,
 				},
-			}, nil)
+			}, nil, nil)
 			require.NoError(t, err)
 			require.NotEmpty(t, query.String())
 			got, err := s.Search(context.Background(), tt.projection, query)
@@ -318,21 +329,26 @@ func TestStore_SearchPrefix(t *testing.T) {
 			want: []index.SeriesDocument{
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(1),
 						EntityValues: []byte("test1"),
 					},
 				},
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(2),
 						EntityValues: []byte("test2"),
 					},
+					Timestamp: int64(101),
 				},
 				{
 					Key: index.Series{
-						ID:           common.SeriesID(3),
 						EntityValues: []byte("test3"),
 					},
+					Timestamp: int64(1001),
+				},
+				{
+					Key: index.Series{
+						EntityValues: []byte("test4"),
+					},
+					Timestamp: int64(2001),
 				},
 			},
 		},
@@ -349,7 +365,7 @@ func TestStore_SearchPrefix(t *testing.T) {
 					Type:  index.SeriesMatcherTypePrefix,
 					Match: tt.prefix,
 				},
-			}, nil)
+			}, nil, nil)
 			require.NoError(t, err)
 			require.NotEmpty(t, query.String())
 			got, err := s.Search(context.Background(), tt.projection, query)
@@ -359,41 +375,600 @@ func TestStore_SearchPrefix(t *testing.T) {
 	}
 }
 
+func TestStore_SearchWithSecondaryQuery(t *testing.T) {
+	tester := require.New(t)
+	path, fn := setUp(tester)
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+
+	// Setup some data
+	setupData(tester, s)
+
+	// Define the secondary query
+	secondaryQuery := &queryNode{
+		query: bluge.NewTermQuery("svc2").SetField(fieldKeyServiceName.Marshal()),
+		node:  newTermNode("svc2", nil),
+	}
+
+	// Test cases
+	tests := []struct {
+		term       [][]byte
+		want       []index.SeriesDocument
+		projection []index.FieldKey
+	}{
+		{
+			term:       [][]byte{[]byte("test2")},
+			projection: []index.FieldKey{fieldKeyServiceName, fieldKeyDuration, {TagName: "short_name"}},
+			want: []index.SeriesDocument{
+				{
+					Key: index.Series{
+						EntityValues: []byte("test2"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal():    convert.Int64ToBytes(int64(100)),
+						fieldKeyServiceName.Marshal(): []byte("svc2"),
+						"short_name":                  []byte("t2"),
+					},
+					Timestamp: int64(101),
+				},
+			},
+		},
+		{
+			term:       [][]byte{[]byte("test3")},
+			projection: []index.FieldKey{fieldKeyServiceName, fieldKeyDuration},
+			want:       []index.SeriesDocument{},
+		},
+		{
+			term:       [][]byte{[]byte("test1")},
+			projection: []index.FieldKey{fieldKeyServiceName, fieldKeyDuration},
+			want:       []index.SeriesDocument{},
+		},
+		{
+			term:       [][]byte{[]byte("test2"), []byte("test3")},
+			projection: []index.FieldKey{fieldKeyServiceName, fieldKeyDuration, {TagName: "short_name"}},
+			want: []index.SeriesDocument{
+				{
+					Key: index.Series{
+						EntityValues: []byte("test2"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal():    convert.Int64ToBytes(int64(100)),
+						fieldKeyServiceName.Marshal(): []byte("svc2"),
+						"short_name":                  []byte("t2"),
+					},
+					Timestamp: int64(101),
+				},
+			},
+		},
+		{
+			term:       [][]byte{[]byte("test1"), []byte("test2")},
+			projection: []index.FieldKey{fieldKeyServiceName, fieldKeyDuration},
+			want: []index.SeriesDocument{
+				{
+					Key: index.Series{
+						EntityValues: []byte("test2"),
+					},
+					Fields: map[string][]byte{
+						fieldKeyDuration.Marshal():    convert.Int64ToBytes(int64(100)),
+						fieldKeyServiceName.Marshal(): []byte("svc2"),
+					},
+					Timestamp: int64(101),
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		var matchers []index.SeriesMatcher
+		var name string
+		for _, term := range tt.term {
+			matchers = append(matchers, index.SeriesMatcher{
+				Type:  index.SeriesMatcherTypeExact,
+				Match: term,
+			})
+			name += string(term) + "-"
+		}
+		t.Run(name, func(t *testing.T) {
+			query, err := s.BuildQuery(matchers, secondaryQuery, nil)
+			require.NotEmpty(t, query.String())
+			require.NoError(t, err)
+			got, err := s.Search(context.Background(), tt.projection, query)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestStore_SeriesSort(t *testing.T) {
+	tester := require.New(t)
+	path, fn := setUp(tester)
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+
+	// Setup some data
+	setupData(tester, s)
+
+	// Define the order by field
+	orderBy := &index.OrderBy{
+		Index: &databasev1.IndexRule{
+			Metadata: &commonv1.Metadata{
+				Id: fieldKeyStartTime.IndexRuleID,
+			},
+		},
+		Sort: modelv1.Sort_SORT_ASC,
+		Type: index.OrderByTypeIndex,
+	}
+
+	// Test cases
+	tests := []struct {
+		name      string
+		orderBy   *index.OrderBy
+		timeRange *timestamp.TimeRange
+		want      []index.DocumentResult
+		fieldKeys []index.FieldKey
+	}{
+		{
+			name:      "Sort by start_time ascending",
+			orderBy:   orderBy,
+			fieldKeys: []index.FieldKey{fieldKeyStartTime},
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test2"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(100)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(100)),
+				},
+				{
+					EntityValues: []byte("test3"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(1000)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(1000)),
+				},
+				{
+					EntityValues: []byte("test4"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(2000)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(2000)),
+				},
+				{
+					EntityValues: []byte("test1"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): nil,
+					},
+					SortedValue: []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+				},
+			},
+		},
+		{
+			name: "Sort by start_time descending",
+			orderBy: &index.OrderBy{
+				Index: &databasev1.IndexRule{
+					Metadata: &commonv1.Metadata{
+						Id: fieldKeyStartTime.IndexRuleID,
+					},
+				},
+				Sort: modelv1.Sort_SORT_DESC,
+				Type: index.OrderByTypeIndex,
+			},
+			fieldKeys: []index.FieldKey{fieldKeyStartTime},
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test4"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(2000)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(2000)),
+				},
+				{
+					EntityValues: []byte("test3"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(1000)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(1000)),
+				},
+				{
+					EntityValues: []byte("test2"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(100)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(100)),
+				},
+				{
+					EntityValues: []byte("test1"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): nil,
+					},
+					SortedValue: []byte{0x00},
+				},
+			},
+		},
+		{
+			name:      "Sort by start_time ascending with time range 100 to 1000",
+			orderBy:   orderBy,
+			fieldKeys: []index.FieldKey{fieldKeyStartTime},
+			timeRange: func() *timestamp.TimeRange {
+				tr := timestamp.NewInclusiveTimeRange(time.Unix(0, 100), time.Unix(0, 1000))
+				return &tr
+			}(),
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test2"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(100)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(100)),
+				},
+				{
+					EntityValues: []byte("test3"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(1000)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(1000)),
+				},
+			},
+		},
+		{
+			name:      "Sort by start_time ascending with time range 0 to 2000",
+			orderBy:   orderBy,
+			fieldKeys: []index.FieldKey{fieldKeyStartTime},
+			timeRange: func() *timestamp.TimeRange {
+				tr := timestamp.NewInclusiveTimeRange(time.Unix(0, 0), time.Unix(0, 2000))
+				return &tr
+			}(),
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test2"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(100)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(100)),
+				},
+				{
+					EntityValues: []byte("test3"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(1000)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(1000)),
+				},
+				{
+					EntityValues: []byte("test4"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(2000)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(2000)),
+				},
+			},
+		},
+		{
+			name:      "Sort by start_time ascending with time range 500 to 1500",
+			orderBy:   orderBy,
+			fieldKeys: []index.FieldKey{fieldKeyStartTime},
+			timeRange: func() *timestamp.TimeRange {
+				tr := timestamp.NewInclusiveTimeRange(time.Unix(0, 500), time.Unix(0, 1500))
+				return &tr
+			}(),
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test3"),
+					Values: map[string][]byte{
+						fieldKeyStartTime.Marshal(): convert.Int64ToBytes(int64(1000)),
+					},
+					SortedValue: convert.Int64ToBytes(int64(1000)),
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var secondaryQuery index.Query
+			if tt.timeRange != nil {
+				secondaryQuery = &queryNode{
+					query: bluge.NewTermRangeInclusiveQuery(
+						string(convert.Int64ToBytes(tt.timeRange.Start.Local().UnixNano())),
+						string(convert.Int64ToBytes(tt.timeRange.End.Local().UnixNano())),
+						tt.timeRange.IncludeStart,
+						tt.timeRange.IncludeEnd,
+					).SetField(fieldKeyStartTime.Marshal()),
+				}
+			}
+			query, err := s.BuildQuery([]index.SeriesMatcher{
+				{
+					Type:  index.SeriesMatcherTypePrefix,
+					Match: []byte("test"),
+				},
+			}, secondaryQuery, nil)
+			require.NoError(t, err)
+			iter, err := s.SeriesSort(context.Background(), query, tt.orderBy, 10, tt.fieldKeys)
+			require.NoError(t, err)
+			defer iter.Close()
+
+			var got []index.DocumentResult
+			for iter.Next() {
+				var g index.DocumentResult
+				val := iter.Val()
+				g.DocID = val.DocID
+				g.EntityValues = val.EntityValues
+				g.Values = maps.Clone(val.Values)
+				g.SortedValue = val.SortedValue
+				got = append(got, g)
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestStore_TimestampSort(t *testing.T) {
+	tester := require.New(t)
+	path, fn := setUp(tester)
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+
+	// Setup some data
+	setupData(tester, s)
+
+	// Define the order by field
+	orderBy := &index.OrderBy{
+		Type: index.OrderByTypeTime,
+		Sort: modelv1.Sort_SORT_ASC,
+	}
+
+	// Test cases
+	tests := []struct {
+		name      string
+		orderBy   *index.OrderBy
+		timeRange *timestamp.TimeRange
+		want      []index.DocumentResult
+		fieldKeys []index.FieldKey
+	}{
+		{
+			name:    "Sort by timestamp ascending",
+			orderBy: orderBy,
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test2"),
+					Timestamp:    int64(101),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(101, 0),
+				},
+				{
+					EntityValues: []byte("test3"),
+					Timestamp:    int64(1001),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(1001, 0),
+				},
+				{
+					EntityValues: []byte("test4"),
+					Timestamp:    int64(2001),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(2001, 0),
+				},
+				{
+					EntityValues: []byte("test1"),
+					Timestamp:    0,
+					SortedValue:  []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+				},
+			},
+		},
+		{
+			name: "Sort by timestamp descending",
+			orderBy: &index.OrderBy{
+				Type: index.OrderByTypeTime,
+				Sort: modelv1.Sort_SORT_DESC,
+			},
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test4"),
+					Timestamp:    int64(2001),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(2001, 0),
+				},
+				{
+					EntityValues: []byte("test3"),
+					Timestamp:    int64(1001),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(1001, 0),
+				},
+				{
+					EntityValues: []byte("test2"),
+					Timestamp:    int64(101),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(101, 0),
+				},
+				{
+					EntityValues: []byte("test1"),
+					Timestamp:    0,
+					SortedValue:  []byte{0x00},
+				},
+			},
+		},
+		{
+			name:    "Sort by timestamp ascending with time range 100 to 1000",
+			orderBy: orderBy,
+			timeRange: func() *timestamp.TimeRange {
+				tr := timestamp.NewInclusiveTimeRange(time.Unix(0, 100), time.Unix(0, 1000))
+				return &tr
+			}(),
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test2"),
+					Timestamp:    int64(101),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(101, 0),
+				},
+			},
+		},
+		{
+			name:    "Sort by timestamp ascending with time range 0 to 2000",
+			orderBy: orderBy,
+			timeRange: func() *timestamp.TimeRange {
+				tr := timestamp.NewInclusiveTimeRange(time.Unix(0, 0), time.Unix(0, 2000))
+				return &tr
+			}(),
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test2"),
+					Timestamp:    int64(101),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(101, 0),
+				},
+				{
+					EntityValues: []byte("test3"),
+					Timestamp:    int64(1001),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(1001, 0),
+				},
+			},
+		},
+		{
+			name:    "Sort by timestamp ascending with time range 500 to 1500",
+			orderBy: orderBy,
+			timeRange: func() *timestamp.TimeRange {
+				tr := timestamp.NewInclusiveTimeRange(time.Unix(0, 500), time.Unix(0, 1500))
+				return &tr
+			}(),
+			want: []index.DocumentResult{
+				{
+					EntityValues: []byte("test3"),
+					Timestamp:    int64(1001),
+					SortedValue:  numeric.MustNewPrefixCodedInt64(1001, 0),
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query, err := s.BuildQuery([]index.SeriesMatcher{
+				{
+					Type:  index.SeriesMatcherTypePrefix,
+					Match: []byte("test"),
+				},
+			}, nil, tt.timeRange)
+			require.NoError(t, err)
+			iter, err := s.SeriesSort(context.Background(), query, tt.orderBy, 10, tt.fieldKeys)
+			require.NoError(t, err)
+			defer iter.Close()
+
+			var got []index.DocumentResult
+			for iter.Next() {
+				var g index.DocumentResult
+				val := iter.Val()
+				g.DocID = val.DocID
+				g.EntityValues = val.EntityValues
+				if len(val.Values) > 0 {
+					g.Values = maps.Clone(val.Values)
+				}
+				g.SortedValue = val.SortedValue
+				g.Timestamp = val.Timestamp
+				got = append(got, g)
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func setupData(tester *require.Assertions, s index.SeriesStore) {
 	series1 := index.Document{
-		DocID:        1,
 		EntityValues: []byte("test1"),
 	}
 
 	series2 := index.Document{
-		DocID:        2,
 		EntityValues: []byte("test2"),
 		Fields: []index.Field{
 			{
 				Key:   fieldKeyDuration,
 				Term:  convert.Int64ToBytes(int64(100)),
 				Store: true,
+				Index: true,
 			},
 			{
 				Key:   fieldKeyServiceName,
 				Term:  []byte("svc2"),
 				Store: true,
+				Index: true,
+			},
+			{
+				Key:   fieldKeyStartTime,
+				Term:  convert.Int64ToBytes(int64(100)),
+				Store: true,
+				Index: true,
+			},
+			{
+				Key: index.FieldKey{
+					TagName: "short_name",
+				},
+				Term:  []byte("t2"),
+				Store: true,
+				Index: false,
 			},
 		},
+		Timestamp: int64(101),
 	}
 
 	series3 := index.Document{
-		DocID:        3,
 		EntityValues: []byte("test3"),
 		Fields: []index.Field{
 			{
 				Key:   fieldKeyDuration,
 				Term:  convert.Int64ToBytes(int64(500)),
 				Store: true,
+				Index: true,
+			},
+			{
+				Key:   fieldKeyStartTime,
+				Term:  convert.Int64ToBytes(int64(1000)),
+				Store: true,
+				Index: true,
+			},
+			{
+				Key: index.FieldKey{
+					TagName: "short_name",
+				},
+				Term:  []byte("t3"),
+				Store: true,
+				Index: false,
 			},
 		},
+		Timestamp: int64(1001),
+	}
+	series4 := index.Document{
+		EntityValues: []byte("test4"),
+		Fields: []index.Field{
+			{
+				Key:   fieldKeyDuration,
+				Term:  convert.Int64ToBytes(int64(500)),
+				Store: true,
+				Index: true,
+			},
+			{
+				Key:   fieldKeyStartTime,
+				Term:  convert.Int64ToBytes(int64(2000)),
+				Store: true,
+				Index: true,
+			},
+		},
+		Timestamp: int64(2001),
 	}
 	tester.NoError(s.SeriesBatch(index.Batch{
-		Documents: []index.Document{series1, series2, series3, series3},
+		Documents: []index.Document{series1, series2, series4, series3},
+	}))
+	tester.NoError(s.SeriesBatch(index.Batch{
+		Documents: []index.Document{series3},
 	}))
 }

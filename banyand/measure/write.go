@@ -125,6 +125,61 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		))
 	}
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
+	tagFamily, fields := w.handleTagFamily(stm, req)
+	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamily)
+
+	if stm.processorManager != nil {
+		stm.processorManager.onMeasureWrite(uint64(series.ID), &measurev1.InternalWriteRequest{
+			Request: &measurev1.WriteRequest{
+				Metadata:  stm.GetSchema().Metadata,
+				DataPoint: req.DataPoint,
+				MessageId: uint64(time.Now().UnixNano()),
+			},
+			EntityValues: writeEvent.EntityValues,
+		})
+	}
+
+	doc := index.Document{
+		DocID:        uint64(series.ID),
+		EntityValues: series.Buffer,
+		Fields:       fields,
+	}
+	if stm.schema.IndexMode {
+		doc.Timestamp = ts
+	}
+	dpg.docs = append(dpg.docs, doc)
+
+	return dst, nil
+}
+
+func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPointsInGroup, t time.Time, ts int64, shardID common.ShardID) (*dataPointsInTable, error) {
+	var segment storage.Segment[*tsTable, option]
+	for _, seg := range dpg.segments {
+		if seg.GetTimeRange().Contains(ts) {
+			segment = seg
+		}
+	}
+	if segment == nil {
+		var err error
+		segment, err = tsdb.CreateSegmentIfNotExist(t)
+		if err != nil {
+			return nil, fmt.Errorf("cannot create segment: %w", err)
+		}
+		dpg.segments = append(dpg.segments, segment)
+	}
+	tstb, err := segment.CreateTSTableIfNotExist(shardID)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create ts table: %w", err)
+	}
+	dpt := &dataPointsInTable{
+		timeRange: segment.GetTimeRange(),
+		tsTable:   tstb,
+	}
+	dpg.tables = append(dpg.tables, dpt)
+	return dpt, nil
+}
+
+func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteRequest) ([]nameValues, []index.Field) {
 	tagFamilies := make([]nameValues, 0, len(stm.schema.TagFamilies))
 	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
 		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
@@ -156,26 +211,34 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 				t.Name,
 				t.Type,
 				tagValue)
-			if r, ok := tfr[t.Name]; ok {
+			r, ok := tfr[t.Name]
+			if ok || stm.schema.IndexMode {
+				fieldKey := index.FieldKey{}
+				switch {
+				case ok:
+					fieldKey.IndexRuleID = r.GetMetadata().GetId()
+					fieldKey.Analyzer = r.Analyzer
+				case stm.schema.IndexMode:
+					fieldKey.TagName = t.Name
+				default:
+					logger.Panicf("metadata crashed, tag family rule %s not found", t.Name)
+				}
+				toIndex := ok || !stm.schema.IndexMode
 				if encodeTagValue.value != nil {
 					fields = append(fields, index.Field{
-						Key: index.FieldKey{
-							IndexRuleID: r.GetMetadata().GetId(),
-							Analyzer:    r.Analyzer,
-						},
+						Key:    fieldKey,
 						Term:   encodeTagValue.value,
 						Store:  true,
+						Index:  toIndex,
 						NoSort: r.GetNoSort(),
 					})
 				} else {
 					for _, val := range encodeTagValue.valueArr {
 						fields = append(fields, index.Field{
-							Key: index.FieldKey{
-								IndexRuleID: r.GetMetadata().GetId(),
-								Analyzer:    r.Analyzer,
-							},
+							Key:    fieldKey,
 							Term:   val,
 							Store:  true,
+							Index:  toIndex,
 							NoSort: r.GetNoSort(),
 						})
 					}
@@ -192,52 +255,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			tagFamilies = append(tagFamilies, tf)
 		}
 	}
-	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamilies)
-
-	if stm.processorManager != nil {
-		stm.processorManager.onMeasureWrite(uint64(series.ID), &measurev1.InternalWriteRequest{
-			Request: &measurev1.WriteRequest{
-				Metadata:  stm.GetSchema().Metadata,
-				DataPoint: req.DataPoint,
-				MessageId: uint64(time.Now().UnixNano()),
-			},
-			EntityValues: writeEvent.EntityValues,
-		})
-	}
-
-	dpg.docs = append(dpg.docs, index.Document{
-		DocID:        uint64(series.ID),
-		EntityValues: series.Buffer,
-		Fields:       fields,
-	})
-	return dst, nil
-}
-
-func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPointsInGroup, t time.Time, ts int64, shardID common.ShardID) (*dataPointsInTable, error) {
-	var segment storage.Segment[*tsTable, option]
-	for _, seg := range dpg.segments {
-		if seg.GetTimeRange().Contains(ts) {
-			segment = seg
-		}
-	}
-	if segment == nil {
-		var err error
-		segment, err = tsdb.CreateSegmentIfNotExist(t)
-		if err != nil {
-			return nil, fmt.Errorf("cannot create segment: %w", err)
-		}
-		dpg.segments = append(dpg.segments, segment)
-	}
-	tstb, err := segment.CreateTSTableIfNotExist(shardID)
-	if err != nil {
-		return nil, fmt.Errorf("cannot create ts table: %w", err)
-	}
-	dpt := &dataPointsInTable{
-		timeRange: segment.GetTimeRange(),
-		tsTable:   tstb,
-	}
-	dpg.tables = append(dpg.tables, dpt)
-	return dpt, nil
+	return tagFamilies, fields
 }
 
 func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {

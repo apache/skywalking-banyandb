@@ -60,6 +60,22 @@ func (t TimeRange) Overlapping(other TimeRange) bool {
 	return !t.Start.After(other.End) && !other.Start.After(t.End)
 }
 
+// Include returns whether the TimeRange includes the other TimeRange.
+func (t TimeRange) Include(other TimeRange) bool {
+	var start, end bool
+	if t.Start.Equal(other.Start) {
+		start = t.IncludeStart || !other.IncludeStart
+	} else {
+		start = !t.Start.After(other.Start)
+	}
+	if t.End.Equal(other.End) {
+		end = t.IncludeEnd || !other.IncludeEnd
+	} else {
+		end = !t.End.Before(other.End)
+	}
+	return start && end
+}
+
 // Duration converts TimeRange to time.Duration.
 func (t TimeRange) Duration() time.Duration {
 	return t.End.Sub(t.Start)

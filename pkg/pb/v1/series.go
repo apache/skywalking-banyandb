@@ -72,6 +72,7 @@ func (s *Series) MarshalWithWildcard() error {
 
 // Unmarshal decodes series from internal Buffer.
 func (s *Series) Unmarshal(src []byte) error {
+	s.ID = common.SeriesID(convert.Hash(src))
 	var err error
 	s.Buffer = s.Buffer[:0]
 	if s.Buffer, src, err = unmarshalEntityValue(s.Buffer, src); err != nil {

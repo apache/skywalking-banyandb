@@ -76,6 +76,7 @@ fields:
 entity:
   tag_names:
   - entity_id
+index_mode: false
 interval: 1m
 ```
 
@@ -114,6 +115,25 @@ functions to them.
 * **ZSTD** : Zstandard is a real-time compression algorithm, that provides high compression ratios. It offers a very wide range of compression/speed trade-offs, while being backed by a very fast decoder. For BanyanDB focus on speed.
 
 Another option named `interval` plays a critical role in encoding. It indicates the time range between two adjacent data points in a time series and implies that all data points belonging to the same time series are distributed based on a fixed interval. A better practice for the naming measure is to append the interval literal to the tail, for example, `service_cpm_minute`. It's a parameter of `GORILLA` encoding method.
+
+`index_mode` is a flag to enable the series index as the storage engine. All the tags will be stored in the inverted index and no field is allowed in the measure. This mode is suitable for the non-time series data model but needs TTL to be set. In this mode, the tags defined in the `entity` is the unique key of the data point. `timestamp` and `version` are the common tags in the inverted index.
+
+There is an example of a measure with the index mode enabled:
+
+```yaml
+metadata:
+  name: service_traffic
+  group: sw_metric
+tag_families:
+- name: default
+  tags:
+  - name: id
+    type: TAG_TYPE_STRING
+  - name: service_name
+    type: TAG_TYPE_STRING
+index_mode: true
+entity: ["id"]
+```
 
 [Measure Registration Operations](../api-reference.md#measureregistryservice)
 

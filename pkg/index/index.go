@@ -49,12 +49,16 @@ const (
 // FieldKey is the key of field in a document.
 type FieldKey struct {
 	Analyzer    string
+	TagName     string
 	SeriesID    common.SeriesID
 	IndexRuleID uint32
 }
 
 // Marshal encodes f to string.
 func (f FieldKey) Marshal() string {
+	if len(f.TagName) > 0 {
+		return f.TagName
+	}
 	return string(convert.Uint32ToBytes(f.IndexRuleID))
 }
 
@@ -64,6 +68,7 @@ type Field struct {
 	Key    FieldKey
 	NoSort bool
 	Store  bool
+	Index  bool
 }
 
 // RangeOpts contains options to performance a continuous scan.
@@ -169,7 +174,7 @@ type Writer interface {
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query) (Query, error)
+	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query, timeRange *timestamp.TimeRange) (Query, error)
 	Iterator(ctx context.Context, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort,
 		preLoadSize int) (iter FieldIterator[*DocumentResult], err error)
 	Sort(ctx context.Context, sids []common.SeriesID, fieldKey FieldKey,
@@ -201,11 +206,10 @@ type Store interface {
 // Series represents a series in an index.
 type Series struct {
 	EntityValues []byte
-	ID           common.SeriesID
 }
 
 func (s Series) String() string {
-	return fmt.Sprintf("%s:%d", s.EntityValues, s.ID)
+	return convert.BytesToString(s.EntityValues)
 }
 
 // SortedField returns the value of the sorted field.
@@ -215,8 +219,28 @@ func (s Series) SortedField() []byte {
 
 // SeriesDocument represents a series document in an index.
 type SeriesDocument struct {
-	Fields map[string][]byte
-	Key    Series
+	Fields    map[string][]byte
+	Key       Series
+	Timestamp int64
+}
+
+// OrderByType is the type of order by.
+type OrderByType int
+
+const (
+	// OrderByTypeTime is the order by time.
+	OrderByTypeTime OrderByType = iota
+	// OrderByTypeIndex is the order by index.
+	OrderByTypeIndex
+	// OrderByTypeSeries is the order by series.
+	OrderByTypeSeries
+)
+
+// OrderBy is the order by rule.
+type OrderBy struct {
+	Index *databasev1.IndexRule
+	Sort  modelv1.Sort
+	Type  OrderByType
 }
 
 // SeriesStore is an abstract of a series repository.
@@ -225,8 +249,8 @@ type SeriesStore interface {
 	// Search returns a list of series that match the given matchers.
 	Search(context.Context, []FieldKey, Query) ([]SeriesDocument, error)
 	SeriesIterator(context.Context) (FieldIterator[Series], error)
-	SeriesSort(ctx context.Context, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort,
-		preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
+	SeriesSort(ctx context.Context, indexQuery Query, orderBy *OrderBy,
+		preLoadSize int, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

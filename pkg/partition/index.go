@@ -40,7 +40,7 @@ type FieldIndexLocation map[string]map[string]FieldWithType
 
 // ParseIndexRuleLocators returns a IndexRuleLocator based on the tag family spec and index rules.
 func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.TagFamilySpec,
-	indexRules []*databasev1.IndexRule,
+	indexRules []*databasev1.IndexRule, indexMode bool,
 ) (locators IndexRuleLocator, fil FieldIndexLocation) {
 	locators.EntitySet = make(map[string]struct{}, len(entity.TagNames))
 	fil = make(FieldIndexLocation)
@@ -64,18 +64,28 @@ func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.Ta
 			ir := findIndexRuleByTagName(families[i].Tags[j].Name)
 			if ir != nil {
 				ttr[families[i].Tags[j].Name] = ir
-				tagFamily, ok := fil[families[i].Name]
-				if !ok {
-					tagFamily = make(map[string]FieldWithType)
-					fil[families[i].Name] = tagFamily
+			}
+			if ir == nil && !indexMode {
+				continue
+			}
+			tagFamily, ok := fil[families[i].Name]
+			if !ok {
+				tagFamily = make(map[string]FieldWithType)
+				fil[families[i].Name] = tagFamily
+			}
+			fwt := FieldWithType{
+				Type: pbv1.MustTagValueSpecToValueType(families[i].Tags[j].Type),
+			}
+			if ir != nil {
+				fwt.Key = index.FieldKey{
+					IndexRuleID: ir.Metadata.Id,
 				}
-				tagFamily[families[i].Tags[j].Name] = FieldWithType{
-					Key: index.FieldKey{
-						IndexRuleID: ir.Metadata.Id,
-					},
-					Type: pbv1.MustTagValueSpecToValueType(families[i].Tags[j].Type),
+			} else {
+				fwt.Key = index.FieldKey{
+					TagName: families[i].Tags[j].Name,
 				}
 			}
+			tagFamily[families[i].Tags[j].Name] = fwt
 		}
 	}
 	return locators, fil
