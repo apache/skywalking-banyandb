@@ -132,6 +132,9 @@ func Measure(measure *databasev1.Measure) error {
 	if len(measure.TagFamilies) == 0 {
 		return errors.New("measure tag families is empty")
 	}
+	if measure.IndexMode && len(measure.Fields) > 0 {
+		return errors.New("index mode is enabled, but fields are not empty")
+	}
 	return tagFamily(measure.TagFamilies)
 }
 
