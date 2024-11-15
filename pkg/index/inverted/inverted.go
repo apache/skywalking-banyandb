@@ -48,10 +48,8 @@ import (
 const (
 	docIDField     = "_id"
 	batchSize      = 1024
-	seriesIDField  = "series_id"
-	entityField    = "entity"
-	idField        = "id"
-	timestampField = "timestamp"
+	seriesIDField  = "_series_id"
+	timestampField = "_timestamp"
 )
 
 var (
@@ -317,22 +315,24 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 }
 
 type blugeMatchIterator struct {
-	delegated search.DocumentMatchIterator
-	err       error
-	closer    io.Closer
-	ctx       *search.Context
-	current   index.DocumentResult
-	hit       int
+	delegated     search.DocumentMatchIterator
+	err           error
+	closer        io.Closer
+	ctx           *search.Context
+	loadDocValues []string
+	current       index.DocumentResult
+	hit           int
 }
 
 func newBlugeMatchIterator(delegated search.DocumentMatchIterator, closer io.Closer,
-	_ []string,
+	loadDocValues []string,
 ) blugeIterator {
 	bmi := &blugeMatchIterator{
-		delegated: delegated,
-		closer:    closer,
-		current:   index.DocumentResult{},
-		ctx:       search.NewSearchContext(1, 0),
+		delegated:     delegated,
+		closer:        closer,
+		current:       index.DocumentResult{},
+		ctx:           search.NewSearchContext(1, 0),
+		loadDocValues: loadDocValues,
 	}
 	return bmi
 }
@@ -359,9 +359,23 @@ func (bmi *blugeMatchIterator) Next() bool {
 	if len(match.SortValue) > 0 {
 		bmi.current.SortedValue = match.SortValue[0]
 	}
-	err := match.VisitStoredFields(bmi.setVal)
-	bmi.err = multierr.Combine(bmi.err, err)
-	return bmi.err == nil
+	if len(bmi.loadDocValues) == 0 {
+		err := match.VisitStoredFields(bmi.setVal)
+		bmi.err = multierr.Combine(bmi.err, err)
+		return bmi.err == nil
+	}
+	if err := match.LoadDocumentValues(bmi.ctx, bmi.loadDocValues); err != nil {
+		bmi.err = multierr.Combine(bmi.err, err)
+		return false
+	}
+	for _, dv := range bmi.loadDocValues {
+		vv := match.DocValues(dv)
+		if len(vv) == 0 {
+			continue
+		}
+		bmi.setVal(dv, vv[0])
+	}
+	return true
 }
 
 func (bmi *blugeMatchIterator) setVal(field string, value []byte) bool {

@@ -264,7 +264,7 @@ func generateStream(db storage.TSDB[*tsTable, option]) *stream {
 	}
 }
 
-func generateStreamQueryOptions(p parameter, index mockIndex) model.StreamQueryOptions {
+func generateStreamQueryOptions(p parameter, midx mockIndex) model.StreamQueryOptions {
 	timeRange := timestamp.TimeRange{
 		Start:        time.Unix(int64(p.startTimestamp), 0),
 		End:          time.Unix(int64(p.endTimestamp), 0),
@@ -287,7 +287,7 @@ func generateStreamQueryOptions(p parameter, index mockIndex) model.StreamQueryO
 	num := generateRandomNumber(int64(p.tagCardinality))
 	value := filterTagValuePrefix + strconv.Itoa(num)
 	filter := mockFilter{
-		index: index,
+		index: midx,
 		value: value,
 	}
 	indexRule := &databasev1.IndexRule{
@@ -297,7 +297,7 @@ func generateStreamQueryOptions(p parameter, index mockIndex) model.StreamQueryO
 		Tags: []string{"filter-tag"},
 		Type: databasev1.IndexRule_TYPE_INVERTED,
 	}
-	order := &model.OrderBy{
+	order := &index.OrderBy{
 		Index: indexRule,
 		Sort:  modelv1.Sort_SORT_ASC,
 	}

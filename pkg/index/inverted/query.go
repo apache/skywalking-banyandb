@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -465,4 +466,24 @@ func (m *wildcardNode) MarshalJSON() ([]byte, error) {
 
 func (m *wildcardNode) String() string {
 	return convert.JSONToString(m)
+}
+
+type timeRangeNode struct {
+	timeRange *timestamp.TimeRange
+}
+
+func newTimeRangeNode(timeRange *timestamp.TimeRange) *timeRangeNode {
+	return &timeRangeNode{
+		timeRange: timeRange,
+	}
+}
+
+func (t *timeRangeNode) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	data["time_range"] = t.timeRange.String()
+	return json.Marshal(data)
+}
+
+func (t *timeRangeNode) String() string {
+	return convert.JSONToString(t)
 }

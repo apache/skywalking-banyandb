@@ -30,10 +30,10 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var emptySeries = make([]index.SeriesDocument, 0)
@@ -49,12 +49,15 @@ func (s *store) SeriesBatch(batch index.Batch) error {
 	b := generateBatch()
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
-		doc := bluge.NewDocument(convert.BytesToString(convert.Uint64ToBytes(d.DocID)))
+		doc := bluge.NewDocument(convert.BytesToString(d.EntityValues))
 		for _, f := range d.Fields {
 			tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
-			if !f.NoSort {
+			if !f.Index {
+				tf.FieldOptions = 0
+			} else if !f.NoSort {
 				tf.Sortable()
 			}
+
 			if f.Store {
 				tf.StoreValue()
 			}
@@ -64,7 +67,6 @@ func (s *store) SeriesBatch(batch index.Batch) error {
 			doc.AddField(tf)
 		}
 
-		doc.AddField(bluge.NewKeywordFieldBytes(entityField, d.EntityValues).StoreValue())
 		if d.Timestamp > 0 {
 			doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
 		}
@@ -78,7 +80,7 @@ func (s *store) SeriesBatch(batch index.Batch) error {
 }
 
 // BuildQuery implements index.SeriesStore.
-func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query) (index.Query, error) {
+func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query, timeRange *timestamp.TimeRange) (index.Query, error) {
 	if len(seriesMatchers) == 0 {
 		return secondaryQuery, nil
 	}
@@ -90,19 +92,19 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 		case index.SeriesMatcherTypeExact:
 			match := convert.BytesToString(seriesMatchers[i].Match)
 			q := bluge.NewTermQuery(match)
-			q.SetField(entityField)
+			q.SetField(docIDField)
 			qs[i] = q
 			nodes = append(nodes, newTermNode(match, nil))
 		case index.SeriesMatcherTypePrefix:
 			match := convert.BytesToString(seriesMatchers[i].Match)
 			q := bluge.NewPrefixQuery(match)
-			q.SetField(entityField)
+			q.SetField(docIDField)
 			qs[i] = q
 			nodes = append(nodes, newPrefixNode(match))
 		case index.SeriesMatcherTypeWildcard:
 			match := convert.BytesToString(seriesMatchers[i].Match)
 			q := bluge.NewWildcardQuery(match)
-			q.SetField(entityField)
+			q.SetField(docIDField)
 			qs[i] = q
 			nodes = append(nodes, newWildcardNode(match))
 		default:
@@ -131,6 +133,12 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 	if secondaryQuery != nil && secondaryQuery.(*queryNode).query != nil {
 		query.AddMust(secondaryQuery.(*queryNode).query)
 		node.Append(secondaryQuery.(*queryNode).node)
+	}
+	if timeRange != nil {
+		q := bluge.NewDateRangeInclusiveQuery(timeRange.Start, timeRange.End, timeRange.IncludeStart, timeRange.IncludeEnd)
+		q.SetField(timestampField)
+		query.AddMust(q)
+		node.Append(newTimeRangeNode(timeRange))
 	}
 	return &queryNode{query, node}, nil
 }
@@ -164,7 +172,6 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 	if err != nil {
 		return nil, errors.WithMessage(err, "iterate document match iterator")
 	}
-	docIDMap := make(map[uint64]struct{})
 	fields := make([]string, 0, len(loadedFields))
 	for i := range loadedFields {
 		fields = append(fields, loadedFields[i].Marshal())
@@ -179,16 +186,19 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 				doc.Fields[fields[i]] = nil
 			}
 		}
+		var errTime error
 		err = next.VisitStoredFields(func(field string, value []byte) bool {
 			switch field {
 			case docIDField:
-				id := convert.BytesToUint64(value)
-				if _, ok := docIDMap[id]; !ok {
-					doc.Key.ID = common.SeriesID(convert.BytesToUint64(value))
-					docIDMap[id] = struct{}{}
-				}
-			case entityField:
 				doc.Key.EntityValues = value
+			case timestampField:
+				var ts time.Time
+				ts, errTime = bluge.DecodeDateTime(value)
+				if errTime != nil {
+					err = errTime
+					return false
+				}
+				doc.Timestamp = ts.UnixNano()
 			default:
 				if _, ok := doc.Fields[field]; ok {
 					doc.Fields[field] = bytes.Clone(value)
@@ -196,10 +206,10 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 			}
 			return true
 		})
-		if err != nil {
+		if err = multierr.Combine(err, errTime); err != nil {
 			return nil, errors.WithMessagef(err, "visit stored fields, hit: %d", hitNumber)
 		}
-		if doc.Key.ID > 0 {
+		if len(doc.Key.EntityValues) > 0 {
 			result = append(result, doc)
 		}
 		next, err = dmi.Next()
@@ -210,58 +220,39 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 	return result, nil
 }
 
-func (s *store) SeriesSort(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
-	preLoadSize int, indexQuery index.Query, fieldKeys []index.FieldKey,
+func (s *store) SeriesSort(ctx context.Context, indexQuery index.Query, orderBy *index.OrderBy,
+	preLoadSize int, fieldKeys []index.FieldKey,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
-	if termRange.Lower != nil &&
-		termRange.Upper != nil &&
-		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
-		return index.DummyFieldIterator, nil
+	var sortedKey string
+	switch orderBy.Type {
+	case index.OrderByTypeTime:
+		sortedKey = timestampField
+	case index.OrderByTypeIndex:
+		fieldKey := index.FieldKey{
+			IndexRuleID: orderBy.Index.Metadata.Id,
+		}
+		sortedKey = fieldKey.Marshal()
+	default:
+		return nil, errors.Errorf("unsupported order by type: %v", orderBy.Type)
 	}
-	if !s.closer.AddRunning() {
-		return nil, nil
-	}
-
-	reader, err := s.writer.Reader()
-	if err != nil {
-		return nil, err
-	}
-	fk := fieldKey.Marshal()
-
-	if termRange.Upper == nil {
-		termRange.Upper = defaultUpper
-	}
-	if termRange.Lower == nil {
-		termRange.Lower = defaultLower
-	}
-	rangeQuery := bluge.NewBooleanQuery()
-	rangeQuery.AddMust(bluge.NewTermRangeInclusiveQuery(
-		string(termRange.Lower),
-		string(termRange.Upper),
-		termRange.IncludesLower,
-		termRange.IncludesUpper,
-	).
-		SetField(fk))
-	rangeNode := newMustNode()
-	rangeNode.Append(newTermRangeInclusiveNode(string(termRange.Lower), string(termRange.Upper), termRange.IncludesLower, termRange.IncludesUpper, nil))
-
-	sortedKey := fk
-	if order == modelv1.Sort_SORT_DESC {
+	if orderBy.Sort == modelv1.Sort_SORT_DESC {
 		sortedKey = "-" + sortedKey
-	}
-	query := bluge.NewBooleanQuery().AddMust(rangeQuery)
-	node := newMustNode()
-	node.Append(rangeNode)
-	if indexQuery != nil && indexQuery.(*queryNode).query != nil {
-		query.AddMust(indexQuery.(*queryNode).query)
-		node.Append(indexQuery.(*queryNode).node)
 	}
 	fields := make([]string, 0, len(fieldKeys))
 	for i := range fieldKeys {
 		fields = append(fields, fieldKeys[i].Marshal())
 	}
-	result := &sortIterator{
-		query:       &queryNode{query, node},
+
+	if !s.closer.AddRunning() {
+		return nil, nil
+	}
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return nil, err
+	}
+
+	return &sortIterator{
+		query:       indexQuery,
 		fields:      fields,
 		reader:      reader,
 		sortedKey:   sortedKey,
@@ -269,13 +260,11 @@ func (s *store) SeriesSort(ctx context.Context, fieldKey index.FieldKey, termRan
 		closer:      s.closer,
 		ctx:         ctx,
 		newIterator: newSeriesIterator,
-	}
-	return result, nil
+	}, nil
 }
 
 type seriesIterator struct {
 	*blugeMatchIterator
-	needToLoadFields []string
 }
 
 func newSeriesIterator(delegated search.DocumentMatchIterator, closer io.Closer,
@@ -288,7 +277,6 @@ func newSeriesIterator(delegated search.DocumentMatchIterator, closer io.Closer,
 			ctx:       search.NewSearchContext(1, 0),
 			current:   index.DocumentResult{Values: make(map[string][]byte, len(needToLoadFields))},
 		},
-		needToLoadFields: append(needToLoadFields, entityField, docIDField, seriesIDField, timestampField),
 	}
 	for _, f := range needToLoadFields {
 		si.current.Values[f] = nil
@@ -312,7 +300,6 @@ func (si *seriesIterator) Next() bool {
 		si.current.Values[i] = nil
 	}
 	si.current.DocID = 0
-	si.current.SeriesID = 0
 	si.current.Timestamp = 0
 	si.current.SortedValue = nil
 	if len(match.SortValue) > 0 {
@@ -329,10 +316,8 @@ func (si *seriesIterator) Next() bool {
 
 func (si *seriesIterator) setVal(field string, value []byte) bool {
 	switch field {
-	case entityField:
-		si.current.EntityValues = value
 	case docIDField:
-		si.current.DocID = convert.BytesToUint64(value)
+		si.current.EntityValues = value
 	case timestampField:
 		ts, errTime := bluge.DecodeDateTime(value)
 		if errTime != nil {
@@ -356,7 +341,7 @@ func (s *store) SeriesIterator(ctx context.Context) (index.FieldIterator[index.S
 	defer func() {
 		_ = reader.Close()
 	}()
-	dict, err := reader.DictionaryIterator(entityField, nil, nil, nil)
+	dict, err := reader.DictionaryIterator(docIDField, nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}

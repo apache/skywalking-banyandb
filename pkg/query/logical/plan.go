@@ -63,6 +63,9 @@ func (o *OrderBy) String() string {
 // ParseOrderBy parses an OrderBy from a Schema.
 func ParseOrderBy(s Schema, indexRuleName string, sort modelv1.Sort) (*OrderBy, error) {
 	if indexRuleName == "" {
+		if sort == modelv1.Sort_SORT_UNSPECIFIED {
+			return nil, nil
+		}
 		return &OrderBy{
 			Sort: sort,
 		}, nil

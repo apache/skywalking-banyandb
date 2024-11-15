@@ -174,7 +174,7 @@ type Writer interface {
 
 // FieldIterable allows building a FieldIterator.
 type FieldIterable interface {
-	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query) (Query, error)
+	BuildQuery(seriesMatchers []SeriesMatcher, secondaryQuery Query, timeRange *timestamp.TimeRange) (Query, error)
 	Iterator(ctx context.Context, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort,
 		preLoadSize int) (iter FieldIterator[*DocumentResult], err error)
 	Sort(ctx context.Context, sids []common.SeriesID, fieldKey FieldKey,
@@ -206,11 +206,10 @@ type Store interface {
 // Series represents a series in an index.
 type Series struct {
 	EntityValues []byte
-	ID           common.SeriesID
 }
 
 func (s Series) String() string {
-	return fmt.Sprintf("%s:%d", s.EntityValues, s.ID)
+	return convert.BytesToString(s.EntityValues)
 }
 
 // SortedField returns the value of the sorted field.
@@ -225,14 +224,33 @@ type SeriesDocument struct {
 	Timestamp int64
 }
 
+// OrderByType is the type of order by.
+type OrderByType int
+
+const (
+	// OrderByTypeTime is the order by time.
+	OrderByTypeTime OrderByType = iota
+	// OrderByTypeIndex is the order by index.
+	OrderByTypeIndex
+	// OrderByTypeSeries is the order by series.
+	OrderByTypeSeries
+)
+
+// OrderBy is the order by rule.
+type OrderBy struct {
+	Index *databasev1.IndexRule
+	Sort  modelv1.Sort
+	Type  OrderByType
+}
+
 // SeriesStore is an abstract of a series repository.
 type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
 	Search(context.Context, []FieldKey, Query) ([]SeriesDocument, error)
 	SeriesIterator(context.Context) (FieldIterator[Series], error)
-	SeriesSort(ctx context.Context, fieldKey FieldKey, termRange RangeOpts, order modelv1.Sort,
-		preLoadSize int, query Query, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
+	SeriesSort(ctx context.Context, indexQuery Query, orderBy *OrderBy,
+		preLoadSize int, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
 }
 
 // SeriesMatcherType represents the type of series matcher.

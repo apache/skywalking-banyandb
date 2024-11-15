@@ -27,6 +27,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
@@ -158,7 +159,7 @@ func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err er
 		Name:            i.metadata.GetName(),
 		TimeRange:       &i.timeRange,
 		Entities:        [][]*modelv1.TagValue{i.entity},
-		Order:           &model.OrderBy{Sort: i.sort},
+		Order:           &index.OrderBy{Sort: i.sort},
 		TagProjection:   i.projectionTags,
 		FieldProjection: i.projectionFields,
 	})

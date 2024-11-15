@@ -81,9 +81,9 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	if i.result != nil {
 		return BuildElementsFromStreamResult(ctx, i.result), nil
 	}
-	var orderBy *model.OrderBy
+	var orderBy *index.OrderBy
 	if i.order != nil {
-		orderBy = &model.OrderBy{
+		orderBy = &index.OrderBy{
 			Index: i.order.Index,
 			Sort:  i.order.Sort,
 		}

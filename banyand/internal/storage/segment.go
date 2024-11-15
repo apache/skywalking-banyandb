@@ -234,6 +234,9 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange)
 	last := len(sc.lst) - 1
 	for i := range sc.lst {
 		s := sc.lst[last-i]
+		if s.GetTimeRange().End.Before(timeRange.Start) {
+			break
+		}
 		if s.Overlapping(timeRange) {
 			s.incRef()
 			tt = append(tt, s)

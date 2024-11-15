@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -157,11 +158,12 @@ func TestSeriesIndex_Primary(t *testing.T) {
 				seriesQuery.EntityValues = tt.entityValues[i]
 				seriesQueries = append(seriesQueries, &seriesQuery)
 			}
-			sl, _, _, err := si.filter(ctx, seriesQueries, nil, nil)
+			sl, _, _, err := si.filter(ctx, seriesQueries, nil, nil, nil)
 			require.NoError(t, err)
 			require.Equal(t, len(tt.entityValues), len(sl))
 			assert.Equal(t, tt.subject, sl[0].Subject)
 			for i := range tt.expected {
+				assert.Greater(t, sl[i].ID, common.SeriesID(0))
 				assert.Equal(t, tt.expected[i][0].GetStr().GetValue(), sl[i].EntityValues[0].GetStr().GetValue())
 				assert.Equal(t, tt.expected[i][1].GetStr().GetValue(), sl[i].EntityValues[1].GetStr().GetValue())
 				assert.True(t, sl[0].ID > 0)

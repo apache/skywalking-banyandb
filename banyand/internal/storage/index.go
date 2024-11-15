@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func (s *segment[T, O]) IndexDB() IndexDB {
@@ -38,7 +39,7 @@ func (s *segment[T, O]) IndexDB() IndexDB {
 }
 
 func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
-	sl, _, _, err := s.index.filter(ctx, series, nil, nil)
+	sl, _, _, err := s.index.filter(ctx, series, nil, nil, nil)
 	return sl, err
 }
 
@@ -76,10 +77,8 @@ func (s *seriesIndex) Write(docs index.Documents) error {
 	})
 }
 
-var rangeOpts = index.RangeOpts{}
-
 func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
-	projection []index.FieldKey, secondaryQuery index.Query,
+	projection []index.FieldKey, secondaryQuery index.Query, timeRange *timestamp.TimeRange,
 ) (sl pbv1.SeriesList, fields FieldResultList, tss []int64, err error) {
 	seriesMatchers := make([]index.SeriesMatcher, len(series))
 	for i := range series {
@@ -88,7 +87,7 @@ func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 			return nil, nil, nil, err
 		}
 	}
-	indexQuery, err := s.store.BuildQuery(seriesMatchers, secondaryQuery)
+	indexQuery, err := s.store.BuildQuery(seriesMatchers, secondaryQuery, timeRange)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -182,7 +181,6 @@ func convertIndexSeriesToSeriesList(indexSeries []index.SeriesDocument, hasField
 	var timestamps []int64
 	for _, s := range indexSeries {
 		var series pbv1.Series
-		series.ID = s.Key.ID
 		if err := series.Unmarshal(s.Key.EntityValues); err != nil {
 			return nil, nil, nil, errors.WithMessagef(err, "failed to unmarshal series: %s", s.Key.EntityValues)
 		}
@@ -197,11 +195,15 @@ func convertIndexSeriesToSeriesList(indexSeries []index.SeriesDocument, hasField
 	return seriesList, fields, timestamps, nil
 }
 
-func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (sl pbv1.SeriesList, frl FieldResultList, tss []int64, err error) {
+func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts,
+) (sl pbv1.SeriesList, frl FieldResultList, tss []int64, sortedValues [][]byte, err error) {
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		var span *query.Span
 		span, ctx = tracer.StartSpan(ctx, "seriesIndex.Search")
+		if opts.Query != nil {
+			span.Tagf("secondary_query", "%s", opts.Query.String())
+		}
 		defer func() {
 			if err != nil {
 				span.Error(err)
@@ -211,19 +213,11 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 	}
 
 	if opts.Order == nil || opts.Order.Index == nil {
-		if opts.Query != nil {
-			sl, frl, tss, err = s.filter(ctx, series, opts.Projection, opts.Query)
-		} else {
-			sl, frl, tss, err = s.filter(ctx, series, opts.Projection, nil)
-		}
+		sl, frl, tss, err = s.filter(ctx, series, opts.Projection, opts.Query, opts.TimeRange)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
-		return sl, frl, tss, nil
-	}
-
-	fieldKey := index.FieldKey{
-		IndexRuleID: opts.Order.Index.GetMetadata().Id,
+		return sl, frl, tss, nil, nil
 	}
 	var span *query.Span
 	if tracer != nil {
@@ -240,43 +234,43 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 	for i := range series {
 		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
-	query, err := s.store.BuildQuery(seriesMatchers, opts.Query)
+	query, err := s.store.BuildQuery(seriesMatchers, opts.Query, opts.TimeRange)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	iter, err := s.store.SeriesSort(ctx, fieldKey, rangeOpts,
-		opts.Order.Sort, opts.PreloadSize, query, opts.Projection)
+	iter, err := s.store.SeriesSort(ctx, query, opts.Order,
+		opts.PreloadSize, opts.Projection)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
 
 	var r int
-	result := make([]index.SeriesDocument, 0, 10)
 	for iter.Next() {
 		r++
 		val := iter.Val()
-		var doc index.SeriesDocument
-		doc.Fields = maps.Clone(val.Values)
-		doc.Key.ID = common.SeriesID(val.DocID)
-		doc.Key.EntityValues = val.EntityValues
-		result = append(result, doc)
-	}
-	sl, frl, tss, err = convertIndexSeriesToSeriesList(result, len(opts.Projection) > 0)
-	if err != nil {
-		return nil, nil, nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, matched: %d", seriesMatchers, len(result))
+		var series pbv1.Series
+		if err = series.Unmarshal(val.EntityValues); err != nil {
+			return nil, nil, nil, nil, errors.WithMessagef(err, "failed to unmarshal series: %s", val.EntityValues)
+		}
+		sl = append(sl, &series)
+		tss = append(tss, val.Timestamp)
+		if len(opts.Projection) > 0 {
+			frl = append(frl, maps.Clone(val.Values))
+		}
+		sortedValues = append(sortedValues, val.SortedValue)
 	}
 	if span != nil {
 		span.Tagf("query", "%s", iter.Query().String())
 		span.Tagf("rounds", "%d", r)
 		span.Tagf("size", "%d", len(sl))
 	}
-	return sl, frl, tss, err
+	return sl, frl, tss, sortedValues, err
 }
 
 func (s *seriesIndex) Close() error {

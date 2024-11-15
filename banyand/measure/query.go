@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"fmt"
@@ -145,23 +146,27 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 
 	if mqo.Order == nil {
 		result.ascTS = true
-	} else if mqo.Order.Sort == modelv1.Sort_SORT_ASC || mqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-		result.ascTS = true
-	}
-	switch mqo.OrderByType {
-	case model.OrderByTypeTime:
 		result.orderByTS = true
-	case model.OrderByTypeIndex:
-		result.orderByTS = false
-	case model.OrderByTypeSeries:
-		result.orderByTS = false
+	} else {
+		if mqo.Order.Sort == modelv1.Sort_SORT_ASC || mqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+			result.ascTS = true
+		}
+		switch mqo.Order.Type {
+		case index.OrderByTypeTime:
+			result.orderByTS = true
+		case index.OrderByTypeIndex:
+			result.orderByTS = false
+		case index.OrderByTypeSeries:
+			result.orderByTS = false
+		}
 	}
+
 	return &result, nil
 }
 
 type tagNameWithType struct {
-	name string
-	typ  pbv1.ValueType
+	fieldName string
+	typ       pbv1.ValueType
 }
 
 func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
@@ -190,8 +195,8 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 				if field, ok := fields[n]; ok {
 					indexProjection = append(indexProjection, field.Key)
 					fieldToValueType[field.Key.Marshal()] = tagNameWithType{
-						name: n,
-						typ:  field.Type,
+						fieldName: n,
+						typ:       field.Type,
 					}
 					continue TAG
 				}
@@ -205,7 +210,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 	}
 	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
-		sll, fieldResultList, _, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
+		sll, fieldResultList, _, _, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
 			Query:       mqo.Query,
 			Order:       mqo.Order,
 			PreloadSize: preloadSize,
@@ -239,7 +244,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			}
 			for f, v := range fieldResultList[j] {
 				if tnt, ok := fieldToValueType[f]; ok {
-					tagValues[tnt.name] = mustDecodeTagValue(tnt.typ, v)
+					tagValues[tnt.fieldName] = mustDecodeTagValue(tnt.typ, v)
 				} else {
 					logger.Panicf("unknown field %s not found in fieldToValueType", f)
 				}
@@ -251,13 +256,14 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 
 func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
 	segments []storage.Segment[*tsTable, option],
-) (*indexQueryResult, error) {
-	r := &indexQueryResult{
-		ctx:      ctx,
-		series:   series,
-		mqo:      mqo,
-		segments: segments,
-	}
+) (*indexSortResult, error) {
+	defer func() {
+		for i := range segments {
+			segments[i].DecRef()
+		}
+	}()
+	r := &indexSortResult{}
+	var indexProjection []index.FieldKey
 	for _, tp := range mqo.TagProjection {
 		tagFamilyLocation := tagFamilyLocation{
 			name:                   tp.Family,
@@ -266,6 +272,7 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Seri
 		}
 	TAG:
 		for _, n := range tp.Names {
+			tagFamilyLocation.tagNames = append(tagFamilyLocation.tagNames, n)
 			for i := range s.schema.GetEntity().GetTagNames() {
 				if n == s.schema.GetEntity().GetTagNames()[i] {
 					tagFamilyLocation.projectedEntityOffsets[n] = i
@@ -274,10 +281,10 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Seri
 			}
 			if fields, ok := s.fieldIndexLocation[tp.Family]; ok {
 				if field, ok := fields[n]; ok {
-					r.indexProjection = append(r.indexProjection, field.Key)
-					tagFamilyLocation.fieldToValueType[field.Key.Marshal()] = tagNameWithType{
-						name: n,
-						typ:  field.Type,
+					indexProjection = append(indexProjection, field.Key)
+					tagFamilyLocation.fieldToValueType[n] = tagNameWithType{
+						fieldName: field.Key.Marshal(),
+						typ:       field.Type,
 					}
 					continue TAG
 				}
@@ -286,6 +293,28 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Seri
 		}
 		r.tfl = append(r.tfl, tagFamilyLocation)
 	}
+	var err error
+	opts := storage.IndexSearchOpts{
+		Query:       mqo.Query,
+		Order:       mqo.Order,
+		PreloadSize: preloadSize,
+		Projection:  indexProjection,
+	}
+
+	for i := range segments {
+		if mqo.TimeRange.Include(segments[i].GetTimeRange()) {
+			opts.TimeRange = nil
+		} else {
+			opts.TimeRange = mqo.TimeRange
+		}
+		sr := &segResult{}
+		sr.sll, sr.frl, sr.timestamps, sr.sortedValues, err = segments[i].IndexDB().Search(ctx, series, opts)
+		if err != nil {
+			return nil, err
+		}
+		r.segResults = append(r.segResults, sr)
+	}
+	heap.Init(&r.segResults)
 	return r, nil
 }
 
@@ -685,88 +714,112 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	return result
 }
 
-var bypassVersions = []int64{0}
+var bypassVersions = []int64{1}
 
-type indexQueryResult struct {
-	ctx             context.Context
-	err             error
-	tfl             []tagFamilyLocation
-	indexProjection []index.FieldKey
-	series          []*pbv1.Series
-	segments        []storage.Segment[*tsTable, option]
-	sll             pbv1.SeriesList
-	frl             storage.FieldResultList
-	timestamps      []int64
-	mqo             model.MeasureQueryOptions
-	i               int
+type indexSortResult struct {
+	tfl        []tagFamilyLocation
+	segResults segResultHeap
 }
 
 // Pull implements model.MeasureQueryResult.
-func (i *indexQueryResult) Pull() *model.MeasureResult {
-	if i.i < 0 {
-		if len(i.segments) < 1 {
+func (iqr *indexSortResult) Pull() *model.MeasureResult {
+	if len(iqr.segResults) < 1 {
+		return nil
+	}
+	if len(iqr.segResults) == 1 {
+		if iqr.segResults[0].i >= len(iqr.segResults[0].sll) {
 			return nil
 		}
-		i.sll, i.frl, i.timestamps, i.err = i.segments[0].IndexDB().Search(i.ctx, i.series, storage.IndexSearchOpts{
-			Query:       i.mqo.Query,
-			Order:       i.mqo.Order,
-			PreloadSize: preloadSize,
-			Projection:  i.indexProjection,
-		})
-		if i.err != nil {
-			return &model.MeasureResult{
-				Error: i.err,
-			}
+		sr := iqr.segResults[0]
+		r := iqr.copyTo(sr)
+		sr.i++
+		if sr.i >= len(sr.sll) {
+			iqr.segResults = iqr.segResults[:0]
 		}
-		i.segments = i.segments[1:]
-		if len(i.sll) < 1 {
-			return i.Pull()
-		}
-		i.i = 0
+		return r
 	}
-	if i.i >= len(i.sll) {
-		i.i = -1
-		return i.Pull()
+	top := heap.Pop(&iqr.segResults)
+	sr := top.(*segResult)
+	r := iqr.copyTo(sr)
+	sr.i++
+	if sr.i < len(sr.sll) {
+		heap.Push(&iqr.segResults, sr)
 	}
-	r := &model.MeasureResult{
-		SID:        i.sll[i.i].ID,
-		Timestamps: []int64{i.timestamps[i.i]},
-		Versions:   bypassVersions,
-	}
-	for j := range i.tfl {
-		tagFamily := model.TagFamily{Name: i.tfl[j].name}
-		for name, offset := range i.tfl[j].projectedEntityOffsets {
-			tagFamily.Tags = append(tagFamily.Tags, model.Tag{
-				Name:   name,
-				Values: []*modelv1.TagValue{i.sll[i.i].EntityValues[offset]},
-			})
-		}
-		if i.frl == nil {
-			continue
-		}
-		for f, v := range i.frl[j] {
-			if tnt, ok := i.tfl[j].fieldToValueType[f]; ok {
-				tagFamily.Tags = append(tagFamily.Tags, model.Tag{
-					Name:   tnt.name,
-					Values: []*modelv1.TagValue{mustDecodeTagValue(tnt.typ, v)},
-				})
-			} else {
-				return &model.MeasureResult{
-					Error: errors.Errorf("unknown field %s not found in fieldToValueType", f),
-				}
-			}
-		}
-		r.TagFamilies = append(r.TagFamilies, tagFamily)
-	}
-	i.i++
 	return r
 }
 
-func (i *indexQueryResult) Release() {
+func (iqr *indexSortResult) Release() {}
+
+func (iqr *indexSortResult) copyTo(src *segResult) (dest *model.MeasureResult) {
+	index := src.i
+	dest = &model.MeasureResult{
+		SID:        src.sll[index].ID,
+		Timestamps: []int64{src.timestamps[index]},
+		Versions:   bypassVersions,
+	}
+	for i := range iqr.tfl {
+		tagFamily := model.TagFamily{Name: iqr.tfl[i].name}
+		peo := iqr.tfl[i].projectedEntityOffsets
+		var fr storage.FieldResult
+		if src.frl != nil {
+			fr = src.frl[index]
+		}
+		for _, n := range iqr.tfl[i].tagNames {
+			if offset, ok := peo[n]; ok {
+				tagFamily.Tags = append(tagFamily.Tags, model.Tag{
+					Name:   n,
+					Values: []*modelv1.TagValue{src.sll[index].EntityValues[offset]},
+				})
+				continue
+			}
+			if fr == nil {
+				continue
+			}
+			if tnt, ok := iqr.tfl[i].fieldToValueType[n]; ok {
+				tagFamily.Tags = append(tagFamily.Tags, model.Tag{
+					Name:   n,
+					Values: []*modelv1.TagValue{mustDecodeTagValue(tnt.typ, fr[tnt.fieldName])},
+				})
+			} else {
+				logger.Panicf("unknown field %s not found in fieldToValueType", n)
+			}
+		}
+		dest.TagFamilies = append(dest.TagFamilies, tagFamily)
+	}
+	return dest
 }
 
 type tagFamilyLocation struct {
 	fieldToValueType       map[string]tagNameWithType
 	projectedEntityOffsets map[string]int
 	name                   string
+	tagNames               []string
+}
+
+type segResult struct {
+	sll          pbv1.SeriesList
+	frl          storage.FieldResultList
+	timestamps   []int64
+	sortedValues [][]byte
+	i            int
+}
+
+type segResultHeap []*segResult
+
+func (h segResultHeap) Len() int { return len(h) }
+func (h segResultHeap) Less(i, j int) bool {
+	return bytes.Compare(h[i].sortedValues[h[i].i], h[j].sortedValues[h[j].i]) < 0
+}
+func (h segResultHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *segResultHeap) Push(x interface{}) {
+	*h = append(*h, x.(*segResult))
+}
+
+func (h *segResultHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
 }

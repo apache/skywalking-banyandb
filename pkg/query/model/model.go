@@ -22,7 +22,6 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -52,34 +51,15 @@ type TagProjection struct {
 	Names  []string
 }
 
-// OrderBy is the order by rule.
-type OrderBy struct {
-	Index *databasev1.IndexRule
-	Sort  modelv1.Sort
-}
-
-// OrderByType is the type of order by.
-type OrderByType int
-
-const (
-	// OrderByTypeTime is the order by time.
-	OrderByTypeTime OrderByType = iota
-	// OrderByTypeIndex is the order by index.
-	OrderByTypeIndex
-	// OrderByTypeSeries is the order by series.
-	OrderByTypeSeries
-)
-
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
 	Query           index.Query
 	TimeRange       *timestamp.TimeRange
-	Order           *OrderBy
+	Order           *index.OrderBy
 	Name            string
 	Entities        [][]*modelv1.TagValue
 	TagProjection   []TagProjection
 	FieldProjection []string
-	OrderByType     OrderByType
 }
 
 // MeasureResult is the result of a query.
@@ -104,7 +84,7 @@ type StreamQueryOptions struct {
 	TimeRange      *timestamp.TimeRange
 	Entities       [][]*modelv1.TagValue
 	Filter         index.Filter
-	Order          *OrderBy
+	Order          *index.OrderBy
 	TagProjection  []TagProjection
 	MaxElementSize int
 }
