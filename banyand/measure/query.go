@@ -46,6 +46,8 @@ const (
 	checkDoneEvery = 128
 )
 
+var nilResult = model.MeasureQueryResult(nil)
+
 // Query allow to retrieve measure data points.
 type Query interface {
 	LoadGroup(name string) (resourceSchema.Group, bool)
@@ -91,7 +93,7 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	tsdb := db.(storage.TSDB[*tsTable, option])
 	segments := tsdb.SelectSegments(*mqo.TimeRange)
 	if len(segments) < 1 {
-		return nil, nil
+		return nilResult, nil
 	}
 
 	if s.schema.IndexMode {
@@ -106,7 +108,7 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		for i := range segments {
 			segments[i].DecRef()
 		}
-		return nil, nil
+		return nilResult, nil
 	}
 	result := queryResult{
 		ctx:              ctx,
@@ -256,7 +258,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 
 func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
 	segments []storage.Segment[*tsTable, option],
-) (*indexSortResult, error) {
+) (model.MeasureQueryResult, error) {
 	defer func() {
 		for i := range segments {
 			segments[i].DecRef()
@@ -300,7 +302,7 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Seri
 		PreloadSize: preloadSize,
 		Projection:  indexProjection,
 	}
-
+	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
 		if mqo.TimeRange.Include(segments[i].GetTimeRange()) {
 			opts.TimeRange = nil
@@ -312,7 +314,21 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Seri
 		if err != nil {
 			return nil, err
 		}
+		for j := 0; j < len(sr.sll); j++ {
+			if seriesFilter.Contains(uint64(sr.sll[j].ID)) {
+				sr.remove(j)
+				j--
+				continue
+			}
+			seriesFilter.Insert(uint64(sr.sll[j].ID))
+		}
+		if len(sr.sll) < 1 {
+			continue
+		}
 		r.segResults = append(r.segResults, sr)
+	}
+	if len(r.segResults) < 1 {
+		return nilResult, nil
 	}
 	heap.Init(&r.segResults)
 	return r, nil
@@ -804,10 +820,24 @@ type segResult struct {
 	i            int
 }
 
+func (sr *segResult) remove(i int) {
+	sr.sll = append(sr.sll[:i], sr.sll[i+1:]...)
+	if sr.frl != nil {
+		sr.frl = append(sr.frl[:i], sr.frl[i+1:]...)
+	}
+	sr.timestamps = append(sr.timestamps[:i], sr.timestamps[i+1:]...)
+	if sr.sortedValues != nil {
+		sr.sortedValues = append(sr.sortedValues[:i], sr.sortedValues[i+1:]...)
+	}
+}
+
 type segResultHeap []*segResult
 
 func (h segResultHeap) Len() int { return len(h) }
 func (h segResultHeap) Less(i, j int) bool {
+	if h[i].sortedValues == nil {
+		return h[i].sll[h[i].i].ID < h[j].sll[h[j].i].ID
+	}
 	return bytes.Compare(h[i].sortedValues[h[i].i], h[j].sortedValues[h[j].i]) < 0
 }
 func (h segResultHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }

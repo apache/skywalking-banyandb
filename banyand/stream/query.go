@@ -44,6 +44,8 @@ import (
 
 const checkDoneEvery = 128
 
+var nilResult = model.StreamQueryResult(nil)
+
 func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
 	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
@@ -53,7 +55,7 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	}
 	db := s.databaseSupplier.SupplyTSDB()
 	if db == nil {
-		return sqr, nil
+		return nilResult, nil
 	}
 	var result queryResult
 	tsdb := db.(storage.TSDB[*tsTable, option])
