@@ -112,5 +112,43 @@
         ]
       }
     ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "4"
+            }
+          },
+          {
+            "str": {
+              "value": "service_4"
+            }
+          },
+          {
+            "str": {
+              "value": "service_name_4"
+            }
+          },
+          {
+            "str": {
+              "value": "service_short_name_4"
+            }
+          },
+          {
+            "str": {
+              "value": "group4"
+            }
+          },
+          {
+            "int": {
+              "value": 3
+            }
+          }
+        ]
+      }
+    ]
   }
 ]
