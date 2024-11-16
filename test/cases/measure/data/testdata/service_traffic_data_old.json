@@ -1,0 +1,154 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "1"
+            }
+          },
+          {
+            "str": {
+              "value": "service_1_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_name_1_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_short_name_1_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "group1_expired"
+            }
+          },
+          {
+            "int": {
+              "value": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "2"
+            }
+          },
+          {
+            "str": {
+              "value": "service_2_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_name_2_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_short_name_2_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "group1"
+            }
+          },
+          {
+            "int": {
+              "value": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "3"
+            }
+          },
+          {
+            "str": {
+              "value": "service_3_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_name_3_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_short_name_3_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "group1_expired"
+            }
+          },
+          {
+            "int": {
+              "value": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "4"
+            }
+          },
+          {
+            "str": {
+              "value": "service_4"
+            }
+          },
+          {
+            "str": {
+              "value": "service_name_4"
+            }
+          },
+          {
+            "str": {
+              "value": "service_short_name_4"
+            }
+          },
+          {
+            "str": {
+              "value": "group4"
+            }
+          },
+          {
+            "int": {
+              "value": 3
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

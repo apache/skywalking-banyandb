@@ -110,6 +110,9 @@ func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	if len(ss) == 0 {
+		return nil, nil, nil, nil
+	}
 	sl, fields, tss, err = convertIndexSeriesToSeriesList(ss, len(projection) > 0)
 	if err != nil {
 		return nil, nil, nil, errors.WithMessagef(err, "failed to convert index series to series list, matchers: %v, matched: %d", seriesMatchers, len(ss))
