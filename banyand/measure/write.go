@@ -83,14 +83,6 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			break
 		}
 	}
-	shardID := common.ShardID(writeEvent.ShardId)
-	if dpt == nil {
-		if dpt, err = w.newDpt(tsdb, dpg, t, ts, shardID); err != nil {
-			return nil, fmt.Errorf("cannot create data points in table: %w", err)
-		}
-	}
-	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, ts)
-	dpt.dataPoints.versions = append(dpt.dataPoints.versions, req.DataPoint.Version)
 	stm, ok := w.schemaRepo.loadMeasure(req.GetMetadata())
 	if !ok {
 		return nil, fmt.Errorf("cannot find measure definition: %s", req.GetMetadata())
@@ -102,6 +94,14 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	if fLen > len(stm.schema.GetTagFamilies()) {
 		return nil, fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
 	}
+
+	shardID := common.ShardID(writeEvent.ShardId)
+	if dpt == nil {
+		if dpt, err = w.newDpt(tsdb, dpg, t, ts, shardID, stm.schema.IndexMode); err != nil {
+			return nil, fmt.Errorf("cannot create data points in table: %w", err)
+		}
+	}
+
 	series := &pbv1.Series{
 		Subject:      req.Metadata.Name,
 		EntityValues: writeEvent.EntityValues,
@@ -109,7 +109,24 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	if err := series.Marshal(); err != nil {
 		return nil, fmt.Errorf("cannot marshal series: %w", err)
 	}
+
+	tagFamily, fields := w.handleTagFamily(stm, req)
+	if stm.schema.IndexMode {
+		doc := index.Document{
+			DocID:        uint64(series.ID),
+			EntityValues: series.Buffer,
+			Fields:       fields,
+		}
+		doc.Timestamp = ts
+		dpg.docs = append(dpg.docs, doc)
+		return dst, nil
+	}
+
+	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamily)
+	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, ts)
+	dpt.dataPoints.versions = append(dpt.dataPoints.versions, req.DataPoint.Version)
 	dpt.dataPoints.seriesIDs = append(dpt.dataPoints.seriesIDs, series.ID)
+
 	field := nameValues{}
 	for i := range stm.GetSchema().GetFields() {
 		var v *modelv1.FieldValue
@@ -125,8 +142,6 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		))
 	}
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
-	tagFamily, fields := w.handleTagFamily(stm, req)
-	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamily)
 
 	if stm.processorManager != nil {
 		stm.processorManager.onMeasureWrite(uint64(series.ID), &measurev1.InternalWriteRequest{
@@ -144,15 +159,13 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		EntityValues: series.Buffer,
 		Fields:       fields,
 	}
-	if stm.schema.IndexMode {
-		doc.Timestamp = ts
-	}
 	dpg.docs = append(dpg.docs, doc)
 
 	return dst, nil
 }
 
-func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPointsInGroup, t time.Time, ts int64, shardID common.ShardID) (*dataPointsInTable, error) {
+func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPointsInGroup,
+	t time.Time, ts int64, shardID common.ShardID, indexMode bool) (*dataPointsInTable, error) {
 	var segment storage.Segment[*tsTable, option]
 	for _, seg := range dpg.segments {
 		if seg.GetTimeRange().Contains(ts) {
@@ -167,6 +180,12 @@ func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPoi
 		}
 		dpg.segments = append(dpg.segments, segment)
 	}
+	if indexMode {
+		return &dataPointsInTable{
+			timeRange: segment.GetTimeRange(),
+		}, nil
+	}
+
 	tstb, err := segment.CreateTSTableIfNotExist(shardID)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create ts table: %w", err)
@@ -295,7 +314,9 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		g := groups[i]
 		for j := range g.tables {
 			dps := g.tables[j]
-			dps.tsTable.mustAddDataPoints(&dps.dataPoints)
+			if dps.tsTable != nil {
+				dps.tsTable.mustAddDataPoints(&dps.dataPoints)
+			}
 		}
 		for _, segment := range g.segments {
 			if err := segment.IndexDB().Write(g.docs); err != nil {

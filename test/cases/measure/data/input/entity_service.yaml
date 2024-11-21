@@ -16,7 +16,7 @@
 # under the License.
 
 name: "service_traffic"
-groups: ["sw_metric"]
+groups: ["index_mode"]
 tagProjection:
   tagFamilies:
   - name: "default"

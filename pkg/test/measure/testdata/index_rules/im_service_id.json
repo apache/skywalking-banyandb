@@ -1,11 +1,11 @@
 {
   "metadata": {
-    "id": 3,
-    "name": "layer",
+    "id": 1,
+    "name": "service_id",
     "group": "index_mode"
   },
   "tags": [
-    "layer"
+    "service_id"
   ],
   "type": "TYPE_INVERTED",
   "updated_at": "2021-04-15T01:30:15.01Z"
