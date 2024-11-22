@@ -20,6 +20,7 @@ package inverted
 import (
 	"context"
 	"maps"
+	"sort"
 	"testing"
 	"time"
 
@@ -63,7 +64,7 @@ func TestStore_Search(t *testing.T) {
 	}()
 
 	// Setup some data
-	setupData(tester, s)
+	insertData(tester, s)
 
 	// Test cases
 	tests := []struct {
@@ -203,6 +204,12 @@ func TestStore_Search(t *testing.T) {
 			require.NoError(t, err)
 			got, err := s.Search(context.Background(), tt.projection, query)
 			require.NoError(t, err)
+			sort.Slice(tt.want, func(i, j int) bool {
+				return string(tt.want[i].Key.EntityValues) < string(tt.want[j].Key.EntityValues)
+			})
+			sort.Slice(got, func(i, j int) bool {
+				return string(got[i].Key.EntityValues) < string(got[j].Key.EntityValues)
+			})
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -222,7 +229,7 @@ func TestStore_SearchWildcard(t *testing.T) {
 	}()
 
 	// Setup some data
-	setupData(tester, s)
+	insertData(tester, s)
 
 	// Test cases
 	tests := []struct {
@@ -316,7 +323,7 @@ func TestStore_SearchPrefix(t *testing.T) {
 	}()
 
 	// Setup some data
-	setupData(tester, s)
+	insertData(tester, s)
 
 	// Test cases
 	tests := []struct {
@@ -389,7 +396,7 @@ func TestStore_SearchWithSecondaryQuery(t *testing.T) {
 	}()
 
 	// Setup some data
-	setupData(tester, s)
+	insertData(tester, s)
 
 	// Define the secondary query
 	secondaryQuery := &queryNode{
@@ -500,7 +507,7 @@ func TestStore_SeriesSort(t *testing.T) {
 	}()
 
 	// Setup some data
-	setupData(tester, s)
+	updateData(tester, s)
 
 	// Define the order by field
 	orderBy := &index.OrderBy{
@@ -729,7 +736,7 @@ func TestStore_TimestampSort(t *testing.T) {
 	}()
 
 	// Setup some data
-	setupData(tester, s)
+	updateData(tester, s)
 
 	// Define the order by field
 	orderBy := &index.OrderBy{
@@ -883,7 +890,13 @@ func TestStore_TimestampSort(t *testing.T) {
 	}
 }
 
-func setupData(tester *require.Assertions, s index.SeriesStore) {
+func insertData(tester *require.Assertions, s index.SeriesStore) {
+	b1, b2 := generateDocs()
+	tester.NoError(s.InsertSeriesBatch(b1))
+	tester.NoError(s.InsertSeriesBatch(b2))
+}
+
+func generateDocs() (index.Batch, index.Batch) {
 	series1 := index.Document{
 		EntityValues: []byte("test1"),
 	}
@@ -965,10 +978,15 @@ func setupData(tester *require.Assertions, s index.SeriesStore) {
 		},
 		Timestamp: int64(2001),
 	}
-	tester.NoError(s.SeriesBatch(index.Batch{
-		Documents: []index.Document{series1, series2, series4, series3},
-	}))
-	tester.NoError(s.SeriesBatch(index.Batch{
-		Documents: []index.Document{series3},
-	}))
+	return index.Batch{
+			Documents: []index.Document{series1, series2, series4, series3},
+		}, index.Batch{
+			Documents: []index.Document{series3},
+		}
+}
+
+func updateData(tester *require.Assertions, s index.SeriesStore) {
+	b1, b2 := generateDocs()
+	tester.NoError(s.UpdateSeriesBatch(b1))
+	tester.NoError(s.UpdateSeriesBatch(b2))
 }

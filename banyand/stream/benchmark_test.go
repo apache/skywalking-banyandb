@@ -220,7 +220,7 @@ func write(b *testing.B, p parameter, esList []*elements, docsList []index.Docum
 	}
 	seg, err := db.CreateSegmentIfNotExist(time.Unix(0, esList[0].timestamps[0]))
 	require.NoError(b, err)
-	seg.IndexDB().Write(docs)
+	seg.IndexDB().Insert(docs)
 
 	tst, err := seg.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(b, err)

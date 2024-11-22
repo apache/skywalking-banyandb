@@ -1,7 +1,7 @@
 {
   "metadata": {
     "name": "service_traffic_rule_binding",
-    "group": "sw_metric"
+    "group": "index_mode"
   },
   "rules": [
     "service_id",

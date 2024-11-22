@@ -267,7 +267,7 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		}
 		if len(g.docs) > 0 {
 			for _, segment := range g.segments {
-				if err := segment.IndexDB().Write(g.docs); err != nil {
+				if err := segment.IndexDB().Insert(g.docs); err != nil {
 					w.l.Error().Err(err).Msg("cannot write index")
 				}
 				segment.DecRef()

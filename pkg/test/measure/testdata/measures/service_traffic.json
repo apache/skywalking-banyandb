@@ -1,7 +1,7 @@
 {
   "metadata": {
     "name": "service_traffic",
-    "group": "sw_metric"
+    "group": "index_mode"
   },
   "tag_families": [
     {
