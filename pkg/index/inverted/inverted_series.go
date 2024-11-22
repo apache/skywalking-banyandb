@@ -38,7 +38,7 @@ import (
 
 var emptySeries = make([]index.SeriesDocument, 0)
 
-func (s *store) SeriesBatch(batch index.Batch) error {
+func (s *store) InsertSeriesBatch(batch index.Batch) error {
 	if len(batch.Documents) == 0 {
 		return nil
 	}
@@ -49,34 +49,52 @@ func (s *store) SeriesBatch(batch index.Batch) error {
 	b := generateBatch()
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
-		doc := bluge.NewDocument(convert.BytesToString(d.EntityValues))
-		for _, f := range d.Fields {
-			tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
-			if !f.Index {
-				tf.FieldOptions = 0
-			} else if !f.NoSort {
-				tf.Sortable()
-			}
-
-			if f.Store {
-				tf.StoreValue()
-			}
-			if f.Key.Analyzer != index.AnalyzerUnspecified {
-				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
-			}
-			doc.AddField(tf)
-		}
-
-		if d.Timestamp > 0 {
-			doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
-		}
-		if len(d.Fields) == 0 {
-			b.InsertIfAbsent(doc.ID(), doc)
-		} else {
-			b.Update(doc.ID(), doc)
-		}
+		doc := toDoc(d)
+		b.InsertIfAbsent(doc.ID(), doc)
 	}
 	return s.writer.Batch(b)
+}
+
+func (s *store) UpdateSeriesBatch(batch index.Batch) error {
+	if len(batch.Documents) == 0 {
+		return nil
+	}
+	if !s.closer.AddRunning() {
+		return nil
+	}
+	defer s.closer.Done()
+	b := generateBatch()
+	defer releaseBatch(b)
+	for _, d := range batch.Documents {
+		doc := toDoc(d)
+		b.Update(doc.ID(), doc)
+	}
+	return s.writer.Batch(b)
+}
+
+func toDoc(d index.Document) *bluge.Document {
+	doc := bluge.NewDocument(convert.BytesToString(d.EntityValues))
+	for _, f := range d.Fields {
+		tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
+		if !f.Index {
+			tf.FieldOptions = 0
+		} else if !f.NoSort {
+			tf.Sortable()
+		}
+
+		if f.Store {
+			tf.StoreValue()
+		}
+		if f.Key.Analyzer != index.AnalyzerUnspecified {
+			tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
+		}
+		doc.AddField(tf)
+	}
+
+	if d.Timestamp > 0 {
+		doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
+	}
+	return doc
 }
 
 // BuildQuery implements index.SeriesStore.

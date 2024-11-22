@@ -80,7 +80,8 @@ type FieldResultList []FieldResult
 
 // IndexDB is the interface of index database.
 type IndexDB interface {
-	Write(docs index.Documents) error
+	Insert(docs index.Documents) error
+	Update(docs index.Documents) error
 	Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (pbv1.SeriesList, FieldResultList, []int64, [][]byte, error)
 }
 

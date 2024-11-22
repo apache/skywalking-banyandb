@@ -169,7 +169,8 @@ type Batch struct {
 // Writer allows writing fields and docID in a document to an index.
 type Writer interface {
 	Batch(batch Batch) error
-	SeriesBatch(batch Batch) error
+	InsertSeriesBatch(batch Batch) error
+	UpdateSeriesBatch(batch Batch) error
 }
 
 // FieldIterable allows building a FieldIterator.

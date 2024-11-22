@@ -118,7 +118,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			Fields:       fields,
 		}
 		doc.Timestamp = ts
-		dpg.docs = append(dpg.docs, doc)
+		dpg.indexModeDocs = append(dpg.indexModeDocs, doc)
 		return dst, nil
 	}
 
@@ -159,13 +159,14 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		EntityValues: series.Buffer,
 		Fields:       fields,
 	}
-	dpg.docs = append(dpg.docs, doc)
+	dpg.metadataDocs = append(dpg.metadataDocs, doc)
 
 	return dst, nil
 }
 
 func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPointsInGroup,
-	t time.Time, ts int64, shardID common.ShardID, indexMode bool) (*dataPointsInTable, error) {
+	t time.Time, ts int64, shardID common.ShardID, indexMode bool,
+) (*dataPointsInTable, error) {
 	var segment storage.Segment[*tsTable, option]
 	for _, seg := range dpg.segments {
 		if seg.GetTimeRange().Contains(ts) {
@@ -319,8 +320,15 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			}
 		}
 		for _, segment := range g.segments {
-			if err := segment.IndexDB().Write(g.docs); err != nil {
-				w.l.Error().Err(err).Msg("cannot write index")
+			if len(g.metadataDocs) > 0 {
+				if err := segment.IndexDB().Insert(g.metadataDocs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write metadata")
+				}
+			}
+			if len(g.indexModeDocs) > 0 {
+				if err := segment.IndexDB().Update(g.indexModeDocs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write index")
+				}
 			}
 			segment.DecRef()
 		}

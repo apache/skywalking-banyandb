@@ -64,7 +64,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 		copy(doc.EntityValues, series.Buffer)
 		docs = append(docs, doc)
 	}
-	require.NoError(t, si.Write(docs))
+	require.NoError(t, si.Insert(docs))
 	// Restart the index
 	require.NoError(t, si.Close())
 	si, err = newSeriesIndex(ctx, path, 0, nil)
