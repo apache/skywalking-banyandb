@@ -245,22 +245,18 @@ func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteReques
 				}
 				toIndex := ok || !stm.schema.IndexMode
 				if encodeTagValue.value != nil {
-					fields = append(fields, index.Field{
-						Key:    fieldKey,
-						Term:   encodeTagValue.value,
-						Store:  true,
-						Index:  toIndex,
-						NoSort: r.GetNoSort(),
-					})
+					f := index.NewBytesField(fieldKey, encodeTagValue.value)
+					f.Store = true
+					f.Index = toIndex
+					f.NoSort = r.GetNoSort()
+					fields = append(fields, f)
 				} else {
 					for _, val := range encodeTagValue.valueArr {
-						fields = append(fields, index.Field{
-							Key:    fieldKey,
-							Term:   val,
-							Store:  true,
-							Index:  toIndex,
-							NoSort: r.GetNoSort(),
-						})
+						f := index.NewBytesField(fieldKey, val)
+						f.Store = true
+						f.Index = toIndex
+						f.NoSort = r.GetNoSort()
+						fields = append(fields, f)
 					}
 				}
 				continue

@@ -75,7 +75,7 @@ func (s *store) UpdateSeriesBatch(batch index.Batch) error {
 func toDoc(d index.Document) *bluge.Document {
 	doc := bluge.NewDocument(convert.BytesToString(d.EntityValues))
 	for _, f := range d.Fields {
-		tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
+		tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.GetBytes())
 		if !f.Index {
 			tf.FieldOptions = 0
 		} else if !f.NoSort {

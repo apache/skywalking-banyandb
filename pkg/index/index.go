@@ -23,6 +23,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
+	"strconv"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -31,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/blugelabs/bluge/numeric"
 )
 
 const (
@@ -44,6 +47,11 @@ const (
 	AnalyzerStandard = "standard"
 	// AnalyzerURL breaks test into tokens at any non-letter and non-digit character.
 	AnalyzerURL = "url"
+)
+
+var (
+	defaultUpper = convert.Uint64ToBytes(math.MaxUint64)
+	defaultLower = convert.Uint64ToBytes(0)
 )
 
 // FieldKey is the key of field in a document.
@@ -62,48 +70,180 @@ func (f FieldKey) Marshal() string {
 	return string(convert.Uint32ToBytes(f.IndexRuleID))
 }
 
+func NewStringField(key FieldKey, value string) Field {
+	return Field{
+		term: &BytesTermValue{Value: convert.StringToBytes(value)},
+		Key:  key,
+	}
+}
+
+func NewIntField(key FieldKey, value int64) Field {
+	return Field{
+		term: &FloatTermValue{Value: numeric.Int64ToFloat64(value)},
+		Key:  key,
+	}
+}
+
+func NewBytesField(key FieldKey, value []byte) Field {
+	return Field{
+		term: &BytesTermValue{Value: bytes.Clone(value)},
+		Key:  key,
+	}
+}
+
+func NewFloatField(key FieldKey, value float64) Field {
+	return Field{
+		term: &FloatTermValue{Value: value},
+		Key:  key,
+	}
+}
+
+func IntToStr(i int64) string {
+	return strconv.FormatFloat(numeric.Int64ToFloat64(i), 'f', -1, 64)
+}
+
 // Field is a indexed item in a document.
 type Field struct {
-	Term   []byte
+	term   IsTermValue
 	Key    FieldKey
 	NoSort bool
 	Store  bool
 	Index  bool
 }
 
+func (f *Field) GetTerm() IsTermValue {
+	return f.term
+}
+
+func (f *Field) GetBytes() []byte {
+	if bv, ok := f.GetTerm().(*BytesTermValue); ok {
+		return bv.Value
+	}
+	panic("field is not bytes")
+}
+
+func (f *Field) GetFloat() float64 {
+	if fv, ok := f.GetTerm().(*FloatTermValue); ok {
+		return fv.Value
+	}
+	panic("field is not float")
+}
+
+func (f *Field) String() string {
+	return fmt.Sprintf("{\"key\": \"%s\", \"term\": %s}", f.Key.Marshal(), f.term)
+}
+
+func (f *Field) MarshalJSON() ([]byte, error) {
+	return []byte(f.String()), nil
+}
+
+type IsTermValue interface {
+	isTermValue()
+	String() string
+}
+
+type BytesTermValue struct {
+	Value []byte
+}
+
+func (BytesTermValue) isTermValue() {}
+
+func (b BytesTermValue) String() string {
+	return convert.BytesToString(b.Value)
+}
+
+type FloatTermValue struct {
+	Value float64
+}
+
+func (FloatTermValue) isTermValue() {}
+
+func (f FloatTermValue) String() string {
+	return strconv.FormatInt(numeric.Float64ToInt64(f.Value), 10)
+}
+
 // RangeOpts contains options to performance a continuous scan.
 type RangeOpts struct {
-	Upper         []byte
-	Lower         []byte
+	Upper         IsTermValue
+	Lower         IsTermValue
 	IncludesUpper bool
 	IncludesLower bool
 }
 
-// Between reports whether value is in the range.
-func (r RangeOpts) Between(value []byte) int {
-	if r.Upper != nil {
-		var in bool
-		if r.IncludesUpper {
-			in = bytes.Compare(r.Upper, value) >= 0
-		} else {
-			in = bytes.Compare(r.Upper, value) > 0
-		}
-		if !in {
-			return 1
-		}
+func (r RangeOpts) IsEmpty() bool {
+	return r.Upper == nil && r.Lower == nil
+}
+
+func (r RangeOpts) Valid() bool {
+	if r.Upper == nil || r.Lower == nil {
+		return false
 	}
-	if r.Lower != nil {
-		var in bool
-		if r.IncludesLower {
-			in = bytes.Compare(r.Lower, value) <= 0
-		} else {
-			in = bytes.Compare(r.Lower, value) < 0
+	switch r.Upper.(type) {
+	case *BytesTermValue:
+		if bytes.Compare(r.Lower.(*BytesTermValue).Value, r.Upper.(*BytesTermValue).Value) > 0 {
+			return false
 		}
-		if !in {
-			return -1
+	case *FloatTermValue:
+		if r.Lower.(*FloatTermValue).Value > r.Upper.(*FloatTermValue).Value {
+			return false
 		}
+	default:
+		return false
 	}
-	return 0
+	return true
+}
+
+func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) RangeOpts {
+	var upperBytes, lowerBytes []byte
+	if len(upper) == 0 {
+		upperBytes = defaultUpper
+	} else {
+		upperBytes = convert.StringToBytes(upper)
+	}
+	if len(lower) == 0 {
+		lowerBytes = defaultLower
+	} else {
+		lowerBytes = convert.StringToBytes(lower)
+	}
+	return RangeOpts{
+		Lower:         &BytesTermValue{Value: upperBytes},
+		Upper:         &BytesTermValue{Value: lowerBytes},
+		IncludesLower: includesLower,
+		IncludesUpper: includesUpper,
+	}
+}
+
+func NewIntRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
+	return RangeOpts{
+		Lower:         &FloatTermValue{Value: numeric.Int64ToFloat64(lower)},
+		Upper:         &FloatTermValue{Value: numeric.Int64ToFloat64(upper)},
+		IncludesLower: includesLower,
+		IncludesUpper: includesUpper,
+	}
+}
+
+func NewBytesRangeOpts(lower, upper []byte, includesLower, includesUpper bool) RangeOpts {
+	if len(upper) == 0 {
+		upper = defaultUpper
+	}
+	if len(lower) == 0 {
+		lower = defaultLower
+	}
+	return RangeOpts{
+		Lower:         &BytesTermValue{Value: bytes.Clone(lower)},
+		Upper:         &BytesTermValue{Value: bytes.Clone(upper)},
+		IncludesLower: includesLower,
+		IncludesUpper: includesUpper,
+	}
+}
+
+func NewFloatRangeOpts(lower, upper float64, includesLower, includesUpper bool) RangeOpts {
+	return RangeOpts{
+		Lower:         &FloatTermValue{Value: lower},
+		Upper:         &FloatTermValue{Value: upper},
+		IncludesLower: includesLower,
+		IncludesUpper: includesUpper,
+	}
 }
 
 // DocumentResult represents a document in an index.

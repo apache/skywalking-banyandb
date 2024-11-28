@@ -18,8 +18,6 @@
 package stream
 
 import (
-	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"strings"
 
@@ -106,23 +104,13 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 ) (index.Filter, [][]*modelv1.TagValue, error) {
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
-		return newRange(indexRule, index.RangeOpts{
-			Lower: bytes.Join(expr.Bytes(), nil),
-		}), [][]*modelv1.TagValue{entity}, nil
+		return newRange(indexRule, expr.RangeOpts(false, false, false)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_GE:
-		return newRange(indexRule, index.RangeOpts{
-			IncludesLower: true,
-			Lower:         bytes.Join(expr.Bytes(), nil),
-		}), [][]*modelv1.TagValue{entity}, nil
+		return newRange(indexRule, expr.RangeOpts(false, true, false)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_LT:
-		return newRange(indexRule, index.RangeOpts{
-			Upper: bytes.Join(expr.Bytes(), nil),
-		}), [][]*modelv1.TagValue{entity}, nil
+		return newRange(indexRule, expr.RangeOpts(true, false, false)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_LE:
-		return newRange(indexRule, index.RangeOpts{
-			IncludesUpper: true,
-			Upper:         bytes.Join(expr.Bytes(), nil),
-		}), [][]*modelv1.TagValue{entity}, nil
+		return newRange(indexRule, expr.RangeOpts(true, true, false)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_EQ:
 		return newEq(indexRule, expr), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_MATCH:
@@ -130,47 +118,47 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 	case modelv1.Condition_BINARY_OP_NE:
 		return newNot(indexRule, newEq(indexRule, expr)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_HAVING:
-		bb := expr.Bytes()
-		l := len(bb)
+		ee := expr.SubExprs()
+		l := len(ee)
 		if l < 1 {
 			return ENode, [][]*modelv1.TagValue{entity}, nil
 		}
 		and := newAnd(l)
-		for _, b := range bb {
-			and.append(newEq(indexRule, logical.NewBytesLiteral(b)))
+		for i := range ee {
+			and.append(newEq(indexRule, ee[i]))
 		}
 		return and, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_HAVING:
-		bb := expr.Bytes()
-		l := len(bb)
+		ee := expr.SubExprs()
+		l := len(ee)
 		if l < 1 {
 			return ENode, [][]*modelv1.TagValue{entity}, nil
 		}
 		and := newAnd(l)
-		for _, b := range bb {
-			and.append(newEq(indexRule, logical.NewBytesLiteral(b)))
+		for i := range ee {
+			and.append(newEq(indexRule, ee[i]))
 		}
 		return newNot(indexRule, and), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_IN:
-		bb := expr.Bytes()
-		l := len(bb)
+		ee := expr.SubExprs()
+		l := len(ee)
 		if l < 1 {
 			return ENode, [][]*modelv1.TagValue{entity}, nil
 		}
 		or := newOr(l)
-		for _, b := range bb {
-			or.append(newEq(indexRule, logical.NewBytesLiteral(b)))
+		for i := range ee {
+			or.append(newEq(indexRule, ee[i]))
 		}
 		return or, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_IN:
-		bb := expr.Bytes()
-		l := len(bb)
+		ee := expr.SubExprs()
+		l := len(ee)
 		if l < 1 {
 			return ENode, [][]*modelv1.TagValue{entity}, nil
 		}
 		or := newOr(l)
-		for _, b := range bb {
-			or.append(newEq(indexRule, logical.NewBytesLiteral(b)))
+		for i := range ee {
+			or.append(newEq(indexRule, ee[i]))
 		}
 		return newNot(indexRule, or), [][]*modelv1.TagValue{entity}, nil
 	}
@@ -375,6 +363,7 @@ func (n *not) String() string {
 
 type eq struct {
 	*leaf
+	field *index.Field
 }
 
 func newEq(indexRule *databasev1.IndexRule, values logical.LiteralExpr) *eq {
@@ -391,10 +380,7 @@ func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (pos
 	if err != nil {
 		return nil, err
 	}
-	return s.MatchTerms(index.Field{
-		Key:  eq.Key.toIndex(seriesID),
-		Term: bytes.Join(eq.Expr.Bytes(), nil),
-	})
+	return s.MatchTerms(eq.Expr.Field(eq.Key.toIndex(seriesID)))
 }
 
 func (eq *eq) MarshalJSON() ([]byte, error) {
@@ -481,9 +467,9 @@ func (r *rangeOp) MarshalJSON() ([]byte, error) {
 			builder.WriteString("(")
 		}
 	}
-	builder.WriteString(base64.StdEncoding.EncodeToString(r.Opts.Lower))
+	builder.WriteString(r.Opts.Lower.String())
 	builder.WriteString(",")
-	builder.WriteString(base64.StdEncoding.EncodeToString(r.Opts.Upper))
+	builder.WriteString(r.Opts.Upper.String())
 	if r.Opts.Upper != nil {
 		if r.Opts.IncludesUpper {
 			builder.WriteString("]")

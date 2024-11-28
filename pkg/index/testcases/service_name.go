@@ -44,18 +44,12 @@ func RunServiceName(t *testing.T, store SimpleStore) {
 	}{
 		{
 			name: "match gateway",
-			arg: index.Field{
-				Key:  serviceName,
-				Term: []byte("gateway"),
-			},
+			arg:  index.NewStringField(serviceName, "gateway"),
 			want: roaring.NewRange(0, 50),
 		},
 		{
 			name: "match webpage",
-			arg: index.Field{
-				Key:  serviceName,
-				Term: []byte("webpage"),
-			},
+			arg:  index.NewStringField(serviceName, "webpage"),
 			want: roaring.NewRange(50, 100),
 		},
 		{
@@ -64,10 +58,7 @@ func RunServiceName(t *testing.T, store SimpleStore) {
 		},
 		{
 			name: "unknown term",
-			arg: index.Field{
-				Key:  serviceName,
-				Term: []byte("unknown"),
-			},
+			arg:  index.NewStringField(serviceName, "unknown"),
 			want: roaring.DummyPostingList,
 		},
 	}
@@ -91,18 +82,16 @@ func SetUp(t *assert.Assertions, store SimpleStore) {
 	for i := 0; i < 100; i++ {
 		if i < 100/2 {
 			batch.Documents = append(batch.Documents, index.Document{
-				Fields: []index.Field{{
-					Key:  serviceName,
-					Term: []byte("gateway"),
-				}},
+				Fields: []index.Field{
+					index.NewStringField(serviceName, "gateway"),
+				},
 				DocID: uint64(i),
 			})
 		} else {
 			batch.Documents = append(batch.Documents, index.Document{
-				Fields: []index.Field{{
-					Key:  serviceName,
-					Term: []byte("webpage"),
-				}},
+				Fields: []index.Field{
+					index.NewStringField(serviceName, "webpage"),
+				},
 				DocID: uint64(i),
 			})
 		}

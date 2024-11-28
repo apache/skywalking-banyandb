@@ -148,13 +148,11 @@ func generateData(p parameter) ([]*elements, []index.Documents, mockIndex) {
 				es.tagFamilies = append(es.tagFamilies, tfs)
 				idx.insert(value, common.SeriesID(k), int(unixTimestamp))
 				var fields []index.Field
-				fields = append(fields, index.Field{
-					Key: index.FieldKey{
-						IndexRuleID: 1,
-						SeriesID:    common.SeriesID(k),
-					},
-					Term: []byte(value),
-				})
+
+				fields = append(fields, index.NewBytesField(index.FieldKey{
+					IndexRuleID: 1,
+					SeriesID:    common.SeriesID(k),
+				}, []byte(value)))
 				docs = append(docs, index.Document{
 					DocID:  uint64(unixTimestamp),
 					Fields: fields,
