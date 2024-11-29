@@ -116,8 +116,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			DocID:        uint64(series.ID),
 			EntityValues: series.Buffer,
 			Fields:       fields,
+			Version:      req.DataPoint.Version,
+			Timestamp:    ts,
 		}
-		doc.Timestamp = ts
 		dpg.indexModeDocs = append(dpg.indexModeDocs, doc)
 		return dst, nil
 	}

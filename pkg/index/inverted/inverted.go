@@ -50,6 +50,8 @@ const (
 	batchSize      = 1024
 	seriesIDField  = "_series_id"
 	timestampField = "_timestamp"
+	versionField   = "_version"
+	sourceField    = "_source"
 )
 
 var (
