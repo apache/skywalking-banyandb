@@ -75,24 +75,30 @@ func (s *store) UpdateSeriesBatch(batch index.Batch) error {
 func toDoc(d index.Document) *bluge.Document {
 	doc := bluge.NewDocument(convert.BytesToString(d.EntityValues))
 	for _, f := range d.Fields {
-		tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
-		if !f.Index {
-			tf.FieldOptions = 0
-		} else if !f.NoSort {
-			tf.Sortable()
-		}
-
-		if f.Store {
-			tf.StoreValue()
-		}
-		if f.Key.Analyzer != index.AnalyzerUnspecified {
-			tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
+		var tf *bluge.TermField
+		if f.Index {
+			tf = bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
+			if f.Store {
+				tf.StoreValue()
+			}
+			if !f.NoSort {
+				tf.Sortable()
+			}
+			if f.Key.Analyzer != index.AnalyzerUnspecified {
+				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
+			}
+		} else {
+			tf = bluge.NewStoredOnlyField(f.Key.Marshal(), f.Term)
 		}
 		doc.AddField(tf)
 	}
 
 	if d.Timestamp > 0 {
 		doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
+	}
+	if d.Version > 0 {
+		vf := bluge.NewStoredOnlyField(versionField, convert.Int64ToBytes(d.Version))
+		doc.AddField(vf)
 	}
 	return doc
 }
@@ -217,6 +223,8 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 					return false
 				}
 				doc.Timestamp = ts.UnixNano()
+			case versionField:
+				doc.Version = convert.BytesToInt64(value)
 			default:
 				if _, ok := doc.Fields[field]; ok {
 					doc.Fields[field] = bytes.Clone(value)
@@ -343,6 +351,8 @@ func (si *seriesIterator) setVal(field string, value []byte) bool {
 			return false
 		}
 		si.current.Timestamp = ts.UnixNano()
+	case versionField:
+		si.current.Version = convert.BytesToInt64(value)
 	default:
 		if _, ok := si.current.Values[field]; ok {
 			si.current.Values[field] = bytes.Clone(value)

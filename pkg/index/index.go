@@ -114,6 +114,7 @@ type DocumentResult struct {
 	SeriesID     common.SeriesID
 	DocID        uint64
 	Timestamp    int64
+	Version      int64
 }
 
 // SortedField returns the value of the sorted field.
@@ -156,6 +157,7 @@ type Document struct {
 	EntityValues []byte
 	Timestamp    int64
 	DocID        uint64
+	Version      int64
 }
 
 // Documents is a collection of documents.
@@ -223,6 +225,7 @@ type SeriesDocument struct {
 	Fields    map[string][]byte
 	Key       Series
 	Timestamp int64
+	Version   int64
 }
 
 // OrderByType is the type of order by.

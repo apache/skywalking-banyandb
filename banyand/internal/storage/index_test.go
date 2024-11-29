@@ -158,7 +158,8 @@ func TestSeriesIndex_Primary(t *testing.T) {
 				seriesQuery.EntityValues = tt.entityValues[i]
 				seriesQueries = append(seriesQueries, &seriesQuery)
 			}
-			sl, _, _, err := si.filter(ctx, seriesQueries, nil, nil, nil)
+			sd, err := si.filter(ctx, seriesQueries, nil, nil, nil)
+			sl := sd.SeriesList
 			require.NoError(t, err)
 			require.Equal(t, len(tt.entityValues), len(sl))
 			assert.Equal(t, tt.subject, sl[0].Subject)

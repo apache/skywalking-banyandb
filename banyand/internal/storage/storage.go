@@ -78,11 +78,19 @@ type FieldResult map[string][]byte
 // FieldResultList is a list of FieldResult.
 type FieldResultList []FieldResult
 
+// SeriesData is the result of a series.
+type SeriesData struct {
+	SeriesList pbv1.SeriesList
+	Fields     FieldResultList
+	Timestamps []int64
+	Versions   []int64
+}
+
 // IndexDB is the interface of index database.
 type IndexDB interface {
 	Insert(docs index.Documents) error
 	Update(docs index.Documents) error
-	Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (pbv1.SeriesList, FieldResultList, []int64, [][]byte, error)
+	Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (SeriesData, [][]byte, error)
 }
 
 // TSDB allows listing and getting shard details.
