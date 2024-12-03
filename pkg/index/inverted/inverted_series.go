@@ -49,8 +49,8 @@ func (s *store) InsertSeriesBatch(batch index.Batch) error {
 	b := generateBatch()
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
-		doc := toDoc(d)
-		b.InsertIfAbsent(doc.ID(), doc)
+		doc, ff := toDoc(d, true)
+		b.InsertIfAbsent(doc.ID(), ff, doc)
 	}
 	return s.writer.Batch(b)
 }
@@ -66,18 +66,23 @@ func (s *store) UpdateSeriesBatch(batch index.Batch) error {
 	b := generateBatch()
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
-		doc := toDoc(d)
+		doc, _ := toDoc(d, false)
 		b.Update(doc.ID(), doc)
 	}
 	return s.writer.Batch(b)
 }
 
-func toDoc(d index.Document) *bluge.Document {
+func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string) {
 	doc := bluge.NewDocument(convert.BytesToString(d.EntityValues))
+	var fieldNames []string
+	if toParseFieldNames && len(d.Fields) > 0 {
+		fieldNames = make([]string, 0, len(d.Fields))
+	}
 	for _, f := range d.Fields {
 		var tf *bluge.TermField
+		k := f.Key.Marshal()
 		if f.Index {
-			tf = bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
+			tf = bluge.NewKeywordFieldBytes(k, f.Term)
 			if f.Store {
 				tf.StoreValue()
 			}
@@ -88,9 +93,12 @@ func toDoc(d index.Document) *bluge.Document {
 				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
 			}
 		} else {
-			tf = bluge.NewStoredOnlyField(f.Key.Marshal(), f.Term)
+			tf = bluge.NewStoredOnlyField(k, f.Term)
 		}
 		doc.AddField(tf)
+		if fieldNames != nil {
+			fieldNames = append(fieldNames, k)
+		}
 	}
 
 	if d.Timestamp > 0 {
@@ -100,7 +108,7 @@ func toDoc(d index.Document) *bluge.Document {
 		vf := bluge.NewStoredOnlyField(versionField, convert.Int64ToBytes(d.Version))
 		doc.AddField(vf)
 	}
-	return doc
+	return doc, fieldNames
 }
 
 // BuildQuery implements index.SeriesStore.

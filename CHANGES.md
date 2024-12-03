@@ -15,6 +15,8 @@ Release Notes.
 
 - Fix the bug that TopN processing item leak. The item can not be updated but as a new item.
 - Resolve data race in Stats methods of the inverted index.
+- Fix the bug when adding new tags or fields to the measure, the querying crashes or returns wrong results.
+- Fix the bug that adding new tags to the stream, the querying crashes or returns wrong results.
 
 ### Documentation
 

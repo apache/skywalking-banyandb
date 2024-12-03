@@ -205,7 +205,7 @@ func (b *block) marshalTagFamily(tf columnFamily, bm *blockMetadata, ww *writers
 }
 
 func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
-	columnFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader,
+	columnFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader, count int,
 ) {
 	if len(tagProjection) < 1 {
 		return
@@ -222,12 +222,19 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].name = name
 	cc := b.tagFamilies[tfIndex].resizeColumns(len(tagProjection))
+NEXT:
 	for j := range tagProjection {
 		for i := range cfm.columnMetadata {
 			if tagProjection[j] == cfm.columnMetadata[i].name {
 				cc[j].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
-				break
+				continue NEXT
 			}
+		}
+		cc[j].name = tagProjection[j]
+		cc[j].valueType = pbv1.ValueTypeUnknown
+		cc[j].resizeValues(count)
+		for k := range cc[j].values {
+			cc[j].values[k] = nil
 		}
 	}
 }
@@ -303,11 +310,21 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 		name := bm.tagProjection[i].Family
 		block, ok := bm.tagFamilies[name]
 		if !ok {
+			b.tagFamilies[i].name = name
+			b.tagFamilies[i].resizeColumns(len(bm.tagProjection[i].Names))
+			for j := range bm.tagProjection[i].Names {
+				b.tagFamilies[i].columns[j].name = bm.tagProjection[i].Names[j]
+				b.tagFamilies[i].columns[j].valueType = pbv1.ValueTypeUnknown
+				b.tagFamilies[i].columns[j].resizeValues(int(bm.count))
+				for k := range bm.count {
+					b.tagFamilies[i].columns[j].values[k] = nil
+				}
+			}
 			continue
 		}
 		b.unmarshalTagFamily(decoder, i, name, block,
 			bm.tagProjection[i].Names, p.tagFamilyMetadata[name],
-			p.tagFamilies[name])
+			p.tagFamilies[name], int(bm.count))
 	}
 }
 
@@ -674,12 +691,18 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	tmpBlock.reset()
 	cfm := make([]columnMetadata, 0, len(bc.fieldProjection))
+NEXT_FIELD:
 	for j := range bc.fieldProjection {
 		for i := range bc.bm.field.columnMetadata {
 			if bc.bm.field.columnMetadata[i].name == bc.fieldProjection[j] {
 				cfm = append(cfm, bc.bm.field.columnMetadata[i])
+				continue NEXT_FIELD
 			}
 		}
+		cfm = append(cfm, columnMetadata{
+			name:      bc.fieldProjection[j],
+			valueType: pbv1.ValueTypeUnknown,
+		})
 	}
 	bc.bm.field.columnMetadata = cfm
 	bc.bm.tagProjection = bc.tagProjection
