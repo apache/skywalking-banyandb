@@ -328,7 +328,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.timestamps = make([]int64, len(b.timestamps))
 	unmarshaled.resizeTagFamilies(1)
 
-	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer)
+	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, 1)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
 		cmp.AllowUnexported(columnFamily{}, column{}),

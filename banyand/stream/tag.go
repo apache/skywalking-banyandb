@@ -73,6 +73,12 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm tagMetadata, count uint64) {
 	t.name = cm.name
 	t.valueType = cm.valueType
+	if t.valueType == pbv1.ValueTypeUnknown {
+		for i := uint64(0); i < count; i++ {
+			t.values = append(t.values, nil)
+		}
+		return
+	}
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)

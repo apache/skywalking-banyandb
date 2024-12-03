@@ -20,6 +20,7 @@ package schema
 import (
 	"context"
 
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -64,8 +65,23 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 	if err != nil {
 		return 0, err
 	}
-	if err := validate.GroupForStreamOrMeasure(g); err != nil {
+	if err = validate.GroupForStreamOrMeasure(g); err != nil {
 		return 0, err
+	}
+	if err = validate.GroupForStreamOrMeasure(g); err != nil {
+		return 0, err
+	}
+	prev, err := e.GetStream(ctx, stream.GetMetadata())
+	if err != nil {
+		return 0, err
+	}
+	if prev == nil {
+		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "measure %s not found", stream.GetMetadata().GetName())
+	}
+	for i, e := range prev.GetEntity().GetTagNames() {
+		if e != stream.GetEntity().GetTagNames()[i] {
+			return 0, errors.WithMessagef(ErrInputInvalid, "entity is immutable. Please create a new stream if you want to change entity")
+		}
 	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{

@@ -180,7 +180,7 @@ func (b *block) marshalTagFamily(tf tagFamily, bm *blockMetadata, ww *writers) {
 }
 
 func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
-	tagFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader,
+	tagFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader, count int,
 ) {
 	if len(tagProjection) < 1 {
 		return
@@ -197,11 +197,18 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].name = name
 	cc := b.tagFamilies[tfIndex].resizeTags(len(tagProjection))
+NEXT:
 	for j := range tagProjection {
 		for i := range tfm.tagMetadata {
 			if tagProjection[j] == tfm.tagMetadata[i].name {
 				cc[j].mustReadValues(decoder, valueReader, tfm.tagMetadata[i], uint64(b.Len()))
-				break
+				continue NEXT
+			}
+			cc[j].name = tagProjection[j]
+			cc[j].valueType = pbv1.ValueTypeUnknown
+			cc[j].resizeValues(count)
+			for k := range cc[j].values {
+				cc[j].values[k] = nil
 			}
 		}
 	}
@@ -262,11 +269,21 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 		name := bm.tagProjection[i].Family
 		block, ok := bm.tagFamilies[name]
 		if !ok {
+			b.tagFamilies[i].name = name
+			b.tagFamilies[i].resizeTags(len(bm.tagProjection[i].Names))
+			for j := range bm.tagProjection[i].Names {
+				b.tagFamilies[i].tags[j].name = bm.tagProjection[i].Names[j]
+				b.tagFamilies[i].tags[j].valueType = pbv1.ValueTypeUnknown
+				b.tagFamilies[i].tags[j].resizeValues(int(bm.count))
+				for k := range bm.count {
+					b.tagFamilies[i].tags[j].values[k] = nil
+				}
+			}
 			continue
 		}
 		b.unmarshalTagFamily(decoder, i, name, block,
 			bm.tagProjection[i].Names, p.tagFamilyMetadata[name],
-			p.tagFamilies[name])
+			p.tagFamilies[name], int(bm.count))
 	}
 }
 
@@ -440,7 +457,7 @@ func (bc *blockCursor) copyAllTo(r *model.StreamResult, desc bool) {
 		for j, c := range cf.tags {
 			values := make([]*modelv1.TagValue, end-start)
 			for k := start; k < end; k++ {
-				if c.values != nil {
+				if len(c.values) > k {
 					values[k-start] = mustDecodeTagValue(c.valueType, c.values[k])
 				} else {
 					values[k-start] = pbv1.NullTagValue
@@ -480,7 +497,7 @@ func (bc *blockCursor) copyTo(r *model.StreamResult) {
 			logger.Panicf("unexpected number of tags: got %d; want %d", len(r.TagFamilies[i].Tags), len(bc.tagProjection[i].Names))
 		}
 		for i2, c := range cf.tags {
-			if c.values != nil {
+			if len(c.values) > bc.idx {
 				r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
 			} else {
 				r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
@@ -533,26 +550,22 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		tf := tagFamily{
 			name: projection.Family,
 		}
-		blockIndex := 0
-		for _, name := range projection.Names {
+		for j, name := range projection.Names {
 			t := tag{
 				name: name,
 			}
-			if len(tmpBlock.tagFamilies[i].tags) != 0 && tmpBlock.tagFamilies[i].tags[blockIndex].name == name {
-				t.valueType = tmpBlock.tagFamilies[i].tags[blockIndex].valueType
-				if len(tmpBlock.tagFamilies[i].tags[blockIndex].values) != len(tmpBlock.timestamps) {
-					logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
-						tmpBlock.tagFamilies[i].tags[blockIndex].name, len(tmpBlock.tagFamilies[i].tags[blockIndex].values), len(tmpBlock.timestamps))
-				}
-				if len(idxList) > 0 {
-					for _, idx := range idxList {
-						t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[idx])
-					}
-				} else {
-					t.values = append(t.values, tmpBlock.tagFamilies[i].tags[blockIndex].values[start:end+1]...)
-				}
+			t.valueType = tmpBlock.tagFamilies[i].tags[j].valueType
+			if len(tmpBlock.tagFamilies[i].tags[j].values) != len(tmpBlock.timestamps) {
+				logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
+					tmpBlock.tagFamilies[i].tags[j].name, len(tmpBlock.tagFamilies[i].tags[j].values), len(tmpBlock.timestamps))
 			}
-			blockIndex++
+			if len(idxList) > 0 {
+				for _, idx := range idxList {
+					t.values = append(t.values, tmpBlock.tagFamilies[i].tags[j].values[idx])
+				}
+			} else {
+				t.values = append(t.values, tmpBlock.tagFamilies[i].tags[j].values[start:end+1]...)
+			}
 			tf.tags = append(tf.tags, t)
 		}
 		bc.tagFamilies = append(bc.tagFamilies, tf)

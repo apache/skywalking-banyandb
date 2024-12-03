@@ -104,8 +104,20 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	if err != nil {
 		return 0, err
 	}
-	if err := validate.GroupForStreamOrMeasure(g); err != nil {
+	if err = validate.GroupForStreamOrMeasure(g); err != nil {
 		return 0, err
+	}
+	prev, err := e.GetMeasure(ctx, measure.GetMetadata())
+	if err != nil {
+		return 0, err
+	}
+	if prev == nil {
+		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "measure %s not found", measure.GetMetadata().GetName())
+	}
+	for i, e := range prev.GetEntity().GetTagNames() {
+		if e != measure.GetEntity().GetTagNames()[i] {
+			return 0, errors.WithMessagef(ErrInputInvalid, "entity is immutable. Please create a new measure if you want to change entity")
+		}
 	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
