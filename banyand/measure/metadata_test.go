@@ -272,6 +272,7 @@ var _ = Describe("Metadata", func() {
 						dp := queryAllMeasurements(svcs, size*2, []string{"new_tag"}, nil)
 						for i := 0; i < size; i++ {
 							if dp[i].TagFamilies[0].Tags[2].Value.GetStr() == nil {
+								GinkgoWriter.Printf("actual: %s", dp[i].TagFamilies[0].Tags[2])
 								return false
 							}
 							Expect(dp[i].TagFamilies[0].Tags[2].Key).Should(Equal("new_tag"))
@@ -280,6 +281,7 @@ var _ = Describe("Metadata", func() {
 						for i := size; i < size*2; i++ {
 							Expect(dp[i].TagFamilies[0].Tags[2].Key).Should(Equal("new_tag"))
 							if dp[i].TagFamilies[0].Tags[2].Value.GetStr() == nil {
+								GinkgoWriter.Printf("actual: %s", dp[i].TagFamilies[0].Tags[2])
 								return false
 							}
 							Expect(dp[i].TagFamilies[0].Tags[2].Value.GetStr().Value).Should(Equal("test" + strconv.Itoa(i%3+1)))
