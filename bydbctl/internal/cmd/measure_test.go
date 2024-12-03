@@ -117,8 +117,10 @@ tag_families:
     tags:
       - name: id
         type: TAG_TYPE_STRING
+      - name: tag1
+        type: TAG_TYPE_STRING
 entity:
-  tagNames: ["tag1"]`))
+  tagNames: ["id"]`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -133,7 +135,7 @@ entity:
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Measure.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Measure.Metadata.Name).To(Equal("name1"))
-		Expect(resp.Measure.Entity.TagNames[0]).To(Equal("tag1"))
+		Expect(resp.Measure.TagFamilies[0].Tags[1].GetName()).To(Equal("tag1"))
 	})
 
 	It("delete measure schema", func() {

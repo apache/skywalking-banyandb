@@ -110,7 +110,7 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 	case modelv1.Condition_BINARY_OP_LT:
 		return newRange(indexRule, expr.RangeOpts(true, false, false)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_LE:
-		return newRange(indexRule, expr.RangeOpts(true, true, false)), [][]*modelv1.TagValue{entity}, nil
+		return newRange(indexRule, expr.RangeOpts(true, false, true)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_EQ:
 		return newEq(indexRule, expr), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_MATCH:
@@ -363,7 +363,6 @@ func (n *not) String() string {
 
 type eq struct {
 	*leaf
-	field *index.Field
 }
 
 func newEq(indexRule *databasev1.IndexRule, values logical.LiteralExpr) *eq {

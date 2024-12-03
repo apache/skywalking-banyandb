@@ -904,10 +904,10 @@ func generateDocs() (index.Batch, index.Batch) {
 	series2 := index.Document{
 		EntityValues: []byte("test2"),
 		Fields: []index.Field{
-			field(fieldKeyDuration, convert.Int64ToBytes(100), true, true),
-			field(fieldKeyServiceName, []byte("svc2"), true, true),
-			field(fieldKeyStartTime, convert.Int64ToBytes(100), true, true),
-			field(index.FieldKey{TagName: "short_name"}, []byte("t2"), true, false),
+			field(fieldKeyDuration, convert.Int64ToBytes(100), true),
+			field(fieldKeyServiceName, []byte("svc2"), true),
+			field(fieldKeyStartTime, convert.Int64ToBytes(100), true),
+			field(index.FieldKey{TagName: "short_name"}, []byte("t2"), false),
 		},
 		Timestamp: int64(101),
 	}
@@ -915,17 +915,17 @@ func generateDocs() (index.Batch, index.Batch) {
 	series3 := index.Document{
 		EntityValues: []byte("test3"),
 		Fields: []index.Field{
-			field(fieldKeyDuration, convert.Int64ToBytes(500), true, true),
-			field(fieldKeyStartTime, convert.Int64ToBytes(1000), true, true),
-			field(index.FieldKey{TagName: "short_name"}, []byte("t3"), true, false),
+			field(fieldKeyDuration, convert.Int64ToBytes(500), true),
+			field(fieldKeyStartTime, convert.Int64ToBytes(1000), true),
+			field(index.FieldKey{TagName: "short_name"}, []byte("t3"), false),
 		},
 		Timestamp: int64(1001),
 	}
 	series4 := index.Document{
 		EntityValues: []byte("test4"),
 		Fields: []index.Field{
-			field(fieldKeyDuration, convert.Int64ToBytes(500), true, true),
-			field(fieldKeyStartTime, convert.Int64ToBytes(2000), true, true),
+			field(fieldKeyDuration, convert.Int64ToBytes(500), true),
+			field(fieldKeyStartTime, convert.Int64ToBytes(2000), true),
 		},
 		Timestamp: int64(2001),
 	}
@@ -936,10 +936,10 @@ func generateDocs() (index.Batch, index.Batch) {
 		}
 }
 
-func field(key index.FieldKey, value []byte, stored, indexed bool) index.Field {
+func field(key index.FieldKey, value []byte, indexed bool) index.Field {
 	f := index.NewBytesField(key, value)
 	f.Index = indexed
-	f.Store = stored
+	f.Store = true
 	return f
 }
 

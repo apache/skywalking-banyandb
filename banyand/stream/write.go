@@ -165,7 +165,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			}
 
 			t := tagFamilySpec.Tags[j]
-			if r, ok := tfr[t.Name]; ok {
+			if r, ok := tfr[t.Name]; ok && tagValue != pbv1.NullTagValue {
 				fields = appendField(fields, index.FieldKey{
 					IndexRuleID: r.GetMetadata().GetId(),
 					Analyzer:    r.Analyzer,
@@ -304,24 +304,42 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.Tag
 func appendField(dest []index.Field, fieldKey index.FieldKey, tagType databasev1.TagType, tagVal *modelv1.TagValue, noSort bool) []index.Field {
 	switch tagType {
 	case databasev1.TagType_TAG_TYPE_INT:
-		f := index.NewIntField(fieldKey, tagVal.GetInt().Value)
+		v := tagVal.GetInt()
+		if v == nil {
+			return dest
+		}
+		f := index.NewIntField(fieldKey, v.Value)
 		f.NoSort = noSort
 		dest = append(dest, f)
 	case databasev1.TagType_TAG_TYPE_STRING:
-		f := index.NewStringField(fieldKey, tagVal.GetStr().Value)
+		v := tagVal.GetStr()
+		if v == nil {
+			return dest
+		}
+		f := index.NewStringField(fieldKey, v.Value)
 		f.NoSort = noSort
 		dest = append(dest, f)
 	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
-		f := index.NewBytesField(fieldKey, tagVal.GetBinaryData())
+		v := tagVal.GetBinaryData()
+		if v == nil {
+			return dest
+		}
+		f := index.NewBytesField(fieldKey, v)
 		f.NoSort = noSort
 		dest = append(dest, f)
 	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
+		if tagVal.GetIntArray() == nil {
+			return dest
+		}
 		for i := range tagVal.GetIntArray().Value {
 			f := index.NewIntField(fieldKey, tagVal.GetIntArray().Value[i])
 			f.NoSort = noSort
 			dest = append(dest, f)
 		}
 	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
+		if tagVal.GetStrArray() == nil {
+			return dest
+		}
 		for i := range tagVal.GetStrArray().Value {
 			f := index.NewStringField(fieldKey, tagVal.GetStrArray().Value[i])
 			f.NoSort = noSort

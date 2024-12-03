@@ -212,7 +212,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 	}
 	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
-		sll, fieldResultList, _, _, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
+		sd, _, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
 			Query:       mqo.Query,
 			Order:       mqo.Order,
 			PreloadSize: preloadSize,
@@ -221,30 +221,30 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
-		if len(sll) > 0 {
+		if len(sd.SeriesList) > 0 {
 			tables = append(tables, segments[i].Tables()...)
 		}
-		for j := range sll {
-			if seriesFilter.Contains(uint64(sll[j].ID)) {
+		for j := range sd.SeriesList {
+			if seriesFilter.Contains(uint64(sd.SeriesList[j].ID)) {
 				continue
 			}
-			seriesFilter.Insert(uint64(sll[j].ID))
-			sl = append(sl, sll[j].ID)
-			if projectedEntityOffsets == nil && fieldResultList == nil {
+			seriesFilter.Insert(uint64(sd.SeriesList[j].ID))
+			sl = append(sl, sd.SeriesList[j].ID)
+			if projectedEntityOffsets == nil && sd.Fields == nil {
 				continue
 			}
 			if storedIndexValue == nil {
 				storedIndexValue = make(map[common.SeriesID]map[string]*modelv1.TagValue)
 			}
 			tagValues := make(map[string]*modelv1.TagValue)
-			storedIndexValue[sll[j].ID] = tagValues
+			storedIndexValue[sd.SeriesList[j].ID] = tagValues
 			for name, offset := range projectedEntityOffsets {
-				tagValues[name] = sll[j].EntityValues[offset]
+				tagValues[name] = sd.SeriesList[j].EntityValues[offset]
 			}
-			if fieldResultList == nil {
+			if sd.Fields == nil {
 				continue
 			}
-			for f, v := range fieldResultList[j] {
+			for f, v := range sd.Fields[j] {
 				if tnt, ok := fieldToValueType[f]; ok {
 					tagValues[tnt.fieldName] = mustDecodeTagValue(tnt.typ, v)
 				} else {
@@ -310,19 +310,19 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Seri
 			opts.TimeRange = mqo.TimeRange
 		}
 		sr := &segResult{}
-		sr.sll, sr.frl, sr.timestamps, sr.sortedValues, err = segments[i].IndexDB().Search(ctx, series, opts)
+		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().Search(ctx, series, opts)
 		if err != nil {
 			return nil, err
 		}
-		for j := 0; j < len(sr.sll); j++ {
-			if seriesFilter.Contains(uint64(sr.sll[j].ID)) {
+		for j := 0; j < len(sr.SeriesList); j++ {
+			if seriesFilter.Contains(uint64(sr.SeriesList[j].ID)) {
 				sr.remove(j)
 				j--
 				continue
 			}
-			seriesFilter.Insert(uint64(sr.sll[j].ID))
+			seriesFilter.Insert(uint64(sr.SeriesList[j].ID))
 		}
-		if len(sr.sll) < 1 {
+		if len(sr.SeriesList) < 1 {
 			continue
 		}
 		r.segResults = append(r.segResults, sr)
@@ -730,8 +730,6 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	return result
 }
 
-var bypassVersions = []int64{1}
-
 type indexSortResult struct {
 	tfl        []tagFamilyLocation
 	segResults segResultHeap
@@ -743,13 +741,13 @@ func (iqr *indexSortResult) Pull() *model.MeasureResult {
 		return nil
 	}
 	if len(iqr.segResults) == 1 {
-		if iqr.segResults[0].i >= len(iqr.segResults[0].sll) {
+		if iqr.segResults[0].i >= len(iqr.segResults[0].SeriesList) {
 			return nil
 		}
 		sr := iqr.segResults[0]
 		r := iqr.copyTo(sr)
 		sr.i++
-		if sr.i >= len(sr.sll) {
+		if sr.i >= len(sr.SeriesList) {
 			iqr.segResults = iqr.segResults[:0]
 		}
 		return r
@@ -758,7 +756,7 @@ func (iqr *indexSortResult) Pull() *model.MeasureResult {
 	sr := top.(*segResult)
 	r := iqr.copyTo(sr)
 	sr.i++
-	if sr.i < len(sr.sll) {
+	if sr.i < len(sr.SeriesList) {
 		heap.Push(&iqr.segResults, sr)
 	}
 	return r
@@ -769,22 +767,22 @@ func (iqr *indexSortResult) Release() {}
 func (iqr *indexSortResult) copyTo(src *segResult) (dest *model.MeasureResult) {
 	index := src.i
 	dest = &model.MeasureResult{
-		SID:        src.sll[index].ID,
-		Timestamps: []int64{src.timestamps[index]},
-		Versions:   bypassVersions,
+		SID:        src.SeriesList[index].ID,
+		Timestamps: []int64{src.Timestamps[index]},
+		Versions:   []int64{src.Versions[index]},
 	}
 	for i := range iqr.tfl {
 		tagFamily := model.TagFamily{Name: iqr.tfl[i].name}
 		peo := iqr.tfl[i].projectedEntityOffsets
 		var fr storage.FieldResult
-		if src.frl != nil {
-			fr = src.frl[index]
+		if src.Fields != nil {
+			fr = src.Fields[index]
 		}
 		for _, n := range iqr.tfl[i].tagNames {
 			if offset, ok := peo[n]; ok {
 				tagFamily.Tags = append(tagFamily.Tags, model.Tag{
 					Name:   n,
-					Values: []*modelv1.TagValue{src.sll[index].EntityValues[offset]},
+					Values: []*modelv1.TagValue{src.SeriesList[index].EntityValues[offset]},
 				})
 				continue
 			}
@@ -813,19 +811,18 @@ type tagFamilyLocation struct {
 }
 
 type segResult struct {
-	sll          pbv1.SeriesList
-	frl          storage.FieldResultList
-	timestamps   []int64
+	storage.SeriesData
 	sortedValues [][]byte
 	i            int
 }
 
 func (sr *segResult) remove(i int) {
-	sr.sll = append(sr.sll[:i], sr.sll[i+1:]...)
-	if sr.frl != nil {
-		sr.frl = append(sr.frl[:i], sr.frl[i+1:]...)
+	sr.SeriesList = append(sr.SeriesList[:i], sr.SeriesList[i+1:]...)
+	if sr.Fields != nil {
+		sr.Fields = append(sr.Fields[:i], sr.Fields[i+1:]...)
 	}
-	sr.timestamps = append(sr.timestamps[:i], sr.timestamps[i+1:]...)
+	sr.Timestamps = append(sr.Timestamps[:i], sr.Timestamps[i+1:]...)
+	sr.Versions = append(sr.Versions[:i], sr.Versions[i+1:]...)
 	if sr.sortedValues != nil {
 		sr.sortedValues = append(sr.sortedValues[:i], sr.sortedValues[i+1:]...)
 	}
@@ -836,7 +833,7 @@ type segResultHeap []*segResult
 func (h segResultHeap) Len() int { return len(h) }
 func (h segResultHeap) Less(i, j int) bool {
 	if h[i].sortedValues == nil {
-		return h[i].sll[h[i].i].ID < h[j].sll[h[j].i].ID
+		return h[i].SeriesList[h[i].i].ID < h[j].SeriesList[h[j].i].ID
 	}
 	return bytes.Compare(h[i].sortedValues[h[i].i], h[j].sortedValues[h[j].i]) < 0
 }

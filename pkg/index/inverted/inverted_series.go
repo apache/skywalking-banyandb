@@ -49,8 +49,8 @@ func (s *store) InsertSeriesBatch(batch index.Batch) error {
 	b := generateBatch()
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
-		doc := toDoc(d)
-		b.InsertIfAbsent(doc.ID(), doc)
+		doc, ff := toDoc(d, true)
+		b.InsertIfAbsent(doc.ID(), ff, doc)
 	}
 	return s.writer.Batch(b)
 }
@@ -66,35 +66,49 @@ func (s *store) UpdateSeriesBatch(batch index.Batch) error {
 	b := generateBatch()
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
-		doc := toDoc(d)
+		doc, _ := toDoc(d, false)
 		b.Update(doc.ID(), doc)
 	}
 	return s.writer.Batch(b)
 }
 
-func toDoc(d index.Document) *bluge.Document {
+func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string) {
 	doc := bluge.NewDocument(convert.BytesToString(d.EntityValues))
+	var fieldNames []string
+	if toParseFieldNames && len(d.Fields) > 0 {
+		fieldNames = make([]string, 0, len(d.Fields))
+	}
 	for _, f := range d.Fields {
-		tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.GetBytes())
-		if !f.Index {
-			tf.FieldOptions = 0
-		} else if !f.NoSort {
-			tf.Sortable()
-		}
-
-		if f.Store {
-			tf.StoreValue()
-		}
-		if f.Key.Analyzer != index.AnalyzerUnspecified {
-			tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
+		var tf *bluge.TermField
+		k := f.Key.Marshal()
+		if f.Index {
+			tf = bluge.NewKeywordFieldBytes(k, f.GetBytes())
+			if f.Store {
+				tf.StoreValue()
+			}
+			if !f.NoSort {
+				tf.Sortable()
+			}
+			if f.Key.Analyzer != index.AnalyzerUnspecified {
+				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
+			}
+		} else {
+			tf = bluge.NewStoredOnlyField(k, f.GetBytes())
 		}
 		doc.AddField(tf)
+		if fieldNames != nil {
+			fieldNames = append(fieldNames, k)
+		}
 	}
 
 	if d.Timestamp > 0 {
 		doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
 	}
-	return doc
+	if d.Version > 0 {
+		vf := bluge.NewStoredOnlyField(versionField, convert.Int64ToBytes(d.Version))
+		doc.AddField(vf)
+	}
+	return doc, fieldNames
 }
 
 // BuildQuery implements index.SeriesStore.
@@ -217,6 +231,8 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 					return false
 				}
 				doc.Timestamp = ts.UnixNano()
+			case versionField:
+				doc.Version = convert.BytesToInt64(value)
 			default:
 				if _, ok := doc.Fields[field]; ok {
 					doc.Fields[field] = bytes.Clone(value)
@@ -343,6 +359,8 @@ func (si *seriesIterator) setVal(field string, value []byte) bool {
 			return false
 		}
 		si.current.Timestamp = ts.UnixNano()
+	case versionField:
+		si.current.Version = convert.BytesToInt64(value)
 	default:
 		if _, ok := si.current.Values[field]; ok {
 			si.current.Values[field] = bytes.Clone(value)

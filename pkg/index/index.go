@@ -26,6 +26,8 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/blugelabs/bluge/numeric"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -33,7 +35,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/blugelabs/bluge/numeric"
 )
 
 const (
@@ -70,6 +71,7 @@ func (f FieldKey) Marshal() string {
 	return string(convert.Uint32ToBytes(f.IndexRuleID))
 }
 
+// NewStringField creates a new string field.
 func NewStringField(key FieldKey, value string) Field {
 	return Field{
 		term: &BytesTermValue{Value: convert.StringToBytes(value)},
@@ -77,6 +79,7 @@ func NewStringField(key FieldKey, value string) Field {
 	}
 }
 
+// NewIntField creates a new int field.
 func NewIntField(key FieldKey, value int64) Field {
 	return Field{
 		term: &FloatTermValue{Value: numeric.Int64ToFloat64(value)},
@@ -84,22 +87,12 @@ func NewIntField(key FieldKey, value int64) Field {
 	}
 }
 
+// NewBytesField creates a new bytes field.
 func NewBytesField(key FieldKey, value []byte) Field {
 	return Field{
 		term: &BytesTermValue{Value: bytes.Clone(value)},
 		Key:  key,
 	}
-}
-
-func NewFloatField(key FieldKey, value float64) Field {
-	return Field{
-		term: &FloatTermValue{Value: value},
-		Key:  key,
-	}
-}
-
-func IntToStr(i int64) string {
-	return strconv.FormatFloat(numeric.Int64ToFloat64(i), 'f', -1, 64)
 }
 
 // Field is a indexed item in a document.
@@ -111,10 +104,12 @@ type Field struct {
 	Index  bool
 }
 
+// GetTerm returns the term value of the field.
 func (f *Field) GetTerm() IsTermValue {
 	return f.term
 }
 
+// GetBytes returns the byte value of the field.
 func (f *Field) GetBytes() []byte {
 	if bv, ok := f.GetTerm().(*BytesTermValue); ok {
 		return bv.Value
@@ -122,6 +117,7 @@ func (f *Field) GetBytes() []byte {
 	panic("field is not bytes")
 }
 
+// GetFloat returns the float value of the field.
 func (f *Field) GetFloat() float64 {
 	if fv, ok := f.GetTerm().(*FloatTermValue); ok {
 		return fv.Value
@@ -129,19 +125,23 @@ func (f *Field) GetFloat() float64 {
 	panic("field is not float")
 }
 
+// String returns a string representation of the field.
 func (f *Field) String() string {
 	return fmt.Sprintf("{\"key\": \"%s\", \"term\": %s}", f.Key.Marshal(), f.term)
 }
 
+// MarshalJSON encodes f to JSON.
 func (f *Field) MarshalJSON() ([]byte, error) {
 	return []byte(f.String()), nil
 }
 
+// IsTermValue is the interface for term value.
 type IsTermValue interface {
 	isTermValue()
 	String() string
 }
 
+// BytesTermValue represents a byte term value.
 type BytesTermValue struct {
 	Value []byte
 }
@@ -152,6 +152,7 @@ func (b BytesTermValue) String() string {
 	return convert.BytesToString(b.Value)
 }
 
+// FloatTermValue represents a float term value.
 type FloatTermValue struct {
 	Value float64
 }
@@ -170,21 +171,23 @@ type RangeOpts struct {
 	IncludesLower bool
 }
 
+// IsEmpty returns true if the range is empty.
 func (r RangeOpts) IsEmpty() bool {
 	return r.Upper == nil && r.Lower == nil
 }
 
+// Valid returns true if the range is valid.
 func (r RangeOpts) Valid() bool {
 	if r.Upper == nil || r.Lower == nil {
 		return false
 	}
-	switch r.Upper.(type) {
+	switch upper := r.Upper.(type) {
 	case *BytesTermValue:
-		if bytes.Compare(r.Lower.(*BytesTermValue).Value, r.Upper.(*BytesTermValue).Value) > 0 {
+		if bytes.Compare(r.Lower.(*BytesTermValue).Value, upper.Value) > 0 {
 			return false
 		}
 	case *FloatTermValue:
-		if r.Lower.(*FloatTermValue).Value > r.Upper.(*FloatTermValue).Value {
+		if r.Lower.(*FloatTermValue).Value > upper.Value {
 			return false
 		}
 	default:
@@ -193,6 +196,7 @@ func (r RangeOpts) Valid() bool {
 	return true
 }
 
+// NewStringRangeOpts creates a new string range option.
 func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) RangeOpts {
 	var upperBytes, lowerBytes []byte
 	if len(upper) == 0 {
@@ -213,6 +217,7 @@ func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) 
 	}
 }
 
+// NewIntRangeOpts creates a new int range option.
 func NewIntRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
 	return RangeOpts{
 		Lower:         &FloatTermValue{Value: numeric.Int64ToFloat64(lower)},
@@ -222,6 +227,7 @@ func NewIntRangeOpts(lower, upper int64, includesLower, includesUpper bool) Rang
 	}
 }
 
+// NewBytesRangeOpts creates a new bytes range option.
 func NewBytesRangeOpts(lower, upper []byte, includesLower, includesUpper bool) RangeOpts {
 	if len(upper) == 0 {
 		upper = defaultUpper
@@ -237,15 +243,6 @@ func NewBytesRangeOpts(lower, upper []byte, includesLower, includesUpper bool) R
 	}
 }
 
-func NewFloatRangeOpts(lower, upper float64, includesLower, includesUpper bool) RangeOpts {
-	return RangeOpts{
-		Lower:         &FloatTermValue{Value: lower},
-		Upper:         &FloatTermValue{Value: upper},
-		IncludesLower: includesLower,
-		IncludesUpper: includesUpper,
-	}
-}
-
 // DocumentResult represents a document in an index.
 type DocumentResult struct {
 	EntityValues []byte
@@ -254,6 +251,7 @@ type DocumentResult struct {
 	SeriesID     common.SeriesID
 	DocID        uint64
 	Timestamp    int64
+	Version      int64
 }
 
 // SortedField returns the value of the sorted field.
@@ -296,6 +294,7 @@ type Document struct {
 	EntityValues []byte
 	Timestamp    int64
 	DocID        uint64
+	Version      int64
 }
 
 // Documents is a collection of documents.
@@ -363,6 +362,7 @@ type SeriesDocument struct {
 	Fields    map[string][]byte
 	Key       Series
 	Timestamp int64
+	Version   int64
 }
 
 // OrderByType is the type of order by.

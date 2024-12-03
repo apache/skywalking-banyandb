@@ -87,6 +87,8 @@ EOF
 
 ```
 
+A stream's `entity` field is immutable. If you want to change the entity field, you should delete the stream and create a new one.
+
 ## Delete operation
 
 Delete operation delete a stream's schema.

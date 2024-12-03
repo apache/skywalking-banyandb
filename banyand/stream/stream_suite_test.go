@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -62,6 +63,7 @@ func (p *preloadStreamService) PreRun(ctx context.Context) error {
 type services struct {
 	stream          stream.Service
 	metadataService metadata.Service
+	pipeline        queue.Queue
 }
 
 func setUp() (*services, func()) {
@@ -79,6 +81,8 @@ func setUp() (*services, func()) {
 	streamService, err := stream.NewService(context.TODO(), metadataService, pipeline, metricSvc)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
+	querySvc, err := query.NewService(context.TODO(), streamService, nil, metadataService, pipeline)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -95,10 +99,12 @@ func setUp() (*services, func()) {
 		metadataService,
 		preloadStreamSvc,
 		streamService,
+		querySvc,
 	)
 	return &services{
 			stream:          streamService,
 			metadataService: metadataService,
+			pipeline:        pipeline,
 		}, func() {
 			moduleDeferFunc()
 			metaDeferFunc()

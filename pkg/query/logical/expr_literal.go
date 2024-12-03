@@ -119,12 +119,12 @@ type int64ArrLiteral struct {
 	arr []int64
 }
 
-func (i *int64ArrLiteral) Field(key index.FieldKey) index.Field {
+func (i *int64ArrLiteral) Field(_ index.FieldKey) index.Field {
 	logger.Panicf("unsupported generate an index field for int64 array")
 	return index.Field{}
 }
 
-func (i *int64ArrLiteral) RangeOpts(isUpper bool, includeLower bool, includeUpper bool) index.RangeOpts {
+func (i *int64ArrLiteral) RangeOpts(_ bool, _ bool, _ bool) index.RangeOpts {
 	logger.Panicf("unsupported generate an index range opts for int64 array")
 	return index.RangeOpts{}
 }
@@ -299,12 +299,12 @@ type strArrLiteral struct {
 	arr []string
 }
 
-func (s *strArrLiteral) Field(key index.FieldKey) index.Field {
+func (s *strArrLiteral) Field(_ index.FieldKey) index.Field {
 	logger.Panicf("unsupported generate an index field for string array")
 	return index.Field{}
 }
 
-func (s *strArrLiteral) RangeOpts(isUpper bool, includeLower bool, includeUpper bool) index.RangeOpts {
+func (s *strArrLiteral) RangeOpts(_ bool, _ bool, _ bool) index.RangeOpts {
 	logger.Panicf("unsupported generate an index range opts for string array")
 	return index.RangeOpts{}
 }
@@ -397,11 +397,11 @@ var (
 
 type nullLiteral struct{}
 
-func (s *nullLiteral) Field(key index.FieldKey) index.Field {
+func (s *nullLiteral) Field(_ index.FieldKey) index.Field {
 	return nullIndexField
 }
 
-func (s *nullLiteral) RangeOpts(isUpper bool, includeLower bool, includeUpper bool) index.RangeOpts {
+func (s *nullLiteral) RangeOpts(_ bool, _ bool, _ bool) index.RangeOpts {
 	return nullRangeOpts
 }
 

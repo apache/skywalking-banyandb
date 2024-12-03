@@ -98,6 +98,8 @@ entity:
 EOF
 ```
 
+A measure's `entity` is immutable. If you want to change the entity field, you should delete the measure and create a new one.
+
 ## Delete operation
 
 Delete operation removes a measure's schema.

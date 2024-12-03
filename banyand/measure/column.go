@@ -73,6 +73,12 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm columnMetadata, count uint64) {
 	c.name = cm.name
 	c.valueType = cm.valueType
+	if c.valueType == pbv1.ValueTypeUnknown {
+		for i := uint64(0); i < count; i++ {
+			c.values = append(c.values, nil)
+		}
+		return
+	}
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
