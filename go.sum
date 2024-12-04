@@ -6,8 +6,8 @@ github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAE
 github.com/RoaringBitmap/roaring v0.9.4/go.mod h1:icnadbWcNyfEHlYdr+tDlOTih1Bf/h+rzPpv4sbomAA=
 github.com/RoaringBitmap/roaring v1.9.4 h1:yhEIoH4YezLYT04s1nHehNO64EKFTop/wBhxv2QzDdQ=
 github.com/RoaringBitmap/roaring v1.9.4/go.mod h1:6AXUsoIEzDTFFQCe1RbGA6uFONMhvejWj5rqITANK90=
-github.com/SkyAPM/bluge v0.0.0-20241202124911-7db485ccafc7 h1:2I3tM57k+g1j3YbJT+WH3u741iHFcW6rXFUVjbLtrrw=
-github.com/SkyAPM/bluge v0.0.0-20241202124911-7db485ccafc7/go.mod h1:6o9wC3xO3qb5Q7VmD1x0r54qQBDpO9+ghGAQvuOHsCU=
+github.com/SkyAPM/bluge v0.0.0-20241204041252-279547fc72c6 h1:Zwv1x7CUnX1tBqfTmBzM2tAOROMi4ZHJtdbkuBEpHfo=
+github.com/SkyAPM/bluge v0.0.0-20241204041252-279547fc72c6/go.mod h1:6o9wC3xO3qb5Q7VmD1x0r54qQBDpO9+ghGAQvuOHsCU=
 github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97 h1:FKuhJ+6n/DHspGeLleeNbziWnKr9gHKYN4q7NcoCp4s=
 github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97/go.mod h1:2xGRl9H1pllhxTbEGO1W3gDkip8P9GQaHPni/wpdR44=
 github.com/SkyAPM/ice v0.0.0-20241108011032-c3d8eea75118 h1:Ja62sgOCp2qPTd8Xmldv1U83v11IRIsh6KlB7UaFLj4=

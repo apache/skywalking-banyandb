@@ -29,7 +29,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -224,13 +223,12 @@ func setUpDuration(t *require.Assertions, ts time.Time, store index.Writer) map[
 			}
 			sid := i2%2 + 1
 			batch.Documents = append(batch.Documents, index.Document{
-				Fields: []index.Field{{
-					Key: index.FieldKey{
+				Fields: []index.Field{
+					index.NewIntField(index.FieldKey{
 						SeriesID:    common.SeriesID(sid),
 						IndexRuleID: indexRuleID,
-					},
-					Term: convert.Int64ToBytes(int64(term)),
-				}},
+					}, int64(term)),
+				},
 				DocID:     id,
 				Timestamp: ts.UnixNano(),
 			})

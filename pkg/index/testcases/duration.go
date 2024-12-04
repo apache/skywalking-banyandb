@@ -21,6 +21,7 @@ package testcases
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"testing"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -85,10 +85,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.RangeOpts{
-					Lower: convert.Int64ToBytes(50),
-					Upper: convert.Int64ToBytes(2000),
-				},
+				termRange: index.NewIntRangeOpts(50, 2000, false, false),
 			},
 			want: []int{200, 500, 1000},
 		},
@@ -97,10 +94,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.RangeOpts{
-					Lower: convert.Int64ToBytes(50),
-					Upper: convert.Int64ToBytes(2000),
-				},
+				termRange: index.NewIntRangeOpts(50, 2000, false, false),
 			},
 			want: []int{1000, 500, 200},
 		},
@@ -109,12 +103,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.RangeOpts{
-					Lower:         convert.Int64ToBytes(200),
-					IncludesLower: true,
-					Upper:         convert.Int64ToBytes(1000),
-					IncludesUpper: true,
-				},
+				termRange: index.NewIntRangeOpts(200, 1000, true, true),
 			},
 			want: []int{200, 500, 1000},
 		},
@@ -123,24 +112,16 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.RangeOpts{
-					Lower:         convert.Int64ToBytes(200),
-					IncludesLower: true,
-					Upper:         convert.Int64ToBytes(1000),
-					IncludesUpper: true,
-				},
+				termRange: index.NewIntRangeOpts(200, 1000, true, true),
 			},
 			want: []int{1000, 500, 200},
 		},
 		{
-			name: "scan in [lower, undefined)  and sort in asc order",
+			name: "scan in [lower, undefined) and sort in asc order",
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.RangeOpts{
-					Lower:         convert.Int64ToBytes(200),
-					IncludesLower: true,
-				},
+				termRange: index.NewIntRangeOpts(200, math.MaxInt64, true, false),
 			},
 			want: []int{200, 500, 1000, 2000},
 		},
@@ -149,10 +130,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.RangeOpts{
-					Lower:         convert.Int64ToBytes(200),
-					IncludesLower: true,
-				},
+				termRange: index.NewIntRangeOpts(200, math.MaxInt64, true, false),
 			},
 			want: []int{2000, 1000, 500, 200},
 		},
@@ -161,10 +139,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.RangeOpts{
-					Upper:         convert.Int64ToBytes(1000),
-					IncludesUpper: true,
-				},
+				termRange: index.NewIntRangeOpts(math.MinInt64, 1000, false, true),
 			},
 			want: []int{50, 200, 500, 1000},
 		},
@@ -173,10 +148,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.RangeOpts{
-					Upper:         convert.Int64ToBytes(1000),
-					IncludesUpper: true,
-				},
+				termRange: index.NewIntRangeOpts(math.MinInt64, 1000, false, true),
 			},
 			want: []int{1000, 500, 200, 50},
 		},
@@ -185,10 +157,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.RangeOpts{
-					Lower: convert.Int64ToBytes(50 + 100),
-					Upper: convert.Int64ToBytes(2000 - 100),
-				},
+				termRange: index.NewIntRangeOpts(150, 1900, false, false),
 			},
 			want: []int{200, 500, 1000},
 		},
@@ -197,10 +166,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.RangeOpts{
-					Lower: convert.Int64ToBytes(50 + 100),
-					Upper: convert.Int64ToBytes(2000 - 100),
-				},
+				termRange: index.NewIntRangeOpts(150, 1900, false, false),
 			},
 			want: []int{1000, 500, 200},
 		},
@@ -209,12 +175,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.RangeOpts{
-					Lower:         convert.Int64ToBytes(50 + 100),
-					IncludesLower: true,
-					Upper:         convert.Int64ToBytes(2000 - 100),
-					IncludesUpper: true,
-				},
+				termRange: index.NewIntRangeOpts(150, 1900, true, true),
 			},
 			want: []int{200, 500, 1000},
 		},
@@ -223,12 +184,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.RangeOpts{
-					Lower:         convert.Int64ToBytes(50 + 100),
-					IncludesLower: true,
-					Upper:         convert.Int64ToBytes(2000 - 100),
-					IncludesUpper: true,
-				},
+				termRange: index.NewIntRangeOpts(150, 1900, true, true),
 			},
 			want: []int{1000, 500, 200},
 		},
@@ -254,11 +210,8 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 		{
 			name: "invalid range",
 			args: args{
-				fieldKey: duration,
-				termRange: index.RangeOpts{
-					Lower: convert.Int64ToBytes(100),
-					Upper: convert.Int64ToBytes(50),
-				},
+				fieldKey:  duration,
+				termRange: index.NewIntRangeOpts(100, 50, false, false),
 			},
 		},
 	}
@@ -345,10 +298,9 @@ func setUpPartialDuration(t *assert.Assertions, store index.Writer, r map[int]po
 				continue
 			}
 			batch.Documents = append(batch.Documents, index.Document{
-				Fields: []index.Field{{
-					Key:  duration,
-					Term: convert.Int64ToBytes(int64(term)),
-				}},
+				Fields: []index.Field{
+					index.NewIntField(duration, int64(term)),
+				},
 				DocID: id,
 			})
 			r[term].Insert(id)

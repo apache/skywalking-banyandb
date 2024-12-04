@@ -19,6 +19,8 @@ package logical
 
 import (
 	"fmt"
+
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
 // UnresolvedPlan denotes an logical expression.
@@ -38,7 +40,6 @@ type Plan interface {
 type Expr interface {
 	fmt.Stringer
 	Elements() []string
-	DataType() int32
 	Equal(Expr) bool
 }
 
@@ -46,6 +47,9 @@ type Expr interface {
 type LiteralExpr interface {
 	Expr
 	Bytes() [][]byte
+	Field(key index.FieldKey) index.Field
+	RangeOpts(isUpper bool, includeLower, includeUpper bool) index.RangeOpts
+	SubExprs() []LiteralExpr
 }
 
 // ComparableExpr allows comparing Expr and Expr arrays.
