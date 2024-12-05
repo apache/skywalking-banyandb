@@ -74,23 +74,23 @@ function initData() {
     <el-card>
       <template #header>
         <div class="flex">
-          <span class="text-bold">Group：</span>
+          <span class="text-bold">Group: </span>
           <span style="margin-right: 20px;">{{ data.group }}</span>
-          <span class="text-bold">Name：</span>
+          <span class="text-bold">Name: </span>
           <span style="margin-right: 20px;">{{ data.name }}</span>
-          <span class="text-bold">Type：</span>
+          <span class="text-bold">Type: </span>
           <span style="margin-right: 20px;">{{ data.type }}</span>
-          <span class="text-bold">Operation：</span>
+          <span class="text-bold">Operation: </span>
           <span>Read</span>
         </div>
       </template>
-      <el-form label-position="left" label-width="100px" :model="data.indexRuleBinding" style="width: 50%;">
+      <el-form label-position="left" label-width="100px" :model="data.indexRuleBinding" style="width: 90%;">
         <el-form-item label="Begin At">
           <el-date-picker v-model="data.indexRuleBinding.beginAt" :disabled="true" type="datetime"
-            style="width: 100% !important;"></el-date-picker>
+            style="width: 100%;"></el-date-picker>
         </el-form-item>
         <el-form-item label="Expire At">
-          <el-date-picker v-model="data.indexRuleBinding.expireAt" :disabled="true" type="datetime"></el-date-picker>
+          <el-date-picker v-model="data.indexRuleBinding.expireAt" :disabled="true" type="datetime" style="width: 100%;"></el-date-picker>
         </el-form-item>
         <el-form-item label="Rules">
           <el-select v-model="data.indexRuleBinding.rules" style="width: 100%;" :disabled="true" multiple></el-select>

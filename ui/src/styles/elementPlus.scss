@@ -122,9 +122,13 @@
 }
 
 .el-tag__content {
-    margin-left: 10px;
     height: 100%;
-    width: 65%;
+    width: 95%;
+}
+
+.el-select__tags .el-tag {
+    display: block;
+    margin: 5px 6px 5px 0 !important;
 }
 
 /* =================

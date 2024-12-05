@@ -210,29 +210,29 @@ function initData() {
     <el-card>
       <template #header>
         <el-row>
-          <el-col :span="12">
-            <div class="flex align-item-center" style="height: 30px; width: 100%;">
+          <el-col :span="20">
+            <div class="flex align-item-center header-content">
               <div class="flex" style="height: 30px;">
-                <span class="text-bold">Group：</span>
-                <span style="margin-right: 20px;">{{ data.group }}</span>
-                <span class="text-bold" v-if="data.operator == 'edit'">Name：</span>
-                <span style="margin-right: 20px;">{{ data.name }}</span>
-                <span class="text-bold">Type：</span>
-                <span style="margin-right: 20px;">{{ data.type }}</span>
-                <span class="text-bold">Operation：</span>
-                <span>{{ data.operator }}</span>
+                <span class="text-bold">Group: </span>
+                <span class="item-value">{{ data.group }}</span>
+                <span class="text-bold" v-if="data.operator == 'edit'">Name: </span>
+                <span class="item-value">{{ data.name }}</span>
+                <span class="text-bold">Type: </span>
+                <span class="item-value">{{ data.type }}</span>
+                <span class="text-bold">Operation: </span>
+                <span class="item-value">{{ data.operator }}</span>
               </div>
             </div>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="4">
             <div class="flex align-item-center justify-end" style="height: 30px;">
-              <el-button size="small" type="primary" @click="submit(ruleFormRef)" color="#6E38F7">submit</el-button>
+              <el-button type="primary" @click="submit(ruleFormRef)" color="#6E38F7">submit</el-button>
             </div>
           </el-col>
         </el-row>
       </template>
       <el-form ref="ruleFormRef" :rules="rules" label-position="left" label-width="100px" :model="data.form"
-        style="width: 50%;">
+        style="width: 90%;">
         <el-form-item label="Group" prop="group">
           <el-input v-model="data.form.group" clearable :disabled="true"></el-input>
         </el-form-item>
@@ -260,5 +260,14 @@ function initData() {
 <style lang="scss" scoped>
 :deep(.el-card) {
     margin: 15px;
+}
+.item-value {
+  margin-right: 20px;
+  margin-left: 5px;
+}
+.header-content {
+  height: 30px;
+  width: 100%;
+  line-height: 30px;
 }
 </style>
