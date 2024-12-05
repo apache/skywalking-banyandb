@@ -74,17 +74,17 @@ function initData() {
     <el-card>
       <template #header>
         <div class="flex">
-          <span class="text-bold">Group：</span>
+          <span class="text-bold">Group: </span>
           <span style="margin-right: 20px;">{{ data.group }}</span>
-          <span class="text-bold">Name：</span>
+          <span class="text-bold">Name: </span>
           <span style="margin-right: 20px;">{{ data.name }}</span>
-          <span class="text-bold">Type：</span>
+          <span class="text-bold">Type: </span>
           <span style="margin-right: 20px;">{{ data.type }}</span>
-          <span class="text-bold">Operation：</span>
+          <span class="text-bold">Operation: </span>
           <span>Read</span>
         </div>
       </template>
-      <el-form label-position="left" label-width="100px" :model="data.indexRule" style="width: 50%;">
+      <el-form label-position="left" label-width="100px" :model="data.indexRule" style="width: 90%;">
         <el-form-item label="Analyzer">
           <el-input v-model="data.indexRule.analyzer" :disabled="true"></el-input>
         </el-form-item>
