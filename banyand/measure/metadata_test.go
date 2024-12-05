@@ -112,21 +112,6 @@ var _ = Describe("Metadata", func() {
 			}).WithTimeout(flags.EventuallyTimeout).Should(MatchError(measure.ErrMeasureNotExist))
 		})
 
-		Context("Update a measure", func() {
-			var measureSchema *databasev1.Measure
-
-			BeforeEach(func() {
-				var err error
-				measureSchema, err = svcs.metadataService.MeasureRegistry().GetMeasure(context.TODO(), &commonv1.Metadata{
-					Name:  "service_cpm_minute",
-					Group: "sw_metric",
-				})
-
-				Expect(err).ShouldNot(HaveOccurred())
-				Expect(measureSchema).ShouldNot(BeNil())
-			})
-		})
-
 		Context("Add tags and fields to the measure", func() {
 			var measureSchema *databasev1.Measure
 			size := 3
@@ -139,7 +124,7 @@ var _ = Describe("Metadata", func() {
 				})
 				Expect(err).ShouldNot(HaveOccurred())
 				Expect(measureSchema).ShouldNot(BeNil())
-				writeData(svcs, size, nil, nil)
+				writeData(timestamp.NowMilli(), svcs, size, nil, nil)
 				_ = queryAllMeasurements(svcs, size, nil, nil)
 
 				measureSchema.TagFamilies[0].Tags = append(measureSchema.TagFamilies[0].Tags, &databasev1.TagSpec{
@@ -179,7 +164,7 @@ var _ = Describe("Metadata", func() {
 					}
 				})
 				It("get new values for the new added tags", func() {
-					writeData(svcs, size, []string{"test1", "test2", "test3"}, nil)
+					writeData(timestamp.NowMilli(), svcs, size, []string{"test1", "test2", "test3"}, nil)
 					dp := queryAllMeasurements(svcs, size*2, []string{"new_tag"}, nil)
 					for i := 0; i < size; i++ {
 						Expect(dp[i].TagFamilies[0].Tags[2].Key).Should(Equal("new_tag"))
@@ -200,7 +185,7 @@ var _ = Describe("Metadata", func() {
 					}
 				})
 				It("get new values for the new added fields", func() {
-					writeData(svcs, size, nil, []int{1, 2, 3})
+					writeData(timestamp.NowMilli(), svcs, size, nil, []int{1, 2, 3})
 					dp := queryAllMeasurements(svcs, size*2, nil, []string{"new_field"})
 					for i := 0; i < size; i++ {
 						Expect(dp[i].Fields[2].Name).Should(Equal("new_field"))
@@ -267,12 +252,13 @@ var _ = Describe("Metadata", func() {
 				})
 
 				It("get new values for the new added tags", func() {
-					writeData(svcs, size, []string{"test1", "test2", "test3"}, nil)
+					ts := timestamp.NowMilli()
 					Eventually(func() bool {
+						writeData(ts, svcs, size, []string{"test1", "test2", "test3"}, nil)
 						dp := queryAllMeasurements(svcs, size*2, []string{"new_tag"}, nil)
 						for i := 0; i < size; i++ {
 							if dp[i].TagFamilies[0].Tags[2].Value.GetStr() == nil {
-								GinkgoWriter.Printf("actual: %s", dp[i].TagFamilies[0].Tags[2])
+								GinkgoWriter.Printf("actual new: %s", dp[i].TagFamilies[0].Tags[2])
 								return false
 							}
 							Expect(dp[i].TagFamilies[0].Tags[2].Key).Should(Equal("new_tag"))
@@ -281,7 +267,7 @@ var _ = Describe("Metadata", func() {
 						for i := size; i < size*2; i++ {
 							Expect(dp[i].TagFamilies[0].Tags[2].Key).Should(Equal("new_tag"))
 							if dp[i].TagFamilies[0].Tags[2].Value.GetStr() == nil {
-								GinkgoWriter.Printf("actual: %s", dp[i].TagFamilies[0].Tags[2])
+								GinkgoWriter.Printf("actual old: %s", dp[i].TagFamilies[0].Tags[2])
 								return false
 							}
 							Expect(dp[i].TagFamilies[0].Tags[2].Value.GetStr().Value).Should(Equal("test" + strconv.Itoa(i%3+1)))
@@ -294,7 +280,7 @@ var _ = Describe("Metadata", func() {
 	})
 })
 
-func writeData(svcs *services, expectedSize int, newTag []string, newFields []int) {
+func writeData(ts time.Time, svcs *services, expectedSize int, newTag []string, newFields []int) {
 	bp := svcs.pipeline.NewBatchPublisher(5 * time.Second)
 	defer bp.Close()
 	for i := 0; i < expectedSize; i++ {
@@ -305,7 +291,7 @@ func writeData(svcs *services, expectedSize int, newTag []string, newFields []in
 				Group: "sw_metric",
 			},
 			DataPoint: &measurev1.DataPointValue{
-				Timestamp: timestamppb.New(timestamp.NowMilli().Add(time.Millisecond)),
+				Timestamp: timestamppb.New(ts.Add(time.Millisecond)),
 				TagFamilies: []*modelv1.TagFamilyForWrite{{
 					Tags: []*modelv1.TagValue{{
 						Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "id" + iStr}},

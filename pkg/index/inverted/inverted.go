@@ -19,11 +19,10 @@
 package inverted
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log"
-	"math"
+	"strconv"
 	"time"
 
 	"github.com/blugelabs/bluge"
@@ -55,8 +54,6 @@ const (
 )
 
 var (
-	defaultUpper            = convert.Uint64ToBytes(math.MaxUint64)
-	defaultLower            = convert.Uint64ToBytes(0)
 	defaultRangePreloadSize = 1000
 	defaultProjection       = []string{docIDField}
 )
@@ -115,7 +112,15 @@ func (s *store) Batch(batch index.Batch) error {
 	for _, d := range batch.Documents {
 		doc := bluge.NewDocument(convert.BytesToString(convert.Uint64ToBytes(d.DocID)))
 		for i, f := range d.Fields {
-			tf := bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.Term)
+			var tf *bluge.TermField
+			switch f.GetTerm().(type) {
+			case *index.BytesTermValue:
+				tf = bluge.NewKeywordFieldBytes(f.Key.Marshal(), f.GetBytes())
+			case *index.FloatTermValue:
+				tf = bluge.NewNumericField(f.Key.Marshal(), f.GetFloat())
+			default:
+				return errors.Errorf("unexpected field type: %T", f.GetTerm())
+			}
 			if !f.NoSort {
 				tf.Sortable()
 			}
@@ -174,9 +179,7 @@ func (s *store) Close() error {
 func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
 	preLoadSize int,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {
-	if termRange.Lower != nil &&
-		termRange.Upper != nil &&
-		bytes.Compare(termRange.Lower, termRange.Upper) > 0 {
+	if !termRange.IsEmpty() && !termRange.Valid() {
 		return index.DummyFieldIterator, nil
 	}
 	if !s.closer.AddRunning() {
@@ -194,21 +197,42 @@ func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange
 	rangeQuery = rangeQuery.AddMust(bluge.NewTermQuery(string(fieldKey.SeriesID.Marshal())).
 		SetField(seriesIDField))
 	rangeNode.Append(newTermNode(string(fieldKey.SeriesID.Marshal()), nil))
-	if termRange.Lower != nil || termRange.Upper != nil {
-		if termRange.Upper == nil {
-			termRange.Upper = defaultUpper
+	if !termRange.IsEmpty() && termRange.Valid() {
+		switch lower := termRange.Lower.(type) {
+		case *index.BytesTermValue:
+			upper := termRange.Upper.(*index.BytesTermValue)
+			rangeQuery.AddMust(bluge.NewTermRangeInclusiveQuery(
+				string(lower.Value),
+				string(upper.Value),
+				termRange.IncludesLower,
+				termRange.IncludesUpper,
+			).
+				SetField(fk))
+			rangeNode.Append(newTermRangeInclusiveNode(
+				string(lower.Value),
+				string(upper.Value),
+				termRange.IncludesLower,
+				termRange.IncludesUpper, nil,
+			))
+
+		case *index.FloatTermValue:
+			upper := termRange.Upper.(*index.FloatTermValue)
+			rangeQuery.AddMust(bluge.NewNumericRangeInclusiveQuery(
+				lower.Value,
+				upper.Value,
+				termRange.IncludesLower,
+				termRange.IncludesUpper,
+			).
+				SetField(fk))
+			rangeNode.Append(newTermRangeInclusiveNode(
+				strconv.FormatFloat(lower.Value, 'f', -1, 64),
+				strconv.FormatFloat(upper.Value, 'f', -1, 64),
+				termRange.IncludesLower,
+				termRange.IncludesUpper,
+				nil,
+			))
+		default:
 		}
-		if termRange.Lower == nil {
-			termRange.Lower = defaultLower
-		}
-		rangeQuery.AddMust(bluge.NewTermRangeInclusiveQuery(
-			string(termRange.Lower),
-			string(termRange.Upper),
-			termRange.IncludesLower,
-			termRange.IncludesUpper,
-		).
-			SetField(fk))
-		rangeNode.Append(newTermRangeInclusiveNode(string(termRange.Lower), string(termRange.Upper), termRange.IncludesLower, termRange.IncludesUpper, nil))
 	}
 
 	sortedKey := fk
@@ -236,11 +260,25 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 	if err != nil {
 		return nil, err
 	}
-	fk := field.Key.Marshal()
-	query := bluge.NewBooleanQuery().
-		AddMust(bluge.NewTermQuery(string(field.Term)).SetField(fk)).
-		AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).
-			SetField(seriesIDField))
+
+	var query *bluge.BooleanQuery
+	switch field.GetTerm().(type) {
+	case *index.BytesTermValue:
+		query = bluge.NewBooleanQuery()
+		query.AddMust(bluge.NewTermQuery(string(field.GetBytes())).SetField(field.Key.Marshal()))
+	case *index.FloatTermValue:
+		query = bluge.NewBooleanQuery()
+		query.AddMust(bluge.NewTermQuery(
+			strconv.FormatFloat(field.GetFloat(), 'f', -1, 64)).
+			SetField(field.Key.Marshal()))
+	case nil:
+		return roaring.DummyPostingList, nil
+	default:
+		return nil, errors.Errorf("unexpected field type: %T", field.GetTerm())
+	}
+	query.AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).
+		SetField(seriesIDField))
+
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
 		return nil, err

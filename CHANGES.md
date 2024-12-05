@@ -10,6 +10,7 @@ Release Notes.
 - Index: Remove sortable field from the stored field. If a field is sortable only, it won't be stored.
 - Index: Support InsertIfAbsent functionality which ensures documents are only inserted if their docIDs are not already present in the current index. There is a exception for the documents with extra index fields more than the entity's index fields.
 - Measure: Introduce "index_mode" to save data exclusively in the series index, ideal for non-timeseries measures.
+- Index: Use numeric index type to support Int and Float
 
 ### Bug Fixes
 

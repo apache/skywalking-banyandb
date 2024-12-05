@@ -904,32 +904,10 @@ func generateDocs() (index.Batch, index.Batch) {
 	series2 := index.Document{
 		EntityValues: []byte("test2"),
 		Fields: []index.Field{
-			{
-				Key:   fieldKeyDuration,
-				Term:  convert.Int64ToBytes(int64(100)),
-				Store: true,
-				Index: true,
-			},
-			{
-				Key:   fieldKeyServiceName,
-				Term:  []byte("svc2"),
-				Store: true,
-				Index: true,
-			},
-			{
-				Key:   fieldKeyStartTime,
-				Term:  convert.Int64ToBytes(int64(100)),
-				Store: true,
-				Index: true,
-			},
-			{
-				Key: index.FieldKey{
-					TagName: "short_name",
-				},
-				Term:  []byte("t2"),
-				Store: true,
-				Index: false,
-			},
+			field(fieldKeyDuration, convert.Int64ToBytes(100), true),
+			field(fieldKeyServiceName, []byte("svc2"), true),
+			field(fieldKeyStartTime, convert.Int64ToBytes(100), true),
+			field(index.FieldKey{TagName: "short_name"}, []byte("t2"), false),
 		},
 		Timestamp: int64(101),
 	}
@@ -937,44 +915,17 @@ func generateDocs() (index.Batch, index.Batch) {
 	series3 := index.Document{
 		EntityValues: []byte("test3"),
 		Fields: []index.Field{
-			{
-				Key:   fieldKeyDuration,
-				Term:  convert.Int64ToBytes(int64(500)),
-				Store: true,
-				Index: true,
-			},
-			{
-				Key:   fieldKeyStartTime,
-				Term:  convert.Int64ToBytes(int64(1000)),
-				Store: true,
-				Index: true,
-			},
-			{
-				Key: index.FieldKey{
-					TagName: "short_name",
-				},
-				Term:  []byte("t3"),
-				Store: true,
-				Index: false,
-			},
+			field(fieldKeyDuration, convert.Int64ToBytes(500), true),
+			field(fieldKeyStartTime, convert.Int64ToBytes(1000), true),
+			field(index.FieldKey{TagName: "short_name"}, []byte("t3"), false),
 		},
 		Timestamp: int64(1001),
 	}
 	series4 := index.Document{
 		EntityValues: []byte("test4"),
 		Fields: []index.Field{
-			{
-				Key:   fieldKeyDuration,
-				Term:  convert.Int64ToBytes(int64(500)),
-				Store: true,
-				Index: true,
-			},
-			{
-				Key:   fieldKeyStartTime,
-				Term:  convert.Int64ToBytes(int64(2000)),
-				Store: true,
-				Index: true,
-			},
+			field(fieldKeyDuration, convert.Int64ToBytes(500), true),
+			field(fieldKeyStartTime, convert.Int64ToBytes(2000), true),
 		},
 		Timestamp: int64(2001),
 	}
@@ -983,6 +934,13 @@ func generateDocs() (index.Batch, index.Batch) {
 		}, index.Batch{
 			Documents: []index.Document{series3},
 		}
+}
+
+func field(key index.FieldKey, value []byte, indexed bool) index.Field {
+	f := index.NewBytesField(key, value)
+	f.Index = indexed
+	f.Store = true
+	return f
 }
 
 func updateData(tester *require.Assertions, s index.SeriesStore) {

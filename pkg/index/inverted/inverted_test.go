@@ -213,38 +213,33 @@ func setup(tester *require.Assertions, s index.Store, serviceName index.FieldKey
 	var batch index.Batch
 	batch.Documents = append(batch.Documents,
 		index.Document{
-			Fields: []index.Field{{
-				Key:  serviceName,
-				Term: []byte("GET::/product/order"),
-			}},
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "GET::/product/order"),
+			},
 			DocID: 1,
 		},
 		index.Document{
-			Fields: []index.Field{{
-				Key:  serviceName,
-				Term: []byte("GET::/root/product"),
-			}},
+			Fields: []index.Field{
+				index.NewBytesField(serviceName, []byte("GET::/root/product")),
+			},
 			DocID: 2,
 		},
 		index.Document{
-			Fields: []index.Field{{
-				Key:  serviceName,
-				Term: []byte("org.apache.skywalking.examples.OrderService.order"),
-			}},
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "org.apache.skywalking.examples.OrderService.order"),
+			},
 			DocID: 3,
 		},
 		index.Document{
-			Fields: []index.Field{{
-				Key:  serviceName,
-				Term: []byte("/svc1/v1/user"),
-			}},
+			Fields: []index.Field{
+				index.NewBytesField(serviceName, []byte("/svc1/v1/user")),
+			},
 			DocID: 4,
 		},
 		index.Document{
-			Fields: []index.Field{{
-				Key:  serviceName,
-				Term: []byte("/svc1/v2/user"),
-			}},
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "/svc1/v2/user"),
+			},
 			DocID: 5,
 		},
 	)
@@ -255,24 +250,21 @@ func setupSeries(tester *assert.Assertions, s index.Store, serviceName index.Fie
 	var batch index.Batch
 	batch.Documents = append(batch.Documents,
 		index.Document{
-			Fields: []index.Field{{
-				Key:  serviceName,
-				Term: []byte("test.a"),
-			}},
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "test.a"),
+			},
 			DocID: 1,
 		},
 		index.Document{
-			Fields: []index.Field{{
-				Key:  serviceName,
-				Term: []byte("test.b"),
-			}},
+			Fields: []index.Field{
+				index.NewBytesField(serviceName, []byte("test.b")),
+			},
 			DocID: 2,
 		},
 		index.Document{
-			Fields: []index.Field{{
-				Key:  serviceName,
-				Term: []byte("test.c"),
-			}},
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "test.c"),
+			},
 			DocID: 3,
 		},
 	)
@@ -309,6 +301,54 @@ func TestStore_Iterator(t *testing.T) {
 	tester.NoError(err)
 	data := testcases.SetUpDuration(tester, s)
 	testcases.RunDuration(t, data, s)
+}
+
+func TestStore_NumericMatch(t *testing.T) {
+	tester := assert.New(t)
+	path, fn := setUp(require.New(t))
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+	var batch index.Batch
+	serviceName := index.FieldKey{
+		IndexRuleID: 6,
+	}
+	durationName := index.FieldKey{
+		IndexRuleID: 7,
+	}
+	batch.Documents = append(batch.Documents,
+		index.Document{
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "svc1"),
+				index.NewIntField(durationName, 50),
+			},
+			DocID: 1,
+		},
+		index.Document{
+			Fields: []index.Field{
+				index.NewBytesField(serviceName, []byte("svc2")),
+				index.NewIntField(durationName, 200),
+			},
+			DocID: 2,
+		},
+		index.Document{
+			Fields: []index.Field{
+				index.NewIntField(durationName, 500),
+			},
+			DocID: 3,
+		},
+	)
+	tester.NoError(s.Batch(batch))
+	l, err := s.MatchTerms(index.NewIntField(durationName, 50))
+	tester.NoError(err)
+	tester.NotNil(l)
+	tester.True(roaring.NewPostingListWithInitialData(1).Equal(l))
 }
 
 func setUp(t *require.Assertions) (tempDir string, deferFunc func()) {

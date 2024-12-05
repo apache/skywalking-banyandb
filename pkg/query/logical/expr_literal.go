@@ -18,9 +18,8 @@
 package logical
 
 import (
-	"bytes"
-	"encoding/hex"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -28,6 +27,8 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var (
@@ -37,6 +38,21 @@ var (
 
 type int64Literal struct {
 	int64
+}
+
+func (i *int64Literal) Field(key index.FieldKey) index.Field {
+	return index.NewIntField(key, i.int64)
+}
+
+func (i *int64Literal) RangeOpts(isUpper bool, includeLower bool, includeUpper bool) index.RangeOpts {
+	if isUpper {
+		return index.NewIntRangeOpts(math.MinInt64, i.int64, includeLower, includeUpper)
+	}
+	return index.NewIntRangeOpts(i.int64, math.MaxInt64, includeLower, includeUpper)
+}
+
+func (i *int64Literal) SubExprs() []LiteralExpr {
+	return []LiteralExpr{i}
 }
 
 func newInt64Literal(val int64) *int64Literal {
@@ -86,10 +102,6 @@ func (i *int64Literal) Equal(expr Expr) bool {
 	return false
 }
 
-func (i *int64Literal) DataType() int32 {
-	return int32(databasev1.TagType_TAG_TYPE_INT)
-}
-
 func (i *int64Literal) String() string {
 	return strconv.FormatInt(i.int64, 10)
 }
@@ -105,6 +117,24 @@ var (
 
 type int64ArrLiteral struct {
 	arr []int64
+}
+
+func (i *int64ArrLiteral) Field(_ index.FieldKey) index.Field {
+	logger.Panicf("unsupported generate an index field for int64 array")
+	return index.Field{}
+}
+
+func (i *int64ArrLiteral) RangeOpts(_ bool, _ bool, _ bool) index.RangeOpts {
+	logger.Panicf("unsupported generate an index range opts for int64 array")
+	return index.RangeOpts{}
+}
+
+func (i *int64ArrLiteral) SubExprs() []LiteralExpr {
+	exprs := make([]LiteralExpr, 0, len(i.arr))
+	for _, v := range i.arr {
+		exprs = append(exprs, newInt64Literal(v))
+	}
+	return exprs
 }
 
 func newInt64ArrLiteral(val []int64) *int64ArrLiteral {
@@ -169,10 +199,6 @@ func (i *int64ArrLiteral) Equal(expr Expr) bool {
 	return false
 }
 
-func (i *int64ArrLiteral) DataType() int32 {
-	return int32(databasev1.TagType_TAG_TYPE_INT_ARRAY)
-}
-
 func (i *int64ArrLiteral) String() string {
 	return fmt.Sprintf("%v", i.arr)
 }
@@ -186,12 +212,29 @@ func (i *int64ArrLiteral) Elements() []string {
 }
 
 var (
-	_ LiteralExpr    = (*strLiteral)(nil)
-	_ ComparableExpr = (*strLiteral)(nil)
+	_            LiteralExpr    = (*strLiteral)(nil)
+	_            ComparableExpr = (*strLiteral)(nil)
+	defaultUpper                = convert.Uint64ToBytes(math.MaxUint64)
+	defaultLower                = convert.Uint64ToBytes(0)
 )
 
 type strLiteral struct {
 	string
+}
+
+func (s *strLiteral) Field(key index.FieldKey) index.Field {
+	return index.NewStringField(key, s.string)
+}
+
+func (s *strLiteral) RangeOpts(isUpper bool, includeLower bool, includeUpper bool) index.RangeOpts {
+	if isUpper {
+		return index.NewStringRangeOpts(convert.BytesToString(defaultLower), s.string, includeLower, includeUpper)
+	}
+	return index.NewStringRangeOpts(s.string, convert.BytesToString(defaultUpper), includeLower, includeUpper)
+}
+
+func (s *strLiteral) SubExprs() []LiteralExpr {
+	return []LiteralExpr{s}
 }
 
 func (s *strLiteral) Compare(other LiteralExpr) (int, bool) {
@@ -239,10 +282,6 @@ func str(str string) LiteralExpr {
 	return &strLiteral{str}
 }
 
-func (s *strLiteral) DataType() int32 {
-	return int32(databasev1.TagType_TAG_TYPE_STRING)
-}
-
 func (s *strLiteral) String() string {
 	return s.string
 }
@@ -258,6 +297,24 @@ var (
 
 type strArrLiteral struct {
 	arr []string
+}
+
+func (s *strArrLiteral) Field(_ index.FieldKey) index.Field {
+	logger.Panicf("unsupported generate an index field for string array")
+	return index.Field{}
+}
+
+func (s *strArrLiteral) RangeOpts(_ bool, _ bool, _ bool) index.RangeOpts {
+	logger.Panicf("unsupported generate an index range opts for string array")
+	return index.RangeOpts{}
+}
+
+func (s *strArrLiteral) SubExprs() []LiteralExpr {
+	exprs := make([]LiteralExpr, 0, len(s.arr))
+	for _, v := range s.arr {
+		exprs = append(exprs, str(v))
+	}
+	return exprs
 }
 
 func newStrArrLiteral(val []string) *strArrLiteral {
@@ -322,10 +379,6 @@ func (s *strArrLiteral) Equal(expr Expr) bool {
 	return false
 }
 
-func (s *strArrLiteral) DataType() int32 {
-	return int32(databasev1.TagType_TAG_TYPE_STRING_ARRAY)
-}
-
 func (s *strArrLiteral) String() string {
 	return fmt.Sprintf("%v", s.arr)
 }
@@ -334,52 +387,27 @@ func (s *strArrLiteral) Elements() []string {
 	return s.arr
 }
 
-// BytesLiteral represents a wrapper for a slice of bytes.
-type BytesLiteral struct {
-	bb []byte
-}
-
-// NewBytesLiteral creates a new instance of BytesLiteral with the provided slice of bytes.
-func NewBytesLiteral(bb []byte) *BytesLiteral {
-	return &BytesLiteral{bb: bb}
-}
-
-// Bytes returns a 2D slice of bytes where the inner slice contains the byte slice stored in the BytesLiteral.
-func (b *BytesLiteral) Bytes() [][]byte {
-	return [][]byte{b.bb}
-}
-
-// Equal checks if the current BytesLiteral is equal to the provided Expr.
-func (b *BytesLiteral) Equal(expr Expr) bool {
-	if other, ok := expr.(*BytesLiteral); ok {
-		return bytes.Equal(other.bb, b.bb)
-	}
-
-	return false
-}
-
-// DataType returns the data type of BytesLiteral.
-func (b *BytesLiteral) DataType() int32 {
-	return int32(databasev1.TagType_TAG_TYPE_DATA_BINARY)
-}
-
-// String converts the BytesLiteral's slice of bytes to a string representation.
-func (b *BytesLiteral) String() string {
-	return hex.EncodeToString(b.bb)
-}
-
-// Elements returns a slice containing the string representation of the byte slice.
-func (b *BytesLiteral) Elements() []string {
-	return []string{hex.EncodeToString(b.bb)}
-}
-
 var (
 	_               LiteralExpr    = (*nullLiteral)(nil)
 	_               ComparableExpr = (*nullLiteral)(nil)
 	nullLiteralExpr                = &nullLiteral{}
+	nullIndexField                 = index.Field{}
+	nullRangeOpts                  = index.RangeOpts{}
 )
 
 type nullLiteral struct{}
+
+func (s *nullLiteral) Field(_ index.FieldKey) index.Field {
+	return nullIndexField
+}
+
+func (s *nullLiteral) RangeOpts(_ bool, _ bool, _ bool) index.RangeOpts {
+	return nullRangeOpts
+}
+
+func (s *nullLiteral) SubExprs() []LiteralExpr {
+	panic("unimplemented")
+}
 
 func newNullLiteral() *nullLiteral {
 	return nullLiteralExpr

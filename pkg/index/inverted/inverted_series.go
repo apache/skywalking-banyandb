@@ -82,7 +82,7 @@ func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string)
 		var tf *bluge.TermField
 		k := f.Key.Marshal()
 		if f.Index {
-			tf = bluge.NewKeywordFieldBytes(k, f.Term)
+			tf = bluge.NewKeywordFieldBytes(k, f.GetBytes())
 			if f.Store {
 				tf.StoreValue()
 			}
@@ -93,7 +93,7 @@ func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string)
 				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
 			}
 		} else {
-			tf = bluge.NewStoredOnlyField(k, f.Term)
+			tf = bluge.NewStoredOnlyField(k, f.GetBytes())
 		}
 		doc.AddField(tf)
 		if fieldNames != nil {
