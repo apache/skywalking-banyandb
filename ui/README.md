@@ -8,7 +8,7 @@ This template should help get you started developing with Vue 3 in Vite.
 
 ## Setting up Environment Variables
 
-First, you need to copy .env.example as .env.development.local. The environment variables explanation is as follows:
+First, you need to copy `.env.example` as `.env.development.local`. The environment variables explanation is as follows:
 
 1. `VITE_API_PROXY` is to enable proxy to a API backend.
 2. `VITE_MONITOR_PROXY` is to enable proxy to a monintor backend.
