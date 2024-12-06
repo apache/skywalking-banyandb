@@ -45,7 +45,10 @@ target
 .vscode
 
 .DS_Store
-.env.development.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 .run
 
 # mock files
