@@ -25,7 +25,7 @@ import vue from '@vitejs/plugin-vue'
 import { loadEnv } from 'vite'
 
 export default ({ mode }) => {
-  const { VITE_API_PROXY_TARGET, VITE_MONITOR_PROXY_TARGET } = loadEnv(mode, process.cwd())
+  const { VITE_API_PROXY, VITE_MONITOR_PROXY } = loadEnv(mode, process.cwd())
 
   return {
     plugins: [
@@ -45,11 +45,11 @@ export default ({ mode }) => {
     server: {
       proxy: {
         '^/api': {
-          target: `${VITE_API_PROXY_TARGET || 'http://127.0.0.1:17913'}`,
+          target: `${VITE_API_PROXY || 'http://127.0.0.1:17913'}`,
           changeOrigin: true,
         },
         '^/monitoring': {
-          target: `${VITE_MONITOR_PROXY_TARGET || 'http://127.0.0.1:2121'}`,
+          target: `${VITE_MONITOR_PROXY || 'http://127.0.0.1:2121'}`,
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/monitoring/, ''),
         },
