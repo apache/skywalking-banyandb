@@ -6,9 +6,19 @@ This template should help get you started developing with Vue 3 in Vite.
 
 [VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur) + [TypeScript Vue Plugin (Volar)](https://marketplace.visualstudio.com/items?itemName=Vue.vscode-typescript-vue-plugin).
 
-## Customize configuration
+## Setting up Environment Variables
 
-See [Vite Configuration Reference](https://vitejs.dev/config/).
+First, you need to copy `.env.example` as `.env.development.local`. The environment variables explanation is as follows:
+
+1. `VITE_API_PROXY` is to enable proxy to a API backend.
+2. `VITE_MONITOR_PROXY` is to enable proxy to a monintor backend.
+
+Example `.env.development.local` is as the following:
+
+```
+VITE_API_PROXY=http://127.0.0.1:17913
+VITE_MONITOR_PROXY=http://127.0.0.1:2121
+```
 
 ## Project Setup
 

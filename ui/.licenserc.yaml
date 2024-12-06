@@ -66,6 +66,7 @@ header: # `header` section is configurations for source codes license header.
     - '*.json'
     - 'LICENSE*'
     - '*.md'
+    - '.env.example'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 
