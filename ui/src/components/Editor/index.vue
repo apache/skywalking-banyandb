@@ -58,7 +58,8 @@ const data = reactive({
         name: route.params.group,
         modRevision: route.params.modRevision,
         interval: 1,
-        intervalUnit: 'm'
+        intervalUnit: 'm',
+        indexMode: false,
     }
 })
 
@@ -214,8 +215,9 @@ function initData() {
         getStreamOrMeasure(data.type, data.form.group, data.form.name)
             .then(res => {
                 if (res.status == 200) {
-                    const tagFamilies = res.data[data.type + ''].tagFamilies
-                    const entity = res.data[data.type + ''].entity.tagNames
+                    data.form.indexMode = res.data[String(data.type)].indexMode
+                    const tagFamilies = res.data[String(data.type)].tagFamilies
+                    const entity = res.data[String(data.type)].entity.tagNames
                     const arr = []
                     tagFamilies.forEach(item => {
                         item.tags.forEach(tag => {
@@ -276,19 +278,22 @@ function initData() {
                     </el-col>
                 </el-row>
             </template>
-            <el-form ref="ruleFormRef" :model="data.form" label-width="80px" label-position="left" :rules="rules"
-                :inline="true" style="height: 30px;">
+            <el-form ref="ruleFormRef" :model="data.form" label-position="left" :rules="rules"
+                :inline="true">
                 <el-form-item label="group" prop="group">
                     <el-input clearable disabled v-model="data.form.group"></el-input>
                 </el-form-item>
                 <el-form-item label="name" prop="name">
-                    <el-input clearable v-model="data.form.name"></el-input>
+                    <el-input style="width: 300px" clearable v-model="data.form.name"></el-input>
                 </el-form-item>
                 <el-form-item v-if="data.type == 'measure'" label="interval" prop="interval">
                     <el-input-number v-model="data.form.interval" :min="1" />
                     <el-select v-model="data.form.intervalUnit" style="width: 100px; margin-left: 5px;">
                         <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value" />
                     </el-select>
+                </el-form-item>
+                <el-form-item label="Index Mode" prop="indexMode">
+                    <span>{{ data.form.indexMode ? `Yes` : `No` }}</span>
                 </el-form-item>
             </el-form>
             <TagEditor ref="tagEditorRef"></TagEditor>
