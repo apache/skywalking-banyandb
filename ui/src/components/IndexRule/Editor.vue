@@ -24,6 +24,8 @@ import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance } from 'element-plus'
 import { createSecondaryDataModel, getSecondaryDataModel, updateSecondaryDataModel } from '@/api/index'
 import { ElMessage } from 'element-plus'
+import FormHeader from '../common/FormHeader.vue'
+
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose
 const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
@@ -241,18 +243,7 @@ function initData() {
       <template #header>
         <el-row>
           <el-col :span="20">
-            <div class="flex align-item-center" style="height: 30px; width: 100%;">
-              <div class="flex" style="height: 30px;">
-                <span class="text-bold">Group: </span>
-                <span style="margin-right: 20px;">{{ data.group }}</span>
-                <span class="text-bold" v-if="data.operator == 'edit'">Name: </span>
-                <span style="margin-right: 20px;">{{ data.name }}</span>
-                <span class="text-bold">Type: </span>
-                <span style="margin-right: 20px;">{{ data.type }}</span>
-                <span class="text-bold">Operation: </span>
-                <span>{{ data.operator }}</span>
-              </div>
-            </div>
+            <FormHeader :fields="data" />
           </el-col>
           <el-col :span="4">
             <div class="flex align-item-center justify-end" style="height: 30px;">
@@ -291,6 +282,6 @@ function initData() {
 
 <style lang="scss" scoped>
 :deep(.el-card) {
-    margin: 15px;
+  margin: 15px;
 }
 </style>

@@ -27,6 +27,7 @@ import { jsonToYaml, yamlToJson } from '@/utils/yaml'
 import CodeMirror from '@/components/CodeMirror/index.vue'
 import { ElMessage } from 'element-plus'
 import { computed } from '@vue/runtime-core'
+import FormHeader from '../common/FormHeader.vue'
 
 const route = useRoute()
 
@@ -403,14 +404,7 @@ function changeFields() {
     <div>
         <el-card shadow="always">
             <template #header>
-                <div class="flex">
-                    <span class="text-bold">Group: </span>
-                    <span style="margin-right: 20px;">{{ data.group }}</span>
-                    <span class="text-bold">Name: </span>
-                    <span style="margin-right: 20px;">{{ data.name }}</span>
-                    <span class="text-bold">Operation: </span>
-                    <span>Read</span>
-                </div>
+                <FormHeader :fields="data" />
             </template>
             <el-row>
                 <el-col :span="16">

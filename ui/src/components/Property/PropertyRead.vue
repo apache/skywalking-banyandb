@@ -26,6 +26,7 @@ import { onMounted, reactive, ref } from 'vue';
 import { RefreshRight } from '@element-plus/icons-vue';
 import PropertyEditror from './PropertyEditror.vue';
 import PropertyValueReader from './PropertyValueReader.vue';
+import FormHeader from '../common/FormHeader.vue';
 
 const { proxy } = getCurrentInstance()
 // Loading
@@ -132,17 +133,13 @@ watch(() => route, () => {
 onMounted(() => {
     getProperty()
 })
+
 </script>
 <template>
     <div>
         <el-card shadow="always">
             <template #header>
-                <div class="flex">
-                    <span class="text-bold">Group: </span>
-                    <span style="margin-right: 20px;">{{ data.group }}</span>
-                    <span class="text-bold">Operation: </span>
-                    <span>Read</span>
-                </div>
+                <FormHeader :fields="data" />
             </template>
             <div class="button-group-operator">
                 <el-button size="small" type="primary" color="#6E38F7" @click="openAddProperty">Apply

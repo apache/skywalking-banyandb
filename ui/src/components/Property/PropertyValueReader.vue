@@ -18,13 +18,7 @@
 -->
 
 <script setup>
-import { applyProperty } from '@/api';
 import { reactive, ref } from 'vue';
-import { getCurrentInstance } from '@vue/runtime-core'
-import TagEditor from './TagEditor.vue';
-import { ElMessage } from 'element-plus';
-const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
-const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose
 const showDialog = ref(false)
 const title = ref('')
 const valueData = reactive({

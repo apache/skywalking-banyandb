@@ -22,6 +22,7 @@ import { reactive } from 'vue';
 import { watch, getCurrentInstance } from '@vue/runtime-core'
 import { useRoute } from 'vue-router'
 import { getSecondaryDataModel } from '@/api/index'
+import FormHeader from '../common/FormHeader.vue'
 
 const { proxy } = getCurrentInstance()
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
@@ -73,16 +74,7 @@ function initData() {
   <div>
     <el-card>
       <template #header>
-        <div class="flex">
-          <span class="text-bold">Group: </span>
-          <span style="margin-right: 20px;">{{ data.group }}</span>
-          <span class="text-bold">Name: </span>
-          <span style="margin-right: 20px;">{{ data.name }}</span>
-          <span class="text-bold">Type: </span>
-          <span style="margin-right: 20px;">{{ data.type }}</span>
-          <span class="text-bold">Operation: </span>
-          <span>Read</span>
-        </div>
+        <FormHeader :fields="data" />
       </template>
       <el-form label-position="left" label-width="100px" :model="data.indexRuleBinding" style="width: 90%;">
         <el-form-item label="Begin At">
