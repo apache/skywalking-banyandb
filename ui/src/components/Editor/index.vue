@@ -25,7 +25,8 @@ import TagEditor from './tagEditor.vue'
 import FieldsEditor from './fieldsEditor.vue'
 import type { FormInstance } from 'element-plus'
 import { ElMessage } from 'element-plus'
-import { createResources, editResources, getStreamOrMeasureList, getStreamOrMeasure } from '@/api/index'
+import { createResources, editResources, getStreamOrMeasure } from '@/api/index'
+import FormHeader from '../common/FormHeader.vue'
 
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose
@@ -264,24 +265,13 @@ function initData() {
         <el-card shadow="always">
             <template #header>
                 <el-row>
-                    <el-col :span="12">
-                        <div class="flex align-item-center" style="height: 30px; width: 100%;">
-                            <div class="flex" style="height: 30px;">
-                                <span class="text-bold">Catalog: </span>
-                                <span style="margin-right: 20px;">{{ data.type }}</span>
-                                <span class="text-bold">Group: </span>
-                                <span style="margin-right: 20px;">{{ data.form.group }}</span>
-                                <span class="text-bold" v-if="data.form.name">Name：</span>
-                                <span style="margin-right: 20px;" v-if="data.form.name">{{ data.form.name }}</span>
-                                <span class="text-bold">Operation: </span>
-                                <span>{{ data.operator }}</span>
-                            </div>
-                        </div>
+                    <el-col :span="20">
+                        <FormHeader :fields="{...data, catalog: data.type}" />
                     </el-col>
-                    <el-col :span="12">
+                    <el-col :span="4">
                         <div class="flex align-item-center justify-end" style="height: 30px;">
                             <el-button size="small" type="primary" @click="submit(ruleFormRef)"
-                                color="#6E38F7">submit</el-button>
+                                color="#6E38F7">Submit</el-button>
                         </div>
                     </el-col>
                 </el-row>

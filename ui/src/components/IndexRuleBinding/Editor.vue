@@ -24,6 +24,8 @@ import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance } from 'element-plus'
 import { createSecondaryDataModel, getSecondaryDataModel, updateSecondaryDataModel } from '@/api/index'
 import { ElMessage } from 'element-plus'
+import FormHeader from '../common/FormHeader.vue'
+
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose
 const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
@@ -52,7 +54,7 @@ const data = reactive({
   group: route.params.group,
   name: route.params.name,
   type: route.params.type,
-  operator: route.params.operator,
+  operator: route.params.operator || 'Read',
   schema: route.params.schema,
   form: {
     group: route.params.group,
@@ -211,22 +213,11 @@ function initData() {
       <template #header>
         <el-row>
           <el-col :span="20">
-            <div class="flex align-item-center header-content">
-              <div class="flex" style="height: 30px;">
-                <span class="text-bold">Group: </span>
-                <span class="item-value">{{ data.group }}</span>
-                <span class="text-bold" v-if="data.operator == 'edit'">Name: </span>
-                <span class="item-value">{{ data.name }}</span>
-                <span class="text-bold">Type: </span>
-                <span class="item-value">{{ data.type }}</span>
-                <span class="text-bold">Operation: </span>
-                <span class="item-value">{{ data.operator }}</span>
-              </div>
-            </div>
+            <FormHeader :fields="data" />
           </el-col>
           <el-col :span="4">
             <div class="flex align-item-center justify-end" style="height: 30px;">
-              <el-button type="primary" @click="submit(ruleFormRef)" color="#6E38F7">submit</el-button>
+              <el-button type="primary" @click="submit(ruleFormRef)" color="#6E38F7">Submit</el-button>
             </div>
           </el-col>
         </el-row>
@@ -264,10 +255,5 @@ function initData() {
 .item-value {
   margin-right: 20px;
   margin-left: 5px;
-}
-.header-content {
-  height: 30px;
-  width: 100%;
-  line-height: 30px;
 }
 </style>
