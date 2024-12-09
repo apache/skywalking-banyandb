@@ -51,8 +51,6 @@ const rules = {
     group: [{ required: true, message: 'Please enter the group.', trigger: 'blur' }],
     name: [{ required: true, message: 'Please enter the name.', trigger: 'blur' }],
     containerID: [{ required: true, message: 'Please enter the container id.', trigger: 'blur' }],
-    modRevision: [{ required: true, message: 'Please enter the container Mod Revision.', trigger: 'blur' }],
-    createRevision: [{ required: true, message: 'Please enter the container Create Revision.', trigger: 'blur' }],
     id: [{ required: true, message: 'Please enter the ID.', trigger: 'blur' }],
     tags: [{ required: true, validator: validateTags, trigger: 'blur' }],
 }
@@ -66,8 +64,6 @@ const formConfig = [
     { label: 'Container Group', prop: 'group', type: 'input', disabled: true },
     { label: 'Container Name', prop: 'name', type: 'input' },
     { label: 'Container ID', prop: 'containerID', type: 'input' },
-    { label: 'Container ModRevision', prop: 'modRevision', type: 'number' },
-    { label: 'Container CreateRevision', prop: 'createRevision', type: 'number' },
     { label: 'ID', prop: 'id', type: 'input' },
 ]
 let promiseResolve

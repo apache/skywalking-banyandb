@@ -270,12 +270,12 @@ function initData() {
     <el-card>
       <template #header>
         <el-row>
-          <el-col :span="12">
+          <el-col :span="20">
               <FormHeader :fields="data" />
           </el-col>
-          <el-col :span="12">
+          <el-col :span="4">
             <div class="flex align-item-center justify-end" style="height: 30px;">
-              <el-button size="small" type="primary" @click="submit(ruleFormRef)" color="#6E38F7">submit</el-button>
+              <el-button size="small" type="primary" @click="submit(ruleFormRef)" color="#6E38F7">Submit</el-button>
             </div>
           </el-col>
         </el-row>

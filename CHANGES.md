@@ -19,6 +19,7 @@ Release Notes.
 - Fix the bug when adding new tags or fields to the measure, the querying crashes or returns wrong results.
 - Fix the bug that adding new tags to the stream, the querying crashes or returns wrong results.
 - UI: Polish Index Rule Binding Page and Index Page.
+- Fix: View configuration on Property page
 
 ### Documentation
 
