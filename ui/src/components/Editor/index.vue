@@ -215,7 +215,7 @@ function initData() {
         getStreamOrMeasure(data.type, data.form.group, data.form.name)
             .then(res => {
                 if (res.status == 200) {
-                    data.form.indexMode = res.data[String(data.type)].indexMode;
+                    data.form.indexMode = res.data[String(data.type)].indexMode
                     const tagFamilies = res.data[String(data.type)].tagFamilies
                     const entity = res.data[String(data.type)].entity.tagNames
                     const arr = []
@@ -284,7 +284,7 @@ function initData() {
                     <el-input clearable disabled v-model="data.form.group"></el-input>
                 </el-form-item>
                 <el-form-item label="name" prop="name">
-                    <el-input style="width: 300px" v-model="data.form.name"></el-input>
+                    <el-input style="width: 300px" clearable v-model="data.form.name"></el-input>
                 </el-form-item>
                 <el-form-item v-if="data.type == 'measure'" label="interval" prop="interval">
                     <el-input-number v-model="data.form.interval" :min="1" />
