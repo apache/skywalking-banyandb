@@ -84,7 +84,10 @@ function initData() {
           <el-select v-model="data.indexRule.tags" style="width: 100%;" :disabled="true" multiple></el-select>
         </el-form-item>
         <el-form-item label="Type">
-          <el-input v-model="data.indexRule.type" :disabled="true"></el-input>
+          <el-input v-model="data.indexRule.type" disabled></el-input>
+        </el-form-item>
+        <el-form-item label="No Sort">
+          <el-input v-model="data.indexRule.noSort" disabled></el-input>
         </el-form-item>
       </el-form>
     </el-card>
