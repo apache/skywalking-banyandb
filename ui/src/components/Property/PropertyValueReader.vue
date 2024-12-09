@@ -58,7 +58,7 @@ defineExpose({
 
 <template>
     <el-dialog v-model="showDialog" :title="title">
-        <pre>{{valueData.formattedData}}</pre>
+        <div class="configuration">{{valueData.formattedData}}</div>
         <template #footer>
             <span class="dialog-footer footer">
                 <el-button @click="closeDialog">Cancel</el-button>
@@ -75,5 +75,11 @@ defineExpose({
     width: 100%;
     display: flex;
     justify-content: center;
+}
+.configuration {
+    width: 100%;
+    overflow: auto;
+    max-height: 700px;
+    white-space: pre;
 }
 </style>
