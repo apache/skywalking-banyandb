@@ -49,23 +49,20 @@ watch(() => route, () => {
   deep: true
 })
 
-function initData() {
-  if (data.type && data.group && data.name) {
-    $loadingCreate()
-    getSecondaryDataModel(data.type, data.group, data.name)
-      .then(result => {
-        data.indexRule = result.data.indexRule
-      })
-      .catch(err => {
-        ElMessage({
-          message: 'Please refresh and try again. Error: ' + err,
-          type: "error",
-          duration: 3000
-        })
-      })
-      .finally(() => {
-        $loadingClose()
-      })
+async function initData() {
+  if (!(data.type && data.group && data.name)) {
+    return;
+  }
+  $loadingCreate()
+  const result = await getSecondaryDataModel(data.type, data.group, data.name)
+  $loadingClose()
+  data.indexRule = {...result.data.indexRule, noSort: String(result.data.indexRule.noSort)}
+  if (!(result.data && result.data.indexRule)) {
+    ElMessage({
+      message: 'Please refresh and try again. Error: ' + err,
+      type: "error",
+      duration: 3000
+    })
   }
 }
 </script>
