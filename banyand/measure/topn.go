@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -32,7 +33,6 @@ import (
 	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	apiData "github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -40,13 +40,17 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 const (
@@ -65,18 +69,20 @@ type dataPointWithEntityValues struct {
 	*measurev1.DataPointValue
 	entityValues []*modelv1.TagValue
 	seriesID     uint64
+	shardID      uint32
 }
 
 type topNStreamingProcessor struct {
-	m             *measure
-	streamingFlow flow.Flow
-	l             *logger.Logger
 	pipeline      queue.Queue
+	streamingFlow flow.Flow
+	in            chan flow.StreamRecord
+	l             *logger.Logger
 	topNSchema    *databasev1.TopNAggregation
 	src           chan interface{}
-	in            chan flow.StreamRecord
+	m             *measure
 	errCh         <-chan error
 	stopCh        chan struct{}
+	buf           []byte
 	flow.ComponentState
 	interval      time.Duration
 	sortDirection modelv1.Sort
@@ -137,132 +143,91 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 	var err error
 	publisher := t.pipeline.NewBatchPublisher(resultPersistencyTimeout)
 	defer publisher.Close()
+	topNValue := GenerateTopNValue()
+	defer ReleaseTopNValue(topNValue)
 	for group, tuples := range tuplesGroups {
 		if e := t.l.Debug(); e.Enabled() {
-			e.Str("TopN", t.topNSchema.GetMetadata().GetName()).
-				Str("group", group).
-				Int("rankNums", len(tuples)).
-				Msg("Write tuples")
+			for i := range tuples {
+				tuple := tuples[i]
+				data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
+				e.
+					Int("rankNums", i+1).
+					Str("entityValues", fmt.Sprintf("%v", data[0])).
+					Int("value", int(data[2].(int64))).
+					Time("eventTime", eventTime).
+					Msgf("Write tuples %s %s", t.topNSchema.GetMetadata().GetName(), group)
+			}
 		}
-		for rankNum, tuple := range tuples {
-			fieldValue := tuple.V1.(int64)
+		topNValue.Reset()
+		topNValue.setMetadata(t.topNSchema.GetFieldName(), t.m.schema.Entity.TagNames)
+		var shardID uint32
+		for _, tuple := range tuples {
 			data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-			err = multierr.Append(err, t.writeData(publisher, eventTime, fieldValue, data, rankNum))
+			topNValue.addValue(
+				tuple.V1.(int64),
+				data[0].([]*modelv1.TagValue),
+			)
+			shardID = data[3].(uint32)
 		}
-	}
-	return err
-}
-
-func (t *topNStreamingProcessor) writeData(publisher queue.BatchPublisher, eventTime time.Time, fieldValue int64,
-	data flow.Data, rankNum int,
-) error {
-	var tagValues []*modelv1.TagValue
-	if len(t.topNSchema.GetGroupByTagNames()) > 0 {
-		var ok bool
-		if tagValues, ok = data[3].([]*modelv1.TagValue); !ok {
-			return errors.New("fail to extract tag values from topN result")
-		}
-	}
-	for _, tv := range tagValues {
-		if tv.Value == nil {
-			t.l.Warn().Msg("tag value is nil")
-		}
-	}
-	series, shardID, err := t.locate(tagValues, rankNum)
-	if err != nil {
-		return err
-	}
-
-	iwr := &measurev1.InternalWriteRequest{
-		Request: &measurev1.WriteRequest{
-			MessageId: uint64(time.Now().UnixNano()),
-			Metadata:  t.topNSchema.GetMetadata(),
-			DataPoint: &measurev1.DataPointValue{
-				Timestamp: timestamppb.New(eventTime),
-				TagFamilies: []*modelv1.TagFamilyForWrite{
-					{
-						Tags: append(
-							data[0].([]*modelv1.TagValue),
-							// SortDirection
-							&modelv1.TagValue{
-								Value: &modelv1.TagValue_Int{
-									Int: &modelv1.Int{
-										Value: int64(t.sortDirection),
-									},
-								},
-							},
-							// RankNumber
-							&modelv1.TagValue{
-								Value: &modelv1.TagValue_Int{
-									Int: &modelv1.Int{
-										Value: int64(rankNum),
-									},
-								},
-							},
-						),
+		entityValues := []*modelv1.TagValue{
+			{
+				Value: &modelv1.TagValue_Str{
+					Str: &modelv1.Str{
+						Value: t.topNSchema.GetMetadata().GetName(),
 					},
 				},
-				Fields: []*modelv1.FieldValue{
-					{
-						Value: &modelv1.FieldValue_Int{
-							Int: &modelv1.Int{
-								Value: fieldValue,
+			},
+			{
+				Value: &modelv1.TagValue_Int{
+					Int: &modelv1.Int{
+						Value: int64(t.sortDirection),
+					},
+				},
+			},
+			{
+				Value: &modelv1.TagValue_Str{
+					Str: &modelv1.Str{
+						Value: group,
+					},
+				},
+			},
+		}
+		t.buf = t.buf[:0]
+		if t.buf, err = topNValue.marshal(t.buf); err != nil {
+			return err
+		}
+		iwr := &measurev1.InternalWriteRequest{
+			Request: &measurev1.WriteRequest{
+				MessageId: uint64(time.Now().UnixNano()),
+				Metadata:  &commonv1.Metadata{Name: schema.TopNSchemaName, Group: t.topNSchema.GetMetadata().Group},
+				DataPoint: &measurev1.DataPointValue{
+					Timestamp: timestamppb.New(eventTime),
+					TagFamilies: []*modelv1.TagFamilyForWrite{
+						{Tags: entityValues},
+					},
+					Fields: []*modelv1.FieldValue{
+						{
+							Value: &modelv1.FieldValue_BinaryData{
+								BinaryData: bytes.Clone(t.buf),
 							},
 						},
 					},
 				},
 			},
-		},
-		EntityValues: series.EntityValues,
-		ShardId:      uint32(shardID),
+			EntityValues: entityValues,
+			ShardId:      shardID,
+		}
+		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "local", iwr)
+		_, err = publisher.Publish(context.TODO(), apiData.TopicMeasureWrite, message)
+		if err != nil {
+			return err
+		}
 	}
-	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "local", iwr)
-	_, errWritePub := publisher.Publish(context.TODO(), apiData.TopicMeasureWrite, message)
-	return errWritePub
+	return err
 }
 
 func (t *topNStreamingProcessor) downSampleTimeBucket(eventTimeMillis int64) time.Time {
 	return time.UnixMilli(eventTimeMillis - eventTimeMillis%t.interval.Milliseconds())
-}
-
-func (t *topNStreamingProcessor) locate(tagValues []*modelv1.TagValue, rankNum int) (*pbv1.Series, common.ShardID, error) {
-	if len(tagValues) != 0 && len(t.topNSchema.GetGroupByTagNames()) != len(tagValues) {
-		return nil, 0, errors.New("no enough tag values for the entity")
-	}
-	series := &pbv1.Series{
-		Subject:      t.topNSchema.GetMetadata().GetName(),
-		EntityValues: make([]*modelv1.TagValue, 1+1+len(tagValues)),
-	}
-
-	copy(series.EntityValues, tagValues)
-	series.EntityValues[len(series.EntityValues)-2] = &modelv1.TagValue{
-		Value: &modelv1.TagValue_Int{
-			Int: &modelv1.Int{
-				Value: int64(t.sortDirection),
-			},
-		},
-	}
-	series.EntityValues[len(series.EntityValues)-1] = &modelv1.TagValue{
-		Value: &modelv1.TagValue_Int{
-			Int: &modelv1.Int{
-				Value: int64(rankNum),
-			},
-		},
-	}
-	if err := series.Marshal(); err != nil {
-		return nil, 0, fmt.Errorf("fail to marshal series: %w", err)
-	}
-	src := make([]byte, len(series.Buffer))
-	copy(src, series.Buffer)
-	var s1 pbv1.Series
-	if err := s1.Unmarshal(src); err != nil {
-		return nil, 0, fmt.Errorf("fail to unmarshal series encoded:[%s] tagValues:[%s]: %w", series.Buffer, series.EntityValues, err)
-	}
-	id, err := partition.ShardID(series.Buffer, t.m.shardNum)
-	if err != nil {
-		return nil, 0, err
-	}
-	return series, common.ShardID(id), nil
 }
 
 func (t *topNStreamingProcessor) start() *topNStreamingProcessor {
@@ -326,7 +291,7 @@ func (manager *topNProcessorManager) Close() error {
 	return err
 }
 
-func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, request *measurev1.InternalWriteRequest) {
+func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uint32, request *measurev1.InternalWriteRequest) {
 	go func() {
 		manager.RLock()
 		defer manager.RUnlock()
@@ -336,6 +301,7 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, request *me
 					request.GetRequest().GetDataPoint(),
 					request.GetEntityValues(),
 					seriesID,
+					shardID,
 				}, request.GetRequest().GetDataPoint().GetTimestamp())
 			}
 		}
@@ -381,6 +347,7 @@ func (manager *topNProcessorManager) start() error {
 				stopCh:        make(chan struct{}),
 				streamingFlow: streamingFlow,
 				pipeline:      manager.pipeline,
+				buf:           make([]byte, 0, 64),
 			}
 			processorList[i] = processor.start()
 		}
@@ -439,8 +406,9 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 				"",
 				// field value as v2
 				dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
-				// groupBy tag values as v3
-				nil,
+				// shardID values as v3
+				dpWithEvs.shardID,
+				// seriesID values as v4
 				dpWithEvs.seriesID,
 			}
 		}, nil
@@ -455,15 +423,14 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			// EntityValues as identity
 			dpWithEvs.entityValues,
 			// save string representation of group values as the key, i.e. v1
-			strings.Join(transform(groupLocator, func(locator partition.TagLocator) string {
-				return stringify(extractTagValue(dpWithEvs.DataPointValue, locator))
-			}), "|"),
+			GroupName(transform(groupLocator, func(locator partition.TagLocator) string {
+				return Stringify(extractTagValue(dpWithEvs.DataPointValue, locator))
+			})),
 			// field value as v2
 			dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
-			// groupBy tag values as v3
-			transform(groupLocator, func(locator partition.TagLocator) *modelv1.TagValue {
-				return extractTagValue(dpWithEvs.DataPointValue, locator)
-			}),
+			// shardID values as v3
+			dpWithEvs.shardID,
+			// seriesID values as v4
 			dpWithEvs.seriesID,
 		}
 	}, nil
@@ -499,7 +466,8 @@ func extractTagValue(dpv *measurev1.DataPointValue, locator partition.TagLocator
 	return tagFamily.GetTags()[locator.TagOffset]
 }
 
-func stringify(tagValue *modelv1.TagValue) string {
+// Stringify converts a TagValue to a string.
+func Stringify(tagValue *modelv1.TagValue) string {
 	switch v := tagValue.GetValue().(type) {
 	case *modelv1.TagValue_Str:
 		return v.Str.GetValue()
@@ -524,4 +492,209 @@ func transform[I, O any](input []I, mapper func(I) O) []O {
 		output[i] = mapper(input[i])
 	}
 	return output
+}
+
+// GenerateTopNValue returns a new TopNValue instance.
+func GenerateTopNValue() *TopNValue {
+	v := topNValuePool.Get()
+	if v == nil {
+		return &TopNValue{}
+	}
+	return v
+}
+
+// ReleaseTopNValue releases a TopNValue instance.
+func ReleaseTopNValue(bi *TopNValue) {
+	bi.Reset()
+	topNValuePool.Put(bi)
+}
+
+var topNValuePool = pool.Register[*TopNValue]("measure-topNValue")
+
+// TopNValue represents the topN value.
+type TopNValue struct {
+	valueName      string
+	entityTagNames []string
+	values         []int64
+	entities       [][]*modelv1.TagValue
+	entityValues   [][]byte
+	buf            []byte
+	encodeType     encoding.EncodeType
+	firstValue     int64
+}
+
+func (t *TopNValue) setMetadata(valueName string, entityTagNames []string) {
+	t.valueName = valueName
+	t.entityTagNames = entityTagNames
+}
+
+func (t *TopNValue) addValue(value int64, entityValues []*modelv1.TagValue) {
+	t.values = append(t.values, value)
+	t.entities = append(t.entities, entityValues)
+}
+
+// Values returns the valueName, entityTagNames, values, and entities.
+func (t *TopNValue) Values() (string, []string, []int64, [][]*modelv1.TagValue) {
+	return t.valueName, t.entityTagNames, t.values, t.entities
+}
+
+// Reset resets the TopNValue.
+func (t *TopNValue) Reset() {
+	t.valueName = ""
+	t.entityTagNames = t.entityTagNames[:0]
+	t.values = t.values[:0]
+	for i := range t.entities {
+		t.entities[i] = t.entities[i][:0]
+	}
+	t.entities = t.entities[:0]
+	t.buf = t.buf[:0]
+	t.encodeType = encoding.EncodeTypeUnknown
+	t.firstValue = 0
+	for i := range t.entityValues {
+		t.entityValues[i] = t.entityValues[i][:0]
+	}
+	t.entityValues = t.entityValues[:0]
+}
+
+func (t *TopNValue) resizeEntityValues(size int) [][]byte {
+	entityValues := t.entityValues
+	if n := size - cap(entityValues); n > 0 {
+		entityValues = append(entityValues[:cap(entityValues)], make([][]byte, n)...)
+	}
+	t.entityValues = entityValues[:size]
+	return t.entityValues
+}
+
+func (t *TopNValue) resizeEntities(size int, entitySize int) [][]*modelv1.TagValue {
+	entities := t.entities
+	if n := size - cap(t.entities); n > 0 {
+		entities = append(entities[:cap(entities)], make([][]*modelv1.TagValue, n)...)
+	}
+	t.entities = entities[:size]
+	for i := range t.entities {
+		entity := t.entities[i]
+		if n := entitySize - cap(entity); n > 0 {
+			entity = append(entity[:cap(entity)], make([]*modelv1.TagValue, n)...)
+		}
+		t.entities[i] = entity[:0]
+	}
+	return t.entities
+}
+
+func (t *TopNValue) marshal(dst []byte) ([]byte, error) {
+	if len(t.values) == 0 {
+		return nil, errors.New("values is empty")
+	}
+	dst = encoding.EncodeBytes(dst, convert.StringToBytes(t.valueName))
+	dst = encoding.VarUint64ToBytes(dst, uint64(len(t.entityTagNames)))
+	for _, entityTagName := range t.entityTagNames {
+		dst = encoding.EncodeBytes(dst, convert.StringToBytes(entityTagName))
+	}
+
+	dst = encoding.VarUint64ToBytes(dst, uint64(len(t.values)))
+
+	t.buf, t.encodeType, t.firstValue = encoding.Int64ListToBytes(t.buf, t.values)
+	dst = append(dst, byte(t.encodeType))
+	dst = encoding.VarInt64ToBytes(dst, t.firstValue)
+	dst = encoding.VarUint64ToBytes(dst, uint64(len(t.buf)))
+	dst = append(dst, t.buf...)
+
+	var err error
+	t.entityValues = t.resizeEntityValues(len(t.entities))
+	for i, tvv := range t.entities {
+		t.entityValues[i], err = pbv1.MarshalTagValues(t.entityValues[i], tvv)
+		if err != nil {
+			return nil, err
+		}
+	}
+	dst = encoding.EncodeBytesBlock(dst, t.entityValues)
+	return dst, nil
+}
+
+// Unmarshal unmarshals the TopNValue from the src.
+func (t *TopNValue) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder) error {
+	var err error
+	src, nameBytes, err := encoding.DecodeBytes(src)
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal topNValue.name: %w", err)
+	}
+	t.valueName = convert.BytesToString(nameBytes)
+
+	var entityTagNamesCount uint64
+	src, entityTagNamesCount, err = encoding.BytesToVarUint64(src)
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal topNValue.entityTagNamesCount: %w", err)
+	}
+	t.entityTagNames = make([]string, 0, entityTagNamesCount)
+	var entityTagNameBytes []byte
+	for i := uint64(0); i < entityTagNamesCount; i++ {
+		src, entityTagNameBytes, err = encoding.DecodeBytes(src)
+		if err != nil {
+			return fmt.Errorf("cannot unmarshal topNValue.entityTagName: %w", err)
+		}
+		t.entityTagNames = append(t.entityTagNames, convert.BytesToString(entityTagNameBytes))
+	}
+
+	var valuesCount uint64
+	src, valuesCount, err = encoding.BytesToVarUint64(src)
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal topNValue.valuesCount: %w", err)
+	}
+
+	if len(src) < 1 {
+		return fmt.Errorf("cannot unmarshal topNValue.encodeType: src is too short")
+	}
+	t.encodeType = encoding.EncodeType(src[0])
+	src = src[1:]
+
+	if len(src) < 1 {
+		return fmt.Errorf("cannot unmarshal topNValue.firstValue: src is too short")
+	}
+	src, t.firstValue, err = encoding.BytesToVarInt64(src)
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal topNValue.firstValue: %w", err)
+	}
+	if len(src) < 1 {
+		return fmt.Errorf("cannot unmarshal topNValue.valueLen: src is too short")
+	}
+	var valueLen uint64
+	src, valueLen, err = encoding.BytesToVarUint64(src)
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal topNValue.valueLen: %w", err)
+	}
+
+	if uint64(len(src)) < valueLen {
+		return fmt.Errorf("src is too short for reading string with size %d; len(src)=%d", valueLen, len(src))
+	}
+
+	t.values, err = encoding.BytesToInt64List(t.values, src[:valueLen], t.encodeType, t.firstValue, int(valuesCount))
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal topNValue.values: %w", err)
+	}
+
+	if uint64(len(src)) < valueLen {
+		return fmt.Errorf("src is too short for reading string with size %d; len(src)=%d", valueLen, len(src))
+	}
+
+	decoder.Reset()
+	t.entityValues, err = decoder.Decode(t.entityValues, src[valueLen:], valuesCount)
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal topNValue.entityValues: %w", err)
+	}
+	t.resizeEntities(len(t.entityValues), int(entityTagNamesCount))
+	for i, ev := range t.entityValues {
+		t.buf, t.entities[i], err = pbv1.UnmarshalTagValues(t.buf, t.entities[i], ev)
+		if err != nil {
+			return fmt.Errorf("cannot unmarshal topNValue.entityValues[%d]: %w", i, err)
+		}
+		if len(t.entities[i]) != len(t.entityTagNames) {
+			return fmt.Errorf("entityValues[%d] length is not equal to entityTagNames", i)
+		}
+	}
+	return nil
+}
+
+// GroupName returns the group name.
+func GroupName(groupTags []string) string {
+	return strings.Join(groupTags, "|")
 }

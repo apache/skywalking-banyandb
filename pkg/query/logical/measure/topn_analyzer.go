@@ -19,20 +19,93 @@
 package measure
 
 import (
-	"context"
-	"fmt"
+	"errors"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	pkgschema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-// BuildTopNSchema returns Schema loaded from the metadata repository.
-func BuildTopNSchema(md *databasev1.Measure) (logical.Schema, error) {
-	md.GetEntity()
+// TopNAnalyze converts logical expressions to executable operation tree represented by Plan.
+func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchema *databasev1.Measure, topNAggSchema *databasev1.TopNAggregation,
+) (logical.Plan, error) {
+	// parse fields
+	timeRange := criteria.GetTimeRange()
+	var plan logical.UnresolvedPlan
+	plan = &unresolvedLocalScan{
+		name:        criteria.Name,
+		startTime:   timeRange.GetBegin().AsTime(),
+		endTime:     timeRange.GetEnd().AsTime(),
+		conditions:  criteria.Conditions,
+		sort:        criteria.FieldValueSort,
+		groupByTags: topNAggSchema.GroupByTagNames,
+	}
+	s, err := buildVirtualSchema(sourceMeasureSchema, topNAggSchema.FieldName)
+	if err != nil {
+		return nil, err
+	}
 
+	if criteria.GetAgg() != 0 {
+		groupByProjectionTags := sourceMeasureSchema.GetEntity().GetTagNames()
+		groupByTags := [][]*logical.Tag{logical.NewTags(pkgschema.TopNTagFamily, groupByProjectionTags...)}
+		plan = newUnresolvedGroupBy(plan, groupByTags, false)
+		plan = newUnresolvedAggregation(plan,
+			&logical.Field{Name: topNAggSchema.FieldName},
+			criteria.GetAgg(),
+			true)
+	}
+
+	plan = top(plan, &measurev1.QueryRequest_Top{
+		Number:         criteria.GetTopN(),
+		FieldName:      topNAggSchema.FieldName,
+		FieldValueSort: criteria.GetFieldValueSort(),
+	})
+
+	p, err := plan.Analyze(s)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func buildVirtualSchema(sourceMeasureSchema *databasev1.Measure, fieldName string) (logical.Schema, error) {
+	var tags []*databasev1.TagSpec
+	for _, tag := range sourceMeasureSchema.GetEntity().TagNames {
+		for i := range sourceMeasureSchema.GetTagFamilies() {
+			for j := range sourceMeasureSchema.GetTagFamilies()[i].Tags {
+				if sourceMeasureSchema.GetTagFamilies()[i].Tags[j].Name == tag {
+					tags = append(tags, sourceMeasureSchema.GetTagFamilies()[i].Tags[j])
+					if len(tags) == len(sourceMeasureSchema.GetEntity().TagNames) {
+						break
+					}
+				}
+			}
+		}
+	}
+	if len(tags) != len(sourceMeasureSchema.GetEntity().TagNames) {
+		return nil, errors.New("failed to build topn schema, source measure schema is invalid:" + sourceMeasureSchema.String())
+	}
+	var fields []*databasev1.FieldSpec
+	for _, field := range sourceMeasureSchema.GetFields() {
+		if field.GetName() == fieldName {
+			fields = append(fields, field)
+			break
+		}
+	}
+	md := &databasev1.Measure{
+		Metadata: sourceMeasureSchema.Metadata,
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: pkgschema.TopNTagFamily,
+				Tags: tags,
+			},
+		},
+		Fields: fields,
+		Entity: &databasev1.Entity{
+			TagNames: sourceMeasureSchema.Entity.TagNames,
+		},
+	}
 	ms := &schema{
 		common: &logical.CommonSchema{
 			TagSpecMap: make(map[string]*logical.TagSpec),
@@ -41,74 +114,9 @@ func BuildTopNSchema(md *databasev1.Measure) (logical.Schema, error) {
 		measure:  md,
 		fieldMap: make(map[string]*logical.FieldSpec),
 	}
-
 	ms.common.RegisterTagFamilies(md.GetTagFamilies())
-
 	for fieldIdx, spec := range md.GetFields() {
 		ms.registerField(fieldIdx, spec)
 	}
-
 	return ms, nil
-}
-
-// TopNAnalyze converts logical expressions to executable operation tree represented by Plan.
-func TopNAnalyze(_ context.Context, criteria *measurev1.TopNRequest, schema *databasev1.Measure,
-	sourceMeasureSchema *databasev1.Measure, s logical.Schema,
-) (logical.Plan, error) {
-	groupByProjectionTags := sourceMeasureSchema.GetEntity().GetTagNames()
-	groupByTags := make([][]*logical.Tag, len(schema.GetTagFamilies()))
-	tagFamily := schema.GetTagFamilies()[0]
-	groupByTags[0] = logical.NewTags(tagFamily.GetName(), groupByProjectionTags...)
-
-	if len(schema.GetFields()) != 1 {
-		return nil, fmt.Errorf("topN schema fields count should be 1 but got %d", len(schema.GetFields()))
-	}
-	projectionFields := make([]*logical.Field, 1)
-	fieldName := schema.GetFields()[0].GetName()
-	projectionFields[0] = logical.NewField(fieldName)
-	// parse fields
-	plan := parse(criteria, schema.GetMetadata(), projectionFields, groupByTags)
-
-	if criteria.GetAgg() != 0 {
-		plan = newUnresolvedGroupBy(plan, groupByTags, false)
-		plan = newUnresolvedAggregation(plan,
-			projectionFields[0],
-			criteria.GetAgg(),
-			true)
-	}
-
-	plan = top(plan, &measurev1.QueryRequest_Top{
-		Number:         criteria.GetTopN(),
-		FieldName:      fieldName,
-		FieldValueSort: criteria.GetFieldValueSort(),
-	})
-	p, err := plan.Analyze(s)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-func parse(criteria *measurev1.TopNRequest, metadata *commonv1.Metadata,
-	projFields []*logical.Field, projTags [][]*logical.Tag,
-) logical.UnresolvedPlan {
-	timeRange := criteria.GetTimeRange()
-	return local(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(),
-		metadata, projTags, projFields, buildConditions(criteria), criteria.GetFieldValueSort())
-}
-
-func buildConditions(criteria *measurev1.TopNRequest) []*modelv1.Condition {
-	return append([]*modelv1.Condition{
-		{
-			Name: "sortDirection",
-			Op:   modelv1.Condition_BINARY_OP_EQ,
-			Value: &modelv1.TagValue{
-				Value: &modelv1.TagValue_Int{
-					Int: &modelv1.Int{
-						Value: int64(criteria.GetFieldValueSort().Number()),
-					},
-				},
-			},
-		},
-	}, criteria.GetConditions()...)
 }

@@ -48,10 +48,9 @@ func (s *Series) CopyTo(dst *Series) {
 func (s *Series) Marshal() error {
 	s.Buffer = marshalEntityValue(s.Buffer, convert.StringToBytes(s.Subject))
 	var err error
-	for _, tv := range s.EntityValues {
-		if s.Buffer, err = marshalTagValue(s.Buffer, tv); err != nil {
-			return errors.WithMessage(err, "marshal subject and entity values")
-		}
+	s.Buffer, err = MarshalTagValues(s.Buffer, s.EntityValues)
+	if err != nil {
+		return errors.WithMessage(err, "marshal subject and entity values")
 	}
 	s.ID = common.SeriesID(convert.Hash(s.Buffer))
 	return nil
