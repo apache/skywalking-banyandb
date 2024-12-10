@@ -58,7 +58,7 @@ async function initData() {
   $loadingClose()
   if (!(result.data && result.data.indexRule)) {
     ElMessage({
-      message: 'Please refresh and try again. Error: ' + err,
+      message: `Please refresh and try again.`,
       type: "error",
       duration: 3000
     })
