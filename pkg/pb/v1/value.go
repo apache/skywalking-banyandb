@@ -97,6 +97,33 @@ func MustTagValueToStr(tag *modelv1.TagValue) string {
 	}
 }
 
+// MarshalTagValues marshals tag values.
+func MarshalTagValues(dest []byte, tags []*modelv1.TagValue) ([]byte, error) {
+	var err error
+	for _, tag := range tags {
+		dest, err = marshalTagValue(dest, tag)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return dest, nil
+}
+
+// UnmarshalTagValues unmarshals tag values.
+func UnmarshalTagValues(dest []byte, destTags []*modelv1.TagValue, src []byte) ([]byte, []*modelv1.TagValue, error) {
+	var err error
+	var tag *modelv1.TagValue
+	for len(src) > 0 {
+		dest = dest[:0]
+		dest, src, tag, err = unmarshalTagValue(dest, src)
+		if err != nil {
+			return nil, nil, err
+		}
+		destTags = append(destTags, tag)
+	}
+	return dest, destTags, nil
+}
+
 func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
 	dest = append(dest, byte(MustTagValueToValueType(tv)))
 	switch tv.Value.(type) {
@@ -136,6 +163,9 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 		if dest, src, err = unmarshalEntityValue(dest, src[1:]); err != nil {
 			return nil, nil, nil, errors.WithMessage(err, "unmarshal string tag value")
 		}
+		if len(dest) == 0 {
+			return dest, src, NullTagValue, nil
+		}
 		return dest, src, &modelv1.TagValue{
 			Value: &modelv1.TagValue_Str{
 				Str: &modelv1.Str{
@@ -157,6 +187,9 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 	case ValueTypeBinaryData:
 		if dest, src, err = unmarshalEntityValue(dest, src[1:]); err != nil {
 			return nil, nil, nil, errors.WithMessage(err, "unmarshal binary tag value")
+		}
+		if len(dest) == 0 {
+			return dest, src, NullTagValue, nil
 		}
 		data := make([]byte, len(dest))
 		copy(data, dest)

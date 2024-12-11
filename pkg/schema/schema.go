@@ -26,6 +26,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
+// TopNSchemaName is the name of the top n result schema.
+const TopNSchemaName = "_top_n_result"
+
 // EventType defines actions of events.
 type EventType uint8
 

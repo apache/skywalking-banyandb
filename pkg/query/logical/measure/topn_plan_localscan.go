@@ -24,95 +24,105 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	pkgschema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var _ logical.UnresolvedPlan = (*unresolvedLocalScan)(nil)
+var (
+	_               logical.UnresolvedPlan = (*unresolvedLocalScan)(nil)
+	fieldProjection                        = []string{pkgschema.TopNFieldName}
+)
 
 type unresolvedLocalScan struct {
-	startTime        time.Time
-	endTime          time.Time
-	metadata         *commonv1.Metadata
-	conditions       []*modelv1.Condition
-	projectionTags   [][]*logical.Tag
-	projectionFields []*logical.Field
-	sort             modelv1.Sort
+	startTime   time.Time
+	endTime     time.Time
+	name        string
+	conditions  []*modelv1.Condition
+	groupByTags []string
+	sort        modelv1.Sort
 }
 
 func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) {
-	var projTagsRefs [][]*logical.TagRef
-	projTags := make([]model.TagProjection, len(uls.projectionTags))
-	if len(uls.projectionTags) > 0 {
-		for i := range uls.projectionTags {
-			for _, tag := range uls.projectionTags[i] {
-				projTags[i].Family = tag.GetFamilyName()
-				projTags[i].Names = append(projTags[i].Names, tag.GetTagName())
-			}
-		}
-		var err error
-		projTagsRefs, err = s.CreateTagRef(uls.projectionTags...)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var projFieldRefs []*logical.FieldRef
-	var projField []string
-	if len(uls.projectionFields) > 0 {
-		for i := range uls.projectionFields {
-			projField = append(projField, uls.projectionFields[i].Name)
-		}
-		var err error
-		projFieldRefs, err = s.CreateFieldRef(uls.projectionFields...)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	entity, err := uls.locateEntity(s.EntityList())
+	tr := timestamp.NewInclusiveTimeRange(uls.startTime, uls.endTime)
+	groupByTags, err := uls.parseGroupByTags()
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to locate entity")
 	}
-
+	entities := [][]*modelv1.TagValue{
+		{
+			{
+				Value: &modelv1.TagValue_Str{
+					Str: &modelv1.Str{
+						Value: uls.name,
+					},
+				},
+			},
+			{
+				Value: &modelv1.TagValue_Int{
+					Int: &modelv1.Int{
+						Value: int64(uls.sort),
+					},
+				},
+			},
+			pbv1.AnyTagValue,
+		},
+	}
+	if len(groupByTags) > 0 {
+		entities[0][len(entities[0])-1] = &modelv1.TagValue{
+			Value: &modelv1.TagValue_Str{
+				Str: &modelv1.Str{
+					Value: measure.GroupName(groupByTags),
+				},
+			},
+		}
+	}
 	return &localScan{
-		timeRange:            timestamp.NewInclusiveTimeRange(uls.startTime, uls.endTime),
-		schema:               s,
-		projectionTagsRefs:   projTagsRefs,
-		projectionFieldsRefs: projFieldRefs,
-		projectionTags:       projTags,
-		projectionFields:     projField,
-		metadata:             uls.metadata,
-		entity:               entity,
-		l:                    logger.GetLogger("topn", "measure", uls.metadata.Group, uls.metadata.Name, "local-index"),
+		s: s,
+		options: model.MeasureQueryOptions{
+			Name:      pkgschema.TopNSchemaName,
+			TimeRange: &tr,
+			Entities:  entities,
+			TagProjection: []model.TagProjection{
+				{
+					Family: pkgschema.TopNTagFamily,
+					Names:  pkgschema.TopNTagNames,
+				},
+			},
+			FieldProjection: fieldProjection,
+		},
 	}, nil
 }
 
-func (uls *unresolvedLocalScan) locateEntity(entityList []string) ([]*modelv1.TagValue, error) {
-	entityMap := make(map[string]int)
-	entity := make([]*modelv1.TagValue, len(entityList))
-	for idx, tagName := range entityList {
-		entityMap[tagName] = idx
-		// allow to make fuzzy search with partial conditions
-		entity[idx] = pbv1.AnyTagValue
+func (uls *unresolvedLocalScan) parseGroupByTags() ([]string, error) {
+	if len(uls.conditions) == 0 {
+		return nil, nil
 	}
+	entityMap := make(map[string]int)
+	entity := make([]string, len(uls.groupByTags))
+	for idx, tagName := range uls.groupByTags {
+		entityMap[tagName] = idx
+	}
+	parsed := 0
 	for _, pairQuery := range uls.conditions {
 		if pairQuery.GetOp() != modelv1.Condition_BINARY_OP_EQ {
 			return nil, errors.Errorf("tag belongs to the entity only supports EQ operation in condition(%v)", pairQuery)
 		}
 		if entityIdx, ok := entityMap[pairQuery.GetName()]; ok {
-			entity[entityIdx] = pairQuery.Value
 			switch pairQuery.GetValue().GetValue().(type) {
 			case *modelv1.TagValue_Str, *modelv1.TagValue_Int, *modelv1.TagValue_Null:
-				entity[entityIdx] = pairQuery.Value
+				entity[entityIdx] = measure.Stringify(pairQuery.Value)
+				parsed++
 			default:
 				return nil, errors.New("unsupported condition tag type for entity")
 			}
@@ -120,61 +130,37 @@ func (uls *unresolvedLocalScan) locateEntity(entityList []string) ([]*modelv1.Ta
 		}
 		return nil, errors.New("only groupBy tag name is supported")
 	}
+	if parsed != len(uls.groupByTags) {
+		return nil, errors.New("failed to parse all groupBy tags")
+	}
 
 	return entity, nil
-}
-
-func local(startTime, endTime time.Time, metadata *commonv1.Metadata, projectionTags [][]*logical.Tag,
-	projectionFields []*logical.Field, conditions []*modelv1.Condition, sort modelv1.Sort,
-) logical.UnresolvedPlan {
-	return &unresolvedLocalScan{
-		startTime:        startTime,
-		endTime:          endTime,
-		metadata:         metadata,
-		projectionTags:   projectionTags,
-		projectionFields: projectionFields,
-		conditions:       conditions,
-		sort:             sort,
-	}
 }
 
 var _ logical.Plan = (*localScan)(nil)
 
 type localScan struct {
-	schema               logical.Schema
-	metadata             *commonv1.Metadata
-	l                    *logger.Logger
-	timeRange            timestamp.TimeRange
-	projectionTagsRefs   [][]*logical.TagRef
-	projectionFieldsRefs []*logical.FieldRef
-	projectionTags       []model.TagProjection
-	projectionFields     []string
-	entity               []*modelv1.TagValue
-	sort                 modelv1.Sort
+	s       logical.Schema
+	options model.MeasureQueryOptions
 }
 
 func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
 	ec := executor.FromMeasureExecutionContext(ctx)
-	result, err := ec.Query(ctx, model.MeasureQueryOptions{
-		Name:            i.metadata.GetName(),
-		TimeRange:       &i.timeRange,
-		Entities:        [][]*modelv1.TagValue{i.entity},
-		Order:           &index.OrderBy{Sort: i.sort},
-		TagProjection:   i.projectionTags,
-		FieldProjection: i.projectionFields,
-	})
+	result, err := ec.Query(ctx, i.options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
-	return &resultMIterator{
-		result: result,
+	return &topNMIterator{
+		result:    result,
+		topNValue: measure.GenerateTopNValue(),
+		decoder:   generateTopNValuesDecoder(),
 	}, nil
 }
 
 func (i *localScan) String() string {
-	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s}; projection=%s; sort=%s;",
-		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		logical.FormatTagRefs(", ", i.projectionTagsRefs...), i.sort)
+	return fmt.Sprintf("TopNAggScan: %s startTime=%d,endTime=%d, entity=%s;",
+		i.options.Name, i.options.TimeRange.Start.Unix(), i.options.TimeRange.End.Unix(),
+		i.options.Entities)
 }
 
 func (i *localScan) Children() []logical.Plan {
@@ -182,8 +168,101 @@ func (i *localScan) Children() []logical.Plan {
 }
 
 func (i *localScan) Schema() logical.Schema {
-	if len(i.projectionTagsRefs) == 0 {
-		return i.schema
-	}
-	return i.schema.ProjTags(i.projectionTagsRefs...).ProjFields(i.projectionFieldsRefs...)
+	return i.s
 }
+
+type topNMIterator struct {
+	result    model.MeasureQueryResult
+	err       error
+	topNValue *measure.TopNValue
+	decoder   *encoding.BytesBlockDecoder
+	current   []*measurev1.DataPoint
+}
+
+func (ei *topNMIterator) Next() bool {
+	if ei.result == nil {
+		return false
+	}
+
+	r := ei.result.Pull()
+	if r == nil {
+		return false
+	}
+	if r.Error != nil {
+		ei.err = r.Error
+		return false
+	}
+	ei.current = ei.current[:0]
+
+	for i := range r.Timestamps {
+		fv := r.Fields[0].Values[i]
+		bd := fv.GetBinaryData()
+		if bd == nil {
+			ei.err = errors.New("failed to get binary data")
+			return false
+		}
+		ei.topNValue.Reset()
+		ei.err = ei.topNValue.Unmarshal(bd, ei.decoder)
+		if ei.err != nil {
+			return false
+		}
+		fieldName, entityNames, values, entities := ei.topNValue.Values()
+		for j := range entities {
+			dp := &measurev1.DataPoint{
+				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+				Sid:       uint64(r.SID),
+				Version:   r.Versions[i],
+			}
+			tagFamily := &modelv1.TagFamily{
+				Name: pkgschema.TopNTagFamily,
+			}
+			dp.TagFamilies = append(dp.TagFamilies, tagFamily)
+			for k, entityName := range entityNames {
+				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+					Key:   entityName,
+					Value: entities[j][k],
+				})
+			}
+			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+				Name: fieldName,
+				Value: &modelv1.FieldValue{
+					Value: &modelv1.FieldValue_Int{
+						Int: &modelv1.Int{
+							Value: values[j],
+						},
+					},
+				},
+			})
+			ei.current = append(ei.current, dp)
+		}
+	}
+	return true
+}
+
+func (ei *topNMIterator) Current() []*measurev1.DataPoint {
+	return ei.current
+}
+
+func (ei *topNMIterator) Close() error {
+	if ei.result != nil {
+		ei.result.Release()
+	}
+	releaseTopNValuesDecoder(ei.decoder)
+	measure.ReleaseTopNValue(ei.topNValue)
+	return ei.err
+}
+
+func generateTopNValuesDecoder() *encoding.BytesBlockDecoder {
+	v := topNValuesDecoderPool.Get()
+	if v == nil {
+		return &encoding.BytesBlockDecoder{}
+	}
+	return v
+}
+
+func releaseTopNValuesDecoder(d *encoding.BytesBlockDecoder) {
+	d.Reset()
+	topNValuesDecoderPool.Put(d)
+}
+
+var topNValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("topn-valueDecoder")

@@ -203,7 +203,7 @@ func (sr *schemaRepo) Watcher() {
 							err = sr.initResource(evt.Metadata.GetMetadata())
 						case EventKindTopNAgg:
 							topNSchema := evt.Metadata.(*databasev1.TopNAggregation)
-							_, err = createOrUpdateTopNMeasure(context.Background(), sr.metadata.MeasureRegistry(), topNSchema)
+							err = createTopNResultMeasure(context.Background(), sr.metadata.MeasureRegistry(), topNSchema.GetMetadata().Group)
 							if err != nil {
 								break
 							}
@@ -217,10 +217,7 @@ func (sr *schemaRepo) Watcher() {
 							err = sr.deleteResource(evt.Metadata.GetMetadata())
 						case EventKindTopNAgg:
 							topNSchema := evt.Metadata.(*databasev1.TopNAggregation)
-							err = multierr.Combine(
-								sr.deleteResource(topNSchema.SourceMeasure),
-								sr.initResource(topNSchema.SourceMeasure),
-							)
+							err = sr.initResource(topNSchema.SourceMeasure)
 						}
 					}
 					if err != nil && !errors.Is(err, schema.ErrClosed) {

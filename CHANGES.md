@@ -11,6 +11,7 @@ Release Notes.
 - Index: Support InsertIfAbsent functionality which ensures documents are only inserted if their docIDs are not already present in the current index. There is a exception for the documents with extra index fields more than the entity's index fields.
 - Measure: Introduce "index_mode" to save data exclusively in the series index, ideal for non-timeseries measures.
 - Index: Use numeric index type to support Int and Float
+- TopN: Group top n pre-calculation result by the group key in the new introduced `_top_n_result` measure, which is used to store the pre-calculation result.
 
 ### Bug Fixes
 
@@ -22,6 +23,7 @@ Release Notes.
 - Fix: View configuration on Property page.
 - UI: Add `indexMode` to display on the measure page.
 - UI: Add `NoSort` Field to IndexRule page.
+- Metadata: Fix the bug that the cache load nil value that is the unknown index rule on the index rule binding.
 
 ### Documentation
 

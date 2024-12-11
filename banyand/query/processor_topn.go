@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
+	pkgschema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 type topNQueryProcessor struct {
@@ -94,21 +95,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 
-	topNResultMeasure, err := t.measureService.Measure(topNMetadata)
-	if err != nil {
-		t.log.Error().Err(err).
-			Str("topN", topNMetadata.GetName()).
-			Msg("fail to find topN result measure")
-		return
-	}
-
-	s, err := logical_measure.BuildTopNSchema(topNResultMeasure.GetSchema())
-	if err != nil {
-		t.log.Error().Err(err).
-			Str("topN", topNMetadata.GetName()).
-			Msg("fail to build schema")
-	}
-	plan, err := logical_measure.TopNAnalyze(ctx, request, topNResultMeasure.GetSchema(), sourceMeasure.GetSchema(), s)
+	plan, err := logical_measure.TopNAnalyze(request, sourceMeasure.GetSchema(), topNSchema)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", topNMetadata.GetName(), err))
 		return
@@ -116,6 +103,11 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("topn plan")
+	}
+	topNResultMeasure, err := t.measureService.Measure(pkgschema.GetTopNSchemaMetadata(topNMetadata.Group))
+	if err != nil {
+		ml.Error().Err(err).Str("topN", topNMetadata.GetName()).Msg("fail to find topn result measure")
+		return
 	}
 	var tracer *query.Tracer
 	var span *query.Span
