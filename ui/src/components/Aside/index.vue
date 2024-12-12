@@ -18,7 +18,6 @@
 -->
 
 <script setup>
-import RigheMenu from '@/components/RightMenu/index.vue'
 import { deleteSecondaryDataModel, getindexRuleList, getindexRuleBindingList, getGroupList, getTopNAggregationList, getStreamOrMeasureList, deleteStreamOrMeasure, deleteGroup, createGroup, editGroup } from '@/api/index'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { watch, getCurrentInstance } from "@vue/runtime-core"
@@ -36,6 +35,35 @@ const loading= ref(false)
 const treeRef = ref()
 const filterText = ref('')
 const currentNode = ref({})
+// Data
+const data = reactive({
+    groupLists: [],
+    showSearch: false,
+    isShrink: false,
+    isCollapse: false,
+    // right menu
+    showRightMenu: false,
+    operationMenus: [],
+    top: 0,
+    left: 0,
+    clickIndex: 0,
+    clickChildIndex: 0,
+    rightClickType: 'group',
+    // create/edit group
+    dialogGroupVisible: false,
+    setGroup: 'create',
+    groupForm: {
+        name: null,
+        catalog: 'CATALOG_STREAM',
+        shardNum: 1,
+        segmentIntervalUnit: "UNIT_DAY",
+        segmentIntervalNum: 1,
+        ttlUnit: "UNIT_DAY",
+        ttlNum: 3
+    },
+    activeMenu: '',
+    formLabelWidth: "170px"
+})
 
 const defaultProps = {
   children: 'children',
@@ -60,78 +88,11 @@ const groupTypeToCatalog = {
     'property': 'CATALOG_UNSPECIFIED'
 }
 
-const typeMap = {
+const TypeMap = {
     'topNAggregation': 'topn-agg',
     'indexRule': 'index-rule',
     'indexRuleBinding': 'index-rule-binding',
     'children': 'children'
-}
-
-// Data
-const data = reactive({
-    groupLists: [],
-    groupListsCopy: [],
-    showSearch: false,
-    isShrink: false,
-    isCollapse: false,
-    // right menu
-    showRightMenu: false,
-    rightMenuList: [],
-    top: 0,
-    left: 0,
-    clickIndex: 0,
-    clickChildIndex: 0,
-    rightClickType: 'group',
-    // create/edit group
-    dialogGroupVisible: false,
-    setGroup: 'create',
-    groupForm: {
-        name: null,
-        catalog: 'CATALOG_STREAM',
-        shardNum: 1,
-        segmentIntervalUnit: "UNIT_DAY",
-        segmentIntervalNum: 1,
-        ttlUnit: "UNIT_DAY",
-        ttlNum: 3
-    },
-    activeMenu: '',
-    formLabelWidth: "170px"
-})
-
-// menu config
-const groupMenu = [
-    {
-        icon: "el-icon-folder",
-        name: "new group",
-        id: "create Group"
-    }, {
-        icon: "el-icon-folder",
-        name: "edit group",
-        id: "edit Group"
-    }, {
-        icon: "el-icon-refresh-right",
-        name: "refresh",
-        id: "refresh Group"
-    }, {
-        icon: "el-icon-delete",
-        name: "delete",
-        id: "delete"
-    }
-]
-
-const menuItemFunction = {
-    "new group": openCreateGroup,
-    "edit group": openEditGroup,
-    "new resources": openCreateResource,
-    "refresh": getGroupLists,
-    "delete": openDeletaDialog,
-    "edit resources": openEditResource,
-    'new index-rule': openCreateSecondaryDataModel,
-    'edit index-rule': openEditSecondaryDataModel,
-    'new index-rule-binding': openCreateSecondaryDataModel,
-    'edit index-rule-binding': openEditSecondaryDataModel,
-    'new topn-agg': openCreateSecondaryDataModel,
-    'edit topn-agg': openEditSecondaryDataModel
 }
 
 // rules
@@ -199,7 +160,13 @@ function getGroupLists() {
             if (res.status == 200) {
                 let group = res.data.group
                 data.groupLists = group
-                deleteOtherGroup()
+                for (let i = 0; i < data.groupLists.length; i++) {
+                    let type = catalogToGroupType[data.groupLists[i].catalog]
+                    if (type !== props.type) {
+                        data.groupLists.splice(i, 1)
+                        i--
+                    }
+                }
                 if (props.type == 'property') {
                     data.showSearch = true
                     $loadingClose()
@@ -276,7 +243,6 @@ function getGroupLists() {
                 Promise.all(promise).then(() => {
                     data.showSearch = true
                     data.groupLists = processGroupTree()
-                    data.groupListsCopy = JSON.parse(JSON.stringify(data.groupLists))
                 }).catch((err) => {
                     ElMessage({
                         message: 'An error occurred while obtaining group data. Please refresh and try again. Error: ' + err,
@@ -294,6 +260,7 @@ function getGroupLists() {
         })
     $loadingClose()
 }
+
 function processGroupTree() {
     const trees = [];
     for (const group of data.groupLists) {
@@ -304,7 +271,7 @@ function processGroupTree() {
             type: 'group',
             key: group.metadata.name,
         }
-        const keys = Object.keys(typeMap);
+        const keys = Object.keys(TypeMap);
         for (const key of keys) {
             if (group[key]) {
                 const n = key === 'children' ? props.type : key
@@ -320,7 +287,7 @@ function processGroupTree() {
                         ...item.metadata,
                         type: 'resources',
                         key: `${group.metadata.name}_${n}_${item.metadata.name}`,
-                        typeFlag: typeMap[n] || n,
+                        typeFlag: TypeMap[n] || n,
                         catalog: group.catalog,
                         resourceOpts: group.resourceOpts
                     })
@@ -333,15 +300,6 @@ function processGroupTree() {
     return trees;
 }
 
-function deleteOtherGroup() {
-    for (let i = 0; i < data.groupLists.length; i++) {
-        let type = catalogToGroupType[data.groupLists[i].catalog]
-        if (type !== props.type) {
-            data.groupLists.splice(i, 1)
-            i--
-        }
-    }
-}
 // to resources
 function openResources(node) {
     currentNode.value = node;
@@ -349,7 +307,7 @@ function openResources(node) {
         return
     }
     const {name, group, typeFlag} = node
-    const values = Object.values(typeMap)
+    const values = Object.values(TypeMap)
 
     if (values.includes(node.typeFlag)) {
         const route = {
@@ -407,63 +365,33 @@ function openResources(node) {
     $bus.emit('AddTabs', add)
 }
 
-// open or close Aide
-function shrinkMove(e) {
-    e.preventDefault()
-    if (data.isShrink) {
-        let wid = e.screenX + 5
-        if (wid <= 65) {
-            $bus.emit('changeIsCollapse', {
-                isCollapse: true,
-                width: '65px'
-            })
-        } else {
-            $bus.emit('changeIsCollapse', {
-                isCollapse: false,
-                width: `${wid > 450 ? 450 : wid}px`
-            })
-        }
-    }
-}
-function shrinkUp(e) {
-    e.stopPropagation()
-    data.isShrink = false
-    document.getElementById('app').onmousemove = null
-    document.getElementById('app').onmouseup = null
-    document.getElementById('app').onmouseleave = null
-    document.getElementById('app').ondragover = null
-}
-function shrinkDown(e) {
-    data.isShrink = true
-    document.getElementById('app').onmousemove = shrinkMove
-    document.getElementById('app').onmouseup = shrinkUp
-    document.getElementById('app').onmouseleave = shrinkUp
-    document.getElementById('app').ondragover = shrinkUp
-    e.preventDefault()
-}
-// right click menu
-function rightClickGroup(e, node) {
-    console.log(node);
-    data.rightMenuList = groupMenu
-    currentNode.value = node;
-    openRightMenu(e)
-}
-
-function openRightMenu(e) {
+function openOperationMenus(e, node) {
+    currentNode.value = node
     data.showRightMenu = true
     data.top = e.pageY
     data.left = e.pageX
     document.getElementById('app').onclick = closeRightMenu
     stopPropagation()
+    const AllMenus = [
+        {label: 'Create', fn: openCreateGroup}, 
+        {label: 'Edit', fn: editGroup},
+        {label: `Refresh`, fn: getGroupLists},
+        {label: 'Delete', fn: openDeletaDialog}
+    ]
+    if (currentNode.value.type === 'group') {
+        data.operationMenus = AllMenus
+        return;
+    }
+    if (currentNode.value.type === 'resources') {
+        data.operationMenus = [AllMenus[1], AllMenus[3]]
+        return;
+    }
+    data.operationMenus = [AllMenus[0]]
 }
 function closeRightMenu() {
     data.showRightMenu = false
     document.getElementById('app').onclick = null
     stopPropagation()
-}
-function handleRightItem(index) {
-    const name = data.rightMenuList[index].name
-    return menuItemFunction[name]()
 }
 function stopPropagation(e) {
     e = e || window.event;
@@ -575,23 +503,15 @@ function openEditResource() {
 }
 
 function openDeletaDialog() {
-    const  { type } = currentNode.value;
     ElMessageBox.confirm('Are you sure to delete?')
         .then(() => {
-            if (Object.keys(typeMap).includes(type)) {
-                return deleteSecondaryDataModelFunction(typeMap[type])
+            if (Object.keys(TypeMap).includes(currentNode.value.type)) {
+                return deleteSecondaryDataModelFunction(TypeMap[currentNode.value.type])
             }
             if (type === 'group') {
                 return deleteGroupFunction()
             }
             return deleteResource()
-        })
-        .catch(() => {
-            // ElMessage({
-            //     message: 'Delete failed',
-            //     type: "error",
-            //     duration: 5000
-            // })
         })
 }
 function deleteSecondaryDataModelFunction(param) {
@@ -814,7 +734,7 @@ watch(filterText, (val) => {
                 :props="defaultProps"
                 :filter-node-method="filterNode"
                 @node-click="openResources"
-                @node-contextmenu="rightClickGroup"
+                @node-contextmenu="openOperationMenus"
             />
             <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
         </div>
@@ -865,9 +785,8 @@ watch(filterText, (val) => {
                 </el-button>
             </div>
         </el-dialog>
-        <div v-if="data.showRightMenu" class="right-menu box-shadow"
-            :style="{ top: `${data.top}px`, left: `${data.left}px` }">
-            <RigheMenu @handleRightItem="handleRightItem" :rightMenuList="data.rightMenuList" />
+        <div v-if="data.showRightMenu" class="right-menu box-shadow" :style="{ top: `${data.top}px`, left: `${data.left}px` }">
+            <div v-for="m in data.operationMenus" @click="m.fn">{{ m.label }}</div>
         </div>
     </div>
 </template>
@@ -887,10 +806,21 @@ watch(filterText, (val) => {
 }
 
 .right-menu {
-    width: 170px;
+    width: 120px;
     position: fixed;
     z-index: 9999 !important;
-    background-color: white;
+    padding: 10px;
+    font-size: 14px;
+    div {
+        height: 30px;
+        line-height: 30px;
+        padding-left: 20px;
+        cursor: pointer;
+        &:hover {
+            background-color: #eee;
+        }
+
+    }
 }
 
 .footer {
