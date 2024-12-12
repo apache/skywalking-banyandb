@@ -32,15 +32,6 @@ const { proxy } = getCurrentInstance()
 
 // ref
 const ruleForm = ref()
-const loading= ref(false)
-const treeRef = ref()
-const filterText = ref('')
-const currentNode = ref({})
-
-const defaultProps = {
-  children: 'children',
-  label: 'name',
-}
 
 // Loading
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
@@ -58,13 +49,6 @@ const groupTypeToCatalog = {
     'measure': 'CATALOG_MEASURE',
     'stream': 'CATALOG_STREAM',
     'property': 'CATALOG_UNSPECIFIED'
-}
-
-const typeMap = {
-    'topNAggregation': 'topn-agg',
-    'indexRule': 'index-rule',
-    'indexRuleBinding': 'index-rule-binding',
-    'children': 'children'
 }
 
 // Data
@@ -95,7 +79,12 @@ const data = reactive({
         ttlNum: 3
     },
     activeMenu: '',
+    search: '',
     formLabelWidth: "170px"
+})
+
+watch(() => data.search, () => {
+    debounce(searchGroup, 300)()
 })
 
 // menu config
@@ -118,7 +107,82 @@ const groupMenu = [
         id: "delete Group"
     }
 ]
-
+const resourceMenu = [
+    {
+        icon: "el-icon-document",
+        name: "edit resources",
+        id: "edit resources"
+    },
+    {
+        icon: "el-icon-delete",
+        name: "delete",
+        id: "delete resources"
+    }
+]
+const StreamMenu = [
+    {
+        icon: "el-icon-document",
+        name: "new resources",
+        id: "create resources"
+    },
+]
+const indexRuleMenu = [
+    {
+        icon: "el-icon-document",
+        name: "new index-rule",
+        id: "create index-rule"
+    }
+]
+const indexRuleBindMenu = [
+    {
+        icon: "el-icon-document",
+        name: "new index-rule-binding",
+        id: "create index-rule-binding"
+    }
+]
+const topNAggregationMenu = [
+    {
+        icon: "el-icon-document",
+        name: "new topn-agg",
+        id: "create topn-agg"
+    }
+]
+const indexRuleItemMenu = [
+    {
+        icon: "el-icon-document",
+        name: "edit index-rule",
+        id: "edit index-rule"
+    },
+    {
+        icon: "el-icon-delete",
+        name: "delete",
+        id: "delete index-rule"
+    }
+]
+const indexRuleBindingItemMenu = [
+    {
+        icon: "el-icon-document",
+        name: "edit index-rule-binding",
+        id: "edit index-rule-binding"
+    },
+    {
+        icon: "el-icon-delete",
+        name: "delete",
+        id: "delete index-rule-binding"
+    }
+]
+const topNAggregationItemMenu = [
+    {
+        icon: "el-icon-document",
+        name: "edit topn-agg",
+        id: "edit topn-agg"
+    },
+    {
+        icon: "el-icon-delete",
+        name: "delete",
+        id: "delete topn-agg"
+    }
+]
 const menuItemFunction = {
     "new group": openCreateGroup,
     "edit group": openEditGroup,
@@ -188,12 +252,48 @@ const props = defineProps({
 // emit event
 const emit = defineEmits(['setWidth'])
 
+// function
+// search group
+function debounce(event, delay) {
+    let timer = null
+    return function (...args) {
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+            event(args)
+        }, delay)
+    }
+}
+
+function searchGroup() {
+    if (!data.search) {
+        return data.groupLists = JSON.parse(JSON.stringify(data.groupListsCopy))
+    }
+    let groupLists = []
+    data.groupListsCopy.forEach(item => {
+        let itemCache = JSON.parse(JSON.stringify(item))
+        let matched = false
+        if (Array.isArray(itemCache.children)) {
+            itemCache.children = itemCache.children.filter(child => {
+                return child.metadata.name.indexOf(data.search) > -1
+            })
+            if (itemCache.children.length > 0) {
+                groupLists.push(itemCache)
+                matched = true
+            }
+        }
+
+        // check the group name if no child items matched
+        if (!matched && itemCache.metadata.name.indexOf(data.search) > -1) {
+            groupLists.push(itemCache)
+        }
+    })
+    data.groupLists = JSON.parse(JSON.stringify(groupLists))
+}
 // init data
 function getGroupLists() {
     $loadingCreate()
     data.showSearch = false
-    filterText.value = ''
-    loading.value = true
+    data.search = ''
     getGroupList()
         .then(res => {
             if (res.status == 200) {
@@ -275,7 +375,6 @@ function getGroupLists() {
                 }
                 Promise.all(promise).then(() => {
                     data.showSearch = true
-                    data.groupLists = processGroupTree()
                     data.groupListsCopy = JSON.parse(JSON.stringify(data.groupLists))
                 }).catch((err) => {
                     ElMessage({
@@ -285,54 +384,13 @@ function getGroupLists() {
                     })
                 }).finally(() => {
                     $loadingClose()
-                    loading.value = false
                 })
             }else{
                 $loadingClose()
-                loading.value = false
             }
         })
     $loadingClose()
 }
-function processGroupTree(groupLists) {
-    const groups = groupLists || data.groupLists
-    const trees = [];
-    for (const group of groups) {
-        const g = {
-            name: group.metadata.name,
-            children: [],
-            catalog: group.catalog,
-            type: 'group',
-            key: group.metadata.name,
-        }
-        const keys = Object.keys(typeMap);
-        for (const key of keys) {
-            if (group[key]) {
-                const n = key === 'children' ? props.type : key
-                const list = {
-                    name: n.charAt(0).toUpperCase() + n.slice(1),
-                    children: [],
-                    type: n,
-                    key: `${group.metadata.name}_${n}`,
-                }
-                for (const item of group[key]) {
-                    list.children.push({
-                        ...item.metadata,
-                        type: 'resources',
-                        key: `${group.metadata.name}_${n}_${item.metadata.name}`,
-                        typeFlag: typeMap[n] || n,
-                        catalog: group.catalog,
-                        resourceOpts: group.resourceOpts
-                    })
-                }
-                g.children.push(list);
-            }
-        }
-        trees.push(g);
-    }
-    return trees;
-}
-
 function deleteOtherGroup() {
     for (let i = 0; i < data.groupLists.length; i++) {
         let type = catalogToGroupType[data.groupLists[i].catalog]
@@ -343,51 +401,29 @@ function deleteOtherGroup() {
     }
 }
 // to resources
-function openResources(node) {
-    currentNode.value = node;
-    if (node.type !== 'resources') {
-        return
-    }
-    const {name, group, typeFlag} = node
-    const values = Object.values(typeMap)
-
-    if (values.includes(node.typeFlag)) {
-        const route = {
-            name: `${props.type}-${typeFlag}`,
-            params: {
-                group: group,
-                name: name,
-                operator: 'read',
-                type: typeFlag
-            }
-        }
-        router.push(route)
-        const add = {
-            label: name,
-            type: `Read-${typeFlag}`,
-            route
-        }
-        data.activeMenu = `${group}-${name}` 
-        return $bus.emit('AddTabs', add)
-    }
+function openResources(index, childIndex) {
     if (props.type == 'property') {
+        const group = data.groupLists[index].metadata.name
         const route = {
             name: 'property',
             params: {
-                group: name,
+                group: group,
                 operator: 'read',
                 type: props.type
             }
         }
         router.push(route)
         const add = {
-            label: name,
+            label: group,
             type: 'Read',
             route
         }
-        data.active = `${name}`
+        data.active = `${group}`
         return $bus.emit('AddTabs', add)
     }
+    const group = data.groupLists[index].children[childIndex].metadata.group
+    const name = data.groupLists[index].children[childIndex].metadata.name
+    console.log(name, group)
     const route = {
         name: props.type,
         params: {
@@ -406,7 +442,6 @@ function openResources(node) {
     data.activeMenu = `${group}-${name}`
     $bus.emit('AddTabs', add)
 }
-
 // open or close Aide
 function shrinkMove(e) {
     e.preventDefault()
@@ -442,12 +477,70 @@ function shrinkDown(e) {
     e.preventDefault()
 }
 // right click menu
-function rightClickGroup(e, node) {
+function rightClickGroup(e, index) {
     data.rightMenuList = groupMenu
-    currentNode.value = node;
+    data.clickIndex = index
+    data.rightClickType = 'group'
     openRightMenu(e)
 }
-
+function rightClickResources(e, index, childIndex) {
+    data.rightMenuList = resourceMenu
+    data.clickIndex = index
+    data.clickChildIndex = childIndex
+    data.rightClickType = 'resources'
+    openRightMenu(e)
+}
+function rightClickResourcesFolder(e, index) {
+    data.rightMenuList = StreamMenu
+    data.clickIndex = index
+    data.rightClickType = 'group'
+    openRightMenu(e)
+}
+function rightClickIndexRule(e, index, schema) {
+    data.rightMenuList = indexRuleMenu
+    data.clickIndex = index
+    data.rightClickType = 'index-rule'
+    data.schema = schema
+    openRightMenu(e)
+}
+function rightClickIndexRuleBinding(e, index, schema) {
+    data.rightMenuList = indexRuleBindMenu
+    data.clickIndex = index
+    data.rightClickType = 'index-rule-binding'
+    data.schema = schema
+    openRightMenu(e)
+}
+function rightClickTopNAggregation(e, index, schema) {
+    data.rightMenuList = topNAggregationMenu
+    data.clickIndex = index
+    data.rightClickType = 'topn-agg'
+    data.schema = schema
+    openRightMenu(e)
+}
+function rightClickIndexRuleItem(e, index, childIndex, schema) {
+    data.rightMenuList = indexRuleItemMenu
+    data.clickIndex = index
+    data.clickChildIndex = childIndex
+    data.rightClickType = 'index-rule'
+    data.schema = schema
+    openRightMenu(e)
+}
+function rightClickIndexRuleBindingItem(e, index, childIndex, schema) {
+    data.rightMenuList = indexRuleBindingItemMenu
+    data.clickIndex = index
+    data.clickChildIndex = childIndex
+    data.rightClickType = 'index-rule-binding'
+    data.schema = schema
+    openRightMenu(e)
+}
+function rightClickTopNAggregationItem(e, index, childIndex, schema) {
+    data.rightMenuList = topNAggregationItemMenu
+    data.clickIndex = index
+    data.clickChildIndex = childIndex
+    data.rightClickType = 'topn-agg'
+    data.schema = schema
+    openRightMenu(e)
+}
 function openRightMenu(e) {
     data.showRightMenu = true
     data.top = e.pageY
@@ -518,20 +611,45 @@ function openEditSecondaryDataModel() {
     }
     $bus.emit('AddTabs', add)
 }
-
+function openSecondaryDataModel(index, childIndex, type, schema) {
+    const typeFlag = {
+        'topNAggregation': 'topn-agg',
+        'indexRule': 'index-rule',
+        'indexRuleBinding': 'index-rule-binding'
+    }
+    const group = data.groupLists[index][type][childIndex].metadata.group
+    const name = data.groupLists[index][type][childIndex].metadata.name
+    const route = {
+        name: `${schema}-${typeFlag[type]}`,
+        params: {
+            group: group,
+            name: name,
+            operator: 'read',
+            type: typeFlag[type]
+        }
+    }
+    router.push(route)
+    const add = {
+        label: name,
+        type: `Read-${typeFlag[type]}`,
+        route
+    }
+    data.activeMenu = `${group}-${name}`
+    $bus.emit('AddTabs', add)
+}
 function openCreateGroup() {
     data.setGroup = 'create'
     data.groupForm.catalog = groupTypeToCatalog[props.type]
     data.dialogGroupVisible = true
 }
 function openEditGroup() {
-    data.groupForm.name = currentNode.value.name
-    data.groupForm.catalog = currentNode.value.catalog
-    data.groupForm.shardNum = currentNode.value.resourceOpts?.shardNum
-    data.groupForm.segmentIntervalUnit = currentNode.value.resourceOpts?.segmentInterval?.unit
-    data.groupForm.segmentIntervalNum = currentNode.value.resourceOpts?.segmentInterval?.num
-    data.groupForm.ttlUnit = currentNode.value.resourceOpts?.ttl?.unit
-    data.groupForm.ttlNum = currentNode.value.resourceOpts?.ttl?.num
+    data.groupForm.name = data.groupLists[data.clickIndex].metadata.name
+    data.groupForm.catalog = data.groupLists[data.clickIndex].catalog
+    data.groupForm.shardNum = data.groupLists[data.clickIndex].resourceOpts?.shardNum
+    data.groupForm.segmentIntervalUnit = data.groupLists[data.clickIndex].resourceOpts?.segmentInterval?.unit
+    data.groupForm.segmentIntervalNum = data.groupLists[data.clickIndex].resourceOpts?.segmentInterval?.num
+    data.groupForm.ttlUnit = data.groupLists[data.clickIndex].resourceOpts?.ttl?.unit
+    data.groupForm.ttlNum = data.groupLists[data.clickIndex].resourceOpts?.ttl?.num
     data.dialogGroupVisible = true
     data.setGroup = 'edit'
 }
@@ -775,11 +893,6 @@ function initActiveMenu() {
         data.activeMenu = `${group}-${name}`
     }
 }
-const filterNode = (value, data) => {
-  if (!value) return true
-  return data.name.includes(value)
-}
-
 // Eventbus, change isCollapse
 $bus.on('changeIsCollapse', (obj) => {
     data.isCollapse = obj.isCollapse
@@ -803,28 +916,162 @@ $bus.on('refreshAside', () => {
 getGroupLists()
 initActiveMenu()
 
-watch(filterText, (val) => {
-  treeRef.value?.filter(val)
-})
+
 </script>
 
 <template>
     <div style="display: flex; flex-direction: column; width: 100%;">
         <div class="size flex" style="display: flex; flex-direction: column; width: 100%;">
-            <el-input v-if="data.showSearch && props.type !== 'stream'" class="aside-search" v-model="filterText"
+            <el-input v-if="data.showSearch && props.type != 'stream'" class="aside-search" v-model="data.search"
                 placeholder="Search" :prefix-icon="Search" clearable />
-            <el-tree
-                ref="treeRef"
-                v-loading="loading"
-                :data="data.groupLists"
-                :props="defaultProps"
-                :filter-node-method="filterNode"
-                @node-click="openResources"
-                @node-contextmenu="rightClickGroup"
-            />
+            <el-menu v-if="data.groupLists.length > 0" :collapse="data.isCollapse" :default-active="data.activeMenu">
+                <div v-for="(item, index) in data.groupLists" :key="item.metadata.name"
+                    @contextmenu.prevent="rightClickGroup($event, index)">
+                    <el-menu-item v-if="props.type == 'property'" @click="openResources(index)"
+                        :index="`${item.metadata.name}`">
+                        <template #title>
+                            <el-icon>
+                                <Document />
+                            </el-icon>
+                            <span slot="title" :title="item.metadata.name" style="width: 70%" class="text-overflow-hidden">
+                                {{ item.metadata.name }}
+                            </span>
+                        </template>
+                    </el-menu-item>
+                    <el-sub-menu v-else :index="`${item.metadata.name}-${index}`">
+                        <template #title>
+                            <el-icon>
+                                <Folder />
+                            </el-icon>
+                            <span slot="title" :title="item.metadata.name" style="width: 70%" class="text-overflow-hidden">
+                                {{ item.metadata.name }}
+                            </span>
+                        </template>
+                        <el-sub-menu :index="`${item.metadata.name}-${index}-index-rule`"
+                            @contextmenu.prevent="rightClickIndexRule($event, index, props.type)">
+                            <template #title>
+                                <el-icon>
+                                    <Folder />
+                                </el-icon>
+                                <span slot="title" title="Index-Rule" style="width: 70%" class="text-overflow-hidden">
+                                    Index-Rule
+                                </span>
+                            </template>
+                            <div v-for="(child, childIndex) in item.indexRule" :key="child.metadata.name">
+                                <div @contextmenu.prevent="rightClickIndexRuleItem($event, index, childIndex, props.type)">
+                                    <el-menu-item @click="openSecondaryDataModel(index, childIndex, 'indexRule', props.type)"
+                                        :index="`${child.metadata.group}-${child.metadata.name}`">
+                                        <template #title>
+                                            <el-icon>
+                                                <Document />
+                                            </el-icon>
+                                            <span slot="title" :title="child.metadata.name" style="width: 90%"
+                                                class="text-overflow-hidden">
+                                                {{ child.metadata.name }}
+                                            </span>
+                                        </template>
+                                    </el-menu-item>
+                                </div>
+                            </div>
+                        </el-sub-menu>
+                        <el-sub-menu
+                            :index="`${item.metadata.name}-${index}-index-rule-binding`"
+                            @contextmenu.prevent="rightClickIndexRuleBinding($event, index, props.type)">
+                            <template #title>
+                                <el-icon>
+                                    <Folder />
+                                </el-icon>
+                                <span slot="title" title="Index-Rule-Binding" style="width: 70%"
+                                    class="text-overflow-hidden">
+                                    Index-Rule-Binding
+                                </span>
+                            </template>
+                            <div v-for="(child, childIndex) in item.indexRuleBinding" :key="child.metadata.name">
+                                <div @contextmenu.prevent="rightClickIndexRuleBindingItem($event, index, childIndex, props.type)">
+                                    <el-menu-item
+                                        @click="openSecondaryDataModel(index, childIndex, 'indexRuleBinding', props.type)"
+                                        :index="`${child.metadata.group}-${child.metadata.name}`">
+                                        <template #title>
+                                            <el-icon>
+                                                <Document />
+                                            </el-icon>
+                                            <span slot="title" :title="child.metadata.name" style="width: 90%"
+                                                class="text-overflow-hidden">
+                                                {{ child.metadata.name }}
+                                            </span>
+                                        </template>
+                                    </el-menu-item>
+                                </div>
+                            </div>
+                        </el-sub-menu>
+                        <el-sub-menu
+                            v-if="props.type == 'measure'"
+                            :index="`${item.metadata.name}-${index}-topn-agg`"
+                            @contextmenu.prevent="rightClickTopNAggregation($event, index, props.type)">
+                            <template #title>
+                                <el-icon>
+                                    <Folder />
+                                </el-icon>
+                                <span slot="title" title="Top-N-Aggregation" style="width: 70%"
+                                    class="text-overflow-hidden">
+                                    Top-N-Aggregation
+                                </span>
+                            </template>
+                            <div v-for="(child, childIndex) in item.topNAggregation" :key="child.metadata.name">
+                                <div @contextmenu.prevent="rightClickTopNAggregationItem($event, index, childIndex, props.type)">
+                                    <el-menu-item
+                                        @click="openSecondaryDataModel(index, childIndex, 'topNAggregation', props.type)"
+                                        :index="`${child.metadata.group}-${child.metadata.name}`">
+                                        <template #title>
+                                            <el-icon>
+                                                <Document />
+                                            </el-icon>
+                                            <span slot="title" :title="child.metadata.name" style="width: 90%"
+                                                class="text-overflow-hidden">
+                                                {{ child.metadata.name }}
+                                            </span>
+                                        </template>
+                                    </el-menu-item>
+                                </div>
+                            </div>
+                        </el-sub-menu>
+                        <el-sub-menu @contextmenu.prevent="rightClickResourcesFolder($event, index)"
+                            :index="`${item.metadata.name}-${index}-stream`">
+                            <template #title>
+                                <el-icon>
+                                    <Folder />
+                                </el-icon>
+                                <span v-if="props.type == 'stream'" slot="title" title="Stream" style="width: 70%" class="text-overflow-hidden">
+                                    Stream
+                                </span>
+                                <span v-if="props.type == 'measure'" slot="title" title="Measure" style="width: 70%" class="text-overflow-hidden">
+                                    Measure
+                                </span>
+                            </template>
+                            <div v-for="(child, childIndex) in item.children" :key="child.metadata.name">
+                                <div @contextmenu.prevent="rightClickResources($event, index, childIndex)">
+                                    <el-menu-item :index="`${child.metadata.group}-${child.metadata.name}`"
+                                        @click="openResources(index, childIndex)">
+                                        <template #title>
+                                            <el-icon>
+                                                <Document />
+                                            </el-icon>
+                                            <span slot="title" :title="child.metadata.name" style="width: 90%"
+                                                class="text-overflow-hidden">
+                                                {{ child.metadata.name }}
+                                            </span>
+                                        </template>
+                                    </el-menu-item>
+                                </div>
+                            </div>
+                        </el-sub-menu>
+                    </el-sub-menu>
+                </div>
+            </el-menu>
             <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
         </div>
-        <div class="flex center add" @click="openCreateGroup" style="height: 50px; width: 100%;" v-if="!data.groupLists.length">
+        <div class="flex center add" @click="openCreateGroup" style="height: 50px; width: 100%;"
+            v-if="data.groupLists.length == 0">
             <el-icon>
                 <Plus />
             </el-icon>
@@ -873,7 +1120,8 @@ watch(filterText, (val) => {
         </el-dialog>
         <div v-if="data.showRightMenu" class="right-menu box-shadow"
             :style="{ top: `${data.top}px`, left: `${data.left}px` }">
-            <RigheMenu @handleRightItem="handleRightItem" :rightMenuList="data.rightMenuList" />
+            <RigheMenu @handleRightItem="handleRightItem" :rightMenuList="data.rightMenuList">
+            </RigheMenu>
         </div>
     </div>
 </template>
@@ -882,6 +1130,13 @@ watch(filterText, (val) => {
 .aside-search {
     margin: 10px;
     width: calc(100% - 20px);
+}
+
+.el-menu {
+    width: 100%;
+    border-right: none;
+    text-align: start;
+    text-justify: middle;
 }
 
 .resize {
@@ -895,7 +1150,7 @@ watch(filterText, (val) => {
 .right-menu {
     width: 170px;
     position: fixed;
-    z-index: 9999 !important;
+    z-index: 9999999999999999999999999999 !important;
     background-color: white;
 }
 
