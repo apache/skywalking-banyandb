@@ -24,6 +24,7 @@ Release Notes.
 - UI: Add `indexMode` to display on the measure page.
 - UI: Add `NoSort` Field to IndexRule page.
 - Metadata: Fix the bug that the cache load nil value that is the unknown index rule on the index rule binding.
+- Queue: Fix the bug that the client remove a registered node in the eviction list. The node is controlled by the recovery loop, doesn't need to be removed in the failover process.
 
 ### Documentation
 
@@ -33,6 +34,10 @@ Release Notes.
 ### Chores
 
 - Fix metrics system typo.
+
+### CVEs
+
+- GO-2024-3321: Misuse of ServerConfig.PublicKeyCallback may cause authorization bypass in golang.org/x/crypto
 
 ## 0.7.0
 

@@ -131,7 +131,7 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	}
 
 	if !p.checkClientHealthAndReconnect(conn, md) {
-		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is unhealthy, move it to evict queue")
+		p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("node is unhealthy in the register flow, move it to evict queue")
 		return
 	}
 
@@ -312,10 +312,12 @@ func (p *pub) healthCheck(node fmt.Stringer, conn *grpc.ClientConn) bool {
 func (p *pub) failover(node string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if en, ok := p.evictable[node]; ok {
-		close(en.c)
-		delete(p.evictable, node)
-		p.log.Info().Str("node", node).Str("status", p.dump()).Msg("node is removed from evict queue by wire event")
+	if en, evictable := p.evictable[node]; evictable {
+		if _, registered := p.registered[node]; !registered {
+			close(en.c)
+			delete(p.evictable, node)
+			p.log.Info().Str("node", node).Str("status", p.dump()).Msg("node is removed from evict queue by wire event")
+		}
 		return
 	}
 
@@ -325,7 +327,7 @@ func (p *pub) failover(node string) {
 		if p.handler != nil {
 			p.handler.OnDelete(client.md)
 		}
-		p.log.Info().Str("status", p.dump()).Str("node", node).Msg("node is unhealthy, move it to evict queue")
+		p.log.Info().Str("status", p.dump()).Str("node", node).Msg("node is unhealthy in the failover flow, move it to evict queue")
 	}
 }
 
