@@ -70,6 +70,10 @@ const defaultProps = {
 const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
 const $loadingClose = proxy.$loadingClose
 
+const TargetTypes = {
+    Group: 'group',
+    Resources: 'resources'
+}
 // catalog to group type
 const catalogToGroupType = {
     'CATALOG_MEASURE': 'measure',
@@ -264,7 +268,7 @@ function processGroupTree() {
             ...group.metadata,
             children: [],
             catalog: group.catalog,
-            type: 'group',
+            type: TargetTypes.Group,
             key: group.metadata.name,
         }
         const keys = Object.keys(TypeMap);
@@ -281,9 +285,9 @@ function processGroupTree() {
                 for (const item of group[key]) {
                     list.children.push({
                         ...item.metadata,
-                        type: 'resources',
+                        type: TargetTypes.Resources,
                         key: `${group.metadata.name}_${n}_${item.metadata.name}`,
-                        typeFlag: TypeMap[n] || n,
+                        parent: TypeMap[n] || n,
                         catalog: group.catalog,
                         resourceOpts: group.resourceOpts
                     })
@@ -299,26 +303,26 @@ function processGroupTree() {
 // to resources
 function viewResources(node) {
     currentNode.value = node;
-    if (node.type !== 'resources') {
+    if (node.type !== TargetTypes.Resources) {
         return
     }
-    const {name, group, typeFlag} = node
+    const {name, group, parent} = node
     const values = Object.values(TypeMap)
 
-    if (values.includes(node.typeFlag)) {
+    if (values.includes(parent)) {
         const route = {
-            name: `${props.type}-${typeFlag}`,
+            name: `${props.type}-${parent}`,
             params: {
                 group: group,
                 name: name,
                 operator: 'read',
-                type: typeFlag
+                type: parent
             }
         }
         router.push(route)
         const add = {
             label: name,
-            type: `Read-${typeFlag}`,
+            type: `Read-${parent}`,
             route
         }
         data.activeMenu = `${group}-${name}` 
@@ -369,16 +373,16 @@ function openOperationMenus(e, node) {
     document.getElementById('app').onclick = closeRightMenu
     e.stopPropagation()
     const AllMenus = [
-        {label: 'Create', fn: create}, 
-        {label: 'Edit', fn: openEditGroup},
+        {label: 'Create', fn: createTarget}, 
+        {label: 'Edit', fn: editTarget},
         {label: `Refresh`, fn: getGroupLists},
         {label: 'Delete', fn: openDeleteDialog}
     ]
-    if (node.type === 'group') {
+    if (node.type === TargetTypes.Group) {
         data.operationMenus = AllMenus
         return;
     }
-    if (node.type === 'resources') {
+    if (node.type === TargetTypes.Resources) {
         data.operationMenus = [AllMenus[1], AllMenus[3]]
         return;
     }
@@ -389,8 +393,20 @@ function closeRightMenu() {
     document.getElementById('app').onclick = null
 }
 // CRUD operator
-function create() {
-    if (currentNode.value.type === 'group') {
+function editTarget() {
+    console.log(currentNode.value);
+    if (currentNode.value.type === TargetTypes.Group) {
+        openEditGroup()
+        return
+    }
+    if (currentNode.value.type === TargetTypes.Resources && Object.values(TypeMap).includes(currentNode.value.parent)) {
+        openEditSecondaryDataModel()
+        return
+    }
+    openEditResource()
+}
+function createTarget() {
+    if (currentNode.value.type === TargetTypes.Group) {
         openCreateGroup()
         return
     }
@@ -421,25 +437,21 @@ function openCreateSecondaryDataModel() {
 }
 
 function openEditSecondaryDataModel() {
-    const typeFlag = {
-        'topn-agg': 'topNAggregation',
-        'index-rule': 'indexRule',
-        'index-rule-binding': 'indexRuleBinding'
-    }
+    const type = currentNode.value.parent
     const route = {
-        name: `${props.type}-edit-${data.rightClickType}`,
+        name: `${props.type}-edit-${type}`,
         params: {
             operator: 'edit',
-            group: data.groupLists[data.clickIndex].metadata.name,
-            name: data.groupLists[data.clickIndex][typeFlag[data.rightClickType]][data.clickChildIndex].metadata.name,
-            type: data.rightClickType,
+            group: currentNode.value.group,
+            name: currentNode.value.name,
+            type,
             schema: props.type
         }
     }
     router.push(route)
     const add = {
-        label: data.groupLists[data.clickIndex][typeFlag[data.rightClickType]][data.clickChildIndex].metadata.name,
-        type: `Edit-${data.rightClickType}`,
+        label: currentNode.value.name,
+        type: `Edit-${type}`,
         route
     }
     $bus.emit('AddTabs', add)
@@ -483,14 +495,14 @@ function openEditResource() {
         name: `edit-${props.type}`,
         params: {
             operator: 'edit',
-            group: data.groupLists[data.clickIndex].metadata.name,
-            name: data.groupLists[data.clickIndex].children[data.clickChildIndex].metadata.name,
+            group: currentNode.value.group,
+            name: currentNode.value.name,
             type: props.type
         }
     }
     router.push(route)
     const add = {
-        label: data.groupLists[data.clickIndex].children[data.clickChildIndex].metadata.name,
+        label: currentNode.value.name,
         type: 'Edit',
         route
     }
@@ -503,7 +515,7 @@ function openDeleteDialog() {
             if (Object.keys(TypeMap).includes(currentNode.value.type)) {
                 return deleteSecondaryDataModelFunction(TypeMap[currentNode.value.type])
             }
-            if (type === 'group') {
+            if (type === TargetTypes.Group) {
                 return deleteGroupFunction()
             }
             return deleteResource()
@@ -660,12 +672,9 @@ function editGroupFunction() {
         }
     })
 }
-function cancelCreateEditDialog() {
-    clearGroupForm()
-    data.dialogGroupVisible = false
-}
 // init form data
 function clearGroupForm() {
+    data.dialogGroupVisible = false
     data.groupForm = {
         name: null,
         catalog: 'CATALOG_STREAM',
@@ -770,7 +779,7 @@ watch(filterText, (val) => {
                 </el-form-item>
             </el-form>
             <div slot="footer" class="dialog-footer footer">
-                <el-button @click="cancelCreateEditDialog">cancel</el-button>
+                <el-button @click="clearGroupForm">cancel</el-button>
                 <el-button type="primary" @click="confirmForm">{{ data.setGroup }}
                 </el-button>
             </div>
@@ -817,9 +826,5 @@ watch(filterText, (val) => {
     width: 100%;
     display: flex;
     justify-content: center;
-}
-
-.add {
-    cursor: pointer;
 }
 </style>
