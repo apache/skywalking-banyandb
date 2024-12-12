@@ -443,6 +443,7 @@ function shrinkDown(e) {
 }
 // right click menu
 function rightClickGroup(e, node) {
+    console.log(node);
     data.rightMenuList = groupMenu
     currentNode.value = node;
     openRightMenu(e)
@@ -583,7 +584,6 @@ function openDeletaDialog() {
             if (type === 'group') {
                 return deleteGroupFunction()
             }
-
             return deleteResource()
         })
         .catch(() => {
@@ -596,8 +596,7 @@ function openDeletaDialog() {
 }
 function deleteSecondaryDataModelFunction(param) {
     $loadingCreate()
-    const { group, type } = currentNode.value
-    deleteSecondaryDataModel(param, group, type)
+    deleteSecondaryDataModel(param, currentNode.value.group, currentNode.value.type)
         .then((res) => {
             if (res.status == 200) {
                 if (res.data.deleted) {
@@ -607,7 +606,7 @@ function deleteSecondaryDataModelFunction(param) {
                         duration: 5000
                     })
                     getGroupLists()
-                    $bus.emit('deleteResource', type)
+                    $bus.emit('deleteResource', currentNode.value.type)
                 }
             }
         })
@@ -616,10 +615,9 @@ function deleteSecondaryDataModelFunction(param) {
         })
 }
 function deleteGroupFunction() {
-    const { name } = currentNode.value
     // delete group
     $loadingCreate()
-    deleteGroup(name)
+    deleteGroup(currentNode.value.name)
         .then((res) => {
             if (res.status == 200) {
                 if (res.data.deleted) {
@@ -630,7 +628,7 @@ function deleteGroupFunction() {
                     })
                     getGroupLists()
                 }
-                $bus.emit('deleteGroup', name)
+                $bus.emit('deleteGroup', currentNode.value.name)
             }
         })
         .finally(() => {
@@ -638,10 +636,8 @@ function deleteGroupFunction() {
         })
 }
 function deleteResource() {
-    const { name, group } = currentNode.vaue
     // delete Resources
-    $loadingCreate()
-    deleteStreamOrMeasure(props.type, group, name)
+    deleteStreamOrMeasure(props.type, currentNode.value.group, currentNode.value.name)
         .then((res) => {
             if (res.status == 200) {
                 if (res.data.deleted) {
@@ -652,7 +648,7 @@ function deleteResource() {
                     })
                     getGroupLists()
                 }
-                $bus.emit('deleteResource', name)
+                $bus.emit('deleteResource', currentNode.value.name)
             }
         })
         .finally(() => {
