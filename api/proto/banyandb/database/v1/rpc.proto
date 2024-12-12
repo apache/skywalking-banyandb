@@ -483,16 +483,3 @@ service TopNAggregationRegistryService {
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(TopNAggregationRegistryServiceExistRequest) returns (TopNAggregationRegistryServiceExistResponse);
 }
-
-message MeasureAggregateFunctionServiceSupportRequest {}
-
-message MeasureAggregateFunctionServiceSupportResponse {
-  repeated banyandb.database.v1.MeasureAggregateFunction measure_aggregate_function = 1;
-}
-
-service MeasureAggregateFunctionService {
-  // Support doesn't need metadata, it's static and stateless.
-  rpc Support(MeasureAggregateFunctionServiceSupportRequest) returns (MeasureAggregateFunctionServiceSupportResponse) {
-    option (google.api.http) = {get: "/v1/measure-agg/schema/support"};
-  }
-}
