@@ -39,16 +39,12 @@ const currentNode = ref({})
 const data = reactive({
     groupLists: [],
     showSearch: false,
-    isShrink: false,
     isCollapse: false,
     // right menu
-    showRightMenu: false,
+    showOperationMenus: false,
     operationMenus: [],
     top: 0,
     left: 0,
-    clickIndex: 0,
-    clickChildIndex: 0,
-    rightClickType: 'group',
     // create/edit group
     dialogGroupVisible: false,
     setGroup: 'create',
@@ -367,14 +363,14 @@ function openResources(node) {
 
 function openOperationMenus(e, node) {
     currentNode.value = node
-    data.showRightMenu = true
+    data.showOperationMenus = true
     data.top = e.pageY
     data.left = e.pageX
     document.getElementById('app').onclick = closeRightMenu
-    stopPropagation()
+    e.stopPropagation()
     const AllMenus = [
         {label: 'Create', fn: openCreateGroup}, 
-        {label: 'Edit', fn: editGroup},
+        {label: 'Edit', fn: openEditGroup},
         {label: `Refresh`, fn: getGroupLists},
         {label: 'Delete', fn: openDeletaDialog}
     ]
@@ -389,17 +385,9 @@ function openOperationMenus(e, node) {
     data.operationMenus = [AllMenus[0]]
 }
 function closeRightMenu() {
-    data.showRightMenu = false
+    data.showOperationMenus = false
     document.getElementById('app').onclick = null
-    stopPropagation()
-}
-function stopPropagation(e) {
-    e = e || window.event;
-    if (e.stopPropagation) {
-        e.stopPropagation();
-    } else {
-        e.cancelBubble = true;
-    }
+    e.stopPropagation()
 }
 
 // CRUD operator
