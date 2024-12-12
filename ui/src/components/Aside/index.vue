@@ -115,7 +115,7 @@ const groupMenu = [
     }, {
         icon: "el-icon-delete",
         name: "delete",
-        id: "delete Group"
+        id: "delete"
     }
 ]
 
@@ -294,12 +294,11 @@ function getGroupLists() {
         })
     $loadingClose()
 }
-function processGroupTree(groupLists) {
-    const groups = groupLists || data.groupLists
+function processGroupTree() {
     const trees = [];
-    for (const group of groups) {
+    for (const group of data.groupLists) {
         const g = {
-            name: group.metadata.name,
+            ...group.metadata,
             children: [],
             catalog: group.catalog,
             type: 'group',
@@ -314,6 +313,7 @@ function processGroupTree(groupLists) {
                     children: [],
                     type: n,
                     key: `${group.metadata.name}_${n}`,
+                    group: group.metadata.name,
                 }
                 for (const item of group[key]) {
                     list.children.push({
@@ -572,35 +572,32 @@ function openEditResource() {
     }
     $bus.emit('AddTabs', add)
 }
+
 function openDeletaDialog() {
+    const  { type } = currentNode.value;
     ElMessageBox.confirm('Are you sure to delete?')
         .then(() => {
-            let group = data.groupLists[data.clickIndex].metadata.name
-            if (data.rightClickType == 'group') {
-                return deleteGroupFunction(group)
-            } else if (data.rightClickType == 'index-rule') {
-                return deleteSecondaryDataModelFunction("index-rule")
-            } else if (data.rightClickType == 'index-rule-binding') {
-                return deleteSecondaryDataModelFunction("index-rule-binding")
-            } else if (data.rightClickType == 'topn-agg') {
-                return deleteSecondaryDataModelFunction("topn-agg")
+            if (Object.keys(typeMap).includes(type)) {
+                return deleteSecondaryDataModelFunction(typeMap[type])
             }
-            return deleteResource(group)
+            if (type === 'group') {
+                return deleteGroupFunction()
+            }
+
+            return deleteResource()
         })
         .catch(() => {
-            // catch error
+            // ElMessage({
+            //     message: 'Delete failed',
+            //     type: "error",
+            //     duration: 5000
+            // })
         })
 }
-function deleteSecondaryDataModelFunction(type) {
+function deleteSecondaryDataModelFunction(param) {
     $loadingCreate()
-    const flag = {
-        'index-rule': 'indexRule',
-        'index-rule-binding': 'indexRuleBinding',
-        'topn-agg': 'topNAggregation'
-    }
-    let group = data.groupLists[data.clickIndex].metadata.name
-    let name = data.groupLists[data.clickIndex][flag[type]][data.clickChildIndex].metadata.name
-    deleteSecondaryDataModel(type, group, name)
+    const { group, type } = currentNode.value
+    deleteSecondaryDataModel(param, group, type)
         .then((res) => {
             if (res.status == 200) {
                 if (res.data.deleted) {
@@ -610,7 +607,7 @@ function deleteSecondaryDataModelFunction(type) {
                         duration: 5000
                     })
                     getGroupLists()
-                    $bus.emit('deleteResource', name)
+                    $bus.emit('deleteResource', type)
                 }
             }
         })
@@ -618,10 +615,11 @@ function deleteSecondaryDataModelFunction(type) {
             $loadingClose()
         })
 }
-function deleteGroupFunction(group) {
+function deleteGroupFunction() {
+    const { name } = currentNode.value
     // delete group
     $loadingCreate()
-    deleteGroup(group)
+    deleteGroup(name)
         .then((res) => {
             if (res.status == 200) {
                 if (res.data.deleted) {
@@ -632,15 +630,15 @@ function deleteGroupFunction(group) {
                     })
                     getGroupLists()
                 }
-                $bus.emit('deleteGroup', data.groupLists[data.clickIndex].metadata.name)
+                $bus.emit('deleteGroup', name)
             }
         })
         .finally(() => {
             $loadingClose()
         })
 }
-function deleteResource(group) {
-    let name = data.groupLists[data.clickIndex].children[data.clickChildIndex].metadata.name
+function deleteResource() {
+    const { name, group } = currentNode.vaue
     // delete Resources
     $loadingCreate()
     deleteStreamOrMeasure(props.type, group, name)
