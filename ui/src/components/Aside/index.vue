@@ -297,7 +297,7 @@ function processGroupTree() {
 }
 
 // to resources
-function openResources(node) {
+function viewResources(node) {
     currentNode.value = node;
     if (node.type !== 'resources') {
         return
@@ -369,16 +369,16 @@ function openOperationMenus(e, node) {
     document.getElementById('app').onclick = closeRightMenu
     e.stopPropagation()
     const AllMenus = [
-        {label: 'Create', fn: openCreateGroup}, 
+        {label: 'Create', fn: create}, 
         {label: 'Edit', fn: openEditGroup},
         {label: `Refresh`, fn: getGroupLists},
-        {label: 'Delete', fn: openDeletaDialog}
+        {label: 'Delete', fn: openDeleteDialog}
     ]
-    if (currentNode.value.type === 'group') {
+    if (node.type === 'group') {
         data.operationMenus = AllMenus
         return;
     }
-    if (currentNode.value.type === 'resources') {
+    if (node.type === 'resources') {
         data.operationMenus = [AllMenus[1], AllMenus[3]]
         return;
     }
@@ -387,10 +387,22 @@ function openOperationMenus(e, node) {
 function closeRightMenu() {
     data.showOperationMenus = false
     document.getElementById('app').onclick = null
-    e.stopPropagation()
 }
 
 // CRUD operator
+
+function create() {
+    if (currentNode.value.type === 'group') {
+        openCreateGroup()
+        return
+    }
+    if (currentNode.value.type === 'resource') {
+        openCreateResource()
+        return
+    }
+    openCreateSecondaryDataModel()
+
+}
 function openCreateSecondaryDataModel() {
     const route = {
         name: `${data.schema}-create-${data.rightClickType}`,
@@ -457,18 +469,17 @@ function openCreateResource() {
         name: `create-${props.type}`,
         params: {
             operator: 'create',
-            group: data.groupLists[data.clickIndex].metadata.name,
+            group: currentNode.value.group,
             name: '',
             type: props.type
         }
     }
     router.push(route)
     const add = {
-        label: data.groupLists[data.clickIndex].metadata.name,
+        label: currentNode.value.group,
         type: 'Create',
         route
     }
-    data.activeMenu = ''
     $bus.emit('AddTabs', add)
 }
 function openEditResource() {
@@ -490,7 +501,7 @@ function openEditResource() {
     $bus.emit('AddTabs', add)
 }
 
-function openDeletaDialog() {
+function openDeleteDialog() {
     ElMessageBox.confirm('Are you sure to delete?')
         .then(() => {
             if (Object.keys(TypeMap).includes(currentNode.value.type)) {
@@ -571,7 +582,7 @@ function confirmForm() {
 function createGroupFunction() {
     ruleForm.value.validate((valid) => {
         if (valid) {
-            let dataList = {
+            const dataList = {
                 group: {
                     metadata: {
                         group: "",
@@ -614,7 +625,7 @@ function editGroupFunction() {
     let name = data.groupLists[data.clickIndex].metadata.name
     ruleForm.value.validate((valid) => {
         if (valid) {
-            let dataList = {
+            const dataList = {
                 group: {
                     metadata: {
                         group: "",
@@ -721,15 +732,10 @@ watch(filterText, (val) => {
                 :data="data.groupLists"
                 :props="defaultProps"
                 :filter-node-method="filterNode"
-                @node-click="openResources"
+                @node-click="viewResources"
                 @node-contextmenu="openOperationMenus"
             />
             <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
-        </div>
-        <div class="flex center add" @click="openCreateGroup" style="height: 50px; width: 100%;" v-if="!data.groupLists.length">
-            <el-icon>
-                <Plus />
-            </el-icon>
         </div>
         <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible"
             :show-close="false">
@@ -773,7 +779,7 @@ watch(filterText, (val) => {
                 </el-button>
             </div>
         </el-dialog>
-        <div v-if="data.showRightMenu" class="right-menu box-shadow" :style="{ top: `${data.top}px`, left: `${data.left}px` }">
+        <div v-if="data.showOperationMenus" class="right-menu box-shadow" :style="{ top: `${data.top}px`, left: `${data.left}px` }">
             <div v-for="m in data.operationMenus" @click="m.fn">{{ m.label }}</div>
         </div>
     </div>
