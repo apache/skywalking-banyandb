@@ -388,38 +388,35 @@ function closeRightMenu() {
     data.showOperationMenus = false
     document.getElementById('app').onclick = null
 }
-
 // CRUD operator
-
 function create() {
     if (currentNode.value.type === 'group') {
         openCreateGroup()
         return
     }
-    if (currentNode.value.type === 'resource') {
+    if (currentNode.value.type.toLowerCase() === props.type) {
         openCreateResource()
         return
     }
     openCreateSecondaryDataModel()
-
 }
 function openCreateSecondaryDataModel() {
+    const type = TypeMap[currentNode.value.type]
     const route = {
-        name: `${data.schema}-create-${data.rightClickType}`,
+        name: `${props.type}-create-${type}`,
         params: {
             operator: 'create',
-            group: data.groupLists[data.clickIndex].metadata.name,
-            type: data.rightClickType,
-            schema: data.schema
+            group: currentNode.value.group,
+            type,
+            schema: props.type
         }
     }
     router.push(route)
     const add = {
-        label: data.groupLists[data.clickIndex].metadata.name,
-        type: `Create-${data.rightClickType}`,
+        label: currentNode.value.group,
+        type: `Create-${type}`,
         route
     }
-    data.activeMenu = ''
     $bus.emit('AddTabs', add)
 }
 
@@ -430,13 +427,13 @@ function openEditSecondaryDataModel() {
         'index-rule-binding': 'indexRuleBinding'
     }
     const route = {
-        name: `${data.schema}-edit-${data.rightClickType}`,
+        name: `${props.type}-edit-${data.rightClickType}`,
         params: {
             operator: 'edit',
             group: data.groupLists[data.clickIndex].metadata.name,
             name: data.groupLists[data.clickIndex][typeFlag[data.rightClickType]][data.clickChildIndex].metadata.name,
             type: data.rightClickType,
-            schema: data.schema
+            schema: props.type
         }
     }
     router.push(route)
@@ -470,7 +467,6 @@ function openCreateResource() {
         params: {
             operator: 'create',
             group: currentNode.value.group,
-            name: '',
             type: props.type
         }
     }
