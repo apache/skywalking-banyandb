@@ -19,7 +19,7 @@
 
 <script setup>
 import { reactive } from "vue";
-import { ElImage, ElTooltip, ElMenu, ElMenuItem } from 'element-plus'
+import { ElImage, ElMenu, ElMenuItem } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { watch, getCurrentInstance } from '@vue/runtime-core'
 import userImg from '@/assets/banyandb_small.jpg'
@@ -33,8 +33,6 @@ const route = useRoute()
 // data
 const data = reactive({
     activeMenu: '/banyandb/dashboard',
-    isCollapse: false,
-    showButton: false
 })
 
 // watch
@@ -45,34 +43,13 @@ watch(() => route, () => {
     immediate: true,
     deep: true
 })
-watch(() => data.activeMenu, () => {
-    data.showButton = data.activeMenu == '/banyandb/stream' || data.activeMenu == '/banyandb/measure' ? true : false
-}, {
-    immediate: true,
-    deep: true
-})
 
 // function
 function initData() {
     let arr = route.path.split('/')
     data.activeMenu = `/${arr[1]}/${arr[2]}`
 }
-function changeAsideWidth() {
-    if (data.isCollapse) {
-        $bus.emit('changeIsCollapse', {
-            isCollapse: false,
-            width: '200px'
-        })
-    } else {
-        $bus.emit('changeIsCollapse', {
-            isCollapse: true,
-            width: '65px'
-        })
-    }
-}
-$bus.on('changeIsCollapse', (obj) => {
-    data.isCollapse = obj.isCollapse
-})
+
 initData()
 </script>
 
@@ -85,19 +62,6 @@ initData()
                 </div>
             </el-image>
             <div class="title text-main-color text-title text-family text-weight-lt">BanyanDB Manager</div>
-            <!-- open aside menu -->
-            <div class="flex center pointer icon-size" v-if="data.showButton" @click="changeAsideWidth">
-                <el-tooltip class="item" effect="dark" :content="!data.isCollapse ? 'Collapse menu' : 'Expand menu'"
-                    placement="bottom">
-                    <el-icon v-if="!data.isCollapse" class="icon">
-                        <Fold />
-                    </el-icon>
-                    <el-icon class="icon" v-else>
-                        <Expand />
-                    </el-icon>
-                </el-tooltip>
-            </div>
-            <div v-else class="icon-size"></div>
             <!-- stream/measure sources url -->
             <div style="width:380px;" class="margin-left-small"></div>
         </div>
