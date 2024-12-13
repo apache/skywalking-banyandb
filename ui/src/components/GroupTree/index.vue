@@ -35,11 +35,13 @@ const loading= ref(false)
 const treeRef = ref()
 const filterText = ref('')
 const currentNode = ref({})
+const resizable = ref()
 // Data
 const data = reactive({
     groupLists: [],
     showSearch: false,
     isCollapse: false,
+    treeWidth: '100%',
     // right menu
     showOperationMenus: false,
     operationMenus: [],
@@ -676,27 +678,38 @@ const filterNode = (value, data) => {
   if (!value) return true
   return data.name.includes(value)
 }
+function mouseDown(e) {
+    e.preventDefault();
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+}
 
+function onMouseMove(e) {
+    e.preventDefault();
+    const newWidth = e.clientX - resizable.value.getBoundingClientRect().left;
+    if (newWidth < 60) {
+        return;
+    }
+    if (newWidth > 600) {
+        return;
+    }
+    data.treeWidth = `${newWidth}px`
+    emit('setWidth', String(newWidth))
+}
+
+function onMouseUp(e) {
+    e.preventDefault();
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+}
 // Eventbus, change isCollapse
-$bus.on('changeIsCollapse', (obj) => {
-    data.isCollapse = obj.isCollapse
-    emit('setWidth', obj.width)
-})
-$bus.on('changeAside', (obj) => {
-    if (obj.group && obj.name)
-        data.activeMenu = `${obj.group}-${obj.name}`
-    else
-        data.activeMenu = `${obj.group}`
-})
 $bus.on('resetAside', () => {
     data.activeMenu = ''
     router.push({
         name: `${props.type}Start`
     })
 })
-$bus.on('refreshAside', () => {
-    getGroupLists()
-})
+
 getGroupLists()
 initActiveMenu()
 
@@ -706,20 +719,22 @@ watch(filterText, (val) => {
 </script>
 
 <template>
-    <div style="display: flex; flex-direction: column; width: 100%;">
-        <div class="size flex" style="display: flex; flex-direction: column; width: 100%;">
-            <el-input v-if="data.showSearch && props.type !== 'stream'" class="aside-search" v-model="filterText"
-                placeholder="Search" :prefix-icon="Search" clearable />
-            <el-tree
-                ref="treeRef"
-                v-loading="loading"
-                :data="data.groupLists"
-                :props="defaultProps"
-                :filter-node-method="filterNode"
-                @node-click="viewResources"
-                @node-contextmenu="openOperationMenus"
-            />
-            <div class="resize" @mousedown="shrinkDown" title="Shrink sidebar"></div>
+    <div :style="{display: 'flex', flexDirection: 'column', width: `${data.treeWidth}`, height: `100%`}" ref="resizable" >
+        <div style="display: flex; flex: 1; flex-direction: row; width: 100%; height: 100%; justify-content: space-between;">
+            <div class="size flex" style="display: flex; flex-direction: column; width: calc(100% - 20px);">
+                <el-input v-if="data.showSearch && props.type !== 'stream'" class="aside-search" v-model="filterText"
+                    placeholder="Search" :prefix-icon="Search" clearable />
+                <el-tree
+                    ref="treeRef"
+                    v-loading="loading"
+                    :data="data.groupLists"
+                    :props="defaultProps"
+                    :filter-node-method="filterNode"
+                    @node-click="viewResources"
+                    @node-contextmenu="openOperationMenus"
+                />
+            </div>
+        <div class="resizer" @mousedown="mouseDown"></div>
         </div>
         <el-dialog width="25%" center :title="`${data.setGroup} group`" v-model="data.dialogGroupVisible"
             :show-close="false">
@@ -775,12 +790,11 @@ watch(filterText, (val) => {
     width: calc(100% - 20px);
 }
 
-.resize {
-    cursor: col-resize;
-    position: absolute;
-    right: 0;
-    height: 100%;
+.resizer {
     width: 5px;
+    cursor: ew-resize;
+    background-color: #bbb;
+    height: 100%;
 }
 
 .right-menu {
