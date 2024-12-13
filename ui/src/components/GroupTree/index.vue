@@ -391,7 +391,6 @@ function closeRightMenu() {
 }
 // CRUD operator
 function editTarget() {
-    console.log(currentNode.value);
     if (currentNode.value.type === TargetTypes.Group) {
         openEditGroup()
         return
@@ -742,7 +741,7 @@ watch(filterText, (val) => {
                             <el-icon class="el-icon" v-if="data.type !== TargetTypes.Group">
                                 <Histogram v-if="data.type===`${Object.keys(TypeMap)[0]}`" />
                                 <Collection v-else-if="data.type===`${Object.keys(TypeMap)[1]}`" />
-                                <Ticket v-else-if="data.type===`${Object.keys(TypeMap)[2]}`" />
+                                <Management v-else-if="data.type===`${Object.keys(TypeMap)[2]}`" />
                                 <Tickets v-else-if="data.type=== TargetTypes.Resources" />
                                 <DataAnalysis v-else />
                             </el-icon>
@@ -804,7 +803,7 @@ watch(filterText, (val) => {
 <style lang="scss" scoped>
 .group-search {
     margin: 20px 0 0 10px;
-    width: calc(100% - 10px);
+    width: calc(100% - 15px);
     overflow: auto;
 }
 
