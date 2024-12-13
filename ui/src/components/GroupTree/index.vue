@@ -720,9 +720,9 @@ watch(filterText, (val) => {
 
 <template>
     <div :style="{display: 'flex', flexDirection: 'column', width: `${data.treeWidth}`, height: `100%`}" ref="resizable" >
-        <div style="display: flex; flex: 1; flex-direction: row; width: 100%; height: 100%; justify-content: space-between;">
+        <div style="display: flex; flex-direction: row; width: 100%; height: 100%; justify-content: space-between;">
             <div class="size flex" style="display: flex; flex-direction: column; width: calc(100% - 20px);">
-                <el-input v-if="data.showSearch && props.type !== 'stream'" class="aside-search" v-model="filterText"
+                <el-input v-if="data.showSearch && props.type !== 'stream'" class="group-search" v-model="filterText"
                     placeholder="Search" :prefix-icon="Search" clearable />
                 <el-tree
                     ref="treeRef"
@@ -732,6 +732,7 @@ watch(filterText, (val) => {
                     :filter-node-method="filterNode"
                     @node-click="viewResources"
                     @node-contextmenu="openOperationMenus"
+                    class="group-tree"
                 />
             </div>
         <div class="resizer" @mousedown="mouseDown"></div>
@@ -785,9 +786,13 @@ watch(filterText, (val) => {
 </template>
 
 <style lang="scss" scoped>
-.aside-search {
-    margin: 10px;
+.group-search {
+    margin: 20px 0 0 10px;
     width: calc(100% - 20px);
+}
+
+.group-tree {
+    padding-top: 10px;
 }
 
 .resizer {
