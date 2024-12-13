@@ -145,7 +145,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
 
 	if stm.processorManager != nil {
-		stm.processorManager.onMeasureWrite(uint64(series.ID), &measurev1.InternalWriteRequest{
+		stm.processorManager.onMeasureWrite(uint64(series.ID), uint32(shardID), &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
 				Metadata:  stm.GetSchema().Metadata,
 				DataPoint: req.DataPoint,

@@ -49,6 +49,9 @@ func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.Ta
 	}
 	findIndexRuleByTagName := func(tagName string) *databasev1.IndexRule {
 		for i := range indexRules {
+			if indexRules[i] == nil {
+				continue
+			}
 			for j := range indexRules[i].Tags {
 				if indexRules[i].Tags[j] == tagName {
 					return indexRules[i]

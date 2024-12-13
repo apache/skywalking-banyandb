@@ -49,24 +49,22 @@ watch(() => route, () => {
   deep: true
 })
 
-function initData() {
-  if (data.type && data.group && data.name) {
-    $loadingCreate()
-    getSecondaryDataModel(data.type, data.group, data.name)
-      .then(result => {
-        data.indexRule = result.data.indexRule
-      })
-      .catch(err => {
-        ElMessage({
-          message: 'Please refresh and try again. Error: ' + err,
-          type: "error",
-          duration: 3000
-        })
-      })
-      .finally(() => {
-        $loadingClose()
-      })
+async function initData() {
+  if (!(data.type && data.group && data.name)) {
+    return;
   }
+  $loadingCreate()
+  const result = await getSecondaryDataModel(data.type, data.group, data.name)
+  $loadingClose()
+  if (!(result.data && result.data.indexRule)) {
+    ElMessage({
+      message: `Please refresh and try again.`,
+      type: "error",
+      duration: 3000
+    })
+    return;
+  }
+  data.indexRule = {...result.data.indexRule, noSort: String(result.data.indexRule.noSort)}
 }
 </script>
 
@@ -84,7 +82,10 @@ function initData() {
           <el-select v-model="data.indexRule.tags" style="width: 100%;" :disabled="true" multiple></el-select>
         </el-form-item>
         <el-form-item label="Type">
-          <el-input v-model="data.indexRule.type" :disabled="true"></el-input>
+          <el-input v-model="data.indexRule.type" disabled></el-input>
+        </el-form-item>
+        <el-form-item label="No Sort">
+          <el-input v-model="data.indexRule.noSort" disabled></el-input>
         </el-form-item>
       </el-form>
     </el-card>

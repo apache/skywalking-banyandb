@@ -22,9 +22,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/testing/protocmp"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -32,16 +30,23 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-const topNTagFamily = "__topN__"
+const (
+	// TopNTagFamily is the tag family name of the topN result measure.
+	TopNTagFamily = "_topN"
+	// TopNFieldName is the field name of the topN result measure.
+	TopNFieldName = "value"
+)
 
 var (
-	initTimeout        = 10 * time.Second
-	topNValueFieldSpec = &databasev1.FieldSpec{
-		Name:              "value",
-		FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
+	initTimeout    = 10 * time.Second
+	topNFieldsSpec = []*databasev1.FieldSpec{{
+		Name:              TopNFieldName,
+		FieldType:         databasev1.FieldType_FIELD_TYPE_DATA_BINARY,
 		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
 		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
-	}
+	}}
+	// TopNTagNames is the tag names of the topN result measure.
+	TopNTagNames = []string{"name", "direction", "group"}
 )
 
 type revisionContext struct {
@@ -154,6 +159,12 @@ func (sr *schemaRepo) getRules(ctx context.Context, gName string) map[string]*da
 
 func (sr *schemaRepo) processMeasure(ctx context.Context, gName string, group *group, bindings map[string][]string, rules map[string]*databasev1.IndexRule) {
 	aggMap := sr.getAggMap(ctx, gName)
+	if len(aggMap) > 0 {
+		if err := createTopNResultMeasure(ctx, sr.metadata.MeasureRegistry(), gName); err != nil {
+			logger.Panicf("fails to create the topN result measure: %v", err)
+			return
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
@@ -163,30 +174,8 @@ func (sr *schemaRepo) processMeasure(ctx context.Context, gName string, group *g
 		logger.Panicf("fails to get the measures: %v", err)
 		return
 	}
-	revCtx := ctx.Value(revCtxKey).(*revisionContext)
-	measureMap := make(map[string]*databasev1.Measure, len(mm))
-	for _, m := range mm {
-		measureMap[m.Metadata.Name] = m
-	}
-	for _, aa := range aggMap {
-		for _, a := range aa {
-			sourceMeasre, ok := measureMap[a.SourceMeasure.Name]
-			if !ok {
-				sr.l.Warn().Str("group", gName).Str("measure", a.SourceMeasure.Name).Str("agg", a.Metadata.Name).Msg("source measure not found")
-				continue
-			}
-			if _, ok := measureMap[a.Metadata.Name]; !ok {
-				sr.l.Info().Str("group", gName).Str("measure", a.SourceMeasure.Name).Str("agg", a.Metadata.Name).Msg("remove topN aggregation")
-				m, err := createTopNMeasure(ctx, sr.metadata.MeasureRegistry(), a, sourceMeasre)
-				if err != nil {
-					logger.Panicf("fails to create or update the topN measure: %v", err)
-					return
-				}
-				mm = append(mm, m)
-			}
-		}
-	}
 
+	revCtx := ctx.Value(revCtxKey).(*revisionContext)
 	for _, m := range mm {
 		if m.Metadata.ModRevision > revCtx.measure {
 			revCtx.measure = m.Metadata.ModRevision
@@ -228,7 +217,9 @@ func (sr *schemaRepo) storeMeasure(m *databasev1.Measure, group *group, bindings
 	var indexRules []*databasev1.IndexRule
 	if rr, ok := bindings[m.Metadata.GetName()]; ok {
 		for _, r := range rr {
-			indexRules = append(indexRules, rules[r])
+			if rule, ok := rules[r]; ok {
+				indexRules = append(indexRules, rule)
+			}
 		}
 	}
 	var topNAggr []*databasev1.TopNAggregation
@@ -263,7 +254,9 @@ func (sr *schemaRepo) storeStream(s *databasev1.Stream, group *group, bindings m
 	var indexRules []*databasev1.IndexRule
 	if rr, ok := bindings[s.Metadata.GetName()]; ok {
 		for _, r := range rr {
-			indexRules = append(indexRules, rules[r])
+			if rule, ok := rules[r]; ok {
+				indexRules = append(indexRules, rule)
+			}
 		}
 	}
 	if err := sr.storeResource(group, s, indexRules, nil); err != nil {
@@ -284,107 +277,50 @@ func (sr *schemaRepo) initGroup(groupSchema *commonv1.Group) (*group, error) {
 	return g, nil
 }
 
-func createOrUpdateTopNMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation) (*databasev1.Measure, error) {
-	oldTopNSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetMetadata())
+func createTopNResultMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, group string) error {
+	md := GetTopNSchemaMetadata(group)
+	m, err := measureSchemaRegistry.GetMeasure(ctx, md)
 	if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
-		return nil, errors.WithMessagef(err, "fail to get current topN measure %s", topNSchema.GetMetadata().GetName())
+		return errors.WithMessagef(err, "fail to get %s", md)
+	}
+	if m != nil {
+		return nil
 	}
 
-	sourceMeasureSchema, err := measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetSourceMeasure())
-	if err != nil {
-		return nil, errors.WithMessagef(err, "fail to get source measure %s", topNSchema.GetSourceMeasure().GetName())
-	}
-
-	// create a new "derived" measure for TopN result
-	newTopNMeasure, err := buildTopNSourceMeasure(topNSchema, sourceMeasureSchema)
-	if err != nil {
-		return nil, err
-	}
-	if oldTopNSchema == nil {
-		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); innerErr != nil {
-			if !errors.Is(innerErr, schema.ErrGRPCAlreadyExists) {
-				return nil, errors.WithMessagef(innerErr, "fail to create new topN measure %s", newTopNMeasure.GetMetadata().GetName())
-			}
-			newTopNMeasure, err = measureSchemaRegistry.GetMeasure(ctx, topNSchema.GetMetadata())
-			if err != nil {
-				return nil, errors.WithMessagef(err, "fail to get created topN measure %s", topNSchema.GetMetadata().GetName())
-			}
+	m = GetTopNSchema(md)
+	if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, m); innerErr != nil {
+		if !errors.Is(innerErr, schema.ErrGRPCAlreadyExists) {
+			return errors.WithMessagef(innerErr, "fail to create new topN measure %s", m)
 		}
-		return newTopNMeasure, nil
 	}
-	// compare with the old one
-	if cmp.Diff(newTopNMeasure, oldTopNSchema,
-		protocmp.IgnoreUnknown(),
-		protocmp.IgnoreFields(&databasev1.Measure{}, "updated_at"),
-		protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
-		protocmp.Transform()) == "" {
-		return oldTopNSchema, nil
-	}
-	// update
-	if _, err = measureSchemaRegistry.UpdateMeasure(ctx, newTopNMeasure); err != nil {
-		return nil, errors.WithMessagef(err, "fail to update topN measure %s", newTopNMeasure.GetMetadata().GetName())
-	}
-	return newTopNMeasure, nil
+	return nil
 }
 
-func createTopNMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, topNSchema *databasev1.TopNAggregation,
-	sourceMeasureSchema *databasev1.Measure,
-) (*databasev1.Measure, error) {
-	newTopNMeasure, err := buildTopNSourceMeasure(topNSchema, sourceMeasureSchema)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := measureSchemaRegistry.CreateMeasure(ctx, newTopNMeasure); err != nil {
-		return nil, err
-	}
-	return newTopNMeasure, nil
-}
-
-func buildTopNSourceMeasure(topNSchema *databasev1.TopNAggregation, sourceMeasureSchema *databasev1.Measure) (*databasev1.Measure, error) {
-	tagNames := sourceMeasureSchema.GetEntity().GetTagNames()
-	seriesSpecs := make([]*databasev1.TagSpec, 0, len(tagNames))
-
-	for _, tagName := range tagNames {
-		var found bool
-		for _, fSpec := range sourceMeasureSchema.GetTagFamilies() {
-			for _, tSpec := range fSpec.GetTags() {
-				if tSpec.GetName() == tagName {
-					seriesSpecs = append(seriesSpecs, tSpec)
-					found = true
-					goto CHECK
-				}
-			}
-		}
-
-	CHECK:
-		if !found {
-			return nil, fmt.Errorf("fail to find tag spec %s", tagName)
-		}
-	}
-	// create a new "derived" measure for TopN result
+// GetTopNSchema returns the schema of the topN result measure.
+func GetTopNSchema(md *commonv1.Metadata) *databasev1.Measure {
 	return &databasev1.Measure{
-		Metadata: topNSchema.Metadata,
-		Interval: sourceMeasureSchema.GetInterval(),
+		Metadata: md,
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
-				Name: topNTagFamily,
-				Tags: append(seriesSpecs,
-					&databasev1.TagSpec{
-						Name: "sortDirection",
-						Type: databasev1.TagType_TAG_TYPE_INT,
-					},
-					&databasev1.TagSpec{
-						Name: "rankNumber",
-						Type: databasev1.TagType_TAG_TYPE_INT,
-					},
-				),
+				Name: TopNTagFamily,
+				Tags: []*databasev1.TagSpec{
+					{Name: TopNTagNames[0], Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: TopNTagNames[1], Type: databasev1.TagType_TAG_TYPE_INT},
+					{Name: TopNTagNames[2], Type: databasev1.TagType_TAG_TYPE_STRING},
+				},
 			},
 		},
-		Fields: []*databasev1.FieldSpec{topNValueFieldSpec},
+		Fields: topNFieldsSpec,
 		Entity: &databasev1.Entity{
-			TagNames: append(topNSchema.GetGroupByTagNames(),
-				"sortDirection",
-				"rankNumber"),
+			TagNames: TopNTagNames,
 		},
-	}, nil
+	}
+}
+
+// GetTopNSchemaMetadata returns the metadata of the topN result measure.
+func GetTopNSchemaMetadata(group string) *commonv1.Metadata {
+	return &commonv1.Metadata{
+		Name:  TopNSchemaName,
+		Group: group,
+	}
 }

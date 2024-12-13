@@ -11,6 +11,7 @@ Release Notes.
 - Index: Support InsertIfAbsent functionality which ensures documents are only inserted if their docIDs are not already present in the current index. There is a exception for the documents with extra index fields more than the entity's index fields.
 - Measure: Introduce "index_mode" to save data exclusively in the series index, ideal for non-timeseries measures.
 - Index: Use numeric index type to support Int and Float
+- TopN: Group top n pre-calculation result by the group key in the new introduced `_top_n_result` measure, which is used to store the pre-calculation result.
 
 ### Bug Fixes
 
@@ -22,6 +23,9 @@ Release Notes.
 - Fix: View configuration on Property page.
 - UI: Add `indexMode` to display on the measure page.
 - UI: Refactor Groups Tree to optimize style and fix bugs.
+- UI: Add `NoSort` Field to IndexRule page.
+- Metadata: Fix the bug that the cache load nil value that is the unknown index rule on the index rule binding.
+- Queue: Fix the bug that the client remove a registered node in the eviction list. The node is controlled by the recovery loop, doesn't need to be removed in the failover process.
 
 ### Documentation
 
@@ -31,6 +35,10 @@ Release Notes.
 ### Chores
 
 - Fix metrics system typo.
+
+### CVEs
+
+- GO-2024-3321: Misuse of ServerConfig.PublicKeyCallback may cause authorization bypass in golang.org/x/crypto
 
 ## 0.7.0
 
