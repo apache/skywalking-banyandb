@@ -21,6 +21,7 @@ Release Notes.
 - UI: Polish Index Rule Binding Page and Index Page.
 - Fix: View configuration on Property page.
 - UI: Add `indexMode` to display on the measure page.
+- UI: Refactor Groups Tree to optimize style and fix bugs.
 
 ### Documentation
 
