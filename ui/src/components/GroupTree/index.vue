@@ -39,7 +39,6 @@ const resizable = ref()
 // Data
 const data = reactive({
     groupLists: [],
-    showSearch: false,
     isCollapse: false,
     treeWidth: '100%',
     // right menu
@@ -149,7 +148,6 @@ const emit = defineEmits(['setWidth'])
 
 // init data
 function getGroupLists() {
-    data.showSearch = false
     filterText.value = ''
     loading.value = true
     getGroupList()
@@ -165,7 +163,6 @@ function getGroupLists() {
                     }
                 }
                 if (props.type == 'property') {
-                    data.showSearch = true
                     return
                 }
                 let promise = data.groupLists.map((item) => {
@@ -237,7 +234,6 @@ function getGroupLists() {
                     promise = promise.concat(TopNAggregationRule)
                 }
                 Promise.all(promise).then(() => {
-                    data.showSearch = true
                     data.groupLists = processGroupTree()
                 }).catch((err) => {
                     ElMessage({
@@ -723,7 +719,7 @@ watch(filterText, (val) => {
     <div :style="{display: 'flex', flexDirection: 'column', width: `${data.treeWidth}`, height: `100%`}" ref="resizable" >
         <div style="display: flex; flex-direction: row; width: 100%; height: 100%; justify-content: space-between;">
             <div class="size flex" style="display: flex; flex-direction: column; width: calc(100% - 10px); overflow: auto;">
-                <el-input v-if="data.showSearch && props.type !== 'stream'" class="group-search" v-model="filterText"
+                <el-input v-if="props.type !== 'stream'" class="group-search" v-model="filterText"
                     placeholder="Search" :prefix-icon="Search" clearable />
                 <el-tree
                     ref="treeRef"
@@ -804,7 +800,6 @@ watch(filterText, (val) => {
 .group-search {
     margin: 20px 0 0 10px;
     width: calc(100% - 15px);
-    overflow: auto;
 }
 
 .group-tree {
