@@ -22,6 +22,7 @@ Release Notes.
 - UI: Polish Index Rule Binding Page and Index Page.
 - Fix: View configuration on Property page.
 - UI: Add `indexMode` to display on the measure page.
+- UI: Refactor Groups Tree to optimize style and fix bugs.
 - UI: Add `NoSort` Field to IndexRule page.
 - Metadata: Fix the bug that the cache load nil value that is the unknown index rule on the index rule binding.
 - Queue: Fix the bug that the client remove a registered node in the eviction list. The node is controlled by the recovery loop, doesn't need to be removed in the failover process.

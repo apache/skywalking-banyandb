@@ -47,7 +47,7 @@ function removeTab(index) {
         return
     }
     data.tabsList.splice(index, 1)
-    if (activeTabIndex != 0) {
+    if (activeTabIndex) {
         data.activeTabIndex--
     }
     router.push(data.tabsList[data.activeTabIndex].route)

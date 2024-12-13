@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import Aside from '@/components/Aside/index.vue'
+import GroupTree from '@/components/GroupTree/index.vue'
 import TopNav from '@/components/TopNav/index.vue'
 import { reactive } from 'vue';
 
@@ -35,7 +35,7 @@ function setWidth(width) {
   <div class="size">
     <el-container>
       <el-aside :width="data.width" class="bd-top flex" style="position:relative; background-color: white;">
-        <Aside type="measure" @setWidth="setWidth"></Aside>
+        <GroupTree type="measure" @setWidth="setWidth" />
       </el-aside>
       <el-main>
         <TopNav></TopNav>
