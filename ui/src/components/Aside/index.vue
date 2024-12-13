@@ -66,10 +66,6 @@ const defaultProps = {
   label: 'name',
 }
 
-// Loading
-const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
-const $loadingClose = proxy.$loadingClose
-
 const TargetTypes = {
     Group: 'group',
     Resources: 'resources'
@@ -151,7 +147,6 @@ const emit = defineEmits(['setWidth'])
 
 // init data
 function getGroupLists() {
-    $loadingCreate()
     data.showSearch = false
     filterText.value = ''
     loading.value = true
@@ -169,7 +164,6 @@ function getGroupLists() {
                 }
                 if (props.type == 'property') {
                     data.showSearch = true
-                    $loadingClose()
                     return
                 }
                 let promise = data.groupLists.map((item) => {
@@ -250,15 +244,12 @@ function getGroupLists() {
                         duration: 3000
                     })
                 }).finally(() => {
-                    $loadingClose()
                     loading.value = false
                 })
             }else{
-                $loadingClose()
                 loading.value = false
             }
         })
-    $loadingClose()
 }
 
 function processGroupTree() {
@@ -387,6 +378,9 @@ function openOperationMenus(e, node) {
         return;
     }
     data.operationMenus = [AllMenus[0]]
+    if (Object.keys(TypeMap).includes(currentNode.value.type)) {
+        data.operationMenus.push(AllMenus[3])
+    }
 }
 function closeRightMenu() {
     data.showOperationMenus = false
@@ -522,7 +516,6 @@ function openDeleteDialog() {
         })
 }
 function deleteSecondaryDataModelFunction(param) {
-    $loadingCreate()
     deleteSecondaryDataModel(param, currentNode.value.group, currentNode.value.type)
         .then((res) => {
             if (res.status == 200) {
@@ -537,13 +530,9 @@ function deleteSecondaryDataModelFunction(param) {
                 }
             }
         })
-        .finally(() => {
-            $loadingClose()
-        })
 }
 function deleteGroupFunction() {
     // delete group
-    $loadingCreate()
     deleteGroup(currentNode.value.name)
         .then((res) => {
             if (res.status == 200) {
@@ -557,9 +546,6 @@ function deleteGroupFunction() {
                 }
                 $bus.emit('deleteGroup', currentNode.value.name)
             }
-        })
-        .finally(() => {
-            $loadingClose()
         })
 }
 function deleteResource() {
@@ -577,9 +563,6 @@ function deleteResource() {
                 }
                 $bus.emit('deleteResource', currentNode.value.name)
             }
-        })
-        .finally(() => {
-            $loadingClose()
         })
 }
 
@@ -610,7 +593,6 @@ function createGroupFunction() {
                     }
                 }
             }
-            $loadingCreate()
             createGroup(dataList)
                 .then((res) => {
                     if (res.status == 200) {
@@ -624,7 +606,6 @@ function createGroupFunction() {
                 })
                 .finally(() => {
                     data.dialogGroupVisible = false
-                    $loadingClose()
                 })
         }
     })
@@ -653,7 +634,6 @@ function editGroupFunction() {
                     }
                 }
             }
-            $loadingCreate()
             editGroup(name, dataList)
                 .then((res) => {
                     if (res.status == 200) {
@@ -667,7 +647,6 @@ function editGroupFunction() {
                 })
                 .finally(() => {
                     data.dialogGroupVisible = false
-                    $loadingClose()
                 })
         }
     })
