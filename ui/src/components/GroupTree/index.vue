@@ -263,6 +263,7 @@ function processGroupTree() {
             catalog: group.catalog,
             type: TargetTypes.Group,
             key: group.metadata.name,
+            icon: `el-icon-folder`
         }
         const keys = Object.keys(TypeMap);
         for (const key of keys) {
@@ -690,7 +691,7 @@ function onMouseMove(e) {
     if (newWidth < 60) {
         return;
     }
-    if (newWidth > 600) {
+    if (newWidth > 700) {
         return;
     }
     data.treeWidth = `${newWidth}px`
@@ -702,6 +703,7 @@ function onMouseUp(e) {
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
 }
+
 // Eventbus, change isCollapse
 $bus.on('resetAside', () => {
     data.activeMenu = ''
@@ -721,7 +723,7 @@ watch(filterText, (val) => {
 <template>
     <div :style="{display: 'flex', flexDirection: 'column', width: `${data.treeWidth}`, height: `100%`}" ref="resizable" >
         <div style="display: flex; flex-direction: row; width: 100%; height: 100%; justify-content: space-between;">
-            <div class="size flex" style="display: flex; flex-direction: column; width: calc(100% - 20px);">
+            <div class="size flex" style="display: flex; flex-direction: column; width: calc(100% - 10px); overflow: auto;">
                 <el-input v-if="data.showSearch && props.type !== 'stream'" class="group-search" v-model="filterText"
                     placeholder="Search" :prefix-icon="Search" clearable />
                 <el-tree
@@ -733,7 +735,21 @@ watch(filterText, (val) => {
                     @node-click="viewResources"
                     @node-contextmenu="openOperationMenus"
                     class="group-tree"
-                />
+                    icon=""
+                >
+                    <template #default="{ _, data }">
+                        <div class="node-icon">
+                            <el-icon class="el-icon" v-if="data.type !== TargetTypes.Group">
+                                <Histogram v-if="data.type===`${Object.keys(TypeMap)[0]}`" />
+                                <Collection v-else-if="data.type===`${Object.keys(TypeMap)[1]}`" />
+                                <Ticket v-else-if="data.type===`${Object.keys(TypeMap)[2]}`" />
+                                <Tickets v-else-if="data.type=== TargetTypes.Resources" />
+                                <DataAnalysis v-else />
+                            </el-icon>
+                            <div>{{ data.name }}</div>
+                        </div>
+                    </template>
+                </el-tree>
             </div>
         <div class="resizer" @mousedown="mouseDown"></div>
         </div>
@@ -788,7 +804,8 @@ watch(filterText, (val) => {
 <style lang="scss" scoped>
 .group-search {
     margin: 20px 0 0 10px;
-    width: calc(100% - 20px);
+    width: calc(100% - 10px);
+    overflow: auto;
 }
 
 .group-tree {
@@ -824,5 +841,16 @@ watch(filterText, (val) => {
     width: 100%;
     display: flex;
     justify-content: center;
+}
+
+.node-icon {
+    display: flex;
+    flex-direction: row;
+}
+
+.el-icon {
+    height: 20px;
+    line-height: 20px;
+    margin-right: 10px;
 }
 </style>
