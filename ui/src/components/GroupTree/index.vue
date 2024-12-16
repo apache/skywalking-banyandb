@@ -706,7 +706,7 @@ watch(filterText, (val) => {
 <template>
     <div :style="{display: 'flex', flexDirection: 'column', width: `${data.treeWidth}`, height: `100%`}" ref="resizable" >
         <div style="display: flex; flex-direction: row; width: 100%; height: 100%; justify-content: space-between;">
-            <div class="size flex" style="display: flex; flex-direction: column; width: calc(100% - 10px); overflow: auto;">
+            <div class="size flex" style="display: flex; flex-direction: column; width: calc(100% - 6px); overflow: auto;">
                 <el-input v-if="props.type !== 'stream'" class="group-search" v-model="filterText"
                     placeholder="Search" :prefix-icon="Search" clearable />
                 <el-tree

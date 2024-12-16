@@ -120,10 +120,12 @@
     padding: 0px !important;
     --el-icon-size: 20px !important;
 }
+.tags-and-rules .el-select__selection {
+    display: block;
+}
 
-.el-tag__content {
-    height: 100%;
-    width: 95%;
+.tags-and-rules .el-select__selected-item {
+    margin-bottom: 5px;
 }
 
 .el-select__tags .el-tag {

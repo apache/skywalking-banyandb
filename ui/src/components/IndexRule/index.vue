@@ -79,7 +79,7 @@ async function initData() {
           <el-input v-model="data.indexRule.analyzer" :disabled="true"></el-input>
         </el-form-item>
         <el-form-item label="Tags">
-          <el-select v-model="data.indexRule.tags" style="width: 100%;" :disabled="true" multiple></el-select>
+          <el-select class="tags-and-rules" v-model="data.indexRule.tags" style="width: 100%;" :disabled="true" multiple></el-select>
         </el-form-item>
         <el-form-item label="Type">
           <el-input v-model="data.indexRule.type" disabled></el-input>
