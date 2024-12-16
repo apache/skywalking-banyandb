@@ -720,6 +720,8 @@ watch(filterText, (val) => {
                     class="group-tree"
                     node-key="key"
                     :default-expanded-keys="[data.activeNode]"
+                    :current-node-key="data.activeNode"
+                    highlight-current
                 >
                     <template #default="{ _, data }">
                         <div class="node-icon">
