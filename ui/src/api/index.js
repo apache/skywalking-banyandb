@@ -19,167 +19,167 @@
 
 // api file
 
-import request from '@/utils/axios'
+import request from '@/utils/axios';
 
 // Some request methods
 export function getGroupList() {
-    return request({
-        url: '/api/v1/group/schema/lists',
-        method: 'get',
-    })
+  return request({
+    url: '/api/v1/group/schema/lists',
+    method: 'get',
+  });
 }
 
 export function getStreamOrMeasureList(type, name) {
-    return request({
-        url: `/api/v1/${type}/schema/lists/${name}`,
-        method: 'get'
-    })
+  return request({
+    url: `/api/v1/${type}/schema/lists/${name}`,
+    method: 'get',
+  });
 }
 
 export function getStreamOrMeasure(type, group, name) {
-    return request({
-        url: `/api/v1/${type}/schema/${group}/${name}`,
-        method: 'get'
-    })
+  return request({
+    url: `/api/v1/${type}/schema/${group}/${name}`,
+    method: 'get',
+  });
 }
 
 export function getTableList(data, type) {
-    return request({
-        url: `/api/v1/${type}/data`,
-        data: data,
-        method: 'post'
-    })
+  return request({
+    url: `/api/v1/${type}/data`,
+    data: data,
+    method: 'post',
+  });
 }
 
 export function deleteStreamOrMeasure(type, group, name) {
-    return request({
-        url: `/api/v1/${type}/schema/${group}/${name}`,
-        method: 'delete'
-    })
+  return request({
+    url: `/api/v1/${type}/schema/${group}/${name}`,
+    method: 'delete',
+  });
 }
 
 export function deleteGroup(group) {
-    return request({
-        url: `/api/v1/group/schema/${group}`,
-        method: 'delete'
-    })
+  return request({
+    url: `/api/v1/group/schema/${group}`,
+    method: 'delete',
+  });
 }
 
 export function createGroup(data) {
-    return request({
-        url: `/api/v1/group/schema`,
-        method: 'post',
-        data: data
-    })
+  return request({
+    url: `/api/v1/group/schema`,
+    method: 'post',
+    data: data,
+  });
 }
 
 export function editGroup(group, data) {
-    return request({
-        url: `/api/v1/group/schema/${group}`,
-        method: 'put',
-        data: data
-    })
+  return request({
+    url: `/api/v1/group/schema/${group}`,
+    method: 'put',
+    data: data,
+  });
 }
 
 export function createResources(type, data) {
-    return request({
-        url: `/api/v1/${type}/schema`,
-        method: 'post',
-        data: data
-    })
+  return request({
+    url: `/api/v1/${type}/schema`,
+    method: 'post',
+    data: data,
+  });
 }
 
 export function editResources(type, group, name, data) {
-    return request({
-        url: `/api/v1/${type}/schema/${group}/${name}`,
-        method: 'put',
-        data: data
-    })
+  return request({
+    url: `/api/v1/${type}/schema/${group}/${name}`,
+    method: 'put',
+    data: data,
+  });
 }
 
 export function getindexRuleList(name) {
-    return request({
-        url: `/api/v1/index-rule/schema/lists/${name}`,
-        method: 'get'
-    })
+  return request({
+    url: `/api/v1/index-rule/schema/lists/${name}`,
+    method: 'get',
+  });
 }
 
 export function getindexRuleBindingList(name) {
-    return request({
-        url: `/api/v1/index-rule-binding/schema/lists/${name}`,
-        method: 'get'
-    })
+  return request({
+    url: `/api/v1/index-rule-binding/schema/lists/${name}`,
+    method: 'get',
+  });
 }
 
 export function getTopNAggregationList(name) {
-    return request({
-        url: `/api/v1/topn-agg/schema/lists/${name}`,
-        method: 'get'
-    })
+  return request({
+    url: `/api/v1/topn-agg/schema/lists/${name}`,
+    method: 'get',
+  });
 }
 
 export function getSecondaryDataModel(type, group, name) {
-    return request({
-        url: `/api/v1/${type}/schema/${group}/${name}`,
-        method: 'get'
-    })
+  return request({
+    url: `/api/v1/${type}/schema/${group}/${name}`,
+    method: 'get',
+  });
 }
 
 export function createSecondaryDataModel(type, data) {
-    return request({
-        url: `/api/v1/${type}/schema`,
-        method: 'post',
-        data: data
-    })
+  return request({
+    url: `/api/v1/${type}/schema`,
+    method: 'post',
+    data: data,
+  });
 }
 
 export function updateSecondaryDataModel(type, group, name, data) {
-    return request({
-        url: `/api/v1/${type}/schema/${group}/${name}`,
-        method: 'put',
-        data: data
-    })
+  return request({
+    url: `/api/v1/${type}/schema/${group}/${name}`,
+    method: 'put',
+    data: data,
+  });
 }
 
 export function deleteSecondaryDataModel(type, group, name) {
-    return request({
-        url: `/api/v1/${type}/schema/${group}/${name}`,
-        method: 'delete'
-    })
+  return request({
+    url: `/api/v1/${type}/schema/${group}/${name}`,
+    method: 'delete',
+  });
 }
 
 export function getPropertyByGroup(group) {
-    return request({
-        url: `/api/v1/property/lists/${group}`,
-        method: 'get'
-    })
+  return request({
+    url: `/api/v1/property/lists/${group}`,
+    method: 'get',
+  });
 }
 
 export function getPropertyList(group, name, ids, tags) {
-    return request({
-        url: `/api/v1/property/lists/${group}/${name}/${ids}/${tags}`,
-        method: 'get'
-    })
+  return request({
+    url: `/api/v1/property/lists/${group}/${name}/${ids}/${tags}`,
+    method: 'get',
+  });
 }
 
 export function getPropertyDetail(group, name, id, tags) {
-    return request({
-        url: `/api/v1/property/${group}/${name}/${id}/${tags}`,
-        method: 'get'
-    })
+  return request({
+    url: `/api/v1/property/${group}/${name}/${id}/${tags}`,
+    method: 'get',
+  });
 }
 
 export function deleteProperty(group, name, id, tags) {
-    return request({
-        url: `/api/v1/property/${group}/${name}/${id}/${tags}`,
-        method: 'delete'
-    })
+  return request({
+    url: `/api/v1/property/${group}/${name}/${id}/${tags}`,
+    method: 'delete',
+  });
 }
 
 export function applyProperty(group, name, id, data) {
-    return request({
-        url: `/api/v1/property/${group}/${name}/${id}`,
-        method: 'put',
-        data: data
-    })
+  return request({
+    url: `/api/v1/property/${group}/${name}/${id}`,
+    method: 'put',
+    data: data,
+  });
 }

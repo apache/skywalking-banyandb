@@ -17,16 +17,16 @@
  * under the License.
  */
 
-import aside from './aside'
-import header from './header'
-import menuState from './menuState'
-import tags from './tags'
+import aside from './aside';
+import header from './header';
+import menuState from './menuState';
+import tags from './tags';
 
 export default function stores() {
-    return {
-        aside: aside(),
-        header: header(),
-        menuState: menuState(),
-        tags: tags()
-    }
+  return {
+    aside: aside(),
+    header: header(),
+    menuState: menuState(),
+    tags: tags(),
+  };
 }

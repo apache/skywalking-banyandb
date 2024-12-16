@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import Read from '@/components/Read/index.vue'
+  import Read from '@/components/Read/index.vue';
 </script>
 
 <template>

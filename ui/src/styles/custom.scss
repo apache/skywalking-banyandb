@@ -18,44 +18,45 @@
  */
 
 html {
-    /* ==================
+  /* ==================
             color
     ==================== */
-    --color-main: #6E38F7; /* main color */
-    --el-color-primary-light-3: #936bf8 !important;
-    --el-color-primary: var(--color-main) !important;
-    --el-border-color-hover: var(--color-main) !important;
-    --el-button-hover-bg-color: var(--color-main-background) !important;
-    --el-button-hover-border-color: var(--color-main) !important;
-    --color-main-background: rgb(241, 235, 254);
-    --color-background: #e7ebfc;
+  --color-main: #6e38f7; /* main color */
+  --el-color-primary-light-3: #936bf8 !important;
+  --el-color-primary: var(--color-main) !important;
+  --el-border-color-hover: var(--color-main) !important;
+  --el-button-hover-bg-color: var(--color-main-background) !important;
+  --el-button-hover-border-color: var(--color-main) !important;
+  --color-main-background: rgb(241, 235, 254);
+  --color-background: #e7ebfc;
 
-    --color-top-background: #1d1f2a;
-    --color-nav-background: #4b4c59;
+  --color-top-background: #1d1f2a;
+  --color-nav-background: #4b4c59;
 
-    --color-main-font: #303133;
-    --color-general-font: #606266;
-    --color-secondary-font: #909399;
-    --color-placeholder-font: #C0C4CC;
+  --color-main-font: #303133;
+  --color-general-font: #606266;
+  --color-secondary-font: #909399;
+  --color-placeholder-font: #c0c4cc;
 
-    --color-first-border: #DCDFE6;
-    --color-secondary-border: #E4E7ED;
-    --color-Tertiary-border: #EBEEF5;
-    --color-Quad-border: #F2F6FC;
-    
-    --color-black: #000000;
-    --color-white: #FFFFFF;
+  --color-first-border: #dcdfe6;
+  --color-secondary-border: #e4e7ed;
+  --color-Tertiary-border: #ebeef5;
+  --color-Quad-border: #f2f6fc;
 
-    --color-select: #ecf5ff;
-    
-    /* ==================
+  --color-black: #000000;
+  --color-white: #ffffff;
+
+  --color-select: #ecf5ff;
+
+  /* ==================
             font
     ==================== */
-    --weight-mini: 500;   /* font-weight */
-    --weight-lt: 600;
-    --size-mini: 0.8em;   /* font-size */
-    --size-lt: 1.1em;
-    --size-title: 1.2em;
-    --size-big: 1.4em;
-    --font-family-main:'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
+  --weight-mini: 500; /* font-weight */
+  --weight-lt: 600;
+  --size-mini: 0.8em; /* font-size */
+  --size-lt: 1.1em;
+  --size-title: 1.2em;
+  --size-big: 1.4em;
+  --font-family-main: 'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana,
+    sans-serif;
 }
