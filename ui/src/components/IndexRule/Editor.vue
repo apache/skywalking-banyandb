@@ -267,7 +267,7 @@ function initData() {
           </el-select>
         </el-form-item>
         <el-form-item label="Tags" prop="tags">
-          <el-select v-model="data.form.tags" allow-create filterable default-first-option placeholder="Input Tags"
+          <el-select class="tags-and-rules" v-model="data.form.tags" allow-create filterable default-first-option placeholder="Input Tags"
             style="width: 100%;" clearable multiple></el-select>
         </el-form-item>
         <el-form-item label="Type" prop="type">

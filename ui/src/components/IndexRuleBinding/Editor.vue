@@ -240,7 +240,7 @@ function initData() {
             clearable></el-date-picker>
         </el-form-item>
         <el-form-item label="Rules" prop="rules">
-          <el-select v-model="data.form.rules" allow-create filterable default-first-option placeholder="Input Rules"
+          <el-select class="tags-and-rules" v-model="data.form.rules" allow-create filterable default-first-option placeholder="Input Rules"
             style="width: 100%;" clearable multiple></el-select>
         </el-form-item>
       </el-form>

@@ -307,7 +307,7 @@ function initData() {
           </el-select>
         </el-form-item>
         <el-form-item label="Group By Tag Names" prop="groupByTagNames" label-width="150px">
-          <el-select v-model="data.form.groupByTagNames" allow-create filterable default-first-option placeholder="Input Group By Tag Names"
+          <el-select class="tags-and-rules" v-model="data.form.groupByTagNames" allow-create filterable default-first-option placeholder="Input Group By Tag Names"
             style="width: 100%;" clearable multiple></el-select>
         </el-form-item>
         <el-form-item label="Counters Number" prop="countersNumber" label-width="150px">

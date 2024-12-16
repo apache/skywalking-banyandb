@@ -85,7 +85,7 @@ function initData() {
           <el-date-picker v-model="data.indexRuleBinding.expireAt" :disabled="true" type="datetime" style="width: 100%;"></el-date-picker>
         </el-form-item>
         <el-form-item label="Rules">
-          <el-select v-model="data.indexRuleBinding.rules" style="width: 100%;" :disabled="true" multiple></el-select>
+          <el-select class="tags-and-rules" v-model="data.indexRuleBinding.rules" style="width: 100%;" :disabled="true" multiple></el-select>
         </el-form-item>
       </el-form>
     </el-card>

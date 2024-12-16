@@ -58,7 +58,7 @@ const data = reactive({
         ttlUnit: "UNIT_DAY",
         ttlNum: 3
     },
-    activeMenu: '',
+    activeNode: '',
     formLabelWidth: "170px"
 })
 
@@ -235,6 +235,7 @@ function getGroupLists() {
                 }
                 Promise.all(promise).then(() => {
                     data.groupLists = processGroupTree()
+                    initActiveNode()
                 }).catch((err) => {
                     ElMessage({
                         message: 'An error occurred while obtaining group data. Please refresh and try again. Error: ' + err,
@@ -259,9 +260,8 @@ function processGroupTree() {
             catalog: group.catalog,
             type: TargetTypes.Group,
             key: group.metadata.name,
-            icon: `el-icon-folder`
         }
-        const keys = Object.keys(TypeMap);
+        const keys = Object.keys(TypeMap)
         for (const key of keys) {
             if (group[key]) {
                 const n = key === 'children' ? props.type : key
@@ -269,14 +269,14 @@ function processGroupTree() {
                     name: n.charAt(0).toUpperCase() + n.slice(1),
                     children: [],
                     type: n,
-                    key: `${group.metadata.name}_${n}`,
+                    key: `${group.metadata.name}_${TypeMap[n] || n}`,
                     group: group.metadata.name,
                 }
                 for (const item of group[key]) {
                     list.children.push({
                         ...item.metadata,
                         type: TargetTypes.Resources,
-                        key: `${group.metadata.name}_${n}_${item.metadata.name}`,
+                        key: `${group.metadata.name}_${TypeMap[n] || n}_${item.metadata.name}`,
                         parent: TypeMap[n] || n,
                         catalog: group.catalog,
                         resourceOpts: group.resourceOpts
@@ -315,7 +315,6 @@ function viewResources(node) {
             type: `Read-${parent}`,
             route
         }
-        data.activeMenu = `${group}-${name}` 
         return $bus.emit('AddTabs', add)
     }
     if (props.type == 'property') {
@@ -351,7 +350,6 @@ function viewResources(node) {
         type: 'Read',
         route
     }
-    data.activeMenu = `${group}-${name}`
     $bus.emit('AddTabs', add)
 }
 
@@ -662,12 +660,11 @@ function clearGroupForm() {
         ttlNum: 3
     }
 }
-function initActiveMenu() {
-    const group = route.params.group
-    const name = route.params.name
-    if (group && name) {
+function initActiveNode() {
+    const {group, name, type} = route.params
 
-        data.activeMenu = `${group}-${name}`
+    if (group && name && type) {
+        data.activeNode = `${group}_${type}_${name}`
     }
 }
 const filterNode = (value, data) => {
@@ -699,16 +696,7 @@ function onMouseUp(e) {
     document.removeEventListener('mouseup', onMouseUp);
 }
 
-// Eventbus, change isCollapse
-$bus.on('resetAside', () => {
-    data.activeMenu = ''
-    router.push({
-        name: `${props.type}Start`
-    })
-})
-
 getGroupLists()
-initActiveMenu()
 
 watch(filterText, (val) => {
   treeRef.value?.filter(val)
@@ -718,7 +706,7 @@ watch(filterText, (val) => {
 <template>
     <div :style="{display: 'flex', flexDirection: 'column', width: `${data.treeWidth}`, height: `100%`}" ref="resizable" >
         <div style="display: flex; flex-direction: row; width: 100%; height: 100%; justify-content: space-between;">
-            <div class="size flex" style="display: flex; flex-direction: column; width: calc(100% - 10px); overflow: auto;">
+            <div class="size flex" style="display: flex; flex-direction: column; width: calc(100% - 6px); overflow: auto;">
                 <el-input v-if="props.type !== 'stream'" class="group-search" v-model="filterText"
                     placeholder="Search" :prefix-icon="Search" clearable />
                 <el-tree
@@ -730,7 +718,10 @@ watch(filterText, (val) => {
                     @node-click="viewResources"
                     @node-contextmenu="openOperationMenus"
                     class="group-tree"
-                    icon=""
+                    node-key="key"
+                    :default-expanded-keys="[data.activeNode]"
+                    :current-node-key="data.activeNode"
+                    highlight-current
                 >
                     <template #default="{ _, data }">
                         <div class="node-icon">

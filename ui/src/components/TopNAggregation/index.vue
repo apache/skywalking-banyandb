@@ -92,7 +92,7 @@ function initData() {
           <el-select v-model="data.topNAggregation.fieldValueSort" style="width: 100%;" :disabled="true"></el-select>
         </el-form-item>
         <el-form-item label="Group By Tag Names">
-          <el-select v-model="data.topNAggregation.groupByTagNames" style="width: 100%;" :disabled="true" multiple></el-select>
+          <el-select class="tags-and-rules" v-model="data.topNAggregation.groupByTagNames" style="width: 100%;" :disabled="true" multiple></el-select>
         </el-form-item>
         <el-form-item label="Counters Number">
           <el-input v-model="data.topNAggregation.countersNumber" :disabled="true"></el-input>
