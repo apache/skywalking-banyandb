@@ -64,13 +64,6 @@
       margin: 0;
     }
   }
-
-  .right-menu {
-    width: 170px;
-    position: fixed;
-    z-index: 9999999999999999999999999999 !important;
-    background-color: white;
-  }
 </style>
 
 <style scoped>
