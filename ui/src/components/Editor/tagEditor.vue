@@ -290,7 +290,7 @@
             data.dialogVisible = false;
             initForm();
           "
-          >
+        >
           Cancel
         </el-button>
         <el-button size="small" type="primary" color="#6E38F7" @click="confirmForm(ruleFormRef)"> Confirm </el-button>
