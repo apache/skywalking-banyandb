@@ -179,11 +179,17 @@
       if (res.status === 200) {
         data.groupLists = res.data.group.filter((d) => catalogToGroupType[d.catalog] === props.type);
         if (props.type === 'property') {
-          data.groupLists = processGroupTree();
+          data.groupLists = data.groupLists.map((item) => ({
+            ...item.metadata,
+            type: TargetTypes.Resources,
+            key: `property-${item.metadata.name}`,
+            catalog: item.catalog,
+            resourceOpts: item.resourceOpts,
+          }));
           loading.value = false;
           return;
         }
-        const promise = data.groupLists.map((item) => {
+        let promise = data.groupLists.map((item) => {
           const type = props.type;
           const name = item.metadata.name;
           return new Promise((resolve, reject) => {
