@@ -218,9 +218,9 @@
 </script>
 
 <template>
-  <el-button size="small" type="primary" color="#6E38F7" style="margin-top: 20px" @click="openAddTagFamily"
-    >Add Tag</el-button
-  >
+  <el-button size="small" type="primary" color="#6E38F7" style="margin-top: 20px" @click="openAddTagFamily">
+    Add Tag
+  </el-button>
   <el-table :data="data.tableData" :span-method="objectSpanMethod" style="width: 100%; margin-top: 20px" border>
     <el-table-column label="Tag Family" prop="tagFamily"></el-table-column>
     <el-table-column label="Tag" prop="tag"></el-table-column>
@@ -234,8 +234,9 @@
           type="primary"
           @click.prevent="openEditTagFamily(scope.$index)"
           style="color: var(--color-main); font-weight: bold"
-          >Edit</el-button
         >
+          Edit
+        </el-button>
         <el-popconfirm @confirm="deleteTableData(scope.$index)" title="Are you sure to delete this?">
           <template #reference>
             <el-button link type="danger" style="color: red; font-weight: bold">Delete</el-button>
@@ -289,8 +290,9 @@
             data.dialogVisible = false;
             initForm();
           "
-          >Cancel</el-button
         >
+          Cancel
+        </el-button>
         <el-button size="small" type="primary" color="#6E38F7" @click="confirmForm(ruleFormRef)"> Confirm </el-button>
       </div>
     </span>

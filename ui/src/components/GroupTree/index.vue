@@ -176,26 +176,28 @@
     filterText.value = '';
     loading.value = true;
     getGroupList().then((res) => {
-      if (res.status == 200) {
-        let group = res.data.group;
-        data.groupLists = group;
-        for (let i = 0; i < data.groupLists.length; i++) {
-          let type = catalogToGroupType[data.groupLists[i].catalog];
-          if (type !== props.type) {
-            data.groupLists.splice(i, 1);
-            i--;
-          }
-        }
-        if (props.type == 'property') {
+      if (res.status === 200) {
+        data.groupLists = res.data.group.filter((d) => catalogToGroupType[d.catalog] === props.type);
+        if (props.type === 'property') {
+          data.groupLists = data.groupLists.map((item) => ({
+            ...item.metadata,
+            type: TargetTypes.Resources,
+            key: `property-${item.metadata.name}`,
+            catalog: item.catalog,
+            resourceOpts: item.resourceOpts,
+          }));
+          loading.value = false;
+          const { group, type } = route.params;
+          data.activeNode = `${type}-${group}`;
           return;
         }
         let promise = data.groupLists.map((item) => {
-          let type = props.type;
-          let name = item.metadata.name;
+          const type = props.type;
+          const name = item.metadata.name;
           return new Promise((resolve, reject) => {
             getStreamOrMeasureList(type, name)
               .then((res) => {
-                if (res.status == 200) {
+                if (res.status === 200) {
                   item.children = res.data[type];
                   resolve();
                 }
@@ -205,13 +207,13 @@
               });
           });
         });
-        if (props.type == 'stream' || props.type == 'measure') {
-          let promiseIndexRule = data.groupLists.map((item) => {
-            let name = item.metadata.name;
+        if (props.type === 'stream' || props.type === 'measure') {
+          const promiseIndexRule = data.groupLists.map((item) => {
+            const name = item.metadata.name;
             return new Promise((resolve, reject) => {
               getindexRuleList(name)
                 .then((res) => {
-                  if (res.status == 200) {
+                  if (res.status === 200) {
                     item.indexRule = res.data.indexRule;
                     resolve();
                   }
@@ -221,12 +223,12 @@
                 });
             });
           });
-          let promiseIndexRuleBinding = data.groupLists.map((item) => {
-            let name = item.metadata.name;
+          const promiseIndexRuleBinding = data.groupLists.map((item) => {
+            const name = item.metadata.name;
             return new Promise((resolve, reject) => {
               getindexRuleBindingList(name)
                 .then((res) => {
-                  if (res.status == 200) {
+                  if (res.status === 200) {
                     item.indexRuleBinding = res.data.indexRuleBinding;
                     resolve();
                   }
@@ -240,12 +242,12 @@
           promise = promise.concat(promiseIndexRuleBinding);
         }
         if (props.type == 'measure') {
-          let TopNAggregationRule = data.groupLists.map((item) => {
-            let name = item.metadata.name;
+          const TopNAggregationRule = data.groupLists.map((item) => {
+            const name = item.metadata.name;
             return new Promise((resolve, reject) => {
               getTopNAggregationList(name)
                 .then((res) => {
-                  if (res.status == 200) {
+                  if (res.status === 200) {
                     item.topNAggregation = res.data.topNAggregation;
                     resolve();
                   }
@@ -264,7 +266,7 @@
           })
           .catch((err) => {
             ElMessage({
-              message: 'An error occurred while obtaining group data. Please refresh and try again. Error: ' + err,
+              message: `An error occurred while obtaining group data. Please refresh and try again. Error: ${err}`,
               type: 'error',
               duration: 3000,
             });
@@ -630,7 +632,7 @@
     });
   }
   function editGroupFunction() {
-    let name = data.groupLists[data.clickIndex].metadata.name;
+    const name = data.groupLists[data.clickIndex].metadata.name;
     ruleForm.value.validate((valid) => {
       if (valid) {
         const dataList = {
