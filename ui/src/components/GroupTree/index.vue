@@ -187,6 +187,8 @@
             resourceOpts: item.resourceOpts,
           }));
           loading.value = false;
+          const { group, type } = route.params;
+          data.activeNode = `${type}-${group}`;
           return;
         }
         let promise = data.groupLists.map((item) => {
