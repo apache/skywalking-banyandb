@@ -55,6 +55,14 @@ jobs:
           node-version: 20.12
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
+      - run: cd ui && npm run format && ../
+      - name: Run consistency check
+        run: |
+          if [ ! -z "`git status -s`" ]; then \
+            echo "Following files are not consistent with CI:"; \
+            git status -s; \
+            exit 1; \
+          fi
       - name: Install Go
         uses: actions/setup-go@v3
         with:
