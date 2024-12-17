@@ -18,58 +18,58 @@
 -->
 
 <script setup>
-import { ElImage } from 'element-plus'
-import userImg from '@/assets/banyandb.svg'
+  import { ElImage } from 'element-plus';
+  import userImg from '@/assets/banyandb.svg';
 </script>
 
 <template>
-    <div class="display-view">
-        <div class="inner-component">
-            <el-image :src="userImg" class="display-image" fit="fill">
-                <div slot="error" class="image-slot">
-                    <i class="el-icon-picture-outline"></i>
-                </div>
-            </el-image>
-            <div class="display-message">
-                <h1 class="message">404 Page Not Found</h1>
-                <router-link to="/" class="go-home-link">Go Home</router-link>
-            </div>
+  <div class="display-view">
+    <div class="inner-component">
+      <el-image :src="userImg" class="display-image" fit="fill">
+        <div slot="error" class="image-slot">
+          <i class="el-icon-picture-outline"></i>
         </div>
+      </el-image>
+      <div class="display-message">
+        <h1 class="message">404 Page Not Found</h1>
+        <router-link to="/" class="go-home-link">Go Home</router-link>
+      </div>
     </div>
+  </div>
 </template>
 
 <style lang="scss" scoped>
-.display-view {
+  .display-view {
     display: flex;
     justify-content: center;
     align-items: center;
     height: 100%;
-}
+  }
 
-.inner-component {
+  .inner-component {
     display: flex;
     justify-content: center;
     align-items: center;
     gap: 2rem;
-}
+  }
 
-.display-image {
-  height: 12rem;
-}
+  .display-image {
+    height: 12rem;
+  }
 
-.display-message {
+  .display-message {
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
     font-family: var(--font-family-main);
-}
+  }
 
-.message {
-    font-size: 2.5rem; 
-}
+  .message {
+    font-size: 2.5rem;
+  }
 
-.go-home-link {
+  .go-home-link {
     text-decoration: none;
     color: inherit;
     font-weight: bold;
@@ -78,12 +78,13 @@ import userImg from '@/assets/banyandb.svg'
     padding: 1rem;
     border-radius: 1rem;
     box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
-    transition: color 0.3s, transform 0.3s;
-}
+    transition:
+      color 0.3s,
+      transform 0.3s;
+  }
 
-.go-home-link:hover {
+  .go-home-link:hover {
     color: #2c3e50;
     transform: scale(1.1);
-}
+  }
 </style>
-

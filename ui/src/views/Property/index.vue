@@ -18,23 +18,23 @@
 -->
 
 <script setup>
-import GroupTree from '@/components/GroupTree/index.vue'
-import TopNav from '@/components/TopNav/index.vue'
-import { reactive } from 'vue';
+  import GroupTree from '@/components/GroupTree/index.vue';
+  import TopNav from '@/components/TopNav/index.vue';
+  import { reactive } from 'vue';
 
-const data = reactive({
-  width: '200px'
-})
+  const data = reactive({
+    width: '200px',
+  });
 
-function setWidth(width) {
-  data.width = width
-}
+  function setWidth(width) {
+    data.width = width;
+  }
 </script>
 
 <template>
   <div class="size">
     <el-container>
-      <el-aside :width="data.width" class="bd-top flex" style="position:relative; background-color: white;">
+      <el-aside :width="data.width" class="bd-top flex" style="position: relative; background-color: white">
         <GroupTree type="property" @setWidth="setWidth" />
       </el-aside>
       <el-main>
@@ -46,21 +46,21 @@ function setWidth(width) {
 </template>
 
 <style lang="scss" scoped>
-.el-container {
-  height: 100%;
-  padding: 0;
-  margin: 0;
-
-  .el-header {
-    background-color: #ffffff;
+  .el-container {
+    height: 100%;
     padding: 0;
     margin: 0;
-  }
 
-  .el-main {
-    background-color: #eaedf1;
-    padding: 0;
-    margin: 0;
+    .el-header {
+      background-color: #ffffff;
+      padding: 0;
+      margin: 0;
+    }
+
+    .el-main {
+      background-color: #eaedf1;
+      padding: 0;
+      margin: 0;
+    }
   }
-}
 </style>

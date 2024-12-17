@@ -17,17 +17,17 @@
  * under the License.
  */
 
-import { defineStore } from "pinia"
+import { defineStore } from 'pinia';
 
 export default defineStore('header', {
-    state() {
-        return {
-            showButton: false,
-        }
+  state() {
+    return {
+      showButton: false,
+    };
+  },
+  actions: {
+    changeShowButton(val) {
+      this.showButton = val;
     },
-    actions: {
-        changeShowButton(val) {
-            this.showButton = val
-        }
-    }
-})
+  },
+});

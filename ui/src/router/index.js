@@ -17,15 +17,15 @@
  * under the License.
  */
 
-import { createRouter, createWebHistory } from 'vue-router'
-import Header from '@/components/Header/index.vue'
+import { createRouter, createWebHistory } from 'vue-router';
+import Header from '@/components/Header/index.vue';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
-      redirect: '/banyandb'
+      redirect: '/banyandb',
     },
     {
       path: '/banyandb',
@@ -39,7 +39,7 @@ const router = createRouter({
         {
           path: '/banyandb/dashboard',
           name: 'dashboard',
-          component: () => import('@/views/Dashboard/index.vue')
+          component: () => import('@/views/Dashboard/index.vue'),
         },
         {
           path: '/banyandb/stream',
@@ -52,55 +52,55 @@ const router = createRouter({
               name: 'streamStart',
               component: () => import('@/components/Start/index.vue'),
               meta: {
-                type: 'stream'
-              }
+                type: 'stream',
+              },
             },
             {
               path: '/banyandb/stream/operator-read/:type/:operator/:group/:name',
               name: 'stream',
-              component: () => import('@/views/Stream/stream.vue')
+              component: () => import('@/views/Stream/stream.vue'),
             },
             {
               path: '/banyandb/stream/operator-create/:type/:operator/:group',
               name: 'create-stream',
-              component: () => import('@/views/Stream/createEdit.vue')
+              component: () => import('@/views/Stream/createEdit.vue'),
             },
             {
               path: '/banyandb/stream/operator-edit/:type/:operator/:group/:name',
               name: 'edit-stream',
-              component: () => import('@/views/Stream/createEdit.vue')
+              component: () => import('@/views/Stream/createEdit.vue'),
             },
             {
               path: '/banyandb/stream/index-rule/operator-read/:type/:operator/:group/:name',
               name: 'stream-index-rule',
-              component: () => import('@/components/IndexRule/index.vue')
+              component: () => import('@/components/IndexRule/index.vue'),
             },
             {
               path: '/banyandb/:schema/index-rule/operator-create/:type/:operator/:group',
               name: 'stream-create-index-rule',
-              component: () => import('@/components/IndexRule/Editor.vue')
+              component: () => import('@/components/IndexRule/Editor.vue'),
             },
             {
               path: '/banyandb/:schema/index-rule/operator-edit/:type/:operator/:group/:name',
               name: 'stream-edit-index-rule',
-              component: () => import('@/components/IndexRule/Editor.vue')
+              component: () => import('@/components/IndexRule/Editor.vue'),
             },
             {
               path: '/banyandb/stream/index-rule-binding/operator-read/:type/:operator/:group/:name',
               name: 'stream-index-rule-binding',
-              component: () => import('@/components/IndexRuleBinding/index.vue')
+              component: () => import('@/components/IndexRuleBinding/index.vue'),
             },
             {
               path: '/banyandb/:schema/index-rule-binding/operator-create/:type/:operator/:group',
               name: 'stream-create-index-rule-binding',
-              component: () => import('@/components/IndexRuleBinding/Editor.vue')
+              component: () => import('@/components/IndexRuleBinding/Editor.vue'),
             },
             {
               path: '/banyandb/:schema/index-rule-binding/operator-edit/:type/:operator/:group/:name',
               name: 'stream-edit-index-rule-binding',
-              component: () => import('@/components/IndexRuleBinding/Editor.vue')
-            }
-          ]
+              component: () => import('@/components/IndexRuleBinding/Editor.vue'),
+            },
+          ],
         },
         {
           path: '/banyandb/measure',
@@ -113,70 +113,70 @@ const router = createRouter({
               name: 'measureStart',
               component: () => import('@/components/Start/index.vue'),
               meta: {
-                type: 'measure'
-              }
+                type: 'measure',
+              },
             },
             {
               path: '/banyandb/measure/operator-read/:type/:operator/:group/:name',
               name: 'measure',
-              component: () => import('@/views/Measure/measure.vue')
+              component: () => import('@/views/Measure/measure.vue'),
             },
             {
               path: '/banyandb/measure/operator-create/:type/:operator/:group',
               name: 'create-measure',
-              component: () => import('@/views/Measure/createEdit.vue')
+              component: () => import('@/views/Measure/createEdit.vue'),
             },
             {
               path: '/banyandb/measure/operator-edit/:type/:operator/:group/:name',
               name: 'edit-measure',
-              component: () => import('@/views/Stream/createEdit.vue')
+              component: () => import('@/views/Stream/createEdit.vue'),
             },
             {
               path: '/banyandb/measure/index-rule/operator-read/:type/:operator/:group/:name',
               name: 'measure-index-rule',
-              component: () => import('@/components/IndexRule/index.vue')
+              component: () => import('@/components/IndexRule/index.vue'),
             },
             {
               path: '/banyandb/:schema/index-rule/operator-create/:type/:operator/:group',
               name: 'measure-create-index-rule',
-              component: () => import('@/components/IndexRule/Editor.vue')
+              component: () => import('@/components/IndexRule/Editor.vue'),
             },
             {
               path: '/banyandb/:schema/index-rule/operator-edit/:type/:operator/:group/:name',
               name: 'measure-edit-index-rule',
-              component: () => import('@/components/IndexRule/Editor.vue')
+              component: () => import('@/components/IndexRule/Editor.vue'),
             },
             {
               path: '/banyandb/measure/index-rule-binding/operator-read/:type/:operator/:group/:name',
               name: 'measure-index-rule-binding',
-              component: () => import('@/components/IndexRuleBinding/index.vue')
+              component: () => import('@/components/IndexRuleBinding/index.vue'),
             },
             {
               path: '/banyandb/:schema/index-rule-binding/operator-create/:type/:operator/:group',
               name: 'measure-create-index-rule-binding',
-              component: () => import('@/components/IndexRuleBinding/Editor.vue')
+              component: () => import('@/components/IndexRuleBinding/Editor.vue'),
             },
             {
               path: '/banyandb/:schema/index-rule-binding/operator-edit/:type/:operator/:group/:name',
               name: 'measure-edit-index-rule-binding',
-              component: () => import('@/components/IndexRuleBinding/Editor.vue')
+              component: () => import('@/components/IndexRuleBinding/Editor.vue'),
             },
             {
               path: '/banyandb/measure/topn-agg/operator-read/:type/:operator/:group/:name',
               name: 'measure-topn-agg',
-              component: () => import('@/components/TopNAggregation/index.vue')
+              component: () => import('@/components/TopNAggregation/index.vue'),
             },
             {
               path: '/banyandb/:schema/topn-agg/operator-create/:type/:operator/:group',
               name: 'measure-create-topn-agg',
-              component: () => import('@/components/TopNAggregation/Editor.vue')
+              component: () => import('@/components/TopNAggregation/Editor.vue'),
             },
             {
               path: '/banyandb/:schema/topn-agg/operator-edit/:type/:operator/:group/:name',
               name: 'measure-edit-topn-agg',
-              component: () => import('@/components/TopNAggregation/Editor.vue')
-            }
-          ]
+              component: () => import('@/components/TopNAggregation/Editor.vue'),
+            },
+          ],
         },
         {
           path: '/banyandb/property',
@@ -189,17 +189,17 @@ const router = createRouter({
               name: 'propertyStart',
               component: () => import('@/components/Start/index.vue'),
               meta: {
-                type: 'property'
-              }
+                type: 'property',
+              },
             },
             {
               path: '/banyandb/property/operator-read/:type/:operator/:group',
               name: 'property',
-              component: () => import('@/components/Property/PropertyRead.vue')
-            }
-          ]
-        }
-      ]
+              component: () => import('@/components/Property/PropertyRead.vue'),
+            },
+          ],
+        },
+      ],
     },
     {
       // will match everything
@@ -214,10 +214,10 @@ const router = createRouter({
           path: '/:pathMatch(.*)',
           name: 'error',
           component: () => import('@/views/Errors/NotFound.vue'),
-        }
-      ]
+        },
+      ],
     },
-  ]
-})
+  ],
+});
 
-export default router
+export default router;

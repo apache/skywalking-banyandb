@@ -18,27 +18,25 @@
 -->
 
 <script setup>
-import { reactive } from 'vue';
-import { useRoute } from 'vue-router'
-const route = useRoute()
-const data = reactive({
-    type: ''
-})
+  import { reactive } from 'vue';
+  import { useRoute } from 'vue-router';
+  const route = useRoute();
+  const data = reactive({
+    type: '',
+  });
 
-// function
-function initData() {
-    data.type = route.meta.type
-}
-initData()
+  // function
+  function initData() {
+    data.type = route.meta.type;
+  }
+  initData();
 </script>
 
 <template>
-    <div class="size flex center column">
-        <div class="text-big text-placeholder-color text-family margin-top-bottom">Welcome to BanyanDB Manager!</div>
-        <div class="text-title text-placeholder-color text-famil">Please open the {{ data.type }} to start working!</div>
-    </div>
+  <div class="size flex center column">
+    <div class="text-big text-placeholder-color text-family margin-top-bottom">Welcome to BanyanDB Manager!</div>
+    <div class="text-title text-placeholder-color text-famil">Please open the {{ data.type }} to start working!</div>
+  </div>
 </template>
 
-<style lang="scss" scoped>
-
-</style>
+<style lang="scss" scoped></style>

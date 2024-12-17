@@ -32,6 +32,12 @@ npm install
 npm run dev
 ```
 
+### Keep consistent style by parsing code
+
+```sh
+npm run format
+```
+
 ### Compile and Minify for Production
 
 ```sh

@@ -13,12 +13,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. -->
 <script setup>
-defineProps({
-  fields: {
-    type: Object,
-    default: () => ({}),
-  },
-});
+  defineProps({
+    fields: {
+      type: Object,
+      default: () => ({}),
+    },
+  });
 </script>
 
 <template>
@@ -27,7 +27,7 @@ defineProps({
     <span class="item-value">{{ fields.group }}</span>
     <span class="text-bold" v-show="fields.name">Name: </span>
     <span class="item-value">{{ fields.name }}</span>
-    <span class="text-bold" v-show="fields.type">{{fields.catalog ? `Catalog:` : `Type:`}}</span>
+    <span class="text-bold" v-show="fields.type">{{ fields.catalog ? `Catalog:` : `Type:` }}</span>
     <span class="item-value">{{ fields.type }}</span>
     <span class="text-bold">Operation: </span>
     <span class="item-value">{{ fields.operator == 'edit' ? fields.operator : `Read` }}</span>
@@ -35,16 +35,16 @@ defineProps({
 </template>
 
 <style lang="scss" scoped>
-:deep(.el-card) {
-  margin: 15px;
-}
-.item-value {
-  margin-right: 20px;
-  margin-left: 5px;
-}
-.header-content {
-  height: 30px;
-  width: 100%;
-  line-height: 30px;
-}
+  :deep(.el-card) {
+    margin: 15px;
+  }
+  .item-value {
+    margin-right: 20px;
+    margin-left: 5px;
+  }
+  .header-content {
+    height: 30px;
+    width: 100%;
+    line-height: 30px;
+  }
 </style>

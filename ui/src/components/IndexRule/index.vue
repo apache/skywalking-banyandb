@@ -18,54 +18,58 @@
 -->
 
 <script setup>
-import { reactive } from 'vue';
-import { watch, getCurrentInstance } from '@vue/runtime-core'
-import { useRoute } from 'vue-router'
-import { getSecondaryDataModel } from '@/api/index'
-import FormHeader from '../common/FormHeader.vue'
+  import { reactive } from 'vue';
+  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { useRoute } from 'vue-router';
+  import { getSecondaryDataModel } from '@/api/index';
+  import FormHeader from '../common/FormHeader.vue';
 
-const { proxy } = getCurrentInstance()
-const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
-const $loadingClose = proxy.$loadingClose
+  const { proxy } = getCurrentInstance();
+  const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
+  const $loadingClose = proxy.$loadingClose;
 
-const data = reactive({
-  group: '',
-  name: '',
-  type: '',
-  operator: '',
-  indexRule: {}
-})
+  const data = reactive({
+    group: '',
+    name: '',
+    type: '',
+    operator: '',
+    indexRule: {},
+  });
 
-const route = useRoute()
+  const route = useRoute();
 
-watch(() => route, () => {
-  data.group = route.params.group
-  data.name = route.params.name
-  data.type = route.params.type
-  data.operator = route.params.operator
-  initData()
-}, {
-  immediate: true,
-  deep: true
-})
+  watch(
+    () => route,
+    () => {
+      data.group = route.params.group;
+      data.name = route.params.name;
+      data.type = route.params.type;
+      data.operator = route.params.operator;
+      initData();
+    },
+    {
+      immediate: true,
+      deep: true,
+    },
+  );
 
-async function initData() {
-  if (!(data.type && data.group && data.name)) {
-    return;
+  async function initData() {
+    if (!(data.type && data.group && data.name)) {
+      return;
+    }
+    $loadingCreate();
+    const result = await getSecondaryDataModel(data.type, data.group, data.name);
+    $loadingClose();
+    if (!(result.data && result.data.indexRule)) {
+      ElMessage({
+        message: `Please refresh and try again.`,
+        type: 'error',
+        duration: 3000,
+      });
+      return;
+    }
+    data.indexRule = { ...result.data.indexRule, noSort: String(result.data.indexRule.noSort) };
   }
-  $loadingCreate()
-  const result = await getSecondaryDataModel(data.type, data.group, data.name)
-  $loadingClose()
-  if (!(result.data && result.data.indexRule)) {
-    ElMessage({
-      message: `Please refresh and try again.`,
-      type: "error",
-      duration: 3000
-    })
-    return;
-  }
-  data.indexRule = {...result.data.indexRule, noSort: String(result.data.indexRule.noSort)}
-}
 </script>
 
 <template>
@@ -74,12 +78,18 @@ async function initData() {
       <template #header>
         <FormHeader :fields="data" />
       </template>
-      <el-form label-position="left" label-width="100px" :model="data.indexRule" style="width: 90%;">
+      <el-form label-position="left" label-width="100px" :model="data.indexRule" style="width: 90%">
         <el-form-item label="Analyzer">
           <el-input v-model="data.indexRule.analyzer" :disabled="true"></el-input>
         </el-form-item>
         <el-form-item label="Tags">
-          <el-select class="tags-and-rules" v-model="data.indexRule.tags" style="width: 100%;" :disabled="true" multiple></el-select>
+          <el-select
+            class="tags-and-rules"
+            v-model="data.indexRule.tags"
+            style="width: 100%"
+            :disabled="true"
+            multiple
+          ></el-select>
         </el-form-item>
         <el-form-item label="Type">
           <el-input v-model="data.indexRule.type" disabled></el-input>
@@ -93,7 +103,7 @@ async function initData() {
 </template>
 
 <style lang="scss" scoped>
-:deep(.el-card) {
+  :deep(.el-card) {
     margin: 15px;
-}
+  }
 </style>

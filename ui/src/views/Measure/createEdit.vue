@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import Editor from '@/components/Editor/index.vue'
+  import Editor from '@/components/Editor/index.vue';
 </script>
 
 <template>

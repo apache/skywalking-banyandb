@@ -17,7 +17,7 @@
  * under the License.
  */
 
-@import "./base.css";
+@import './base.css';
 
 #app {
   max-width: 1280px;

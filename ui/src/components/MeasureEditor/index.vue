@@ -17,20 +17,16 @@
   ~ under the License.
 -->
 
-<script lang="ts" setup>
-
-</script>
+<script lang="ts" setup></script>
 
 <template>
-    <div>
-        <el-card shadow="always">
-
-        </el-card>
-    </div>
+  <div>
+    <el-card shadow="always"> </el-card>
+  </div>
 </template>
 
-<style lang="scss"  scoped>
-:deep(.el-card) {
+<style lang="scss" scoped>
+  :deep(.el-card) {
     margin: 15px;
-}
+  }
 </style>

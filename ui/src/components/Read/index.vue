@@ -18,114 +18,114 @@
 -->
 
 <script setup>
-import { reactive, ref } from 'vue';
-import { useRoute } from 'vue-router'
-import { watch, getCurrentInstance } from '@vue/runtime-core'
-import { getStreamOrMeasure, getTableList } from '@/api/index'
-import { Search, RefreshRight } from '@element-plus/icons-vue'
-import { jsonToYaml, yamlToJson } from '@/utils/yaml'
-import CodeMirror from '@/components/CodeMirror/index.vue'
-import { ElMessage } from 'element-plus'
-import { computed } from '@vue/runtime-core'
-import FormHeader from '../common/FormHeader.vue'
+  import { reactive, ref } from 'vue';
+  import { useRoute } from 'vue-router';
+  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { getStreamOrMeasure, getTableList } from '@/api/index';
+  import { Search, RefreshRight } from '@element-plus/icons-vue';
+  import { jsonToYaml, yamlToJson } from '@/utils/yaml';
+  import CodeMirror from '@/components/CodeMirror/index.vue';
+  import { ElMessage } from 'element-plus';
+  import { computed } from '@vue/runtime-core';
+  import FormHeader from '../common/FormHeader.vue';
 
-const route = useRoute()
+  const route = useRoute();
 
-const yamlRef = ref()
+  const yamlRef = ref();
 
-const last15Minutes = 900 * 1000
+  const last15Minutes = 900 * 1000;
 
-const lastWeek = 3600 * 1000 * 24 * 7
+  const lastWeek = 3600 * 1000 * 24 * 7;
 
-const lastMonth = 3600 * 1000 * 24 * 30
+  const lastMonth = 3600 * 1000 * 24 * 30;
 
-const last3Months = 3600 * 1000 * 24 * 90
+  const last3Months = 3600 * 1000 * 24 * 90;
 
-const autoRefreshTimeRangeFlag = ref(true)
+  const autoRefreshTimeRangeFlag = ref(true);
 
-const pickedShortCutTimeRanges = ref(false)
+  const pickedShortCutTimeRanges = ref(false);
 
-// Loading
-const { proxy } = getCurrentInstance()
-const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus
-const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate
-const $loadingClose = proxy.$loadingClose
-const tagType = {
-    'TAG_TYPE_UNSPECIFIED': 'null',
-    'TAG_TYPE_STRING': 'str',
-    'TAG_TYPE_INT': 'int',
-    'TAG_TYPE_STRING_ARRAY': 'strArray',
-    'TAG_TYPE_INT_ARRAY': 'intArray',
-    'TAG_TYPE_DATA_BINARY': 'binaryData'
-}
-const fieldTypes = {
-    'FIELD_TYPE_UNSPECIFIED': 'null',
-    'FIELD_TYPE_STRING': 'str',
-    'FIELD_TYPE_INT': 'int',
-    'FIELD_TYPE_FLOAT': 'float',
-    'FIELD_TYPE_DATA_BINARY': 'binaryData'
-}
-const shortcuts = [
+  // Loading
+  const { proxy } = getCurrentInstance();
+  const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
+  const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
+  const $loadingClose = proxy.$loadingClose;
+  const tagType = {
+    TAG_TYPE_UNSPECIFIED: 'null',
+    TAG_TYPE_STRING: 'str',
+    TAG_TYPE_INT: 'int',
+    TAG_TYPE_STRING_ARRAY: 'strArray',
+    TAG_TYPE_INT_ARRAY: 'intArray',
+    TAG_TYPE_DATA_BINARY: 'binaryData',
+  };
+  const fieldTypes = {
+    FIELD_TYPE_UNSPECIFIED: 'null',
+    FIELD_TYPE_STRING: 'str',
+    FIELD_TYPE_INT: 'int',
+    FIELD_TYPE_FLOAT: 'float',
+    FIELD_TYPE_DATA_BINARY: 'binaryData',
+  };
+  const shortcuts = [
     {
-        text: 'Last 15 minutes',
-        value: () => {
-            const end = new Date()
-            const start = new Date()
-            start.setTime(start.getTime() - last15Minutes)
-            pickedShortCutTimeRanges.value = true
-            return [start, end]
-        }
+      text: 'Last 15 minutes',
+      value: () => {
+        const end = new Date();
+        const start = new Date();
+        start.setTime(start.getTime() - last15Minutes);
+        pickedShortCutTimeRanges.value = true;
+        return [start, end];
+      },
     },
     {
-        text: 'Last week',
-        value: () => {
-            const end = new Date()
-            const start = new Date()
-            start.setTime(start.getTime() - lastWeek)
-            pickedShortCutTimeRanges.value = true
-            return [start, end]
-        },
+      text: 'Last week',
+      value: () => {
+        const end = new Date();
+        const start = new Date();
+        start.setTime(start.getTime() - lastWeek);
+        pickedShortCutTimeRanges.value = true;
+        return [start, end];
+      },
     },
     {
-        text: 'Last month',
-        value: () => {
-            const end = new Date()
-            const start = new Date()
-            start.setTime(start.getTime() - lastMonth)
-            pickedShortCutTimeRanges.value = true
-            return [start, end]
-        },
+      text: 'Last month',
+      value: () => {
+        const end = new Date();
+        const start = new Date();
+        start.setTime(start.getTime() - lastMonth);
+        pickedShortCutTimeRanges.value = true;
+        return [start, end];
+      },
     },
     {
-        text: 'Last 3 months',
-        value: () => {
-            const end = new Date()
-            const start = new Date()
-            start.setTime(start.getTime() - last3Months)
-            pickedShortCutTimeRanges.value = true
-            return [start, end]
-        },
+      text: 'Last 3 months',
+      value: () => {
+        const end = new Date();
+        const start = new Date();
+        start.setTime(start.getTime() - last3Months);
+        pickedShortCutTimeRanges.value = true;
+        return [start, end];
+      },
     },
-]
-const param = {
+  ];
+  const param = {
     groups: [],
     name: '',
     offset: null,
     limit: null,
     //criteria: {},
     projection: {
-        tagFamilies: [
-            {
-                name: '',
-                tags: []
-            }
-        ]
-    }
-}
-const data = reactive({
+      tagFamilies: [
+        {
+          name: '',
+          tags: [],
+        },
+      ],
+    },
+  };
+  const data = reactive({
     fields: [],
     tableFields: [],
-    handleFields: "",
+    handleFields: '',
     group: route.params.group,
     name: route.params.name,
     type: route.params.type,
@@ -143,320 +143,367 @@ const data = reactive({
     tableTags: [],
     tableData: [],
     code: null,
-    codeStorage: []
-})
-const tableHeader = computed(() => {
-    return data.tableTags.concat(data.tableFields)
-})
-watch(() => data.handleFields, () => {
-    if (data.handleFields.length > 0) {
-        data.tableTags = data.tableTags.map(item => {
-            item.label = `${data.options[data.tagFamily].label}.${item.name}`
-            return item
-        })
-    } else {
-        data.tableTags = data.tableTags.map(item => {
-            item.label = item.name
-            return item
-        })
-    }
-})
-watch(() => route, () => {
-    data.group = route.params.group
-    data.name = route.params.name
-    data.type = route.params.type
-    data.tableData = []
-    data.tableTags = []
-    data.tableFields = []
-    data.fields = []
-    data.handleFields = ""
+    codeStorage: [],
+  });
+  const tableHeader = computed(() => {
+    return data.tableTags.concat(data.tableFields);
+  });
+  watch(
+    () => data.handleFields,
+    () => {
+      if (data.handleFields.length > 0) {
+        data.tableTags = data.tableTags.map((item) => {
+          item.label = `${data.options[data.tagFamily].label}.${item.name}`;
+          return item;
+        });
+      } else {
+        data.tableTags = data.tableTags.map((item) => {
+          item.label = item.name;
+          return item;
+        });
+      }
+    },
+  );
+  watch(
+    () => route,
+    () => {
+      data.group = route.params.group;
+      data.name = route.params.name;
+      data.type = route.params.type;
+      data.tableData = [];
+      data.tableTags = [];
+      data.tableFields = [];
+      data.fields = [];
+      data.handleFields = '';
 
-    if (data.group && data.name && data.type) {
-        initCode()
-        initData()
-    }
-}, {
-    immediate: true,
-    deep: true
-})
+      if (data.group && data.name && data.type) {
+        initCode();
+        initData();
+      }
+    },
+    {
+      immediate: true,
+      deep: true,
+    },
+  );
 
-function initCode() {
-    let index = data.codeStorage.findIndex(item => {
-        return item.params.group == route.params.group && item.params.name == route.params.name
-    })
+  function initCode() {
+    let index = data.codeStorage.findIndex((item) => {
+      return item.params.group == route.params.group && item.params.name == route.params.name;
+    });
     if (index >= 0) {
-        data.code = data.codeStorage[index].params.code
+      data.code = data.codeStorage[index].params.code;
     } else {
-        let timeRange = {
-            timeRange: {
-                begin: new Date(new Date() - last15Minutes),
-                end: new Date()
-            }
-        }
-        timeRange = jsonToYaml(timeRange).data
-        data.code = ref(
-            `${timeRange}offset: 0
+      let timeRange = {
+        timeRange: {
+          begin: new Date(new Date() - last15Minutes),
+          end: new Date(),
+        },
+      };
+      timeRange = jsonToYaml(timeRange).data;
+      data.code = ref(
+        `${timeRange}offset: 0
 limit: 10
 orderBy:
   indexRuleName: ""
   sort: SORT_UNSPECIFIED
-`)
+`,
+      );
     }
-}
-function changeCode(name, value) {
-    let code = yamlToJson(data.code).data
-    code[name] = value
-    data.code = jsonToYaml(code).data
-}
-function initData() {
-    $loadingCreate()
+  }
+  function changeCode(name, value) {
+    let code = yamlToJson(data.code).data;
+    code[name] = value;
+    data.code = jsonToYaml(code).data;
+  }
+  function initData() {
+    $loadingCreate();
     getStreamOrMeasure(data.type, data.group, data.name)
-        .then(res => {
-            if (res.status == 200) {
-                data.resourceData = res.data[data.type]
-                data.tableTags = res.data[data.type].tagFamilies[0].tags.map(item => {
-                    item.label = item.name
-                    return item
-                })
-                data.options = res.data[data.type].tagFamilies.map((item, index) => {
-                    return { label: item.name, value: index }
-                })
-                data.tagFamily = 0
-                data.fields = res.data[data.type].fields ? res.data[data.type].fields : []
-                handleCodeData()
-            }
-        })
-        .finally(() => {
-            $loadingClose()
-        })
-}
-function getTableData() {
-    data.tableData = []
-    data.loading = true
-    setTableParam()
-    let paramList = JSON.parse(JSON.stringify(param))
-    if (data.type == 'measure') {
-        paramList.tagProjection = paramList.projection
-        if (data.handleFields.length > 0) {
-            paramList.fieldProjection = {
-                names: data.handleFields
-            }
+      .then((res) => {
+        if (res.status == 200) {
+          data.resourceData = res.data[data.type];
+          data.tableTags = res.data[data.type].tagFamilies[0].tags.map((item) => {
+            item.label = item.name;
+            return item;
+          });
+          data.options = res.data[data.type].tagFamilies.map((item, index) => {
+            return { label: item.name, value: index };
+          });
+          data.tagFamily = 0;
+          data.fields = res.data[data.type].fields ? res.data[data.type].fields : [];
+          handleCodeData();
         }
-        delete paramList.projection
+      })
+      .finally(() => {
+        $loadingClose();
+      });
+  }
+  function getTableData() {
+    data.tableData = [];
+    data.loading = true;
+    setTableParam();
+    let paramList = JSON.parse(JSON.stringify(param));
+    if (data.type == 'measure') {
+      paramList.tagProjection = paramList.projection;
+      if (data.handleFields.length > 0) {
+        paramList.fieldProjection = {
+          names: data.handleFields,
+        };
+      }
+      delete paramList.projection;
     }
     /* paramList.offset = data.queryInfo.pagenum
     paramList.limit = data.queryInfo.pagesize */
-    paramList.name = data.resourceData.metadata.name
-    paramList.groups = [data.resourceData.metadata.group]
+    paramList.name = data.resourceData.metadata.name;
+    paramList.groups = [data.resourceData.metadata.group];
     getTableList(paramList, data.type)
-        .then((res) => {
-            if (res.status == 200) {
-                if (data.type == 'stream') {
-                    setTableData(res.data.elements)
-                } else {
-                    setTableData(res.data.dataPoints)
-                }
-
-            }
-        })
-        .catch(() => {
-            data.loading = false
-        })
-}
-function setTableData(elements) {
-    const tags = data.resourceData.tagFamilies[data.tagFamily].tags
-    const tableFields = data.tableFields
-    data.tableData = elements.map(item => {
-        let dataItem = {}
-        item.tagFamilies[0].tags.forEach(tag => {
-            const index = tags.findIndex(item => item.name == tag.key)
-            const type = tags[index].type
-            if (tag.value[tagType[type]] == null) {
-                return dataItem[tag.key] = 'Null'
-            }
-            dataItem[tag.key] = Object.hasOwnProperty.call(tag.value[tagType[type]], 'value') ? tag.value[tagType[type]].value : tag.value[tagType[type]]
-        })
-        if (data.type == 'measure' && tableFields.length > 0) {
-            item.fields.forEach(field => {
-                const name = field.name
-                const fieldType = tableFields.filter(tableField => {
-                    return tableField.name == name
-                })[0].fieldType || ''
-                if (field.value[fieldTypes[fieldType]] == null) {
-                    return dataItem[name] = 'Null'
-                }
-                dataItem[name] = Object.hasOwnProperty.call(field.value[fieldTypes[fieldType]], 'value') ? field.value[fieldTypes[fieldType]].value : field.value[fieldTypes[fieldType]]
-            })
+      .then((res) => {
+        if (res.status == 200) {
+          if (data.type == 'stream') {
+            setTableData(res.data.elements);
+          } else {
+            setTableData(res.data.dataPoints);
+          }
         }
+      })
+      .catch(() => {
+        data.loading = false;
+      });
+  }
+  function setTableData(elements) {
+    const tags = data.resourceData.tagFamilies[data.tagFamily].tags;
+    const tableFields = data.tableFields;
+    data.tableData = elements.map((item) => {
+      let dataItem = {};
+      item.tagFamilies[0].tags.forEach((tag) => {
+        const index = tags.findIndex((item) => item.name == tag.key);
+        const type = tags[index].type;
+        if (tag.value[tagType[type]] == null) {
+          return (dataItem[tag.key] = 'Null');
+        }
+        dataItem[tag.key] = Object.hasOwnProperty.call(tag.value[tagType[type]], 'value')
+          ? tag.value[tagType[type]].value
+          : tag.value[tagType[type]];
+      });
+      if (data.type == 'measure' && tableFields.length > 0) {
+        item.fields.forEach((field) => {
+          const name = field.name;
+          const fieldType =
+            tableFields.filter((tableField) => {
+              return tableField.name == name;
+            })[0].fieldType || '';
+          if (field.value[fieldTypes[fieldType]] == null) {
+            return (dataItem[name] = 'Null');
+          }
+          dataItem[name] = Object.hasOwnProperty.call(field.value[fieldTypes[fieldType]], 'value')
+            ? field.value[fieldTypes[fieldType]].value
+            : field.value[fieldTypes[fieldType]];
+        });
+      }
 
-        dataItem.timestamp = item.timestamp
-        return dataItem
-    })
-    data.loading = false
-}
-function setTableParam() {
-    let tagFamily = data.resourceData.tagFamilies[data.tagFamily]
-    let tagsList = []
+      dataItem.timestamp = item.timestamp;
+      return dataItem;
+    });
+    data.loading = false;
+  }
+  function setTableParam() {
+    let tagFamily = data.resourceData.tagFamilies[data.tagFamily];
+    let tagsList = [];
     tagFamily.tags.forEach((item) => {
-        tagsList.push(item.name)
-    })
-    param.projection.tagFamilies[0].name = tagFamily.name
-    param.projection.tagFamilies[0].tags = tagsList
+      tagsList.push(item.name);
+    });
+    param.projection.tagFamilies[0].name = tagFamily.name;
+    param.projection.tagFamilies[0].tags = tagsList;
     //param.criteria[0].tagFamilyName = tagFamily.name
-}
-function changeTagFamilies() {
-    data.tableTags = data.resourceData.tagFamilies[data.tagFamily].tags.map(item => {
-        item.label = item.name
-        if (data.handleFields.length > 0) {
-            item.label = `${data.options[data.tagFamily].label}.${item.name}`
-        }
-        return item
-    })
-    getTableData()
-}
-function handleCodeData() {
-    const json = yamlToJson(data.code).data
-    param.offset = (json.offset !== undefined) ? json.offset : 0;
-    param.limit = (json.limit !== undefined) ? json.limit : 10;
+  }
+  function changeTagFamilies() {
+    data.tableTags = data.resourceData.tagFamilies[data.tagFamily].tags.map((item) => {
+      item.label = item.name;
+      if (data.handleFields.length > 0) {
+        item.label = `${data.options[data.tagFamily].label}.${item.name}`;
+      }
+      return item;
+    });
+    getTableData();
+  }
+  function handleCodeData() {
+    const json = yamlToJson(data.code).data;
+    param.offset = json.offset !== undefined ? json.offset : 0;
+    param.limit = json.limit !== undefined ? json.limit : 10;
     /* json.orderBy ? param.orderBy = json.orderBy : null */
-    delete param.timeRange
+    delete param.timeRange;
     if (json.timeRange && !isNaN(Date.parse(json.timeRange.begin)) && !isNaN(Date.parse(json.timeRange.end))) {
-        data.timeValue = [json.timeRange.begin, json.timeRange.end]
-        param.timeRange = json.timeRange
+      data.timeValue = [json.timeRange.begin, json.timeRange.end];
+      param.timeRange = json.timeRange;
     } else if (json.timeRange.begin || json.timeRange.end) {
-        data.timeValue = []
-        ElMessage({
-            dangerouslyUseHTMLString: true,
-            showClose: true,
-            message: 'Warning: Wrong time type',
-            type: 'warning',
-            duration: 5000
-        })
+      data.timeValue = [];
+      ElMessage({
+        dangerouslyUseHTMLString: true,
+        showClose: true,
+        message: 'Warning: Wrong time type',
+        type: 'warning',
+        duration: 5000,
+      });
     } else {
-        data.timeValue = []
+      data.timeValue = [];
     }
-    json.orderBy ? param.orderBy = json.orderBy : delete param.orderBy
+    json.orderBy ? (param.orderBy = json.orderBy) : delete param.orderBy;
 
     // Add other fields from json to param
-    Object.keys(json).forEach(key => {
-        if (!['offset', 'limit', 'timeRange', 'orderBy'].includes(key)) {
-            param[key] = json[key];
-        }
+    Object.keys(json).forEach((key) => {
+      if (!['offset', 'limit', 'timeRange', 'orderBy'].includes(key)) {
+        param[key] = json[key];
+      }
     });
 
-    getTableData()
-}
-function autoRefreshTimeRange() {
-    let json = yamlToJson(data.code)
-    const interval = new Date(json.data.timeRange.end).getTime() - new Date(json.data.timeRange.begin).getTime()
-    const begin = new Date(new Date() - interval)
-    const end = new Date()
-    json.data.timeRange.begin = begin.toISOString()
-    json.data.timeRange.end = end.toISOString()
-    data.code = jsonToYaml(json.data).data
-}
-function searchTableData() {
-    yamlRef.value.checkYaml(data.code).then(() => {
+    getTableData();
+  }
+  function autoRefreshTimeRange() {
+    let json = yamlToJson(data.code);
+    const interval = new Date(json.data.timeRange.end).getTime() - new Date(json.data.timeRange.begin).getTime();
+    const begin = new Date(new Date() - interval);
+    const end = new Date();
+    json.data.timeRange.begin = begin.toISOString();
+    json.data.timeRange.end = end.toISOString();
+    data.code = jsonToYaml(json.data).data;
+  }
+  function searchTableData() {
+    yamlRef.value
+      .checkYaml(data.code)
+      .then(() => {
         if (autoRefreshTimeRangeFlag.value) {
-            autoRefreshTimeRange()
+          autoRefreshTimeRange();
         }
-        handleCodeData()
-    })
-        .catch((err) => {
-            ElMessage({
-                dangerouslyUseHTMLString: true,
-                showClose: true,
-                message: `<div>${err.message}</div>`,
-                type: 'error',
-                duration: 5000
-            })
-        })
-}
-function changeDatePicker() {
-    autoRefreshTimeRangeFlag.value = pickedShortCutTimeRanges.value
-    let json = yamlToJson(data.code)
+        handleCodeData();
+      })
+      .catch((err) => {
+        ElMessage({
+          dangerouslyUseHTMLString: true,
+          showClose: true,
+          message: `<div>${err.message}</div>`,
+          type: 'error',
+          duration: 5000,
+        });
+      });
+  }
+  function changeDatePicker() {
+    autoRefreshTimeRangeFlag.value = pickedShortCutTimeRanges.value;
+    let json = yamlToJson(data.code);
     if (!json.data.hasOwnProperty('timeRange')) {
-        json.data.timeRange = {
-            begin: "",
-            end: ""
-        }
+      json.data.timeRange = {
+        begin: '',
+        end: '',
+      };
     }
-    json.data.timeRange.begin = data.timeValue ? data.timeValue[0] : null
-    json.data.timeRange.end = data.timeValue ? data.timeValue[1] : null
-    data.code = jsonToYaml(json.data).data
-}
-function resetDatePicker() {
-    pickedShortCutTimeRanges.value = false
-}
-function changeFields() {
-    data.tableFields = data.handleFields.map(fieldName => {
-        let item = data.fields.filter(field => {
-            return field.name == fieldName
-        })[0]
-        item.label = item.name
-        return item
-    })
-    getTableData()
-}
+    json.data.timeRange.begin = data.timeValue ? data.timeValue[0] : null;
+    json.data.timeRange.end = data.timeValue ? data.timeValue[1] : null;
+    data.code = jsonToYaml(json.data).data;
+  }
+  function resetDatePicker() {
+    pickedShortCutTimeRanges.value = false;
+  }
+  function changeFields() {
+    data.tableFields = data.handleFields.map((fieldName) => {
+      let item = data.fields.filter((field) => {
+        return field.name == fieldName;
+      })[0];
+      item.label = item.name;
+      return item;
+    });
+    getTableData();
+  }
 </script>
 
 <template>
-    <div>
-        <el-card shadow="always">
-            <template #header>
-                <FormHeader :fields="data" />
-            </template>
-            <el-row>
-                <el-col :span="16">
-                    <div class="flex align-item-center" style="height: 40px; width: 100%;">
-                        <el-select v-model="data.tagFamily" @change="changeTagFamilies" filterable
-                            placeholder="Please select" style="flex: 0 0 300px;">
-                            <el-option v-for="item in data.options" :key="item.value" :label="item.label"
-                                :value="item.value">
-                            </el-option>
-                        </el-select>
-                        <el-select v-if="data.type == 'measure'" v-model="data.handleFields" collapse-tags
-                            style="margin: 0 0 0 10px; flex: 0 0 300px;" @change="changeFields" filterable multiple
-                            placeholder="Please select Fields">
-                            <el-option v-for="item in data.fields" :key="item.name" :label="item.name" :value="item.name">
-                            </el-option>
-                        </el-select>
-                        <el-date-picker @change="changeDatePicker" @visible-change="resetDatePicker" style="margin: 0 10px 0 10px; flex: 1 1 0;" v-model="data.timeValue"
-                            type="datetimerange" :shortcuts="shortcuts" range-separator="to" start-placeholder="begin"
-                            end-placeholder="end" align="right">
-                        </el-date-picker>
-                        <el-button :icon="Search" @click="searchTableData" style="flex: 0 0 auto;" color="#6E38F7" plain></el-button>
-                    </div>
-                </el-col>
-                <el-col :span="8">
-                    <div class="flex align-item-center justify-end" style="height: 30px;">
-                        <el-button :icon="RefreshRight" @click="getTableData" plain></el-button>
-                    </div>
-                </el-col>
-            </el-row>
-            <CodeMirror ref="yamlRef" v-model="data.code" mode="yaml" style="height: 200px" :lint="true" :readonly="false">
-            </CodeMirror>
-        </el-card>
-        <el-card shadow="always">
-            <el-table v-loading="data.loading" element-loading-text="loading" element-loading-spinner="el-icon-loading"
-                element-loading-background="rgba(0, 0, 0, 0.8)" ref="multipleTable" stripe border highlight-current-row
-                tooltip-effect="dark" empty-text="No data yet"
-                :data="data.tableData">
-                <el-table-column type="selection" width="55">
-                </el-table-column>
-                <el-table-column type="index" label="number" width="90">
-                </el-table-column>
-                <el-table-column label="timestamp" width="260" key="timestamp" prop="timestamp"></el-table-column>
-                <el-table-column v-for="item in tableHeader" sortable :key="item.name"
-                    :label="item.label" :prop="item.name" show-overflow-tooltip>
-                </el-table-column>
-            </el-table>
-        </el-card>
-    </div>
+  <div>
+    <el-card shadow="always">
+      <template #header>
+        <FormHeader :fields="data" />
+      </template>
+      <el-row>
+        <el-col :span="16">
+          <div class="flex align-item-center" style="height: 40px; width: 100%">
+            <el-select
+              v-model="data.tagFamily"
+              @change="changeTagFamilies"
+              filterable
+              placeholder="Please select"
+              style="flex: 0 0 300px"
+            >
+              <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
+              </el-option>
+            </el-select>
+            <el-select
+              v-if="data.type == 'measure'"
+              v-model="data.handleFields"
+              collapse-tags
+              style="margin: 0 0 0 10px; flex: 0 0 300px"
+              @change="changeFields"
+              filterable
+              multiple
+              placeholder="Please select Fields"
+            >
+              <el-option v-for="item in data.fields" :key="item.name" :label="item.name" :value="item.name">
+              </el-option>
+            </el-select>
+            <el-date-picker
+              @change="changeDatePicker"
+              @visible-change="resetDatePicker"
+              style="margin: 0 10px 0 10px; flex: 1 1 0"
+              v-model="data.timeValue"
+              type="datetimerange"
+              :shortcuts="shortcuts"
+              range-separator="to"
+              start-placeholder="begin"
+              end-placeholder="end"
+              align="right"
+            >
+            </el-date-picker>
+            <el-button :icon="Search" @click="searchTableData" style="flex: 0 0 auto" color="#6E38F7" plain></el-button>
+          </div>
+        </el-col>
+        <el-col :span="8">
+          <div class="flex align-item-center justify-end" style="height: 30px">
+            <el-button :icon="RefreshRight" @click="getTableData" plain></el-button>
+          </div>
+        </el-col>
+      </el-row>
+      <CodeMirror ref="yamlRef" v-model="data.code" mode="yaml" style="height: 200px" :lint="true" :readonly="false">
+      </CodeMirror>
+    </el-card>
+    <el-card shadow="always">
+      <el-table
+        v-loading="data.loading"
+        element-loading-text="loading"
+        element-loading-spinner="el-icon-loading"
+        element-loading-background="rgba(0, 0, 0, 0.8)"
+        ref="multipleTable"
+        stripe
+        border
+        highlight-current-row
+        tooltip-effect="dark"
+        empty-text="No data yet"
+        :data="data.tableData"
+      >
+        <el-table-column type="selection" width="55"> </el-table-column>
+        <el-table-column type="index" label="number" width="90"> </el-table-column>
+        <el-table-column label="timestamp" width="260" key="timestamp" prop="timestamp"></el-table-column>
+        <el-table-column
+          v-for="item in tableHeader"
+          sortable
+          :key="item.name"
+          :label="item.label"
+          :prop="item.name"
+          show-overflow-tooltip
+        >
+        </el-table-column>
+      </el-table>
+    </el-card>
+  </div>
 </template>
 
 <style lang="scss" scoped>
-:deep(.el-card) {
+  :deep(.el-card) {
     margin: 15px;
-}
+  }
 </style>

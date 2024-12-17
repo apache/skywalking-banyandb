@@ -17,21 +17,21 @@
  * under the License.
  */
 
-import { defineStore } from "pinia"
+import { defineStore } from 'pinia';
 
 export default defineStore('aside', {
-    state() {
-        return {
-            fatherWidth: '200px',
-            isCollapse: false
-        }
+  state() {
+    return {
+      fatherWidth: '200px',
+      isCollapse: false,
+    };
+  },
+  actions: {
+    changeFatherWidth(val) {
+      this.fatherWidth = val;
     },
-    actions: {
-        changeFatherWidth(val) {
-            this.fatherWidth = val
-        },
-        changeCollapse(val) {
-            this.isCollapse = val
-        }
-    }
-})
+    changeCollapse(val) {
+      this.isCollapse = val;
+    },
+  },
+});

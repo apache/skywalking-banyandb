@@ -17,123 +17,115 @@
   ~ under the License.
 -->
 
-<script setup>
-</script>
+<script setup></script>
 
 <template>
   <div id="app">
-    <div style="width: 100%; height:100%">
+    <div style="width: 100%; height: 100%">
       <RouterView></RouterView>
     </div>
   </div>
 </template>
 
 <style lang="scss">
-@use './styles/elementPlus.scss' as *;
+  @use './styles/elementPlus.scss' as *;
 </style>
 
 <style lang="scss">
-html,
-body {
-  padding: 0;
-  margin: 0;
-  width: 100%;
-  height: 100%;
-}
-
-#app {
-  color: #2c3e50;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-}
-
-.el-container {
-  height: 100%;
-  padding: 0;
-  margin: 0;
-
-  .el-header {
-    background-color: #ffffff;
+  html,
+  body {
     padding: 0;
     margin: 0;
+    width: 100%;
+    height: 100%;
   }
 
-  .el-main {
-    background-color: #eaedf1;
+  #app {
+    color: #2c3e50;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  .el-container {
+    height: 100%;
     padding: 0;
     margin: 0;
-  }
-}
 
-.right-menu {
-  width: 170px;
-  position: fixed;
-  z-index: 9999999999999999999999999999 !important;
-  background-color: white;
-}
+    .el-header {
+      background-color: #ffffff;
+      padding: 0;
+      margin: 0;
+    }
+
+    .el-main {
+      background-color: #eaedf1;
+      padding: 0;
+      margin: 0;
+    }
+  }
 </style>
 
 <style scoped>
-header {
-  line-height: 1.5;
-  max-height: 100vh;
-}
-
-.logo {
-  display: block;
-  margin: 0 auto 2rem;
-}
-
-nav {
-  width: 100%;
-  font-size: 12px;
-  text-align: center;
-  margin-top: 2rem;
-}
-
-nav a.router-link-exact-active {
-  color: var(--color-text);
-}
-
-nav a.router-link-exact-active:hover {
-  background-color: transparent;
-}
-
-nav a {
-  display: inline-block;
-  padding: 0 1rem;
-  border-left: 1px solid var(--color-border);
-}
-
-nav a:first-of-type {
-  border: 0;
-}
-
-@media (min-width: 1024px) {
   header {
-    display: flex;
-    place-items: center;
-    padding-right: calc(var(--section-gap) / 2);
+    line-height: 1.5;
+    max-height: 100vh;
   }
 
   .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
+    display: block;
+    margin: 0 auto 2rem;
   }
 
   nav {
-    text-align: left;
-    margin-left: -1rem;
-    font-size: 1rem;
-
-    padding: 1rem 0;
-    margin-top: 1rem;
+    width: 100%;
+    font-size: 12px;
+    text-align: center;
+    margin-top: 2rem;
   }
-}
+
+  nav a.router-link-exact-active {
+    color: var(--color-text);
+  }
+
+  nav a.router-link-exact-active:hover {
+    background-color: transparent;
+  }
+
+  nav a {
+    display: inline-block;
+    padding: 0 1rem;
+    border-left: 1px solid var(--color-border);
+  }
+
+  nav a:first-of-type {
+    border: 0;
+  }
+
+  @media (min-width: 1024px) {
+    header {
+      display: flex;
+      place-items: center;
+      padding-right: calc(var(--section-gap) / 2);
+    }
+
+    .logo {
+      margin: 0 2rem 0 0;
+    }
+
+    header .wrapper {
+      display: flex;
+      place-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    nav {
+      text-align: left;
+      margin-left: -1rem;
+      font-size: 1rem;
+
+      padding: 1rem 0;
+      margin-top: 1rem;
+    }
+  }
 </style>

@@ -19,71 +19,71 @@
 
 // axios response interceptors file
 
-import axios from "axios"
-import { ElMessage } from "element-plus"
+import axios from 'axios';
+import { ElMessage } from 'element-plus';
 
 const axiosService = axios.create({
-    // baseURL: "http://34.92.85.178:18913",// process.env.VUE_APP_BASE_API,
-    timeout: 30000
-})
+  // baseURL: "http://34.92.85.178:18913",// process.env.VUE_APP_BASE_API,
+  timeout: 30000,
+});
 
 axiosService.interceptors.request.use(
-    config => {
-        /**
-         * TODO
-         * Configuration before request
-         */
+  (config) => {
+    /**
+     * TODO
+     * Configuration before request
+     */
 
-        return config
-    },
-    error => {
-        /**
-         * TODO
-         * do some error handling
-         */
-        return Promise.reject(error)
-    }
-)
+    return config;
+  },
+  (error) => {
+    /**
+     * TODO
+     * do some error handling
+     */
+    return Promise.reject(error);
+  },
+);
 
 // re request
 function reRequest(err) {
-    let againReq = new Promise((resolve) => {
-        resolve();
-    })
-    return againReq.then(() => {
-        return axiosService(err.config);
-    })
+  let againReq = new Promise((resolve) => {
+    resolve();
+  });
+  return againReq.then(() => {
+    return axiosService(err.config);
+  });
 }
 
 // axios response interceptors
 axiosService.interceptors.response.use(
-    response => {
-        const res = response.data
-        /**
-         * TODO
-         * Data processing operation
-         */
-        if (response.status == 200) {
-            return Promise.resolve(response)
-        } else {
-            return Promise.reject(response)
-        }
-    },
-    error => {
-        /**
-         * TODO
-         * do some error handling
-         */
-        const resErr = error.data
-        let msg = error.data && error.data.message ? error.data.message : error.message
-        ElMessage({
-            dangerouslyUseHTMLString: true,
-            message: `${msg}<br/>Error：${error.response.data.message}`,
-            type: "error",
-            duration: 3000
-        })
-        return Promise.reject(error)
+  (response) => {
+    const res = response.data;
+    /**
+     * TODO
+     * Data processing operation
+     */
+    if (response.status == 200) {
+      return Promise.resolve(response);
+    } else {
+      return Promise.reject(response);
     }
-)
+  },
+  (error) => {
+    /**
+     * TODO
+     * do some error handling
+     */
+    const resErr = error.data;
+    let msg = error.data && error.data.message ? error.data.message : error.message;
+    ElMessage({
+      dangerouslyUseHTMLString: true,
+      message: `${msg}<br/>Error：${error.response.data.message}`,
+      type: 'error',
+      duration: 3000,
+    });
+    return Promise.reject(error);
+  },
+);
 
-export default axiosService
+export default axiosService;

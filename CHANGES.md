@@ -26,6 +26,7 @@ Release Notes.
 - UI: Add `NoSort` Field to IndexRule page.
 - Metadata: Fix the bug that the cache load nil value that is the unknown index rule on the index rule binding.
 - Queue: Fix the bug that the client remove a registered node in the eviction list. The node is controlled by the recovery loop, doesn't need to be removed in the failover process.
+- UI: Add prettier to enforce a consistent style by parsing code.
 
 ### Documentation
 

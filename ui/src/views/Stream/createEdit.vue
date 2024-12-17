@@ -18,15 +18,13 @@
 -->
 
 <script setup>
-import Editor from '@/components/Editor/index.vue'
+  import Editor from '@/components/Editor/index.vue';
 </script>
 
 <template>
-    <div class="about">
-        <Editor></Editor>
-    </div>
+  <div class="about">
+    <Editor></Editor>
+  </div>
 </template>
 
-<style lang="scss" scoped>
-
-</style>
+<style lang="scss" scoped></style>

@@ -18,44 +18,42 @@
 -->
 
 <script setup>
-import Header from './components/header.vue'
+  import Header from './components/header.vue';
 </script>
 
 <template>
-    <div class="size">
-        <el-container>
-            <el-header>
-                <Header class="size"></Header>
-            </el-header>
-            <el-main class="no-scroll">
-                <RouterView></RouterView>
-            </el-main>
-        </el-container>
-    </div>
+  <div class="size">
+    <el-container>
+      <el-header>
+        <Header class="size"></Header>
+      </el-header>
+      <el-main class="no-scroll">
+        <RouterView></RouterView>
+      </el-main>
+    </el-container>
+  </div>
 </template>
 
-
-
 <style lang="scss" scoped>
-.no-scroll {
-  overflow: hidden;
-}
-
-.el-container {
-  height: 100%;
-  padding: 0;
-  margin: 0;
-
-  .el-header {
-    background-color: #ffffff;
-    padding: 0;
-    margin: 0;
+  .no-scroll {
+    overflow: hidden;
   }
 
-  .el-main {
-    background-color: #eaedf1;
+  .el-container {
+    height: 100%;
     padding: 0;
     margin: 0;
+
+    .el-header {
+      background-color: #ffffff;
+      padding: 0;
+      margin: 0;
+    }
+
+    .el-main {
+      background-color: #eaedf1;
+      padding: 0;
+      margin: 0;
+    }
   }
-}
 </style>

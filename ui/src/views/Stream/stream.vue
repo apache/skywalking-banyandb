@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-import Read from '@/components/Read/index.vue'
+  import Read from '@/components/Read/index.vue';
 </script>
 
 <template>
@@ -27,6 +27,4 @@ import Read from '@/components/Read/index.vue'
   </div>
 </template>
 
-<style lang="scss" scoped>
-
-</style>
+<style lang="scss" scoped></style>

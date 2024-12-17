@@ -18,68 +18,66 @@
 -->
 
 <script setup>
-import { reactive, ref } from 'vue';
-const showDialog = ref(false)
-const title = ref('')
-const valueData = reactive({
+  import { reactive, ref } from 'vue';
+  const showDialog = ref(false);
+  const title = ref('');
+  const valueData = reactive({
     data: '',
-    formattedData: ''
-})
+    formattedData: '',
+  });
 
-const numSpaces = 2
-const initData = () => {
-    valueData.data = temp
-}
-const closeDialog = () => {
-    showDialog.value = false
-    initData()
-}
+  const numSpaces = 2;
+  const initData = () => {
+    valueData.data = temp;
+  };
+  const closeDialog = () => {
+    showDialog.value = false;
+    initData();
+  };
 
-const downloadValue = () => {
-    const dataBlob = new Blob([valueData.formattedData], { type: 'text/JSON' })
+  const downloadValue = () => {
+    const dataBlob = new Blob([valueData.formattedData], { type: 'text/JSON' });
     var a = document.createElement('a');
     a.download = 'value.txt';
     a.href = URL.createObjectURL(dataBlob);
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-}
+  };
 
-const openDialog = (data) => {
-    title.value = "Value of key " + data.key
-    showDialog.value = true
-    valueData.data = data.value
-    valueData.formattedData = JSON.stringify(JSON.parse(valueData.data), null, numSpaces)
-}
-defineExpose({
-    openDialog
-})
+  const openDialog = (data) => {
+    title.value = 'Value of key ' + data.key;
+    showDialog.value = true;
+    valueData.data = data.value;
+    valueData.formattedData = JSON.stringify(JSON.parse(valueData.data), null, numSpaces);
+  };
+  defineExpose({
+    openDialog,
+  });
 </script>
 
 <template>
-    <el-dialog v-model="showDialog" :title="title">
-        <div class="configuration">{{valueData.formattedData}}</div>
-        <template #footer>
-            <span class="dialog-footer footer">
-                <el-button @click="closeDialog">Cancel</el-button>
-                <el-button type="primary" @click.prevent="downloadValue()">
-                    Download
-                </el-button>
-            </span>
-        </template>
-    </el-dialog>
+  <el-dialog v-model="showDialog" :title="title">
+    <div class="configuration">{{ valueData.formattedData }}</div>
+    <template #footer>
+      <span class="dialog-footer footer">
+        <el-button @click="closeDialog">Cancel</el-button>
+        <el-button type="primary" @click.prevent="downloadValue()"> Download </el-button>
+      </span>
+    </template>
+  </el-dialog>
 </template>
 
 <style lang="scss" scoped>
-.footer {
+  .footer {
     width: 100%;
     display: flex;
     justify-content: center;
-}
-.configuration {
+  }
+  .configuration {
     width: 100%;
     overflow: auto;
     max-height: 700px;
     white-space: pre;
-}
+  }
 </style>

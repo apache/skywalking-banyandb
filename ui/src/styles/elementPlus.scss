@@ -69,103 +69,102 @@
       el-tag
 ===============*/
 .el-tag {
-    border-radius: 1px !important;
-    justify-content: space-between !important;
+  border-radius: 1px !important;
+  justify-content: space-between !important;
 }
 
 .el-tag--plain {
+  color: var(--color-main) !important;
+  border: 1px solid var(--color-main) !important;
+
+  .el-icon.el-tag__close {
     color: var(--color-main) !important;
-    border: 1px solid var(--color-main) !important;
-
-    .el-icon.el-tag__close {
-        color: var(--color-main) !important;
-        margin-right: 5px;
-        font-size: 15px !important;
-
-        &:hover {
-            width: 15px;
-            height: 15px;
-            color: white !important;
-            background-color: var(--color-main) !important;
-        }
-    }
+    margin-right: 5px;
+    font-size: 15px !important;
 
     &:hover {
-        background-color: var(--color-main-background) !important;
+      width: 15px;
+      height: 15px;
+      color: white !important;
+      background-color: var(--color-main) !important;
     }
+  }
+
+  &:hover {
+    background-color: var(--color-main-background) !important;
+  }
 }
 
 .el-tag--dark {
-    color: white !important;
-    background-color: var(--color-main) !important;
-    border: 1px solid var(--color-main) !important;
+  color: white !important;
+  background-color: var(--color-main) !important;
+  border: 1px solid var(--color-main) !important;
 
-    .el-icon.el-tag__close {
-        margin-right: 5px;
-        font-size: 15px !important;
+  .el-icon.el-tag__close {
+    margin-right: 5px;
+    font-size: 15px !important;
 
-        &:hover {
-            width: 15px;
-            height: 15px;
-            color: white !important;
-            background-color: var(--color-main-background) !important;
-        }
+    &:hover {
+      width: 15px;
+      height: 15px;
+      color: white !important;
+      background-color: var(--color-main-background) !important;
     }
+  }
 }
 
 .el-tag--large {
-    height: 25px !important;
-    font-size: 12px !important;
-    line-height: 25px !important;
-    padding: 0px !important;
-    --el-icon-size: 20px !important;
+  height: 25px !important;
+  font-size: 12px !important;
+  line-height: 25px !important;
+  padding: 0px !important;
+  --el-icon-size: 20px !important;
 }
 .tags-and-rules .el-select__selection {
-    display: block;
+  display: block;
 }
 
 .tags-and-rules .el-select__selected-item {
-    margin-bottom: 5px;
+  margin-bottom: 5px;
 }
 
 .el-select__tags .el-tag {
-    display: block;
-    margin: 5px 6px 5px 0 !important;
+  display: block;
+  margin: 5px 6px 5px 0 !important;
 }
 
 /* =================
       el-select
 ==================== */
 .el-select {
-    border-radius: 1px !important;
-    --el-select-input-focus-border-color: var(--color-main) !important;
-    --el-select-border-color-hover: var(--color-main) !important;
+  border-radius: 1px !important;
+  --el-select-input-focus-border-color: var(--color-main) !important;
+  --el-select-border-color-hover: var(--color-main) !important;
 }
 
 .el-scrollbar__view.el-select-dropdown__list {
-    margin: 0 !important;
-    font-size: 12px !important;
+  margin: 0 !important;
+  font-size: 12px !important;
 
-    .el-select-dropdown__item.selected {
-        font-size: 14px !important;
-        color: var(--color-main);
-    }
+  .el-select-dropdown__item.selected {
+    font-size: 14px !important;
+    color: var(--color-main);
+  }
 
-    .el-select-dropdown__item {
-        font-size: 14px !important;
-    }
+  .el-select-dropdown__item {
+    font-size: 14px !important;
+  }
 }
-
 
 /* ==================
       el-input
 ====================*/
 .el-input {
-    --el-input-border-radius: 1px !important;
-    --el-input-focus-border-color: var(--color-main) !important;
-    --el-input-clear-hover-color: var(--color-main) !important;
+  --el-input-border-radius: 1px !important;
+  --el-input-focus-border-color: var(--color-main) !important;
+  --el-input-clear-hover-color: var(--color-main) !important;
 
-    /* .el-input__inner {
+  /* .el-input__inner {
         height: 25px !important;
     } */
 }
@@ -174,10 +173,10 @@
       el-date-editor
 =====================*/
 .el-date-editor {
-    /* height: 25px !important; */
-    border-radius: 1px !important;
+  /* height: 25px !important; */
+  border-radius: 1px !important;
 
-    /* .el-range-input {
+  /* .el-range-input {
         height: 21px !important;
     } */
 }
@@ -186,105 +185,106 @@
       el-divider
 =====================*/
 .el-divider {
-    margin: 15px 0 15px 0 !important;
+  margin: 15px 0 15px 0 !important;
 }
 
 /*=====================
       el-table
 =======================*/
 .el-table {
-    --el-table-border-color: white !important;
-    --el-table-header-bg-color: #f2f5fc !important;
-    --el-table-header-text-color: black !important
+  --el-table-border-color: white !important;
+  --el-table-header-bg-color: #f2f5fc !important;
+  --el-table-header-text-color: black !important
+;
 }
 
 .el-table .sort-caret.ascending {
-    border-bottom-color: var(--el-text-color-placeholder) !important;
+  border-bottom-color: var(--el-text-color-placeholder) !important;
 }
 
 .el-table .ascending .sort-caret.ascending {
-    border-bottom-color: var(--color-main) !important;
+  border-bottom-color: var(--color-main) !important;
 }
 
 .el-table .sort-caret.descending {
-    border-top-color: var(--el-text-color-placeholder) !important;
+  border-top-color: var(--el-text-color-placeholder) !important;
 }
 
 .el-table .descending .sort-caret.descending {
-    border-top-color: var(--color-main) !important;
+  border-top-color: var(--color-main) !important;
 }
 
 /* ================
      el-card
 ===================*/
 .el-card {
-    border-radius: 0px !important;
+  border-radius: 0px !important;
 }
 
 /* ===============
      left menu
 ===================*/
 .el-sub-menu__title {
-    height: 48px !important;
+  height: 48px !important;
 }
 
 .el-menu-item {
-    height: 45px !important;
+  height: 45px !important;
 }
 
 .el-menu.el-menu--horizontal.el-menu-demo {
-    border: 0px !important;
+  border: 0px !important;
 
-    .el-menu-item {
-        height: 100% !important;
-    }
+  .el-menu-item {
+    height: 100% !important;
+  }
 }
 
 .el-menu-item.is-active {
-    color: var(--color-main) !important;
+  color: var(--color-main) !important;
 }
 
 .el-sub-menu.is-active {
-    --el-menu-active-color: var(--color-main) !important;
+  --el-menu-active-color: var(--color-main) !important;
 }
 
 .navigation {
-    border: 0px !important;
+  border: 0px !important;
 }
 
 /*==================
     el-checkbox
 ===================*/
 .el-checkbox {
-    --el-checkbox-checked-bg-color: var(--color-main) !important;
-    --el-checkbox-checked-input-border-color: var(--color-main) !important;
-    --el-checkbox-input-border-color-hover: var(--color-main) !important;
+  --el-checkbox-checked-bg-color: var(--color-main) !important;
+  --el-checkbox-checked-input-border-color: var(--color-main) !important;
+  --el-checkbox-input-border-color-hover: var(--color-main) !important;
 }
 
 /*==================
     el-date-picker
 ===================*/
 .el-picker-panel__sidebar {
-    width: 120px !important;
+  width: 120px !important;
 }
 
 .el-date-range-picker .el-picker-panel__body {
-    margin-left: 120px !important;
+  margin-left: 120px !important;
 }
 
 /*==================
     el-table in dashboard
 ===================*/
 .dashboard .el-table {
-    max-width: 100%;
-    width: auto;
-    margin: 0 auto;
+  max-width: 100%;
+  width: auto;
+  margin: 0 auto;
 }
 
 /*==================
     el-card in dashboard
 ===================*/
 .dashboard .el-card {
-    margin: 15px;
-    padding: 0;
+  margin: 15px;
+  padding: 0;
 }

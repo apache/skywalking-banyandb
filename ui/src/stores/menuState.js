@@ -17,29 +17,29 @@
  * under the License.
  */
 
-import { defineStore } from "pinia"
+import { defineStore } from 'pinia';
 
 export default defineStore('menuState', {
-    state() {
-        return {
-            showRightMenu: false,
-            left: 0,
-            top: 0,
-            rightMenuList: []
-        }
+  state() {
+    return {
+      showRightMenu: false,
+      left: 0,
+      top: 0,
+      rightMenuList: [],
+    };
+  },
+  actions: {
+    changeShowRightMenu(val) {
+      this.showRightMenu = val;
     },
-    actions: {
-        changeShowRightMenu(val) {
-            this.showRightMenu = val
-        },
-        changeLeft(val) {
-            this.left = val
-        },
-        changeTop(val) {
-            this.top = val
-        },
-        changeRightMenuList(val) {
-            this.rightMenuList = val
-        }
-    }
-})
+    changeLeft(val) {
+      this.left = val;
+    },
+    changeTop(val) {
+      this.top = val;
+    },
+    changeRightMenuList(val) {
+      this.rightMenuList = val;
+    },
+  },
+});
