@@ -43,7 +43,8 @@ func (d *database[T, O]) Tick(ts int64) {
 }
 
 func (d *database[T, O]) startRotationTask() error {
-	rt := newRetentionTask(d, d.opts.TTL)
+	options := d.segmentController.getOptions()
+	rt := newRetentionTask(d, options.TTL)
 	go func(rt *retentionTask[T, O]) {
 		for ts := range d.tsEventCh {
 			func(ts int64) {
@@ -70,7 +71,7 @@ func (d *database[T, O]) startRotationTask() error {
 					}
 					d.incTotalRotationStarted(1)
 					defer d.incTotalRotationFinished(1)
-					start := d.segmentController.opts.SegmentInterval.nextTime(t)
+					start := options.SegmentInterval.nextTime(t)
 					d.logger.Info().Time("segment_start", start).Time("event_time", t).Msg("create new segment")
 					_, err := d.segmentController.create(start)
 					if err != nil {

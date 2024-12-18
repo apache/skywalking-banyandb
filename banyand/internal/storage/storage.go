@@ -99,6 +99,7 @@ type TSDB[T TSTable, O any] interface {
 	CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], error)
 	SelectSegments(timeRange timestamp.TimeRange) []Segment[T, O]
 	Tick(ts int64)
+	UpdateOptions(opts *commonv1.ResourceOpts)
 }
 
 // Segment is a time range of data.

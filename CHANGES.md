@@ -27,11 +27,13 @@ Release Notes.
 - Metadata: Fix the bug that the cache load nil value that is the unknown index rule on the index rule binding.
 - Queue: Fix the bug that the client remove a registered node in the eviction list. The node is controlled by the recovery loop, doesn't need to be removed in the failover process.
 - UI: Add prettier to enforce a consistent style by parsing code.
+- Fix the bug that fails to update `Group` Schema's ResourceOpts.
 
 ### Documentation
 
 - Improve the description of the memory in observability doc.
 - Update kubernetes install document to align the banyandb helm v0.3.0.
+- Add restrictions on updating schema.
 
 ### Chores
 

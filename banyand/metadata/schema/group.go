@@ -23,6 +23,7 @@ import (
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -102,7 +103,17 @@ func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Gr
 	if group.Metadata.Name == "" {
 		return errors.New("metadata.name is required")
 	}
-	_, err := e.update(ctx, Metadata{
+	g, err := e.GetGroup(ctx, group.GetMetadata().GetName())
+	if err != nil {
+		return err
+	}
+	if proto.Equal(g.ResourceOpts, group.ResourceOpts) {
+		return nil
+	}
+	if g.GetResourceOpts().SegmentInterval.Unit != group.GetResourceOpts().SegmentInterval.Unit {
+		return errors.New("segment interval unit cannot be changed")
+	}
+	_, err = e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind: KindGroup,
 			Name: group.GetMetadata().GetName(),

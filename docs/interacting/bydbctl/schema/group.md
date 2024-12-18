@@ -66,6 +66,8 @@ resource_opts:
 EOF
 ```
 
+You can't change the unit of `segment_interval`. If you want to change the unit, you should delete the group and create a new one.
+
 ## Delete operation
 
 Delete operation deletes a group's schema.

@@ -293,6 +293,10 @@ func (tst *tsTable) Collect(m storage.Metrics) {
 	}
 	metrics := m.(*metrics)
 	snp := tst.currentSnapshot()
+	if snp == nil {
+		return
+	}
+
 	defer snp.decRef()
 
 	var totalMemPart, totalMemElements, totalMemBlocks, totalMemPartBytes, totalMemPartUncompressedBytes uint64
