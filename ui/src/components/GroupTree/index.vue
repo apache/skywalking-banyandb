@@ -851,6 +851,7 @@
     z-index: 9999 !important;
     padding: 10px;
     font-size: 14px;
+    background-color: #fff;
     div {
       height: 30px;
       line-height: 30px;
