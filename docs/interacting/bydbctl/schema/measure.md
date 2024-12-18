@@ -87,18 +87,32 @@ bydbctl measure update -f - <<EOF
 metadata:
   name: service_cpm_minute
   group: sw_metric
-tagFamilies:
-  - name: searchable
-    tags: 
-      - name: trace_id
-        type: TAG_TYPE_STRING
+tag_families:
+- name: default
+  tags:
+  - name: id
+    type: TAG_TYPE_STRING
+  - name: entity_id
+    type: TAG_TYPE_STRING
+  - name: new_tag
+    type: TAG_TYPE_STRING
+fields:
+- name: total
+  field_type: FIELD_TYPE_INT
+  encoding_method: ENCODING_METHOD_GORILLA
+  compression_method: COMPRESSION_METHOD_ZSTD
+- name: value
+  field_type: FIELD_TYPE_INT
+  encoding_method: ENCODING_METHOD_GORILLA
+  compression_method: COMPRESSION_METHOD_ZSTD
 entity:
   tag_names:
-    - entity_id
+  - entity_id
+interval: 1m
 EOF
 ```
 
-A measure's `entity` is immutable. If you want to change the entity field, you should delete the measure and create a new one.
+You only can append new tags or fields to a measure. You can't change the existing tags or fields. The order of tags and fields is immutable, you can't change the order of tags or fields. You can't insert a new tag or field in the middle or front of the existing tags or fields.
 
 ## Delete operation
 

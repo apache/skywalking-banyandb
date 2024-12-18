@@ -32,6 +32,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -43,6 +44,8 @@ var ErrExpiredData = errors.New("expired data")
 
 type segment[T TSTable, O any] struct {
 	metrics  any
+	option   O
+	creator  TSTableCreator[T, O]
 	l        *logger.Logger
 	index    *seriesIndex
 	sLst     atomic.Pointer[[]*shard[T]]
@@ -50,7 +53,6 @@ type segment[T TSTable, O any] struct {
 	timestamp.TimeRange
 	suffix        string
 	location      string
-	opts          TSDBOpts[T, O]
 	mu            sync.Mutex
 	refCount      int32
 	mustBeDeleted uint32
@@ -58,7 +60,6 @@ type segment[T TSTable, O any] struct {
 }
 
 func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string,
-	opts TSDBOpts[T, O],
 ) (s *segment[T, O], err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
@@ -69,8 +70,9 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
 		return p
 	})
-	id := generateSegID(sc.opts.SegmentInterval.Unit, suffixInteger)
-	sir, err := newSeriesIndex(ctx, path, sc.opts.SeriesIndexFlushTimeoutSeconds, sc.indexMetrics)
+	options := sc.getOptions()
+	id := generateSegID(options.SegmentInterval.Unit, suffixInteger)
+	sir, err := newSeriesIndex(ctx, path, options.SeriesIndexFlushTimeoutSeconds, sc.indexMetrics)
 	if err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
 	}
@@ -82,20 +84,21 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 		position:  p,
 		refCount:  1,
 		index:     sir,
-		opts:      opts,
 		metrics:   sc.metrics,
+		creator:   options.TSTableCreator,
+		option:    options.Option,
 	}
 	s.l = logger.Fetch(ctx, s.String())
-	return s, s.loadShards()
+	return s, s.loadShards(int(options.ShardNum))
 }
 
-func (s *segment[T, O]) loadShards() error {
+func (s *segment[T, O]) loadShards(shardNum int) error {
 	return walkDir(s.location, shardPathPrefix, func(suffix string) error {
 		shardID, err := strconv.Atoi(suffix)
 		if err != nil {
 			return err
 		}
-		if shardID >= int(s.opts.ShardNum) {
+		if shardID >= shardNum {
 			return nil
 		}
 		s.l.Info().Int("shard_id", shardID).Msg("loaded a existed shard")
@@ -205,11 +208,12 @@ type segmentController[T TSTable, O any] struct {
 	metrics      Metrics
 	l            *logger.Logger
 	indexMetrics *inverted.Metrics
+	opts         *TSDBOpts[T, O]
 	position     common.Position
 	location     string
 	lst          []*segment[T, O]
-	opts         TSDBOpts[T, O]
 	deadline     atomic.Int64
+	optsMutex    sync.RWMutex
 	sync.RWMutex
 }
 
@@ -219,13 +223,32 @@ func newSegmentController[T TSTable, O any](ctx context.Context, location string
 	clock, _ := timestamp.GetClock(ctx)
 	return &segmentController[T, O]{
 		location:     location,
-		opts:         opts,
+		opts:         &opts,
 		l:            l,
 		clock:        clock,
 		position:     common.GetPosition(ctx),
 		metrics:      metrics,
 		indexMetrics: indexMetrics,
 	}
+}
+
+func (sc *segmentController[T, O]) getOptions() *TSDBOpts[T, O] {
+	sc.optsMutex.RLock()
+	defer sc.optsMutex.RUnlock()
+	return sc.opts
+}
+
+func (sc *segmentController[T, O]) updateOptions(resourceOpts *commonv1.ResourceOpts) {
+	sc.optsMutex.Lock()
+	defer sc.optsMutex.Unlock()
+	si := MustToIntervalRule(resourceOpts.SegmentInterval)
+	if sc.opts.SegmentInterval.Unit != si.Unit {
+		sc.l.Panic().Msg("segment interval unit cannot be changed")
+		return
+	}
+	sc.opts.SegmentInterval = si
+	sc.opts.TTL = MustToIntervalRule(resourceOpts.Ttl)
+	sc.opts.ShardNum = resourceOpts.ShardNum
 }
 
 func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange) (tt []Segment[T, O]) {
@@ -270,7 +293,7 @@ func (sc *segmentController[T, O]) segments() (ss []*segment[T, O]) {
 }
 
 func (sc *segmentController[T, O]) format(tm time.Time) string {
-	switch sc.opts.SegmentInterval.Unit {
+	switch sc.getOptions().SegmentInterval.Unit {
 	case HOUR:
 		return tm.Format(hourFormat)
 	case DAY:
@@ -280,7 +303,7 @@ func (sc *segmentController[T, O]) format(tm time.Time) string {
 }
 
 func (sc *segmentController[T, O]) parse(value string) (time.Time, error) {
-	switch sc.opts.SegmentInterval.Unit {
+	switch sc.getOptions().SegmentInterval.Unit {
 	case HOUR:
 		return time.ParseInLocation(hourFormat, value, time.Local)
 	case DAY:
@@ -293,7 +316,7 @@ func (sc *segmentController[T, O]) open() error {
 	sc.Lock()
 	defer sc.Unlock()
 	emptySegments := make([]string, 0)
-	err := loadSegments(sc.location, segPathPrefix, sc, sc.opts.SegmentInterval, func(start, end time.Time) error {
+	err := loadSegments(sc.location, segPathPrefix, sc, sc.getOptions().SegmentInterval, func(start, end time.Time) error {
 		suffix := sc.format(start)
 		segmentPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix))
 		metadataPath := path.Join(segmentPath, metadataFilename)
@@ -334,7 +357,8 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 			return s, nil
 		}
 	}
-	start = sc.opts.SegmentInterval.Unit.standard(start)
+	options := sc.getOptions()
+	start = options.SegmentInterval.Unit.standard(start)
 	var next *segment[T, O]
 	for _, s := range sc.lst {
 		if s.Contains(start.UnixNano()) {
@@ -344,7 +368,7 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 			next = s
 		}
 	}
-	stdEnd := sc.opts.SegmentInterval.nextTime(start)
+	stdEnd := options.SegmentInterval.nextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
 		end = next.Start
@@ -381,7 +405,7 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 	ctx := common.SetPosition(context.WithValue(context.Background(), logger.ContextKey, sc.l), func(_ common.Position) common.Position {
 		return sc.position
 	})
-	seg, err = sc.openSegment(ctx, start, end, segPath, suffix, sc.opts)
+	seg, err = sc.openSegment(ctx, start, end, segPath, suffix)
 	if err != nil {
 		return nil, err
 	}

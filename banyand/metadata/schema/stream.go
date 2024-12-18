@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -68,20 +69,15 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 	if err = validate.GroupForStreamOrMeasure(g); err != nil {
 		return 0, err
 	}
-	if err = validate.GroupForStreamOrMeasure(g); err != nil {
-		return 0, err
-	}
 	prev, err := e.GetStream(ctx, stream.GetMetadata())
 	if err != nil {
 		return 0, err
 	}
 	if prev == nil {
-		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "measure %s not found", stream.GetMetadata().GetName())
+		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "stream %s not found", stream.GetMetadata().GetName())
 	}
-	for i, e := range prev.GetEntity().GetTagNames() {
-		if e != stream.GetEntity().GetTagNames()[i] {
-			return 0, errors.WithMessagef(ErrInputInvalid, "entity is immutable. Please create a new stream if you want to change entity")
-		}
+	if err := validateEqualExceptAppendTags(prev, stream); err != nil {
+		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
 	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
@@ -92,6 +88,29 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 		},
 		Spec: stream,
 	})
+}
+
+func validateEqualExceptAppendTags(prevStream, newStream *databasev1.Stream) error {
+	if prevStream.GetEntity().String() != newStream.GetEntity().String() {
+		return fmt.Errorf("entity is different: %s != %s", prevStream.GetEntity().String(), newStream.GetEntity().String())
+	}
+	if len(prevStream.GetTagFamilies()) > len(newStream.GetTagFamilies()) {
+		return fmt.Errorf("number of tag families is less in the new stream")
+	}
+	for i, tagFamily := range prevStream.GetTagFamilies() {
+		if tagFamily.Name != newStream.GetTagFamilies()[i].Name {
+			return fmt.Errorf("tag family name is different: %s != %s", tagFamily.Name, newStream.GetTagFamilies()[i].Name)
+		}
+		if len(tagFamily.Tags) > len(newStream.GetTagFamilies()[i].Tags) {
+			return fmt.Errorf("number of tags in tag family %s is less in the new stream", tagFamily.Name)
+		}
+		for j, tag := range tagFamily.Tags {
+			if tag.String() != newStream.GetTagFamilies()[i].Tags[j].String() {
+				return fmt.Errorf("tag %s in tag family %s is different: %s != %s", tag.Name, tagFamily.Name, tag.String(), newStream.GetTagFamilies()[i].Tags[j].String())
+			}
+		}
+	}
+	return nil
 }
 
 func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.Stream) (int64, error) {
