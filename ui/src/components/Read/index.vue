@@ -146,6 +146,7 @@
     codeStorage: [],
   });
   const tableHeader = computed(() => {
+    console.log(data.tableTags.concat(data.tableFields))
     return data.tableTags.concat(data.tableFields);
   });
   watch(
@@ -210,11 +211,6 @@ orderBy:
 `,
       );
     }
-  }
-  function changeCode(name, value) {
-    let code = yamlToJson(data.code).data;
-    code[name] = value;
-    data.code = jsonToYaml(code).data;
   }
   function initData() {
     $loadingCreate();
@@ -305,6 +301,7 @@ orderBy:
       return dataItem;
     });
     data.loading = false;
+    console.log(data.tableData);
   }
   function setTableParam() {
     let tagFamily = data.resourceData.tagFamilies[data.tagFamily];
@@ -412,6 +409,10 @@ orderBy:
     });
     getTableData();
   }
+
+  function getvalue(row) {
+    console.log(row);
+  }
 </script>
 
 <template>
@@ -456,7 +457,7 @@ orderBy:
               range-separator="to"
               start-placeholder="begin"
               end-placeholder="end"
-              align="right"
+              :align="`right`"
             >
             </el-date-picker>
             <el-button :icon="Search" @click="searchTableData" style="flex: 0 0 auto" color="#6E38F7" plain></el-button>
@@ -479,7 +480,7 @@ orderBy:
         element-loading-background="rgba(0, 0, 0, 0.8)"
         ref="multipleTable"
         stripe
-        border
+        :border="true"
         highlight-current-row
         tooltip-effect="dark"
         empty-text="No data yet"
@@ -496,6 +497,17 @@ orderBy:
           :prop="item.name"
           show-overflow-tooltip
         >
+          <template #default="scope">
+            <el-popover v-if="item.type.includes(`ARRAY`) && scope.row[item.name]" effect="light" trigger="hover" placement="top" width="auto">
+              <template #default>
+                <div>{{scope.row[item.name].join('; ')}}</div>
+              </template>
+              <template #reference>
+                <el-tag>View</el-tag>
+              </template>
+            </el-popover>
+            <div v-else>{{ scope.row[item.name] }}</div>
+          </template>
         </el-table-column>
       </el-table>
     </el-card>
