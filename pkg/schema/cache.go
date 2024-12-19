@@ -28,6 +28,7 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -270,15 +271,12 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	if groupSchema.GetMetadata().GetModRevision() <= prevGroupSchema.Metadata.ModRevision {
 		return g, nil
 	}
-	sr.l.Info().Str("group", name).Msg("closing the previous tsdb")
-	db := g.SupplyTSDB()
-	if db != nil {
-		db.Close()
+	g.groupSchema.Store(groupSchema)
+	if proto.Equal(groupSchema, prevGroupSchema) {
+		return g, nil
 	}
-	sr.l.Info().Str("group", name).Msg("creating a new tsdb")
-	if err := g.init(name); err != nil {
-		return nil, err
-	}
+	sr.l.Info().Str("group", name).Msg("updating the group resource options")
+	g.db.Load().(DB).UpdateOptions(groupSchema.ResourceOpts)
 	return g, nil
 }
 
@@ -500,7 +498,7 @@ func (g *group) initBySchema(groupSchema *commonv1.Group) error {
 		return err
 	}
 	g.db.Store(db)
-	return nil
+	return err
 }
 
 func (g *group) isInit() bool {
@@ -512,10 +510,7 @@ func (g *group) GetSchema() *commonv1.Group {
 }
 
 func (g *group) SupplyTSDB() io.Closer {
-	if v := g.db.Load(); v != nil {
-		return v.(io.Closer)
-	}
-	return nil
+	return g.db.Load().(io.Closer)
 }
 
 func (g *group) isPortable() bool {
@@ -526,11 +521,7 @@ func (g *group) close() (err error) {
 	if !g.isInit() || g.isPortable() {
 		return nil
 	}
-	db := g.SupplyTSDB()
-	if db != nil {
-		err = multierr.Append(err, db.Close())
-	}
-	return err
+	return multierr.Append(err, g.SupplyTSDB().Close())
 }
 
 func parseMaxModRevision[T ResourceSchema](indexRules []T) (maxRevisionForIdxRules int64) {

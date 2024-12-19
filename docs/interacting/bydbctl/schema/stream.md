@@ -80,14 +80,16 @@ tagFamilies:
     tags: 
       - name: trace_id
         type: TAG_TYPE_STRING
+      - name: trace_name
+        type: TAG_TYPE_STRING
 entity:
-  tagNames:    
+  tagNames:
     - stream_id
 EOF
 
 ```
 
-A stream's `entity` field is immutable. If you want to change the entity field, you should delete the stream and create a new one.
+You only can append new tags to a measure. You can't change the existing tags . The order of tags is immutable, you can't change the order of tags. You can't insert a new tag in the middle or front of the existing tags.
 
 ## Delete operation
 

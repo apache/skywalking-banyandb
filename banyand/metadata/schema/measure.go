@@ -19,6 +19,7 @@ package schema
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -114,10 +115,8 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	if prev == nil {
 		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "measure %s not found", measure.GetMetadata().GetName())
 	}
-	for i, e := range prev.GetEntity().GetTagNames() {
-		if e != measure.GetEntity().GetTagNames()[i] {
-			return 0, errors.WithMessagef(ErrInputInvalid, "entity is immutable. Please create a new measure if you want to change entity")
-		}
+	if err := validateEqualExceptAppendTagsAndFields(prev, measure); err != nil {
+		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
 	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
@@ -128,6 +127,43 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 		},
 		Spec: measure,
 	})
+}
+
+func validateEqualExceptAppendTagsAndFields(prevMeasure, newMeasure *databasev1.Measure) error {
+	if prevMeasure.GetInterval() != newMeasure.GetInterval() {
+		return fmt.Errorf("interval is different: %s != %s", prevMeasure.GetInterval(), newMeasure.GetInterval())
+	}
+	if prevMeasure.GetEntity().String() != newMeasure.GetEntity().String() {
+		return fmt.Errorf("entity is different: %s != %s", prevMeasure.GetEntity().String(), newMeasure.GetEntity().String())
+	}
+	if prevMeasure.GetIndexMode() != newMeasure.GetIndexMode() {
+		return fmt.Errorf("index mode is different: %v != %v", prevMeasure.GetIndexMode(), newMeasure.GetIndexMode())
+	}
+	if len(prevMeasure.GetTagFamilies()) > len(newMeasure.GetTagFamilies()) {
+		return fmt.Errorf("number of tag families is less in the new measure")
+	}
+	if len(prevMeasure.GetFields()) > len(newMeasure.GetFields()) {
+		return fmt.Errorf("number of fields is less in the new measure")
+	}
+	for i, tagFamily := range prevMeasure.GetTagFamilies() {
+		if tagFamily.Name != newMeasure.GetTagFamilies()[i].Name {
+			return fmt.Errorf("tag family name is different: %s != %s", tagFamily.Name, newMeasure.GetTagFamilies()[i].Name)
+		}
+		if len(tagFamily.Tags) > len(newMeasure.GetTagFamilies()[i].Tags) {
+			return fmt.Errorf("number of tags in tag family %s is less in the new measure", tagFamily.Name)
+		}
+		for j, tag := range tagFamily.Tags {
+			if tag.String() != newMeasure.GetTagFamilies()[i].Tags[j].String() {
+				return fmt.Errorf("tag %s in tag family %s is different: %s != %s", tag.Name, tagFamily.Name, tag.String(), newMeasure.GetTagFamilies()[i].Tags[j].String())
+			}
+		}
+	}
+	for i, field := range prevMeasure.GetFields() {
+		if field.String() != newMeasure.GetFields()[i].String() {
+			return fmt.Errorf("field is different: %s != %s", field.String(), newMeasure.GetFields()[i].String())
+		}
+	}
+	return nil
 }
 
 func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {

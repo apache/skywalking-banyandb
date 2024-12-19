@@ -90,7 +90,13 @@ type ResourceSchemaSupplier interface {
 // ResourceSupplier allows open a resource and its embedded tsdb.
 type ResourceSupplier interface {
 	ResourceSchemaSupplier
-	OpenDB(groupSchema *commonv1.Group) (io.Closer, error)
+	OpenDB(groupSchema *commonv1.Group) (DB, error)
+}
+
+// DB is the interface of a tsdb.
+type DB interface {
+	io.Closer
+	UpdateOptions(opts *commonv1.ResourceOpts)
 }
 
 // Repository is the collection of several hierarchies groups by a "Group".

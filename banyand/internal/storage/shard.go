@@ -43,7 +43,7 @@ func (s *segment[T, O]) openShard(ctx context.Context, id common.ShardID) (*shar
 	l.Info().Int("shard_id", int(id)).Str("path", location).Msg("creating a shard")
 	p := common.GetPosition(ctx)
 	p.Shard = strconv.Itoa(int(id))
-	t, err := s.opts.TSTableCreator(lfs, location, p, l, s.TimeRange, s.opts.Option, s.metrics)
+	t, err := s.creator(lfs, location, p, l, s.TimeRange, s.option, s.metrics)
 	if err != nil {
 		return nil, err
 	}

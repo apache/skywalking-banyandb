@@ -28,6 +28,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -79,13 +80,17 @@ type database[T TSTable, O any] struct {
 	*metrics
 	p              common.Position
 	location       string
-	opts           TSDBOpts[T, O]
 	latestTickTime atomic.Int64
 	sync.RWMutex
 	rotationProcessOn atomic.Bool
+	closed            atomic.Bool
 }
 
 func (d *database[T, O]) Close() error {
+	if d.closed.Load() {
+		return nil
+	}
+	d.closed.Store(true)
 	d.Lock()
 	defer d.Unlock()
 	d.scheduler.Close()
@@ -122,7 +127,6 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		location:  location,
 		scheduler: scheduler,
 		logger:    l,
-		opts:      opts,
 		tsEventCh: make(chan int64),
 		p:         p,
 		segmentController: newSegmentController[T](ctx, location,
@@ -144,14 +148,30 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 }
 
 func (d *database[T, O]) CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], error) {
+	if d.closed.Load() {
+		return nil, errors.New("database is closed")
+	}
 	return d.segmentController.createSegment(ts)
 }
 
 func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange) []Segment[T, O] {
+	if d.closed.Load() {
+		return nil
+	}
 	return d.segmentController.selectSegments(timeRange)
 }
 
+func (d *database[T, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
+	if d.closed.Load() {
+		return
+	}
+	d.segmentController.updateOptions(resourceOpts)
+}
+
 func (d *database[T, O]) collect() {
+	if d.closed.Load() {
+		return
+	}
 	if d.metrics == nil {
 		return
 	}

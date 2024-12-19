@@ -279,7 +279,7 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 	return s.metadata.StreamRegistry().GetStream(ctx, md)
 }
 
-func (s *supplier) OpenDB(groupSchema *commonv1.Group) (io.Closer, error) {
+func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {
 	name := groupSchema.Metadata.Name
 	p := common.Position{
 		Module:   "stream",
