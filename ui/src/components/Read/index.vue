@@ -498,7 +498,7 @@ orderBy:
           show-overflow-tooltip
         >
           <template #default="scope">
-            <el-popover v-if="item.type.includes(`ARRAY`) && scope.row[item.name]" effect="light" trigger="hover" placement="top" width="auto">
+            <el-popover v-if="item.type.includes(`ARRAY`) && scope.row[item.name]" effect="dark" trigger="hover" placement="top" width="auto">
               <template #default>
                 <div>{{scope.row[item.name].join('; ')}}</div>
               </template>
