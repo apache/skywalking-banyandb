@@ -146,7 +146,6 @@
     codeStorage: [],
   });
   const tableHeader = computed(() => {
-    console.log(data.tableTags.concat(data.tableFields))
     return data.tableTags.concat(data.tableFields);
   });
   watch(
@@ -301,7 +300,6 @@ orderBy:
       return dataItem;
     });
     data.loading = false;
-    console.log(data.tableData);
   }
   function setTableParam() {
     let tagFamily = data.resourceData.tagFamilies[data.tagFamily];
@@ -408,10 +406,6 @@ orderBy:
       return item;
     });
     getTableData();
-  }
-
-  function getvalue(row) {
-    console.log(row);
   }
 </script>
 
