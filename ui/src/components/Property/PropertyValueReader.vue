@@ -27,12 +27,8 @@
   });
 
   const numSpaces = 2;
-  const initData = () => {
-    valueData.data = temp;
-  };
   const closeDialog = () => {
     showDialog.value = false;
-    initData();
   };
 
   const downloadValue = () => {
