@@ -89,6 +89,23 @@ func ParseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, co
 	return nil, nil, errors.WithMessagef(ErrUnsupportedConditionValue, "index filter parses %v", cond)
 }
 
+// ParseExpr parses the condition and returns the literal expression.
+func ParseExpr(cond *modelv1.Condition) (LiteralExpr, error) {
+	switch v := cond.Value.Value.(type) {
+	case *modelv1.TagValue_Str:
+		return str(v.Str.GetValue()), nil
+	case *modelv1.TagValue_StrArray:
+		return newStrArrLiteral(v.StrArray.GetValue()), nil
+	case *modelv1.TagValue_Int:
+		return newInt64Literal(v.Int.GetValue()), nil
+	case *modelv1.TagValue_IntArray:
+		return newInt64ArrLiteral(v.IntArray.GetValue()), nil
+	case *modelv1.TagValue_Null:
+		return newNullLiteral(), nil
+	}
+	return nil, errors.WithMessagef(ErrUnsupportedConditionValue, "condition parses %v", cond)
+}
+
 // ParseEntities merges entities based on the logical operation.
 func ParseEntities(op modelv1.LogicalExpression_LogicalOp, input []*modelv1.TagValue, left, right [][]*modelv1.TagValue) [][]*modelv1.TagValue {
 	count := len(input)

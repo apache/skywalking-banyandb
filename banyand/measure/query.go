@@ -71,8 +71,8 @@ type queryOptions struct {
 }
 
 func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
-	if mqo.TimeRange == nil || len(mqo.Entities) < 1 {
-		return nil, errors.New("invalid query options: timeRange and series are required")
+	if mqo.TimeRange == nil {
+		return nil, errors.New("invalid query options: timeRange are required")
 	}
 	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
@@ -82,14 +82,6 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		return mqr, nil
 	}
 
-	series := make([]*pbv1.Series, len(mqo.Entities))
-	for i := range mqo.Entities {
-		series[i] = &pbv1.Series{
-			Subject:      mqo.Name,
-			EntityValues: mqo.Entities[i],
-		}
-	}
-
 	tsdb := db.(storage.TSDB[*tsTable, option])
 	segments := tsdb.SelectSegments(*mqo.TimeRange)
 	if len(segments) < 1 {
@@ -97,7 +89,19 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	}
 
 	if s.schema.IndexMode {
-		return s.buildIndexQueryResult(ctx, series, mqo, segments)
+		return s.buildIndexQueryResult(ctx, mqo, segments)
+	}
+
+	if len(mqo.Entities) < 1 {
+		return nil, errors.New("invalid query options: series is required")
+	}
+
+	series := make([]*pbv1.Series, len(mqo.Entities))
+	for i := range mqo.Entities {
+		series[i] = &pbv1.Series{
+			Subject:      mqo.Name,
+			EntityValues: mqo.Entities[i],
+		}
 	}
 
 	sids, tables, storedIndexValue, newTagProjection, err := s.searchSeriesList(ctx, series, mqo, segments)
@@ -256,7 +260,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 	return sl, tables, storedIndexValue, newTagProjection, nil
 }
 
-func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
+func (s *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQueryOptions,
 	segments []storage.Segment[*tsTable, option],
 ) (model.MeasureQueryResult, error) {
 	defer func() {
@@ -310,7 +314,7 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, series []*pbv1.Seri
 			opts.TimeRange = mqo.TimeRange
 		}
 		sr := &segResult{}
-		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().Search(ctx, series, opts)
+		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().SearchWithoutSeries(ctx, opts)
 		if err != nil {
 			return nil, err
 		}

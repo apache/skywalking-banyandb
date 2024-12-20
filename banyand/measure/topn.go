@@ -621,10 +621,7 @@ func (t *TopNValue) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder) e
 	t.valueName = convert.BytesToString(nameBytes)
 
 	var entityTagNamesCount uint64
-	src, entityTagNamesCount, err = encoding.BytesToVarUint64(src)
-	if err != nil {
-		return fmt.Errorf("cannot unmarshal topNValue.entityTagNamesCount: %w", err)
-	}
+	src, entityTagNamesCount = encoding.BytesToVarUint64(src)
 	t.entityTagNames = make([]string, 0, entityTagNamesCount)
 	var entityTagNameBytes []byte
 	for i := uint64(0); i < entityTagNamesCount; i++ {
@@ -636,10 +633,7 @@ func (t *TopNValue) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder) e
 	}
 
 	var valuesCount uint64
-	src, valuesCount, err = encoding.BytesToVarUint64(src)
-	if err != nil {
-		return fmt.Errorf("cannot unmarshal topNValue.valuesCount: %w", err)
-	}
+	src, valuesCount = encoding.BytesToVarUint64(src)
 
 	if len(src) < 1 {
 		return fmt.Errorf("cannot unmarshal topNValue.encodeType: src is too short")
@@ -658,10 +652,7 @@ func (t *TopNValue) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder) e
 		return fmt.Errorf("cannot unmarshal topNValue.valueLen: src is too short")
 	}
 	var valueLen uint64
-	src, valueLen, err = encoding.BytesToVarUint64(src)
-	if err != nil {
-		return fmt.Errorf("cannot unmarshal topNValue.valueLen: %w", err)
-	}
+	src, valueLen = encoding.BytesToVarUint64(src)
 
 	if uint64(len(src)) < valueLen {
 		return fmt.Errorf("src is too short for reading string with size %d; len(src)=%d", valueLen, len(src))

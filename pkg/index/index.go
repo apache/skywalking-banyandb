@@ -48,6 +48,10 @@ const (
 	AnalyzerStandard = "standard"
 	// AnalyzerURL breaks test into tokens at any non-letter and non-digit character.
 	AnalyzerURL = "url"
+	// IndexModeName is the name in the index mode.
+	IndexModeName = "_im_name"
+	// IndexModeEntityTagPrefix is the entity tag prefix in the index mode.
+	IndexModeEntityTagPrefix = "_im_entity_tag_"
 )
 
 var (

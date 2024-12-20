@@ -33,11 +33,8 @@ func EncodeBytes(dst, b []byte) []byte {
 
 // DecodeBytes decodes a string from src.
 func DecodeBytes(src []byte) ([]byte, []byte, error) {
-	tail, n, err := BytesToVarUint64(src)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot decode string size: %w", err)
-	}
-	src = tail
+	var n uint64
+	src, n = BytesToVarUint64(src)
 	if uint64(len(src)) < n {
 		return nil, nil, fmt.Errorf("src is too short for reading string with size %d; len(src)=%d", n, len(src))
 	}
@@ -270,10 +267,7 @@ func decompressBlock(dst, src []byte) ([]byte, []byte, error) {
 		src = src[blockLen:]
 		return dst, src, nil
 	case compressTypeZSTD:
-		tail, blockLen, err := BytesToVarUint64(src)
-		if err != nil {
-			return dst, src, fmt.Errorf("cannot decode compressed block size: %w", err)
-		}
+		tail, blockLen := BytesToVarUint64(src)
 		src = tail
 		if uint64(len(src)) < blockLen {
 			return dst, src, fmt.Errorf("cannot read compressed block with the size %d bytes from %d bytes", blockLen, len(src))
@@ -282,6 +276,7 @@ func decompressBlock(dst, src []byte) ([]byte, []byte, error) {
 		src = src[blockLen:]
 
 		// Decompress the block
+		var err error
 		bb := bbPool.Generate()
 		bb.Buf, err = zstd.Decompress(bb.Buf[:0], compressedBlock)
 		if err != nil {

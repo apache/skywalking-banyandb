@@ -67,8 +67,7 @@ func Test_dataBlock_marshal_unmarshal(t *testing.T) {
 
 	unmarshaled := &dataBlock{}
 
-	_, err := unmarshaled.unmarshal(marshaled)
-	require.NoError(t, err)
+	_ = unmarshaled.unmarshal(marshaled)
 
 	assert.Equal(t, original.offset, unmarshaled.offset)
 	assert.Equal(t, original.size, unmarshaled.size)
@@ -157,8 +156,7 @@ func Test_timestampsMetadata_marshal_unmarshal(t *testing.T) {
 
 	unmarshaled := &timestampsMetadata{}
 
-	_, err := unmarshaled.unmarshal(marshaled)
-	require.NoError(t, err)
+	_ = unmarshaled.unmarshal(marshaled)
 
 	assert.Equal(t, original.dataBlock.offset, unmarshaled.dataBlock.offset)
 	assert.Equal(t, original.dataBlock.size, unmarshaled.dataBlock.size)
