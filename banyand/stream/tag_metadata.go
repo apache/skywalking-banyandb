@@ -62,10 +62,7 @@ func (tm *tagMetadata) unmarshal(src []byte) ([]byte, error) {
 	}
 	tm.valueType = pbv1.ValueType(src[0])
 	src = src[1:]
-	src, err = tm.dataBlock.unmarshal(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal tagMetadata.dataBlock: %w", err)
-	}
+	src = tm.dataBlock.unmarshal(src)
 	return src, nil
 }
 
@@ -109,14 +106,12 @@ func (tfm *tagFamilyMetadata) marshal(dst []byte) []byte {
 }
 
 func (tfm *tagFamilyMetadata) unmarshal(src []byte) error {
-	src, tagMetadataLen, err := encoding.BytesToVarUint64(src)
-	if err != nil {
-		return fmt.Errorf("cannot unmarshal tagMetadataLen: %w", err)
-	}
+	src, tagMetadataLen := encoding.BytesToVarUint64(src)
 	if tagMetadataLen < 1 {
 		return nil
 	}
 	tms := tfm.resizeTagMetadata(int(tagMetadataLen))
+	var err error
 	for i := range tms {
 		src, err = tms[i].unmarshal(src)
 		if err != nil {

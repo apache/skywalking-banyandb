@@ -80,6 +80,28 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		}
 	}
 
+	tr := timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime)
+	ms := s.(*schema)
+	if ms.measure.IndexMode {
+		query, err := inverted.BuildIndexModeQuery(uis.metadata.Name, &tr, uis.criteria, s)
+		if err != nil {
+			return nil, err
+		}
+		return &localIndexScan{
+			timeRange:            tr,
+			schema:               s,
+			projectionTags:       projTags,
+			projectionFields:     projField,
+			projectionTagsRefs:   projTagsRefs,
+			projectionFieldsRefs: projFieldRefs,
+			metadata:             uis.metadata,
+			query:                query,
+			groupByEntity:        uis.groupByEntity,
+			uis:                  uis,
+			l:                    logger.GetLogger("query", "measure", uis.metadata.Group, uis.metadata.Name, "local-index"),
+		}, nil
+	}
+
 	entityList := s.EntityList()
 	entityMap := make(map[string]int)
 	entity := make([]*modelv1.TagValue, len(entityList))
@@ -88,13 +110,13 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		// fill AnyEntry by default
 		entity[idx] = pbv1.AnyTagValue
 	}
-	query, entities, _, err := inverted.BuildLocalQuery(uis.criteria, s, entityMap, entity)
+	query, entities, _, err := inverted.BuildQuery(uis.criteria, s, entityMap, entity)
 	if err != nil {
 		return nil, err
 	}
 
 	return &localIndexScan{
-		timeRange:            timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
+		timeRange:            tr,
 		schema:               s,
 		projectionTags:       projTags,
 		projectionFields:     projField,

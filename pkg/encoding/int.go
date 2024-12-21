@@ -150,6 +150,16 @@ func BytesToVarInt64List(dst []int64, src []byte) ([]byte, error) {
 // VarUint64ToBytes appends the bytes of the given uint64 to the given byte slice.
 // It uses variable-length encoding.
 func VarUint64ToBytes(dst []byte, u uint64) []byte {
+	if u < (1 << 7) {
+		return append(dst, byte(u))
+	}
+	if u < (1 << (2 * 7)) {
+		return append(dst, byte(u|0x80), byte(u>>7))
+	}
+	if u < (1 << (3 * 7)) {
+		return append(dst, byte(u|0x80), byte((u>>7)|0x80), byte(u>>(2*7)))
+	}
+
 	var tmp [1]uint64
 	tmp[0] = u
 	return VarUint64sToBytes(dst, tmp[:])
@@ -174,10 +184,28 @@ func VarUint64sToBytes(dst []byte, us []uint64) []byte {
 
 // BytesToVarUint64 converts the first bytes of the given byte slice to a uint64.
 // It uses variable-length encoding.
-func BytesToVarUint64(src []byte) ([]byte, uint64, error) {
-	var tmp [1]uint64
-	tail, err := BytesToVarUint64s(tmp[:], src)
-	return tail, tmp[0], err
+func BytesToVarUint64(src []byte) ([]byte, uint64) {
+	if len(src) == 0 {
+		return src, 0
+	}
+	if src[0] < 0x80 {
+		// Fast path for a single byte
+		return src[1:], uint64(src[0])
+	}
+	if len(src) == 1 {
+		return src, 0
+	}
+	if src[1] < 0x80 {
+		// Fast path for two bytes
+		return src[2:], uint64(src[0]&0x7f) | uint64(src[1])<<7
+	}
+
+	// Slow path for other number of bytes
+	x, o := binary.Uvarint(src)
+	if o <= 0 {
+		return src, 0
+	}
+	return src[o:], x
 }
 
 // BytesToVarUint64s converts the first bytes of the given byte slice to a uint64s.
