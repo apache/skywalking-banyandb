@@ -41,6 +41,7 @@ Release Notes.
 ### Chores
 
 - Fix metrics system typo.
+- Bump up OAP in CI to 6d262cce62e156bd197177abb3640ea65bb2d38e.
 
 ### CVEs
 

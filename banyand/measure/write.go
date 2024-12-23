@@ -284,6 +284,9 @@ func (w *writeCallback) appendEntityTagsToIndexFields(fields []index.Field, stm 
 	f.NoSort = true
 	fields = append(fields, f)
 	for i := range stm.schema.Entity.TagNames {
+		if _, exists := stm.indexTagMap[stm.schema.Entity.TagNames[i]]; exists {
+			continue
+		}
 		tagName := stm.schema.Entity.TagNames[i]
 		var t *databasev1.TagSpec
 		for j := range stm.schema.TagFamilies {
