@@ -62,6 +62,7 @@ type measure struct {
 	topNAggregations   []*databasev1.TopNAggregation
 	interval           time.Duration
 	shardNum           uint32
+	indexTagMap        map[string]struct{}
 }
 
 func (s *measure) startSteamingManager(pipeline queue.Queue) error {
@@ -104,7 +105,12 @@ func (s *measure) parseSpec() (err error) {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
 	s.indexRuleLocators, s.fieldIndexLocation = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules, s.schema.IndexMode)
-
+	s.indexTagMap = make(map[string]struct{})
+	for j := range s.indexRules {
+		for k := range s.indexRules[j].Tags {
+			s.indexTagMap[s.indexRules[j].Tags[k]] = struct{}{}
+		}
+	}
 	return err
 }
 

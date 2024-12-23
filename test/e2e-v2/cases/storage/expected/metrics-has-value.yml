@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+debuggingtrace: null
 type: TIME_SERIES_VALUES
 results:
   {{- contains .results }}
@@ -22,9 +23,11 @@ results:
       {{- contains .values }}
       - id: {{ notEmpty .id }}
         value: {{ .value }}
+        owner: null
         traceid: null
       - id: {{ notEmpty .id }}
         value: null
+        owner: null
         traceid: null
       {{- end}}
   {{- end}}

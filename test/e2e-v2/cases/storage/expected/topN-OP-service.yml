@@ -14,4 +14,21 @@
 # limitations under the License.
 
 debuggingtrace: null
-traces: []
+type: SORTED_LIST
+results:
+  {{- contains .results }}
+  - metric:
+      labels: []
+    values:
+      {{- contains .values }}
+      - id: {{ notEmpty .id }}
+        owner: null
+        value: "100"
+        traceid: null
+      - id: {{ notEmpty .id }}
+        owner: null
+        value: "100"
+        traceid: null
+      {{- end }}
+  {{- end }}
+error: null

@@ -197,13 +197,13 @@ func buildIndexModeCriteria(criteria *modelv1.Criteria, schema logical.Schema, e
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := entityDict[cond.Name]; ok {
-			fk := index.FieldKey{TagName: index.IndexModeEntityTagPrefix + cond.Name}
-			return parseConditionToQuery(cond, nil, expr, fk.Marshal())
-		}
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
 			fk := index.FieldKey{IndexRuleID: indexRule.Metadata.Id}
 			return parseConditionToQuery(cond, indexRule, expr, fk.Marshal())
+		}
+		if _, ok := entityDict[cond.Name]; ok {
+			fk := index.FieldKey{TagName: index.IndexModeEntityTagPrefix + cond.Name}
+			return parseConditionToQuery(cond, nil, expr, fk.Marshal())
 		}
 		return nil, errors.Wrapf(logical.ErrUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
 	case *modelv1.Criteria_Le:
@@ -301,6 +301,9 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 		node := newTermNode(str, indexRule)
 		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_MATCH:
+		if indexRule == nil {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index rule is mandatory for match operation: %s", cond)
+		}
 		bb := expr.Bytes()
 		if len(bb) != 1 {
 			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)

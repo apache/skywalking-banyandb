@@ -54,6 +54,7 @@ target
 # mock files
 *mock.go
 *mock_test.go
+gomock_reflect*
 
 # snky cache
 .dccache
