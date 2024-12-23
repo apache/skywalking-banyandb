@@ -51,18 +51,18 @@ type option struct {
 
 type measure struct {
 	databaseSupplier   schema.Supplier
+	indexTagMap        map[string]struct{}
 	l                  *logger.Logger
 	schema             *databasev1.Measure
 	processorManager   *topNProcessorManager
+	fieldIndexLocation partition.FieldIndexLocation
 	name               string
 	group              string
-	indexRules         []*databasev1.IndexRule
 	indexRuleLocators  partition.IndexRuleLocator
-	fieldIndexLocation partition.FieldIndexLocation
+	indexRules         []*databasev1.IndexRule
 	topNAggregations   []*databasev1.TopNAggregation
 	interval           time.Duration
 	shardNum           uint32
-	indexTagMap        map[string]struct{}
 }
 
 func (s *measure) startSteamingManager(pipeline queue.Queue) error {
