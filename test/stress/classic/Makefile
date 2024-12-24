@@ -18,6 +18,11 @@
 
 NAME := stress
 
+mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
+mk_dir   := $(dir $(mk_path))
+
+root_dir := $(mk_dir)../../..
+
 CLI_ARGS :=
 
 ifdef PROFILE
@@ -29,6 +34,10 @@ cli_env := DOCKER_BUILDKIT=1 USER_ID=$(shell id -u) GROUP_ID=$(shell id -g)
 .PHONY: clean
 clean:
 	rm -rf /tmp/banyandb-stress-agent
+
+.PHONY: build-server
+build-server:
+	(cd $(root_dir) && TARGET_OS=linux PLATFORMS=linux/arm64 make release)
 
 .PHONY: dev-up
 dev-up: clean

@@ -50,19 +50,13 @@ func (d *dataBlock) marshal(dst []byte) []byte {
 	return dst
 }
 
-func (d *dataBlock) unmarshal(src []byte) ([]byte, error) {
-	src, n, err := encoding.BytesToVarUint64(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal offset: %w", err)
-	}
+func (d *dataBlock) unmarshal(src []byte) []byte {
+	src, n := encoding.BytesToVarUint64(src)
 	d.offset = n
 
-	src, n, err = encoding.BytesToVarUint64(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal size: %w", err)
-	}
+	src, n = encoding.BytesToVarUint64(src)
 	d.size = n
-	return src, nil
+	return src
 }
 
 type blockMetadata struct {
@@ -142,49 +136,29 @@ func (bm *blockMetadata) unmarshal(src []byte) ([]byte, error) {
 	}
 	bm.seriesID = common.SeriesID(encoding.BytesToUint64(src))
 	src = src[8:]
-	src, n, err := encoding.BytesToVarUint64(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal uncompressedSizeBytes: %w", err)
-	}
+	src, n := encoding.BytesToVarUint64(src)
 	bm.uncompressedSizeBytes = n
 
-	src, n, err = encoding.BytesToVarUint64(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal count: %w", err)
-	}
+	src, n = encoding.BytesToVarUint64(src)
 	bm.count = n
-	src, err = bm.timestamps.unmarshal(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal timestampsMetadata: %w", err)
-	}
-	src, err = bm.elementIDs.unmarshal(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal elementIDsMetadata: %w", err)
-	}
-	src, n, err = encoding.BytesToVarUint64(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal tagFamilies count: %w", err)
-	}
+	src = bm.timestamps.unmarshal(src)
+	src = bm.elementIDs.unmarshal(src)
+	src, n = encoding.BytesToVarUint64(src)
 	if n > 0 {
 		if bm.tagFamilies == nil {
 			bm.tagFamilies = make(map[string]*dataBlock, n)
 		}
 		var nameBytes []byte
+		var err error
 		for i := uint64(0); i < n; i++ {
 			src, nameBytes, err = encoding.DecodeBytes(src)
 			if err != nil {
 				return nil, fmt.Errorf("cannot unmarshal tagFamily name: %w", err)
 			}
 			tf := &dataBlock{}
-			src, err = tf.unmarshal(src)
-			if err != nil {
-				return nil, fmt.Errorf("cannot unmarshal tagFamily dataBlock: %w", err)
-			}
+			src = tf.unmarshal(src)
 			bm.tagFamilies[string(nameBytes)] = tf
 		}
-	}
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal tagFamilyMetadata: %w", err)
 	}
 	return src, nil
 }
@@ -270,23 +244,17 @@ func (tm *timestampsMetadata) marshal(dst []byte) []byte {
 	return dst
 }
 
-func (tm *timestampsMetadata) unmarshal(src []byte) ([]byte, error) {
-	src, err := tm.dataBlock.unmarshal(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal ts blockData: %w", err)
-	}
+func (tm *timestampsMetadata) unmarshal(src []byte) []byte {
+	src = tm.dataBlock.unmarshal(src)
 	tm.min = int64(encoding.BytesToUint64(src))
 	src = src[8:]
 	tm.max = int64(encoding.BytesToUint64(src))
 	src = src[8:]
 	tm.encodeType = encoding.EncodeType(src[0])
 	src = src[1:]
-	src, n, err := encoding.BytesToVarUint64(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal ts offset: %w", err)
-	}
+	src, n := encoding.BytesToVarUint64(src)
 	tm.elementIDsOffset = n
-	return src, nil
+	return src
 }
 
 type elementIDsMetadata struct {
@@ -310,13 +278,10 @@ func (em *elementIDsMetadata) marshal(dst []byte) []byte {
 	return dst
 }
 
-func (em *elementIDsMetadata) unmarshal(src []byte) ([]byte, error) {
-	src, err := em.dataBlock.unmarshal(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal dataBlock: %w", err)
-	}
+func (em *elementIDsMetadata) unmarshal(src []byte) []byte {
+	src = em.dataBlock.unmarshal(src)
 	em.encodeType = encoding.EncodeType(src[0])
-	return src[1:], nil
+	return src[1:]
 }
 
 func unmarshalBlockMetadata(dst []blockMetadata, src []byte) ([]blockMetadata, error) {

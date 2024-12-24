@@ -62,8 +62,8 @@ func (q *queryNode) String() string {
 	return q.node.String()
 }
 
-// BuildLocalQuery returns blugeQuery for local indices.
-func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int,
+// BuildQuery returns blugeQuery for local indices.
+func BuildQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int,
 	entity []*modelv1.TagValue,
 ) (index.Query, [][]*modelv1.TagValue, bool, error) {
 	if criteria == nil {
@@ -80,7 +80,12 @@ func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDi
 			return nil, parsedEntity, false, nil
 		}
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
-			return parseConditionToQuery(cond, indexRule, expr, entity)
+			fk := index.FieldKey{IndexRuleID: indexRule.Metadata.Id}
+			q, err := parseConditionToQuery(cond, indexRule, expr, fk.Marshal())
+			if err != nil {
+				return nil, nil, false, err
+			}
+			return q, [][]*modelv1.TagValue{entity}, false, nil
 		}
 		return nil, nil, false, errors.Wrapf(logical.ErrUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
 	case *modelv1.Criteria_Le:
@@ -89,16 +94,16 @@ func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDi
 			return nil, nil, false, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
-			return BuildLocalQuery(le.Right, schema, entityDict, entity)
+			return BuildQuery(le.Right, schema, entityDict, entity)
 		}
 		if le.GetRight() == nil {
-			return BuildLocalQuery(le.Left, schema, entityDict, entity)
+			return BuildQuery(le.Left, schema, entityDict, entity)
 		}
-		left, leftEntities, leftIsMatchAllQuery, err := BuildLocalQuery(le.Left, schema, entityDict, entity)
+		left, leftEntities, leftIsMatchAllQuery, err := BuildQuery(le.Left, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, false, err
 		}
-		right, rightEntities, rightIsMatchAllQuery, err := BuildLocalQuery(le.Right, schema, entityDict, entity)
+		right, rightEntities, rightIsMatchAllQuery, err := BuildQuery(le.Right, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -146,68 +151,191 @@ func BuildLocalQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDi
 			}
 			return &queryNode{query, node}, entities, false, nil
 		}
+		return nil, nil, false, logical.ErrInvalidCriteriaType
 	}
 	return nil, nil, false, logical.ErrInvalidCriteriaType
 }
 
-func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexRule,
-	expr logical.LiteralExpr, entity []*modelv1.TagValue,
-) (*queryNode, [][]*modelv1.TagValue, bool, error) {
-	field := string(convert.Uint32ToBytes(indexRule.Metadata.Id))
-	b := expr.Bytes()
-	if len(b) < 1 {
+// BuildIndexModeQuery returns blugeQuery for index mode.
+func BuildIndexModeQuery(measureName string, timeRange *timestamp.TimeRange, criteria *modelv1.Criteria, schema logical.Schema) (index.Query, error) {
+	subjectQuery := bluge.NewTermQuery(measureName).SetField(index.IndexModeName)
+	subjectNode := newTermNode(measureName, nil)
+	if criteria == nil {
 		return &queryNode{
-			query: bluge.NewMatchAllQuery(),
-			node:  newMatchAllNode(),
-		}, [][]*modelv1.TagValue{entity}, true, nil
+			query: subjectQuery,
+			node:  subjectNode,
+		}, nil
 	}
-	term, str := string(b[0]), expr.String()
+	entityList := schema.EntityList()
+	entityDict := make(map[string]int)
+	for idx, e := range entityList {
+		entityDict[e] = idx
+	}
+	criteriaQuery, err := buildIndexModeCriteria(criteria, schema, entityDict)
+	if err != nil {
+		return nil, err
+	}
+	query, node := bluge.NewBooleanQuery(), newMustNode()
+	query.AddMust(subjectQuery)
+	query.AddMust(criteriaQuery.(*queryNode).query)
+	node.Append(subjectNode)
+	node.Append(criteriaQuery.(*queryNode).node)
+	if timeRange != nil {
+		q := bluge.NewDateRangeInclusiveQuery(timeRange.Start, timeRange.End, timeRange.IncludeStart, timeRange.IncludeEnd)
+		q.SetField(timestampField)
+		query.AddMust(q)
+		node.Append(newTimeRangeNode(timeRange))
+	}
+	return &queryNode{query, node}, nil
+}
+
+func buildIndexModeCriteria(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int) (index.Query, error) {
+	switch criteria.GetExp().(type) {
+	case *modelv1.Criteria_Condition:
+		cond := criteria.GetCondition()
+		expr, err := logical.ParseExpr(cond)
+		if err != nil {
+			return nil, err
+		}
+		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
+			fk := index.FieldKey{IndexRuleID: indexRule.Metadata.Id}
+			return parseConditionToQuery(cond, indexRule, expr, fk.Marshal())
+		}
+		if _, ok := entityDict[cond.Name]; ok {
+			fk := index.FieldKey{TagName: index.IndexModeEntityTagPrefix + cond.Name}
+			return parseConditionToQuery(cond, nil, expr, fk.Marshal())
+		}
+		return nil, errors.Wrapf(logical.ErrUnsupportedConditionOp, "mandatory index rule conf:%s", cond)
+	case *modelv1.Criteria_Le:
+		le := criteria.GetLe()
+		if le.GetLeft() == nil && le.GetRight() == nil {
+			return nil, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
+		}
+		if le.GetLeft() == nil {
+			return buildIndexModeCriteria(le.Right, schema, entityDict)
+		}
+		if le.GetRight() == nil {
+			return buildIndexModeCriteria(le.Left, schema, entityDict)
+		}
+		left, err := buildIndexModeCriteria(le.Left, schema, entityDict)
+		if err != nil {
+			return nil, err
+		}
+		right, err := buildIndexModeCriteria(le.Right, schema, entityDict)
+		if err != nil {
+			return nil, err
+		}
+		switch le.Op {
+		case modelv1.LogicalExpression_LOGICAL_OP_AND:
+			query, node := bluge.NewBooleanQuery(), newMustNode()
+			if left != nil {
+				query.AddMust(left.(*queryNode).query)
+				node.Append(left.(*queryNode).node)
+			}
+			if right != nil {
+				query.AddMust(right.(*queryNode).query)
+				node.Append(right.(*queryNode).node)
+			}
+			return &queryNode{query, node}, nil
+		case modelv1.LogicalExpression_LOGICAL_OP_OR:
+			query, node := bluge.NewBooleanQuery(), newShouldNode()
+			query.SetMinShould(1)
+			if left != nil {
+				query.AddShould(left.(*queryNode).query)
+				node.Append(left.(*queryNode).node)
+			}
+			if right != nil {
+				query.AddShould(right.(*queryNode).query)
+				node.Append(right.(*queryNode).node)
+			}
+			return &queryNode{query, node}, nil
+		}
+		return nil, logical.ErrInvalidCriteriaType
+	}
+	return nil, logical.ErrInvalidCriteriaType
+}
+
+func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexRule,
+	expr logical.LiteralExpr, fieldKey string,
+) (*queryNode, error) {
+	str := expr.String()
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
-		query := bluge.NewTermRangeInclusiveQuery(term, maxTerm, false, false).SetField(field)
+		bb := expr.Bytes()
+		if len(bb) != 1 {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
+		}
+		query := bluge.NewTermRangeInclusiveQuery(convert.BytesToString(bb[0]), maxTerm, false, false).SetField(fieldKey)
 		node := newTermRangeInclusiveNode(str, maxInf, false, false, indexRule)
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_GE:
-		query := bluge.NewTermRangeInclusiveQuery(term, maxTerm, true, false).SetField(field)
+		bb := expr.Bytes()
+		if len(bb) != 1 {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
+		}
+		query := bluge.NewTermRangeInclusiveQuery(convert.BytesToString(bb[0]), maxTerm, true, false).SetField(fieldKey)
 		node := newTermRangeInclusiveNode(str, maxInf, true, false, indexRule)
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_LT:
-		query := bluge.NewTermRangeInclusiveQuery(minTerm, term, false, false).SetField(field)
+		bb := expr.Bytes()
+		if len(bb) != 1 {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
+		}
+		query := bluge.NewTermRangeInclusiveQuery(minTerm, convert.BytesToString(bb[0]), false, false).SetField(fieldKey)
 		node := newTermRangeInclusiveNode(minInf, str, false, false, indexRule)
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_LE:
-		query := bluge.NewTermRangeInclusiveQuery(minTerm, term, false, true).SetField(field)
+		bb := expr.Bytes()
+		if len(bb) != 1 {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
+		}
+		query := bluge.NewTermRangeInclusiveQuery(minTerm, convert.BytesToString(bb[0]), false, true).SetField(fieldKey)
 		node := newTermRangeInclusiveNode(minInf, str, false, true, indexRule)
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_EQ:
-		query := bluge.NewTermQuery(term).SetField(field)
+		bb := expr.Bytes()
+		if len(bb) != 1 {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
+		}
+		query := bluge.NewTermQuery(convert.BytesToString(bb[0])).SetField(fieldKey)
 		node := newTermNode(str, indexRule)
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_MATCH:
+		if indexRule == nil {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index rule is mandatory for match operation: %s", cond)
+		}
+		bb := expr.Bytes()
+		if len(bb) != 1 {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
+		}
 		analyzer, operator := getMatchOptions(indexRule.Analyzer, cond.MatchOption)
-		query := bluge.NewMatchQuery(term).SetField(field).SetAnalyzer(analyzer).SetOperator(operator)
+		query := bluge.NewMatchQuery(convert.BytesToString(bb[0])).SetField(fieldKey).SetAnalyzer(analyzer).SetOperator(operator)
 		node := newMatchNode(str, indexRule)
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_NE:
+		bb := expr.Bytes()
+		if len(bb) != 1 {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
+		}
 		query, node := bluge.NewBooleanQuery(), newMustNotNode()
-		query.AddMustNot(bluge.NewTermQuery(term).SetField(field))
+		query.AddMustNot(bluge.NewTermQuery(convert.BytesToString(bb[0])).SetField(fieldKey))
 		node.SetSubNode(newTermNode(str, indexRule))
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_HAVING:
 		bb, elements := expr.Bytes(), expr.Elements()
 		query, node := bluge.NewBooleanQuery(), newMustNode()
 		for _, b := range bb {
-			query.AddMust(bluge.NewTermQuery(string(b)).SetField(field))
+			query.AddMust(bluge.NewTermQuery(string(b)).SetField(fieldKey))
 		}
 		for _, e := range elements {
 			node.Append(newTermNode(e, indexRule))
 		}
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_NOT_HAVING:
 		bb, elements := expr.Bytes(), expr.Elements()
 		subQuery, subNode := bluge.NewBooleanQuery(), newMustNode()
 		for _, b := range bb {
-			subQuery.AddMust(bluge.NewTermQuery(string(b)).SetField(field))
+			subQuery.AddMust(bluge.NewTermQuery(string(b)).SetField(fieldKey))
 		}
 		for _, e := range elements {
 			subNode.Append(newTermNode(e, indexRule))
@@ -215,24 +343,24 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 		query, node := bluge.NewBooleanQuery(), newMustNotNode()
 		query.AddMustNot(subQuery)
 		node.SetSubNode(node)
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_IN:
 		bb, elements := expr.Bytes(), expr.Elements()
 		query, node := bluge.NewBooleanQuery(), newShouldNode()
 		query.SetMinShould(1)
 		for _, b := range bb {
-			query.AddShould(bluge.NewTermQuery(string(b)).SetField(field))
+			query.AddShould(bluge.NewTermQuery(string(b)).SetField(fieldKey))
 		}
 		for _, e := range elements {
 			node.Append(newTermNode(e, indexRule))
 		}
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_NOT_IN:
 		bb, elements := expr.Bytes(), expr.Elements()
 		subQuery, subNode := bluge.NewBooleanQuery(), newShouldNode()
 		subQuery.SetMinShould(1)
 		for _, b := range bb {
-			subQuery.AddShould(bluge.NewTermQuery(string(b)).SetField(field))
+			subQuery.AddShould(bluge.NewTermQuery(string(b)).SetField(fieldKey))
 		}
 		for _, e := range elements {
 			subNode.Append(newTermNode(e, indexRule))
@@ -240,9 +368,9 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 		query, node := bluge.NewBooleanQuery(), newMustNotNode()
 		query.AddMustNot(subQuery)
 		node.SetSubNode(subNode)
-		return &queryNode{query, node}, [][]*modelv1.TagValue{entity}, false, nil
+		return &queryNode{query, node}, nil
 	}
-	return nil, nil, false, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index filter parses %v", cond)
+	return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index filter parses %v", cond)
 }
 
 type node interface {

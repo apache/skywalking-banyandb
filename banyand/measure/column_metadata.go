@@ -79,10 +79,7 @@ func (cm *columnMetadata) unmarshal(src []byte) ([]byte, error) {
 	}
 	cm.valueType = pbv1.ValueType(src[0])
 	src = src[1:]
-	src, err = cm.dataBlock.unmarshal(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal columnMetadata.dataBlock: %w", err)
-	}
+	src = cm.dataBlock.unmarshal(src)
 	return src, nil
 }
 
@@ -126,14 +123,12 @@ func (cfm *columnFamilyMetadata) marshal(dst []byte) []byte {
 }
 
 func (cfm *columnFamilyMetadata) unmarshal(src []byte) ([]byte, error) {
-	src, columnMetadataLen, err := encoding.BytesToVarUint64(src)
-	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal columnMetadataLen: %w", err)
-	}
+	src, columnMetadataLen := encoding.BytesToVarUint64(src)
 	if columnMetadataLen < 1 {
 		return src, nil
 	}
 	cms := cfm.resizeColumnMetadata(int(columnMetadataLen))
+	var err error
 	for i := range cms {
 		src, err = cms[i].unmarshal(src)
 		if err != nil {

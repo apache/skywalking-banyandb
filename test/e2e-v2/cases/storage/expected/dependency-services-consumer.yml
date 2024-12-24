@@ -13,20 +13,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+debuggingtrace: null
 nodes:
 {{- contains .nodes }}
 - id: {{ b64enc "User"}}.0
   name: User
   type: USER
   isreal: false
+  layers:
+    - UNDEFINED
 - id: {{ b64enc "e2e-service-consumer"}}.1
   name: e2e-service-consumer
   type: Tomcat
   isreal: true
+  layers:
+    - GENERAL
 - id: {{ b64enc "e2e-service-provider"}}.1
   name: e2e-service-provider
   type: Tomcat
   isreal: true
+  layers:
+    - GENERAL
 {{- end }}
 calls:
 {{- contains .calls }}

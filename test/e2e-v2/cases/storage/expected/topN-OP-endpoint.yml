@@ -13,6 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-status: true
-errorreason: null
-id: {{ notEmpty .id }}
+debuggingtrace: null
+type: SORTED_LIST
+results:
+  {{- contains .results }}
+  - metric:
+      labels: []
+    values:
+      {{- contains .values }}
+      - id: {{ notEmpty .id }}
+        value: "100"
+        owner: null
+        traceid: null
+      - id: {{ notEmpty .id }}
+        value: "100"
+        owner: null
+        traceid: null
+      {{- end }}
+  {{- end }}
+error: null

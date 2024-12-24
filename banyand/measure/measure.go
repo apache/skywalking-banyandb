@@ -51,14 +51,15 @@ type option struct {
 
 type measure struct {
 	databaseSupplier   schema.Supplier
+	indexTagMap        map[string]struct{}
 	l                  *logger.Logger
 	schema             *databasev1.Measure
 	processorManager   *topNProcessorManager
+	fieldIndexLocation partition.FieldIndexLocation
 	name               string
 	group              string
-	indexRules         []*databasev1.IndexRule
 	indexRuleLocators  partition.IndexRuleLocator
-	fieldIndexLocation partition.FieldIndexLocation
+	indexRules         []*databasev1.IndexRule
 	topNAggregations   []*databasev1.TopNAggregation
 	interval           time.Duration
 	shardNum           uint32
@@ -104,7 +105,12 @@ func (s *measure) parseSpec() (err error) {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
 	s.indexRuleLocators, s.fieldIndexLocation = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules, s.schema.IndexMode)
-
+	s.indexTagMap = make(map[string]struct{})
+	for j := range s.indexRules {
+		for k := range s.indexRules[j].Tags {
+			s.indexTagMap[s.indexRules[j].Tags[k]] = struct{}{}
+		}
+	}
 	return err
 }
 

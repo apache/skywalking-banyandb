@@ -13,12 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-{{- contains . }}
-- id: {{ b64enc "sqrt" }}.1
-  name: sqrt
-  group: ""
-  shortname: sqrt
-  layers:
-    - OS_LINUX
-  normal: true
-{{- end }}
+debuggingtrace: null
+type: SORTED_LIST
+results:
+  {{- contains .results }}
+  - metric:
+      labels: []
+    values:
+      {{- contains .values }}
+      - id: {{ notEmpty .id }}
+        owner: null
+        value: "100"
+        traceid: null
+      - id: {{ notEmpty .id }}
+        owner: null
+        value: "100"
+        traceid: null
+      {{- end }}
+  {{- end }}
+error: null

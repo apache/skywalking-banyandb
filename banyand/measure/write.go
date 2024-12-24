@@ -38,6 +38,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+var subjectField = index.FieldKey{TagName: index.IndexModeName}
+
 type writeCallback struct {
 	l          *logger.Logger
 	schemaRepo *schemaRepo
@@ -112,6 +114,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 
 	tagFamily, fields := w.handleTagFamily(stm, req)
 	if stm.schema.IndexMode {
+		fields = w.appendEntityTagsToIndexFields(fields, stm, series)
 		doc := index.Document{
 			DocID:        uint64(series.ID),
 			EntityValues: series.Buffer,
@@ -273,6 +276,39 @@ func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteReques
 		}
 	}
 	return tagFamilies, fields
+}
+
+func (w *writeCallback) appendEntityTagsToIndexFields(fields []index.Field, stm *measure, series *pbv1.Series) []index.Field {
+	f := index.NewStringField(subjectField, series.Subject)
+	f.Index = true
+	f.NoSort = true
+	fields = append(fields, f)
+	for i := range stm.schema.Entity.TagNames {
+		if _, exists := stm.indexTagMap[stm.schema.Entity.TagNames[i]]; exists {
+			continue
+		}
+		tagName := stm.schema.Entity.TagNames[i]
+		var t *databasev1.TagSpec
+		for j := range stm.schema.TagFamilies {
+			for k := range stm.schema.TagFamilies[j].Tags {
+				if stm.schema.TagFamilies[j].Tags[k].Name == tagName {
+					t = stm.schema.TagFamilies[j].Tags[k]
+				}
+			}
+		}
+
+		encodeTagValue := encodeTagValue(
+			t.Name,
+			t.Type,
+			series.EntityValues[i])
+		if encodeTagValue.value != nil {
+			f = index.NewBytesField(index.FieldKey{TagName: index.IndexModeEntityTagPrefix + t.Name}, encodeTagValue.value)
+			f.Index = true
+			f.NoSort = true
+			fields = append(fields, f)
+		}
+	}
+	return fields
 }
 
 func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {

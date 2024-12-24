@@ -86,13 +86,17 @@ func (s *seriesIndex) Update(docs index.Documents) error {
 func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 	projection []index.FieldKey, secondaryQuery index.Query, timeRange *timestamp.TimeRange,
 ) (data SeriesData, err error) {
-	seriesMatchers := make([]index.SeriesMatcher, len(series))
-	for i := range series {
-		seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
-		if err != nil {
-			return SeriesData{}, err
+	var seriesMatchers []index.SeriesMatcher
+	if len(series) > 0 {
+		seriesMatchers = make([]index.SeriesMatcher, len(series))
+		for i := range series {
+			seriesMatchers[i], err = convertEntityValuesToSeriesMatcher(series[i])
+			if err != nil {
+				return SeriesData{}, err
+			}
 		}
 	}
+
 	indexQuery, err := s.store.BuildQuery(seriesMatchers, secondaryQuery, timeRange)
 	if err != nil {
 		return SeriesData{}, err
@@ -254,6 +258,74 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 		return sd, nil, err
 	}
 	iter, err := s.store.SeriesSort(ctx, query, opts.Order,
+		opts.PreloadSize, opts.Projection)
+	if err != nil {
+		return sd, nil, err
+	}
+	defer func() {
+		err = multierr.Append(err, iter.Close())
+	}()
+
+	var r int
+	for iter.Next() {
+		r++
+		val := iter.Val()
+		var series pbv1.Series
+		if err = series.Unmarshal(val.EntityValues); err != nil {
+			return sd, nil, errors.WithMessagef(err, "failed to unmarshal series: %s", val.EntityValues)
+		}
+		sd.SeriesList = append(sd.SeriesList, &series)
+		sd.Timestamps = append(sd.Timestamps, val.Timestamp)
+		sd.Versions = append(sd.Versions, val.Version)
+		if len(opts.Projection) > 0 {
+			sd.Fields = append(sd.Fields, maps.Clone(val.Values))
+		}
+		sortedValues = append(sortedValues, val.SortedValue)
+	}
+	if span != nil {
+		span.Tagf("query", "%s", iter.Query().String())
+		span.Tagf("rounds", "%d", r)
+		span.Tagf("size", "%d", len(sd.SeriesList))
+	}
+	return sd, sortedValues, err
+}
+
+func (s *seriesIndex) SearchWithoutSeries(ctx context.Context, opts IndexSearchOpts) (sd SeriesData, sortedValues [][]byte, err error) {
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		var span *query.Span
+		span, ctx = tracer.StartSpan(ctx, "seriesIndex.SearchWithoutSeries")
+		if opts.Query != nil {
+			span.Tagf("secondary_query", "%s", opts.Query.String())
+		}
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			}
+			span.Stop()
+		}()
+	}
+
+	if opts.Order == nil || opts.Order.Index == nil {
+		sd, err = s.filter(ctx, nil, opts.Projection, opts.Query, opts.TimeRange)
+		if err != nil {
+			return sd, nil, err
+		}
+		return sd, nil, nil
+	}
+	var span *query.Span
+	if tracer != nil {
+		span, _ = tracer.StartSpan(ctx, "sort")
+		span.Tagf("preload", "%d", opts.PreloadSize)
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			}
+			span.Stop()
+		}()
+	}
+
+	iter, err := s.store.SeriesSort(ctx, opts.Query, opts.Order,
 		opts.PreloadSize, opts.Projection)
 	if err != nil {
 		return sd, nil, err

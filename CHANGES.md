@@ -12,6 +12,8 @@ Release Notes.
 - Measure: Introduce "index_mode" to save data exclusively in the series index, ideal for non-timeseries measures.
 - Index: Use numeric index type to support Int and Float
 - TopN: Group top n pre-calculation result by the group key in the new introduced `_top_n_result` measure, which is used to store the pre-calculation result.
+- Index Mode: Index `measure_nam` and `tags` in `entity` to improve the query performance.
+- Encoding: Improve the performance of encoding and decoding the variable-length int64.
 
 ### Bug Fixes
 
@@ -39,10 +41,12 @@ Release Notes.
 ### Chores
 
 - Fix metrics system typo.
+- Bump up OAP in CI to 6d262cce62e156bd197177abb3640ea65bb2d38e.
 
 ### CVEs
 
 - GO-2024-3321: Misuse of ServerConfig.PublicKeyCallback may cause authorization bypass in golang.org/x/crypto
+- GO-2024-3333: Non-linear parsing of case-insensitive content in golang.org/x/net/html
 
 ## 0.7.0
 

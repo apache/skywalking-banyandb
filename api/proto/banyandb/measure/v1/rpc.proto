@@ -38,5 +38,10 @@ service MeasureService {
   }
 
   rpc Write(stream WriteRequest) returns (stream WriteResponse);
-  rpc TopN(TopNRequest) returns (TopNResponse);
+  rpc TopN(TopNRequest) returns (TopNResponse) {
+    option (google.api.http) = {
+      post: "/v1/measure/topn"
+      body: "*"
+    };
+  }
 }
