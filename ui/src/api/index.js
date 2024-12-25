@@ -118,6 +118,14 @@ export function getTopNAggregationList(name) {
   });
 }
 
+export function getTopNAggregationData(data) {
+  return request({
+    url: `/api/v1/measure/topn`,
+    data,
+    method: 'post',
+  });
+}
+
 export function getSecondaryDataModel(type, group, name) {
   return request({
     url: `/api/v1/${type}/schema/${group}/${name}`,

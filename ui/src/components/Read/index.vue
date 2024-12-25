@@ -28,18 +28,11 @@
   import { ElMessage } from 'element-plus';
   import { computed } from '@vue/runtime-core';
   import FormHeader from '../common/FormHeader.vue';
+  import { Shortcuts, last15Minutes } from '../common/data';
 
   const route = useRoute();
 
   const yamlRef = ref();
-
-  const last15Minutes = 900 * 1000;
-
-  const lastWeek = 3600 * 1000 * 24 * 7;
-
-  const lastMonth = 3600 * 1000 * 24 * 30;
-
-  const last3Months = 3600 * 1000 * 24 * 90;
 
   const autoRefreshTimeRangeFlag = ref(true);
 
@@ -65,48 +58,6 @@
     FIELD_TYPE_FLOAT: 'float',
     FIELD_TYPE_DATA_BINARY: 'binaryData',
   };
-  const shortcuts = [
-    {
-      text: 'Last 15 minutes',
-      value: () => {
-        const end = new Date();
-        const start = new Date();
-        start.setTime(start.getTime() - last15Minutes);
-        pickedShortCutTimeRanges.value = true;
-        return [start, end];
-      },
-    },
-    {
-      text: 'Last week',
-      value: () => {
-        const end = new Date();
-        const start = new Date();
-        start.setTime(start.getTime() - lastWeek);
-        pickedShortCutTimeRanges.value = true;
-        return [start, end];
-      },
-    },
-    {
-      text: 'Last month',
-      value: () => {
-        const end = new Date();
-        const start = new Date();
-        start.setTime(start.getTime() - lastMonth);
-        pickedShortCutTimeRanges.value = true;
-        return [start, end];
-      },
-    },
-    {
-      text: 'Last 3 months',
-      value: () => {
-        const end = new Date();
-        const start = new Date();
-        start.setTime(start.getTime() - last3Months);
-        pickedShortCutTimeRanges.value = true;
-        return [start, end];
-      },
-    },
-  ];
   const param = {
     groups: [],
     name: '',
@@ -447,7 +398,7 @@ orderBy:
               style="margin: 0 10px 0 10px; flex: 1 1 0"
               v-model="data.timeValue"
               type="datetimerange"
-              :shortcuts="shortcuts"
+              :shortcuts="Shortcuts"
               range-separator="to"
               start-placeholder="begin"
               end-placeholder="end"
