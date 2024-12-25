@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -46,6 +47,7 @@ type option struct {
 	mergePolicy              *mergePolicy
 	flushTimeout             time.Duration
 	elementIndexFlushTimeout time.Duration
+	seriesCacheMaxSize       run.Bytes
 }
 
 // Query allow to retrieve elements in a series of streams.

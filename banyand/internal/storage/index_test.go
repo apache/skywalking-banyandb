@@ -37,7 +37,7 @@ import (
 func TestSeriesIndex_Primary(t *testing.T) {
 	ctx := context.Background()
 	path, fn := setUp(require.New(t))
-	si, err := newSeriesIndex(ctx, path, 0, nil)
+	si, err := newSeriesIndex(ctx, path, 0, 0, nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, si.Close())
@@ -67,7 +67,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 	require.NoError(t, si.Insert(docs))
 	// Restart the index
 	require.NoError(t, si.Close())
-	si, err = newSeriesIndex(ctx, path, 0, nil)
+	si, err = newSeriesIndex(ctx, path, 0, 0, nil)
 	require.NoError(t, err)
 	tests := []struct {
 		name         string

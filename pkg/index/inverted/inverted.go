@@ -74,10 +74,11 @@ var _ index.Store = (*store)(nil)
 
 // StoreOpts wraps options to create an inverted index repository.
 type StoreOpts struct {
-	Logger       *logger.Logger
-	Metrics      *Metrics
-	Path         string
-	BatchWaitSec int64
+	Logger        *logger.Logger
+	Metrics       *Metrics
+	Path          string
+	BatchWaitSec  int64
+	CacheMaxBytes int
 }
 
 type store struct {
@@ -154,6 +155,7 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 		indexConfig = indexConfig.WithUnsafeBatches().
 			WithPersisterNapTimeMSec(int(opts.BatchWaitSec * 1000))
 	}
+	indexConfig.CacheMaxBytes = opts.CacheMaxBytes
 	config := bluge.DefaultConfigWithIndexConfig(indexConfig)
 	config.DefaultSearchAnalyzer = Analyzers[index.AnalyzerKeyword]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
@@ -174,6 +176,10 @@ func (s *store) Close() error {
 	s.closer.Done()
 	s.closer.CloseThenWait()
 	return s.writer.Close()
+}
+
+func (s *store) Reset() {
+	s.writer.ResetCache()
 }
 
 func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,

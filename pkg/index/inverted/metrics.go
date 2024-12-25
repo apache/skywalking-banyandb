@@ -46,6 +46,13 @@ type Metrics struct {
 	curOnDiskFiles    meter.Gauge
 
 	totalDocCount meter.Gauge
+
+	cacheGetCalls     meter.Gauge
+	cacheSetCalls     meter.Gauge
+	cacheMisses       meter.Gauge
+	cacheEntriesCount meter.Gauge
+	cacheBytesSize    meter.Gauge
+	cacheMaxBytesSize meter.Gauge
 }
 
 // NewMetrics creates a new metrics for the inverted index.
@@ -73,6 +80,13 @@ func NewMetrics(factory *observability.Factory, labelNames ...string) *Metrics {
 		curOnDiskFiles:    factory.NewGauge("inverted_index_cur_on_disk_files", labelNames...),
 
 		totalDocCount: factory.NewGauge("inverted_index_total_doc_count", labelNames...),
+
+		cacheGetCalls:     factory.NewGauge("inverted_index_cache_get_calls", labelNames...),
+		cacheSetCalls:     factory.NewGauge("inverted_index_cache_set_calls", labelNames...),
+		cacheMisses:       factory.NewGauge("inverted_index_cache_misses", labelNames...),
+		cacheEntriesCount: factory.NewGauge("inverted_index_cache_entries_count", labelNames...),
+		cacheBytesSize:    factory.NewGauge("inverted_index_cache_bytes_size", labelNames...),
+		cacheMaxBytesSize: factory.NewGauge("inverted_index_cache_max_bytes_size", labelNames...),
 	}
 }
 
@@ -106,6 +120,13 @@ func (m *Metrics) DeleteAll(labelValues ...string) {
 	m.totalFileSegments.Delete(labelValues...)
 	m.curOnDiskBytes.Delete(labelValues...)
 	m.curOnDiskFiles.Delete(labelValues...)
+
+	m.cacheGetCalls.Delete(labelValues...)
+	m.cacheSetCalls.Delete(labelValues...)
+	m.cacheMisses.Delete(labelValues...)
+	m.cacheEntriesCount.Delete(labelValues...)
+	m.cacheBytesSize.Delete(labelValues...)
+	m.cacheMaxBytesSize.Delete(labelValues...)
 }
 
 func (s *store) CollectMetrics(labelValues ...string) {
@@ -139,6 +160,13 @@ func (s *store) CollectMetrics(labelValues ...string) {
 	s.metrics.totalFileSegments.Set(float64(status.TotFileSegmentsAtRoot), labelValues...)
 	s.metrics.curOnDiskBytes.Set(float64(status.CurOnDiskBytes), labelValues...)
 	s.metrics.curOnDiskFiles.Set(float64(status.CurOnDiskFiles), labelValues...)
+
+	s.metrics.cacheGetCalls.Set(float64(status.CacheGetCalls), labelValues...)
+	s.metrics.cacheSetCalls.Set(float64(status.CacheSetCalls), labelValues...)
+	s.metrics.cacheMisses.Set(float64(status.CacheMisses), labelValues...)
+	s.metrics.cacheEntriesCount.Set(float64(status.CacheEntriesCount), labelValues...)
+	s.metrics.cacheBytesSize.Set(float64(status.CacheBytesSize), labelValues...)
+	s.metrics.cacheMaxBytesSize.Set(float64(status.CacheMaxBytesSize), labelValues...)
 
 	r, err := s.writer.Reader()
 	if err != nil {

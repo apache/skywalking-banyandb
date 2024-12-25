@@ -178,7 +178,7 @@
 Apache-2.0 licenses
 ========================================================================
 
-    github.com/SkyAPM/bluge v0.0.0-20241204041252-279547fc72c6 Apache-2.0
+    github.com/SkyAPM/bluge v0.0.0-20241225104157-e54f64be56e8 Apache-2.0
     github.com/SkyAPM/ice v0.0.0-20241108011032-c3d8eea75118 Apache-2.0
     github.com/apache/skywalking-cli v0.0.0-20240227151024-ee371a210afe Apache-2.0
     github.com/blevesearch/segment v0.9.1 Apache-2.0
@@ -268,6 +268,7 @@ BSD-3-Clause licenses
     github.com/fsnotify/fsnotify v1.8.0 BSD-3-Clause
     github.com/gogo/protobuf v1.3.2 BSD-3-Clause
     github.com/golang/protobuf v1.5.4 BSD-3-Clause
+    github.com/golang/snappy v0.0.4 BSD-3-Clause
     github.com/google/go-cmp v0.6.0 BSD-3-Clause
     github.com/google/uuid v1.6.0 BSD-3-Clause
     github.com/grpc-ecosystem/grpc-gateway v1.16.0 BSD-3-Clause
@@ -314,6 +315,7 @@ MIT licenses
 ========================================================================
 
     github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97 MIT
+    github.com/VictoriaMetrics/fastcache v1.12.2 MIT
     github.com/axiomhq/hyperloglog v0.2.2 MIT
     github.com/beorn7/perks v1.0.1 MIT
     github.com/blevesearch/go-porterstemmer v1.0.3 MIT
