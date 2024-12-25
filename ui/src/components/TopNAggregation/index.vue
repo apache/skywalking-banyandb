@@ -37,33 +37,33 @@
     trace: null,
   });
   const yamlRef = ref();
-  const timeRange = ref([new Date(new Date().getTime() - last15Minutes), new Date()]);
+  const timeRange = ref([]);
   const yamlCode = ref('');
   const loading = ref(false);
 
-  function init() {
+  function initTopNAggregationData() {
     if (!(data.type && data.group && data.name)) {
       return;
     }
+    timeRange.value = [new Date(new Date().getTime() - last15Minutes), new Date()];
     const range = jsonToYaml({
       timeRange: {
-        begin: new Date(new Date() - last15Minutes),
-        end: new Date(),
+        begin: timeRange.value[0],
+        end: timeRange.value[1],
       },
     }).data;
     yamlCode.value = `${range}topN: 10`;
-
     fetchTopNAggregationData();
   }
 
-  async function fetchTopNAggregationData() {
+  async function fetchTopNAggregationData(param) {
     loading.value = true;
-
     const result = await getTopNAggregationData({
       groups: [data.group],
       name: data.name,
       timeRange: { begin: timeRange.value[0], end: timeRange.value[1] },
       topN: 10,
+      ...param,
     });
     loading.value = false;
     if (!result.data) {
@@ -78,14 +78,11 @@
     data.trace =  result.data.trace;
   }
 
-  function processYaml() {
-
-  }
-
   function searchTopNAggregation() {
     yamlRef.value.checkYaml(yamlCode.value)
     .then(()=> {
-      processYaml();
+      const json = yamlToJson(yamlCode.value).data;
+      fetchTopNAggregationData(json);
     })
     .catch((err) => {
       ElMessage({
@@ -118,7 +115,7 @@
       data.name = route.params.name;
       data.type = route.params.type;
       data.operator = route.params.operator;
-      init();
+      initTopNAggregationData();
     },
     {
       immediate: true,
@@ -150,7 +147,7 @@
         </el-col>
         <el-col :span="14">
           <div class="flex align-item-center justify-end" style="height: 30px">
-            <el-button :icon="RefreshRight" plain></el-button>
+            <el-button :icon="RefreshRight" @click="initTopNAggregationData" plain></el-button>
           </div>
         </el-col>
       </el-row>
