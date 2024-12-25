@@ -49,8 +49,10 @@ require (
 )
 
 require (
+	github.com/VictoriaMetrics/fastcache v1.12.2 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.6 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
+	github.com/golang/snappy v0.0.4 // indirect
 	github.com/kamstrup/intmap v0.5.1 // indirect
 	github.com/machinebox/graphql v0.2.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
@@ -159,7 +161,7 @@ require (
 
 replace (
 	github.com/benbjohnson/clock v1.3.0 => github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97
-	github.com/blugelabs/bluge => github.com/SkyAPM/bluge v0.0.0-20241204041252-279547fc72c6
+	github.com/blugelabs/bluge => github.com/SkyAPM/bluge v0.0.0-20241225104157-e54f64be56e8
 	github.com/blugelabs/bluge_segment_api => github.com/zinclabs/bluge_segment_api v1.0.0
 	github.com/blugelabs/ice => github.com/SkyAPM/ice v0.0.0-20241108011032-c3d8eea75118
 )

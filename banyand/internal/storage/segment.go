@@ -72,7 +72,7 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 	})
 	options := sc.getOptions()
 	id := generateSegID(options.SegmentInterval.Unit, suffixInteger)
-	sir, err := newSeriesIndex(ctx, path, options.SeriesIndexFlushTimeoutSeconds, sc.indexMetrics)
+	sir, err := newSeriesIndex(ctx, path, options.SeriesIndexFlushTimeoutSeconds, options.SeriesIndexCacheMaxBytes, sc.indexMetrics)
 	if err != nil {
 		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
 	}

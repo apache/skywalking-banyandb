@@ -61,6 +61,7 @@ type TSDBOpts[T TSTable, O any] struct {
 	TTL                            IntervalRule
 	SeriesIndexFlushTimeoutSeconds int64
 	ShardNum                       uint32
+	SeriesIndexCacheMaxBytes       int
 }
 
 type (

@@ -345,6 +345,7 @@ type Store interface {
 	Writer
 	Searcher
 	CollectMetrics(...string)
+	Reset()
 }
 
 // Series represents a series in an index.

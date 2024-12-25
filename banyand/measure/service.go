@@ -60,8 +60,8 @@ type service struct {
 	omr            observability.MetricsRegistry
 	schemaRepo     *schemaRepo
 	l              *logger.Logger
-	option         option
 	root           string
+	option         option
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -82,6 +82,8 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "measure-max-fan-out-size", "", "the upper bound of a single file size after merge of measure")
+	s.option.seriesCacheMaxSize = run.Bytes(10 << 20)
+	flagS.VarP(&s.option.seriesCacheMaxSize, "measure-series-cache-max-size", "", "the max size of series cache in each group")
 	return flagS
 }
 

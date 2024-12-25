@@ -50,15 +50,18 @@ type seriesIndex struct {
 	p       common.Position
 }
 
-func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64, metrics *inverted.Metrics) (*seriesIndex, error) {
+func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64, cacheMaxBytes int,
+	metrics *inverted.Metrics,
+) (*seriesIndex, error) {
 	si := &seriesIndex{
 		l: logger.Fetch(ctx, "series_index"),
 		p: common.GetPosition(ctx),
 	}
 	opts := inverted.StoreOpts{
-		Path:         path.Join(root, "sidx"),
-		Logger:       si.l,
-		BatchWaitSec: flushTimeoutSeconds,
+		Path:          path.Join(root, "sidx"),
+		Logger:        si.l,
+		BatchWaitSec:  flushTimeoutSeconds,
+		CacheMaxBytes: cacheMaxBytes,
 	}
 	if metrics != nil {
 		opts.Metrics = metrics
