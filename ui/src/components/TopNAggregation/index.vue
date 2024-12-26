@@ -36,7 +36,7 @@
     lists: [],
     trace: null,
   });
-  const yamlRef = ref();
+  const yamlRef = ref(null);
   const timeRange = ref([]);
   const yamlCode = ref('');
   const loading = ref(false);
@@ -52,7 +52,9 @@
         end: timeRange.value[1],
       },
     }).data;
-    yamlCode.value = `${range}topN: 10`;
+    yamlCode.value = `${range}topN: 10
+agg: 2
+fieldValueSort: 1`;
     fetchTopNAggregationData();
   }
 
@@ -63,6 +65,8 @@
       name: data.name,
       timeRange: { begin: timeRange.value[0], end: timeRange.value[1] },
       topN: 10,
+      agg: 2,
+      fieldValueSort: 1,
       ...param,
     });
     loading.value = false;
@@ -74,7 +78,7 @@
       });
       return;
     }
-    data.lists = result.data.lists;
+    data.lists = result.data.lists.map((d) => d.items.map((item) => ({label: item.entity[0].value.str.value, value: item.value.int.value}))).flat();
     data.trace =  result.data.trace;
   }
 
@@ -147,11 +151,24 @@
         </el-col>
         <el-col :span="14">
           <div class="flex align-item-center justify-end" style="height: 30px">
-            <el-button :icon="RefreshRight" @click="initTopNAggregationData" plain></el-button>
+            <el-button :icon="RefreshRight" @click="initTopNAggregationData" plain />
           </div>
         </el-col>
       </el-row>
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
+    </el-card>
+    <el-card>
+      <el-table
+        :data="data.lists"
+        style="width: 100%"
+        stripe
+        :border="true"
+        highlight-current-row
+        tooltip-effect="dark"
+      >
+        <el-table-column prop="label" label="Label" />
+        <el-table-column prop="value" label="Value" width="220" />
+      </el-table>
     </el-card>
   </div>
 </template>
