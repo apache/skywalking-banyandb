@@ -14,6 +14,7 @@ Release Notes.
 - TopN: Group top n pre-calculation result by the group key in the new introduced `_top_n_result` measure, which is used to store the pre-calculation result.
 - Index Mode: Index `measure_nam` and `tags` in `entity` to improve the query performance.
 - Encoding: Improve the performance of encoding and decoding the variable-length int64.
+- Index: Add a cache to improve the performance of the series index write.
 
 ### Bug Fixes
 

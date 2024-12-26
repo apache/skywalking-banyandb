@@ -62,6 +62,11 @@ func (d *database[T, O]) startRotationTask() error {
 							ss[i].DecRef()
 						}
 					}()
+					for i := range ss {
+						if ss[i].End.UnixNano() < ts {
+							ss[i].index.store.Reset()
+						}
+					}
 					latest := ss[len(ss)-1]
 					gap := latest.End.UnixNano() - ts
 					// gap <=0 means the event is from the future
