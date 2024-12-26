@@ -83,7 +83,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 	tr := timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime)
 	ms := s.(*schema)
 	if ms.measure.IndexMode {
-		query, err := inverted.BuildIndexModeQuery(uis.metadata.Name, &tr, uis.criteria, s)
+		query, err := inverted.BuildIndexModeQuery(uis.metadata.Name, uis.criteria, s)
 		if err != nil {
 			return nil, err
 		}
