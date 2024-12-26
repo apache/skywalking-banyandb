@@ -34,10 +34,6 @@
 
   const yamlRef = ref();
 
-  const autoRefreshTimeRangeFlag = ref(true);
-
-  const pickedShortCutTimeRanges = ref(false);
-
   // Loading
   const { proxy } = getCurrentInstance();
   const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
@@ -189,7 +185,7 @@ orderBy:
     data.loading = true;
     setTableParam();
     let paramList = JSON.parse(JSON.stringify(param));
-    if (data.type == 'measure') {
+    if (data.type === 'measure') {
       paramList.tagProjection = paramList.projection;
       if (data.handleFields.length > 0) {
         paramList.fieldProjection = {
@@ -204,8 +200,8 @@ orderBy:
     paramList.groups = [data.resourceData.metadata.group];
     getTableList(paramList, data.type)
       .then((res) => {
-        if (res.status == 200) {
-          if (data.type == 'stream') {
+        if (res.status === 200) {
+          if (data.type === 'stream') {
             setTableData(res.data.elements);
           } else {
             setTableData(res.data.dataPoints);
@@ -304,22 +300,10 @@ orderBy:
 
     getTableData();
   }
-  function autoRefreshTimeRange() {
-    let json = yamlToJson(data.code);
-    const interval = new Date(json.data.timeRange.end).getTime() - new Date(json.data.timeRange.begin).getTime();
-    const begin = new Date(new Date() - interval);
-    const end = new Date();
-    json.data.timeRange.begin = begin.toISOString();
-    json.data.timeRange.end = end.toISOString();
-    data.code = jsonToYaml(json.data).data;
-  }
   function searchTableData() {
     yamlRef.value
       .checkYaml(data.code)
       .then(() => {
-        if (autoRefreshTimeRangeFlag.value) {
-          autoRefreshTimeRange();
-        }
         handleCodeData();
       })
       .catch((err) => {
@@ -333,8 +317,7 @@ orderBy:
       });
   }
   function changeDatePicker() {
-    autoRefreshTimeRangeFlag.value = pickedShortCutTimeRanges.value;
-    let json = yamlToJson(data.code);
+    const json = yamlToJson(data.code);
     if (!json.data.hasOwnProperty('timeRange')) {
       json.data.timeRange = {
         begin: '',
@@ -344,9 +327,6 @@ orderBy:
     json.data.timeRange.begin = data.timeValue ? data.timeValue[0] : null;
     json.data.timeRange.end = data.timeValue ? data.timeValue[1] : null;
     data.code = jsonToYaml(json.data).data;
-  }
-  function resetDatePicker() {
-    pickedShortCutTimeRanges.value = false;
   }
   function changeFields() {
     data.tableFields = data.handleFields.map((fieldName) => {
@@ -374,13 +354,13 @@ orderBy:
               @change="changeTagFamilies"
               filterable
               placeholder="Please select"
-              style="flex: 0 0 300px"
+              style="width: 200px"
             >
               <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
               </el-option>
             </el-select>
             <el-select
-              v-if="data.type == 'measure'"
+              v-if="data.type === 'measure'"
               v-model="data.handleFields"
               collapse-tags
               style="margin: 0 0 0 10px; flex: 0 0 300px"
@@ -394,8 +374,7 @@ orderBy:
             </el-select>
             <el-date-picker
               @change="changeDatePicker"
-              @visible-change="resetDatePicker"
-              style="margin: 0 10px 0 10px; flex: 1 1 0"
+              style="margin: 0 10px; flex: 1 1 0"
               v-model="data.timeValue"
               type="datetimerange"
               :shortcuts="Shortcuts"

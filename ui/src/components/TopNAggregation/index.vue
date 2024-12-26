@@ -34,7 +34,6 @@
     type: '',
     operator: '',
     lists: [],
-    trace: null,
   });
   const yamlRef = ref(null);
   const timeRange = ref([]);
@@ -81,7 +80,6 @@ fieldValueSort: 1`;
     data.lists = result.data.lists
       .map((d) => d.items.map((item) => ({ label: item.entity[0].value.str.value, value: item.value.int.value })))
       .flat();
-    data.trace = result.data.trace;
   }
 
   function searchTopNAggregation() {
@@ -104,7 +102,7 @@ fieldValueSort: 1`;
 
   function changeTimeRange() {
     const json = yamlToJson(yamlCode.value);
-    if (!json.data.hasOwnProperty('timeRange')) {
+    if (!json.data.timeRange) {
       json.data.timeRange = {
         begin: '',
         end: '',
