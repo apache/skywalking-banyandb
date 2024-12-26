@@ -27,6 +27,7 @@
   import FormHeader from '../common/FormHeader.vue';
   import { Shortcuts, Last15Minutes } from '../common/data';
 
+  const pageSize = 10;
   const route = useRoute();
   const data = reactive({
     group: '',
@@ -39,6 +40,7 @@
   const timeRange = ref([]);
   const yamlCode = ref('');
   const loading = ref(false);
+  const currentList = ref([]);
 
   function initTopNAggregationData() {
     if (!(data.type && data.group && data.name)) {
@@ -80,6 +82,7 @@ fieldValueSort: 1`;
     data.lists = result.data.lists
       .map((d) => d.items.map((item) => ({ label: item.entity[0].value.str.value, value: item.value.int.value })))
       .flat();
+    changePage(0);
   }
 
   function searchTopNAggregation() {
@@ -111,6 +114,12 @@ fieldValueSort: 1`;
     json.data.timeRange.begin = timeRange.value[0] ?? null;
     json.data.timeRange.end = timeRange.value[1] ?? null;
     yamlCode.value = jsonToYaml(json.data).data;
+  }
+
+  function changePage(pageIndex) {
+    currentList.value = data.lists.filter(
+      (d, index) => (pageIndex - 1 || 0) * pageSize <= index && pageSize * (pageIndex || 1) > index,
+    );
   }
 
   watch(
@@ -160,8 +169,8 @@ fieldValueSort: 1`;
     </el-card>
     <el-card>
       <el-table
-        :data="data.lists"
-        style="width: 100%"
+        :data="currentList"
+        style="width: 100%; margin: 10px 0; min-height: 440px"
         stripe
         :border="true"
         highlight-current-row
@@ -170,6 +179,15 @@ fieldValueSort: 1`;
         <el-table-column prop="label" label="Label" />
         <el-table-column prop="value" label="Value" width="220" />
       </el-table>
+      <el-pagination
+        background
+        layout="prev, pager, next"
+        :page-size="pageSize"
+        :total="data.lists.length"
+        @current-change="changePage"
+        @prev-click="changePage"
+        @next-click="changePage"
+      />
     </el-card>
   </div>
 </template>
