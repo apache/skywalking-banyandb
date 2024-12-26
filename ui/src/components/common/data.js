@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-export const last15Minutes = 900 * 1000;
+export const Last15Minutes = 900 * 1000;
 
 const lastWeek = 3600 * 1000 * 24 * 7;
 
@@ -29,7 +29,7 @@ export const Shortcuts = [
     value: () => {
       const end = new Date();
       const start = new Date();
-      start.setTime(start.getTime() - last15Minutes);
+      start.setTime(start.getTime() - Last15Minutes);
       return [start, end];
     },
   },

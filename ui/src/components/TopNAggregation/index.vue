@@ -25,7 +25,7 @@
   import { Search, RefreshRight } from '@element-plus/icons-vue';
   import { getTopNAggregationData } from '@/api/index';
   import FormHeader from '../common/FormHeader.vue';
-  import { Shortcuts, last15Minutes } from '../common/data';
+  import { Shortcuts, Last15Minutes } from '../common/data';
 
   const route = useRoute();
   const data = reactive({
@@ -45,7 +45,7 @@
     if (!(data.type && data.group && data.name)) {
       return;
     }
-    timeRange.value = [new Date(new Date().getTime() - last15Minutes), new Date()];
+    timeRange.value = [new Date(new Date().getTime() - Last15Minutes), new Date()];
     const range = jsonToYaml({
       timeRange: {
         begin: timeRange.value[0],

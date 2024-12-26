@@ -28,7 +28,7 @@
   import { ElMessage } from 'element-plus';
   import { computed } from '@vue/runtime-core';
   import FormHeader from '../common/FormHeader.vue';
-  import { Shortcuts, last15Minutes } from '../common/data';
+  import { Shortcuts, Last15Minutes } from '../common/data';
 
   const route = useRoute();
 
@@ -147,7 +147,7 @@
     } else {
       let timeRange = {
         timeRange: {
-          begin: new Date(new Date() - last15Minutes),
+          begin: new Date(new Date() - Last15Minutes),
           end: new Date(),
         },
       };
