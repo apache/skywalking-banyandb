@@ -305,22 +305,22 @@
         ref="ruleFormRef"
         :rules="rules"
         label-position="left"
-        label-width="100px"
         :model="data.form"
-        style="width: 50%"
+        style="width: 100%"
+        label-width="auto"
       >
-        <el-form-item label="Group" prop="group" label-width="150px">
+        <el-form-item label="Group" prop="group">
           <el-input v-model="data.form.group" clearable :disabled="true"></el-input>
         </el-form-item>
-        <el-form-item label="Name" prop="name" label-width="150px">
+        <el-form-item label="Name" prop="name">
           <el-input
             v-model="data.form.name"
-            :disabled="data.operator == 'edit'"
+            :disabled="data.operator === 'edit'"
             clearable
             placeholder="Input Name"
           ></el-input>
         </el-form-item>
-        <el-form-item label="Measure Group" prop="sourceMeasureGroup" label-width="150px">
+        <el-form-item label="Measure Group" prop="sourceMeasureGroup">
           <el-input
             v-model="data.form.sourceMeasureGroup"
             :disabled="true"
@@ -328,18 +328,18 @@
             placeholder="Input Source Measure Group"
           ></el-input>
         </el-form-item>
-        <el-form-item label="Measure Name" prop="sourceMeasureName" label-width="150px">
+        <el-form-item label="Measure Name" prop="sourceMeasureName">
           <el-input
             v-model="data.form.sourceMeasureName"
-            :disabled="data.operator == 'edit'"
+            :disabled="data.operator === 'edit'"
             clearable
             placeholder="Input Source Measure Name"
           ></el-input>
         </el-form-item>
-        <el-form-item label="Field Name" prop="fieldName" label-width="150px">
+        <el-form-item label="Field Name" prop="fieldName">
           <el-input v-model="data.form.fieldName" clearable placeholder="Input Field Name"></el-input>
         </el-form-item>
-        <el-form-item label="Field Value Sort" prop="fieldValueSort" label-width="150px">
+        <el-form-item label="Field Value Sort" prop="fieldValueSort">
           <el-select
             v-model="data.form.fieldValueSort"
             placeholder="Choose Field Value Sort"
@@ -349,7 +349,7 @@
             <el-option v-for="item in fieldValueSortList" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Group By Tag Names" prop="groupByTagNames" label-width="150px">
+        <el-form-item label="Group By Tag Names" prop="groupByTagNames">
           <el-select
             class="tags-and-rules"
             v-model="data.form.groupByTagNames"
@@ -362,10 +362,10 @@
             multiple
           ></el-select>
         </el-form-item>
-        <el-form-item label="Counters Number" prop="countersNumber" label-width="150px">
+        <el-form-item label="Counters Number" prop="countersNumber">
           <el-input v-model="data.form.countersNumber" clearable placeholder="Input Counters Number"></el-input>
         </el-form-item>
-        <el-form-item label="LRU Size" prop="lruSize" label-width="150px">
+        <el-form-item label="LRU Size" prop="lruSize">
           <el-input v-model="data.form.lruSize" clearable placeholder="Input LRU Size"></el-input>
         </el-form-item>
       </el-form>

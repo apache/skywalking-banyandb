@@ -18,27 +18,109 @@
 -->
 
 <script setup>
-  import { reactive } from 'vue';
+  import { reactive, ref } from 'vue';
   import { watch, getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
-  import { getSecondaryDataModel } from '@/api/index';
+  import { jsonToYaml, yamlToJson } from '@/utils/yaml';
+  import { Search, RefreshRight } from '@element-plus/icons-vue';
+  import { getTopNAggregationData } from '@/api/index';
   import FormHeader from '../common/FormHeader.vue';
+  import { Shortcuts, Last15Minutes } from '../common/data';
 
-  const { proxy } = getCurrentInstance();
-  const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
-  const $loadingClose = proxy.$loadingClose;
-
+  const pageSize = 10;
+  const route = useRoute();
   const data = reactive({
     group: '',
     name: '',
     type: '',
     operator: '',
-    topNAggregation: {
-      sourceMeasure: {},
-    },
+    lists: [],
   });
+  const yamlRef = ref(null);
+  const timeRange = ref([]);
+  const yamlCode = ref('');
+  const loading = ref(false);
+  const currentList = ref([]);
 
-  const route = useRoute();
+  function initTopNAggregationData() {
+    if (!(data.type && data.group && data.name)) {
+      return;
+    }
+    timeRange.value = [new Date(new Date().getTime() - Last15Minutes), new Date()];
+    const range = jsonToYaml({
+      timeRange: {
+        begin: timeRange.value[0],
+        end: timeRange.value[1],
+      },
+    }).data;
+    yamlCode.value = `${range}topN: 10
+agg: 2
+fieldValueSort: 1`;
+    fetchTopNAggregationData();
+  }
+
+  async function fetchTopNAggregationData(param) {
+    loading.value = true;
+    const result = await getTopNAggregationData({
+      groups: [data.group],
+      name: data.name,
+      timeRange: { begin: timeRange.value[0], end: timeRange.value[1] },
+      topN: 10,
+      agg: 2,
+      fieldValueSort: 1,
+      ...param,
+    });
+    loading.value = false;
+    if (!result.data) {
+      ElMessage({
+        message: `Please refresh and try again. Error: ${err}`,
+        type: 'error',
+        duration: 3000,
+      });
+      return;
+    }
+    data.lists = result.data.lists
+      .map((d) => d.items.map((item) => ({ label: item.entity[0].value.str.value, value: item.value.int.value })))
+      .flat();
+    changePage(0);
+  }
+
+  function searchTopNAggregation() {
+    yamlRef.value
+      .checkYaml(yamlCode.value)
+      .then(() => {
+        const json = yamlToJson(yamlCode.value).data;
+        fetchTopNAggregationData(json);
+      })
+      .catch((err) => {
+        ElMessage({
+          dangerouslyUseHTMLString: true,
+          showClose: true,
+          message: `<div>${err.message}</div>`,
+          type: 'error',
+          duration: 5000,
+        });
+      });
+  }
+
+  function changeTimeRange() {
+    const json = yamlToJson(yamlCode.value);
+    if (!json.data.timeRange) {
+      json.data.timeRange = {
+        begin: '',
+        end: '',
+      };
+    }
+    json.data.timeRange.begin = timeRange.value[0] ?? null;
+    json.data.timeRange.end = timeRange.value[1] ?? null;
+    yamlCode.value = jsonToYaml(json.data).data;
+  }
+
+  function changePage(pageIndex) {
+    currentList.value = data.lists.filter(
+      (d, index) => (pageIndex - 1 || 0) * pageSize <= index && pageSize * (pageIndex || 1) > index,
+    );
+  }
 
   watch(
     () => route,
@@ -47,70 +129,65 @@
       data.name = route.params.name;
       data.type = route.params.type;
       data.operator = route.params.operator;
-      initData();
+      initTopNAggregationData();
     },
     {
       immediate: true,
       deep: true,
     },
   );
-
-  function initData() {
-    if (data.type && data.group && data.name) {
-      $loadingCreate();
-      getSecondaryDataModel(data.type, data.group, data.name)
-        .then((result) => {
-          data.topNAggregation = result.data.topNAggregation;
-        })
-        .catch((err) => {
-          ElMessage({
-            message: 'Please refresh and try again. Error: ' + err,
-            type: 'error',
-            duration: 3000,
-          });
-        })
-        .finally(() => {
-          $loadingClose();
-        });
-    }
-  }
 </script>
 
 <template>
-  <div>
+  <div v-loading="loading">
     <el-card>
       <template #header>
         <FormHeader :fields="data" />
       </template>
-      <el-form label-position="left" label-width="100px" :model="data.indexRule" style="width: 50%">
-        <el-form-item label="Measure Group">
-          <el-input v-model="data.topNAggregation.sourceMeasure.group" :disabled="true"></el-input>
-        </el-form-item>
-        <el-form-item label="Measure Name">
-          <el-input v-model="data.topNAggregation.sourceMeasure.name" :disabled="true"></el-input>
-        </el-form-item>
-        <el-form-item label="Field Name">
-          <el-input v-model="data.topNAggregation.fieldName" :disabled="true"></el-input>
-        </el-form-item>
-        <el-form-item label="Field Value Sort">
-          <el-select v-model="data.topNAggregation.fieldValueSort" style="width: 100%" :disabled="true"></el-select>
-        </el-form-item>
-        <el-form-item label="Group By Tag Names">
-          <el-select
-            class="tags-and-rules"
-            v-model="data.topNAggregation.groupByTagNames"
-            style="width: 100%"
-            :disabled="true"
-            multiple
-          ></el-select>
-        </el-form-item>
-        <el-form-item label="Counters Number">
-          <el-input v-model="data.topNAggregation.countersNumber" :disabled="true"></el-input>
-        </el-form-item>
-        <el-form-item label="LRU Size">
-          <el-input v-model="data.topNAggregation.lruSize" :disabled="true"></el-input>
-        </el-form-item>
-      </el-form>
+      <el-row>
+        <el-col :span="10">
+          <div class="flex align-item-center" style="height: 40px; width: 100%">
+            <el-date-picker
+              @change="changeTimeRange"
+              v-model="timeRange"
+              type="datetimerange"
+              :shortcuts="Shortcuts"
+              range-separator="to"
+              start-placeholder="begin"
+              end-placeholder="end"
+            />
+            <el-button :icon="Search" @click="searchTopNAggregation" style="margin-left: 10px" color="#6E38F7" plain />
+          </div>
+        </el-col>
+        <el-col :span="14">
+          <div class="flex align-item-center justify-end" style="height: 30px">
+            <el-button :icon="RefreshRight" @click="initTopNAggregationData" plain />
+          </div>
+        </el-col>
+      </el-row>
+      <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
+    </el-card>
+    <el-card>
+      <el-table
+        :data="currentList"
+        style="width: 100%; margin: 10px 0; min-height: 440px"
+        stripe
+        :border="true"
+        highlight-current-row
+        tooltip-effect="dark"
+      >
+        <el-table-column prop="label" label="Label" />
+        <el-table-column prop="value" label="Value" width="220" />
+      </el-table>
+      <el-pagination
+        background
+        layout="prev, pager, next"
+        :page-size="pageSize"
+        :total="data.lists.length"
+        @current-change="changePage"
+        @prev-click="changePage"
+        @next-click="changePage"
+      />
     </el-card>
   </div>
 </template>

@@ -32,6 +32,7 @@ Release Notes.
 - UI: Add prettier to enforce a consistent style by parsing code.
 - Parse string and int array in the query result table.
 - Fix the bug that fails to update `Group` Schema's ResourceOpts.
+- UI: Implement TopNAggregation data query page.
 
 ### Documentation
 

@@ -20,6 +20,7 @@
 <script setup>
   import { ref, watchEffect, computed } from 'vue';
   import { getGroupList, getTableList } from '@/api/index';
+  import { Shortcuts } from '../../components/common/data';
 
   const tableLayout = ref('auto');
 
@@ -81,55 +82,6 @@
     { color: '#edc374', percentage: 80 },
     { color: '#f56c6c', percentage: 100 },
   ];
-
-  const pickedShortCutTimeRanges = ref(false);
-
-  // Time constants
-  const last15Minutes = 15 * 60 * 1000;
-  const lastWeek = 7 * 24 * 60 * 60 * 1000;
-  const lastMonth = 30 * 24 * 60 * 60 * 1000;
-  const last3Months = 3 * 30 * 24 * 60 * 60 * 1000;
-
-  // Shortcuts for the date picker
-  const shortcuts = [
-    {
-      text: 'Last 15 minutes',
-      value: () => {
-        const end = new Date();
-        const start = new Date(end.getTime() - last15Minutes);
-        pickedShortCutTimeRanges.value = true;
-        return [start, end];
-      },
-    },
-    {
-      text: 'Last week',
-      value: () => {
-        const end = new Date();
-        const start = new Date(end.getTime() - lastWeek);
-        pickedShortCutTimeRanges.value = true;
-        return [start, end];
-      },
-    },
-    {
-      text: 'Last month',
-      value: () => {
-        const end = new Date();
-        const start = new Date(end.getTime() - lastMonth);
-        pickedShortCutTimeRanges.value = true;
-        return [start, end];
-      },
-    },
-    {
-      text: 'Last 3 months',
-      value: () => {
-        const end = new Date();
-        const start = new Date(end.getTime() - last3Months);
-        pickedShortCutTimeRanges.value = true;
-        return [start, end];
-      },
-    },
-  ];
-
   // State for date picker default 30 mins
   const dateRange = ref([new Date(Date.now() - 30 * 60 * 1000), new Date()]);
 
@@ -377,12 +329,12 @@
           @change="changeDatePicker"
           v-model="dateRange"
           type="datetimerange"
-          :shortcuts="shortcuts"
+          :shortcuts="Shortcuts"
           range-separator="to"
           start-placeholder="begin"
           end-placeholder="end"
           align="right"
-          style="margin: 0 10px 0 10px"
+          style="margin: 0 10px"
         ></el-date-picker>
         <span class="timestamp-item">{{ timezoneOffset }}</span>
       </span>
