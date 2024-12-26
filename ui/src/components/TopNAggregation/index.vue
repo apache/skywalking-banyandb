@@ -78,25 +78,28 @@ fieldValueSort: 1`;
       });
       return;
     }
-    data.lists = result.data.lists.map((d) => d.items.map((item) => ({label: item.entity[0].value.str.value, value: item.value.int.value}))).flat();
-    data.trace =  result.data.trace;
+    data.lists = result.data.lists
+      .map((d) => d.items.map((item) => ({ label: item.entity[0].value.str.value, value: item.value.int.value })))
+      .flat();
+    data.trace = result.data.trace;
   }
 
   function searchTopNAggregation() {
-    yamlRef.value.checkYaml(yamlCode.value)
-    .then(()=> {
-      const json = yamlToJson(yamlCode.value).data;
-      fetchTopNAggregationData(json);
-    })
-    .catch((err) => {
-      ElMessage({
-        dangerouslyUseHTMLString: true,
-        showClose: true,
-        message: `<div>${err.message}</div>`,
-        type: 'error',
-        duration: 5000,
+    yamlRef.value
+      .checkYaml(yamlCode.value)
+      .then(() => {
+        const json = yamlToJson(yamlCode.value).data;
+        fetchTopNAggregationData(json);
+      })
+      .catch((err) => {
+        ElMessage({
+          dangerouslyUseHTMLString: true,
+          showClose: true,
+          message: `<div>${err.message}</div>`,
+          type: 'error',
+          duration: 5000,
+        });
       });
-    });
   }
 
   function changeTimeRange() {
