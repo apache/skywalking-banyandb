@@ -157,7 +157,7 @@ func BuildQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict ma
 }
 
 // BuildIndexModeQuery returns blugeQuery for index mode.
-func BuildIndexModeQuery(measureName string, timeRange *timestamp.TimeRange, criteria *modelv1.Criteria, schema logical.Schema) (index.Query, error) {
+func BuildIndexModeQuery(measureName string, criteria *modelv1.Criteria, schema logical.Schema) (index.Query, error) {
 	subjectQuery := bluge.NewTermQuery(measureName).SetField(index.IndexModeName)
 	subjectNode := newTermNode(measureName, nil)
 	if criteria == nil {
@@ -180,12 +180,6 @@ func BuildIndexModeQuery(measureName string, timeRange *timestamp.TimeRange, cri
 	query.AddMust(criteriaQuery.(*queryNode).query)
 	node.Append(subjectNode)
 	node.Append(criteriaQuery.(*queryNode).node)
-	if timeRange != nil {
-		q := bluge.NewDateRangeInclusiveQuery(timeRange.Start, timeRange.End, timeRange.IncludeStart, timeRange.IncludeEnd)
-		q.SetField(timestampField)
-		query.AddMust(q)
-		node.Append(newTimeRangeNode(timeRange))
-	}
 	return &queryNode{query, node}, nil
 }
 
