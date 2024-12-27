@@ -112,10 +112,10 @@
           },
         };
         $loadingCreate();
-        if (data.operator == 'create') {
+        if (data.operator === 'create') {
           return createSecondaryDataModel('index-rule-binding', param)
             .then((res) => {
-              if (res.status == 200) {
+              if (res.status === 200) {
                 ElMessage({
                   message: 'Create successed',
                   type: 'success',
@@ -139,7 +139,7 @@
         } else {
           return updateSecondaryDataModel('index-rule-binding', data.form.group, data.form.name, param)
             .then((res) => {
-              if (res.status == 200) {
+              if (res.status === 200) {
                 ElMessage({
                   message: 'Edit successed',
                   type: 'success',
@@ -186,11 +186,11 @@
   }
 
   function initData() {
-    if (data.operator == 'edit' && data.form.group && data.form.name) {
+    if (data.operator === 'edit' && data.form.group && data.form.name) {
       $loadingCreate();
       getSecondaryDataModel('index-rule-binding', data.form.group, data.form.name)
         .then((res) => {
-          if (res.status == 200) {
+          if (res.status === 200) {
             const indexRuleBinding = res.data.indexRuleBinding;
             data.form = {
               group: indexRuleBinding.metadata.group,
@@ -244,7 +244,7 @@
         <el-form-item label="Name" prop="name">
           <el-input
             v-model="data.form.name"
-            :disabled="data.operator == 'edit'"
+            :disabled="data.operator === 'edit'"
             clearable
             placeholder="Input Name"
           ></el-input>

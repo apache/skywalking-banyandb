@@ -67,14 +67,14 @@
     },
   ];
   const validateName = (rule: any, value: any, callback: any) => {
-    if (value == '') {
+    if (value === '') {
       callback(new Error('Please input the field name.'));
     } else {
       const index = data.tableData.findIndex((item) => {
-        return item.name == value;
+        return item.name === value;
       });
       if (index >= 0) {
-        if (data.fieldOperator == 'Edit' && data.fieldEditIndex == index) {
+        if (data.fieldOperator === 'Edit' && data.fieldEditIndex === index) {
           return callback();
         }
         return callback(new Error('The name is exists'));
@@ -116,7 +116,7 @@
     if (!formEl) return;
     await formEl.validate((valid) => {
       if (valid) {
-        if (data.fieldOperator == 'Add') {
+        if (data.fieldOperator === 'Add') {
           data.tableData.push(data.form);
           initForm();
         } else {
@@ -190,7 +190,7 @@
     v-model="data.dialogVisible"
     :close-on-click-modal="false"
     align-center
-    :title="data.fieldOperator == 'Add' ? 'Create Field' : 'Edit Field'"
+    :title="data.fieldOperator === 'Add' ? 'Create Field' : 'Edit Field'"
     width="30%"
   >
     <el-form ref="ruleFormRef" :rules="rules" :model="data.form" label-width="180" label-position="left">
@@ -198,7 +198,7 @@
         <el-input
           v-model="data.form.name"
           placeholder="Input the field name"
-          :disabled="data.fieldOperator == 'Edit'"
+          :disabled="data.fieldOperator === 'Edit'"
         ></el-input>
       </el-form-item>
       <el-form-item label="Field Type" prop="fieldType">

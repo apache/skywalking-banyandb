@@ -45,7 +45,7 @@
     const group = route.params.group;
     getPropertyByGroup(group)
       .then((res) => {
-        if (res.status == 200 && group == route.params.group) {
+        if (res.status === 200 && group === route.params.group) {
           data.tableData = res.data.property.map((item) => {
             item.tags.forEach((tag) => {
               tag.value = JSON.stringify(tag.value);
@@ -100,7 +100,7 @@
     $loadingCreate();
     deleteProperty(item.metadata.container.group, item.metadata.container.name, item.metadata.id, item.tags)
       .then((res) => {
-        if (res.status == 200) {
+        if (res.status === 200) {
           ElMessage({
             message: 'successed',
             type: 'success',

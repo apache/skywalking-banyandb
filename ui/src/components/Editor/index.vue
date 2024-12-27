@@ -110,9 +110,9 @@
         const entity = [];
         arr.forEach((item) => {
           const index = tagFamilies.findIndex((tagItem) => {
-            return tagItem.name == item.tagFamily;
+            return tagItem.name === item.tagFamily;
           });
-          if (item.entity == true) {
+          if (item.entity === true) {
             entity.push(item.tag);
           }
           if (index >= 0) {
@@ -135,7 +135,7 @@
           };
           tagFamilies.push(obj);
         });
-        if (entity.length == 0) {
+        if (entity.length === 0) {
           return ElMessage({
             message: 'At least one Entity is required',
             type: 'error',
@@ -153,7 +153,7 @@
             tagNames: entity,
           },
         };
-        if (data.type == 'measure') {
+        if (data.type === 'measure') {
           const fields = fieldEditorRef.value.getFields();
           form['fields'] = fields;
           form['interval'] = data.form.interval + data.form.intervalUnit;
@@ -161,10 +161,10 @@
         $loadingCreate();
         let params = {};
         params[data.type + ''] = form;
-        if (data.operator == 'edit' && data.form.group && data.form.name) {
+        if (data.operator === 'edit' && data.form.group && data.form.name) {
           return editResources(data.type, data.form.group, data.form.name, params)
             .then((res) => {
-              if (res.status == 200) {
+              if (res.status === 200) {
                 ElMessage({
                   message: 'Edit successed',
                   type: 'success',
@@ -181,7 +181,7 @@
         }
         createResources(data.type, params)
           .then((res) => {
-            if (res.status == 200) {
+            if (res.status === 200) {
               ElMessage({
                 message: 'Create successed',
                 type: 'success',
@@ -218,11 +218,11 @@
     $bus.emit('AddTabs', add);
   }
   function initData() {
-    if (data.operator == 'edit' && data.form.group && data.form.name) {
+    if (data.operator === 'edit' && data.form.group && data.form.name) {
       $loadingCreate();
       getStreamOrMeasure(data.type, data.form.group, data.form.name)
         .then((res) => {
-          if (res.status == 200) {
+          if (res.status === 200) {
             data.form.indexMode = res.data[String(data.type)].indexMode;
             const tagFamilies = res.data[String(data.type)].tagFamilies;
             const entity = res.data[String(data.type)].entity.tagNames;
@@ -230,7 +230,7 @@
             tagFamilies.forEach((item) => {
               item.tags.forEach((tag) => {
                 let index = entity.findIndex((entityItem) => {
-                  return entityItem == tag.name;
+                  return entityItem === tag.name;
                 });
                 let obj = {
                   tagFamily: item.name,
@@ -243,7 +243,7 @@
               });
             });
             tagEditorRef.value.setTagFamilies(arr);
-            if (data.type == 'measure') {
+            if (data.type === 'measure') {
               const fields = res.data[data.type + ''].fields;
               const intervalArr = res.data[data.type + ''].interval.split('');
               let interval = 0;
@@ -292,7 +292,7 @@
         <el-form-item label="name" prop="name">
           <el-input style="width: 300px" clearable v-model="data.form.name"></el-input>
         </el-form-item>
-        <el-form-item v-if="data.type == 'measure'" label="interval" prop="interval">
+        <el-form-item v-if="data.type === 'measure'" label="interval" prop="interval">
           <el-input-number v-model="data.form.interval" :min="1" />
           <el-select v-model="data.form.intervalUnit" style="width: 100px; margin-left: 5px">
             <el-option v-for="item in options" :key="item.value" :label="item.label" :value="item.value" />
@@ -303,8 +303,8 @@
         </el-form-item>
       </el-form>
       <TagEditor ref="tagEditorRef"></TagEditor>
-      <el-divider v-if="data.type == 'measure'" border-style="dashed" />
-      <FieldsEditor ref="fieldEditorRef" v-if="data.type == 'measure'"></FieldsEditor>
+      <el-divider v-if="data.type === 'measure'" border-style="dashed" />
+      <FieldsEditor ref="fieldEditorRef" v-if="data.type === 'measure'"></FieldsEditor>
     </el-card>
   </div>
 </template>

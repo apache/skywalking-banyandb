@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "format": "prettier --write  \"src/**/*.{js,tsx,css,scss,vue,html}\""
+    "format": "prettier --write  \"src/**/*.{js,tsx,css,scss,vue,html,mjs}\""
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

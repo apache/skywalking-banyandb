@@ -241,7 +241,7 @@
           promise = promise.concat(promiseIndexRule);
           promise = promise.concat(promiseIndexRuleBinding);
         }
-        if (props.type == 'measure') {
+        if (props.type === 'measure') {
           const TopNAggregationRule = data.groupLists.map((item) => {
             const name = item.metadata.name;
             return new Promise((resolve, reject) => {
@@ -346,7 +346,7 @@
       };
       return $bus.emit('AddTabs', add);
     }
-    if (props.type == 'property') {
+    if (props.type === 'property') {
       const route = {
         name: 'property',
         params: {
@@ -541,7 +541,7 @@
   }
   function deleteSecondaryDataModelFunction(param) {
     deleteSecondaryDataModel(param, currentNode.value.group, currentNode.value.type).then((res) => {
-      if (res.status == 200) {
+      if (res.status === 200) {
         if (res.data.deleted) {
           ElMessage({
             message: 'Delete succeeded',
@@ -557,7 +557,7 @@
   function deleteGroupFunction() {
     // delete group
     deleteGroup(currentNode.value.name).then((res) => {
-      if (res.status == 200) {
+      if (res.status === 200) {
         if (res.data.deleted) {
           ElMessage({
             message: 'Delete succeeded',
@@ -573,7 +573,7 @@
   function deleteResource() {
     // delete Resources
     deleteStreamOrMeasure(props.type, currentNode.value.group, currentNode.value.name).then((res) => {
-      if (res.status == 200) {
+      if (res.status === 200) {
         if (res.data.deleted) {
           ElMessage({
             message: 'Delete succeeded',
@@ -589,7 +589,7 @@
 
   // create/edit group
   function confirmForm() {
-    data.setGroup == 'create' ? createGroupFunction() : editGroupFunction();
+    data.setGroup === 'create' ? createGroupFunction() : editGroupFunction();
   }
   function createGroupFunction() {
     ruleForm.value.validate((valid) => {
@@ -616,7 +616,7 @@
         };
         createGroup(dataList)
           .then((res) => {
-            if (res.status == 200) {
+            if (res.status === 200) {
               getGroupLists();
               ElMessage({
                 message: 'Created successfully',
@@ -657,7 +657,7 @@
         };
         editGroup(name, dataList)
           .then((res) => {
-            if (res.status == 200) {
+            if (res.status === 200) {
               getGroupLists();
               ElMessage({
                 message: 'Update succeeded',
@@ -723,6 +723,11 @@
 
   getGroupLists();
 
+  $bus.on('resetAside', (data) => {
+    router.push({
+      name: `${props.type}Start`,
+    });
+  });
   watch(filterText, (val) => {
     treeRef.value?.filter(val);
   });
@@ -782,7 +787,7 @@
     >
       <el-form ref="ruleForm" :rules="rules" :model="data.groupForm" label-position="left">
         <el-form-item label="group name" :label-width="data.formLabelWidth" prop="name">
-          <el-input :disabled="data.setGroup == 'edit'" v-model="data.groupForm.name" autocomplete="off"> </el-input>
+          <el-input :disabled="data.setGroup === 'edit'" v-model="data.groupForm.name" autocomplete="off"> </el-input>
         </el-form-item>
         <el-form-item label="group type" :label-width="data.formLabelWidth" prop="catalog">
           <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
