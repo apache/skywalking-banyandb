@@ -82,14 +82,14 @@
     },
   ];
   const validateTag = (rule: any, value: any, callback: any) => {
-    if (value == '') {
+    if (value === '') {
       callback(new Error('Please input the tag.'));
     } else {
       const index = data.tableData.findIndex((item) => {
-        return item.tag == value;
+        return item.tag === value;
       });
       if (index >= 0) {
-        if (data.tagOperator == 'Edit' && data.tagEditIndex == index) {
+        if (data.tagOperator === 'Edit' && data.tagEditIndex === index) {
           return callback();
         }
         return callback(new Error('The tag is exists'));
@@ -129,9 +129,9 @@
     if (columnIndex === 0) {
       const tagFamily = data.tableData[rowIndex].tagFamily;
       const index = data.tableData.findIndex((item) => {
-        return item.tagFamily == tagFamily;
+        return item.tagFamily === tagFamily;
       });
-      if (rowIndex == index) {
+      if (rowIndex === index) {
         let len = 1;
         for (let i = index + 1; i < data.tableData.length; i++) {
           if (data.tableData[i].tagFamily !== tagFamily) {
@@ -154,7 +154,7 @@
     if (!formEl) return;
     await formEl.validate((valid) => {
       if (valid) {
-        if (data.tagOperator == 'Add') {
+        if (data.tagOperator === 'Add') {
           addTagFamily();
         } else {
           editTagFamily();
@@ -174,14 +174,14 @@
   }
   function addTagFamily() {
     const index = data.tableData.findIndex((item) => {
-      return item.tagFamily == data.form.tagFamily;
+      return item.tagFamily === data.form.tagFamily;
     });
     if (index < 0) {
       data.tableData.push(data.form);
       return initForm();
     }
     for (let i = data.tableData.length - 1; i >= 0; i--) {
-      if (data.tableData[i].tagFamily == data.form.tagFamily) {
+      if (data.tableData[i].tagFamily === data.form.tagFamily) {
         data.tableData.splice(i + 1, 0, data.form);
         break;
       }
@@ -249,7 +249,7 @@
     v-model="data.dialogVisible"
     :close-on-click-modal="false"
     align-center
-    :title="data.tagOperator == 'Add' ? 'Create Tag Family' : 'Edit Tag Family'"
+    :title="data.tagOperator === 'Add' ? 'Create Tag Family' : 'Edit Tag Family'"
     width="30%"
   >
     <el-form ref="ruleFormRef" :rules="rules" :model="data.form" label-width="120" label-position="left">
@@ -262,7 +262,7 @@
           :reserve-keyword="false"
           placeholder="Choose tag family"
           style="width: 100%"
-          :disabled="data.tagOperator == 'Edit'"
+          :disabled="data.tagOperator === 'Edit'"
         >
           <el-option v-for="item in data.tagFamilyOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>

@@ -18,16 +18,14 @@
  */
 
 module.exports = {
-  presets: [
-    '@vue/cli-plugin-babel/preset'
-  ],
-  "plugins": [
+  presets: ['@vue/cli-plugin-babel/preset'],
+  plugins: [
     [
-      "component",
+      'component',
       {
-        "libraryName": "element-ui",
-        "styleLibraryName": "theme-chalk"
-      }
-    ]
-  ]
-}
+        libraryName: 'element-ui',
+        styleLibraryName: 'theme-chalk',
+      },
+    ],
+  ],
+};

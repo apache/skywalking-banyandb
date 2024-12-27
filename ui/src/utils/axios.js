@@ -63,7 +63,7 @@ axiosService.interceptors.response.use(
      * TODO
      * Data processing operation
      */
-    if (response.status == 200) {
+    if (response.status === 200) {
       return Promise.resolve(response);
     } else {
       return Promise.reject(response);

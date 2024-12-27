@@ -136,7 +136,7 @@
 
   function initCode() {
     let index = data.codeStorage.findIndex((item) => {
-      return item.params.group == route.params.group && item.params.name == route.params.name;
+      return item.params.group === route.params.group && item.params.name === route.params.name;
     });
     if (index >= 0) {
       data.code = data.codeStorage[index].params.code;
@@ -162,7 +162,7 @@ orderBy:
     $loadingCreate();
     getStreamOrMeasure(data.type, data.group, data.name)
       .then((res) => {
-        if (res.status == 200) {
+        if (res.status === 200) {
           data.resourceData = res.data[data.type];
           data.tableTags = res.data[data.type].tagFamilies[0].tags.map((item) => {
             item.label = item.name;
@@ -218,23 +218,23 @@ orderBy:
     data.tableData = elements.map((item) => {
       let dataItem = {};
       item.tagFamilies[0].tags.forEach((tag) => {
-        const index = tags.findIndex((item) => item.name == tag.key);
+        const index = tags.findIndex((item) => item.name === tag.key);
         const type = tags[index].type;
-        if (tag.value[tagType[type]] == null) {
+        if (tag.value[tagType[type]] === null) {
           return (dataItem[tag.key] = 'Null');
         }
         dataItem[tag.key] = Object.hasOwnProperty.call(tag.value[tagType[type]], 'value')
           ? tag.value[tagType[type]].value
           : tag.value[tagType[type]];
       });
-      if (data.type == 'measure' && tableFields.length > 0) {
+      if (data.type === 'measure' && tableFields.length > 0) {
         item.fields.forEach((field) => {
           const name = field.name;
           const fieldType =
             tableFields.filter((tableField) => {
-              return tableField.name == name;
+              return tableField.name === name;
             })[0].fieldType || '';
-          if (field.value[fieldTypes[fieldType]] == null) {
+          if (field.value[fieldTypes[fieldType]] === null) {
             return (dataItem[name] = 'Null');
           }
           dataItem[name] = Object.hasOwnProperty.call(field.value[fieldTypes[fieldType]], 'value')
@@ -331,7 +331,7 @@ orderBy:
   function changeFields() {
     data.tableFields = data.handleFields.map((fieldName) => {
       let item = data.fields.filter((field) => {
-        return field.name == fieldName;
+        return field.name === fieldName;
       })[0];
       item.label = item.name;
       return item;
