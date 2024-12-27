@@ -17,15 +17,15 @@
  * under the License.
  */
 
-import { fileURLToPath, URL } from 'node:url'
-import AutoImport from 'unplugin-auto-import/vite'
-import Components from 'unplugin-vue-components/vite'
-import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
-import vue from '@vitejs/plugin-vue'
-import { loadEnv } from 'vite'
+import { fileURLToPath, URL } from 'node:url';
+import AutoImport from 'unplugin-auto-import/vite';
+import Components from 'unplugin-vue-components/vite';
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers';
+import vue from '@vitejs/plugin-vue';
+import { loadEnv } from 'vite';
 
 export default ({ mode }) => {
-  const { VITE_API_PROXY, VITE_MONITOR_PROXY } = loadEnv(mode, process.cwd())
+  const { VITE_API_PROXY, VITE_MONITOR_PROXY } = loadEnv(mode, process.cwd());
 
   return {
     plugins: [
@@ -45,9 +45,9 @@ export default ({ mode }) => {
     css: {
       preprocessorOptions: {
         scss: {
-          api: 'modern-compiler'
-        }
-      }
+          api: 'modern-compiler',
+        },
+      },
     },
     server: {
       proxy: {
@@ -62,5 +62,5 @@ export default ({ mode }) => {
         },
       },
     },
-  }
-}
+  };
+};

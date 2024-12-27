@@ -179,10 +179,10 @@
           },
         };
         $loadingCreate();
-        if (data.operator == 'create') {
+        if (data.operator === 'create') {
           return createSecondaryDataModel('topn-agg', param)
             .then((res) => {
-              if (res.status == 200) {
+              if (res.status === 200) {
                 ElMessage({
                   message: 'Create successed',
                   type: 'success',
@@ -206,7 +206,7 @@
         } else {
           return updateSecondaryDataModel('topn-agg', data.form.group, data.form.name, param)
             .then((res) => {
-              if (res.status == 200) {
+              if (res.status === 200) {
                 ElMessage({
                   message: 'Edit successed',
                   type: 'success',
@@ -253,11 +253,11 @@
   }
 
   function initData() {
-    if (data.operator == 'edit' && data.form.group && data.form.name) {
+    if (data.operator === 'edit' && data.form.group && data.form.name) {
       $loadingCreate();
       getSecondaryDataModel('topn-agg', data.form.group, data.form.name)
         .then((res) => {
-          if (res.status == 200) {
+          if (res.status === 200) {
             const topNAggregation = res.data.topNAggregation;
             data.form = {
               group: topNAggregation.metadata.group,

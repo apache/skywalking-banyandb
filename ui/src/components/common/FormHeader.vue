@@ -30,7 +30,7 @@ limitations under the License. -->
     <span class="text-bold" v-show="fields.type">{{ fields.catalog ? `Catalog:` : `Type:` }}</span>
     <span class="item-value">{{ fields.type }}</span>
     <span class="text-bold">Operation: </span>
-    <span class="item-value">{{ fields.operator == 'edit' ? fields.operator : `Read` }}</span>
+    <span class="item-value">{{ fields.operator === 'edit' ? fields.operator : `Read` }}</span>
   </div>
 </template>
 

@@ -43,7 +43,7 @@
   function removeTab(index) {
     const len = data.tabsList.length;
     const activeTabIndex = data.activeTabIndex;
-    if (len == 1) {
+    if (len === 1) {
       data.tabsList = [];
       $bus.emit('resetAside');
       return;
@@ -66,25 +66,25 @@
       params: route.params,
     };
     const add = { route: routeData };
-    if (operator == 'read') {
+    if (operator === 'read') {
       routeData.name = type;
-      add.label = type == 'property' ? group : name;
-      add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Read-${type}` : 'Read';
-    } else if (operator == 'edit') {
+      add.label = type === 'property' ? group : name;
+      add.type = type === 'index-rule' || type === 'index-rule-binding' ? `Read-${type}` : 'Read';
+    } else if (operator === 'edit') {
       routeData.name = `edit-${type}`;
       add.label = name;
-      add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Edit-${type}` : 'Edit';
+      add.type = type === 'index-rule' || type === 'index-rule-binding' ? `Edit-${type}` : 'Edit';
     } else {
       routeData.name = `create-${type}`;
       add.label = group;
-      add.type = type == 'index-rule' || type == 'index-rule-binding' ? `Create-${type}` : 'Create';
+      add.type = type === 'index-rule' || type === 'index-rule-binding' ? `Create-${type}` : 'Create';
     }
     data.tabsList.push(add);
     $bus.emit('changeAside', { group, name });
   }
   $bus.on('AddTabs', (tab) => {
     const index = data.tabsList.findIndex((item) => {
-      return item.label == tab.label && item.type == tab.type;
+      return item.label === tab.label && item.type === tab.type;
     });
     if (index >= 0) {
       return (data.activeTabIndex = index);
@@ -94,14 +94,14 @@
   });
   $bus.on('deleteGroup', (group) => {
     for (let i = 0; i < data.tabsList.length; i++) {
-      if (data.tabsList[i].route.params.group && data.tabsList[i].route.params.group == group) {
+      if (data.tabsList[i].route.params.group && data.tabsList[i].route.params.group === group) {
         removeTab(i);
       }
     }
   });
   $bus.on('deleteResource', (name) => {
     for (let i = 0; i < data.tabsList.length; i++) {
-      if (data.tabsList[i].route.params.name && data.tabsList[i].route.params.name == name) {
+      if (data.tabsList[i].route.params.name && data.tabsList[i].route.params.name === name) {
         removeTab(i);
       }
     }

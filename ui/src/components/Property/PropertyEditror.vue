@@ -124,7 +124,7 @@
         };
         applyProperty(formData.group, formData.name, formData.id, param)
           .then((res) => {
-            if (res.status == 200) {
+            if (res.status === 200) {
               ElMessage({
                 message: 'successed',
                 type: 'success',

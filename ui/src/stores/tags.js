@@ -36,7 +36,7 @@ export default defineStore('tags', {
           item.metadata.name === val.metadata.name,
       );
       if (result === -1) {
-        if (this.tagsList.length == 9) {
+        if (this.tagsList.length === 9) {
           ElMessage({
             message: 'Open up to 9 files at the same time! Please close some files and try again!',
             type: 'warning',

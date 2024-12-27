@@ -23,7 +23,7 @@ import yaml from 'js-yaml';
 export function jsonToYaml(jsonData) {
   try {
     return {
-      data: typeof jsonData == 'string' ? yaml.dump(JSON.parse(jsonData)) : yaml.dump(jsonData),
+      data: typeof jsonData === 'string' ? yaml.dump(JSON.parse(jsonData)) : yaml.dump(jsonData),
       error: false,
     };
   } catch (err) {
