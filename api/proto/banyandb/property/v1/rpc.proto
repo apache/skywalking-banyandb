@@ -20,6 +20,9 @@ syntax = "proto3";
 package banyandb.property.v1;
 
 import "banyandb/common/v1/common.proto";
+import "banyandb/common/v1/trace.proto";
+import "banyandb/model/v1/common.proto";
+import "banyandb/model/v1/query.proto";
 import "banyandb/property/v1/property.proto";
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
@@ -58,30 +61,29 @@ message DeleteResponse {
   uint32 tags_num = 2;
 }
 
-message GetRequest {
-  banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
-  repeated string tags = 2;
+// QueryRequest is the request contract for query.
+message QueryRequest {
+  // groups indicate where the data points are stored.
+  repeated string groups = 1 [(validate.rules).repeated.min_items = 1];
+  // container is created when it receives the first property
+  string container = 2 [(validate.rules).string.min_len = 1];
+  // ids is the identities of properties
+  repeated string ids = 3;
+  // criteria is used to filter properties based on tags
+  model.v1.Criteria criteria = 4;
+  // tag_projection can be used to select tags of the data points in the response
+  repeated string tag_projection = 5;
+  // trace is used to enable trace for the query
+  bool trace = 6;
 }
 
-message GetResponse {
-  banyandb.property.v1.Property property = 1;
+// QueryResponse is the response for a query to the Query module.
+message QueryResponse {
+  // properties are the actual data returned
+  repeated banyandb.property.v1.Property properties = 1;
+  // trace contains the trace information of the query when trace is enabled
+  common.v1.Trace trace = 2;
 }
-
-message ListRequest {
-  banyandb.common.v1.Metadata container = 1 [(validate.rules).message.required = true];
-  repeated string ids = 2;
-  repeated string tags = 3;
-}
-
-message ListResponse {
-  repeated banyandb.property.v1.Property property = 1;
-}
-
-message KeepAliveRequest {
-  int64 lease_id = 1;
-}
-
-message KeepAliveResponse {}
 
 service PropertyService {
   // Apply creates a property if it's absent, or update a existed one based on a strategy.
@@ -96,17 +98,10 @@ service PropertyService {
     option (google.api.http) = {delete: "/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"};
   }
 
-  rpc Get(GetRequest) returns (GetResponse) {
-    option (google.api.http) = {get: "/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"};
-  }
-
-  rpc List(ListRequest) returns (ListResponse) {
+  rpc Query(QueryRequest) returns (QueryResponse) {
     option (google.api.http) = {
-      get: "/v1/property/lists/{container.group}/{container.name}/{ids}/{tags}"
-      additional_bindings: {get: "/v1/property/lists/{container.group}"}
+      post: "/v1/property/query"
+      body: "*"
     };
-  }
-  rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse) {
-    option (google.api.http) = {put: "/v1/property/lease/{lease_id}"};
   }
 }

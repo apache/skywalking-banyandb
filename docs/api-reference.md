@@ -196,12 +196,8 @@
     - [ApplyResponse](#banyandb-property-v1-ApplyResponse)
     - [DeleteRequest](#banyandb-property-v1-DeleteRequest)
     - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
-    - [GetRequest](#banyandb-property-v1-GetRequest)
-    - [GetResponse](#banyandb-property-v1-GetResponse)
-    - [KeepAliveRequest](#banyandb-property-v1-KeepAliveRequest)
-    - [KeepAliveResponse](#banyandb-property-v1-KeepAliveResponse)
-    - [ListRequest](#banyandb-property-v1-ListRequest)
-    - [ListResponse](#banyandb-property-v1-ListResponse)
+    - [QueryRequest](#banyandb-property-v1-QueryRequest)
+    - [QueryResponse](#banyandb-property-v1-QueryResponse)
   
     - [ApplyRequest.Strategy](#banyandb-property-v1-ApplyRequest-Strategy)
   
@@ -2805,8 +2801,6 @@ Property stores the user defined data
 | metadata | [Metadata](#banyandb-property-v1-Metadata) |  | metadata is the identity of a property |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
-| lease_id | [int64](#int64) |  | readonly. lease_id is the ID of the lease that attached to key. |
-| ttl | [string](#string) |  | ttl indicates the time to live of the property. It&#39;s a string in the format of &#34;1h&#34;, &#34;2m&#34;, &#34;3s&#34;, &#34;1500ms&#34;. It defaults to 0s, which means the property never expires. The minimum allowed ttl is 1s. |
 
 
 
@@ -2894,88 +2888,36 @@ Property stores the user defined data
 
 
 
-<a name="banyandb-property-v1-GetRequest"></a>
+<a name="banyandb-property-v1-QueryRequest"></a>
 
-### GetRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [Metadata](#banyandb-property-v1-Metadata) |  |  |
-| tags | [string](#string) | repeated |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-GetResponse"></a>
-
-### GetResponse
-
+### QueryRequest
+QueryRequest is the request contract for query.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| property | [Property](#banyandb-property-v1-Property) |  |  |
+| groups | [string](#string) | repeated | groups indicate where the data points are stored. |
+| container | [string](#string) |  | container is created when it receives the first property |
+| ids | [string](#string) | repeated | ids is the identities of properties |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is used to filter properties based on tags |
+| tag_projection | [string](#string) | repeated | tag_projection can be used to select tags of the data points in the response |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
 
 
 
 
 
 
-<a name="banyandb-property-v1-KeepAliveRequest"></a>
+<a name="banyandb-property-v1-QueryResponse"></a>
 
-### KeepAliveRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| lease_id | [int64](#int64) |  |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-KeepAliveResponse"></a>
-
-### KeepAliveResponse
-
-
-
-
-
-
-
-<a name="banyandb-property-v1-ListRequest"></a>
-
-### ListRequest
-
+### QueryResponse
+QueryResponse is the response for a query to the Query module.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| container | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| ids | [string](#string) | repeated |  |
-| tags | [string](#string) | repeated |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-ListResponse"></a>
-
-### ListResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| property | [Property](#banyandb-property-v1-Property) | repeated |  |
+| properties | [Property](#banyandb-property-v1-Property) | repeated | properties are the actual data returned |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
 
 
 
@@ -3010,9 +2952,7 @@ Property stores the user defined data
 | ----------- | ------------ | ------------- | ------------|
 | Apply | [ApplyRequest](#banyandb-property-v1-ApplyRequest) | [ApplyResponse](#banyandb-property-v1-ApplyResponse) | Apply creates a property if it&#39;s absent, or update a existed one based on a strategy. |
 | Delete | [DeleteRequest](#banyandb-property-v1-DeleteRequest) | [DeleteResponse](#banyandb-property-v1-DeleteResponse) |  |
-| Get | [GetRequest](#banyandb-property-v1-GetRequest) | [GetResponse](#banyandb-property-v1-GetResponse) |  |
-| List | [ListRequest](#banyandb-property-v1-ListRequest) | [ListResponse](#banyandb-property-v1-ListResponse) |  |
-| KeepAlive | [KeepAliveRequest](#banyandb-property-v1-KeepAliveRequest) | [KeepAliveResponse](#banyandb-property-v1-KeepAliveResponse) |  |
+| Query | [QueryRequest](#banyandb-property-v1-QueryRequest) | [QueryResponse](#banyandb-property-v1-QueryResponse) |  |
 
  
 
