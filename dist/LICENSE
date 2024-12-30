@@ -278,7 +278,6 @@ BSD-3-Clause licenses
     github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 BSD-3-Clause
     github.com/sagikazarmark/slog-shim v0.1.0 BSD-3-Clause
     github.com/shirou/gopsutil/v3 v3.24.5 BSD-3-Clause
-    github.com/spaolacci/murmur3 v1.1.0 BSD-3-Clause
     github.com/spf13/pflag v1.0.5 BSD-3-Clause
     github.com/tklauser/go-sysconf v0.3.14 BSD-3-Clause
     github.com/xhit/go-str2duration/v2 v2.1.0 BSD-3-Clause
@@ -321,7 +320,6 @@ MIT licenses
     github.com/blevesearch/go-porterstemmer v1.0.3 MIT
     github.com/caio/go-tdigest v3.1.0+incompatible MIT
     github.com/cenkalti/backoff/v4 v4.3.0 MIT
-    github.com/cespare/xxhash v1.1.0 MIT
     github.com/cespare/xxhash/v2 v2.3.0 MIT
     github.com/cpuguy83/go-md2man/v2 v2.0.6 MIT
     github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140 MIT

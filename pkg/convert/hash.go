@@ -17,7 +17,7 @@
 
 package convert
 
-import "github.com/cespare/xxhash"
+import "github.com/cespare/xxhash/v2"
 
 // Hash computes the 64-bit Hash digest of key.
 func Hash(key []byte) uint64 {

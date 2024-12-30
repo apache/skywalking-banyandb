@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cespare/xxhash"
+	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
