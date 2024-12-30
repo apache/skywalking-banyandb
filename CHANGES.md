@@ -15,6 +15,7 @@ Release Notes.
 - Index Mode: Index `measure_nam` and `tags` in `entity` to improve the query performance.
 - Encoding: Improve the performance of encoding and decoding the variable-length int64.
 - Index: Add a cache to improve the performance of the series index write.
+- Read cpu quota and limit from the cgroup file system to set gomaxprocs.
 
 ### Bug Fixes
 

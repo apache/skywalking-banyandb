@@ -21,7 +21,6 @@ import (
 	"context"
 	"io"
 	"path"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +33,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -93,7 +93,7 @@ func (rs *resourceSpec) isNewThan(other *resourceSpec) bool {
 const maxWorkerNum = 8
 
 func getWorkerNum() int {
-	maxProcs := runtime.GOMAXPROCS(-1)
+	maxProcs := cgroups.CPUs()
 	if maxProcs > maxWorkerNum {
 		return maxWorkerNum
 	}

@@ -354,6 +354,7 @@ MIT licenses
     github.com/yusufpapurcu/wmi v1.2.4 MIT
     github.com/zenizh/go-capturer v0.0.0-20211219060012-52ea6c8fed04 MIT
     go.etcd.io/bbolt v1.3.11 MIT
+    go.uber.org/automaxprocs v1.6.0 MIT
     go.uber.org/multierr v1.11.0 MIT
     go.uber.org/zap v1.27.0 MIT
     gopkg.in/natefinch/lumberjack.v2 v2.2.1 MIT

@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -54,7 +55,13 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
-			return logger.Init(logging)
+
+			if err = logger.Init(logging); err != nil {
+				return err
+			}
+
+			logger.Infof("CPU Number: %d", cgroups.CPUs())
+			return nil
 		},
 	}
 	cmd.PersistentFlags().Var(&nodeIDProviderValue{&common.FlagNodeHostProvider},
