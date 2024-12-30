@@ -20,7 +20,7 @@ package convert
 import (
 	"testing"
 
-	"github.com/cespare/xxhash"
+	"github.com/cespare/xxhash/v2"
 )
 
 func TestHash(t *testing.T) {
