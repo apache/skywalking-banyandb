@@ -15,20 +15,39 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package main implements the executable banyandb server named banyand.
-package main
+// Package cgroups provides a way to get the number of CPUs.
+package cgroups
 
 import (
-	"fmt"
 	"os"
+	"runtime"
 
-	"github.com/apache/skywalking-banyandb/pkg/cmdsetup"
-	"github.com/apache/skywalking-banyandb/pkg/signal"
+	"go.uber.org/automaxprocs/maxprocs"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-func main() {
-	if err := cmdsetup.NewRoot(new(signal.Handler)).Execute(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+// CPUs returns the number of CPUs.
+func CPUs() int {
+	return runtime.GOMAXPROCS(-1)
+}
+
+func init() {
+	if maxProcs, exists := os.LookupEnv("GOMAXPROCS"); exists {
+		logger.Infof("honoring GOMAXPROCS=%q as set in environment", maxProcs)
+		return
 	}
+	_, err := maxprocs.Set(maxprocs.Logger(logger.Infof))
+	if err != nil {
+		logger.Warningf("failed to set GOMAXPROCS: %v", err)
+	}
+	gomaxprocs := runtime.GOMAXPROCS(-1)
+	if gomaxprocs <= 0 {
+		gomaxprocs = 1
+	}
+	numCPU := runtime.NumCPU()
+	if gomaxprocs > numCPU {
+		gomaxprocs = numCPU
+	}
+	runtime.GOMAXPROCS(gomaxprocs)
 }
