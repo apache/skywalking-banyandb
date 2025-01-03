@@ -48,7 +48,6 @@ message ApplyResponse {
   // True: the property is absent. False: the property existed.
   bool created = 1;
   uint32 tags_num = 2;
-  int64 lease_id = 3;
 }
 
 message DeleteRequest {
@@ -73,8 +72,9 @@ message QueryRequest {
   model.v1.Criteria criteria = 4;
   // tag_projection can be used to select tags of the data points in the response
   repeated string tag_projection = 5;
+  uint32 limit = 6;
   // trace is used to enable trace for the query
-  bool trace = 6;
+  bool trace = 7;
 }
 
 // QueryResponse is the response for a query to the Query module.
@@ -104,4 +104,19 @@ service PropertyService {
       body: "*"
     };
   }
+}
+
+message InternalUpdateRequest {
+  bytes id = 1;
+  uint64 shard_id = 2;
+  banyandb.property.v1.Property property = 3;
+}
+
+message InternalDeleteRequest {
+  repeated bytes ids = 1;
+}
+
+message InternalQueryResponse {
+  repeated bytes sources = 1;
+  common.v1.Trace trace = 2;
 }

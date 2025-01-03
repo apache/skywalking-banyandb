@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/property"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -47,6 +48,10 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
 	metricSvc := observability.NewMetricService(metaSvc, pipeline, "standalone", nil)
+	propertySvc, err := property.NewService(metaSvc, pipeline, metricSvc)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate property service")
+	}
 	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
@@ -72,6 +77,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		pipeline,
 		metaSvc,
 		metricSvc,
+		propertySvc,
 		measureSvc,
 		streamSvc,
 		q,

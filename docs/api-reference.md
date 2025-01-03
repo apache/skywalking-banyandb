@@ -196,6 +196,9 @@
     - [ApplyResponse](#banyandb-property-v1-ApplyResponse)
     - [DeleteRequest](#banyandb-property-v1-DeleteRequest)
     - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
+    - [InternalDeleteRequest](#banyandb-property-v1-InternalDeleteRequest)
+    - [InternalQueryResponse](#banyandb-property-v1-InternalQueryResponse)
+    - [InternalUpdateRequest](#banyandb-property-v1-InternalUpdateRequest)
     - [QueryRequest](#banyandb-property-v1-QueryRequest)
     - [QueryResponse](#banyandb-property-v1-QueryResponse)
   
@@ -371,6 +374,7 @@ Metadata is for multi-tenant, multi-model use
 | CATALOG_UNSPECIFIED | 0 |  |
 | CATALOG_STREAM | 1 |  |
 | CATALOG_MEASURE | 2 |  |
+| CATALOG_PROPERTY | 3 |  |
 
 
 
@@ -2849,7 +2853,6 @@ Property stores the user defined data
 | ----- | ---- | ----- | ----------- |
 | created | [bool](#bool) |  | created indicates whether the property existed. True: the property is absent. False: the property existed. |
 | tags_num | [uint32](#uint32) |  |  |
-| lease_id | [int64](#int64) |  |  |
 
 
 
@@ -2888,6 +2891,54 @@ Property stores the user defined data
 
 
 
+<a name="banyandb-property-v1-InternalDeleteRequest"></a>
+
+### InternalDeleteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ids | [bytes](#bytes) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-InternalQueryResponse"></a>
+
+### InternalQueryResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sources | [bytes](#bytes) | repeated |  |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-InternalUpdateRequest"></a>
+
+### InternalUpdateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [bytes](#bytes) |  |  |
+| shard_id | [uint64](#uint64) |  |  |
+| property | [Property](#banyandb-property-v1-Property) |  |  |
+
+
+
+
+
+
 <a name="banyandb-property-v1-QueryRequest"></a>
 
 ### QueryRequest
@@ -2901,6 +2952,7 @@ QueryRequest is the request contract for query.
 | ids | [string](#string) | repeated | ids is the identities of properties |
 | criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is used to filter properties based on tags |
 | tag_projection | [string](#string) | repeated | tag_projection can be used to select tags of the data points in the response |
+| limit | [uint32](#uint32) |  |  |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
 
 

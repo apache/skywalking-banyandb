@@ -29,6 +29,7 @@ enum Catalog {
   CATALOG_UNSPECIFIED = 0;
   CATALOG_STREAM = 1;
   CATALOG_MEASURE = 2;
+  CATALOG_PROPERTY = 3;
 }
 
 // Metadata is for multi-tenant, multi-model use

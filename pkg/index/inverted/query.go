@@ -26,8 +26,10 @@ import (
 	"github.com/blugelabs/bluge"
 	"github.com/pkg/errors"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -608,4 +610,97 @@ func (t *timeRangeNode) MarshalJSON() ([]byte, error) {
 
 func (t *timeRangeNode) String() string {
 	return convert.JSONToString(t)
+}
+
+func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string) (index.Query, error) {
+	iq, err := BuildIndexModeQuery(req.Container, req.Criteria, schemaInstance)
+	if err != nil {
+		return nil, err
+	}
+	iqn := iq.(*queryNode)
+	bq := bluge.NewBooleanQuery()
+	bq.AddMust(iqn.query)
+	bn := newMustNode()
+	bn.Append(iqn.node)
+	if len(req.Groups) > 1 {
+		gq := bluge.NewBooleanQuery()
+		gn := newShouldNode()
+		for _, g := range req.Groups {
+			gq.AddShould(bluge.NewTermQuery(g).SetField(groupField))
+			gn.Append(newTermNode(g, nil))
+		}
+		gq.SetMinShould(1)
+		bq.AddMust(gq)
+		bn.Append(gn)
+	} else {
+		bq.AddMust(bluge.NewTermQuery(req.Groups[0]).SetField(groupField))
+		bn.Append(newTermNode(req.Groups[0], nil))
+	}
+	switch len(req.Ids) {
+	case 0:
+	case 1:
+		bq.AddMust(bluge.NewTermQuery(req.Ids[0]).SetField(idField))
+		bn.Append(newTermNode(req.Ids[0], nil))
+	default:
+		iq := bluge.NewBooleanQuery()
+		in := newShouldNode()
+		for _, id := range req.Ids {
+			iq.AddShould(bluge.NewTermQuery(id).SetField(idField))
+			in.Append(newTermNode(id, nil))
+		}
+		iq.SetMinShould(1)
+		bq.AddMust(iq)
+		bn.Append(in)
+	}
+	return &queryNode{
+		query: bq,
+		node:  bn,
+	}, nil
+}
+
+var (
+	_              logical.Schema = (*schema)(nil)
+	schemaInstance                = &schema{}
+)
+
+type schema struct{}
+
+func (p *schema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
+	panic("unimplemented")
+}
+
+func (p *schema) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
+	panic("unimplemented")
+}
+
+func (p *schema) EntityList() []string {
+	return nil
+}
+
+func (p *schema) Equal(logical.Schema) bool {
+	panic("unimplemented")
+}
+
+func (p *schema) FindTagSpecByName(string) *logical.TagSpec {
+	panic("unimplemented")
+}
+
+func (p *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+	return true, &databasev1.IndexRule{
+		Metadata: &commonv1.Metadata{
+			Id: uint32(convert.HashStr(tagName)),
+		},
+	}
+}
+
+func (p *schema) IndexRuleDefined(ruleName string) (bool, *databasev1.IndexRule) {
+	return false, nil
+}
+
+func (p *schema) ProjFields(refs ...*logical.FieldRef) logical.Schema {
+	panic("unimplemented")
+}
+
+func (p *schema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
+	panic("unimplemented")
 }
