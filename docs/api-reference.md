@@ -2867,8 +2867,9 @@ Property stores the user defined data
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [Metadata](#banyandb-property-v1-Metadata) |  |  |
-| tags | [string](#string) | repeated |  |
+| group | [string](#string) |  | groups indicate where the data points are stored. |
+| container | [string](#string) |  | container is created when it receives the first property |
+| id | [string](#string) |  | id is the identity of properties |
 
 
 
@@ -2884,7 +2885,6 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
-| tags_num | [uint32](#uint32) |  |  |
 
 
 

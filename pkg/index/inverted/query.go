@@ -160,9 +160,16 @@ func BuildQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict ma
 
 // BuildIndexModeQuery returns blugeQuery for index mode.
 func BuildIndexModeQuery(measureName string, criteria *modelv1.Criteria, schema logical.Schema) (index.Query, error) {
-	subjectQuery := bluge.NewTermQuery(measureName).SetField(index.IndexModeName)
-	subjectNode := newTermNode(measureName, nil)
+	var subjectQuery bluge.Query
+	var subjectNode node
+	if measureName != "" {
+		subjectQuery = bluge.NewTermQuery(measureName).SetField(index.IndexModeName)
+		subjectNode = newTermNode(measureName, nil)
+	}
 	if criteria == nil {
+		if subjectQuery == nil {
+			return nil, nil
+		}
 		return &queryNode{
 			query: subjectQuery,
 			node:  subjectNode,
@@ -176,6 +183,9 @@ func BuildIndexModeQuery(measureName string, criteria *modelv1.Criteria, schema 
 	criteriaQuery, err := buildIndexModeCriteria(criteria, schema, entityDict)
 	if err != nil {
 		return nil, err
+	}
+	if subjectQuery == nil {
+		return criteriaQuery, nil
 	}
 	query, node := bluge.NewBooleanQuery(), newMustNode()
 	query.AddMust(subjectQuery)
@@ -612,16 +622,19 @@ func (t *timeRangeNode) String() string {
 	return convert.JSONToString(t)
 }
 
+// BuildPropertyQuery returns blugeQuery for property query.
 func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string) (index.Query, error) {
 	iq, err := BuildIndexModeQuery(req.Container, req.Criteria, schemaInstance)
 	if err != nil {
 		return nil, err
 	}
-	iqn := iq.(*queryNode)
 	bq := bluge.NewBooleanQuery()
-	bq.AddMust(iqn.query)
 	bn := newMustNode()
-	bn.Append(iqn.node)
+	if iq != nil {
+		iqn := iq.(*queryNode)
+		bq.AddMust(iqn.query)
+		bn.Append(iqn.node)
+	}
 	if len(req.Groups) > 1 {
 		gq := bluge.NewBooleanQuery()
 		gn := newShouldNode()
@@ -665,11 +678,11 @@ var (
 
 type schema struct{}
 
-func (p *schema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
+func (p *schema) CreateFieldRef(...*logical.Field) ([]*logical.FieldRef, error) {
 	panic("unimplemented")
 }
 
-func (p *schema) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
+func (p *schema) CreateTagRef(...[]*logical.Tag) ([][]*logical.TagRef, error) {
 	panic("unimplemented")
 }
 
@@ -693,14 +706,14 @@ func (p *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
 	}
 }
 
-func (p *schema) IndexRuleDefined(ruleName string) (bool, *databasev1.IndexRule) {
+func (p *schema) IndexRuleDefined(string) (bool, *databasev1.IndexRule) {
 	return false, nil
 }
 
-func (p *schema) ProjFields(refs ...*logical.FieldRef) logical.Schema {
+func (p *schema) ProjFields(...*logical.FieldRef) logical.Schema {
 	panic("unimplemented")
 }
 
-func (p *schema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
+func (p *schema) ProjTags(...[]*logical.TagRef) logical.Schema {
 	panic("unimplemented")
 }

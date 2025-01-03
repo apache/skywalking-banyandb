@@ -56,7 +56,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 const defaultQueryTimeout = 30 * time.Second
@@ -70,16 +72,6 @@ type propertyServer struct {
 }
 
 func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyRequest) (resp *propertyv1.ApplyResponse, err error) {
-	g := req.Property.Metadata.Container.Group
-	ps.metrics.totalStarted.Inc(1, g, "property", "apply")
-	start := time.Now()
-	defer func() {
-		ps.metrics.totalFinished.Inc(1, g, "property", "apply")
-		ps.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "property", "apply")
-		if err != nil {
-			ps.metrics.totalErr.Inc(1, g, "property", "apply")
-		}
-	}()
 	property := req.Property
 	if property.Metadata == nil {
 		return nil, schema.BadRequest("metadata", "metadata should not be nil")
@@ -99,12 +91,28 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	if len(property.Tags) == 0 {
 		return nil, schema.BadRequest("tags", "tags should not be empty")
 	}
-
+	g := req.Property.Metadata.Container.Group
+	ps.metrics.totalStarted.Inc(1, g, "property", "apply")
+	start := time.Now()
+	defer func() {
+		ps.metrics.totalFinished.Inc(1, g, "property", "apply")
+		ps.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "property", "apply")
+		if err != nil {
+			ps.metrics.totalErr.Inc(1, g, "property", "apply")
+		}
+	}()
 	var group *commonv1.Group
-	if group, err := ps.schemaRegistry.GroupRegistry().GetGroup(ctx, g); err != nil {
+	if group, err = ps.schemaRegistry.GroupRegistry().GetGroup(ctx, g); err != nil {
 		return nil, errors.Errorf("group %s not found", g)
-	} else if group.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
+	}
+	if group.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
 		return nil, errors.Errorf("group %s is not allowed to have properties", g)
+	}
+	if group.ResourceOpts == nil {
+		return nil, errors.Errorf("group %s has no resource options", g)
+	}
+	if group.ResourceOpts.ShardNum == 0 {
+		return nil, errors.Errorf("group %s has no shard number", g)
 	}
 	qResp, err := ps.Query(ctx, &propertyv1.QueryRequest{
 		Groups:    []string{g},
@@ -123,7 +131,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 				for _, p := range qResp.Properties {
 					ids = append(ids, getPropertyID(p))
 				}
-				if err := ps.remove(ctx, ids); err != nil {
+				if err = ps.remove(ids); err != nil {
 					err = multierr.Append(err, errors.New("fail to remove old properties"))
 				}
 			}
@@ -144,7 +152,9 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	return ps.mergeProperty(ctx, start, uint64(id), node, prev, property)
 }
 
-func (ps *propertyServer) mergeProperty(ctx context.Context, now time.Time, shardID uint64, node string, prev, cur *propertyv1.Property) (*propertyv1.ApplyResponse, error) {
+func (ps *propertyServer) mergeProperty(ctx context.Context, now time.Time, shardID uint64, node string,
+	prev, cur *propertyv1.Property,
+) (*propertyv1.ApplyResponse, error) {
 	if prev == nil {
 		return ps.replaceProperty(ctx, now, shardID, node, prev, cur)
 	}
@@ -158,7 +168,6 @@ func (ps *propertyServer) mergeProperty(ctx context.Context, now time.Time, shar
 		tagExisted := false
 		for _, et := range cur.Tags {
 			if et.Key == t.Key {
-				et.Value = t.Value
 				tagExisted = true
 				break
 			}
@@ -180,7 +189,9 @@ func tagLen(property *propertyv1.Property) (uint32, error) {
 	return tagsNum, nil
 }
 
-func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, shardID uint64, node string, prev, cur *propertyv1.Property) (*propertyv1.ApplyResponse, error) {
+func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, shardID uint64, node string,
+	prev, cur *propertyv1.Property,
+) (*propertyv1.ApplyResponse, error) {
 	ns := now.UnixNano()
 	if prev != nil {
 		cur.Metadata.Container.CreateRevision = prev.Metadata.Container.CreateRevision
@@ -201,13 +212,19 @@ func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, sh
 		return nil, err
 	}
 	return &propertyv1.ApplyResponse{
-		Created: true,
+		Created: prev == nil,
 		TagsNum: uint32(len(cur.Tags)),
 	}, nil
 }
 
 func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequest) (resp *propertyv1.DeleteResponse, err error) {
-	g := req.Metadata.Container.Group
+	if req.Group == "" {
+		return nil, schema.BadRequest("group", "group should not be nil")
+	}
+	if req.Container == "" {
+		return nil, schema.BadRequest("metadata.container", "container should not be nil")
+	}
+	g := req.Group
 	ps.metrics.totalStarted.Inc(1, g, "property", "delete")
 	start := time.Now()
 	defer func() {
@@ -217,19 +234,12 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 			ps.metrics.totalErr.Inc(1, g, "property", "delete")
 		}
 	}()
-	if req.Metadata == nil {
-		return nil, schema.BadRequest("metadata", "metadata should not be nil")
-	}
-	if req.Metadata.Container == nil {
-		return nil, schema.BadRequest("metadata.container", "container should not be nil")
-	}
-	md := req.Metadata
 	qReq := &propertyv1.QueryRequest{
 		Groups:    []string{g},
-		Container: md.Container.Name,
+		Container: req.Container,
 	}
-	if len(md.Id) > 0 {
-		qReq.Ids = []string{md.Id}
+	if len(req.Id) > 0 {
+		qReq.Ids = []string{req.Id}
 	}
 	qResp, err := ps.Query(ctx, qReq)
 	if err != nil {
@@ -238,32 +248,11 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 	if len(qResp.Properties) == 0 {
 		return &propertyv1.DeleteResponse{Deleted: false}, nil
 	}
-	property := qResp.Properties[0]
-	if len(req.Tags) > 0 {
-		property.Metadata.Container.ModRevision = start.UnixNano()
-		filtered := &propertyv1.Property{
-			Metadata:  property.Metadata,
-			UpdatedAt: timestamppb.New(start),
-		}
-
-		for _, expectedTag := range req.Tags {
-			for _, t := range property.Tags {
-				if t.Key != expectedTag {
-					filtered.Tags = append(filtered.Tags, t)
-				}
-			}
-		}
-		if _, err = ps.Apply(ctx, &propertyv1.ApplyRequest{
-			Property: filtered,
-			Strategy: propertyv1.ApplyRequest_STRATEGY_REPLACE,
-		}); err != nil {
-			return nil, err
-		}
-		return &propertyv1.DeleteResponse{Deleted: true}, nil
-	}
 	var ids [][]byte
-	ids = append(ids, getPropertyID(property))
-	if err := ps.remove(ctx, ids); err != nil {
+	for _, p := range qResp.Properties {
+		ids = append(ids, getPropertyID(p))
+	}
+	if err := ps.remove(ids); err != nil {
 		return nil, err
 	}
 	return &propertyv1.DeleteResponse{Deleted: true}, nil
@@ -282,14 +271,22 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	if len(req.Groups) == 0 {
 		return nil, schema.BadRequest("groups", "groups should not be empty")
 	}
-	if req.Container == "" {
-		return nil, schema.BadRequest("container", "container should not be empty")
-	}
-	if len(req.TagProjection) == 0 {
-		return nil, schema.BadRequest("tag_projection", "tag_projection should not be empty")
-	}
 	if req.Limit == 0 {
 		req.Limit = 100
+	}
+	var span *query.Span
+	if req.Trace {
+		tracer, _ := query.NewTracer(ctx, start.Format(time.RFC3339Nano))
+		span, _ = tracer.StartSpan(ctx, "property-grpc")
+		span.Tag("request", convert.BytesToString(logger.Proto(req)))
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			} else {
+				resp.Trace = tracer.ToProto()
+			}
+			span.Stop()
+		}()
 	}
 	for _, gn := range req.Groups {
 		if g, getGroupErr := ps.schemaRegistry.GroupRegistry().GetGroup(ctx, gn); getGroupErr != nil {
@@ -327,17 +324,19 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 					}
 					if cur.Metadata.Container.ModRevision < p.Metadata.Container.ModRevision {
 						res[entity] = &p
-						err = ps.remove(ctx, [][]byte{getPropertyID(cur)})
+						err = ps.remove([][]byte{getPropertyID(cur)})
 						if err != nil {
 							return nil, err
 						}
 					}
 				}
+				if span != nil {
+					span.AddSubTrace(v.Trace)
+				}
 			case common.Error:
 				err = multierr.Append(err, errors.New(v.Msg()))
 			}
 		}
-
 	}
 	if err != nil {
 		return nil, err
@@ -347,12 +346,27 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	}
 	properties := make([]*propertyv1.Property, 0, len(res))
 	for _, p := range res {
+		if len(req.TagProjection) > 0 {
+			var tags []*modelv1.Tag
+			for _, tag := range p.Tags {
+				for _, tp := range req.TagProjection {
+					if tp == tag.Key {
+						tags = append(tags, tag)
+						break
+					}
+				}
+			}
+			p.Tags = tags
+		}
 		properties = append(properties, p)
+		if len(properties) >= int(req.Limit) {
+			break
+		}
 	}
 	return &propertyv1.QueryResponse{Properties: properties}, nil
 }
 
-func (ps *propertyServer) remove(ctx context.Context, ids [][]byte) error {
+func (ps *propertyServer) remove(ids [][]byte) error {
 	ff, err := ps.broadcaster.Broadcast(defaultQueryTimeout, data.TopicPropertyDelete, bus.NewMessage(bus.MessageID(time.Now().Unix()), &propertyv1.InternalDeleteRequest{
 		Ids: ids,
 	}))

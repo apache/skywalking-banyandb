@@ -221,7 +221,7 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 	for i := range loadedFields {
 		fields = append(fields, loadedFields[i].Marshal())
 	}
-	var hitNumber, num int
+	var hitNumber int
 	for err == nil && next != nil {
 		hitNumber = next.HitNumber
 		var doc index.SeriesDocument
@@ -259,8 +259,7 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 		if len(doc.Key.EntityValues) > 0 {
 			result = append(result, doc)
 		}
-		num++
-		if limit > 0 && num >= limit {
+		if limit > 0 && len(result) >= limit {
 			break
 		}
 		next, err = dmi.Next()

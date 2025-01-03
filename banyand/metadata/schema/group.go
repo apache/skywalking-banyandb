@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/api/validate"
 )
 
 var groupsKeyPrefix = "/groups/"
@@ -74,14 +75,11 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 }
 
 func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Group) error {
+	if err := validate.Group(group); err != nil {
+		return err
+	}
 	if group.UpdatedAt != nil {
 		group.UpdatedAt = timestamppb.Now()
-	}
-	if group.Metadata == nil {
-		return errors.New("metadata is required")
-	}
-	if group.Metadata.Name == "" {
-		return errors.New("metadata.name is required")
 	}
 	_, err := e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
@@ -94,14 +92,11 @@ func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Gr
 }
 
 func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) error {
+	if err := validate.Group(group); err != nil {
+		return err
+	}
 	if group.UpdatedAt != nil {
 		group.UpdatedAt = timestamppb.Now()
-	}
-	if group.Metadata == nil {
-		return errors.New("metadata is required")
-	}
-	if group.Metadata.Name == "" {
-		return errors.New("metadata.name is required")
 	}
 	g, err := e.GetGroup(ctx, group.GetMetadata().GetName())
 	if err != nil {
@@ -110,8 +105,10 @@ func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Gr
 	if proto.Equal(g.ResourceOpts, group.ResourceOpts) {
 		return nil
 	}
-	if g.GetResourceOpts().SegmentInterval.Unit != group.GetResourceOpts().SegmentInterval.Unit {
-		return errors.New("segment interval unit cannot be changed")
+	if group.Catalog == commonv1.Catalog_CATALOG_STREAM || group.Catalog == commonv1.Catalog_CATALOG_MEASURE {
+		if g.GetResourceOpts().SegmentInterval.Unit != group.GetResourceOpts().SegmentInterval.Unit {
+			return errors.New("segment interval unit cannot be changed")
+		}
 	}
 	_, err = e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{

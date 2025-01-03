@@ -63,9 +63,9 @@ message ResourceOpts {
   // shard_num is the number of shards
   uint32 shard_num = 1 [(validate.rules).uint32.gt = 0];
   // segment_interval indicates the length of a segment
-  IntervalRule segment_interval = 2 [(validate.rules).message.required = true];
+  IntervalRule segment_interval = 2;
   // ttl indicates time to live, how long the data will be cached
-  IntervalRule ttl = 3 [(validate.rules).message.required = true];
+  IntervalRule ttl = 3;
 }
 
 // Group is an internal object for Group management

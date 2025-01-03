@@ -18,32 +18,19 @@
 package cmd_test
 
 import (
-	"strconv"
 	"strings"
 
-	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
-	"google.golang.org/protobuf/testing/protocmp"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
-
-var equalsOpts = []cmp.Option{
-	protocmp.Transform(),
-	protocmp.IgnoreUnknown(),
-	protocmp.IgnoreFields(&propertyv1.Property{}, "updated_at"),
-	protocmp.IgnoreFields(&propertyv1.Property{}, "lease_id"),
-	protocmp.IgnoreFields(&commonv1.Metadata{}, "mod_revision"),
-	protocmp.IgnoreFields(&commonv1.Metadata{}, "create_revision"),
-}
 
 var _ = Describe("Property Operation", func() {
 	var addr string
@@ -81,19 +68,6 @@ tags:
       int:
         value: 3
 `
-	p3Yaml := `
-metadata:
-  container:
-    group: ui-template
-    name: security
-  id: login-token
-tags:
-  - key: content
-    value:
-      str:
-        value: foo 
-ttl: 30m
-`
 
 	p1Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p1YAML), p1Proto)
@@ -109,7 +83,11 @@ ttl: 30m
 		creatGroup := func() string {
 			rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: ui-template`))
+  name: ui-template
+catalog: CATALOG_PROPERTY
+resource_opts:
+  shard_num: 2
+`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {
@@ -129,82 +107,24 @@ metadata:
 		Expect(out).To(ContainSubstring("tagsNum: 2"))
 	})
 
-	It("gets property", func() {
-		rootCmd.SetArgs([]string{"property", "get", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		GinkgoWriter.Println(out)
-		resp := new(propertyv1.GetResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(cmp.Equal(resp.Property, p1Proto,
-			equalsOpts...)).To(BeTrue())
-	})
-
-	It("gets a tag", func() {
-		rootCmd.SetArgs([]string{
-			"property", "get", "-g", "ui-template", "-n",
-			"service", "-i", "kubernetes", "-t", "state",
-		})
-
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		GinkgoWriter.Println(out)
-		resp := new(propertyv1.GetResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Property.Tags).To(HaveLen(1))
-		Expect(resp.Property.Tags[0].Key).To(Equal("state"))
-	})
-
-	It("gets tags", func() {
-		rootCmd.SetArgs([]string{
-			"property", "get", "-g", "ui-template", "-n",
-			"service", "-i", "kubernetes", "-t", "content,state",
-		})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		GinkgoWriter.Println(out)
-		resp := new(propertyv1.GetResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(cmp.Equal(resp.Property, p1Proto,
-			equalsOpts...)).To(BeTrue())
-	})
-
-	It("update property", func() {
-		rootCmd.SetArgs([]string{"property", "apply", "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(`
-metadata:
-  container:
-    group: ui-template 
-    name: service
-  id: kubernetes
-tags:
-- key: state
-  value:
-    int:
-      value: 3
+	It("query all properties", func() {
+		rootCmd.SetArgs([]string{"property", "query", "-a", addr, "-f", "-"})
+		issue := func() string {
+			rootCmd.SetIn(strings.NewReader(`
+groups: ["ui-template"]
 `))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("created: false"))
-		Expect(out).To(ContainSubstring("tagsNum: 1"))
-		rootCmd.SetArgs([]string{"property", "get", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		resp := new(propertyv1.GetResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-
-		Expect(cmp.Equal(resp.Property, p2Proto,
-			equalsOpts...)).To(BeTrue())
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				Expect(err).NotTo(HaveOccurred())
+			})
+		}
+		Eventually(func() int {
+			out := issue()
+			resp := new(propertyv1.QueryResponse)
+			helpers.UnmarshalYAML([]byte(out), resp)
+			GinkgoWriter.Println(resp)
+			return len(resp.Properties)
+		}, flags.EventuallyTimeout).Should(Equal(1))
 	})
 
 	It("delete property", func() {
@@ -215,195 +135,25 @@ tags:
 			Expect(err).NotTo(HaveOccurred())
 		})
 		Expect(out).To(ContainSubstring("deleted: true"))
-		Expect(out).To(ContainSubstring("tagsNum: 0"))
-		// get again
-		rootCmd.SetArgs([]string{"property", "get", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
-		err := rootCmd.Execute()
-		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
-	})
-
-	It("list all properties", func() {
-		// create another property for list operation
-		rootCmd.SetArgs([]string{"property", "apply", "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(`
-metadata:
-  container:
-    group: ui-template 
-    name: service
-  id: spring
-tags:
-  - key: content
-    value:
-      str:
-        value: bar
-  - key: state
-    value:
-      int:
-        value: 1
+		rootCmd.SetArgs([]string{"property", "query", "-a", addr, "-f", "-"})
+		issue := func() string {
+			rootCmd.SetIn(strings.NewReader(`
+groups: ["ui-template"]
 `))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("created: true"))
-		Expect(out).To(ContainSubstring("tagsNum: 2"))
-		// list
-		rootCmd.SetArgs([]string{"property", "list", "-g", "ui-template"})
-		out = capturer.CaptureStdout(func() {
-			cmd.ResetFlags()
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		resp := new(propertyv1.ListResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Property).To(HaveLen(2))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				Expect(err).NotTo(HaveOccurred())
+			})
+		}
+		Eventually(func() int {
+			out := issue()
+			resp := new(propertyv1.QueryResponse)
+			helpers.UnmarshalYAML([]byte(out), resp)
+			GinkgoWriter.Println(resp)
+			return len(resp.Properties)
+		}, flags.EventuallyTimeout).Should(Equal(0))
 	})
 
-	It("list properties in a container", func() {
-		// create another property for list operation
-		rootCmd.SetArgs([]string{"property", "apply", "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(`
-metadata:
-  container:
-    group: ui-template 
-    name: service
-  id: spring
-tags:
-  - key: content
-    value:
-      str:
-        value: bar
-  - key: state
-    value:
-      int:
-        value: 1
-`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("created: true"))
-		Expect(out).To(ContainSubstring("tagsNum: 2"))
-		// list
-		rootCmd.SetArgs([]string{"property", "list", "-g", "ui-template", "-n", "service"})
-		out = capturer.CaptureStdout(func() {
-			cmd.ResetFlags()
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		resp := new(propertyv1.ListResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Property).To(HaveLen(2))
-	})
-
-	It("list properties in a container by id", func() {
-		// create another property for list operation
-		rootCmd.SetArgs([]string{"property", "apply", "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(`
-metadata:
-  container:
-    group: ui-template 
-    name: service
-  id: spring
-tags:
-  - key: content
-    value:
-      str:
-        value: bar
-  - key: state
-    value:
-      int:
-        value: 1
-`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("created: true"))
-		Expect(out).To(ContainSubstring("tagsNum: 2"))
-
-		rootCmd.SetArgs([]string{"property", "list", "-g", "ui-template", "-n", "service", "--ids", "spring"})
-		out = capturer.CaptureStdout(func() {
-			cmd.ResetFlags()
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		resp := new(propertyv1.ListResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Property).To(HaveLen(1))
-		Expect(resp.Property[0].Metadata.GetId()).To(Equal("spring"))
-		Expect(resp.Property[0].Tags).To(HaveLen(2))
-	})
-
-	It("list properties in a container by ids and tags", func() {
-		// create another property for list operation
-		rootCmd.SetArgs([]string{"property", "apply", "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(`
-metadata:
-  container:
-    group: ui-template 
-    name: service
-  id: spring
-tags:
-  - key: content
-    value:
-      str:
-        value: bar
-  - key: state
-    value:
-      int:
-        value: 1
-`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("created: true"))
-		Expect(out).To(ContainSubstring("tagsNum: 2"))
-
-		rootCmd.SetArgs([]string{"property", "list", "-g", "ui-template", "-n", "service", "--ids", "spring", "--tags", "content"})
-		out = capturer.CaptureStdout(func() {
-			cmd.ResetFlags()
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		resp := new(propertyv1.ListResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Property).To(HaveLen(1))
-		Expect(resp.Property[0].Metadata.GetId()).To(Equal("spring"))
-		Expect(resp.Property[0].Tags).To(HaveLen(1))
-	})
-
-	It("keepalive not found", func() {
-		rootCmd.SetArgs([]string{
-			"property", "keepalive", "-i", "111",
-		})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).Should(MatchError("rpc error: code = Unknown desc = etcdserver: requested lease not found"))
-		})
-		GinkgoWriter.Println(out)
-	})
-	It("keepalive", func() {
-		rootCmd.SetArgs([]string{"property", "apply", "-a", addr, "-f", "-"})
-		rootCmd.SetIn(strings.NewReader(p3Yaml))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		GinkgoWriter.Println(out)
-		resp := new(propertyv1.ApplyResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.LeaseId).Should(BeNumerically(">", 0))
-		rootCmd.SetArgs([]string{
-			"property", "keepalive", "-i", strconv.Itoa(int(resp.LeaseId)),
-		})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		GinkgoWriter.Println(out)
-	})
 	AfterEach(func() {
 		deferFunc()
 	})

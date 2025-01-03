@@ -25,6 +25,35 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
+// Group validates the provided Group object.
+func Group(group *commonv1.Group) error {
+	if group.Metadata == nil {
+		return errors.New("metadata is required")
+	}
+	if group.Metadata.Name == "" {
+		return errors.New("metadata.name is required")
+	}
+	if group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
+		return errors.New("catalog is unspecified")
+	}
+	if group.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
+		if group.ResourceOpts == nil {
+			return errors.New("resourceOpts is nil")
+		}
+		if group.ResourceOpts.ShardNum <= 0 {
+			return errors.New("shardNum is invalid")
+		}
+		if group.ResourceOpts.SegmentInterval != nil {
+			return errors.New("segmentInterval should be nil")
+		}
+		if group.ResourceOpts.Ttl != nil {
+			return errors.New("ttl should be nil")
+		}
+		return nil
+	}
+	return GroupForStreamOrMeasure(group)
+}
+
 // GroupForStreamOrMeasure validates the provided Group object for Stream or Measure.
 // It checks for nil values, empty strings, and unspecified enum values.
 func GroupForStreamOrMeasure(group *commonv1.Group) error {

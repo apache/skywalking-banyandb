@@ -1,3 +1,20 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package property
 
 import (
@@ -6,6 +23,9 @@ import (
 	"path"
 	"runtime/debug"
 	"time"
+
+	"go.uber.org/multierr"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -18,8 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"go.uber.org/multierr"
-	"google.golang.org/protobuf/proto"
 )
 
 const defaultFlushTimeout = 5 * time.Second
@@ -34,11 +52,11 @@ type service struct {
 	pipeline     queue.Server
 	omr          observability.MetricsRegistry
 	l            *logger.Logger
+	db           *database
+	close        chan struct{}
 	root         string
 	nodeID       string
 	flushTimeout time.Duration
-	db           *database
-	close        chan struct{}
 }
 
 func (s *service) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -93,14 +111,6 @@ func (s *service) Rev(ctx context.Context, message bus.Message) (resp bus.Messag
 		protoReq = d
 		if len(d.Groups) == 0 {
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("groups is empty"))
-			return
-		}
-		if d.Container == "" {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("container is empty"))
-			return
-		}
-		if len(d.TagProjection) == 0 {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("tag projection is empty"))
 			return
 		}
 		if d.Limit == 0 {
@@ -159,7 +169,7 @@ func (s *service) Validate() error {
 }
 
 func (s *service) Name() string {
-	return "measure"
+	return "property"
 }
 
 func (s *service) Role() databasev1.Role {
@@ -178,7 +188,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.nodeID = node.NodeID
 
 	var err error
-	s.db, err = openDB(ctx, path, s.flushTimeout, s.omr.With(propertyScope))
+	s.db, err = openDB(ctx, path, s.flushTimeout, s.omr)
 	if err != nil {
 		return err
 	}

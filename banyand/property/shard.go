@@ -1,3 +1,20 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package property
 
 import (
@@ -6,15 +23,17 @@ import (
 	"path"
 	"strconv"
 
+	"google.golang.org/protobuf/encoding/protojson"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
@@ -22,22 +41,21 @@ const (
 	sourceField   = "_source"
 	groupField    = "_group"
 	nameField     = index.IndexModeName
-	entityId      = "_entity_id"
+	entityID      = "_entity_id"
 )
 
 var (
 	sourceFieldKey = index.FieldKey{TagName: sourceField}
-	entityFieldKey = index.FieldKey{TagName: entityId}
+	entityFieldKey = index.FieldKey{TagName: entityID}
 	groupFieldKey  = index.FieldKey{TagName: groupField}
 	nameFieldKey   = index.FieldKey{TagName: nameField}
 	projection     = []index.FieldKey{sourceFieldKey}
 )
 
 type shard struct {
-	id       common.ShardID
-	l        *logger.Logger
-	location string
-	store    index.SeriesStore
+	store index.SeriesStore
+	l     *logger.Logger
+	id    common.ShardID
 }
 
 func (s *shard) close() error {
@@ -47,16 +65,18 @@ func (s *shard) close() error {
 	return nil
 }
 
-func (db *database) newShard(ctx context.Context, root string, id common.ShardID, flushTimeoutSeconds int64,
+func (db *database) newShard(ctx context.Context, id common.ShardID, flushTimeoutSeconds int64,
 ) (*shard, error) {
 	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
+	sName := "shard" + strconv.Itoa(int(id))
 	si := &shard{
-		l: logger.Fetch(ctx, "shard"+strconv.Itoa(int(id))),
+		id: id,
+		l:  logger.Fetch(ctx, sName),
 	}
 	opts := inverted.StoreOpts{
 		Path:         location,
 		Logger:       si.l,
-		Metrics:      inverted.NewMetrics(db.of, "shard"),
+		Metrics:      inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
 		BatchWaitSec: flushTimeoutSeconds,
 	}
 	var err error
@@ -110,6 +130,7 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 	if tracer != nil {
 		span, _ := tracer.StartSpan(ctx, "property.search")
 		span.Tagf("query", "%s", indexQuery.String())
+		span.Tagf("shard", "%d", s.id)
 		defer func() {
 			if data != nil {
 				span.Tagf("matched", "%d", len(data))

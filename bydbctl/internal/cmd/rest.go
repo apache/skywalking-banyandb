@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -64,26 +63,11 @@ type reqBody struct {
 	tags       []string
 	parsedData map[string]interface{}
 	data       []byte
-	leaseID    int64
 }
 
 type request struct {
 	req *resty.Request
 	reqBody
-}
-
-func (r request) ids() string {
-	if len(r.reqBody.ids) == 0 {
-		return "*"
-	}
-	return strings.Join(r.reqBody.ids, ",")
-}
-
-func (r request) tags() string {
-	if len(r.reqBody.tags) == 0 {
-		return "*"
-	}
-	return strings.Join(r.reqBody.tags, ",")
 }
 
 type reqFn func(request request) (*resty.Response, error)
@@ -152,6 +136,23 @@ func parseFromYAML(tryParseGroup bool, reader io.Reader) (requests []reqBody, er
 			group:      group,
 			data:       j,
 			parsedData: data,
+		})
+	}
+	return requests, nil
+}
+
+func simpleParseFromYAML(reader io.Reader) (requests []reqBody, err error) {
+	contents, err := file.Read(filePath, reader)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range contents {
+		j, err := yaml.YAMLToJSON(c)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, reqBody{
+			data: j,
 		})
 	}
 	return requests, nil

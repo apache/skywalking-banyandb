@@ -111,6 +111,7 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 		"--stream-root-path=" + path,
 		"--measure-root-path=" + path,
 		"--metadata-root-path=" + path,
+		"--property-root-path=" + path,
 		fmt.Sprintf("--etcd-listen-client-url=%s", endpoint), fmt.Sprintf("--etcd-listen-peer-url=http://%s:%d", host, ports[3]),
 	}
 	tlsEnabled := false
@@ -216,6 +217,7 @@ func DataNode(etcdEndpoint string) func() {
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
 		"--stream-root-path="+path,
 		"--measure-root-path="+path,
+		"--property-root-path="+path,
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost)

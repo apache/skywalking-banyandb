@@ -51,13 +51,16 @@ message ApplyResponse {
 }
 
 message DeleteRequest {
-  banyandb.property.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
-  repeated string tags = 2;
+  // groups indicate where the data points are stored.
+  string group = 1 [(validate.rules).string.min_len = 1];
+  // container is created when it receives the first property
+  string container = 2 [(validate.rules).string.min_len = 1];
+  // id is the identity of properties
+  string id = 3;
 }
 
 message DeleteResponse {
   bool deleted = 1;
-  uint32 tags_num = 2;
 }
 
 // QueryRequest is the request contract for query.
@@ -65,7 +68,7 @@ message QueryRequest {
   // groups indicate where the data points are stored.
   repeated string groups = 1 [(validate.rules).repeated.min_items = 1];
   // container is created when it receives the first property
-  string container = 2 [(validate.rules).string.min_len = 1];
+  string container = 2;
   // ids is the identities of properties
   repeated string ids = 3;
   // criteria is used to filter properties based on tags
@@ -95,7 +98,7 @@ service PropertyService {
   }
 
   rpc Delete(DeleteRequest) returns (DeleteResponse) {
-    option (google.api.http) = {delete: "/v1/property/{metadata.container.group}/{metadata.container.name}/{metadata.id}/{tags}"};
+    option (google.api.http) = {delete: "/v1/property/{group}/{container}/{id}"};
   }
 
   rpc Query(QueryRequest) returns (QueryResponse) {
