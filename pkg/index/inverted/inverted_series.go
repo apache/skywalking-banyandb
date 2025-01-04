@@ -72,6 +72,19 @@ func (s *store) UpdateSeriesBatch(batch index.Batch) error {
 	return s.writer.Batch(b)
 }
 
+func (s *store) Delete(docID [][]byte) error {
+	if !s.closer.AddRunning() {
+		return nil
+	}
+	defer s.closer.Done()
+	batch := generateBatch()
+	defer releaseBatch(batch)
+	for _, id := range docID {
+		batch.Delete(bluge.Identifier(id))
+	}
+	return s.writer.Batch(batch)
+}
+
 func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string) {
 	doc := bluge.NewDocument(convert.BytesToString(d.EntityValues))
 	var fieldNames []string
@@ -177,7 +190,7 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 
 // Search implements index.SeriesStore.
 func (s *store) Search(ctx context.Context,
-	projection []index.FieldKey, query index.Query,
+	projection []index.FieldKey, query index.Query, limit int,
 ) ([]index.SeriesDocument, error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
@@ -195,10 +208,10 @@ func (s *store) Search(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	return parseResult(dmi, projection)
+	return parseResult(dmi, projection, limit)
 }
 
-func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey) ([]index.SeriesDocument, error) {
+func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey, limit int) ([]index.SeriesDocument, error) {
 	result := make([]index.SeriesDocument, 0, 10)
 	next, err := dmi.Next()
 	if err != nil {
@@ -245,6 +258,9 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 		}
 		if len(doc.Key.EntityValues) > 0 {
 			result = append(result, doc)
+		}
+		if limit > 0 && len(result) >= limit {
+			break
 		}
 		next, err = dmi.Next()
 	}

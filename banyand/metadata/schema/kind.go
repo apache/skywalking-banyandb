@@ -26,7 +26,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
 // Kind is the type of a resource.
@@ -40,11 +39,10 @@ const (
 	KindIndexRuleBinding
 	KindIndexRule
 	KindTopNAggregation
-	KindProperty
 	KindNode
 	KindMask = KindGroup | KindStream | KindMeasure |
 		KindIndexRuleBinding | KindIndexRule |
-		KindTopNAggregation | KindProperty | KindNode
+		KindTopNAggregation | KindNode
 	KindSize = 9
 )
 
@@ -62,8 +60,6 @@ func (k Kind) key() string {
 		return indexRuleKeyPrefix
 	case KindTopNAggregation:
 		return topNAggregationKeyPrefix
-	case KindProperty:
-		return propertyKeyPrefix
 	case KindNode:
 		return nodeKeyPrefix
 	default:
@@ -88,8 +84,6 @@ func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
 		m = &databasev1.IndexRuleBinding{}
 	case KindIndexRule:
 		m = &databasev1.IndexRule{}
-	case KindProperty:
-		m = &propertyv1.Property{}
 	case KindTopNAggregation:
 		m = &databasev1.TopNAggregation{}
 	case KindNode:
@@ -134,8 +128,6 @@ func (k Kind) String() string {
 		return "indexRule"
 	case KindTopNAggregation:
 		return "topNAggregation"
-	case KindProperty:
-		return "property"
 	case KindNode:
 		return "node"
 	default:

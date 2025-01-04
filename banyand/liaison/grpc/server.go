@@ -129,6 +129,8 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 		},
 		propertyServer: &propertyServer{
 			schemaRegistry: schemaRegistry,
+			pipeline:       pipeline,
+			nodeRegistry:   nodeRegistry,
 		},
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}

@@ -46,7 +46,6 @@ var (
 	_ IndexRule        = (*etcdSchemaRegistry)(nil)
 	_ Measure          = (*etcdSchemaRegistry)(nil)
 	_ Group            = (*etcdSchemaRegistry)(nil)
-	_ Property         = (*etcdSchemaRegistry)(nil)
 
 	errUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
 	errConcurrentModification     = errors.New("concurrent modification of entities")

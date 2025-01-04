@@ -18,8 +18,6 @@
 package cmd
 
 import (
-	"strconv"
-
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -28,16 +26,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const propertySchemaPath = "/api/v1/property"
+const propertySchemaPath = "/api/v1/property/{group}/{name}/{id}"
 
 var (
-	id                                  string
-	tags                                []string
-	ids                                 []string
-	propertySchemaPathWithoutTagParams  = propertySchemaPath + "/{group}/{name}/{id}"
-	propertySchemaPathWithTagParams     = propertySchemaPath + "/{group}/{name}/{id}/{tag}"
-	propertyListSchemaPathWithTagParams = propertySchemaPath + "/lists/{group}/{name}/{ids}/{tags}"
-	propertyListSchemaPath              = propertySchemaPath + "/lists/{group}"
+	id   string
+	tags []string
+	ids  []string
 )
 
 func newPropertyCmd() *cobra.Command {
@@ -68,76 +62,39 @@ func newPropertyCmd() *cobra.Command {
 						return nil, err
 					}
 					return request.req.SetPathParam("group", request.group).SetPathParam("name", request.name).
-						SetPathParam("id", request.id).SetBody(b).Put(getPath(propertySchemaPathWithoutTagParams))
+						SetPathParam("id", request.id).SetBody(b).Put(getPath(propertySchemaPath))
 				}, yamlPrinter, enableTLS, insecure, cert)
-		},
-	}
-	bindFileFlag(applyCmd)
-
-	getCmd := &cobra.Command{
-		Use:     "get [-g group] -n name -i id [-t tags]",
-		Version: version.Build(),
-		Short:   "Get a property",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
-					SetPathParam("id", request.id).SetPathParam("tag", request.tags()).
-					Get(getPath(propertySchemaPathWithTagParams))
-			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
 
 	deleteCmd := &cobra.Command{
-		Use:     "delete [-g group] -n name -i id -t [tags]",
+		Use:     "delete -g group -n name [-i id]",
 		Version: version.Build(),
 		Short:   "Delete a property",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
-					SetPathParam("id", request.id).SetPathParam("tag", request.tags()).Delete(getPath(propertySchemaPathWithTagParams))
+					SetPathParam("id", request.id).Delete(getPath(propertySchemaPath))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
-	bindNameAndIDAndTagsFlag(getCmd, deleteCmd)
+	bindNameAndIDFlag(deleteCmd)
 
-	listCmd := &cobra.Command{
-		Use:     "list [-g group] -n name",
+	queryCmd := &cobra.Command{
+		Use:     "query -f [file|dir|-]",
 		Version: version.Build(),
-		Short:   "List properties",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				if len(request.name) == 0 {
-					return request.req.SetPathParam("group", request.group).Get(getPath(propertyListSchemaPath))
-				}
-				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
-					SetPathParam("ids", request.ids()).SetPathParam("tags", request.tags()).Get(getPath(propertyListSchemaPathWithTagParams))
-			}, yamlPrinter, enableTLS, insecure, cert)
+		Short:   "Query properties from files",
+		Long:    timeRangeUsage,
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(func() ([]reqBody, error) { return simpleParseFromYAML(cmd.InOrStdin()) },
+				func(request request) (*resty.Response, error) {
+					return request.req.SetBody(request.data).Post(getPath("/api/v1/property/query"))
+				}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
-	listCmd.Flags().StringVarP(&name, "name", "n", "", "the name of the resource")
-	listCmd.Flags().StringSliceVarP(&ids, "ids", "", nil, "id selector")
-	listCmd.Flags().StringSliceVarP(&tags, "tags", "t", nil, "tag selector")
+	bindFileFlag(applyCmd, queryCmd)
 
-	var leaseID int64
-	keepAliveCmd := &cobra.Command{
-		Use:     "keepalive -i lease_id",
-		Version: version.Build(),
-		Short:   "Keep alive a property",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) {
-				if leaseID == 0 {
-					return nil, errMalformedInput
-				}
-				return []reqBody{{leaseID: leaseID}}, nil
-			}, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("lease_id", strconv.FormatInt(request.leaseID, 10)).
-					Put(getPath(propertySchemaPath + "/lease/{lease_id}"))
-			}, yamlPrinter, enableTLS, insecure, cert)
-		},
-	}
-	keepAliveCmd.Flags().Int64VarP(&leaseID, "lease_id", "i", 0, "the lease id of the property")
-
-	bindTLSRelatedFlag(getCmd, applyCmd, deleteCmd, listCmd, keepAliveCmd)
-	propertyCmd.AddCommand(getCmd, applyCmd, deleteCmd, listCmd, keepAliveCmd)
+	bindTLSRelatedFlag(applyCmd, deleteCmd, queryCmd)
+	propertyCmd.AddCommand(applyCmd, deleteCmd, queryCmd)
 	return propertyCmd
 }

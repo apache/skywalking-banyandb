@@ -314,6 +314,7 @@ type Writer interface {
 	Batch(batch Batch) error
 	InsertSeriesBatch(batch Batch) error
 	UpdateSeriesBatch(batch Batch) error
+	Delete(docID [][]byte) error
 }
 
 // FieldIterable allows building a FieldIterator.
@@ -393,7 +394,7 @@ type OrderBy struct {
 type SeriesStore interface {
 	Store
 	// Search returns a list of series that match the given matchers.
-	Search(context.Context, []FieldKey, Query) ([]SeriesDocument, error)
+	Search(context.Context, []FieldKey, Query, int) ([]SeriesDocument, error)
 	SeriesIterator(context.Context) (FieldIterator[Series], error)
 	SeriesSort(ctx context.Context, indexQuery Query, orderBy *OrderBy,
 		preLoadSize int, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)

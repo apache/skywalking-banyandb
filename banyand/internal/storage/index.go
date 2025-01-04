@@ -119,7 +119,7 @@ func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 			span.Stop()
 		}()
 	}
-	ss, err := s.store.Search(ctx, projection, indexQuery)
+	ss, err := s.store.Search(ctx, projection, indexQuery, 0)
 	if err != nil {
 		return SeriesData{}, err
 	}

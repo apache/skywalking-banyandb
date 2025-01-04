@@ -27,7 +27,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
 var errUnsupportedEntityType = errors.New("unsupported entity type")
@@ -61,7 +60,6 @@ type Registry interface {
 	Measure
 	Group
 	TopNAggregation
-	Property
 	Node
 	RegisterHandler(string, Kind, EventHandler)
 	NewWatcher(string, Kind, watchEventHandler) *watcher
@@ -109,11 +107,7 @@ func (m Metadata) key() (string, error) {
 			Group: m.Group,
 			Name:  m.Name,
 		}), nil
-	case KindProperty:
-		return formatPropertyKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
+
 	case KindTopNAggregation:
 		return formatTopNAggregationKey(&commonv1.Metadata{
 			Group: m.Group,
@@ -192,15 +186,6 @@ type TopNAggregation interface {
 	CreateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) error
 	UpdateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) error
 	DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
-}
-
-// Property allows CRUD properties or tags in group.
-type Property interface {
-	GetProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (*propertyv1.Property, error)
-	ListProperty(ctx context.Context, container *commonv1.Metadata, ids []string, tags []string) ([]*propertyv1.Property, error)
-	ApplyProperty(ctx context.Context, property *propertyv1.Property, strategy propertyv1.ApplyRequest_Strategy) (bool, uint32, int64, error)
-	DeleteProperty(ctx context.Context, metadata *propertyv1.Metadata, tags []string) (bool, uint32, error)
-	KeepAlive(ctx context.Context, leaseID int64) error
 }
 
 // Node allows CRUD node schemas in a group.

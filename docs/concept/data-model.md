@@ -184,7 +184,7 @@ Tags in `group_by_tag_names` are used as dimensions. These tags can be searched 
 
 `Property` is a schema-less or schema-free data model. That means you __DO NOT__ have to define a schema before writing a Property
 
-`Property` is a standard key-value store. Users could store their metadata or items on a property and get a [sequential consistency](https://en.wikipedia.org/wiki/Consistency_model#Sequential_consistency) guarantee. BanyanDB's motivation for introducing such a particular structure is to support most APM scenarios that need to store critical data, especially for a distributed database cluster.
+`Property` is a standard key-value store. Users could store their metadata or items on a property. BanyanDB's motivation for introducing such a particular structure is to support most APM scenarios that need to store critical data, especially for a distributed database cluster.
 
 We should create a group before creating a property.
 
@@ -193,7 +193,11 @@ Creating group.
 ```yaml
 metadata:
   name: sw
+catalog: CATALOG_PROPERTY
+resource_opts:
+  shard_num: 2
 ```
+
 Creating property.
 
 ```yaml
@@ -214,36 +218,6 @@ tags:
 ```
 
 `Property` supports a three-level hierarchy, `group`/`name`/`id`, that is more flexible than schemaful data models.
-
-The property supports the TTL mechanism. You could set the `ttl` field to specify the time to live.
-
-```yaml
-metadata:
-  container:
-    group: sw
-    name: temp_data
-  id: General-Service
-tags:
-- key: name
-  value:
-    str:
-      value: "hello"
-- key: state
-  value:
-    str:
-      value: "succeed"
-ttl: "1h"
-```
-
-"General-Service" will be dropped after 1 hour. If you want to extend the TTL, you could use the "keepalive" operation. The "lease_id" is returned in the apply response. You can use get operation to get the property with the lease_id as well.
-
-```yaml
-lease_id: 1
-```
-
-"General-Service" lives another 1 hour.
-
-You could Create, Read, Update and Drop a property, and update or drop several tags instead of the entire property.
 
 [Property Operations](../api-reference.md#propertyservice)
 

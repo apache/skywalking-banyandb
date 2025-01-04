@@ -45,7 +45,6 @@ type Repo interface {
 	MeasureRegistry() schema.Measure
 	GroupRegistry() schema.Group
 	TopNAggregationRegistry() schema.TopNAggregation
-	PropertyRegistry() schema.Property
 	RegisterHandler(string, schema.Kind, schema.EventHandler)
 }
 

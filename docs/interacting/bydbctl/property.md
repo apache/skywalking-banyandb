@@ -20,6 +20,9 @@ The group's catalog should be empty.
 bydbctl group create -f - <<EOF
 metadata:
   name: sw
+catalog: CATALOG_PROPERTY
+resource_opts:
+  shard_num: 2
 EOF
 ```
 
@@ -61,40 +64,6 @@ tags:
 EOF
 ```
 
-TTL is supported in the operation.
-
-```shell
-bydbctl property apply -f - <<EOF
-metadata:
-  container:
-    group: sw
-    name: temp_data
-  id: General-Service
-tags:
-- key: state
-  value:
-    str:
-      value: "failed"
-ttl: "1h"
-EOF
-```
-
-## Get operation
-
-Get operation gets a property.
-
-### Examples of getting
-
-```shell
-bydbctl property get -g sw -n temp_data --id General-Service
-```
-
-The operation could filter data by tags.
-
-```shell
-bydbctl property get -g sw -n temp_data --id General-Service --tags state
-```
-
 ## Delete operation
 
 Delete operation delete a property.
@@ -105,68 +74,60 @@ Delete operation delete a property.
 bydbctl property delete -g sw -n temp_data --id General-Service
 ```
 
-The delete operation could remove specific tags instead of the whole property.
+## Query operation
 
-```shell
-bydbctl property delete -g sw -n temp_data --id General-Service --tags state
-```
-
-## List operation
-
-List operation lists all properties in a group.
+Query operation properties in a group.
 
 ### Examples of listing in a group
 
 ```shell
-bydbctl property list -g sw
-```
-
-List operation lists all properties in a group with a name.
-
-### Examples of listing in a group with a name
-
-```shell
-bydbctl property list -g sw -n temp_data
-```
-
-## TTL field in a property
-
-TTL field in a property is used to set the time to live of the property. The property will be deleted automatically after the TTL.
-
-This functionality is supported by the lease mechanism. The readonly lease_id field is used to identify the lease of the property.
-
-### Examples of setting TTL
-
-```shell
-bydbctl property apply -f - <<EOF
-metadata:
-  container:
-    group: sw
-    name: temp_data
-  id: General-Service
-tags:
-- key: state
-  value:
-    str:
-      value: "failed"
-ttl: "1h"
+bydbctl property query -f - <<EOF
+groups: ["sw"]
 EOF
 ```
 
-The lease_id is returned in the response. 
-You can use get operation to get the property with the lease_id as well.
+Query operation queries all properties in a group with a container name.
+
+### Examples of listing in a group with a container name
 
 ```shell
-bydbctl property get -g sw -n temp_data --id General-Service
+bydbctl property query -f - <<EOF
+groups: ["sw"]
+container: temp_data
+EOF
 ```
 
-The lease_id is used to keep the property alive. You can use keepalive operation to keep the property alive.
-When the keepalive operation is called, the property's TTL will be reset to the original value.
+Query properties with a specific tag.
+
+### Examples of listing with a tag
 
 ```shell
-bydbctl property keepalive --lease_id 1
+bydbctl property query -f - <<EOF
+groups: ["sw"]
+criteria:
+  condition:
+    name: "state"
+    op: "BINARY_OP_EQ"
+    value:
+      str:
+        value: "succeed"
 ```
 
+You can limit the number of properties to be returned.
+
+```shell
+bydbctl property query -f - <<EOF
+groups: ["sw"]
+limit: 1
+```
+
+You also can return partial tags of properties(tags' projection).
+
+```shell
+bydbctl property query -f - <<EOF
+groups: ["sw"]
+tag_projection: ["name"]
+```
 
 ## API Reference
 
