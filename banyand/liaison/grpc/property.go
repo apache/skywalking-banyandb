@@ -66,7 +66,7 @@ const defaultQueryTimeout = 30 * time.Second
 type propertyServer struct {
 	propertyv1.UnimplementedPropertyServiceServer
 	schemaRegistry metadata.Repo
-	broadcaster    queue.Client
+	pipeline       queue.Client
 	nodeRegistry   NodeRegistry
 	metrics        *metrics
 }
@@ -200,7 +200,7 @@ func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, sh
 	}
 	cur.Metadata.Container.ModRevision = ns
 	cur.UpdatedAt = timestamppb.New(now)
-	f, err := ps.broadcaster.Publish(ctx, data.TopicPropertyUpdate, bus.NewMessageWithNode(bus.MessageID(time.Now().Unix()), node, &propertyv1.InternalUpdateRequest{
+	f, err := ps.pipeline.Publish(ctx, data.TopicPropertyUpdate, bus.NewMessageWithNode(bus.MessageID(time.Now().Unix()), node, &propertyv1.InternalUpdateRequest{
 		ShardId:  shardID,
 		Id:       getPropertyID(cur),
 		Property: cur,
@@ -295,7 +295,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			return nil, errors.Errorf("group %s is not allowed to have properties", gn)
 		}
 	}
-	ff, err := ps.broadcaster.Broadcast(defaultQueryTimeout, data.TopicPropertyQuery, bus.NewMessage(bus.MessageID(start.Unix()), req))
+	ff, err := ps.pipeline.Broadcast(defaultQueryTimeout, data.TopicPropertyQuery, bus.NewMessage(bus.MessageID(start.Unix()), req))
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +367,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 }
 
 func (ps *propertyServer) remove(ids [][]byte) error {
-	ff, err := ps.broadcaster.Broadcast(defaultQueryTimeout, data.TopicPropertyDelete, bus.NewMessage(bus.MessageID(time.Now().Unix()), &propertyv1.InternalDeleteRequest{
+	ff, err := ps.pipeline.Broadcast(defaultQueryTimeout, data.TopicPropertyDelete, bus.NewMessage(bus.MessageID(time.Now().Unix()), &propertyv1.InternalDeleteRequest{
 		Ids: ids,
 	}))
 	if err != nil {

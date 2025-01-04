@@ -170,8 +170,9 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 	return f, err
 }
 
-func (p *pub) Publish(_ context.Context, _ bus.Topic, _ ...bus.Message) (bus.Future, error) {
-	panic("should not be called")
+func (p *pub) Publish(_ context.Context, topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
+	// nolint: contextcheck
+	return p.publish(15*time.Second, topic, messages...)
 }
 
 // NewBatchPublisher returns a new batch publisher.

@@ -129,7 +129,7 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 		},
 		propertyServer: &propertyServer{
 			schemaRegistry: schemaRegistry,
-			broadcaster:    broadcaster,
+			pipeline:       pipeline,
 			nodeRegistry:   nodeRegistry,
 		},
 	}

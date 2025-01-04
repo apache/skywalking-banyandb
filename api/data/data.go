@@ -22,17 +22,21 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
 // TopicMap is the map of topic name to topic.
 var TopicMap = map[string]bus.Topic{
-	TopicStreamWrite.String():  TopicStreamWrite,
-	TopicStreamQuery.String():  TopicStreamQuery,
-	TopicMeasureWrite.String(): TopicMeasureWrite,
-	TopicMeasureQuery.String(): TopicMeasureQuery,
-	TopicTopNQuery.String():    TopicTopNQuery,
+	TopicStreamWrite.String():    TopicStreamWrite,
+	TopicStreamQuery.String():    TopicStreamQuery,
+	TopicMeasureWrite.String():   TopicMeasureWrite,
+	TopicMeasureQuery.String():   TopicMeasureQuery,
+	TopicTopNQuery.String():      TopicTopNQuery,
+	TopicPropertyDelete.String(): TopicPropertyDelete,
+	TopicPropertyQuery.String():  TopicPropertyQuery,
+	TopicPropertyUpdate.String(): TopicPropertyUpdate,
 }
 
 // TopicRequestMap is the map of topic name to request message.
@@ -53,6 +57,15 @@ var TopicRequestMap = map[bus.Topic]func() proto.Message{
 	TopicTopNQuery: func() proto.Message {
 		return &measurev1.TopNRequest{}
 	},
+	TopicPropertyUpdate: func() proto.Message {
+		return &propertyv1.InternalUpdateRequest{}
+	},
+	TopicPropertyQuery: func() proto.Message {
+		return &propertyv1.QueryRequest{}
+	},
+	TopicPropertyDelete: func() proto.Message {
+		return &propertyv1.InternalDeleteRequest{}
+	},
 }
 
 // TopicResponseMap is the map of topic name to response message.
@@ -66,5 +79,14 @@ var TopicResponseMap = map[bus.Topic]func() proto.Message{
 	},
 	TopicTopNQuery: func() proto.Message {
 		return &measurev1.TopNResponse{}
+	},
+	TopicPropertyQuery: func() proto.Message {
+		return &propertyv1.InternalQueryResponse{}
+	},
+	TopicPropertyDelete: func() proto.Message {
+		return &propertyv1.DeleteResponse{}
+	},
+	TopicPropertyUpdate: func() proto.Message {
+		return &propertyv1.ApplyResponse{}
 	},
 }
