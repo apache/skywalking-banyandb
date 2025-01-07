@@ -185,7 +185,7 @@ func (db *database) collect() {
 		return
 	}
 	for _, s := range *sLst {
-		s.store.CollectMetrics(strconv.Itoa(int(s.id)))
+		s.store.CollectMetrics()
 	}
 }
 
