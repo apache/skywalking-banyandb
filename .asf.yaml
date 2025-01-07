@@ -24,6 +24,11 @@ github:
     - observability
     - apm
     - database
+    - time-series
+    - monitoring
+    - distributed-tracing
+    - logging
+    - metrics
   enabled_merge_buttons:
     squash:  true
     merge:   false
