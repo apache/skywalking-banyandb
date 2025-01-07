@@ -61,6 +61,18 @@ services:
       banyandb:
         condition: service_healthy
 
+  ui:
+    extends:
+      file: ../../docker/base-compose.yml
+      service: ui
+    ports:
+      - 8080:8080
+    networks:
+      - test
+    depends_on:
+      oap:
+        condition: service_healthy
+
   agent:
     extends:
       file: ../../docker/base-compose.yml
