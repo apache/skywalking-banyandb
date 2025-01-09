@@ -25,6 +25,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"go.uber.org/multierr"
 )
 
 type (
@@ -86,6 +88,7 @@ func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
 // MessageListener is the signature of functions that can handle an EventMessage.
 type MessageListener interface {
 	Rev(ctx context.Context, message Message) Message
+	CheckHealth() error
 }
 
 // Subscriber allow subscribing a Topic's messages.
@@ -101,6 +104,19 @@ type Publisher interface {
 // Broadcaster allow sending Messages to a Topic and receiving the responses.
 type Broadcaster interface {
 	Broadcast(timeout time.Duration, topic Topic, message Message) ([]Future, error)
+}
+
+// UnImplementedHealthyListener is a listener that is not implemented. But it is healthy.
+type UnImplementedHealthyListener struct{}
+
+// CheckHealth always returns nil.
+func (h *UnImplementedHealthyListener) CheckHealth() error {
+	return nil
+}
+
+// Rev always panics.
+func (h *UnImplementedHealthyListener) Rev(context.Context, Message) Message {
+	panic("implement me")
 }
 
 type chType int
@@ -198,7 +214,13 @@ func (b *Bus) Publish(ctx context.Context, topic Topic, message ...Message) (Fut
 	case chTypeBidirectional:
 		f = &localFuture{messages: make([]Message, 0, len(message))}
 	}
+	var err error
 	for _, ml := range mll {
+		if e := ml.CheckHealth(); e != nil {
+			err = multierr.Append(err, e)
+			continue
+		}
+
 		for _, m := range message {
 			if f != nil {
 				f.messages = append(f.messages, ml.Rev(ctx, m))
@@ -208,9 +230,9 @@ func (b *Bus) Publish(ctx context.Context, topic Topic, message ...Message) (Fut
 		}
 	}
 	if f == nil {
-		return &emptyFuture{}, nil
+		return &emptyFuture{}, err
 	}
-	return f, nil
+	return f, err
 }
 
 // Subscribe adds an MessageListener to be called when a message of a Topic is posted.

@@ -35,7 +35,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
@@ -175,7 +174,7 @@ func (s *server) Serve() run.StopNotify {
 	)
 	s.ser = grpclib.NewServer(opts...)
 	clusterv1.RegisterServiceServer(s.ser, s)
-	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
+	grpc_health_v1.RegisterHealthServer(s.ser, newHealthServer(s.listeners))
 
 	var ctx context.Context
 	ctx, s.clientCloser = context.WithCancel(context.Background())

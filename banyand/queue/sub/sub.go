@@ -36,17 +36,6 @@ import (
 )
 
 func (s *server) Send(stream clusterv1.Service_SendServer) error {
-	reply := func(writeEntity *clusterv1.SendRequest, err error, message string) {
-		s.log.Error().Stringer("request", writeEntity).Err(err).Msg(message)
-		s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
-		if errResp := stream.Send(&clusterv1.SendResponse{
-			MessageId: writeEntity.MessageId,
-			Error:     message,
-		}); errResp != nil {
-			s.log.Error().Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
-			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
-		}
-	}
 	ctx := stream.Context()
 	var topic *bus.Topic
 	var m bus.Message
@@ -71,10 +60,35 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			}
 			listener := s.getListeners(*topic)
 			if listener == nil {
-				reply(writeEntity, err, "no listener found")
+				s.reply(topic, stream, writeEntity, err, "no listener found")
 				return nil
 			}
-			_ = listener.Rev(ctx, bus.NewMessage(bus.MessageID(0), dataCollection))
+			if le := listener.CheckHealth(); le != nil {
+				s.reply(topic, stream, writeEntity, le, "")
+				return nil
+			}
+			message := listener.Rev(ctx, bus.NewMessage(bus.MessageID(0), dataCollection))
+			var resp *clusterv1.SendResponse
+			data := message.Data()
+			if data != nil {
+				switch d := data.(type) {
+				case common.Error:
+					resp = &clusterv1.SendResponse{
+						MessageId: writeEntity.MessageId,
+						Error:     d.Error(),
+						Status:    d.Status(),
+						Topic:     topic.String(),
+					}
+				default:
+					resp = &clusterv1.SendResponse{
+						MessageId: writeEntity.MessageId,
+					}
+				}
+			}
+			if errSend := stream.Send(resp); errSend != nil {
+				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send write response")
+				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+			}
 			return nil
 		}
 		if err != nil {
@@ -91,25 +105,25 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		if writeEntity.Topic != "" && topic == nil {
 			t, ok := data.TopicMap[writeEntity.Topic]
 			if !ok {
-				reply(writeEntity, err, "invalid topic")
+				s.reply(topic, stream, writeEntity, err, "invalid topic")
 				continue
 			}
 			topic = &t
 		}
 		if topic == nil {
-			reply(writeEntity, err, "topic is empty")
+			s.reply(topic, stream, writeEntity, err, "topic is empty")
 			continue
 		}
 
 		if reqSupplier, ok := data.TopicRequestMap[*topic]; ok {
 			req := reqSupplier()
 			if errUnmarshal := writeEntity.Body.UnmarshalTo(req); errUnmarshal != nil {
-				reply(writeEntity, errUnmarshal, "failed to unmarshal message")
+				s.reply(topic, stream, writeEntity, errUnmarshal, "failed to unmarshal message")
 				continue
 			}
 			m = bus.NewMessage(bus.MessageID(writeEntity.MessageId), req)
 		} else {
-			reply(writeEntity, err, "unknown topic")
+			s.reply(topic, stream, writeEntity, err, "unknown topic")
 			continue
 		}
 		if writeEntity.BatchMod {
@@ -118,20 +132,13 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 				start = time.Now()
 			}
 			dataCollection = append(dataCollection, writeEntity.Body)
-			if errSend := stream.Send(&clusterv1.SendResponse{
-				MessageId: writeEntity.MessageId,
-			}); errSend != nil {
-				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send write response")
-				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
-				continue
-			}
 			s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
 			continue
 		}
 		s.metrics.totalStarted.Inc(1, writeEntity.Topic)
 		listener := s.getListeners(*topic)
 		if listener == nil {
-			reply(writeEntity, err, "no listener found")
+			s.reply(topic, stream, writeEntity, err, "no listener found")
 			continue
 		}
 
@@ -158,15 +165,15 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 				return ctx.Err()
 			default:
 			}
-			reply(writeEntity, nil, d.Msg())
+			s.reply(topic, stream, writeEntity, nil, d.Error())
 			continue
 		default:
-			reply(writeEntity, nil, fmt.Sprintf("invalid response: %T", d))
+			s.reply(topic, stream, writeEntity, nil, fmt.Sprintf("invalid response: %T", d))
 			continue
 		}
 		anyMessage, err := anypb.New(message)
 		if err != nil {
-			reply(writeEntity, err, "failed to marshal message")
+			s.reply(topic, stream, writeEntity, err, "failed to marshal message")
 			continue
 		}
 		if err := stream.Send(&clusterv1.SendResponse{
@@ -195,4 +202,30 @@ func (s *server) getListeners(topic bus.Topic) bus.MessageListener {
 	s.listenersLock.RLock()
 	defer s.listenersLock.RUnlock()
 	return s.listeners[topic]
+}
+
+func (s *server) reply(topic *bus.Topic, stream clusterv1.Service_SendServer, writeEntity *clusterv1.SendRequest, err error, message string) {
+	s.log.Error().Stringer("request", writeEntity).Err(err).Msg(message)
+	s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
+	resp := &clusterv1.SendResponse{
+		MessageId: writeEntity.MessageId,
+	}
+
+	// nolint: errorlint
+	if ce, ok := err.(common.Error); ok {
+		resp.Error = ce.Error()
+		resp.Status = ce.Status()
+		if topic != nil {
+			resp.Topic = topic.String()
+		}
+	} else {
+		resp.Error = message
+	}
+	if errResp := stream.Send(&clusterv1.SendResponse{
+		MessageId: writeEntity.MessageId,
+		Error:     message,
+	}); errResp != nil {
+		s.log.Error().Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
+		s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+	}
 }

@@ -27,6 +27,7 @@ import (
 
 var (
 	errNoAddr         = errors.New("no address")
+	errNoMode         = errors.New("no observability mode")
 	errInvalidMode    = errors.New("invalid observability mode")
 	errDuplicatedMode = errors.New("duplicated observability mode")
 )

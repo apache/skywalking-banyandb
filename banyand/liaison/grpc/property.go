@@ -334,7 +334,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 					span.AddSubTrace(v.Trace)
 				}
 			case common.Error:
-				err = multierr.Append(err, errors.New(v.Msg()))
+				err = multierr.Append(err, errors.New(v.Error()))
 			}
 		}
 	}

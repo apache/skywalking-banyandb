@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/dquery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
@@ -46,10 +47,16 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	}
 	pipeline := pub.New(metaSvc)
 	localPipeline := queue.Local()
-	nodeSel := node.NewRoundRobinSelector(metaSvc)
-	nodeRegistry := grpc.NewClusterNodeRegistry(pipeline, nodeSel)
-	metricSvc := observability.NewMetricService(metaSvc, pipeline, "liaison", nodeRegistry)
-	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, nodeRegistry, metricSvc)
+	measureNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)
+	measureNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, pipeline, measureNodeSel)
+	metricSvc := observability.NewMetricService(metaSvc, pipeline, "liaison", measureNodeRegistry)
+	streamNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
+	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
+	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, grpc.NodeRegistries{
+		MeasureNodeRegistry:  measureNodeRegistry,
+		StreamNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicStreamWrite, pipeline, streamNodeSel),
+		PropertyNodeRegistry: grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, pipeline, propertyNodeSel),
+	}, metricSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer()
 	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline, metricSvc)
@@ -62,7 +69,9 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		metaSvc,
 		localPipeline,
 		pipeline,
-		nodeSel,
+		measureNodeSel,
+		streamNodeSel,
+		propertyNodeSel,
 		metricSvc,
 		dQuery,
 		grpcServer,

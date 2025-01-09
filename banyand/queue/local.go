@@ -22,6 +22,7 @@ import (
 	context "context"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -90,7 +91,7 @@ func (*local) GetPort() *uint32 {
 	return nil
 }
 
-func (*local) Register(schema.EventHandler) {
+func (*local) Register(bus.Topic, schema.EventHandler) {
 }
 
 type localBatchPublisher struct {
@@ -113,16 +114,32 @@ func (l *localBatchPublisher) Publish(ctx context.Context, topic bus.Topic, mess
 	return nil, nil
 }
 
-func (l *localBatchPublisher) Close() error {
+func (l *localBatchPublisher) Close() (map[string]common.Error, error) {
 	if l.local == nil || len(l.messages) == 0 {
-		return nil
+		return nil, nil
 	}
 	newMessage := bus.NewMessage(1, l.messages)
-	_, err := l.local.Publish(l.ctx, *l.topic, newMessage)
-	if err != nil {
-		return err
-	}
+	f, err := l.local.Publish(l.ctx, *l.topic, newMessage)
 	l.messages = nil
 	l.topic = nil
-	return nil
+	if err != nil {
+		// nolint: errorlint
+		if ce, ok := err.(common.Error); ok {
+			return map[string]common.Error{"local": ce}, nil
+		}
+		return nil, err
+	}
+	if f == nil {
+		return nil, nil
+	}
+	m, err := f.Get()
+	if err != nil {
+		return nil, err
+	}
+	if m.Data() != nil {
+		if d, ok := m.Data().(common.Error); ok {
+			return map[string]common.Error{"local": d}, nil
+		}
+	}
+	return nil, nil
 }

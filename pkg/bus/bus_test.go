@@ -39,6 +39,7 @@ func TestBus_PubAndSub(t *testing.T) {
 		wantMessages []MessageID
 		ret          []MessageID
 		wantErr      bool
+		wantUnHealth bool
 	}
 	tests := []struct {
 		name      string
@@ -150,6 +151,22 @@ func TestBus_PubAndSub(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "send to unhealthy listener",
+			messages: []message{
+				{
+					topic:      BiTopic("default"),
+					messageIDs: []MessageID{12, 33},
+					wantErr:    true,
+				},
+			},
+			listeners: []listener{
+				{
+					wantTopic:    BiTopic("default"),
+					wantUnHealth: true,
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -164,7 +181,7 @@ func TestBus_PubAndSub(t *testing.T) {
 						ret <- NewMessage(id, nil)
 					}
 				}
-				ml := &mockListener{wg: &wg, ret: ret}
+				ml := &mockListener{wg: &wg, ret: ret, unhealthy: l.wantUnHealth}
 				mll = append(mll, ml)
 				wg.Add(len(l.wantMessages))
 				if err := e.Subscribe(l.wantTopic, ml); (err != nil) != l.wantErr {
@@ -184,7 +201,7 @@ func TestBus_PubAndSub(t *testing.T) {
 				if f == nil {
 					continue
 				}
-				go func(want []MessageID) {
+				go func(t *testing.T, want []MessageID) {
 					ret, errRet := f.GetAll()
 					if errors.Is(errRet, errEmptyFuture) {
 						return
@@ -196,13 +213,18 @@ func TestBus_PubAndSub(t *testing.T) {
 						ids = append(ids, ret[i].ID())
 					}
 					ids = sortMessage(ids)
-					if !reflect.DeepEqual(ids, want) {
+					if len(ids) != len(want) {
 						t.Errorf("Publish()'s return = %v, want %v", ret, want)
+					}
+					if len(ids) != 0 {
+						if !reflect.DeepEqual(ids, want) {
+							t.Errorf("Publish()'s return = %v, want %v", ret, want)
+						}
 					}
 					for i := 0; i < len(ret); i++ {
 						wg.Done()
 					}
-				}(m.wantRet)
+				}(t, m.wantRet)
 			}
 			if waitTimeout(&wg, 10*time.Second) {
 				t.Error("message receiving is time out")
@@ -234,10 +256,18 @@ func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 var _ MessageListener = new(mockListener)
 
 type mockListener struct {
-	wg      *sync.WaitGroup
-	closeWg *sync.WaitGroup
-	ret     chan Message
-	queue   []MessageID
+	wg        *sync.WaitGroup
+	closeWg   *sync.WaitGroup
+	ret       chan Message
+	queue     []MessageID
+	unhealthy bool
+}
+
+func (m *mockListener) CheckHealth() error {
+	if m.unhealthy {
+		return errors.New("error")
+	}
+	return nil
 }
 
 func (m *mockListener) Rev(_ context.Context, message Message) Message {

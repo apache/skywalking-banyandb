@@ -65,6 +65,13 @@ type Server interface {
 	GetPort() *uint32
 }
 
+// NodeRegistries contains the node registries.
+type NodeRegistries struct {
+	StreamNodeRegistry   NodeRegistry
+	MeasureNodeRegistry  NodeRegistry
+	PropertyNodeRegistry NodeRegistry
+}
+
 type server struct {
 	creds      credentials.TransportCredentials
 	omr        observability.MetricsRegistry
@@ -94,14 +101,14 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nodeRegistry NodeRegistry, omr observability.MetricsRegistry) Server {
+func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry) Server {
 	streamSVC := &streamService{
-		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nodeRegistry),
+		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nr.StreamNodeRegistry),
 		pipeline:         pipeline,
 		broadcaster:      broadcaster,
 	}
 	measureSVC := &measureService{
-		discoveryService: newDiscoveryService(schema.KindMeasure, schemaRegistry, nodeRegistry),
+		discoveryService: newDiscoveryService(schema.KindMeasure, schemaRegistry, nr.MeasureNodeRegistry),
 		pipeline:         pipeline,
 		broadcaster:      broadcaster,
 	}
@@ -130,7 +137,7 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 		propertyServer: &propertyServer{
 			schemaRegistry: schemaRegistry,
 			pipeline:       pipeline,
-			nodeRegistry:   nodeRegistry,
+			nodeRegistry:   nr.PropertyNodeRegistry,
 		},
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}

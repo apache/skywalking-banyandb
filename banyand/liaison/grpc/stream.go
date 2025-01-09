@@ -78,8 +78,21 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	s.metrics.totalStreamStarted.Inc(1, "stream", "write")
 	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
 	start := time.Now()
+	var succeedSent []succeedSentMessage
 	defer func() {
-		publisher.Close()
+		cee, err := publisher.Close()
+		for _, ssm := range succeedSent {
+			code := modelv1.Status_STATUS_SUCCEED
+			if cee != nil {
+				if ce, ok := cee[ssm.node]; ok {
+					code = ce.Status()
+				}
+			}
+			reply(ssm.metadata, code, ssm.messageID, stream, s.sampled)
+		}
+		if err != nil {
+			s.sampled.Error().Err(err).Msg("failed to close the publisher")
+		}
 		s.metrics.totalStreamFinished.Inc(1, "stream", "write")
 		s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "stream", "write")
 	}()
@@ -149,7 +162,11 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
-		reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_SUCCEED, writeEntity.GetMessageId(), stream, s.sampled)
+		succeedSent = append(succeedSent, succeedSentMessage{
+			metadata:  writeEntity.GetMetadata(),
+			messageID: writeEntity.GetMessageId(),
+			node:      nodeID,
+		})
 	}
 }
 
@@ -208,7 +225,7 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 	case *streamv1.QueryResponse:
 		return d, nil
 	case common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Msg())
+		return nil, errors.WithMessage(errQueryMsg, d.Error())
 	}
 	return nil, nil
 }

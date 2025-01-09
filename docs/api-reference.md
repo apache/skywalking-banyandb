@@ -3,6 +3,9 @@
 
 ## Table of Contents
 
+- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
+    - [Status](#banyandb-model-v1-Status)
+  
 - [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
     - [SendRequest](#banyandb-cluster-v1-SendRequest)
     - [SendResponse](#banyandb-cluster-v1-SendResponse)
@@ -173,9 +176,6 @@
     - [TopNRequest](#banyandb-measure-v1-TopNRequest)
     - [TopNResponse](#banyandb-measure-v1-TopNResponse)
   
-- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
-    - [Status](#banyandb-model-v1-Status)
-  
 - [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
     - [DataPointValue](#banyandb-measure-v1-DataPointValue)
     - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
@@ -224,6 +224,39 @@
 
 
 
+<a name="banyandb_model_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/model/v1/write.proto
+
+
+ 
+
+
+<a name="banyandb-model-v1-Status"></a>
+
+### Status
+Status is the response status for write
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| STATUS_SUCCEED | 1 |  |
+| STATUS_INVALID_TIMESTAMP | 2 |  |
+| STATUS_NOT_FOUND | 3 |  |
+| STATUS_EXPIRED_SCHEMA | 4 |  |
+| STATUS_INTERNAL_ERROR | 5 |  |
+| STATUS_DISK_FULL | 6 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
 <a name="banyandb_cluster_v1_rpc-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -260,6 +293,8 @@
 | message_id | [uint64](#uint64) |  |  |
 | error | [string](#string) |  |  |
 | body | [google.protobuf.Any](#google-protobuf-Any) |  |  |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
+| topic | [string](#string) |  |  |
 
 
 
@@ -2602,38 +2637,6 @@ TopNResponse is the response for a query to the Query module.
 
 
  
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_model_v1_write-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/model/v1/write.proto
-
-
- 
-
-
-<a name="banyandb-model-v1-Status"></a>
-
-### Status
-Status is the response status for write
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| STATUS_UNSPECIFIED | 0 |  |
-| STATUS_SUCCEED | 1 |  |
-| STATUS_INVALID_TIMESTAMP | 2 |  |
-| STATUS_NOT_FOUND | 3 |  |
-| STATUS_EXPIRED_SCHEMA | 4 |  |
-| STATUS_INTERNAL_ERROR | 5 |  |
-
 
  
 

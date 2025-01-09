@@ -53,6 +53,7 @@ var (
 type streamQueryProcessor struct {
 	streamService stream.Service
 	*queryService
+	*bus.UnImplementedHealthyListener
 }
 
 func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -112,7 +113,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			case *streamv1.QueryResponse:
 				d.Trace = tracer.ToProto()
 			case common.Error:
-				span.Error(errors.New(d.Msg()))
+				span.Error(errors.New(d.Error()))
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
@@ -143,6 +144,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 type measureQueryProcessor struct {
 	measureService measure.Service
 	*queryService
+	*bus.UnImplementedHealthyListener
 }
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -201,7 +203,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 			case *measurev1.QueryResponse:
 				d.Trace = tracer.ToProto()
 			case common.Error:
-				span.Error(errors.New(d.Msg()))
+				span.Error(errors.New(d.Error()))
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")

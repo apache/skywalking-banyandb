@@ -18,13 +18,20 @@
 package pub
 
 import (
+	"context"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -87,7 +94,7 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		p.OnAddOrUpdate(node1)
 		verifyClients(p, 1, 0, 1, 0)
 		closeFn()
-		p.failover("node1")
+		p.failover("node1", common.NewError("test"), data.TopicCommon)
 		verifyClients(p, 0, 1, 1, 2)
 		p.OnDelete(node1)
 		verifyClients(p, 0, 0, 1, 2)
@@ -105,21 +112,54 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		verifyClients(p, 1, 0, 1, 0)
 		closeFn()
 		gomega.Eventually(func(g gomega.Gomega) {
-			verifyClientsWithGomega(g, p, 0, 0, 1, 1)
+			verifyClientsWithGomega(g, p, data.TopicCommon, 0, 0, 1, 1)
+		}, flags.EventuallyTimeout).Should(gomega.Succeed())
+	})
+
+	ginkgo.It("should remove handler", func() {
+		addr1 := getAddress()
+		node1 := getDataNode("node1", addr1)
+		hs, closeFn := setupWithStatus(addr1, modelv1.Status_STATUS_DISK_FULL)
+		defer closeFn()
+		p := newPub()
+		defer p.GracefulStop()
+		p.OnAddOrUpdate(node1)
+		verifyClients(p, 1, 0, 1, 0)
+		bp := p.NewBatchPublisher(3 * time.Second)
+		ctx := context.TODO()
+		for i := 0; i < 10; i++ {
+			_, err := bp.Publish(ctx, data.TopicStreamWrite,
+				bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
+			)
+			gomega.Expect(err).Should(gomega.MatchError("node node1 is not writable"))
+		}
+		cee, err := bp.Close()
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(cee).Should(gomega.BeNil())
+		verifyClientsWithGomega(gomega.Default, p, data.TopicStreamWrite, 1, 0, 1, 1)
+		verifyClientsWithGomega(gomega.Default, p, data.TopicMeasureWrite, 1, 0, 1, 0)
+		hs.SetServingStatus(data.TopicStreamWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
+		gomega.Eventually(func(g gomega.Gomega) {
+			verifyClientsWithGomega(g, p, data.TopicStreamWrite, 1, 0, 2, 1)
 		}, flags.EventuallyTimeout).Should(gomega.Succeed())
 	})
 })
 
 func verifyClients(p *pub, active, evict, onAdd, onDelete int) {
-	verifyClientsWithGomega(gomega.Default, p, active, evict, onAdd, onDelete)
+	verifyClientsWithGomega(gomega.Default, p, data.TopicCommon, active, evict, onAdd, onDelete)
 }
 
-func verifyClientsWithGomega(g gomega.Gomega, p *pub, active, evict, onAdd, onDelete int) {
+func verifyClientsWithGomega(g gomega.Gomega, p *pub, topic bus.Topic, active, evict, onAdd, onDelete int) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	g.Expect(len(p.active)).Should(gomega.Equal(active))
 	g.Expect(len(p.evictable)).Should(gomega.Equal(evict))
-	h := p.handler.(*mockHandler)
-	g.Expect(h.addOrUpdateCount).Should(gomega.Equal(onAdd))
-	g.Expect(h.deleteCount).Should(gomega.Equal(onDelete))
+	for t, eh := range p.handlers {
+		if topic != data.TopicCommon && t != topic {
+			continue
+		}
+		h := eh.(*mockHandler)
+		g.Expect(h.addOrUpdateCount).Should(gomega.Equal(onAdd), "topic: %s", t)
+		g.Expect(h.deleteCount).Should(gomega.Equal(onDelete), "topic: %s", t)
+	}
 }

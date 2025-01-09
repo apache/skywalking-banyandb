@@ -26,6 +26,8 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
 
@@ -45,23 +47,23 @@ type clusterNodeService struct {
 	schema.UnimplementedOnInitHandler
 	pipeline queue.Client
 	sel      node.Selector
+	l        *logger.Logger
+	topic    bus.Topic
 	sync.Once
 }
 
 // NewClusterNodeRegistry creates a cluster node registry.
-func NewClusterNodeRegistry(pipeline queue.Client, selector node.Selector) NodeRegistry {
+func NewClusterNodeRegistry(topic bus.Topic, pipeline queue.Client, selector node.Selector) NodeRegistry {
 	nr := &clusterNodeService{
 		pipeline: pipeline,
 		sel:      selector,
+		topic:    topic,
+		l:        logger.GetLogger("cluster-node-registry-" + topic.String()),
 	}
-	nr.init()
-	return nr
-}
-
-func (n *clusterNodeService) init() {
-	n.Do(func() {
-		n.pipeline.Register(n)
+	nr.Do(func() {
+		nr.pipeline.Register(nr.topic, nr)
 	})
+	return nr
 }
 
 func (n *clusterNodeService) Locate(group, name string, shardID uint32) (string, error) {

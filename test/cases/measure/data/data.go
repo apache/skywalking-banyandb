@@ -154,3 +154,25 @@ func Write(conn *grpclib.ClientConn, name, group, dataFile string,
 		return err
 	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
 }
+
+// WriteOnly write data into the server and return the write client.
+func WriteOnly(conn *grpclib.ClientConn, name, group, dataFile string,
+	baseTime time.Time, interval time.Duration,
+) measurev1.MeasureService_WriteClient {
+	metadata := &commonv1.Metadata{
+		Name:  name,
+		Group: group,
+	}
+
+	schema := databasev1.NewMeasureRegistryServiceClient(conn)
+	resp, err := schema.Get(context.Background(), &databasev1.MeasureRegistryServiceGetRequest{Metadata: metadata})
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	metadata = resp.GetMeasure().GetMetadata()
+
+	c := measurev1.NewMeasureServiceClient(conn)
+	ctx := context.Background()
+	writeClient, err := c.Write(ctx)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	loadData(metadata, writeClient, dataFile, baseTime, interval)
+	return writeClient
+}

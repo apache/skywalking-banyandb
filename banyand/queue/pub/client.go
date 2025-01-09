@@ -26,9 +26,12 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -110,9 +113,7 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 		if client, ok := p.active[name]; ok {
 			_ = client.conn.Close()
 			delete(p.active, name)
-			if p.handler != nil {
-				p.handler.OnDelete(client.md)
-			}
+			p.deleteClient(client.md)
 			p.log.Info().Str("status", p.dump()).Str("node", name).Msg("node is removed from active queue by the new gRPC address updated event")
 		}
 	}
@@ -137,9 +138,7 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 
 	c := clusterv1.NewServiceClient(conn)
 	p.active[name] = &client{conn: conn, client: c, md: md}
-	if p.handler != nil {
-		p.handler.OnAddOrUpdate(md)
-	}
+	p.addClient(md)
 	p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("new node is healthy, add it to active queue")
 }
 
@@ -212,15 +211,13 @@ func (p *pub) OnDelete(md schema.Metadata) {
 }
 
 func (p *pub) removeNodeIfUnhealthy(md schema.Metadata, node *databasev1.Node, client *client) bool {
-	if p.healthCheck(node, client.conn) {
+	if p.healthCheck(node.String(), client.conn) {
 		return false
 	}
 	_ = client.conn.Close()
 	name := node.Metadata.GetName()
 	delete(p.active, name)
-	if p.handler != nil {
-		p.handler.OnDelete(md)
-	}
+	p.deleteClient(md)
 	return true
 }
 
@@ -230,7 +227,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 		logger.Panicf("failed to cast node spec")
 		return false
 	}
-	if p.healthCheck(node, conn) {
+	if p.healthCheck(node.String(), conn) {
 		return true
 	}
 	_ = conn.Close()
@@ -239,9 +236,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 	}
 	name := node.Metadata.Name
 	p.evictable[name] = evictNode{n: node, c: make(chan struct{})}
-	if p.handler != nil {
-		p.handler.OnDelete(md)
-	}
+	p.deleteClient(md)
 	go func(p *pub, name string, en evictNode, md schema.Metadata) {
 		defer p.closer.Done()
 		backoff := initBackoff
@@ -249,7 +244,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 			select {
 			case <-time.After(backoff):
 				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(retryPolicy))
-				if errEvict == nil && p.healthCheck(en.n, connEvict) {
+				if errEvict == nil && p.healthCheck(en.n.String(), connEvict) {
 					func() {
 						p.mu.Lock()
 						defer p.mu.Unlock()
@@ -259,9 +254,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 						}
 						c := clusterv1.NewServiceClient(connEvict)
 						p.active[name] = &client{conn: connEvict, client: c, md: md}
-						if p.handler != nil {
-							p.handler.OnAddOrUpdate(md)
-						}
+						p.addClient(md)
 						delete(p.evictable, name)
 						p.log.Info().Str("status", p.dump()).Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
 					}()
@@ -289,17 +282,21 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 	return false
 }
 
-func (p *pub) healthCheck(node fmt.Stringer, conn *grpc.ClientConn) bool {
+func (p *pub) healthCheck(node string, conn *grpc.ClientConn) bool {
+	return p.checkServiceHealth(node, "", conn)
+}
+
+func (p *pub) checkServiceHealth(node string, svc string, conn *grpc.ClientConn) bool {
 	var resp *grpc_health_v1.HealthCheckResponse
 	if err := grpchelper.Request(context.Background(), rpcTimeout, func(rpcCtx context.Context) (err error) {
 		resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
 			&grpc_health_v1.HealthCheckRequest{
-				Service: "",
+				Service: svc,
 			})
 		return err
 	}); err != nil {
 		if e := p.log.Debug(); e.Enabled() {
-			e.Err(err).Stringer("node", node).Msg("service unhealthy")
+			e.Err(err).Str("node", node).Str("svc", svc).Msg("service unhealthy")
 		}
 		return false
 	}
@@ -309,9 +306,13 @@ func (p *pub) healthCheck(node fmt.Stringer, conn *grpc.ClientConn) bool {
 	return false
 }
 
-func (p *pub) failover(node string) {
+func (p *pub) failover(node string, ce common.Error, topic bus.Topic) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if ce.Status() != modelv1.Status_STATUS_INTERNAL_ERROR {
+		_ = p.checkWritable(node, topic)
+		return
+	}
 	if en, evictable := p.evictable[node]; evictable {
 		if _, registered := p.registered[node]; !registered {
 			close(en.c)
@@ -324,10 +325,72 @@ func (p *pub) failover(node string) {
 	if client, ok := p.active[node]; ok && !p.checkClientHealthAndReconnect(client.conn, client.md) {
 		_ = client.conn.Close()
 		delete(p.active, node)
-		if p.handler != nil {
-			p.handler.OnDelete(client.md)
-		}
+		p.deleteClient(client.md)
 		p.log.Info().Str("status", p.dump()).Str("node", node).Msg("node is unhealthy in the failover flow, move it to evict queue")
+	}
+}
+
+func (p *pub) checkWritable(n string, topic bus.Topic) bool {
+	h, ok := p.handlers[topic]
+	if !ok {
+		return false
+	}
+	node, ok := p.active[n]
+	if !ok {
+		return false
+	}
+	if p.checkServiceHealth(n, topic.String(), node.conn) {
+		return true
+	}
+	h.OnDelete(node.md)
+	if !p.closer.AddRunning() {
+		return false
+	}
+	go func() {
+		defer p.closer.Done()
+		backoff := initBackoff
+		for {
+			select {
+			case <-time.After(backoff):
+				if p.checkServiceHealth(n, topic.String(), node.conn) {
+					func() {
+						p.mu.Lock()
+						defer p.mu.Unlock()
+						node, ok := p.active[n]
+						if !ok {
+							return
+						}
+						h.OnAddOrUpdate(node.md)
+					}()
+					return
+				}
+				p.log.Warn().Str("topic", topic.String()).Str("node", n).Dur("backoff", backoff).Msg("data node can not ingest data")
+			case <-p.closer.CloseNotify():
+				return
+			}
+			if backoff < maxBackoff {
+				backoff *= time.Duration(backoffMultiplier)
+			} else {
+				backoff = maxBackoff
+			}
+		}
+	}()
+	return false
+}
+
+func (p *pub) deleteClient(md schema.Metadata) {
+	if len(p.handlers) > 0 {
+		for _, h := range p.handlers {
+			h.OnDelete(md)
+		}
+	}
+}
+
+func (p *pub) addClient(md schema.Metadata) {
+	if len(p.handlers) > 0 {
+		for _, h := range p.handlers {
+			h.OnAddOrUpdate(md)
+		}
 	}
 }
 

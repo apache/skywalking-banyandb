@@ -18,6 +18,7 @@
 package pub
 
 import (
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -26,7 +27,6 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
@@ -38,7 +38,9 @@ import (
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -59,38 +61,29 @@ var _ = ginkgo.BeforeSuite(func() {
 type mockServer struct {
 	clusterv1.UnimplementedServiceServer
 	healthServer *health.Server
+	errMsg       string
 	latency      time.Duration
 	code         codes.Code
+	statusCode   modelv1.Status
 }
 
-func (s *mockServer) Send(stream clusterv1.Service_SendServer) error {
-	for {
-		req, err := stream.Recv()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
-		}
-
+func (s *mockServer) Send(stream clusterv1.Service_SendServer) (err error) {
+	var topic bus.Topic
+	var first *clusterv1.SendRequest
+	var req *clusterv1.SendRequest
+	var batchMod bool
+	sendResp := func() {
 		if s.code != codes.OK {
 			s.healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
-			return status.Error(s.code, "mock error")
+			err = status.Error(s.code, "mock error")
+			return
 		}
 
-		if s.latency > 0 {
-			time.Sleep(s.latency)
-		}
-
-		topic, ok := data.TopicMap[req.Topic]
-
-		if !ok {
-			panic("invalid topic")
-		}
 		f := data.TopicResponseMap[topic]
+
 		var body *anypb.Any
 		if f == nil {
-			body = req.Body
+			body = first.Body
 		} else {
 			var errAny error
 			body, errAny = anypb.New(f())
@@ -98,15 +91,45 @@ func (s *mockServer) Send(stream clusterv1.Service_SendServer) error {
 				panic(errAny)
 			}
 		}
-
 		res := &clusterv1.SendResponse{
-			MessageId: req.MessageId,
-			Error:     "",
-			Body:      body,
+			Error:  s.errMsg,
+			Status: s.statusCode,
+			Body:   body,
+			Topic:  topic.String(),
+		}
+		if res.Error == "" && res.Status == modelv1.Status_STATUS_UNSPECIFIED {
+			res.Status = modelv1.Status_STATUS_SUCCEED
+		}
+		err = stream.Send(res)
+	}
+	for {
+		req, err = stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				if batchMod {
+					sendResp()
+				}
+			}
+			return err
+		}
+		if first == nil {
+			first = req
+			batchMod = req.BatchMod
 		}
 
-		if err := stream.Send(res); err != nil {
-			return err
+		if s.latency > 0 {
+			time.Sleep(s.latency)
+		}
+		var ok bool
+		if topic, ok = data.TopicMap[req.Topic]; !ok {
+			panic("invalid topic")
+		}
+		if batchMod {
+			continue
+		}
+		sendResp()
+		if err != nil {
+			return
 		}
 	}
 }
@@ -114,23 +137,56 @@ func (s *mockServer) Send(stream clusterv1.Service_SendServer) error {
 func setup(address string, code codes.Code, latency time.Duration) func() {
 	s := grpc.NewServer()
 	hs := health.NewServer()
+	hs.SetServingStatus(data.TopicStreamWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
+	hs.SetServingStatus(data.TopicMeasureWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
 	clusterv1.RegisterServiceServer(s, &mockServer{
 		code:         code,
 		latency:      latency,
 		healthServer: hs,
 	})
 	grpc_health_v1.RegisterHealthServer(s, hs)
+	lis, err := net.Listen("tcp", address)
+	if err != nil {
+		logger.Panicf("failed to listen: %v", err)
+		return nil
+	}
 	go func() {
-		lis, err := net.Listen("tcp", address)
-		if err != nil {
-			logger.Panicf("failed to listen: %v", err)
-			return
-		}
 		if err := s.Serve(lis); err != nil {
 			logger.Panicf("Server exited with error: %v", err)
 		}
 	}()
 	return s.GracefulStop
+}
+
+func setupWithStatus(address string, statusCode modelv1.Status) (*health.Server, func()) {
+	s := grpc.NewServer()
+	hs := health.NewServer()
+	if statusCode == modelv1.Status_STATUS_UNSPECIFIED || statusCode == modelv1.Status_STATUS_SUCCEED {
+		hs.SetServingStatus(data.TopicStreamWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
+		hs.SetServingStatus(data.TopicMeasureWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
+	} else {
+		hs.SetServingStatus(data.TopicStreamWrite.String(), grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+		hs.SetServingStatus(data.TopicMeasureWrite.String(), grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	}
+	clusterv1.RegisterServiceServer(s, &mockServer{
+		code:         codes.OK,
+		latency:      200 * time.Millisecond,
+		statusCode:   statusCode,
+		errMsg:       modelv1.Status_name[int32(statusCode)],
+		healthServer: hs,
+	})
+	grpc_health_v1.RegisterHealthServer(s, hs)
+	lis, err := net.Listen("tcp", address)
+	if err != nil {
+		logger.Panicf("failed to listen: %v", err)
+		return nil, nil
+	}
+	go func() {
+		if err := s.Serve(lis); err != nil {
+			logger.Panicf("Server exited with error: %v", err)
+		}
+	}()
+	return hs, s.GracefulStop
 }
 
 func getAddress() string {
@@ -162,7 +218,8 @@ func (m *mockHandler) OnDelete(_ schema.Metadata) {
 func newPub() *pub {
 	p := New(nil).(*pub)
 	p.log = logger.GetLogger("pub")
-	p.handler = &mockHandler{}
+	p.Register(data.TopicStreamWrite, &mockHandler{})
+	p.Register(data.TopicMeasureWrite, &mockHandler{})
 	return p
 }
 

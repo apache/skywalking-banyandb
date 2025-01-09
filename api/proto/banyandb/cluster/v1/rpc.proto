@@ -19,6 +19,7 @@ syntax = "proto3";
 
 package banyandb.cluster.v1;
 
+import "banyandb/model/v1/write.proto";
 import "google/protobuf/any.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
@@ -34,6 +35,8 @@ message SendResponse {
   uint64 message_id = 1;
   string error = 2;
   google.protobuf.Any body = 3;
+  model.v1.Status status = 4;
+  string topic = 5;
 }
 
 service Service {

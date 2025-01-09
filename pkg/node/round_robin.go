@@ -37,8 +37,8 @@ import (
 )
 
 type roundRobinSelector struct {
+	name           string
 	schemaRegistry metadata.Repo
-	closeCh        chan struct{}
 	lookupTable    []key
 	nodes          []string
 	mu             sync.RWMutex
@@ -68,10 +68,10 @@ func (r *roundRobinSelector) String() string {
 }
 
 // NewRoundRobinSelector creates a new round-robin selector.
-func NewRoundRobinSelector(schemaRegistry metadata.Repo) Selector {
+func NewRoundRobinSelector(name string, schemaRegistry metadata.Repo) Selector {
 	rrs := &roundRobinSelector{
+		name:           name,
 		nodes:          make([]string, 0),
-		closeCh:        make(chan struct{}),
 		schemaRegistry: schemaRegistry,
 		lookupTable:    make([]key, 0),
 	}
@@ -79,11 +79,11 @@ func NewRoundRobinSelector(schemaRegistry metadata.Repo) Selector {
 }
 
 func (r *roundRobinSelector) Name() string {
-	return "round-robin-selector"
+	return r.name
 }
 
 func (r *roundRobinSelector) PreRun(context.Context) error {
-	r.schemaRegistry.RegisterHandler("liaison", schema.KindGroup, r)
+	r.schemaRegistry.RegisterHandler(r.name, schema.KindGroup, r)
 	return nil
 }
 
@@ -204,10 +204,6 @@ func (r *roundRobinSelector) sortEntries() {
 		}
 		return int(a.shardID) - int(b.shardID)
 	})
-}
-
-func (r *roundRobinSelector) Close() {
-	close(r.closeCh)
 }
 
 func (r *roundRobinSelector) selectNode(entry any) string {

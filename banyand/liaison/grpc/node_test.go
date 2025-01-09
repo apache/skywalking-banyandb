@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -37,12 +38,9 @@ func TestClusterNodeRegistry(t *testing.T) {
 	sel, err := node.NewPickFirstSelector()
 	assert.NoError(t, err)
 
-	cnr := &clusterNodeService{
-		pipeline: pipeline,
-		sel:      sel,
-	}
-	pipeline.EXPECT().Register(gomock.Eq(cnr)).Return().Times(1)
-	cnr.init()
+	pipeline.EXPECT().Register(data.TopicCommon, gomock.Any()).Return().Times(1)
+	nr := NewClusterNodeRegistry(data.TopicCommon, pipeline, sel)
+	cnr := nr.(*clusterNodeService)
 	fakeNodeID := "data-node-1"
 	cnr.OnAddOrUpdate(schema.Metadata{
 		TypeMeta: schema.TypeMeta{

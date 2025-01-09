@@ -28,14 +28,14 @@ import (
 )
 
 func TestPickEmptySelector(t *testing.T) {
-	selector := NewRoundRobinSelector(nil)
+	selector := NewRoundRobinSelector("test", nil)
 	setupGroup(selector)
 	_, err := selector.Pick("group1", "", 0)
 	assert.Error(t, err)
 }
 
 func TestPickUnknownGroup(t *testing.T) {
-	selector := NewRoundRobinSelector(nil)
+	selector := NewRoundRobinSelector("test", nil)
 	_, err := selector.Pick("group1", "", 0)
 	assert.Error(t, err)
 	setupGroup(selector)
@@ -44,7 +44,7 @@ func TestPickUnknownGroup(t *testing.T) {
 }
 
 func TestPickSingleSelection(t *testing.T) {
-	selector := NewRoundRobinSelector(nil)
+	selector := NewRoundRobinSelector("test", nil)
 	setupGroup(selector)
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
 	node, err := selector.Pick("group1", "", 0)
@@ -53,7 +53,7 @@ func TestPickSingleSelection(t *testing.T) {
 }
 
 func TestPickMultipleSelections(t *testing.T) {
-	selector := NewRoundRobinSelector(nil)
+	selector := NewRoundRobinSelector("test", nil)
 	setupGroup(selector)
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
@@ -68,7 +68,7 @@ func TestPickMultipleSelections(t *testing.T) {
 }
 
 func TestPickNodeRemoval(t *testing.T) {
-	selector := NewRoundRobinSelector(nil)
+	selector := NewRoundRobinSelector("test", nil)
 	setupGroup(selector)
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
@@ -79,7 +79,7 @@ func TestPickNodeRemoval(t *testing.T) {
 }
 
 func TestPickConsistentSelectionAfterRemoval(t *testing.T) {
-	selector := NewRoundRobinSelector(nil)
+	selector := NewRoundRobinSelector("test", nil)
 	setupGroup(selector)
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
@@ -123,7 +123,7 @@ func TestSortNodeEntries(t *testing.T) {
 }
 
 func TestStringer(t *testing.T) {
-	selector := NewRoundRobinSelector(nil)
+	selector := NewRoundRobinSelector("test", nil)
 	assert.Empty(t, selector.String())
 	setupGroup(selector)
 	assert.NotEmpty(t, selector.String())
@@ -134,7 +134,7 @@ func TestStringer(t *testing.T) {
 }
 
 func TestChangeShard(t *testing.T) {
-	s := NewRoundRobinSelector(nil)
+	s := NewRoundRobinSelector("test", nil)
 	selector := s.(*roundRobinSelector)
 	setupGroup(selector)
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
