@@ -36,9 +36,19 @@ message SendResponse {
   string error = 2;
   google.protobuf.Any body = 3;
   model.v1.Status status = 4;
-  string topic = 5;
+}
+
+message HealthCheckRequest {
+  string service_name = 1;
+}
+
+message HealthCheckResponse {
+  string service_name = 1;
+  model.v1.Status status = 2;
+  string error = 3;
 }
 
 service Service {
   rpc Send(stream SendRequest) returns (stream SendResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }

@@ -43,27 +43,35 @@ var (
 )
 
 type service struct {
-	metadata     metadata.Repo
-	pipeline     queue.Server
-	omr          observability.MetricsRegistry
-	l            *logger.Logger
-	db           *database
-	close        chan struct{}
-	root         string
-	nodeID       string
-	flushTimeout time.Duration
+	metadata            metadata.Repo
+	pipeline            queue.Server
+	omr                 observability.MetricsRegistry
+	l                   *logger.Logger
+	db                  *database
+	close               chan struct{}
+	root                string
+	nodeID              string
+	flushTimeout        time.Duration
+	maxDiskUsagePercent int
 }
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "property-root-path", "/tmp", "the root path of database")
 	flagS.DurationVar(&s.flushTimeout, "property-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
+	flagS.IntVar(&s.maxDiskUsagePercent, "property-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	return flagS
 }
 
 func (s *service) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
+	}
+	if s.maxDiskUsagePercent < 0 {
+		return errors.New("property-max-disk-usage-percent must be greater than or equal to 0")
+	}
+	if s.maxDiskUsagePercent > 100 {
+		return errors.New("property-max-disk-usage-percent must be less than or equal to 100")
 	}
 	return nil
 }
@@ -93,7 +101,7 @@ func (s *service) PreRun(ctx context.Context) error {
 		return err
 	}
 	return multierr.Combine(
-		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, path: path}),
+		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
 		s.pipeline.Subscribe(data.TopicPropertyDelete, &deleteListener{s: s}),
 		s.pipeline.Subscribe(data.TopicPropertyQuery, &queryListener{s: s}),
 	)

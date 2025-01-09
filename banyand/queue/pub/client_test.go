@@ -131,7 +131,8 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 			_, err := bp.Publish(ctx, data.TopicStreamWrite,
 				bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
 			)
-			gomega.Expect(err).Should(gomega.MatchError("node node1 is not writable"))
+			gomega.Expect(err).Should(gomega.MatchError(common.NewErrorWithStatus(
+				modelv1.Status_STATUS_DISK_FULL, modelv1.Status_name[int32(modelv1.Status_STATUS_DISK_FULL)]).Error()))
 		}
 		cee, err := bp.Close()
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())

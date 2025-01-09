@@ -29,7 +29,7 @@ var StreamWriteKindVersion = common.KindVersion{
 }
 
 // TopicStreamWrite is the stream write topic.
-var TopicStreamWrite = bus.UniTopic(StreamWriteKindVersion.String())
+var TopicStreamWrite = bus.BiTopic(StreamWriteKindVersion.String())
 
 // StreamQueryKindVersion is the version tag of stream query kind.
 var StreamQueryKindVersion = common.KindVersion{

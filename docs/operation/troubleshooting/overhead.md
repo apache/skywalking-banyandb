@@ -16,6 +16,10 @@ If you notice high disk usage on the BanyanDB server, follow these steps to trou
 1. **Check Group TTL**: Verify that the TTL policy for groups is not causing excessive data storage. If the TTL for a group is set too high, it may result in high disk usage. Use the `bydbctl` command to [update the group schema](../../interacting/bydbctl/schema/group.md#update-operation) and adjust the TTL as needed.
 2. **Check Segment Interval**: Check the segment interval for groups to ensure that data is being compacted and stored efficiently. If the TTL is 7 days, the segment interval is set to 3 days. At the 10th morning, the first segment will be deleted. There will be 9 days of data in the database at most, which is more than the TTL.
 
+## Cannot Write Data
+
+The parameters `measure-max-disk-usage-percent`, `stream-max-disk-usage-percent`, and `property-max-disk-usage-percent` control what percentage of the disk these three different modules can use. If the disk usage exceeds these limits, or if we set these parameters to 0, the module will not accept writing. However, queries can still run. Once the disk usage goes down below the set limits, the module can accept data again.
+
 ## Too Many Open Files
 
 The BanyanDB uses LSM-tree storage engine, which may open many files. If you encounter issues with too many open files, follow these steps to troubleshoot the issue:

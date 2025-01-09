@@ -84,14 +84,20 @@ func (s *service) FlagSet() *run.FlagSet {
 	s.option.mergePolicy = newDefaultMergePolicy()
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "stream-max-fan-out-size", "", "the upper bound of a single file size after merge of stream")
 	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
-	flagS.VarP(&s.option.seriesCacheMaxSize, "measure-series-cache-max-size", "", "the max size of series cache in each group")
-	flagS.IntVar(&s.maxDiskUsagePercent, "measure-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
+	flagS.VarP(&s.option.seriesCacheMaxSize, "stream-series-cache-max-size", "", "the max size of series cache in each group")
+	flagS.IntVar(&s.maxDiskUsagePercent, "stream-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	return flagS
 }
 
 func (s *service) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
+	}
+	if s.maxDiskUsagePercent < 0 {
+		return errors.New("stream-max-disk-usage-percent must be greater than or equal to 0")
+	}
+	if s.maxDiskUsagePercent > 100 {
+		return errors.New("stream-max-disk-usage-percent must be less than or equal to 100")
 	}
 	return nil
 }

@@ -74,7 +74,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			switch d := data.(type) {
 			case *measurev1.TopNResponse:
 				d.Trace = tracer.ToProto()
-			case common.Error:
+			case *common.Error:
 				span.Error(errors.New(d.Error()))
 				resp = bus.NewMessage(now, &measurev1.TopNResponse{Trace: tracer.ToProto()})
 			default:

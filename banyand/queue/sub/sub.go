@@ -60,11 +60,11 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			}
 			listener := s.getListeners(*topic)
 			if listener == nil {
-				s.reply(topic, stream, writeEntity, err, "no listener found")
+				s.reply(stream, writeEntity, err, "no listener found")
 				return nil
 			}
 			if le := listener.CheckHealth(); le != nil {
-				s.reply(topic, stream, writeEntity, le, "")
+				s.reply(stream, writeEntity, le, "")
 				return nil
 			}
 			message := listener.Rev(ctx, bus.NewMessage(bus.MessageID(0), dataCollection))
@@ -72,12 +72,11 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			data := message.Data()
 			if data != nil {
 				switch d := data.(type) {
-				case common.Error:
+				case *common.Error:
 					resp = &clusterv1.SendResponse{
 						MessageId: writeEntity.MessageId,
 						Error:     d.Error(),
 						Status:    d.Status(),
-						Topic:     topic.String(),
 					}
 				default:
 					resp = &clusterv1.SendResponse{
@@ -105,25 +104,25 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		if writeEntity.Topic != "" && topic == nil {
 			t, ok := data.TopicMap[writeEntity.Topic]
 			if !ok {
-				s.reply(topic, stream, writeEntity, err, "invalid topic")
+				s.reply(stream, writeEntity, err, "invalid topic")
 				continue
 			}
 			topic = &t
 		}
 		if topic == nil {
-			s.reply(topic, stream, writeEntity, err, "topic is empty")
+			s.reply(stream, writeEntity, err, "topic is empty")
 			continue
 		}
 
 		if reqSupplier, ok := data.TopicRequestMap[*topic]; ok {
 			req := reqSupplier()
 			if errUnmarshal := writeEntity.Body.UnmarshalTo(req); errUnmarshal != nil {
-				s.reply(topic, stream, writeEntity, errUnmarshal, "failed to unmarshal message")
+				s.reply(stream, writeEntity, errUnmarshal, "failed to unmarshal message")
 				continue
 			}
 			m = bus.NewMessage(bus.MessageID(writeEntity.MessageId), req)
 		} else {
-			s.reply(topic, stream, writeEntity, err, "unknown topic")
+			s.reply(stream, writeEntity, err, "unknown topic")
 			continue
 		}
 		if writeEntity.BatchMod {
@@ -138,7 +137,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		s.metrics.totalStarted.Inc(1, writeEntity.Topic)
 		listener := s.getListeners(*topic)
 		if listener == nil {
-			s.reply(topic, stream, writeEntity, err, "no listener found")
+			s.reply(stream, writeEntity, err, "no listener found")
 			continue
 		}
 
@@ -158,22 +157,22 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		switch d := m.Data().(type) {
 		case proto.Message:
 			message = d
-		case common.Error:
+		case *common.Error:
 			select {
 			case <-ctx.Done():
 				s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
 				return ctx.Err()
 			default:
 			}
-			s.reply(topic, stream, writeEntity, nil, d.Error())
+			s.reply(stream, writeEntity, nil, d.Error())
 			continue
 		default:
-			s.reply(topic, stream, writeEntity, nil, fmt.Sprintf("invalid response: %T", d))
+			s.reply(stream, writeEntity, nil, fmt.Sprintf("invalid response: %T", d))
 			continue
 		}
 		anyMessage, err := anypb.New(message)
 		if err != nil {
-			s.reply(topic, stream, writeEntity, err, "failed to marshal message")
+			s.reply(stream, writeEntity, err, "failed to marshal message")
 			continue
 		}
 		if err := stream.Send(&clusterv1.SendResponse{
@@ -193,6 +192,7 @@ func (s *server) Subscribe(topic bus.Topic, listener bus.MessageListener) error 
 	defer s.listenersLock.Unlock()
 	if _, ok := s.listeners[topic]; !ok {
 		s.listeners[topic] = listener
+		s.topicMap[topic.String()] = topic
 		return nil
 	}
 	return errors.New("topic already exists")
@@ -204,20 +204,17 @@ func (s *server) getListeners(topic bus.Topic) bus.MessageListener {
 	return s.listeners[topic]
 }
 
-func (s *server) reply(topic *bus.Topic, stream clusterv1.Service_SendServer, writeEntity *clusterv1.SendRequest, err error, message string) {
+func (s *server) reply(stream clusterv1.Service_SendServer, writeEntity *clusterv1.SendRequest, err error, message string) {
 	s.log.Error().Stringer("request", writeEntity).Err(err).Msg(message)
 	s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
 	resp := &clusterv1.SendResponse{
 		MessageId: writeEntity.MessageId,
 	}
 
-	// nolint: errorlint
-	if ce, ok := err.(common.Error); ok {
+	var ce *common.Error
+	if errors.As(err, &ce) {
 		resp.Error = ce.Error()
 		resp.Status = ce.Status()
-		if topic != nil {
-			resp.Topic = topic.String()
-		}
 	} else {
 		resp.Error = message
 	}

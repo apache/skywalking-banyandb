@@ -93,6 +93,12 @@ func (s *service) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
 	}
+	if s.maxDiskUsagePercent < 0 {
+		return errors.New("measure-max-disk-usage-percen must be greater than or equal to 0")
+	}
+	if s.maxDiskUsagePercent > 100 {
+		return errors.New("measure-max-disk-usage-percen must be less than or equal to 100")
+	}
 	return nil
 }
 

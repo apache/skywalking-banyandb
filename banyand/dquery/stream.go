@@ -90,7 +90,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			switch d := data.(type) {
 			case *streamv1.QueryResponse:
 				d.Trace = tracer.ToProto()
-			case common.Error:
+			case *common.Error:
 				span.Error(errors.New(d.Error()))
 				resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Trace: tracer.ToProto()})
 			default:

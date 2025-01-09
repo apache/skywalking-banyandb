@@ -48,6 +48,9 @@ type writeCallback struct {
 }
 
 func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int) bus.MessageListener {
+	if maxDiskUsagePercent > 100 {
+		maxDiskUsagePercent = 100
+	}
 	return &writeCallback{
 		l:                   l,
 		schemaRepo:          schemaRepo,
@@ -55,7 +58,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 	}
 }
 
-func (w *writeCallback) CheckHealth() error {
+func (w *writeCallback) CheckHealth() *common.Error {
 	if w.maxDiskUsagePercent < 1 {
 		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "measure is readonly because \"measure-max-disk-usage-percent\" is 0")
 	}

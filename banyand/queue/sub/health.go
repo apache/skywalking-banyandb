@@ -20,41 +20,28 @@ package sub
 import (
 	"context"
 
-	"google.golang.org/grpc/health"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
-
-	"github.com/apache/skywalking-banyandb/pkg/bus"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-type healthServer struct {
-	*health.Server
-	listeners map[string]bus.MessageListener
-}
-
-func newHealthServer(listeners map[bus.Topic]bus.MessageListener) *healthServer {
-	s := &healthServer{
-		Server:    health.NewServer(),
-		listeners: make(map[string]bus.MessageListener, len(listeners)),
-	}
-	for t, l := range listeners {
-		topic := t.String()
-		s.listeners[topic] = l
-	}
-	return s
-}
-
-func (s *healthServer) Check(ctx context.Context, in *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
-	if l, ok := s.listeners[in.Service]; ok {
-		if l.CheckHealth() != nil {
-			s.SetServingStatus(in.Service, healthpb.HealthCheckResponse_NOT_SERVING)
-			return &healthpb.HealthCheckResponse{
-				Status: healthpb.HealthCheckResponse_NOT_SERVING,
+func (s *server) HealthCheck(_ context.Context, req *clusterv1.HealthCheckRequest) (*clusterv1.HealthCheckResponse, error) {
+	if t, ok := s.topicMap[req.ServiceName]; ok {
+		if l := s.listeners[t]; l != nil {
+			if err := l.CheckHealth(); err != nil {
+				return &clusterv1.HealthCheckResponse{
+					ServiceName: req.ServiceName,
+					Status:      err.Status(),
+					Error:       err.Error(),
+				}, nil
+			}
+			return &clusterv1.HealthCheckResponse{
+				ServiceName: req.ServiceName,
+				Status:      modelv1.Status_STATUS_SUCCEED,
 			}, nil
 		}
-		s.SetServingStatus(in.Service, healthpb.HealthCheckResponse_SERVING)
-		return &healthpb.HealthCheckResponse{
-			Status: healthpb.HealthCheckResponse_SERVING,
-		}, nil
 	}
-	return s.Server.Check(ctx, in)
+	return &clusterv1.HealthCheckResponse{
+		ServiceName: req.ServiceName,
+		Status:      modelv1.Status_STATUS_NOT_FOUND,
+	}, nil
 }

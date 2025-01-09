@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"go.uber.org/multierr"
+
+	"github.com/apache/skywalking-banyandb/api/common"
 )
 
 type (
@@ -88,7 +90,7 @@ func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
 // MessageListener is the signature of functions that can handle an EventMessage.
 type MessageListener interface {
 	Rev(ctx context.Context, message Message) Message
-	CheckHealth() error
+	CheckHealth() *common.Error
 }
 
 // Subscriber allow subscribing a Topic's messages.
@@ -110,7 +112,7 @@ type Broadcaster interface {
 type UnImplementedHealthyListener struct{}
 
 // CheckHealth always returns nil.
-func (h *UnImplementedHealthyListener) CheckHealth() error {
+func (h *UnImplementedHealthyListener) CheckHealth() *common.Error {
 	return nil
 }
 

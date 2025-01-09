@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -126,7 +127,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 		ginkgo.It("should go to evict queue when node's disk is full", func() {
 			addr1 := getAddress()
 			addr2 := getAddress()
-			_, closeFn1 := setupWithStatus(addr1, modelv1.Status_STATUS_UNSPECIFIED)
+			_, closeFn1 := setupWithStatus(addr1, modelv1.Status_STATUS_SUCCEED)
 			_, closeFn2 := setupWithStatus(addr2, modelv1.Status_STATUS_DISK_FULL)
 			p := newPub()
 			defer func() {
@@ -146,7 +147,8 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
 					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
 				)
-				gomega.Expect(err).Should(gomega.MatchError("node node2 is not writable"))
+				gomega.Expect(err).Should(gomega.MatchError(common.NewErrorWithStatus(
+					modelv1.Status_STATUS_DISK_FULL, modelv1.Status_name[int32(modelv1.Status_STATUS_DISK_FULL)]).Error()))
 			}
 			cee, err := bp.Close()
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())

@@ -121,13 +121,13 @@ type Error struct {
 }
 
 // NewError returns a new Error.
-func NewError(tpl string, args ...any) Error {
-	return Error{status: modelv1.Status_STATUS_INTERNAL_ERROR, msg: fmt.Sprintf(tpl, args...)}
+func NewError(tpl string, args ...any) *Error {
+	return &Error{status: modelv1.Status_STATUS_INTERNAL_ERROR, msg: fmt.Sprintf(tpl, args...)}
 }
 
 // NewErrorWithStatus returns a new Error with status.
-func NewErrorWithStatus(status modelv1.Status, msg string) Error {
-	return Error{status: status, msg: msg}
+func NewErrorWithStatus(status modelv1.Status, msg string) *Error {
+	return &Error{status: status, msg: msg}
 }
 
 // Status returns the status.
@@ -137,7 +137,7 @@ func (e Error) Status() modelv1.Status {
 
 // Error returns the error msg.
 func (e Error) Error() string {
-	return e.msg
+	return fmt.Sprintf("code: %s, msg: %s", modelv1.Status_name[int32(e.status)], e.msg)
 }
 
 // Node contains the node id and address.

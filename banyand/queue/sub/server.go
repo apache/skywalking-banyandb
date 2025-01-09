@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
@@ -69,6 +70,7 @@ type server struct {
 	log       *logger.Logger
 	ser       *grpclib.Server
 	listeners map[bus.Topic]bus.MessageListener
+	topicMap  map[string]bus.Topic
 	clusterv1.UnimplementedServiceServer
 	metrics        *metrics
 	clientCloser   context.CancelFunc
@@ -88,6 +90,7 @@ type server struct {
 func NewServer(omr observability.MetricsRegistry) queue.Server {
 	return &server{
 		listeners: make(map[bus.Topic]bus.MessageListener),
+		topicMap:  make(map[string]bus.Topic),
 		omr:       omr,
 	}
 }
@@ -174,7 +177,7 @@ func (s *server) Serve() run.StopNotify {
 	)
 	s.ser = grpclib.NewServer(opts...)
 	clusterv1.RegisterServiceServer(s.ser, s)
-	grpc_health_v1.RegisterHealthServer(s.ser, newHealthServer(s.listeners))
+	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	var ctx context.Context
 	ctx, s.clientCloser = context.WithCancel(context.Background())

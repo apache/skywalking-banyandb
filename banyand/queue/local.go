@@ -20,6 +20,7 @@ package queue
 
 import (
 	context "context"
+	"errors"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -114,7 +115,7 @@ func (l *localBatchPublisher) Publish(ctx context.Context, topic bus.Topic, mess
 	return nil, nil
 }
 
-func (l *localBatchPublisher) Close() (map[string]common.Error, error) {
+func (l *localBatchPublisher) Close() (map[string]*common.Error, error) {
 	if l.local == nil || len(l.messages) == 0 {
 		return nil, nil
 	}
@@ -123,9 +124,9 @@ func (l *localBatchPublisher) Close() (map[string]common.Error, error) {
 	l.messages = nil
 	l.topic = nil
 	if err != nil {
-		// nolint: errorlint
-		if ce, ok := err.(common.Error); ok {
-			return map[string]common.Error{"local": ce}, nil
+		var ce *common.Error
+		if errors.As(err, &ce) {
+			return map[string]*common.Error{"local": ce}, nil
 		}
 		return nil, err
 	}
@@ -137,8 +138,8 @@ func (l *localBatchPublisher) Close() (map[string]common.Error, error) {
 		return nil, err
 	}
 	if m.Data() != nil {
-		if d, ok := m.Data().(common.Error); ok {
-			return map[string]common.Error{"local": d}, nil
+		if d, ok := m.Data().(*common.Error); ok {
+			return map[string]*common.Error{"local": d}, nil
 		}
 	}
 	return nil, nil

@@ -43,7 +43,7 @@ type batchPublisher struct {
 	pub         *pub
 	streams     map[string]writeStream
 	topic       *bus.Topic
-	failedNodes map[string]struct{}
+	failedNodes map[string]*common.Error
 	f           batchFuture
 	timeout     time.Duration
 }
@@ -102,8 +102,10 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			return nil, ctx.Err()
 		default:
 		}
-		if bp.failedNodes != nil && bp.failedNodes[node] == struct{}{} {
-			err = multierr.Append(err, fmt.Errorf("node %s is not writable", node))
+		if bp.failedNodes != nil {
+			if ce := bp.failedNodes[node]; ce != nil {
+				err = multierr.Append(err, ce)
+			}
 			continue
 		}
 		var client *client
@@ -117,14 +119,15 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 				err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 				return true
 			}
-			if bp.pub.checkWritable(node, topic) {
+			succeed, ce := bp.pub.checkWritable(node, topic)
+			if succeed {
 				return false
 			}
 			if bp.failedNodes == nil {
-				bp.failedNodes = make(map[string]struct{})
+				bp.failedNodes = make(map[string]*common.Error)
 			}
-			bp.failedNodes[node] = struct{}{}
-			err = multierr.Append(err, fmt.Errorf("node %s is not writable", node))
+			bp.failedNodes[node] = ce
+			err = multierr.Append(err, ce)
 			return true
 		}() {
 			continue
@@ -169,14 +172,14 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			}
 			if isFailoverStatus(resp.Status) {
 				ce := common.NewErrorWithStatus(resp.Status, resp.Error)
-				bc <- batchEvent{n: node, e: ce, t: resp.Topic}
+				bc <- batchEvent{n: node, e: ce}
 			}
 		}(stream, deferFn, bp.f.events[len(bp.f.events)-1])
 	}
 	return nil, err
 }
 
-func (bp *batchPublisher) Close() (cee map[string]common.Error, err error) {
+func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 	for i := range bp.streams {
 		err = multierr.Append(err, bp.streams[i].client.CloseSend())
 	}
@@ -191,15 +194,15 @@ func (bp *batchPublisher) Close() (cee map[string]common.Error, err error) {
 		go func() {
 			defer bp.pub.closer.Done()
 			for n, e := range batchEvents {
-				if e.t == "" {
+				if bp.topic == nil {
 					bp.pub.failover(n, e.e, data.TopicCommon)
 					continue
 				}
-				bp.pub.failover(n, e.e, data.TopicMap[e.t])
+				bp.pub.failover(n, e.e, *bp.topic)
 			}
 		}()
 	}
-	cee = make(map[string]common.Error, len(batchEvents))
+	cee = make(map[string]*common.Error, len(batchEvents))
 	for n, be := range batchEvents {
 		cee[n] = be.e
 	}
@@ -207,9 +210,8 @@ func (bp *batchPublisher) Close() (cee map[string]common.Error, err error) {
 }
 
 type batchEvent struct {
+	e *common.Error
 	n string
-	t string
-	e common.Error
 }
 
 type batchFuture struct {

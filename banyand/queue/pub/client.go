@@ -283,20 +283,16 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 }
 
 func (p *pub) healthCheck(node string, conn *grpc.ClientConn) bool {
-	return p.checkServiceHealth(node, "", conn)
-}
-
-func (p *pub) checkServiceHealth(node string, svc string, conn *grpc.ClientConn) bool {
 	var resp *grpc_health_v1.HealthCheckResponse
 	if err := grpchelper.Request(context.Background(), rpcTimeout, func(rpcCtx context.Context) (err error) {
 		resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
 			&grpc_health_v1.HealthCheckRequest{
-				Service: svc,
+				Service: "",
 			})
 		return err
 	}); err != nil {
 		if e := p.log.Debug(); e.Enabled() {
-			e.Err(err).Str("node", node).Str("svc", svc).Msg("service unhealthy")
+			e.Err(err).Str("node", node).Msg("service unhealthy")
 		}
 		return false
 	}
@@ -306,11 +302,27 @@ func (p *pub) checkServiceHealth(node string, svc string, conn *grpc.ClientConn)
 	return false
 }
 
-func (p *pub) failover(node string, ce common.Error, topic bus.Topic) {
+func (p *pub) checkServiceHealth(svc string, conn *grpc.ClientConn) *common.Error {
+	client := clusterv1.NewServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+	resp, err := client.HealthCheck(ctx, &clusterv1.HealthCheckRequest{
+		ServiceName: svc,
+	})
+	if err != nil {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, err.Error())
+	}
+	if resp.Status == modelv1.Status_STATUS_SUCCEED {
+		return nil
+	}
+	return common.NewErrorWithStatus(resp.Status, resp.Error)
+}
+
+func (p *pub) failover(node string, ce *common.Error, topic bus.Topic) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if ce.Status() != modelv1.Status_STATUS_INTERNAL_ERROR {
-		_ = p.checkWritable(node, topic)
+		_, _ = p.checkWritable(node, topic)
 		return
 	}
 	if en, evictable := p.evictable[node]; evictable {
@@ -330,21 +342,22 @@ func (p *pub) failover(node string, ce common.Error, topic bus.Topic) {
 	}
 }
 
-func (p *pub) checkWritable(n string, topic bus.Topic) bool {
+func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 	h, ok := p.handlers[topic]
 	if !ok {
-		return false
+		return false, nil
 	}
 	node, ok := p.active[n]
 	if !ok {
-		return false
+		return false, nil
 	}
-	if p.checkServiceHealth(n, topic.String(), node.conn) {
-		return true
+	err := p.checkServiceHealth(topic.String(), node.conn)
+	if err == nil {
+		return true, nil
 	}
 	h.OnDelete(node.md)
 	if !p.closer.AddRunning() {
-		return false
+		return false, err
 	}
 	go func() {
 		defer p.closer.Done()
@@ -352,7 +365,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) bool {
 		for {
 			select {
 			case <-time.After(backoff):
-				if p.checkServiceHealth(n, topic.String(), node.conn) {
+				if errInternal := p.checkServiceHealth(topic.String(), node.conn); errInternal != nil {
 					func() {
 						p.mu.Lock()
 						defer p.mu.Unlock()
@@ -364,7 +377,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) bool {
 					}()
 					return
 				}
-				p.log.Warn().Str("topic", topic.String()).Str("node", n).Dur("backoff", backoff).Msg("data node can not ingest data")
+				p.log.Warn().Str("topic", topic.String()).Err(err).Str("node", n).Dur("backoff", backoff).Msg("data node can not ingest data")
 			case <-p.closer.CloseNotify():
 				return
 			}
@@ -375,7 +388,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) bool {
 			}
 		}
 	}()
-	return false
+	return false, err
 }
 
 func (p *pub) deleteClient(md schema.Metadata) {

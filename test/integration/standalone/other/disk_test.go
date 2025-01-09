@@ -70,7 +70,7 @@ var _ = g.Describe("Disk", func() {
 				return
 			}
 			gm.Expect(err).ShouldNot(gm.HaveOccurred())
-			gm.Expect(resp.GetStatus()).To(gm.Equal(modelv1.Status_STATUS_DISK_FULL))
+			gm.Expect(resp.GetStatus()).To(gm.Equal(modelv1.Status_name[int32(modelv1.Status_STATUS_DISK_FULL)]))
 		}
 	})
 	g.It(" is a cluster, blocking writing on node 0, with disk full", func() {
@@ -113,18 +113,22 @@ var _ = g.Describe("Disk", func() {
 		wc, deferFn := writeData(liaisonAddr)
 		defer deferFn()
 		errNum := 0
+		successNum := 0
 		for {
 			resp, err := wc.Recv()
 			if errors.Is(err, io.EOF) {
 				break
 			}
 			gm.Expect(err).ShouldNot(gm.HaveOccurred())
-			if resp.Status != modelv1.Status_STATUS_SUCCEED {
+			if resp.Status == modelv1.Status_name[int32(modelv1.Status_STATUS_SUCCEED)] {
+				successNum++
+			} else {
 				errNum++
-				gm.Expect(resp.GetStatus()).To(gm.Equal(modelv1.Status_STATUS_INTERNAL_ERROR))
+				gm.Expect(resp.GetStatus()).To(gm.Equal(modelv1.Status_name[int32(modelv1.Status_STATUS_DISK_FULL)]))
 			}
 		}
 		gm.Expect(errNum).To(gm.BeNumerically(">", 0))
+		gm.Expect(successNum).To(gm.BeNumerically(">", 0))
 	})
 })
 

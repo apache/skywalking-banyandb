@@ -56,5 +56,5 @@ type Server interface {
 // BatchPublisher is the interface for publishing data in batch.
 type BatchPublisher interface {
 	bus.Publisher
-	Close() (map[string]common.Error, error)
+	Close() (map[string]*common.Error, error)
 }

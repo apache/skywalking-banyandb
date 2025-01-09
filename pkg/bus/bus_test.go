@@ -25,6 +25,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/apache/skywalking-banyandb/api/common"
 )
 
 func TestBus_PubAndSub(t *testing.T) {
@@ -263,9 +265,9 @@ type mockListener struct {
 	unhealthy bool
 }
 
-func (m *mockListener) CheckHealth() error {
+func (m *mockListener) CheckHealth() *common.Error {
 	if m.unhealthy {
-		return errors.New("error")
+		return common.NewError("unhealthy")
 	}
 	return nil
 }

@@ -18,6 +18,7 @@
 package pub
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -95,7 +96,6 @@ func (s *mockServer) Send(stream clusterv1.Service_SendServer) (err error) {
 			Error:  s.errMsg,
 			Status: s.statusCode,
 			Body:   body,
-			Topic:  topic.String(),
 		}
 		if res.Error == "" && res.Status == modelv1.Status_STATUS_UNSPECIFIED {
 			res.Status = modelv1.Status_STATUS_SUCCEED
@@ -134,13 +134,19 @@ func (s *mockServer) Send(stream clusterv1.Service_SendServer) (err error) {
 	}
 }
 
+func (s *mockServer) HealthCheck(context.Context, *clusterv1.HealthCheckRequest) (*clusterv1.HealthCheckResponse, error) {
+	return &clusterv1.HealthCheckResponse{
+		Status: s.statusCode,
+		Error:  s.errMsg,
+	}, nil
+}
+
 func setup(address string, code codes.Code, latency time.Duration) func() {
 	s := grpc.NewServer()
 	hs := health.NewServer()
-	hs.SetServingStatus(data.TopicStreamWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
-	hs.SetServingStatus(data.TopicMeasureWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
 	clusterv1.RegisterServiceServer(s, &mockServer{
 		code:         code,
+		statusCode:   modelv1.Status_STATUS_SUCCEED,
 		latency:      latency,
 		healthServer: hs,
 	})
@@ -161,13 +167,6 @@ func setup(address string, code codes.Code, latency time.Duration) func() {
 func setupWithStatus(address string, statusCode modelv1.Status) (*health.Server, func()) {
 	s := grpc.NewServer()
 	hs := health.NewServer()
-	if statusCode == modelv1.Status_STATUS_UNSPECIFIED || statusCode == modelv1.Status_STATUS_SUCCEED {
-		hs.SetServingStatus(data.TopicStreamWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
-		hs.SetServingStatus(data.TopicMeasureWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
-	} else {
-		hs.SetServingStatus(data.TopicStreamWrite.String(), grpc_health_v1.HealthCheckResponse_NOT_SERVING)
-		hs.SetServingStatus(data.TopicMeasureWrite.String(), grpc_health_v1.HealthCheckResponse_NOT_SERVING)
-	}
 	clusterv1.RegisterServiceServer(s, &mockServer{
 		code:         codes.OK,
 		latency:      200 * time.Millisecond,

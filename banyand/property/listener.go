@@ -25,7 +25,9 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -38,12 +40,22 @@ var (
 )
 
 type updateListener struct {
-	s    *service
-	path string
+	s                   *service
+	l                   *logger.Logger
+	path                string
+	maxDiskUsagePercent int
 }
 
-func (h *updateListener) CheckHealth() error {
-	return nil
+func (h *updateListener) CheckHealth() *common.Error {
+	if h.maxDiskUsagePercent < 1 {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "property is readonly because \"property-max-disk-usage-percent\" is 0")
+	}
+	diskPercent := observability.GetPathUsedPercent(h.path)
+	if diskPercent < h.maxDiskUsagePercent {
+		return nil
+	}
+	h.l.Warn().Int("maxPercent", h.maxDiskUsagePercent).Int("diskPercent", diskPercent).Msg("disk usage is too high, stop writing")
+	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
 func (h *updateListener) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {

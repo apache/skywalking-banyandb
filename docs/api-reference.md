@@ -7,6 +7,8 @@
     - [Status](#banyandb-model-v1-Status)
   
 - [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
+    - [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest)
+    - [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse)
     - [SendRequest](#banyandb-cluster-v1-SendRequest)
     - [SendResponse](#banyandb-cluster-v1-SendResponse)
   
@@ -264,6 +266,38 @@ Status is the response status for write
 
 
 
+<a name="banyandb-cluster-v1-HealthCheckRequest"></a>
+
+### HealthCheckRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| service_name | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-HealthCheckResponse"></a>
+
+### HealthCheckResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| service_name | [string](#string) |  |  |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
+| error | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="banyandb-cluster-v1-SendRequest"></a>
 
 ### SendRequest
@@ -294,7 +328,6 @@ Status is the response status for write
 | error | [string](#string) |  |  |
 | body | [google.protobuf.Any](#google-protobuf-Any) |  |  |
 | status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
-| topic | [string](#string) |  |  |
 
 
 
@@ -315,6 +348,7 @@ Status is the response status for write
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Send | [SendRequest](#banyandb-cluster-v1-SendRequest) stream | [SendResponse](#banyandb-cluster-v1-SendResponse) stream |  |
+| HealthCheck | [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest) | [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse) |  |
 
  
 
@@ -2716,7 +2750,7 @@ WriteResponse is the response contract for write
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message_id | [uint64](#uint64) |  | the message_id from request. |
-| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| status | [string](#string) |  | status indicates the request processing result |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
 
 
@@ -3155,7 +3189,7 @@ QueryResponse is the response for a query to the Query module.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message_id | [uint64](#uint64) |  | the message_id from request. |
-| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status indicates the request processing result |
+| status | [string](#string) |  | status indicates the request processing result |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
 
 
