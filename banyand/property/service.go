@@ -21,22 +21,17 @@ import (
 	"context"
 	"errors"
 	"path"
-	"runtime/debug"
 	"time"
 
 	"go.uber.org/multierr"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -48,122 +43,35 @@ var (
 )
 
 type service struct {
-	metadata     metadata.Repo
-	pipeline     queue.Server
-	omr          observability.MetricsRegistry
-	l            *logger.Logger
-	db           *database
-	close        chan struct{}
-	root         string
-	nodeID       string
-	flushTimeout time.Duration
-}
-
-func (s *service) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
-	n := time.Now()
-	now := n.UnixNano()
-	var protoReq proto.Message
-	defer func() {
-		if err := recover(); err != nil {
-			s.l.Error().Interface("err", err).RawJSON("req", logger.Proto(protoReq)).Str("stack", string(debug.Stack())).Msg("panic")
-			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic: %v", err))
-		}
-	}()
-	switch d := message.Data().(type) {
-	case *propertyv1.InternalUpdateRequest:
-		protoReq = d
-		if d.Property == nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("property is nil"))
-			return
-		}
-		if d.Property.Tags == nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("tags is nil"))
-			return
-		}
-		if len(d.Id) == 0 {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("id is empty"))
-			return
-		}
-		err := s.db.update(ctx, common.ShardID(d.ShardId), d.Id, d.Property)
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to update property: %v", err))
-			return
-		}
-		resp = bus.NewMessage(bus.MessageID(now), &propertyv1.ApplyResponse{
-			Created: true,
-			TagsNum: uint32(len(d.Property.Tags)),
-		})
-	case *propertyv1.InternalDeleteRequest:
-		protoReq = d
-		if len(d.Ids) == 0 {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("id is empty"))
-			return
-		}
-		err := s.db.delete(d.Ids)
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to delete property: %v", err))
-			return
-		}
-		resp = bus.NewMessage(bus.MessageID(now), &propertyv1.DeleteResponse{
-			Deleted: true,
-		})
-	case *propertyv1.QueryRequest:
-		protoReq = d
-		if len(d.Groups) == 0 {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("groups is empty"))
-			return
-		}
-		if d.Limit == 0 {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("limit is 0"))
-			return
-		}
-		var tracer *query.Tracer
-		var span *query.Span
-		if d.Trace {
-			tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
-			span, ctx = tracer.StartSpan(ctx, "data-%s", s.nodeID)
-			span.Tag("req", string(logger.Proto(protoReq)))
-			defer func() {
-				span.Stop()
-			}()
-		}
-		sources, err := s.db.query(ctx, d)
-		if err != nil {
-			if tracer != nil {
-				span.Error(err)
-				resp = bus.NewMessage(bus.MessageID(now), &propertyv1.InternalQueryResponse{
-					Trace: tracer.ToProto(),
-				})
-				return
-			}
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to query property: %v", err))
-			return
-		}
-		qResp := &propertyv1.InternalQueryResponse{
-			Sources: sources,
-		}
-		if tracer != nil {
-			qResp.Trace = tracer.ToProto()
-		}
-		resp = bus.NewMessage(bus.MessageID(now), qResp)
-		return
-
-	default:
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
-	}
-	return
+	metadata            metadata.Repo
+	pipeline            queue.Server
+	omr                 observability.MetricsRegistry
+	l                   *logger.Logger
+	db                  *database
+	close               chan struct{}
+	root                string
+	nodeID              string
+	flushTimeout        time.Duration
+	maxDiskUsagePercent int
 }
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "property-root-path", "/tmp", "the root path of database")
 	flagS.DurationVar(&s.flushTimeout, "property-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
+	flagS.IntVar(&s.maxDiskUsagePercent, "property-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	return flagS
 }
 
 func (s *service) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
+	}
+	if s.maxDiskUsagePercent < 0 {
+		return errors.New("property-max-disk-usage-percent must be greater than or equal to 0")
+	}
+	if s.maxDiskUsagePercent > 100 {
+		return errors.New("property-max-disk-usage-percent must be less than or equal to 100")
 	}
 	return nil
 }
@@ -193,9 +101,9 @@ func (s *service) PreRun(ctx context.Context) error {
 		return err
 	}
 	return multierr.Combine(
-		s.pipeline.Subscribe(data.TopicPropertyUpdate, s),
-		s.pipeline.Subscribe(data.TopicPropertyDelete, s),
-		s.pipeline.Subscribe(data.TopicPropertyQuery, s),
+		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
+		s.pipeline.Subscribe(data.TopicPropertyDelete, &deleteListener{s: s}),
+		s.pipeline.Subscribe(data.TopicPropertyQuery, &queryListener{s: s}),
 	)
 }
 

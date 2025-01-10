@@ -29,7 +29,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -62,7 +64,6 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			p.OnAddOrUpdate(node2)
 
 			bp := p.NewBatchPublisher(3 * time.Second)
-			defer bp.Close()
 			ctx := context.TODO()
 			for i := 0; i < 10; i++ {
 				_, err := bp.Publish(ctx, data.TopicStreamWrite,
@@ -71,6 +72,9 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 				)
 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			}
+			cee, err := bp.Close()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(cee).Should(gomega.HaveLen(0))
 		})
 
 		ginkgo.It("should go to evict queue when node is unavailable", func() {
@@ -102,7 +106,10 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 					gomega.Expect(errors.Is(err, io.EOF))
 				}
 			}
-			gomega.Expect(bp.Close()).ShouldNot(gomega.HaveOccurred())
+			cee, err := bp.Close()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(cee).Should(gomega.HaveLen(1))
+			gomega.Expect(cee).Should(gomega.HaveKey("node2"))
 			gomega.Eventually(func() int {
 				p.mu.RLock()
 				defer p.mu.RUnlock()
@@ -115,6 +122,43 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 				gomega.Expect(p.evictable).Should(gomega.HaveKey("node2"))
 				gomega.Expect(p.active).Should(gomega.HaveKey("node1"))
 			}()
+		})
+
+		ginkgo.It("should go to evict queue when node's disk is full", func() {
+			addr1 := getAddress()
+			addr2 := getAddress()
+			_, closeFn1 := setupWithStatus(addr1, modelv1.Status_STATUS_SUCCEED)
+			_, closeFn2 := setupWithStatus(addr2, modelv1.Status_STATUS_DISK_FULL)
+			p := newPub()
+			defer func() {
+				p.GracefulStop()
+				closeFn1()
+				closeFn2()
+			}()
+			node1 := getDataNode("node1", addr1)
+			p.OnAddOrUpdate(node1)
+			node2 := getDataNode("node2", addr2)
+			p.OnAddOrUpdate(node2)
+
+			bp := p.NewBatchPublisher(3 * time.Second)
+			ctx := context.TODO()
+			for i := 0; i < 10; i++ {
+				_, err := bp.Publish(ctx, data.TopicStreamWrite,
+					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &streamv1.InternalWriteRequest{}),
+					bus.NewBatchMessageWithNode(bus.MessageID(i), "node2", &streamv1.InternalWriteRequest{}),
+				)
+				gomega.Expect(err).Should(gomega.MatchError(common.NewErrorWithStatus(
+					modelv1.Status_STATUS_DISK_FULL, modelv1.Status_name[int32(modelv1.Status_STATUS_DISK_FULL)]).Error()))
+			}
+			cee, err := bp.Close()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(cee).Should(gomega.BeNil())
+			gomega.Consistently(func(g gomega.Gomega) {
+				p.mu.RLock()
+				defer p.mu.RUnlock()
+				g.Expect(p.active).Should(gomega.HaveLen(2))
+				g.Expect(p.evictable).Should(gomega.HaveLen(0))
+			}).Should(gomega.Succeed())
 		})
 
 		ginkgo.It("should stay in active queue when operation takes a long time", func() {
@@ -142,7 +186,10 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 				)
 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			}
-			gomega.Expect(bp.Close()).ShouldNot(gomega.HaveOccurred())
+			cee, err := bp.Close()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(cee).Should(gomega.HaveLen(1))
+			gomega.Expect(cee).Should(gomega.HaveKey("node2"))
 			gomega.Consistently(func() int {
 				p.mu.RLock()
 				defer p.mu.RUnlock()

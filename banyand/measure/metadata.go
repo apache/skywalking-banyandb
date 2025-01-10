@@ -50,10 +50,12 @@ type schemaRepo struct {
 	resourceSchema.Repository
 	l        *logger.Logger
 	metadata metadata.Repo
+	path     string
 }
 
 func newSchemaRepo(path string, svc *service) *schemaRepo {
 	sr := &schemaRepo{
+		path:     path,
 		l:        svc.l,
 		metadata: svc.metadata,
 		Repository: resourceSchema.NewRepository(

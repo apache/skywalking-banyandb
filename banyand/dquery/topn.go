@@ -42,6 +42,7 @@ const defaultTopNQueryTimeout = 10 * time.Second
 type topNQueryProcessor struct {
 	broadcaster bus.Broadcaster
 	*queryService
+	*bus.UnImplementedHealthyListener
 }
 
 func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -73,8 +74,8 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			switch d := data.(type) {
 			case *measurev1.TopNResponse:
 				d.Trace = tracer.ToProto()
-			case common.Error:
-				span.Error(errors.New(d.Msg()))
+			case *common.Error:
+				span.Error(errors.New(d.Error()))
 				resp = bus.NewMessage(now, &measurev1.TopNResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")

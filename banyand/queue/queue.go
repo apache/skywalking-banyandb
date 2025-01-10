@@ -18,9 +18,9 @@
 package queue
 
 import (
-	"io"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -43,7 +43,7 @@ type Client interface {
 	bus.Publisher
 	bus.Broadcaster
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
-	Register(schema.EventHandler)
+	Register(bus.Topic, schema.EventHandler)
 }
 
 // Server is the interface for receiving data from the queue.
@@ -56,5 +56,5 @@ type Server interface {
 // BatchPublisher is the interface for publishing data in batch.
 type BatchPublisher interface {
 	bus.Publisher
-	io.Closer
+	Close() (map[string]*common.Error, error)
 }

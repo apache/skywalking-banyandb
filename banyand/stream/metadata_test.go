@@ -323,8 +323,8 @@ func queryAllMeasurements(svcs *services, expectedSize int, newTag []string, new
 			}
 			resp = d
 			return true
-		case common.Error:
-			Fail(d.Msg())
+		case *common.Error:
+			Fail(d.Error())
 		default:
 			Fail("unexpected data type")
 		}

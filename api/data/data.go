@@ -27,66 +27,71 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
-// TopicMap is the map of topic name to topic.
-var TopicMap = map[string]bus.Topic{
-	TopicStreamWrite.String():    TopicStreamWrite,
-	TopicStreamQuery.String():    TopicStreamQuery,
-	TopicMeasureWrite.String():   TopicMeasureWrite,
-	TopicMeasureQuery.String():   TopicMeasureQuery,
-	TopicTopNQuery.String():      TopicTopNQuery,
-	TopicPropertyDelete.String(): TopicPropertyDelete,
-	TopicPropertyQuery.String():  TopicPropertyQuery,
-	TopicPropertyUpdate.String(): TopicPropertyUpdate,
-}
+var (
+	// TopicMap is the map of topic name to topic.
+	TopicMap = map[string]bus.Topic{
+		TopicStreamWrite.String():    TopicStreamWrite,
+		TopicStreamQuery.String():    TopicStreamQuery,
+		TopicMeasureWrite.String():   TopicMeasureWrite,
+		TopicMeasureQuery.String():   TopicMeasureQuery,
+		TopicTopNQuery.String():      TopicTopNQuery,
+		TopicPropertyDelete.String(): TopicPropertyDelete,
+		TopicPropertyQuery.String():  TopicPropertyQuery,
+		TopicPropertyUpdate.String(): TopicPropertyUpdate,
+	}
 
-// TopicRequestMap is the map of topic name to request message.
-// nolint: exhaustruct
-var TopicRequestMap = map[bus.Topic]func() proto.Message{
-	TopicStreamWrite: func() proto.Message {
-		return &streamv1.InternalWriteRequest{}
-	},
-	TopicStreamQuery: func() proto.Message {
-		return &streamv1.QueryRequest{}
-	},
-	TopicMeasureWrite: func() proto.Message {
-		return &measurev1.InternalWriteRequest{}
-	},
-	TopicMeasureQuery: func() proto.Message {
-		return &measurev1.QueryRequest{}
-	},
-	TopicTopNQuery: func() proto.Message {
-		return &measurev1.TopNRequest{}
-	},
-	TopicPropertyUpdate: func() proto.Message {
-		return &propertyv1.InternalUpdateRequest{}
-	},
-	TopicPropertyQuery: func() proto.Message {
-		return &propertyv1.QueryRequest{}
-	},
-	TopicPropertyDelete: func() proto.Message {
-		return &propertyv1.InternalDeleteRequest{}
-	},
-}
+	// TopicRequestMap is the map of topic name to request message.
+	// nolint: exhaustruct
+	TopicRequestMap = map[bus.Topic]func() proto.Message{
+		TopicStreamWrite: func() proto.Message {
+			return &streamv1.InternalWriteRequest{}
+		},
+		TopicStreamQuery: func() proto.Message {
+			return &streamv1.QueryRequest{}
+		},
+		TopicMeasureWrite: func() proto.Message {
+			return &measurev1.InternalWriteRequest{}
+		},
+		TopicMeasureQuery: func() proto.Message {
+			return &measurev1.QueryRequest{}
+		},
+		TopicTopNQuery: func() proto.Message {
+			return &measurev1.TopNRequest{}
+		},
+		TopicPropertyUpdate: func() proto.Message {
+			return &propertyv1.InternalUpdateRequest{}
+		},
+		TopicPropertyQuery: func() proto.Message {
+			return &propertyv1.QueryRequest{}
+		},
+		TopicPropertyDelete: func() proto.Message {
+			return &propertyv1.InternalDeleteRequest{}
+		},
+	}
 
-// TopicResponseMap is the map of topic name to response message.
-// nolint: exhaustruct
-var TopicResponseMap = map[bus.Topic]func() proto.Message{
-	TopicStreamQuery: func() proto.Message {
-		return &streamv1.QueryResponse{}
-	},
-	TopicMeasureQuery: func() proto.Message {
-		return &measurev1.QueryResponse{}
-	},
-	TopicTopNQuery: func() proto.Message {
-		return &measurev1.TopNResponse{}
-	},
-	TopicPropertyQuery: func() proto.Message {
-		return &propertyv1.InternalQueryResponse{}
-	},
-	TopicPropertyDelete: func() proto.Message {
-		return &propertyv1.DeleteResponse{}
-	},
-	TopicPropertyUpdate: func() proto.Message {
-		return &propertyv1.ApplyResponse{}
-	},
-}
+	// TopicResponseMap is the map of topic name to response message.
+	// nolint: exhaustruct
+	TopicResponseMap = map[bus.Topic]func() proto.Message{
+		TopicStreamQuery: func() proto.Message {
+			return &streamv1.QueryResponse{}
+		},
+		TopicMeasureQuery: func() proto.Message {
+			return &measurev1.QueryResponse{}
+		},
+		TopicTopNQuery: func() proto.Message {
+			return &measurev1.TopNResponse{}
+		},
+		TopicPropertyQuery: func() proto.Message {
+			return &propertyv1.InternalQueryResponse{}
+		},
+		TopicPropertyDelete: func() proto.Message {
+			return &propertyv1.DeleteResponse{}
+		},
+		TopicPropertyUpdate: func() proto.Message {
+			return &propertyv1.ApplyResponse{}
+		},
+	}
+
+	// TopicCommon is the common topic for data transmission.
+	TopicCommon = bus.Topic{}
+)

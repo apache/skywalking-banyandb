@@ -59,7 +59,15 @@ var (
 
 // UpdatePath updates a path to monitoring its disk usage.
 func UpdatePath(path string) {
-	diskMap.Store(path, nil)
+	diskMap.Store(path, 0)
+}
+
+// GetPathUsedPercent returns the used percent of the path.
+func GetPathUsedPercent(path string) int {
+	if v, ok := diskMap.Load(path); ok {
+		return v.(int)
+	}
+	return 0
 }
 
 func getPath() (paths []string) {
@@ -191,6 +199,7 @@ func collectDisk() {
 			}
 			return
 		}
+		diskMap.Store(path, int(usage.UsedPercent))
 		diskStateGauge.Set(usage.UsedPercent/100, path, "used_percent")
 		diskStateGauge.Set(float64(usage.Used), path, "used")
 		diskStateGauge.Set(float64(usage.Total), path, "total")

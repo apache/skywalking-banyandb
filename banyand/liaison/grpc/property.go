@@ -333,8 +333,8 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 				if span != nil {
 					span.AddSubTrace(v.Trace)
 				}
-			case common.Error:
-				err = multierr.Append(err, errors.New(v.Msg()))
+			case *common.Error:
+				err = multierr.Append(err, errors.New(v.Error()))
 			}
 		}
 	}

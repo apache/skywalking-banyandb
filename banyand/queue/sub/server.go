@@ -70,6 +70,7 @@ type server struct {
 	log       *logger.Logger
 	ser       *grpclib.Server
 	listeners map[bus.Topic]bus.MessageListener
+	topicMap  map[string]bus.Topic
 	clusterv1.UnimplementedServiceServer
 	metrics        *metrics
 	clientCloser   context.CancelFunc
@@ -89,6 +90,7 @@ type server struct {
 func NewServer(omr observability.MetricsRegistry) queue.Server {
 	return &server{
 		listeners: make(map[bus.Topic]bus.MessageListener),
+		topicMap:  make(map[string]bus.Topic),
 		omr:       omr,
 	}
 }

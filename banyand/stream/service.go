@@ -52,15 +52,16 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaRepo    schemaRepo
-	writeListener bus.MessageListener
-	metadata      metadata.Repo
-	pipeline      queue.Server
-	localPipeline queue.Queue
-	omr           observability.MetricsRegistry
-	l             *logger.Logger
-	root          string
-	option        option
+	schemaRepo          schemaRepo
+	writeListener       bus.MessageListener
+	metadata            metadata.Repo
+	pipeline            queue.Server
+	localPipeline       queue.Queue
+	omr                 observability.MetricsRegistry
+	l                   *logger.Logger
+	root                string
+	option              option
+	maxDiskUsagePercent int
 }
 
 func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -82,14 +83,21 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&s.option.elementIndexFlushTimeout, "element-index-flush-timeout", defaultFlushTimeout, "the elementIndex timeout of stream")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "stream-max-fan-out-size", "", "the upper bound of a single file size after merge of stream")
-	s.option.seriesCacheMaxSize = run.Bytes(10 << 20)
-	flagS.VarP(&s.option.seriesCacheMaxSize, "measure-series-cache-max-size", "", "the max size of series cache in each group")
+	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
+	flagS.VarP(&s.option.seriesCacheMaxSize, "stream-series-cache-max-size", "", "the max size of series cache in each group")
+	flagS.IntVar(&s.maxDiskUsagePercent, "stream-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	return flagS
 }
 
 func (s *service) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
+	}
+	if s.maxDiskUsagePercent < 0 {
+		return errors.New("stream-max-disk-usage-percent must be greater than or equal to 0")
+	}
+	if s.maxDiskUsagePercent > 100 {
+		return errors.New("stream-max-disk-usage-percent must be less than or equal to 100")
 	}
 	return nil
 }
@@ -110,7 +118,7 @@ func (s *service) PreRun(_ context.Context) error {
 	s.schemaRepo = newSchemaRepo(path, s)
 	// run a serial watcher
 
-	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo)
+	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
 	err := s.pipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
 	if err != nil {
 		return err

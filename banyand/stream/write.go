@@ -30,6 +30,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -39,15 +40,32 @@ import (
 )
 
 type writeCallback struct {
-	l          *logger.Logger
-	schemaRepo *schemaRepo
+	l                   *logger.Logger
+	schemaRepo          *schemaRepo
+	maxDiskUsagePercent int
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageListener {
-	return &writeCallback{
-		l:          l,
-		schemaRepo: schemaRepo,
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int) bus.MessageListener {
+	if maxDiskUsagePercent > 100 {
+		maxDiskUsagePercent = 100
 	}
+	return &writeCallback{
+		l:                   l,
+		schemaRepo:          schemaRepo,
+		maxDiskUsagePercent: maxDiskUsagePercent,
+	}
+}
+
+func (w *writeCallback) CheckHealth() *common.Error {
+	if w.maxDiskUsagePercent < 1 {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "stream is readonly because \"stream-max-disk-usage-percent\" is 0")
+	}
+	diskPercent := observability.GetPathUsedPercent(w.schemaRepo.path)
+	if diskPercent < w.maxDiskUsagePercent {
+		return nil
+	}
+	w.l.Warn().Int("maxPercent", w.maxDiskUsagePercent).Int("diskPercent", diskPercent).Msg("disk usage is too high, stop writing")
+	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
 func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest,

@@ -29,7 +29,7 @@ var MeasureWriteKindVersion = common.KindVersion{
 }
 
 // TopicMeasureWrite is the measure write topic.
-var TopicMeasureWrite = bus.UniTopic(MeasureWriteKindVersion.String())
+var TopicMeasureWrite = bus.BiTopic(MeasureWriteKindVersion.String())
 
 // MeasureQueryKindVersion is the version tag of measure query kind.
 var MeasureQueryKindVersion = common.KindVersion{

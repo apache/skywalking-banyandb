@@ -17,6 +17,7 @@ Release Notes.
 - Index: Add a cache to improve the performance of the series index write.
 - Read cpu quota and limit from the cgroup file system to set gomaxprocs.
 - Property: Add native storage layer for property.
+- Add the max disk usage threshold for the `Measure`, `Stream`, and `Property` to control the disk usage.
 
 ### Bug Fixes
 

@@ -52,16 +52,17 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	writeListener  bus.MessageListener
-	metadata       metadata.Repo
-	pipeline       queue.Server
-	localPipeline  queue.Queue
-	metricPipeline queue.Server
-	omr            observability.MetricsRegistry
-	schemaRepo     *schemaRepo
-	l              *logger.Logger
-	root           string
-	option         option
+	writeListener       bus.MessageListener
+	metadata            metadata.Repo
+	pipeline            queue.Server
+	localPipeline       queue.Queue
+	metricPipeline      queue.Server
+	omr                 observability.MetricsRegistry
+	schemaRepo          *schemaRepo
+	l                   *logger.Logger
+	root                string
+	option              option
+	maxDiskUsagePercent int
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -82,14 +83,21 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "measure-max-fan-out-size", "", "the upper bound of a single file size after merge of measure")
-	s.option.seriesCacheMaxSize = run.Bytes(10 << 20)
+	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
 	flagS.VarP(&s.option.seriesCacheMaxSize, "measure-series-cache-max-size", "", "the max size of series cache in each group")
+	flagS.IntVar(&s.maxDiskUsagePercent, "measure-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	return flagS
 }
 
 func (s *service) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
+	}
+	if s.maxDiskUsagePercent < 0 {
+		return errors.New("measure-max-disk-usage-percen must be greater than or equal to 0")
+	}
+	if s.maxDiskUsagePercent > 100 {
+		return errors.New("measure-max-disk-usage-percen must be less than or equal to 100")
 	}
 	return nil
 }
@@ -113,7 +121,7 @@ func (s *service) PreRun(ctx context.Context) error {
 		return err
 	}
 
-	s.writeListener = setUpWriteCallback(s.l, s.schemaRepo)
+	s.writeListener = setUpWriteCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent)
 	// only subscribe metricPipeline for data node
 	if s.metricPipeline != nil {
 		err := s.metricPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)

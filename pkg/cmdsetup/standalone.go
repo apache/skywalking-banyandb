@@ -67,7 +67,12 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
-	grpcServer := grpc.NewServer(ctx, pipeline, pipeline, metaSvc, grpc.NewLocalNodeRegistry(), metricSvc)
+	nr := grpc.NewLocalNodeRegistry()
+	grpcServer := grpc.NewServer(ctx, pipeline, pipeline, metaSvc, grpc.NodeRegistries{
+		MeasureNodeRegistry:  nr,
+		StreamNodeRegistry:   nr,
+		PropertyNodeRegistry: nr,
+	}, metricSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer()
 

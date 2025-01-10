@@ -38,6 +38,7 @@ type measureQueryProcessor struct {
 	measureService measure.SchemaService
 	broadcaster    bus.Broadcaster
 	*queryService
+	*bus.UnImplementedHealthyListener
 }
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -93,8 +94,8 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 			switch d := data.(type) {
 			case *measurev1.QueryResponse:
 				d.Trace = tracer.ToProto()
-			case common.Error:
-				span.Error(errors.New(d.Msg()))
+			case *common.Error:
+				span.Error(errors.New(d.Error()))
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")

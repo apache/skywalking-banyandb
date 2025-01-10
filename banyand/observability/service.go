@@ -96,6 +96,9 @@ func (p *metricService) Validate() error {
 	if p.listenAddr == "" {
 		return errNoAddr
 	}
+	if len(p.modes) == 0 {
+		return errNoMode
+	}
 	set := make(map[string]struct{})
 	for _, mode := range p.modes {
 		if mode != flagNativeMode && mode != flagPromethusMode {

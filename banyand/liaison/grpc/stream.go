@@ -70,7 +70,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "stream", "write")
 		}
 		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "stream", "write")
-		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
+		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageId}); errResp != nil {
 			logger.Debug().Err(errResp).Msg("failed to send stream write response")
 			s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "stream", "write")
 		}
@@ -78,8 +78,21 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	s.metrics.totalStreamStarted.Inc(1, "stream", "write")
 	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
 	start := time.Now()
+	var succeedSent []succeedSentMessage
 	defer func() {
-		publisher.Close()
+		cee, err := publisher.Close()
+		for _, ssm := range succeedSent {
+			code := modelv1.Status_STATUS_SUCCEED
+			if cee != nil {
+				if ce, ok := cee[ssm.node]; ok {
+					code = ce.Status()
+				}
+			}
+			reply(ssm.metadata, code, ssm.messageID, stream, s.sampled)
+		}
+		if err != nil {
+			s.sampled.Error().Err(err).Msg("failed to close the publisher")
+		}
 		s.metrics.totalStreamFinished.Inc(1, "stream", "write")
 		s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "stream", "write")
 	}()
@@ -145,11 +158,20 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
 		_, errWritePub := publisher.Publish(ctx, data.TopicStreamWrite, message)
 		if errWritePub != nil {
+			var ce *common.Error
+			if errors.As(errWritePub, &ce) {
+				reply(writeEntity.GetMetadata(), ce.Status(), writeEntity.GetMessageId(), stream, s.sampled)
+				continue
+			}
 			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Str("nodeID", nodeID).Msg("failed to send a message")
 			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
 			continue
 		}
-		reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_SUCCEED, writeEntity.GetMessageId(), stream, s.sampled)
+		succeedSent = append(succeedSent, succeedSentMessage{
+			metadata:  writeEntity.GetMetadata(),
+			messageID: writeEntity.GetMessageId(),
+			node:      nodeID,
+		})
 	}
 }
 
@@ -207,8 +229,8 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 	switch d := data.(type) {
 	case *streamv1.QueryResponse:
 		return d, nil
-	case common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Msg())
+	case *common.Error:
+		return nil, errors.WithMessage(errQueryMsg, d.Error())
 	}
 	return nil, nil
 }

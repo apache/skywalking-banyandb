@@ -70,7 +70,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			ms.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "measure", "write")
 		}
 		ms.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "measure", "write")
-		if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status, MessageId: messageId}); errResp != nil {
+		if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageId}); errResp != nil {
 			logger.Debug().Err(errResp).Msg("failed to send measure write response")
 			ms.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "measure", "write")
 		}
@@ -79,8 +79,21 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 	publisher := ms.pipeline.NewBatchPublisher(ms.writeTimeout)
 	ms.metrics.totalStreamStarted.Inc(1, "measure", "write")
 	start := time.Now()
+	var succeedSent []succeedSentMessage
 	defer func() {
-		publisher.Close()
+		cee, err := publisher.Close()
+		for _, s := range succeedSent {
+			code := modelv1.Status_STATUS_SUCCEED
+			if cee != nil {
+				if ce, ok := cee[s.node]; ok {
+					code = ce.Status()
+				}
+			}
+			reply(s.metadata, code, s.messageID, measure, ms.sampled)
+		}
+		if err != nil {
+			ms.sampled.Error().Err(err).Msg("failed to close the publisher")
+		}
 		ms.metrics.totalStreamFinished.Inc(1, "measure", "write")
 		ms.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "measure", "write")
 	}()
@@ -152,10 +165,19 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		_, errWritePub := publisher.Publish(ctx, data.TopicMeasureWrite, message)
 		if errWritePub != nil {
 			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
+			var ce *common.Error
+			if errors.As(errWritePub, &ce) {
+				reply(writeRequest.GetMetadata(), ce.Status(), writeRequest.GetMessageId(), measure, ms.sampled)
+				continue
+			}
 			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
 			continue
 		}
-		reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_SUCCEED, writeRequest.GetMessageId(), measure, ms.sampled)
+		succeedSent = append(succeedSent, succeedSentMessage{
+			metadata:  writeRequest.GetMetadata(),
+			messageID: writeRequest.GetMessageId(),
+			node:      nodeID,
+		})
 	}
 }
 
@@ -208,8 +230,8 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 	switch d := data.(type) {
 	case *measurev1.QueryResponse:
 		return d, nil
-	case common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Msg())
+	case *common.Error:
+		return nil, errors.WithMessage(errQueryMsg, d.Error())
 	}
 	return nil, nil
 }
@@ -246,12 +268,18 @@ func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNR
 	switch d := data.(type) {
 	case *measurev1.TopNResponse:
 		return d, nil
-	case common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Msg())
+	case *common.Error:
+		return nil, errors.WithMessage(errQueryMsg, d.Error())
 	}
 	return nil, nil
 }
 
 func (ms *measureService) Close() error {
 	return ms.ingestionAccessLog.Close()
+}
+
+type succeedSentMessage struct {
+	metadata  *commonv1.Metadata
+	node      string
+	messageID uint64
 }
