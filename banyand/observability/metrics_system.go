@@ -108,9 +108,11 @@ func collectCPU() {
 	s, err := cpuTimesFunc(false)
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get cpu stat")
+		return
 	}
 	if len(s) == 0 {
 		log.Error().Msg("cannot get cpu stat")
+		return
 	}
 	allStat := s[0]
 	total := allStat.User + allStat.System + allStat.Idle + allStat.Nice + allStat.Iowait + allStat.Irq +
@@ -128,10 +130,12 @@ func collectCPU() {
 func collectMemory() {
 	if memoryStateGauge == nil {
 		log.Error().Msg("memoryStateGauge is not registered")
+		return
 	}
 	m, err := mem.VirtualMemory()
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get memory stat")
+		return
 	}
 	memoryStateGauge.Set(m.UsedPercent/100, "used_percent")
 	memoryStateGauge.Set(float64(m.Used), "used")
@@ -141,10 +145,12 @@ func collectMemory() {
 func collectNet() {
 	if netStateGauge == nil {
 		log.Error().Msg("netStateGauge is not registered")
+		return
 	}
 	stats, err := getNetStat(context.Background())
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get net stat")
+		return
 	}
 	for _, stat := range stats {
 		netStateGauge.Set(float64(stat.BytesRecv), "bytes_recv", stat.Name)
