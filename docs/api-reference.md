@@ -23,6 +23,13 @@
     - [Catalog](#banyandb-common-v1-Catalog)
     - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
   
+- [banyandb/common/v1/rpc.proto](#banyandb_common_v1_rpc-proto)
+    - [APIVersion](#banyandb-common-v1-APIVersion)
+    - [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest)
+    - [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse)
+  
+    - [Service](#banyandb-common-v1-Service)
+  
 - [banyandb/common/v1/trace.proto](#banyandb_common_v1_trace-proto)
     - [Span](#banyandb-common-v1-Span)
     - [Tag](#banyandb-common-v1-Tag)
@@ -462,6 +469,75 @@ Metadata is for multi-tenant, multi-model use
  
 
  
+
+ 
+
+
+
+<a name="banyandb_common_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/common/v1/rpc.proto
+
+
+
+<a name="banyandb-common-v1-APIVersion"></a>
+
+### APIVersion
+APIVersion is the version of the API
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| version | [string](#string) |  | version is the version of the API |
+| revision | [string](#string) |  | revision is the commit hash of the API |
+
+
+
+
+
+
+<a name="banyandb-common-v1-GetAPIVersionRequest"></a>
+
+### GetAPIVersionRequest
+GetAPIVersionRequest is the request for GetAPIVersion
+
+empty
+
+
+
+
+
+
+<a name="banyandb-common-v1-GetAPIVersionResponse"></a>
+
+### GetAPIVersionResponse
+GetAPIVersionResponse is the response for GetAPIVersion
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| version | [APIVersion](#banyandb-common-v1-APIVersion) |  | version is the version of the API |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-common-v1-Service"></a>
+
+### Service
+Service is the service for the API
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetAPIVersion | [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest) | [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse) | GetAPIVersion returns the version of the API |
 
  
 

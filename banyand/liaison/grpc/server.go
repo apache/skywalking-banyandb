@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
@@ -259,6 +260,7 @@ func (s *server) Serve() run.StopNotify {
 	)
 	s.ser = grpclib.NewServer(opts...)
 
+	commonv1.RegisterServiceServer(s.ser, &apiVersionService{})
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
 	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
 	// register *Registry

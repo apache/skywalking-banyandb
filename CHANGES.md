@@ -18,6 +18,7 @@ Release Notes.
 - Read cpu quota and limit from the cgroup file system to set gomaxprocs.
 - Property: Add native storage layer for property.
 - Add the max disk usage threshold for the `Measure`, `Stream`, and `Property` to control the disk usage.
+- Add the "api version" service to gRPC and HTTP server.
 
 ### Bug Fixes
 

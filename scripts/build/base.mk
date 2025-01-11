@@ -41,6 +41,12 @@ endif
 
 GO_LINK_VERSION := -X ${VERSION_PATH}.build=${VERSION_STRING}-${GIT_BRANCH_NAME}
 
+API_VERSION_PATH := github.com/apache/skywalking-banyandb/api/proto/banyandb
+PROTO_REVISION := $(shell git log -1 --pretty=format:%h -- ${root_dir}/api/proto/banyandb)
+
+GO_LINK_VERSION := ${GO_LINK_VERSION} -X ${API_VERSION_PATH}.revision=${PROTO_REVISION}
+
+
 # Operating system name, such as 'Darwin'
 OS := $(shell uname)
 
