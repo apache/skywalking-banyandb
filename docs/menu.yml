@@ -37,6 +37,8 @@ catalog:
             path: "/concept/data-model"
       - name: "Quick Start Tutorial"
         path: "/guides/quick-start/quick-start"
+      - name: "Versions and Compatibility"
+        path: "/installation/versions"
   - name: "Interacting"
     catalog:
       - name: "CLI"
