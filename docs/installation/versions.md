@@ -19,7 +19,7 @@ bydb.version=0.8
 # Please check BanyanDB documentation for the API version compatibility.
 # https://skywalking.apache.org/docs/skywalking-banyandb/next/installation/versions/
 # Each `bydb.api.version` could have multiple compatible release version(`bydb.version`).
-bydb.api.version=0.7
+bydb.api.version=0.8
 ```
 
 You can select the latest release version of the required APIs to ensure maximum performance and access to the latest
