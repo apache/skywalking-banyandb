@@ -156,7 +156,7 @@ export function deleteSecondaryDataModel(type, group, name) {
   });
 }
 
-export function getPropertyByGroup(data) {
+export function fetchProperties(data) {
   return request({
     url: `/api/v1/property/query`,
     method: 'post',

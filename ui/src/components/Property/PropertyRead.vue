@@ -18,8 +18,8 @@
 -->
 
 <script setup>
-  import { getPropertyByGroup, deleteProperty } from '@/api/index';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { fetchProperties, deleteProperty } from '@/api/index';
+  import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { onMounted, reactive, ref } from 'vue';
@@ -46,7 +46,7 @@ limit: 10`);
   const getProperties = (params) => {
     $loadingCreate();
     const group = route.params.group;
-    getPropertyByGroup({ groups: [group], limit: 6, ...params })
+    fetchProperties({ groups: [group], limit: 6, ...params })
       .then((res) => {
         if (res.status === 200 && group === route.params.group) {
           data.tableData = res.data.properties.map((item) => {
