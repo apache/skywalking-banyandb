@@ -153,9 +153,6 @@ limit: 10`);
       immediate: true,
     },
   );
-  onMounted(() => {
-    getProperties();
-  });
 </script>
 <template>
   <div>
