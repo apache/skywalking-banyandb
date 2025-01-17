@@ -37,14 +37,6 @@ func newDefaultMergePolicy() *mergePolicy {
 	return newMergePolicy(15, 1.7, run.Bytes(math.MaxInt64))
 }
 
-func newDefaultMergePolicyForTesting() *mergePolicy {
-	return newMergePolicy(3, 1, run.Bytes(math.MaxInt64))
-}
-
-func newDisabledMergePolicyForTesting() *mergePolicy {
-	return newMergePolicy(0, 0, 0)
-}
-
 // NewMergePolicy creates a MergePolicy with given parameters.
 func newMergePolicy(maxParts int, minMergeMul float64, maxFanOutSize run.Bytes) *mergePolicy {
 	return &mergePolicy{

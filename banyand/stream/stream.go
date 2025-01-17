@@ -70,10 +70,12 @@ type stream struct {
 	databaseSupplier  schema.Supplier
 	l                 *logger.Logger
 	schema            *databasev1.Stream
+	tagMap            map[string]*databasev1.TagSpec
+	entityMap         map[string]int
 	name              string
 	group             string
-	indexRules        []*databasev1.IndexRule
 	indexRuleLocators partition.IndexRuleLocator
+	indexRules        []*databasev1.IndexRule
 	shardNum          uint32
 }
 
@@ -92,6 +94,16 @@ func (s *stream) Close() error {
 func (s *stream) parseSpec() {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
 	s.indexRuleLocators, _ = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules, false)
+	s.tagMap = make(map[string]*databasev1.TagSpec)
+	for _, tf := range s.schema.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			s.tagMap[tag.GetName()] = tag
+		}
+	}
+	s.entityMap = make(map[string]int)
+	for idx, entity := range s.schema.GetEntity().GetTagNames() {
+		s.entityMap[entity] = idx + 1
+	}
 }
 
 type streamSpec struct {

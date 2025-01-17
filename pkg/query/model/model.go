@@ -19,11 +19,13 @@
 package model
 
 import (
+	"container/heap"
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -96,6 +98,162 @@ type StreamResult struct {
 	ElementIDs  []uint64
 	TagFamilies []TagFamily
 	SIDs        []common.SeriesID
+	topN        int
+	idx         int
+	asc         bool
+}
+
+// NewStreamResult creates a new StreamResult.
+func NewStreamResult(topN int, asc bool) *StreamResult {
+	return &StreamResult{
+		topN:        topN,
+		asc:         asc,
+		Timestamps:  make([]int64, 0, topN),
+		ElementIDs:  make([]uint64, 0, topN),
+		TagFamilies: make([]TagFamily, 0, topN),
+		SIDs:        make([]common.SeriesID, 0, topN),
+	}
+}
+
+// Len returns the length of the StreamResult.
+func (sr *StreamResult) Len() int {
+	return len(sr.Timestamps)
+}
+
+// Reset resets the StreamResult.
+func (sr *StreamResult) Reset() {
+	sr.Error = nil
+	sr.idx = 0
+	sr.Timestamps = sr.Timestamps[:0]
+	sr.ElementIDs = sr.ElementIDs[:0]
+	sr.TagFamilies = sr.TagFamilies[:0]
+	sr.SIDs = sr.SIDs[:0]
+}
+
+// CopyFrom copies the topN results from other to sr using tmp as a temporary result.
+func (sr *StreamResult) CopyFrom(tmp, other *StreamResult) bool {
+	// Prepare a reusable tmp result
+	tmp.Reset()
+	tmp.topN = sr.topN
+	tmp.asc = sr.asc
+
+	// Prepare heaps
+	sr.idx = 0
+	other.idx = 0
+
+	h := &StreamResultHeap{asc: sr.asc}
+	heap.Init(h)
+
+	if sr.Len() > 0 {
+		heap.Push(h, sr)
+	}
+	if other.Len() > 0 {
+		heap.Push(h, other)
+	}
+
+	// Pop from heap to build tmp with topN
+	for h.Len() > 0 && tmp.Len() < tmp.topN {
+		res := heap.Pop(h).(*StreamResult)
+		tmp.CopySingleFrom(res)
+		res.idx++
+		if res.idx < res.Len() {
+			heap.Push(h, res)
+		}
+	}
+
+	// Copy tmp back to sr
+	sr.Reset()
+	sr.Timestamps = append(sr.Timestamps, tmp.Timestamps...)
+	sr.ElementIDs = append(sr.ElementIDs, tmp.ElementIDs...)
+	sr.SIDs = append(sr.SIDs, tmp.SIDs...)
+	sr.TagFamilies = append(sr.TagFamilies, tmp.TagFamilies...)
+
+	return len(sr.Timestamps) >= sr.topN
+}
+
+// CopySingleFrom copies a single result from other to sr.
+func (sr *StreamResult) CopySingleFrom(other *StreamResult) {
+	sr.SIDs = append(sr.SIDs, other.SIDs[other.idx])
+	sr.Timestamps = append(sr.Timestamps, other.Timestamps[other.idx])
+	sr.ElementIDs = append(sr.ElementIDs, other.ElementIDs[other.idx])
+	if len(sr.TagFamilies) < len(other.TagFamilies) {
+		for i := range other.TagFamilies {
+			tf := TagFamily{
+				Name: other.TagFamilies[i].Name,
+				Tags: make([]Tag, len(other.TagFamilies[i].Tags)),
+			}
+			for j := range tf.Tags {
+				tf.Tags[j].Name = other.TagFamilies[i].Tags[j].Name
+			}
+			sr.TagFamilies = append(sr.TagFamilies, tf)
+		}
+	}
+	if len(sr.TagFamilies) != len(other.TagFamilies) {
+		logger.Panicf("tag family length mismatch: %d != %d", len(sr.TagFamilies), len(other.TagFamilies))
+	}
+	for i := range sr.TagFamilies {
+		if len(sr.TagFamilies[i].Tags) != len(other.TagFamilies[i].Tags) {
+			logger.Panicf("tag length mismatch: %d != %d", len(sr.TagFamilies[i].Tags), len(other.TagFamilies[i].Tags))
+		}
+		for j := range sr.TagFamilies[i].Tags {
+			sr.TagFamilies[i].Tags[j].Values = append(sr.TagFamilies[i].Tags[j].Values, other.TagFamilies[i].Tags[j].Values[other.idx])
+		}
+	}
+}
+
+// StreamResultHeap is a min-heap of StreamResult pointers.
+type StreamResultHeap struct {
+	data []*StreamResult
+	asc  bool
+}
+
+func (h StreamResultHeap) Len() int { return len(h.data) }
+func (h StreamResultHeap) Less(i, j int) bool {
+	if h.asc {
+		return h.data[i].Timestamps[h.data[i].idx] < h.data[j].Timestamps[h.data[j].idx]
+	}
+	return h.data[i].Timestamps[h.data[i].idx] > h.data[j].Timestamps[h.data[j].idx]
+}
+func (h StreamResultHeap) Swap(i, j int) { h.data[i], h.data[j] = h.data[j], h.data[i] }
+
+// Push pushes a StreamResult pointer to the heap.
+func (h *StreamResultHeap) Push(x interface{}) {
+	h.data = append(h.data, x.(*StreamResult))
+}
+
+// Pop pops a StreamResult pointer from the heap.
+func (h *StreamResultHeap) Pop() interface{} {
+	old := h.data
+	n := len(old)
+	x := old[n-1]
+	h.data = old[0 : n-1]
+	return x
+}
+
+// MergeStreamResults merges multiple StreamResult slices into a single StreamResult.
+func MergeStreamResults(results []*StreamResult, topN int, asc bool) *StreamResult {
+	h := &StreamResultHeap{asc: asc}
+	heap.Init(h)
+
+	for _, result := range results {
+		if result.Len() > 0 {
+			result.idx = 0
+			heap.Push(h, result)
+		}
+	}
+
+	mergedResult := NewStreamResult(topN, asc)
+
+	for h.Len() > 0 && mergedResult.Len() < topN {
+		sr := heap.Pop(h).(*StreamResult)
+		mergedResult.CopySingleFrom(sr)
+		sr.idx++
+		if sr.idx < sr.Len() {
+			heap.Push(h, sr)
+		}
+	}
+
+	return mergedResult
 }
 
 // StreamQueryResult is the result of a stream query.

@@ -32,7 +32,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -249,12 +248,6 @@ func Test_tstIter(t *testing.T) {
 			})
 		}
 	})
-}
-
-var tagProjectionAll = []model.TagProjection{
-	{Family: "arrTag", Names: []string{"strArrTag", "intArrTag"}},
-	{Family: "binaryTag", Names: []string{"binaryTag"}},
-	{Family: "singleTag", Names: []string{"strTag", "intTag", "strTag1", "strTag2"}},
 }
 
 var esTS1 = &elements{
