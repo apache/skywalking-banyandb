@@ -18,12 +18,13 @@
 -->
 
 <script setup>
-  import { getPropertyByGroup, deleteProperty } from '@/api/index';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { fetchProperties, deleteProperty } from '@/api/index';
+  import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { onMounted, reactive, ref } from 'vue';
-  import { RefreshRight } from '@element-plus/icons-vue';
+  import { RefreshRight, Search } from '@element-plus/icons-vue';
+  import { yamlToJson } from '@/utils/yaml';
   import PropertyEditror from './PropertyEditror.vue';
   import PropertyValueReader from './PropertyValueReader.vue';
   import FormHeader from '../common/FormHeader.vue';
@@ -31,22 +32,24 @@
   const { proxy } = getCurrentInstance();
   // Loading
   const route = useRoute();
-  const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = proxy.$loadingClose;
   const propertyEditorRef = ref();
   const propertyValueViewerRef = ref();
+  const yamlRef = ref(null);
+  const yamlCode = ref(`container: ''
+limit: 10`);
   const data = reactive({
     group: '',
     tableData: [],
   });
-  const getProperty = () => {
+  const getProperties = (params) => {
     $loadingCreate();
     const group = route.params.group;
-    getPropertyByGroup(group)
+    fetchProperties({ groups: [group], limit: 6, ...params })
       .then((res) => {
         if (res.status === 200 && group === route.params.group) {
-          data.tableData = res.data.property.map((item) => {
+          data.tableData = res.data.properties.map((item) => {
             item.tags.forEach((tag) => {
               tag.value = JSON.stringify(tag.value);
             });
@@ -84,7 +87,7 @@
       tags: JSON.parse(JSON.stringify(item.tags)),
     };
     propertyEditorRef?.value.openDialog(true, param).then(() => {
-      getProperty();
+      getProperties();
     });
   };
   const openAddProperty = () => {
@@ -92,13 +95,31 @@
       group: data.group,
     };
     propertyEditorRef?.value.openDialog(false, dataForm).then(() => {
-      getProperty();
+      getProperties();
     });
   };
+
+  function searchProperties() {
+    yamlRef.value
+      .checkYaml(yamlCode.value)
+      .then(() => {
+        const json = yamlToJson(yamlCode.value).data;
+        getProperties(json);
+      })
+      .catch((err) => {
+        ElMessage({
+          dangerouslyUseHTMLString: true,
+          showClose: true,
+          message: `<div>${err.message}</div>`,
+          type: 'error',
+          duration: 5000,
+        });
+      });
+  }
   const deleteTableData = (index) => {
     const item = data.tableData[index];
     $loadingCreate();
-    deleteProperty(item.metadata.container.group, item.metadata.container.name, item.metadata.id, item.tags)
+    deleteProperty(item.metadata.container.group, item.metadata.container.name, item.metadata.id)
       .then((res) => {
         if (res.status === 200) {
           ElMessage({
@@ -106,7 +127,7 @@
             type: 'success',
             duration: 5000,
           });
-          getProperty();
+          getProperties();
         }
       })
       .catch((err) => {
@@ -120,20 +141,8 @@
         $loadingClose();
       });
   };
-  watch(
-    () => route,
-    () => {
-      data.group = route.params.group;
-      data.tableData = [];
-      getProperty();
-    },
-    {
-      deep: true,
-      immediate: true,
-    },
-  );
   onMounted(() => {
-    getProperty();
+    getProperties();
   });
 </script>
 <template>
@@ -144,9 +153,12 @@
       </template>
       <div class="button-group-operator">
         <el-button size="small" type="primary" color="#6E38F7" @click="openAddProperty">Apply Property</el-button>
-        <el-button size="small" :icon="RefreshRight" @click="getProperty" plain></el-button>
+        <div>
+          <el-button size="small" :icon="Search" @click="searchProperties" plain />
+          <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
+        </div>
       </div>
-
+      <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
       <el-table :data="data.tableData" style="width: 100%; margin-top: 20px" border>
         <el-table-column label="Container">
           <el-table-column label="Group" prop="metadata.container.group" width="100"></el-table-column>
@@ -210,5 +222,6 @@
     display: flex;
     flex-direction: row;
     justify-content: space-between;
+    margin-bottom: 10px;
   }
 </style>
