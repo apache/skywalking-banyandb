@@ -156,11 +156,11 @@ export function deleteSecondaryDataModel(type, group, name) {
   });
 }
 
-export function getPropertyByGroup(group) {
+export function getPropertyByGroup(data) {
   return request({
     url: `/api/v1/property/query`,
     method: 'post',
-    data: { groups: [group] },
+    data,
   });
 }
 

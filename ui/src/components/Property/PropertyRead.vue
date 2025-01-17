@@ -43,7 +43,7 @@
   const getProperty = () => {
     $loadingCreate();
     const group = route.params.group;
-    getPropertyByGroup(group)
+    getPropertyByGroup( { groups: [group] })
       .then((res) => {
         if (res.status === 200 && group === route.params.group) {
           data.tableData = res.data.property.map((item) => {
