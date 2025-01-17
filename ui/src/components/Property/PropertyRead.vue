@@ -98,7 +98,7 @@
   const deleteTableData = (index) => {
     const item = data.tableData[index];
     $loadingCreate();
-    deleteProperty(item.metadata.container.group, item.metadata.container.name, item.metadata.id, item.tags)
+    deleteProperty(item.metadata.container.group, item.metadata.container.name, item.metadata.id)
       .then((res) => {
         if (res.status === 200) {
           ElMessage({

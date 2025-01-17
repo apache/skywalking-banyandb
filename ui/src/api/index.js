@@ -164,9 +164,9 @@ export function getPropertyByGroup(data) {
   });
 }
 
-export function deleteProperty(group, name, id, tags) {
+export function deleteProperty(group, name, id) {
   return request({
-    url: `/api/v1/property/${group}/${name}/${id}/${tags}`,
+    url: `/api/v1/property/${group}/${name}/${id}`,
     method: 'delete',
   });
 }
