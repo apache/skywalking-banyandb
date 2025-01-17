@@ -178,7 +178,6 @@
     getGroupList().then((res) => {
       if (res.status === 200) {
         data.groupLists = res.data.group.filter((d) => catalogToGroupType[d.catalog] === props.type);
-        console.log(data.groupLists);
         if (props.type === 'property') {
           data.groupLists = data.groupLists.map((item) => ({
             ...item.metadata,
