@@ -86,14 +86,14 @@
   const catalogToGroupType = {
     CATALOG_MEASURE: 'measure',
     CATALOG_STREAM: 'stream',
-    CATALOG_UNSPECIFIED: 'property',
+    CATALOG_PROPERTY: 'property',
   };
 
   // group type to catalog
   const groupTypeToCatalog = {
     measure: 'CATALOG_MEASURE',
     stream: 'CATALOG_STREAM',
-    property: 'CATALOG_UNSPECIFIED',
+    property: 'CATALOG_PROPERTY',
   };
 
   const TypeMap = {
@@ -178,6 +178,7 @@
     getGroupList().then((res) => {
       if (res.status === 200) {
         data.groupLists = res.data.group.filter((d) => catalogToGroupType[d.catalog] === props.type);
+        console.log(data.groupLists);
         if (props.type === 'property') {
           data.groupLists = data.groupLists.map((item) => ({
             ...item.metadata,
@@ -793,7 +794,7 @@
           <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
             <el-option label="Stream" value="CATALOG_STREAM"></el-option>
             <el-option label="Measure" value="CATALOG_MEASURE"></el-option>
-            <el-option label="Unspecified(Property)" value="CATALOG_UNSPECIFIED"></el-option>
+            <el-option label="Property" value="CATALOG_PROPERTY"></el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="shard num" :label-width="data.formLabelWidth" prop="shardNum">
