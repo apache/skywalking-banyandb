@@ -46,7 +46,7 @@
     getPropertyByGroup( { groups: [group] })
       .then((res) => {
         if (res.status === 200 && group === route.params.group) {
-          data.tableData = res.data.property.map((item) => {
+          data.tableData = res.data.properties.map((item) => {
             item.tags.forEach((tag) => {
               tag.value = JSON.stringify(tag.value);
             });
