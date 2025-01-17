@@ -141,18 +141,9 @@ limit: 10`);
         $loadingClose();
       });
   };
-  watch(
-    () => route,
-    () => {
-      data.group = route.params.group;
-      data.tableData = [];
-      getProperties();
-    },
-    {
-      deep: true,
-      immediate: true,
-    },
-  );
+  onMounted(() => {
+    getProperties();
+  });
 </script>
 <template>
   <div>
