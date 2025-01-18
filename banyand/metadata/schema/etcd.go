@@ -400,7 +400,7 @@ func (e *etcdSchemaRegistry) Register(ctx context.Context, metadata Metadata, fo
 
 	lease, err := e.client.Grant(ctx, int64(leaseDuration.Seconds()))
 	if err != nil {
-		return fmt.Errorf("failed to grant lease for key %s: %w", key, err)
+		return errors.WithMessagef(err, "failed to grant lease for key %s", key)
 	}
 
 	if err := e.putKeyVal(ctx, key, val, lease, forced); err != nil {
