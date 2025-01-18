@@ -89,6 +89,9 @@ func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T)
 			return err
 		}
 		if err := loadFn(resource); err != nil {
+			if errors.Is(err, schema.ErrGRPCAlreadyExists) {
+				return nil
+			}
 			return err
 		}
 	}
