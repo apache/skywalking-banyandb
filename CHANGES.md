@@ -39,6 +39,7 @@ Release Notes.
 - Parse string and int array in the query result table.
 - Fix the bug that fails to update `Group` Schema's ResourceOpts.
 - UI: Implement TopNAggregation data query page.
+- UI: Update BanyanDB UI to Integrate New Property Query API.
 
 ### Documentation
 

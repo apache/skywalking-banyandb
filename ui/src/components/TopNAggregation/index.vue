@@ -19,7 +19,7 @@
 
 <script setup>
   import { reactive, ref } from 'vue';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { watch } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import { Search, RefreshRight } from '@element-plus/icons-vue';
