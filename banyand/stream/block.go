@@ -570,7 +570,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		}
 		bc.tagFamilies = append(bc.tagFamilies, tf)
 	}
-	return true
+	return len(bc.timestamps) > 0
 }
 
 var blockCursorPool = pool.Register[*blockCursor]("stream-blockCursor")
