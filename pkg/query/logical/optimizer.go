@@ -78,7 +78,7 @@ func (pdo PushDownOrder) Optimize(plan Plan) (Plan, error) {
 			pdo.order.GetIndexRuleName(), pdo.order.GetSort()); err == nil && order != nil {
 			v.Sort(order)
 		} else {
-			return nil, err
+			return plan, err
 		}
 	}
 	return plan, nil

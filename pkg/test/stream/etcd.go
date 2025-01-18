@@ -21,6 +21,7 @@ package stream
 import (
 	"context"
 	"embed"
+	"errors"
 	"path"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -28,6 +29,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const (
@@ -55,6 +57,11 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 	g := &commonv1.Group{}
 	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
 		return err
+	}
+	_, err := e.GetGroup(ctx, g.Metadata.Name)
+	if !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		logger.Infof("group %s already exists", g.Metadata.Name)
+		return nil
 	}
 	if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
 		return innerErr

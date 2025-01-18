@@ -676,7 +676,7 @@ func (t *TopNValue) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder) e
 	for i, ev := range t.entityValues {
 		t.buf, t.entities[i], err = pbv1.UnmarshalTagValues(t.buf, t.entities[i], ev)
 		if err != nil {
-			return fmt.Errorf("cannot unmarshal topNValue.entityValues[%d]: %w", i, err)
+			return fmt.Errorf("cannot unmarshal topNValue.entityValues[%d]:%s %w", i, ev, err)
 		}
 		if len(t.entities[i]) != len(t.entityTagNames) {
 			return fmt.Errorf("entityValues[%d] length is not equal to entityTagNames", i)

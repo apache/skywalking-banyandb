@@ -30,7 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -71,9 +70,9 @@ func (e *elementIndex) Write(docs index.Documents) error {
 	})
 }
 
-func (e *elementIndex) Search(ctx context.Context, seriesList pbv1.SeriesList, filter index.Filter) (posting.List, error) {
+func (e *elementIndex) Search(ctx context.Context, seriesList []uint64, filter index.Filter) (posting.List, error) {
 	var result posting.List
-	for i, series := range seriesList {
+	for i, id := range seriesList {
 		select {
 		case <-ctx.Done():
 			return nil, errors.WithMessagef(ctx.Err(), "search series %d/%d", i, len(seriesList))
@@ -81,7 +80,7 @@ func (e *elementIndex) Search(ctx context.Context, seriesList pbv1.SeriesList, f
 		}
 		pl, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return e.store, nil
-		}, series.ID)
+		}, common.SeriesID(id))
 		if err != nil {
 			return nil, err
 		}

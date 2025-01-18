@@ -20,6 +20,7 @@ Release Notes.
 - Add the max disk usage threshold for the `Measure`, `Stream`, and `Property` to control the disk usage.
 - Add the "api version" service to gRPC and HTTP server.
 - Metadata: Wait for the existing registration to be removed before registering the node.
+- Stream: Introduce the batch scan to improve the performance of the query and limit the memory usage.
 
 ### Bug Fixes
 

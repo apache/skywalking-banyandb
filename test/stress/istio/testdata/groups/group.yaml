@@ -110,13 +110,14 @@
       num: 3
       unit: UNIT_DAY
   updatedAt: null
-- catalog: CATALOG_UNSPECIFIED
+- catalog: CATALOG_PROPERTY
   metadata:
     createRevision: "0"
     group: ""
     id: 0
     modRevision: "0"
     name: sw
-  resourceOpts: null
+  resourceOpts:
+    shardNum: 1
   updatedAt: null
 

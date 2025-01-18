@@ -169,7 +169,10 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		err := s.schemaRegistry.RegisterNode(ctx, nodeInfo, s.forceRegisterNode)
 		cancel()
 		if errors.Is(err, schema.ErrGRPCAlreadyExists) ||
-			errors.Is(err, context.DeadlineExceeded) {
+			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			// Log the specific error
+			l.Warn().Err(err).Strs("etcd-endpoints", s.endpoints).Msg("register node error")
+
 			select {
 			case <-stopCh:
 				return errors.New("register node interrupted")
@@ -178,13 +181,6 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			case <-s.closer.CloseNotify():
 				return errors.New("register node interrupted")
 			default:
-				var msg string
-				if errors.Is(err, schema.ErrGRPCAlreadyExists) {
-					msg = "node already exists, retrying..."
-				} else {
-					msg = "register node timeout, retrying..."
-				}
-				l.Warn().Strs("etcd-endpoints", s.endpoints).Msg(msg)
 				time.Sleep(time.Second)
 				continue
 			}

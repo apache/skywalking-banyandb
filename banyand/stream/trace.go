@@ -50,7 +50,7 @@ func (bc *blockCursor) String() string {
 		bc.p.partMetadata.ID, bc.bm.seriesID, minTimestamp, maxTimestamp, bc.bm.count, humanize.Bytes(bc.bm.uncompressedSizeBytes))
 }
 
-func startBlockScanSpan(ctx context.Context, sids int, parts []*part, qr *queryResult) func() {
+func startBlockScanSpan(ctx context.Context, sids int, parts []*part, qr *idxResult) func() {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
 		return func() {}
