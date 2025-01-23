@@ -28,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -75,8 +76,9 @@ func setUp() (*services, func()) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	metricSvc := observability.NewMetricService(metadataService, pipeline, "test", nil)
+	pm := protector.NewMemory(metricSvc)
 	// Init Measure Service
-	measureService, err := measure.NewService(context.TODO(), metadataService, pipeline, nil, metricSvc)
+	measureService, err := measure.NewService(metadataService, pipeline, nil, metricSvc, pm)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadMeasureSvc := &preloadMeasureService{metaSvc: metadataService}
 	querySvc, err := query.NewService(context.TODO(), nil, measureService, metadataService, pipeline)

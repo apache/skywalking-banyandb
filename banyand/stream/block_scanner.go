@@ -26,9 +26,11 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
@@ -80,6 +82,8 @@ var shardScanConcurrencyCh = make(chan struct{}, cgroups.CPUs())
 
 type blockScanner struct {
 	segment   storage.Segment[*tsTable, *option]
+	pm        *protector.Memory
+	l         *logger.Logger
 	series    []*pbv1.Series
 	seriesIDs []uint64
 	qo        queryOptions
@@ -165,6 +169,7 @@ func (q *blockScanner) scanBlocks(ctx context.Context, seriesList []uint64, tab 
 		case blockCh <- batch:
 		case <-ctx.Done():
 			releaseBlockScanResultBatch(batch)
+			q.l.Warn().Err(ti.Error()).Msg("cannot init tstIter")
 		}
 		return
 	}
@@ -178,10 +183,25 @@ func (q *blockScanner) scanBlocks(ctx context.Context, seriesList []uint64, tab 
 		bs.qo.elementFilter = filter
 		bs.bm.copyFrom(p.curBlock)
 		if len(batch.bss) >= cap(batch.bss) {
+			var totalBlockBytes uint64
+			for i := range batch.bss {
+				totalBlockBytes += batch.bss[i].bm.uncompressedSizeBytes
+			}
+			if err := q.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
+				batch.err = fmt.Errorf("cannot acquire resource: %w", err)
+				select {
+				case blockCh <- batch:
+				case <-ctx.Done():
+					releaseBlockScanResultBatch(batch)
+					q.l.Warn().Err(err).Msg("cannot acquire resource")
+				}
+				return
+			}
 			select {
 			case blockCh <- batch:
 			case <-ctx.Done():
 				releaseBlockScanResultBatch(batch)
+				q.l.Warn().Int("batch.len", len(batch.bss)).Msg("context canceled while sending block")
 				return
 			}
 			batch = generateBlockScanResultBatch()
@@ -192,6 +212,7 @@ func (q *blockScanner) scanBlocks(ctx context.Context, seriesList []uint64, tab 
 		select {
 		case blockCh <- batch:
 		case <-ctx.Done():
+
 			releaseBlockScanResultBatch(batch)
 		}
 		return

@@ -61,7 +61,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
-const defaultQueryTimeout = 30 * time.Second
+const defaultQueryTimeout = 10 * time.Second
 
 type propertyServer struct {
 	propertyv1.UnimplementedPropertyServiceServer

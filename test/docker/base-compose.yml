@@ -59,8 +59,7 @@ services:
       - sw_agent:/skywalking-java-agent
 
   oap:
-    # TODO: Use the official image when it's available
-    image: "docker.io/hanahmily/oap:${SW_OAP_COMMIT}"
+    image: "ghcr.io/apache/skywalking/oap:${SW_OAP_COMMIT}"
     expose:
       - 11800
       - 12800

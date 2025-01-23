@@ -94,7 +94,7 @@ func (q *queryService) Name() string {
 
 func (q *queryService) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("distributed-query")
-	fs.DurationVar(&q.slowQuery, "dst-slow-query", 0, "distributed slow query threshold, 0 means no slow query log")
+	fs.DurationVar(&q.slowQuery, "dst-slow-query", 5*time.Second, "distributed slow query threshold, 0 means no slow query log")
 	return fs
 }
 

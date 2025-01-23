@@ -25,6 +25,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -53,6 +54,7 @@ type option struct {
 
 type measure struct {
 	databaseSupplier   schema.Supplier
+	pm                 *protector.Memory
 	indexTagMap        map[string]struct{}
 	l                  *logger.Logger
 	schema             *databasev1.Measure
@@ -122,7 +124,8 @@ type measureSpec struct {
 	topNAggregations []*databasev1.TopNAggregation
 }
 
-func openMeasure(shardNum uint32, db schema.Supplier, spec measureSpec, l *logger.Logger, pipeline queue.Queue,
+func openMeasure(shardNum uint32, db schema.Supplier, spec measureSpec,
+	l *logger.Logger, pipeline queue.Queue, pm *protector.Memory,
 ) (*measure, error) {
 	m := &measure{
 		shardNum:         shardNum,
@@ -130,6 +133,7 @@ func openMeasure(shardNum uint32, db schema.Supplier, spec measureSpec, l *logge
 		indexRules:       spec.indexRules,
 		topNAggregations: spec.topNAggregations,
 		l:                l,
+		pm:               pm,
 	}
 	if err := m.parseSpec(); err != nil {
 		return nil, err

@@ -28,6 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -60,6 +61,7 @@ type service struct {
 	omr                 observability.MetricsRegistry
 	schemaRepo          *schemaRepo
 	l                   *logger.Logger
+	pm                  *protector.Memory
 	root                string
 	option              option
 	maxDiskUsagePercent int
@@ -147,11 +149,12 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server, omr observability.MetricsRegistry) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server, omr observability.MetricsRegistry, pm *protector.Memory) (Service, error) {
 	return &service{
 		metadata:       metadata,
 		pipeline:       pipeline,
 		metricPipeline: metricPipeline,
 		omr:            omr,
+		pm:             pm,
 	}, nil
 }

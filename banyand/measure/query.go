@@ -353,6 +353,7 @@ func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		return fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
 	}
 	var hit int
+	var totalBlockBytes uint64
 	for tstIter.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {
@@ -366,9 +367,13 @@ func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		p := tstIter.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
 		result.data = append(result.data, bc)
+		totalBlockBytes += bc.bm.uncompressedSizeBytes
 	}
 	if tstIter.Error() != nil {
 		return fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
+	}
+	if err := s.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
+		return err
 	}
 	result.sidToIndex = make(map[common.SeriesID]int)
 	for i, si := range originalSids {

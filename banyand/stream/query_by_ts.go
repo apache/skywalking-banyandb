@@ -25,7 +25,9 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -35,6 +37,8 @@ var _ model.StreamQueryResult = (*tsResult)(nil)
 
 type tsResult struct {
 	sm       *stream
+	pm       *protector.Memory
+	l        *logger.Logger
 	segments []storage.Segment[*tsTable, option]
 	series   []*pbv1.Series
 	shards   []*model.StreamResult
@@ -75,6 +79,8 @@ func (t *tsResult) scanSegment(ctx context.Context) error {
 		segment: segment,
 		qo:      t.qo,
 		series:  t.series,
+		pm:      t.pm,
+		l:       t.l,
 	}
 	defer bs.close()
 	if err := bs.searchSeries(ctx); err != nil {

@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
@@ -48,18 +49,19 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
 	metricSvc := observability.NewMetricService(metaSvc, pipeline, "standalone", nil)
+	pm := protector.NewMemory(metricSvc)
 	propertySvc, err := property.NewService(metaSvc, pipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
 	}
-	streamSvc, err := stream.NewService(ctx, metaSvc, pipeline, metricSvc)
+	streamSvc, err := stream.NewService(metaSvc, pipeline, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
 	var srvMetrics *grpcprom.ServerMetrics
 	srvMetrics.UnaryServerInterceptor()
 	srvMetrics.UnaryServerInterceptor()
-	measureSvc, err := measure.NewService(ctx, metaSvc, pipeline, nil, metricSvc)
+	measureSvc, err := measure.NewService(metaSvc, pipeline, nil, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
@@ -82,6 +84,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		pipeline,
 		metaSvc,
 		metricSvc,
+		pm,
 		propertySvc,
 		measureSvc,
 		streamSvc,

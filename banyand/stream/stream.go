@@ -26,6 +26,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -72,6 +73,7 @@ type stream struct {
 	schema            *databasev1.Stream
 	tagMap            map[string]*databasev1.TagSpec
 	entityMap         map[string]int
+	pm                *protector.Memory
 	name              string
 	group             string
 	indexRuleLocators partition.IndexRuleLocator
@@ -111,12 +113,15 @@ type streamSpec struct {
 	indexRules []*databasev1.IndexRule
 }
 
-func openStream(shardNum uint32, db schema.Supplier, spec streamSpec, l *logger.Logger) *stream {
+func openStream(shardNum uint32, db schema.Supplier,
+	spec streamSpec, l *logger.Logger, pm *protector.Memory,
+) *stream {
 	s := &stream{
 		shardNum:   shardNum,
 		schema:     spec.schema,
 		indexRules: spec.indexRules,
 		l:          l,
+		pm:         pm,
 	}
 	s.parseSpec()
 	if db == nil {

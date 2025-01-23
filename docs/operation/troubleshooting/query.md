@@ -125,3 +125,15 @@ If the `block_header` is:
 ```
 
 The `PartID` is 377403, which means this block is in the data part `part_377403_/tmp/measure/measure-default/seg-20240923/shard-0/0000000000005c23b`. The `SeriesID` is 4570144289778100188, which means this block is for the series with the ID `4570144289778100188`. The `MinTimestamp` and `MaxTimestamp` are `Jun 16 23:08:08` and `Sep 24 23:08:08`, respectively. The `Count` is 1, which means there is only one data point in this block. The `UncompressedSize` is 16 B, which means the uncompressed size of this block is 16 bytes.
+
+### Memory Acquisition Failed
+
+When you faced the following error:
+
+```json
+{"level":"error","module":"QUERY.MEASURE.MINUTE.SERVICE_CPM_MINUTE","error":"failed to query measure: context canceled: memory acquisition failed (currentUsage: 455081320, limit: 5, size: 1428, blockedDuration: 31.874045791s): context canceled","req":{"groups":["minute"], "name":"service_cpm_minute", "timeRange":{"begin":"2025-01-22T10:39:58Z", "end":"2025-01-22T11:09:58Z"}, "fieldProjection":{"names":["total", "value"]}},"time":"2025-01-22T11:11:38Z","message":"fail to query"}
+```
+
+It means the query service has reached the memory limit. The query service will stop if the memory usage exceeds the limit. The memory limit is controlled by the `allowed-bytes` or `allowed-percent` flags. If the memory is sucient, you can increase the memory limit by setting the `allowed-bytes` or `allowed-percent` flags. Please refer to the [Configuration](../configuration.md#data--storage) documentation for more information on setting the memory limit.
+
+BanyanDB get the cgroup memory limit. If the memory limit is not set, BanyanDB will ignore the memory limit.

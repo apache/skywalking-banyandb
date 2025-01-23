@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
@@ -37,6 +38,7 @@ import (
 type idxResult struct {
 	sortingIter      itersort.Iterator[*index.DocumentResult]
 	sm               *stream
+	pm               *protector.Memory
 	tabs             []*tsTable
 	elementIDsSorted []uint64
 	data             []*blockCursor
@@ -86,6 +88,7 @@ func (qr *idxResult) scanParts(ctx context.Context, qo queryOptions) error {
 		return fmt.Errorf("cannot init tstIter: %w", ti.Error())
 	}
 	var hit int
+	var totalBlockBytes uint64
 	for ti.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {
@@ -99,9 +102,13 @@ func (qr *idxResult) scanParts(ctx context.Context, qo queryOptions) error {
 		p := ti.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
 		qr.data = append(qr.data, bc)
+		totalBlockBytes += bc.bm.uncompressedSizeBytes
 	}
 	if ti.Error() != nil {
 		return fmt.Errorf("cannot iterate tstIter: %w", ti.Error())
+	}
+	if err := qr.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
+		return fmt.Errorf("cannot acquire resource: %w", err)
 	}
 	return nil
 }

@@ -28,6 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -52,13 +53,14 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	schemaRepo          schemaRepo
 	writeListener       bus.MessageListener
 	metadata            metadata.Repo
 	pipeline            queue.Server
 	localPipeline       queue.Queue
 	omr                 observability.MetricsRegistry
 	l                   *logger.Logger
+	pm                  *protector.Memory
+	schemaRepo          schemaRepo
 	root                string
 	option              option
 	maxDiskUsagePercent int
@@ -136,10 +138,11 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(_ context.Context, metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm *protector.Memory) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,
 		omr:      omr,
+		pm:       pm,
 	}, nil
 }
