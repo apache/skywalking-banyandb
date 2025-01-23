@@ -21,6 +21,7 @@ Release Notes.
 - Add the "api version" service to gRPC and HTTP server.
 - Metadata: Wait for the existing registration to be removed before registering the node.
 - Stream: Introduce the batch scan to improve the performance of the query and limit the memory usage.
+- Add memory protector to protect the memory usage of the system. It will limit the memory usage of the querying.
 
 ### Bug Fixes
 

@@ -107,10 +107,10 @@ func (m *Memory) Name() string {
 func (m *Memory) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet(m.Name())
 	flagS.IntVarP(&m.allowedPercent, "allowed-percent", "", 75,
-		"Allowed percent of memory usage. If the memory usage exceeds this value, the protector will stop the query services. "+
-			"If the value is too high, the data will be evicted from OS page cache, which may cause high disk I/O.")
-	flagS.VarP(&m.allowedBytes, "allowed-bytes", "", "Allowed bytes of memory usage. If the memory usage exceeds this value, the protector will stop the query services."+
-		"If the value is too high, the data will be evicted from OS page cache, which may cause high disk I/O.")
+		"Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. "+
+			"Setting a large value may evict data from the OS page cache, causing high disk I/O.")
+	flagS.VarP(&m.allowedBytes, "allowed-bytes", "", "Allowed percentage of total memory usage. If usage exceeds this value, the query services will stop. "+
+		"This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache eviction.")
 	return flagS
 }
 
