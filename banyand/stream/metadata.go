@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
@@ -252,6 +253,7 @@ type supplier struct {
 	pipeline queue.Queue
 	omr      observability.MetricsRegistry
 	l        *logger.Logger
+	pm       *protector.Memory
 	path     string
 	option   option
 }
@@ -264,6 +266,7 @@ func newSupplier(path string, svc *service) *supplier {
 		pipeline: svc.localPipeline,
 		option:   svc.option,
 		omr:      svc.omr,
+		pm:       svc.pm,
 	}
 }
 
@@ -272,7 +275,7 @@ func (s *supplier) OpenResource(shardNum uint32, supplier resourceSchema.Supplie
 	return openStream(shardNum, supplier, streamSpec{
 		schema:     streamSchema,
 		indexRules: spec.IndexRules(),
-	}, s.l), nil
+	}, s.l, s.pm), nil
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -334,5 +337,5 @@ func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Suppli
 	return openStream(shardNum, nil, streamSpec{
 		schema:     streamSchema,
 		indexRules: spec.IndexRules(),
-	}, s.l), nil
+	}, s.l, nil), nil
 }

@@ -82,6 +82,8 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 			series:   series,
 			qo:       qo,
 			sm:       s,
+			pm:       s.pm,
+			l:        s.l,
 		}
 		if sqo.Order == nil {
 			result.asc = true
@@ -91,6 +93,7 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		return result, nil
 	}
 	var result idxResult
+	result.pm = s.pm
 	result.segments = segments
 	result.sm = s
 	result.qo = queryOptions{

@@ -100,6 +100,11 @@ The following flags are used to configure the embedded etcd storage engine which
 
 - `--metadata-root-path string`: The root path of metadata (default: "/tmp").
 
+The following flags are used to 
+
+- `--allowed-bytes bytes`: Allowed bytes of memory usage. If the memory usage exceeds this value, the protector will stop the query services.If the value is too high, the data will be evicted from OS page cache, which may cause high disk I/O. (default 0B)
+- `--allowed-percent int`: Allowed percent of memory usage. If the memory usage exceeds this value, the protector will stop the query services. If the value is too high, the data will be evicted from OS page cache, which may cause high disk I/O. (default 75)
+
 ### Observability
 
 - `--observability-listener-addr string`: Listen address for observability (default: ":2121").
