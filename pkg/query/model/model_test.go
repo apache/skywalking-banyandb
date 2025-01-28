@@ -560,9 +560,9 @@ func TestMergeStreamResults(t *testing.T) {
 			results:  []*StreamResult{NewStreamResult(3, true), NewStreamResult(3, true)},
 			topN:     3,
 			asc:      true,
-			wantTS:   []int64{},
-			wantTags: []TagFamily{},
-			wantSIDs: []common.SeriesID{},
+			wantTS:   nil,
+			wantTags: nil,
+			wantSIDs: nil,
 		},
 		{
 			name: "one with data, one empty",

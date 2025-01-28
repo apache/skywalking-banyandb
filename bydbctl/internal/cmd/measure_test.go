@@ -179,7 +179,8 @@ entity:
 		})
 		resp := new(databasev1.MeasureRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Measure).To(HaveLen(2))
+		// There is a _topn_result measure created by default
+		Expect(resp.Measure).To(HaveLen(3))
 	})
 
 	AfterEach(func() {
