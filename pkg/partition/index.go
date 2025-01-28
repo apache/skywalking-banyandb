@@ -25,7 +25,7 @@ import (
 
 // IndexRuleLocator is a helper struct to locate the index rule by tag name.
 type IndexRuleLocator struct {
-	EntitySet      map[string]struct{}
+	EntitySet      map[string]int
 	TagFamilyTRule []map[string]*databasev1.IndexRule
 }
 
@@ -42,10 +42,10 @@ type FieldIndexLocation map[string]map[string]FieldWithType
 func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.TagFamilySpec,
 	indexRules []*databasev1.IndexRule, indexMode bool,
 ) (locators IndexRuleLocator, fil FieldIndexLocation) {
-	locators.EntitySet = make(map[string]struct{}, len(entity.TagNames))
+	locators.EntitySet = make(map[string]int, len(entity.TagNames))
 	fil = make(FieldIndexLocation)
 	for i := range entity.TagNames {
-		locators.EntitySet[entity.TagNames[i]] = struct{}{}
+		locators.EntitySet[entity.TagNames[i]] = i + 1
 	}
 	findIndexRuleByTagName := func(tagName string) *databasev1.IndexRule {
 		for i := range indexRules {

@@ -22,7 +22,6 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"io"
 	"sort"
 
 	"github.com/pkg/errors"
@@ -56,7 +55,6 @@ type Query interface {
 
 // Measure allows inspecting measure data points' details.
 type Measure interface {
-	io.Closer
 	Query(ctx context.Context, opts model.MeasureQueryOptions) (model.MeasureQueryResult, error)
 	GetSchema() *databasev1.Measure
 	GetIndexRules() []*databasev1.IndexRule
@@ -77,12 +75,18 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
 	}
-	db := s.databaseSupplier.SupplyTSDB()
+	var tsdb storage.TSDB[*tsTable, option]
+	db := s.tsdb.Load()
 	if db == nil {
-		return mqr, nil
+		tsdb, err = s.schemaRepo.loadTSDB(s.group)
+		if err != nil {
+			return nil, err
+		}
+		s.tsdb.Store(tsdb)
+	} else {
+		tsdb = db.(storage.TSDB[*tsTable, option])
 	}
 
-	tsdb := db.(storage.TSDB[*tsTable, option])
 	segments := tsdb.SelectSegments(*mqo.TimeRange)
 	if len(segments) < 1 {
 		return nilResult, nil
@@ -184,6 +188,7 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 	fieldToValueType := make(map[string]tagNameWithType)
 	var projectedEntityOffsets map[string]int
 	newTagProjection = make([]model.TagProjection, 0)
+	is := s.indexSchema.Load().(indexSchema)
 	for _, tp := range mqo.TagProjection {
 		var tagProjection model.TagProjection
 	TAG:
@@ -197,14 +202,16 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 					continue TAG
 				}
 			}
-			if fields, ok := s.fieldIndexLocation[tp.Family]; ok {
-				if field, ok := fields[n]; ok {
-					indexProjection = append(indexProjection, field.Key)
-					fieldToValueType[field.Key.Marshal()] = tagNameWithType{
-						fieldName: n,
-						typ:       field.Type,
+			if is.fieldIndexLocation != nil {
+				if fields, ok := is.fieldIndexLocation[tp.Family]; ok {
+					if field, ok := fields[n]; ok {
+						indexProjection = append(indexProjection, field.Key)
+						fieldToValueType[field.Key.Marshal()] = tagNameWithType{
+							fieldName: n,
+							typ:       field.Type,
+						}
+						continue TAG
 					}
-					continue TAG
 				}
 			}
 			tagProjection.Family = tp.Family
@@ -268,6 +275,7 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 			segments[i].DecRef()
 		}
 	}()
+	is := s.indexSchema.Load().(indexSchema)
 	r := &indexSortResult{}
 	var indexProjection []index.FieldKey
 	for _, tp := range mqo.TagProjection {
@@ -285,14 +293,16 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 					continue TAG
 				}
 			}
-			if fields, ok := s.fieldIndexLocation[tp.Family]; ok {
-				if field, ok := fields[n]; ok {
-					indexProjection = append(indexProjection, field.Key)
-					tagFamilyLocation.fieldToValueType[n] = tagNameWithType{
-						fieldName: field.Key.Marshal(),
-						typ:       field.Type,
+			if is.fieldIndexLocation != nil {
+				if fields, ok := is.fieldIndexLocation[tp.Family]; ok {
+					if field, ok := fields[n]; ok {
+						indexProjection = append(indexProjection, field.Key)
+						tagFamilyLocation.fieldToValueType[n] = tagNameWithType{
+							fieldName: field.Key.Marshal(),
+							typ:       field.Type,
+						}
+						continue TAG
 					}
-					continue TAG
 				}
 			}
 			return nil, fmt.Errorf("tag %s not found in schema", n)

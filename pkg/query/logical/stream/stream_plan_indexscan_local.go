@@ -79,7 +79,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	default:
 	}
 	if i.result != nil {
-		return BuildElementsFromStreamResult(ctx, i.result), nil
+		return BuildElementsFromStreamResult(ctx, i.result)
 	}
 	var orderBy *index.OrderBy
 	if i.order != nil {
@@ -104,7 +104,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	if i.result == nil {
 		return nil, nil
 	}
-	return BuildElementsFromStreamResult(ctx, i.result), nil
+	return BuildElementsFromStreamResult(ctx, i.result)
 }
 
 func (i *localIndexScan) String() string {
@@ -125,10 +125,19 @@ func (i *localIndexScan) Schema() logical.Schema {
 }
 
 // BuildElementsFromStreamResult builds a slice of elements from the given stream query result.
-func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQueryResult) (elements []*streamv1.Element) {
-	r := result.Pull(ctx)
-	if r == nil {
-		return nil
+func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQueryResult) (elements []*streamv1.Element, err error) {
+	var r *model.StreamResult
+	for {
+		r = result.Pull(ctx)
+		if r == nil {
+			return nil, nil
+		}
+		if r.Error != nil {
+			return nil, r.Error
+		}
+		if len(r.Timestamps) > 0 {
+			break
+		}
 	}
 	for i := range r.Timestamps {
 		e := &streamv1.Element{
@@ -150,5 +159,5 @@ func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQuery
 		}
 		elements = append(elements, e)
 	}
-	return elements
+	return elements, nil
 }

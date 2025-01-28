@@ -107,7 +107,8 @@ func (sr *schemaRepo) OnInit(kinds []schema.Kind) (bool, []int64) {
 		logger.Panicf("invalid kinds: %v", kinds)
 		return false, nil
 	}
-	return true, sr.Repository.Init(schema.KindStream)
+	_, revs := sr.Repository.Init(schema.KindStream)
+	return true, revs
 }
 
 func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
@@ -137,47 +138,29 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			Metadata: metadata.Spec.(*databasev1.Stream),
 		})
 	case schema.KindIndexRuleBinding:
-		irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding)
-		if !ok {
-			sr.l.Warn().Msg("fail to convert message to IndexRuleBinding")
-			return
+		if irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding); ok {
+			if err := validate.IndexRuleBinding(irb); err != nil {
+				sr.l.Warn().Err(err).Msg("index rule binding is ignored")
+				return
+			}
+			if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
+				sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+					Typ:      resourceSchema.EventAddOrUpdate,
+					Kind:     resourceSchema.EventKindIndexRuleBinding,
+					Metadata: irb,
+				})
+			}
 		}
-		if err := validate.IndexRuleBinding(irb); err != nil {
-			sr.l.Warn().Err(err).Msg("index rule binding is ignored")
-			return
-		}
-		if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			stm, err := sr.metadata.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
-				Name:  irb.GetSubject().GetName(),
-				Group: metadata.Group,
-			})
-			cancel()
-			if err != nil {
+	case schema.KindIndexRule:
+		if ir, ok := metadata.Spec.(*databasev1.IndexRule); ok {
+			if err := validate.IndexRule(metadata.Spec.(*databasev1.IndexRule)); err != nil {
+				sr.l.Warn().Err(err).Msg("index rule is ignored")
 				return
 			}
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
-				Kind:     resourceSchema.EventKindResource,
-				Metadata: stm,
-			})
-		}
-	case schema.KindIndexRule:
-		if err := validate.IndexRule(metadata.Spec.(*databasev1.IndexRule)); err != nil {
-			sr.l.Warn().Err(err).Msg("index rule is ignored")
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		subjects, err := sr.metadata.Subjects(ctx, metadata.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_STREAM)
-		if err != nil {
-			return
-		}
-		for _, sub := range subjects {
-			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-				Typ:      resourceSchema.EventAddOrUpdate,
-				Kind:     resourceSchema.EventKindResource,
-				Metadata: sub.(*databasev1.Stream),
+				Kind:     resourceSchema.EventKindIndexRule,
+				Metadata: ir,
 			})
 		}
 	default:
@@ -203,24 +186,23 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			Metadata: metadata.Spec.(*databasev1.Stream),
 		})
 	case schema.KindIndexRuleBinding:
-		if metadata.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			m, err := sr.metadata.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
-				Name:  metadata.Name,
-				Group: metadata.Group,
-			})
-			if err != nil {
-				return
+		if binding, ok := metadata.Spec.(*databasev1.IndexRuleBinding); ok {
+			if binding.GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
+				sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+					Typ:      resourceSchema.EventDelete,
+					Kind:     resourceSchema.EventKindIndexRuleBinding,
+					Metadata: metadata.Spec.(*databasev1.IndexRuleBinding),
+				})
 			}
-			// we should update instead of delete
-			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-				Typ:      resourceSchema.EventAddOrUpdate,
-				Kind:     resourceSchema.EventKindResource,
-				Metadata: m,
-			})
 		}
 	case schema.KindIndexRule:
+		if rule, ok := metadata.Spec.(*databasev1.IndexRule); ok {
+			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+				Typ:      resourceSchema.EventDelete,
+				Kind:     resourceSchema.EventKindIndexRule,
+				Metadata: rule,
+			})
+		}
 	default:
 	}
 }
@@ -249,33 +231,34 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata metadata.Repo
-	pipeline queue.Queue
-	omr      observability.MetricsRegistry
-	l        *logger.Logger
-	pm       *protector.Memory
-	path     string
-	option   option
+	metadata   metadata.Repo
+	pipeline   queue.Queue
+	omr        observability.MetricsRegistry
+	l          *logger.Logger
+	pm         *protector.Memory
+	schemaRepo *schemaRepo
+	path       string
+	option     option
 }
 
 func newSupplier(path string, svc *service) *supplier {
 	return &supplier{
-		path:     path,
-		metadata: svc.metadata,
-		l:        svc.l,
-		pipeline: svc.localPipeline,
-		option:   svc.option,
-		omr:      svc.omr,
-		pm:       svc.pm,
+		path:       path,
+		metadata:   svc.metadata,
+		l:          svc.l,
+		pipeline:   svc.localPipeline,
+		option:     svc.option,
+		omr:        svc.omr,
+		pm:         svc.pm,
+		schemaRepo: &svc.schemaRepo,
 	}
 }
 
-func (s *supplier) OpenResource(shardNum uint32, supplier resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	streamSchema := spec.Schema().(*databasev1.Stream)
-	return openStream(shardNum, supplier, streamSpec{
-		schema:     streamSchema,
-		indexRules: spec.IndexRules(),
-	}, s.l, s.pm), nil
+	return openStream(streamSpec{
+		schema: streamSchema,
+	}, s.l, s.pm, s.schemaRepo), nil
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -332,10 +315,9 @@ func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
 	panic("do not support open db")
 }
 
-func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+func (s *portableSupplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	streamSchema := spec.Schema().(*databasev1.Stream)
-	return openStream(shardNum, nil, streamSpec{
-		schema:     streamSchema,
-		indexRules: spec.IndexRules(),
-	}, s.l, nil), nil
+	return openStream(streamSpec{
+		schema: streamSchema,
+	}, s.l, nil, nil), nil
 }

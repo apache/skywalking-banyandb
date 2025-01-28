@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	ginkgo "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -245,5 +246,237 @@ var _ = ginkgo.Describe("Watcher", func() {
 				mockedObj.deleteCalledNum.Load() == 1 &&
 				len(mockedObj.Data()) == 0
 		}, flags.EventuallyTimeout).Should(gomega.BeTrue())
+	})
+	ginkgo.It("should load initial state and track revisions", func() {
+		groupName := "testgroup-initial"
+		err := registry.CreateGroup(context.Background(), &commonv1.Group{
+			Metadata: &commonv1.Metadata{
+				Name: groupName,
+			},
+			Catalog: commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 1,
+				SegmentInterval: &commonv1.IntervalRule{
+					Num:  1,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Num:  3,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		_, err = registry.CreateMeasure(context.Background(), &databasev1.Measure{
+			Metadata: &commonv1.Metadata{
+				Name:  "initial-key1",
+				Group: groupName,
+			},
+			Entity: &databasev1.Entity{
+				TagNames: []string{"testtag"},
+			},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{
+					Name: "testtagfamily",
+					Tags: []*databasev1.TagSpec{
+						{
+							Name: "testtag",
+							Type: databasev1.TagType_TAG_TYPE_STRING,
+						},
+					},
+				},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		_, err = registry.CreateMeasure(context.Background(), &databasev1.Measure{
+			Metadata: &commonv1.Metadata{
+				Name:  "initial-key2",
+				Group: groupName,
+			},
+			Entity: &databasev1.Entity{
+				TagNames: []string{"testtag"},
+			},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{
+					Name: "testtagfamily",
+					Tags: []*databasev1.TagSpec{
+						{
+							Name: "testtag",
+							Type: databasev1.TagType_TAG_TYPE_STRING,
+						},
+					},
+				},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		watcher := registry.NewWatcher("test", schema.KindMeasure, mockedObj, schema.CheckInterval(1*time.Second))
+		ginkgo.DeferCleanup(func() {
+			watcher.Close()
+		})
+
+		gomega.Eventually(func() int {
+			return len(mockedObj.Data())
+		}, flags.EventuallyTimeout).Should(gomega.Equal(2))
+
+		gomega.Expect(mockedObj.addOrUpdateCalledNum.Load()).To(gomega.Equal(int32(2)))
+	})
+
+	ginkgo.It("should detect deletions", func() {
+		watcher := registry.NewWatcher("test", schema.KindMeasure, mockedObj, schema.CheckInterval(1*time.Second))
+		ginkgo.DeferCleanup(func() {
+			watcher.Close()
+		})
+
+		groupName := "testgroup-delete"
+		measureName := "delete-key"
+		err := registry.CreateGroup(context.Background(), &commonv1.Group{
+			Metadata: &commonv1.Metadata{
+				Name: groupName,
+			},
+			Catalog: commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 1,
+				SegmentInterval: &commonv1.IntervalRule{
+					Num:  1,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Num:  3,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		_, err = registry.CreateMeasure(context.Background(), &databasev1.Measure{
+			Metadata: &commonv1.Metadata{
+				Name:  measureName,
+				Group: groupName,
+			},
+			Entity: &databasev1.Entity{
+				TagNames: []string{"testtag"},
+			},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{
+					Name: "testtagfamily",
+					Tags: []*databasev1.TagSpec{
+						{
+							Name: "testtag",
+							Type: databasev1.TagType_TAG_TYPE_STRING,
+						},
+					},
+				},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		gomega.Eventually(func() bool {
+			_, ok := mockedObj.Data()[measureName]
+			return ok
+		}, flags.EventuallyTimeout).Should(gomega.BeTrue())
+
+		deleted, err := registry.DeleteMeasure(context.Background(), &commonv1.Metadata{
+			Name:  measureName,
+			Group: groupName,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(deleted).To(gomega.BeTrue())
+
+		gomega.Eventually(func() int {
+			return int(mockedObj.deleteCalledNum.Load())
+		}, 5*time.Second).Should(gomega.Equal(1))
+		gomega.Expect(mockedObj.Data()).NotTo(gomega.HaveKey(measureName))
+	})
+
+	ginkgo.It("should recover state after compaction", func() {
+		watcher := registry.NewWatcher("test", schema.KindMeasure, mockedObj, schema.CheckInterval(1*time.Hour))
+		ginkgo.DeferCleanup(func() {
+			watcher.Close()
+		})
+
+		groupName := "testgroup-compact"
+		measureName := "compact-key"
+		err := registry.CreateGroup(context.Background(), &commonv1.Group{
+			Metadata: &commonv1.Metadata{
+				Name: groupName,
+			},
+			Catalog: commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 1,
+				SegmentInterval: &commonv1.IntervalRule{
+					Num:  1,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Num:  3,
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+				},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		modRev, err := registry.CreateMeasure(context.Background(), &databasev1.Measure{
+			Metadata: &commonv1.Metadata{
+				Name:  measureName,
+				Group: groupName,
+			},
+			Entity: &databasev1.Entity{
+				TagNames: []string{"testtag"},
+			},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{
+					Name: "testtagfamily",
+					Tags: []*databasev1.TagSpec{
+						{
+							Name: "testtag",
+							Type: databasev1.TagType_TAG_TYPE_STRING,
+						},
+					},
+				},
+			},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		gomega.Eventually(func() bool {
+			_, ok := mockedObj.Data()[measureName]
+			return ok
+		}, flags.EventuallyTimeout).Should(gomega.BeTrue())
+
+		err = registry.Compact(context.Background(), modRev)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		updatedMeasure := &databasev1.Measure{
+			Metadata: &commonv1.Metadata{
+				Name:  measureName,
+				Group: groupName,
+			},
+			Entity: &databasev1.Entity{
+				TagNames: []string{"testtag"},
+			},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{
+					Name: "testtagfamily",
+					Tags: []*databasev1.TagSpec{
+						{
+							Name: "testtag",
+							Type: databasev1.TagType_TAG_TYPE_STRING,
+						},
+						{
+							Name: "testtag1",
+							Type: databasev1.TagType_TAG_TYPE_STRING,
+						},
+					},
+				},
+			},
+		}
+		_, err = registry.UpdateMeasure(context.Background(), updatedMeasure)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		gomega.Eventually(func() int {
+			return int(mockedObj.addOrUpdateCalledNum.Load())
+		}, 5*time.Second).Should(gomega.BeNumerically(">=", 2))
 	})
 })

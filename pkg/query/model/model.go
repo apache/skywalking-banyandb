@@ -201,6 +201,8 @@ func (sr *StreamResult) CopySingleFrom(other *StreamResult) {
 	}
 }
 
+var bypassStreamResult = &StreamResult{}
+
 // StreamResultHeap is a min-heap of StreamResult pointers.
 type StreamResultHeap struct {
 	data []*StreamResult
@@ -240,6 +242,10 @@ func MergeStreamResults(results []*StreamResult, topN int, asc bool) *StreamResu
 			result.idx = 0
 			heap.Push(h, result)
 		}
+	}
+
+	if h.Len() == 0 {
+		return bypassStreamResult
 	}
 
 	mergedResult := NewStreamResult(topN, asc)

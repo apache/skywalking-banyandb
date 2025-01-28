@@ -51,6 +51,9 @@ type ListOpt struct {
 	Group string
 }
 
+// WatcherOption is a placeholder for watcher configuration.
+type WatcherOption func(*watcherConfig)
+
 // Registry allowing depositing resources.
 type Registry interface {
 	io.Closer
@@ -62,8 +65,9 @@ type Registry interface {
 	TopNAggregation
 	Node
 	RegisterHandler(string, Kind, EventHandler)
-	NewWatcher(string, Kind, watchEventHandler) *watcher
+	NewWatcher(string, Kind, watchEventHandler, ...WatcherOption) *watcher
 	Register(context.Context, Metadata, bool) error
+	Compact(context.Context, int64) error
 }
 
 // TypeMeta defines the identity and type of an Event.

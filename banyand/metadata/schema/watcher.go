@@ -18,13 +18,15 @@
 package schema
 
 import (
-	"errors"
+	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
 	v3rpc "go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -34,37 +36,53 @@ type watchEventHandler interface {
 	OnDelete(Metadata)
 }
 type watcherConfig struct {
-	handler  watchEventHandler
-	key      string
-	revision int64
-	kind     Kind
+	handler       watchEventHandler
+	key           string
+	revision      int64
+	kind          Kind
+	checkInterval time.Duration
+}
+
+type cacheEntry struct {
+	valueHash   uint64 // Hash of the value
+	modRevision int64  // Last modified revision
 }
 
 type watcher struct {
-	handler  watchEventHandler
-	cli      *clientv3.Client
-	closer   *run.Closer
-	l        *logger.Logger
-	key      string
-	revision int64
-	kind     Kind
+	handler       watchEventHandler
+	cli           *clientv3.Client
+	closer        *run.Closer
+	l             *logger.Logger
+	ticker        *time.Ticker
+	cache         map[string]cacheEntry
+	key           string
+	revision      int64
+	kind          Kind
+	checkInterval time.Duration
+	mu            sync.RWMutex
 }
 
 func newWatcher(cli *clientv3.Client, wc watcherConfig, l *logger.Logger) *watcher {
+	if wc.checkInterval == 0 {
+		wc.checkInterval = 5 * time.Minute
+	}
 	w := &watcher{
-		cli:      cli,
-		key:      wc.key,
-		kind:     wc.kind,
-		handler:  wc.handler,
-		revision: wc.revision,
-		closer:   run.NewCloser(1),
-		l:        l,
+		cli:           cli,
+		key:           wc.key,
+		kind:          wc.kind,
+		handler:       wc.handler,
+		revision:      wc.revision,
+		closer:        run.NewCloser(1),
+		l:             l,
+		checkInterval: wc.checkInterval,
+		cache:         make(map[string]cacheEntry),
 	}
-	revision := w.revision
-	if revision < 1 {
-		revision = w.allEvents()
+
+	if w.revision < 1 {
+		w.periodicSync()
 	}
-	go w.watch(revision)
+
+	go w.watch(w.revision)
 	return w
 }
 
@@ -73,47 +91,29 @@ func (w *watcher) Close() {
 	w.closer.CloseThenWait()
 }
 
-func (w *watcher) allEvents() int64 {
-	cli := w.cli
-	var resp *clientv3.GetResponse
-	start := time.Now()
-	var eventHandleTime time.Duration
-	var eventSize int
-	for {
-		var err error
-		if resp, err = cli.Get(w.closer.Ctx(), w.key, clientv3.WithPrefix()); err == nil {
-			startHandle := time.Now()
-			eventSize = len(resp.Kvs)
-			w.handleAllEvents(resp.Kvs)
-			eventHandleTime = time.Since(startHandle)
-			break
-		}
-		select {
-		case <-w.closer.CloseNotify():
-			return -1
-		case <-time.After(1 * time.Second):
-		}
-	}
-	w.l.Info().Dur("event_handle_time", eventHandleTime).Dur("total_time", time.Since(start)).
-		Int("event_size", eventSize).Str("key", w.key).Msg("watcher all events")
-	return resp.Header.Revision
-}
-
 func (w *watcher) watch(revision int64) {
 	if !w.closer.AddRunning() {
 		return
 	}
 	defer w.closer.Done()
 	cli := w.cli
+
+	w.ticker = time.NewTicker(w.checkInterval)
+	defer w.ticker.Stop()
+
 OUTER:
 	for {
-		if revision < 0 {
-			revision = w.allEvents()
-		}
 		select {
 		case <-w.closer.CloseNotify():
 			return
 		default:
+		}
+
+		if revision < 0 {
+			// Use periodic sync to recover state and get new revision
+			w.periodicSync()
+			revision = w.revision
+			continue
 		}
 
 		wch := cli.Watch(w.closer.Ctx(), w.key,
@@ -124,39 +124,34 @@ OUTER:
 		if wch == nil {
 			continue
 		}
+
 		for {
 			select {
 			case <-w.closer.CloseNotify():
-				w.l.Info().Msgf("watcher closed")
+				w.l.Info().Msg("watcher closed")
 				return
+			case <-w.ticker.C:
+				w.periodicSync()
 			case watchResp, ok := <-wch:
 				if !ok {
 					select {
 					case <-w.closer.CloseNotify():
 						return
 					default:
-						break OUTER
+						revision = -1
+						continue OUTER
 					}
 				}
 				if err := watchResp.Err(); err != nil {
-					select {
-					case <-w.closer.CloseNotify():
-						return
-					default:
-						if errors.Is(err, v3rpc.ErrCompacted) {
-							revision = -1
-							break
-						}
-						continue
+					if errors.Is(err, v3rpc.ErrCompacted) {
+						revision = -1
+						continue OUTER
 					}
+					continue
 				}
+				w.revision = watchResp.Header.Revision
 				for _, event := range watchResp.Events {
-					select {
-					case <-w.closer.CloseNotify():
-						return
-					default:
-						w.handle(event, &watchResp)
-					}
+					w.handle(event, &watchResp)
 				}
 			}
 		}
@@ -164,15 +159,29 @@ OUTER:
 }
 
 func (w *watcher) handle(watchEvent *clientv3.Event, watchResp *clientv3.WatchResponse) {
+	keyStr := string(watchEvent.Kv.Key)
+	entry := cacheEntry{
+		valueHash:   convert.Hash(watchEvent.Kv.Value),
+		modRevision: watchEvent.Kv.ModRevision,
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	switch watchEvent.Type {
 	case mvccpb.PUT:
-		md, err := w.kind.Unmarshal(watchEvent.Kv)
-		if err != nil {
-			w.l.Error().Stringer("event_header", &watchResp.Header).AnErr("err", err).Msg("failed to unmarshal message")
-			return
+		if existing, exists := w.cache[keyStr]; !exists || existing.modRevision < entry.modRevision {
+			w.cache[keyStr] = entry
+
+			md, err := w.kind.Unmarshal(watchEvent.Kv)
+			if err != nil {
+				w.l.Error().Stringer("event_header", &watchResp.Header).AnErr("err", err).Msg("failed to unmarshal message")
+				return
+			}
+			w.handler.OnAddOrUpdate(md)
 		}
-		w.handler.OnAddOrUpdate(md)
 	case mvccpb.DELETE:
+		delete(w.cache, keyStr)
 		md, err := w.kind.Unmarshal(watchEvent.PrevKv)
 		if err != nil {
 			w.l.Error().Stringer("event_header", &watchResp.Header).AnErr("err", err).Msg("failed to unmarshal message")
@@ -182,13 +191,64 @@ func (w *watcher) handle(watchEvent *clientv3.Event, watchResp *clientv3.WatchRe
 	}
 }
 
-func (w *watcher) handleAllEvents(kvs []*mvccpb.KeyValue) {
-	for i := 0; i < len(kvs); i++ {
-		md, err := w.kind.Unmarshal(kvs[i])
-		if err != nil {
-			w.l.Error().AnErr("err", err).Msg("failed to unmarshal message")
+func (w *watcher) periodicSync() {
+	resp, err := w.cli.Get(w.closer.Ctx(), w.key, clientv3.WithPrefix())
+	if err != nil {
+		w.l.Error().Err(err).Msg("periodic sync failed to fetch keys")
+		return
+	}
+
+	currentState := make(map[string]cacheEntry, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		currentState[string(kv.Key)] = cacheEntry{
+			valueHash:   convert.Hash(kv.Value),
+			modRevision: kv.ModRevision,
+		}
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Detect deletions and changes
+	for cachedKey, cachedEntry := range w.cache {
+		currentEntry, exists := currentState[cachedKey]
+		if !exists {
+			// Handle deletion
+			delete(w.cache, cachedKey)
+			if md, err := w.getFromStore(cachedKey); err == nil {
+				w.handler.OnDelete(*md)
+			}
 			continue
 		}
-		w.handler.OnAddOrUpdate(md)
+
+		if currentEntry.valueHash != cachedEntry.valueHash {
+			// Handle update
+			if md, err := w.getFromStore(cachedKey); err == nil {
+				w.handler.OnAddOrUpdate(*md)
+				w.cache[cachedKey] = currentEntry
+			}
+		}
 	}
+
+	// Detect additions
+	for key, entry := range currentState {
+		if _, exists := w.cache[key]; !exists {
+			if md, err := w.getFromStore(key); err == nil {
+				w.handler.OnAddOrUpdate(*md)
+				w.cache[key] = entry
+			}
+		}
+	}
+}
+
+func (w *watcher) getFromStore(key string) (*Metadata, error) {
+	resp, err := w.cli.Get(w.closer.Ctx(), key)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, errors.New("key not found")
+	}
+	md, err := w.kind.Unmarshal(resp.Kvs[0])
+	return &md, err
 }

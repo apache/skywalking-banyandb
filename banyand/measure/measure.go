@@ -21,17 +21,14 @@
 package measure
 
 import (
+	"sync/atomic"
 	"time"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -52,40 +49,33 @@ type option struct {
 	seriesCacheMaxSize run.Bytes
 }
 
-type measure struct {
-	databaseSupplier   schema.Supplier
-	pm                 *protector.Memory
+type indexSchema struct {
 	indexTagMap        map[string]struct{}
-	l                  *logger.Logger
-	schema             *databasev1.Measure
-	processorManager   *topNProcessorManager
 	fieldIndexLocation partition.FieldIndexLocation
-	name               string
-	group              string
 	indexRuleLocators  partition.IndexRuleLocator
 	indexRules         []*databasev1.IndexRule
-	topNAggregations   []*databasev1.TopNAggregation
-	interval           time.Duration
-	shardNum           uint32
 }
 
-func (s *measure) startSteamingManager(pipeline queue.Queue) error {
-	if len(s.topNAggregations) == 0 {
-		return nil
+func (i *indexSchema) parse(schema *databasev1.Measure) {
+	i.indexRuleLocators, i.fieldIndexLocation = partition.ParseIndexRuleLocators(schema.GetEntity(), schema.GetTagFamilies(), i.indexRules, schema.IndexMode)
+	i.indexTagMap = make(map[string]struct{})
+	for j := range i.indexRules {
+		for k := range i.indexRules[j].Tags {
+			i.indexTagMap[i.indexRules[j].Tags[k]] = struct{}{}
+		}
 	}
-	tagMapSpec := logical.TagSpecMap{}
-	tagMapSpec.RegisterTagFamilies(s.schema.GetTagFamilies())
+}
 
-	s.processorManager = &topNProcessorManager{
-		l:            s.l,
-		pipeline:     pipeline,
-		m:            s,
-		s:            tagMapSpec,
-		topNSchemas:  s.topNAggregations,
-		processorMap: make(map[*commonv1.Metadata][]*topNStreamingProcessor),
-	}
-
-	return s.processorManager.start()
+type measure struct {
+	indexSchema atomic.Value
+	tsdb        atomic.Value
+	pm          *protector.Memory
+	l           *logger.Logger
+	schema      *databasev1.Measure
+	schemaRepo  *schemaRepo
+	name        string
+	group       string
+	interval    time.Duration
 }
 
 func (s *measure) GetSchema() *databasev1.Measure {
@@ -93,14 +83,18 @@ func (s *measure) GetSchema() *databasev1.Measure {
 }
 
 func (s *measure) GetIndexRules() []*databasev1.IndexRule {
-	return s.indexRules
-}
-
-func (s *measure) Close() error {
-	if s.processorManager == nil {
+	is := s.indexSchema.Load()
+	if is == nil {
 		return nil
 	}
-	return s.processorManager.Close()
+	return is.(indexSchema).indexRules
+}
+
+func (s *measure) OnIndexUpdate(index []*databasev1.IndexRule) {
+	var is indexSchema
+	is.indexRules = index
+	is.parse(s.schema)
+	s.indexSchema.Store(is)
 }
 
 func (s *measure) parseSpec() (err error) {
@@ -108,44 +102,27 @@ func (s *measure) parseSpec() (err error) {
 	if s.schema.Interval != "" {
 		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
 	}
-	s.indexRuleLocators, s.fieldIndexLocation = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules, s.schema.IndexMode)
-	s.indexTagMap = make(map[string]struct{})
-	for j := range s.indexRules {
-		for k := range s.indexRules[j].Tags {
-			s.indexTagMap[s.indexRules[j].Tags[k]] = struct{}{}
-		}
-	}
+	var is indexSchema
+	is.parse(s.schema)
+	s.indexSchema.Store(is)
 	return err
 }
 
 type measureSpec struct {
-	schema           *databasev1.Measure
-	indexRules       []*databasev1.IndexRule
-	topNAggregations []*databasev1.TopNAggregation
+	schema *databasev1.Measure
 }
 
-func openMeasure(shardNum uint32, db schema.Supplier, spec measureSpec,
-	l *logger.Logger, pipeline queue.Queue, pm *protector.Memory,
+func openMeasure(spec measureSpec,
+	l *logger.Logger, pm *protector.Memory, schemaRepo *schemaRepo,
 ) (*measure, error) {
 	m := &measure{
-		shardNum:         shardNum,
-		schema:           spec.schema,
-		indexRules:       spec.indexRules,
-		topNAggregations: spec.topNAggregations,
-		l:                l,
-		pm:               pm,
+		schema:     spec.schema,
+		l:          l,
+		pm:         pm,
+		schemaRepo: schemaRepo,
 	}
 	if err := m.parseSpec(); err != nil {
 		return nil, err
-	}
-	if db == nil {
-		return m, nil
-	}
-
-	m.databaseSupplier = db
-	if startErr := m.startSteamingManager(pipeline); startErr != nil {
-		l.Err(startErr).Str("measure", spec.schema.GetMetadata().GetName()).
-			Msg("fail to start streaming manager")
 	}
 	return m, nil
 }

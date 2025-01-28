@@ -22,9 +22,12 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -40,7 +43,27 @@ import (
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-var metadataScope = measureScope.SubScope("metadata")
+const (
+	// TopNSchemaName is the name of the top n result schema.
+	TopNSchemaName = "_top_n_result"
+	// TopNTagFamily is the tag family name of the topN result measure.
+	TopNTagFamily = "_topN"
+	// TopNFieldName is the field name of the topN result measure.
+	TopNFieldName = "value"
+)
+
+var (
+	metadataScope = measureScope.SubScope("metadata")
+
+	topNFieldsSpec = []*databasev1.FieldSpec{{
+		Name:              TopNFieldName,
+		FieldType:         databasev1.FieldType_FIELD_TYPE_DATA_BINARY,
+		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
+		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+	}}
+	// TopNTagNames is the tag names of the topN result measure.
+	TopNTagNames = []string{"name", "direction", "group"}
+)
 
 // SchemaService allows querying schema information.
 type SchemaService interface {
@@ -49,9 +72,11 @@ type SchemaService interface {
 }
 type schemaRepo struct {
 	resourceSchema.Repository
-	l        *logger.Logger
-	metadata metadata.Repo
-	path     string
+	metadata         metadata.Repo
+	pipeline         queue.Queue
+	l                *logger.Logger
+	topNProcessorMap sync.Map
+	path             string
 }
 
 func newSchemaRepo(path string, svc *service) *schemaRepo {
@@ -59,13 +84,14 @@ func newSchemaRepo(path string, svc *service) *schemaRepo {
 		path:     path,
 		l:        svc.l,
 		metadata: svc.metadata,
-		Repository: resourceSchema.NewRepository(
-			svc.metadata,
-			svc.l,
-			newSupplier(path, svc),
-			resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
-		),
+		pipeline: svc.localPipeline,
 	}
+	sr.Repository = resourceSchema.NewRepository(
+		svc.metadata,
+		svc.l,
+		newSupplier(path, svc, sr),
+		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
+	)
 	sr.start()
 	return sr
 }
@@ -106,7 +132,11 @@ func (sr *schemaRepo) OnInit(kinds []schema.Kind) (bool, []int64) {
 		logger.Panicf("unexpected kinds: %v", kinds)
 		return false, nil
 	}
-	return true, sr.Repository.Init(schema.KindMeasure)
+	groupNames, revs := sr.Repository.Init(schema.KindMeasure)
+	for i := range groupNames {
+		sr.createTopNResultMeasure(context.Background(), sr.metadata.MeasureRegistry(), groupNames[i])
+	}
+	return true, revs
 }
 
 func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
@@ -125,70 +155,52 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
+		sr.createTopNResultMeasure(context.Background(), sr.metadata.MeasureRegistry(), g.Metadata.Name)
 	case schema.KindMeasure:
-		if err := validate.Measure(metadata.Spec.(*databasev1.Measure)); err != nil {
+		m := metadata.Spec.(*databasev1.Measure)
+		if err := validate.Measure(m); err != nil {
 			sr.l.Warn().Err(err).Msg("measure is ignored")
 			return
 		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Measure),
+			Metadata: m,
 		})
 	case schema.KindIndexRuleBinding:
-		irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding)
-		if !ok {
-			sr.l.Warn().Msg("fail to convert message to IndexRuleBinding")
-			return
+		if irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding); ok {
+			if err := validate.IndexRuleBinding(irb); err != nil {
+				sr.l.Warn().Err(err).Msg("index rule binding is ignored")
+				return
+			}
+			if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
+				sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+					Typ:      resourceSchema.EventAddOrUpdate,
+					Kind:     resourceSchema.EventKindIndexRuleBinding,
+					Metadata: irb,
+				})
+			}
 		}
-		if err := validate.IndexRuleBinding(irb); err != nil {
-			sr.l.Warn().Err(err).Msg("index rule binding is ignored")
-			return
-		}
-		if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			stm, err := sr.metadata.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
-				Name:  irb.GetSubject().GetName(),
-				Group: metadata.Group,
-			})
-			cancel()
-			if err != nil {
+	case schema.KindIndexRule:
+		if ir, ok := metadata.Spec.(*databasev1.IndexRule); ok {
+			if err := validate.IndexRule(metadata.Spec.(*databasev1.IndexRule)); err != nil {
+				sr.l.Warn().Err(err).Msg("index rule is ignored")
 				return
 			}
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 				Typ:      resourceSchema.EventAddOrUpdate,
-				Kind:     resourceSchema.EventKindResource,
-				Metadata: stm,
-			})
-		}
-	case schema.KindIndexRule:
-		if err := validate.IndexRule(metadata.Spec.(*databasev1.IndexRule)); err != nil {
-			sr.l.Warn().Err(err).Msg("index rule is ignored")
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		subjects, err := sr.metadata.Subjects(ctx, metadata.Spec.(*databasev1.IndexRule), commonv1.Catalog_CATALOG_MEASURE)
-		if err != nil {
-			return
-		}
-		for _, sub := range subjects {
-			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-				Typ:      resourceSchema.EventAddOrUpdate,
-				Kind:     resourceSchema.EventKindResource,
-				Metadata: sub.(*databasev1.Measure),
+				Kind:     resourceSchema.EventKindIndexRule,
+				Metadata: ir,
 			})
 		}
 	case schema.KindTopNAggregation:
-		if err := validate.TopNAggregation(metadata.Spec.(*databasev1.TopNAggregation)); err != nil {
+		topNSchema := metadata.Spec.(*databasev1.TopNAggregation)
+		if err := validate.TopNAggregation(topNSchema); err != nil {
 			sr.l.Warn().Err(err).Msg("topNAggregation is ignored")
 			return
 		}
-		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-			Typ:      resourceSchema.EventAddOrUpdate,
-			Kind:     resourceSchema.EventKindTopNAgg,
-			Metadata: metadata.Spec.(*databasev1.TopNAggregation),
-		})
+		manager := sr.getSteamingManager(topNSchema.SourceMeasure, sr.pipeline)
+		manager.register(topNSchema)
 	default:
 	}
 }
@@ -206,38 +218,50 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			Metadata: g,
 		})
 	case schema.KindMeasure:
+		m := metadata.Spec.(*databasev1.Measure)
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Measure),
+			Metadata: m,
 		})
+		sr.stopSteamingManager(m.GetMetadata())
 	case schema.KindIndexRuleBinding:
-		if metadata.Spec.(*databasev1.IndexRuleBinding).GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			m, err := sr.metadata.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
-				Name:  metadata.Name,
-				Group: metadata.Group,
-			})
-			if err != nil {
-				return
+		if binding, ok := metadata.Spec.(*databasev1.IndexRuleBinding); ok {
+			if binding.GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
+				sr.SendMetadataEvent(resourceSchema.MetadataEvent{
+					Typ:      resourceSchema.EventDelete,
+					Kind:     resourceSchema.EventKindIndexRuleBinding,
+					Metadata: metadata.Spec.(*databasev1.IndexRuleBinding),
+				})
 			}
-			// we should update instead of delete
+		}
+
+	case schema.KindIndexRule:
+		if rule, ok := metadata.Spec.(*databasev1.IndexRule); ok {
 			sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-				Typ:      resourceSchema.EventAddOrUpdate,
-				Kind:     resourceSchema.EventKindResource,
-				Metadata: m,
+				Typ:      resourceSchema.EventDelete,
+				Kind:     resourceSchema.EventKindIndexRule,
+				Metadata: rule,
 			})
 		}
-	case schema.KindIndexRule:
 	case schema.KindTopNAggregation:
-		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-			Typ:      resourceSchema.EventAddOrUpdate,
-			Kind:     resourceSchema.EventKindTopNAgg,
-			Metadata: metadata.Spec.(*databasev1.TopNAggregation),
-		})
+		topNAggregation := metadata.Spec.(*databasev1.TopNAggregation)
+		sr.stopSteamingManager(topNAggregation.SourceMeasure)
 	default:
 	}
+}
+
+func (sr *schemaRepo) Close() {
+	var err error
+	sr.topNProcessorMap.Range(func(_, val any) bool {
+		manager := val.(*topNProcessorManager)
+		err = multierr.Append(err, manager.Close())
+		return true
+	})
+	if err != nil {
+		sr.l.Error().Err(err).Msg("faced error when closing schema repository")
+	}
+	sr.Repository.Close()
 }
 
 func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) {
@@ -250,6 +274,9 @@ func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) 
 }
 
 func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option], error) {
+	if sr == nil {
+		return nil, fmt.Errorf("schemaRepo is nil")
+	}
 	g, ok := sr.LoadGroup(groupName)
 	if !ok {
 		return nil, fmt.Errorf("group %s not found", groupName)
@@ -261,37 +288,64 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
-var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
+func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, group string) {
+	md := GetTopNSchemaMetadata(group)
+	operation := func() error {
+		m, err := measureSchemaRegistry.GetMeasure(ctx, md)
+		if err != nil && !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+			return errors.WithMessagef(err, "fail to get %s", md)
+		}
+		if m != nil {
+			return nil
+		}
 
-type supplier struct {
-	metadata metadata.Repo
-	pipeline queue.Queue
-	omr      observability.MetricsRegistry
-	l        *logger.Logger
-	pm       *protector.Memory
-	path     string
-	option   option
-}
+		m = GetTopNSchema(md)
+		if _, innerErr := measureSchemaRegistry.CreateMeasure(ctx, m); innerErr != nil {
+			if !errors.Is(innerErr, schema.ErrGRPCAlreadyExists) {
+				return errors.WithMessagef(innerErr, "fail to create new topN measure %s", m)
+			}
+		}
+		return nil
+	}
 
-func newSupplier(path string, svc *service) *supplier {
-	return &supplier{
-		path:     path,
-		metadata: svc.metadata,
-		l:        svc.l,
-		pipeline: svc.localPipeline,
-		option:   svc.option,
-		omr:      svc.omr,
-		pm:       svc.pm,
+	backoffStrategy := backoff.NewExponentialBackOff()
+	backoffStrategy.MaxElapsedTime = 2 * time.Minute
+
+	err := backoff.Retry(operation, backoffStrategy)
+	if err != nil {
+		logger.Panicf("fail to create topN measure %s: %v", md, err)
 	}
 }
 
-func (s *supplier) OpenResource(shardNum uint32, supplier resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
+
+type supplier struct {
+	metadata   metadata.Repo
+	omr        observability.MetricsRegistry
+	l          *logger.Logger
+	pm         *protector.Memory
+	schemaRepo *schemaRepo
+	path       string
+	option     option
+}
+
+func newSupplier(path string, svc *service, sr *schemaRepo) *supplier {
+	return &supplier{
+		path:       path,
+		metadata:   svc.metadata,
+		l:          svc.l,
+		option:     svc.option,
+		omr:        svc.omr,
+		pm:         svc.pm,
+		schemaRepo: sr,
+	}
+}
+
+func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	measureSchema := spec.Schema().(*databasev1.Measure)
-	return openMeasure(shardNum, supplier, measureSpec{
-		schema:           measureSchema,
-		indexRules:       spec.IndexRules(),
-		topNAggregations: spec.TopN(),
-	}, s.l, s.pipeline, s.pm)
+	return openMeasure(measureSpec{
+		schema: measureSchema,
+	}, s.l, s.pm, s.schemaRepo)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -348,11 +402,42 @@ func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
 	panic("do not support open db")
 }
 
-func (s *portableSupplier) OpenResource(shardNum uint32, _ resourceSchema.Supplier, spec resourceSchema.Resource) (io.Closer, error) {
+func (s *portableSupplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	measureSchema := spec.Schema().(*databasev1.Measure)
-	return openMeasure(shardNum, nil, measureSpec{
-		schema:           measureSchema,
-		indexRules:       spec.IndexRules(),
-		topNAggregations: spec.TopN(),
+	return openMeasure(measureSpec{
+		schema: measureSchema,
 	}, s.l, nil, nil)
+}
+
+// GetTopNSchema returns the schema of the topN result measure.
+func GetTopNSchema(md *commonv1.Metadata) *databasev1.Measure {
+	return &databasev1.Measure{
+		Metadata: md,
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: TopNTagFamily,
+				Tags: []*databasev1.TagSpec{
+					{Name: TopNTagNames[0], Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: TopNTagNames[1], Type: databasev1.TagType_TAG_TYPE_INT},
+					{Name: TopNTagNames[2], Type: databasev1.TagType_TAG_TYPE_STRING},
+				},
+			},
+		},
+		Fields: topNFieldsSpec,
+		Entity: &databasev1.Entity{
+			TagNames: TopNTagNames,
+		},
+	}
+}
+
+// GetTopNSchemaMetadata returns the metadata of the topN result measure.
+func GetTopNSchemaMetadata(group string) *commonv1.Metadata {
+	return &commonv1.Metadata{
+		Name:  TopNSchemaName,
+		Group: group,
+	}
+}
+
+func getKey(metadata *commonv1.Metadata) string {
+	return path.Join(metadata.GetGroup(), metadata.GetName())
 }

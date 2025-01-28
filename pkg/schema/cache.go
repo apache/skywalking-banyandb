@@ -41,30 +41,16 @@ import (
 var _ Resource = (*resourceSpec)(nil)
 
 type resourceSpec struct {
-	schema       ResourceSchema
-	delegated    io.Closer
-	indexRules   []*databasev1.IndexRule
-	aggregations []*databasev1.TopNAggregation
+	schema    ResourceSchema
+	delegated IndexListener
 }
 
-func (rs *resourceSpec) Delegated() io.Closer {
+func (rs *resourceSpec) Delegated() IndexListener {
 	return rs.delegated
-}
-
-func (rs *resourceSpec) Close() error {
-	return rs.delegated.Close()
 }
 
 func (rs *resourceSpec) Schema() ResourceSchema {
 	return rs.schema
-}
-
-func (rs *resourceSpec) IndexRules() []*databasev1.IndexRule {
-	return rs.indexRules
-}
-
-func (rs *resourceSpec) TopN() []*databasev1.TopNAggregation {
-	return rs.aggregations
 }
 
 func (rs *resourceSpec) maxRevision() int64 {
@@ -72,22 +58,7 @@ func (rs *resourceSpec) maxRevision() int64 {
 }
 
 func (rs *resourceSpec) isNewThan(other *resourceSpec) bool {
-	if other.maxRevision() > rs.maxRevision() {
-		return false
-	}
-	if len(rs.indexRules) != len(other.indexRules) {
-		return false
-	}
-	if len(rs.aggregations) != len(other.aggregations) {
-		return false
-	}
-	if parseMaxModRevision(other.indexRules) > parseMaxModRevision(rs.indexRules) {
-		return false
-	}
-	if parseMaxModRevision(other.aggregations) > parseMaxModRevision(rs.aggregations) {
-		return false
-	}
-	return true
+	return other.maxRevision() <= rs.maxRevision()
 }
 
 const maxWorkerNum = 8
@@ -112,6 +83,9 @@ type schemaRepo struct {
 	metrics                *Metrics
 	groupMap               sync.Map
 	resourceMap            sync.Map
+	indexRuleMap           sync.Map
+	bindingForwardMap      sync.Map
+	bindingBackwardMap     sync.Map
 	workerNum              int
 	resourceMutex          sync.Mutex
 	groupMux               sync.Mutex
@@ -200,25 +174,50 @@ func (sr *schemaRepo) Watcher() {
 						switch evt.Kind {
 						case EventKindGroup:
 							_, err = sr.storeGroup(evt.Metadata.GetMetadata())
-						case EventKindResource:
-							err = sr.initResource(evt.Metadata.GetMetadata())
-						case EventKindTopNAgg:
-							topNSchema := evt.Metadata.(*databasev1.TopNAggregation)
-							err = createTopNResultMeasure(context.Background(), sr.metadata.MeasureRegistry(), topNSchema.GetMetadata().Group)
-							if err != nil {
-								break
+							if errors.As(err, schema.ErrGRPCResourceNotFound) {
+								err = nil
 							}
-							err = sr.initResource(topNSchema.SourceMeasure)
+						case EventKindResource:
+							err = sr.storeResource(evt.Metadata)
+						case EventKindIndexRule:
+							indexRule := evt.Metadata.(*databasev1.IndexRule)
+							sr.storeIndexRule(indexRule)
+						case EventKindIndexRuleBinding:
+							indexRuleBinding := evt.Metadata.(*databasev1.IndexRuleBinding)
+							sr.storeIndexRuleBinding(indexRuleBinding)
 						}
 					case EventDelete:
 						switch evt.Kind {
 						case EventKindGroup:
 							err = sr.deleteGroup(evt.Metadata.GetMetadata())
 						case EventKindResource:
-							err = sr.deleteResource(evt.Metadata.GetMetadata())
-						case EventKindTopNAgg:
-							topNSchema := evt.Metadata.(*databasev1.TopNAggregation)
-							err = sr.initResource(topNSchema.SourceMeasure)
+							sr.deleteResource(evt.Metadata.GetMetadata())
+						case EventKindIndexRule:
+							key := getKey(evt.Metadata.GetMetadata())
+							sr.indexRuleMap.Delete(key)
+						case EventKindIndexRuleBinding:
+							indexRuleBinding := evt.Metadata.(*databasev1.IndexRuleBinding)
+							col, _ := sr.bindingForwardMap.Load(getKey(&commonv1.Metadata{
+								Name:  indexRuleBinding.Subject.GetName(),
+								Group: indexRuleBinding.GetMetadata().GetGroup(),
+							}))
+							if col == nil {
+								break
+							}
+							tMap := col.(*sync.Map)
+							key := getKey(indexRuleBinding.GetMetadata())
+							tMap.Delete(key)
+							for i := range indexRuleBinding.Rules {
+								col, _ := sr.bindingBackwardMap.Load(getKey(&commonv1.Metadata{
+									Name:  indexRuleBinding.Rules[i],
+									Group: indexRuleBinding.GetMetadata().GetGroup(),
+								}))
+								if col == nil {
+									continue
+								}
+								tMap := col.(*sync.Map)
+								tMap.Delete(key)
+							}
 						}
 					}
 					if err != nil && !errors.Is(err, schema.ErrClosed) {
@@ -320,17 +319,13 @@ func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool)
 	return s.(Resource), true
 }
 
-func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
-	idxRules []*databasev1.IndexRule, topNAggrs []*databasev1.TopNAggregation,
-) error {
+func (sr *schemaRepo) storeResource(resourceSchema ResourceSchema) error {
 	sr.resourceMutex.Lock()
 	defer sr.resourceMutex.Unlock()
 	resource := &resourceSpec{
-		schema:       stm,
-		indexRules:   idxRules,
-		aggregations: topNAggrs,
+		schema: resourceSchema,
 	}
-	key := getKey(stm.GetMetadata())
+	key := getKey(resourceSchema.GetMetadata())
 	pre, loadedPre := sr.resourceMap.Load(key)
 	var preResource *resourceSpec
 	if loadedPre {
@@ -339,71 +334,119 @@ func (sr *schemaRepo) storeResource(g Group, stm ResourceSchema,
 	if loadedPre && preResource.isNewThan(resource) {
 		return nil
 	}
-	var dbSupplier Supplier
-	if !g.(*group).isPortable() {
-		dbSupplier = g
-	}
-	sm, err := sr.resourceSchemaSupplier.OpenResource(g.GetSchema().GetResourceOpts().ShardNum, dbSupplier, resource)
+	sm, err := sr.resourceSchemaSupplier.OpenResource(resource)
 	if err != nil {
 		return errors.WithMessage(err, "fails to open the resource")
 	}
+	sm.OnIndexUpdate(sr.indexRules(resourceSchema))
 	resource.delegated = sm
 	sr.resourceMap.Store(key, resource)
-	if loadedPre {
-		return preResource.Close()
-	}
 	return nil
+}
+
+func (sr *schemaRepo) storeIndexRule(indexRule *databasev1.IndexRule) {
+	key := getKey(indexRule.GetMetadata())
+	if prev, loaded := sr.indexRuleMap.LoadOrStore(key, indexRule); loaded {
+		if prev.(*databasev1.IndexRule).GetMetadata().ModRevision <= indexRule.GetMetadata().ModRevision {
+			sr.indexRuleMap.Store(key, indexRule)
+			if col, _ := sr.bindingBackwardMap.Load(key); col != nil {
+				col.(*sync.Map).Range(func(_, value any) bool {
+					sr.updateIndex(value.(*databasev1.IndexRuleBinding))
+					return true
+				})
+			}
+		}
+	} else {
+		if col, _ := sr.bindingBackwardMap.Load(key); col != nil {
+			col.(*sync.Map).Range(func(_, value any) bool {
+				sr.updateIndex(value.(*databasev1.IndexRuleBinding))
+				return true
+			})
+		}
+	}
+}
+
+func (sr *schemaRepo) storeIndexRuleBinding(indexRuleBinding *databasev1.IndexRuleBinding) {
+	var changed bool
+	col, _ := sr.bindingForwardMap.LoadOrStore(getKey(&commonv1.Metadata{
+		Name:  indexRuleBinding.Subject.GetName(),
+		Group: indexRuleBinding.GetMetadata().GetGroup(),
+	}), &sync.Map{})
+	tMap := col.(*sync.Map)
+	key := getKey(indexRuleBinding.GetMetadata())
+	if prev, loaded := tMap.LoadOrStore(key, indexRuleBinding); loaded {
+		if prev.(*databasev1.IndexRuleBinding).GetMetadata().ModRevision <= indexRuleBinding.GetMetadata().ModRevision {
+			tMap.Store(key, indexRuleBinding)
+			changed = true
+		}
+	} else {
+		changed = true
+	}
+	for i := range indexRuleBinding.Rules {
+		col, _ := sr.bindingBackwardMap.LoadOrStore(getKey(&commonv1.Metadata{
+			Name:  indexRuleBinding.Rules[i],
+			Group: indexRuleBinding.GetMetadata().GetGroup(),
+		}), &sync.Map{})
+		tMap := col.(*sync.Map)
+		key := getKey(indexRuleBinding.GetMetadata())
+		if prev, loaded := tMap.LoadOrStore(key, indexRuleBinding); loaded {
+			if prev.(*databasev1.IndexRuleBinding).GetMetadata().ModRevision <= indexRuleBinding.GetMetadata().ModRevision {
+				tMap.Store(key, indexRuleBinding)
+				changed = true
+			}
+		} else {
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	sr.updateIndex(indexRuleBinding)
+}
+
+func (sr *schemaRepo) updateIndex(binding *databasev1.IndexRuleBinding) {
+	if r, ok := sr.LoadResource(&commonv1.Metadata{
+		Name:  binding.Subject.GetName(),
+		Group: binding.GetMetadata().GetGroup(),
+	}); ok {
+		r.Delegated().OnIndexUpdate(sr.indexRules(r.Schema()))
+	}
+}
+
+func (sr *schemaRepo) indexRules(schema ResourceSchema) []*databasev1.IndexRule {
+	n := schema.GetMetadata().GetName()
+	g := schema.GetMetadata().GetGroup()
+	col, _ := sr.bindingForwardMap.Load(getKey(&commonv1.Metadata{
+		Name:  n,
+		Group: g,
+	}))
+	if col == nil {
+		return nil
+	}
+	tMap := col.(*sync.Map)
+	var indexRules []*databasev1.IndexRule
+	tMap.Range(func(_, value any) bool {
+		indexRuleBinding := value.(*databasev1.IndexRuleBinding)
+		for i := range indexRuleBinding.Rules {
+			if r, _ := sr.indexRuleMap.Load(getKey(&commonv1.Metadata{
+				Name:  indexRuleBinding.Rules[i],
+				Group: g,
+			})); r != nil {
+				indexRules = append(indexRules, r.(*databasev1.IndexRule))
+			}
+		}
+		return true
+	})
+	return indexRules
 }
 
 func getKey(metadata *commonv1.Metadata) string {
 	return path.Join(metadata.GetGroup(), metadata.GetName())
 }
 
-func (sr *schemaRepo) initResource(metadata *commonv1.Metadata) error {
-	g, ok := sr.LoadGroup(metadata.Group)
-	if !ok {
-		var err error
-		if g, err = sr.storeGroup(&commonv1.Metadata{Name: metadata.Group}); err != nil {
-			return errors.WithMessagef(err, "create unknown group:%s", metadata.Group)
-		}
-	}
-	stm, err := sr.resourceSchemaSupplier.ResourceSchema(metadata)
-	if err != nil {
-		if errors.Is(err, schema.ErrGRPCResourceNotFound) {
-			if dl := sr.l.Debug(); dl.Enabled() {
-				dl.Interface("metadata", metadata).Msg("resource not found")
-			}
-			return nil
-		}
-		return errors.WithMessage(err, "fails to get the resource")
-	}
-	ctx := context.Background()
-	localCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	idxRules, err := sr.metadata.IndexRules(localCtx, stm.GetMetadata())
-	if err != nil {
-		return err
-	}
-	var topNAggrs []*databasev1.TopNAggregation
-	if _, ok := stm.(*databasev1.Measure); ok {
-		localCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
-		var innerErr error
-		topNAggrs, innerErr = sr.metadata.MeasureRegistry().TopNAggregations(localCtx, stm.GetMetadata())
-		cancel()
-		if innerErr != nil {
-			return errors.WithMessage(innerErr, "fails to get the topN aggregations")
-		}
-	}
-	return sr.storeResource(g, stm, idxRules, topNAggrs)
-}
-
-func (sr *schemaRepo) deleteResource(metadata *commonv1.Metadata) error {
+func (sr *schemaRepo) deleteResource(metadata *commonv1.Metadata) {
 	key := getKey(metadata)
-	pre, loaded := sr.resourceMap.LoadAndDelete(key)
-	if !loaded {
-		return nil
-	}
-	return pre.(Resource).Close()
+	_, _ = sr.resourceMap.LoadAndDelete(key)
 }
 
 func (sr *schemaRepo) Close() {
@@ -414,23 +457,6 @@ func (sr *schemaRepo) Close() {
 	}()
 	sr.closer.CloseThenWait()
 	close(sr.eventCh)
-
-	sr.resourceMutex.Lock()
-	sr.resourceMap.Range(func(_, value any) bool {
-		if value == nil {
-			return true
-		}
-		r, ok := value.(*resourceSpec)
-		if !ok {
-			return true
-		}
-		err := r.Close()
-		if err != nil {
-			sr.l.Err(err).RawJSON("resource", logger.Proto(r.Schema().GetMetadata())).Msg("closing")
-		}
-		return true
-	})
-	sr.resourceMutex.Unlock()
 
 	sr.groupMux.Lock()
 	defer sr.groupMux.Unlock()
@@ -522,14 +548,4 @@ func (g *group) close() (err error) {
 		return nil
 	}
 	return multierr.Append(err, g.SupplyTSDB().Close())
-}
-
-func parseMaxModRevision[T ResourceSchema](indexRules []T) (maxRevisionForIdxRules int64) {
-	maxRevisionForIdxRules = int64(0)
-	for _, idxRule := range indexRules {
-		if idxRule.GetMetadata().GetModRevision() > maxRevisionForIdxRules {
-			maxRevisionForIdxRules = idxRule.GetMetadata().GetModRevision()
-		}
-	}
-	return
 }

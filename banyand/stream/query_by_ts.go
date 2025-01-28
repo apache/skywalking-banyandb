@@ -48,7 +48,7 @@ type tsResult struct {
 
 func (t *tsResult) Pull(ctx context.Context) *model.StreamResult {
 	if len(t.segments) == 0 {
-		return &model.StreamResult{}
+		return nil
 	}
 	if err := t.scanSegment(ctx); err != nil {
 		return &model.StreamResult{Error: err}
@@ -158,13 +158,14 @@ func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, sm *stre
 	for idx, tagFamily := range bc.tagFamilies {
 		tagFamilyMap[tagFamily.name] = idx + 1
 	}
+	is := sm.indexSchema.Load().(indexSchema)
 	for _, tagFamilyProj := range bc.tagProjection {
 		for j, tagProj := range tagFamilyProj.Names {
-			tagSpec := sm.tagMap[tagProj]
+			tagSpec := is.tagMap[tagProj]
 			if tagSpec.IndexedOnly {
 				continue
 			}
-			entityPos := sm.entityMap[tagProj]
+			entityPos := is.indexRuleLocators.EntitySet[tagProj]
 			if entityPos == 0 {
 				continue
 			}
