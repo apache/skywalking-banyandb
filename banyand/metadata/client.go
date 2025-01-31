@@ -62,17 +62,18 @@ func NewClient(forceRegisterNode bool) (Service, error) {
 }
 
 type clientService struct {
-	schemaRegistry    schema.Registry
-	closer            *run.Closer
-	namespace         string
-	etcdUsername      string
-	etcdPassword      string
-	etcdTLSCAFile     string
-	etcdTLSCertFile   string
-	etcdTLSKeyFile    string
-	endpoints         []string
-	registryTimeout   time.Duration
-	forceRegisterNode bool
+	schemaRegistry       schema.Registry
+	closer               *run.Closer
+	namespace            string
+	etcdUsername         string
+	etcdPassword         string
+	etcdTLSCAFile        string
+	etcdTLSCertFile      string
+	etcdTLSKeyFile       string
+	endpoints            []string
+	registryTimeout      time.Duration
+	etcdFullSyncInterval time.Duration
+	forceRegisterNode    bool
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -89,6 +90,7 @@ func (s *clientService) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.etcdTLSCertFile, flagEtcdTLSCertFile, "", "Etcd client certificate")
 	fs.StringVar(&s.etcdTLSKeyFile, flagEtcdTLSKeyFile, "", "Private key for the etcd client certificate.")
 	fs.DurationVar(&s.registryTimeout, "node-registry-timeout", 2*time.Minute, "The timeout for the node registry")
+	fs.DurationVar(&s.etcdFullSyncInterval, "etcd-full-sync-interval", 30*time.Minute, "The interval for full sync etcd")
 	return fs
 }
 
@@ -123,6 +125,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			schema.ConfigureEtcdUser(s.etcdUsername, s.etcdPassword),
 			schema.ConfigureEtcdTLSCAFile(s.etcdTLSCAFile),
 			schema.ConfigureEtcdTLSCertAndKey(s.etcdTLSCertFile, s.etcdTLSKeyFile),
+			schema.ConfigureWatchCheckInterval(s.etcdFullSyncInterval),
 		)
 		if errors.Is(err, context.DeadlineExceeded) {
 			select {
@@ -193,6 +196,9 @@ func (s *clientService) PreRun(ctx context.Context) error {
 }
 
 func (s *clientService) Serve() run.StopNotify {
+	if s.schemaRegistry != nil {
+		s.schemaRegistry.StartWatcher()
+	}
 	return s.closer.CloseNotify()
 }
 

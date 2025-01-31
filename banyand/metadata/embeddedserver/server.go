@@ -81,6 +81,7 @@ func (s *server) PreRun(ctx context.Context) error {
 }
 
 func (s *server) Serve() run.StopNotify {
+	_ = s.Service.Serve()
 	return s.metaServer.StoppingNotify()
 }
 

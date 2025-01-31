@@ -65,9 +65,10 @@ type Registry interface {
 	TopNAggregation
 	Node
 	RegisterHandler(string, Kind, EventHandler)
-	NewWatcher(string, Kind, watchEventHandler, ...WatcherOption) *watcher
+	NewWatcher(string, Kind, ...WatcherOption) *watcher
 	Register(context.Context, Metadata, bool) error
 	Compact(context.Context, int64) error
+	StartWatcher()
 }
 
 // TypeMeta defines the identity and type of an Event.

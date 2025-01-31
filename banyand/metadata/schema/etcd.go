@@ -125,13 +125,13 @@ func CheckInterval(d time.Duration) WatcherOption {
 }
 
 type etcdSchemaRegistry struct {
-	namespace     string
 	client        *clientv3.Client
 	closer        *run.Closer
 	l             *logger.Logger
-	watchers      []*watcher
-	mux           sync.RWMutex
+	watchers      map[Kind]*watcher
+	namespace     string
 	checkInterval time.Duration
+	mux           sync.RWMutex
 }
 
 type etcdSchemaRegistryConfig struct {
@@ -167,21 +167,28 @@ func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler Eve
 			return
 		}
 		for i := range kinds {
-			e.l.Info().Str("name", name).Stringer("kind", kinds[i]).Msg("registering watcher")
-			w := e.newWatcherWithRevision(name, kinds[i], revisions[i], handler, CheckInterval(e.checkInterval))
-			if w != nil {
-				e.watchers = append(e.watchers, w)
-			}
+			e.registerToWatcher(name, kinds[i], revisions[i], handler)
 		}
 		return
 	}
 	for i := range kinds {
-		e.l.Info().Str("name", name).Stringer("kind", kinds[i]).Msg("registering watcher")
-		w := e.NewWatcher(name, kinds[i], handler, CheckInterval(e.checkInterval))
-		if w != nil {
-			e.watchers = append(e.watchers, w)
-		}
+		e.registerToWatcher(name, kinds[i], 0, handler)
 	}
+}
+
+func (e *etcdSchemaRegistry) registerToWatcher(name string, kind Kind, revision int64, handler EventHandler) {
+	if w, ok := e.watchers[kind]; ok {
+		e.l.Info().Str("name", name).Stringer("kind", kind).Msg("registering to an existing watcher")
+		w.AddHandler(handler)
+		if w.revision > revision {
+			w.revision = revision
+		}
+		return
+	}
+	e.l.Info().Str("name", name).Stringer("kind", kind).Msg("registering to a new watcher")
+	w := e.newWatcherWithRevision(name, kind, revision, CheckInterval(e.checkInterval))
+	w.AddHandler(handler)
+	e.watchers[kind] = w
 }
 
 func (e *etcdSchemaRegistry) Compact(ctx context.Context, revision int64) error {
@@ -191,6 +198,12 @@ func (e *etcdSchemaRegistry) Compact(ctx context.Context, revision int64) error 
 	defer e.closer.Done()
 	_, err := e.client.Compact(ctx, revision)
 	return err
+}
+
+func (e *etcdSchemaRegistry) StartWatcher() {
+	for _, w := range e.watchers {
+		w.Start()
+	}
 }
 
 func (e *etcdSchemaRegistry) Close() error {
@@ -241,6 +254,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		closer:        run.NewCloser(1),
 		l:             logger.GetLogger("schema-registry"),
 		checkInterval: registryConfig.checkInterval,
+		watchers:      make(map[Kind]*watcher),
 	}
 	return reg, nil
 }
@@ -560,15 +574,14 @@ func (e *etcdSchemaRegistry) revokeLease(lease *clientv3.LeaseGrantResponse) {
 	}
 }
 
-func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, handler watchEventHandler, opts ...WatcherOption) *watcher {
-	return e.newWatcherWithRevision(name, kind, 0, handler, opts...)
+func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, opts ...WatcherOption) *watcher {
+	return e.newWatcherWithRevision(name, kind, 0, opts...)
 }
 
-func (e *etcdSchemaRegistry) newWatcherWithRevision(name string, kind Kind, revision int64, handler watchEventHandler, opts ...WatcherOption) *watcher {
+func (e *etcdSchemaRegistry) newWatcherWithRevision(name string, kind Kind, revision int64, opts ...WatcherOption) *watcher {
 	wc := watcherConfig{
 		key:           e.prependNamespace(kind.key()),
 		kind:          kind,
-		handler:       handler,
 		revision:      revision,
 		checkInterval: 5 * time.Minute, // Default value
 	}

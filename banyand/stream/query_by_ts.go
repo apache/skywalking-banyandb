@@ -123,11 +123,11 @@ func (t *tsResult) scanSegment(ctx context.Context) error {
 						blockHeap.Push(bc)
 					}
 				}
-				releaseBlockScanResultBatch(batch)
 				heap.Init(blockHeap)
 				result := blockHeap.merge(t.qo.MaxElementSize)
 				t.shards[workerID].CopyFrom(tmpResult, result)
 				blockHeap.reset()
+				releaseBlockScanResultBatch(batch)
 			}
 			workerWg.Done()
 		}(i)

@@ -18,6 +18,7 @@
 package schema
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -36,7 +37,6 @@ type watchEventHandler interface {
 	OnDelete(Metadata)
 }
 type watcherConfig struct {
-	handler       watchEventHandler
 	key           string
 	revision      int64
 	kind          Kind
@@ -49,17 +49,18 @@ type cacheEntry struct {
 }
 
 type watcher struct {
-	handler       watchEventHandler
 	cli           *clientv3.Client
 	closer        *run.Closer
 	l             *logger.Logger
 	ticker        *time.Ticker
 	cache         map[string]cacheEntry
 	key           string
+	handlers      []watchEventHandler
 	revision      int64
 	kind          Kind
 	checkInterval time.Duration
 	mu            sync.RWMutex
+	startOnce     sync.Once
 }
 
 func newWatcher(cli *clientv3.Client, wc watcherConfig, l *logger.Logger) *watcher {
@@ -70,20 +71,29 @@ func newWatcher(cli *clientv3.Client, wc watcherConfig, l *logger.Logger) *watch
 		cli:           cli,
 		key:           wc.key,
 		kind:          wc.kind,
-		handler:       wc.handler,
 		revision:      wc.revision,
 		closer:        run.NewCloser(1),
 		l:             l,
 		checkInterval: wc.checkInterval,
 		cache:         make(map[string]cacheEntry),
 	}
-
-	if w.revision < 1 {
-		w.periodicSync()
-	}
-
-	go w.watch(w.revision)
 	return w
+}
+
+func (w *watcher) Start() {
+	w.startOnce.Do(func() {
+		if w.revision < 1 {
+			w.periodicSync()
+		}
+		go w.watch(w.revision)
+	})
+}
+
+func (w *watcher) AddHandler(handler watchEventHandler) {
+	if w.handlers == nil {
+		w.handlers = make([]watchEventHandler, 0)
+	}
+	w.handlers = append(w.handlers, handler)
 }
 
 func (w *watcher) Close() {
@@ -165,6 +175,12 @@ func (w *watcher) handle(watchEvent *clientv3.Event, watchResp *clientv3.WatchRe
 		modRevision: watchEvent.Kv.ModRevision,
 	}
 
+	handlers := w.handlers
+	if len(handlers) == 0 {
+		w.l.Panic().Msg("no handlers registered")
+		return
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -178,7 +194,9 @@ func (w *watcher) handle(watchEvent *clientv3.Event, watchResp *clientv3.WatchRe
 				w.l.Error().Stringer("event_header", &watchResp.Header).AnErr("err", err).Msg("failed to unmarshal message")
 				return
 			}
-			w.handler.OnAddOrUpdate(md)
+			for i := range handlers {
+				handlers[i].OnAddOrUpdate(md)
+			}
 		}
 	case mvccpb.DELETE:
 		delete(w.cache, keyStr)
@@ -187,14 +205,18 @@ func (w *watcher) handle(watchEvent *clientv3.Event, watchResp *clientv3.WatchRe
 			w.l.Error().Stringer("event_header", &watchResp.Header).AnErr("err", err).Msg("failed to unmarshal message")
 			return
 		}
-		w.handler.OnDelete(md)
+		for i := range handlers {
+			handlers[i].OnDelete(md)
+		}
 	}
 }
 
 func (w *watcher) periodicSync() {
 	resp, err := w.cli.Get(w.closer.Ctx(), w.key, clientv3.WithPrefix())
 	if err != nil {
-		w.l.Error().Err(err).Msg("periodic sync failed to fetch keys")
+		if !errors.Is(err, context.Canceled) {
+			w.l.Error().Err(err).Msg("periodic sync failed to fetch keys")
+		}
 		return
 	}
 
@@ -206,6 +228,11 @@ func (w *watcher) periodicSync() {
 		}
 	}
 
+	handlers := w.handlers
+	if len(handlers) == 0 {
+		w.l.Panic().Msg("no handlers registered")
+		return
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -216,7 +243,9 @@ func (w *watcher) periodicSync() {
 			// Handle deletion
 			delete(w.cache, cachedKey)
 			if md, err := w.getFromStore(cachedKey); err == nil {
-				w.handler.OnDelete(*md)
+				for i := range handlers {
+					handlers[i].OnDelete(*md)
+				}
 			}
 			continue
 		}
@@ -224,7 +253,9 @@ func (w *watcher) periodicSync() {
 		if currentEntry.valueHash != cachedEntry.valueHash {
 			// Handle update
 			if md, err := w.getFromStore(cachedKey); err == nil {
-				w.handler.OnAddOrUpdate(*md)
+				for i := range handlers {
+					handlers[i].OnAddOrUpdate(*md)
+				}
 				w.cache[cachedKey] = currentEntry
 			}
 		}
@@ -234,7 +265,9 @@ func (w *watcher) periodicSync() {
 	for key, entry := range currentState {
 		if _, exists := w.cache[key]; !exists {
 			if md, err := w.getFromStore(key); err == nil {
-				w.handler.OnAddOrUpdate(*md)
+				for i := range handlers {
+					handlers[i].OnAddOrUpdate(*md)
+				}
 				w.cache[key] = entry
 			}
 		}

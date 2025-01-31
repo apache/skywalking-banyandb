@@ -149,7 +149,7 @@ type queryOptions struct {
 }
 
 func (qo *queryOptions) copyFrom(other *queryOptions) {
-	qo.StreamQueryOptions = other.StreamQueryOptions
+	qo.StreamQueryOptions.CopyFrom(&other.StreamQueryOptions)
 	qo.elementFilter = other.elementFilter
 	qo.seriesToEntity = other.seriesToEntity
 	qo.sortedSids = other.sortedSids

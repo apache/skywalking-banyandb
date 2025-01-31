@@ -89,7 +89,9 @@ var _ = SynchronizedAfterSuite(func() {
 		Expect(connection.Close()).To(Succeed())
 	}
 }, func() {
-	deferFunc()
+	if deferFunc != nil {
+		deferFunc()
+	}
 	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 })
