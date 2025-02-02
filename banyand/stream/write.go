@@ -155,10 +155,12 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	}
 	et.elements.seriesIDs = append(et.elements.seriesIDs, series.ID)
 
+	is := stm.indexSchema.Load().(indexSchema)
+
 	tagFamilies := make([]tagValues, 0, len(stm.schema.TagFamilies))
-	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
+	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
 		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
-			len(stm.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
+			len(is.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
 	}
 	var fields []index.Field
 	for i := range stm.GetSchema().GetTagFamilies() {
@@ -168,7 +170,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		} else {
 			tagFamily = req.Element.TagFamilies[i]
 		}
-		tfr := stm.indexRuleLocators.TagFamilyTRule[i]
+		tfr := is.indexRuleLocators.TagFamilyTRule[i]
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
 		tf := tagValues{
 			tag: tagFamilySpec.Name,
@@ -190,7 +192,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 					SeriesID:    series.ID,
 				}, t.Type, tagValue, r.GetNoSort())
 			}
-			_, isEntity := stm.indexRuleLocators.EntitySet[tagFamilySpec.Tags[j].Name]
+			_, isEntity := is.indexRuleLocators.EntitySet[t.Name]
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
 				continue
 			}

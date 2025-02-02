@@ -256,10 +256,11 @@ func generateStream(db storage.TSDB[*tsTable, option]) *stream {
 		Entity:      entity,
 		TagFamilies: []*databasev1.TagFamilySpec{tagFamily},
 	}
-	return &stream{
-		databaseSupplier: dbSupplier,
-		schema:           schema,
+	s := &stream{
+		schema: schema,
 	}
+	s.tsdb.Store(db)
+	return s
 }
 
 func generateStreamQueryOptions(p parameter, midx mockIndex) model.StreamQueryOptions {

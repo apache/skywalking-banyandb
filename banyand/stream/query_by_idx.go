@@ -131,6 +131,7 @@ func (qr *idxResult) load(ctx context.Context, qo queryOptions) *model.StreamRes
 		go func(i int) {
 			select {
 			case <-ctx.Done():
+				releaseBlockCursor(qr.data[i])
 				cursorChan <- i
 				return
 			default:
@@ -167,7 +168,6 @@ func (qr *idxResult) load(ctx context.Context, qo queryOptions) *model.StreamRes
 		return blankCursorList[i] > blankCursorList[j]
 	})
 	for _, index := range blankCursorList {
-		releaseBlockCursor(qr.data[index])
 		qr.data = append(qr.data[:index], qr.data[index+1:]...)
 	}
 	qr.loaded = true

@@ -23,8 +23,8 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
-	pkgschema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 // TopNAnalyze converts logical expressions to executable operation tree represented by Plan.
@@ -48,7 +48,7 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchema *databasev
 
 	if criteria.GetAgg() != 0 {
 		groupByProjectionTags := sourceMeasureSchema.GetEntity().GetTagNames()
-		groupByTags := [][]*logical.Tag{logical.NewTags(pkgschema.TopNTagFamily, groupByProjectionTags...)}
+		groupByTags := [][]*logical.Tag{logical.NewTags(measure.TopNTagFamily, groupByProjectionTags...)}
 		plan = newUnresolvedGroupBy(plan, groupByTags, false)
 		plan = newUnresolvedAggregation(plan,
 			&logical.Field{Name: topNAggSchema.FieldName},
@@ -97,7 +97,7 @@ func buildVirtualSchema(sourceMeasureSchema *databasev1.Measure, fieldName strin
 		Metadata: sourceMeasureSchema.Metadata,
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
-				Name: pkgschema.TopNTagFamily,
+				Name: measure.TopNTagFamily,
 				Tags: tags,
 			},
 		},

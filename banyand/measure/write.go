@@ -165,15 +165,15 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
 
-	if stm.processorManager != nil {
-		stm.processorManager.onMeasureWrite(uint64(series.ID), uint32(shardID), &measurev1.InternalWriteRequest{
+	if p, _ := w.schemaRepo.topNProcessorMap.Load(getKey(stm.schema.GetMetadata())); p != nil {
+		p.(*topNProcessorManager).onMeasureWrite(uint64(series.ID), uint32(shardID), &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
 				Metadata:  stm.GetSchema().Metadata,
 				DataPoint: req.DataPoint,
 				MessageId: uint64(time.Now().UnixNano()),
 			},
 			EntityValues: writeEvent.EntityValues,
-		})
+		}, stm)
 	}
 
 	doc := index.Document{
@@ -223,10 +223,12 @@ func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPoi
 
 func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteRequest) ([]nameValues, []index.Field) {
 	tagFamilies := make([]nameValues, 0, len(stm.schema.TagFamilies))
-	if len(stm.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
+	is := stm.indexSchema.Load().(indexSchema)
+	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
 		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
-			len(stm.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
+			len(is.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
 	}
+
 	var fields []index.Field
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
@@ -235,7 +237,7 @@ func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteReques
 		} else {
 			tagFamily = req.DataPoint.TagFamilies[i]
 		}
-		tfr := stm.indexRuleLocators.TagFamilyTRule[i]
+		tfr := is.indexRuleLocators.TagFamilyTRule[i]
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
 		tf := nameValues{
 			name: tagFamilySpec.Name,
@@ -283,7 +285,7 @@ func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteReques
 				}
 				continue
 			}
-			_, isEntity := stm.indexRuleLocators.EntitySet[t.Name]
+			_, isEntity := is.indexRuleLocators.EntitySet[t.Name]
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
 				continue
 			}
@@ -301,8 +303,9 @@ func (w *writeCallback) appendEntityTagsToIndexFields(fields []index.Field, stm 
 	f.Index = true
 	f.NoSort = true
 	fields = append(fields, f)
+	is := stm.indexSchema.Load().(indexSchema)
 	for i := range stm.schema.Entity.TagNames {
-		if _, exists := stm.indexTagMap[stm.schema.Entity.TagNames[i]]; exists {
+		if _, exists := is.indexTagMap[stm.schema.Entity.TagNames[i]]; exists {
 			continue
 		}
 		tagName := stm.schema.Entity.TagNames[i]

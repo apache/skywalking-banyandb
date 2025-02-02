@@ -26,9 +26,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
-// TopNSchemaName is the name of the top n result schema.
-const TopNSchemaName = "_top_n_result"
-
 // EventType defines actions of events.
 type EventType uint8
 
@@ -46,7 +43,8 @@ type EventKind uint8
 const (
 	EventKindGroup EventKind = iota
 	EventKindResource
-	EventKindTopNAgg
+	EventKindIndexRule
+	EventKindIndexRuleBinding
 )
 
 // Group is the root node, allowing get resources from its sub nodes.
@@ -69,11 +67,8 @@ type ResourceSchema interface {
 
 // Resource allows access metadata from a local cache.
 type Resource interface {
-	io.Closer
-	IndexRules() []*databasev1.IndexRule
-	TopN() []*databasev1.TopNAggregation
 	Schema() ResourceSchema
-	Delegated() io.Closer
+	Delegated() IndexListener
 }
 
 // Supplier allows open a tsdb.
@@ -81,10 +76,15 @@ type Supplier interface {
 	SupplyTSDB() io.Closer
 }
 
+// IndexListener listens to the index update.
+type IndexListener interface {
+	OnIndexUpdate(index []*databasev1.IndexRule)
+}
+
 // ResourceSchemaSupplier allows get a ResourceSchema from the metadata.
 type ResourceSchemaSupplier interface {
 	ResourceSchema(metadata *commonv1.Metadata) (ResourceSchema, error)
-	OpenResource(shardNum uint32, supplier Supplier, spec Resource) (io.Closer, error)
+	OpenResource(spec Resource) (IndexListener, error)
 }
 
 // ResourceSupplier allows open a resource and its embedded tsdb.
@@ -102,7 +102,7 @@ type DB interface {
 // Repository is the collection of several hierarchies groups by a "Group".
 type Repository interface {
 	Watcher()
-	Init(schema.Kind) []int64
+	Init(schema.Kind) ([]string, []int64)
 	SendMetadataEvent(MetadataEvent)
 	LoadGroup(name string) (Group, bool)
 	LoadResource(metadata *commonv1.Metadata) (Resource, bool)

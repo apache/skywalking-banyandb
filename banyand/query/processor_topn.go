@@ -40,7 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
-	pkgschema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 type topNQueryProcessor struct {
@@ -105,7 +104,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("topn plan")
 	}
-	topNResultMeasure, err := t.measureService.Measure(pkgschema.GetTopNSchemaMetadata(topNMetadata.Group))
+	topNResultMeasure, err := t.measureService.Measure(measure.GetTopNSchemaMetadata(topNMetadata.Group))
 	if err != nil {
 		ml.Error().Err(err).Str("topN", topNMetadata.GetName()).Msg("fail to find topn result measure")
 		return

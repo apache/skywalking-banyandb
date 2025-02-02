@@ -35,13 +35,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
-	pkgschema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
 	_               logical.UnresolvedPlan = (*unresolvedLocalScan)(nil)
-	fieldProjection                        = []string{pkgschema.TopNFieldName}
+	fieldProjection                        = []string{measure.TopNFieldName}
 )
 
 type unresolvedLocalScan struct {
@@ -90,13 +89,13 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 	return &localScan{
 		s: s,
 		options: model.MeasureQueryOptions{
-			Name:      pkgschema.TopNSchemaName,
+			Name:      measure.TopNSchemaName,
 			TimeRange: &tr,
 			Entities:  entities,
 			TagProjection: []model.TagProjection{
 				{
-					Family: pkgschema.TopNTagFamily,
-					Names:  pkgschema.TopNTagNames,
+					Family: measure.TopNTagFamily,
+					Names:  measure.TopNTagNames,
 				},
 			},
 			FieldProjection: fieldProjection,
@@ -214,7 +213,7 @@ func (ei *topNMIterator) Next() bool {
 				Version:   r.Versions[i],
 			}
 			tagFamily := &modelv1.TagFamily{
-				Name: pkgschema.TopNTagFamily,
+				Name: measure.TopNTagFamily,
 			}
 			dp.TagFamilies = append(dp.TagFamilies, tagFamily)
 			for k, entityName := range entityNames {

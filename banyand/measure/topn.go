@@ -50,7 +50,6 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
-	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 const (
@@ -64,6 +63,51 @@ var (
 	_ io.Closer = (*topNProcessorManager)(nil)
 	_ flow.Sink = (*topNStreamingProcessor)(nil)
 )
+
+func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline queue.Queue) (manager *topNProcessorManager) {
+	key := getKey(source)
+	sourceMeasure, ok := sr.loadMeasure(source)
+	if !ok {
+		m, _ := sr.topNProcessorMap.LoadOrStore(key, &topNProcessorManager{
+			l:        sr.l,
+			pipeline: pipeline,
+		})
+		manager = m.(*topNProcessorManager)
+		return manager
+	}
+
+	if v, ok := sr.topNProcessorMap.Load(key); ok {
+		pre := v.(*topNProcessorManager)
+		pre.init(sourceMeasure)
+		if pre.m.schema.GetMetadata().GetModRevision() < sourceMeasure.schema.GetMetadata().GetModRevision() {
+			defer pre.Close()
+			manager = &topNProcessorManager{
+				l:        sr.l,
+				pipeline: pipeline,
+			}
+			manager.registeredTasks = append(manager.registeredTasks, pre.registeredTasks...)
+		} else {
+			return pre
+		}
+	}
+	if manager == nil {
+		manager = &topNProcessorManager{
+			l:        sr.l,
+			pipeline: pipeline,
+		}
+	}
+	manager.init(sourceMeasure)
+	sr.topNProcessorMap.Store(key, manager)
+	return manager
+}
+
+func (sr *schemaRepo) stopSteamingManager(sourceMeasure *commonv1.Metadata) {
+	key := getKey(sourceMeasure)
+	if v, ok := sr.topNProcessorMap.Load(key); ok {
+		v.(*topNProcessorManager).Close()
+		sr.topNProcessorMap.Delete(key)
+	}
+}
 
 type dataPointWithEntityValues struct {
 	*measurev1.DataPointValue
@@ -199,7 +243,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 		iwr := &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
 				MessageId: uint64(time.Now().UnixNano()),
-				Metadata:  &commonv1.Metadata{Name: schema.TopNSchemaName, Group: t.topNSchema.GetMetadata().Group},
+				Metadata:  &commonv1.Metadata{Name: TopNSchemaName, Group: t.topNSchema.GetMetadata().Group},
 				DataPoint: &measurev1.DataPointValue{
 					Timestamp: timestamppb.New(eventTime),
 					TagFamilies: []*modelv1.TagFamilyForWrite{
@@ -270,92 +314,153 @@ func (t *topNStreamingProcessor) handleError() {
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
-	l            *logger.Logger
-	pipeline     queue.Queue
-	m            *measure
-	s            logical.TagSpecRegistry
-	processorMap map[*commonv1.Metadata][]*topNStreamingProcessor
-	topNSchemas  []*databasev1.TopNAggregation
+	l               *logger.Logger
+	pipeline        queue.Queue
+	m               *measure
+	s               logical.TagSpecRegistry
+	registeredTasks []*databasev1.TopNAggregation
+	processorList   []*topNStreamingProcessor
 	sync.RWMutex
+}
+
+func (manager *topNProcessorManager) init(m *measure) {
+	manager.Lock()
+	defer manager.Unlock()
+	if manager.m != nil {
+		return
+	}
+	manager.m = m
+	tagMapSpec := logical.TagSpecMap{}
+	tagMapSpec.RegisterTagFamilies(m.schema.GetTagFamilies())
+	for i := range manager.registeredTasks {
+		if err := manager.start(manager.registeredTasks[i]); err != nil {
+			manager.l.Err(err).Msg("fail to start processor")
+		}
+	}
 }
 
 func (manager *topNProcessorManager) Close() error {
 	manager.Lock()
 	defer manager.Unlock()
 	var err error
-	for _, processorList := range manager.processorMap {
-		for _, processor := range processorList {
-			err = multierr.Append(err, processor.Close())
-		}
+	for _, processor := range manager.processorList {
+		err = multierr.Append(err, processor.Close())
 	}
+	manager.processorList = nil
+	manager.registeredTasks = nil
 	return err
 }
 
-func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uint32, request *measurev1.InternalWriteRequest) {
+func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uint32, request *measurev1.InternalWriteRequest, measure *measure) {
 	go func() {
 		manager.RLock()
 		defer manager.RUnlock()
-		for _, processorList := range manager.processorMap {
-			for _, processor := range processorList {
-				processor.src <- flow.NewStreamRecordWithTimestampPb(&dataPointWithEntityValues{
-					request.GetRequest().GetDataPoint(),
-					request.GetEntityValues(),
-					seriesID,
-					shardID,
-				}, request.GetRequest().GetDataPoint().GetTimestamp())
-			}
+		if manager.m == nil {
+			manager.RUnlock()
+			manager.init(measure)
+			manager.RLock()
+		}
+		for _, processor := range manager.processorList {
+			processor.src <- flow.NewStreamRecordWithTimestampPb(&dataPointWithEntityValues{
+				request.GetRequest().GetDataPoint(),
+				request.GetEntityValues(),
+				seriesID,
+				shardID,
+			}, request.GetRequest().GetDataPoint().GetTimestamp())
 		}
 	}()
 }
 
-func (manager *topNProcessorManager) start() error {
+func (manager *topNProcessorManager) register(topNSchema *databasev1.TopNAggregation) {
+	manager.Lock()
+	defer manager.Unlock()
+	exist := false
+	for i := range manager.registeredTasks {
+		if manager.registeredTasks[i].GetMetadata().GetName() == topNSchema.GetMetadata().GetName() {
+			exist = true
+			if manager.registeredTasks[i].GetMetadata().GetModRevision() < topNSchema.GetMetadata().GetModRevision() {
+				prev := manager.registeredTasks[i]
+				prevProcessors := manager.removeProcessors(prev)
+				if err := manager.start(topNSchema); err != nil {
+					manager.l.Err(err).Msg("fail to start the new processor")
+					return
+				}
+				manager.registeredTasks[i] = topNSchema
+				for _, processor := range prevProcessors {
+					if err := processor.Close(); err != nil {
+						manager.l.Err(err).Msg("fail to close the prev processor")
+					}
+				}
+			}
+		}
+	}
+	if exist {
+		return
+	}
+	manager.registeredTasks = append(manager.registeredTasks, topNSchema)
+	if err := manager.start(topNSchema); err != nil {
+		manager.l.Err(err).Msg("fail to start processor")
+	}
+}
+
+func (manager *topNProcessorManager) start(topNSchema *databasev1.TopNAggregation) error {
+	if manager.m == nil {
+		return nil
+	}
 	interval := manager.m.interval
-	for _, topNSchema := range manager.topNSchemas {
-		sortDirections := make([]modelv1.Sort, 0, 2)
-		if topNSchema.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
-			sortDirections = append(sortDirections, modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC)
-		} else {
-			sortDirections = append(sortDirections, topNSchema.GetFieldValueSort())
-		}
-
-		processorList := make([]*topNStreamingProcessor, len(sortDirections))
-		for i, sortDirection := range sortDirections {
-			srcCh := make(chan interface{})
-			src, _ := sources.NewChannel(srcCh)
-			name := strings.Join([]string{topNSchema.GetMetadata().Group, topNSchema.GetMetadata().Name, modelv1.Sort_name[int32(sortDirection)]}, "-")
-			streamingFlow := streaming.New(name, src)
-
-			filters, buildErr := manager.buildFilter(topNSchema.GetCriteria())
-			if buildErr != nil {
-				return buildErr
-			}
-			streamingFlow = streamingFlow.Filter(filters)
-
-			mapper, innerErr := manager.buildMapper(topNSchema.GetFieldName(), topNSchema.GetGroupByTagNames()...)
-			if innerErr != nil {
-				return innerErr
-			}
-			streamingFlow = streamingFlow.Map(mapper)
-			processor := &topNStreamingProcessor{
-				m:             manager.m,
-				l:             manager.l,
-				interval:      interval,
-				topNSchema:    topNSchema,
-				sortDirection: sortDirection,
-				src:           srcCh,
-				in:            make(chan flow.StreamRecord),
-				stopCh:        make(chan struct{}),
-				streamingFlow: streamingFlow,
-				pipeline:      manager.pipeline,
-				buf:           make([]byte, 0, 64),
-			}
-			processorList[i] = processor.start()
-		}
-
-		manager.processorMap[topNSchema.GetSourceMeasure()] = processorList
+	sortDirections := make([]modelv1.Sort, 0, 2)
+	if topNSchema.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
+		sortDirections = append(sortDirections, modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC)
+	} else {
+		sortDirections = append(sortDirections, topNSchema.GetFieldValueSort())
 	}
 
+	processorList := make([]*topNStreamingProcessor, len(sortDirections))
+	for i, sortDirection := range sortDirections {
+		srcCh := make(chan interface{})
+		src, _ := sources.NewChannel(srcCh)
+		name := strings.Join([]string{topNSchema.GetMetadata().Group, topNSchema.GetMetadata().Name, modelv1.Sort_name[int32(sortDirection)]}, "-")
+		streamingFlow := streaming.New(name, src)
+
+		filters, buildErr := manager.buildFilter(topNSchema.GetCriteria())
+		if buildErr != nil {
+			return buildErr
+		}
+		streamingFlow = streamingFlow.Filter(filters)
+
+		mapper, innerErr := manager.buildMapper(topNSchema.GetFieldName(), topNSchema.GetGroupByTagNames()...)
+		if innerErr != nil {
+			return innerErr
+		}
+		streamingFlow = streamingFlow.Map(mapper)
+		processor := &topNStreamingProcessor{
+			m:             manager.m,
+			l:             manager.l,
+			interval:      interval,
+			topNSchema:    topNSchema,
+			sortDirection: sortDirection,
+			src:           srcCh,
+			in:            make(chan flow.StreamRecord),
+			stopCh:        make(chan struct{}),
+			streamingFlow: streamingFlow,
+			pipeline:      manager.pipeline,
+			buf:           make([]byte, 0, 64),
+		}
+		processorList[i] = processor.start()
+	}
+	manager.processorList = append(manager.processorList, processorList...)
 	return nil
+}
+
+func (manager *topNProcessorManager) removeProcessors(topNSchema *databasev1.TopNAggregation) []*topNStreamingProcessor {
+	var processors []*topNStreamingProcessor
+	for i := range manager.processorList {
+		if manager.processorList[i].topNSchema.GetMetadata().GetName() == topNSchema.GetMetadata().GetName() {
+			processors = append(processors, manager.processorList[i])
+			manager.processorList = append(manager.processorList[:i], manager.processorList[i+1:]...)
+		}
+	}
+	return processors
 }
 
 func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (flow.UnaryFunc[bool], error) {
@@ -387,7 +492,7 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 		return spec.GetName() == fieldName
 	})
 	if fieldIdx == -1 {
-		return nil, errors.New("invalid fieldName")
+		return nil, fmt.Errorf("field %s is not found in %s schema", fieldName, manager.m.GetSchema().GetMetadata().GetName())
 	}
 	if len(groupByNames) == 0 {
 		return func(_ context.Context, request any) any {

@@ -692,24 +692,24 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	tmpBlock.reset()
 	cfm := make([]columnMetadata, 0, len(bc.fieldProjection))
 NEXT_FIELD:
-	for j := range bc.fieldProjection {
-		for i := range bc.bm.field.columnMetadata {
-			if bc.bm.field.columnMetadata[i].name == bc.fieldProjection[j] {
-				cfm = append(cfm, bc.bm.field.columnMetadata[i])
+	for _, fp := range bc.fieldProjection {
+		for _, cm := range bc.bm.field.columnMetadata {
+			if cm.name == fp {
+				cfm = append(cfm, cm)
 				continue NEXT_FIELD
 			}
 		}
 		cfm = append(cfm, columnMetadata{
-			name:      bc.fieldProjection[j],
+			name:      fp,
 			valueType: pbv1.ValueTypeUnknown,
 		})
 	}
 	bc.bm.field.columnMetadata = cfm
 	bc.bm.tagProjection = bc.tagProjection
 	var tf map[string]*dataBlock
-	for i := range bc.tagProjection {
+	for _, tp := range bc.tagProjection {
 		for tfName, block := range bc.bm.tagFamilies {
-			if bc.tagProjection[i].Family == tfName {
+			if tp.Family == tfName {
 				if tf == nil {
 					tf = make(map[string]*dataBlock, len(bc.tagProjection))
 				}

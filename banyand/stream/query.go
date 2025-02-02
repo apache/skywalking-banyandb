@@ -40,8 +40,6 @@ import (
 
 const checkDoneEvery = 128
 
-var nilResult = model.StreamQueryResult(nil)
-
 func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
 	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
 		return nil, errors.New("invalid query options: timeRange and series are required")
@@ -49,11 +47,17 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	if len(sqo.TagProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection is required")
 	}
-	db := s.databaseSupplier.SupplyTSDB()
+	var tsdb storage.TSDB[*tsTable, option]
+	db := s.tsdb.Load()
 	if db == nil {
-		return nilResult, nil
+		tsdb, err = s.schemaRepo.loadTSDB(s.group)
+		if err != nil {
+			return nil, err
+		}
+		s.tsdb.Store(tsdb)
+	} else {
+		tsdb = db.(storage.TSDB[*tsTable, option])
 	}
-	tsdb := db.(storage.TSDB[*tsTable, option])
 	segments := tsdb.SelectSegments(*sqo.TimeRange)
 	if len(segments) < 1 {
 		return bypassQueryResultInstance, nil
@@ -144,8 +148,17 @@ type queryOptions struct {
 	maxTimestamp int64
 }
 
+func (qo *queryOptions) reset() {
+	qo.StreamQueryOptions.Reset()
+	qo.elementFilter = nil
+	qo.seriesToEntity = nil
+	qo.sortedSids = nil
+	qo.minTimestamp = 0
+	qo.maxTimestamp = 0
+}
+
 func (qo *queryOptions) copyFrom(other *queryOptions) {
-	qo.StreamQueryOptions = other.StreamQueryOptions
+	qo.StreamQueryOptions.CopyFrom(&other.StreamQueryOptions)
 	qo.elementFilter = other.elementFilter
 	qo.seriesToEntity = other.seriesToEntity
 	qo.sortedSids = other.sortedSids

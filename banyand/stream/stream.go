@@ -21,7 +21,7 @@ package stream
 
 import (
 	"context"
-	"io"
+	"sync/atomic"
 	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -59,26 +59,38 @@ type Query interface {
 
 // Stream allows inspecting elements' details.
 type Stream interface {
-	io.Closer
 	GetSchema() *databasev1.Stream
 	GetIndexRules() []*databasev1.IndexRule
 	Query(ctx context.Context, opts model.StreamQueryOptions) (model.StreamQueryResult, error)
 }
 
+type indexSchema struct {
+	tagMap            map[string]*databasev1.TagSpec
+	indexRuleLocators partition.IndexRuleLocator
+	indexRules        []*databasev1.IndexRule
+}
+
+func (i *indexSchema) parse(schema *databasev1.Stream) {
+	i.indexRuleLocators, _ = partition.ParseIndexRuleLocators(schema.GetEntity(), schema.GetTagFamilies(), i.indexRules, false)
+	i.tagMap = make(map[string]*databasev1.TagSpec)
+	for _, tf := range schema.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			i.tagMap[tag.GetName()] = tag
+		}
+	}
+}
+
 var _ Stream = (*stream)(nil)
 
 type stream struct {
-	databaseSupplier  schema.Supplier
-	l                 *logger.Logger
-	schema            *databasev1.Stream
-	tagMap            map[string]*databasev1.TagSpec
-	entityMap         map[string]int
-	pm                *protector.Memory
-	name              string
-	group             string
-	indexRuleLocators partition.IndexRuleLocator
-	indexRules        []*databasev1.IndexRule
-	shardNum          uint32
+	indexSchema atomic.Value
+	tsdb        atomic.Value
+	l           *logger.Logger
+	schema      *databasev1.Stream
+	pm          *protector.Memory
+	schemaRepo  *schemaRepo
+	name        string
+	group       string
 }
 
 func (s *stream) GetSchema() *databasev1.Stream {
@@ -86,48 +98,40 @@ func (s *stream) GetSchema() *databasev1.Stream {
 }
 
 func (s *stream) GetIndexRules() []*databasev1.IndexRule {
-	return s.indexRules
+	is := s.indexSchema.Load()
+	if is == nil {
+		return nil
+	}
+	return is.(indexSchema).indexRules
 }
 
-func (s *stream) Close() error {
-	return nil
+func (s *stream) OnIndexUpdate(index []*databasev1.IndexRule) {
+	var is indexSchema
+	is.indexRules = index
+	is.parse(s.schema)
+	s.indexSchema.Store(is)
 }
 
 func (s *stream) parseSpec() {
 	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-	s.indexRuleLocators, _ = partition.ParseIndexRuleLocators(s.schema.GetEntity(), s.schema.GetTagFamilies(), s.indexRules, false)
-	s.tagMap = make(map[string]*databasev1.TagSpec)
-	for _, tf := range s.schema.GetTagFamilies() {
-		for _, tag := range tf.GetTags() {
-			s.tagMap[tag.GetName()] = tag
-		}
-	}
-	s.entityMap = make(map[string]int)
-	for idx, entity := range s.schema.GetEntity().GetTagNames() {
-		s.entityMap[entity] = idx + 1
-	}
+	var is indexSchema
+	is.parse(s.schema)
+	s.indexSchema.Store(is)
 }
 
 type streamSpec struct {
-	schema     *databasev1.Stream
-	indexRules []*databasev1.IndexRule
+	schema *databasev1.Stream
 }
 
-func openStream(shardNum uint32, db schema.Supplier,
-	spec streamSpec, l *logger.Logger, pm *protector.Memory,
+func openStream(spec streamSpec,
+	l *logger.Logger, pm *protector.Memory, schemaRepo *schemaRepo,
 ) *stream {
 	s := &stream{
-		shardNum:   shardNum,
 		schema:     spec.schema,
-		indexRules: spec.indexRules,
 		l:          l,
 		pm:         pm,
+		schemaRepo: schemaRepo,
 	}
 	s.parseSpec()
-	if db == nil {
-		return s
-	}
-
-	s.databaseSupplier = db
 	return s
 }

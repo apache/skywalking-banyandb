@@ -91,6 +91,44 @@ type StreamQueryOptions struct {
 	MaxElementSize int
 }
 
+// Reset resets the StreamQueryOptions.
+func (s *StreamQueryOptions) Reset() {
+	s.Name = ""
+	s.TimeRange = nil
+	s.Entities = nil
+	s.Filter = nil
+	s.Order = nil
+	s.TagProjection = nil
+	s.MaxElementSize = 0
+}
+
+// CopyFrom copies the StreamQueryOptions from other to s.
+func (s *StreamQueryOptions) CopyFrom(other *StreamQueryOptions) {
+	s.Name = other.Name
+	s.TimeRange = other.TimeRange
+
+	// Deep copy for Entities if it's a slice
+	if other.Entities != nil {
+		s.Entities = make([][]*modelv1.TagValue, len(other.Entities))
+		copy(s.Entities, other.Entities)
+	} else {
+		s.Entities = nil
+	}
+
+	s.Filter = other.Filter
+	s.Order = other.Order
+
+	// Deep copy if TagProjection is a slice
+	if other.TagProjection != nil {
+		s.TagProjection = make([]TagProjection, len(other.TagProjection))
+		copy(s.TagProjection, other.TagProjection)
+	} else {
+		s.TagProjection = nil
+	}
+
+	s.MaxElementSize = other.MaxElementSize
+}
+
 // StreamResult is the result of a query.
 type StreamResult struct {
 	Error       error
@@ -201,6 +239,8 @@ func (sr *StreamResult) CopySingleFrom(other *StreamResult) {
 	}
 }
 
+var bypassStreamResult = &StreamResult{}
+
 // StreamResultHeap is a min-heap of StreamResult pointers.
 type StreamResultHeap struct {
 	data []*StreamResult
@@ -240,6 +280,10 @@ func MergeStreamResults(results []*StreamResult, topN int, asc bool) *StreamResu
 			result.idx = 0
 			heap.Push(h, result)
 		}
+	}
+
+	if h.Len() == 0 {
+		return bypassStreamResult
 	}
 
 	mergedResult := NewStreamResult(topN, asc)

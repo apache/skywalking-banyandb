@@ -510,9 +510,9 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	tmpBlock.reset()
 	bc.bm.tagProjection = bc.tagProjection
 	var tf map[string]*dataBlock
-	for i := range bc.tagProjection {
+	for _, tp := range bc.tagProjection {
 		for tfName, block := range bc.bm.tagFamilies {
-			if bc.tagProjection[i].Family == tfName {
+			if tp.Family == tfName {
 				if tf == nil {
 					tf = make(map[string]*dataBlock, len(bc.tagProjection))
 				}
@@ -520,8 +520,15 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			}
 		}
 	}
+	if len(tf) == 0 {
+		return false
+	}
+
 	bc.bm.tagFamilies = tf
 	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)
+	if len(tmpBlock.timestamps) == 0 {
+		return false
+	}
 
 	idxList := make([]int, 0)
 	var start, end int

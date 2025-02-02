@@ -96,6 +96,17 @@ jobs:
         uses: apache/skywalking-infra-e2e@cf589b4a0b9f8e6f436f78e9cfd94a1ee5494180
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
+      - if: ${{ failure() }}
+        run: |
+          df -h
+          du -sh .
+          docker images
+      - uses: actions/upload-artifact@v4
+        if: ${{ failure() }}
+        name: Upload Logs
+        with:
+          name: test-logs-${{ matrix.test.name }}
+          path: "${{ env.SW_INFRA_E2E_LOG_DIR }}"
 
   Storage:
     if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')

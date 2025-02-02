@@ -2,7 +2,7 @@ module github.com/apache/skywalking-banyandb
 
 go 1.23
 
-toolchain go1.23.1
+toolchain go1.23.5
 
 require (
 	github.com/RoaringBitmap/roaring v1.9.4
@@ -74,7 +74,7 @@ require (
 	github.com/blugelabs/bluge_segment_api v0.2.0
 	github.com/blugelabs/ice v1.0.0 // indirect
 	github.com/caio/go-tdigest v3.1.0+incompatible // indirect
-	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
