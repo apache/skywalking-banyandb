@@ -148,6 +148,15 @@ type queryOptions struct {
 	maxTimestamp int64
 }
 
+func (qo *queryOptions) reset() {
+	qo.StreamQueryOptions.Reset()
+	qo.elementFilter = nil
+	qo.seriesToEntity = nil
+	qo.sortedSids = nil
+	qo.minTimestamp = 0
+	qo.maxTimestamp = 0
+}
+
 func (qo *queryOptions) copyFrom(other *queryOptions) {
 	qo.StreamQueryOptions.CopyFrom(&other.StreamQueryOptions)
 	qo.elementFilter = other.elementFilter

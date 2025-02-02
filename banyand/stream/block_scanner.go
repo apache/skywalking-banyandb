@@ -46,6 +46,7 @@ type blockScanResult struct {
 
 func (bs *blockScanResult) reset() {
 	bs.p = nil
+	bs.qo.reset()
 	bs.bm.reset()
 }
 
@@ -55,6 +56,7 @@ type blockScanResultBatch struct {
 }
 
 func (bsb *blockScanResultBatch) reset() {
+	bsb.err = nil
 	for i := range bsb.bss {
 		bsb.bss[i].reset()
 	}

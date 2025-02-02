@@ -91,6 +91,17 @@ type StreamQueryOptions struct {
 	MaxElementSize int
 }
 
+// Reset resets the StreamQueryOptions.
+func (s *StreamQueryOptions) Reset() {
+	s.Name = ""
+	s.TimeRange = nil
+	s.Entities = nil
+	s.Filter = nil
+	s.Order = nil
+	s.TagProjection = nil
+	s.MaxElementSize = 0
+}
+
 // CopyFrom copies the StreamQueryOptions from other to s.
 func (s *StreamQueryOptions) CopyFrom(other *StreamQueryOptions) {
 	s.Name = other.Name

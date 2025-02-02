@@ -102,7 +102,10 @@ func (bm *blockMetadata) reset() {
 	bm.count = 0
 	bm.timestamps.reset()
 	bm.elementIDs.reset()
-	bm.tagFamilies = make(map[string]*dataBlock)
+	for k := range bm.tagFamilies {
+		bm.tagFamilies[k].reset()
+		delete(bm.tagFamilies, k)
+	}
 	bm.tagProjection = bm.tagProjection[:0]
 }
 
