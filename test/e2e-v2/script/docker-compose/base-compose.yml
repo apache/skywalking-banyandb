@@ -13,14 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   banyandb:
     extends:
       file: ../../../docker/base-compose.yml
       service: banyandb
     image: "apache/skywalking-banyandb:${TAG}-testing"
+    cpus: 4
+    mem_limit: 4g
     networks:
       - e2e
 
@@ -29,6 +29,8 @@ services:
       file: ../../../docker/base-compose.yml
       service: liaison
     image: "apache/skywalking-banyandb:${TAG}-testing"
+    cpus: 4
+    mem_limit: 2g
     networks:
       - e2e
 
@@ -37,6 +39,8 @@ services:
       file: ../../../docker/base-compose.yml
       service: data
     image: "apache/skywalking-banyandb:${TAG}-testing"
+    cpus: 4
+    mem_limit: 4g
     networks:
       - e2e
 

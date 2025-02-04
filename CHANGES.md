@@ -23,6 +23,8 @@ Release Notes.
 - Stream: Introduce the batch scan to improve the performance of the query and limit the memory usage.
 - Add memory protector to protect the memory usage of the system. It will limit the memory usage of the querying.
 - Metadata: Introduce the periodic sync to sync the metadata from the etcd to the local cache in case of the loss of the events.
+- Test: Add the e2e test for zipkin.
+- Test: Limit the CPU and memory usage of the e2e test.
 
 ### Bug Fixes
 

@@ -306,15 +306,17 @@ func TestStreamResult_CopyFrom(t *testing.T) {
 					},
 					{
 						Name: "family2",
-						Tags: []Tag{{
-							Name: "tag1",
-							Values: []*modelv1.TagValue{
-								{
-									Value: &modelv1.TagValue_Str{
-										Str: &modelv1.Str{Value: "value23"},
+						Tags: []Tag{
+							{
+								Name: "tag1",
+								Values: []*modelv1.TagValue{
+									{
+										Value: &modelv1.TagValue_Str{
+											Str: &modelv1.Str{Value: "value23"},
+										},
 									},
 								},
-							}},
+							},
 						},
 					},
 				},
