@@ -18,6 +18,7 @@
 package model
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -305,16 +306,18 @@ func TestStreamResult_CopyFrom(t *testing.T) {
 					},
 					{
 						Name: "family2",
-						Tags: []Tag{{
-							Name: "tag1",
-							Values: []*modelv1.TagValue{
-								{
-									Value: &modelv1.TagValue_Str{
-										Str: &modelv1.Str{Value: "value23"},
+						Tags: []Tag{
+							{
+								Name: "tag1",
+								Values: []*modelv1.TagValue{
+									{
+										Value: &modelv1.TagValue_Str{
+											Str: &modelv1.Str{Value: "value23"},
+										},
 									},
 								},
 							},
-						}},
+						},
 					},
 				},
 				SIDs: []common.SeriesID{3},
@@ -959,6 +962,35 @@ func TestMergeStreamResults(t *testing.T) {
 			assert.Equal(t, tt.wantTS, got.Timestamps, "unexpected timestamps")
 			assert.Equal(t, tt.wantTags, got.TagFamilies, "unexpected tag families")
 			assert.Equal(t, tt.wantSIDs, got.SIDs, "unexpected SIDs")
+		})
+	}
+}
+
+func TestStreamResult_TopNTooLarge(t *testing.T) {
+	tests := []struct {
+		name    string
+		topN    int
+		asc     bool
+		wantLen int
+	}{
+		{
+			name:    "topN exceeds maxTopN",
+			topN:    math.MaxUint32,
+			asc:     true,
+			wantLen: maxTopN,
+		},
+		{
+			name:    "topN within limit",
+			topN:    maxTopN - 5,
+			asc:     true,
+			wantLen: maxTopN - 5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sr := NewStreamResult(tt.topN, tt.asc)
+			assert.Equal(t, tt.wantLen, cap(sr.Timestamps), "unexpected capacity")
 		})
 	}
 }

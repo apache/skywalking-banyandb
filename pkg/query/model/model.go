@@ -29,6 +29,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const maxTopN = 20
+
 // Tag is a tag name and its values.
 type Tag struct {
 	Name   string
@@ -143,13 +145,17 @@ type StreamResult struct {
 
 // NewStreamResult creates a new StreamResult.
 func NewStreamResult(topN int, asc bool) *StreamResult {
+	capacity := topN
+	if topN > maxTopN {
+		capacity = maxTopN
+	}
 	return &StreamResult{
 		topN:        topN,
 		asc:         asc,
-		Timestamps:  make([]int64, 0, topN),
-		ElementIDs:  make([]uint64, 0, topN),
-		TagFamilies: make([]TagFamily, 0, topN),
-		SIDs:        make([]common.SeriesID, 0, topN),
+		Timestamps:  make([]int64, 0, capacity),
+		ElementIDs:  make([]uint64, 0, capacity),
+		TagFamilies: make([]TagFamily, 0, capacity),
+		SIDs:        make([]common.SeriesID, 0, capacity),
 	}
 }
 

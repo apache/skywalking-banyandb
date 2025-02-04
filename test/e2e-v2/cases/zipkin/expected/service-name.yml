@@ -13,5 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-SW_OAP_COMMIT=c2cdf07871647678087a31b31aca2385828eabe4
+[
+  "backend",
+  "frontend"
+]
