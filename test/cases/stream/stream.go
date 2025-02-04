@@ -48,6 +48,7 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 },
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
+	g.Entry("max limit", helpers.Args{Input: "all_max_limit", Want: "all", Duration: 1 * time.Hour}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
 	g.Entry("order asc", helpers.Args{Input: "order_asc", Duration: 1 * time.Hour}),
 	g.Entry("order desc", helpers.Args{Input: "order_desc", Duration: 1 * time.Hour}),
