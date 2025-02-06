@@ -69,6 +69,8 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 	}
 	decoder := generateColumnValuesDecoder()
 	defer releaseColumnValuesDecoder(decoder)
+	decodedTopNValue := GenerateTopNValue()
+	defer ReleaseTopNValue(decodedTopNValue)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,7 +79,7 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 			require.NoError(t, err)
 
 			// Unmarshal the topNValue
-			var decodedTopNValue TopNValue
+			decodedTopNValue.Reset()
 			err = decodedTopNValue.Unmarshal(dst, decoder)
 			require.NoError(t, err)
 

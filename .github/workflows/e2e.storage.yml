@@ -51,7 +51,9 @@ jobs:
       TAG: ${{ github.sha }}
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
       - name: Cache Go Modules
         uses: actions/cache@v3
         id: cache-go

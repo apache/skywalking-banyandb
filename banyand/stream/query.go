@@ -124,7 +124,8 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	}
 
 	if seriesFilter.IsEmpty() {
-		return &result, nil
+		result.Release()
+		return nil, nil
 	}
 	sids := seriesFilter.ToSlice()
 	if result.qo.elementFilter, err = indexSearch(ctx, sqo, result.tabs, sids); err != nil {
