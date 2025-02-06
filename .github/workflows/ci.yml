@@ -31,7 +31,9 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
       - name: Cache Go Modules
         uses: actions/cache@v3
         id: cache-go
@@ -94,7 +96,9 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
       - name: Cache Go Modules
         uses: actions/cache@v3
         id: cache-go

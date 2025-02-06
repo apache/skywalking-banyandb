@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -200,15 +201,17 @@ func (ei *topNMIterator) Next() bool {
 			ei.err = errors.New("failed to get binary data")
 			return false
 		}
+		ts := timestamppb.New(time.Unix(0, r.Timestamps[i]))
 		ei.topNValue.Reset()
-		ei.err = ei.topNValue.Unmarshal(bd, ei.decoder)
-		if ei.err != nil {
-			return false
+		err := ei.topNValue.Unmarshal(bd, ei.decoder)
+		if err != nil {
+			ei.err = multierr.Append(ei.err, errors.WithMessagef(err, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, fv))
+			continue
 		}
 		fieldName, entityNames, values, entities := ei.topNValue.Values()
 		for j := range entities {
 			dp := &measurev1.DataPoint{
-				Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
+				Timestamp: ts,
 				Sid:       uint64(r.SID),
 				Version:   r.Versions[i],
 			}
