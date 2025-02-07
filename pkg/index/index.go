@@ -347,6 +347,7 @@ type Store interface {
 	Searcher
 	CollectMetrics(...string)
 	Reset()
+	TakeFileSnapshot(dst string) error
 }
 
 // Series represents a series in an index.

@@ -53,9 +53,10 @@ var (
 )
 
 type shard struct {
-	store index.SeriesStore
-	l     *logger.Logger
-	id    common.ShardID
+	store    index.SeriesStore
+	l        *logger.Logger
+	location string
+	id       common.ShardID
 }
 
 func (s *shard) close() error {
@@ -70,8 +71,9 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, flushTimeou
 	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
 	sName := "shard" + strconv.Itoa(int(id))
 	si := &shard{
-		id: id,
-		l:  logger.Fetch(ctx, sName),
+		id:       id,
+		l:        logger.Fetch(ctx, sName),
+		location: location,
 	}
 	opts := inverted.StoreOpts{
 		Path:         location,

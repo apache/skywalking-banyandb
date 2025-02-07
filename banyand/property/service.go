@@ -104,6 +104,7 @@ func (s *service) PreRun(ctx context.Context) error {
 		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
 		s.pipeline.Subscribe(data.TopicPropertyDelete, &deleteListener{s: s}),
 		s.pipeline.Subscribe(data.TopicPropertyQuery, &queryListener{s: s}),
+		s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}),
 	)
 }
 

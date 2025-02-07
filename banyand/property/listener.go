@@ -19,12 +19,18 @@ package property
 
 import (
 	"context"
+	"fmt"
+	"path"
+	"path/filepath"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -32,6 +38,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
+
+const snapshotsDir = "snapshots"
 
 var (
 	_ bus.MessageListener = (*updateListener)(nil)
@@ -193,4 +201,66 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 	}
 	resp = bus.NewMessage(bus.MessageID(now), qResp)
 	return
+}
+
+type snapshotListener struct {
+	*bus.UnImplementedHealthyListener
+	s           *service
+	snapshotSeq uint64
+	snapshotMux sync.Mutex
+}
+
+// Rev takes a snapshot of the database.
+func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	groups := message.Data().([]*databasev1.SnapshotRequest_Group)
+	var toTake bool
+	if len(groups) == 0 {
+		toTake = true
+	} else {
+		for _, g := range groups {
+			if g.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
+				toTake = true
+				break
+			}
+		}
+	}
+	if !toTake {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+	}
+	s.snapshotMux.Lock()
+	defer s.snapshotMux.Unlock()
+	sn := s.snapshotName()
+	shardsRef := s.s.db.sLst.Load()
+	if shardsRef == nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+	}
+	shards := *shardsRef
+	for _, shard := range shards {
+		select {
+		case <-ctx.Done():
+			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+		default:
+		}
+		snpDir := path.Join(s.s.db.location, snapshotsDir, sn, filepath.Base(shard.location))
+		lfs.MkdirPanicIfExist(snpDir, dirPerm)
+		err := shard.store.TakeFileSnapshot(snpDir)
+		if err != nil {
+			s.s.l.Error().Err(err).Str("shard", filepath.Base(shard.location)).Msg("fail to take shard snapshot")
+			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.Snapshot{
+				Name:    sn,
+				Catalog: commonv1.Catalog_CATALOG_PROPERTY,
+				Error:   err.Error(),
+			})
+		}
+	}
+
+	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.Snapshot{
+		Name:    sn,
+		Catalog: commonv1.Catalog_CATALOG_PROPERTY,
+	})
+}
+
+func (s *snapshotListener) snapshotName() string {
+	s.snapshotSeq++
+	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), s.snapshotSeq)
 }

@@ -204,14 +204,16 @@ func CMD(flags ...string) func() {
 	}
 }
 
-// DataNode runs a data node.
-func DataNode(etcdEndpoint string, flags ...string) func() {
+func startDataNode(etcdEndpoint string, flags ...string) (string, string, func(), func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 	ports, err := test.AllocateFreePorts(1)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
 	nodeHost := "127.0.0.1"
+
 	flags = append(flags,
 		"data",
 		"--grpc-host="+host,
@@ -223,14 +225,33 @@ func DataNode(etcdEndpoint string, flags ...string) func() {
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost,
 	)
+
 	closeFn := CMD(flags...)
+
 	gomega.Eventually(
 		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 		testflags.EventuallyTimeout).Should(gomega.Succeed())
+
 	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
 		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
 	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
+
+	return addr, path, closeFn, deferFn
+}
+
+// DataNode runs a data node.
+func DataNode(etcdEndpoint string, flags ...string) func() {
+	_, _, closeFn, deferFn := startDataNode(etcdEndpoint, flags...)
 	return func() {
+		closeFn()
+		deferFn()
+	}
+}
+
+// DataNodeWithAddrAndDir runs a data node and returns the address and root path.
+func DataNodeWithAddrAndDir(etcdEndpoint string, flags ...string) (string, string, func()) {
+	addr, dir, closeFn, deferFn := startDataNode(etcdEndpoint, flags...)
+	return addr, dir, func() {
 		closeFn()
 		deferFn()
 	}

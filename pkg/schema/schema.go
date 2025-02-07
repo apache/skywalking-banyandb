@@ -105,6 +105,7 @@ type Repository interface {
 	Init(schema.Kind) ([]string, []int64)
 	SendMetadataEvent(MetadataEvent)
 	LoadGroup(name string) (Group, bool)
+	LoadAllGroups() []Group
 	LoadResource(metadata *commonv1.Metadata) (Resource, bool)
 	Close()
 	StopCh() <-chan struct{}

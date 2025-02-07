@@ -34,6 +34,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const seriesIndexDirName = "sidx"
+
 func (s *segment[T, O]) IndexDB() IndexDB {
 	return s.index
 }
@@ -58,7 +60,7 @@ func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64,
 		p: common.GetPosition(ctx),
 	}
 	opts := inverted.StoreOpts{
-		Path:          path.Join(root, "sidx"),
+		Path:          path.Join(root, seriesIndexDirName),
 		Logger:        si.l,
 		BatchWaitSec:  flushTimeoutSeconds,
 		CacheMaxBytes: cacheMaxBytes,

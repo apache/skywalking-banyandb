@@ -23,12 +23,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 )
 
-var _ = ginkgo.Describe("Loacl File System", func() {
+var _ = ginkgo.Describe("Local File System", func() {
 	const (
 		data          string = "BanyanDB"
 		dirName       string = "tmpDir"
@@ -144,6 +145,68 @@ var _ = ginkgo.Describe("Loacl File System", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			_, err = os.Stat(fileName)
 			gomega.Expect(err).To(gomega.HaveOccurred())
+		})
+	})
+
+	ginkgo.Context("Hard Link Operations", func() {
+		const (
+			srcDir  = "test_src"
+			destDir = "test_dest"
+		)
+
+		var fs FileSystem
+
+		ginkgo.BeforeEach(func() {
+			fs = NewLocalFileSystem()
+			// Create source directory structure
+			gomega.Expect(os.MkdirAll(srcDir, 0o755)).To(gomega.Succeed())
+			gomega.Expect(os.WriteFile(filepath.Join(srcDir, "file1.txt"), []byte("data1"), 0o600)).To(gomega.Succeed())
+			gomega.Expect(os.MkdirAll(filepath.Join(srcDir, "subdir"), 0o755)).To(gomega.Succeed())
+			gomega.Expect(os.WriteFile(filepath.Join(srcDir, "subdir", "file2.txt"), []byte("data2"), 0o600)).To(gomega.Succeed())
+		})
+
+		ginkgo.AfterEach(func() {
+			gomega.Expect(os.RemoveAll(srcDir)).To(gomega.Succeed())
+			gomega.Expect(os.RemoveAll(destDir)).To(gomega.Succeed())
+		})
+
+		ginkgo.It("should create hard links for files passing the filter", func() {
+			// Filter only "file1.txt"
+			filter := func(path string) bool {
+				return filepath.Base(path) == "file1.txt"
+			}
+
+			err := fs.CreateHardLink(srcDir, destDir, filter)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			srcFile := filepath.Join(srcDir, "file1.txt")
+			destFile := filepath.Join(destDir, "file1.txt")
+			gomega.Expect(destFile).To(gomega.BeAnExistingFile())
+
+			gomega.Expect(CompareINode(srcFile, destFile)).To(gomega.Succeed())
+
+			_, err = os.Stat(filepath.Join(destDir, "subdir", "file2.txt"))
+			gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("should return error if source path does not exist", func() {
+			err := fs.CreateHardLink("non_existent_src", destDir, nil)
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			var errFS *FileSystemError
+			gomega.Expect(errors.As(err, &errFS)).To(gomega.BeTrue())
+			gomega.Expect(errFS.Code).To(gomega.Equal(IsNotExistError))
+		})
+
+		ginkgo.It("should return error if destination file already exists", func() {
+			// Pre-create destination file
+			gomega.Expect(os.MkdirAll(destDir, 0o755)).To(gomega.Succeed())
+			gomega.Expect(os.WriteFile(filepath.Join(destDir, "file1.txt"), []byte("existing"), 0o600)).To(gomega.Succeed())
+
+			err := fs.CreateHardLink(srcDir, destDir, nil) // No filter
+			var errFS *FileSystemError
+			gomega.Expect(errors.As(err, &errFS)).To(gomega.BeTrue())
+			gomega.Expect(errFS.Code).To(gomega.Equal(isExistError))
+			gomega.Expect(errFS.Code).To(gomega.Equal(isExistError))
 		})
 	})
 })

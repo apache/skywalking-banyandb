@@ -137,6 +137,10 @@
     - [MeasureRegistryServiceListResponse](#banyandb-database-v1-MeasureRegistryServiceListResponse)
     - [MeasureRegistryServiceUpdateRequest](#banyandb-database-v1-MeasureRegistryServiceUpdateRequest)
     - [MeasureRegistryServiceUpdateResponse](#banyandb-database-v1-MeasureRegistryServiceUpdateResponse)
+    - [Snapshot](#banyandb-database-v1-Snapshot)
+    - [SnapshotRequest](#banyandb-database-v1-SnapshotRequest)
+    - [SnapshotRequest.Group](#banyandb-database-v1-SnapshotRequest-Group)
+    - [SnapshotResponse](#banyandb-database-v1-SnapshotResponse)
     - [StreamRegistryServiceCreateRequest](#banyandb-database-v1-StreamRegistryServiceCreateRequest)
     - [StreamRegistryServiceCreateResponse](#banyandb-database-v1-StreamRegistryServiceCreateResponse)
     - [StreamRegistryServiceDeleteRequest](#banyandb-database-v1-StreamRegistryServiceDeleteRequest)
@@ -166,6 +170,7 @@
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
     - [IndexRuleRegistryService](#banyandb-database-v1-IndexRuleRegistryService)
     - [MeasureRegistryService](#banyandb-database-v1-MeasureRegistryService)
+    - [SnapshotService](#banyandb-database-v1-SnapshotService)
     - [StreamRegistryService](#banyandb-database-v1-StreamRegistryService)
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
   
@@ -2061,6 +2066,69 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-Snapshot"></a>
+
+### Snapshot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
+| name | [string](#string) |  |  |
+| error | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SnapshotRequest"></a>
+
+### SnapshotRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| groups | [SnapshotRequest.Group](#banyandb-database-v1-SnapshotRequest-Group) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SnapshotRequest-Group"></a>
+
+### SnapshotRequest.Group
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SnapshotResponse"></a>
+
+### SnapshotResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| snapshots | [Snapshot](#banyandb-database-v1-Snapshot) | repeated |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-StreamRegistryServiceCreateRequest"></a>
 
 ### StreamRegistryServiceCreateRequest
@@ -2477,6 +2545,16 @@ Type determine the index structure under the hood
 | Get | [MeasureRegistryServiceGetRequest](#banyandb-database-v1-MeasureRegistryServiceGetRequest) | [MeasureRegistryServiceGetResponse](#banyandb-database-v1-MeasureRegistryServiceGetResponse) |  |
 | List | [MeasureRegistryServiceListRequest](#banyandb-database-v1-MeasureRegistryServiceListRequest) | [MeasureRegistryServiceListResponse](#banyandb-database-v1-MeasureRegistryServiceListResponse) |  |
 | Exist | [MeasureRegistryServiceExistRequest](#banyandb-database-v1-MeasureRegistryServiceExistRequest) | [MeasureRegistryServiceExistResponse](#banyandb-database-v1-MeasureRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+
+
+<a name="banyandb-database-v1-SnapshotService"></a>
+
+### SnapshotService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Snapshot | [SnapshotRequest](#banyandb-database-v1-SnapshotRequest) | [SnapshotResponse](#banyandb-database-v1-SnapshotResponse) |  |
 
 
 <a name="banyandb-database-v1-StreamRegistryService"></a>

@@ -23,6 +23,7 @@ package fs
 import (
 	"fmt"
 	"os"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -79,6 +80,34 @@ func syncFile(file *os.File) error {
 			Code:    flushError,
 			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", file.Name(), err),
 		}
+	}
+	return nil
+}
+
+func mustGetFileStat(path string) (*syscall.Stat_t, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert fileinfo.Sys() to *syscall.Stat_t for %s", path)
+	}
+	return stat, nil
+}
+
+// CompareINode compares the inode of two files.
+func CompareINode(srcPath, destPath string) error {
+	srcStat, err := mustGetFileStat(srcPath)
+	if err != nil {
+		return err
+	}
+	destStat, err := mustGetFileStat(destPath)
+	if err != nil {
+		return err
+	}
+	if srcStat.Ino != destStat.Ino {
+		return fmt.Errorf("src file inode: %d, dest file inode: %d", srcStat.Ino, destStat.Ino)
 	}
 	return nil
 }

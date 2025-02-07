@@ -360,6 +360,15 @@ func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posti
 	return
 }
 
+func (s *store) TakeFileSnapshot(dst string) error {
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	return reader.Backup(dst, nil)
+}
+
 type blugeMatchIterator struct {
 	delegated     search.DocumentMatchIterator
 	err           error

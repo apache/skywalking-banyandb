@@ -169,6 +169,46 @@ func (d *database[T, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
 	d.segmentController.updateOptions(resourceOpts)
 }
 
+func (d *database[T, O]) TakeFileSnapshot(dst string) error {
+	if d.closed.Load() {
+		return errors.New("database is closed")
+	}
+
+	segments := d.segmentController.segments()
+	defer func() {
+		for _, seg := range segments {
+			seg.DecRef()
+		}
+	}()
+
+	for _, seg := range segments {
+		segDir := filepath.Base(seg.location)
+		segPath := filepath.Join(dst, segDir)
+		lfs.MkdirIfNotExist(segPath, dirPerm)
+
+		indexPath := filepath.Join(segPath, seriesIndexDirName)
+		lfs.MkdirIfNotExist(indexPath, dirPerm)
+		if err := seg.index.store.TakeFileSnapshot(indexPath); err != nil {
+			return errors.Wrapf(err, "failed to snapshot index for segment %s", segDir)
+		}
+
+		sLst := seg.sLst.Load()
+		if sLst == nil {
+			continue
+		}
+		for _, shard := range *sLst {
+			shardDir := filepath.Base(shard.location)
+			shardPath := filepath.Join(segPath, shardDir)
+			lfs.MkdirIfNotExist(shardPath, dirPerm)
+			if err := shard.table.TakeFileSnapshot(shardPath); err != nil {
+				return errors.Wrapf(err, "failed to snapshot shard %s in segment %s", shardDir, segDir)
+			}
+		}
+	}
+
+	return nil
+}
+
 func (d *database[T, O]) collect() {
 	if d.closed.Load() {
 		return

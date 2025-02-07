@@ -120,6 +120,9 @@ func (s *service) PreRun(_ context.Context) error {
 	s.schemaRepo = newSchemaRepo(path, s)
 	// run a serial watcher
 
+	if err := s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {
+		return err
+	}
 	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
 	err := s.pipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
 	if err != nil {

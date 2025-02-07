@@ -280,6 +280,86 @@ func (fs *localFileSystem) MustGetFreeSpace(path string) uint64 {
 	return usage.Free
 }
 
+func (fs *localFileSystem) CreateHardLink(srcPath, destPath string, filter func(string) bool) error {
+	_, err := os.Stat(srcPath)
+	if err != nil {
+		return &FileSystemError{
+			Code:    IsNotExistError,
+			Message: fmt.Sprintf("Source path does not exist: %s, error: %v", srcPath, err),
+		}
+	}
+
+	err = filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return &FileSystemError{
+				Code:    otherError,
+				Message: fmt.Sprintf("Error accessing path %s: %v", path, err),
+			}
+		}
+
+		if path == srcPath {
+			if info.IsDir() {
+				if err = os.MkdirAll(destPath, info.Mode()); err != nil {
+					return &FileSystemError{
+						Code:    otherError,
+						Message: fmt.Sprintf("Failed to create destination root directory %s: %v", destPath, err),
+					}
+				}
+			}
+			return nil
+		}
+
+		relPath, err := filepath.Rel(srcPath, path)
+		if err != nil {
+			return &FileSystemError{
+				Code:    otherError,
+				Message: fmt.Sprintf("Failed to get relative path for %s: %v", path, err),
+			}
+		}
+		destFullPath := filepath.Join(destPath, relPath)
+
+		if info.IsDir() {
+			if err := os.MkdirAll(destFullPath, info.Mode()); err != nil {
+				return &FileSystemError{
+					Code:    otherError,
+					Message: fmt.Sprintf("Failed to create directory %s: %v", destFullPath, err),
+				}
+			}
+			return nil
+		}
+		if filter != nil && !filter(path) {
+			return nil
+		}
+
+		parentDir := filepath.Dir(destFullPath)
+		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+			return &FileSystemError{
+				Code:    otherError,
+				Message: fmt.Sprintf("Failed to create parent directory %s: %v", parentDir, err),
+			}
+		}
+
+		if err := os.Link(path, destFullPath); err != nil {
+			code := otherError
+			if os.IsExist(err) {
+				code = isExistError
+			} else if os.IsPermission(err) {
+				code = permissionError
+			}
+			return &FileSystemError{
+				Code:    code,
+				Message: fmt.Sprintf("Failed to create hard link from %s to %s: %v", path, destFullPath, err),
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	fs.SyncPath(destPath)
+	return nil
+}
+
 // Write adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
 	size, err := file.file.Write(buffer)
