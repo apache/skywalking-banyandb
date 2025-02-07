@@ -174,10 +174,19 @@ func (m *Memory) Serve() run.StopNotify {
 				return
 			case <-ticker.C:
 				samples := []metrics.Sample{
-					{Name: "/memory/classes/total:bytes"},
+					{Name: "/memory/classes/heap/objects:bytes"},
+					{Name: "/memory/classes/heap/stacks:bytes"},
+					{Name: "/memory/classes/metadata/mcache/inuse:bytes"},
+					{Name: "/memory/classes/metadata/mspan/inuse:bytes"},
+					{Name: "/memory/classes/metadata/other:bytes"},
+					{Name: "/memory/classes/os-stacks:bytes"},
+					{Name: "/memory/classes/other:bytes"},
 				}
 				metrics.Read(samples)
-				usedBytes := samples[0].Value.Uint64()
+				var usedBytes uint64
+				for _, sample := range samples {
+					usedBytes += sample.Value.Uint64()
+				}
 
 				atomic.StoreUint64(&m.usage, usedBytes)
 
