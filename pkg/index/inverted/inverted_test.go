@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -358,4 +359,44 @@ func setUp(t *require.Assertions) (tempDir string, deferFunc func()) {
 	}))
 	tempDir, deferFunc = test.Space(t)
 	return tempDir, deferFunc
+}
+
+func TestStore_TakeFileSnapshot(t *testing.T) {
+	tester := require.New(t)
+	path, fn := setUp(tester)
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+
+	var batch index.Batch
+	sampleKey := index.FieldKey{
+		IndexRuleID: 10,
+		SeriesID:    common.SeriesID(99),
+	}
+	batch.Documents = append(batch.Documents,
+		index.Document{
+			Fields: []index.Field{
+				index.NewStringField(sampleKey, "snapshot-test"),
+			},
+			DocID: 1,
+		},
+	)
+	tester.NoError(s.Batch(batch))
+
+	// Take snapshot
+	snapshotDir, cleanFn := test.Space(require.New(t))
+	defer cleanFn()
+
+	err = s.TakeFileSnapshot(snapshotDir)
+	tester.NoError(err)
+
+	fileSystem := fs.NewLocalFileSystem()
+	entries := fileSystem.ReadDir(snapshotDir)
+	tester.True(len(entries) > 0, "Expected snapshot to produce files")
 }

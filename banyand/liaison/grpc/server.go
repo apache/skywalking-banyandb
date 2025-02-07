@@ -74,6 +74,7 @@ type NodeRegistries struct {
 }
 
 type server struct {
+	databasev1.UnimplementedSnapshotServiceServer
 	creds      credentials.TransportCredentials
 	omr        observability.MetricsRegistry
 	measureSVC *measureService
@@ -271,6 +272,7 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterMeasureRegistryServiceServer(s.ser, s.measureRegistryServer)
 	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
 	databasev1.RegisterTopNAggregationRegistryServiceServer(s.ser, s.topNAggregationRegistryServer)
+	databasev1.RegisterSnapshotServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})

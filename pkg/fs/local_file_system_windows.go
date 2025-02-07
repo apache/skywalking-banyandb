@@ -63,3 +63,7 @@ func (fs *localFileSystem) SyncPath(_ string) {}
 func syncFile(_ *os.File) error {
 	return nil
 }
+
+func CompareINode(srcPath, destPath string) error {
+	return nil
+}

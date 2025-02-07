@@ -64,32 +64,33 @@ var (
 )
 
 type server struct {
+	databasev1.UnimplementedSnapshotServiceServer
 	creds     credentials.TransportCredentials
 	omr       observability.MetricsRegistry
-	healthSrv *http.Server
+	httpSrv   *http.Server
 	log       *logger.Logger
 	ser       *grpclib.Server
-	listeners map[bus.Topic]bus.MessageListener
+	listeners map[bus.Topic][]bus.MessageListener
 	topicMap  map[string]bus.Topic
 	clusterv1.UnimplementedServiceServer
 	metrics        *metrics
 	clientCloser   context.CancelFunc
 	host           string
 	addr           string
-	healthAddr     string
+	httpAddr       string
 	certFile       string
 	keyFile        string
 	maxRecvMsgSize run.Bytes
 	listenersLock  sync.RWMutex
 	port           uint32
-	healthPort     uint32
+	httpPort       uint32
 	tls            bool
 }
 
 // NewServer returns a new gRPC server.
 func NewServer(omr observability.MetricsRegistry) queue.Server {
 	return &server{
-		listeners: make(map[bus.Topic]bus.MessageListener),
+		listeners: make(map[bus.Topic][]bus.MessageListener),
 		topicMap:  make(map[string]bus.Topic),
 		omr:       omr,
 	}
@@ -122,7 +123,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
-	fs.Uint32Var(&s.healthPort, "health-port", 17913, "the port of banyand health check listens")
+	fs.Uint32Var(&s.httpPort, "http-port", 17913, "the port of banyand http api listens")
 	return fs
 }
 
@@ -131,8 +132,8 @@ func (s *server) Validate() error {
 	if s.addr == ":" {
 		return errNoAddr
 	}
-	s.healthAddr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.healthPort), 10))
-	if s.healthAddr == ":" {
+	s.httpAddr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.httpPort), 10))
+	if s.httpAddr == ":" {
 		return errNoAddr
 	}
 	if !s.tls {
@@ -178,6 +179,7 @@ func (s *server) Serve() run.StopNotify {
 	s.ser = grpclib.NewServer(opts...)
 	clusterv1.RegisterServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
+	databasev1.RegisterSnapshotServiceServer(s.ser, s)
 
 	var ctx context.Context
 	ctx, s.clientCloser = context.WithCancel(context.Background())
@@ -195,10 +197,15 @@ func (s *server) Serve() run.StopNotify {
 		return stopCh
 	}
 	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
+	if err := databasev1.RegisterSnapshotServiceHandlerFromEndpoint(ctx, gwMux, s.addr, clientOpts); err != nil {
+		s.log.Error().Err(err).Msg("Failed to register snapshot service")
+		close(stopCh)
+		return stopCh
+	}
 	mux := chi.NewRouter()
 	mux.Mount("/api", http.StripPrefix("/api", gwMux))
-	s.healthSrv = &http.Server{
-		Addr:              s.healthAddr,
+	s.httpSrv = &http.Server{
+		Addr:              s.httpAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 3 * time.Second,
 	}
@@ -219,8 +226,8 @@ func (s *server) Serve() run.StopNotify {
 		wg.Done()
 	}()
 	go func() {
-		s.log.Info().Str("listenAddr", s.healthAddr).Msg("Start healthz http server")
-		err := s.healthSrv.ListenAndServe()
+		s.log.Info().Str("listenAddr", s.httpAddr).Msg("Start healthz http server")
+		err := s.httpSrv.ListenAndServe()
 		if err != http.ErrServerClosed {
 			s.log.Error().Err(err)
 		}
@@ -240,7 +247,7 @@ func (s *server) GracefulStop() {
 	s.clientCloser()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = s.healthSrv.Shutdown(ctx)
+	_ = s.httpSrv.Shutdown(ctx)
 	go func() {
 		s.ser.GracefulStop()
 		close(stopped)

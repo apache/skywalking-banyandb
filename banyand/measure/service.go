@@ -123,12 +123,15 @@ func (s *service) PreRun(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {
+		return err
+	}
+
 	s.writeListener = setUpWriteCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent)
 	// only subscribe metricPipeline for data node
 	if s.metricPipeline != nil {
 		err := s.metricPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
 		if err != nil {
-			s.l.Err(err).Msgf("Fail to subscribe metricPipeline, %v", err)
 			return err
 		}
 	}

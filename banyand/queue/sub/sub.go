@@ -24,8 +24,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -33,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func (s *server) Send(stream clusterv1.Service_SendServer) error {
@@ -55,50 +54,11 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		}
 		writeEntity, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			if len(dataCollection) < 1 {
-				return nil
-			}
-			listener := s.getListeners(*topic)
-			if listener == nil {
-				s.reply(stream, writeEntity, err, "no listener found")
-				return nil
-			}
-			if le := listener.CheckHealth(); le != nil {
-				s.reply(stream, writeEntity, le, "")
-				return nil
-			}
-			message := listener.Rev(ctx, bus.NewMessage(bus.MessageID(0), dataCollection))
-			var resp *clusterv1.SendResponse
-			data := message.Data()
-			if data != nil {
-				switch d := data.(type) {
-				case *common.Error:
-					resp = &clusterv1.SendResponse{
-						MessageId: writeEntity.MessageId,
-						Error:     d.Error(),
-						Status:    d.Status(),
-					}
-				default:
-					resp = &clusterv1.SendResponse{
-						MessageId: writeEntity.MessageId,
-					}
-				}
-			}
-			if errSend := stream.Send(resp); errSend != nil {
-				s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send write response")
-				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
-			}
+			s.handleEOF(stream, topic, dataCollection, writeEntity)
 			return nil
 		}
 		if err != nil {
-			// If the context is canceled or the deadline is exceeded, the stream will be closed.
-			// In this case, we should return nil to avoid logging the error.
-			// Deadline exceeded will be raised when other data nodes are not available, and the client timeout context is triggered.
-			if status.Code(err) == codes.Canceled || status.Code(err) == codes.DeadlineExceeded {
-				return nil
-			}
-			s.log.Error().Err(err).Msg("failed to receive message")
-			return err
+			return s.handleRecvError(err)
 		}
 		s.metrics.totalMsgReceived.Inc(1, writeEntity.Topic)
 		if writeEntity.Topic != "" && topic == nil {
@@ -126,20 +86,19 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			continue
 		}
 		if writeEntity.BatchMod {
-			if len(dataCollection) == 0 {
-				s.metrics.totalStarted.Inc(1, writeEntity.Topic)
-				start = time.Now()
-			}
-			dataCollection = append(dataCollection, writeEntity.Body)
-			s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
+			s.handleBatch(&dataCollection, writeEntity, &start)
 			continue
 		}
 		s.metrics.totalStarted.Inc(1, writeEntity.Topic)
-		listener := s.getListeners(*topic)
-		if listener == nil {
+		listeners := s.getListeners(*topic)
+		if len(listeners) == 0 {
 			s.reply(stream, writeEntity, err, "no listener found")
 			continue
 		}
+		if len(listeners) > 1 {
+			logger.Panicf("multiple listeners found for topic %s", *topic)
+		}
+		listener := listeners[0]
 
 		m = listener.Rev(ctx, m)
 		if m.Data() == nil {
@@ -190,15 +149,20 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 func (s *server) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
 	s.listenersLock.Lock()
 	defer s.listenersLock.Unlock()
-	if _, ok := s.listeners[topic]; !ok {
-		s.listeners[topic] = listener
-		s.topicMap[topic.String()] = topic
+	listeners, ok := s.listeners[topic]
+	if ok {
+		listeners = append(listeners, listener)
+		s.listeners[topic] = listeners
 		return nil
 	}
-	return errors.New("topic already exists")
+	listeners = make([]bus.MessageListener, 0)
+	listeners = append(listeners, listener)
+	s.listeners[topic] = listeners
+	s.topicMap[topic.String()] = topic
+	return nil
 }
 
-func (s *server) getListeners(topic bus.Topic) bus.MessageListener {
+func (s *server) getListeners(topic bus.Topic) []bus.MessageListener {
 	s.listenersLock.RLock()
 	defer s.listenersLock.RUnlock()
 	return s.listeners[topic]

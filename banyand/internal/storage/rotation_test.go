@@ -171,6 +171,10 @@ func (m *MockTSTable) Close() error {
 
 func (m *MockTSTable) Collect(_ Metrics) {}
 
+func (m *MockTSTable) TakeFileSnapshot(_ string) error {
+	return nil
+}
+
 var MockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
 	_ *logger.Logger, _ timestamp.TimeRange, _, _ any,
 ) (*MockTSTable, error) {

@@ -25,6 +25,7 @@ Release Notes.
 - Metadata: Introduce the periodic sync to sync the metadata from the etcd to the local cache in case of the loss of the events.
 - Test: Add the e2e test for zipkin.
 - Test: Limit the CPU and memory usage of the e2e test.
+- Add taking the snapshot of data files.
 
 ### Bug Fixes
 

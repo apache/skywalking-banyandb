@@ -483,3 +483,33 @@ service TopNAggregationRegistryService {
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(TopNAggregationRegistryServiceExistRequest) returns (TopNAggregationRegistryServiceExistResponse);
 }
+
+message SnapshotRequest {
+  message Group {
+    common.v1.Catalog catalog = 1;
+    string group = 2;
+  }
+  repeated Group groups = 1;
+}
+
+message Snapshot {
+  common.v1.Catalog catalog = 1;
+  string name = 2;
+  string error = 3;
+}
+
+message SnapshotResponse {
+  repeated Snapshot snapshots = 1;
+}
+
+service SnapshotService {
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse) {
+    option (google.api.http) = {
+      get: "/v1/snapshot"
+      additional_bindings: {
+        post: "/v1/snapshot"
+        body: "*"
+      }
+    };
+  }
+}

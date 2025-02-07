@@ -171,6 +171,7 @@ func (p *server) Serve() run.StopNotify {
 		databasev1.RegisterIndexRuleBindingRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 		databasev1.RegisterGroupRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 		databasev1.RegisterTopNAggregationRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
+		databasev1.RegisterSnapshotServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 		streamv1.RegisterStreamServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 		measurev1.RegisterMeasureServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 		propertyv1.RegisterPropertyServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),

@@ -26,7 +26,8 @@ import (
 
 func (s *server) HealthCheck(_ context.Context, req *clusterv1.HealthCheckRequest) (*clusterv1.HealthCheckResponse, error) {
 	if t, ok := s.topicMap[req.ServiceName]; ok {
-		if l := s.listeners[t]; l != nil {
+		ll := s.listeners[t]
+		for _, l := range ll {
 			if err := l.CheckHealth(); err != nil {
 				return &clusterv1.HealthCheckResponse{
 					ServiceName: req.ServiceName,
@@ -34,11 +35,11 @@ func (s *server) HealthCheck(_ context.Context, req *clusterv1.HealthCheckReques
 					Error:       err.Error(),
 				}, nil
 			}
-			return &clusterv1.HealthCheckResponse{
-				ServiceName: req.ServiceName,
-				Status:      modelv1.Status_STATUS_SUCCEED,
-			}, nil
 		}
+		return &clusterv1.HealthCheckResponse{
+			ServiceName: req.ServiceName,
+			Status:      modelv1.Status_STATUS_SUCCEED,
+		}, nil
 	}
 	return &clusterv1.HealthCheckResponse{
 		ServiceName: req.ServiceName,

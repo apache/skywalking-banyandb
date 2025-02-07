@@ -119,6 +119,8 @@ type FileSystem interface {
 	SyncPath(path string)
 	// MustGetFreeSpace returns the free space of the file system.
 	MustGetFreeSpace(path string) uint64
+	// CreateHardLink creates hard links in destPath for files in srcPath that pass the filter.
+	CreateHardLink(srcPath, destPath string, filter func(string) bool) error
 }
 
 // DirEntry is the interface that wraps the basic information about a file or directory.

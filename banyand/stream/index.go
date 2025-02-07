@@ -34,17 +34,19 @@ import (
 )
 
 type elementIndex struct {
-	store index.Store
-	l     *logger.Logger
+	store    index.Store
+	l        *logger.Logger
+	location string
 }
 
 func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64, metrics *inverted.Metrics) (*elementIndex, error) {
 	ei := &elementIndex{
-		l: logger.Fetch(ctx, "element_index"),
+		l:        logger.Fetch(ctx, "element_index"),
+		location: path.Join(root, elementIndexFilename),
 	}
 	var err error
 	if ei.store, err = inverted.NewStore(inverted.StoreOpts{
-		Path:         path.Join(root, elementIndexFilename),
+		Path:         ei.location,
 		Logger:       ei.l,
 		BatchWaitSec: flushTimeoutSeconds,
 		Metrics:      metrics,

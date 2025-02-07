@@ -19,6 +19,7 @@ package storage
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -160,5 +161,57 @@ func TestOpenTSDB(t *testing.T) {
 		})
 
 		tsdb.Close()
+	})
+}
+
+func TestTakeFileSnapshot(t *testing.T) {
+	logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})
+
+	t.Run("Take snapshot of existing TSDB", func(t *testing.T) {
+		dir, defFn := test.Space(require.New(t))
+		defer defFn()
+
+		snapshotDir := filepath.Join(dir, "snapshot")
+
+		opts := TSDBOpts[*MockTSTable, any]{
+			Location:        dir,
+			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+			TTL:             IntervalRule{Unit: DAY, Num: 3},
+			ShardNum:        1,
+			TSTableCreator:  MockTSTableCreator,
+		}
+
+		ctx := context.Background()
+		mc := timestamp.NewMockClock()
+
+		ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+		require.NoError(t, err)
+		mc.Set(ts)
+		ctx = timestamp.SetClock(ctx, mc)
+
+		tsdb, err := OpenTSDB(ctx, opts)
+		require.NoError(t, err)
+		require.NotNil(t, tsdb)
+
+		seg, err := tsdb.CreateSegmentIfNotExist(ts)
+		require.NoError(t, err)
+		require.NotNil(t, seg)
+		segLocation := seg.(*segment[*MockTSTable, any]).location // to verify snapshot files/dirs later
+		seg.DecRef()
+
+		err = tsdb.TakeFileSnapshot(snapshotDir)
+		require.NoError(t, err, "taking file snapshot should not produce an error")
+
+		segDir := filepath.Join(snapshotDir, filepath.Base(segLocation))
+		require.DirExists(t, segDir, "snapshot of the segment directory should exist")
+
+		indexDir := filepath.Join(segDir, seriesIndexDirName) // "seriesIndexDirName" comes from the TSDB code.
+		require.DirExists(t, indexDir,
+			"index directory must be present in the snapshot")
+
+		require.NoError(t, tsdb.Close())
 	})
 }

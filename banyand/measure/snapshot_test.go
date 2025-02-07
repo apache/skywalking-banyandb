@@ -18,11 +18,21 @@
 package measure
 
 import (
+	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func TestSnapshotGetParts(t *testing.T) {
@@ -419,5 +429,92 @@ func TestSnapshotRemove(t *testing.T) {
 			}
 			assert.Equal(t, tt.expected, result)
 		})
+	}
+}
+
+func TestSnapshotFunctionality(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+
+	tst, err := newTSTable(
+		fileSystem,
+		tabDir,
+		common.Position{},
+		logger.GetLogger("test"),
+		timestamp.TimeRange{},
+		option{
+			flushTimeout: 0,
+			mergePolicy:  newDefaultMergePolicyForTesting(),
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("failed to create newTSTable: %v", err)
+	}
+	defer tst.Close()
+
+	tst.mustAddDataPoints(dpsTS1)
+	tst.mustAddDataPoints(dpsTS2)
+	time.Sleep(100 * time.Millisecond) // allow time for flushing
+
+	require.Eventually(t, func() bool {
+		dd := fileSystem.ReadDir(tabDir)
+		partNum := 0
+		for _, d := range dd {
+			if d.IsDir() {
+				partNum++
+			}
+		}
+		return partNum >= 1
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for file parts to be created")
+
+	snapshotPath := filepath.Join(tmpPath, "snapshot")
+	fileSystem.MkdirIfNotExist(snapshotPath, 0o755)
+
+	if err := tst.TakeFileSnapshot(snapshotPath); err != nil {
+		t.Fatalf("TakeFileSnapshot failed: %v", err)
+	}
+
+	entries := fileSystem.ReadDir(snapshotPath)
+
+	if len(entries) < 1 {
+		t.Fatalf("expected 1 directory for flushed part, got %d", len(entries))
+	}
+	partDir := entries[0].Name()
+
+	partFiles := fileSystem.ReadDir(filepath.Join(snapshotPath, partDir))
+
+	// Check "primary.bin" and "meta.bin" existence
+	hasPrimary := false
+	hasMeta := false
+	for _, pf := range partFiles {
+		switch pf.Name() {
+		case "primary.bin":
+			hasPrimary = true
+		case "meta.bin":
+			hasMeta = true
+		}
+	}
+	if !hasPrimary {
+		t.Error("expected primary.bin in snapshot, but none found")
+	}
+	if !hasMeta {
+		t.Error("expected meta.bin in snapshot, but none found")
+	}
+
+	// Verify hard links (Unix-only)
+	if runtime.GOOS != "windows" {
+		srcFile := filepath.Join(tabDir, partDir, "primary.bin")
+		destFile := filepath.Join(snapshotPath, partDir, "primary.bin")
+
+		err := fs.CompareINode(srcFile, destFile)
+		if err != nil {
+			t.Fatalf("expected hard linked files to share inode: %v", err)
+		}
 	}
 }

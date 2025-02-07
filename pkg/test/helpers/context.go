@@ -70,3 +70,9 @@ func TimeRange(args Args, shardContext SharedContext) *modelv1.TimeRange {
 		End:   timestamppb.New(b.Add(args.Duration)),
 	}
 }
+
+// SnapshotSharedContext is the context shared between test cases in the snapshot testing.
+type SnapshotSharedContext struct {
+	Connection *grpclib.ClientConn
+	RootDir    string
+}

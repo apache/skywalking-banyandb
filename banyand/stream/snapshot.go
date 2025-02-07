@@ -18,11 +18,24 @@
 package stream
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
+
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
+
+const snapshotsDir = "snapshots"
 
 func (tst *tsTable) currentSnapshot() *snapshot {
 	tst.RLock()
@@ -133,4 +146,110 @@ func parseSnapshot(name string) (uint64, error) {
 		return 0, errors.New("invalid snapshot file name")
 	}
 	return parseEpoch(name[:16])
+}
+
+func (tst *tsTable) TakeFileSnapshot(dst string) error {
+	indexDir := filepath.Join(dst, filepath.Base(tst.index.location))
+	tst.fileSystem.MkdirPanicIfExist(indexDir, dirPermission)
+	if err := tst.index.store.TakeFileSnapshot(indexDir); err != nil {
+		return fmt.Errorf("failed to take file snapshot for index: %w", err)
+	}
+
+	snapshot := tst.currentSnapshot()
+	if snapshot == nil {
+		return fmt.Errorf("no current snapshot available")
+	}
+	defer snapshot.decRef()
+
+	for _, pw := range snapshot.parts {
+		if pw.mp != nil {
+			continue
+		}
+
+		part := pw.p
+		srcPath := part.path
+		destPartPath := filepath.Join(dst, filepath.Base(srcPath))
+
+		if err := tst.fileSystem.CreateHardLink(srcPath, destPartPath, nil); err != nil {
+			return fmt.Errorf("failed to create snapshot for part %d: %w", part.partMetadata.ID, err)
+		}
+	}
+	parent := filepath.Dir(dst)
+	tst.fileSystem.SyncPath(parent)
+	return nil
+}
+
+func (s *service) takeGroupSnapshot(dstDir string, groupName string) error {
+	group, ok := s.schemaRepo.LoadGroup(groupName)
+	if !ok {
+		return errors.Errorf("group %s not found", groupName)
+	}
+	db := group.SupplyTSDB()
+	if db == nil {
+		return errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
+	}
+	tsdb := db.(storage.TSDB[*tsTable, option])
+	if err := tsdb.TakeFileSnapshot(dstDir); err != nil {
+		return errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
+	}
+	return nil
+}
+
+type snapshotListener struct {
+	*bus.UnImplementedHealthyListener
+	s           *service
+	snapshotSeq uint64
+	snapshotMux sync.Mutex
+}
+
+// Rev takes a snapshot of the database.
+func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	groups := message.Data().([]*databasev1.SnapshotRequest_Group)
+	var gg []schema.Group
+	if len(groups) == 0 {
+		gg = s.s.schemaRepo.LoadAllGroups()
+	} else {
+		for _, g := range groups {
+			if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
+				continue
+			}
+			group, ok := s.s.schemaRepo.LoadGroup(g.Group)
+			if !ok {
+				continue
+			}
+			gg = append(gg, group)
+		}
+	}
+	if len(gg) == 0 {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+	}
+	s.snapshotMux.Lock()
+	defer s.snapshotMux.Unlock()
+	sn := s.snapshotName()
+	var err error
+	for _, g := range gg {
+		select {
+		case <-ctx.Done():
+			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+		default:
+		}
+		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.schemaRepo.path, snapshotsDir, sn), g.GetSchema().Metadata.Name); err != nil {
+			s.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
+			err = multierr.Append(err, errGroup)
+			continue
+		}
+	}
+	snp := &databasev1.Snapshot{
+		Name:    sn,
+		Catalog: commonv1.Catalog_CATALOG_STREAM,
+	}
+	if err != nil {
+		snp.Error = err.Error()
+	}
+	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), snp)
+}
+
+func (s *snapshotListener) snapshotName() string {
+	s.snapshotSeq++
+	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), s.snapshotSeq)
 }

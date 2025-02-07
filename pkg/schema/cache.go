@@ -310,6 +310,15 @@ func (sr *schemaRepo) LoadGroup(name string) (Group, bool) {
 	return g, g.isInit()
 }
 
+func (sr *schemaRepo) LoadAllGroups() []Group {
+	var groups []Group
+	sr.groupMap.Range(func(_, value any) bool {
+		groups = append(groups, value.(*group))
+		return true
+	})
+	return groups
+}
+
 func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool) {
 	k := getKey(metadata)
 	s, ok := sr.resourceMap.Load(k)
