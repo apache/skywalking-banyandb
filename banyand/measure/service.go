@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -53,18 +54,20 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
-	writeListener       bus.MessageListener
+	lfs                 fs.FileSystem
 	metadata            metadata.Repo
 	pipeline            queue.Server
 	localPipeline       queue.Queue
 	metricPipeline      queue.Server
 	omr                 observability.MetricsRegistry
+	writeListener       bus.MessageListener
 	schemaRepo          *schemaRepo
-	l                   *logger.Logger
 	pm                  *protector.Memory
+	l                   *logger.Logger
 	root                string
 	option              option
 	maxDiskUsagePercent int
+	maxFileSnapshotNum  int
 }
 
 func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -88,6 +91,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
 	flagS.VarP(&s.option.seriesCacheMaxSize, "measure-series-cache-max-size", "", "the max size of series cache in each group")
 	flagS.IntVar(&s.maxDiskUsagePercent, "measure-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
+	flagS.IntVar(&s.maxFileSnapshotNum, "measure-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
 	return flagS
 }
 
@@ -114,6 +118,7 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
+	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
 	s.localPipeline = queue.Local()

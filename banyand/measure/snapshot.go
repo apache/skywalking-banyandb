@@ -219,6 +219,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	}
 	s.snapshotMux.Lock()
 	defer s.snapshotMux.Unlock()
+	storage.DeleteStaleSnapshots(filepath.Join(s.s.schemaRepo.path, snapshotsDir), s.s.maxFileSnapshotNum, s.s.lfs)
 	sn := s.snapshotName()
 	var err error
 	for _, g := range gg {

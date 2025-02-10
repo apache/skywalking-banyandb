@@ -33,6 +33,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -229,6 +230,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	}
 	s.snapshotMux.Lock()
 	defer s.snapshotMux.Unlock()
+	storage.DeleteStaleSnapshots(filepath.Join(s.s.db.location, snapshotsDir), s.s.maxFileSnapshotNum, s.s.lfs)
 	sn := s.snapshotName()
 	shardsRef := s.s.db.sLst.Load()
 	if shardsRef == nil {

@@ -26,6 +26,7 @@ Release Notes.
 - Test: Add the e2e test for zipkin.
 - Test: Limit the CPU and memory usage of the e2e test.
 - Add taking the snapshot of data files.
+- Add backup command line tool to backup the data files.
 
 ### Bug Fixes
 

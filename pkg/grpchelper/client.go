@@ -20,16 +20,48 @@ package grpchelper
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"os"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	ins "google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+// SecureOptions returns gRPC dial options with secure connection settings.
+func SecureOptions(dest []grpc.DialOption, enabled, insecure bool, cert string) ([]grpc.DialOption, error) {
+	if !enabled {
+		dest = append(dest, grpc.WithTransportCredentials(ins.NewCredentials()))
+		return dest, nil
+	}
+	config := &tls.Config{
+		// #nosec G402
+		InsecureSkipVerify: insecure,
+	}
+	if cert != "" {
+		cert, errRead := os.ReadFile(cert)
+		if errRead != nil {
+			return nil, errRead
+		}
+		certPool := x509.NewCertPool()
+		if !certPool.AppendCertsFromPEM(cert) {
+			return nil, errors.New("failed to add server's certificate")
+		}
+		config.RootCAs = certPool
+	}
+	creds := credentials.NewTLS(config)
+	dest = append(dest, grpc.WithTransportCredentials(creds))
+	return dest, nil
+}
 
 // Conn returns a gRPC client connection once connecting the server.
 func Conn(addr string, healthCheckTimeout time.Duration, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
