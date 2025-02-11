@@ -20,6 +20,7 @@ package stream
 import (
 	"context"
 	"path"
+	"path/filepath"
 
 	"github.com/pkg/errors"
 
@@ -36,6 +37,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
+
+const dataDir = "data"
 
 var (
 	errEmptyRootPath = errors.New("root path is empty")
@@ -64,6 +67,7 @@ type service struct {
 	l                   *logger.Logger
 	schemaRepo          schemaRepo
 	root                string
+	snapshotDir         string
 	option              option
 	maxDiskUsagePercent int
 	maxFileSnapshotNum  int
@@ -120,9 +124,10 @@ func (s *service) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
 	path := path.Join(s.root, s.Name())
+	s.snapshotDir = filepath.Join(path, snapshotsDir)
 	observability.UpdatePath(path)
 	s.localPipeline = queue.Local()
-	s.schemaRepo = newSchemaRepo(path, s)
+	s.schemaRepo = newSchemaRepo(filepath.Join(path, dataDir), s)
 	// run a serial watcher
 
 	if err := s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {

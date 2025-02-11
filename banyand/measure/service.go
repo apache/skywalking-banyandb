@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"path"
+	"path/filepath"
 
 	"github.com/pkg/errors"
 
@@ -36,6 +37,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
+
+const dataDir = "data"
 
 var (
 	errEmptyRootPath = errors.New("root path is empty")
@@ -54,17 +57,18 @@ type Service interface {
 var _ Service = (*service)(nil)
 
 type service struct {
+	writeListener       bus.MessageListener
 	lfs                 fs.FileSystem
-	metadata            metadata.Repo
 	pipeline            queue.Server
 	localPipeline       queue.Queue
 	metricPipeline      queue.Server
 	omr                 observability.MetricsRegistry
-	writeListener       bus.MessageListener
-	schemaRepo          *schemaRepo
+	metadata            metadata.Repo
 	pm                  *protector.Memory
+	schemaRepo          *schemaRepo
 	l                   *logger.Logger
 	root                string
+	snapshotDir         string
 	option              option
 	maxDiskUsagePercent int
 	maxFileSnapshotNum  int
@@ -120,9 +124,10 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
 	path := path.Join(s.root, s.Name())
+	s.snapshotDir = filepath.Join(path, snapshotsDir)
 	observability.UpdatePath(path)
 	s.localPipeline = queue.Local()
-	s.schemaRepo = newSchemaRepo(path, s)
+	s.schemaRepo = newSchemaRepo(filepath.Join(path, dataDir), s)
 
 	if err := s.createNativeObservabilityGroup(ctx); err != nil {
 		return err
