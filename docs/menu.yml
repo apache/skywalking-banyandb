@@ -127,6 +127,8 @@ catalog:
             path: "/operation/troubleshooting/query"
       - name: "Security"
         path: "/operation/security"
+      - name: "Backup"
+        path: "/operation/backup"
   - name: "File Format"
     catalog:
       - name: "v1.1.0"

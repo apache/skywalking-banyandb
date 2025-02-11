@@ -23,7 +23,8 @@ Before running the backup tool, ensure you have:
 - A running BanyanDB data node exposing a gRPC service (by default at `127.0.0.1:17912`).
 - Network connectivity to the data node.
 - A valid destination URL specified using the `file:///` scheme (or any supported scheme in future releases).
-- Necessary access rights for reading snapshot data and writing to the destination.
+- Necessary access rights for writing to the destination.
+- Sufficient permissions to access the snapshots directories for **Stream**, **Measure**, and **Property** catalogs on the data node.
 
 ## Command-Line Usage
 
