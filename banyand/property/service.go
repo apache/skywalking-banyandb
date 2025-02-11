@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -46,6 +47,7 @@ type service struct {
 	metadata            metadata.Repo
 	pipeline            queue.Server
 	omr                 observability.MetricsRegistry
+	lfs                 fs.FileSystem
 	l                   *logger.Logger
 	db                  *database
 	close               chan struct{}
@@ -53,6 +55,7 @@ type service struct {
 	nodeID              string
 	flushTimeout        time.Duration
 	maxDiskUsagePercent int
+	maxFileSnapshotNum  int
 }
 
 func (s *service) FlagSet() *run.FlagSet {
@@ -60,6 +63,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.root, "property-root-path", "/tmp", "the root path of database")
 	flagS.DurationVar(&s.flushTimeout, "property-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
 	flagS.IntVar(&s.maxDiskUsagePercent, "property-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
+	flagS.IntVar(&s.maxFileSnapshotNum, "property-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
 	return flagS
 }
 
@@ -86,6 +90,7 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
+	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
 	path := path.Join(s.root, s.Name())
 	observability.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)

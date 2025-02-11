@@ -225,6 +225,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	}
 	s.snapshotMux.Lock()
 	defer s.snapshotMux.Unlock()
+	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.lfs)
 	sn := s.snapshotName()
 	var err error
 	for _, g := range gg {
@@ -233,7 +234,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.schemaRepo.path, snapshotsDir, sn), g.GetSchema().Metadata.Name); err != nil {
+		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn), g.GetSchema().Metadata.Name); err != nil {
 			s.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue

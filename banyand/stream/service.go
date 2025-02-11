@@ -20,6 +20,7 @@ package stream
 import (
 	"context"
 	"path"
+	"path/filepath"
 
 	"github.com/pkg/errors"
 
@@ -31,10 +32,13 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
+
+const dataDir = "data"
 
 var (
 	errEmptyRootPath = errors.New("root path is empty")
@@ -58,12 +62,15 @@ type service struct {
 	pipeline            queue.Server
 	localPipeline       queue.Queue
 	omr                 observability.MetricsRegistry
-	l                   *logger.Logger
+	lfs                 fs.FileSystem
 	pm                  *protector.Memory
+	l                   *logger.Logger
 	schemaRepo          schemaRepo
 	root                string
+	snapshotDir         string
 	option              option
 	maxDiskUsagePercent int
+	maxFileSnapshotNum  int
 }
 
 func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -88,6 +95,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
 	flagS.VarP(&s.option.seriesCacheMaxSize, "stream-series-cache-max-size", "", "the max size of series cache in each group")
 	flagS.IntVar(&s.maxDiskUsagePercent, "stream-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
+	flagS.IntVar(&s.maxFileSnapshotNum, "stream-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
 	return flagS
 }
 
@@ -114,10 +122,12 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger(s.Name())
+	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
 	path := path.Join(s.root, s.Name())
+	s.snapshotDir = filepath.Join(path, snapshotsDir)
 	observability.UpdatePath(path)
 	s.localPipeline = queue.Local()
-	s.schemaRepo = newSchemaRepo(path, s)
+	s.schemaRepo = newSchemaRepo(filepath.Join(path, dataDir), s)
 	// run a serial watcher
 
 	if err := s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {

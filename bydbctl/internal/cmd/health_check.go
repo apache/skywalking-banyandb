@@ -18,19 +18,14 @@
 package cmd
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	ins "google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -51,26 +46,9 @@ func newHealthCheckCmd() *cobra.Command {
 					return request.req.Get(getPath("/api/healthz"))
 				}, yamlPrinter, enableTLS, insecure, cert)
 			}
-			if enableTLS {
-				config := &tls.Config{
-					// #nosec G402
-					InsecureSkipVerify: insecure,
-				}
-				if cert != "" {
-					cert, errRead := os.ReadFile(cert)
-					if errRead != nil {
-						return errRead
-					}
-					certPool := x509.NewCertPool()
-					if !certPool.AppendCertsFromPEM(cert) {
-						return errors.New("failed to add server's certificate")
-					}
-					config.RootCAs = certPool
-				}
-				creds := credentials.NewTLS(config)
-				opts = append(opts, grpc.WithTransportCredentials(creds))
-			} else {
-				opts = append(opts, grpc.WithTransportCredentials(ins.NewCredentials()))
+			opts, err = grpchelper.SecureOptions(opts, enableTLS, insecure, cert)
+			if err != nil {
+				return err
 			}
 			err = helpers.HealthCheck(grpcAddr, 10*time.Second, 10*time.Second, opts...)()
 			if err == nil {
