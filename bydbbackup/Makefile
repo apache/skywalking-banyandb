@@ -17,7 +17,7 @@
 #
 
 NAME := bydbbackup
-BINARIES := backup restore
+BINARIES := $(NAME)-backup $(NAME)-restore
 
 IMG_NAME := skywalking-bydbbackup
 
