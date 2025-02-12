@@ -27,6 +27,7 @@ Release Notes.
 - Test: Limit the CPU and memory usage of the e2e test.
 - Add taking the snapshot of data files.
 - Add backup command line tool to backup the data files.
+- Add restore command line tool to restore the data files.
 
 ### Bug Fixes
 

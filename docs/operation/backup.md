@@ -34,7 +34,7 @@ To perform a one-time backup, run the backup command with the required flags. At
 
 **Example Command:**
 ```bash
-./bydbbackup backup --dest "file:///backups"
+./backup --dest "file:///backups"
 ```
 
 ### Scheduled Backup
@@ -47,7 +47,7 @@ To enable periodic backups, provide the `--schedule` flag with a schedule style 
 **Example Command:**
 
 ```bash
-./bydbbackup backup --dest "file:///backups" --schedule daily --time-style daily
+./backup --dest "file:///backups" --schedule daily --time-style daily
 ```
 
 When a schedule is provided, the tool:

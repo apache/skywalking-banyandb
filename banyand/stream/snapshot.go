@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -32,6 +33,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
@@ -174,9 +176,33 @@ func (tst *tsTable) TakeFileSnapshot(dst string) error {
 			return fmt.Errorf("failed to create snapshot for part %d: %w", part.partMetadata.ID, err)
 		}
 	}
+	tst.createMetadata(dst, snapshot)
 	parent := filepath.Dir(dst)
 	tst.fileSystem.SyncPath(parent)
 	return nil
+}
+
+func (tst *tsTable) createMetadata(dst string, snapshot *snapshot) {
+	var partNames []string
+	for i := range snapshot.parts {
+		partNames = append(partNames, partName(snapshot.parts[i].ID()))
+	}
+	data, err := json.Marshal(partNames)
+	if err != nil {
+		logger.Panicf("cannot marshal partNames to JSON: %s", err)
+	}
+	snapshotPath := filepath.Join(dst, snapshotName(snapshot.epoch))
+	lf, err := tst.fileSystem.CreateFile(snapshotPath, filePermission)
+	if err != nil {
+		logger.Panicf("cannot create lock file %s: %s", snapshotPath, err)
+	}
+	n, err := lf.Write(data)
+	if err != nil {
+		logger.Panicf("cannot write snapshot %s: %s", snapshotPath, err)
+	}
+	if n != len(data) {
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", snapshotPath, n, len(data))
+	}
 }
 
 func (s *service) takeGroupSnapshot(dstDir string, groupName string) error {
@@ -234,7 +260,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn), g.GetSchema().Metadata.Name); err != nil {
+		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn, dataDir), g.GetSchema().Metadata.Name); err != nil {
 			s.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue

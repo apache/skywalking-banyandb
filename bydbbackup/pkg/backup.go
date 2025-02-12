@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package backup provides the backup command-line tool.
-package backup
+// Package pkg provides the backup command-line tool.
+package pkg
 
 import (
 	"context"
@@ -42,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
 const snapshotDir = "snapshots"
@@ -67,8 +68,9 @@ func NewBackupCommand() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "backup",
-		Short: "Backup BanyanDB snapshots to remote storage",
+		Short:             "Backup BanyanDB snapshots to remote storage",
+		DisableAutoGenTag: true,
+		Version:           version.Build(),
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if scheduleStyle == "" {
 				return backupAction(dest, gRPCAddr, enableTLS, insecure, cert,
@@ -147,7 +149,7 @@ func backupAction(dest, gRPCAddr string, enableTLS, insecure bool, cert,
 			logger.Warningf("Failed to get snapshot directory for %s: %v", snapshot.Name, err)
 			continue
 		}
-		multierr.AppendInto(&err, backupSnapshot(fs, snapshotDir, snapshot.Name, timeDir))
+		multierr.AppendInto(&err, backupSnapshot(fs, snapshotDir, getCatalogName(snapshot.Catalog), timeDir))
 	}
 	return err
 }
@@ -189,15 +191,14 @@ func getSnapshotDir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, prop
 	var baseDir string
 	switch snapshot.Catalog {
 	case commonv1.Catalog_CATALOG_STREAM:
-		baseDir = streamRoot
+		baseDir = getLocalDir(streamRoot, snapshot.Catalog)
 	case commonv1.Catalog_CATALOG_MEASURE:
-		baseDir = measureRoot
+		baseDir = getLocalDir(measureRoot, snapshot.Catalog)
 	case commonv1.Catalog_CATALOG_PROPERTY:
-		baseDir = propertyRoot
+		baseDir = getLocalDir(propertyRoot, snapshot.Catalog)
 	default:
 		return "", errors.New("unknown catalog type")
 	}
-
 	return filepath.Join(baseDir, snapshotDir, snapshot.Name), nil
 }
 
@@ -211,14 +212,14 @@ func getTimeDir(style string) string {
 	}
 }
 
-func backupSnapshot(fs remote.FS, snapshotDir, snapshotName, timeDir string) error {
+func backupSnapshot(fs remote.FS, snapshotDir, catalog, timeDir string) error {
 	localFiles, err := getAllFiles(snapshotDir)
 	if err != nil {
 		return err
 	}
 
 	ctx := context.Background()
-	remotePrefix := path.Join(timeDir, snapshotName) + "/"
+	remotePrefix := path.Join(timeDir, catalog) + "/"
 
 	remoteFiles, err := fs.List(ctx, remotePrefix)
 	if err != nil {
@@ -226,7 +227,7 @@ func backupSnapshot(fs remote.FS, snapshotDir, snapshotName, timeDir string) err
 	}
 
 	for _, relPath := range localFiles {
-		remotePath := path.Join(timeDir, snapshotName, relPath)
+		remotePath := path.Join(timeDir, catalog, relPath)
 		if !contains(remoteFiles, remotePath) {
 			if err := uploadFile(ctx, fs, snapshotDir, relPath, remotePath); err != nil {
 				return err
@@ -234,7 +235,7 @@ func backupSnapshot(fs remote.FS, snapshotDir, snapshotName, timeDir string) err
 		}
 	}
 
-	deleteOrphanedFiles(ctx, fs, localFiles, remoteFiles, timeDir, snapshotName)
+	deleteOrphanedFiles(ctx, fs, localFiles, remoteFiles, timeDir, catalog)
 	return nil
 }
 

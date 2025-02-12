@@ -129,6 +129,8 @@ catalog:
         path: "/operation/security"
       - name: "Backup"
         path: "/operation/backup"
+      - name: "Restore"
+        path: "/operation/restore"
   - name: "File Format"
     catalog:
       - name: "v1.1.0"
