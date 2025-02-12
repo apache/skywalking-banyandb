@@ -487,6 +487,9 @@ func TestSnapshotFunctionality(t *testing.T) {
 	hasIndex := false
 	var partDir string
 	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
 		if entry.Name() == elementIndexFilename {
 			hasIndex = true
 		} else {

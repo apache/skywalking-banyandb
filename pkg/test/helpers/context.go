@@ -71,8 +71,9 @@ func TimeRange(args Args, shardContext SharedContext) *modelv1.TimeRange {
 	}
 }
 
-// SnapshotSharedContext is the context shared between test cases in the snapshot testing.
-type SnapshotSharedContext struct {
+// BackupSharedContext is the context shared between test cases in the snapshot testing.
+type BackupSharedContext struct {
+	DataAddr   string
 	Connection *grpclib.ClientConn
 	RootDir    string
 }

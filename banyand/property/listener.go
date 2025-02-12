@@ -230,7 +230,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	}
 	s.snapshotMux.Lock()
 	defer s.snapshotMux.Unlock()
-	storage.DeleteStaleSnapshots(filepath.Join(s.s.db.location, snapshotsDir), s.s.maxFileSnapshotNum, s.s.lfs)
+	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.lfs)
 	sn := s.snapshotName()
 	shardsRef := s.s.db.sLst.Load()
 	if shardsRef == nil {
@@ -243,7 +243,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		snpDir := path.Join(s.s.db.location, snapshotsDir, sn, filepath.Base(shard.location))
+		snpDir := path.Join(s.s.snapshotDir, sn, dataDir, filepath.Base(shard.location))
 		lfs.MkdirPanicIfExist(snpDir, dirPerm)
 		err := shard.store.TakeFileSnapshot(snpDir)
 		if err != nil {

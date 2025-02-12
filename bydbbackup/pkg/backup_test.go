@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package backup
+package pkg
 
 import (
 	"context"
@@ -63,8 +63,8 @@ func TestGetSnapshotDir(t *testing.T) {
 		{
 			"stream catalog",
 			&databasev1.Snapshot{Catalog: commonv1.Catalog_CATALOG_STREAM, Name: "test"},
-			"/stream", "/measure", "/prop",
-			filepath.Join("/stream", snapshotDir, "test"),
+			"/tmp", "/tmp", "/tmp",
+			filepath.Join("/tmp/stream", snapshotDir, "test"),
 			false,
 		},
 		{

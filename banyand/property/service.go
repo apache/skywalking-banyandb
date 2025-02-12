@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"path"
+	"path/filepath"
 	"time"
 
 	"go.uber.org/multierr"
@@ -36,7 +37,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-const defaultFlushTimeout = 5 * time.Second
+const (
+	defaultFlushTimeout = 5 * time.Second
+	dataDir             = "data"
+)
 
 var (
 	errEmptyRootPath         = errors.New("root path is empty")
@@ -48,11 +52,12 @@ type service struct {
 	pipeline            queue.Server
 	omr                 observability.MetricsRegistry
 	lfs                 fs.FileSystem
-	l                   *logger.Logger
-	db                  *database
 	close               chan struct{}
+	db                  *database
+	l                   *logger.Logger
 	root                string
 	nodeID              string
+	snapshotDir         string
 	flushTimeout        time.Duration
 	maxDiskUsagePercent int
 	maxFileSnapshotNum  int
@@ -92,6 +97,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
 	path := path.Join(s.root, s.Name())
+	s.snapshotDir = filepath.Join(path, snapshotsDir)
 	observability.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
@@ -101,7 +107,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.nodeID = node.NodeID
 
 	var err error
-	s.db, err = openDB(ctx, path, s.flushTimeout, s.omr)
+	s.db, err = openDB(ctx, filepath.Join(path, dataDir), s.flushTimeout, s.omr)
 	if err != nil {
 		return err
 	}

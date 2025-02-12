@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package main provides main entry for the backup command-line tool.
+// Package main provides main entry for the restore command-line tool.
 package main
 
 import (
@@ -26,7 +26,7 @@ import (
 )
 
 func main() {
-	cmd := pkg.NewBackupCommand()
+	cmd := pkg.NewRestoreCommand()
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

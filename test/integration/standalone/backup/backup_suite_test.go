@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package snapshot_test
+package backup_test
 
 import (
 	"context"
@@ -42,13 +42,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
-	casessnapshot "github.com/apache/skywalking-banyandb/test/cases/snapshot"
+	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
 	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
 )
 
-func TestSnapshot(t *testing.T) {
+func TestBackup(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Snapshot Suite", Label(integration_standalone.Labels...))
+	RunSpecs(t, "Backup Suite", Label(integration_standalone.Labels...))
 }
 
 var (
@@ -82,7 +82,8 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
-	casessnapshot.SharedContext = helpers.SnapshotSharedContext{
+	casesbackup.SharedContext = helpers.BackupSharedContext{
+		DataAddr:   string(address),
 		Connection: connection,
 		RootDir:    dir,
 	}
