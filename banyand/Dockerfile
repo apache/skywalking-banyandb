@@ -24,6 +24,8 @@ ARG TARGETARCH
 ARG BINARYTYPE
 
 COPY build/bin/linux/${TARGETARCH}/banyand-server-${BINARYTYPE} /banyand
+COPY build/bin/linux/${TARGETARCH}/banyand-backup-${BINARYTYPE} /backup
+COPY build/bin/linux/${TARGETARCH}/banyand-restore-${BINARYTYPE} /restore
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build-windows
@@ -31,6 +33,8 @@ FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build-windows
 ARG TARGETARCH
 
 COPY build/bin/windows/${TARGETARCH}/banyand-server-static "/banyand"
+COPY build/bin/windows/${TARGETARCH}/banyand-backup-static "/backup"
+COPY build/bin/windows/${TARGETARCH}/banyand-restore-static "/restore"
 
 FROM build-${TARGETOS} AS final
 

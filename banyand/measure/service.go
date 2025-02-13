@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
@@ -37,8 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
-
-const dataDir = "data"
 
 var (
 	errEmptyRootPath = errors.New("root path is empty")
@@ -124,10 +123,10 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
 	path := path.Join(s.root, s.Name())
-	s.snapshotDir = filepath.Join(path, snapshotsDir)
+	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
 	observability.UpdatePath(path)
 	s.localPipeline = queue.Local()
-	s.schemaRepo = newSchemaRepo(filepath.Join(path, dataDir), s)
+	s.schemaRepo = newSchemaRepo(filepath.Join(path, storage.DataDir), s)
 
 	if err := s.createNativeObservabilityGroup(ctx); err != nil {
 		return err

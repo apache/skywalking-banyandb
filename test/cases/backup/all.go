@@ -26,7 +26,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/bydbbackup/pkg"
+	"github.com/apache/skywalking-banyandb/banyand/backup"
 )
 
 var _ = ginkgo.Describe("Backup All", func() {
@@ -38,7 +38,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 			defer os.RemoveAll(destDir)
 			destURL := "file://" + destDir
 
-			backupCmd := pkg.NewBackupCommand()
+			backupCmd := backup.NewBackupCommand()
 			backupCmd.SetArgs([]string{
 				"--grpc-addr", SharedContext.DataAddr,
 				"--stream-root-path", SharedContext.RootDir,
@@ -66,7 +66,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer os.RemoveAll(newCatalogDir)
 
-			listCmd := pkg.NewTimeDirCommand()
+			listCmd := backup.NewTimeDirCommand()
 			listCmd.SetArgs([]string{"list", "--dest", destURL})
 			listOut := &bytes.Buffer{}
 			listCmd.SetOut(listOut)
@@ -90,7 +90,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 			gomega.Expect(latestTimedir).To(gomega.Equal(backupTimeDir))
 
 			ginkgo.By("Create timedir in new catalog's root path")
-			createCmd := pkg.NewTimeDirCommand()
+			createCmd := backup.NewTimeDirCommand()
 			createCmd.SetArgs([]string{
 				"create",
 				"--stream-root", newCatalogDir,
@@ -105,7 +105,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ginkgo.By("Read timedir from new catalog's root path")
-			readCmd := pkg.NewTimeDirCommand()
+			readCmd := backup.NewTimeDirCommand()
 			readCmd.SetArgs([]string{
 				"read",
 				"--stream-root", newCatalogDir,
@@ -132,7 +132,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 			}
 
 			ginkgo.By("Restore data from the remote destination")
-			restoreCmd := pkg.NewRestoreCommand()
+			restoreCmd := backup.NewRestoreCommand()
 			restoreCmd.SetArgs([]string{
 				"run",
 				"--source", destURL,
@@ -167,7 +167,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 
 			// Verify that the timedir file is removed from the new catalog's root path (after a successful restore).
 			for _, cat := range catalogs {
-				timedirFile := filepath.Join(newCatalogDir, cat+"-time-dir")
+				timedirFile := filepath.Join(newCatalogDir, cat, "time-dir")
 				_, err = os.Stat(timedirFile)
 				gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue())
 			}

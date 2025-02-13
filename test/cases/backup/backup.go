@@ -29,7 +29,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/bydbbackup/pkg"
+	"github.com/apache/skywalking-banyandb/banyand/backup"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
@@ -100,7 +100,7 @@ var _ = ginkgo.Describe("Backup", func() {
 		defer os.RemoveAll(destDir)
 		destURL := "file://" + destDir
 
-		backupCmd := pkg.NewBackupCommand()
+		backupCmd := backup.NewBackupCommand()
 		backupCmd.SetArgs([]string{
 			"--grpc-addr", SharedContext.DataAddr,
 			"--stream-root-path", SharedContext.RootDir,

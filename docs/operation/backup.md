@@ -39,7 +39,7 @@ To perform a one-time backup, run the backup command with the required flags. At
 
 ### Scheduled Backup
 
-To enable periodic backups, provide the `--schedule` flag with a schedule style (e.g., `hourly` or `daily`) and set your preferred time style using `--time-style`. The supported schedule expressions based on the tool’s internal map are:
+To enable periodic backups, provide the `--schedule` flag with a schedule style (e.g., @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>) and set your preferred time style using `--time-style`. The supported schedule expressions based on the tool’s internal map are:
 
 - **Hourly:** Schedules at "5 * * * *" (runs on the 5th minute of every hour).
 - **Daily:** Schedules at "5 0 * * *" (runs at 00:05 every day).
@@ -47,7 +47,7 @@ To enable periodic backups, provide the `--schedule` flag with a schedule style 
 **Example Command:**
 
 ```bash
-./backup --dest "file:///backups" --schedule daily --time-style daily
+./backup --dest "file:///backups" --schedule @daily --time-style daily
 ```
 
 When a schedule is provided, the tool:
@@ -69,6 +69,6 @@ When a schedule is provided, the tool:
 | `--property-root-path`| Root directory for the property catalog snapshots.                                     | `/tmp`                |
 | `--dest`            | Destination URL for backup data. (e.g., `file:///backups`)                                | _required_            |
 | `--time-style`      | Directory naming style based on time. Supports `daily` or `hourly`.                       | `daily`               |
-| `--schedule`        | Schedule style for periodic backup. If not set, backup is performed once. Options: `hourly` or `daily`. | _empty_               |
+| `--schedule`        | Schedule style for periodic backup. If not set, backup is performed once. Options: @yearly, @monthly, @weekly, @daily, @hourly and @every <duration>. | _empty_               |
 
 This guide should provide you with the necessary steps and information to effectively use the backup tool for your data backup operations.

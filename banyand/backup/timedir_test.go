@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package pkg
+package backup
 
 import (
 	"bytes"
@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 )
 
 func TestNewCreateCmd(t *testing.T) {
@@ -31,23 +33,14 @@ func TestNewCreateCmd(t *testing.T) {
 	streamDir := filepath.Join(baseDir, "stream")
 	measureDir := filepath.Join(baseDir, "measure")
 	propertyDir := filepath.Join(baseDir, "property")
-	if err := os.MkdirAll(streamDir, dirPerm); err != nil {
-		t.Fatalf("Failed to create stream dir: %v", err)
-	}
-	if err := os.MkdirAll(measureDir, dirPerm); err != nil {
-		t.Fatalf("Failed to create measure dir: %v", err)
-	}
-	if err := os.MkdirAll(propertyDir, dirPerm); err != nil {
-		t.Fatalf("Failed to create property dir: %v", err)
-	}
 
 	content := "2023-10-12"
 	cmd := newCreateCmd()
 	cmd.SetArgs([]string{
 		content,
-		"--stream-root", streamDir,
-		"--measure-root", measureDir,
-		"--property-root", propertyDir,
+		"--stream-root", baseDir,
+		"--measure-root", baseDir,
+		"--property-root", baseDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("newCreateCmd.Execute() error: %v", err)
@@ -61,7 +54,7 @@ func TestNewCreateCmd(t *testing.T) {
 		{"measure", measureDir},
 		{"property", propertyDir},
 	} {
-		fp := filepath.Join(dir.root, fmt.Sprintf("%s-time-dir", dir.name))
+		fp := filepath.Join(dir.root, "time-dir")
 		data, err := os.ReadFile(fp)
 		if err != nil {
 			t.Errorf("Catalog '%s': expected file at %s, error: %v", dir.name, fp, err)
@@ -79,12 +72,11 @@ func TestNewReadCmd(t *testing.T) {
 	measureDir := filepath.Join(baseDir, "measure")
 	propertyDir := filepath.Join(baseDir, "property")
 	for _, dir := range []string{streamDir, measureDir, propertyDir} {
-		if err := os.MkdirAll(dir, dirPerm); err != nil {
+		if err := os.MkdirAll(dir, storage.DirPerm); err != nil {
 			t.Fatalf("Failed to create dir %s: %v", dir, err)
 		}
-		catalog := filepath.Base(dir)
-		fp := filepath.Join(dir, fmt.Sprintf("%s-time-dir", catalog))
-		if err := os.WriteFile(fp, []byte("dummy-time"), filePerm); err != nil {
+		fp := filepath.Join(dir, "time-dir")
+		if err := os.WriteFile(fp, []byte("dummy-time"), storage.FilePerm); err != nil {
 			t.Fatalf("Failed to write file %s: %v", fp, err)
 		}
 	}
@@ -93,9 +85,9 @@ func TestNewReadCmd(t *testing.T) {
 	var outBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetArgs([]string{
-		"--stream-root", streamDir,
-		"--measure-root", measureDir,
-		"--property-root", propertyDir,
+		"--stream-root", baseDir,
+		"--measure-root", baseDir,
+		"--property-root", baseDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("newReadCmd.Execute() error: %v", err)
@@ -115,11 +107,10 @@ func TestNewDeleteCmd(t *testing.T) {
 	measureDir := filepath.Join(baseDir, "measure")
 	propertyDir := filepath.Join(baseDir, "property")
 	for _, dir := range []string{streamDir, measureDir, propertyDir} {
-		if err := os.MkdirAll(dir, dirPerm); err != nil {
+		if err := os.MkdirAll(dir, storage.DirPerm); err != nil {
 			t.Fatalf("Failed to create dir %s: %v", dir, err)
 		}
-		catalog := filepath.Base(dir)
-		fp := filepath.Join(dir, fmt.Sprintf("%s-time-dir", catalog))
+		fp := filepath.Join(dir, "time-dir")
 		if err := os.WriteFile(fp, []byte("to-be-deleted"), 0o600); err != nil {
 			t.Fatalf("Failed to write file %s: %v", fp, err)
 		}
@@ -127,9 +118,9 @@ func TestNewDeleteCmd(t *testing.T) {
 
 	cmd := newDeleteCmd()
 	cmd.SetArgs([]string{
-		"--stream-root", streamDir,
-		"--measure-root", measureDir,
-		"--property-root", propertyDir,
+		"--stream-root", baseDir,
+		"--measure-root", baseDir,
+		"--property-root", baseDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("newDeleteCmd.Execute() error: %v", err)

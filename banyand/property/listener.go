@@ -40,8 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
-const snapshotsDir = "snapshots"
-
 var (
 	_ bus.MessageListener = (*updateListener)(nil)
 	_ bus.MessageListener = (*deleteListener)(nil)
@@ -243,8 +241,8 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		snpDir := path.Join(s.s.snapshotDir, sn, dataDir, filepath.Base(shard.location))
-		lfs.MkdirPanicIfExist(snpDir, dirPerm)
+		snpDir := path.Join(s.s.snapshotDir, sn, storage.DataDir, filepath.Base(shard.location))
+		lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
 		err := shard.store.TakeFileSnapshot(snpDir)
 		if err != nil {
 			s.s.l.Error().Err(err).Str("shard", filepath.Base(shard.location)).Msg("fail to take shard snapshot")

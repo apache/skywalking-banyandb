@@ -49,7 +49,14 @@ const (
 	hourFormat = "2006010215"
 	dayFormat  = "20060102"
 
-	dirPerm = 0o700
+	// DirPerm is the permission of the directory.
+	DirPerm = 0o700
+	// SnapshotsDir is the directory for snapshots.
+	SnapshotsDir = "snapshots"
+	// DataDir is the directory for data.
+	DataDir = "data"
+	// FilePerm is the permission of the file.
+	FilePerm = 0o600
 )
 
 var (

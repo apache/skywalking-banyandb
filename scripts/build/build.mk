@@ -69,7 +69,7 @@ $(SLIM_BINARIES_GOBUILD_TARGET): $(BUILD_DIR)/$(OS)/%-slim: $(BUILD_LOCK)
 	$(call set_build_package,$*,$@)
 	@echo "Building slim $*"
 	$(MAKE) prepare-build
-	$(eval BUILD_TAGS := $(BUILD_TAGS) slim)
+	$(if $(filter slim,$(BUILD_TAGS)),, $(eval BUILD_TAGS := $(BUILD_TAGS) slim))
 	$(call go_build_static_executable,,-s -w)
 	@echo "Done building static $*"
 

@@ -46,8 +46,7 @@ const (
 )
 
 const (
-	lockFilename   = "lock"
-	filePermission = 0o600
+	lockFilename = "lock"
 )
 
 // TSDBOpts wraps options to create a tsdb.
@@ -115,7 +114,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	}
 	p := common.GetPosition(ctx)
 	location := filepath.Clean(opts.Location)
-	lfs.MkdirIfNotExist(location, dirPerm)
+	lfs.MkdirIfNotExist(location, DirPerm)
 	l := logger.Fetch(ctx, p.Database)
 	clock, _ := timestamp.GetClock(ctx)
 	scheduler := timestamp.NewScheduler(l, clock)
@@ -136,7 +135,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	lockPath := filepath.Join(opts.Location, lockFilename)
-	lock, err := lfs.CreateLockFile(lockPath, filePermission)
+	lock, err := lfs.CreateLockFile(lockPath, FilePerm)
 	if err != nil {
 		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
 	}
@@ -184,10 +183,10 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 	for _, seg := range segments {
 		segDir := filepath.Base(seg.location)
 		segPath := filepath.Join(dst, segDir)
-		lfs.MkdirIfNotExist(segPath, dirPerm)
+		lfs.MkdirIfNotExist(segPath, DirPerm)
 
 		indexPath := filepath.Join(segPath, seriesIndexDirName)
-		lfs.MkdirIfNotExist(indexPath, dirPerm)
+		lfs.MkdirIfNotExist(indexPath, DirPerm)
 		if err := seg.index.store.TakeFileSnapshot(indexPath); err != nil {
 			return errors.Wrapf(err, "failed to snapshot index for segment %s", segDir)
 		}
@@ -199,7 +198,7 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 		for _, shard := range *sLst {
 			shardDir := filepath.Base(shard.location)
 			shardPath := filepath.Join(segPath, shardDir)
-			lfs.MkdirIfNotExist(shardPath, dirPerm)
+			lfs.MkdirIfNotExist(shardPath, DirPerm)
 			if err := shard.table.TakeFileSnapshot(shardPath); err != nil {
 				return errors.Wrapf(err, "failed to snapshot shard %s in segment %s", shardDir, segDir)
 			}

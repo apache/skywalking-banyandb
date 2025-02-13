@@ -15,18 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package main provides main entry for the restore command-line tool.
+// Package main provides main entry for the backup command-line tool.
 package main
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/apache/skywalking-banyandb/bydbbackup/pkg"
+	"github.com/apache/skywalking-banyandb/banyand/backup"
 )
 
 func main() {
-	cmd := pkg.NewRestoreCommand()
+	cmd := backup.NewBackupCommand()
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

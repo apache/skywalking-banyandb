@@ -75,7 +75,7 @@ restore timedir create 2025-02-12 \
   --property-root /data
 ```
 
-This command writes the specified timestamp (e.g., 2025-02-12) into files named `stream-time-dir`, `measure-time-dir`, and `property-time-dir` in the designated root directories.
+This command writes the specified timestamp (e.g., 2025-02-12) into files named `/data/stream/time-dir`, `/data/measure/time-dir`, and `/data/property/time-dir` in the designated root directories.
 
 #### Verifying Timedir Files
 
@@ -108,7 +108,7 @@ restore run \
 
 **Key Points:**
 
-- The tool reads the timedir files (e.g., `stream-time-dir`) to fetch the appropriate timestamp.
+- The tool reads the timedir files (e.g., `/data/stream/time-dir`) to fetch the appropriate timestamp.
 - Local data is compared with the remote backup snapshot; orphaned files in local directories are removed.
 - Upon success, the timedir marker files are deleted to ensure a clean recovery state.
 
