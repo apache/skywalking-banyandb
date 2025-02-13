@@ -30,6 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -37,9 +38,7 @@ import (
 )
 
 const (
-	dirPerm        = 0o700
-	filePermission = 0o600
-	lockFilename   = "lock"
+	lockFilename = "lock"
 )
 
 var (
@@ -59,7 +58,7 @@ type database struct {
 
 func openDB(ctx context.Context, location string, flushInterval time.Duration, omr observability.MetricsRegistry) (*database, error) {
 	loc := filepath.Clean(location)
-	lfs.MkdirIfNotExist(loc, dirPerm)
+	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
 
 	db := &database{
@@ -73,7 +72,7 @@ func openDB(ctx context.Context, location string, flushInterval time.Duration, o
 	}
 	db.logger.Info().Str("path", loc).Msg("initialized")
 	lockPath := filepath.Join(loc, lockFilename)
-	lock, err := lfs.CreateLockFile(lockPath, filePermission)
+	lock, err := lfs.CreateLockFile(lockPath, storage.FilePerm)
 	if err != nil {
 		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
 	}

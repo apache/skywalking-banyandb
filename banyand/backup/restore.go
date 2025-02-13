@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package pkg
+package backup
 
 import (
 	"context"
@@ -30,14 +30,11 @@ import (
 	"go.uber.org/multierr"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
-)
-
-const (
-	dirPerm = 0o755
-	dataDir = "data"
 )
 
 // NewRestoreCommand creates a new restore command.
@@ -46,6 +43,9 @@ func NewRestoreCommand() *cobra.Command {
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		Short:             "Restore BanyanDB data from remote storage",
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			return config.Load("logging", cmd.Flags())
+		},
 	}
 	rootCmd.AddCommand(newRunCommand())
 	rootCmd.AddCommand(NewTimeDirCommand())
@@ -78,7 +78,7 @@ func newRunCommand() *cobra.Command {
 			var errs error
 
 			if streamRoot != "" {
-				timeDirPath := filepath.Join(streamRoot, "stream-time-dir")
+				timeDirPath := filepath.Join(streamRoot, "stream", "time-dir")
 				if data, err := os.ReadFile(timeDirPath); err == nil {
 					timeDir := strings.TrimSpace(string(data))
 					if err = restoreCatalog(fs, timeDir, streamRoot, commonv1.Catalog_CATALOG_STREAM); err != nil {
@@ -91,7 +91,7 @@ func newRunCommand() *cobra.Command {
 				}
 			}
 			if measureRoot != "" {
-				timeDirPath := filepath.Join(measureRoot, "measure-time-dir")
+				timeDirPath := filepath.Join(measureRoot, "measure", "time-dir")
 				if data, err := os.ReadFile(timeDirPath); err == nil {
 					timeDir := strings.TrimSpace(string(data))
 					if err = restoreCatalog(fs, timeDir, measureRoot, commonv1.Catalog_CATALOG_MEASURE); err != nil {
@@ -104,7 +104,7 @@ func newRunCommand() *cobra.Command {
 				}
 			}
 			if propertyRoot != "" {
-				timeDirPath := filepath.Join(propertyRoot, "property-time-dir")
+				timeDirPath := filepath.Join(propertyRoot, "property", "time-dir")
 				if data, err := os.ReadFile(timeDirPath); err == nil {
 					timeDir := strings.TrimSpace(string(data))
 					if err = restoreCatalog(fs, timeDir, propertyRoot, commonv1.Catalog_CATALOG_PROPERTY); err != nil {
@@ -136,10 +136,12 @@ func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Cat
 		return fmt.Errorf("failed to list remote files: %w", err)
 	}
 
-	localDir := filepath.Join(getLocalDir(rootPath, catalog), dataDir)
-	if err = os.MkdirAll(localDir, dirPerm); err != nil {
+	localDir := filepath.Join(getLocalDir(rootPath, catalog), storage.DataDir)
+	if err = os.MkdirAll(localDir, storage.DirPerm); err != nil {
 		return fmt.Errorf("failed to create local directory %s: %w", localDir, err)
 	}
+
+	logger.Infof("Restoring %s to %s from %s", getCatalogName(catalog), localDir, remotePrefix)
 
 	remoteRelSet := make(map[string]bool)
 	var relPath string
@@ -175,7 +177,7 @@ func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Cat
 		localPath := filepath.Join(rootPath, relPath)
 
 		if !contains(localFiles, relPath) {
-			if err := os.MkdirAll(filepath.Dir(localPath), dirPerm); err != nil {
+			if err := os.MkdirAll(filepath.Dir(localPath), storage.DirPerm); err != nil {
 				return fmt.Errorf("failed to create directory for %s: %w", localPath, err)
 			}
 

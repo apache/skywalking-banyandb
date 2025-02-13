@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -41,8 +42,6 @@ import (
 
 const (
 	snapshotSuffix = ".snp"
-	filePermission = 0o600
-	dirPermission  = 0o700
 )
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
@@ -201,7 +200,7 @@ func (tst *tsTable) mustWriteSnapshot(snapshot uint64, partNames []string) {
 		logger.Panicf("cannot marshal partNames to JSON: %s", err)
 	}
 	snapshotPath := filepath.Join(tst.root, snapshotName(snapshot))
-	lf, err := tst.fileSystem.CreateLockFile(snapshotPath, filePermission)
+	lf, err := tst.fileSystem.CreateLockFile(snapshotPath, storage.FilePerm)
 	if err != nil {
 		logger.Panicf("cannot create lock file %s: %s", snapshotPath, err)
 	}

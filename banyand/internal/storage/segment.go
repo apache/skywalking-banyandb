@@ -376,10 +376,10 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 		end = stdEnd
 	}
 	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.format(start)))
-	lfs.MkdirPanicIfExist(segPath, dirPerm)
+	lfs.MkdirPanicIfExist(segPath, DirPerm)
 	data := []byte(currentVersion)
 	metadataPath := filepath.Join(segPath, metadataFilename)
-	lf, err := lfs.CreateLockFile(metadataPath, filePermission)
+	lf, err := lfs.CreateLockFile(metadataPath, FilePerm)
 	if err != nil {
 		logger.Panicf("cannot create lock file %s: %s", metadataPath, err)
 	}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -86,7 +87,7 @@ func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath str
 		return
 	}
 	metadataPath := filepath.Join(partPath, metadataFilename)
-	n, err := fileSystem.Write(metadata, metadataPath, filePermission)
+	n, err := fileSystem.Write(metadata, metadataPath, storage.FilePerm)
 	if err != nil {
 		logger.Panicf("cannot write metadata: %s", err)
 		return

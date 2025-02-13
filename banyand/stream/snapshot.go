@@ -37,8 +37,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-const snapshotsDir = "snapshots"
-
 func (tst *tsTable) currentSnapshot() *snapshot {
 	tst.RLock()
 	defer tst.RUnlock()
@@ -152,7 +150,7 @@ func parseSnapshot(name string) (uint64, error) {
 
 func (tst *tsTable) TakeFileSnapshot(dst string) error {
 	indexDir := filepath.Join(dst, filepath.Base(tst.index.location))
-	tst.fileSystem.MkdirPanicIfExist(indexDir, dirPermission)
+	tst.fileSystem.MkdirPanicIfExist(indexDir, storage.DirPerm)
 	if err := tst.index.store.TakeFileSnapshot(indexDir); err != nil {
 		return fmt.Errorf("failed to take file snapshot for index: %w", err)
 	}
@@ -192,7 +190,7 @@ func (tst *tsTable) createMetadata(dst string, snapshot *snapshot) {
 		logger.Panicf("cannot marshal partNames to JSON: %s", err)
 	}
 	snapshotPath := filepath.Join(dst, snapshotName(snapshot.epoch))
-	lf, err := tst.fileSystem.CreateFile(snapshotPath, filePermission)
+	lf, err := tst.fileSystem.CreateFile(snapshotPath, storage.FilePerm)
 	if err != nil {
 		logger.Panicf("cannot create lock file %s: %s", snapshotPath, err)
 	}
@@ -260,7 +258,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn, dataDir), g.GetSchema().Metadata.Name); err != nil {
+		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn, storage.DataDir), g.GetSchema().Metadata.Name); err != nil {
 			s.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue

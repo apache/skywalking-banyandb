@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package pkg
+package backup
 
 import (
 	"context"
@@ -27,9 +27,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-)
 
-const filePerm = 0o600
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+)
 
 // NewTimeDirCommand creates a new time-dir command.
 func NewTimeDirCommand() *cobra.Command {
@@ -125,12 +125,15 @@ func newCreateCmd() *cobra.Command {
 					fmt.Fprintf(cmd.OutOrStdout(), "Skipping unknown catalog '%s': %v\n", cat, err)
 					continue
 				}
-				err = os.WriteFile(filePath, []byte(tValue), filePerm)
-				if err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Failed to create time-dir for catalog '%s' at %s: %v\n", cat, filePath, err)
-				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "Created time-dir for catalog '%s' at %s with content '%s'\n", cat, filePath, tValue)
+				dirPath := filepath.Dir(filePath)
+				if err = os.MkdirAll(dirPath, storage.DirPerm); err != nil {
+					return fmt.Errorf("failed to create time-dir directory: %w", err)
 				}
+				err = os.WriteFile(filePath, []byte(tValue), storage.FilePerm)
+				if err != nil {
+					return fmt.Errorf("failed to write time-dir file: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Created time-dir for catalog '%s' at %s with content '%s'\n", cat, filePath, tValue)
 			}
 			return nil
 		},
@@ -228,11 +231,11 @@ func newDeleteCmd() *cobra.Command {
 func getLocalTimeDirFilePath(catalog, streamRoot, measureRoot, propertyRoot string) (string, error) {
 	switch strings.ToLower(catalog) {
 	case "stream":
-		return filepath.Join(streamRoot, fmt.Sprintf("%s-time-dir", "stream")), nil
+		return filepath.Join(streamRoot, "stream", "time-dir"), nil
 	case "measure":
-		return filepath.Join(measureRoot, fmt.Sprintf("%s-time-dir", "measure")), nil
+		return filepath.Join(measureRoot, "measure", "time-dir"), nil
 	case "property":
-		return filepath.Join(propertyRoot, fmt.Sprintf("%s-time-dir", "property")), nil
+		return filepath.Join(propertyRoot, "property", "time-dir"), nil
 	default:
 		return "", fmt.Errorf("unknown catalog type: %s", catalog)
 	}

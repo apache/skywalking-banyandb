@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package pkg
+package backup
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 )
 
@@ -38,7 +39,7 @@ func TestRestoreDownload(t *testing.T) {
 	}
 
 	timeDir := "2023-10-10"
-	remoteFilePath := filepath.Join(timeDir, getCatalogName(commonv1.Catalog_CATALOG_STREAM), dataDir, "test.txt")
+	remoteFilePath := filepath.Join(timeDir, getCatalogName(commonv1.Catalog_CATALOG_STREAM), storage.DataDir, "test.txt")
 	content := "hello"
 	err = fs.Upload(context.Background(), remoteFilePath, strings.NewReader(content))
 	if err != nil {
@@ -50,7 +51,7 @@ func TestRestoreDownload(t *testing.T) {
 		t.Fatalf("restoreCatalog failed: %v", err)
 	}
 
-	localFilePath := filepath.Join(localRestoreDir, getCatalogName(commonv1.Catalog_CATALOG_STREAM), dataDir, "test.txt")
+	localFilePath := filepath.Join(localRestoreDir, getCatalogName(commonv1.Catalog_CATALOG_STREAM), storage.DataDir, "test.txt")
 	got, err := os.ReadFile(localFilePath)
 	if err != nil {
 		t.Fatalf("failed to read local file: %v", err)
@@ -69,8 +70,8 @@ func TestRestoreDelete(t *testing.T) {
 		t.Fatalf("failed to create remote FS: %v", err)
 	}
 
-	streamDir := filepath.Join(localRestoreDir, "stream", dataDir)
-	if err = os.MkdirAll(streamDir, dirPerm); err != nil {
+	streamDir := filepath.Join(localRestoreDir, "stream", storage.DataDir)
+	if err = os.MkdirAll(streamDir, storage.DirPerm); err != nil {
 		t.Fatalf("failed to create local stream directory: %v", err)
 	}
 	extraFilePath := filepath.Join(streamDir, "old.txt")

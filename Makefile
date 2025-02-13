@@ -27,7 +27,7 @@ endif
 
 include scripts/build/version.mk
 
-PROJECTS := ui banyand bydbctl bydbbackup
+PROJECTS := ui banyand bydbctl
 
 TEST_CI_OPTS ?=
 

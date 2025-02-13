@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package pkg provides the backup command-line tool.
-package pkg
+// Package backup provides the backup command-line tool.
+package backup
 
 import (
 	"context"
@@ -37,6 +37,8 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -45,46 +47,38 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const snapshotDir = "snapshots"
-
-var scheduleExprMap = map[string]string{
-	"hourly": "5 * * * *",
-	"daily":  "5 0 * * *",
-}
-
 // NewBackupCommand creates a new backup command.
 func NewBackupCommand() *cobra.Command {
 	var (
-		gRPCAddr      string
-		enableTLS     bool
-		insecure      bool
-		cert          string
-		streamRoot    string
-		measureRoot   string
-		propertyRoot  string
-		dest          string
-		timeStyle     string
-		scheduleStyle string
+		gRPCAddr     string
+		enableTLS    bool
+		insecure     bool
+		cert         string
+		streamRoot   string
+		measureRoot  string
+		propertyRoot string
+		dest         string
+		timeStyle    string
+		schedule     string
 	)
 
 	cmd := &cobra.Command{
 		Short:             "Backup BanyanDB snapshots to remote storage",
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
-		RunE: func(_ *cobra.Command, _ []string) error {
-			if scheduleStyle == "" {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := config.Load("logging", cmd.Flags()); err != nil {
+				return err
+			}
+			if schedule == "" {
 				return backupAction(dest, gRPCAddr, enableTLS, insecure, cert,
 					streamRoot, measureRoot, propertyRoot, timeStyle)
 			}
-			expr, ok := scheduleExprMap[scheduleStyle]
-			if !ok {
-				return fmt.Errorf("unsupported schedule style: %s. Only support: hourly or daily", scheduleStyle)
-			}
 			schedLogger := logger.GetLogger().Named("backup-scheduler")
+			schedLogger.Info().Msgf("backup to %s will run with schedule: %s", dest, schedule)
 			clockInstance := clock.New()
 			sch := timestamp.NewScheduler(schedLogger, clockInstance)
-			cronOptions := cron.Minute | cron.Hour
-			err := sch.Register("backup", cronOptions, expr, func(_ time.Time, l *logger.Logger) bool {
+			err := sch.Register("backup", cron.Descriptor, schedule, func(_ time.Time, l *logger.Logger) bool {
 				err := backupAction(dest, gRPCAddr, enableTLS, insecure, cert,
 					streamRoot, measureRoot, propertyRoot, timeStyle)
 				if err != nil {
@@ -117,7 +111,12 @@ func NewBackupCommand() *cobra.Command {
 	cmd.Flags().StringVar(&propertyRoot, "property-root-path", "/tmp", "Root directory for property catalog")
 	cmd.Flags().StringVar(&dest, "dest", "", "Destination URL (e.g., file:///backups)")
 	cmd.Flags().StringVar(&timeStyle, "time-style", "daily", "Time directory style (daily|hourly)")
-	cmd.Flags().StringVar(&scheduleStyle, "schedule", "", "Schedule expression for periodic backup. The format is a cron expression \"<minute> <hour>\"")
+	cmd.Flags().StringVar(
+		&schedule,
+		"schedule",
+		"",
+		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
+	)
 
 	return cmd
 }
@@ -199,7 +198,7 @@ func getSnapshotDir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, prop
 	default:
 		return "", errors.New("unknown catalog type")
 	}
-	return filepath.Join(baseDir, snapshotDir, snapshot.Name), nil
+	return filepath.Join(baseDir, storage.SnapshotsDir, snapshot.Name), nil
 }
 
 func getTimeDir(style string) string {

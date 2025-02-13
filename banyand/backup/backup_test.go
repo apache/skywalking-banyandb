@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package pkg
+package backup
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 )
 
 func TestNewFS(t *testing.T) {
@@ -64,7 +65,7 @@ func TestGetSnapshotDir(t *testing.T) {
 			"stream catalog",
 			&databasev1.Snapshot{Catalog: commonv1.Catalog_CATALOG_STREAM, Name: "test"},
 			"/tmp", "/tmp", "/tmp",
-			filepath.Join("/tmp/stream", snapshotDir, "test"),
+			filepath.Join("/tmp/stream", storage.SnapshotsDir, "test"),
 			false,
 		},
 		{

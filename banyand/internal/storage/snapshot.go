@@ -29,7 +29,7 @@ func DeleteStaleSnapshots(root string, maxNum int, lfs fs.FileSystem) {
 	if maxNum <= 0 {
 		return
 	}
-	lfs.MkdirIfNotExist(root, dirPerm)
+	lfs.MkdirIfNotExist(root, DirPerm)
 	snapshots := lfs.ReadDir(root)
 	if len(snapshots) <= maxNum {
 		return
