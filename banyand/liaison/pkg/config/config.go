@@ -25,11 +25,13 @@ import (
 
 // Config AuthConfig.
 type Config struct {
-	Users []struct {
-		Username string `yaml:"username"`
-		Password string `yaml:"password"`
-	} `yaml:"users"`
-	Enabled bool `yaml:"enabled"`
+	Users   []User `yaml:"users"`
+	Enabled bool   `yaml:"enabled"`
+}
+
+type User struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 // NewConfig returns a new config object.
