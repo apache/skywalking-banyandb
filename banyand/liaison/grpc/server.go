@@ -20,8 +20,6 @@ package grpc
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/interceptors"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -42,6 +40,8 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/interceptors"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"

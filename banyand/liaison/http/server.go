@@ -21,8 +21,6 @@ package http
 import (
 	"context"
 	"fmt"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/middlewares"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 	"net"
 	"net/http"
 	"strconv"
@@ -42,6 +40,8 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/middlewares"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
