@@ -1,0 +1,5 @@
+auth:
+  enabled: true
+  users:
+    - username: test
+      password: $2a$10$Dty9D1PMVx0kt24S09qs6ezn2Q77wLsnmlpU6iO29hMn.Urbo.uji

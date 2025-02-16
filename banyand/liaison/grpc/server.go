@@ -20,6 +20,8 @@ package grpc
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/interceptors"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -80,6 +82,7 @@ type server struct {
 	measureSVC *measureService
 	ser        *grpclib.Server
 	log        *logger.Logger
+	cfg        *config.Config
 	*propertyServer
 	*topNAggregationRegistryServer
 	*groupRegistryServer
@@ -116,6 +119,7 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 	}
 	s := &server{
 		omr:        omr,
+		cfg:        config.NewConfig(),
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		streamRegistryServer: &streamRegistryServer{
@@ -159,6 +163,9 @@ func (s *server) PreRun(_ context.Context) error {
 		if err := c.initialize(); err != nil {
 			return err
 		}
+	}
+	if err := config.LoadConfig(s.cfg); err != nil {
+		return err
 	}
 
 	if s.enableIngestionAccessLog {
@@ -253,6 +260,7 @@ func (s *server) Serve() run.StopNotify {
 	unaryChain := []grpclib.UnaryServerInterceptor{
 		grpc_validator.UnaryServerInterceptor(),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		interceptors.AuthInterceptor(s.cfg),
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),

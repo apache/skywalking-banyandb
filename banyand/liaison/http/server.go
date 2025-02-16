@@ -21,6 +21,8 @@ package http
 import (
 	"context"
 	"fmt"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/middlewares"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 	"net"
 	"net/http"
 	"strconv"
@@ -57,6 +59,7 @@ var (
 // NewServer return a http service.
 func NewServer() Server {
 	return &server{
+		cfg:    config.NewConfig(),
 		stopCh: make(chan struct{}),
 	}
 }
@@ -73,6 +76,7 @@ type server struct {
 	clientCloser context.CancelFunc
 	mux          *chi.Mux
 	srv          *http.Server
+	cfg          *config.Config
 	stopCh       chan struct{}
 	host         string
 	listenAddr   string
@@ -135,7 +139,9 @@ func (p *server) GetPort() *uint32 {
 func (p *server) PreRun(_ context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mux = chi.NewRouter()
-
+	if err := config.LoadConfig(p.cfg); err != nil {
+		return err
+	}
 	if err := p.setRootPath(); err != nil {
 		return err
 	}
@@ -181,7 +187,12 @@ func (p *server) Serve() run.StopNotify {
 		close(p.stopCh)
 		return p.stopCh
 	}
-	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
+
+	apiGroup := p.mux.Group(func(r chi.Router) {
+		r.Use(middlewares.AuthMiddleware(p.cfg))
+		r.Mount("/", http.StripPrefix("/api", gwMux))
+	})
+	p.mux.Mount("/api", apiGroup)
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		var err error
