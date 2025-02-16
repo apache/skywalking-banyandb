@@ -253,6 +253,7 @@ func (s *server) Serve() run.StopNotify {
 	}
 
 	streamChain := []grpclib.StreamServerInterceptor{
+		AuthStreamInterceptor(s.cfg),
 		grpc_validator.StreamServerInterceptor(),
 		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
