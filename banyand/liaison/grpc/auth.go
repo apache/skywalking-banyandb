@@ -19,12 +19,14 @@ package grpc
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 )
 
 // AuthInterceptor gRPC auth interceptor.

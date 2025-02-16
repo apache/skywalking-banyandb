@@ -19,7 +19,6 @@ package grpc_test
 
 import (
 	"context"
-	md "google.golang.org/grpc/metadata"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -28,6 +27,7 @@ import (
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	md "google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"

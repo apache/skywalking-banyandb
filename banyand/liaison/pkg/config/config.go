@@ -19,8 +19,9 @@
 package config
 
 import (
-	"gopkg.in/yaml.v3"
 	"os"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Config AuthConfig.
@@ -29,6 +30,7 @@ type Config struct {
 	Enabled bool   `yaml:"enabled"`
 }
 
+// User details from config file.
 type User struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
