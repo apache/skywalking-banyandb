@@ -28,6 +28,7 @@ Release Notes.
 - Add taking the snapshot of data files.
 - Add backup command line tool to backup the data files.
 - Add restore command line tool to restore the data files.
+- Implement Username/Password Authentication for BanyanDB Liaison.
 
 ### Bug Fixes
 
