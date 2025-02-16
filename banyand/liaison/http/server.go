@@ -253,21 +253,21 @@ func serveFileContents(file string, files http.FileSystem) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Accept"), "text/html") {
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, "404 not found")
+			_, _ = fmt.Fprint(w, "404 not found")
 
 			return
 		}
 		index, err := files.Open(file)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, "%s not found", file)
+			_, _ = fmt.Fprintf(w, "%s not found", file)
 
 			return
 		}
 		fi, err := index.Stat()
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, "%s not found", file)
+			_, _ = fmt.Fprintf(w, "%s not found", file)
 
 			return
 		}
