@@ -19,9 +19,8 @@
 package config
 
 import (
-	"os"
-
 	"gopkg.in/yaml.v3"
+	"os"
 )
 
 // Config AuthConfig.
@@ -40,7 +39,7 @@ func NewConfig() *Config {
 
 // LoadConfig implements the reading of the authentication configuration.
 func LoadConfig(cfg *Config) error {
-	data, err := os.ReadFile("banyand/liaison/pkg/config/config.yaml")
+	data, err := os.ReadFile("../pkg/config/config.yaml")
 	if err != nil {
 		return err
 	}

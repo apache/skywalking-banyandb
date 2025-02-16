@@ -15,24 +15,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package interceptors implements the gRPC interceptors.
-package interceptors
+package grpc
 
 import (
 	"context"
-
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 )
 
 // AuthInterceptor gRPC auth interceptor.
-func AuthInterceptor(cfg *config.Config) func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-	return func(ctx context.Context, req interface{}, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func AuthInterceptor(cfg *config.Config) func(ctxt context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
+	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		md, ok := metadata.FromIncomingContext(ctx)
 		if !ok {
 			return nil, status.Errorf(codes.Unauthenticated, "metadata is not provided")

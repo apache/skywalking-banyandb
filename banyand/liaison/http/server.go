@@ -40,7 +40,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/middlewares"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -189,7 +188,7 @@ func (p *server) Serve() run.StopNotify {
 	}
 
 	apiGroup := p.mux.Group(func(r chi.Router) {
-		r.Use(middlewares.AuthMiddleware(p.cfg))
+		r.Use(AuthMiddleware(p.cfg))
 		r.Mount("/", http.StripPrefix("/api", gwMux))
 	})
 	p.mux.Mount("/api", apiGroup)

@@ -15,8 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package middlewares implements the http middlewares.
-package middlewares
+package http
 
 import (
 	"encoding/base64"
