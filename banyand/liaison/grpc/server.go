@@ -163,8 +163,12 @@ func (s *server) PreRun(_ context.Context) error {
 			return err
 		}
 	}
-	if err := config.LoadConfig(s.authConfigFile); err != nil {
-		return err
+	if s.authConfigFile != "" {
+		if err := config.LoadConfig(s.authConfigFile); err != nil {
+			return err
+		}
+	} else {
+		config.DefaultConfig()
 	}
 
 	if s.enableIngestionAccessLog {

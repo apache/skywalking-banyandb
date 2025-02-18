@@ -52,3 +52,10 @@ func LoadConfig(filePath string) error {
 	}
 	return nil
 }
+
+// DefaultConfig disable auth.
+func DefaultConfig() {
+	Cfg = new(Config)
+	Cfg.Enabled = false
+	Cfg.Users = []User{}
+}

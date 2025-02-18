@@ -27,7 +27,6 @@ import (
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
-	md "google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -42,13 +41,6 @@ import (
 	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
-)
-
-const (
-	Username    string = "test"
-	Password    string = "password"
-	UsernameKey string = "username"
-	PasswordKey string = "password"
 )
 
 var _ = Describe("Registry", func() {
@@ -81,7 +73,7 @@ var _ = Describe("Registry", func() {
 		client := databasev1.NewStreamRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
 		meta.Name = "sw"
-		ctx := md.AppendToOutgoingContext(context.Background(), "username", "test", "password", "password")
+		ctx := context.Background()
 		getResp, err := client.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: meta})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
@@ -124,7 +116,7 @@ var _ = Describe("Registry", func() {
 		client := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
 		meta.Name = "sw-index-rule-binding"
-		ctx := md.AppendToOutgoingContext(context.Background(), "username", "test", "password", "password")
+		ctx := context.Background()
 		getResp, err := client.Get(ctx, &databasev1.IndexRuleBindingRegistryServiceGetRequest{Metadata: meta})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
@@ -155,7 +147,7 @@ var _ = Describe("Registry", func() {
 		client := databasev1.NewIndexRuleRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
 		meta.Name = "db.instance"
-		ctx := md.AppendToOutgoingContext(context.Background(), UsernameKey, Username, PasswordKey, Password)
+		ctx := context.Background()
 		getResp, err := client.Get(ctx, &databasev1.IndexRuleRegistryServiceGetRequest{Metadata: meta})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
@@ -205,7 +197,7 @@ func setupForRegistry() func() {
 	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
 	Expect(err).NotTo(HaveOccurred())
 	flags = append(flags, "--metadata-root-path="+metaPath, "--etcd-listen-client-url="+listenClientURL,
-		"--etcd-listen-peer-url="+listenPeerURL, "--auth-config-file=../pkg/config/config.yaml")
+		"--etcd-listen-peer-url="+listenPeerURL)
 	deferFunc := test.SetupModules(
 		flags,
 		pipeline,
