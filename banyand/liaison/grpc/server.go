@@ -54,6 +54,7 @@ const defaultRecvSize = 10 << 20
 var (
 	errServerCert        = errors.New("invalid server cert file")
 	errServerKey         = errors.New("invalid server key file")
+	errConfigFile        = errors.New("invalid config file")
 	errNoAddr            = errors.New("no address")
 	errQueryMsg          = errors.New("invalid query message")
 	errAccessLogRootPath = errors.New("access log root path is required")
@@ -81,7 +82,6 @@ type server struct {
 	measureSVC *measureService
 	ser        *grpclib.Server
 	log        *logger.Logger
-	cfg        *config.Config
 	*propertyServer
 	*topNAggregationRegistryServer
 	*groupRegistryServer
@@ -94,6 +94,7 @@ type server struct {
 	metrics                  *metrics
 	keyFile                  string
 	certFile                 string
+	authConfigFile           string
 	accessLogRootPath        string
 	addr                     string
 	host                     string
@@ -118,7 +119,6 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 	}
 	s := &server{
 		omr:        omr,
-		cfg:        config.NewConfig(),
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		streamRegistryServer: &streamRegistryServer{
@@ -163,7 +163,7 @@ func (s *server) PreRun(_ context.Context) error {
 			return err
 		}
 	}
-	if err := config.LoadConfig(s.cfg); err != nil {
+	if err := config.LoadConfig(s.authConfigFile); err != nil {
 		return err
 	}
 
@@ -207,6 +207,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.tls, "tls", false, "connection uses TLS if true, else plain TCP")
 	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
+	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "the authentication config file (YAML format)")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
@@ -233,6 +234,9 @@ func (s *server) Validate() error {
 	if s.keyFile == "" {
 		return errServerKey
 	}
+	if s.authConfigFile == "" {
+		return errConfigFile
+	}
 	creds, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 	if errTLS != nil {
 		return errors.Wrap(errTLS, "failed to load cert and key")
@@ -253,12 +257,12 @@ func (s *server) Serve() run.StopNotify {
 	}
 
 	streamChain := []grpclib.StreamServerInterceptor{
-		AuthStreamInterceptor(s.cfg),
+		AuthStreamInterceptor,
 		grpc_validator.StreamServerInterceptor(),
 		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
-		AuthInterceptor(s.cfg),
+		AuthInterceptor,
 		grpc_validator.UnaryServerInterceptor(),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}

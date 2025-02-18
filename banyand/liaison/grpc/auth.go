@@ -30,62 +30,66 @@ import (
 )
 
 // AuthInterceptor gRPC auth interceptor.
-func AuthInterceptor(cfg *config.Config) func(ctxt context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
-	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		md, ok := metadata.FromIncomingContext(ctx)
-		if !ok {
-			return nil, status.Errorf(codes.Unauthenticated, "metadata is not provided")
-		}
-		usernameList, usernameOk := md["username"]
-		passwordList, passwordOk := md["password"]
-		if !usernameOk || !passwordOk {
-			return nil, status.Errorf(codes.Unauthenticated, "username or password is not provided")
-		}
-		username := usernameList[0]
-		password := passwordList[0]
-
-		var valid bool
-		for _, user := range cfg.Users {
-			if username == user.Username && auth.CheckPassword(password, user.Password) {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return nil, status.Errorf(codes.Unauthenticated, "invalid username or password")
-		}
-
+func AuthInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if !config.Cfg.Enabled {
 		return handler(ctx, req)
 	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, status.Errorf(codes.Unauthenticated, "metadata is not provided")
+	}
+	usernameList, usernameOk := md["username"]
+	passwordList, passwordOk := md["password"]
+	if !usernameOk || !passwordOk {
+		return nil, status.Errorf(codes.Unauthenticated, "username or password is not provided")
+	}
+	username := usernameList[0]
+	password := passwordList[0]
+
+	var valid bool
+	for _, user := range config.Cfg.Users {
+		if username == user.Username && auth.CheckPassword(password, user.Password) {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return nil, status.Errorf(codes.Unauthenticated, "invalid username or password")
+	}
+
+	return handler(ctx, req)
 }
 
 // AuthStreamInterceptor gRPC auth interceptor for streams.
-func AuthStreamInterceptor(cfg *config.Config) func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	return func(srv interface{}, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		md, ok := metadata.FromIncomingContext(ss.Context())
-		if !ok {
-			return status.Errorf(codes.Unauthenticated, "metadata is not provided")
-		}
-		usernameList, usernameOk := md["username"]
-		passwordList, passwordOk := md["password"]
-		if !usernameOk || !passwordOk {
-			return status.Errorf(codes.Unauthenticated, "username or password is not provided")
-		}
-		username := usernameList[0]
-		password := passwordList[0]
-
-		var valid bool
-		for _, user := range cfg.Users {
-			if username == user.Username && auth.CheckPassword(password, user.Password) {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return status.Errorf(codes.Unauthenticated, "invalid username or password")
-		}
-
-		// Proceed with the stream handler if authentication is successful
+func AuthStreamInterceptor(srv interface{}, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if !config.Cfg.Enabled {
 		return handler(srv, ss)
 	}
+
+	md, ok := metadata.FromIncomingContext(ss.Context())
+	if !ok {
+		return status.Errorf(codes.Unauthenticated, "metadata is not provided")
+	}
+	usernameList, usernameOk := md["username"]
+	passwordList, passwordOk := md["password"]
+	if !usernameOk || !passwordOk {
+		return status.Errorf(codes.Unauthenticated, "username or password is not provided")
+	}
+	username := usernameList[0]
+	password := passwordList[0]
+
+	var valid bool
+	for _, user := range config.Cfg.Users {
+		if username == user.Username && auth.CheckPassword(password, user.Password) {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return status.Errorf(codes.Unauthenticated, "invalid username or password")
+	}
+
+	// Proceed with the stream handler if authentication is successful
+	return handler(srv, ss)
 }

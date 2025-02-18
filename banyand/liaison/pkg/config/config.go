@@ -24,6 +24,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Cfg auth config.
+var Cfg *Config
+
 // Config AuthConfig.
 type Config struct {
 	Users   []User `yaml:"users"`
@@ -36,18 +39,14 @@ type User struct {
 	Password string `yaml:"password"`
 }
 
-// NewConfig returns a new config object.
-func NewConfig() *Config {
-	return &Config{}
-}
-
 // LoadConfig implements the reading of the authentication configuration.
-func LoadConfig(cfg *Config) error {
-	data, err := os.ReadFile("../pkg/config/config.yaml")
+func LoadConfig(filePath string) error {
+	Cfg = new(Config)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return err
 	}
-	err = yaml.Unmarshal(data, cfg)
+	err = yaml.Unmarshal(data, Cfg)
 	if err != nil {
 		return err
 	}

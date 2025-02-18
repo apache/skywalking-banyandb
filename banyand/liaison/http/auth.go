@@ -27,58 +27,56 @@ import (
 )
 
 // AuthMiddleware http auth middleware.
-func AuthMiddleware(cfg *config.Config) func(next http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !cfg.Enabled {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
-				http.Error(w, "Authorization header is missing", http.StatusUnauthorized)
-				return
-			}
-
-			if !strings.HasPrefix(authHeader, "Basic ") {
-				http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
-				return
-			}
-
-			encodedCredentials := strings.TrimPrefix(authHeader, "Basic ")
-
-			decodedBytes, err := base64.StdEncoding.DecodeString(encodedCredentials)
-			if err != nil {
-				http.Error(w, "Failed to decode authorization header", http.StatusBadRequest)
-				return
-			}
-
-			decodedCredentials := string(decodedBytes)
-
-			parts := strings.SplitN(decodedCredentials, ":", 2)
-			if len(parts) != 2 {
-				http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
-				return
-			}
-
-			username := parts[0]
-			password := parts[1]
-
-			var valid bool
-			for _, user := range cfg.Users {
-				if username == user.Username && auth.CheckPassword(password, user.Password) {
-					valid = true
-					break
-				}
-			}
-			if !valid {
-				http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
-				return
-			}
-
+func AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !config.Cfg.Enabled {
 			next.ServeHTTP(w, r)
-		})
-	}
+			return
+		}
+
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+			http.Error(w, "Authorization header is missing", http.StatusUnauthorized)
+			return
+		}
+
+		if !strings.HasPrefix(authHeader, "Basic ") {
+			http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
+			return
+		}
+
+		encodedCredentials := strings.TrimPrefix(authHeader, "Basic ")
+
+		decodedBytes, err := base64.StdEncoding.DecodeString(encodedCredentials)
+		if err != nil {
+			http.Error(w, "Failed to decode authorization header", http.StatusBadRequest)
+			return
+		}
+
+		decodedCredentials := string(decodedBytes)
+
+		parts := strings.SplitN(decodedCredentials, ":", 2)
+		if len(parts) != 2 {
+			http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
+			return
+		}
+
+		username := parts[0]
+		password := parts[1]
+
+		var valid bool
+		for _, user := range config.Cfg.Users {
+			if username == user.Username && auth.CheckPassword(password, user.Password) {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }

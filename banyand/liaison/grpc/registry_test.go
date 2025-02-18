@@ -81,7 +81,7 @@ var _ = Describe("Registry", func() {
 		client := databasev1.NewStreamRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
 		meta.Name = "sw"
-		ctx := context.TODO()
+		ctx := md.AppendToOutgoingContext(context.Background(), "username", "test", "password", "password")
 		getResp, err := client.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: meta})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
@@ -124,7 +124,7 @@ var _ = Describe("Registry", func() {
 		client := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
 		meta.Name = "sw-index-rule-binding"
-		ctx := context.TODO()
+		ctx := md.AppendToOutgoingContext(context.Background(), "username", "test", "password", "password")
 		getResp, err := client.Get(ctx, &databasev1.IndexRuleBindingRegistryServiceGetRequest{Metadata: meta})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
@@ -205,7 +205,7 @@ func setupForRegistry() func() {
 	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
 	Expect(err).NotTo(HaveOccurred())
 	flags = append(flags, "--metadata-root-path="+metaPath, "--etcd-listen-client-url="+listenClientURL,
-		"--etcd-listen-peer-url="+listenPeerURL)
+		"--etcd-listen-peer-url="+listenPeerURL, "--auth-config-file=../pkg/config/config.yaml")
 	deferFunc := test.SetupModules(
 		flags,
 		pipeline,
