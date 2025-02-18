@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strconv"
@@ -126,7 +127,6 @@ type topNStreamingProcessor struct {
 	m             *measure
 	errCh         <-chan error
 	stopCh        chan struct{}
-	buf           []byte
 	flow.ComponentState
 	interval      time.Duration
 	sortDirection modelv1.Sort
@@ -144,6 +144,7 @@ func (t *topNStreamingProcessor) Setup(ctx context.Context) error {
 
 func (t *topNStreamingProcessor) run(ctx context.Context) {
 	defer t.Done()
+	buf := make([]byte, 0, 64)
 	for {
 		select {
 		case record, ok := <-t.in:
@@ -151,7 +152,7 @@ func (t *topNStreamingProcessor) run(ctx context.Context) {
 				return
 			}
 			// nolint: contextcheck
-			if err := t.writeStreamRecord(record); err != nil {
+			if err := t.writeStreamRecord(record, buf); err != nil {
 				t.l.Err(err).Msg("fail to write stream record")
 			}
 		case <-ctx.Done():
@@ -177,7 +178,7 @@ func (t *topNStreamingProcessor) Close() error {
 	return err
 }
 
-func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) error {
+func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf []byte) error {
 	tuplesGroups, ok := record.Data().(map[string][]*streaming.Tuple2)
 	if !ok {
 		return errors.New("invalid data type")
@@ -236,8 +237,8 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 				},
 			},
 		}
-		t.buf = t.buf[:0]
-		if t.buf, err = topNValue.marshal(t.buf); err != nil {
+		buf = buf[:0]
+		if buf, err = topNValue.marshal(buf); err != nil {
 			return err
 		}
 		iwr := &measurev1.InternalWriteRequest{
@@ -252,7 +253,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord) err
 					Fields: []*modelv1.FieldValue{
 						{
 							Value: &modelv1.FieldValue_BinaryData{
-								BinaryData: bytes.Clone(t.buf),
+								BinaryData: bytes.Clone(buf),
 							},
 						},
 					},
@@ -444,7 +445,6 @@ func (manager *topNProcessorManager) start(topNSchema *databasev1.TopNAggregatio
 			stopCh:        make(chan struct{}),
 			streamingFlow: streamingFlow,
 			pipeline:      manager.pipeline,
-			buf:           make([]byte, 0, 64),
 		}
 		processorList[i] = processor.start()
 	}
@@ -618,14 +618,15 @@ var topNValuePool = pool.Register[*TopNValue]("measure-topNValue")
 
 // TopNValue represents the topN value.
 type TopNValue struct {
-	valueName      string
-	entityTagNames []string
-	values         []int64
-	entities       [][]*modelv1.TagValue
-	entityValues   [][]byte
-	buf            []byte
-	encodeType     encoding.EncodeType
-	firstValue     int64
+	valueName       string
+	entityTagNames  []string
+	values          []int64
+	entities        [][]*modelv1.TagValue
+	entityValues    [][]byte
+	entityValuesBuf [][]byte
+	buf             []byte
+	encodeType      encoding.EncodeType
+	firstValue      int64
 }
 
 func (t *TopNValue) setMetadata(valueName string, entityTagNames []string) {
@@ -655,9 +656,7 @@ func (t *TopNValue) Reset() {
 	t.buf = t.buf[:0]
 	t.encodeType = encoding.EncodeTypeUnknown
 	t.firstValue = 0
-	for i := range t.entityValues {
-		t.entityValues[i] = t.entityValues[i][:0]
-	}
+	t.entityValuesBuf = t.entityValuesBuf[:0]
 	t.entityValues = t.entityValues[:0]
 }
 
@@ -705,14 +704,16 @@ func (t *TopNValue) marshal(dst []byte) ([]byte, error) {
 	dst = append(dst, t.buf...)
 
 	var err error
-	t.entityValues = t.resizeEntityValues(len(t.entities))
+	evv := t.resizeEntityValues(len(t.entities))
 	for i, tvv := range t.entities {
-		t.entityValues[i], err = pbv1.MarshalTagValues(t.entityValues[i], tvv)
+		ev := evv[i]
+		ev, err = pbv1.MarshalTagValues(ev[:0], tvv)
 		if err != nil {
 			return nil, err
 		}
+		evv[i] = ev
 	}
-	dst = encoding.EncodeBytesBlock(dst, t.entityValues)
+	dst = encoding.EncodeBytesBlock(dst, evv)
 	return dst, nil
 }
 
@@ -773,15 +774,16 @@ func (t *TopNValue) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder) e
 	}
 
 	decoder.Reset()
-	t.entityValues, err = decoder.Decode(t.entityValues, src[valueLen:], valuesCount)
+	evv := t.entityValuesBuf
+	evv, err = decoder.Decode(evv[:0], src[valueLen:], valuesCount)
 	if err != nil {
 		return fmt.Errorf("cannot unmarshal topNValue.entityValues: %w", err)
 	}
-	t.resizeEntities(len(t.entityValues), int(entityTagNamesCount))
-	for i, ev := range t.entityValues {
+	t.resizeEntities(len(evv), int(entityTagNamesCount))
+	for i, ev := range evv {
 		t.buf, t.entities[i], err = pbv1.UnmarshalTagValues(t.buf, t.entities[i], ev)
 		if err != nil {
-			return fmt.Errorf("cannot unmarshal topNValue.entityValues[%d]:%s %w", i, ev, err)
+			return fmt.Errorf("cannot unmarshal topNValue.entityValues[%d]:%s %w", i, hex.EncodeToString(ev), err)
 		}
 		if len(t.entities[i]) != len(t.entityTagNames) {
 			return fmt.Errorf("entityValues[%d] length is not equal to entityTagNames", i)

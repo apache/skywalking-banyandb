@@ -25,10 +25,13 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
+
+var mergeMaxConcurrencyCh = make(chan struct{}, cgroups.CPUs())
 
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
@@ -54,6 +57,14 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 				}
 				defer curSnapshot.decRef()
 				if curSnapshot.epoch != epoch {
+					select {
+					case mergeMaxConcurrencyCh <- struct{}{}:
+						defer func() {
+							<-mergeMaxConcurrencyCh
+						}()
+					case <-tst.loopCloser.CloseNotify():
+						return true
+					}
 					tst.incTotalMergeLoopStarted(1)
 					defer tst.incTotalMergeLoopFinished(1)
 					var err error
