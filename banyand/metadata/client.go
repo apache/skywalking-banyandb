@@ -166,10 +166,9 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		Roles:       nodeRoles,
 		CreatedAt:   timestamppb.Now(),
 	}
-	var cancel context.CancelFunc
 	for {
-		ctx, cancel = context.WithTimeout(ctx, time.Second*10)
-		err := s.schemaRegistry.RegisterNode(ctx, nodeInfo, s.forceRegisterNode)
+		ctxCancelable, cancel := context.WithTimeout(ctx, time.Second*10)
+		err := s.schemaRegistry.RegisterNode(ctxCancelable, nodeInfo, s.forceRegisterNode)
 		cancel()
 		if errors.Is(err, schema.ErrGRPCAlreadyExists) ||
 			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {

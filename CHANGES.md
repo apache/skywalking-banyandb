@@ -29,6 +29,7 @@ Release Notes.
 - Add backup command line tool to backup the data files.
 - Add restore command line tool to restore the data files.
 - Implement Username/Password Authentication for BanyanDB Liaison.
+- Add concurrent barrier to partition merge to improve the performance of the partition merge.
 
 ### Bug Fixes
 
