@@ -54,7 +54,6 @@ const defaultRecvSize = 10 << 20
 var (
 	errServerCert        = errors.New("invalid server cert file")
 	errServerKey         = errors.New("invalid server key file")
-	errConfigFile        = errors.New("invalid config file")
 	errNoAddr            = errors.New("no address")
 	errQueryMsg          = errors.New("invalid query message")
 	errAccessLogRootPath = errors.New("access log root path is required")
@@ -237,9 +236,6 @@ func (s *server) Validate() error {
 	}
 	if s.keyFile == "" {
 		return errServerKey
-	}
-	if s.authConfigFile == "" {
-		return errConfigFile
 	}
 	creds, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 	if errTLS != nil {
