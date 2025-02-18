@@ -6,11 +6,11 @@ Security is a critical aspect of any application. In this section, we will discu
 
 ### Username/Password Authentication
 
-BanyanDB supports username/password authentication for the gRPC and HTTP server. The following flag is used to configure authentication:
+BanyanDB supports username/password authentication for gRPC and HTTP server. The following flag is used to configure authentication:
 
 - `--auth-config-file`: Path to the authentication config file (YAML format).
 
-Passwords should be encrypted with bcrypt. For example, you can create an authentication config file like this:
+Password should be encrypted by bcrypt. For example, you can create an authentication configuration file like this:
 
 ```yaml
 users:
@@ -18,10 +18,10 @@ users:
     password: $2a$10$Dty9D1PMVx0kt24S09qs6ezn2Q77wLsnmlpU6iO29hMn.Urbo.uji
 ```
 
-Then, you can start the BanyanDB server with the following command:
+Then, use the auth-config-file flag to enable the authentication:
 
 ```shell
-banyand liaison --auth-config-file=/path/to/auth.yaml
+banyand liaison --auth-config-file=/path/to/config.yaml
 ```
 
 ### TLS
