@@ -69,8 +69,6 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 	}
 	decoder := generateColumnValuesDecoder()
 	defer releaseColumnValuesDecoder(decoder)
-	decodedTopNValue := GenerateTopNValue()
-	defer ReleaseTopNValue(decodedTopNValue)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -79,15 +77,15 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 			require.NoError(t, err)
 
 			// Unmarshal the topNValue
-			decodedTopNValue.Reset()
-			err = decodedTopNValue.Unmarshal(dst, decoder)
+			tt.topNVal.Reset()
+			err = tt.topNVal.Unmarshal(dst, decoder)
 			require.NoError(t, err)
 
 			// Compare the original and decoded topNValue
-			require.Equal(t, tt.topNVal.valueName, decodedTopNValue.valueName)
-			require.Equal(t, tt.topNVal.entityTagNames, decodedTopNValue.entityTagNames)
-			require.Equal(t, tt.topNVal.values, decodedTopNValue.values)
-			require.Equal(t, tt.topNVal.entities, decodedTopNValue.entities)
+			require.Equal(t, tt.topNVal.valueName, tt.topNVal.valueName)
+			require.Equal(t, tt.topNVal.entityTagNames, tt.topNVal.entityTagNames)
+			require.Equal(t, tt.topNVal.values, tt.topNVal.values)
+			require.Equal(t, tt.topNVal.entities, tt.topNVal.entities)
 		})
 	}
 }
