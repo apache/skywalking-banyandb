@@ -30,7 +30,7 @@ var Cfg *Config
 // Config AuthConfig.
 type Config struct {
 	Users   []User `yaml:"users"`
-	Enabled bool   `yaml:"enabled"`
+	Enabled bool   `yaml:"-"`
 }
 
 // User details from config file.

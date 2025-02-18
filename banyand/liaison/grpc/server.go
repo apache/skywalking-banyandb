@@ -210,7 +210,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.tls, "tls", false, "connection uses TLS if true, else plain TCP")
 	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
-	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "the authentication config file (YAML format)")
+	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "Path to the authentication config file (YAML format)")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
@@ -257,12 +257,12 @@ func (s *server) Serve() run.StopNotify {
 	}
 
 	streamChain := []grpclib.StreamServerInterceptor{
-		AuthStreamInterceptor,
+		authStreamInterceptor,
 		grpc_validator.StreamServerInterceptor(),
 		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
-		AuthInterceptor,
+		authInterceptor,
 		grpc_validator.UnaryServerInterceptor(),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}

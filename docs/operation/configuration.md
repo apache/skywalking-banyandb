@@ -10,7 +10,7 @@ There are three bootstrap commands: `data`, `liaison`, and `standalone`. You cou
 
 - `data`: Run as the data server. It stores the data and processes the data requests.
 - `liaison`: Run as the liaison server. It is responsible for the communication between the data servers and clients.
-- `standalone`: Run as the standalone server. It combines the data, liaison server and embed etcd server for development and testing. 
+- `standalone`: Run as the standalone server. It combines the data, liaison server and embed etcd server for development and testing.
 
 ### Other commands
 
@@ -65,6 +65,12 @@ The following flags are used to configure the timeout of data sending from liais
 - `--stream-write-timeout duration`: Stream write timeout (default: 15s).
 - `--measure-write-timeout duration`: Measure write timeout (default: 15s).
 
+### Authentication
+
+If you want to enable username/password authentication for the gRPC and HTTP server, you can use the following flag:
+
+- `--auth-config-file`: Path to the authentication config file (YAML format).
+
 ### TLS
 
 If you want to enable TLS for the communication between the client and liaison/standalone, you can use the following flags:
@@ -102,7 +108,7 @@ The following flags are used to configure the embedded etcd storage engine which
 
 The following flags are used to configure the memory protector:
 
-- `--allowed-bytes bytes`: Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. Setting a large value may evict data from the OS page cache, causing high disk I/O. (default 0B)  
+- `--allowed-bytes bytes`: Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. Setting a large value may evict data from the OS page cache, causing high disk I/O. (default 0B)
 - `--allowed-percent int`: Allowed percentage of total memory usage. If usage exceeds this value, the query services will stop. This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache eviction. (default 75)
 
 ### Observability

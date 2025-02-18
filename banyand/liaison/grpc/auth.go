@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -29,8 +30,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 )
 
-// AuthInterceptor gRPC auth interceptor.
-func AuthInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+// authInterceptor gRPC auth interceptor.
+func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	if !config.Cfg.Enabled {
 		return handler(ctx, req)
 	}
@@ -41,28 +42,26 @@ func AuthInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, hand
 	}
 	usernameList, usernameOk := md["username"]
 	passwordList, passwordOk := md["password"]
-	if !usernameOk || !passwordOk {
-		return nil, status.Errorf(codes.Unauthenticated, "username or password is not provided")
+	if !usernameOk || len(usernameList) == 0 {
+		return nil, status.Errorf(codes.Unauthenticated, "username is not provided correctly")
+	}
+	if !passwordOk || len(passwordList) == 0 {
+		return nil, status.Errorf(codes.Unauthenticated, "password is not provided correctly")
 	}
 	username := usernameList[0]
 	password := passwordList[0]
 
-	var valid bool
 	for _, user := range config.Cfg.Users {
-		if username == user.Username && auth.CheckPassword(password, user.Password) {
-			valid = true
-			break
+		if strings.ReplaceAll(username, " ", "") == strings.ReplaceAll(user.Username, " ", "") &&
+			auth.CheckPassword(strings.ReplaceAll(password, " ", ""), strings.ReplaceAll(user.Password, " ", "")) {
+			return handler(ctx, req)
 		}
 	}
-	if !valid {
-		return nil, status.Errorf(codes.Unauthenticated, "invalid username or password")
-	}
-
-	return handler(ctx, req)
+	return nil, status.Errorf(codes.Unauthenticated, "invalid username or password")
 }
 
-// AuthStreamInterceptor gRPC auth interceptor for streams.
-func AuthStreamInterceptor(srv interface{}, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+// authStreamInterceptor gRPC auth interceptor for streams.
+func authStreamInterceptor(srv interface{}, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	if !config.Cfg.Enabled {
 		return handler(srv, ss)
 	}
@@ -73,23 +72,20 @@ func AuthStreamInterceptor(srv interface{}, ss grpc.ServerStream, _ *grpc.Stream
 	}
 	usernameList, usernameOk := md["username"]
 	passwordList, passwordOk := md["password"]
-	if !usernameOk || !passwordOk {
-		return status.Errorf(codes.Unauthenticated, "username or password is not provided")
+	if !usernameOk || len(usernameList) == 0 {
+		return status.Errorf(codes.Unauthenticated, "username is not provided correctly")
+	}
+	if !passwordOk || len(passwordList) == 0 {
+		return status.Errorf(codes.Unauthenticated, "password is not provided correctly")
 	}
 	username := usernameList[0]
 	password := passwordList[0]
 
-	var valid bool
 	for _, user := range config.Cfg.Users {
-		if username == user.Username && auth.CheckPassword(password, user.Password) {
-			valid = true
-			break
+		if strings.ReplaceAll(username, " ", "") == strings.ReplaceAll(user.Username, " ", "") &&
+			auth.CheckPassword(strings.ReplaceAll(password, " ", ""), strings.ReplaceAll(user.Password, " ", "")) {
+			return handler(srv, ss)
 		}
 	}
-	if !valid {
-		return status.Errorf(codes.Unauthenticated, "invalid username or password")
-	}
-
-	// Proceed with the stream handler if authentication is successful
-	return handler(srv, ss)
+	return status.Errorf(codes.Unauthenticated, "invalid username or password")
 }

@@ -73,39 +73,38 @@ var _ = Describe("Registry", func() {
 		client := databasev1.NewStreamRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
 		meta.Name = "sw"
-		ctx := context.Background()
-		getResp, err := client.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: meta})
+		getResp, err := client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{Metadata: meta})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
 		By("Cleanup the registry")
-		deleteResp, err := client.Delete(ctx, &databasev1.StreamRegistryServiceDeleteRequest{
+		deleteResp, err := client.Delete(context.TODO(), &databasev1.StreamRegistryServiceDeleteRequest{
 			Metadata: meta,
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(deleteResp).NotTo(BeNil())
 		Expect(deleteResp.GetDeleted()).To(BeTrue())
 		By("Verifying the registry empty")
-		_, err = client.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{
+		_, err = client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{
 			Metadata: meta,
 		})
 		errStatus, _ := status.FromError(err)
 		Expect(errStatus.Code()).To(Equal(codes.NotFound))
-		existResp, err := client.Exist(ctx, &databasev1.StreamRegistryServiceExistRequest{
+		existResp, err := client.Exist(context.TODO(), &databasev1.StreamRegistryServiceExistRequest{
 			Metadata: meta,
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(existResp.HasGroup).To(BeTrue())
 		Expect(existResp.HasStream).To(BeFalse())
 		By("Creating a new stream")
-		_, err = client.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{Stream: getResp.GetStream()})
+		_, err = client.Create(context.TODO(), &databasev1.StreamRegistryServiceCreateRequest{Stream: getResp.GetStream()})
 		Expect(err).ShouldNot(HaveOccurred())
 		By("Verifying the new stream")
-		getResp, err = client.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{
+		getResp, err = client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{
 			Metadata: meta,
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
-		existResp, err = client.Exist(ctx, &databasev1.StreamRegistryServiceExistRequest{
+		existResp, err = client.Exist(context.TODO(), &databasev1.StreamRegistryServiceExistRequest{
 			Metadata: meta,
 		})
 		Expect(err).ShouldNot(HaveOccurred())
@@ -116,28 +115,27 @@ var _ = Describe("Registry", func() {
 		client := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
 		meta.Name = "sw-index-rule-binding"
-		ctx := context.Background()
-		getResp, err := client.Get(ctx, &databasev1.IndexRuleBindingRegistryServiceGetRequest{Metadata: meta})
+		getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{Metadata: meta})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
 		By("Cleanup the registry")
-		deleteResp, err := client.Delete(ctx, &databasev1.IndexRuleBindingRegistryServiceDeleteRequest{
+		deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceDeleteRequest{
 			Metadata: meta,
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(deleteResp).NotTo(BeNil())
 		Expect(deleteResp.GetDeleted()).To(BeTrue())
 		By("Verifying the registry empty")
-		_, err = client.Get(ctx, &databasev1.IndexRuleBindingRegistryServiceGetRequest{
+		_, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{
 			Metadata: meta,
 		})
 		errStatus, _ := status.FromError(err)
 		Expect(errStatus.Code()).To(Equal(codes.NotFound))
 		By("Creating a new index-rule-binding")
-		_, err = client.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{IndexRuleBinding: getResp.GetIndexRuleBinding()})
+		_, err = client.Create(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceCreateRequest{IndexRuleBinding: getResp.GetIndexRuleBinding()})
 		Expect(err).ShouldNot(HaveOccurred())
 		By("Verifying the new index-rule-binding")
-		getResp, err = client.Get(ctx, &databasev1.IndexRuleBindingRegistryServiceGetRequest{
+		getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleBindingRegistryServiceGetRequest{
 			Metadata: meta,
 		})
 		Expect(err).ShouldNot(HaveOccurred())
@@ -147,28 +145,27 @@ var _ = Describe("Registry", func() {
 		client := databasev1.NewIndexRuleRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
 		meta.Name = "db.instance"
-		ctx := context.Background()
-		getResp, err := client.Get(ctx, &databasev1.IndexRuleRegistryServiceGetRequest{Metadata: meta})
+		getResp, err := client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{Metadata: meta})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())
 		By("Cleanup the registry")
-		deleteResp, err := client.Delete(ctx, &databasev1.IndexRuleRegistryServiceDeleteRequest{
+		deleteResp, err := client.Delete(context.TODO(), &databasev1.IndexRuleRegistryServiceDeleteRequest{
 			Metadata: meta,
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(deleteResp).NotTo(BeNil())
 		Expect(deleteResp.GetDeleted()).To(BeTrue())
 		By("Verifying the registry empty")
-		_, err = client.Get(ctx, &databasev1.IndexRuleRegistryServiceGetRequest{
+		_, err = client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{
 			Metadata: meta,
 		})
 		errStatus, _ := status.FromError(err)
 		Expect(errStatus.Code()).To(Equal(codes.NotFound))
 		By("Creating a new index-rule")
-		_, err = client.Create(ctx, &databasev1.IndexRuleRegistryServiceCreateRequest{IndexRule: getResp.GetIndexRule()})
+		_, err = client.Create(context.TODO(), &databasev1.IndexRuleRegistryServiceCreateRequest{IndexRule: getResp.GetIndexRule()})
 		Expect(err).ShouldNot(HaveOccurred())
 		By("Verifying the new index-rule")
-		getResp, err = client.Get(ctx, &databasev1.IndexRuleRegistryServiceGetRequest{
+		getResp, err = client.Get(context.TODO(), &databasev1.IndexRuleRegistryServiceGetRequest{
 			Metadata: meta,
 		})
 		Expect(err).ShouldNot(HaveOccurred())

@@ -4,6 +4,28 @@ Security is a critical aspect of any application. In this section, we will discu
 
 ## Authentication
 
+### Username/Password Authentication
+
+BanyanDB supports username/password authentication for the gRPC and HTTP server. The following flag is used to configure authentication:
+
+- `--auth-config-file`: Path to the authentication config file (YAML format).
+
+Passwords should be encrypted with bcrypt. For example, you can create an authentication config file like this:
+
+```yaml
+users:
+  - username: admin
+    password: $2a$10$Dty9D1PMVx0kt24S09qs6ezn2Q77wLsnmlpU6iO29hMn.Urbo.uji
+```
+
+Then, you can start the BanyanDB server with the following command:
+
+```shell
+banyand liaison --auth-config-file=/path/to/auth.yaml
+```
+
+### TLS
+
 BanyanDB supports TLS for secure communication between servers. The following flags are used to configure TLS:
 
 - `--tls`: gRPC Connection uses TLS if true, else plain TCP.
