@@ -19,104 +19,85 @@ package grpc
 
 import (
 	"context"
+	"log"
+	"net"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
+	auth2 "github.com/apache/skywalking-banyandb/pkg/auth"
 )
 
-var cfg = &config.Config{
-	Enabled: true,
-	Users: []config.User{
-		{
-			Username: "test",
-			Password: "$2a$10$Dty9D1PMVx0kt24S09qs6ezn2Q77wLsnmlpU6iO29hMn.Urbo.uji",
-		},
-	},
-}
-
-// Mock handler to simulate GRPC behavior.
-func mockHandler(_ context.Context, _ any) (any, error) {
-	return "success", nil
-}
-
-func TestAuthInterceptor(t *testing.T) {
-	// Create the interceptor.
-	interceptor := mockAuthInterceptor
-
-	tests := []struct {
-		name            string
-		md              metadata.MD
-		expectedError   error
-		expectedMessage string
-	}{
-		{
-			name: "Valid credentials",
-			md: metadata.MD{
-				"username": []string{"test"},
-				"password": []string{"password"},
+var (
+	cfg = auth2.Config{
+		Enabled: true,
+		Users: []auth2.User{
+			{
+				Username: "admin",
+				Password: "$2a$10$Dty9D1PMVx0kt24S09qs6ezn2Q77wLsnmlpU6iO29hMn.Urbo.uji",
 			},
-			expectedError:   nil,
-			expectedMessage: "success",
-		},
-		{
-			name: "Invalid username",
-			md: metadata.MD{
-				"username": []string{"wronguser"},
-				"password": []string{"password"},
-			},
-			expectedError:   status.Errorf(codes.Unauthenticated, "invalid username or password"),
-			expectedMessage: "",
-		},
-		{
-			name: "Invalid password",
-			md: metadata.MD{
-				"username": []string{"test"},
-				"password": []string{"wrongpassword"},
-			},
-			expectedError:   status.Errorf(codes.Unauthenticated, "invalid username or password"),
-			expectedMessage: "",
-		},
-		{
-			name:            "Missing username",
-			md:              metadata.MD{},
-			expectedError:   status.Errorf(codes.Unauthenticated, "username is not provided correctly"),
-			expectedMessage: "",
-		},
-		{
-			name: "Missing password",
-			md: metadata.MD{
-				"username": []string{"test"},
-			},
-			expectedError:   status.Errorf(codes.Unauthenticated, "password is not provided correctly"),
-			expectedMessage: "",
 		},
 	}
+	errUsernameNotProvided       = status.Errorf(codes.Unauthenticated, "username is not provided correctly")
+	errInvalidUsernameOrPassword = status.Errorf(codes.Unauthenticated, "invalid username or password")
+)
 
-	// Iterate over test cases.
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create context with metadata.
-			ctx := metadata.NewIncomingContext(context.Background(), tt.md)
+func TestAuthInterceptor(t *testing.T) {
+	lis, err := net.Listen("tcp", "localhost:27912")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer(grpc.UnaryInterceptor(mockAuthInterceptor))
+	databasev1.RegisterSnapshotServiceServer(server, &databasev1.UnimplementedSnapshotServiceServer{})
 
-			// Call the interceptor.
-			resp, err := interceptor(ctx, nil, nil, mockHandler)
+	go func() {
+		if err = server.Serve(lis); err != nil {
+			log.Fatal(err)
+		}
+	}()
 
-			// Assert the response and error.
-			if tt.expectedError != nil {
-				assert.ErrorIs(t, err, tt.expectedError)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.expectedMessage, resp)
-			}
-		})
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func(conn *grpc.ClientConn) {
+		err := conn.Close()
+		if err != nil {
+
+		}
+	}(conn)
+
+	client := databasev1.NewSnapshotServiceClient(conn)
+
+	// no username and password.
+	ctx := context.Background()
+	_, err = client.Snapshot(ctx, new(databasev1.SnapshotRequest))
+	if errors.Is(err, errInvalidUsernameOrPassword) {
+		t.Errorf("Expect error invalid username or password, but got %v", err)
+	}
+
+	// invalid password.
+	md := metadata.Pairs("username", "admin", "password", "wrong")
+	ctx = metadata.NewOutgoingContext(ctx, md)
+	_, err = client.Snapshot(ctx, new(databasev1.SnapshotRequest))
+	if errors.Is(err, errUsernameNotProvided) {
+		t.Errorf("Expect error invalid username or password, but got %v", err)
+	}
+
+	// valid password.
+	md = metadata.Pairs("username", "admin", "password", "password")
+	ctx = metadata.NewOutgoingContext(ctx, md)
+	_, err = client.Snapshot(ctx, new(databasev1.SnapshotRequest))
+	if errors.Is(err, errInvalidUsernameOrPassword) || errors.Is(err, errUsernameNotProvided) {
+		t.Errorf("Expect no error, but got %v", err)
 	}
 }
 
@@ -125,24 +106,14 @@ func mockAuthInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, 
 		return handler(ctx, req)
 	}
 
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return nil, status.Errorf(codes.Unauthenticated, "metadata is not provided")
+	username, password, err := extractUserCredentialsFromContext(ctx)
+	if err != nil {
+		return nil, err
 	}
-	usernameList, usernameOk := md["username"]
-	passwordList, passwordOk := md["password"]
-	if !usernameOk || len(usernameList) == 0 {
-		return nil, status.Errorf(codes.Unauthenticated, "username is not provided correctly")
-	}
-	if !passwordOk || len(passwordList) == 0 {
-		return nil, status.Errorf(codes.Unauthenticated, "password is not provided correctly")
-	}
-	username := usernameList[0]
-	password := passwordList[0]
 
 	for _, user := range cfg.Users {
-		if strings.ReplaceAll(username, " ", "") == strings.ReplaceAll(user.Username, " ", "") &&
-			auth.CheckPassword(strings.ReplaceAll(password, " ", ""), strings.ReplaceAll(user.Password, " ", "")) {
+		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
+			auth.CheckPassword(strings.TrimSpace(password), strings.TrimSpace(user.Password)) {
 			return handler(ctx, req)
 		}
 	}

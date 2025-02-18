@@ -1,27 +1,31 @@
 # Security
 
-Security is a critical aspect of any application. In this section, we will discuss the security features of the BanyanDB.
+Security is a critical aspect of any application. In this section, we will discuss the security features of the
+BanyanDB.
 
 ## Authentication
 
 ### Username/Password Authentication
 
-BanyanDB supports username/password authentication for gRPC and HTTP server. The following flag is used to configure authentication:
+BanyanDB supports username/password authentication for gRPC and HTTP server. The following flags are used to configure
+authentication:
 
 - `--auth-config-file`: Path to the authentication config file (YAML format).
+- `--hash-password`: It is used when enabling authentication for the first time. Encrypt the passwords in the provided
+  authentication config file with bcrypt.
 
-Password should be encrypted by bcrypt. For example, you can create an authentication configuration file like this:
+For example, you can create an authentication configuration file like this:
 
 ```yaml
 users:
   - username: admin
-    password: $2a$10$Dty9D1PMVx0kt24S09qs6ezn2Q77wLsnmlpU6iO29hMn.Urbo.uji
+    password: password
 ```
 
 Then, use the auth-config-file flag to enable the authentication:
 
 ```shell
-banyand liaison --auth-config-file=/path/to/config.yaml
+banyand liaison --auth-config-file=/path/to/config.yaml --hash-password=true
 ```
 
 ### TLS
@@ -32,7 +36,8 @@ BanyanDB supports TLS for secure communication between servers. The following fl
 - `--http-tls`: HTTP Connection uses TLS if true, else plain HTTP.
 - `--key-file string`: The TLS key file for gRPC.
 - `--cert-file string`: The TLS certificate file for gRPC.
-- `--http-grpc-cert-file string`: The gRPC TLS certificate file if the gRPC server enables TLS. It should be the same as the `cert-file`. It is used for gRPC over HTTP.
+- `--http-grpc-cert-file string`: The gRPC TLS certificate file if the gRPC server enables TLS. It should be the same as
+  the `cert-file`. It is used for gRPC over HTTP.
 - `--http-key-file string`: The TLS key file of the HTTP server.
 - `--http-cert-file string`: The TLS certificate file of the HTTP server.
 
@@ -58,8 +63,10 @@ banyand liaison --http-tls=true --http-key-file=server.key --http-cert-file=serv
 
 ## Authorization
 
-BanyanDB does not have built-in authorization mechanisms. However, you can use external tools like [Envoy](https://www.envoyproxy.io/) or [Istio](https://istio.io/) to manage access control and authorization.
+BanyanDB does not have built-in authorization mechanisms. However, you can use external tools
+like [Envoy](https://www.envoyproxy.io/) or [Istio](https://istio.io/) to manage access control and authorization.
 
 ## Data Encryption
 
-BanyanDB does not provide data encryption at rest. If you require data encryption, you can use disk-level encryption or other encryption mechanisms provided by the underlying storage system.
+BanyanDB does not provide data encryption at rest. If you require data encryption, you can use disk-level encryption or
+other encryption mechanisms provided by the underlying storage system.

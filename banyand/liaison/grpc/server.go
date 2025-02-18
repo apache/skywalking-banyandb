@@ -40,11 +40,11 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -101,6 +101,7 @@ type server struct {
 	maxRecvMsgSize           run.Bytes
 	port                     uint32
 	enableIngestionAccessLog bool
+	hashPassword             bool
 	tls                      bool
 }
 
@@ -163,11 +164,11 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}
 	if s.authConfigFile != "" {
-		if err := config.LoadConfig(s.authConfigFile); err != nil {
+		if err := auth.LoadConfig(s.authConfigFile, s.hashPassword); err != nil {
 			return err
 		}
 	} else {
-		config.DefaultConfig()
+		auth.DefaultConfig()
 	}
 
 	if s.enableIngestionAccessLog {
@@ -214,6 +215,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
+	fs.BoolVar(&s.hashPassword, "hash-password", false, "encrypt the passwords from the authentication config file")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "stream write timeout")
 	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "measure write timeout")

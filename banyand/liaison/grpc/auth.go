@@ -27,33 +27,41 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
+	auth2 "github.com/apache/skywalking-banyandb/pkg/auth"
 )
 
-// authInterceptor gRPC auth interceptor.
-func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if !config.Cfg.Enabled {
-		return handler(ctx, req)
-	}
-
+func extractUserCredentialsFromContext(ctx context.Context) (string, string, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return nil, status.Errorf(codes.Unauthenticated, "metadata is not provided")
+		return "", "", status.Errorf(codes.Unauthenticated, "metadata is not provided")
 	}
 	usernameList, usernameOk := md["username"]
 	passwordList, passwordOk := md["password"]
 	if !usernameOk || len(usernameList) == 0 {
-		return nil, status.Errorf(codes.Unauthenticated, "username is not provided correctly")
+		return "", "", status.Errorf(codes.Unauthenticated, "username is not provided correctly")
 	}
 	if !passwordOk || len(passwordList) == 0 {
-		return nil, status.Errorf(codes.Unauthenticated, "password is not provided correctly")
+		return "", "", status.Errorf(codes.Unauthenticated, "password is not provided correctly")
 	}
 	username := usernameList[0]
 	password := passwordList[0]
+	return username, password, nil
+}
 
-	for _, user := range config.Cfg.Users {
-		if strings.ReplaceAll(username, " ", "") == strings.ReplaceAll(user.Username, " ", "") &&
-			auth.CheckPassword(strings.ReplaceAll(password, " ", ""), strings.ReplaceAll(user.Password, " ", "")) {
+// authInterceptor gRPC auth interceptor.
+func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if !auth2.Cfg.Enabled {
+		return handler(ctx, req)
+	}
+
+	username, password, err := extractUserCredentialsFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, user := range auth2.Cfg.Users {
+		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
+			auth.CheckPassword(strings.TrimSpace(password), strings.TrimSpace(user.Password)) {
 			return handler(ctx, req)
 		}
 	}
@@ -62,28 +70,18 @@ func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, hand
 
 // authStreamInterceptor gRPC auth interceptor for streams.
 func authStreamInterceptor(srv interface{}, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	if !config.Cfg.Enabled {
+	if !auth2.Cfg.Enabled {
 		return handler(srv, ss)
 	}
 
-	md, ok := metadata.FromIncomingContext(ss.Context())
-	if !ok {
-		return status.Errorf(codes.Unauthenticated, "metadata is not provided")
+	username, password, err := extractUserCredentialsFromContext(ss.Context())
+	if err != nil {
+		return err
 	}
-	usernameList, usernameOk := md["username"]
-	passwordList, passwordOk := md["password"]
-	if !usernameOk || len(usernameList) == 0 {
-		return status.Errorf(codes.Unauthenticated, "username is not provided correctly")
-	}
-	if !passwordOk || len(passwordList) == 0 {
-		return status.Errorf(codes.Unauthenticated, "password is not provided correctly")
-	}
-	username := usernameList[0]
-	password := passwordList[0]
 
-	for _, user := range config.Cfg.Users {
-		if strings.ReplaceAll(username, " ", "") == strings.ReplaceAll(user.Username, " ", "") &&
-			auth.CheckPassword(strings.ReplaceAll(password, " ", ""), strings.ReplaceAll(user.Password, " ", "")) {
+	for _, user := range auth2.Cfg.Users {
+		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
+			auth.CheckPassword(strings.TrimSpace(password), strings.TrimSpace(user.Password)) {
 			return handler(srv, ss)
 		}
 	}

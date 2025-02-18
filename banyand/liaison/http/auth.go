@@ -23,13 +23,13 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/config"
+	auth2 "github.com/apache/skywalking-banyandb/pkg/auth"
 )
 
 // AuthMiddleware http auth middleware.
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !config.Cfg.Enabled {
+		if !auth2.Cfg.Enabled {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -64,19 +64,13 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		username := parts[0]
 		password := parts[1]
-
-		var valid bool
-		for _, user := range config.Cfg.Users {
-			if username == user.Username && auth.CheckPassword(password, user.Password) {
-				valid = true
-				break
+		for _, user := range auth2.Cfg.Users {
+			if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
+				auth.CheckPassword(strings.TrimSpace(password), strings.TrimSpace(user.Password)) {
+				next.ServeHTTP(w, r)
+				return
 			}
 		}
-		if !valid {
-			http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
+		http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
 	})
 }
