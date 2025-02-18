@@ -20,6 +20,7 @@ package measure
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -205,7 +206,7 @@ func (ei *topNMIterator) Next() bool {
 		ei.topNValue.Reset()
 		err := ei.topNValue.Unmarshal(bd, ei.decoder)
 		if err != nil {
-			ei.err = multierr.Append(ei.err, errors.WithMessagef(err, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, fv))
+			ei.err = multierr.Append(ei.err, errors.WithMessagef(err, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
 			continue
 		}
 		fieldName, entityNames, values, entities := ei.topNValue.Values()
@@ -248,9 +249,16 @@ func (ei *topNMIterator) Current() []*measurev1.DataPoint {
 func (ei *topNMIterator) Close() error {
 	if ei.result != nil {
 		ei.result.Release()
+		ei.result = nil
 	}
-	releaseTopNValuesDecoder(ei.decoder)
-	measure.ReleaseTopNValue(ei.topNValue)
+	if ei.decoder != nil {
+		releaseTopNValuesDecoder(ei.decoder)
+		ei.decoder = nil
+	}
+	if ei.topNValue != nil {
+		measure.ReleaseTopNValue(ei.topNValue)
+		ei.topNValue = nil
+	}
 	return ei.err
 }
 
