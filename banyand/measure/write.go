@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -114,6 +115,11 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	if fLen > len(stm.schema.GetTagFamilies()) {
 		return nil, fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
 	}
+	is := stm.indexSchema.Load().(indexSchema)
+	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
+		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
+			len(is.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
+	}
 
 	shardID := common.ShardID(writeEvent.ShardId)
 	if dpt == nil {
@@ -130,8 +136,8 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		return nil, fmt.Errorf("cannot marshal series: %w", err)
 	}
 
-	tagFamily, fields := w.handleTagFamily(stm, req)
 	if stm.schema.IndexMode {
+		fields := handleIndexMode(stm.schema, req, is.indexRuleLocators)
 		fields = w.appendEntityTagsToIndexFields(fields, stm, series)
 		doc := index.Document{
 			DocID:        uint64(series.ID),
@@ -144,26 +150,14 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		return dst, nil
 	}
 
-	dpt.dataPoints.tagFamilies = append(dpt.dataPoints.tagFamilies, tagFamily)
-	dpt.dataPoints.timestamps = append(dpt.dataPoints.timestamps, ts)
-	dpt.dataPoints.versions = append(dpt.dataPoints.versions, req.DataPoint.Version)
-	dpt.dataPoints.seriesIDs = append(dpt.dataPoints.seriesIDs, series.ID)
+	fields := appendDataPoints(dpt, ts, series.ID, stm.GetSchema(), req, is.indexRuleLocators)
 
-	field := nameValues{}
-	for i := range stm.GetSchema().GetFields() {
-		var v *modelv1.FieldValue
-		if len(req.DataPoint.Fields) <= i {
-			v = pbv1.NullFieldValue
-		} else {
-			v = req.DataPoint.Fields[i]
-		}
-		field.values = append(field.values, encodeFieldValue(
-			stm.GetSchema().GetFields()[i].GetName(),
-			stm.GetSchema().GetFields()[i].FieldType,
-			v,
-		))
+	doc := index.Document{
+		DocID:        uint64(series.ID),
+		EntityValues: series.Buffer,
+		Fields:       fields,
 	}
-	dpt.dataPoints.fields = append(dpt.dataPoints.fields, field)
+	dpg.metadataDocs = append(dpg.metadataDocs, doc)
 
 	if p, _ := w.schemaRepo.topNProcessorMap.Load(getKey(stm.schema.GetMetadata())); p != nil {
 		p.(*topNProcessorManager).onMeasureWrite(uint64(series.ID), uint32(shardID), &measurev1.InternalWriteRequest{
@@ -175,15 +169,34 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			EntityValues: writeEvent.EntityValues,
 		}, stm)
 	}
-
-	doc := index.Document{
-		DocID:        uint64(series.ID),
-		EntityValues: series.Buffer,
-		Fields:       fields,
-	}
-	dpg.metadataDocs = append(dpg.metadataDocs, doc)
-
 	return dst, nil
+}
+
+func appendDataPoints(dest *dataPointsInTable, ts int64, sid common.SeriesID, schema *databasev1.Measure,
+	req *measurev1.WriteRequest, locator partition.IndexRuleLocator) []index.Field {
+	tagFamily, fields := handleTagFamily(schema, req, locator)
+	dest.dataPoints.tagFamilies = append(dest.dataPoints.tagFamilies, tagFamily)
+	dest.dataPoints.timestamps = append(dest.dataPoints.timestamps, ts)
+	dest.dataPoints.versions = append(dest.dataPoints.versions, req.DataPoint.Version)
+	dest.dataPoints.seriesIDs = append(dest.dataPoints.seriesIDs, sid)
+
+	field := nameValues{}
+	for i := range schema.GetFields() {
+		var v *modelv1.FieldValue
+		if len(req.DataPoint.Fields) <= i {
+			v = pbv1.NullFieldValue
+		} else {
+			v = req.DataPoint.Fields[i]
+		}
+		field.values = append(field.values, encodeFieldValue(
+			schema.GetFields()[i].GetName(),
+			schema.GetFields()[i].FieldType,
+			v,
+		))
+	}
+	dest.dataPoints.fields = append(dest.dataPoints.fields, field)
+
+	return fields
 }
 
 func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPointsInGroup,
@@ -221,24 +234,19 @@ func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPoi
 	return dpt, nil
 }
 
-func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteRequest) ([]nameValues, []index.Field) {
-	tagFamilies := make([]nameValues, 0, len(stm.schema.TagFamilies))
-	is := stm.indexSchema.Load().(indexSchema)
-	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
-		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
-			len(is.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
-	}
+func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest, locator partition.IndexRuleLocator) ([]nameValues, []index.Field) {
+	tagFamilies := make([]nameValues, 0, len(schema.TagFamilies))
 
 	var fields []index.Field
-	for i := range stm.GetSchema().GetTagFamilies() {
+	for i := range schema.GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.DataPoint.TagFamilies) <= i {
 			tagFamily = pbv1.NullTagFamily
 		} else {
 			tagFamily = req.DataPoint.TagFamilies[i]
 		}
-		tfr := is.indexRuleLocators.TagFamilyTRule[i]
-		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
+		tfr := locator.TagFamilyTRule[i]
+		tagFamilySpec := schema.GetTagFamilies()[i]
 		tf := nameValues{
 			name: tagFamilySpec.Name,
 		}
@@ -256,36 +264,28 @@ func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteReques
 				t.Type,
 				tagValue)
 			r, ok := tfr[t.Name]
-			if ok || stm.schema.IndexMode {
+			if ok {
 				fieldKey := index.FieldKey{}
-				switch {
-				case ok:
-					fieldKey.IndexRuleID = r.GetMetadata().GetId()
-					fieldKey.Analyzer = r.Analyzer
-				case stm.schema.IndexMode:
-					fieldKey.TagName = t.Name
-				default:
-					logger.Panicf("metadata crashed, tag family rule %s not found", t.Name)
-				}
-				toIndex := ok || !stm.schema.IndexMode
+				fieldKey.IndexRuleID = r.GetMetadata().GetId()
+				fieldKey.Analyzer = r.Analyzer
 				if encodeTagValue.value != nil {
 					f := index.NewBytesField(fieldKey, encodeTagValue.value)
 					f.Store = true
-					f.Index = toIndex
+					f.Index = true
 					f.NoSort = r.GetNoSort()
 					fields = append(fields, f)
 				} else {
 					for _, val := range encodeTagValue.valueArr {
 						f := index.NewBytesField(fieldKey, val)
 						f.Store = true
-						f.Index = toIndex
+						f.Index = true
 						f.NoSort = r.GetNoSort()
 						fields = append(fields, f)
 					}
 				}
 				continue
 			}
-			_, isEntity := is.indexRuleLocators.EntitySet[t.Name]
+			_, isEntity := locator.EntitySet[t.Name]
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
 				continue
 			}
@@ -296,6 +296,53 @@ func (w *writeCallback) handleTagFamily(stm *measure, req *measurev1.WriteReques
 		}
 	}
 	return tagFamilies, fields
+}
+
+func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest, locator partition.IndexRuleLocator) []index.Field {
+	var fields []index.Field
+	for i := range schema.GetTagFamilies() {
+		var tagFamily *modelv1.TagFamilyForWrite
+		if len(req.DataPoint.TagFamilies) <= i {
+			tagFamily = pbv1.NullTagFamily
+		} else {
+			tagFamily = req.DataPoint.TagFamilies[i]
+		}
+		tfr := locator.TagFamilyTRule[i]
+		tagFamilySpec := schema.GetTagFamilies()[i]
+		for j := range tagFamilySpec.Tags {
+			var tagValue *modelv1.TagValue
+			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
+				tagValue = pbv1.NullTagValue
+			} else {
+				tagValue = tagFamily.Tags[j]
+			}
+
+			t := tagFamilySpec.Tags[j]
+			encodeTagValue := encodeTagValue(
+				t.Name,
+				t.Type,
+				tagValue)
+			fieldKey := index.FieldKey{}
+			fieldKey.TagName = t.Name
+			r, toIndex := tfr[t.Name]
+			if encodeTagValue.value != nil {
+				f := index.NewBytesField(fieldKey, encodeTagValue.value)
+				f.Store = true
+				f.Index = toIndex
+				f.NoSort = r.GetNoSort()
+				fields = append(fields, f)
+			} else {
+				for _, val := range encodeTagValue.valueArr {
+					f := index.NewBytesField(fieldKey, val)
+					f.Store = true
+					f.Index = toIndex
+					f.NoSort = r.GetNoSort()
+					fields = append(fields, f)
+				}
+			}
+		}
+	}
+	return fields
 }
 
 func (w *writeCallback) appendEntityTagsToIndexFields(fields []index.Field, stm *measure, series *pbv1.Series) []index.Field {
