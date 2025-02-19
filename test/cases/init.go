@@ -25,14 +25,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
 
 // Initialize test data.
 func Initialize(addr string, now time.Time) {
-	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer conn.Close()
 	interval := 500 * time.Millisecond

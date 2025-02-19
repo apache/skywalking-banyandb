@@ -291,6 +291,16 @@ func (s *server) Serve() run.StopNotify {
 			recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 		}
 	}
+	if s.authConfigFile == "" {
+		streamChain = []grpclib.StreamServerInterceptor{
+			grpc_validator.StreamServerInterceptor(),
+			recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		}
+		unaryChain = []grpclib.UnaryServerInterceptor{
+			grpc_validator.UnaryServerInterceptor(),
+			recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		}
+	}
 	commonOpts := opts
 	healthOpts := opts
 
@@ -317,7 +327,6 @@ func (s *server) Serve() run.StopNotify {
 	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
 	databasev1.RegisterTopNAggregationRegistryServiceServer(s.ser, s.topNAggregationRegistryServer)
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
-	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 	grpc_health_v1.RegisterHealthServer(s.healthSer, health.NewServer())
 
 	s.stopCh = make(chan struct{})

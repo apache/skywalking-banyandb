@@ -65,18 +65,20 @@ var _ = Describe("Node registration", func() {
 	It("should register/unregister a data node successfully", func() {
 		namespace := "data-test"
 		nodeHost := "data-1"
-		ports, err := test.AllocateFreePorts(1)
+		ports, err := test.AllocateFreePorts(2)
 		Expect(err).NotTo(HaveOccurred())
-		addr := fmt.Sprintf("%s:%d", host, ports[0])
+		healthAddr := fmt.Sprintf("%s:%d", host, ports[1])
 		closeFn := setup.CMD("data",
 			"--namespace", namespace,
 			"--grpc-host="+host,
 			fmt.Sprintf("--grpc-port=%d", ports[0]),
+			"--health-grpc-host="+host,
+			fmt.Sprintf("--health-grpc-port=%d", ports[1]),
 			"--etcd-endpoints", etcdEndpoint,
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost)
 		Eventually(
-			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+			helpers.HealthCheck(healthAddr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
 			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))

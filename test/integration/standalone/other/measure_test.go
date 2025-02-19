@@ -26,7 +26,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
@@ -45,9 +44,9 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 
 	g.BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.Standalone()
+		addr, _, _, _, deferFn = setup.Standalone()
 		var err error
-		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		ns := timestamp.NowMilli().UnixNano()
 		baseTime = time.Unix(0, ns-ns%int64(time.Minute))

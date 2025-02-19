@@ -44,7 +44,7 @@ import (
 const host = "localhost"
 
 // Standalone wires standalone modules to build a testing ready runtime.
-func Standalone(flags ...string) (string, string, func()) {
+func Standalone(flags ...string) (string, string, string, string, func()) {
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
@@ -52,7 +52,7 @@ func Standalone(flags ...string) (string, string, func()) {
 }
 
 // StandaloneWithTLS wires standalone modules to build a testing ready runtime with TLS enabled.
-func StandaloneWithTLS(certFile, keyFile string, flags ...string) (string, string, func()) {
+func StandaloneWithTLS(certFile, keyFile string, flags ...string) (string, string, string, string, func()) {
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
@@ -60,26 +60,26 @@ func StandaloneWithTLS(certFile, keyFile string, flags ...string) (string, strin
 }
 
 // EmptyStandalone wires standalone modules to build a testing ready runtime.
-func EmptyStandalone(flags ...string) (string, string, func()) {
+func EmptyStandalone(flags ...string) (string, string, string, string, func()) {
 	return StandaloneWithSchemaLoaders(nil, "", "", flags...)
 }
 
 // StandaloneWithSchemaLoaders wires standalone modules to build a testing ready runtime. It also allows to preload schema.
-func StandaloneWithSchemaLoaders(schemaLoaders []SchemaLoader, certFile, keyFile string, flags ...string) (string, string, func()) {
+func StandaloneWithSchemaLoaders(schemaLoaders []SchemaLoader, certFile, keyFile string, flags ...string) (string, string, string, string, func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var ports []int
-	ports, err = test.AllocateFreePorts(4)
+	ports, err = test.AllocateFreePorts(6)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	addr, httpAddr, closeFn := standaloneServer(path, ports, schemaLoaders, certFile, keyFile, flags...)
-	return addr, httpAddr, func() {
+	addr, healthAddr, httpAddr, httpHealthAddr, closeFn := standaloneServer(path, ports, schemaLoaders, certFile, keyFile, flags...)
+	return addr, healthAddr, httpAddr, httpHealthAddr, func() {
 		closeFn()
 		deferFn()
 	}
 }
 
 // ClosableStandalone wires standalone modules to build a testing ready runtime.
-func ClosableStandalone(path string, ports []int, flags ...string) (string, string, func()) {
+func ClosableStandalone(path string, ports []int, flags ...string) (string, string, string, string, func()) {
 	return standaloneServer(path, ports, []SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
@@ -87,18 +87,20 @@ func ClosableStandalone(path string, ports []int, flags ...string) (string, stri
 }
 
 // ClosableStandaloneWithSchemaLoaders wires standalone modules to build a testing ready runtime.
-func ClosableStandaloneWithSchemaLoaders(path string, ports []int, schemaLoaders []SchemaLoader, flags ...string) (string, string, func()) {
+func ClosableStandaloneWithSchemaLoaders(path string, ports []int, schemaLoaders []SchemaLoader, flags ...string) (string, string, string, string, func()) {
 	return standaloneServer(path, ports, schemaLoaders, "", "", flags...)
 }
 
 // EmptyClosableStandalone wires standalone modules to build a testing ready runtime.
-func EmptyClosableStandalone(path string, ports []int, flags ...string) (string, string, func()) {
+func EmptyClosableStandalone(path string, ports []int, flags ...string) (string, string, string, string, func()) {
 	return standaloneServer(path, ports, nil, "", "", flags...)
 }
 
-func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, certFile, keyFile string, flags ...string) (string, string, func()) {
+func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, certFile, keyFile string, flags ...string) (string, string, string, string, func()) {
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
+	healthAddr := fmt.Sprintf("%s:%d", host, ports[4])
 	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
+	httpHealthAddr := fmt.Sprintf("%s:%d", host, ports[5])
 	endpoint := fmt.Sprintf("http://%s:%d", host, ports[2])
 	ff := []string{
 		"--logging-env=dev",
@@ -107,6 +109,10 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
 		"--http-host=" + host,
 		fmt.Sprintf("--http-port=%d", ports[1]),
+		"--health-grpc-host=" + host,
+		fmt.Sprintf("--health-grpc-port=%d", ports[4]),
+		"--health-http-host=" + host,
+		fmt.Sprintf("--health-http-port=%d", ports[5]),
 		"--http-grpc-addr=" + addr,
 		"--stream-root-path=" + path,
 		"--measure-root-path=" + path,
@@ -129,14 +135,14 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 	if tlsEnabled {
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(creds)), testflags.EventuallyTimeout).
+		gomega.Eventually(helpers.HealthCheck(healthAddr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(creds)), testflags.EventuallyTimeout).
 			Should(gomega.Succeed())
-		gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, certFile), testflags.EventuallyTimeout).Should(gomega.Succeed())
+		gomega.Eventually(helpers.HTTPHealthCheck(httpHealthAddr, certFile), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	} else {
 		gomega.Eventually(
-			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+			helpers.HealthCheck(healthAddr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 			testflags.EventuallyTimeout).Should(gomega.Succeed())
-		gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
+		gomega.Eventually(helpers.HTTPHealthCheck(httpHealthAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	}
 
 	if schemaLoaders != nil {
@@ -156,7 +162,7 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 		err = preloadGroup.Run(context.Background())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
-	return addr, httpAddr, closeFn
+	return addr, healthAddr, httpAddr, httpHealthAddr, closeFn
 }
 
 // SchemaLoader is a service that can preload schema.
@@ -208,16 +214,19 @@ func startDataNode(etcdEndpoint string, flags ...string) (string, string, func()
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	ports, err := test.AllocateFreePorts(1)
+	ports, err := test.AllocateFreePorts(2)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
+	healthAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	nodeHost := "127.0.0.1"
 
 	flags = append(flags,
 		"data",
 		"--grpc-host="+host,
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
+		"--health-grpc-host="+host,
+		fmt.Sprintf("--health-grpc-port=%d", ports[1]),
 		"--stream-root-path="+path,
 		"--measure-root-path="+path,
 		"--property-root-path="+path,
@@ -229,7 +238,7 @@ func startDataNode(etcdEndpoint string, flags ...string) (string, string, func()
 	closeFn := CMD(flags...)
 
 	gomega.Eventually(
-		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+		helpers.HealthCheck(healthAddr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 		testflags.EventuallyTimeout).Should(gomega.Succeed())
 
 	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
@@ -259,16 +268,20 @@ func DataNodeWithAddrAndDir(etcdEndpoint string, flags ...string) (string, strin
 
 // LiaisonNode runs a liaison node.
 func LiaisonNode(etcdEndpoint string) (string, func()) {
-	ports, err := test.AllocateFreePorts(2)
+	ports, err := test.AllocateFreePorts(4)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
-	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
+	httpAddr := fmt.Sprintf("%s:%d", host, ports[2])
 	nodeHost := "127.0.0.1"
 	closeFn := CMD("liaison",
 		"--grpc-host="+host,
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
 		"--http-host="+host,
 		fmt.Sprintf("--http-port=%d", ports[1]),
+		"--health-http-host="+host,
+		fmt.Sprintf("--health-http-port=%d", ports[2]),
+		"--health-grpc-host="+host,
+		fmt.Sprintf("--health-grpc-port=%d", ports[3]),
 		"--http-grpc-addr="+addr,
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",

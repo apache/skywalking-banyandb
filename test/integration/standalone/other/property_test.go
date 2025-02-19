@@ -19,7 +19,6 @@ package integration_other_test
 
 import (
 	"context"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,7 +30,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
@@ -46,9 +44,9 @@ var _ = Describe("Property application", func() {
 
 	BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.Standalone()
+		addr, _, _, _, deferFn = setup.Standalone()
 		var err error
-		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		gClient := databasev1.NewGroupRegistryServiceClient(conn)
 		_, err = gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{
@@ -213,9 +211,9 @@ var _ = Describe("Property application", func() {
 
 	BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.Standalone()
+		addr, _, _, _, deferFn = setup.Standalone()
 		var err error
-		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		gClient := databasev1.NewGroupRegistryServiceClient(conn)
 		_, err = gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{

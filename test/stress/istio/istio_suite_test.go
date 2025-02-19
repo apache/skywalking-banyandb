@@ -39,7 +39,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -66,9 +65,9 @@ var _ = g.Describe("Istio", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		measurePath := filepath.Join(path, "measure")
 		var ports []int
-		ports, err = test.AllocateFreePorts(4)
+		ports, err = test.AllocateFreePorts(6)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		addr, _, closerServerFunc := setup.ClosableStandaloneWithSchemaLoaders(
+		addr, healthAddr, _, _, closerServerFunc := setup.ClosableStandaloneWithSchemaLoaders(
 			path, ports,
 			[]setup.SchemaLoader{&preloadService{name: "oap"}},
 			"--logging-level", "info")
@@ -79,10 +78,10 @@ var _ = g.Describe("Istio", func() {
 			time.Sleep(10 * time.Second)
 			deferFn()
 		})
-		gomega.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+		gomega.Eventually(helpers.HealthCheck(healthAddr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(gomega.Succeed())
 		bc := &clientCounter{}
-		conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(bc))
+		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(bc))
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		closeMetricCollectorCh := metric.Start(measurePath)
 		g.DeferCleanup(func() {

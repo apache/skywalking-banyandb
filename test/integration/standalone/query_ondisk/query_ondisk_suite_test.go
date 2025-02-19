@@ -27,7 +27,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -66,14 +65,14 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	var ports []int
 	ports, err = test.AllocateFreePorts(4)
 	Expect(err).NotTo(HaveOccurred())
-	addr, _, closeFunc := setup.ClosableStandalone(path, ports)
+	addr, _, _, _, closeFunc := setup.ClosableStandalone(path, ports)
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute))
 	test_cases.Initialize(addr, now)
 	time.Sleep(10 * time.Second)
 	closeFunc()
 	time.Sleep(time.Second)
-	addr, _, closeFunc = setup.EmptyClosableStandalone(path, ports)
+	addr, _, _, _, closeFunc = setup.EmptyClosableStandalone(path, ports)
 	deferFunc = func() {
 		closeFunc()
 		diskCleanupFn()
@@ -81,7 +80,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
+	connection, err = grpc.NewClient(string(address),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesstream.SharedContext = helpers.SharedContext{
 		Connection: connection,

@@ -57,7 +57,7 @@ var _ = g.Describe("Disk", func() {
 		gm.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	})
 	g.It(" is a standalone server, blocking writing, with disk full", func() {
-		addr, _, deferFn := setup.Standalone(
+		addr, _, _, _, deferFn := setup.Standalone(
 			"--measure-max-disk-usage-percent",
 			"0",
 		)

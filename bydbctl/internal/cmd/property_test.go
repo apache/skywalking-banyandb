@@ -74,7 +74,7 @@ tags:
 	p2Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p2YAML), p2Proto)
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.EmptyStandalone()
+		_, _, addr, _, deferFunc = setup.EmptyStandalone()
 		addr = httpSchema + addr
 		// extracting the operation of creating property schema
 		rootCmd = &cobra.Command{Use: "root"}
