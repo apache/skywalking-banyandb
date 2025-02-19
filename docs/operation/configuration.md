@@ -77,11 +77,9 @@ The following flags are used to configure the timeout of data sending from liais
 
 ### Authentication
 
-If you want to enable username/password authentication for gRPC and HTTP server, you can use the following flags:
+If you want to enable username/password authentication for gRPC and HTTP server, you can use the following flag:
 
 - `--auth-config-file`: Path to the authentication config file (YAML format).
-- `--hash-password`: It is used when enabling authentication for the first time. Encrypt the passwords in the provided
-  authentication config file with bcrypt.
 
 You can view the example usage [here](security.md).
 

@@ -15,19 +15,48 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package auth implements auth tool functions.
+// Package auth implements the reading of the authentication configuration.
 package auth
 
-import "golang.org/x/crypto/bcrypt"
+import (
+	"os"
 
-// CheckPassword CheckPassAndHashed.
-func CheckPassword(password, hash string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
+	"gopkg.in/yaml.v3"
+)
+
+// Cfg auth config.
+var Cfg *Config
+
+// Config AuthConfig.
+type Config struct {
+	Users   []User `yaml:"users"`
+	Enabled bool   `yaml:"-"`
 }
 
-// HashPassword generate a hashed password from raw string.
-func HashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(hash), err
+// User details from config file.
+type User struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+// LoadConfig implements the reading of the authentication configuration.
+func LoadConfig(filePath string) error {
+	Cfg = new(Config)
+	Cfg.Enabled = true
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+	err = yaml.Unmarshal(data, Cfg)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// DefaultConfig disable auth.
+func DefaultConfig() {
+	Cfg = new(Config)
+	Cfg.Enabled = false
+	Cfg.Users = []User{}
 }

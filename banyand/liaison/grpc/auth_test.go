@@ -21,7 +21,6 @@ import (
 	"context"
 	"log"
 	"net"
-	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -33,13 +32,12 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-	auth2 "github.com/apache/skywalking-banyandb/pkg/auth"
 )
 
 var (
-	cfg = auth2.Config{
+	cfg = &auth.Config{
 		Enabled: true,
-		Users: []auth2.User{
+		Users: []auth.User{
 			{
 				Username: "admin",
 				Password: "$2a$10$Dty9D1PMVx0kt24S09qs6ezn2Q77wLsnmlpU6iO29hMn.Urbo.uji",
@@ -55,7 +53,8 @@ func TestAuthInterceptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := grpc.NewServer(grpc.UnaryInterceptor(mockAuthInterceptor))
+	auth.Cfg = cfg
+	server := grpc.NewServer(grpc.UnaryInterceptor(authInterceptor))
 	databasev1.RegisterSnapshotServiceServer(server, &databasev1.UnimplementedSnapshotServiceServer{})
 
 	go func() {
@@ -68,12 +67,7 @@ func TestAuthInterceptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func(conn *grpc.ClientConn) {
-		err := conn.Close()
-		if err != nil {
-
-		}
-	}(conn)
+	defer conn.Close()
 
 	client := databasev1.NewSnapshotServiceClient(conn)
 
@@ -99,23 +93,4 @@ func TestAuthInterceptor(t *testing.T) {
 	if errors.Is(err, errInvalidUsernameOrPassword) || errors.Is(err, errUsernameNotProvided) {
 		t.Errorf("Expect no error, but got %v", err)
 	}
-}
-
-func mockAuthInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if !cfg.Enabled {
-		return handler(ctx, req)
-	}
-
-	username, password, err := extractUserCredentialsFromContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, user := range cfg.Users {
-		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
-			auth.CheckPassword(strings.TrimSpace(password), strings.TrimSpace(user.Password)) {
-			return handler(ctx, req)
-		}
-	}
-	return nil, status.Errorf(codes.Unauthenticated, "invalid username or password")
 }

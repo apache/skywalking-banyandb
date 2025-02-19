@@ -27,7 +27,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-	auth2 "github.com/apache/skywalking-banyandb/pkg/auth"
 )
 
 func extractUserCredentialsFromContext(ctx context.Context) (string, string, error) {
@@ -48,9 +47,26 @@ func extractUserCredentialsFromContext(ctx context.Context) (string, string, err
 	return username, password, nil
 }
 
+func isHTTPReq(ctx context.Context) bool {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return false
+	}
+	ua, uaOk := md["authorization"]
+	if !uaOk || len(ua) == 0 {
+		return false
+	}
+
+	return true
+}
+
 // authInterceptor gRPC auth interceptor.
 func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if !auth2.Cfg.Enabled {
+	if !auth.Cfg.Enabled {
+		return handler(ctx, req)
+	}
+
+	if isHTTPReq(ctx) {
 		return handler(ctx, req)
 	}
 
@@ -59,9 +75,9 @@ func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, hand
 		return nil, err
 	}
 
-	for _, user := range auth2.Cfg.Users {
+	for _, user := range auth.Cfg.Users {
 		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
-			auth.CheckPassword(strings.TrimSpace(password), strings.TrimSpace(user.Password)) {
+			strings.TrimSpace(password) == strings.TrimSpace(user.Password) {
 			return handler(ctx, req)
 		}
 	}
@@ -70,7 +86,11 @@ func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, hand
 
 // authStreamInterceptor gRPC auth interceptor for streams.
 func authStreamInterceptor(srv interface{}, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	if !auth2.Cfg.Enabled {
+	if !auth.Cfg.Enabled {
+		return handler(srv, ss)
+	}
+
+	if isHTTPReq(ss.Context()) {
 		return handler(srv, ss)
 	}
 
@@ -79,9 +99,9 @@ func authStreamInterceptor(srv interface{}, ss grpc.ServerStream, _ *grpc.Stream
 		return err
 	}
 
-	for _, user := range auth2.Cfg.Users {
+	for _, user := range auth.Cfg.Users {
 		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
-			auth.CheckPassword(strings.TrimSpace(password), strings.TrimSpace(user.Password)) {
+			strings.TrimSpace(password) == strings.TrimSpace(user.Password) {
 			return handler(srv, ss)
 		}
 	}

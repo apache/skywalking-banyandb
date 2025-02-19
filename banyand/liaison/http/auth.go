@@ -23,13 +23,11 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-	auth2 "github.com/apache/skywalking-banyandb/pkg/auth"
 )
 
-// AuthMiddleware http auth middleware.
-func AuthMiddleware(next http.Handler) http.Handler {
+func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !auth2.Cfg.Enabled {
+		if !auth.Cfg.Enabled {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -64,9 +62,9 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		username := parts[0]
 		password := parts[1]
-		for _, user := range auth2.Cfg.Users {
+		for _, user := range auth.Cfg.Users {
 			if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
-				auth.CheckPassword(strings.TrimSpace(password), strings.TrimSpace(user.Password)) {
+				strings.TrimSpace(password) == strings.TrimSpace(user.Password) {
 				next.ServeHTTP(w, r)
 				return
 			}

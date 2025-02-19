@@ -135,6 +135,7 @@ func (p *server) GetPort() *uint32 {
 func (p *server) PreRun(_ context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mux = chi.NewRouter()
+	p.mux.Use(authMiddleware)
 	if err := p.setRootPath(); err != nil {
 		return err
 	}
@@ -161,7 +162,12 @@ func (p *server) Serve() run.StopNotify {
 		close(p.stopCh)
 		return p.stopCh
 	}
-	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
+	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client), runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
+		if key == "Authorization" {
+			return key, true
+		}
+		return runtime.DefaultHeaderMatcher(key)
+	}))
 	err = multierr.Combine(
 		commonv1.RegisterServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 		databasev1.RegisterStreamRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
@@ -181,7 +187,7 @@ func (p *server) Serve() run.StopNotify {
 		return p.stopCh
 	}
 
-	p.mux.Mount("/api", AuthMiddleware(http.StripPrefix("/api", gwMux)))
+	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		var err error
