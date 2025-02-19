@@ -19,7 +19,6 @@ package grpc_test
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -37,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"

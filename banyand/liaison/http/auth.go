@@ -20,9 +20,10 @@ package http
 import (
 	"context"
 	"encoding/base64"
-	"google.golang.org/grpc/metadata"
 	"net/http"
 	"strings"
+
+	"google.golang.org/grpc/metadata"
 
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
