@@ -72,8 +72,8 @@ var _ = Describe("Node registration", func() {
 			"--namespace", namespace,
 			"--grpc-host="+host,
 			fmt.Sprintf("--grpc-port=%d", ports[0]),
-			"--health-grpc-host="+host,
-			fmt.Sprintf("--health-grpc-port=%d", ports[1]),
+			"--grpc-health-host="+host,
+			fmt.Sprintf("--grpc-health-port=%d", ports[1]),
 			"--etcd-endpoints", etcdEndpoint,
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost)

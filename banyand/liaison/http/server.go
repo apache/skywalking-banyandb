@@ -97,9 +97,9 @@ type server struct {
 func (p *server) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("http")
 	flagSet.StringVar(&p.host, "http-host", "", "listen host for http")
-	flagSet.StringVar(&p.healthHost, "health-http-host", "", "health listen host for http")
+	flagSet.StringVar(&p.healthHost, "http-health-host", "", "health listen host for http")
 	flagSet.Uint32Var(&p.port, "http-port", 17913, "listen port for http")
-	flagSet.Uint32Var(&p.healthPort, "health-http-port", 18913, "health listen port for http")
+	flagSet.Uint32Var(&p.healthPort, "http-health-port", 18913, "health listen port for http")
 	flagSet.StringVar(&p.grpcAddr, "http-grpc-addr", "localhost:17912", "http server redirect grpc requests to this address")
 	flagSet.StringVar(&p.certFile, "http-cert-file", "", "the TLS cert file of http server")
 	flagSet.StringVar(&p.keyFile, "http-key-file", "", "the TLS key file of http server")
