@@ -18,7 +18,9 @@
 package http
 
 import (
+	"context"
 	"encoding/base64"
+	"google.golang.org/grpc/metadata"
 	"net/http"
 	"strings"
 
@@ -71,4 +73,37 @@ func authMiddleware(next http.Handler) http.Handler {
 		}
 		http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
 	})
+}
+
+func metadataAnnotator() func(context.Context, *http.Request) metadata.MD {
+	return func(_ context.Context, r *http.Request) metadata.MD {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			return nil
+		}
+
+		if !strings.HasPrefix(authHeader, "Basic ") {
+			return nil
+		}
+
+		encodedCredentials := strings.TrimPrefix(authHeader, "Basic ")
+
+		decodedBytes, err := base64.StdEncoding.DecodeString(encodedCredentials)
+		if err != nil {
+			return nil
+		}
+
+		decodedCredentials := string(decodedBytes)
+
+		parts := strings.SplitN(decodedCredentials, ":", 2)
+		if len(parts) != 2 {
+			return nil
+		}
+
+		username := parts[0]
+		password := parts[1]
+
+		md := metadata.Pairs("username", username, "password", password)
+		return md
+	}
 }

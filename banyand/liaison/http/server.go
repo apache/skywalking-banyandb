@@ -187,18 +187,8 @@ func (p *server) Serve() run.StopNotify {
 		p.tryClose()
 		return p.stopCh
 	}
-	gwMux := runtime.NewServeMux(runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
-		if key == "Authorization" {
-			return key, true
-		}
-		return runtime.DefaultHeaderMatcher(key)
-	}))
-	gwHealthMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client), runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
-		if key == "Authorization" {
-			return key, true
-		}
-		return runtime.DefaultHeaderMatcher(key)
-	}))
+	gwMux := runtime.NewServeMux(runtime.WithMetadata(metadataAnnotator()))
+	gwHealthMux := runtime.NewServeMux(runtime.WithMetadata(metadataAnnotator()), runtime.WithHealthzEndpoint(client))
 	err = multierr.Combine(
 		commonv1.RegisterServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 		databasev1.RegisterStreamRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
