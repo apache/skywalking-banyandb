@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -47,17 +48,38 @@ func extractUserCredentialsFromContext(ctx context.Context) (string, string, err
 	return username, password, nil
 }
 
-func isHTTPReq(ctx context.Context) bool {
+func isHTTPReq(ctx context.Context) (string, string, bool) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return false
+		return "", "", false
 	}
-	ua, uaOk := md["authorization"]
-	if !uaOk || len(ua) == 0 {
-		return false
+	authorization, authorizationOk := md["authorization"]
+	if !authorizationOk || len(authorization) == 0 {
+		return "", "", false
 	}
 
-	return true
+	if !strings.HasPrefix(authorization[0], "Basic ") {
+		return "", "", false
+	}
+
+	encodedCredentials := strings.TrimPrefix(authorization[0], "Basic ")
+
+	decodedBytes, err := base64.StdEncoding.DecodeString(encodedCredentials)
+	if err != nil {
+		return "", "", false
+	}
+
+	decodedCredentials := string(decodedBytes)
+
+	parts := strings.SplitN(decodedCredentials, ":", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+
+	username := parts[0]
+	password := parts[1]
+
+	return username, password, true
 }
 
 // authInterceptor gRPC auth interceptor.
@@ -66,13 +88,14 @@ func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, hand
 		return handler(ctx, req)
 	}
 
-	if isHTTPReq(ctx) {
-		return handler(ctx, req)
-	}
+	username, password, ok := isHTTPReq(ctx)
 
-	username, password, err := extractUserCredentialsFromContext(ctx)
-	if err != nil {
-		return nil, err
+	var err error
+	if !ok {
+		username, password, err = extractUserCredentialsFromContext(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	for _, user := range auth.Cfg.Users {
@@ -90,13 +113,14 @@ func authStreamInterceptor(srv interface{}, ss grpc.ServerStream, _ *grpc.Stream
 		return handler(srv, ss)
 	}
 
-	if isHTTPReq(ss.Context()) {
-		return handler(srv, ss)
-	}
+	username, password, ok := isHTTPReq(ss.Context())
 
-	username, password, err := extractUserCredentialsFromContext(ss.Context())
-	if err != nil {
-		return err
+	var err error
+	if !ok {
+		username, password, err = extractUserCredentialsFromContext(ss.Context())
+		if err != nil {
+			return err
+		}
 	}
 
 	for _, user := range auth.Cfg.Users {

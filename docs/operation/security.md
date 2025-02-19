@@ -7,10 +7,11 @@ BanyanDB.
 
 ### Username/Password Authentication
 
-BanyanDB supports username/password authentication for gRPC and HTTP server. The following flag is used to configure
+BanyanDB supports username/password authentication for gRPC and HTTP server. The following flags are used to configure
 authentication:
 
-- `--auth-config-file`: Path to the authentication config file (YAML format).
+- `--auth-config-file string`: Path to the authentication config file (YAML format).
+- `--enable-health-auth bool`: Enable authentication for health service.
 
 For example, you can create an authentication configuration file like this:
 

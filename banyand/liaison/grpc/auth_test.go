@@ -40,7 +40,7 @@ var (
 		Users: []auth.User{
 			{
 				Username: "admin",
-				Password: "$2a$10$Dty9D1PMVx0kt24S09qs6ezn2Q77wLsnmlpU6iO29hMn.Urbo.uji",
+				Password: "password",
 			},
 		},
 	}
@@ -53,6 +53,7 @@ func TestAuthInterceptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	preCfg := auth.Cfg
 	auth.Cfg = cfg
 	server := grpc.NewServer(grpc.UnaryInterceptor(authInterceptor))
 	databasev1.RegisterSnapshotServiceServer(server, &databasev1.UnimplementedSnapshotServiceServer{})
@@ -93,4 +94,6 @@ func TestAuthInterceptor(t *testing.T) {
 	if errors.Is(err, errInvalidUsernameOrPassword) || errors.Is(err, errUsernameNotProvided) {
 		t.Errorf("Expect no error, but got %v", err)
 	}
+
+	auth.Cfg = preCfg
 }

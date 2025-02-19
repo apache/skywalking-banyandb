@@ -53,9 +53,13 @@ settings.
 
 - `--grpc-host string`: The host BanyanDB listens on.
 - `--grpc-port uint32`: The port BanyanDB listens on (default: 17912).
+- `--health-grpc-host string`: The host BanyanDB health service listens on.
+- `--health-grpc-port uint32`: The port BanyanDB health service listens on (default: 18912).
 - `--http-grpc-addr string`: HTTP server redirects gRPC requests to this address (default: "localhost:17912").
 - `--http-host string`: Listen host for HTTP.
 - `--http-port uint32`: Listen port for HTTP (default: 17913).
+- `--health-http-host string`: Listen host for HTTP health service.
+- `--health-http-port uint32`: Listen port for HTTP health service (default: 18913).
 - `--max-recv-msg-size bytes`: The size of the maximum receiving message (default: 10.00MiB).
 
 The following flags are used to configure access logs for the data ingestion:
@@ -77,9 +81,10 @@ The following flags are used to configure the timeout of data sending from liais
 
 ### Authentication
 
-If you want to enable username/password authentication for gRPC and HTTP server, you can use the following flag:
+If you want to enable username/password authentication for gRPC and HTTP server, you can use the following flags:
 
-- `--auth-config-file`: Path to the authentication config file (YAML format).
+- `--auth-config-file string`: Path to the authentication config file (YAML format).
+- `--enable-health-auth bool`: Enable authentication for health service.
 
 You can view the example usage [here](security.md).
 

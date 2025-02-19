@@ -29,8 +29,9 @@ var Cfg *Config
 
 // Config AuthConfig.
 type Config struct {
-	Users   []User `yaml:"users"`
-	Enabled bool   `yaml:"-"`
+	Users             []User `yaml:"users"`
+	Enabled           bool   `yaml:"-"`
+	HealthAuthEnabled bool   `yaml:"-"`
 }
 
 // User details from config file.
@@ -39,9 +40,15 @@ type User struct {
 	Password string `yaml:"password"`
 }
 
+func init() {
+	Cfg = new(Config)
+	Cfg.Enabled = false
+	Cfg.HealthAuthEnabled = false
+	Cfg.Users = []User{}
+}
+
 // LoadConfig implements the reading of the authentication configuration.
 func LoadConfig(filePath string) error {
-	Cfg = new(Config)
 	Cfg.Enabled = true
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -52,11 +59,4 @@ func LoadConfig(filePath string) error {
 		return err
 	}
 	return nil
-}
-
-// DefaultConfig disable auth.
-func DefaultConfig() {
-	Cfg = new(Config)
-	Cfg.Enabled = false
-	Cfg.Users = []User{}
 }

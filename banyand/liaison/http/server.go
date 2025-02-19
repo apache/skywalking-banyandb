@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -40,6 +41,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -49,15 +51,17 @@ var (
 	_ run.Config  = (*server)(nil)
 	_ run.Service = (*server)(nil)
 
-	errServerCert = errors.New("http: invalid server cert file")
-	errServerKey  = errors.New("http: invalid server key file")
-	errNoAddr     = errors.New("http: no address")
+	errServerCert   = errors.New("http: invalid server cert file")
+	errServerKey    = errors.New("http: invalid server key file")
+	errNoAddr       = errors.New("http: no address")
+	errNoHealthAddr = errors.New("http: no health address")
 )
 
 // NewServer return a http service.
 func NewServer() Server {
 	return &server{
 		stopCh: make(chan struct{}),
+		closed: 0,
 	}
 }
 
@@ -72,22 +76,30 @@ type server struct {
 	l            *logger.Logger
 	clientCloser context.CancelFunc
 	mux          *chi.Mux
+	healthMux    *chi.Mux
 	srv          *http.Server
+	healthSrv    *http.Server
 	stopCh       chan struct{}
 	host         string
+	healthHost   string
 	listenAddr   string
+	healthAddr   string
 	grpcAddr     string
 	keyFile      string
 	certFile     string
 	grpcCert     string
 	port         uint32
+	healthPort   uint32
+	closed       uint32
 	tls          bool
 }
 
 func (p *server) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("http")
 	flagSet.StringVar(&p.host, "http-host", "", "listen host for http")
+	flagSet.StringVar(&p.healthHost, "health-http-host", "", "health listen host for http")
 	flagSet.Uint32Var(&p.port, "http-port", 17913, "listen port for http")
+	flagSet.Uint32Var(&p.healthPort, "health-http-port", 18913, "health listen port for http")
 	flagSet.StringVar(&p.grpcAddr, "http-grpc-addr", "localhost:17912", "http server redirect grpc requests to this address")
 	flagSet.StringVar(&p.certFile, "http-cert-file", "", "the TLS cert file of http server")
 	flagSet.StringVar(&p.keyFile, "http-key-file", "", "the TLS key file of http server")
@@ -100,6 +112,10 @@ func (p *server) Validate() error {
 	p.listenAddr = net.JoinHostPort(p.host, strconv.FormatUint(uint64(p.port), 10))
 	if p.listenAddr == ":" {
 		return errNoAddr
+	}
+	p.healthAddr = net.JoinHostPort(p.healthHost, strconv.FormatUint(uint64(p.healthPort), 10))
+	if p.healthAddr == ":" {
+		return errNoHealthAddr
 	}
 	if p.grpcCert != "" {
 		creds, errTLS := credentials.NewClientTLSFromFile(p.grpcCert, "")
@@ -136,12 +152,21 @@ func (p *server) PreRun(_ context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mux = chi.NewRouter()
 	p.mux.Use(authMiddleware)
+	p.healthMux = chi.NewRouter()
+	if auth.Cfg.HealthAuthEnabled {
+		p.healthMux.Use(authMiddleware)
+	}
 	if err := p.setRootPath(); err != nil {
 		return err
 	}
 	p.srv = &http.Server{
 		Addr:              p.listenAddr,
 		Handler:           p.mux,
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+	p.healthSrv = &http.Server{
+		Addr:              p.healthAddr,
+		Handler:           p.healthMux,
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 	return nil
@@ -159,10 +184,16 @@ func (p *server) Serve() run.StopNotify {
 	client, err := healthcheck.NewClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
 		p.l.Error().Err(err).Msg("Failed to health check client")
-		close(p.stopCh)
+		p.tryClose()
 		return p.stopCh
 	}
-	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client), runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
+	gwMux := runtime.NewServeMux(runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
+		if key == "Authorization" {
+			return key, true
+		}
+		return runtime.DefaultHeaderMatcher(key)
+	}))
+	gwHealthMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client), runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
 		if key == "Authorization" {
 			return key, true
 		}
@@ -183,11 +214,12 @@ func (p *server) Serve() run.StopNotify {
 	)
 	if err != nil {
 		p.l.Error().Err(err).Msg("Failed to register endpoints")
-		close(p.stopCh)
+		p.tryClose()
 		return p.stopCh
 	}
 
 	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
+	p.healthMux.Mount("/api", http.StripPrefix("/api", gwHealthMux))
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		var err error
@@ -200,9 +232,29 @@ func (p *server) Serve() run.StopNotify {
 			p.l.Error().Err(err)
 		}
 
-		close(p.stopCh)
+		p.tryClose()
+	}()
+	go func() {
+		p.l.Info().Str("healthAddr", p.healthAddr).Msg("Start liaison http health server")
+		var err error
+		if p.tls {
+			err = p.healthSrv.ListenAndServeTLS(p.certFile, p.keyFile)
+		} else {
+			err = p.healthSrv.ListenAndServe()
+		}
+		if err != http.ErrServerClosed {
+			p.l.Error().Err(err)
+		}
+
+		p.tryClose()
 	}()
 	return p.stopCh
+}
+
+func (p *server) tryClose() {
+	if atomic.CompareAndSwapUint32(&p.closed, 0, 1) {
+		close(p.stopCh)
+	}
 }
 
 func (p *server) GracefulStop() {

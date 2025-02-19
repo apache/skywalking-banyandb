@@ -23,6 +23,7 @@ import (
 	"net"
 	"runtime/debug"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
@@ -55,6 +56,7 @@ var (
 	errServerCert        = errors.New("invalid server cert file")
 	errServerKey         = errors.New("invalid server key file")
 	errNoAddr            = errors.New("no address")
+	errNoHealthAddr      = errors.New("no address for health check")
 	errQueryMsg          = errors.New("invalid query message")
 	errAccessLogRootPath = errors.New("access log root path is required")
 
@@ -80,6 +82,7 @@ type server struct {
 	omr        observability.MetricsRegistry
 	measureSVC *measureService
 	ser        *grpclib.Server
+	healthSer  *grpclib.Server
 	log        *logger.Logger
 	*propertyServer
 	*topNAggregationRegistryServer
@@ -96,11 +99,16 @@ type server struct {
 	authConfigFile           string
 	accessLogRootPath        string
 	addr                     string
+	healthAddr               string
 	host                     string
+	healthHost               string
 	accessLogRecorders       []accessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	port                     uint32
+	healthPort               uint32
+	closed                   uint32
 	enableIngestionAccessLog bool
+	enableHealthAuth         bool
 	tls                      bool
 }
 
@@ -166,8 +174,6 @@ func (s *server) PreRun(_ context.Context) error {
 		if err := auth.LoadConfig(s.authConfigFile); err != nil {
 			return err
 		}
-	} else {
-		auth.DefaultConfig()
 	}
 
 	if s.enableIngestionAccessLog {
@@ -212,7 +218,10 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
 	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "Path to the authentication config file (YAML format)")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
+	fs.StringVar(&s.healthHost, "health-grpc-host", "", "the host of health check service")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
+	fs.Uint32Var(&s.healthPort, "health-grpc-port", 18912, "the port of health check service")
+	fs.BoolVar(&auth.Cfg.HealthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "stream write timeout")
@@ -224,6 +233,10 @@ func (s *server) Validate() error {
 	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
 	if s.addr == ":" {
 		return errNoAddr
+	}
+	s.healthAddr = net.JoinHostPort(s.healthHost, strconv.FormatUint(uint64(s.healthPort), 10))
+	if s.healthAddr == ":" {
+		return errNoHealthAddr
 	}
 	if s.enableIngestionAccessLog && s.accessLogRootPath == "" {
 		return errAccessLogRootPath
@@ -266,12 +279,31 @@ func (s *server) Serve() run.StopNotify {
 		grpc_validator.UnaryServerInterceptor(),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
+	healthStreamChain := streamChain
+	healthUnaryChain := unaryChain
+	if !s.enableHealthAuth {
+		healthStreamChain = []grpclib.StreamServerInterceptor{
+			grpc_validator.StreamServerInterceptor(),
+			recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		}
+		healthUnaryChain = []grpclib.UnaryServerInterceptor{
+			grpc_validator.UnaryServerInterceptor(),
+			recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		}
+	}
+	commonOpts := opts
+	healthOpts := opts
 
-	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
+	commonOpts = append(commonOpts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
 		grpclib.ChainUnaryInterceptor(unaryChain...),
 		grpclib.ChainStreamInterceptor(streamChain...),
 	)
-	s.ser = grpclib.NewServer(opts...)
+	healthOpts = append(healthOpts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
+		grpclib.ChainUnaryInterceptor(healthUnaryChain...),
+		grpclib.ChainStreamInterceptor(healthStreamChain...),
+	)
+	s.ser = grpclib.NewServer(commonOpts...)
+	s.healthSer = grpclib.NewServer(healthOpts...)
 
 	commonv1.RegisterServiceServer(s.ser, &apiVersionService{})
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
@@ -285,14 +317,15 @@ func (s *server) Serve() run.StopNotify {
 	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
 	databasev1.RegisterTopNAggregationRegistryServiceServer(s.ser, s.topNAggregationRegistryServer)
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
-	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
+	grpc_health_v1.RegisterHealthServer(s.healthSer, health.NewServer())
 
 	s.stopCh = make(chan struct{})
+	s.closed = 0
 	go func() {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
-			close(s.stopCh)
+			s.tryClose()
 			return
 		}
 		s.log.Info().Str("addr", s.addr).Msg("Listening to")
@@ -300,9 +333,29 @@ func (s *server) Serve() run.StopNotify {
 		if err != nil {
 			s.log.Error().Err(err).Msg("server is interrupted")
 		}
-		close(s.stopCh)
+		s.tryClose()
+	}()
+	go func() {
+		listen, err := net.Listen("tcp", s.healthAddr)
+		if err != nil {
+			s.log.Error().Err(err).Msg("Failed to listen")
+			s.tryClose()
+			return
+		}
+		s.log.Info().Str("health check addr", s.healthAddr).Msg("Listening to")
+		err = s.healthSer.Serve(listen)
+		if err != nil {
+			s.log.Error().Err(err).Msg("server is interrupted")
+		}
+		s.tryClose()
 	}()
 	return s.stopCh
+}
+
+func (s *server) tryClose() {
+	if atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
+		close(s.stopCh)
+	}
 }
 
 func (s *server) GracefulStop() {
@@ -310,6 +363,7 @@ func (s *server) GracefulStop() {
 	stopped := make(chan struct{})
 	go func() {
 		s.ser.GracefulStop()
+		s.healthSer.GracefulStop()
 		if s.enableIngestionAccessLog {
 			for _, alr := range s.accessLogRecorders {
 				_ = alr.Close()
@@ -322,6 +376,7 @@ func (s *server) GracefulStop() {
 	select {
 	case <-t.C:
 		s.ser.Stop()
+		s.healthSer.Stop()
 		s.log.Info().Msg("force stopped")
 	case <-stopped:
 		t.Stop()
