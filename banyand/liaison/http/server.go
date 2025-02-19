@@ -261,6 +261,9 @@ func (p *server) GracefulStop() {
 	if err := p.srv.Close(); err != nil {
 		p.l.Error().Err(err)
 	}
+	if err := p.healthSrv.Close(); err != nil {
+		p.l.Error().Err(err)
+	}
 	p.clientCloser()
 }
 

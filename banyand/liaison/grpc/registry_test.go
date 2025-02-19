@@ -19,6 +19,7 @@ package grpc_test
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -54,12 +55,11 @@ var _ = Describe("Registry", func() {
 		goods = gleak.Goroutines()
 		gracefulStop = setupForRegistry()
 		addr := "localhost:17912"
-		healthAddr := "localhost:18912"
 		Eventually(
-			helpers.HealthCheck(healthAddr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 			testflags.EventuallyTimeout).Should(Succeed())
 		var err error
-		conn, err = grpclib.NewClient(addr, grpclib.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -203,7 +203,7 @@ func setupForRegistry() func() {
 		tcp,
 	)
 	Eventually(
-		helpers.HealthCheck("localhost:18912", 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+		helpers.HealthCheck("localhost:17912", 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 		testflags.EventuallyTimeout).Should(Succeed())
 	return func() {
 		deferFunc()

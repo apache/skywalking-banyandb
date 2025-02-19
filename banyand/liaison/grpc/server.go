@@ -317,6 +317,7 @@ func (s *server) Serve() run.StopNotify {
 	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
 	databasev1.RegisterTopNAggregationRegistryServiceServer(s.ser, s.topNAggregationRegistryServer)
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
+	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 	grpc_health_v1.RegisterHealthServer(s.healthSer, health.NewServer())
 
 	s.stopCh = make(chan struct{})
