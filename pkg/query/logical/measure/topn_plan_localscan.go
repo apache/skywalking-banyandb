@@ -152,9 +152,7 @@ func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err er
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
 	return &topNMIterator{
-		result:    result,
-		topNValue: measure.GenerateTopNValue(),
-		decoder:   generateTopNValuesDecoder(),
+		result: result,
 	}, nil
 }
 
@@ -173,11 +171,9 @@ func (i *localScan) Schema() logical.Schema {
 }
 
 type topNMIterator struct {
-	result    model.MeasureQueryResult
-	err       error
-	topNValue *measure.TopNValue
-	decoder   *encoding.BytesBlockDecoder
-	current   []*measurev1.DataPoint
+	result  model.MeasureQueryResult
+	err     error
+	current []*measurev1.DataPoint
 }
 
 func (ei *topNMIterator) Next() bool {
@@ -194,6 +190,10 @@ func (ei *topNMIterator) Next() bool {
 		return false
 	}
 	ei.current = ei.current[:0]
+	topNValue := measure.GenerateTopNValue()
+	defer measure.ReleaseTopNValue(topNValue)
+	decoder := generateTopNValuesDecoder()
+	defer releaseTopNValuesDecoder(decoder)
 
 	for i := range r.Timestamps {
 		fv := r.Fields[0].Values[i]
@@ -203,13 +203,13 @@ func (ei *topNMIterator) Next() bool {
 			return false
 		}
 		ts := timestamppb.New(time.Unix(0, r.Timestamps[i]))
-		ei.topNValue.Reset()
-		err := ei.topNValue.Unmarshal(bd, ei.decoder)
+		topNValue.Reset()
+		err := topNValue.Unmarshal(bd, decoder)
 		if err != nil {
 			ei.err = multierr.Append(ei.err, errors.WithMessagef(err, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
 			continue
 		}
-		fieldName, entityNames, values, entities := ei.topNValue.Values()
+		fieldName, entityNames, values, entities := topNValue.Values()
 		for j := range entities {
 			dp := &measurev1.DataPoint{
 				Timestamp: ts,
@@ -250,14 +250,6 @@ func (ei *topNMIterator) Close() error {
 	if ei.result != nil {
 		ei.result.Release()
 		ei.result = nil
-	}
-	if ei.decoder != nil {
-		releaseTopNValuesDecoder(ei.decoder)
-		ei.decoder = nil
-	}
-	if ei.topNValue != nil {
-		measure.ReleaseTopNValue(ei.topNValue)
-		ei.topNValue = nil
 	}
 	return ei.err
 }
