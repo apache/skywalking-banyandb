@@ -53,9 +53,9 @@ type List interface {
 
 	AddIterator(iter Iterator) error
 
-	AddRange(min, max uint64) error
+	AddRange(minVal, maxVal uint64) error
 
-	RemoveRange(min, max uint64) error
+	RemoveRange(minVal, maxVal uint64) error
 
 	Reset()
 

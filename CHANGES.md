@@ -29,6 +29,7 @@ Release Notes.
 - Add backup command line tool to backup the data files.
 - Add restore command line tool to restore the data files.
 - Add concurrent barrier to partition merge to improve the performance of the partition merge.
+- Improve the write performance.
 
 ### Bug Fixes
 
@@ -60,6 +61,7 @@ Release Notes.
 - Fix metrics system typo.
 - Bump up OAP in CI to 6d262cce62e156bd197177abb3640ea65bb2d38e.
 - Update cespare/xxhash to v2 version.
+- Bump up Go to 1.24.
 
 ### CVEs
 

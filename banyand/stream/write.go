@@ -125,7 +125,9 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		et = &elementsInTable{
 			timeRange: segment.GetTimeRange(),
 			tsTable:   tstb,
+			elements:  generateElements(),
 		}
+		et.elements.reset()
 		eg.tables = append(eg.tables, et)
 	}
 	et.elements.timestamps = append(et.elements.timestamps, ts)
@@ -258,7 +260,8 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddElements(&es.elements)
+			es.tsTable.mustAddElements(es.elements)
+			releaseElements(es.elements)
 			if len(es.docs) > 0 {
 				index := es.tsTable.Index()
 				if err := index.Write(es.docs); err != nil {
@@ -280,7 +283,8 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 }
 
 func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.TagValue) *tagValue {
-	tv := &tagValue{tag: name}
+	tv := generateTagValue()
+	tv.tag = name
 	switch tagType {
 	case databasev1.TagType_TAG_TYPE_INT:
 		tv.valueType = pbv1.ValueTypeInt64
@@ -290,7 +294,7 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.Tag
 	case databasev1.TagType_TAG_TYPE_STRING:
 		tv.valueType = pbv1.ValueTypeStr
 		if tagVal.GetStr() != nil {
-			tv.value = []byte(tagVal.GetStr().GetValue())
+			tv.value = convert.StringToBytes(tagVal.GetStr().GetValue())
 		}
 	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
 		tv.valueType = pbv1.ValueTypeBinaryData

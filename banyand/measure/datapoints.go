@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -35,6 +36,27 @@ type nameValue struct {
 	valueArr  [][]byte
 	valueType pbv1.ValueType
 }
+
+func (n *nameValue) reset() {
+	n.name = ""
+	n.value = nil
+	n.valueArr = nil
+}
+
+func generateNameValue() *nameValue {
+	v := nameValuePool.Get()
+	if v == nil {
+		return &nameValue{}
+	}
+	return v
+}
+
+func releaseNameValue(v *nameValue) {
+	v.reset()
+	nameValuePool.Put(v)
+}
+
+var nameValuePool = pool.Register[*nameValue]("measure-nameValue")
 
 func (n *nameValue) size() int {
 	s := len(n.name)
@@ -115,12 +137,36 @@ type nameValues struct {
 	values []*nameValue
 }
 
+func (n *nameValues) reset() {
+	n.name = ""
+	for i := range n.values {
+		releaseNameValue(n.values[i])
+	}
+	n.values = n.values[:0]
+}
+
 type dataPoints struct {
 	seriesIDs   []common.SeriesID
 	timestamps  []int64
 	versions    []int64
 	tagFamilies [][]nameValues
 	fields      []nameValues
+}
+
+func (d *dataPoints) reset() {
+	d.seriesIDs = d.seriesIDs[:0]
+	d.timestamps = d.timestamps[:0]
+	d.versions = d.versions[:0]
+	for i := range d.tagFamilies {
+		for j := range d.tagFamilies[i] {
+			d.tagFamilies[i][j].reset()
+		}
+	}
+	d.tagFamilies = d.tagFamilies[:0]
+	for i := range d.fields {
+		d.fields[i].reset()
+	}
+	d.fields = d.fields[:0]
 }
 
 func (d *dataPoints) skip(i int) {
@@ -158,11 +204,25 @@ func (d *dataPoints) Swap(i, j int) {
 	d.fields[i], d.fields[j] = d.fields[j], d.fields[i]
 }
 
-type dataPointsInTable struct {
-	timeRange timestamp.TimeRange
-	tsTable   *tsTable
+func generateDataPoints() *dataPoints {
+	v := dataPointsPool.Get()
+	if v == nil {
+		return &dataPoints{}
+	}
+	return v
+}
 
-	dataPoints dataPoints
+func releaseDataPoints(v *dataPoints) {
+	v.reset()
+	dataPointsPool.Put(v)
+}
+
+var dataPointsPool = pool.Register[*dataPoints]("measure-dataPoints")
+
+type dataPointsInTable struct {
+	tsTable    *tsTable
+	dataPoints *dataPoints
+	timeRange  timestamp.TimeRange
 }
 
 type dataPointsInGroup struct {

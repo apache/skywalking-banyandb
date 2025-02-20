@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -34,6 +35,12 @@ type tagValue struct {
 	value     []byte
 	valueArr  [][]byte
 	valueType pbv1.ValueType
+}
+
+func (t *tagValue) reset() {
+	t.tag = ""
+	t.value = nil
+	t.valueArr = nil
 }
 
 func (t *tagValue) size() int {
@@ -63,6 +70,21 @@ func (t *tagValue) marshal() []byte {
 	}
 	return t.value
 }
+
+func generateTagValue() *tagValue {
+	v := tagValuePool.Get()
+	if v == nil {
+		return &tagValue{}
+	}
+	return v
+}
+
+func releaseTagValue(v *tagValue) {
+	v.reset()
+	tagValuePool.Put(v)
+}
+
+var tagValuePool = pool.Register[*tagValue]("stream-tagValue")
 
 const (
 	entityDelimiter = '|'
@@ -115,11 +137,31 @@ type tagValues struct {
 	values []*tagValue
 }
 
+func (t *tagValues) reset() {
+	t.tag = ""
+	for i := range t.values {
+		releaseTagValue(t.values[i])
+	}
+	t.values = t.values[:0]
+}
+
 type elements struct {
 	seriesIDs   []common.SeriesID
 	timestamps  []int64
 	elementIDs  []uint64
 	tagFamilies [][]tagValues
+}
+
+func (e *elements) reset() {
+	e.seriesIDs = e.seriesIDs[:0]
+	e.timestamps = e.timestamps[:0]
+	e.elementIDs = e.elementIDs[:0]
+	for i := range e.tagFamilies {
+		for j := range e.tagFamilies[i] {
+			e.tagFamilies[i][j].reset()
+		}
+	}
+	e.tagFamilies = e.tagFamilies[:0]
 }
 
 func (e *elements) Len() int {
@@ -140,11 +182,26 @@ func (e *elements) Swap(i, j int) {
 	e.tagFamilies[i], e.tagFamilies[j] = e.tagFamilies[j], e.tagFamilies[i]
 }
 
+func generateElements() *elements {
+	v := elementsPool.Get()
+	if v == nil {
+		return &elements{}
+	}
+	return v
+}
+
+func releaseElements(e *elements) {
+	e.reset()
+	elementsPool.Put(e)
+}
+
+var elementsPool = pool.Register[*elements]("stream-elements")
+
 type elementsInTable struct {
 	timeRange timestamp.TimeRange
 	tsTable   *tsTable
 
-	elements elements
+	elements *elements
 
 	docs index.Documents
 }
