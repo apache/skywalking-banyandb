@@ -46,7 +46,7 @@ var _ = Describe("Measure Data Query", func() {
 		directory, _, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
 		var ports []int
-		ports, err = test.AllocateFreePorts(4)
+		ports, err = test.AllocateFreePorts(6)
 		Expect(err).NotTo(HaveOccurred())
 		grpcAddr, _, addr, _, serverDeferFunc = setup.ClosableStandalone(directory, ports)
 		addr = httpSchema + addr

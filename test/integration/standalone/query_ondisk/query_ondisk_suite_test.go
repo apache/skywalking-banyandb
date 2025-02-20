@@ -63,7 +63,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	path, diskCleanupFn, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
 	var ports []int
-	ports, err = test.AllocateFreePorts(4)
+	ports, err = test.AllocateFreePorts(6)
 	Expect(err).NotTo(HaveOccurred())
 	addr, _, _, _, closeFunc := setup.ClosableStandalone(path, ports)
 	ns := timestamp.NowMilli().UnixNano()

@@ -72,26 +72,27 @@ type Server interface {
 }
 
 type server struct {
-	creds        credentials.TransportCredentials
-	l            *logger.Logger
-	clientCloser context.CancelFunc
-	mux          *chi.Mux
-	healthMux    *chi.Mux
-	srv          *http.Server
-	healthSrv    *http.Server
-	stopCh       chan struct{}
-	host         string
-	healthHost   string
-	listenAddr   string
-	healthAddr   string
-	grpcAddr     string
-	keyFile      string
-	certFile     string
-	grpcCert     string
-	port         uint32
-	healthPort   uint32
-	closed       uint32
-	tls          bool
+	creds          credentials.TransportCredentials
+	l              *logger.Logger
+	clientCloser   context.CancelFunc
+	mux            *chi.Mux
+	healthMux      *chi.Mux
+	srv            *http.Server
+	healthSrv      *http.Server
+	stopCh         chan struct{}
+	host           string
+	healthHost     string
+	listenAddr     string
+	healthAddr     string
+	grpcAddr       string
+	grpcHealthAddr string
+	keyFile        string
+	certFile       string
+	grpcCert       string
+	port           uint32
+	healthPort     uint32
+	closed         uint32
+	tls            bool
 }
 
 func (p *server) FlagSet() *run.FlagSet {
@@ -101,6 +102,7 @@ func (p *server) FlagSet() *run.FlagSet {
 	flagSet.Uint32Var(&p.port, "http-port", 17913, "listen port for http")
 	flagSet.Uint32Var(&p.healthPort, "http-health-port", 18913, "health listen port for http")
 	flagSet.StringVar(&p.grpcAddr, "http-grpc-addr", "localhost:17912", "http server redirect grpc requests to this address")
+	flagSet.StringVar(&p.grpcHealthAddr, "http-grpc-health-addr", "localhost:18912", "http server redirect grpc health check requests to this address")
 	flagSet.StringVar(&p.certFile, "http-cert-file", "", "the TLS cert file of http server")
 	flagSet.StringVar(&p.keyFile, "http-key-file", "", "the TLS key file of http server")
 	flagSet.StringVar(&p.grpcCert, "http-grpc-cert-file", "", "the grpc TLS cert file if grpc server enables tls")
@@ -181,7 +183,7 @@ func (p *server) Serve() run.StopNotify {
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(p.creds))
 	}
-	client, err := healthcheck.NewClient(ctx, p.l, p.grpcAddr, opts)
+	client, err := healthcheck.NewClient(ctx, p.l, p.grpcHealthAddr, opts)
 	if err != nil {
 		p.l.Error().Err(err).Msg("Failed to health check client")
 		p.tryClose()

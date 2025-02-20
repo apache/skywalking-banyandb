@@ -34,6 +34,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 	"go.uber.org/multierr"
+	grpclib "google.golang.org/grpc"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -172,7 +173,7 @@ func getSnapshots(gRPCAddr string, enableTLS, insecure bool, cert string) ([]*da
 	if err != nil {
 		return nil, err
 	}
-	connection, err := grpchelper.Conn(gRPCAddr, 10*time.Second, opts...)
+	connection, err := grpclib.NewClient(gRPCAddr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to gRPC server: %w", err)
 	}

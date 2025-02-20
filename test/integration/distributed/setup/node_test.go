@@ -39,21 +39,27 @@ var _ = Describe("Node registration", func() {
 	It("should register/unregister a liaison node successfully", func() {
 		namespace := "liaison-test"
 		nodeHost := "liaison-1"
-		ports, err := test.AllocateFreePorts(2)
+		ports, err := test.AllocateFreePorts(4)
 		Expect(err).NotTo(HaveOccurred())
 		addr := fmt.Sprintf("%s:%d", host, ports[0])
-		httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
+		healthAddr := fmt.Sprintf("%s:%d", host, ports[3])
+		httpHealthAddr := fmt.Sprintf("%s:%d", host, ports[2])
 		closeFn := setup.CMD("liaison",
 			"--namespace", namespace,
 			"--grpc-host="+host,
 			fmt.Sprintf("--grpc-port=%d", ports[0]),
+			"--grpc-health-host="+host,
+			fmt.Sprintf("--grpc-health-port=%d", ports[3]),
 			"--http-host="+host,
 			fmt.Sprintf("--http-port=%d", ports[1]),
+			"http-health-host="+host,
+			fmt.Sprintf("--http-health-port=%d", ports[2]),
 			"--http-grpc-addr="+addr,
+			"--http-grpc-health-addr="+healthAddr,
 			"--etcd-endpoints", etcdEndpoint,
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost)
-		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
+		Eventually(helpers.HTTPHealthCheck(httpHealthAddr, ""), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
 			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
 		}, flags.EventuallyTimeout).Should(HaveLen(1))

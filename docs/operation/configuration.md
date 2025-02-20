@@ -56,6 +56,7 @@ settings.
 - `--grpc-health-host string`: The host BanyanDB health service listens on.
 - `--grpc-health-port uint32`: The port BanyanDB health service listens on (default: 18912).
 - `--http-grpc-addr string`: HTTP server redirects gRPC requests to this address (default: "localhost:17912").
+- `--http-grpc-health-addr string`: HTTP server redirects gRPC health check requests to this address (default: "localhost:18912").
 - `--http-host string`: Listen host for HTTP.
 - `--http-port uint32`: Listen port for HTTP (default: 17913).
 - `--http-health-host string`: Listen host for HTTP health service.

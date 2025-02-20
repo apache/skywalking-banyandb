@@ -114,6 +114,7 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 		"--http-health-host=" + host,
 		fmt.Sprintf("--http-health-port=%d", ports[5]),
 		"--http-grpc-addr=" + addr,
+		"--http-grpc-health-addr=" + healthAddr,
 		"--stream-root-path=" + path,
 		"--measure-root-path=" + path,
 		"--metadata-root-path=" + path,
@@ -271,7 +272,8 @@ func LiaisonNode(etcdEndpoint string) (string, func()) {
 	ports, err := test.AllocateFreePorts(4)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
-	httpAddr := fmt.Sprintf("%s:%d", host, ports[2])
+	healthAddr := fmt.Sprintf("%s:%d", host, ports[3])
+	httpHealthAddr := fmt.Sprintf("%s:%d", host, ports[2])
 	nodeHost := "127.0.0.1"
 	closeFn := CMD("liaison",
 		"--grpc-host="+host,
@@ -283,10 +285,11 @@ func LiaisonNode(etcdEndpoint string) (string, func()) {
 		"--grpc-health-host="+host,
 		fmt.Sprintf("--grpc-health-port=%d", ports[3]),
 		"--http-grpc-addr="+addr,
+		"--http-grpc-health-addr="+healthAddr,
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost)
-	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
+	gomega.Eventually(helpers.HTTPHealthCheck(httpHealthAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
 		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
 	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))

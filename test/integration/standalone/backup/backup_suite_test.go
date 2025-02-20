@@ -67,7 +67,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	dir, _, err = test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
 	var ports []int
-	ports, err = test.AllocateFreePorts(4)
+	ports, err = test.AllocateFreePorts(6)
 	Expect(err).NotTo(HaveOccurred())
 	var addr string
 	addr, _, _, _, deferFunc = setup.ClosableStandalone(dir, ports)

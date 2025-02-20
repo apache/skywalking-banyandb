@@ -35,7 +35,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -133,7 +132,7 @@ var _ = g.Describe("Disk", func() {
 })
 
 func writeData(addr string) (measurev1.MeasureService_WriteClient, func()) {
-	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gm.Expect(err).NotTo(gm.HaveOccurred())
 	ns := timestamp.NowMilli().UnixNano()
 	baseTime := time.Unix(0, ns-ns%int64(time.Minute))
