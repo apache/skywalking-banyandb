@@ -50,7 +50,7 @@ func ApplyRules(plan Plan, rules ...OptimizeRule) error {
 // VolumeLimiter controls the volume of a Plan's output.
 type VolumeLimiter interface {
 	Plan
-	Limit(max int)
+	Limit(maxVal int)
 }
 
 // Sorter sorts a Plan's output.

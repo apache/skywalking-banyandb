@@ -1,24 +1,40 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package measure
 
 import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	partition "github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
-
-	"github.com/apache/skywalking-banyandb/api/common"
 )
 
 // BenchmarkAppendDataPoints benchmarks the performance of the appendDataPoints function.
-// BenchmarkAppendDataPoints-10    	 3995332	       307.8 ns/op	     344 B/op	       9 allocs/op
-// BenchmarkAppendDataPoints-10    	 1467444	       823.0 ns/op	    1152 B/op	      21 allocs/op
+// BenchmarkAppendDataPoints-10    	 1000000	      1011 ns/op	    1248 B/op	      26 allocs/op.
+// BenchmarkAppendDataPoints-10    	 1637550	       732.4 ns/op	     815 B/op	      13 allocs/op.
 func BenchmarkAppendDataPoints(b *testing.B) {
 	// Prepare a mock schema
 	schema := &databasev1.Measure{
@@ -161,13 +177,6 @@ func BenchmarkAppendDataPoints(b *testing.B) {
 			Start: time.Now().Add(-time.Hour),
 			End:   time.Now(),
 		},
-		dataPoints: dataPoints{
-			seriesIDs:   make([]common.SeriesID, 0, 1000),
-			timestamps:  make([]int64, 0, 1000),
-			versions:    make([]int64, 0, 1000),
-			tagFamilies: make([][]nameValues, 0, 1000),
-			fields:      make([]nameValues, 0, 1000),
-		},
 	}
 
 	ts := time.Now().UnixNano()
@@ -175,14 +184,9 @@ func BenchmarkAppendDataPoints(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Reset slice lengths to zero
-		dest.dataPoints.tagFamilies = dest.dataPoints.tagFamilies[:0]
-		dest.dataPoints.timestamps = dest.dataPoints.timestamps[:0]
-		dest.dataPoints.versions = dest.dataPoints.versions[:0]
-		dest.dataPoints.seriesIDs = dest.dataPoints.seriesIDs[:0]
-		dest.dataPoints.fields = dest.dataPoints.fields[:0]
-
 		// Call appendDataPoints
 		appendDataPoints(dest, ts, sid, schema, req, locator)
+		releaseDataPoints(dest.dataPoints)
+		dest.dataPoints = nil
 	}
 }

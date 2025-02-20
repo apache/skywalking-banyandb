@@ -173,12 +173,18 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 }
 
 func appendDataPoints(dest *dataPointsInTable, ts int64, sid common.SeriesID, schema *databasev1.Measure,
-	req *measurev1.WriteRequest, locator partition.IndexRuleLocator) []index.Field {
+	req *measurev1.WriteRequest, locator partition.IndexRuleLocator,
+) []index.Field {
 	tagFamily, fields := handleTagFamily(schema, req, locator)
-	dest.dataPoints.tagFamilies = append(dest.dataPoints.tagFamilies, tagFamily)
-	dest.dataPoints.timestamps = append(dest.dataPoints.timestamps, ts)
-	dest.dataPoints.versions = append(dest.dataPoints.versions, req.DataPoint.Version)
-	dest.dataPoints.seriesIDs = append(dest.dataPoints.seriesIDs, sid)
+	if dest.dataPoints == nil {
+		dest.dataPoints = generateDataPoints()
+		dest.dataPoints.reset()
+	}
+	dataPoints := dest.dataPoints
+	dataPoints.tagFamilies = append(dataPoints.tagFamilies, tagFamily)
+	dataPoints.timestamps = append(dataPoints.timestamps, ts)
+	dataPoints.versions = append(dataPoints.versions, req.DataPoint.Version)
+	dataPoints.seriesIDs = append(dataPoints.seriesIDs, sid)
 
 	field := nameValues{}
 	for i := range schema.GetFields() {
@@ -194,8 +200,9 @@ func appendDataPoints(dest *dataPointsInTable, ts int64, sid common.SeriesID, sc
 			v,
 		))
 	}
-	dest.dataPoints.fields = append(dest.dataPoints.fields, field)
+	dataPoints.fields = append(dataPoints.fields, field)
 
+	dest.dataPoints = dataPoints
 	return fields
 }
 
@@ -283,10 +290,12 @@ func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest, lo
 						fields = append(fields, f)
 					}
 				}
+				releaseNameValue(encodeTagValue)
 				continue
 			}
 			_, isEntity := locator.EntitySet[t.Name]
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
+				releaseNameValue(encodeTagValue)
 				continue
 			}
 			tf.values = append(tf.values, encodeTagValue)
@@ -322,9 +331,14 @@ func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest, lo
 				t.Name,
 				t.Type,
 				tagValue)
-			fieldKey := index.FieldKey{}
-			fieldKey.TagName = t.Name
 			r, toIndex := tfr[t.Name]
+			fieldKey := index.FieldKey{}
+			if toIndex {
+				fieldKey.IndexRuleID = r.GetMetadata().GetId()
+				fieldKey.Analyzer = r.Analyzer
+			} else {
+				fieldKey.TagName = t.Name
+			}
 			if encodeTagValue.value != nil {
 				f := index.NewBytesField(fieldKey, encodeTagValue.value)
 				f.Store = true
@@ -340,6 +354,7 @@ func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest, lo
 					fields = append(fields, f)
 				}
 			}
+			releaseNameValue(encodeTagValue)
 		}
 	}
 	return fields
@@ -375,6 +390,7 @@ func (w *writeCallback) appendEntityTagsToIndexFields(fields []index.Field, stm 
 			f.NoSort = true
 			fields = append(fields, f)
 		}
+		releaseNameValue(encodeTagValue)
 	}
 	return fields
 }
@@ -417,7 +433,10 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		for j := range g.tables {
 			dps := g.tables[j]
 			if dps.tsTable != nil {
-				dps.tsTable.mustAddDataPoints(&dps.dataPoints)
+				dps.tsTable.mustAddDataPoints(dps.dataPoints)
+			}
+			if dps.dataPoints != nil {
+				releaseDataPoints(dps.dataPoints)
 			}
 		}
 		for _, segment := range g.segments {
@@ -468,7 +487,8 @@ func encodeFieldValue(name string, fieldType databasev1.FieldType, fieldValue *m
 }
 
 func encodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue) *nameValue {
-	nv := &nameValue{name: name}
+	nv := generateNameValue()
+	nv.name = name
 	switch tagType {
 	case databasev1.TagType_TAG_TYPE_INT:
 		nv.valueType = pbv1.ValueTypeInt64
@@ -478,7 +498,7 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.T
 	case databasev1.TagType_TAG_TYPE_STRING:
 		nv.valueType = pbv1.ValueTypeStr
 		if tagValue.GetStr() != nil {
-			nv.value = []byte(tagValue.GetStr().GetValue())
+			nv.value = convert.StringToBytes(tagValue.GetStr().GetValue())
 		}
 	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
 		nv.valueType = pbv1.ValueTypeBinaryData
