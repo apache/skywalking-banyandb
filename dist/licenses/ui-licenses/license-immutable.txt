@@ -1,4 +1,4 @@
-MIT License
+﻿MIT License
 
 Copyright (c) 2014-present, Lee Byron and other contributors.
 

@@ -1,4 +1,4 @@
-# Cluster Maintenance
+﻿# Cluster Maintenance
 
 ## Introduction
 Properly maintaining and scaling a cluster is crucial for ensuring its reliable and efficient operation. This document provides guidance on setting up a cluster, planning its capacity, and scaling it to meet evolving requirements.

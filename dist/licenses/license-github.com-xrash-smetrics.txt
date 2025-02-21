@@ -1,4 +1,4 @@
-Copyright (C) 2016 Felipe da Cunha Gonçalves
+﻿Copyright (C) 2016 Felipe da Cunha Gon莽alves
 All Rights Reserved.
 
 MIT LICENSE

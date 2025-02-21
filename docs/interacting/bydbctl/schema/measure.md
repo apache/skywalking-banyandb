@@ -1,4 +1,4 @@
-# CRUD [Measures](../../../concept/data-model.md#measures)
+﻿# CRUD [Measures](../../../concept/data-model.md#measures)
 
 CRUD operations create, read, update and delete measures.
 

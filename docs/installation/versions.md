@@ -1,4 +1,4 @@
-# Versions
+﻿# Versions
 
 BanyanDB releases have different API versions and Release versions. To keep the compatibility with SkyWalking
 OAP releases, you need to pick the proper API versions.

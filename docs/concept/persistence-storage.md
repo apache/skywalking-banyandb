@@ -1,4 +1,4 @@
-# Persistence Storage
+﻿# Persistence Storage
 Persistence storage is used for unifying data of BanyanDB persistence, including index, and data collected from skywalking and other observability platforms or APM systems. It provides various implementations and IO modes to satisfy the need of different components.
 BanyanDB provides a concise interface that shields the complexity of the implementation from the upper layer. By exposing necessary interfaces, upper components do not need to care how persistence is implemented and avoid dealing with differences between different operating systems.
 

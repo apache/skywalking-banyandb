@@ -1,4 +1,4 @@
-# Upgrade Procedure
+﻿# Upgrade Procedure
 
 This document describes how to upgrade your existing installation of the BanyanDB database.
 

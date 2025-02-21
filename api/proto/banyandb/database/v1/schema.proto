@@ -1,4 +1,4 @@
-// Licensed to Apache Software Foundation (ASF) under one or more contributor
+﻿// Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
 // ownership. Apache Software Foundation (ASF) licenses this file to you under
@@ -109,7 +109,7 @@ message Measure {
   // entity indicates which tags will be to generate a series and shard a measure
   Entity entity = 4 [(validate.rules).message.required = true];
   // interval indicates how frequently to send a data point
-  // valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h", "d".
+  // valid time units are "ns", "us" (or "碌s"), "ms", "s", "m", "h", "d".
   string interval = 5;
   // updated_at indicates when the measure is updated
   google.protobuf.Timestamp updated_at = 6;
@@ -169,7 +169,7 @@ message IndexRule {
   // - "simple" breaks text into tokens at any non-letter character,
   //            such as numbers, spaces, hyphens and apostrophes, discards non-letter characters,
   //            and changes uppercase to lowercase.
-  // - "keyword" is a “noop” analyzer which returns the entire input string as a single token.
+  // - "keyword" is a 鈥渘oop鈥?analyzer which returns the entire input string as a single token.
   // - "url" breaks test into tokens at any non-letter and non-digit character.
   string analyzer = 5;
   // no_sort indicates whether the index is not for sorting.

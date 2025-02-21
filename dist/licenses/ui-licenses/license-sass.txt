@@ -1,4 +1,4 @@
-Dart Sass license:
+﻿Dart Sass license:
 
 Copyright (c) 2016, Google Inc.
 

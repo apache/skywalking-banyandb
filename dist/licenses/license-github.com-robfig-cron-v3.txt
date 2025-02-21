@@ -1,4 +1,4 @@
-Copyright (C) 2012 Rob Figueiredo
+﻿Copyright (C) 2012 Rob Figueiredo
 All Rights Reserved.
 
 MIT LICENSE

@@ -1,4 +1,4 @@
-# BanyanDB Clustering
+﻿# BanyanDB Clustering
 
 BanyanDB Clustering introduces a robust and scalable architecture that comprises "Liaison Nodes", "Data Nodes", and "Meta Nodes". This structure allows for effectively distributing and managing time-series data within the system.
 
@@ -69,7 +69,7 @@ They also handle the computational tasks associated with data queries, interacti
 
 ## 4. **Determining Optimal Node Counts**
 
-When creating a BanyanDB cluster, choosing the appropriate number of each node type to configure and connect is crucial. The number of Meta Nodes should always be odd, for instance, “3”. The number of Data Nodes scales based on your storage and query needs. The number of Liaison Nodes depends on the expected query load and routing complexity.
+When creating a BanyanDB cluster, choosing the appropriate number of each node type to configure and connect is crucial. The number of Meta Nodes should always be odd, for instance, 鈥?鈥? The number of Data Nodes scales based on your storage and query needs. The number of Liaison Nodes depends on the expected query load and routing complexity.
 
 If the write and read load is from different sources, it is recommended to separate the Liaison Nodes for write and read. For instance, if the write load is from metrics, trace or log collectors and the read load is from a web application, it is recommended to separate the Liaison Nodes for write and read.
 
@@ -97,7 +97,7 @@ Futhermore, the storage system might be cheaper. For instance, S3 can be more co
 
 ### 5.2 Data Sharding
 
-Data distribution across the cluster is determined by the `shard_num` setting for a group and the specified `entity` in each resource, whether it is a stream or a measure. The combination of the resource’s `name` and its `entity` forms the sharding key, which guides data distribution to the appropriate Data Node during write operations.
+Data distribution across the cluster is determined by the `shard_num` setting for a group and the specified `entity` in each resource, whether it is a stream or a measure. The combination of the resource鈥檚 `name` and its `entity` forms the sharding key, which guides data distribution to the appropriate Data Node during write operations.
 
 For example, if a group has 5 shards, the data is distributed across these shards based on the sharding key:
 

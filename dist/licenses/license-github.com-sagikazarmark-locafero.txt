@@ -1,4 +1,4 @@
-Copyright (c) 2023 Márk Sági-Kazár <mark.sagikazar@gmail.com>
+﻿Copyright (c) 2023 M谩rk S谩gi-Kaz谩r <mark.sagikazar@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

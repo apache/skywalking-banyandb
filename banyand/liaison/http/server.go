@@ -1,4 +1,4 @@
-// Licensed to Apache Software Foundation (ASF) under one or more contributor
+﻿// Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
 // ownership. Apache Software Foundation (ASF) licenses this file to you under
@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -40,6 +41,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -49,15 +51,17 @@ var (
 	_ run.Config  = (*server)(nil)
 	_ run.Service = (*server)(nil)
 
-	errServerCert = errors.New("http: invalid server cert file")
-	errServerKey  = errors.New("http: invalid server key file")
-	errNoAddr     = errors.New("http: no address")
+	errServerCert   = errors.New("http: invalid server cert file")
+	errServerKey    = errors.New("http: invalid server key file")
+	errNoAddr       = errors.New("http: no address")
+	errNoHealthAddr = errors.New("http: no health address")
 )
 
 // NewServer return a http service.
 func NewServer() Server {
 	return &server{
 		stopCh: make(chan struct{}),
+		closed: 0,
 	}
 }
 
@@ -68,27 +72,37 @@ type Server interface {
 }
 
 type server struct {
-	creds        credentials.TransportCredentials
-	l            *logger.Logger
-	clientCloser context.CancelFunc
-	mux          *chi.Mux
-	srv          *http.Server
-	stopCh       chan struct{}
-	host         string
-	listenAddr   string
-	grpcAddr     string
-	keyFile      string
-	certFile     string
-	grpcCert     string
-	port         uint32
-	tls          bool
+	creds          credentials.TransportCredentials
+	l              *logger.Logger
+	clientCloser   context.CancelFunc
+	mux            *chi.Mux
+	healthMux      *chi.Mux
+	srv            *http.Server
+	healthSrv      *http.Server
+	stopCh         chan struct{}
+	host           string
+	healthHost     string
+	listenAddr     string
+	healthAddr     string
+	grpcAddr       string
+	grpcHealthAddr string
+	keyFile        string
+	certFile       string
+	grpcCert       string
+	port           uint32
+	healthPort     uint32
+	closed         uint32
+	tls            bool
 }
 
 func (p *server) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("http")
 	flagSet.StringVar(&p.host, "http-host", "", "listen host for http")
+	flagSet.StringVar(&p.healthHost, "http-health-host", "", "health listen host for http")
 	flagSet.Uint32Var(&p.port, "http-port", 17913, "listen port for http")
+	flagSet.Uint32Var(&p.healthPort, "http-health-port", 0, "health listen port for http")
 	flagSet.StringVar(&p.grpcAddr, "http-grpc-addr", "localhost:17912", "http server redirect grpc requests to this address")
+	flagSet.StringVar(&p.grpcHealthAddr, "http-grpc-health-addr", "localhost:17912", "http server redirect grpc health check requests to this address")
 	flagSet.StringVar(&p.certFile, "http-cert-file", "", "the TLS cert file of http server")
 	flagSet.StringVar(&p.keyFile, "http-key-file", "", "the TLS key file of http server")
 	flagSet.StringVar(&p.grpcCert, "http-grpc-cert-file", "", "the grpc TLS cert file if grpc server enables tls")
@@ -100,6 +114,10 @@ func (p *server) Validate() error {
 	p.listenAddr = net.JoinHostPort(p.host, strconv.FormatUint(uint64(p.port), 10))
 	if p.listenAddr == ":" {
 		return errNoAddr
+	}
+	p.healthAddr = net.JoinHostPort(p.healthHost, strconv.FormatUint(uint64(p.healthPort), 10))
+	if p.healthAddr == ":" {
+		return errNoHealthAddr
 	}
 	if p.grpcCert != "" {
 		creds, errTLS := credentials.NewClientTLSFromFile(p.grpcCert, "")
@@ -135,13 +153,22 @@ func (p *server) GetPort() *uint32 {
 func (p *server) PreRun(_ context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.mux = chi.NewRouter()
-
+	p.mux.Use(authMiddleware)
+	p.healthMux = chi.NewRouter()
+	if auth.Cfg.HealthAuthEnabled {
+		p.healthMux.Use(authMiddleware)
+	}
 	if err := p.setRootPath(); err != nil {
 		return err
 	}
 	p.srv = &http.Server{
 		Addr:              p.listenAddr,
 		Handler:           p.mux,
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+	p.healthSrv = &http.Server{
+		Addr:              p.healthAddr,
+		Handler:           p.healthMux,
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 	return nil
@@ -156,13 +183,20 @@ func (p *server) Serve() run.StopNotify {
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(p.creds))
 	}
-	client, err := healthcheck.NewClient(ctx, p.l, p.grpcAddr, opts)
+	client, err := healthcheck.NewClient(ctx, p.l, p.grpcHealthAddr, opts)
 	if err != nil {
 		p.l.Error().Err(err).Msg("Failed to health check client")
-		close(p.stopCh)
+		p.tryClose()
 		return p.stopCh
 	}
-	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
+
+	var gwMux *runtime.ServeMux
+	if p.healthPort != 0 {
+		gwMux = runtime.NewServeMux(runtime.WithMetadata(metadataAnnotator()))
+	} else {
+		gwMux = runtime.NewServeMux(runtime.WithMetadata(metadataAnnotator()), runtime.WithHealthzEndpoint(client))
+	}
+	gwHealthMux := runtime.NewServeMux(runtime.WithMetadata(metadataAnnotator()), runtime.WithHealthzEndpoint(client))
 	err = multierr.Combine(
 		commonv1.RegisterServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
 		databasev1.RegisterStreamRegistryServiceHandlerFromEndpoint(ctx, gwMux, p.grpcAddr, opts),
@@ -178,10 +212,12 @@ func (p *server) Serve() run.StopNotify {
 	)
 	if err != nil {
 		p.l.Error().Err(err).Msg("Failed to register endpoints")
-		close(p.stopCh)
+		p.tryClose()
 		return p.stopCh
 	}
+
 	p.mux.Mount("/api", http.StripPrefix("/api", gwMux))
+	p.healthMux.Mount("/api", http.StripPrefix("/api", gwHealthMux))
 	go func() {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		var err error
@@ -194,13 +230,38 @@ func (p *server) Serve() run.StopNotify {
 			p.l.Error().Err(err)
 		}
 
-		close(p.stopCh)
+		p.tryClose()
 	}()
+	if p.healthPort != 0 {
+		go func() {
+			p.l.Info().Str("healthAddr", p.healthAddr).Msg("Start liaison http health server")
+			var err error
+			if p.tls {
+				err = p.healthSrv.ListenAndServeTLS(p.certFile, p.keyFile)
+			} else {
+				err = p.healthSrv.ListenAndServe()
+			}
+			if err != http.ErrServerClosed {
+				p.l.Error().Err(err)
+			}
+
+			p.tryClose()
+		}()
+	}
 	return p.stopCh
+}
+
+func (p *server) tryClose() {
+	if atomic.CompareAndSwapUint32(&p.closed, 0, 1) {
+		close(p.stopCh)
+	}
 }
 
 func (p *server) GracefulStop() {
 	if err := p.srv.Close(); err != nil {
+		p.l.Error().Err(err)
+	}
+	if err := p.healthSrv.Close(); err != nil {
 		p.l.Error().Err(err)
 	}
 	p.clientCloser()
@@ -242,21 +303,21 @@ func serveFileContents(file string, files http.FileSystem) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Accept"), "text/html") {
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, "404 not found")
+			_, _ = fmt.Fprint(w, "404 not found")
 
 			return
 		}
 		index, err := files.Open(file)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, "%s not found", file)
+			_, _ = fmt.Fprintf(w, "%s not found", file)
 
 			return
 		}
 		fi, err := index.Stat()
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, "%s not found", file)
+			_, _ = fmt.Fprintf(w, "%s not found", file)
 
 			return
 		}

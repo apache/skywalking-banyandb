@@ -1,4 +1,4 @@
-# bydbctl
+﻿# bydbctl
 `bydbctl` is the command line tool for interacting with BanyanDB. It is a powerful tool that can be used to create, update, read, and delete schemas. It can also be used to query data stored in streams, measures, and properties.
 
 These are several ways to install:

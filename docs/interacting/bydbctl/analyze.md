@@ -1,4 +1,4 @@
-# Analyze the data
+﻿# Analyze the data
 
 `bydbctl` provides a powerful subcommand `analyze` to analyze the data stored in BanyanDB. The `analyze` subcommand supports the following operations:
 

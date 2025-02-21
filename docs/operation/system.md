@@ -1,4 +1,4 @@
-# System Configuration
+﻿# System Configuration
 
 Several system configuration settings should be set before running BanyanDB. 
 

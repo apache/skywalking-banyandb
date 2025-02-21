@@ -1,4 +1,4 @@
-# Licensed to the Apache Software Foundation (ASF) under one or more
+﻿# Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with
 # this work for additional information regarding copyright ownership.
 # The ASF licenses this file to You under the Apache License, Version 2.0
@@ -20,8 +20,10 @@ services:
     command: standalone
     expose:
       - 17912
+      - 18912
     ports:
-    - 17913:17913
+    - "17913:17913"
+    - "18913:18913"
     networks:
       - demo
 

@@ -1,4 +1,4 @@
-# Troubleshooting No Data Issue
+﻿# Troubleshooting No Data Issue
 
 If you encounter issues with missing data in BanyanDB, follow these troubleshooting steps to identify and resolve the problem.
 

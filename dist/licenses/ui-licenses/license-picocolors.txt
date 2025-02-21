@@ -1,4 +1,4 @@
-ISC License
+﻿ISC License
 
 Copyright (c) 2021-2024 Oleksii Raspopov, Kostiantyn Denysov, Anton Verinov
 

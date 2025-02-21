@@ -1,4 +1,4 @@
-# Installing BanyanDB Cluster Mode
+﻿# Installing BanyanDB Cluster Mode
 
 ## Setup Meta Nodes
 

@@ -1,4 +1,4 @@
-# Failover and Resilience Test
+﻿# Failover and Resilience Test
 
 ## Setup the Cluster
 
@@ -33,8 +33,8 @@ See [Setup the Cluster](setup.md).
 
 - The `banyandb-1` pod is in the `Terminating` state.
 - The cluster is still available.
-- OAP might face "fail to execute the query plan for measure events_minute: broadcast errors: failed to publish message to 10. │
-│ 244.0.76:17912: failed to get stream for node 10.244.0.76:17912: rpc error: code = Canceled desc = grpc: the client connection is closing: invalid query message" error.
+- OAP might face "fail to execute the query plan for measure events_minute: broadcast errors: failed to publish message to 10. 鈹?
+鈹?244.0.76:17912: failed to get stream for node 10.244.0.76:17912: rpc error: code = Canceled desc = grpc: the client connection is closing: invalid query message" error.
 - The trace and metrics(5 services) write and read operations are still available.
 - Partial data loss might occur as the `banyandb-2` is down.
 

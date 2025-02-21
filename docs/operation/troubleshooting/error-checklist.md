@@ -1,4 +1,4 @@
-# Error Checklist
+﻿# Error Checklist
 
 When facing issues with BanyanDB, follow this checklist to effectively troubleshoot and resolve errors.
 

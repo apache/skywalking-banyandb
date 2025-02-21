@@ -1,4 +1,4 @@
-module github.com/apache/skywalking-banyandb
+﻿module github.com/apache/skywalking-banyandb
 
 go 1.24
 

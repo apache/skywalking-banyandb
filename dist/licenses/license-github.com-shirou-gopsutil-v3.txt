@@ -1,4 +1,4 @@
-gopsutil is distributed under BSD license reproduced below.
+﻿gopsutil is distributed under BSD license reproduced below.
 
 Copyright (c) 2014, WAKAYAMA Shirou
 All rights reserved.

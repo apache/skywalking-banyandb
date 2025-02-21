@@ -1,4 +1,4 @@
-The ISC License
+﻿The ISC License
 
 Copyright (c) 2011-2022 Isaac Z. Schlueter, Ben Noordhuis, and Contributors
 

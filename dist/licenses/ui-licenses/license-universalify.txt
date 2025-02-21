@@ -1,4 +1,4 @@
-(The MIT License)
+﻿(The MIT License)
 
 Copyright (c) 2017, Ryan Zimmerman <opensrc@ryanzim.com>
 

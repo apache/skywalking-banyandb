@@ -1,4 +1,4 @@
-# Query [Measures](../../../concept/data-model.md#measures)
+﻿# Query [Measures](../../../concept/data-model.md#measures)
 
 Query operation queries the data in a measure.
 

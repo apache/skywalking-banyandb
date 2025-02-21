@@ -1,4 +1,4 @@
-# Protocol Documentation
+﻿# Protocol Documentation
 <a name="top"></a>
 
 ## Table of Contents
@@ -1154,7 +1154,7 @@ IndexRule should bind to a subject through an IndexRuleBinding to generate prope
 | tags | [string](#string) | repeated | tags are the combination that refers to an indexed object If the elements in tags are more than 1, the object will generate a multi-tag index Caveat: All tags in a multi-tag MUST have an identical IndexType |
 | type | [IndexRule.Type](#banyandb-database-v1-IndexRule-Type) |  | type is the IndexType of this IndexObject. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRule is updated |
-| analyzer | [string](#string) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. available analyzers are: - &#34;standard&#34; provides grammar based tokenization - &#34;simple&#34; breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. - &#34;keyword&#34; is a “noop” analyzer which returns the entire input string as a single token. - &#34;url&#34; breaks test into tokens at any non-letter and non-digit character. |
+| analyzer | [string](#string) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. available analyzers are: - &#34;standard&#34; provides grammar based tokenization - &#34;simple&#34; breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. - &#34;keyword&#34; is a 鈥渘oop鈥?analyzer which returns the entire input string as a single token. - &#34;url&#34; breaks test into tokens at any non-letter and non-digit character. |
 | no_sort | [bool](#bool) |  | no_sort indicates whether the index is not for sorting. |
 
 
@@ -1196,7 +1196,7 @@ Measure intends to store data point
 | tag_families | [TagFamilySpec](#banyandb-database-v1-TagFamilySpec) | repeated | tag_families are for filter measures |
 | fields | [FieldSpec](#banyandb-database-v1-FieldSpec) | repeated | fields denote measure values |
 | entity | [Entity](#banyandb-database-v1-Entity) |  | entity indicates which tags will be to generate a series and shard a measure |
-| interval | [string](#string) |  | interval indicates how frequently to send a data point valid time units are &#34;ns&#34;, &#34;us&#34; (or &#34;µs&#34;), &#34;ms&#34;, &#34;s&#34;, &#34;m&#34;, &#34;h&#34;, &#34;d&#34;. |
+| interval | [string](#string) |  | interval indicates how frequently to send a data point valid time units are &#34;ns&#34;, &#34;us&#34; (or &#34;碌s&#34;), &#34;ms&#34;, &#34;s&#34;, &#34;m&#34;, &#34;h&#34;, &#34;d&#34;. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the measure is updated |
 | index_mode | [bool](#bool) |  | index_mode specifies whether the data should be stored exclusively in the index, meaning it will not be stored in the data storage system. |
 
@@ -3393,8 +3393,8 @@ QueryResponse is the response for a query to the Query module.
 | ----------- | ----- | --- | ---- | ------ | -- | -- | --- | ---- |
 | <a name="double" /> double |  | double | double | float | float64 | double | float | Float |
 | <a name="float" /> float |  | float | float | float | float32 | float | float | Float |
-| <a name="int32" /> int32 | Uses variable-length encoding. Inefficient for encoding negative numbers – if your field is likely to have negative values, use sint32 instead. | int32 | int | int | int32 | int | integer | Bignum or Fixnum (as required) |
-| <a name="int64" /> int64 | Uses variable-length encoding. Inefficient for encoding negative numbers – if your field is likely to have negative values, use sint64 instead. | int64 | long | int/long | int64 | long | integer/string | Bignum |
+| <a name="int32" /> int32 | Uses variable-length encoding. Inefficient for encoding negative numbers 鈥?if your field is likely to have negative values, use sint32 instead. | int32 | int | int | int32 | int | integer | Bignum or Fixnum (as required) |
+| <a name="int64" /> int64 | Uses variable-length encoding. Inefficient for encoding negative numbers 鈥?if your field is likely to have negative values, use sint64 instead. | int64 | long | int/long | int64 | long | integer/string | Bignum |
 | <a name="uint32" /> uint32 | Uses variable-length encoding. | uint32 | int | int/long | uint32 | uint | integer | Bignum or Fixnum (as required) |
 | <a name="uint64" /> uint64 | Uses variable-length encoding. | uint64 | long | int/long | uint64 | ulong | integer/string | Bignum or Fixnum (as required) |
 | <a name="sint32" /> sint32 | Uses variable-length encoding. Signed int value. These more efficiently encode negative numbers than regular int32s. | int32 | int | int | int32 | int | integer | Bignum or Fixnum (as required) |

@@ -1,4 +1,4 @@
-# Query [Streams](../../../concept/data-model.md#streams)
+﻿# Query [Streams](../../../concept/data-model.md#streams)
 
 Query operation queries the data in a stream.
 

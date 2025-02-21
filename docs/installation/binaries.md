@@ -1,4 +1,4 @@
-# Get Binaries
+﻿# Get Binaries
 
 This page shows how to get binaries of Banyand.
 
@@ -20,34 +20,34 @@ tar -zxvf skywalking-bydbctl-x.y.z-bydbctl.tgz
 The banyand and bydbctl directory structure is as follows.
 
 ```shell
-├── CHANGES.md
-├── LICENSE
-├── LICENSE.tpl
-├── NOTICE
-├── README.md
-├── bin
-│   ├──banyand-server-slim-linux-amd64 
-│   ├──banyand-server-slim-linux-arm64 
-│   ├──banyand-server-static-linux-amd64 
-│   └──banyand-server-static-linux-arm64
-└── licenses
+鈹溾攢鈹€ CHANGES.md
+鈹溾攢鈹€ LICENSE
+鈹溾攢鈹€ LICENSE.tpl
+鈹溾攢鈹€ NOTICE
+鈹溾攢鈹€ README.md
+鈹溾攢鈹€ bin
+鈹?  鈹溾攢鈹€banyand-server-slim-linux-amd64 
+鈹?  鈹溾攢鈹€banyand-server-slim-linux-arm64 
+鈹?  鈹溾攢鈹€banyand-server-static-linux-amd64 
+鈹偮犅?鈹斺攢鈹€banyand-server-static-linux-arm64
+鈹斺攢鈹€ licenses
 ```
 
 ```shell
-├── CHANGES.md
-├── LICENSE
-├── LICENSE.tpl
-├── NOTICE
-├── README.md
-├── bin
-│   ├── bydbctl-cli-static-linux-386
-│   ├── bydbctl-cli-static-linux-amd64
-│   ├── bydbctl-cli-static-linux-arm64
-│   ├── bydbctl-cli-static-windows-386
-│   ├── bydbctl-cli-static-windows-amd64
-│   ├── bydbctl-cli-static-darwin-amd64
-│   └── bydbctl-cli-static-darwin-arm64
-└── licenses
+鈹溾攢鈹€ CHANGES.md
+鈹溾攢鈹€ LICENSE
+鈹溾攢鈹€ LICENSE.tpl
+鈹溾攢鈹€ NOTICE
+鈹溾攢鈹€ README.md
+鈹溾攢鈹€ bin
+鈹偮犅?鈹溾攢鈹€ bydbctl-cli-static-linux-386
+鈹偮犅?鈹溾攢鈹€ bydbctl-cli-static-linux-amd64
+鈹偮犅?鈹溾攢鈹€ bydbctl-cli-static-linux-arm64
+鈹偮犅?鈹溾攢鈹€ bydbctl-cli-static-windows-386
+鈹偮犅?鈹溾攢鈹€ bydbctl-cli-static-windows-amd64
+鈹偮犅?鈹溾攢鈹€ bydbctl-cli-static-darwin-amd64
+鈹偮犅?鈹斺攢鈹€ bydbctl-cli-static-darwin-arm64
+鈹斺攢鈹€ licenses
 ```
 
 ## Build From Source

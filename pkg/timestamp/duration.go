@@ -1,4 +1,4 @@
-// Licensed to Apache Software Foundation (ASF) under one or more contributor
+﻿// Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
 // ownership. Apache Software Foundation (ASF) licenses this file to you under
@@ -27,7 +27,7 @@ import (
 // A duration string is a possibly signed sequence of
 // decimal numbers, each with optional fraction and a unit suffix,
 // such as "300ms", "-1.5h" or "2h45m".
-// Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h", "d".
+// Valid time units are "ns", "us" (or "碌s"), "ms", "s", "m", "h", "d".
 func ParseDuration(s string) (time.Duration, error) {
 	i := strings.Index(s, "d")
 	if i <= 0 {

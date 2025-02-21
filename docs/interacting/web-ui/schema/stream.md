@@ -1,4 +1,4 @@
-# CRUD [Streams](../../../concept/data-model.md#streams) on the Web UI
+﻿# CRUD [Streams](../../../concept/data-model.md#streams) on the Web UI
 The Web UI is hosted at [skywalking-banyandb-webapp](http://localhost:17913/) when you boot up the BanyanDB server.
 
 ## Get Streams

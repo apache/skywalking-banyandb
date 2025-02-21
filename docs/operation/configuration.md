@@ -1,6 +1,7 @@
-# Configuration
+﻿# Configuration
 
-BanyanD is the BanyanDB server. There are two ways to configure BanyanD: using a bootstrap flag or using environment variables. The environment variable name has a prefix `BYDB_` followed by the flag name in uppercase. For example, the flag `--port` can be set using the environment variable `BYDB_PORT`.
+BanyanD is the BanyanDB server. There are two ways to configure BanyanD: using a bootstrap flag or using environment variables. The environment variable name has a prefix `BYDB_` followed by the flag name in uppercase. For example, the flag `--port` can be set using the environment variable
+`BYDB_PORT`.
 
 ## Commands
 
@@ -10,7 +11,7 @@ There are three bootstrap commands: `data`, `liaison`, and `standalone`. You cou
 
 - `data`: Run as the data server. It stores the data and processes the data requests.
 - `liaison`: Run as the liaison server. It is responsible for the communication between the data servers and clients.
-- `standalone`: Run as the standalone server. It combines the data, liaison server and embed etcd server for development and testing. 
+- `standalone`: Run as the standalone server. It combines the data, liaison server and embed etcd server for development and testing.
 
 ### Other commands
 
@@ -45,9 +46,14 @@ BanyanDB uses gRPC for communication between the servers. The following flags ar
 
 - `--grpc-host string`: The host BanyanDB listens on.
 - `--grpc-port uint32`: The port BanyanDB listens on (default: 17912).
+- `--grpc-health-host string`: The host BanyanDB health service listens on.
+- `--grpc-health-port uint32`: The port BanyanDB health service listens on (default: 17912).
 - `--http-grpc-addr string`: HTTP server redirects gRPC requests to this address (default: "localhost:17912").
+- `--http-grpc-health-addr string`: HTTP server redirects gRPC health requests to this address (default: "localhost:17912").
 - `--http-host string`: Listen host for HTTP.
 - `--http-port uint32`: Listen port for HTTP (default: 17913).
+- `--http-health-host string`: Health service listen host for HTTP.
+- `--http-health-port uint32`: Health service Listen port for HTTP (default: 17913).
 - `--max-recv-msg-size bytes`: The size of the maximum receiving message (default: 10.00MiB).
 
 The following flags are used to configure access logs for the data ingestion:
@@ -64,6 +70,13 @@ The following flags are used to configure the timeout of data sending from liais
 
 - `--stream-write-timeout duration`: Stream write timeout (default: 15s).
 - `--measure-write-timeout duration`: Measure write timeout (default: 15s).
+
+### Authentication
+
+If you want to enable username/password auth for HTTP and gRPC services, you can use the following flags:
+
+- `--auth-config-file string`: Path to the authentication config file (YAML format).
+- `--enable-health-auth bool`: Enable auth for health service.
 
 ### TLS
 
@@ -102,7 +115,7 @@ The following flags are used to configure the embedded etcd storage engine which
 
 The following flags are used to configure the memory protector:
 
-- `--allowed-bytes bytes`: Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. Setting a large value may evict data from the OS page cache, causing high disk I/O. (default 0B)  
+- `--allowed-bytes bytes`: Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. Setting a large value may evict data from the OS page cache, causing high disk I/O. (default 0B)
 - `--allowed-percent int`: Allowed percentage of total memory usage. If usage exceeds this value, the query services will stop. This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache eviction. (default 75)
 
 ### Observability

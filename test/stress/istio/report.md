@@ -1,4 +1,4 @@
-# Testing Report
+﻿# Testing Report
 
 ## Scenario
 
@@ -25,7 +25,7 @@ Machine and OS information:
 written 16186000 items in 38m25.757182449s
 throughput: 7019.819833 items/s
 throughput(kb/s) 1796.489734
-latency: 167.193µs
+latency: 167.193碌s
 
 CPU and Memory usage are improved due to reducing the updates of the index.
 

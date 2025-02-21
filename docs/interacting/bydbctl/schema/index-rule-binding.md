@@ -1,4 +1,4 @@
-# CRUD [IndexRuleBindings](../../../concept/data-model.md#indexrule--indexrulebinding)
+﻿# CRUD [IndexRuleBindings](../../../concept/data-model.md#indexrule--indexrulebinding)
 
 CRUD operations create, read, update and delete index rule bindings.
 

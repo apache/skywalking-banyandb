@@ -1,4 +1,4 @@
-MIT License
+﻿MIT License
 
 Copyright (C) 2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 

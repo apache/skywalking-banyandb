@@ -1,4 +1,4 @@
-# Changes by Version
+﻿# Changes by Version
 
 Release Notes.
 

@@ -1,4 +1,4 @@
-ISC License
+﻿ISC License
 
 Copyright (c) 2012-2016 Dave Collins <dave@davec.name>
 

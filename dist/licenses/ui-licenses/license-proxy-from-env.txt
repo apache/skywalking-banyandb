@@ -1,4 +1,4 @@
-The MIT License
+﻿The MIT License
 
 Copyright (C) 2016-2018 Rob Wu <rob@robwu.nl>
 

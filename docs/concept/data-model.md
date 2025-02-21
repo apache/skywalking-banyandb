@@ -1,4 +1,4 @@
-# Data Model
+﻿# Data Model
 
 This chapter introduces BanyanDB's data models and covers the following:
 

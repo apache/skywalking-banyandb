@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Licensed to Apache Software Foundation (ASF) under one or more contributor
  * license agreements. See the NOTICE file distributed with
  * this work for additional information regarding copyright
@@ -78,7 +78,7 @@ axiosService.interceptors.response.use(
     let msg = error.data && error.data.message ? error.data.message : error.message;
     ElMessage({
       dangerouslyUseHTMLString: true,
-      message: `${msg}<br/>Error：${error.response.data.message}`,
+      message: `${msg}<br/>Error锛?{error.response.data.message}`,
       type: 'error',
       duration: 3000,
     });

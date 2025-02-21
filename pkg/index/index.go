@@ -1,4 +1,4 @@
-// Licensed to Apache Software Foundation (ASF) under one or more contributor
+﻿// Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
 // ownership. Apache Software Foundation (ASF) licenses this file to you under
@@ -40,7 +40,7 @@ import (
 const (
 	// AnalyzerUnspecified represents an unspecified analyzer.
 	AnalyzerUnspecified = ""
-	// AnalyzerKeyword is a “noop” analyzer which returns the entire input string as a single token.
+	// AnalyzerKeyword is a 鈥渘oop鈥?analyzer which returns the entire input string as a single token.
 	AnalyzerKeyword = "keyword"
 	// AnalyzerSimple breaks text into tokens at any non-letter character.
 	AnalyzerSimple = "simple"

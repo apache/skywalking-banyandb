@@ -1,4 +1,4 @@
-# CRUD [Groups](../../../concept/data-model.md#groups)
+﻿# CRUD [Groups](../../../concept/data-model.md#groups)
 
 CRUD operations create, read, update and delete groups.
 

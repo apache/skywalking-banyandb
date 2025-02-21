@@ -1,4 +1,4 @@
-# Data Lifecycle
+﻿# Data Lifecycle
 
 ## [Measures](../concept/data-model.md#measures) and [Streams](../concept/data-model.md#streams)
 
@@ -6,7 +6,7 @@ Due to the design of BanyanDB, the data in the `Measures and Streams` can not be
 The data will be deleted automatically based on the [Groups](../concept/data-model.md#groups) `TTL` setting.
 
 The TTL means the `time to live` of the data in the group. 
-Each group has an internal trigger which is triggered by writing events. If there is no further data, the expired data can’t get removed.
+Each group has an internal trigger which is triggered by writing events. If there is no further data, the expired data can鈥檛 get removed.
 
 For example, the following command will create a group with a TTL of 7 days:
 ```shell

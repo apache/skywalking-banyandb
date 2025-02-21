@@ -1,4 +1,4 @@
-# Filter Operation
+﻿# Filter Operation
 
 Filter operation is a part of the query configuration. It is used to filter the data based on the given condition for [Stream](stream.md) and [Measure](measure.md) queries.
 

@@ -1,4 +1,4 @@
-# Backup Data Using BanyanDB Backup Tool
+﻿# Backup Data Using BanyanDB Backup Tool
 
 The backup command-line tool is used to backup BanyanDB snapshots to remote storage. The tool allows both one-time and scheduled backups.
 
@@ -39,7 +39,7 @@ To perform a one-time backup, run the backup command with the required flags. At
 
 ### Scheduled Backup
 
-To enable periodic backups, provide the `--schedule` flag with a schedule style (e.g., @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>) and set your preferred time style using `--time-style`. The supported schedule expressions based on the tool’s internal map are:
+To enable periodic backups, provide the `--schedule` flag with a schedule style (e.g., @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>) and set your preferred time style using `--time-style`. The supported schedule expressions based on the tool鈥檚 internal map are:
 
 - **Hourly:** Schedules at "5 * * * *" (runs on the 5th minute of every hour).
 - **Daily:** Schedules at "5 0 * * *" (runs at 00:05 every day).

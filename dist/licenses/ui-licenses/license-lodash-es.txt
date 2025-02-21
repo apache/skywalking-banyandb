@@ -1,4 +1,4 @@
-Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
+﻿Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
 
 Based on Underscore.js, copyright Jeremy Ashkenas,
 DocumentCloud and Investigative Reporters & Editors <http://underscorejs.org/>

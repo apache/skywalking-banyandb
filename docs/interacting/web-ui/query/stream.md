@@ -1,4 +1,4 @@
-# Query [Streams](../../../concept/data-model.md#streams)
+﻿# Query [Streams](../../../concept/data-model.md#streams)
 The Web UI is hosted at [skywalking-banyandb-webapp](http://localhost:17913/) when you boot up the BanyanDB server.
 
 You can query the data stored in the stream on the Web UI.

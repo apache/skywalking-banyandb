@@ -1,4 +1,4 @@
-The MIT License (MIT)
+﻿The MIT License (MIT)
 
 Copyright (c) 2017 [Node.js API collaborators](https://github.com/nodejs/node-addon-api#collaborators)
 

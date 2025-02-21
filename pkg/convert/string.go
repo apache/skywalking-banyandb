@@ -1,4 +1,4 @@
-// Licensed to Apache Software Foundation (ASF) under one or more contributor
+﻿// Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
 // ownership. Apache Software Foundation (ASF) licenses this file to you under
@@ -22,7 +22,7 @@ import (
 )
 
 // StringToBytes converts string to bytes.
-// It work well until the referenced memory won’t be changed.
+// It work well until the referenced memory won鈥檛 be changed.
 func StringToBytes(s string) (b []byte) {
 	if s == "" {
 		return nil
@@ -31,7 +31,7 @@ func StringToBytes(s string) (b []byte) {
 }
 
 // BytesToString converts bytes to string.
-// It work well until the referenced memory won’t be changed.
+// It work well until the referenced memory won鈥檛 be changed.
 func BytesToString(b []byte) string {
 	if len(b) == 0 {
 		return ""

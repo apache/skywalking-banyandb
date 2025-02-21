@@ -1,4 +1,4 @@
-# Troubleshooting Query Issues
+﻿# Troubleshooting Query Issues
 
 If you encounter issues with query results in BanyanDB, follow these troubleshooting steps to identify and resolve the problem.
 

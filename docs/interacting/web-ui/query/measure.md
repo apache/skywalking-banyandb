@@ -1,4 +1,4 @@
-# Query [Measures](../../../concept/data-model.md#measures) on the Web UI
+﻿# Query [Measures](../../../concept/data-model.md#measures) on the Web UI
 The Web UI is hosted at [skywalking-banyandb-webapp](http://localhost:17913/) when you boot up the BanyanDB server.
 
 You can query the data stored in the measure on the Web UI.

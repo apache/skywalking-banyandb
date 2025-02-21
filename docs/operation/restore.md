@@ -1,4 +1,4 @@
-# Restore BanyanDB Data Using the Restore Tool
+﻿# Restore BanyanDB Data Using the Restore Tool
 
 This document explains how to use the backup and restore command line tools for BanyanDB.
 
@@ -42,7 +42,7 @@ backup run \
 
 ### Timedir Utilities
 
-The `timedir` tool provides commands to create, read, list, and delete marker files (time directories) that indicate the backup snapshot’s timestamp. These marker files are used by the restore process to identify which snapshot to restore.
+The `timedir` tool provides commands to create, read, list, and delete marker files (time directories) that indicate the backup snapshot鈥檚 timestamp. These marker files are used by the restore process to identify which snapshot to restore.
 
 #### List Remote Timedir Files
 
@@ -132,4 +132,4 @@ For environments running BanyanDB in Kubernetes, the backup and restore tools ca
    - The timedir files and data directories are shared between the init container, sidecar, and main container (data node) via Kubernetes volumes.
    - This shared setup ensures that the restore process can correctly synchronize the data state before the server starts.
 
-By following the guidelines and examples provided in this document, administrators can choose the approach that best fits their deployment environment—whether on-prem or in Kubernetes—to ensure reliable data backup and restoration for BanyanDB.
+By following the guidelines and examples provided in this document, administrators can choose the approach that best fits their deployment environment鈥攚hether on-prem or in Kubernetes鈥攖o ensure reliable data backup and restoration for BanyanDB.

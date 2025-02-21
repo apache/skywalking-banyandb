@@ -1,4 +1,4 @@
-(The MIT License)
+﻿(The MIT License)
 
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
 Copyright (c) 2015-2022 Douglas Christopher Wilson <doug@somethingdoug.com>

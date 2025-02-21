@@ -1,4 +1,4 @@
-{{.LicenseContent }}
+﻿{{.LicenseContent }}
 {{ range .Groups }}
 ========================================================================
 {{.LicenseID}} licenses

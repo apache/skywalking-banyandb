@@ -1,4 +1,4 @@
-The MIT License (MIT)
+﻿The MIT License (MIT)
 
 go-toml v2
 Copyright (c) 2021 - 2023 Thomas Pelletier

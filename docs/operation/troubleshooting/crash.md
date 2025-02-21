@@ -1,4 +1,4 @@
-# Troubleshooting Crash Issues
+﻿# Troubleshooting Crash Issues
 
 If BanyanDB processes crash or encounter file corruption, follow these steps to diagnose and recover from the issue.
 

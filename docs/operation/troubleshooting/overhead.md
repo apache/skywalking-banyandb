@@ -1,4 +1,4 @@
-# Troubleshooting Overhead Issue
+﻿# Troubleshooting Overhead Issue
 
 If you encounter issues with high overhead in BanyanDB, follow these troubleshooting steps to identify and resolve the problem.
 

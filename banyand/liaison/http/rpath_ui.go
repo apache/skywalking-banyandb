@@ -1,4 +1,4 @@
-//go:build !slim
+﻿//go:build !slim
 // +build !slim
 
 // Licensed to Apache Software Foundation (ASF) under one or more contributor

@@ -1,4 +1,4 @@
-# Scale Test
+﻿# Scale Test
 
 ## Provisioning the KinD cluster
 

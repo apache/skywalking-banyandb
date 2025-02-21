@@ -1,4 +1,4 @@
-# Data Rotation
+﻿# Data Rotation
 
 Data rotation is the process of managing the size of data stored in BanyanDB by removing old data and keeping only the most recent data. Data rotation is essential to prevent the database from running out of disk space and to maintain query performance.
 
@@ -50,13 +50,13 @@ S = 4
 
 | Time (Day)    | Action                                | Number of Segments |
 |---------------|---------------------------------------|--------------------|
-| Day 1 (00:00) | Segment for Days 1–3 is created       | 1                  |
-| Day 3 (23:00) | New segment for Days 4–6 is created   | 2                  |
-| Day 6 (23:00) | New segment for Days 7–9 is created   | 3                  |
-| Day 9 (23:00) | New segment for Days 10–12 is created | 4                  |
-| Day 10 (00:00) | Oldest segment for Days 1–3 is removed | 3                  |
-| Day 12 (23:00) | New segment for Days 13–15 is created | 4                  |
-| Day 13 (00:00) | Oldest segment for Days 4–6 is removed | 3                  |
+| Day 1 (00:00) | Segment for Days 1鈥? is created       | 1                  |
+| Day 3 (23:00) | New segment for Days 4鈥? is created   | 2                  |
+| Day 6 (23:00) | New segment for Days 7鈥? is created   | 3                  |
+| Day 9 (23:00) | New segment for Days 10鈥?2 is created | 4                  |
+| Day 10 (00:00) | Oldest segment for Days 1鈥? is removed | 3                  |
+| Day 12 (23:00) | New segment for Days 13鈥?5 is created | 4                  |
+| Day 13 (00:00) | Oldest segment for Days 4鈥? is removed | 3                  |
 
 So, **4 segments** are required to retain data for 7 days with a 3-day segment interval.
 
@@ -95,7 +95,7 @@ So, **5 segments** are required to retain data for 7 days with a 2-day segment i
 
 ### Generalization for Any Time Unit
 
-To use this formula with time units like hours and days , make sure **both the segment interval (I)** and **TTL (T)** use the same unit of time. If they don’t, convert one of them so that they match.
+To use this formula with time units like hours and days , make sure **both the segment interval (I)** and **TTL (T)** use the same unit of time. If they don鈥檛, convert one of them so that they match.
 
 #### Steps
 

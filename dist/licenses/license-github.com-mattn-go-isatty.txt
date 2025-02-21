@@ -1,4 +1,4 @@
-Copyright (c) Yasuhiro MATSUMOTO <mattn.jp@gmail.com>
+﻿Copyright (c) Yasuhiro MATSUMOTO <mattn.jp@gmail.com>
 
 MIT License (Expat)
 

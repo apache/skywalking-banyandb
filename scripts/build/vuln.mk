@@ -1,4 +1,4 @@
-GOVULNCHECK := $(tool_bin)/govulncheck
+﻿GOVULNCHECK := $(tool_bin)/govulncheck
 $(GOVULNCHECK):
 	@echo "Install govulncheck..."
 	@mkdir -p $(tool_bin)

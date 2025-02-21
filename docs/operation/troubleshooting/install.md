@@ -1,4 +1,4 @@
-# Troubleshooting Installation Issues
+﻿# Troubleshooting Installation Issues
 
 If you encounter issues during the installation of BanyanDB, follow these troubleshooting steps to resolve common problems.
 

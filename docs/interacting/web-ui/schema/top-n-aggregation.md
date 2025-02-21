@@ -1,4 +1,4 @@
-# CRUD [TopNAggregation](../../../concept/data-model.md#topnaggregation) on the Web UI
+﻿# CRUD [TopNAggregation](../../../concept/data-model.md#topnaggregation) on the Web UI
 
 ## Get Top-N-Aggregation
 When you in the `Measure` tab, you can view the list of top-n-aggregations in the specific group.

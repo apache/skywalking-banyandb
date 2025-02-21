@@ -1,4 +1,4 @@
-# CRUD [Streams](../../../concept/data-model.md#streams)
+﻿# CRUD [Streams](../../../concept/data-model.md#streams)
 
 CRUD operations create, read, update and delete streams.
 

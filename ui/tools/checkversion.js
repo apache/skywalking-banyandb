@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Licensed to Apache Software Foundation (ASF) under one or more contributor
  * license agreements. See the NOTICE file distributed with
  * this work for additional information regarding copyright
@@ -26,7 +26,7 @@ const packageJsonPath = path.join(process.cwd(), 'package.json')
 fs.accessSync(packageJsonPath);
 const engines = jsonfile.readFileSync(packageJsonPath).engines;
 if (!engines) {
-  console.error('✘ No engines found in package.json');
+  console.error('鉁?No engines found in package.json');
   process.exit(1); 
 }
 const nodeVersion = engines['node']

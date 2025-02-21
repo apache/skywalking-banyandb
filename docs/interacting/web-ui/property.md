@@ -1,4 +1,4 @@
-# CRUD [Property](../../concept/data-model.md#Properties) on the Web UI
+﻿# CRUD [Property](../../concept/data-model.md#Properties) on the Web UI
 The Web UI is hosted at [skywalking-banyandb-webapp](http://localhost:17913/) when you boot up the BanyanDB server.
 
 ![web-ui-property.png](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/web-ui/web-ui-property.png)

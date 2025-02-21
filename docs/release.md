@@ -1,4 +1,4 @@
-# Apache SkyWalking BanyanDB release guide
+﻿# Apache SkyWalking BanyanDB release guide
 
 This documentation guides the release manager to release the SkyWalking BanyanDB in the Apache Way, and also helps people to check the release for vote.
 
@@ -109,14 +109,14 @@ Vote result should follow these:
    ```
    [RESULT][VOTE] Release Apache SkyWalking BanyanDB version $VERSION
    
-   3 days passed, we’ve got ($NUMBER) +1 bindings:
+   3 days passed, we鈥檝e got ($NUMBER) +1 bindings:
    xxx
    xxx
    xxx
    ...
    (list names)
     
-   I’ll continue the release process.
+   I鈥檒l continue the release process.
    ```
 
 ## Publish release
@@ -146,7 +146,7 @@ Vote result should follow these:
 
     Hi the SkyWalking Community
 
-    On behalf of the SkyWalking Team, I’m glad to announce that SkyWalking BanyanDB $VERSION is now released.
+    On behalf of the SkyWalking Team, I鈥檓 glad to announce that SkyWalking BanyanDB $VERSION is now released.
 
     SkyWalking BanyanDB: An observability database, aims to ingest, analyze and store Metrics, Tracing and Logging data.
 

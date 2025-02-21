@@ -1,4 +1,4 @@
-# Observability
+﻿# Observability
 
 This document outlines the observability features of BanyanDB, which include metrics, profiling, and tracing. These features help monitor and understand the performance, behavior, and overall health of BanyanDB.
 
