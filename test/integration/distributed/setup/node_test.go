@@ -50,6 +50,7 @@ var _ = Describe("Node registration", func() {
 			"--http-host="+host,
 			fmt.Sprintf("--http-port=%d", ports[1]),
 			"--http-grpc-addr="+addr,
+			"--http-grpc-health-addr="+addr,
 			"--etcd-endpoints", etcdEndpoint,
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost)

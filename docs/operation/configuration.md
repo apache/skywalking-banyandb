@@ -1,20 +1,17 @@
 # Configuration
 
-BanyanD is the BanyanDB server. There are two ways to configure BanyanD: using a bootstrap flag or using environment
-variables. The environment variable name has a prefix `BYDB_` followed by the flag name in uppercase. For example, the
-flag `--port` can be set using the environment variable `BYDB_PORT`.
+BanyanD is the BanyanDB server. There are two ways to configure BanyanD: using a bootstrap flag or using environment variables. The environment variable name has a prefix `BYDB_` followed by the flag name in uppercase. For example, the flag `--port` can be set using the environment variable
+`BYDB_PORT`.
 
 ## Commands
 
 ### Bootstrap commands
 
-There are three bootstrap commands: `data`, `liaison`, and `standalone`. You could use them to boot different roles of
-BanyanD.
+There are three bootstrap commands: `data`, `liaison`, and `standalone`. You could use them to boot different roles of BanyanD.
 
 - `data`: Run as the data server. It stores the data and processes the data requests.
 - `liaison`: Run as the liaison server. It is responsible for the communication between the data servers and clients.
-- `standalone`: Run as the standalone server. It combines the data, liaison server and embed etcd server for development
-  and testing.
+- `standalone`: Run as the standalone server. It combines the data, liaison server and embed etcd server for development and testing.
 
 ### Other commands
 
@@ -27,8 +24,7 @@ Below are the available flags for configuring BanyanDB:
 
 ### Service Discovery
 
-BanyanDB Liaison reads the endpoints of the data servers from the etcd server. The following flags are used to
-configure:
+BanyanDB Liaison reads the endpoints of the data servers from the etcd server. The following flags are used to configure:
 
 `node-host-provider`: the node host provider, can be "hostname", "ip" or "flag", default is hostname.
 
@@ -38,28 +34,26 @@ If the `node-host-provider` is "flag", you can use `node-host` to configure the 
 ./banyand liaison --node-host=foo.bar.com --node-host-provider=flag
 ```
 
-If the `node-host-provider` is "hostname", BanyanDB will use the hostname of the server as the node host. The hostname
-is parsed from the go library `os.Hostname()`.
+If the `node-host-provider` is "hostname", BanyanDB will use the hostname of the server as the node host. The hostname is parsed from the go library `os.Hostname()`.
 
-If the `node-host-provider` is "ip", BanyanDB will use the IP address of the server as the node host. The IP address is
-parsed from the go library `net.Interfaces()`. BanyanDB will use the first non-loopback IPv4 address as the node host.
+If the `node-host-provider` is "ip", BanyanDB will use the IP address of the server as the node host. The IP address is parsed from the go library `net.Interfaces()`. BanyanDB will use the first non-loopback IPv4 address as the node host.
 
 The official Helm chart uses the `node-host-provider` as "ip" as the default value.
 
 ### Liaison & Network
 
-BanyanDB uses gRPC for communication between the servers. The following flags are used to configure the network
-settings.
+BanyanDB uses gRPC for communication between the servers. The following flags are used to configure the network settings.
 
 - `--grpc-host string`: The host BanyanDB listens on.
 - `--grpc-port uint32`: The port BanyanDB listens on (default: 17912).
-- `--health-grpc-host string`: The host BanyanDB health service listens on.
-- `--health-grpc-port uint32`: The port BanyanDB health service listens on (default: 18912).
+- `--grpc-health-host string`: The host BanyanDB health service listens on.
+- `--grpc-health-port uint32`: The port BanyanDB health service listens on (default: 17912).
 - `--http-grpc-addr string`: HTTP server redirects gRPC requests to this address (default: "localhost:17912").
+- `--http-grpc-health-addr string`: HTTP server redirects gRPC health requests to this address (default: "localhost:17912").
 - `--http-host string`: Listen host for HTTP.
 - `--http-port uint32`: Listen port for HTTP (default: 17913).
-- `--health-http-host string`: Listen host for HTTP health service.
-- `--health-http-port uint32`: Listen port for HTTP health service (default: 18913).
+- `--http-health-host string`: Health service listen host for HTTP.
+- `--http-health-port uint32`: Health service Listen port for HTTP (default: 17913).
 - `--max-recv-msg-size bytes`: The size of the maximum receiving message (default: 10.00MiB).
 
 The following flags are used to configure access logs for the data ingestion:
@@ -67,9 +61,7 @@ The following flags are used to configure access logs for the data ingestion:
 - `--access-log-root-path string`: Access log root path.
 - `--enable-ingestion-access-log`: Enable ingestion access log.
 
-BanyanDB uses etcd for service discovery and configuration. The following flags are used to configure the etcd settings.
-These flags are only used when running as a liaison or data server. Standalone server embeds etcd server and does not
-need these flags.
+BanyanDB uses etcd for service discovery and configuration. The following flags are used to configure the etcd settings. These flags are only used when running as a liaison or data server. Standalone server embeds etcd server and does not need these flags.
 
 - `--etcd-listen-client-url strings`: A URL to listen on for client traffic (default: [http://localhost:2379]).
 - `--etcd-listen-peer-url strings`: A URL to listen on for peer traffic (default: [http://localhost:2380]).
@@ -81,24 +73,20 @@ The following flags are used to configure the timeout of data sending from liais
 
 ### Authentication
 
-If you want to enable username/password authentication for gRPC and HTTP server, you can use the following flags:
+If you want to enable username/password auth for HTTP and gRPC services, you can use the following flags:
 
 - `--auth-config-file string`: Path to the authentication config file (YAML format).
-- `--enable-health-auth bool`: Enable authentication for health service.
-
-You can view the example usage [here](security.md).
+- `--enable-health-auth bool`: Enable auth for health service.
 
 ### TLS
 
-If you want to enable TLS for the communication between the client and liaison/standalone, you can use the following
-flags:
+If you want to enable TLS for the communication between the client and liaison/standalone, you can use the following flags:
 
 - `--tls`: gRPC connection uses TLS if true, else plain TCP.
 - `--http-tls`: http connection uses TLS if true, else plain HTTP.
 - `--key-file string`: The TLS key file.
 - `--cert-file string`: The TLS certificate file.
-- `--http-grpc-cert-file string`: The gRPC TLS certificate file if the gRPC server enables TLS. It should be the same as
-  the `cert-file`.
+- `--http-grpc-cert-file string`: The gRPC TLS certificate file if the gRPC server enables TLS. It should be the same as the `cert-file`.
 - `--http-key-file string`: The TLS key file of the HTTP server.
 - `--http-cert-file string`: The TLS certificate file of the HTTP server.
 
@@ -121,28 +109,22 @@ The following flags are used to configure the stream storage engine:
 - `--stream-max-fan-out-size bytes`: the upper bound of a single file size after merge of stream (default 8.00EiB)
 - `--element-index-flush-timeout duration`: The element index timeout of stream (default: 1s).
 
-The following flags are used to configure the embedded etcd storage engine which is only used when running as a
-standalone server:
+The following flags are used to configure the embedded etcd storage engine which is only used when running as a standalone server:
 
 - `--metadata-root-path string`: The root path of metadata (default: "/tmp").
 
 The following flags are used to configure the memory protector:
 
-- `--allowed-bytes bytes`: Allowed bytes of memory usage. If the memory usage exceeds this value, the query services
-  will stop. Setting a large value may evict data from the OS page cache, causing high disk I/O. (default 0B)
-- `--allowed-percent int`: Allowed percentage of total memory usage. If usage exceeds this value, the query services
-  will stop. This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache
-  eviction. (default 75)
+- `--allowed-bytes bytes`: Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. Setting a large value may evict data from the OS page cache, causing high disk I/O. (default 0B)
+- `--allowed-percent int`: Allowed percentage of total memory usage. If usage exceeds this value, the query services will stop. This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache eviction. (default 75)
 
 ### Observability
 
 - `--observability-listener-addr string`: Listen address for observability (default: ":2121").
 - `--observability-modes strings`: Modes for observability (default: [prometheus]).
 - `--pprof-listener-addr string`: Listen address for pprof (default: ":6060").
-- `--dst-slow-query duration`: distributed slow query threshold, 0 means no slow query log. This is only used for the
-  liaison server (default: 0).
-- `--slow-query duration`: slow query threshold, 0 means no slow query log. This is only used for the data and
-  standalone server (default: 0).
+- `--dst-slow-query duration`: distributed slow query threshold, 0 means no slow query log. This is only used for the liaison server (default: 0).
+- `--slow-query duration`: slow query threshold, 0 means no slow query log. This is only used for the data and standalone server (default: 0).
 
 ### Other
 

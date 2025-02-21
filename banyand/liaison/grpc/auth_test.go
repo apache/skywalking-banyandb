@@ -21,6 +21,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"strconv"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -32,11 +33,11 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 var (
 	cfg = &auth.Config{
-		Enabled: true,
 		Users: []auth.User{
 			{
 				Username: "admin",
@@ -49,13 +50,20 @@ var (
 )
 
 func TestAuthInterceptor(t *testing.T) {
-	lis, err := net.Listen("tcp", "localhost:27912")
+	ports, err := test.AllocateFreePorts(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lis, err := net.Listen("tcp", "localhost:"+strconv.Itoa(ports[0]))
 	if err != nil {
 		t.Fatal(err)
 	}
 	preCfg := auth.Cfg
 	auth.Cfg = cfg
 	server := grpc.NewServer(grpc.UnaryInterceptor(authInterceptor))
+	defer server.GracefulStop()
+
 	databasev1.RegisterSnapshotServiceServer(server, &databasev1.UnimplementedSnapshotServiceServer{})
 
 	go func() {

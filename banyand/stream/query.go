@@ -232,8 +232,9 @@ func (s *stream) buildItersByIndex(ctx context.Context, tables []*tsTable,
 
 func mustEncodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue, num int) [][]byte {
 	values := make([][]byte, num)
-	nv := encodeTagValue(name, tagType, tagValue)
-	value := nv.marshal()
+	tv := encodeTagValue(name, tagType, tagValue)
+	defer releaseTagValue(tv)
+	value := tv.marshal()
 	for i := 0; i < num; i++ {
 		values[i] = value
 	}

@@ -47,6 +47,16 @@ func extractUserCredentialsFromContext(ctx context.Context) (string, string, err
 	return username, password, nil
 }
 
+func checkUsernameAndPassword(username, password string) bool {
+	for _, user := range auth.Cfg.Users {
+		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
+			strings.TrimSpace(password) == strings.TrimSpace(user.Password) {
+			return true
+		}
+	}
+	return false
+}
+
 // authInterceptor gRPC auth interceptor.
 func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	if !auth.Cfg.Enabled {
@@ -58,11 +68,8 @@ func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, hand
 		return nil, err
 	}
 
-	for _, user := range auth.Cfg.Users {
-		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
-			strings.TrimSpace(password) == strings.TrimSpace(user.Password) {
-			return handler(ctx, req)
-		}
+	if checkUsernameAndPassword(username, password) {
+		return handler(ctx, req)
 	}
 	return nil, status.Errorf(codes.Unauthenticated, "invalid username or password")
 }
@@ -78,11 +85,8 @@ func authStreamInterceptor(srv interface{}, ss grpc.ServerStream, _ *grpc.Stream
 		return err
 	}
 
-	for _, user := range auth.Cfg.Users {
-		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
-			strings.TrimSpace(password) == strings.TrimSpace(user.Password) {
-			return handler(srv, ss)
-		}
+	if checkUsernameAndPassword(username, password) {
+		return handler(srv, ss)
 	}
 	return status.Errorf(codes.Unauthenticated, "invalid username or password")
 }

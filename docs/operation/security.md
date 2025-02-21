@@ -11,7 +11,7 @@ BanyanDB supports username/password authentication for gRPC and HTTP server. The
 authentication:
 
 - `--auth-config-file string`: Path to the authentication config file (YAML format).
-- `--enable-health-auth bool`: Enable authentication for health service.
+- `--enable-health-auth bool`: Enable authentication for health service.It only takes effect when you provide a `grpc-health-port` different from the `grpc-port`.
 
 For example, you can create an authentication configuration file like this:
 

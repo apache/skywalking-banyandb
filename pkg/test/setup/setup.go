@@ -108,6 +108,7 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 		"--http-host=" + host,
 		fmt.Sprintf("--http-port=%d", ports[1]),
 		"--http-grpc-addr=" + addr,
+		"--http-grpc-health-addr=" + addr,
 		"--stream-root-path=" + path,
 		"--measure-root-path=" + path,
 		"--metadata-root-path=" + path,
@@ -270,6 +271,7 @@ func LiaisonNode(etcdEndpoint string) (string, func()) {
 		"--http-host="+host,
 		fmt.Sprintf("--http-port=%d", ports[1]),
 		"--http-grpc-addr="+addr,
+		"--http-grpc-health-addr="+addr,
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost)

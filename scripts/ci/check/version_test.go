@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	GoVersion = "1.23.6"
+	GoVersion = "1.24.0"
 	CPUType   = 8
 )
 

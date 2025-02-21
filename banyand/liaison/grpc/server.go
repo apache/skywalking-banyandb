@@ -20,6 +20,8 @@ package grpc
 
 import (
 	"context"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -32,8 +34,6 @@ import (
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/health"
-	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -108,7 +108,6 @@ type server struct {
 	healthPort               uint32
 	closed                   uint32
 	enableIngestionAccessLog bool
-	enableHealthAuth         bool
 	tls                      bool
 }
 
@@ -218,9 +217,9 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
 	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "Path to the authentication config file (YAML format)")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
-	fs.StringVar(&s.healthHost, "health-grpc-host", "", "the host of health check service")
+	fs.StringVar(&s.healthHost, "grpc-health-host", "", "the host of health check service")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
-	fs.Uint32Var(&s.healthPort, "health-grpc-port", 18912, "the port of health check service")
+	fs.Uint32Var(&s.healthPort, "grpc-health-port", 0, "the port of health check service")
 	fs.BoolVar(&auth.Cfg.HealthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
@@ -281,12 +280,22 @@ func (s *server) Serve() run.StopNotify {
 	}
 	healthStreamChain := streamChain
 	healthUnaryChain := unaryChain
-	if !s.enableHealthAuth {
+	if !auth.Cfg.HealthAuthEnabled {
 		healthStreamChain = []grpclib.StreamServerInterceptor{
 			grpc_validator.StreamServerInterceptor(),
 			recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 		}
 		healthUnaryChain = []grpclib.UnaryServerInterceptor{
+			grpc_validator.UnaryServerInterceptor(),
+			recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		}
+	}
+	if s.authConfigFile == "" {
+		streamChain = []grpclib.StreamServerInterceptor{
+			grpc_validator.StreamServerInterceptor(),
+			recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		}
+		unaryChain = []grpclib.UnaryServerInterceptor{
 			grpc_validator.UnaryServerInterceptor(),
 			recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 		}
@@ -317,8 +326,11 @@ func (s *server) Serve() run.StopNotify {
 	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
 	databasev1.RegisterTopNAggregationRegistryServiceServer(s.ser, s.topNAggregationRegistryServer)
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
-	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
-	grpc_health_v1.RegisterHealthServer(s.healthSer, health.NewServer())
+	if s.healthPort != 0 {
+		grpc_health_v1.RegisterHealthServer(s.healthSer, health.NewServer())
+	} else {
+		grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
+	}
 
 	s.stopCh = make(chan struct{})
 	s.closed = 0
@@ -336,20 +348,22 @@ func (s *server) Serve() run.StopNotify {
 		}
 		s.tryClose()
 	}()
-	go func() {
-		listen, err := net.Listen("tcp", s.healthAddr)
-		if err != nil {
-			s.log.Error().Err(err).Msg("Failed to listen")
+	if s.healthPort != 0 {
+		go func() {
+			listen, err := net.Listen("tcp", s.healthAddr)
+			if err != nil {
+				s.log.Error().Err(err).Msg("Failed to listen")
+				s.tryClose()
+				return
+			}
+			s.log.Info().Str("health check addr", s.healthAddr).Msg("Listening to")
+			err = s.healthSer.Serve(listen)
+			if err != nil {
+				s.log.Error().Err(err).Msg("server is interrupted")
+			}
 			s.tryClose()
-			return
-		}
-		s.log.Info().Str("health check addr", s.healthAddr).Msg("Listening to")
-		err = s.healthSer.Serve(listen)
-		if err != nil {
-			s.log.Error().Err(err).Msg("server is interrupted")
-		}
-		s.tryClose()
-	}()
+		}()
+	}
 	return s.stopCh
 }
 
