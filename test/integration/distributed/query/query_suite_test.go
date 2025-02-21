@@ -33,7 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -110,7 +109,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	return []byte(liaisonAddr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
+	connection, err = grpc.NewClient(string(address),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesstream.SharedContext = helpers.SharedContext{
 		Connection: connection,

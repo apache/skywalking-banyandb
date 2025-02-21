@@ -32,7 +32,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -68,10 +67,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	dir, _, err = test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
 	var ports []int
-	ports, err = test.AllocateFreePorts(4)
+	ports, err = test.AllocateFreePorts(6)
 	Expect(err).NotTo(HaveOccurred())
 	var addr string
-	addr, _, deferFunc = setup.ClosableStandalone(dir, ports)
+	addr, _, _, _, deferFunc = setup.ClosableStandalone(dir, ports)
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
 	test_cases.Initialize(addr, now)
@@ -79,7 +78,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
+	connection, err = grpc.NewClient(string(address),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	casesbackup.SharedContext = helpers.BackupSharedContext{

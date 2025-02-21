@@ -36,7 +36,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -74,14 +73,14 @@ var _ = Describe("Load Test Suit", func() {
 			Level: "debug",
 		})).Should(Succeed())
 		goods = gleak.Goroutines()
-		ports, err := test.AllocateFreePorts(4)
+		ports, err := test.AllocateFreePorts(6)
 		Expect(err).NotTo(HaveOccurred())
-		var addr string
-		addr, _, deferFunc = setup.ClosableStandalone(dir, ports)
+		var addr, healthAddr string
+		addr, healthAddr, _, _, deferFunc = setup.ClosableStandalone(dir, ports)
 		Eventually(
-			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
+			helpers.HealthCheck(healthAddr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(Succeed())
-		connection, err = grpchelper.Conn(addr, 10*time.Second,
+		connection, err = grpc.NewClient(addr,
 			grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 	})

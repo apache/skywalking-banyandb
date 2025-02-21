@@ -27,7 +27,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -61,14 +60,14 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Level: flags.LogLevel,
 	})).To(Succeed())
 	var addr string
-	addr, _, deferFunc = setup.Standalone()
+	addr, _, _, _, deferFunc = setup.Standalone()
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute))
 	test_cases.Initialize(addr, now)
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
+	connection, err = grpc.NewClient(string(address),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesstream.SharedContext = helpers.SharedContext{
 		Connection: connection,

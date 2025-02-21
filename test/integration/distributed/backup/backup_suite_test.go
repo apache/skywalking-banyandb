@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -101,7 +100,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
 	test_cases.Initialize(liaisonAddr, now)
-	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(liaisonAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	defer conn.Close()
 	gClient := databasev1.NewGroupRegistryServiceClient(conn)
@@ -143,7 +142,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	return []byte(dataAddr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
+	connection, err = grpc.NewClient(string(address),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	casesbackup.SharedContext = helpers.BackupSharedContext{

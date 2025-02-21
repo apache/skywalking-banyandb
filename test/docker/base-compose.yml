@@ -17,11 +17,12 @@ services:
   banyandb:
     expose:
       - 17912
+      - 18912
       - 2121
       - 6060
     command: standalone
     healthcheck:
-      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913"]
+      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:18913"]
       interval: 5s
       timeout: 120s
       retries: 120
@@ -30,11 +31,12 @@ services:
     hostname: liaison
     expose:
       - 17912
+      - 18912
       - 2121
       - 6060
     command: liaison --etcd-endpoints=http://etcd:2379
     healthcheck:
-      test: ["CMD", "./bydbctl", "health", "--addr=http://liaison:17913"]
+      test: ["CMD", "./bydbctl", "health", "--addr=http://liaison:18913"]
       interval: 5s
       timeout: 120s
       retries: 120
@@ -43,11 +45,12 @@ services:
     hostname: data
     expose:
       - 17912
+      - 18912
       - 2121
       - 6060
     command: data --etcd-endpoints=http://etcd:2379
     healthcheck:
-      test: ["CMD", "./bydbctl", "health", "--addr=http://127.0.0.1:17913"]
+      test: ["CMD", "./bydbctl", "health", "--addr=http://127.0.0.1:18913"]
       interval: 5s
       timeout: 120s
       retries: 120

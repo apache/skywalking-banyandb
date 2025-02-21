@@ -20,8 +20,10 @@ services:
     command: standalone
     expose:
       - 17912
+      - 18912
     ports:
-    - 17913:17913
+    - "17913:17913"
+    - "18913:18913"
     networks:
       - demo
 

@@ -32,7 +32,7 @@ import (
 
 var _ = Describe("health check after launching banyandb server with gRPC and HTTP TLS", func() {
 	var deferFunc func()
-	var grpcAddr, httpAddr, certFile string
+	var grpcHealthAddr, httpHealthAddr, certFile string
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
 		_, basePath, _, _ := runtime.Caller(0)
@@ -41,13 +41,13 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 		}
 		certFile = filepath.Join(basePath, "test/integration/standalone/other/testdata/server_cert.pem")
 		keyFile := filepath.Join(basePath, "test/integration/standalone/other/testdata/server_key.pem")
-		grpcAddr, httpAddr, deferFunc = setup.StandaloneWithTLS(certFile, keyFile)
+		_, grpcHealthAddr, _, httpHealthAddr, deferFunc = setup.StandaloneWithTLS(certFile, keyFile)
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 	})
 
 	It("http health check should pass", func() {
-		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpAddr, "--cert", certFile, "--enable-tls", "true"})
+		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpHealthAddr, "--cert", certFile, "--enable-tls", "true"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -56,7 +56,7 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 	})
 
 	It("http health check should pass with insecure flag set", func() {
-		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpAddr, "--insecure", "true", "--enable-tls", "true"})
+		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpHealthAddr, "--insecure", "true", "--enable-tls", "true"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -65,13 +65,13 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 	})
 
 	It("http health check should fail without the proper cert", func() {
-		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpAddr, "--enable-tls", "true"})
+		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpHealthAddr, "--enable-tls", "true"})
 		err := rootCmd.Execute()
 		Expect(err).To(HaveOccurred())
 	})
 
 	It("grpc health check should pass", func() {
-		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--cert", certFile, "--enable-tls", "true"})
+		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcHealthAddr, "--cert", certFile, "--enable-tls", "true"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -80,7 +80,7 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 	})
 
 	It("grpc health check should pass with insecure flag set", func() {
-		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--insecure", "true", "--enable-tls", "true"})
+		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcHealthAddr, "--insecure", "true", "--enable-tls", "true"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -89,7 +89,7 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 	})
 
 	It("grpc health check should fail without the proper cert", func() {
-		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--enable-tls", "true"})
+		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcHealthAddr, "--enable-tls", "true"})
 		err := rootCmd.Execute()
 		Expect(err).To(HaveOccurred())
 	})
@@ -101,16 +101,16 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 
 var _ = Describe("health check after launching banyandb server", func() {
 	var deferFunc func()
-	var grpcAddr, httpAddr string
+	var grpcHealthAddr, httpHealthAddr string
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		grpcAddr, httpAddr, deferFunc = setup.Standalone()
+		_, grpcHealthAddr, _, httpHealthAddr, deferFunc = setup.Standalone()
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 	})
 
 	It("http health check should pass", func() {
-		rootCmd.SetArgs([]string{"health", "--addr", "http://" + httpAddr})
+		rootCmd.SetArgs([]string{"health", "--addr", "http://" + httpHealthAddr})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -119,7 +119,7 @@ var _ = Describe("health check after launching banyandb server", func() {
 	})
 
 	It("grpc health check should pass", func() {
-		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr})
+		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcHealthAddr})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())

@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -54,12 +53,12 @@ var _ = Describe("Registry", func() {
 	BeforeEach(func() {
 		goods = gleak.Goroutines()
 		gracefulStop = setupForRegistry()
-		addr := "localhost:17912"
+		addr := "localhost:18912"
 		Eventually(
 			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 			testflags.EventuallyTimeout).Should(Succeed())
 		var err error
-		conn, err = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpclib.NewClient("localhost:17912", grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -203,7 +202,7 @@ func setupForRegistry() func() {
 		tcp,
 	)
 	Eventually(
-		helpers.HealthCheck("localhost:17912", 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+		helpers.HealthCheck("localhost:18912", 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 		testflags.EventuallyTimeout).Should(Succeed())
 	return func() {
 		deferFunc()

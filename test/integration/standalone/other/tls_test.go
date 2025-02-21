@@ -28,7 +28,6 @@ import (
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -49,11 +48,11 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		certFile := filepath.Join(basePath, "testdata/server_cert.pem")
 		keyFile := filepath.Join(basePath, "testdata/server_key.pem")
 		var addr string
-		addr, _, deferFn = setup.StandaloneWithTLS(certFile, keyFile)
+		addr, _, _, _, deferFn = setup.StandaloneWithTLS(certFile, keyFile)
 		var err error
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
 		gm.Expect(err).NotTo(gm.HaveOccurred())
-		conn, err = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(creds))
+		conn, err = grpclib.NewClient(addr, grpclib.WithTransportCredentials(creds))
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		ns := timestamp.NowMilli().UnixNano()
 		baseTime = time.Unix(0, ns-ns%int64(time.Minute))
