@@ -250,6 +250,11 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			tagValues := make(map[string]*modelv1.TagValue)
 			storedIndexValue[sd.SeriesList[j].ID] = tagValues
 			for name, offset := range projectedEntityOffsets {
+				if offset < 0 || offset >= len(sd.SeriesList[j].EntityValues) {
+					logger.Warningf("offset %d for tag %s is out of range for series ID %v", offset, name, sd.SeriesList[j].ID)
+					tagValues[name] = pbv1.NullTagValue
+					continue
+				}
 				tagValues[name] = sd.SeriesList[j].EntityValues[offset]
 			}
 			if sd.Fields == nil {
