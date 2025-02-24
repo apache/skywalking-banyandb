@@ -182,9 +182,7 @@ Tags in `group_by_tag_names` are used as dimensions. These tags can be searched 
 
 ### Properties
 
-`Property` is a schema-less or schema-free data model. That means you __DO NOT__ have to define a schema before writing a Property
-
-`Property` is a standard key-value store. Users could store their metadata or items on a property. BanyanDB's motivation for introducing such a particular structure is to support most APM scenarios that need to store critical data, especially for a distributed database cluster.
+A `Property` is a schema-less (or schema-free) document, stored using a distributed inverted index for efficient tag-based queries. Unlike Measures and Streams, Properties support a more flexible key structure: `group`/`name`/`id`.
 
 We should create a group before creating a property.
 
