@@ -55,6 +55,8 @@ Release Notes.
 - Improve the description of the memory in observability doc.
 - Update kubernetes install document to align the banyandb helm v0.3.0.
 - Add restrictions on updating schema.
+- Add docs for the new property storage.
+- Update quick start guide to use showcase instead of the old example.
 
 ### Chores
 
