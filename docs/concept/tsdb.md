@@ -28,7 +28,9 @@ In `Property`, the shard is implemented by the [inverted index](#Inverted-Index)
 
 ## Inverted Index
 
-The inverted index is used to locate the data in the shard. For `measure`, it is a mapping from the term to the series id. For `stream`, it is a mapping from the term to the timestamp.
+The inverted index is used to locate the data in the shard. For `measure`, it is a mapping from the term to the series id. For `stream`, it is a mapping from the term to the timestamp. 
+
+For `property`, all the content of a property is stored as a `_source` field in the inverted index. `group`, `name`,  `id` and `tags` are only indexed in the inverted index.
 
 The inverted index stores `snapshot` file `xxxxxxx.snp` to record the validity of segments. In the chart, `0000000000000001.seg` is removed from the snapshot file, which means the segment is invalid. It will be cleaned up in the next flush or merge operation.
 
