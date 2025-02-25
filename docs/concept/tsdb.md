@@ -2,9 +2,9 @@
 
 TSDB is a time-series storage engine designed to store and query large volumes of time-series data. One of the key features of TSDB is its ability to automatically manage data storage over time, optimize performance and ensure that the system can scale to handle large workloads. TSDB empowers `Measure` and `Stream` relevant data.
 
-In TSDB, the data in a group is partitioned base on the time range of the data. The segment size is determined by the `segment_interval` of a group. The number of segments in a group is determined by the `ttl` of a group. A new segment is created when the written data exceeds the time range of the current segment. The expired segment will be deleted after the `ttl` of the group.
+In TSDB, the data in a group is partitioned based on the time range of the data. The segment size is determined by the `segment_interval` of a group. The number of segments in a group is determined by the `ttl` of a group. A new segment is created when the written data exceeds the time range of the current segment. The expired segment will be deleted after the `ttl` of the group.
 
-More than the time series data model, TSDB also provides a schema-less data type, `Property`. The `Property` data type is used to store the document which contains several tags. The `Property` data is separate group which only contains `shard`.
+More than the time series data model, TSDB also provides a schema-less and non-time-series data type, `Property`. The `Property` data type is used to store the document which contains several tags. The `Property` data is an independent group that contains only `shard`s, without `segment_interval`, `ttl`, or other time-series-related features.
 
 ![tsdb](https://skywalking.apache.org/doc-graph/banyandb/v0.8.0/tsdb-v1.2.0.png)
 

@@ -133,7 +133,7 @@ catalog:
         path: "/operation/restore"
   - name: "File Format"
     catalog:
-      - name: "v1.1.0"
+      - name: "v1.2.0"
         path: "/concept/tsdb"
   - name: "Concepts"
     catalog:
