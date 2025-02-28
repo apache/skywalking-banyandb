@@ -235,11 +235,12 @@ orderBy:
               return tableField.name === name;
             })[0].fieldType || '';
           if (field.value[fieldTypes[fieldType]] === null) {
-            return (dataItem[name] = 'Null');
+            dataItem[name] = 'Null';
+          } else {
+            dataItem[name] = Object.hasOwnProperty('value')
+              ? field.value[fieldTypes[fieldType]].value
+              : field.value[fieldTypes[fieldType]];
           }
-          dataItem[name] = Object.hasOwnProperty.call(field.value[fieldTypes[fieldType]], 'value')
-            ? field.value[fieldTypes[fieldType]].value
-            : field.value[fieldTypes[fieldType]];
         });
       }
       dataItem.timestamp = item.timestamp;
