@@ -222,9 +222,7 @@ orderBy:
         if (tag.value[tagType[type]] === null) {
           dataItem[tag.key] = 'Null';
         } else {
-          dataItem[tag.key] = Object.hasOwnProperty('value')
-            ? tag.value[tagType[type]].value
-            : tag.value[tagType[type]];
+          dataItem[tag.key] = tag.value[tagType[type]]?.value || tag.value[tagType[type]];
         }
       }
       if (data.type === 'measure' && tableFields.length > 0) {
@@ -237,9 +235,7 @@ orderBy:
           if (field.value[fieldTypes[fieldType]] === null) {
             dataItem[name] = 'Null';
           } else {
-            dataItem[name] = Object.hasOwnProperty('value')
-              ? field.value[fieldTypes[fieldType]].value
-              : field.value[fieldTypes[fieldType]];
+            dataItem[name] = field.value[fieldTypes[fieldType]]?.value || field.value[fieldTypes[fieldType]];
           }
         });
       }
