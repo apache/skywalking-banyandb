@@ -36,7 +36,6 @@
 
   // Loading
   const { proxy } = getCurrentInstance();
-  const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = proxy.$loadingClose;
   const tagType = {
@@ -215,18 +214,17 @@ orderBy:
   function setTableData(elements) {
     const tags = data.resourceData.tagFamilies[data.tagFamily].tags;
     const tableFields = data.tableFields;
-    data.tableData = elements.map((item) => {
-      let dataItem = {};
-      item.tagFamilies[0].tags.forEach((tag) => {
+    for (const item of elements) {
+      const dataItem = {};
+      for (const tag of item.tagFamilies[0].tags) {
         const index = tags.findIndex((item) => item.name === tag.key);
         const type = tags[index].type;
         if (tag.value[tagType[type]] === null) {
-          return (dataItem[tag.key] = 'Null');
+          dataItem[tag.key] = 'Null';
+        } else {
+          dataItem[tag.key] = tag.value[tagType[type]]?.value || tag.value[tagType[type]];
         }
-        dataItem[tag.key] = Object.hasOwnProperty.call(tag.value[tagType[type]], 'value')
-          ? tag.value[tagType[type]].value
-          : tag.value[tagType[type]];
-      });
+      }
       if (data.type === 'measure' && tableFields.length > 0) {
         item.fields.forEach((field) => {
           const name = field.name;
@@ -235,17 +233,15 @@ orderBy:
               return tableField.name === name;
             })[0].fieldType || '';
           if (field.value[fieldTypes[fieldType]] === null) {
-            return (dataItem[name] = 'Null');
+            dataItem[name] = 'Null';
+          } else {
+            dataItem[name] = field.value[fieldTypes[fieldType]]?.value || field.value[fieldTypes[fieldType]];
           }
-          dataItem[name] = Object.hasOwnProperty.call(field.value[fieldTypes[fieldType]], 'value')
-            ? field.value[fieldTypes[fieldType]].value
-            : field.value[fieldTypes[fieldType]];
         });
       }
-
       dataItem.timestamp = item.timestamp;
-      return dataItem;
-    });
+      data.tableData.push(dataItem);
+    }
     data.loading = false;
   }
   function setTableParam() {

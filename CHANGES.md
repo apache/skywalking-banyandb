@@ -50,6 +50,7 @@ Release Notes.
 - Fix the bug that fails to update `Group` Schema's ResourceOpts.
 - UI: Implement TopNAggregation data query page.
 - UI: Update BanyanDB UI to Integrate New Property Query API.
+- UI: Fix the Stream List.
 
 ### Documentation
 
