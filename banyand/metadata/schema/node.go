@@ -59,6 +59,17 @@ func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.
 	}, forced)
 }
 
+func (e *etcdSchemaRegistry) UpdateNode(ctx context.Context, node *databasev1.Node) error {
+	_, err := e.update(ctx, Metadata{
+		TypeMeta: TypeMeta{
+			Kind: KindNode,
+			Name: node.Metadata.Name,
+		},
+		Spec: node,
+	})
+	return err
+}
+
 func formatNodeKey(name string) string {
 	return path.Join(nodeKeyPrefix, name)
 }

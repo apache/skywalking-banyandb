@@ -198,4 +198,5 @@ type Node interface {
 	ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error)
 	RegisterNode(ctx context.Context, node *databasev1.Node, forced bool) error
 	GetNode(ctx context.Context, node string) (*databasev1.Node, error)
+	UpdateNode(ctx context.Context, node *databasev1.Node) error
 }

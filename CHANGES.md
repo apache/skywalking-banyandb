@@ -30,6 +30,7 @@ Release Notes.
 - Add restore command line tool to restore the data files.
 - Add concurrent barrier to partition merge to improve the performance of the partition merge.
 - Improve the write performance.
+- Add node labels to classify the nodes.
 
 ### Bug Fixes
 

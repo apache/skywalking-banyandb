@@ -29,6 +29,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
 type (
@@ -46,10 +47,12 @@ type (
 
 // Message is send on the bus to all subscribed listeners.
 type Message struct {
-	payload   payload
-	node      string
-	id        MessageID
-	batchMode bool
+	payload       payload
+	nodeSelectors map[string]string
+	timeRange     *modelv1.TimeRange
+	node          string
+	id            MessageID
+	batchMode     bool
 }
 
 // ID outputs the MessageID of the Message.
@@ -65,6 +68,16 @@ func (m Message) Data() interface{} {
 // Node returns the node name of the Message.
 func (m Message) Node() string {
 	return m.node
+}
+
+// NodeSelectors returns the node selectors of the Message.
+func (m Message) NodeSelectors() map[string]string {
+	return m.nodeSelectors
+}
+
+// TimeRange returns the time range of the Message.
+func (m Message) TimeRange() *modelv1.TimeRange {
+	return m.timeRange
 }
 
 // BatchModeEnabled returns whether the Message is sent in batch mode.
@@ -85,6 +98,12 @@ func NewBatchMessageWithNode(id MessageID, node string, data interface{}) Messag
 // NewMessageWithNode returns a new Message with a MessageID and NodeID and embed data.
 func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
 	return Message{id: id, node: node, payload: data}
+}
+
+// NewMessageWithNodeSelectors returns a new Message with a MessageID and NodeSelectors and embed data.
+// Nodes matching any of the selectors will receive the message.
+func NewMessageWithNodeSelectors(id MessageID, nodeSelectors map[string]string, timeRange *modelv1.TimeRange, data interface{}) Message {
+	return Message{id: id, nodeSelectors: nodeSelectors, timeRange: timeRange, payload: data}
 }
 
 // MessageListener is the signature of functions that can handle an EventMessage.

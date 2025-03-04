@@ -60,6 +60,7 @@ type contextPositionKey struct{}
 // The logger could attach it for debugging.
 type Position struct {
 	Module   string
+	Stage    string
 	Database string
 	Shard    string
 	Segment  string
@@ -142,6 +143,7 @@ func (e Error) Error() string {
 
 // Node contains the node id and address.
 type Node struct {
+	Labels      map[string]string
 	NodeID      string
 	GrpcAddress string
 	HTTPAddress string
@@ -152,6 +154,8 @@ var (
 	FlagNodeHost string
 	// FlagNodeHostProvider is the node id provider from flag.
 	FlagNodeHostProvider NodeHostProvider
+	// FlagNodeLabels is the node labels from flag.
+	FlagNodeLabels []string
 )
 
 // NodeHostProvider is the provider of node id.
@@ -218,7 +222,20 @@ func GenerateNode(grpcPort, httpPort *uint32) (node Node, err error) {
 	if httpPort != nil {
 		node.HTTPAddress = net.JoinHostPort(nodeHost, strconv.FormatUint(uint64(*httpPort), 10))
 	}
+	node.Labels = parseNodeFlags()
 	return node, nil
+}
+
+func parseNodeFlags() map[string]string {
+	labels := make(map[string]string)
+	for _, label := range FlagNodeLabels {
+		parts := strings.Split(label, "=")
+		if len(parts) != 2 {
+			continue
+		}
+		labels[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	}
+	return labels
 }
 
 // ContextNodeKey is a context key to store the node id.

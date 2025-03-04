@@ -100,24 +100,7 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if n, ok := p.registered[name]; ok {
-		if n.GrpcAddress == address {
-			return
-		}
-		if en, ok := p.evictable[name]; ok {
-			close(en.c)
-			delete(p.evictable, name)
-			p.log.Info().Str("node", name).Str("status", p.dump()).Msg("node is removed from evict queue by the new gRPC address updated event")
-		}
-
-		if client, ok := p.active[name]; ok {
-			_ = client.conn.Close()
-			delete(p.active, name)
-			p.deleteClient(client.md)
-			p.log.Info().Str("status", p.dump()).Str("node", name).Msg("node is removed from active queue by the new gRPC address updated event")
-		}
-	}
-	p.registered[name] = node
+	p.registerNode(node)
 
 	if _, ok := p.active[name]; ok {
 		return
@@ -140,6 +123,32 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	p.active[name] = &client{conn: conn, client: c, md: md}
 	p.addClient(md)
 	p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("new node is healthy, add it to active queue")
+}
+
+func (p *pub) registerNode(node *databasev1.Node) {
+	name := node.Metadata.GetName()
+	defer func() {
+		p.registered[name] = node
+	}()
+
+	n, ok := p.registered[name]
+	if !ok {
+		return
+	}
+	if n.GrpcAddress == node.GrpcAddress {
+		return
+	}
+	if en, ok := p.evictable[name]; ok {
+		close(en.c)
+		delete(p.evictable, name)
+		p.log.Info().Str("node", name).Str("status", p.dump()).Msg("node is removed from evict queue by the new gRPC address updated event")
+	}
+	if client, ok := p.active[name]; ok {
+		_ = client.conn.Close()
+		delete(p.active, name)
+		p.deleteClient(client.md)
+		p.log.Info().Str("status", p.dump()).Str("node", name).Msg("node is removed from active queue by the new gRPC address updated event")
+	}
 }
 
 func (p *pub) OnDelete(md schema.Metadata) {

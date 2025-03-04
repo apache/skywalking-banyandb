@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -86,16 +87,54 @@ func (p *pub) Serve() run.StopNotify {
 	return p.closer.CloseNotify()
 }
 
+func bypassMatches(_ map[string]string) bool { return true }
+
 func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
-	var names []string
+	var nodes []*databasev1.Node
 	p.mu.RLock()
 	for k := range p.active {
-		names = append(names, k)
+		nodes = append(nodes, p.registered[k])
 	}
 	p.mu.RUnlock()
+	if len(nodes) == 0 {
+		return nil, errors.New("no active nodes")
+	}
+	names := make(map[string]struct{})
+	if len(messages.NodeSelectors()) == 0 {
+		for _, n := range nodes {
+			names[n.Metadata.Name] = struct{}{}
+		}
+	} else {
+		for g, sel := range messages.NodeSelectors() {
+			var matches func(map[string]string) bool
+			if sel == "" {
+				matches = bypassMatches
+			} else {
+				selector, err := parseLabelSelector(sel)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse node selector: %w", err)
+				}
+				matches = selector.matches
+			}
+			for _, n := range nodes {
+				tr := metadata.FindSegmentsBoundary(n, g)
+				if tr == nil {
+					continue
+				}
+				if matches(n.Labels) && timestamp.PbHasOverlap(messages.TimeRange(), tr) {
+					names[n.Metadata.Name] = struct{}{}
+				}
+			}
+		}
+	}
+
+	if l := p.log.Debug(); l.Enabled() {
+		l.Msgf("broadcasting message to %s nodes", names)
+	}
+
 	futureCh := make(chan publishResult, len(names))
 	var wg sync.WaitGroup
-	for _, n := range names {
+	for n := range names {
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()

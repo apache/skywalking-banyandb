@@ -19,6 +19,8 @@ package timestamp
 
 import (
 	"time"
+
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
 // TimeRange is a range of periods into which data can be written or retrieved.
@@ -187,4 +189,32 @@ func Find(timestamps []int64, target int64) int {
 		}
 	}
 	return -1
+}
+
+// PbHasOverlap checks if two TimeRanges have an overlap.
+// Returns true if they have at least one point in common, false otherwise.
+// Note: this follows [begin, end] (inclusive on both ends)
+//
+//	other follows [begin, end) (inclusive begin, exclusive end)
+func PbHasOverlap(this, other *modelv1.TimeRange) bool {
+	if this == nil || other == nil {
+		return false
+	}
+
+	if this.Begin == nil || this.End == nil || other.Begin == nil || other.End == nil {
+		return false
+	}
+
+	thisBegin := this.Begin.GetSeconds()*1e9 + int64(this.Begin.GetNanos())
+	thisEnd := this.End.GetSeconds()*1e9 + int64(this.End.GetNanos())
+	otherBegin := other.Begin.GetSeconds()*1e9 + int64(other.Begin.GetNanos())
+	otherEnd := other.End.GetSeconds()*1e9 + int64(other.End.GetNanos())
+
+	// Check for overlap:
+	// - For x [begin, end] (inclusive on both ends)
+	// - For other [begin, end) (inclusive begin, exclusive end)
+	// They overlap when:
+	// thisBegin <= otherEnd-1 && thisEnd >= otherBegin
+	// Simplified to: thisBegin < otherEnd && thisEnd >= otherBegin
+	return thisBegin < otherEnd && thisEnd >= otherBegin
 }
