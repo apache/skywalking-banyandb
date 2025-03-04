@@ -59,6 +59,31 @@ message IntervalRule {
   uint32 num = 2 [(validate.rules).uint32.gt = 0];
 }
 
+message LifecycleStage {
+  // The stage name (e.g., "warm", "cold").
+  // This should be a non-empty string.
+  string name = 1 [(validate.rules).string.min_len = 1];
+
+  // Number of shards allocated for this stage.
+  // Must be greater than zero.
+  uint32 shard_num = 2 [(validate.rules).uint32.gt = 0];
+
+  // Defines the interval for data segmentation in this stage.
+  // This is a required field and uses the IntervalRule structure.
+  IntervalRule segment_interval = 3 [(validate.rules).message.required = true];
+
+  // Specifies the time-to-live for data in this stage before moving to the next.
+  // This is also a required field using the IntervalRule structure.
+  IntervalRule ttl = 4 [(validate.rules).message.required = true];
+
+  // Node selector specifying target nodes for this stage.
+  // Optional; if provided, it must be a non-empty string.
+  string node_selector = 5 [(validate.rules).string.min_len = 1];
+
+  // Indicates whether segments that are no longer live should be closed.
+  bool close = 6;
+}
+
 message ResourceOpts {
   // shard_num is the number of shards
   uint32 shard_num = 1 [(validate.rules).uint32.gt = 0];
@@ -66,6 +91,10 @@ message ResourceOpts {
   IntervalRule segment_interval = 2;
   // ttl indicates time to live, how long the data will be cached
   IntervalRule ttl = 3;
+  // stages defines the ordered lifecycle stages. Data progresses through these stages sequentially.
+  repeated LifecycleStage stages = 4;
+  // default_node_selector is the default node selector for queries if node_selector is not specified
+  string default_node_selector = 5;
 }
 
 // Group is an internal object for Group management

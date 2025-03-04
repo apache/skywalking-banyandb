@@ -39,17 +39,17 @@ var errNotExist = errors.New("the object doesn't exist")
 type discoveryService struct {
 	metadataRepo metadata.Repo
 	nodeRegistry NodeRegistry
-	shardRepo    *shardRepo
+	groupRepo    *groupRepo
 	entityRepo   *entityRepo
 	log          *logger.Logger
 	kind         schema.Kind
 }
 
 func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
-	sr := &shardRepo{shardEventsMap: make(map[identity]uint32)}
+	sr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
 	return &discoveryService{
-		shardRepo:    sr,
+		groupRepo:    sr,
 		entityRepo:   er,
 		kind:         kind,
 		metadataRepo: metadataRepo,
@@ -58,21 +58,19 @@ func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegis
 }
 
 func (ds *discoveryService) initialize() error {
-	ds.metadataRepo.RegisterHandler("liaison", schema.KindGroup, ds.shardRepo)
+	ds.metadataRepo.RegisterHandler("liaison", schema.KindGroup, ds.groupRepo)
 	ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.entityRepo)
 	return nil
 }
 
 func (ds *discoveryService) SetLogger(log *logger.Logger) {
 	ds.log = log
-	ds.shardRepo.log = log
+	ds.groupRepo.log = log
 	ds.entityRepo.log = log
 }
 
 func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (pbv1.Entity, pbv1.EntityValues, common.ShardID, error) {
-	shardNum, existed := ds.shardRepo.shardNum(getID(&commonv1.Metadata{
-		Name: metadata.Group,
-	}))
+	shardNum, existed := ds.groupRepo.shardNum(metadata.Group)
 	if !existed {
 		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
 	}
@@ -92,16 +90,16 @@ func (i identity) String() string {
 	return fmt.Sprintf("%s/%s", i.group, i.name)
 }
 
-var _ schema.EventHandler = (*shardRepo)(nil)
+var _ schema.EventHandler = (*groupRepo)(nil)
 
-type shardRepo struct {
+type groupRepo struct {
 	schema.UnimplementedOnInitHandler
-	log            *logger.Logger
-	shardEventsMap map[identity]uint32
+	log          *logger.Logger
+	resourceOpts map[string]*commonv1.ResourceOpts
 	sync.RWMutex
 }
 
-func (s *shardRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
+func (s *groupRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	if schemaMetadata.Kind != schema.KindGroup {
 		return
 	}
@@ -109,16 +107,15 @@ func (s *shardRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	if group.ResourceOpts == nil || group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 		return
 	}
-	idx := getID(group.GetMetadata())
 	if le := s.log.Debug(); le.Enabled() {
-		le.Stringer("id", idx).Uint32("total", group.ResourceOpts.ShardNum).Msg("shard added or updated")
+		le.Stringer("id", group.Metadata).Uint32("total", group.ResourceOpts.ShardNum).Msg("shard added or updated")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
-	s.shardEventsMap[idx] = group.ResourceOpts.ShardNum
+	s.resourceOpts[group.Metadata.GetName()] = group.ResourceOpts
 }
 
-func (s *shardRepo) OnDelete(schemaMetadata schema.Metadata) {
+func (s *groupRepo) OnDelete(schemaMetadata schema.Metadata) {
 	if schemaMetadata.Kind != schema.KindGroup {
 		return
 	}
@@ -126,23 +123,32 @@ func (s *shardRepo) OnDelete(schemaMetadata schema.Metadata) {
 	if group.ResourceOpts == nil || group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 		return
 	}
-	idx := getID(group.GetMetadata())
 	if le := s.log.Debug(); le.Enabled() {
-		le.Stringer("id", idx).Msg("shard deleted")
+		le.Stringer("id", group.Metadata).Msg("shard deleted")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
-	delete(s.shardEventsMap, idx)
+	delete(s.resourceOpts, group.Metadata.GetName())
 }
 
-func (s *shardRepo) shardNum(idx identity) (uint32, bool) {
+func (s *groupRepo) shardNum(groupName string) (uint32, bool) {
 	s.RWMutex.RLock()
 	defer s.RWMutex.RUnlock()
-	sn, ok := s.shardEventsMap[idx]
+	r, ok := s.resourceOpts[groupName]
 	if !ok {
 		return 0, false
 	}
-	return sn, true
+	return r.ShardNum, true
+}
+
+func (s *groupRepo) getNodeSelector(groupName string) (string, bool) {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	r, ok := s.resourceOpts[groupName]
+	if !ok {
+		return "", false
+	}
+	return r.DefaultNodeSelector, true
 }
 
 func getID(metadata *commonv1.Metadata) identity {

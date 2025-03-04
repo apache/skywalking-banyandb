@@ -67,6 +67,7 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 	cmd.PersistentFlags().Var(&nodeIDProviderValue{&common.FlagNodeHostProvider},
 		"node-host-provider", "the node host provider, can be hostname, ip or flag, default is hostname")
 	cmd.PersistentFlags().StringVar(&common.FlagNodeHost, "node-host", "", "the node host of the server only used when node-host-provider is \"flag\"")
+	cmd.PersistentFlags().StringSliceVar(&common.FlagNodeLabels, "node-labels", nil, "the node labels. e.g. key1=value1,key2=value2")
 	cmd.PersistentFlags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
 	cmd.PersistentFlags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
 	cmd.PersistentFlags().StringSliceVar(&logging.Modules, "logging-modules", nil, "the specific module")

@@ -29,6 +29,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -49,18 +50,22 @@ const (
 	lockFilename = "lock"
 )
 
+// SegmentBoundaryUpdateFn is a callback function to update the segment boundary.
+type SegmentBoundaryUpdateFn func(stage, group string, boundary *modelv1.TimeRange)
+
 // TSDBOpts wraps options to create a tsdb.
 type TSDBOpts[T TSTable, O any] struct {
 	Option                         O
 	TableMetrics                   Metrics
 	TSTableCreator                 TSTableCreator[T, O]
 	StorageMetricsFactory          *observability.Factory
+	SegmentBoundaryUpdateFn        SegmentBoundaryUpdateFn
 	Location                       string
 	SegmentInterval                IntervalRule
 	TTL                            IntervalRule
 	SeriesIndexFlushTimeoutSeconds int64
-	ShardNum                       uint32
 	SeriesIndexCacheMaxBytes       int
+	ShardNum                       uint32
 }
 
 type (
@@ -130,7 +135,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		tsEventCh: make(chan int64),
 		p:         p,
 		segmentController: newSegmentController[T](ctx, location,
-			l, opts, indexMetrics, opts.TableMetrics),
+			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentBoundaryUpdateFn),
 		metrics: newMetrics(opts.StorageMetricsFactory),
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")

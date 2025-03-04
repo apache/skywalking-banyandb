@@ -237,3 +237,11 @@ func getDataNode(name string, address string) schema.Metadata {
 		},
 	}
 }
+
+func getDataNodeWithLabels(name string, address string, labels map[string]string, dataBoundary map[string]*modelv1.TimeRange) schema.Metadata {
+	node := getDataNode(name, address)
+	nodeInfo := node.Spec.(*databasev1.Node)
+	nodeInfo.Labels = labels
+	nodeInfo.DataSegmentsBoundary = dataBoundary
+	return node
+}

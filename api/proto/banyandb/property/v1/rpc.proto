@@ -78,6 +78,8 @@ message QueryRequest {
   uint32 limit = 6;
   // trace is used to enable trace for the query
   bool trace = 7;
+  // node_selector is used to select the node to query
+  string node_selector = 8;
 }
 
 // QueryResponse is the response for a query to the Query module.
