@@ -14,12 +14,16 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//go:build linux
+// +build linux
 
 package stream
 
 import (
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -150,6 +154,17 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				Msg("background merger merges unbalanced parts")
 		}
 	}
+
+	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
+	if newPart.p.partMetadata.CompressedSizeBytes > largeFileThreshold {
+		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
+		if err := applyFadvise(filePath); err != nil {
+			tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
+		} else {
+			tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
+		}
+	}
+
 	mi := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mi)
 	mi.creator = creator
@@ -380,4 +395,16 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		}
 		left, right = right, left
 	}
+}
+
+func applyFadvise(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return unix.Fadvise(int(f.Fd()), 0, 0, unix.POSIX_FADV_DONTNEED)
 }

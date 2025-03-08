@@ -33,6 +33,8 @@ import (
 
 var mergeMaxConcurrencyCh = make(chan struct{}, cgroups.CPUs())
 
+const largeFileThreshold = 1 << 27
+
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
 
@@ -150,6 +152,17 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				Msg("background merger merges unbalanced parts")
 		}
 	}
+
+	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
+	if newPart.p.partMetadata.CompressedSizeBytes > largeFileThreshold {
+		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
+		if err := applyFadvise(filePath); err != nil {
+			tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
+		} else {
+			tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
+		}
+	}
+
 	mi := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mi)
 	mi.creator = creator
