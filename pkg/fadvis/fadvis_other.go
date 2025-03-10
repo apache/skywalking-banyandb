@@ -19,9 +19,13 @@
 
 package fadvis
 
+import "errors"
+
+var ErrFadviseNotSupported = errors.New("fadvise not supported on this OS")
+
 // Apply is a no-op on non-Linux platforms.
 // The POSIX_FADV_DONTNEED functionality is specific to Linux.
 func Apply(path string) error {
 	// No-op on non-Linux platforms
-	return nil
+	return ErrFadviseNotSupported
 }

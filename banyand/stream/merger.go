@@ -157,8 +157,13 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
 	if newPart.p.partMetadata.CompressedSizeBytes > largeFileThreshold {
 		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
-		if err := fadvis.Apply(filePath); err != nil {
-			tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
+		err := fadvis.Apply(filePath)
+		if err != nil {
+			if err == fadvis.ErrFadviseNotSupported {
+				tst.l.Info().Msgf("fadvise is not supported on this platform for file: %s", filePath)
+			} else {
+				tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
+			}
 		} else {
 			tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
 		}
