@@ -14,16 +14,12 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//go:build linux
-// +build linux
 
 package stream
 
 import (
 	"errors"
 	"fmt"
-	"golang.org/x/sys/unix"
-	"os"
 	"sync/atomic"
 	"time"
 
@@ -31,11 +27,14 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
 var mergeMaxConcurrencyCh = make(chan struct{}, cgroups.CPUs())
+
+const largeFileThreshold = 1 << 27
 
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
@@ -158,7 +157,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
 	if newPart.p.partMetadata.CompressedSizeBytes > largeFileThreshold {
 		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
-		if err := applyFadvise(filePath); err != nil {
+		if err := fadvis.Apply(filePath); err != nil {
 			tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
 		} else {
 			tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
@@ -238,7 +237,7 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst
 func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
 	var needSize uint64
 	for i := range parts {
-		needSize = +parts[i].p.partMetadata.CompressedSizeBytes
+		needSize += parts[i].p.partMetadata.CompressedSizeBytes
 	}
 	if tst.tryReserveDiskSpace(needSize) {
 		return needSize
@@ -395,16 +394,4 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		}
 		left, right = right, left
 	}
-}
-
-func applyFadvise(path string) error {
-	f, err := os.OpenFile(path, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := f.Sync(); err != nil {
-		return err
-	}
-	return unix.Fadvise(int(f.Fd()), 0, 0, unix.POSIX_FADV_DONTNEED)
 }

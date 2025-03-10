@@ -27,6 +27,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -156,7 +157,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
 	if newPart.p.partMetadata.CompressedSizeBytes > largeFileThreshold {
 		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
-		if err := applyFadvise(filePath); err != nil {
+		if err := fadvis.Apply(filePath); err != nil {
 			tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
 		} else {
 			tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
@@ -236,7 +237,7 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst
 func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
 	var needSize uint64
 	for i := range parts {
-		needSize = +parts[i].p.partMetadata.CompressedSizeBytes
+		needSize += parts[i].p.partMetadata.CompressedSizeBytes
 	}
 	if tst.tryReserveDiskSpace(needSize) {
 		return needSize
