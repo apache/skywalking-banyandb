@@ -110,11 +110,11 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 			if sel == "" {
 				matches = bypassMatches
 			} else {
-				selector, err := parseLabelSelector(sel)
+				selector, err := ParseLabelSelector(sel)
 				if err != nil {
 					return nil, fmt.Errorf("failed to parse node selector: %w", err)
 				}
-				matches = selector.matches
+				matches = selector.Matches
 			}
 			for _, n := range nodes {
 				tr := metadata.FindSegmentsBoundary(n, g)
@@ -225,6 +225,7 @@ func New(metadata metadata.Repo) queue.Client {
 		registered: make(map[string]*databasev1.Node),
 		handlers:   make(map[bus.Topic]schema.EventHandler),
 		closer:     run.NewCloser(1),
+		log:        logger.GetLogger("server-queue-pub"),
 	}
 }
 
@@ -233,7 +234,6 @@ func (*pub) Name() string {
 }
 
 func (p *pub) PreRun(context.Context) error {
-	p.log = logger.GetLogger("server-queue-pub")
 	p.metadata.RegisterHandler("queue-client", schema.KindNode, p)
 	return nil
 }

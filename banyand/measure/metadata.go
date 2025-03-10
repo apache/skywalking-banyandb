@@ -39,8 +39,10 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -79,7 +81,7 @@ type schemaRepo struct {
 	path             string
 }
 
-func newSchemaRepo(path string, svc *service) *schemaRepo {
+func newSchemaRepo(path string, svc *service, nodeLabels map[string]string) *schemaRepo {
 	sr := &schemaRepo{
 		path:     path,
 		l:        svc.l,
@@ -89,7 +91,7 @@ func newSchemaRepo(path string, svc *service) *schemaRepo {
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
 		svc.l,
-		newSupplier(path, svc, sr),
+		newSupplier(path, svc, sr, nodeLabels),
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
@@ -125,6 +127,18 @@ func (sr *schemaRepo) Measure(metadata *commonv1.Metadata) (Measure, error) {
 		return nil, errors.WithStack(ErrMeasureNotExist)
 	}
 	return sm, nil
+}
+
+func (sr *schemaRepo) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
+	g, ok := sr.LoadGroup(group)
+	if !ok {
+		return nil
+	}
+	db := g.SupplyTSDB()
+	if db == nil {
+		return nil
+	}
+	return db.(storage.TSDB[*tsTable, option]).GetExpiredSegmentsTimeRange()
 }
 
 func (sr *schemaRepo) OnInit(kinds []schema.Kind) (bool, []int64) {
@@ -325,11 +339,12 @@ type supplier struct {
 	l          *logger.Logger
 	pm         *protector.Memory
 	schemaRepo *schemaRepo
+	nodeLabels map[string]string
 	path       string
 	option     option
 }
 
-func newSupplier(path string, svc *service, sr *schemaRepo) *supplier {
+func newSupplier(path string, svc *service, sr *schemaRepo, nodeLabels map[string]string) *supplier {
 	return &supplier{
 		path:       path,
 		metadata:   svc.metadata,
@@ -338,6 +353,7 @@ func newSupplier(path string, svc *service, sr *schemaRepo) *supplier {
 		omr:        svc.omr,
 		pm:         svc.pm,
 		schemaRepo: sr,
+		nodeLabels: nodeLabels,
 	}
 }
 
@@ -361,13 +377,44 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		Database: name,
 	}
 	metrics, factory := s.newMetrics(p)
+	ro := groupSchema.ResourceOpts
+	if ro == nil {
+		return nil, fmt.Errorf("no resource opts in group %s", name)
+	}
+	shardNum := ro.ShardNum
+	ttl := ro.Ttl
+	segInterval := ro.SegmentInterval
+	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
+		matched := false
+		var ttlNum uint32
+		for _, st := range ro.Stages {
+			if st.Ttl.Unit != ro.Ttl.Unit {
+				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
+			}
+			selector, err := pub.ParseLabelSelector(st.NodeSelector)
+			if err != nil {
+				return nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
+			}
+			ttlNum += st.Ttl.Num
+			if !selector.Matches(s.nodeLabels) {
+				continue
+			}
+			matched = true
+			shardNum = st.ShardNum
+			segInterval = st.SegmentInterval
+			break
+		}
+		if matched {
+			ttl.Num += ttlNum
+		}
+	}
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:                       groupSchema.ResourceOpts.ShardNum,
+		ShardNum:                       shardNum,
 		Location:                       path.Join(s.path, groupSchema.Metadata.Name),
 		TSTableCreator:                 newTSTable,
 		TableMetrics:                   metrics,
-		SegmentInterval:                storage.MustToIntervalRule(groupSchema.ResourceOpts.SegmentInterval),
-		TTL:                            storage.MustToIntervalRule(groupSchema.ResourceOpts.Ttl),
+		SegmentInterval:                storage.MustToIntervalRule(segInterval),
+		TTL:                            storage.MustToIntervalRule(ttl),
 		Option:                         s.option,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),

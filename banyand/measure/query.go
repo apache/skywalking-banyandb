@@ -38,6 +38,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -51,6 +52,7 @@ var nilResult = model.MeasureQueryResult(nil)
 type Query interface {
 	LoadGroup(name string) (resourceSchema.Group, bool)
 	Measure(measure *commonv1.Metadata) (Measure, error)
+	GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange
 }
 
 // Measure allows inspecting measure data points' details.

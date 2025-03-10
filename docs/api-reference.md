@@ -202,6 +202,9 @@
     - [DataPointValue.Type](#banyandb-measure-v1-DataPointValue-Type)
   
 - [banyandb/measure/v1/rpc.proto](#banyandb_measure_v1_rpc-proto)
+    - [DeleteExpiredSegmentsRequest](#banyandb-measure-v1-DeleteExpiredSegmentsRequest)
+    - [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse)
+  
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
 - [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
@@ -235,6 +238,9 @@
     - [WriteResponse](#banyandb-stream-v1-WriteResponse)
   
 - [banyandb/stream/v1/rpc.proto](#banyandb_stream_v1_rpc-proto)
+    - [DeleteExpiredSegmentsRequest](#banyandb-stream-v1-DeleteExpiredSegmentsRequest)
+    - [DeleteExpiredSegmentsResponse](#banyandb-stream-v1-DeleteExpiredSegmentsResponse)
+  
     - [StreamService](#banyandb-stream-v1-StreamService)
   
 - [Scalar Value Types](#scalar-value-types)
@@ -3000,6 +3006,37 @@ the type of the data point cumulative or delta
 ## banyandb/measure/v1/rpc.proto
 
 
+
+<a name="banyandb-measure-v1-DeleteExpiredSegmentsRequest"></a>
+
+### DeleteExpiredSegmentsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  |  |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-DeleteExpiredSegmentsResponse"></a>
+
+### DeleteExpiredSegmentsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted | [int64](#int64) |  |  |
+
+
+
+
+
  
 
  
@@ -3017,6 +3054,7 @@ the type of the data point cumulative or delta
 | Query | [QueryRequest](#banyandb-measure-v1-QueryRequest) | [QueryResponse](#banyandb-measure-v1-QueryResponse) |  |
 | Write | [WriteRequest](#banyandb-measure-v1-WriteRequest) stream | [WriteResponse](#banyandb-measure-v1-WriteResponse) stream |  |
 | TopN | [TopNRequest](#banyandb-measure-v1-TopNRequest) | [TopNResponse](#banyandb-measure-v1-TopNResponse) |  |
+| DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-measure-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse) |  |
 
  
 
@@ -3428,6 +3466,37 @@ QueryResponse is the response for a query to the Query module.
 ## banyandb/stream/v1/rpc.proto
 
 
+
+<a name="banyandb-stream-v1-DeleteExpiredSegmentsRequest"></a>
+
+### DeleteExpiredSegmentsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  |  |
+
+
+
+
+
+
+<a name="banyandb-stream-v1-DeleteExpiredSegmentsResponse"></a>
+
+### DeleteExpiredSegmentsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted | [int64](#int64) |  |  |
+
+
+
+
+
  
 
  
@@ -3444,6 +3513,7 @@ QueryResponse is the response for a query to the Query module.
 | ----------- | ------------ | ------------- | ------------|
 | Query | [QueryRequest](#banyandb-stream-v1-QueryRequest) | [QueryResponse](#banyandb-stream-v1-QueryResponse) |  |
 | Write | [WriteRequest](#banyandb-stream-v1-WriteRequest) stream | [WriteResponse](#banyandb-stream-v1-WriteResponse) stream |  |
+| DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-stream-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-stream-v1-DeleteExpiredSegmentsResponse) |  |
 
  
 

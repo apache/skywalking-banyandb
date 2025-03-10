@@ -132,7 +132,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			schema.ConfigureEtcdTLSCertAndKey(s.etcdTLSCertFile, s.etcdTLSKeyFile),
 			schema.ConfigureWatchCheckInterval(s.etcdFullSyncInterval),
 		)
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			select {
 			case <-stopCh:
 				return errors.New("pre-run interrupted")
@@ -245,6 +245,10 @@ func (s *clientService) GroupRegistry() schema.Group {
 }
 
 func (s *clientService) TopNAggregationRegistry() schema.TopNAggregation {
+	return s.schemaRegistry
+}
+
+func (s *clientService) NodeRegistry() schema.Node {
 	return s.schemaRegistry
 }
 

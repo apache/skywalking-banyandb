@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -55,6 +56,7 @@ type option struct {
 type Query interface {
 	LoadGroup(name string) (schema.Group, bool)
 	Stream(stream *commonv1.Metadata) (Stream, error)
+	GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange
 }
 
 // Stream allows inspecting elements' details.
