@@ -22,12 +22,22 @@ package banyandb.measure.v1;
 import "banyandb/measure/v1/query.proto";
 import "banyandb/measure/v1/topn.proto";
 import "banyandb/measure/v1/write.proto";
+import "banyandb/model/v1/query.proto";
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1";
 option java_package = "org.apache.skywalking.banyandb.measure.v1";
 option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_path: "/api"};
+
+message DeleteExpiredSegmentsRequest {
+  string group = 1;
+  model.v1.TimeRange time_range = 2;
+}
+
+message DeleteExpiredSegmentsResponse {
+  int64 deleted = 1;
+}
 
 service MeasureService {
   rpc Query(QueryRequest) returns (QueryResponse) {
@@ -44,4 +54,5 @@ service MeasureService {
       body: "*"
     };
   }
+  rpc DeleteExpiredSegments(DeleteExpiredSegmentsRequest) returns (DeleteExpiredSegmentsResponse);
 }

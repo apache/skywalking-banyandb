@@ -91,6 +91,9 @@ func (s *seriesIndex) Update(docs index.Documents) error {
 func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 	projection []index.FieldKey, secondaryQuery index.Query, timeRange *timestamp.TimeRange,
 ) (data SeriesData, err error) {
+	if len(series) == 0 && secondaryQuery == nil {
+		return data, nil
+	}
 	var seriesMatchers []index.SeriesMatcher
 	if len(series) > 0 {
 		seriesMatchers = make([]index.SeriesMatcher, len(series))

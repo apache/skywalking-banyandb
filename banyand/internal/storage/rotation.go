@@ -44,14 +44,19 @@ func (d *database[T, O]) Tick(ts int64) {
 
 func (d *database[T, O]) startRotationTask() error {
 	options := d.segmentController.getOptions()
-	rt := newRetentionTask(d, options.TTL)
+	var rt *retentionTask[T, O]
+	if !d.disableRetention {
+		rt = newRetentionTask(d, options.TTL)
+	}
 	go func(rt *retentionTask[T, O]) {
 		for ts := range d.tsEventCh {
 			func(ts int64) {
 				d.rotationProcessOn.Store(true)
 				defer d.rotationProcessOn.Store(false)
 				t := time.Unix(0, ts)
-				rt.run(t, d.logger)
+				if rt != nil {
+					rt.run(t, d.logger)
+				}
 				func() {
 					ss := d.segmentController.segments()
 					if len(ss) == 0 {
@@ -87,6 +92,9 @@ func (d *database[T, O]) startRotationTask() error {
 			}(ts)
 		}
 	}(rt)
+	if rt == nil {
+		return nil
+	}
 	return d.scheduler.Register("retention", rt.option, rt.expr, rt.run)
 }
 

@@ -66,6 +66,7 @@ type TSDBOpts[T TSTable, O any] struct {
 	SeriesIndexFlushTimeoutSeconds int64
 	SeriesIndexCacheMaxBytes       int
 	ShardNum                       uint32
+	DisableRetention               bool
 }
 
 type (
@@ -89,6 +90,7 @@ type database[T TSTable, O any] struct {
 	sync.RWMutex
 	rotationProcessOn atomic.Bool
 	closed            atomic.Bool
+	disableRetention  bool
 }
 
 func (d *database[T, O]) Close() error {
@@ -136,7 +138,8 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		p:         p,
 		segmentController: newSegmentController[T](ctx, location,
 			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentBoundaryUpdateFn),
-		metrics: newMetrics(opts.StorageMetricsFactory),
+		metrics:          newMetrics(opts.StorageMetricsFactory),
+		disableRetention: opts.DisableRetention,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	lockPath := filepath.Join(opts.Location, lockFilename)
@@ -211,6 +214,14 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 	}
 
 	return nil
+}
+
+func (d *database[T, O]) GetExpiredSegmentsTimeRange() *timestamp.TimeRange {
+	return d.segmentController.getExpiredSegmentsTimeRange()
+}
+
+func (d *database[T, O]) DeleteExpiredSegments(timeRange timestamp.TimeRange) int64 {
+	return d.segmentController.deleteExpiredSegments(timeRange)
 }
 
 func (d *database[T, O]) collect() {

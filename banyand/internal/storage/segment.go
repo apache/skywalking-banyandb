@@ -462,6 +462,41 @@ func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, 
 	return hasSegment, err
 }
 
+func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.TimeRange {
+	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
+	timeRange := &timestamp.TimeRange{
+		IncludeStart: true,
+		IncludeEnd:   false,
+	}
+	for _, s := range sc.segments() {
+		if s.Before(deadline) {
+			if timeRange.Start.IsZero() {
+				timeRange.Start = s.Start
+			}
+			timeRange.End = s.End
+		}
+		s.DecRef()
+	}
+	return timeRange
+}
+
+func (sc *segmentController[T, O]) deleteExpiredSegments(timeRange timestamp.TimeRange) int64 {
+	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
+	var count int64
+	for _, s := range sc.segments() {
+		if s.Before(deadline) && s.Overlapping(timeRange) {
+			s.delete()
+			sc.Lock()
+			sc.removeSeg(s.id)
+			sc.Unlock()
+			count++
+		}
+		s.DecRef()
+	}
+	sc.notifySegmentBoundaryUpdate()
+	return count
+}
+
 func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 	for i, b := range sc.lst {
 		if b.id == segID {

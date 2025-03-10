@@ -48,6 +48,7 @@ type Repo interface {
 	TopNAggregationRegistry() schema.TopNAggregation
 	RegisterHandler(string, schema.Kind, schema.EventHandler)
 	UpdateSegmentsBoundary(stage, group string, boundary *modelv1.TimeRange)
+	NodeRegistry() schema.Node
 }
 
 // Service is the metadata repository.

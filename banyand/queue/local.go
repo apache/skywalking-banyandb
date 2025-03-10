@@ -78,6 +78,10 @@ func (l *local) Broadcast(timeout time.Duration, topic bus.Topic, message bus.Me
 	return []bus.Future{f}, nil
 }
 
+func (l *local) OnAddOrUpdate(_ schema.Metadata) {
+	panic("unimplemented")
+}
+
 func (l local) Name() string {
 	return "local-pipeline"
 }

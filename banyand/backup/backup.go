@@ -35,13 +35,10 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/multierr"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -134,21 +131,21 @@ func backupAction(dest, gRPCAddr string, enableTLS, insecure bool, cert,
 	}
 	defer fs.Close()
 
-	snapshots, err := getSnapshots(gRPCAddr, enableTLS, insecure, cert)
+	snapshots, err := snapshot.Get(gRPCAddr, enableTLS, insecure, cert)
 	if err != nil {
 		return err
 	}
 
 	timeDir := getTimeDir(timeStyle)
 
-	for _, snapshot := range snapshots {
+	for _, snp := range snapshots {
 		var snapshotDir string
-		snapshotDir, err = getSnapshotDir(snapshot, streamRoot, measureRoot, propertyRoot)
+		snapshotDir, err = snapshot.Dir(snp, streamRoot, measureRoot, propertyRoot)
 		if err != nil {
-			logger.Warningf("Failed to get snapshot directory for %s: %v", snapshot.Name, err)
+			logger.Warningf("Failed to get snapshot directory for %s: %v", snp.Name, err)
 			continue
 		}
-		multierr.AppendInto(&err, backupSnapshot(fs, snapshotDir, getCatalogName(snapshot.Catalog), timeDir))
+		multierr.AppendInto(&err, backupSnapshot(fs, snapshotDir, snapshot.CatalogName(snp.Catalog), timeDir))
 	}
 	return err
 }
@@ -165,40 +162,6 @@ func newFS(dest string) (remote.FS, error) {
 	default:
 		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
-}
-
-func getSnapshots(gRPCAddr string, enableTLS, insecure bool, cert string) ([]*databasev1.Snapshot, error) {
-	opts, err := grpchelper.SecureOptions(nil, enableTLS, insecure, cert)
-	if err != nil {
-		return nil, err
-	}
-	connection, err := grpchelper.Conn(gRPCAddr, 10*time.Second, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to gRPC server: %w", err)
-	}
-	defer connection.Close()
-	ctx := context.Background()
-	client := databasev1.NewSnapshotServiceClient(connection)
-	snapshotResp, err := client.Snapshot(ctx, &databasev1.SnapshotRequest{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to request snapshot: %w", err)
-	}
-	return snapshotResp.Snapshots, nil
-}
-
-func getSnapshotDir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot string) (string, error) {
-	var baseDir string
-	switch snapshot.Catalog {
-	case commonv1.Catalog_CATALOG_STREAM:
-		baseDir = getLocalDir(streamRoot, snapshot.Catalog)
-	case commonv1.Catalog_CATALOG_MEASURE:
-		baseDir = getLocalDir(measureRoot, snapshot.Catalog)
-	case commonv1.Catalog_CATALOG_PROPERTY:
-		baseDir = getLocalDir(propertyRoot, snapshot.Catalog)
-	default:
-		return "", errors.New("unknown catalog type")
-	}
-	return filepath.Join(baseDir, storage.SnapshotsDir, snapshot.Name), nil
 }
 
 func getTimeDir(style string) string {
