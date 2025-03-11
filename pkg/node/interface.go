@@ -38,6 +38,8 @@ var (
 )
 
 // Selector keeps all data nodes in the memory and can provide different algorithm to pick an available node.
+//
+//go:generate mockgen -destination=mock/node_selector_mock.go -package=mock github.com/apache/skywalking-banyandb/pkg/node Selector
 type Selector interface {
 	AddNode(node *databasev1.Node)
 	RemoveNode(node *databasev1.Node)

@@ -97,7 +97,7 @@ func (s *server) GracefulStop() {
 func NewService(_ context.Context) (metadata.Service, error) {
 	s := &server{}
 	var err error
-	s.Service, err = metadata.NewClient(true)
+	s.Service, err = metadata.NewClient(true, true)
 	if err != nil {
 		return nil, err
 	}

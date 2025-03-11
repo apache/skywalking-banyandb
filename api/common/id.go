@@ -222,11 +222,12 @@ func GenerateNode(grpcPort, httpPort *uint32) (node Node, err error) {
 	if httpPort != nil {
 		node.HTTPAddress = net.JoinHostPort(nodeHost, strconv.FormatUint(uint64(*httpPort), 10))
 	}
-	node.Labels = parseNodeFlags()
+	node.Labels = ParseNodeFlags()
 	return node, nil
 }
 
-func parseNodeFlags() map[string]string {
+// ParseNodeFlags parses the node labels from flag.
+func ParseNodeFlags() map[string]string {
 	labels := make(map[string]string)
 	for _, label := range FlagNodeLabels {
 		parts := strings.Split(label, "=")

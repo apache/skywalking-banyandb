@@ -393,6 +393,7 @@ func (s *store) SeriesIterator(ctx context.Context) (index.FieldIterator[index.S
 	defer func() {
 		_ = reader.Close()
 	}()
+
 	dict, err := reader.DictionaryIterator(docIDField, nil, nil, nil)
 	if err != nil {
 		return nil, err

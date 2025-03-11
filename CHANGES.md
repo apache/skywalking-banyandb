@@ -31,6 +31,7 @@ Release Notes.
 - Add concurrent barrier to partition merge to improve the performance of the partition merge.
 - Improve the write performance.
 - Add node labels to classify the nodes.
+- Add lifecycle management for the node.
 
 ### Bug Fixes
 

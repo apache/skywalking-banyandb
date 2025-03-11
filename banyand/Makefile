@@ -17,7 +17,7 @@
 #
 
 NAME := banyand
-BINARIES := $(NAME)-server $(NAME)-backup $(NAME)-restore
+BINARIES := $(NAME)-server $(NAME)-backup $(NAME)-restore $(NAME)-lifecycle
 
 IMG_NAME := skywalking-banyandb
 

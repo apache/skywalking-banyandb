@@ -21,12 +21,15 @@ import (
 	"context"
 	"path"
 	"path/filepath"
+	"time"
 
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -37,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -85,6 +89,10 @@ func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }
 
+func (s *service) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
+	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
+}
+
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of database")
@@ -126,13 +134,25 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
 	observability.UpdatePath(path)
 	s.localPipeline = queue.Local()
-	s.schemaRepo = newSchemaRepo(filepath.Join(path, storage.DataDir), s)
+	val := ctx.Value(common.ContextNodeKey)
+	if val == nil {
+		return errors.New("node id is empty")
+	}
+	node := val.(common.Node)
+	s.schemaRepo = newSchemaRepo(filepath.Join(path, storage.DataDir), s, node.Labels)
+	if s.pipeline == nil {
+		return nil
+	}
 
 	if err := s.createNativeObservabilityGroup(ctx); err != nil {
 		return err
 	}
 
 	if err := s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {
+		return err
+	}
+
+	if err := s.pipeline.Subscribe(data.TopicDeleteExpiredStreamSegments, &deleteStreamSegmentsListener{s: s}); err != nil {
 		return err
 	}
 
@@ -156,8 +176,10 @@ func (s *service) Serve() run.StopNotify {
 }
 
 func (s *service) GracefulStop() {
-	s.localPipeline.GracefulStop()
 	s.schemaRepo.Close()
+	if s.localPipeline != nil {
+		s.localPipeline.GracefulStop()
+	}
 }
 
 // NewService returns a new service.
@@ -169,4 +191,33 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline qu
 		omr:            omr,
 		pm:             pm,
 	}, nil
+}
+
+// NewReadonlyService returns a new readonly service.
+func NewReadonlyService(metadata metadata.Repo, omr observability.MetricsRegistry, pm *protector.Memory) (Service, error) {
+	return &service{
+		metadata: metadata,
+		omr:      omr,
+		pm:       pm,
+	}, nil
+}
+
+type deleteStreamSegmentsListener struct {
+	*bus.UnImplementedHealthyListener
+	s *service
+}
+
+func (d *deleteStreamSegmentsListener) Rev(_ context.Context, message bus.Message) bus.Message {
+	req := message.Data().(*measurev1.DeleteExpiredSegmentsRequest)
+	if req == nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), int64(0))
+	}
+
+	db, err := d.s.schemaRepo.loadTSDB(req.Group)
+	if err != nil {
+		d.s.l.Error().Err(err).Str("group", req.Group).Msg("failed to load tsdb")
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), int64(0))
+	}
+	deleted := db.DeleteExpiredSegments(timestamp.NewSectionTimeRange(req.TimeRange.Begin.AsTime(), req.TimeRange.End.AsTime()))
+	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
 }

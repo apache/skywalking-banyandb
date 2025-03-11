@@ -23,7 +23,7 @@ import (
 
 func TestParseLabelSelector(t *testing.T) {
 	tests := []struct {
-		want    *labelSelector
+		want    *LabelSelector
 		name    string
 		input   string
 		wantErr bool
@@ -31,12 +31,12 @@ func TestParseLabelSelector(t *testing.T) {
 		{
 			name:  "empty selector",
 			input: "",
-			want:  &labelSelector{},
+			want:  &LabelSelector{},
 		},
 		{
 			name:  "single equality",
 			input: "key=value",
-			want: &labelSelector{
+			want: &LabelSelector{
 				criteria: []condition{
 					{Key: "key", Op: opEquals, Values: []string{"value"}},
 				},
@@ -45,7 +45,7 @@ func TestParseLabelSelector(t *testing.T) {
 		{
 			name:  "not equals",
 			input: "key != value",
-			want: &labelSelector{
+			want: &LabelSelector{
 				criteria: []condition{
 					{Key: "key", Op: opNotEquals, Values: []string{"value"}},
 				},
@@ -54,7 +54,7 @@ func TestParseLabelSelector(t *testing.T) {
 		{
 			name:  "in clause",
 			input: "key in (v1, v2)",
-			want: &labelSelector{
+			want: &LabelSelector{
 				criteria: []condition{
 					{Key: "key", Op: opIn, Values: []string{"v1", "v2"}},
 				},
@@ -63,7 +63,7 @@ func TestParseLabelSelector(t *testing.T) {
 		{
 			name:  "not in clause",
 			input: "key notin (v1,v2)",
-			want: &labelSelector{
+			want: &LabelSelector{
 				criteria: []condition{
 					{Key: "key", Op: opNotIn, Values: []string{"v1", "v2"}},
 				},
@@ -72,7 +72,7 @@ func TestParseLabelSelector(t *testing.T) {
 		{
 			name:  "exists",
 			input: "key",
-			want: &labelSelector{
+			want: &LabelSelector{
 				criteria: []condition{
 					{Key: "key", Op: opExists},
 				},
@@ -81,7 +81,7 @@ func TestParseLabelSelector(t *testing.T) {
 		{
 			name:  "not exists",
 			input: "!key",
-			want: &labelSelector{
+			want: &LabelSelector{
 				criteria: []condition{
 					{Key: "key", Op: opNotExists},
 				},
@@ -90,7 +90,7 @@ func TestParseLabelSelector(t *testing.T) {
 		{
 			name:  "multiple conditions",
 			input: "key1=value1,key2 in (v1, v2),!key3",
-			want: &labelSelector{
+			want: &LabelSelector{
 				criteria: []condition{
 					{Key: "key1", Op: opEquals, Values: []string{"value1"}},
 					{Key: "key2", Op: opIn, Values: []string{"v1", "v2"}},
@@ -122,7 +122,7 @@ func TestParseLabelSelector(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseLabelSelector(tt.input)
+			got, err := ParseLabelSelector(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("parseLabelSelector() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -293,14 +293,14 @@ func TestConditionMatches(t *testing.T) {
 
 func TestLabelSelectorMatches(t *testing.T) {
 	tests := []struct {
-		selector *labelSelector
+		selector *LabelSelector
 		labels   map[string]string
 		name     string
 		want     bool
 	}{
 		{
 			name: "all conditions met",
-			selector: &labelSelector{
+			selector: &LabelSelector{
 				criteria: []condition{
 					{Key: "k1", Op: opExists},
 					{Key: "k2", Op: opEquals, Values: []string{"v2"}},
@@ -316,7 +316,7 @@ func TestLabelSelectorMatches(t *testing.T) {
 		},
 		{
 			name: "one condition fails",
-			selector: &labelSelector{
+			selector: &LabelSelector{
 				criteria: []condition{
 					{Key: "k1", Op: opExists},
 					{Key: "k2", Op: opEquals, Values: []string{"v2"}},
@@ -330,7 +330,7 @@ func TestLabelSelectorMatches(t *testing.T) {
 		},
 		{
 			name:     "empty selector",
-			selector: &labelSelector{},
+			selector: &LabelSelector{},
 			labels:   map[string]string{"any": "value"},
 			want:     true,
 		},
@@ -338,7 +338,7 @@ func TestLabelSelectorMatches(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.selector.matches(tt.labels)
+			got := tt.selector.Matches(tt.labels)
 			if got != tt.want {
 				t.Errorf("matches() = %v, want %v", got, tt.want)
 			}
