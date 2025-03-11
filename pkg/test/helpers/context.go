@@ -77,3 +77,12 @@ type BackupSharedContext struct {
 	Connection *grpclib.ClientConn
 	RootDir    string
 }
+
+// LifecycleSharedContext is the context shared between test cases in the lifecycle testing.
+type LifecycleSharedContext struct {
+	DataAddr   string
+	Connection *grpclib.ClientConn
+	SrcDir     string
+	DestDir    string
+	EtcdAddr   string
+}

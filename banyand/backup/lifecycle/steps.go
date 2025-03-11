@@ -26,6 +26,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -78,6 +79,7 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group) (streamDir str
 
 func (l *lifecycleService) setupQuerySvc(ctx context.Context, streamDir, measureDir string) (stream.Service, measure.Service, error) {
 	pm := protector.NewMemory(l.omr)
+	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{})
 	streamSVC, err := stream.NewReadonlyService(l.metadata, l.omr, pm)
 	if err != nil {
 		return nil, nil, err

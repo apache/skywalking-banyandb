@@ -55,6 +55,8 @@ type Server interface {
 }
 
 // BatchPublisher is the interface for publishing data in batch.
+//
+//go:generate mockgen -destination=./batch_publisher_mock.go -package=queue . BatchPublisher
 type BatchPublisher interface {
 	bus.Publisher
 	Close() (map[string]*common.Error, error)

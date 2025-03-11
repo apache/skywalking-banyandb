@@ -57,10 +57,11 @@ const flagEtcdTLSCertFile = "etcd-tls-cert-file"
 const flagEtcdTLSKeyFile = "etcd-tls-key-file"
 
 // NewClient returns a new metadata client.
-func NewClient(forceRegisterNode bool) (Service, error) {
+func NewClient(toRegisterNode, forceRegisterNode bool) (Service, error) {
 	return &clientService{
 		closer:            run.NewCloser(1),
 		forceRegisterNode: forceRegisterNode,
+		toRegisterNode:    toRegisterNode,
 	}, nil
 }
 
@@ -79,6 +80,7 @@ type clientService struct {
 	etcdFullSyncInterval time.Duration
 	nodeInfoMux          sync.Mutex
 	forceRegisterNode    bool
+	toRegisterNode       bool
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -150,6 +152,9 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			break
 		}
 		return err
+	}
+	if !s.toRegisterNode {
+		return nil
 	}
 
 	val := ctx.Value(common.ContextNodeKey)

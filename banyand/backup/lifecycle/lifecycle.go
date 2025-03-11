@@ -38,13 +38,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-// NewLifecycleCommand creates a new lifecycle command.
-func NewLifecycleCommand() *cobra.Command {
+// NewCommand creates a new lifecycle command.
+func NewCommand() *cobra.Command {
 	var schedule string
 
 	l := logger.GetLogger("bootstrap")
 
-	metaSvc, err := metadata.NewClient(false)
+	metaSvc, err := metadata.NewClient(false, false)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
@@ -54,7 +54,7 @@ func NewLifecycleCommand() *cobra.Command {
 	group.Register(metaSvc, metricSvc, svc)
 
 	cmd := &cobra.Command{
-		Short:             "Backup BanyanDB snapshots to remote storage",
+		Short:             "Run lifecycle migration",
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -85,11 +85,12 @@ func NewLifecycleCommand() *cobra.Command {
 			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 			schedLogger.Info().Msg("backup scheduler started, press Ctrl+C to exit")
 			<-sigChan
-			schedLogger.Info().Msg("shutting down backup scheduler...")
+			schedLogger.Info().Msg("shutting down lifecycle migration scheduler...")
 			sch.Close()
 			return nil
 		},
 	}
+	cmd.Flags().AddFlagSet(group.RegisterFlags().FlagSet)
 
 	cmd.Flags().StringVar(
 		&schedule,

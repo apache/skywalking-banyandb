@@ -99,7 +99,6 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	l.l = logger.GetLogger("lifecycle")
 	ctx := context.Background()
 
-	// Load progress from file if it exists
 	progress := LoadProgress(l.progressFilePath, l.l)
 
 	groups, err := l.getGroupsToProcess(ctx, progress)
