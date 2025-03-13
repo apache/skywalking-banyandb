@@ -193,6 +193,12 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 		segPath := filepath.Join(dst, segDir)
 		lfs.MkdirIfNotExist(segPath, DirPerm)
 
+		metadataSrc := filepath.Join(seg.location, metadataFilename)
+		metadataDest := filepath.Join(segPath, metadataFilename)
+		if err := lfs.CreateHardLink(metadataSrc, metadataDest, nil); err != nil {
+			return errors.Wrapf(err, "failed to snapshot metadata for segment %s", segDir)
+		}
+
 		indexPath := filepath.Join(segPath, seriesIndexDirName)
 		lfs.MkdirIfNotExist(indexPath, DirPerm)
 		if err := seg.index.store.TakeFileSnapshot(indexPath); err != nil {

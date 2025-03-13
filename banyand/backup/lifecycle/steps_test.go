@@ -584,7 +584,7 @@ func TestParseGroup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shardNum, selector, client, err := parseGroup(tt.group, tt.nodeLabels, tt.nodes, l)
+			shardNum, selector, client, err := parseGroup(context.Background(), tt.group, tt.nodeLabels, tt.nodes, l, nil)
 
 			if tt.expectError {
 				require.Error(t, err)

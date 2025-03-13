@@ -33,12 +33,14 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
 type roundRobinSelector struct {
-	name           string
 	schemaRegistry metadata.Repo
+	nodeSelector   *pub.LabelSelector
+	name           string
 	lookupTable    []key
 	nodes          []string
 	mu             sync.RWMutex
@@ -80,6 +82,10 @@ func NewRoundRobinSelector(name string, schemaRegistry metadata.Repo) Selector {
 
 func (r *roundRobinSelector) Name() string {
 	return r.name
+}
+
+func (r *roundRobinSelector) SetNodeSelector(selector *pub.LabelSelector) {
+	r.nodeSelector = selector
 }
 
 func (r *roundRobinSelector) PreRun(context.Context) error {
@@ -160,6 +166,9 @@ func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {
 }
 
 func (r *roundRobinSelector) AddNode(node *databasev1.Node) {
+	if r.nodeSelector != nil && !r.nodeSelector.Matches(node.Labels) {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.nodes = append(r.nodes, node.Metadata.Name)

@@ -21,6 +21,7 @@ import (
 	"context"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -71,6 +72,7 @@ type service struct {
 	schemaRepo          schemaRepo
 	root                string
 	snapshotDir         string
+	dataPath            string
 	option              option
 	maxDiskUsagePercent int
 	maxFileSnapshotNum  int
@@ -94,7 +96,8 @@ func (s *service) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
-	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of database")
+	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of stream")
+	flagS.StringVar(&s.dataPath, "stream-data-path", "", "the data directory path of stream. If not set, <stream-root-path>/stream/data will be used")
 	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
 	flagS.DurationVar(&s.option.elementIndexFlushTimeout, "element-index-flush-timeout", defaultFlushTimeout, "the elementIndex timeout of stream")
 	s.option.mergePolicy = newDefaultMergePolicy()
@@ -138,7 +141,13 @@ func (s *service) PreRun(ctx context.Context) error {
 		return errors.New("node id is empty")
 	}
 	node := val.(common.Node)
-	s.schemaRepo = newSchemaRepo(filepath.Join(path, storage.DataDir), s, node.Labels)
+	if s.dataPath == "" {
+		s.dataPath = filepath.Join(path, storage.DataDir)
+	}
+	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
+		observability.UpdatePath(s.dataPath)
+	}
+	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
 	if s.pipeline == nil {
 		return nil
 	}
