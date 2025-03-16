@@ -139,7 +139,6 @@ func NewBackupCommand() *cobra.Command {
 	cmd.Flags().StringVar(&awsConfig.KeyID, "aws-access-key", "", "AWS access key ID")
 	cmd.Flags().StringVar(&awsConfig.SecretKey, "aws-secret-key", "", "AWS secret access key")
 	cmd.Flags().StringVar(&awsConfig.Endpoint, "aws-endpoint", "", "Custom endpoint for S3 API (optional)")
-	// todo: timeout
 	cmd.Flags().DurationVar(&awsConfig.Timeout, "aws-timeout", 30*time.Second, "Timeout for AWS operations")
 
 	return cmd
