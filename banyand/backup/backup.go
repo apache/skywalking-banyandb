@@ -27,6 +27,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -57,9 +59,23 @@ func NewBackupCommand() *cobra.Command {
 		dest         string
 		timeStyle    string
 		schedule     string
+
+		// AWS S3
+		awsConfig = &aws.AWSConfig{}
 	)
 
 	cmd := &cobra.Command{
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.HasPrefix(dest, "s3://") {
+				// global aws config
+				aws.SetAWSConfig(awsConfig)
+
+				if awsConfig.Region == "" {
+					return fmt.Errorf("AWS region is required for S3 storage")
+				}
+			}
+			return nil
+		},
 		Short:             "Backup BanyanDB snapshots to remote storage",
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
@@ -115,6 +131,17 @@ func NewBackupCommand() *cobra.Command {
 		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
 	)
 
+	// aws
+	cmd.Flags().StringVar(&awsConfig.Region, "aws-region", "", "AWS region for S3 storage")
+	cmd.Flags().StringVar(&awsConfig.MeasureBucket, "aws-measure-bucket", "", "AWS S3 measure bucket name")
+	cmd.Flags().StringVar(&awsConfig.StreamBucket, "aws-stream-bucket", "", "AWS S3 stream bucket name")
+	cmd.Flags().StringVar(&awsConfig.PropertyBucket, "aws-property-bucket", "", "AWS S3 property bucket name")
+	cmd.Flags().StringVar(&awsConfig.KeyID, "aws-access-key", "", "AWS access key ID")
+	cmd.Flags().StringVar(&awsConfig.SecretKey, "aws-secret-key", "", "AWS secret access key")
+	cmd.Flags().StringVar(&awsConfig.Endpoint, "aws-endpoint", "", "Custom endpoint for S3 API (optional)")
+	// todo: timeout
+	cmd.Flags().DurationVar(&awsConfig.Timeout, "aws-timeout", 30*time.Second, "Timeout for AWS operations")
+
 	return cmd
 }
 
@@ -159,6 +186,9 @@ func newFS(dest string) (remote.FS, error) {
 	switch u.Scheme {
 	case "file":
 		return local.NewFS(u.Path)
+	case "s3":
+		return aws.NewFS(u.Path)
+
 	default:
 		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
