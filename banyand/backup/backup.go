@@ -59,23 +59,23 @@ func NewBackupCommand() *cobra.Command {
 		dest         string
 		timeStyle    string
 		schedule     string
-		awsConfig    = &aws.AWSConfig{}
+		s3Config     = &aws.S3Config{}
 	)
 
 	cmd := &cobra.Command{
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.HasPrefix(dest, "s3://") {
-				aws.SetAWSConfig(awsConfig)
-				if awsConfig.MeasureBucket == "" {
+				aws.SetS3Config(s3Config)
+				if s3Config.MeasureBucket == "" {
 					return errors.New("measure-bucket is required")
 				}
-				if awsConfig.StreamBucket == "" {
+				if s3Config.StreamBucket == "" {
 					return errors.New("stream-bucket is required")
 				}
-				if awsConfig.PropertyBucket == "" {
+				if s3Config.PropertyBucket == "" {
 					return errors.New("property-bucket is required")
 				}
-				if awsConfig.Region == "" {
+				if s3Config.Region == "" {
 					return errors.New("aws-region is required")
 				}
 			}
@@ -137,14 +137,14 @@ func NewBackupCommand() *cobra.Command {
 	)
 
 	// aws
-	cmd.Flags().StringVar(&awsConfig.Region, "aws-region", "", "AWS region for S3 storage")
-	cmd.Flags().StringVar(&awsConfig.KeyID, "aws-access-key", "", "AWS access key ID")
-	cmd.Flags().StringVar(&awsConfig.SecretKey, "aws-secret-key", "", "AWS secret access key")
-	cmd.Flags().StringVar(&awsConfig.Endpoint, "aws-endpoint", "", "Custom endpoint for S3 API (optional)")
-	cmd.Flags().DurationVar(&awsConfig.Timeout, "aws-timeout", 30*time.Second, "Timeout for AWS operations")
-	cmd.Flags().StringVar(&awsConfig.MeasureBucket, "measure-bucket", "", "measure bucket name for S3 storage")
-	cmd.Flags().StringVar(&awsConfig.StreamBucket, "stream-bucket", "", "stream bucket name for S3 storage")
-	cmd.Flags().StringVar(&awsConfig.PropertyBucket, "property-bucket", "", "property bucket name for S3 storage")
+	cmd.Flags().StringVar(&s3Config.Region, "s3-region", "", "AWS region for S3 storage")
+	cmd.Flags().StringVar(&s3Config.KeyID, "s3-access-key", "", "AWS access key ID")
+	cmd.Flags().StringVar(&s3Config.SecretKey, "s3-secret-key", "", "AWS secret access key")
+	cmd.Flags().StringVar(&s3Config.Endpoint, "s3-endpoint", "", "Custom endpoint for S3 API (optional)")
+	cmd.Flags().DurationVar(&s3Config.Timeout, "s3-timeout", 30*time.Second, "Timeout for AWS operations")
+	cmd.Flags().StringVar(&s3Config.MeasureBucket, "measure-bucket", "", "measure bucket name for S3 storage")
+	cmd.Flags().StringVar(&s3Config.StreamBucket, "stream-bucket", "", "stream bucket name for S3 storage")
+	cmd.Flags().StringVar(&s3Config.PropertyBucket, "property-bucket", "", "property bucket name for S3 storage")
 	return cmd
 }
 
@@ -188,7 +188,6 @@ func newFS(dest string) (remote.FS, error) {
 
 	switch u.Scheme {
 	case "file":
-
 		remote.NowRemoteKind = remote.Local
 		return local.NewFS(u.Path)
 	case "s3":

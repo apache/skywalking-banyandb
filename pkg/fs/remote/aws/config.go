@@ -19,7 +19,7 @@ package aws
 
 import "time"
 
-type AWSConfig struct {
+type S3Config struct {
 	Region         string
 	KeyID          string
 	SecretKey      string
@@ -30,12 +30,12 @@ type AWSConfig struct {
 	PropertyBucket string
 }
 
-var awsGlobalConfig *AWSConfig
+var awsGlobalConfig *S3Config
 
-func SetAWSConfig(cfg *AWSConfig) {
+func SetS3Config(cfg *S3Config) {
 	awsGlobalConfig = cfg
 }
 
-func getAWSConfig() *AWSConfig {
+func GetS3Config() *S3Config {
 	return awsGlobalConfig
 }
