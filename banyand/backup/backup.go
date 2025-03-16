@@ -59,9 +59,7 @@ func NewBackupCommand() *cobra.Command {
 		dest         string
 		timeStyle    string
 		schedule     string
-
-		// AWS S3
-		awsConfig = &aws.AWSConfig{}
+		awsConfig    = &aws.AWSConfig{}
 	)
 
 	cmd := &cobra.Command{
@@ -69,13 +67,16 @@ func NewBackupCommand() *cobra.Command {
 			if strings.HasPrefix(dest, "s3://") {
 				aws.SetAWSConfig(awsConfig)
 				if awsConfig.MeasureBucket == "" {
-					return errors.New("measure bucket is required")
+					return errors.New("measure-bucket is required")
 				}
 				if awsConfig.StreamBucket == "" {
-					return errors.New("stream bucket is required")
+					return errors.New("stream-bucket is required")
 				}
 				if awsConfig.PropertyBucket == "" {
-					return errors.New("property bucket is required")
+					return errors.New("property-bucket is required")
+				}
+				if awsConfig.Region == "" {
+					return errors.New("aws-region is required")
 				}
 			}
 			return nil
@@ -187,8 +188,11 @@ func newFS(dest string) (remote.FS, error) {
 
 	switch u.Scheme {
 	case "file":
+
+		remote.NowRemoteKind = remote.Local
 		return local.NewFS(u.Path)
 	case "s3":
+		remote.NowRemoteKind = remote.S3
 		return aws.NewFS()
 
 	default:
@@ -215,16 +219,18 @@ func backupSnapshot(fs remote.FS, snapshotDir, catalog, timeDir string) error {
 	ctx := context.Background()
 	remotePrefix := path.Join(timeDir, catalog) + "/"
 
-	remoteFiles, err := fs.List(ctx, remotePrefix)
-	if err != nil {
-		return err
+	var remoteFiles []string
+	if remote.NowRemoteKind == remote.Local {
+		remoteFiles, err = fs.List(ctx, remotePrefix)
+		if err != nil {
+			return err
+		}
 	}
-
 	for _, relPath := range localFiles {
 		remotePath := path.Join(timeDir, catalog, relPath)
-		newCtx := context.WithValue(ctx, "catalog", catalog)
 		if !contains(remoteFiles, remotePath) {
-			if err := uploadFile(newCtx, fs, snapshotDir, relPath, remotePath); err != nil {
+			remote.NowCatalog = catalog
+			if err := uploadFile(ctx, fs, snapshotDir, relPath, remotePath); err != nil {
 				return err
 			}
 		}

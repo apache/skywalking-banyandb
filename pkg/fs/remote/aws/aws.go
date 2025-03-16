@@ -28,6 +28,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
+	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
@@ -55,8 +57,6 @@ func NewFS() (remote.FS, error) {
 			cfg.SecretKey,
 			"",
 		)),
-		// Compatible with non-AWS services
-		config.WithBaseEndpoint(cfg.Endpoint),
 		config.WithHTTPClient(httpClient),
 		config.WithClientLogMode(aws.LogRetries),
 	)
@@ -74,8 +74,22 @@ func NewFS() (remote.FS, error) {
 }
 
 func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
-	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: getBucketName(ctx),
+	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: getBucketName(),
+		Key:    &path,
+	})
+	// todo: 细粒度的异常处理，比如网络超时重试
+	if err != nil {
+		var apiErr *smithy.GenericAPIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
+			err = nil
+		} else {
+			return fmt.Errorf("failed to check if object exists: %w", err)
+		}
+	}
+
+	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: getBucketName(),
 		Key:    &path,
 		Body:   data,
 	})
@@ -84,7 +98,7 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 
 func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error) {
 	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: getBucketName(ctx),
+		Bucket: getBucketName(),
 		Key:    &path,
 	})
 	if err != nil {
@@ -96,7 +110,7 @@ func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error)
 func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
 	var files []string
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: getBucketName(ctx),
+		Bucket: getBucketName(),
 		Prefix: &prefix,
 	})
 
@@ -114,7 +128,7 @@ func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
 
 func (s *s3FS) Delete(ctx context.Context, path string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: getBucketName(ctx),
+		Bucket: getBucketName(),
 		Key:    &path,
 	})
 	return err
@@ -125,8 +139,8 @@ func (s *s3FS) Close() error {
 	return nil
 }
 
-func getBucketName(ctx context.Context) *string {
-	switch ctx.Value("catalog").(string) {
+func getBucketName() *string {
+	switch remote.NowCatalog {
 	case "measure":
 		return &awsGlobalConfig.MeasureBucket
 	case "stream":
