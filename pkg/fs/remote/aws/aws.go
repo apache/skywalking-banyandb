@@ -28,21 +28,22 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/smithy-go"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
+// todo: Maybe we can bring in minio, oss
 type s3FS struct {
 	client *s3.Client
 }
 
 // todo: variable to get the bucket name for measure,property,stream
-var cfg *AWSConfig
+var cfg *S3Config
 
 func NewFS() (remote.FS, error) {
-	cfg = getAWSConfig()
+	cfg = GetS3Config()
 	// timeout
 	httpClient := &http.Client{
 		Timeout: cfg.Timeout,
@@ -78,10 +79,10 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 		Bucket: getBucketName(),
 		Key:    &path,
 	})
-	// todo: 细粒度的异常处理，比如网络超时重试
+	// todo: 细粒度的异常处理，比如网络超时重试，查重策略
 	if err != nil {
-		var apiErr *smithy.GenericAPIError
-		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
+		var notFoundErr *types.NotFound
+		if errors.As(err, &notFoundErr) {
 			err = nil
 		} else {
 			return fmt.Errorf("failed to check if object exists: %w", err)
