@@ -21,12 +21,12 @@ package aws
 import (
 	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"io"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
@@ -65,7 +65,6 @@ func NewFS() (remote.FS, error) {
 	}
 
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-
 		o.UsePathStyle = true
 	})
 
