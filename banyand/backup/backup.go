@@ -133,9 +133,6 @@ func NewBackupCommand() *cobra.Command {
 
 	// aws
 	cmd.Flags().StringVar(&awsConfig.Region, "aws-region", "", "AWS region for S3 storage")
-	cmd.Flags().StringVar(&awsConfig.MeasureBucket, "aws-measure-bucket", "", "AWS S3 measure bucket name")
-	cmd.Flags().StringVar(&awsConfig.StreamBucket, "aws-stream-bucket", "", "AWS S3 stream bucket name")
-	cmd.Flags().StringVar(&awsConfig.PropertyBucket, "aws-property-bucket", "", "AWS S3 property bucket name")
 	cmd.Flags().StringVar(&awsConfig.KeyID, "aws-access-key", "", "AWS access key ID")
 	cmd.Flags().StringVar(&awsConfig.SecretKey, "aws-secret-key", "", "AWS secret access key")
 	cmd.Flags().StringVar(&awsConfig.Endpoint, "aws-endpoint", "", "Custom endpoint for S3 API (optional)")
@@ -186,7 +183,7 @@ func newFS(dest string) (remote.FS, error) {
 	case "file":
 		return local.NewFS(u.Path)
 	case "s3":
-		return aws.NewFS(u.Path)
+		return aws.NewFS()
 
 	default:
 		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
@@ -219,8 +216,9 @@ func backupSnapshot(fs remote.FS, snapshotDir, catalog, timeDir string) error {
 
 	for _, relPath := range localFiles {
 		remotePath := path.Join(timeDir, catalog, relPath)
+		newCtx := context.WithValue(ctx, "catalog", catalog)
 		if !contains(remoteFiles, remotePath) {
-			if err := uploadFile(ctx, fs, snapshotDir, relPath, remotePath); err != nil {
+			if err := uploadFile(newCtx, fs, snapshotDir, relPath, remotePath); err != nil {
 				return err
 			}
 		}

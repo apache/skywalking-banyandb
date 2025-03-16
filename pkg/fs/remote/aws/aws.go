@@ -10,7 +10,7 @@
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
-// "AS IS" BASIS, WaITHOUT WARRANTIES OR CONDITIONS OF ANY
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
@@ -20,7 +20,11 @@ package aws
 
 import (
 	"context"
+	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"io"
+	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -33,14 +37,38 @@ type s3FS struct {
 }
 
 // todo: variable to get the bucket name for measure,property,stream
-var bucketName = "aws-s3"
+var cfg *AWSConfig
 
-func NewFS(region string) (remote.FS, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(region))
-	if err != nil {
+func NewFS() (remote.FS, error) {
+	cfg = getAWSConfig()
+	// timeout
+	httpClient := &http.Client{
+		Timeout: cfg.Timeout,
 	}
 
-	client := s3.NewFromConfig(cfg)
+	// todo: lots of configs to do
+	awsCfg, err := config.LoadDefaultConfig(
+		context.TODO(),
+		config.WithRegion(cfg.Region),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			cfg.KeyID,
+			cfg.SecretKey,
+			"",
+		)),
+		// Compatible with non-AWS services
+		config.WithBaseEndpoint(cfg.Endpoint),
+		config.WithHTTPClient(httpClient),
+		config.WithClientLogMode(aws.LogRetries),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load AWS config error: %w", err)
+	}
+
+	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+
+		o.UsePathStyle = true
+	})
+
 	return &s3FS{
 		client: client,
 	}, nil
@@ -48,7 +76,7 @@ func NewFS(region string) (remote.FS, error) {
 
 func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: &bucketName,
+		Bucket: ctx.Value("catalog").(*string),
 		Key:    &path,
 		Body:   data,
 	})
@@ -57,7 +85,7 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 
 func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error) {
 	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: &bucketName,
+		Bucket: ctx.Value("catalog").(*string),
 		Key:    &path,
 	})
 	if err != nil {
@@ -69,7 +97,7 @@ func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error)
 func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
 	var files []string
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: &bucketName,
+		Bucket: ctx.Value("catalog").(*string),
 		Prefix: &prefix,
 	})
 
@@ -87,7 +115,7 @@ func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
 
 func (s *s3FS) Delete(ctx context.Context, path string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: &bucketName,
+		Bucket: ctx.Value("catalog").(*string),
 		Key:    &path,
 	})
 	return err
