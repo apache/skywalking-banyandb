@@ -10,7 +10,7 @@
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// "AS IS" BASIS, WaITHOUT WARRANTIES OR CONDITIONS OF ANY
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
@@ -29,25 +29,26 @@ import (
 )
 
 type s3FS struct {
-	client     *s3.Client
-	bucketName string
+	client *s3.Client
 }
 
-func NewFS(bucketName, region string) (remote.FS, error) {
+// todo: variable to get the bucket name for measure,property,stream
+var bucketName = "aws-s3"
+
+func NewFS(region string) (remote.FS, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(region))
 	if err != nil {
 	}
 
 	client := s3.NewFromConfig(cfg)
 	return &s3FS{
-		client:     client,
-		bucketName: bucketName,
+		client: client,
 	}, nil
 }
 
 func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: &s.bucketName,
+		Bucket: &bucketName,
 		Key:    &path,
 		Body:   data,
 	})
@@ -56,7 +57,7 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 
 func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error) {
 	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: &s.bucketName,
+		Bucket: &bucketName,
 		Key:    &path,
 	})
 	if err != nil {
@@ -68,7 +69,7 @@ func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error)
 func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
 	var files []string
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: &s.bucketName,
+		Bucket: &bucketName,
 		Prefix: &prefix,
 	})
 
@@ -86,7 +87,7 @@ func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
 
 func (s *s3FS) Delete(ctx context.Context, path string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: &s.bucketName,
+		Bucket: &bucketName,
 		Key:    &path,
 	})
 	return err
