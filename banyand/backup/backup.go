@@ -67,11 +67,15 @@ func NewBackupCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.HasPrefix(dest, "s3://") {
-				// global aws config
 				aws.SetAWSConfig(awsConfig)
-
-				if awsConfig.Region == "" {
-					return fmt.Errorf("AWS region is required for S3 storage")
+				if awsConfig.MeasureBucket == "" {
+					return errors.New("measure bucket is required")
+				}
+				if awsConfig.StreamBucket == "" {
+					return errors.New("stream bucket is required")
+				}
+				if awsConfig.PropertyBucket == "" {
+					return errors.New("property bucket is required")
 				}
 			}
 			return nil
@@ -137,7 +141,9 @@ func NewBackupCommand() *cobra.Command {
 	cmd.Flags().StringVar(&awsConfig.SecretKey, "aws-secret-key", "", "AWS secret access key")
 	cmd.Flags().StringVar(&awsConfig.Endpoint, "aws-endpoint", "", "Custom endpoint for S3 API (optional)")
 	cmd.Flags().DurationVar(&awsConfig.Timeout, "aws-timeout", 30*time.Second, "Timeout for AWS operations")
-
+	cmd.Flags().StringVar(&awsConfig.MeasureBucket, "measure-bucket", "", "measure bucket name for S3 storage")
+	cmd.Flags().StringVar(&awsConfig.StreamBucket, "stream-bucket", "", "stream bucket name for S3 storage")
+	cmd.Flags().StringVar(&awsConfig.PropertyBucket, "property-bucket", "", "property bucket name for S3 storage")
 	return cmd
 }
 
