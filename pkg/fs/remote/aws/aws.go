@@ -75,7 +75,7 @@ func NewFS() (remote.FS, error) {
 
 func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: ctx.Value("catalog").(*string),
+		Bucket: getBucketName(ctx),
 		Key:    &path,
 		Body:   data,
 	})
@@ -84,7 +84,7 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 
 func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error) {
 	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: ctx.Value("catalog").(*string),
+		Bucket: getBucketName(ctx),
 		Key:    &path,
 	})
 	if err != nil {
@@ -96,7 +96,7 @@ func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error)
 func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
 	var files []string
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: ctx.Value("catalog").(*string),
+		Bucket: getBucketName(ctx),
 		Prefix: &prefix,
 	})
 
@@ -114,7 +114,7 @@ func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
 
 func (s *s3FS) Delete(ctx context.Context, path string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: ctx.Value("catalog").(*string),
+		Bucket: getBucketName(ctx),
 		Key:    &path,
 	})
 	return err
@@ -123,4 +123,17 @@ func (s *s3FS) Delete(ctx context.Context, path string) error {
 func (s *s3FS) Close() error {
 	// No resources to close for S3 client
 	return nil
+}
+
+func getBucketName(ctx context.Context) *string {
+	switch ctx.Value("catalog").(string) {
+	case "measure":
+		return &awsGlobalConfig.MeasureBucket
+	case "stream":
+		return &awsGlobalConfig.StreamBucket
+	case "property":
+		return &awsGlobalConfig.PropertyBucket
+	default:
+		return nil
+	}
 }
