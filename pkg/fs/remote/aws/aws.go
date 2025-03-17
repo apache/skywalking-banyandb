@@ -28,8 +28,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
@@ -75,21 +73,7 @@ func NewFS() (remote.FS, error) {
 }
 
 func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
-	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: getBucketName(),
-		Key:    &path,
-	})
-	// todo: 细粒度的异常处理，比如网络超时重试，查重策略
-	if err != nil {
-		var notFoundErr *types.NotFound
-		if errors.As(err, &notFoundErr) {
-			err = nil
-		} else {
-			return fmt.Errorf("failed to check if object exists: %w", err)
-		}
-	}
-
-	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: getBucketName(),
 		Key:    &path,
 		Body:   data,
