@@ -63,7 +63,7 @@ func NewBackupCommand() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		PreRunE: func(cmd *cobra.Command, _ []string) error {
+		PreRunE: func(_ *cobra.Command, _ []string) error {
 			if strings.HasPrefix(dest, "s3://") {
 				aws.SetS3Config(s3Config)
 				if s3Config.MeasureBucket == "" {
@@ -77,6 +77,12 @@ func NewBackupCommand() *cobra.Command {
 				}
 				if s3Config.Region == "" {
 					return errors.New("aws-region is required")
+				}
+				if s3Config.KeyID == "" {
+					return errors.New("aws-access-key is required")
+				}
+				if s3Config.SecretKey == "" {
+					return errors.New("aws-secret-key is required")
 				}
 			}
 			return nil
@@ -188,10 +194,8 @@ func newFS(dest string) (remote.FS, error) {
 
 	switch u.Scheme {
 	case "file":
-		remote.NowRemoteKind = remote.Local
 		return local.NewFS(u.Path)
 	case "s3":
-		remote.NowRemoteKind = remote.S3
 		return aws.NewFS()
 
 	default:
@@ -220,6 +224,9 @@ func backupSnapshot(fs remote.FS, snapshotDir, catalog, timeDir string) error {
 
 	remote.NowCatalog = catalog
 	remoteFiles, err := fs.List(ctx, remotePrefix)
+	if err != nil {
+		return err
+	}
 	for _, relPath := range localFiles {
 		remotePath := path.Join(timeDir, catalog, relPath)
 		if !contains(remoteFiles, remotePath) {

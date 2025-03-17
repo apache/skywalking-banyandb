@@ -19,23 +19,26 @@ package aws
 
 import "time"
 
+// S3Config holds the configuration for S3 storage.
 type S3Config struct {
 	Region         string
 	KeyID          string
 	SecretKey      string
 	Endpoint       string
-	Timeout        time.Duration
 	MeasureBucket  string
 	StreamBucket   string
 	PropertyBucket string
+	Timeout        time.Duration
 }
 
 var awsGlobalConfig *S3Config
 
+// SetS3Config configures the S3 settings based on the provided config.
 func SetS3Config(cfg *S3Config) {
 	awsGlobalConfig = cfg
 }
 
+// GetS3Config retrieves the current S3 configuration.
 func GetS3Config() *S3Config {
 	return awsGlobalConfig
 }

@@ -40,9 +40,13 @@ type s3FS struct {
 // todo: variable to get the bucket name for measure,property,stream
 var cfg *S3Config
 
+// NewFS creates a new instance of the file system for accessing S3 storage.
 func NewFS() (remote.FS, error) {
 	cfg = GetS3Config()
-	// timeout
+	if cfg == nil {
+		return nil, fmt.Errorf("s3 config is nil")
+	}
+
 	httpClient := &http.Client{
 		Timeout: cfg.Timeout,
 	}
