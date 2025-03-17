@@ -218,17 +218,11 @@ func backupSnapshot(fs remote.FS, snapshotDir, catalog, timeDir string) error {
 	ctx := context.Background()
 	remotePrefix := path.Join(timeDir, catalog) + "/"
 
-	var remoteFiles []string
-	if remote.NowRemoteKind == remote.Local {
-		remoteFiles, err = fs.List(ctx, remotePrefix)
-		if err != nil {
-			return err
-		}
-	}
+	remote.NowCatalog = catalog
+	remoteFiles, err := fs.List(ctx, remotePrefix)
 	for _, relPath := range localFiles {
 		remotePath := path.Join(timeDir, catalog, relPath)
 		if !contains(remoteFiles, remotePath) {
-			remote.NowCatalog = catalog
 			if err := uploadFile(ctx, fs, snapshotDir, relPath, remotePath); err != nil {
 				return err
 			}
