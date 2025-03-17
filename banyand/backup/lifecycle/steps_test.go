@@ -34,6 +34,8 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -397,6 +399,9 @@ func TestMigrateMeasure(t *testing.T) {
 func TestParseGroup(t *testing.T) {
 	l := logger.GetLogger("test")
 
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	tests := []struct {
 		group        *commonv1.Group
 		nodeLabels   map[string]string
@@ -584,7 +589,9 @@ func TestParseGroup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shardNum, selector, client, err := parseGroup(context.Background(), tt.group, tt.nodeLabels, tt.nodes, l, nil)
+			mockRepo := metadata.NewMockRepo(ctrl)
+			mockRepo.EXPECT().RegisterHandler("", schema.KindGroup, gomock.Any()).MaxTimes(1)
+			shardNum, selector, client, err := parseGroup(context.Background(), tt.group, tt.nodeLabels, tt.nodes, l, mockRepo)
 
 			if tt.expectError {
 				require.Error(t, err)

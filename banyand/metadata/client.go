@@ -257,6 +257,10 @@ func (s *clientService) NodeRegistry() schema.Node {
 	return s.schemaRegistry
 }
 
+func (s *clientService) PropertyRegistry() schema.Property {
+	return s.schemaRegistry
+}
+
 func (s *clientService) Name() string {
 	return "metadata"
 }

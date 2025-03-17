@@ -40,10 +40,11 @@ const (
 	KindIndexRule
 	KindTopNAggregation
 	KindNode
+	KindProperty
 	KindMask = KindGroup | KindStream | KindMeasure |
 		KindIndexRuleBinding | KindIndexRule |
-		KindTopNAggregation | KindNode
-	KindSize = 9
+		KindTopNAggregation | KindNode | KindProperty
+	KindSize = 8
 )
 
 func (k Kind) key() string {
@@ -88,6 +89,8 @@ func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
 		m = &databasev1.TopNAggregation{}
 	case KindNode:
 		m = &databasev1.Node{}
+	case KindProperty:
+		m = &databasev1.Property{}
 	default:
 		return Metadata{}, errUnsupportedEntityType
 	}

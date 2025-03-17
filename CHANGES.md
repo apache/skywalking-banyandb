@@ -32,6 +32,7 @@ Release Notes.
 - Improve the write performance.
 - Add node labels to classify the nodes.
 - Add lifecycle management for the node.
+- Property: Introduce the schema style to the property.
 
 ### Bug Fixes
 

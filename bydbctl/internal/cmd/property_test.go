@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -38,10 +39,9 @@ var _ = Describe("Property Operation", func() {
 	var rootCmd *cobra.Command
 	p1YAML := `
 metadata:
-  container:
-    group: ui-template 
-    name: service
-  id: kubernetes
+  group: ui-template 
+  name: service
+id: kubernetes
 tags:
   - key: content
     value:
@@ -54,10 +54,9 @@ tags:
 `
 	p2YAML := `
 metadata:
-  container:
-    group: ui-template 
-    name: service
-  id: kubernetes
+  group: ui-template 
+  name: service
+id: kubernetes
 tags:
   - key: content
     value:
@@ -80,7 +79,7 @@ tags:
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 		rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
-		creatGroup := func() string {
+		createGroup := func() string {
 			rootCmd.SetIn(strings.NewReader(`
 metadata:
   name: ui-template
@@ -95,8 +94,28 @@ resource_opts:
 				}
 			})
 		}
-		Eventually(creatGroup, flags.EventuallyTimeout).Should(ContainSubstring("group ui-template is created"))
-		rootCmd.SetArgs([]string{"property", "apply", "-a", addr, "-f", "-"})
+		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group ui-template is created"))
+		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
+		createPropertySchema := func() string {
+			rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: service
+  group: ui-template
+tags:
+  - name: content
+    type: TAG_TYPE_STRING
+  - name: state
+    type: TAG_TYPE_INT
+`))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
+			})
+		}
+		Eventually(createPropertySchema, flags.EventuallyTimeout).Should(ContainSubstring("property schema ui-template.service is created"))
+		rootCmd.SetArgs([]string{"property", "data", "apply", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(p1YAML))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -108,7 +127,7 @@ resource_opts:
 	})
 
 	It("query all properties", func() {
-		rootCmd.SetArgs([]string{"property", "query", "-a", addr, "-f", "-"})
+		rootCmd.SetArgs([]string{"property", "data", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(`
 groups: ["ui-template"]
@@ -129,13 +148,13 @@ groups: ["ui-template"]
 
 	It("delete property", func() {
 		// delete
-		rootCmd.SetArgs([]string{"property", "delete", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
+		rootCmd.SetArgs([]string{"property", "data", "delete", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
 		Expect(out).To(ContainSubstring("deleted: true"))
-		rootCmd.SetArgs([]string{"property", "query", "-a", addr, "-f", "-"})
+		rootCmd.SetArgs([]string{"property", "data", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(`
 groups: ["ui-template"]
@@ -152,6 +171,224 @@ groups: ["ui-template"]
 			GinkgoWriter.Println(resp)
 			return len(resp.Properties)
 		}, flags.EventuallyTimeout).Should(Equal(0))
+	})
+
+	AfterEach(func() {
+		deferFunc()
+	})
+})
+
+var _ = Describe("Property Schema Operation", func() {
+	var addr string
+	var deferFunc func()
+	var rootCmd *cobra.Command
+	BeforeEach(func() {
+		_, addr, deferFunc = setup.EmptyStandalone()
+		addr = httpSchema + addr
+		rootCmd = &cobra.Command{Use: "root"}
+		cmd.RootCmdFlags(rootCmd)
+		rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
+		createGroup := func() string {
+			rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: ui-template
+catalog: CATALOG_PROPERTY
+resource_opts:
+  shard_num: 2
+`))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				if err != nil {
+					GinkgoWriter.Printf("execution fails:%v", err)
+				}
+			})
+		}
+		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group ui-template is created"))
+	})
+
+	It("create property schema", func() {
+		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: service
+  group: ui-template
+tags:
+  - name: content
+    type: TAG_TYPE_STRING
+  - name: state
+    type: TAG_TYPE_INT
+`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
+	})
+
+	It("get property schema", func() {
+		// First create the schema
+		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: service
+  group: ui-template
+tags:
+  - name: content
+    type: TAG_TYPE_STRING
+  - name: state
+    type: TAG_TYPE_INT
+`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
+
+		// Then get the schema
+		rootCmd.SetArgs([]string{"property", "schema", "get", "-g", "ui-template", "-n", "service"})
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		resp := new(databasev1.PropertyRegistryServiceGetResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.Property.Metadata.Group).To(Equal("ui-template"))
+		Expect(resp.Property.Metadata.Name).To(Equal("service"))
+		Expect(resp.Property.Tags).To(HaveLen(2))
+		Expect(resp.Property.Tags[0].Name).To(Equal("content"))
+		Expect(resp.Property.Tags[1].Name).To(Equal("state"))
+	})
+
+	It("update property schema", func() {
+		// First create the schema
+		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: service
+  group: ui-template
+tags:
+  - name: content
+    type: TAG_TYPE_STRING
+  - name: state
+    type: TAG_TYPE_INT
+`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
+
+		// Then update the schema
+		rootCmd.SetArgs([]string{"property", "schema", "update", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: service
+  group: ui-template
+tags:
+  - name: content
+    type: TAG_TYPE_STRING
+  - name: state
+    type: TAG_TYPE_INT
+  - name: version
+    type: TAG_TYPE_STRING
+`))
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("property schema ui-template.service is updated"))
+
+		// Verify the update
+		rootCmd.SetArgs([]string{"property", "schema", "get", "-g", "ui-template", "-n", "service"})
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		resp := new(databasev1.PropertyRegistryServiceGetResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.Property.Tags).To(HaveLen(3))
+		Expect(resp.Property.Tags[2].Name).To(Equal("version"))
+	})
+
+	It("delete property schema", func() {
+		// First create the schema
+		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: service
+  group: ui-template
+tags:
+  - name: content
+    type: TAG_TYPE_STRING
+  - name: state
+    type: TAG_TYPE_INT
+`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
+
+		// Delete the schema
+		rootCmd.SetArgs([]string{"property", "schema", "delete", "-g", "ui-template", "-n", "service"})
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("property schema ui-template.service is deleted"))
+
+		// Verify deletion
+		rootCmd.SetArgs([]string{"property", "schema", "get", "-g", "ui-template", "-n", "service"})
+		err := rootCmd.Execute()
+		Expect(err).To(MatchError(ContainSubstring("not found")))
+	})
+
+	It("list property schema", func() {
+		// Create multiple schemas
+		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: service
+  group: ui-template
+tags:
+  - name: content
+    type: TAG_TYPE_STRING
+  - name: state
+    type: TAG_TYPE_INT
+`))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
+
+		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(`
+metadata:
+  name: endpoint
+  group: ui-template
+tags:
+  - name: content
+    type: TAG_TYPE_STRING
+`))
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("property schema ui-template.endpoint is created"))
+
+		// List all schemas
+		rootCmd.SetArgs([]string{"property", "schema", "list", "-g", "ui-template"})
+		out = capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		resp := new(databasev1.PropertyRegistryServiceListResponse)
+		helpers.UnmarshalYAML([]byte(out), resp)
+		Expect(resp.Properties).To(HaveLen(2))
+
+		propertyNames := []string{resp.Properties[0].Metadata.Name, resp.Properties[1].Metadata.Name}
+		Expect(propertyNames).To(ContainElements("service", "endpoint"))
 	})
 
 	AfterEach(func() {
