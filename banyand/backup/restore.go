@@ -130,7 +130,6 @@ func newRunCommand() *cobra.Command {
 }
 
 func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Catalog) error {
-	remote.NowRemoteKind = snapshot.CatalogName(catalog)
 	remotePrefix := filepath.Join(timeDir, snapshot.CatalogName(catalog), "/")
 
 	remoteFiles, err := fs.List(context.Background(), remotePrefix)

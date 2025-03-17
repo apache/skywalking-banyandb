@@ -17,12 +17,5 @@
 
 package remote
 
-const (
-	S3    = "s3"
-	Local = "local"
-)
-
-var (
-	NowCatalog    string
-	NowRemoteKind string
-)
+// NowCatalog is the catalog name for the current remote.
+var NowCatalog string
