@@ -545,13 +545,13 @@ func (w *seqWriter) Path() string {
 }
 
 func (w *seqWriter) Close() error {
+	defer releaseWriter(w.writer)
 	if err := w.writer.Flush(); err != nil {
 		return &FileSystemError{
 			Code:    closeError,
 			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", w.fileName, err),
 		}
 	}
-	releaseWriter(w.writer)
 	return nil
 }
 
