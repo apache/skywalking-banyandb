@@ -53,9 +53,9 @@ message ApplyResponse {
 message DeleteRequest {
   // groups indicate where the data points are stored.
   string group = 1 [(validate.rules).string.min_len = 1];
-  // container is created when it receives the first property
-  string container = 2 [(validate.rules).string.min_len = 1];
-  // id is the identity of properties
+  // name is the identity of a property.
+  string name = 2 [(validate.rules).string.min_len = 1];
+  // id is the identity of item in the property.
   string id = 3;
 }
 
@@ -67,8 +67,8 @@ message DeleteResponse {
 message QueryRequest {
   // groups indicate where the data points are stored.
   repeated string groups = 1 [(validate.rules).repeated.min_items = 1];
-  // container is created when it receives the first property
-  string container = 2;
+  // name is created when it receives the first property
+  string name = 2;
   // ids is the identities of properties
   repeated string ids = 3;
   // criteria is used to filter properties based on tags
@@ -94,18 +94,18 @@ service PropertyService {
   // Apply creates a property if it's absent, or update a existed one based on a strategy.
   rpc Apply(ApplyRequest) returns (ApplyResponse) {
     option (google.api.http) = {
-      put: "/v1/property/{property.metadata.container.group}/{property.metadata.container.name}/{property.metadata.id}"
+      put: "/v1/property/data/{property.metadata.group}/{property.metadata.name}/{property.id}"
       body: "*"
     };
   }
 
   rpc Delete(DeleteRequest) returns (DeleteResponse) {
-    option (google.api.http) = {delete: "/v1/property/{group}/{container}/{id}"};
+    option (google.api.http) = {delete: "/v1/property/data/{group}/{name}/{id}"};
   }
 
   rpc Query(QueryRequest) returns (QueryResponse) {
     option (google.api.http) = {
-      post: "/v1/property/query"
+      post: "/v1/property/data/query"
       body: "*"
     };
   }

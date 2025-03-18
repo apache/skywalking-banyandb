@@ -203,3 +203,13 @@ message IndexRuleBinding {
   // updated_at indicates when the IndexRuleBinding is updated
   google.protobuf.Timestamp updated_at = 6;
 }
+
+// Property stores the user defined data
+message Property {
+  // metadata is the identity of a property
+  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  // tag stores the content of a property
+  repeated TagSpec tags = 2 [(validate.rules).repeated.min_items = 1];
+  // updated_at indicates when the property is updated
+  google.protobuf.Timestamp updated_at = 6;
+}

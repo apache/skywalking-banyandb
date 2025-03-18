@@ -19,6 +19,7 @@ package lifecycle
 
 import (
 	"context"
+	"math"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -38,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -98,42 +100,59 @@ func (l *lifecycleService) Name() string {
 func (l *lifecycleService) Serve() run.StopNotify {
 	l.l = logger.GetLogger("lifecycle")
 	ctx := context.Background()
+	done := make(chan struct{})
+	close(done)
 
 	progress := LoadProgress(l.progressFilePath, l.l)
 
 	groups, err := l.getGroupsToProcess(ctx, progress)
 	if err != nil {
-		return nil
+		l.l.Error().Err(err).Msg("failed to get groups to process")
+		return done
 	}
 
 	if len(groups) == 0 {
 		l.l.Info().Msg("no groups to process, all groups already completed")
 		progress.Remove(l.progressFilePath, l.l)
-		return nil
+		return done
 	}
 
 	streamDir, measureDir, err := l.getSnapshots(groups)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to get snapshots")
-		return nil
+		return done
 	}
 	streamSVC, measureSVC, err := l.setupQuerySvc(ctx, streamDir, measureDir)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to setup query service")
-		return nil
+		return done
+	}
+	if streamSVC != nil {
+		defer streamSVC.GracefulStop()
+	}
+	if measureSVC != nil {
+		defer measureSVC.GracefulStop()
 	}
 	nodes, err := l.metadata.NodeRegistry().ListNode(ctx, databasev1.Role_ROLE_DATA)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to list data nodes")
-		return nil
+		return done
 	}
 	labels := common.ParseNodeFlags()
 
 	for _, g := range groups {
 		switch g.Catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
+			if streamSVC == nil {
+				l.l.Error().Msgf("stream service is not available, skipping group: %s", g.Metadata.Name)
+				continue
+			}
 			l.processStreamGroup(ctx, g, streamSVC, nodes, labels, progress)
 		case commonv1.Catalog_CATALOG_MEASURE:
+			if measureSVC == nil {
+				l.l.Error().Msgf("measure service is not available, skipping group: %s", g.Metadata.Name)
+				continue
+			}
 			l.processMeasureGroup(ctx, g, measureSVC, nodes, labels, progress)
 		default:
 			l.l.Info().Msgf("group catalog: %s doesn't support lifecycle management", g.Catalog)
@@ -145,8 +164,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 
 	progress.Remove(l.progressFilePath, l.l)
 	l.l.Info().Msg("lifecycle migration completed successfully")
-
-	return nil
+	return done
 }
 
 func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Progress) ([]*commonv1.Group, error) {
@@ -177,11 +195,12 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group, streamSVC stream.Service,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, selector, client, err := parseGroup(g, labels, nodes, l.l)
+	shardNum, selector, client, err := parseGroup(ctx, g, labels, nodes, l.l, l.metadata)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	defer client.GracefulStop()
 
 	ss, err := l.metadata.StreamRegistry().ListStream(ctx, schema.ListOpt{Group: g.Metadata.Name})
 	if err != nil {
@@ -205,8 +224,8 @@ func (l *lifecycleService) processStreams(ctx context.Context, g *commonv1.Group
 			continue
 		}
 
-		if err := l.processSingleStream(ctx, s, streamSVC, tr, shardNum, selector, client); err != nil {
-			continue
+		if sum, err := l.processSingleStream(ctx, s, streamSVC, tr, shardNum, selector, client); err == nil {
+			l.l.Info().Msgf("migrated %d elements in stream %s", sum, s.Metadata.Name)
 		}
 
 		progress.MarkStreamCompleted(g.Metadata.Name, s.Metadata.Name)
@@ -216,14 +235,18 @@ func (l *lifecycleService) processStreams(ctx context.Context, g *commonv1.Group
 
 func (l *lifecycleService) processSingleStream(ctx context.Context, s *databasev1.Stream,
 	streamSVC stream.Service, tr *timestamp.TimeRange, shardNum uint32, selector node.Selector, client queue.Client,
-) error {
+) (int, error) {
 	q, err := streamSVC.Stream(s.Metadata)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to get stream %s", s.Metadata.Name)
-		return err
+		return 0, err
 	}
 
 	tagProjection := make([]model.TagProjection, len(s.TagFamilies))
+	entity := make([]*modelv1.TagValue, len(s.Entity.TagNames))
+	for idx := range s.Entity.TagNames {
+		entity[idx] = pbv1.AnyTagValue
+	}
 	for i, tf := range s.TagFamilies {
 		tagProjection[i] = model.TagProjection{
 			Family: tf.Name,
@@ -235,17 +258,17 @@ func (l *lifecycleService) processSingleStream(ctx context.Context, s *databasev
 	}
 
 	result, err := q.Query(ctx, model.StreamQueryOptions{
-		Name:          s.Metadata.Name,
-		TagProjection: tagProjection,
-		TimeRange:     tr,
+		Name:           s.Metadata.Name,
+		TagProjection:  tagProjection,
+		Entities:       [][]*modelv1.TagValue{entity},
+		TimeRange:      tr,
+		MaxElementSize: math.MaxInt,
 	})
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to query stream %s", s.Metadata.Name)
-		return err
+		return 0, err
 	}
-
-	migrateStream(ctx, s, result, shardNum, selector, client, l.l)
-	return nil
+	return migrateStream(ctx, s, result, shardNum, selector, client, l.l), nil
 }
 
 func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *commonv1.Group, tr *timestamp.TimeRange, progress *Progress) {
@@ -277,11 +300,12 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureSVC measure.Service,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, selector, client, err := parseGroup(g, labels, nodes, l.l)
+	shardNum, selector, client, err := parseGroup(ctx, g, labels, nodes, l.l, l.metadata)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	defer client.GracefulStop()
 
 	mm, err := l.metadata.MeasureRegistry().ListMeasure(ctx, schema.ListOpt{Group: g.Metadata.Name})
 	if err != nil {
@@ -305,8 +329,8 @@ func (l *lifecycleService) processMeasures(ctx context.Context, g *commonv1.Grou
 			continue
 		}
 
-		if err := l.processSingleMeasure(ctx, m, measureSVC, tr, shardNum, selector, client); err != nil {
-			continue
+		if sum, err := l.processSingleMeasure(ctx, m, measureSVC, tr, shardNum, selector, client); err == nil {
+			l.l.Info().Msgf("migrated %d elements in measure %s", sum, m.Metadata.Name)
 		}
 
 		progress.MarkMeasureCompleted(g.Metadata.Name, m.Metadata.Name)
@@ -316,11 +340,11 @@ func (l *lifecycleService) processMeasures(ctx context.Context, g *commonv1.Grou
 
 func (l *lifecycleService) processSingleMeasure(ctx context.Context, m *databasev1.Measure,
 	measureSVC measure.Service, tr *timestamp.TimeRange, shardNum uint32, selector node.Selector, client queue.Client,
-) error {
+) (int, error) {
 	q, err := measureSVC.Measure(m.Metadata)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to get measure %s", m.Metadata.Name)
-		return err
+		return 0, err
 	}
 
 	tagProjection := make([]model.TagProjection, len(m.TagFamilies))
@@ -337,20 +361,24 @@ func (l *lifecycleService) processSingleMeasure(ctx context.Context, m *database
 	for i, f := range m.Fields {
 		fieldProjection[i] = f.Name
 	}
+	entity := make([]*modelv1.TagValue, len(m.Entity.TagNames))
+	for idx := range m.Entity.TagNames {
+		entity[idx] = pbv1.AnyTagValue
+	}
 
 	result, err := q.Query(ctx, model.MeasureQueryOptions{
 		Name:            m.Metadata.Name,
 		TagProjection:   tagProjection,
 		FieldProjection: fieldProjection,
+		Entities:        [][]*modelv1.TagValue{entity},
 		TimeRange:       tr,
 	})
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to query measure %s", m.Metadata.Name)
-		return err
+		return 0, err
 	}
 
-	migrateMeasure(ctx, m, result, shardNum, selector, client, l.l)
-	return nil
+	return migrateMeasure(ctx, m, result, shardNum, selector, client, l.l), nil
 }
 
 func (l *lifecycleService) deleteExpiredMeasureSegments(ctx context.Context, g *commonv1.Group, tr *timestamp.TimeRange, progress *Progress) {

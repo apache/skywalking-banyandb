@@ -46,6 +46,8 @@ const (
 	opNotExists
 )
 
+var emptyLabels = map[string]string{}
+
 // ParseLabelSelector parses a label selector string.
 func ParseLabelSelector(selector string) (*LabelSelector, error) {
 	if selector == "" {
@@ -189,6 +191,9 @@ func validateLabelKey(key string) error {
 
 // Matches returns true if the labels match the selector.
 func (s *LabelSelector) Matches(labels map[string]string) bool {
+	if labels == nil {
+		labels = emptyLabels
+	}
 	for _, req := range s.criteria {
 		if !req.matches(labels) {
 			return false

@@ -79,6 +79,7 @@
     - [IndexRule](#banyandb-database-v1-IndexRule)
     - [IndexRuleBinding](#banyandb-database-v1-IndexRuleBinding)
     - [Measure](#banyandb-database-v1-Measure)
+    - [Property](#banyandb-database-v1-Property)
     - [Stream](#banyandb-database-v1-Stream)
     - [Subject](#banyandb-database-v1-Subject)
     - [TagFamilySpec](#banyandb-database-v1-TagFamilySpec)
@@ -140,6 +141,18 @@
     - [MeasureRegistryServiceListResponse](#banyandb-database-v1-MeasureRegistryServiceListResponse)
     - [MeasureRegistryServiceUpdateRequest](#banyandb-database-v1-MeasureRegistryServiceUpdateRequest)
     - [MeasureRegistryServiceUpdateResponse](#banyandb-database-v1-MeasureRegistryServiceUpdateResponse)
+    - [PropertyRegistryServiceCreateRequest](#banyandb-database-v1-PropertyRegistryServiceCreateRequest)
+    - [PropertyRegistryServiceCreateResponse](#banyandb-database-v1-PropertyRegistryServiceCreateResponse)
+    - [PropertyRegistryServiceDeleteRequest](#banyandb-database-v1-PropertyRegistryServiceDeleteRequest)
+    - [PropertyRegistryServiceDeleteResponse](#banyandb-database-v1-PropertyRegistryServiceDeleteResponse)
+    - [PropertyRegistryServiceExistRequest](#banyandb-database-v1-PropertyRegistryServiceExistRequest)
+    - [PropertyRegistryServiceExistResponse](#banyandb-database-v1-PropertyRegistryServiceExistResponse)
+    - [PropertyRegistryServiceGetRequest](#banyandb-database-v1-PropertyRegistryServiceGetRequest)
+    - [PropertyRegistryServiceGetResponse](#banyandb-database-v1-PropertyRegistryServiceGetResponse)
+    - [PropertyRegistryServiceListRequest](#banyandb-database-v1-PropertyRegistryServiceListRequest)
+    - [PropertyRegistryServiceListResponse](#banyandb-database-v1-PropertyRegistryServiceListResponse)
+    - [PropertyRegistryServiceUpdateRequest](#banyandb-database-v1-PropertyRegistryServiceUpdateRequest)
+    - [PropertyRegistryServiceUpdateResponse](#banyandb-database-v1-PropertyRegistryServiceUpdateResponse)
     - [Snapshot](#banyandb-database-v1-Snapshot)
     - [SnapshotRequest](#banyandb-database-v1-SnapshotRequest)
     - [SnapshotRequest.Group](#banyandb-database-v1-SnapshotRequest-Group)
@@ -173,6 +186,7 @@
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
     - [IndexRuleRegistryService](#banyandb-database-v1-IndexRuleRegistryService)
     - [MeasureRegistryService](#banyandb-database-v1-MeasureRegistryService)
+    - [PropertyRegistryService](#banyandb-database-v1-PropertyRegistryService)
     - [SnapshotService](#banyandb-database-v1-SnapshotService)
     - [StreamRegistryService](#banyandb-database-v1-StreamRegistryService)
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
@@ -208,7 +222,6 @@
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
 - [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
-    - [Metadata](#banyandb-property-v1-Metadata)
     - [Property](#banyandb-property-v1-Property)
   
 - [banyandb/property/v1/rpc.proto](#banyandb_property_v1_rpc-proto)
@@ -1270,6 +1283,23 @@ Measure intends to store data point
 
 
 
+<a name="banyandb-database-v1-Property"></a>
+
+### Property
+Property stores the user defined data
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
+| tags | [TagSpec](#banyandb-database-v1-TagSpec) | repeated | tag stores the content of a property |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
+
+
+
+
+
+
 <a name="banyandb-database-v1-Stream"></a>
 
 ### Stream
@@ -2131,6 +2161,187 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-PropertyRegistryServiceCreateRequest"></a>
+
+### PropertyRegistryServiceCreateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| property | [Property](#banyandb-database-v1-Property) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceCreateResponse"></a>
+
+### PropertyRegistryServiceCreateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceDeleteRequest"></a>
+
+### PropertyRegistryServiceDeleteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceDeleteResponse"></a>
+
+### PropertyRegistryServiceDeleteResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceExistRequest"></a>
+
+### PropertyRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceExistResponse"></a>
+
+### PropertyRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_property | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceGetRequest"></a>
+
+### PropertyRegistryServiceGetRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceGetResponse"></a>
+
+### PropertyRegistryServiceGetResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| property | [Property](#banyandb-database-v1-Property) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceListRequest"></a>
+
+### PropertyRegistryServiceListRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceListResponse"></a>
+
+### PropertyRegistryServiceListResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| properties | [Property](#banyandb-database-v1-Property) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceUpdateRequest"></a>
+
+### PropertyRegistryServiceUpdateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| property | [Property](#banyandb-database-v1-Property) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-PropertyRegistryServiceUpdateResponse"></a>
+
+### PropertyRegistryServiceUpdateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-Snapshot"></a>
 
 ### Snapshot
@@ -2612,6 +2823,21 @@ Type determine the index structure under the hood
 | Exist | [MeasureRegistryServiceExistRequest](#banyandb-database-v1-MeasureRegistryServiceExistRequest) | [MeasureRegistryServiceExistResponse](#banyandb-database-v1-MeasureRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 
 
+<a name="banyandb-database-v1-PropertyRegistryService"></a>
+
+### PropertyRegistryService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Create | [PropertyRegistryServiceCreateRequest](#banyandb-database-v1-PropertyRegistryServiceCreateRequest) | [PropertyRegistryServiceCreateResponse](#banyandb-database-v1-PropertyRegistryServiceCreateResponse) |  |
+| Update | [PropertyRegistryServiceUpdateRequest](#banyandb-database-v1-PropertyRegistryServiceUpdateRequest) | [PropertyRegistryServiceUpdateResponse](#banyandb-database-v1-PropertyRegistryServiceUpdateResponse) |  |
+| Delete | [PropertyRegistryServiceDeleteRequest](#banyandb-database-v1-PropertyRegistryServiceDeleteRequest) | [PropertyRegistryServiceDeleteResponse](#banyandb-database-v1-PropertyRegistryServiceDeleteResponse) |  |
+| Get | [PropertyRegistryServiceGetRequest](#banyandb-database-v1-PropertyRegistryServiceGetRequest) | [PropertyRegistryServiceGetResponse](#banyandb-database-v1-PropertyRegistryServiceGetResponse) |  |
+| List | [PropertyRegistryServiceListRequest](#banyandb-database-v1-PropertyRegistryServiceListRequest) | [PropertyRegistryServiceListResponse](#banyandb-database-v1-PropertyRegistryServiceListResponse) |  |
+| Exist | [PropertyRegistryServiceExistRequest](#banyandb-database-v1-PropertyRegistryServiceExistRequest) | [PropertyRegistryServiceExistResponse](#banyandb-database-v1-PropertyRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+
+
 <a name="banyandb-database-v1-SnapshotService"></a>
 
 ### SnapshotService
@@ -3067,22 +3293,6 @@ the type of the data point cumulative or delta
 
 
 
-<a name="banyandb-property-v1-Metadata"></a>
-
-### Metadata
-Metadata is for multi-tenant use
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| container | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | container is created when it receives the first property |
-| id | [string](#string) |  | id identifies a property |
-
-
-
-
-
-
 <a name="banyandb-property-v1-Property"></a>
 
 ### Property
@@ -3091,7 +3301,8 @@ Property stores the user defined data
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [Metadata](#banyandb-property-v1-Metadata) |  | metadata is the identity of a property |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
+| id | [string](#string) |  | id is the identity of a property |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
 
@@ -3157,8 +3368,8 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | group | [string](#string) |  | groups indicate where the data points are stored. |
-| container | [string](#string) |  | container is created when it receives the first property |
-| id | [string](#string) |  | id is the identity of properties |
+| name | [string](#string) |  | name is the identity of a property. |
+| id | [string](#string) |  | id is the identity of item in the property. |
 
 
 
@@ -3237,7 +3448,7 @@ QueryRequest is the request contract for query.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | groups | [string](#string) | repeated | groups indicate where the data points are stored. |
-| container | [string](#string) |  | container is created when it receives the first property |
+| name | [string](#string) |  | name is created when it receives the first property |
 | ids | [string](#string) | repeated | ids is the identities of properties |
 | criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is used to filter properties based on tags |
 | tag_projection | [string](#string) | repeated | tag_projection can be used to select tags of the data points in the response |

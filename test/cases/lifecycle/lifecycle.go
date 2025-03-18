@@ -19,6 +19,7 @@
 package lifecycle_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -48,5 +49,61 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 		})
 		err = lifecycleCmd.Execute()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		verifySourceDirectoriesBeforeMigration()
+		verifyDestinationDirectoriesAfterMigration()
 	})
 })
+
+func verifySourceDirectoriesBeforeMigration() {
+	streamSrcPath := filepath.Join(SharedContext.SrcDir, "stream", "data", "default")
+	streamEntries, err := os.ReadDir(streamSrcPath)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Stream source directory should exist")
+
+	hasLockFileOnly := verifyOnlyLockFileExists(streamEntries)
+	gomega.Expect(hasLockFileOnly).To(gomega.BeTrue(), "Stream source directory should only contain a lock file")
+
+	measureSrcPath := filepath.Join(SharedContext.SrcDir, "measure", "data", "sw_metric")
+	measureEntries, err := os.ReadDir(measureSrcPath)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Measure source directory should exist")
+
+	hasLockFileOnly = verifyOnlyLockFileExists(measureEntries)
+	gomega.Expect(hasLockFileOnly).To(gomega.BeTrue(), "Measure source directory should only contain a lock file")
+}
+
+func verifyDestinationDirectoriesAfterMigration() {
+	streamDestPath := filepath.Join(SharedContext.DestDir, "stream", "data", "default")
+	streamEntries, err := os.ReadDir(streamDestPath)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Stream destination directory should exist")
+
+	hasLockFile, hasSegFolder := verifyLockFileAndSegFolder(streamEntries)
+	gomega.Expect(hasLockFile).To(gomega.BeTrue(), "Stream destination should have a lock file")
+	gomega.Expect(hasSegFolder).To(gomega.BeTrue(), "Stream destination should have a seg-xxx folder")
+
+	measureDestPath := filepath.Join(SharedContext.DestDir, "measure", "data", "sw_metric")
+	measureEntries, err := os.ReadDir(measureDestPath)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Measure destination directory should exist")
+
+	hasLockFile, hasSegFolder = verifyLockFileAndSegFolder(measureEntries)
+	gomega.Expect(hasLockFile).To(gomega.BeTrue(), "Measure destination should have a lock file")
+	gomega.Expect(hasSegFolder).To(gomega.BeTrue(), "Measure destination should have a seg-xxx folder")
+}
+
+func verifyOnlyLockFileExists(entries []fs.DirEntry) bool {
+	if len(entries) != 1 {
+		return false
+	}
+
+	return !entries[0].IsDir() && entries[0].Name() == "lock"
+}
+
+func verifyLockFileAndSegFolder(entries []fs.DirEntry) (hasLockFile bool, hasSegFolder bool) {
+	for _, entry := range entries {
+		if !entry.IsDir() && entry.Name() == "lock" {
+			hasLockFile = true
+		}
+		if entry.IsDir() && len(entry.Name()) >= 4 && entry.Name()[:4] == "seg-" {
+			hasSegFolder = true
+		}
+	}
+	return hasLockFile, hasSegFolder
+}

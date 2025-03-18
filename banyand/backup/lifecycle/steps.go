@@ -34,7 +34,9 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -77,35 +79,39 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group) (streamDir str
 	return streamDir, measureDir, nil
 }
 
-func (l *lifecycleService) setupQuerySvc(ctx context.Context, streamDir, measureDir string) (stream.Service, measure.Service, error) {
+func (l *lifecycleService) setupQuerySvc(ctx context.Context, streamDir, measureDir string) (streamSVC stream.Service, measureSVC measure.Service, err error) {
 	pm := protector.NewMemory(l.omr)
 	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{})
-	streamSVC, err := stream.NewReadonlyService(l.metadata, l.omr, pm)
-	if err != nil {
-		return nil, nil, err
+	if streamDir != "" {
+		streamSVC, err = stream.NewReadonlyService(l.metadata, l.omr, pm)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err = streamSVC.FlagSet().Parse([]string{"--stream-data-path", streamDir}); err != nil {
+			return nil, nil, err
+		}
+		if err = streamSVC.PreRun(ctx); err != nil {
+			return nil, nil, err
+		}
 	}
-	if err = streamSVC.FlagSet().Parse([]string{"--stream-root-path", streamDir}); err != nil {
-		return nil, nil, err
+	if measureDir != "" {
+		measureSVC, err = measure.NewReadonlyService(l.metadata, l.omr, pm)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err = measureSVC.FlagSet().Parse([]string{"--measure-data-path", measureDir}); err != nil {
+			return nil, nil, err
+		}
+		if err = measureSVC.PreRun(ctx); err != nil {
+			return nil, nil, err
+		}
 	}
-	if err = streamSVC.PreRun(ctx); err != nil {
-		return nil, nil, err
-	}
-	defer streamSVC.GracefulStop()
-	measureSVC, err := measure.NewReadonlyService(l.metadata, l.omr, pm)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err = measureSVC.FlagSet().Parse([]string{"--measure-root-path", measureDir}); err != nil {
-		return nil, nil, err
-	}
-	if err = measureSVC.PreRun(ctx); err != nil {
-		return nil, nil, err
-	}
-	defer measureSVC.GracefulStop()
 	return streamSVC, measureSVC, nil
 }
 
-func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node, l *logger.Logger) (uint32, node.Selector, queue.Client, error) {
+func parseGroup(ctx context.Context, g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
+	l *logger.Logger, metadata metadata.Repo,
+) (uint32, node.Selector, queue.Client, error) {
 	ro := g.ResourceOpts
 	if ro == nil {
 		return 0, nil, nil, fmt.Errorf("no resource opts in group %s", g.Metadata.Name)
@@ -137,8 +143,16 @@ func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databa
 	if err != nil {
 		return 0, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
 	}
-	nodeSel := node.NewRoundRobinSelector("", nil)
+	nodeSel := node.NewRoundRobinSelector("", metadata)
+	if err = nodeSel.PreRun(ctx); err != nil {
+		return 0, nil, nil, errors.WithMessage(err, "failed to run node selector")
+	}
 	client := pub.New(nil)
+	if g.Catalog == commonv1.Catalog_CATALOG_STREAM {
+		_ = grpc.NewClusterNodeRegistry(data.TopicStreamWrite, client, nodeSel)
+	} else {
+		_ = grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, client, nodeSel)
+	}
 
 	var existed bool
 	for _, n := range nodes {
@@ -147,7 +161,6 @@ func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databa
 		}
 		if nsl.Matches(n.Labels) {
 			existed = true
-			nodeSel.AddNode(n)
 			client.OnAddOrUpdate(schema.Metadata{
 				TypeMeta: schema.TypeMeta{
 					Kind: schema.KindNode,
@@ -164,7 +177,10 @@ func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databa
 
 func migrateStream(ctx context.Context, s *databasev1.Stream, result model.StreamQueryResult,
 	shardNum uint32, selector node.Selector, client queue.Client, l *logger.Logger,
-) {
+) (sum int) {
+	if result == nil {
+		return 0
+	}
 	defer result.Release()
 
 	entityLocator := partition.NewEntityLocator(s.TagFamilies, s.Entity, 0)
@@ -207,14 +223,20 @@ func migrateStream(ctx context.Context, s *databasev1.Stream, result model.Strea
 			_, err = batch.Publish(ctx, data.TopicStreamWrite, message)
 			if err != nil {
 				l.Error().Err(err).Msg("failed to publish message")
+				continue
 			}
+			sum++
 		}
 	}
+	return sum
 }
 
 func migrateMeasure(ctx context.Context, m *databasev1.Measure, result model.MeasureQueryResult,
 	shardNum uint32, selector node.Selector, client queue.Client, l *logger.Logger,
-) {
+) (sum int) {
+	if result == nil {
+		return 0
+	}
 	defer result.Release()
 
 	entityLocator := partition.NewEntityLocator(m.TagFamilies, m.Entity, 0)
@@ -266,7 +288,10 @@ func migrateMeasure(ctx context.Context, m *databasev1.Measure, result model.Mea
 			_, err = batch.Publish(ctx, data.TopicMeasureWrite, message)
 			if err != nil {
 				l.Error().Err(err).Msg("failed to publish message")
+			} else {
+				sum++
 			}
 		}
 	}
+	return sum
 }

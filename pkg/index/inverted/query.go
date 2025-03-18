@@ -624,7 +624,7 @@ func (t *timeRangeNode) String() string {
 
 // BuildPropertyQuery returns blugeQuery for property query.
 func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string) (index.Query, error) {
-	iq, err := BuildIndexModeQuery(req.Container, req.Criteria, schemaInstance)
+	iq, err := BuildIndexModeQuery(req.Name, req.Criteria, schemaInstance)
 	if err != nil {
 		return nil, err
 	}

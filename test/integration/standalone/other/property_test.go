@@ -61,6 +61,20 @@ var _ = Describe("Property application", func() {
 			},
 		})
 		Expect(err).NotTo(HaveOccurred())
+		pClient := databasev1.NewPropertyRegistryServiceClient(conn)
+		_, err = pClient.Create(context.Background(), &databasev1.PropertyRegistryServiceCreateRequest{
+			Property: &databasev1.Property{
+				Metadata: &commonv1.Metadata{
+					Group: "g",
+					Name:  "p",
+				},
+				Tags: []*databasev1.TagSpec{
+					{Name: "t1", Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: "t2", Type: databasev1.TagType_TAG_TYPE_STRING},
+				},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
 		client = propertyv1.NewPropertyServiceClient(conn)
 		goods = gleak.Goroutines()
 	})
@@ -71,15 +85,13 @@ var _ = Describe("Property application", func() {
 		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	})
 	It("applies properties", func() {
-		md := &propertyv1.Metadata{
-			Container: &commonv1.Metadata{
-				Name:  "p",
-				Group: "g",
-			},
-			Id: "1",
+		md := &commonv1.Metadata{
+			Name:  "p",
+			Group: "g",
 		}
 		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
+			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
@@ -89,9 +101,9 @@ var _ = Describe("Property application", func() {
 		Expect(resp.Created).To(BeTrue())
 		Expect(resp.TagsNum).To(Equal(uint32(2)))
 		got, err := client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
-			Ids:       []string{"1"},
+			Groups: []string{"g"},
+			Name:   "p",
+			Ids:    []string{"1"},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Properties).To(HaveLen(1))
@@ -102,6 +114,7 @@ var _ = Describe("Property application", func() {
 		}))
 		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
+			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
 			},
@@ -110,9 +123,9 @@ var _ = Describe("Property application", func() {
 		Expect(resp.Created).To(BeFalse())
 		Expect(resp.TagsNum).To(Equal(uint32(2)))
 		got, err = client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
-			Ids:       []string{"1"},
+			Groups: []string{"g"},
+			Name:   "p",
+			Ids:    []string{"1"},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Properties).To(HaveLen(1))
@@ -123,15 +136,13 @@ var _ = Describe("Property application", func() {
 		}))
 	})
 	It("applies properties with new tags", func() {
-		md := &propertyv1.Metadata{
-			Container: &commonv1.Metadata{
-				Name:  "p",
-				Group: "g",
-			},
-			Id: "1",
+		md := &commonv1.Metadata{
+			Name:  "p",
+			Group: "g",
 		}
 		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
+			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 			},
@@ -141,6 +152,7 @@ var _ = Describe("Property application", func() {
 		Expect(resp.TagsNum).To(Equal(uint32(1)))
 		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
+			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
@@ -150,9 +162,9 @@ var _ = Describe("Property application", func() {
 		Expect(resp.Created).To(BeFalse())
 		Expect(resp.TagsNum).To(Equal(uint32(2)))
 		got, err := client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
-			Ids:       []string{"1"},
+			Groups: []string{"g"},
+			Name:   "p",
+			Ids:    []string{"1"},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Properties).To(HaveLen(1))
@@ -163,15 +175,13 @@ var _ = Describe("Property application", func() {
 		}))
 	})
 	It("applies null tag", func() {
-		md := &propertyv1.Metadata{
-			Container: &commonv1.Metadata{
-				Name:  "p",
-				Group: "g",
-			},
-			Id: "1",
+		md := &commonv1.Metadata{
+			Name:  "p",
+			Group: "g",
 		}
 		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
+			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}},
@@ -182,6 +192,7 @@ var _ = Describe("Property application", func() {
 		Expect(resp.TagsNum).To(Equal(uint32(2)))
 		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
+			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
@@ -191,9 +202,9 @@ var _ = Describe("Property application", func() {
 		Expect(resp.Created).To(BeFalse())
 		Expect(resp.TagsNum).To(Equal(uint32(2)))
 		got, err := client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
-			Ids:       []string{"1"},
+			Groups: []string{"g"},
+			Name:   "p",
+			Ids:    []string{"1"},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Properties).To(HaveLen(1))
@@ -209,7 +220,7 @@ var _ = Describe("Property application", func() {
 	var deferFn func()
 	var conn *grpc.ClientConn
 	var client propertyv1.PropertyServiceClient
-	var md *propertyv1.Metadata
+	var md *commonv1.Metadata
 
 	BeforeEach(func() {
 		var addr string
@@ -228,16 +239,28 @@ var _ = Describe("Property application", func() {
 			},
 		})
 		Expect(err).NotTo(HaveOccurred())
-		client = propertyv1.NewPropertyServiceClient(conn)
-		md = &propertyv1.Metadata{
-			Container: &commonv1.Metadata{
-				Name:  "p",
-				Group: "g",
+		pClient := databasev1.NewPropertyRegistryServiceClient(conn)
+		_, err = pClient.Create(context.Background(), &databasev1.PropertyRegistryServiceCreateRequest{
+			Property: &databasev1.Property{
+				Metadata: &commonv1.Metadata{
+					Group: "g",
+					Name:  "p",
+				},
+				Tags: []*databasev1.TagSpec{
+					{Name: "t1", Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: "t2", Type: databasev1.TagType_TAG_TYPE_STRING},
+				},
 			},
-			Id: "1",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		client = propertyv1.NewPropertyServiceClient(conn)
+		md = &commonv1.Metadata{
+			Name:  "p",
+			Group: "g",
 		}
 		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
+			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
@@ -247,13 +270,11 @@ var _ = Describe("Property application", func() {
 		Expect(resp.Created).To(BeTrue())
 		Expect(resp.TagsNum).To(Equal(uint32(2)))
 		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
-			Metadata: &propertyv1.Metadata{
-				Container: &commonv1.Metadata{
-					Name:  "p",
-					Group: "g",
-				},
-				Id: "2",
+			Metadata: &commonv1.Metadata{
+				Name:  "p",
+				Group: "g",
 			},
+			Id: "2",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v21"}}}},
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v22"}}}},
@@ -274,18 +295,18 @@ var _ = Describe("Property application", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Properties).To(HaveLen(2))
 	})
-	It("lists properties in a container", func() {
+	It("lists properties under a name", func() {
 		got, err := client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
+			Groups: []string{"g"},
+			Name:   "p",
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Properties).To(HaveLen(2))
 	})
 	It("filters properties by tag", func() {
 		got, err := client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
+			Groups: []string{"g"},
+			Name:   "p",
 			Criteria: &modelv1.Criteria{
 				Exp: &modelv1.Criteria_Condition{
 					Condition: &modelv1.Condition{
@@ -304,8 +325,8 @@ var _ = Describe("Property application", func() {
 		Expect(got.Properties).To(HaveLen(1))
 		Expect(got.Properties[0].Tags).To(HaveLen(2))
 		got, err = client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
+			Groups: []string{"g"},
+			Name:   "p",
 			Criteria: &modelv1.Criteria{
 				Exp: &modelv1.Criteria_Condition{
 					Condition: &modelv1.Condition{
@@ -326,7 +347,7 @@ var _ = Describe("Property application", func() {
 	It("projects a tag", func() {
 		got, err := client.Query(context.Background(), &propertyv1.QueryRequest{
 			Groups:        []string{"g"},
-			Container:     "p",
+			Name:          "p",
 			Ids:           []string{"1"},
 			TagProjection: []string{"t1"},
 		})
@@ -336,17 +357,17 @@ var _ = Describe("Property application", func() {
 	})
 	It("limits result size", func() {
 		got, err := client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
-			Limit:     1,
+			Groups: []string{"g"},
+			Name:   "p",
+			Limit:  1,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Properties).To(HaveLen(1))
 	})
 	It("traces the query", func() {
 		got, err := client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
+			Groups: []string{"g"},
+			Name:   "p",
 			Criteria: &modelv1.Criteria{
 				Exp: &modelv1.Criteria_Condition{
 					Condition: &modelv1.Condition{
@@ -371,29 +392,29 @@ var _ = Describe("Property application", func() {
 	})
 	It("deletes a property", func() {
 		got, err := client.Delete(context.Background(), &propertyv1.DeleteRequest{
-			Container: "p",
-			Group:     "g",
-			Id:        "1",
+			Name:  "p",
+			Group: "g",
+			Id:    "1",
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Deleted).To(BeTrue())
 		qGot, err := client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
+			Groups: []string{"g"},
+			Name:   "p",
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(qGot.Properties).To(HaveLen(1))
 	})
 	It("deletes all properties", func() {
 		got, err := client.Delete(context.Background(), &propertyv1.DeleteRequest{
-			Container: "p",
-			Group:     "g",
+			Name:  "p",
+			Group: "g",
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Deleted).To(BeTrue())
 		qGot, err := client.Query(context.Background(), &propertyv1.QueryRequest{
-			Groups:    []string{"g"},
-			Container: "p",
+			Groups: []string{"g"},
+			Name:   "p",
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(qGot.Properties).To(HaveLen(0))

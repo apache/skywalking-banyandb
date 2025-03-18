@@ -130,7 +130,8 @@ func newRunCommand() *cobra.Command {
 }
 
 func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Catalog) error {
-	remotePrefix := filepath.Join(timeDir, snapshot.CatalogName(catalog), "/")
+	catalogName := snapshot.CatalogName(catalog)
+	remotePrefix := filepath.Join(timeDir, catalogName, "/")
 
 	remoteFiles, err := fs.List(context.Background(), remotePrefix)
 	if err != nil {
@@ -142,7 +143,7 @@ func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Cat
 		return fmt.Errorf("failed to create local directory %s: %w", localDir, err)
 	}
 
-	logger.Infof("Restoring %s to %s from %s", snapshot.CatalogName(catalog), localDir, remotePrefix)
+	logger.Infof("Restoring %s to %s from %s", catalogName, localDir, remotePrefix)
 
 	remoteRelSet := make(map[string]bool)
 	var relPath string
@@ -170,12 +171,12 @@ func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Cat
 	}
 
 	for _, remoteFile := range remoteFiles {
-		relPath, err := filepath.Rel(timeDir, remoteFile)
+		relPath, err := filepath.Rel(filepath.Join(timeDir, catalogName), remoteFile)
 		if err != nil {
 			return fmt.Errorf("failed to get relative path for %s: %w", remoteFile, err)
 		}
 		relPath = filepath.ToSlash(relPath)
-		localPath := filepath.Join(rootPath, relPath)
+		localPath := filepath.Join(rootPath, catalogName, storage.DataDir, relPath)
 
 		if !contains(localFiles, relPath) {
 			if err := os.MkdirAll(filepath.Dir(localPath), storage.DirPerm); err != nil {

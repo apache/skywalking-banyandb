@@ -513,3 +513,83 @@ service SnapshotService {
     };
   }
 }
+
+message PropertyRegistryServiceCreateRequest {
+  banyandb.database.v1.Property property = 1;
+}
+
+message PropertyRegistryServiceCreateResponse {
+  int64 mod_revision = 1;
+}
+
+message PropertyRegistryServiceUpdateRequest {
+  banyandb.database.v1.Property property = 1;
+}
+
+message PropertyRegistryServiceUpdateResponse {
+  int64 mod_revision = 1;
+}
+
+message PropertyRegistryServiceDeleteRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message PropertyRegistryServiceDeleteResponse {
+  bool deleted = 1;
+}
+
+message PropertyRegistryServiceGetRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message PropertyRegistryServiceGetResponse {
+  banyandb.database.v1.Property property = 1;
+}
+
+message PropertyRegistryServiceListRequest {
+  string group = 1;
+}
+
+message PropertyRegistryServiceListResponse {
+  repeated banyandb.database.v1.Property properties = 1;
+}
+
+message PropertyRegistryServiceExistRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message PropertyRegistryServiceExistResponse {
+  bool has_group = 1;
+  bool has_property = 2;
+}
+
+service PropertyRegistryService {
+  rpc Create(PropertyRegistryServiceCreateRequest) returns (PropertyRegistryServiceCreateResponse) {
+    option (google.api.http) = {
+      post: "/v1/property/schema"
+      body: "*"
+    };
+  }
+
+  rpc Update(PropertyRegistryServiceUpdateRequest) returns (PropertyRegistryServiceUpdateResponse) {
+    option (google.api.http) = {
+      put: "/v1/property/schema/{property.metadata.group}/{property.metadata.name}"
+      body: "*"
+    };
+  }
+
+  rpc Delete(PropertyRegistryServiceDeleteRequest) returns (PropertyRegistryServiceDeleteResponse) {
+    option (google.api.http) = {delete: "/v1/property/schema/{metadata.group}/{metadata.name}"};
+  }
+
+  rpc Get(PropertyRegistryServiceGetRequest) returns (PropertyRegistryServiceGetResponse) {
+    option (google.api.http) = {get: "/v1/property/schema/{metadata.group}/{metadata.name}"};
+  }
+
+  rpc List(PropertyRegistryServiceListRequest) returns (PropertyRegistryServiceListResponse) {
+    option (google.api.http) = {get: "/v1/property/schema/lists/{group}"};
+  }
+
+  // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+  rpc Exist(PropertyRegistryServiceExistRequest) returns (PropertyRegistryServiceExistResponse);
+}
