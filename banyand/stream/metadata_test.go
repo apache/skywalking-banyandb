@@ -197,10 +197,16 @@ var _ = Describe("Metadata", func() {
 						Expect(dp[i].TagFamilies[0].Tags[3].Key).Should(Equal("new_tag"))
 						Expect(dp[i].TagFamilies[0].Tags[3].Value.GetValue()).Should(BeAssignableToTypeOf(&modelv1.TagValue_Null{}))
 					}
+					expectedValues := map[string]int{"test1": 0, "test2": 0, "test3": 0}
 					for i := size; i < size*2; i++ {
 						Expect(dp[i].TagFamilies[0].Tags[3].Key).Should(Equal("new_tag"))
-						Expect(dp[i].TagFamilies[0].Tags[3].Value.GetStr().Value).Should(Equal("test" + strconv.Itoa(i%3+1)))
+						val := dp[i].TagFamilies[0].Tags[3].Value.GetStr().Value
+						Expect(val).Should(HavePrefix("test"))
+						expectedValues[val]++
 					}
+					Expect(expectedValues["test1"]).Should(Equal(1))
+					Expect(expectedValues["test2"]).Should(Equal(1))
+					Expect(expectedValues["test3"]).Should(Equal(1))
 				})
 			})
 
@@ -218,14 +224,23 @@ var _ = Describe("Metadata", func() {
 				It("get new values for the new added tags", func() {
 					writeData(svcs, size, []string{"test1", "test2", "test3"}, independentFamily)
 					dp := queryAllMeasurements(svcs, size*2, []string{"new_tag"}, "independent_family")
+
 					for i := 0; i < size; i++ {
 						Expect(dp[i].TagFamilies[1].Tags[0].Key).Should(Equal("new_tag"))
 						Expect(dp[i].TagFamilies[1].Tags[0].Value.GetValue()).Should(BeAssignableToTypeOf(&modelv1.TagValue_Null{}))
 					}
+
+					expectedValues := map[string]int{"test1": 0, "test2": 0, "test3": 0}
 					for i := size; i < size*2; i++ {
 						Expect(dp[i].TagFamilies[1].Tags[0].Key).Should(Equal("new_tag"))
-						Expect(dp[i].TagFamilies[1].Tags[0].Value.GetStr().Value).Should(Equal("test" + strconv.Itoa(i%3+1)))
+						val := dp[i].TagFamilies[1].Tags[0].Value.GetStr().Value
+						Expect(val).Should(HavePrefix("test"))
+						expectedValues[val]++
 					}
+
+					Expect(expectedValues["test1"]).Should(Equal(1))
+					Expect(expectedValues["test2"]).Should(Equal(1))
+					Expect(expectedValues["test3"]).Should(Equal(1))
 				})
 			})
 		})

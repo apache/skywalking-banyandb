@@ -252,7 +252,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn, storage.DataDir), g.GetSchema().Metadata.Name); err != nil {
+		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn, g.GetSchema().Metadata.Name), g.GetSchema().Metadata.Name); err != nil {
 			s.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue

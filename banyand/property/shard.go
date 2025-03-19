@@ -96,11 +96,11 @@ func (s *shard) update(id []byte, property *propertyv1.Property) error {
 	sourceField := index.NewBytesField(sourceFieldKey, pj)
 	sourceField.NoSort = true
 	sourceField.Store = true
-	entityField := index.NewBytesField(entityFieldKey, []byte(property.Metadata.Id))
+	entityField := index.NewBytesField(entityFieldKey, []byte(property.Id))
 	entityField.Index = true
-	groupField := index.NewBytesField(groupFieldKey, []byte(property.Metadata.Container.Group))
+	groupField := index.NewBytesField(groupFieldKey, []byte(property.Metadata.Group))
 	groupField.Index = true
-	nameField := index.NewBytesField(nameFieldKey, []byte(property.Metadata.Container.Name))
+	nameField := index.NewBytesField(nameFieldKey, []byte(property.Metadata.Name))
 	nameField.Index = true
 
 	doc := index.Document{

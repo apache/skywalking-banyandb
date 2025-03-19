@@ -27,6 +27,7 @@ import (
 	"github.com/kkdai/maglev"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 )
 
 const lookupTableSize = 65537
@@ -38,6 +39,8 @@ type maglevSelector struct {
 	nodes   []string
 	mutex   sync.RWMutex
 }
+
+func (m *maglevSelector) SetNodeSelector(_ *pub.LabelSelector) {}
 
 // String implements Selector.
 func (m *maglevSelector) String() string {

@@ -89,6 +89,7 @@ type server struct {
 	streamSVC *streamService
 	*streamRegistryServer
 	*indexRuleBindingRegistryServer
+	*propertyRegistryServer
 	metrics                  *metrics
 	keyFile                  string
 	certFile                 string
@@ -141,6 +142,9 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 			pipeline:       pipeline,
 			nodeRegistry:   nr.PropertyNodeRegistry,
 		},
+		propertyRegistryServer: &propertyRegistryServer{
+			schemaRegistry: schemaRegistry,
+		},
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
 	return s
@@ -179,6 +183,7 @@ func (s *server) PreRun(_ context.Context) error {
 	s.measureRegistryServer.metrics = metrics
 	s.groupRegistryServer.metrics = metrics
 	s.topNAggregationRegistryServer.metrics = metrics
+	s.propertyRegistryServer.metrics = metrics
 	return nil
 }
 
@@ -273,6 +278,7 @@ func (s *server) Serve() run.StopNotify {
 	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
 	databasev1.RegisterTopNAggregationRegistryServiceServer(s.ser, s.topNAggregationRegistryServer)
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
+	databasev1.RegisterPropertyRegistryServiceServer(s.ser, s.propertyRegistryServer)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})

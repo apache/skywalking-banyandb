@@ -40,7 +40,7 @@ func (s *segment[T, O]) openShard(ctx context.Context, id common.ShardID) (*shar
 	location := path.Join(s.location, fmt.Sprintf(shardTemplate, int(id)))
 	lfs.MkdirIfNotExist(location, DirPerm)
 	l := logger.Fetch(ctx, "shard"+strconv.Itoa(int(id)))
-	l.Info().Int("shard_id", int(id)).Str("path", location).Msg("creating a shard")
+	l.Info().Int("shard_id", int(id)).Str("path", location).Msg("loading a shard")
 	p := common.GetPosition(ctx)
 	p.Shard = strconv.Itoa(int(id))
 	t, err := s.creator(lfs, location, p, l, s.TimeRange, s.option, s.metrics)

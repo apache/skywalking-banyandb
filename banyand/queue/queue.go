@@ -45,6 +45,7 @@ type Client interface {
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	Register(bus.Topic, schema.EventHandler)
 	OnAddOrUpdate(md schema.Metadata)
+	GracefulStop()
 }
 
 // Server is the interface for receiving data from the queue.

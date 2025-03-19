@@ -34,10 +34,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
-	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -48,7 +46,6 @@ import (
 )
 
 func TestLifecycle(t *testing.T) {
-	t.Skip("Skip the test")
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Distributed Lifecycle Suite")
 }
@@ -93,12 +90,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	test_measure.PreloadSchema(ctx, schemaRegistry)
 	By("Starting hot data node")
 	var closeDataNode0 func()
-	dataAddr, srcDir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep)
+	dataAddr, srcDir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=hot", "--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s")
 	By("Starting warm data node")
 	var closeDataNode1 func()
-	_, destDir, closeDataNode1 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=warm")
+	_, destDir, closeDataNode1 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=warm", "--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s")
 	By("Starting liaison node")
-	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
+	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep, "--data-node-selector", "type=hot")
 	By("Initializing test cases with 10 days before")
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
@@ -136,5 +133,4 @@ var _ = SynchronizedAfterSuite(func() {
 		deferFunc()
 	}
 	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 })

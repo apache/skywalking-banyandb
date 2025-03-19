@@ -824,3 +824,128 @@ func (ts *topNAggregationRegistryServer) Exist(ctx context.Context, req *databas
 	}
 	return &databasev1.TopNAggregationRegistryServiceExistResponse{HasGroup: exist, HasTopNAggregation: false}, nil
 }
+
+type propertyRegistryServer struct {
+	databasev1.UnimplementedPropertyRegistryServiceServer
+	schemaRegistry metadata.Repo
+	metrics        *metrics
+}
+
+func (ps *propertyRegistryServer) Create(ctx context.Context, req *databasev1.PropertyRegistryServiceCreateRequest) (
+	*databasev1.PropertyRegistryServiceCreateResponse, error,
+) {
+	g := req.Property.Metadata.Group
+	ps.metrics.totalRegistryStarted.Inc(1, g, "property", "create")
+	start := time.Now()
+	defer func() {
+		ps.metrics.totalRegistryFinished.Inc(1, g, "property", "create")
+		ps.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "property", "create")
+	}()
+	if err := ps.schemaRegistry.PropertyRegistry().CreateProperty(ctx, req.GetProperty()); err != nil {
+		ps.metrics.totalRegistryErr.Inc(1, g, "property", "create")
+		return nil, err
+	}
+	return &databasev1.PropertyRegistryServiceCreateResponse{}, nil
+}
+
+func (ps *propertyRegistryServer) Update(ctx context.Context, req *databasev1.PropertyRegistryServiceUpdateRequest) (
+	*databasev1.PropertyRegistryServiceUpdateResponse, error,
+) {
+	g := req.Property.Metadata.Group
+	ps.metrics.totalRegistryStarted.Inc(1, g, "property", "update")
+	start := time.Now()
+	defer func() {
+		ps.metrics.totalRegistryFinished.Inc(1, g, "property", "update")
+		ps.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "property", "update")
+	}()
+	if err := ps.schemaRegistry.PropertyRegistry().UpdateProperty(ctx, req.GetProperty()); err != nil {
+		ps.metrics.totalRegistryErr.Inc(1, g, "property", "update")
+		return nil, err
+	}
+	return &databasev1.PropertyRegistryServiceUpdateResponse{}, nil
+}
+
+func (ps *propertyRegistryServer) Delete(ctx context.Context, req *databasev1.PropertyRegistryServiceDeleteRequest) (
+	*databasev1.PropertyRegistryServiceDeleteResponse, error,
+) {
+	g := req.Metadata.Group
+	ps.metrics.totalRegistryStarted.Inc(1, g, "property", "delete")
+	start := time.Now()
+	defer func() {
+		ps.metrics.totalRegistryFinished.Inc(1, g, "property", "delete")
+		ps.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "property", "delete")
+	}()
+	ok, err := ps.schemaRegistry.PropertyRegistry().DeleteProperty(ctx, req.GetMetadata())
+	if err != nil {
+		ps.metrics.totalRegistryErr.Inc(1, g, "property", "delete")
+		return nil, err
+	}
+	return &databasev1.PropertyRegistryServiceDeleteResponse{
+		Deleted: ok,
+	}, nil
+}
+
+func (ps *propertyRegistryServer) Get(ctx context.Context, req *databasev1.PropertyRegistryServiceGetRequest) (
+	*databasev1.PropertyRegistryServiceGetResponse, error,
+) {
+	g := req.Metadata.Group
+	ps.metrics.totalRegistryStarted.Inc(1, g, "property", "get")
+	start := time.Now()
+	defer func() {
+		ps.metrics.totalRegistryFinished.Inc(1, g, "property", "get")
+		ps.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "property", "get")
+	}()
+	entity, err := ps.schemaRegistry.PropertyRegistry().GetProperty(ctx, req.GetMetadata())
+	if err != nil {
+		ps.metrics.totalRegistryErr.Inc(1, g, "property", "get")
+		return nil, err
+	}
+	return &databasev1.PropertyRegistryServiceGetResponse{
+		Property: entity,
+	}, nil
+}
+
+func (ps *propertyRegistryServer) List(ctx context.Context, req *databasev1.PropertyRegistryServiceListRequest) (
+	*databasev1.PropertyRegistryServiceListResponse, error,
+) {
+	g := req.Group
+	ps.metrics.totalRegistryStarted.Inc(1, g, "property", "list")
+	start := time.Now()
+	defer func() {
+		ps.metrics.totalRegistryFinished.Inc(1, g, "property", "list")
+		ps.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "property", "list")
+	}()
+	entities, err := ps.schemaRegistry.PropertyRegistry().ListProperty(ctx, schema.ListOpt{Group: req.GetGroup()})
+	if err != nil {
+		ps.metrics.totalRegistryErr.Inc(1, g, "property", "list")
+		return nil, err
+	}
+	return &databasev1.PropertyRegistryServiceListResponse{
+		Properties: entities,
+	}, nil
+}
+
+func (ps *propertyRegistryServer) Exist(ctx context.Context, req *databasev1.PropertyRegistryServiceExistRequest) (
+	*databasev1.PropertyRegistryServiceExistResponse, error,
+) {
+	g := req.Metadata.Group
+	ps.metrics.totalRegistryStarted.Inc(1, g, "property", "exist")
+	start := time.Now()
+	defer func() {
+		ps.metrics.totalRegistryFinished.Inc(1, g, "property", "exist")
+		ps.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "property", "exist")
+	}()
+	_, err := ps.Get(ctx, &databasev1.PropertyRegistryServiceGetRequest{Metadata: req.Metadata})
+	if err == nil {
+		return &databasev1.PropertyRegistryServiceExistResponse{
+			HasGroup:    true,
+			HasProperty: true,
+		}, nil
+	}
+	exist, errGroup := groupExist(ctx, err, req.Metadata, ps.schemaRegistry.GroupRegistry())
+	if errGroup != nil {
+		ps.metrics.totalRegistryErr.Inc(1, g, "property", "exist")
+		return nil, errGroup
+	}
+	return &databasev1.PropertyRegistryServiceExistResponse{HasGroup: exist, HasProperty: false}, nil
+}
