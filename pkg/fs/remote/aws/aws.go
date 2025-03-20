@@ -25,7 +25,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net/url"
 	"path"
 	"strings"
 
@@ -47,13 +46,8 @@ type s3FS struct {
 }
 
 // NewFS creates a new instance of the file system for accessing S3 storage.
-func NewFS(dest string) (remote.FS, error) {
-	u, err := url.Parse(dest)
-	if err != nil {
-		return nil, fmt.Errorf("invalid dest URL: %w", err)
-	}
-
-	bucket, basePath := extractBucketAndBase(u)
+func NewFS(path string) (remote.FS, error) {
+	bucket, basePath := extractBucketAndBase(path)
 	if bucket == "" {
 		return nil, fmt.Errorf("bucket name not provided")
 	}
@@ -77,18 +71,18 @@ func NewFS(dest string) (remote.FS, error) {
 	}, nil
 }
 
-func extractBucketAndBase(u *url.URL) (bucket, basePath string) {
-	if u.Host != "" {
-		return u.Host, strings.TrimPrefix(u.Path, "/")
-	}
-	parts := strings.SplitN(strings.Trim(u.Path, "/"), "/", 2)
-	if len(parts) == 0 {
+func extractBucketAndBase(path string) (bucket, basePath string) {
+	trimmedPath := strings.Trim(path, "/")
+	if trimmedPath == "" {
 		return "", ""
 	}
-	if len(parts) == 1 {
-		return parts[0], ""
+
+	parts := strings.SplitN(trimmedPath, "/", 2)
+	bucket = parts[0]
+	if len(parts) > 1 {
+		basePath = parts[1]
 	}
-	return parts[0], parts[1]
+	return
 }
 
 func (s *s3FS) getFullPath(p string) string {
