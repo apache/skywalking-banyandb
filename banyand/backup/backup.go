@@ -160,7 +160,7 @@ func newFS(dest string) (remote.FS, error) {
 	case "file":
 		return local.NewFS(u.Path)
 	case "s3":
-		return aws.NewFS(dest)
+		return aws.NewFS(u.Path)
 	default:
 		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
