@@ -60,6 +60,7 @@ func NewFS(dest string) (remote.FS, error) {
 
 	opts := []func(*config.LoadOptions) error{
 		config.WithSharedConfigProfile("banyandb"),
+		config.WithClientLogMode(aws.LogRetries),
 	}
 
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(), opts...)
