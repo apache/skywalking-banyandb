@@ -688,7 +688,44 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 	}
 }
 
-func (bc *blockCursor) loadData(tmpBlock *block) bool {
+func (bc *blockCursor) loadDataFromBuckets(buckets []*bucket, tmpBlock *block) bool {
+	tmpBlock.reset()
+	var err error
+	for _, bucket := range buckets {
+		tmpBlock, err = bucket.findRange(bc.minTimestamp, bc.maxTimestamp)
+		if err != nil {
+			panic(fmt.Sprintf("failed to load data from cache: %v", err))
+		}
+	}
+
+	start, end, ok := timestamp.FindRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
+	if !ok {
+		return false
+	}
+	bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[start:end+1]...)
+	bc.versions = append(bc.versions, tmpBlock.versions[start:end+1]...)
+
+	bc.fields.name = tmpBlock.field.name
+	for i := range tmpBlock.field.columns {
+		if len(tmpBlock.field.columns[i].values) == 0 {
+			continue
+		}
+		if len(tmpBlock.field.columns[i].values) != len(tmpBlock.timestamps) {
+			logger.Panicf("unexpected number of values for fields %q: got %d; want %d",
+				tmpBlock.field.columns[i].name, len(tmpBlock.field.columns[i].values), len(tmpBlock.timestamps))
+		}
+		c := column{
+			name:      tmpBlock.field.columns[i].name,
+			valueType: tmpBlock.field.columns[i].valueType,
+		}
+
+		c.values = append(c.values, tmpBlock.field.columns[i].values[start:end+1]...)
+		bc.fields.columns = append(bc.fields.columns, c)
+	}
+	return true
+}
+
+func (bc *blockCursor) loadDataFromParts(tmpBlock *block) bool {
 	tmpBlock.reset()
 	cfm := make([]columnMetadata, 0, len(bc.fieldProjection))
 NEXT_FIELD:

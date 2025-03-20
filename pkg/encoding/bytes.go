@@ -70,6 +70,12 @@ type BytesBlockDecoder struct {
 	data []byte
 }
 
+func NewBytesBlockDecoder() *BytesBlockDecoder {
+	return &BytesBlockDecoder{
+		data: make([]byte, 0),
+	}
+}
+
 // Reset resets the decoder.
 func (bbd *BytesBlockDecoder) Reset() {
 	bbd.data = bbd.data[:0]

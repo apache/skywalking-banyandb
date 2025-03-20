@@ -287,6 +287,170 @@ var fieldProjections = map[int][]string{
 	3: {"intField"},
 }
 
+var dpsTS0 = &dataPoints{
+	seriesIDs:  []common.SeriesID{1, 2, 3},
+	timestamps: []int64{1, 2, 3},
+	versions:   []int64{1, 2, 3},
+	tagFamilies: [][]nameValues{
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+		},
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+		},
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+		},
+	},
+	fields: []nameValues{
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field1"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field2"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field3"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+	},
+}
+
+var duplicatedDpsTS0 = &dataPoints{
+	seriesIDs:  []common.SeriesID{1, 1, 2, 2, 3, 3},
+	timestamps: []int64{1, 2, 3, 4, 5, 6},
+	versions:   []int64{1, 1, 1, 1, 1, 1},
+	tagFamilies: [][]nameValues{
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+		},
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+		},
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+		},
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+		},
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+		},
+		{
+			{
+				name: "arrTag", values: []*nameValue{
+					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+					{name: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
+				},
+			},
+		},
+	},
+	fields: []nameValues{
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field11"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field12"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field21"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field22"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field31"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+		{
+			name: "skipped", values: []*nameValue{
+				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field32"), valueArr: nil},
+				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(1110), valueArr: nil},
+				{name: "floatField", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(1221233.343), valueArr: nil},
+				{name: "binaryField", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
+			},
+		},
+	},
+}
+
 var dpsTS1 = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{1, 1, 1},
