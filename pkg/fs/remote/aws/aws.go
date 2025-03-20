@@ -24,9 +24,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/smithy-go"
-	"github.com/pkg/errors"
 	"io"
 	"net/url"
 	"path"
@@ -35,6 +32,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
@@ -67,9 +67,7 @@ func NewFS(dest string) (remote.FS, error) {
 		return nil, fmt.Errorf("load AWS config: %w", err)
 	}
 
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		o.UsePathStyle = true
-	})
+	client := s3.NewFromConfig(awsCfg)
 
 	return &s3FS{
 		client:   client,
@@ -118,7 +116,6 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
 		ChecksumSHA256:    aws.String(checksum),
 	})
-
 	if err != nil {
 		var apiErr *smithy.OperationError
 		if errors.As(err, &apiErr) && strings.Contains(apiErr.Error(), "BadDigest") {
