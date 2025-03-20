@@ -22,11 +22,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
+	"net/url"
+	"path"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
@@ -34,37 +35,30 @@ import (
 
 // todo: Maybe we can bring in minio, oss
 type s3FS struct {
-	client *s3.Client
+	client   *s3.Client
+	bucket   string
+	basePath string
 }
 
-// todo: variable to get the bucket name for measure,property,stream
-var cfg *S3Config
-
 // NewFS creates a new instance of the file system for accessing S3 storage.
-func NewFS() (remote.FS, error) {
-	cfg = GetS3Config()
-	if cfg == nil {
-		return nil, fmt.Errorf("s3 config is nil")
-	}
-
-	httpClient := &http.Client{
-		Timeout: cfg.Timeout,
-	}
-
-	// todo: lots of configs to do
-	awsCfg, err := config.LoadDefaultConfig(
-		context.TODO(),
-		config.WithRegion(cfg.Region),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			cfg.KeyID,
-			cfg.SecretKey,
-			"",
-		)),
-		config.WithHTTPClient(httpClient),
-		config.WithClientLogMode(aws.LogRetries),
-	)
+func NewFS(dest string) (remote.FS, error) {
+	u, err := url.Parse(dest)
 	if err != nil {
-		return nil, fmt.Errorf("load AWS config error: %w", err)
+		return nil, fmt.Errorf("invalid dest URL: %w", err)
+	}
+
+	bucket, basePath := extractBucketAndBase(u)
+	if bucket == "" {
+		return nil, fmt.Errorf("bucket name not provided")
+	}
+
+	opts := []func(*config.LoadOptions) error{
+		config.WithSharedConfigProfile("banyandb"),
+	}
+
+	awsCfg, err := config.LoadDefaultConfig(context.TODO(), opts...)
+	if err != nil {
+		return nil, fmt.Errorf("load AWS config: %w", err)
 	}
 
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
@@ -72,23 +66,48 @@ func NewFS() (remote.FS, error) {
 	})
 
 	return &s3FS{
-		client: client,
+		client:   client,
+		bucket:   bucket,
+		basePath: basePath,
 	}, nil
 }
 
+func extractBucketAndBase(u *url.URL) (bucket, basePath string) {
+	if u.Host != "" {
+		return u.Host, strings.TrimPrefix(u.Path, "/")
+	}
+	parts := strings.SplitN(strings.Trim(u.Path, "/"), "/", 2)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+	return parts[0], parts[1]
+}
+
+func (s *s3FS) getFullPath(p string) string {
+	if s.basePath == "" {
+		return p
+	}
+	return path.Join(s.basePath, p)
+}
+
 func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
+	key := s.getFullPath(path)
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: getBucketName(),
-		Key:    &path,
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
 		Body:   data,
 	})
 	return err
 }
 
 func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error) {
+	key := s.getFullPath(path)
 	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: getBucketName(),
-		Key:    &path,
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
 	})
 	if err != nil {
 		return nil, err
@@ -97,10 +116,12 @@ func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error)
 }
 
 func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
+	fullPrefix := s.getFullPath(prefix)
 	var files []string
+
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: getBucketName(),
-		Prefix: &prefix,
+		Bucket: aws.String(s.bucket),
+		Prefix: aws.String(fullPrefix),
 	})
 
 	for paginator.HasMorePages() {
@@ -108,17 +129,23 @@ func (s *s3FS) List(ctx context.Context, prefix string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		for _, obj := range page.Contents {
-			files = append(files, *obj.Key)
+			key := *obj.Key
+			if s.basePath != "" {
+				key = strings.TrimPrefix(key, s.basePath+"/")
+			}
+			files = append(files, key)
 		}
 	}
 	return files, nil
 }
 
 func (s *s3FS) Delete(ctx context.Context, path string) error {
+	key := s.getFullPath(path)
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: getBucketName(),
-		Key:    &path,
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
 	})
 	return err
 }
@@ -126,17 +153,4 @@ func (s *s3FS) Delete(ctx context.Context, path string) error {
 func (s *s3FS) Close() error {
 	// No resources to close for S3 client
 	return nil
-}
-
-func getBucketName() *string {
-	switch remote.NowCatalog {
-	case "measure":
-		return &awsGlobalConfig.MeasureBucket
-	case "stream":
-		return &awsGlobalConfig.StreamBucket
-	case "property":
-		return &awsGlobalConfig.PropertyBucket
-	default:
-		return nil
-	}
 }
