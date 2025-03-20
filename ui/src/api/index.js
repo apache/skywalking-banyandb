@@ -158,7 +158,7 @@ export function deleteSecondaryDataModel(type, group, name) {
 
 export function fetchProperties(data) {
   return request({
-    url: `/v1/property/data/query`,
+    url: `/api/v1/property/data/query`,
     method: 'post',
     data,
   });

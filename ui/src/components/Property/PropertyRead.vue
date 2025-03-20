@@ -80,7 +80,6 @@ limit: 10`);
     const param = {
       group: item.metadata.group,
       name: item.metadata.name,
-      containerID: item.metadata.id,
       modRevision: item.metadata.modRevision,
       createRevision: item.metadata.createRevision,
       id: item.id,
