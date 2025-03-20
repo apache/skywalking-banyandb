@@ -289,6 +289,7 @@
         catalog: group.catalog,
         type: TargetTypes.Group,
         key: group.metadata.name,
+        resourceOpts: group.resourceOpts,
       };
       const keys = Object.keys(TypeMap);
       for (const key of keys) {
