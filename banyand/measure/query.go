@@ -555,6 +555,7 @@ type queryResult struct {
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
 	tagProjection    []model.TagProjection
+	cache            *cache
 	data             []*blockCursor
 	snapshots        []*snapshot
 	segments         []storage.Segment[*tsTable, option]
@@ -588,7 +589,29 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 				}
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
-				if !qr.data[i].loadData(tmpBlock) {
+				val, ok := qr.cache.data.Load(qr.data[i].bm.seriesID)
+				if ok {
+					buckets := val.([]*bucket)
+					startIdx, endIdx := -1, -1
+					for j, bucket := range buckets {
+						if bucket.timestampsBuf.minTimestamp > qr.data[i].minTimestamp {
+							break
+						}
+						startIdx = j
+					}
+					for j := len(buckets) - 1; j >= startIdx && startIdx != -1; j-- {
+						if buckets[j].timestampsBuf.maxTimestamp < qr.data[i].maxTimestamp {
+							break
+						}
+						endIdx = j
+					}
+					if startIdx != -1 && endIdx != -1 {
+						qr.data[i].loadDataFromBuckets(buckets[startIdx:endIdx+1], tmpBlock)
+						cursorChan <- i
+						return
+					}
+				}
+				if !qr.data[i].loadDataFromParts(tmpBlock) {
 					cursorChan <- i
 					return
 				}

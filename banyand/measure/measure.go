@@ -69,6 +69,7 @@ func (i *indexSchema) parse(schema *databasev1.Measure) {
 type measure struct {
 	indexSchema atomic.Value
 	tsdb        atomic.Value
+	c           *cache
 	pm          *protector.Memory
 	l           *logger.Logger
 	schema      *databasev1.Measure
