@@ -46,7 +46,7 @@ limit: 10`);
   const getProperties = (params) => {
     $loadingCreate();
     const group = route.params.group;
-    fetchProperties({ groups: [group], limit: 6, ...params })
+    fetchProperties({ groups: [group], limit: 10, ...params })
       .then((res) => {
         if (res.status === 200 && group === route.params.group) {
           data.tableData = res.data.properties.map((item) => {
