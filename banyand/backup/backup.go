@@ -27,7 +27,6 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -59,34 +58,9 @@ func NewBackupCommand() *cobra.Command {
 		dest         string
 		timeStyle    string
 		schedule     string
-		s3Config     = &aws.S3Config{}
 	)
 
 	cmd := &cobra.Command{
-		PreRunE: func(_ *cobra.Command, _ []string) error {
-			if strings.HasPrefix(dest, "s3://") {
-				aws.SetS3Config(s3Config)
-				if s3Config.MeasureBucket == "" {
-					return errors.New("measure-bucket is required")
-				}
-				if s3Config.StreamBucket == "" {
-					return errors.New("stream-bucket is required")
-				}
-				if s3Config.PropertyBucket == "" {
-					return errors.New("property-bucket is required")
-				}
-				if s3Config.Region == "" {
-					return errors.New("aws-region is required")
-				}
-				if s3Config.KeyID == "" {
-					return errors.New("aws-access-key is required")
-				}
-				if s3Config.SecretKey == "" {
-					return errors.New("aws-secret-key is required")
-				}
-			}
-			return nil
-		},
 		Short:             "Backup BanyanDB snapshots to remote storage",
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
@@ -141,16 +115,6 @@ func NewBackupCommand() *cobra.Command {
 		"",
 		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
 	)
-
-	// aws
-	cmd.Flags().StringVar(&s3Config.Region, "s3-region", "", "AWS region for S3 storage")
-	cmd.Flags().StringVar(&s3Config.KeyID, "s3-access-key", "", "AWS access key ID")
-	cmd.Flags().StringVar(&s3Config.SecretKey, "s3-secret-key", "", "AWS secret access key")
-	cmd.Flags().StringVar(&s3Config.Endpoint, "s3-endpoint", "", "Custom endpoint for S3 API (optional)")
-	cmd.Flags().DurationVar(&s3Config.Timeout, "s3-timeout", 30*time.Second, "Timeout for AWS operations")
-	cmd.Flags().StringVar(&s3Config.MeasureBucket, "measure-bucket", "", "measure bucket name for S3 storage")
-	cmd.Flags().StringVar(&s3Config.StreamBucket, "stream-bucket", "", "stream bucket name for S3 storage")
-	cmd.Flags().StringVar(&s3Config.PropertyBucket, "property-bucket", "", "property bucket name for S3 storage")
 	return cmd
 }
 
@@ -196,8 +160,7 @@ func newFS(dest string) (remote.FS, error) {
 	case "file":
 		return local.NewFS(u.Path)
 	case "s3":
-		return aws.NewFS()
-
+		return aws.NewFS(dest)
 	default:
 		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
@@ -222,7 +185,6 @@ func backupSnapshot(fs remote.FS, snapshotDir, catalog, timeDir string) error {
 	ctx := context.Background()
 	remotePrefix := path.Join(timeDir, catalog) + "/"
 
-	remote.NowCatalog = catalog
 	remoteFiles, err := fs.List(ctx, remotePrefix)
 	if err != nil {
 		return err
