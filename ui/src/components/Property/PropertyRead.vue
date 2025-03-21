@@ -25,28 +25,28 @@
   import { onMounted, reactive, ref } from 'vue';
   import { RefreshRight, Search } from '@element-plus/icons-vue';
   import { yamlToJson } from '@/utils/yaml';
-  import PropertyEditror from './PropertyEditror.vue';
+  import PropertyEditror from './PropertyEditor.vue';
   import PropertyValueReader from './PropertyValueReader.vue';
   import FormHeader from '../common/FormHeader.vue';
 
   const { proxy } = getCurrentInstance();
   // Loading
   const route = useRoute();
+  const {group, name} = route.params;
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = proxy.$loadingClose;
   const propertyEditorRef = ref();
   const propertyValueViewerRef = ref();
   const yamlRef = ref(null);
-  const yamlCode = ref(`name: ''
+  const yamlCode = ref(`name: ${name}
 limit: 10`);
   const data = reactive({
-    group: '',
+    group,
     tableData: [],
   });
   const getProperties = (params) => {
     $loadingCreate();
-    const group = route.params.group;
-    fetchProperties({ groups: [group], limit: 10, ...params })
+    fetchProperties({ groups: [group], name, limit: 10, ...params })
       .then((res) => {
         if (res.status === 200 && group === route.params.group) {
           data.tableData = res.data.properties.map((item) => {

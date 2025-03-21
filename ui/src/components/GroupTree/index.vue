@@ -38,7 +38,6 @@
 
   const router = useRouter();
   const route = useRoute();
-  const { proxy } = getCurrentInstance();
 
   // ref
   const ruleForm = ref();
@@ -332,24 +331,6 @@
         type: `Read-${parent}`,
         route,
       };
-      return $bus.emit('AddTabs', add);
-    }
-    if (props.type === 'property') {
-      const route = {
-        name: 'property',
-        params: {
-          group: name,
-          operator: 'read',
-          type: props.type,
-        },
-      };
-      router.push(route);
-      const add = {
-        label: name,
-        type: 'Read',
-        route,
-      };
-      data.active = `${name}`;
       return $bus.emit('AddTabs', add);
     }
     const route = {
