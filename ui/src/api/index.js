@@ -171,9 +171,25 @@ export function deleteProperty(group, name) {
   });
 }
 
-export function applyProperty(group, name, data) {
+export function updateProperty(group, name, data) {
   return request({
     url: `/api/v1/property/schema/${group}/${name}`,
+    method: 'put',
+    data: data,
+  });
+}
+
+export function createProperty(data) {
+  return request({
+    url: `/api/v1/property/schema`,
+    method: 'post',
+    data: data,
+  });
+}
+
+export function applyProperty(group, name, id, data) {
+  return request({
+    url: `/api/v1/property/data/${group}/${name}/${id}`,
     method: 'put',
     data: data,
   });

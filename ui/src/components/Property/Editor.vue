@@ -17,7 +17,7 @@
   ~ under the License.
 -->
 <script setup>
-  import { applyProperty } from '@/api';
+  import { updateProperty, createProperty } from '@/api';
   import { reactive, ref } from 'vue';
   import { ElMessage } from 'element-plus';
   import { getCurrentInstance } from '@vue/runtime-core';
@@ -37,8 +37,6 @@
     group: group || '',
     operator,
     name: name || '',
-    modRevision: 0,
-    createRevision: 0,
     tags: [],
   });
 
@@ -84,15 +82,36 @@
           property: {
             id: formData.id,
             metadata: {
-              createRevision: formData.createRevision,
               group: formData.group,
-              modRevision: formData.modRevision,
               name: formData.name,
             },
             tags: formData.tags,
           },
         };
-        applyProperty(formData.group, formData.name, param)
+        if (operator === 'create') {
+          createProperty(param)
+          .then((res) => {
+            if (res.status === 200) {
+              ElMessage({
+                message: 'successed',
+                type: 'success',
+                duration: 5000,
+              });
+            }
+          })
+          .catch((err) => {
+            ElMessage({
+              message: 'Please refresh and try again. Error: ' + err,
+              type: 'error',
+              duration: 3000,
+            });
+          })
+          .finally(() => {
+            $loadingClose();
+          });
+          return;
+        }
+        updateProperty(formData.group, formData.name, param)
           .then((res) => {
             if (res.status === 200) {
               ElMessage({

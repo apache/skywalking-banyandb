@@ -49,8 +49,8 @@
   };
   const openDialog = (data) => {
     if (data) {
-      formData.name = data.name;
-      formData.type = data.type;
+      formData.key = data.key;
+      formData.value = data.value;
       title.value = 'Edit Tag';
     } else {
       title.value = 'Add Tag';
@@ -68,11 +68,11 @@
 <template>
   <el-dialog v-model="showDialog" :title="title" width="30%">
     <el-form ref="ruleForm" :model="formData" label-position="left">
-      <el-form-item label="Name" prop="name" required label-width="150">
-        <el-input v-model="formData.name" autocomplete="off"></el-input>
+      <el-form-item label="Key" prop="key" required label-width="150">
+        <el-input v-model="formData.key" autocomplete="off"></el-input>
       </el-form-item>
-      <el-form-item label="Type" prop="type" required label-width="150">
-        <el-input v-model="formData.type"></el-input>
+      <el-form-item label="Value" prop="value" required label-width="150">
+        <el-input v-model="formData.value"></el-input>
       </el-form-item>
     </el-form>
     <template #footer>
