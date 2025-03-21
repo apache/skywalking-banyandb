@@ -38,7 +38,6 @@
 
   const router = useRouter();
   const route = useRoute();
-  const { proxy } = getCurrentInstance();
 
   // ref
   const ruleForm = ref();
@@ -178,19 +177,6 @@
     getGroupList().then((res) => {
       if (res.status === 200) {
         data.groupLists = res.data.group.filter((d) => catalogToGroupType[d.catalog] === props.type);
-        if (props.type === 'property') {
-          data.groupLists = data.groupLists.map((item) => ({
-            ...item.metadata,
-            type: TargetTypes.Resources,
-            key: `property-${item.metadata.name}`,
-            catalog: item.catalog,
-            resourceOpts: item.resourceOpts,
-          }));
-          loading.value = false;
-          const { group, type } = route.params;
-          data.activeNode = `${type}-${group}`;
-          return;
-        }
         let promise = data.groupLists.map((item) => {
           const type = props.type;
           const name = item.metadata.name;
@@ -198,7 +184,7 @@
             getStreamOrMeasureList(type, name)
               .then((res) => {
                 if (res.status === 200) {
-                  item.children = res.data[type];
+                  item.children = res.data[props.type === 'property' ? 'properties' : type];
                   resolve();
                 }
               })
@@ -345,24 +331,6 @@
         type: `Read-${parent}`,
         route,
       };
-      return $bus.emit('AddTabs', add);
-    }
-    if (props.type === 'property') {
-      const route = {
-        name: 'property',
-        params: {
-          group: name,
-          operator: 'read',
-          type: props.type,
-        },
-      };
-      router.push(route);
-      const add = {
-        label: name,
-        type: 'Read',
-        route,
-      };
-      data.active = `${name}`;
       return $bus.emit('AddTabs', add);
     }
     const route = {
@@ -534,7 +502,7 @@
       if (Object.keys(TypeMap).includes(currentNode.value.type)) {
         return deleteSecondaryDataModelFunction(TypeMap[currentNode.value.type]);
       }
-      if (type === TargetTypes.Group) {
+      if (props.type === TargetTypes.Group) {
         return deleteGroupFunction();
       }
       return deleteResource();
@@ -728,6 +696,10 @@
     router.push({
       name: `${props.type}Start`,
     });
+  });
+
+  $bus.on('refreshAside', (data) => {
+    getGroupLists();
   });
   watch(filterText, (val) => {
     treeRef.value?.filter(val);

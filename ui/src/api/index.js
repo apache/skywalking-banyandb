@@ -164,10 +164,26 @@ export function fetchProperties(data) {
   });
 }
 
-export function deleteProperty(group, name, id) {
+export function deleteProperty(group, name) {
   return request({
-    url: `/api/v1/property/data/${group}/${name}/${id}`,
+    url: `/api/v1/property/schema/${group}/${name}`,
     method: 'delete',
+  });
+}
+
+export function updateProperty(group, name, data) {
+  return request({
+    url: `/api/v1/property/schema/${group}/${name}`,
+    method: 'put',
+    data: data,
+  });
+}
+
+export function createProperty(data) {
+  return request({
+    url: `/api/v1/property/schema`,
+    method: 'post',
+    data: data,
   });
 }
 

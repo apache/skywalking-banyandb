@@ -22,10 +22,10 @@
   import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
-  import { onMounted, reactive, ref } from 'vue';
+  import { reactive, ref, watch, onMounted } from 'vue';
   import { RefreshRight, Search } from '@element-plus/icons-vue';
   import { yamlToJson } from '@/utils/yaml';
-  import PropertyEditror from './PropertyEditror.vue';
+  import PropertyEditor from './PropertyEditor.vue';
   import PropertyValueReader from './PropertyValueReader.vue';
   import FormHeader from '../common/FormHeader.vue';
 
@@ -37,18 +37,18 @@
   const propertyEditorRef = ref();
   const propertyValueViewerRef = ref();
   const yamlRef = ref(null);
-  const yamlCode = ref(`name: ''
-limit: 10`);
   const data = reactive({
-    group: '',
+    group: route.params.group,
     tableData: [],
+    name: route.params.name,
   });
+  const yamlCode = ref(`name: ${data.name}
+limit: 10`);
   const getProperties = (params) => {
     $loadingCreate();
-    const group = route.params.group;
-    fetchProperties({ groups: [group], limit: 10, ...params })
+    fetchProperties({ groups: [data.group], name: data.name, limit: 10, ...params })
       .then((res) => {
-        if (res.status === 200 && group === route.params.group) {
+        if (res.status === 200) {
           data.tableData = res.data.properties.map((item) => {
             item.tags.forEach((tag) => {
               tag.value = JSON.stringify(tag.value);
@@ -86,14 +86,6 @@ limit: 10`);
       tags: JSON.parse(JSON.stringify(item.tags)),
     };
     propertyEditorRef?.value.openDialog(true, param).then(() => {
-      getProperties();
-    });
-  };
-  const openAddProperty = () => {
-    let dataForm = {
-      group: data.group,
-    };
-    propertyEditorRef?.value.openDialog(false, dataForm).then(() => {
       getProperties();
     });
   };
@@ -143,6 +135,17 @@ limit: 10`);
   onMounted(() => {
     getProperties();
   });
+  watch(
+    () => route.params,
+    () => {
+      const { group, name } = route.params;
+      data.name = name;
+      data.group = group;
+      yamlCode.value = `name: ${data.name}
+limit: 10`;
+      getProperties();
+    },
+  );
 </script>
 <template>
   <div>
@@ -151,7 +154,6 @@ limit: 10`);
         <FormHeader :fields="data" />
       </template>
       <div class="button-group-operator">
-        <el-button size="small" type="primary" color="#6E38F7" @click="openAddProperty">Apply Property</el-button>
         <div>
           <el-button size="small" :icon="Search" @click="searchProperties" plain />
           <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
@@ -201,7 +203,7 @@ limit: 10`);
         </el-table-column>
       </el-table>
     </el-card>
-    <PropertyEditror ref="propertyEditorRef"></PropertyEditror>
+    <PropertyEditor ref="propertyEditorRef"></PropertyEditor>
     <PropertyValueReader ref="propertyValueViewerRef"></PropertyValueReader>
   </div>
 </template>
