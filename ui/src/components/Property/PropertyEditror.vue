@@ -59,8 +59,8 @@
   ];
   const formConfig = [
     { label: 'Strategy', prop: 'strategy', type: 'select', selectGroup: strategyGroup },
-    { label: 'Container Group', prop: 'group', type: 'input', disabled: true },
-    { label: 'Container Name', prop: 'name', type: 'input' },
+    { label: 'Group', prop: 'group', type: 'input', disabled: true },
+    { label: 'Name', prop: 'name', type: 'input' },
     { label: 'ID', prop: 'id', type: 'input' },
   ];
   let promiseResolve;
