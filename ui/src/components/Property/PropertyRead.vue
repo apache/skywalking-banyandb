@@ -22,7 +22,7 @@
   import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
-  import { onMounted, reactive, ref } from 'vue';
+  import { reactive, ref, watch } from 'vue';
   import { RefreshRight, Search } from '@element-plus/icons-vue';
   import { yamlToJson } from '@/utils/yaml';
   import PropertyEditor from './PropertyEditor.vue';
@@ -32,23 +32,23 @@
   const { proxy } = getCurrentInstance();
   // Loading
   const route = useRoute();
-  const { group, name } = route.params;
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = proxy.$loadingClose;
   const propertyEditorRef = ref();
   const propertyValueViewerRef = ref();
   const yamlRef = ref(null);
-  const yamlCode = ref(`name: ${name}
-limit: 10`);
   const data = reactive({
-    group,
+    group: route.params.group,
     tableData: [],
+    name: route.params.name,
   });
+  const yamlCode = ref(`name: ${data.name}
+limit: 10`);
   const getProperties = (params) => {
     $loadingCreate();
-    fetchProperties({ groups: [group], name, limit: 10, ...params })
+    fetchProperties({ groups: [data.group], name: data.name, limit: 10, ...params })
       .then((res) => {
-        if (res.status === 200 && group === route.params.group) {
+        if (res.status === 200) {
           data.tableData = res.data.properties.map((item) => {
             item.tags.forEach((tag) => {
               tag.value = JSON.stringify(tag.value);
@@ -132,9 +132,17 @@ limit: 10`);
         $loadingClose();
       });
   };
-  onMounted(() => {
-    getProperties();
-  });
+  watch(
+    () => route.params,
+    () => {
+      const { group, name } = route.params;
+      data.name = name;
+      data.group = group;
+      yamlCode.value = `name: ${data.name}
+limit: 10`;
+      getProperties();
+    },
+  );
 </script>
 <template>
   <div>

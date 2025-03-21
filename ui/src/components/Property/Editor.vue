@@ -17,11 +17,11 @@
   ~ under the License.
 -->
 <script setup>
-  import { updateProperty, createProperty } from '@/api';
   import { reactive, ref } from 'vue';
   import { ElMessage } from 'element-plus';
   import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
+  import { updateProperty, createProperty } from '@/api';
   import { getStreamOrMeasure } from '@/api/index';
   import TagEditor from './TagEditor.vue';
   import { rules, strategyGroup, formConfig } from './data';
@@ -39,9 +39,7 @@
     name: name || '',
     tags: [],
   });
-
   initProperty();
-
   function initProperty() {
     if (operator === 'edit') {
       $loadingCreate();
@@ -59,7 +57,7 @@
     }
   }
   const openEditTag = (index) => {
-    tagEditorRef.value.openDialog({key: formData.tags[index].name, value: formData.tags[index].type}).then((res) => {
+    tagEditorRef.value.openDialog({ key: formData.tags[index].name, value: formData.tags[index].type }).then((res) => {
       formData.tags[index].name = res.key;
       formData.tags[index].type = res.value;
     });
@@ -90,25 +88,25 @@
         };
         if (operator === 'create') {
           createProperty(param)
-          .then((res) => {
-            if (res.status === 200) {
+            .then((res) => {
+              if (res.status === 200) {
+                ElMessage({
+                  message: 'successed',
+                  type: 'success',
+                  duration: 5000,
+                });
+              }
+            })
+            .catch((err) => {
               ElMessage({
-                message: 'successed',
-                type: 'success',
-                duration: 5000,
+                message: 'Please refresh and try again. Error: ' + err,
+                type: 'error',
+                duration: 3000,
               });
-            }
-          })
-          .catch((err) => {
-            ElMessage({
-              message: 'Please refresh and try again. Error: ' + err,
-              type: 'error',
-              duration: 3000,
+            })
+            .finally(() => {
+              $loadingClose();
             });
-          })
-          .finally(() => {
-            $loadingClose();
-          });
           return;
         }
         updateProperty(formData.group, formData.name, param)
