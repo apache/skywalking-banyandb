@@ -162,11 +162,7 @@ limit: 10`);
         <el-table-column label="Group" prop="metadata.group" width="100"></el-table-column>
         <el-table-column label="Name" prop="metadata.name" width="120"></el-table-column>
         <el-table-column label="ModRevision" prop="metadata.modRevision" width="120"></el-table-column>
-        <el-table-column
-          label="CreateRevision"
-          prop="metadata.createRevision"
-          width="140"
-        ></el-table-column>
+        <el-table-column label="CreateRevision" prop="metadata.createRevision" width="140"></el-table-column>
         <el-table-column label="ID" prop="id" width="150"></el-table-column>
         <el-table-column label="Tags">
           <template #default="scope">
@@ -180,7 +176,8 @@ limit: 10`);
                     type="primary"
                     @click.prevent="openPropertyView(scope.row)"
                     style="color: var(--color-main); font-weight: bold"
-                  >view</el-button>
+                    >view</el-button
+                  >
                 </template>
               </el-table-column>
             </el-table>
@@ -193,7 +190,8 @@ limit: 10`);
               type="primary"
               @click.prevent="openEditField(scope.$index)"
               style="color: var(--color-main); font-weight: bold"
-            >Edit</el-button>
+              >Edit</el-button
+            >
             <el-popconfirm @confirm="deleteTableData(scope.$index)" title="Are you sure to delete this?">
               <template #reference>
                 <el-button link type="danger" style="color: red; font-weight: bold">Delete</el-button>
