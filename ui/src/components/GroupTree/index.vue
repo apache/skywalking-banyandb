@@ -178,19 +178,6 @@
     getGroupList().then((res) => {
       if (res.status === 200) {
         data.groupLists = res.data.group.filter((d) => catalogToGroupType[d.catalog] === props.type);
-        if (props.type === 'property') {
-          data.groupLists = data.groupLists.map((item) => ({
-            ...item.metadata,
-            type: TargetTypes.Resources,
-            key: `property-${item.metadata.name}`,
-            catalog: item.catalog,
-            resourceOpts: item.resourceOpts,
-          }));
-          loading.value = false;
-          const { group, type } = route.params;
-          data.activeNode = `${type}-${group}`;
-          return;
-        }
         let promise = data.groupLists.map((item) => {
           const type = props.type;
           const name = item.metadata.name;
@@ -198,7 +185,7 @@
             getStreamOrMeasureList(type, name)
               .then((res) => {
                 if (res.status === 200) {
-                  item.children = res.data[type];
+                  item.children = res.data[props.type === 'property' ? 'properties' : type];
                   resolve();
                 }
               })
