@@ -158,7 +158,7 @@ export function deleteSecondaryDataModel(type, group, name) {
 
 export function fetchProperties(data) {
   return request({
-    url: `/api/v1/property/query`,
+    url: `/api/v1/property/data/query`,
     method: 'post',
     data,
   });
@@ -166,14 +166,14 @@ export function fetchProperties(data) {
 
 export function deleteProperty(group, name, id) {
   return request({
-    url: `/api/v1/property/${group}/${name}/${id}`,
+    url: `/api/v1/property/data/${group}/${name}/${id}`,
     method: 'delete',
   });
 }
 
 export function applyProperty(group, name, id, data) {
   return request({
-    url: `/api/v1/property/${group}/${name}/${id}`,
+    url: `/api/v1/property/data/${group}/${name}/${id}`,
     method: 'put',
     data: data,
   });
