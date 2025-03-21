@@ -23,7 +23,7 @@
   import { getCurrentInstance } from '@vue/runtime-core';
   import TagEditor from './TagEditor.vue';
   import { ElMessage } from 'element-plus';
-  import {rules, strategyGroup, formConfig} from './data';
+  import { rules, strategyGroup, formConfig } from './data';
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose;
   const showDialog = ref(false);
