@@ -697,6 +697,10 @@
       name: `${props.type}Start`,
     });
   });
+
+  $bus.on('refreshAside', (data) => {
+    getGroupLists();
+  });
   watch(filterText, (val) => {
     treeRef.value?.filter(val);
   });
