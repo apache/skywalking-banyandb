@@ -72,7 +72,7 @@
         <el-input v-model="formData.key" autocomplete="off"></el-input>
       </el-form-item>
       <el-form-item label="Value" prop="value" required label-width="150">
-        <el-input v-model="formData.value"></el-input>
+        <el-input v-model="formData.value" type="textarea" autocomplete="off"></el-input>
       </el-form-item>
     </el-form>
     <template #footer>

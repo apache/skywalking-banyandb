@@ -59,9 +59,9 @@
     }
   }
   const openEditTag = (index) => {
-    tagEditorRef.value.openDialog(formData.tags[index]).then((res) => {
-      formData.tags[index].name = res.name;
-      formData.tags[index].type = res.type;
+    tagEditorRef.value.openDialog({key: formData.tags[index].name, value: formData.tags[index].type}).then((res) => {
+      formData.tags[index].name = res.key;
+      formData.tags[index].type = res.value;
     });
   };
   const deleteTag = (index) => {
