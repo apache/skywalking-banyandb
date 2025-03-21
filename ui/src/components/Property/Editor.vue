@@ -17,10 +17,10 @@
   ~ under the License.
 -->
 <script setup>
-  import { reactive, ref } from 'vue';
+  import { reactive, ref, onMounted } from 'vue';
   import { ElMessage } from 'element-plus';
   import { getCurrentInstance } from '@vue/runtime-core';
-  import { useRoute } from 'vue-router';
+  import { useRoute, useRouter } from 'vue-router'; 
   import { updateProperty, createProperty } from '@/api';
   import { getStreamOrMeasure } from '@/api/index';
   import TagEditor from './TagEditor.vue';
@@ -28,7 +28,9 @@
 
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose;
+  const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
   const route = useRoute();
+  const router = useRouter();
   const tagEditorRef = ref();
   const ruleForm = ref();
   const { operator, name, group, type } = route.params;
@@ -36,10 +38,11 @@
     strategy: strategyGroup[0].value,
     group: group || '',
     operator,
+    type,
     name: name || '',
     tags: [],
   });
-  initProperty();
+
   function initProperty() {
     if (operator === 'edit') {
       $loadingCreate();
@@ -48,7 +51,11 @@
           if (res.status === 200) {
             const { property } = res.data;
 
-            formData.tags = property.tags;
+            formData.tags = property.tags.map((d) => ({
+              ...d,
+              key: d.name,
+              value: d.type,
+            }));
           }
         })
         .finally(() => {
@@ -57,9 +64,8 @@
     }
   }
   const openEditTag = (index) => {
-    tagEditorRef.value.openDialog({ key: formData.tags[index].name, value: formData.tags[index].type }).then((res) => {
-      formData.tags[index].name = res.key;
-      formData.tags[index].type = res.value;
+    tagEditorRef.value.openDialog(formData.tags[index]).then((res) => {
+      formData.tags[index] = res;
     });
   };
   const deleteTag = (index) => {
@@ -83,7 +89,7 @@
               group: formData.group,
               name: formData.name,
             },
-            tags: formData.tags,
+            tags: formData.tags.map(d => ({name: d.key, type: d.value, indexedOnly: d.indexedOnly})),
           },
         };
         if (operator === 'create') {
@@ -95,6 +101,9 @@
                   type: 'success',
                   duration: 5000,
                 });
+                $bus.emit('refreshAside');
+                $bus.emit('deleteGroup', formData.group);
+                openResourses();
               }
             })
             .catch((err) => {
@@ -117,6 +126,9 @@
                 type: 'success',
                 duration: 5000,
               });
+              $bus.emit('refreshAside');
+              $bus.emit('deleteResource', formData.name);
+              openResourses();
             }
           })
           .catch((err) => {
@@ -132,6 +144,28 @@
       }
     });
   };
+  function openResourses() {
+    const route = {
+      name: formData.type,
+      params: {
+        group: formData.group,
+        name: formData.name,
+        operator: 'read',
+        type: formData.type + '',
+      },
+    };
+    router.push(route);
+    const add = {
+      label: formData.name,
+      type: 'Read',
+      route,
+    };
+    $bus.emit('changeAside', formData);
+    $bus.emit('AddTabs', add);
+  }
+  onMounted(() => {
+    initProperty();
+  })
 </script>
 <template>
   <div>
@@ -180,8 +214,8 @@
         <el-form-item label="Tags" prop="tags" label-width="200">
           <el-button size="small" type="primary" color="#6E38F7" @click="openAddTag">Add Tag</el-button>
           <el-table style="margin-top: 10px" :data="formData.tags" border>
-            <el-table-column label="Name" prop="name"></el-table-column>
-            <el-table-column label="Type" prop="type"></el-table-column>
+            <el-table-column label="Name" prop="key"></el-table-column>
+            <el-table-column label="Type" prop="value"></el-table-column>
             <el-table-column label="Operator" width="150">
               <template #default="scope">
                 <el-button

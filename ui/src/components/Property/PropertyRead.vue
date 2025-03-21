@@ -22,7 +22,7 @@
   import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
-  import { reactive, ref, watch } from 'vue';
+  import { reactive, ref, watch, onMounted } from 'vue';
   import { RefreshRight, Search } from '@element-plus/icons-vue';
   import { yamlToJson } from '@/utils/yaml';
   import PropertyEditor from './PropertyEditor.vue';
@@ -132,6 +132,9 @@ limit: 10`);
         $loadingClose();
       });
   };
+  onMounted(() => {
+    getProperties();
+  })
   watch(
     () => route.params,
     () => {
