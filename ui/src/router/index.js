@@ -200,12 +200,12 @@ const router = createRouter({
             {
               path: '/banyandb/property/operator-edit/:type/:operator/:group/:name',
               name: 'edit-property',
-              component: () => import('@/views/Stream/createEdit.vue'),
+              component: () => import('@/views/Property/createEdit.vue'),
             },
             {
               path: '/banyandb/property/operator-create/:type/:operator/:group',
               name: 'create-property',
-              component: () => import('@/views/Measure/createEdit.vue'),
+              component: () => import('@/views/Property/createEdit.vue'),
             },
           ],
         },

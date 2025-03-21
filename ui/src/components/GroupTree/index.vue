@@ -502,7 +502,7 @@
       if (Object.keys(TypeMap).includes(currentNode.value.type)) {
         return deleteSecondaryDataModelFunction(TypeMap[currentNode.value.type]);
       }
-      if (type === TargetTypes.Group) {
+      if (props.type === TargetTypes.Group) {
         return deleteGroupFunction();
       }
       return deleteResource();

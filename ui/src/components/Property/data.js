@@ -29,7 +29,6 @@ export const rules = {
   strategy: [{ required: true, message: 'please select the apply method.', trigger: 'blur' }],
   group: [{ required: true, message: 'Please enter the group.', trigger: 'blur' }],
   name: [{ required: true, message: 'Please enter the name.', trigger: 'blur' }],
-  id: [{ required: true, message: 'Please enter the ID.', trigger: 'blur' }],
   tags: [{ required: true, validator: validateTags, trigger: 'blur' }],
 };
 export const strategyGroup = [
@@ -40,5 +39,4 @@ export const formConfig = [
   { label: 'Strategy', prop: 'strategy', type: 'select', selectGroup: strategyGroup },
   { label: 'Group', prop: 'group', type: 'input', disabled: true },
   { label: 'Name', prop: 'name', type: 'input' },
-  { label: 'ID', prop: 'id', type: 'input' },
 ];

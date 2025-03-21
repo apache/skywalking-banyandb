@@ -25,14 +25,14 @@
   import { onMounted, reactive, ref } from 'vue';
   import { RefreshRight, Search } from '@element-plus/icons-vue';
   import { yamlToJson } from '@/utils/yaml';
-  import PropertyEditror from './PropertyEditor.vue';
+  import PropertyEditor from './PropertyEditor.vue';
   import PropertyValueReader from './PropertyValueReader.vue';
   import FormHeader from '../common/FormHeader.vue';
 
   const { proxy } = getCurrentInstance();
   // Loading
   const route = useRoute();
-  const {group, name} = route.params;
+  const { group, name } = route.params;
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = proxy.$loadingClose;
   const propertyEditorRef = ref();
@@ -86,14 +86,6 @@ limit: 10`);
       tags: JSON.parse(JSON.stringify(item.tags)),
     };
     propertyEditorRef?.value.openDialog(true, param).then(() => {
-      getProperties();
-    });
-  };
-  const openAddProperty = () => {
-    let dataForm = {
-      group: data.group,
-    };
-    propertyEditorRef?.value.openDialog(false, dataForm).then(() => {
       getProperties();
     });
   };
@@ -151,7 +143,6 @@ limit: 10`);
         <FormHeader :fields="data" />
       </template>
       <div class="button-group-operator">
-        <el-button size="small" type="primary" color="#6E38F7" @click="openAddProperty">Apply Property</el-button>
         <div>
           <el-button size="small" :icon="Search" @click="searchProperties" plain />
           <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
@@ -201,7 +192,7 @@ limit: 10`);
         </el-table-column>
       </el-table>
     </el-card>
-    <PropertyEditror ref="propertyEditorRef"></PropertyEditror>
+    <PropertyEditor ref="propertyEditorRef"></PropertyEditor>
     <PropertyValueReader ref="propertyValueViewerRef"></PropertyValueReader>
   </div>
 </template>
