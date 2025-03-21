@@ -160,7 +160,6 @@
       type: 'Read',
       route,
     };
-    $bus.emit('changeAside', formData);
     $bus.emit('AddTabs', add);
   }
   onMounted(() => {

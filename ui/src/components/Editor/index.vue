@@ -214,7 +214,6 @@
       type: 'Read',
       route,
     };
-    $bus.emit('changeAside', data.form);
     $bus.emit('AddTabs', add);
   }
   function initData() {

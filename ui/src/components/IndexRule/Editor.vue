@@ -216,7 +216,6 @@
       type: `Read-${data.type}`,
       route,
     };
-    $bus.emit('changeAside', data.form);
     $bus.emit('AddTabs', add);
   }
 
