@@ -20,7 +20,7 @@
   import { reactive, ref, onMounted } from 'vue';
   import { ElMessage } from 'element-plus';
   import { getCurrentInstance } from '@vue/runtime-core';
-  import { useRoute, useRouter } from 'vue-router'; 
+  import { useRoute, useRouter } from 'vue-router';
   import { updateProperty, createProperty } from '@/api';
   import { getStreamOrMeasure } from '@/api/index';
   import TagEditor from './TagEditor.vue';
@@ -89,7 +89,7 @@
               group: formData.group,
               name: formData.name,
             },
-            tags: formData.tags.map(d => ({name: d.key, type: d.value, indexedOnly: d.indexedOnly})),
+            tags: formData.tags.map((d) => ({ name: d.key, type: d.value, indexedOnly: d.indexedOnly })),
           },
         };
         if (operator === 'create') {
@@ -164,7 +164,7 @@
   }
   onMounted(() => {
     initProperty();
-  })
+  });
 </script>
 <template>
   <div>

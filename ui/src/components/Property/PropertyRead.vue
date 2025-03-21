@@ -134,7 +134,7 @@ limit: 10`);
   };
   onMounted(() => {
     getProperties();
-  })
+  });
   watch(
     () => route.params,
     () => {
