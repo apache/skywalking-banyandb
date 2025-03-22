@@ -19,10 +19,7 @@
 package aws
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"path"
@@ -31,9 +28,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/smithy-go"
-	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
@@ -95,27 +89,12 @@ func (s *s3FS) getFullPath(p string) string {
 func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 	key := s.getFullPath(path)
 
-	dataBytes, err := io.ReadAll(data)
-	if err != nil {
-		return fmt.Errorf("failed to read data: %w", err)
-	}
-
-	hasher := sha256.New()
-	hasher.Write(dataBytes)
-	checksum := base64.StdEncoding.EncodeToString(hasher.Sum(nil))
-
-	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:            aws.String(s.bucket),
-		Key:               aws.String(key),
-		Body:              bytes.NewReader(dataBytes),
-		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
-		ChecksumSHA256:    aws.String(checksum),
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Body:   data,
 	})
 	if err != nil {
-		var apiErr *smithy.OperationError
-		if errors.As(err, &apiErr) && strings.Contains(apiErr.Error(), "BadDigest") {
-			return fmt.Errorf("checksum validation failed: %w", err)
-		}
 		return err
 	}
 	return nil
