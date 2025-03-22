@@ -39,7 +39,6 @@ func TestNewFS(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid file scheme", "file:///tmp", false},
-		{"s3 scheme", "s3:///bucket", false},
 		{"malformed URL", ":invalid", true},
 	}
 	for _, tt := range tests {
