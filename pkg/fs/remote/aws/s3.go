@@ -19,11 +19,9 @@
 package aws
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"io"
 	"path"
 	"strings"
@@ -31,9 +29,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/smithy-go"
-	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
@@ -53,7 +48,6 @@ func NewFS(path string) (remote.FS, error) {
 	}
 
 	opts := []func(*config.LoadOptions) error{
-		config.WithSharedConfigProfile("banyandb"),
 		config.WithClientLogMode(aws.LogRetries),
 	}
 
@@ -95,27 +89,13 @@ func (s *s3FS) getFullPath(p string) string {
 func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 	key := s.getFullPath(path)
 
-	dataBytes, err := io.ReadAll(data)
-	if err != nil {
-		return fmt.Errorf("failed to read data: %w", err)
-	}
-
-	hasher := sha256.New()
-	hasher.Write(dataBytes)
-	checksum := base64.StdEncoding.EncodeToString(hasher.Sum(nil))
-
-	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:            aws.String(s.bucket),
 		Key:               aws.String(key),
-		Body:              bytes.NewReader(dataBytes),
+		Body:              data,
 		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
-		ChecksumSHA256:    aws.String(checksum),
 	})
 	if err != nil {
-		var apiErr *smithy.OperationError
-		if errors.As(err, &apiErr) && strings.Contains(apiErr.Error(), "BadDigest") {
-			return fmt.Errorf("checksum validation failed: %w", err)
-		}
 		return err
 	}
 	return nil
@@ -124,8 +104,9 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error) {
 	key := s.getFullPath(path)
 	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Bucket:       aws.String(s.bucket),
+		Key:          aws.String(key),
+		ChecksumMode: types.ChecksumModeEnabled,
 	})
 	if err != nil {
 		return nil, err
