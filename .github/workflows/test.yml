@@ -69,7 +69,56 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version-file: 'go.mod'
-      - name: Update dependencies 
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Start MinIO server
+        run: |
+          docker run -d \
+            --network=host \
+            --name minio \
+            -e "MINIO_ROOT_USER=OjezEU7caGd8H9zSG4Ov" \
+            -e "MINIO_ROOT_PASSWORD=9tWu8XB8Cemol44pVGd661ZkyAwJ1OPNd6BC0tmH" \
+            quay.io/minio/minio:RELEASE.2025-03-12T18-04-18Z-cpuv1 \
+            server /data --console-address ":9001"
+
+      - name: Wait for service readiness
+        run: |
+          until curl -s http://localhost:9000/minio/health/live; do sleep 5; done
+
+      - name: Configure MinIO client
+        run: |
+          docker exec minio mc alias set local \
+            http://localhost:9000 \
+            "OjezEU7caGd8H9zSG4Ov" \
+            "9tWu8XB8Cemol44pVGd661ZkyAwJ1OPNd6BC0tmH" \
+            --api s3v4 \
+            --insecure
+
+      - name: Create persistent bucket
+        run: |
+          docker exec minio mc mb local/bydb233
+          docker exec minio mc version enable local/bydb233
+
+      - name: Configure AWS for MinIO
+        run: |
+          mkdir -p ~/.aws
+          cat << EOF > ~/.aws/config
+          [profile banyandb]
+          region = eu-north-1
+          output = json
+          max_attempts = 5
+          endpoint_url = http://localhost:9000
+          EOF
+
+          cat << EOF > ~/.aws/credentials
+          [banyandb]
+          aws_access_key_id = OjezEU7caGd8H9zSG4Ov
+          aws_secret_access_key = 9tWu8XB8Cemol44pVGd661ZkyAwJ1OPNd6BC0tmH
+          EOF
+          chmod 600 ~/.aws/credentials
+
+      - name: Update dependencies
         if: steps.cache-go.outputs.cache-hit != 'true'
         run: GOPROXY=https://proxy.golang.org go mod download
       - name: Generate mocks
