@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -114,7 +115,6 @@ func NewBackupCommand() *cobra.Command {
 		"",
 		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
 	)
-
 	return cmd
 }
 
@@ -159,6 +159,8 @@ func newFS(dest string) (remote.FS, error) {
 	switch u.Scheme {
 	case "file":
 		return local.NewFS(u.Path)
+	case "s3":
+		return aws.NewFS(u.Path)
 	default:
 		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
@@ -187,7 +189,6 @@ func backupSnapshot(fs remote.FS, snapshotDir, catalog, timeDir string) error {
 	if err != nil {
 		return err
 	}
-
 	for _, relPath := range localFiles {
 		remotePath := path.Join(timeDir, catalog, relPath)
 		if !contains(remoteFiles, remotePath) {
