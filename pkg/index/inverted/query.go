@@ -464,11 +464,12 @@ func (m *matchAllNode) String() string {
 }
 
 type termRangeInclusiveNode struct {
-	indexRule    *databasev1.IndexRule
-	min          string
-	max          string
-	minInclusive bool
-	maxInclusive bool
+	indexRule        *databasev1.IndexRule
+	min              string
+	max              string
+	minInclusive     bool
+	maxInclusive     bool
+	isTimeRangeQuery bool
 }
 
 func newTermRangeInclusiveNode(minVal, maxVal string, minInclusive, maxInclusive bool, indexRule *databasev1.IndexRule) *termRangeInclusiveNode {
@@ -499,6 +500,9 @@ func (t *termRangeInclusiveNode) MarshalJSON() ([]byte, error) {
 	inner["range"] = builder.String()
 	if t.indexRule != nil {
 		inner["index"] = t.indexRule.Metadata.Name + ":" + t.indexRule.Metadata.Group
+	}
+	if t.isTimeRangeQuery {
+		inner["timeRange"] = true
 	}
 	data := make(map[string]interface{}, 1)
 	data["termRangeInclusive"] = inner

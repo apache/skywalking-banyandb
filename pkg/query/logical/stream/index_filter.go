@@ -32,8 +32,20 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-// buildLocalFilter returns a new index.Filter for local indices.
-func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
+// buildLocalFilter builds a new index.Filter for local indices.
+func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int, entity []*modelv1.TagValue,
+	startTime int64, endTime int64,
+) (index.Filter, [][]*modelv1.TagValue, error) {
+	criteriaFilter, entities, err := buildLocalFilterFromCriteria(criteria, schema, entityDict, entity)
+	opts := index.NewTimeRangeOpts(startTime, endTime, true, true)
+	timeRangeFilter := newRange(nil, opts)
+	filter := newAnd(2)
+	filter.append(criteriaFilter).append(timeRangeFilter)
+	return filter, entities, err
+}
+
+// buildLocalFilterFromCriteria builds a new index.Filter from criteria for local indices.
+func buildLocalFilterFromCriteria(criteria *modelv1.Criteria, schema logical.Schema,
 	entityDict map[string]int, entity []*modelv1.TagValue,
 ) (index.Filter, [][]*modelv1.TagValue, error) {
 	if criteria == nil {
@@ -59,16 +71,16 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 			return nil, nil, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
-			return buildLocalFilter(le.Right, schema, entityDict, entity)
+			return buildLocalFilterFromCriteria(le.Right, schema, entityDict, entity)
 		}
 		if le.GetRight() == nil {
-			return buildLocalFilter(le.Left, schema, entityDict, entity)
+			return buildLocalFilterFromCriteria(le.Left, schema, entityDict, entity)
 		}
-		left, leftEntities, err := buildLocalFilter(le.Left, schema, entityDict, entity)
+		left, leftEntities, err := buildLocalFilterFromCriteria(le.Left, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
-		right, rightEntities, err := buildLocalFilter(le.Right, schema, entityDict, entity)
+		right, rightEntities, err := buildLocalFilterFromCriteria(le.Right, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -449,11 +461,26 @@ func newRange(indexRule *databasev1.IndexRule, opts index.RangeOpts) *rangeOp {
 }
 
 func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
-	s, err := searcher(r.Key.Type)
+	var s index.Searcher
+	var indexType databasev1.IndexRule_Type
+	if r.Opts.IsTimeRangeQuery {
+		indexType = databasev1.IndexRule_TYPE_INVERTED
+	} else {
+		indexType = r.Key.Type
+	}
+	s, err := searcher(indexType)
 	if err != nil {
 		return nil, err
 	}
-	return s.Range(r.Key.toIndex(seriesID), r.Opts)
+	var fieldKey index.FieldKey
+	if r.Opts.IsTimeRangeQuery {
+		fieldKey = index.FieldKey{
+			SeriesID: seriesID,
+		}
+	} else {
+		fieldKey = r.Key.toIndex(seriesID)
+	}
+	return s.Range(fieldKey, r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
@@ -476,7 +503,9 @@ func (r *rangeOp) MarshalJSON() ([]byte, error) {
 			builder.WriteString(")")
 		}
 	}
-	data["key"] = r.Key.IndexRule.Metadata.Name + ":" + r.Key.Metadata.Group
+	if !r.Opts.IsTimeRangeQuery {
+		data["key"] = r.Key.IndexRule.Metadata.Name + ":" + r.Key.Metadata.Group
+	}
 	data["range"] = builder.String()
 	return json.Marshal(data)
 }

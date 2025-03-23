@@ -85,7 +85,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.NewIntRangeOpts(50, 2000, false, false),
+				termRange: index.NewNumericRangeOpts(50, 2000, false, false),
 			},
 			want: []int{200, 500, 1000},
 		},
@@ -94,7 +94,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.NewIntRangeOpts(50, 2000, false, false),
+				termRange: index.NewNumericRangeOpts(50, 2000, false, false),
 			},
 			want: []int{1000, 500, 200},
 		},
@@ -103,7 +103,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.NewIntRangeOpts(200, 1000, true, true),
+				termRange: index.NewNumericRangeOpts(200, 1000, true, true),
 			},
 			want: []int{200, 500, 1000},
 		},
@@ -112,7 +112,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.NewIntRangeOpts(200, 1000, true, true),
+				termRange: index.NewNumericRangeOpts(200, 1000, true, true),
 			},
 			want: []int{1000, 500, 200},
 		},
@@ -121,7 +121,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.NewIntRangeOpts(200, math.MaxInt64, true, false),
+				termRange: index.NewNumericRangeOpts(200, math.MaxInt64, true, false),
 			},
 			want: []int{200, 500, 1000, 2000},
 		},
@@ -130,7 +130,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.NewIntRangeOpts(200, math.MaxInt64, true, false),
+				termRange: index.NewNumericRangeOpts(200, math.MaxInt64, true, false),
 			},
 			want: []int{2000, 1000, 500, 200},
 		},
@@ -139,7 +139,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.NewIntRangeOpts(math.MinInt64, 1000, false, true),
+				termRange: index.NewNumericRangeOpts(math.MinInt64, 1000, false, true),
 			},
 			want: []int{50, 200, 500, 1000},
 		},
@@ -148,7 +148,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.NewIntRangeOpts(math.MinInt64, 1000, false, true),
+				termRange: index.NewNumericRangeOpts(math.MinInt64, 1000, false, true),
 			},
 			want: []int{1000, 500, 200, 50},
 		},
@@ -157,7 +157,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.NewIntRangeOpts(150, 1900, false, false),
+				termRange: index.NewNumericRangeOpts(150, 1900, false, false),
 			},
 			want: []int{200, 500, 1000},
 		},
@@ -166,7 +166,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.NewIntRangeOpts(150, 1900, false, false),
+				termRange: index.NewNumericRangeOpts(150, 1900, false, false),
 			},
 			want: []int{1000, 500, 200},
 		},
@@ -175,7 +175,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_ASC,
-				termRange: index.NewIntRangeOpts(150, 1900, true, true),
+				termRange: index.NewNumericRangeOpts(150, 1900, true, true),
 			},
 			want: []int{200, 500, 1000},
 		},
@@ -184,7 +184,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			args: args{
 				fieldKey:  duration,
 				orderType: modelv1.Sort_SORT_DESC,
-				termRange: index.NewIntRangeOpts(150, 1900, true, true),
+				termRange: index.NewNumericRangeOpts(150, 1900, true, true),
 			},
 			want: []int{1000, 500, 200},
 		},
@@ -211,7 +211,7 @@ func RunDuration(t *testing.T, data map[int]posting.List, store SimpleStore) {
 			name: "invalid range",
 			args: args{
 				fieldKey:  duration,
-				termRange: index.NewIntRangeOpts(100, 50, false, false),
+				termRange: index.NewNumericRangeOpts(100, 50, false, false),
 			},
 		},
 	}

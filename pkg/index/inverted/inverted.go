@@ -237,6 +237,24 @@ func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange
 				termRange.IncludesUpper,
 				nil,
 			))
+
+		case *index.IntTermValue:
+			upper := termRange.Upper.(*index.IntTermValue)
+			rangeQuery.AddMust(bluge.NewDateRangeInclusiveQuery(
+				time.Unix(0, lower.Value),
+				time.Unix(0, upper.Value),
+				termRange.IncludesLower,
+				termRange.IncludesUpper,
+			).
+				SetField(timestampField))
+			rangeNode.Append(newTermRangeInclusiveNode(
+				strconv.FormatInt(lower.Value, 10),
+				strconv.FormatInt(upper.Value, 10),
+				termRange.IncludesLower,
+				termRange.IncludesUpper,
+				nil,
+			))
+
 		default:
 		}
 	}

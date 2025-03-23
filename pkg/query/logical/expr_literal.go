@@ -46,9 +46,9 @@ func (i *int64Literal) Field(key index.FieldKey) index.Field {
 
 func (i *int64Literal) RangeOpts(isUpper bool, includeLower bool, includeUpper bool) index.RangeOpts {
 	if isUpper {
-		return index.NewIntRangeOpts(math.MinInt64, i.int64, includeLower, includeUpper)
+		return index.NewNumericRangeOpts(math.MinInt64, i.int64, includeLower, includeUpper)
 	}
-	return index.NewIntRangeOpts(i.int64, math.MaxInt64, includeLower, includeUpper)
+	return index.NewNumericRangeOpts(i.int64, math.MaxInt64, includeLower, includeUpper)
 }
 
 func (i *int64Literal) SubExprs() []LiteralExpr {

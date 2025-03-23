@@ -167,12 +167,24 @@ func (f FloatTermValue) String() string {
 	return strconv.FormatInt(numeric.Float64ToInt64(f.Value), 10)
 }
 
+// IntTermValue represents a int term value.
+type IntTermValue struct {
+	Value int64
+}
+
+func (IntTermValue) isTermValue() {}
+
+func (i IntTermValue) String() string {
+	return strconv.FormatInt(i.Value, 10)
+}
+
 // RangeOpts contains options to performance a continuous scan.
 type RangeOpts struct {
-	Upper         IsTermValue
-	Lower         IsTermValue
-	IncludesUpper bool
-	IncludesLower bool
+	Upper            IsTermValue
+	Lower            IsTermValue
+	IncludesUpper    bool
+	IncludesLower    bool
+	IsTimeRangeQuery bool
 }
 
 // IsEmpty returns true if the range is empty.
@@ -192,6 +204,10 @@ func (r RangeOpts) Valid() bool {
 		}
 	case *FloatTermValue:
 		if r.Lower.(*FloatTermValue).Value > upper.Value {
+			return false
+		}
+	case *IntTermValue:
+		if r.Lower.(*IntTermValue).Value > upper.Value {
 			return false
 		}
 	default:
@@ -221,8 +237,19 @@ func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) 
 	}
 }
 
-// NewIntRangeOpts creates a new int range option.
-func NewIntRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
+// NewTimeRangeOpts creates a new int range option.
+func NewTimeRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
+	return RangeOpts{
+		Lower:            &IntTermValue{Value: lower},
+		Upper:            &IntTermValue{Value: upper},
+		IncludesLower:    includesLower,
+		IncludesUpper:    includesUpper,
+		IsTimeRangeQuery: true,
+	}
+}
+
+// NewNumericRangeOpts creates a new int range option.
+func NewNumericRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
 	return RangeOpts{
 		Lower:         &FloatTermValue{Value: numeric.Int64ToFloat64(lower)},
 		Upper:         &FloatTermValue{Value: numeric.Int64ToFloat64(upper)},
