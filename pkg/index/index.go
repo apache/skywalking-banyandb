@@ -180,11 +180,10 @@ func (i IntTermValue) String() string {
 
 // RangeOpts contains options to performance a continuous scan.
 type RangeOpts struct {
-	Upper            IsTermValue
-	Lower            IsTermValue
-	IncludesUpper    bool
-	IncludesLower    bool
-	IsTimeRangeQuery bool
+	Upper         IsTermValue
+	Lower         IsTermValue
+	IncludesUpper bool
+	IncludesLower bool
 }
 
 // IsEmpty returns true if the range is empty.
@@ -216,6 +215,12 @@ func (r RangeOpts) Valid() bool {
 	return true
 }
 
+// IsTimeRangeQuery returns true if the range is for a time range query.
+func (r RangeOpts) IsTimeRangeQuery() bool {
+	_, isIntTermValue := r.Upper.(*IntTermValue)
+	return isIntTermValue
+}
+
 // NewStringRangeOpts creates a new string range option.
 func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) RangeOpts {
 	var upperBytes, lowerBytes []byte
@@ -240,11 +245,10 @@ func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) 
 // NewTimeRangeOpts creates a new int range option.
 func NewTimeRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
 	return RangeOpts{
-		Lower:            &IntTermValue{Value: lower},
-		Upper:            &IntTermValue{Value: upper},
-		IncludesLower:    includesLower,
-		IncludesUpper:    includesUpper,
-		IsTimeRangeQuery: true,
+		Lower:         &IntTermValue{Value: lower},
+		Upper:         &IntTermValue{Value: upper},
+		IncludesLower: includesLower,
+		IncludesUpper: includesUpper,
 	}
 }
 

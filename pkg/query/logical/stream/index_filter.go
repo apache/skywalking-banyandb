@@ -463,7 +463,7 @@ func newRange(indexRule *databasev1.IndexRule, opts index.RangeOpts) *rangeOp {
 func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
 	var s index.Searcher
 	var indexType databasev1.IndexRule_Type
-	if r.Opts.IsTimeRangeQuery {
+	if r.Opts.IsTimeRangeQuery() {
 		indexType = databasev1.IndexRule_TYPE_INVERTED
 	} else {
 		indexType = r.Key.Type
@@ -473,7 +473,7 @@ func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID) 
 		return nil, err
 	}
 	var fieldKey index.FieldKey
-	if r.Opts.IsTimeRangeQuery {
+	if r.Opts.IsTimeRangeQuery() {
 		fieldKey = index.FieldKey{
 			SeriesID: seriesID,
 		}
@@ -503,7 +503,7 @@ func (r *rangeOp) MarshalJSON() ([]byte, error) {
 			builder.WriteString(")")
 		}
 	}
-	if !r.Opts.IsTimeRangeQuery {
+	if !r.Opts.IsTimeRangeQuery() {
 		data["key"] = r.Key.IndexRule.Metadata.Name + ":" + r.Key.Metadata.Group
 	}
 	data["range"] = builder.String()
