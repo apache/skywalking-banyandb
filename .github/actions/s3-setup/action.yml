@@ -1,0 +1,74 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: S3 Setup
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v1
+
+    - name: Start MinIO server
+      run: |
+        docker run -d \
+          --network=host \
+          --name minio \
+          -e "MINIO_ROOT_USER=OjezEU7caGd8H9zSG4Ov" \
+          -e "MINIO_ROOT_PASSWORD=9tWu8XB8Cemol44pVGd661ZkyAwJ1OPNd6BC0tmH" \
+          quay.io/minio/minio:RELEASE.2025-03-12T18-04-18Z-cpuv1 \
+          server /data --console-address ":9001"
+      shell: bash
+
+    - name: Wait for service readiness
+      run: |
+        until curl -s http://localhost:9000/minio/health/live; do sleep 5; done
+      shell: bash
+
+    - name: Configure MinIO client
+      run: |
+        docker exec minio mc alias set local \
+          http://localhost:9000 \
+          "OjezEU7caGd8H9zSG4Ov" \
+          "9tWu8XB8Cemol44pVGd661ZkyAwJ1OPNd6BC0tmH" \
+          --api s3v4 \
+          --insecure
+      shell: bash
+
+    - name: Create persistent bucket
+      run: |
+        docker exec minio mc mb local/bydb233
+        docker exec minio mc version enable local/bydb233
+      shell: bash
+
+    - name: Configure AWS for MinIO
+      run: |
+        mkdir -p ~/.aws
+        cat << EOF > ~/.aws/config
+        [profile banyandb]
+        region = eu-north-1
+        output = json
+        max_attempts = 5
+        endpoint_url = http://localhost:9000
+        EOF
+
+        cat << EOF > ~/.aws/credentials
+        [banyandb]
+        aws_access_key_id = OjezEU7caGd8H9zSG4Ov
+        aws_secret_access_key = 9tWu8XB8Cemol44pVGd661ZkyAwJ1OPNd6BC0tmH
+        EOF
+        chmod 600 ~/.aws/credentials
+      shell: bash
