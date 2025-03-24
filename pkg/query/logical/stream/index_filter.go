@@ -28,6 +28,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -38,7 +39,7 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema, entityD
 ) (index.Filter, [][]*modelv1.TagValue, error) {
 	criteriaFilter, entities, err := buildLocalFilterFromCriteria(criteria, schema, entityDict, entity)
 	opts := index.NewTimeRangeOpts(startTime, endTime, true, true)
-	timeRangeFilter := newRange(nil, opts)
+	timeRangeFilter := newTimeRange(inverted.TimestampField, opts)
 	filter := newAnd(2)
 	filter.append(criteriaFilter).append(timeRangeFilter)
 	return filter, entities, err
@@ -179,18 +180,31 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 
 type fieldKey struct {
 	*databasev1.IndexRule
+	TagName string
 }
 
-func newFieldKey(indexRule *databasev1.IndexRule) fieldKey {
-	return fieldKey{indexRule}
+func newFieldKeyWithIndexRule(indexRule *databasev1.IndexRule) fieldKey {
+	return fieldKey{indexRule, ""}
+}
+
+func newFieldKeyWithTagName(tagName string) fieldKey {
+	fk := fieldKey{&databasev1.IndexRule{}, tagName}
+	fk.Type = databasev1.IndexRule_TYPE_INVERTED
+	return fk
 }
 
 func (fk fieldKey) toIndex(seriesID common.SeriesID) index.FieldKey {
-	return index.FieldKey{
-		IndexRuleID: fk.Metadata.Id,
-		Analyzer:    fk.Analyzer,
-		SeriesID:    seriesID,
+	ifk := index.FieldKey{
+		SeriesID: seriesID,
 	}
+	if fk.Metadata != nil {
+		ifk.IndexRuleID = fk.Metadata.Id
+		ifk.Analyzer = fk.Analyzer
+	}
+	if fk.TagName != "" {
+		ifk.TagName = fk.TagName
+	}
+	return ifk
 }
 
 type logicalOP interface {
@@ -322,8 +336,8 @@ func (on *orNode) String() string {
 
 type leaf struct {
 	index.Filter
-	Key  fieldKey
 	Expr logical.LiteralExpr
+	Key  fieldKey
 }
 
 func (l *leaf) MarshalJSON() ([]byte, error) {
@@ -335,13 +349,13 @@ func (l *leaf) MarshalJSON() ([]byte, error) {
 
 type not struct {
 	index.Filter
-	Key   fieldKey
 	Inner index.Filter
+	Key   fieldKey
 }
 
 func newNot(indexRule *databasev1.IndexRule, inner index.Filter) *not {
 	return &not{
-		Key:   newFieldKey(indexRule),
+		Key:   newFieldKeyWithIndexRule(indexRule),
 		Inner: inner,
 	}
 }
@@ -380,7 +394,7 @@ type eq struct {
 func newEq(indexRule *databasev1.IndexRule, values logical.LiteralExpr) *eq {
 	return &eq{
 		leaf: &leaf{
-			Key:  newFieldKey(indexRule),
+			Key:  newFieldKeyWithIndexRule(indexRule),
 			Expr: values,
 		},
 	}
@@ -412,7 +426,7 @@ type match struct {
 func newMatch(indexRule *databasev1.IndexRule, values logical.LiteralExpr, opts *modelv1.Condition_MatchOption) *match {
 	return &match{
 		leaf: &leaf{
-			Key:  newFieldKey(indexRule),
+			Key:  newFieldKeyWithIndexRule(indexRule),
 			Expr: values,
 		},
 		opts: opts,
@@ -454,33 +468,27 @@ type rangeOp struct {
 func newRange(indexRule *databasev1.IndexRule, opts index.RangeOpts) *rangeOp {
 	return &rangeOp{
 		leaf: &leaf{
-			Key: newFieldKey(indexRule),
+			Key: newFieldKeyWithIndexRule(indexRule),
+		},
+		Opts: opts,
+	}
+}
+
+func newTimeRange(tagName string, opts index.RangeOpts) *rangeOp {
+	return &rangeOp{
+		leaf: &leaf{
+			Key: newFieldKeyWithTagName(tagName),
 		},
 		Opts: opts,
 	}
 }
 
 func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
-	var s index.Searcher
-	var indexType databasev1.IndexRule_Type
-	if r.Opts.IsTimeRangeQuery() {
-		indexType = databasev1.IndexRule_TYPE_INVERTED
-	} else {
-		indexType = r.Key.Type
-	}
-	s, err := searcher(indexType)
+	s, err := searcher(r.Key.Type)
 	if err != nil {
 		return nil, err
 	}
-	var fieldKey index.FieldKey
-	if r.Opts.IsTimeRangeQuery() {
-		fieldKey = index.FieldKey{
-			SeriesID: seriesID,
-		}
-	} else {
-		fieldKey = r.Key.toIndex(seriesID)
-	}
-	return s.Range(fieldKey, r.Opts)
+	return s.Range(r.Key.toIndex(seriesID), r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
@@ -503,7 +511,7 @@ func (r *rangeOp) MarshalJSON() ([]byte, error) {
 			builder.WriteString(")")
 		}
 	}
-	if !r.Opts.IsTimeRangeQuery() {
+	if r.Key.IndexRule != nil && r.Key.IndexRule.Metadata != nil && r.Key.Metadata != nil {
 		data["key"] = r.Key.IndexRule.Metadata.Name + ":" + r.Key.Metadata.Group
 	}
 	data["range"] = builder.String()

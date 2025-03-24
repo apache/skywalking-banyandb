@@ -36,6 +36,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const (
+	termRangeQuery = "termRangeQuery"
+	timeRangeQuery = "timeRangeQuery"
+)
+
 var (
 	minTerm = string([][]byte{convert.Int64ToBytes(math.MinInt64)}[0])
 	maxTerm = string([][]byte{convert.Int64ToBytes(math.MaxInt64)}[0])
@@ -272,7 +277,7 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
 		}
 		query := bluge.NewTermRangeInclusiveQuery(convert.BytesToString(bb[0]), maxTerm, false, false).SetField(fieldKey)
-		node := newTermRangeInclusiveNode(str, maxInf, false, false, indexRule)
+		node := newTermRangeInclusiveNode(str, maxInf, false, false, indexRule, false)
 		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_GE:
 		bb := expr.Bytes()
@@ -280,7 +285,7 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
 		}
 		query := bluge.NewTermRangeInclusiveQuery(convert.BytesToString(bb[0]), maxTerm, true, false).SetField(fieldKey)
-		node := newTermRangeInclusiveNode(str, maxInf, true, false, indexRule)
+		node := newTermRangeInclusiveNode(str, maxInf, true, false, indexRule, false)
 		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_LT:
 		bb := expr.Bytes()
@@ -288,7 +293,7 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
 		}
 		query := bluge.NewTermRangeInclusiveQuery(minTerm, convert.BytesToString(bb[0]), false, false).SetField(fieldKey)
-		node := newTermRangeInclusiveNode(minInf, str, false, false, indexRule)
+		node := newTermRangeInclusiveNode(minInf, str, false, false, indexRule, false)
 		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_LE:
 		bb := expr.Bytes()
@@ -296,7 +301,7 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
 		}
 		query := bluge.NewTermRangeInclusiveQuery(minTerm, convert.BytesToString(bb[0]), false, true).SetField(fieldKey)
-		node := newTermRangeInclusiveNode(minInf, str, false, true, indexRule)
+		node := newTermRangeInclusiveNode(minInf, str, false, true, indexRule, false)
 		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_EQ:
 		bb := expr.Bytes()
@@ -472,13 +477,14 @@ type termRangeInclusiveNode struct {
 	isTimeRangeQuery bool
 }
 
-func newTermRangeInclusiveNode(minVal, maxVal string, minInclusive, maxInclusive bool, indexRule *databasev1.IndexRule) *termRangeInclusiveNode {
+func newTermRangeInclusiveNode(minVal, maxVal string, minInclusive, maxInclusive bool, indexRule *databasev1.IndexRule, isTimeRangeQuery bool) *termRangeInclusiveNode {
 	return &termRangeInclusiveNode{
-		indexRule:    indexRule,
-		min:          minVal,
-		max:          maxVal,
-		minInclusive: minInclusive,
-		maxInclusive: maxInclusive,
+		indexRule:        indexRule,
+		min:              minVal,
+		max:              maxVal,
+		minInclusive:     minInclusive,
+		maxInclusive:     maxInclusive,
+		isTimeRangeQuery: isTimeRangeQuery,
 	}
 }
 
@@ -502,7 +508,9 @@ func (t *termRangeInclusiveNode) MarshalJSON() ([]byte, error) {
 		inner["index"] = t.indexRule.Metadata.Name + ":" + t.indexRule.Metadata.Group
 	}
 	if t.isTimeRangeQuery {
-		inner["timeRange"] = true
+		inner["queryType"] = timeRangeQuery
+	} else {
+		inner["queryType"] = termRangeQuery
 	}
 	data := make(map[string]interface{}, 1)
 	data["termRangeInclusive"] = inner

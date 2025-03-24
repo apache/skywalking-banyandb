@@ -167,14 +167,14 @@ func (f FloatTermValue) String() string {
 	return strconv.FormatInt(numeric.Float64ToInt64(f.Value), 10)
 }
 
-// IntTermValue represents a int term value.
-type IntTermValue struct {
+// TimestampValue represents a int term value.
+type TimestampValue struct {
 	Value int64
 }
 
-func (IntTermValue) isTermValue() {}
+func (TimestampValue) isTermValue() {}
 
-func (i IntTermValue) String() string {
+func (i TimestampValue) String() string {
 	return strconv.FormatInt(i.Value, 10)
 }
 
@@ -205,20 +205,14 @@ func (r RangeOpts) Valid() bool {
 		if r.Lower.(*FloatTermValue).Value > upper.Value {
 			return false
 		}
-	case *IntTermValue:
-		if r.Lower.(*IntTermValue).Value > upper.Value {
+	case *TimestampValue:
+		if r.Lower.(*TimestampValue).Value > upper.Value {
 			return false
 		}
 	default:
 		return false
 	}
 	return true
-}
-
-// IsTimeRangeQuery returns true if the range is for a time range query.
-func (r RangeOpts) IsTimeRangeQuery() bool {
-	_, isIntTermValue := r.Upper.(*IntTermValue)
-	return isIntTermValue
 }
 
 // NewStringRangeOpts creates a new string range option.
@@ -245,15 +239,15 @@ func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) 
 // NewTimeRangeOpts creates a new int range option.
 func NewTimeRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
 	return RangeOpts{
-		Lower:         &IntTermValue{Value: lower},
-		Upper:         &IntTermValue{Value: upper},
+		Lower:         &TimestampValue{Value: lower},
+		Upper:         &TimestampValue{Value: upper},
 		IncludesLower: includesLower,
 		IncludesUpper: includesUpper,
 	}
 }
 
-// NewNumericRangeOpts creates a new int range option.
-func NewNumericRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
+// NewIntRangeOpts creates a new int range option.
+func NewIntRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
 	return RangeOpts{
 		Lower:         &FloatTermValue{Value: numeric.Int64ToFloat64(lower)},
 		Upper:         &FloatTermValue{Value: numeric.Int64ToFloat64(upper)},
