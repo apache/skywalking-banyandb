@@ -28,12 +28,25 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-// buildLocalFilter returns a new index.Filter for local indices.
-func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
+// buildLocalFilter builds a new index.Filter for local indices.
+func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int, entity []*modelv1.TagValue,
+	startTime int64, endTime int64,
+) (index.Filter, [][]*modelv1.TagValue, error) {
+	criteriaFilter, entities, err := buildLocalFilterFromCriteria(criteria, schema, entityDict, entity)
+	opts := index.NewTimeRangeOpts(startTime, endTime, true, true)
+	timeRangeFilter := newTimeRange(inverted.TimestampField, opts)
+	filter := newAnd(2)
+	filter.append(criteriaFilter).append(timeRangeFilter)
+	return filter, entities, err
+}
+
+// buildLocalFilterFromCriteria builds a new index.Filter from criteria for local indices.
+func buildLocalFilterFromCriteria(criteria *modelv1.Criteria, schema logical.Schema,
 	entityDict map[string]int, entity []*modelv1.TagValue,
 ) (index.Filter, [][]*modelv1.TagValue, error) {
 	if criteria == nil {
@@ -59,16 +72,16 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 			return nil, nil, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
-			return buildLocalFilter(le.Right, schema, entityDict, entity)
+			return buildLocalFilterFromCriteria(le.Right, schema, entityDict, entity)
 		}
 		if le.GetRight() == nil {
-			return buildLocalFilter(le.Left, schema, entityDict, entity)
+			return buildLocalFilterFromCriteria(le.Left, schema, entityDict, entity)
 		}
-		left, leftEntities, err := buildLocalFilter(le.Left, schema, entityDict, entity)
+		left, leftEntities, err := buildLocalFilterFromCriteria(le.Left, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
-		right, rightEntities, err := buildLocalFilter(le.Right, schema, entityDict, entity)
+		right, rightEntities, err := buildLocalFilterFromCriteria(le.Right, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -167,18 +180,31 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 
 type fieldKey struct {
 	*databasev1.IndexRule
+	TagName string
 }
 
-func newFieldKey(indexRule *databasev1.IndexRule) fieldKey {
-	return fieldKey{indexRule}
+func newFieldKeyWithIndexRule(indexRule *databasev1.IndexRule) fieldKey {
+	return fieldKey{indexRule, ""}
+}
+
+func newFieldKeyWithTagName(tagName string) fieldKey {
+	fk := fieldKey{&databasev1.IndexRule{}, tagName}
+	fk.Type = databasev1.IndexRule_TYPE_INVERTED
+	return fk
 }
 
 func (fk fieldKey) toIndex(seriesID common.SeriesID) index.FieldKey {
-	return index.FieldKey{
-		IndexRuleID: fk.Metadata.Id,
-		Analyzer:    fk.Analyzer,
-		SeriesID:    seriesID,
+	ifk := index.FieldKey{
+		SeriesID: seriesID,
 	}
+	if fk.Metadata != nil {
+		ifk.IndexRuleID = fk.Metadata.Id
+		ifk.Analyzer = fk.Analyzer
+	}
+	if fk.TagName != "" {
+		ifk.TagName = fk.TagName
+	}
+	return ifk
 }
 
 type logicalOP interface {
@@ -310,8 +336,8 @@ func (on *orNode) String() string {
 
 type leaf struct {
 	index.Filter
-	Key  fieldKey
 	Expr logical.LiteralExpr
+	Key  fieldKey
 }
 
 func (l *leaf) MarshalJSON() ([]byte, error) {
@@ -323,13 +349,13 @@ func (l *leaf) MarshalJSON() ([]byte, error) {
 
 type not struct {
 	index.Filter
-	Key   fieldKey
 	Inner index.Filter
+	Key   fieldKey
 }
 
 func newNot(indexRule *databasev1.IndexRule, inner index.Filter) *not {
 	return &not{
-		Key:   newFieldKey(indexRule),
+		Key:   newFieldKeyWithIndexRule(indexRule),
 		Inner: inner,
 	}
 }
@@ -368,7 +394,7 @@ type eq struct {
 func newEq(indexRule *databasev1.IndexRule, values logical.LiteralExpr) *eq {
 	return &eq{
 		leaf: &leaf{
-			Key:  newFieldKey(indexRule),
+			Key:  newFieldKeyWithIndexRule(indexRule),
 			Expr: values,
 		},
 	}
@@ -400,7 +426,7 @@ type match struct {
 func newMatch(indexRule *databasev1.IndexRule, values logical.LiteralExpr, opts *modelv1.Condition_MatchOption) *match {
 	return &match{
 		leaf: &leaf{
-			Key:  newFieldKey(indexRule),
+			Key:  newFieldKeyWithIndexRule(indexRule),
 			Expr: values,
 		},
 		opts: opts,
@@ -442,7 +468,16 @@ type rangeOp struct {
 func newRange(indexRule *databasev1.IndexRule, opts index.RangeOpts) *rangeOp {
 	return &rangeOp{
 		leaf: &leaf{
-			Key: newFieldKey(indexRule),
+			Key: newFieldKeyWithIndexRule(indexRule),
+		},
+		Opts: opts,
+	}
+}
+
+func newTimeRange(tagName string, opts index.RangeOpts) *rangeOp {
+	return &rangeOp{
+		leaf: &leaf{
+			Key: newFieldKeyWithTagName(tagName),
 		},
 		Opts: opts,
 	}
@@ -476,7 +511,9 @@ func (r *rangeOp) MarshalJSON() ([]byte, error) {
 			builder.WriteString(")")
 		}
 	}
-	data["key"] = r.Key.IndexRule.Metadata.Name + ":" + r.Key.Metadata.Group
+	if r.Key.IndexRule != nil && r.Key.IndexRule.Metadata != nil && r.Key.Metadata != nil {
+		data["key"] = r.Key.IndexRule.Metadata.Name + ":" + r.Key.Metadata.Group
+	}
 	data["range"] = builder.String()
 	return json.Marshal(data)
 }

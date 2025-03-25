@@ -50,7 +50,7 @@ func (s *store) Sort(ctx context.Context, sids []common.SeriesID, fieldKey index
 	}
 	drq := bluge.
 		NewDateRangeInclusiveQuery(timeRange.Start, timeRange.End, timeRange.IncludeStart, timeRange.IncludeEnd).
-		SetField(timestampField)
+		SetField(TimestampField)
 	var query bluge.Query
 	if len(tqs) == 0 {
 		query = drq

@@ -55,7 +55,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		entity[idx] = pbv1.AnyTagValue
 	}
 	var err error
-	ctx.filter, ctx.entities, err = buildLocalFilter(uis.criteria, s, entityDict, entity)
+	ctx.filter, ctx.entities, err = buildLocalFilter(uis.criteria, s, entityDict, entity, uis.startTime.UnixNano(), uis.endTime.UnixNano())
 	if err != nil {
 		return nil, err
 	}

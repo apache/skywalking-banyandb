@@ -45,10 +45,11 @@ import (
 )
 
 const (
-	docIDField     = "_id"
-	batchSize      = 1024
-	seriesIDField  = "_series_id"
-	timestampField = "_timestamp"
+	docIDField    = "_id"
+	batchSize     = 1024
+	seriesIDField = "_series_id"
+	// TimestampField is the field for timestamp in inverted index.
+	TimestampField = "_timestamp"
 	versionField   = "_version"
 	sourceField    = "_source"
 )
@@ -138,7 +139,7 @@ func (s *store) Batch(batch index.Batch) error {
 		}
 
 		if d.Timestamp > 0 {
-			doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
+			doc.AddField(bluge.NewDateTimeField(TimestampField, time.Unix(0, d.Timestamp)).StoreValue())
 		}
 		b.Insert(doc)
 	}
@@ -219,6 +220,7 @@ func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange
 				string(upper.Value),
 				termRange.IncludesLower,
 				termRange.IncludesUpper, nil,
+				false,
 			))
 
 		case *index.FloatTermValue:
@@ -236,7 +238,27 @@ func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange
 				termRange.IncludesLower,
 				termRange.IncludesUpper,
 				nil,
+				false,
 			))
+
+		case *index.TimestampValue:
+			upper := termRange.Upper.(*index.TimestampValue)
+			rangeQuery.AddMust(bluge.NewDateRangeInclusiveQuery(
+				time.Unix(0, lower.Value),
+				time.Unix(0, upper.Value),
+				termRange.IncludesLower,
+				termRange.IncludesUpper,
+			).
+				SetField(fk))
+			rangeNode.Append(newTermRangeInclusiveNode(
+				strconv.FormatInt(lower.Value, 10),
+				strconv.FormatInt(upper.Value, 10),
+				termRange.IncludesLower,
+				termRange.IncludesUpper,
+				nil,
+				true,
+			))
+
 		default:
 		}
 	}
@@ -439,7 +461,7 @@ func (bmi *blugeMatchIterator) setVal(field string, value []byte) bool {
 		bmi.current.DocID = convert.BytesToUint64(value)
 	case seriesIDField:
 		bmi.current.SeriesID = common.SeriesID(convert.BytesToUint64(value))
-	case timestampField:
+	case TimestampField:
 		ts, errTime := bluge.DecodeDateTime(value)
 		if errTime != nil {
 			bmi.err = errTime

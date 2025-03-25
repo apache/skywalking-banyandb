@@ -167,6 +167,17 @@ func (f FloatTermValue) String() string {
 	return strconv.FormatInt(numeric.Float64ToInt64(f.Value), 10)
 }
 
+// TimestampValue represents a int term value.
+type TimestampValue struct {
+	Value int64
+}
+
+func (TimestampValue) isTermValue() {}
+
+func (i TimestampValue) String() string {
+	return strconv.FormatInt(i.Value, 10)
+}
+
 // RangeOpts contains options to performance a continuous scan.
 type RangeOpts struct {
 	Upper         IsTermValue
@@ -194,6 +205,10 @@ func (r RangeOpts) Valid() bool {
 		if r.Lower.(*FloatTermValue).Value > upper.Value {
 			return false
 		}
+	case *TimestampValue:
+		if r.Lower.(*TimestampValue).Value > upper.Value {
+			return false
+		}
 	default:
 		return false
 	}
@@ -216,6 +231,16 @@ func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) 
 	return RangeOpts{
 		Lower:         &BytesTermValue{Value: upperBytes},
 		Upper:         &BytesTermValue{Value: lowerBytes},
+		IncludesLower: includesLower,
+		IncludesUpper: includesUpper,
+	}
+}
+
+// NewTimeRangeOpts creates a new int range option.
+func NewTimeRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
+	return RangeOpts{
+		Lower:         &TimestampValue{Value: lower},
+		Upper:         &TimestampValue{Value: upper},
 		IncludesLower: includesLower,
 		IncludesUpper: includesUpper,
 	}
