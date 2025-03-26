@@ -39,6 +39,7 @@ type tsResult struct {
 	sm       *stream
 	pm       *protector.Memory
 	l        *logger.Logger
+	ts       *blockScanner
 	segments []storage.Segment[*tsTable, option]
 	series   []*pbv1.Series
 	shards   []*model.StreamResult
@@ -46,26 +47,21 @@ type tsResult struct {
 	asc      bool
 }
 
-func (t *tsResult) Pull(ctx context.Context) *model.StreamResult {
-	if len(t.segments) == 0 {
+func (t *tsResult) Pull(ctx context.Context) (r *model.StreamResult) {
+	if len(t.segments) == 0 && t.ts == nil {
 		return nil
 	}
-	if err := t.scanSegment(ctx); err != nil {
-		return &model.StreamResult{Error: err}
-	}
 	var err error
-	for i := range t.shards {
-		if t.shards[i].Error != nil {
-			err = multierr.Append(err, t.shards[i].Error)
-		}
-	}
-	if err != nil {
+	if r, err = t.scan(ctx); err != nil {
 		return &model.StreamResult{Error: err}
 	}
-	return model.MergeStreamResults(t.shards, t.qo.MaxElementSize, t.asc)
+	return r
 }
 
-func (t *tsResult) scanSegment(ctx context.Context) error {
+func (t *tsResult) scan(ctx context.Context) (*model.StreamResult, error) {
+	if t.ts != nil {
+		return t.runTabScanner(ctx)
+	}
 	var segment storage.Segment[*tsTable, option]
 	if t.asc {
 		segment = t.segments[len(t.segments)-1]
@@ -74,18 +70,22 @@ func (t *tsResult) scanSegment(ctx context.Context) error {
 		segment = t.segments[0]
 		t.segments = t.segments[1:]
 	}
+	qo, err := searchSeries(ctx, t.qo, segment, t.series)
+	if err != nil {
+		return nil, err
+	}
+	ts, err := getBlockScanner(ctx, segment, qo, t.l, t.pm)
+	if err != nil {
+		return nil, err
+	}
+	if ts == nil {
+		return nil, nil
+	}
+	t.ts = ts
+	return t.runTabScanner(ctx)
+}
 
-	bs := blockScanner{
-		segment: segment,
-		qo:      t.qo,
-		series:  t.series,
-		pm:      t.pm,
-		l:       t.l,
-	}
-	defer bs.close()
-	if err := bs.searchSeries(ctx); err != nil {
-		return err
-	}
+func (t *tsResult) runTabScanner(ctx context.Context) (*model.StreamResult, error) {
 	workerSize := cgroups.CPUs()
 	var workerWg sync.WaitGroup
 	batchCh := make(chan *blockScanResultBatch, workerSize)
@@ -100,7 +100,7 @@ func (t *tsResult) scanSegment(ctx context.Context) error {
 			t.shards[i].Reset()
 		}
 	}
-	for i := 0; i < workerSize; i++ {
+	for i := range workerSize {
 		go func(workerID int) {
 			tmpBlock := generateBlock()
 			defer releaseBlock(tmpBlock)
@@ -132,18 +132,23 @@ func (t *tsResult) scanSegment(ctx context.Context) error {
 			workerWg.Done()
 		}(i)
 	}
-
-	var scannerWg sync.WaitGroup
-	finalizers := bs.scanShardsInParallel(ctx, &scannerWg, batchCh)
-	scannerWg.Wait()
+	t.ts.scan(ctx, batchCh)
 	close(batchCh)
 	workerWg.Wait()
-	for i := range finalizers {
-		if finalizers[i] != nil {
-			finalizers[i]()
+	if len(t.ts.parts) == 0 {
+		t.ts.close()
+		t.ts = nil
+	}
+	var err error
+	for i := range t.shards {
+		if t.shards[i].Error != nil {
+			err = multierr.Append(err, t.shards[i].Error)
 		}
 	}
-	return nil
+	if err != nil {
+		return nil, err
+	}
+	return model.MergeStreamResults(t.shards, t.qo.MaxElementSize, t.asc), nil
 }
 
 func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, sm *stream) bool {
@@ -188,6 +193,9 @@ func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, sm *stre
 }
 
 func (t *tsResult) Release() {
+	if t.ts != nil {
+		t.ts.close()
+	}
 	for i := range t.segments {
 		t.segments[i].DecRef()
 	}

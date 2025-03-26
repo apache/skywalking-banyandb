@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort" // added for sorting parts
 	"sync"
 	"sync/atomic"
 	"time"
@@ -132,6 +133,49 @@ func (s *snapshot) remove(nextEpoch uint64, merged map[uint64]struct{}) snapshot
 		s.parts[i].removable.Store(true)
 	}
 	return result
+}
+
+func getDisjointParts(parts []*part, asc bool) [][]*part {
+	if len(parts) == 0 {
+		return nil
+	}
+	sort.Slice(parts, func(i, j int) bool {
+		return parts[i].partMetadata.MinTimestamp < parts[j].partMetadata.MinTimestamp
+	})
+
+	var groups [][]*part
+	var currentGroup []*part
+	var boundary int64
+	for _, p := range parts {
+		pMin := p.partMetadata.MinTimestamp
+		pMax := p.partMetadata.MaxTimestamp
+		if len(currentGroup) == 0 {
+			currentGroup = append(currentGroup, p)
+			boundary = pMax
+		} else {
+			if pMin <= boundary {
+				currentGroup = append(currentGroup, p)
+				if pMax > boundary {
+					boundary = pMax
+				}
+			} else {
+				groups = append(groups, currentGroup)
+				currentGroup = []*part{p}
+				boundary = pMax
+			}
+		}
+	}
+
+	if len(currentGroup) > 0 {
+		groups = append(groups, currentGroup)
+	}
+
+	if !asc {
+		for i, j := 0, len(groups)-1; i < j; i, j = i+1, j-1 {
+			groups[i], groups[j] = groups[j], groups[i]
+		}
+	}
+	return groups
 }
 
 func snapshotName(snapshot uint64) string {
