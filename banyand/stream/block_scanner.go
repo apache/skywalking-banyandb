@@ -21,13 +21,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
-	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -80,90 +78,130 @@ func releaseBlockScanResultBatch(bsb *blockScanResultBatch) {
 
 var blockScanResultBatchPool = pool.Register[*blockScanResultBatch]("stream-blockScannerBatch")
 
-var shardScanConcurrencyCh = make(chan struct{}, cgroups.CPUs())
-
-type blockScanner struct {
-	segment   storage.Segment[*tsTable, *option]
-	pm        *protector.Memory
-	l         *logger.Logger
-	series    []*pbv1.Series
-	seriesIDs []uint64
-	qo        queryOptions
-}
-
-func (q *blockScanner) searchSeries(ctx context.Context) error {
+func searchSeries(ctx context.Context, qo queryOptions, segment storage.Segment[*tsTable, *option], series []*pbv1.Series) (queryOptions, error) {
 	seriesFilter := roaring.NewPostingList()
-	sl, err := q.segment.Lookup(ctx, q.series)
+	sl, err := segment.Lookup(ctx, series)
 	if err != nil {
-		return err
+		return qo, err
 	}
 	for i := range sl {
 		if seriesFilter.Contains(uint64(sl[i].ID)) {
 			continue
 		}
 		seriesFilter.Insert(uint64(sl[i].ID))
-		if q.qo.seriesToEntity == nil {
-			q.qo.seriesToEntity = make(map[common.SeriesID][]*modelv1.TagValue)
+		if qo.seriesToEntity == nil {
+			qo.seriesToEntity = make(map[common.SeriesID][]*modelv1.TagValue)
 		}
-		q.qo.seriesToEntity[sl[i].ID] = sl[i].EntityValues
-		q.qo.sortedSids = append(q.qo.sortedSids, sl[i].ID)
+		qo.seriesToEntity[sl[i].ID] = sl[i].EntityValues
+		qo.sortedSids = append(qo.sortedSids, sl[i].ID)
 	}
 	if seriesFilter.IsEmpty() {
-		return nil
+		return qo, nil
 	}
-	q.seriesIDs = seriesFilter.ToSlice()
-	sort.Slice(q.qo.sortedSids, func(i, j int) bool { return q.qo.sortedSids[i] < q.qo.sortedSids[j] })
-	return nil
+	sort.Slice(qo.sortedSids, func(i, j int) bool { return qo.sortedSids[i] < qo.sortedSids[j] })
+	return qo, nil
 }
 
-func (q *blockScanner) scanShardsInParallel(ctx context.Context, wg *sync.WaitGroup, blockCh chan *blockScanResultBatch) []scanFinalizer {
-	tabs := q.segment.Tables()
-	finalizers := make([]scanFinalizer, len(tabs))
+func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *option], qo queryOptions,
+	l *logger.Logger, pm *protector.Memory,
+) (bc *blockScanner, err error) {
+	tabs := segment.Tables()
+	finalizers := make([]scanFinalizer, 0, len(tabs)+1)
+	finalizers = append(finalizers, segment.DecRef)
+	defer func() {
+		if bc == nil || err != nil {
+			for i := range finalizers {
+				finalizers[i]()
+			}
+		}
+	}()
+	var parts []*part
+	var size, offset int
+	filterIndex := make(map[uint64]posting.List)
 	for i := range tabs {
-		select {
-		case shardScanConcurrencyCh <- struct{}{}:
-		case <-ctx.Done():
-			return finalizers
+		snp := tabs[i].currentSnapshot()
+		parts, size = snp.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
+		if size < 1 {
+			snp.decRef()
+			continue
 		}
-		wg.Add(1)
-		go func(idx int, tab *tsTable) {
-			finalizers[idx] = q.scanBlocks(ctx, q.seriesIDs, tab, blockCh)
-			wg.Done()
-			<-shardScanConcurrencyCh
-		}(i, tabs[i])
+		finalizers = append(finalizers, snp.decRef)
+		filter, err := search(ctx, qo, qo.sortedSids, tabs[i])
+		if err != nil {
+			return nil, err
+		}
+		for j := offset; j < offset+size; j++ {
+			filterIndex[parts[j].partMetadata.ID] = filter
+		}
+		offset += size
 	}
-	return finalizers
+	if len(parts) < 1 {
+		return nil, nil
+	}
+	var asc bool
+	if qo.Order == nil {
+		asc = true
+	} else {
+		asc = qo.Order.Sort == modelv1.Sort_SORT_ASC || qo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED
+	}
+	return &blockScanner{
+		parts:       getDisjointParts(parts, asc),
+		filterIndex: filterIndex,
+		qo:          qo,
+		asc:         asc,
+		l:           l,
+		pm:          pm,
+		finalizers:  finalizers,
+	}, nil
 }
 
-func (q *blockScanner) scanBlocks(ctx context.Context, seriesList []uint64, tab *tsTable, blockCh chan *blockScanResultBatch) (sf scanFinalizer) {
-	s := tab.currentSnapshot()
-	if s == nil {
-		return nil
+func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, tw *tsTable) (posting.List, error) {
+	if qo.Filter == nil || qo.Filter == logicalstream.ENode {
+		return nil, nil
 	}
-	sf = s.decRef
-	filter, err := q.indexSearch(ctx, seriesList, tab)
+	sid := make([]uint64, len(seriesList))
+	for i := range seriesList {
+		sid[i] = uint64(seriesList[i])
+	}
+	pl, err := tw.Index().Search(ctx, sid, qo.Filter)
 	if err != nil {
-		select {
-		case blockCh <- &blockScanResultBatch{err: err}:
-		case <-ctx.Done():
-		}
-		return
+		return nil, err
 	}
-	select {
-	case <-ctx.Done():
-		return
-	default:
+	if pl == nil {
+		return roaring.DummyPostingList, nil
 	}
+	return pl, nil
+}
 
-	parts, n := s.getParts(nil, q.qo.minTimestamp, q.qo.maxTimestamp)
-	if n < 1 {
+type scanFinalizer func()
+
+type blockScanner struct {
+	filterIndex map[uint64]posting.List
+	l           *logger.Logger
+	pm          *protector.Memory
+	parts       [][]*part
+	finalizers  []scanFinalizer
+	qo          queryOptions
+	asc         bool
+}
+
+func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResultBatch) {
+	if len(bsn.parts) < 1 {
 		return
+	}
+	var parts []*part
+	if bsn.asc {
+		parts = bsn.parts[0]
+		bsn.parts = bsn.parts[1:]
+	} else {
+		parts = bsn.parts[len(bsn.parts)-1]
+		bsn.parts = bsn.parts[:len(bsn.parts)-1]
 	}
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
 	ti := generateTstIter()
 	defer releaseTstIter(ti)
-	ti.init(bma, parts, q.qo.sortedSids, q.qo.minTimestamp, q.qo.maxTimestamp)
+	ti.init(bma, parts, bsn.qo.sortedSids, bsn.qo.minTimestamp, bsn.qo.maxTimestamp)
 	batch := generateBlockScanResultBatch()
 	if ti.Error() != nil {
 		batch.err = fmt.Errorf("cannot init tstIter: %w", ti.Error())
@@ -171,7 +209,7 @@ func (q *blockScanner) scanBlocks(ctx context.Context, seriesList []uint64, tab 
 		case blockCh <- batch:
 		case <-ctx.Done():
 			releaseBlockScanResultBatch(batch)
-			q.l.Warn().Err(ti.Error()).Msg("cannot init tstIter")
+			bsn.l.Warn().Err(ti.Error()).Msg("cannot init tstIter")
 		}
 		return
 	}
@@ -181,21 +219,21 @@ func (q *blockScanner) scanBlocks(ctx context.Context, seriesList []uint64, tab 
 			p: p.p,
 		})
 		bs := &batch.bss[len(batch.bss)-1]
-		bs.qo.copyFrom(&q.qo)
-		bs.qo.elementFilter = filter
+		bs.qo.copyFrom(&bsn.qo)
+		bs.qo.elementFilter = bsn.filterIndex[p.p.partMetadata.ID]
 		bs.bm.copyFrom(p.curBlock)
 		if len(batch.bss) >= cap(batch.bss) {
 			var totalBlockBytes uint64
 			for i := range batch.bss {
 				totalBlockBytes += batch.bss[i].bm.uncompressedSizeBytes
 			}
-			if err := q.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
+			if err := bsn.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
 				batch.err = fmt.Errorf("cannot acquire resource: %w", err)
 				select {
 				case blockCh <- batch:
 				case <-ctx.Done():
 					releaseBlockScanResultBatch(batch)
-					q.l.Warn().Err(err).Msg("cannot acquire resource")
+					bsn.l.Warn().Err(err).Msg("cannot acquire resource")
 				}
 				return
 			}
@@ -203,7 +241,7 @@ func (q *blockScanner) scanBlocks(ctx context.Context, seriesList []uint64, tab 
 			case blockCh <- batch:
 			case <-ctx.Done():
 				releaseBlockScanResultBatch(batch)
-				q.l.Warn().Int("batch.len", len(batch.bss)).Msg("context canceled while sending block")
+				bsn.l.Warn().Int("batch.len", len(batch.bss)).Msg("context canceled while sending block")
 				return
 			}
 			batch = generateBlockScanResultBatch()
@@ -228,25 +266,10 @@ func (q *blockScanner) scanBlocks(ctx context.Context, seriesList []uint64, tab 
 		return
 	}
 	releaseBlockScanResultBatch(batch)
-	return
 }
 
-func (q *blockScanner) indexSearch(ctx context.Context, seriesList []uint64, tw *tsTable) (posting.List, error) {
-	if q.qo.Filter == nil || q.qo.Filter == logicalstream.ENode {
-		return nil, nil
+func (bsn *blockScanner) close() {
+	for i := range bsn.finalizers {
+		bsn.finalizers[i]()
 	}
-	pl, err := tw.Index().Search(ctx, seriesList, q.qo.Filter)
-	if err != nil {
-		return nil, err
-	}
-	if pl == nil {
-		return roaring.DummyPostingList, nil
-	}
-	return pl, nil
 }
-
-func (q *blockScanner) close() {
-	q.segment.DecRef()
-}
-
-type scanFinalizer func()

@@ -54,6 +54,7 @@ Release Notes.
 - UI: Implement TopNAggregation data query page.
 - UI: Update BanyanDB UI to Integrate New Property Query API.
 - UI: Fix the Stream List.
+- Fix the oom issue when loading too many unnecessary parts into memory.
 
 ### Documentation
 
