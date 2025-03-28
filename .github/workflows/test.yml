@@ -69,7 +69,9 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version-file: 'go.mod'
-      - name: Update dependencies 
+      - name: Call S3 Setup
+        uses: ./.github/actions/s3-setup
+      - name: Update dependencies
         if: steps.cache-go.outputs.cache-hit != 'true'
         run: GOPROXY=https://proxy.golang.org go mod download
       - name: Generate mocks
