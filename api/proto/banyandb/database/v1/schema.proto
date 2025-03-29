@@ -120,7 +120,7 @@ message Measure {
   // index_mode specifies whether the data should be stored exclusively in the index,
   // meaning it will not be stored in the data storage system.
   bool index_mode = 7;
-  // sharding_key determines the distribution of topN-related data.
+  // sharding_key determines the distribution of TopN-related data.
   ShardingKey sharding_key = 8;
 }
 
