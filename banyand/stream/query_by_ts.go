@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -40,6 +41,7 @@ type tsResult struct {
 	pm       *protector.Memory
 	l        *logger.Logger
 	ts       *blockScanner
+	tr       *index.RangeOpts
 	segments []storage.Segment[*tsTable, option]
 	series   []*pbv1.Series
 	shards   []*model.StreamResult
@@ -62,27 +64,30 @@ func (t *tsResult) scan(ctx context.Context) (*model.StreamResult, error) {
 	if t.ts != nil {
 		return t.runTabScanner(ctx)
 	}
-	var segment storage.Segment[*tsTable, option]
-	if t.asc {
-		segment = t.segments[len(t.segments)-1]
-		t.segments = t.segments[:len(t.segments)-1]
-	} else {
-		segment = t.segments[0]
-		t.segments = t.segments[1:]
+	for len(t.segments) > 0 {
+		var segment storage.Segment[*tsTable, option]
+		if t.asc {
+			segment = t.segments[len(t.segments)-1]
+			t.segments = t.segments[:len(t.segments)-1]
+		} else {
+			segment = t.segments[0]
+			t.segments = t.segments[1:]
+		}
+		qo, err := searchSeries(ctx, t.qo, segment, t.series)
+		if err != nil {
+			return nil, err
+		}
+		ts, err := getBlockScanner(ctx, segment, qo, t.l, t.pm, t.tr)
+		if err != nil {
+			return nil, err
+		}
+		if ts == nil {
+			continue
+		}
+		t.ts = ts
+		return t.runTabScanner(ctx)
 	}
-	qo, err := searchSeries(ctx, t.qo, segment, t.series)
-	if err != nil {
-		return nil, err
-	}
-	ts, err := getBlockScanner(ctx, segment, qo, t.l, t.pm)
-	if err != nil {
-		return nil, err
-	}
-	if ts == nil {
-		return nil, nil
-	}
-	t.ts = ts
-	return t.runTabScanner(ctx)
+	return nil, nil
 }
 
 func (t *tsResult) runTabScanner(ctx context.Context) (*model.StreamResult, error) {

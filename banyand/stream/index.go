@@ -72,32 +72,35 @@ func (e *elementIndex) Write(docs index.Documents) error {
 	})
 }
 
-func (e *elementIndex) Search(ctx context.Context, seriesList []uint64, filter index.Filter) (posting.List, error) {
-	var result posting.List
+func (e *elementIndex) Search(ctx context.Context, seriesList []uint64, filter index.Filter, tr *index.RangeOpts) (posting.List, posting.List, error) {
+	var result, resultTS posting.List
 	for i, id := range seriesList {
 		select {
 		case <-ctx.Done():
-			return nil, errors.WithMessagef(ctx.Err(), "search series %d/%d", i, len(seriesList))
+			return nil, nil, errors.WithMessagef(ctx.Err(), "search series %d/%d", i, len(seriesList))
 		default:
 		}
-		pl, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
+		pl, plTS, err := filter.Execute(func(_ databasev1.IndexRule_Type) (index.Searcher, error) {
 			return e.store, nil
-		}, common.SeriesID(id))
+		}, common.SeriesID(id), tr)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if pl == nil || pl.IsEmpty() {
 			continue
 		}
 		if result == nil {
-			result = pl
+			result, resultTS = pl, plTS
 		} else {
 			if err := result.Union(pl); err != nil {
-				return nil, err
+				return nil, nil, err
+			}
+			if err := resultTS.Union(plTS); err != nil {
+				return nil, nil, err
 			}
 		}
 	}
-	return result, nil
+	return result, resultTS, nil
 }
 
 func (e *elementIndex) Close() error {

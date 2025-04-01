@@ -34,6 +34,8 @@ Release Notes.
 - Add lifecycle management for the node.
 - Property: Introduce the schema style to the property.
 - Add time range parameters to stream index filter.
+- Add time range return value from stream local index filter.
+- Deduplicate the documents on building the series index.
 
 ### Bug Fixes
 
@@ -55,6 +57,7 @@ Release Notes.
 - UI: Update BanyanDB UI to Integrate New Property Query API.
 - UI: Fix the Stream List.
 - Fix the oom issue when loading too many unnecessary parts into memory.
+- bydbctl: Fix the bug that the bydbctl can't parse the absolute time flag.
 
 ### Documentation
 

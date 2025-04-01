@@ -96,6 +96,11 @@ func (p Position) ShardLabelValues() []string {
 	return []string{p.Segment, p.Shard}
 }
 
+// String returns the string representation of Position.
+func (p Position) String() string {
+	return fmt.Sprintf("module=%s, stage=%s, database=%s, shard=%s, segment=%s", p.Module, p.Stage, p.Database, p.Shard, p.Segment)
+}
+
 // SetPosition sets a position returned from fn to attach it to ctx, then return a new context.
 func SetPosition(ctx context.Context, fn func(p Position) Position) context.Context {
 	val := ctx.Value(positionKey)

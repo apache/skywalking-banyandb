@@ -28,25 +28,11 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-// buildLocalFilter builds a new index.Filter for local indices.
-func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int, entity []*modelv1.TagValue,
-	startTime int64, endTime int64,
-) (index.Filter, [][]*modelv1.TagValue, error) {
-	criteriaFilter, entities, err := buildLocalFilterFromCriteria(criteria, schema, entityDict, entity)
-	opts := index.NewTimeRangeOpts(startTime, endTime, true, true)
-	timeRangeFilter := newTimeRange(inverted.TimestampField, opts)
-	filter := newAnd(2)
-	filter.append(criteriaFilter).append(timeRangeFilter)
-	return filter, entities, err
-}
-
-// buildLocalFilterFromCriteria builds a new index.Filter from criteria for local indices.
-func buildLocalFilterFromCriteria(criteria *modelv1.Criteria, schema logical.Schema,
+func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 	entityDict map[string]int, entity []*modelv1.TagValue,
 ) (index.Filter, [][]*modelv1.TagValue, error) {
 	if criteria == nil {
@@ -72,16 +58,16 @@ func buildLocalFilterFromCriteria(criteria *modelv1.Criteria, schema logical.Sch
 			return nil, nil, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
-			return buildLocalFilterFromCriteria(le.Right, schema, entityDict, entity)
+			return buildLocalFilter(le.Right, schema, entityDict, entity)
 		}
 		if le.GetRight() == nil {
-			return buildLocalFilterFromCriteria(le.Left, schema, entityDict, entity)
+			return buildLocalFilter(le.Left, schema, entityDict, entity)
 		}
-		left, leftEntities, err := buildLocalFilterFromCriteria(le.Left, schema, entityDict, entity)
+		left, leftEntities, err := buildLocalFilter(le.Left, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
-		right, rightEntities, err := buildLocalFilterFromCriteria(le.Right, schema, entityDict, entity)
+		right, rightEntities, err := buildLocalFilter(le.Right, schema, entityDict, entity)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -180,29 +166,20 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 
 type fieldKey struct {
 	*databasev1.IndexRule
-	TagName string
 }
 
 func newFieldKeyWithIndexRule(indexRule *databasev1.IndexRule) fieldKey {
-	return fieldKey{indexRule, ""}
+	return fieldKey{indexRule}
 }
 
-func newFieldKeyWithTagName(tagName string) fieldKey {
-	fk := fieldKey{&databasev1.IndexRule{}, tagName}
-	fk.Type = databasev1.IndexRule_TYPE_INVERTED
-	return fk
-}
-
-func (fk fieldKey) toIndex(seriesID common.SeriesID) index.FieldKey {
+func (fk fieldKey) toIndex(seriesID common.SeriesID, tr *index.RangeOpts) index.FieldKey {
 	ifk := index.FieldKey{
-		SeriesID: seriesID,
+		SeriesID:  seriesID,
+		TimeRange: tr,
 	}
 	if fk.Metadata != nil {
 		ifk.IndexRuleID = fk.Metadata.Id
 		ifk.Analyzer = fk.Analyzer
-	}
-	if fk.TagName != "" {
-		ifk.TagName = fk.TagName
 	}
 	return ifk
 }
@@ -224,15 +201,15 @@ func (n *node) append(sub index.Filter) *node {
 	return n
 }
 
-func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp logicalOP) (posting.List, error) {
+func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp logicalOP, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	if len(n.SubNodes) < 1 {
-		return bList, nil
+		return bList, bList, nil
 	}
-	var result posting.List
+	var result, resultTS posting.List
 	for _, sn := range n.SubNodes {
-		r, err := sn.Execute(searcher, seriesID)
+		r, rt, err := sn.Execute(searcher, seriesID, tr)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if result == nil {
 			result = r
@@ -240,10 +217,14 @@ func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp l
 		}
 		result, err = lp.merge(result, r)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		resultTS, err = lp.merge(resultTS, rt)
+		if err != nil {
+			return nil, nil, err
 		}
 	}
-	return result, nil
+	return result, resultTS, nil
 }
 
 type andNode struct {
@@ -275,8 +256,8 @@ func (an *andNode) merge(list ...posting.List) (posting.List, error) {
 	return result, nil
 }
 
-func (an *andNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
-	return execute(searcher, seriesID, an.node, an)
+func (an *andNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
+	return execute(searcher, seriesID, an.node, an, tr)
 }
 
 func (an *andNode) MarshalJSON() ([]byte, error) {
@@ -320,8 +301,8 @@ func (on *orNode) merge(list ...posting.List) (posting.List, error) {
 	return result, nil
 }
 
-func (on *orNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
-	return execute(searcher, seriesID, on.node, on)
+func (on *orNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
+	return execute(searcher, seriesID, on.node, on, tr)
 }
 
 func (on *orNode) MarshalJSON() ([]byte, error) {
@@ -360,21 +341,28 @@ func newNot(indexRule *databasev1.IndexRule, inner index.Filter) *not {
 	}
 }
 
-func (n *not) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+func (n *not) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	s, err := searcher(n.Key.Type)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	all, err := s.MatchField(n.Key.toIndex(seriesID))
+	all, allTS, err := s.MatchField(n.Key.toIndex(seriesID, tr))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	list, err := n.Inner.Execute(searcher, seriesID)
+	list, listTS, err := n.Inner.Execute(searcher, seriesID, tr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	err = all.Difference(list)
-	return all, err
+	if err != nil {
+		return nil, nil, err
+	}
+	err = allTS.Difference(listTS)
+	if err != nil {
+		return nil, nil, err
+	}
+	return all, allTS, err
 }
 
 func (n *not) MarshalJSON() ([]byte, error) {
@@ -400,12 +388,12 @@ func newEq(indexRule *databasev1.IndexRule, values logical.LiteralExpr) *eq {
 	}
 }
 
-func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	s, err := searcher(eq.Key.Type)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.MatchTerms(eq.Expr.Field(eq.Key.toIndex(seriesID)))
+	return s.MatchTerms(eq.Expr.Field(eq.Key.toIndex(seriesID, tr)))
 }
 
 func (eq *eq) MarshalJSON() ([]byte, error) {
@@ -433,10 +421,10 @@ func newMatch(indexRule *databasev1.IndexRule, values logical.LiteralExpr, opts 
 	}
 }
 
-func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	s, err := searcher(match.Key.Type)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	bb := match.Expr.Bytes()
 	matches := make([]string, len(bb))
@@ -444,7 +432,7 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 		matches[i] = string(v)
 	}
 	return s.Match(
-		match.Key.toIndex(seriesID),
+		match.Key.toIndex(seriesID, tr),
 		matches,
 		match.opts,
 	)
@@ -474,21 +462,12 @@ func newRange(indexRule *databasev1.IndexRule, opts index.RangeOpts) *rangeOp {
 	}
 }
 
-func newTimeRange(tagName string, opts index.RangeOpts) *rangeOp {
-	return &rangeOp{
-		leaf: &leaf{
-			Key: newFieldKeyWithTagName(tagName),
-		},
-		Opts: opts,
-	}
-}
-
-func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	s, err := searcher(r.Key.Type)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.Range(r.Key.toIndex(seriesID), r.Opts)
+	return s.Range(r.Key.toIndex(seriesID, tr), r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
@@ -530,8 +509,8 @@ var (
 
 type emptyNode struct{}
 
-func (an emptyNode) Execute(_ index.GetSearcher, _ common.SeriesID) (posting.List, error) {
-	return bList, nil
+func (an emptyNode) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
+	return bList, bList, nil
 }
 
 func (an emptyNode) String() string {
@@ -547,6 +526,10 @@ func (bl bypassList) Contains(_ uint64) bool {
 
 func (bl bypassList) IsEmpty() bool {
 	return false
+}
+
+func (bl bypassList) Min() (uint64, error) {
+	panic("not invoked")
 }
 
 func (bl bypassList) Max() (uint64, error) {
