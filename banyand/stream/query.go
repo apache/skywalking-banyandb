@@ -20,6 +20,7 @@ package stream
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -36,6 +37,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const checkDoneEvery = 128
@@ -79,6 +81,7 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
 	}
+	tr := index.NewIntRangeOpts(qo.minTimestamp, qo.maxTimestamp, true, true)
 
 	if sqo.Order == nil || sqo.Order.Index == nil {
 		result := &tsResult{
@@ -88,6 +91,7 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 			sm:       s,
 			pm:       s.pm,
 			l:        s.l,
+			tr:       &tr,
 		}
 		if sqo.Order == nil {
 			result.asc = true
@@ -102,16 +106,33 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	result.sm = s
 	result.qo = queryOptions{
 		StreamQueryOptions: sqo,
-		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
-		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
 		seriesToEntity:     make(map[common.SeriesID][]*modelv1.TagValue),
 	}
 	var sl pbv1.SeriesList
 	seriesFilter := roaring.NewPostingList()
+	var resultTS posting.List
 	for i := range result.segments {
 		sl, err = result.segments[i].Lookup(ctx, series)
 		if err != nil {
 			return nil, err
+		}
+		var filter, filterTS posting.List
+		if filter, filterTS, err = indexSearch(ctx, sqo, segments[i].Tables(), sl.ToList().ToSlice(), &tr); err != nil {
+			return nil, err
+		}
+		if filter != nil && filter.IsEmpty() {
+			continue
+		}
+		if result.qo.elementFilter == nil {
+			result.qo.elementFilter = filter
+			resultTS = filterTS
+		} else {
+			if err = result.qo.elementFilter.Union(filter); err != nil {
+				return nil, err
+			}
+			if err = resultTS.Union(filterTS); err != nil {
+				return nil, err
+			}
 		}
 		for j := range sl {
 			if seriesFilter.Contains(uint64(sl[j].ID)) {
@@ -128,8 +149,12 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		return nil, nil
 	}
 	sids := seriesFilter.ToSlice()
-	if result.qo.elementFilter, err = indexSearch(ctx, sqo, result.tabs, sids); err != nil {
-		return nil, err
+	startTS := sqo.TimeRange.Start.UnixNano()
+	endTS := sqo.TimeRange.End.UnixNano()
+	minTS, maxTS := updateTimeRange(resultTS, startTS, endTS)
+	if minTS > startTS || maxTS < endTS {
+		newTR := timestamp.NewTimeRange(time.Unix(0, minTS), time.Unix(0, maxTS), sqo.TimeRange.IncludeStart, sqo.TimeRange.IncludeEnd)
+		sqo.TimeRange = &newTR
 	}
 	if result.sortingIter, err = s.indexSort(ctx, sqo, result.tabs, sids); err != nil {
 		return nil, err
@@ -168,26 +193,32 @@ func (qo *queryOptions) copyFrom(other *queryOptions) {
 }
 
 func indexSearch(ctx context.Context, sqo model.StreamQueryOptions,
-	tabs []*tsTable, seriesList []uint64,
-) (posting.List, error) {
+	tabs []*tsTable, seriesList []uint64, tr *index.RangeOpts,
+) (posting.List, posting.List, error) {
 	if sqo.Filter == nil || sqo.Filter == logicalstream.ENode {
-		return nil, nil
+		return nil, nil, nil
 	}
-	result := roaring.NewPostingList()
+	result, resultTS := roaring.NewPostingList(), roaring.NewPostingList()
 	for _, tw := range tabs {
 		index := tw.Index()
-		pl, err := index.Search(ctx, seriesList, sqo.Filter)
+		pl, plTS, err := index.Search(ctx, seriesList, sqo.Filter, tr)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if pl == nil || pl.IsEmpty() {
 			continue
 		}
 		if err := result.Union(pl); err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if plTS == nil || plTS.IsEmpty() {
+			continue
+		}
+		if err := resultTS.Union(plTS); err != nil {
+			return nil, nil, err
 		}
 	}
-	return result, nil
+	return result, resultTS, nil
 }
 
 func (s *stream) indexSort(ctx context.Context, sqo model.StreamQueryOptions, tabs []*tsTable,
@@ -325,4 +356,16 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 			},
 		},
 	}
+}
+
+func updateTimeRange(filterTS posting.List, minTimestamp, maxTimestamp int64) (int64, int64) {
+	if filterTS != nil && !filterTS.IsEmpty() {
+		if minTS, err := filterTS.Min(); err == nil && int64(minTS) > minTimestamp {
+			minTimestamp = int64(minTS)
+		}
+		if maxTS, err := filterTS.Max(); err == nil && int64(maxTS) < maxTimestamp {
+			maxTimestamp = int64(maxTS)
+		}
+	}
+	return minTimestamp, maxTimestamp
 }

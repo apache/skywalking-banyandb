@@ -44,7 +44,7 @@ var duration = index.FieldKey{
 type SimpleStore interface {
 	index.FieldIterable
 	index.Writer
-	MatchTerms(field index.Field) (list posting.List, err error)
+	MatchTerms(field index.Field) (list posting.List, timestamps posting.List, err error)
 }
 
 type args struct {

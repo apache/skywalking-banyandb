@@ -29,6 +29,7 @@ import (
 	"github.com/blugelabs/bluge/analysis"
 	"github.com/blugelabs/bluge/analysis/analyzer"
 	blugeIndex "github.com/blugelabs/bluge/index"
+	"github.com/blugelabs/bluge/numeric"
 	"github.com/blugelabs/bluge/search"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -45,18 +46,17 @@ import (
 )
 
 const (
-	docIDField    = "_id"
-	batchSize     = 1024
-	seriesIDField = "_series_id"
-	// TimestampField is the field for timestamp in inverted index.
-	TimestampField = "_timestamp"
+	docIDField     = "_id"
+	batchSize      = 1024
+	seriesIDField  = "_series_id"
+	timestampField = "_timestamp"
 	versionField   = "_version"
 	sourceField    = "_source"
 )
 
 var (
 	defaultRangePreloadSize = 1000
-	defaultProjection       = []string{docIDField}
+	defaultProjection       = []string{docIDField, timestampField}
 )
 
 // Analyzers is a map that associates each IndexRule_Analyzer type with a corresponding Analyzer.
@@ -139,7 +139,7 @@ func (s *store) Batch(batch index.Batch) error {
 		}
 
 		if d.Timestamp > 0 {
-			doc.AddField(bluge.NewDateTimeField(TimestampField, time.Unix(0, d.Timestamp)).StoreValue())
+			doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
 		}
 		b.Insert(doc)
 	}
@@ -240,27 +240,12 @@ func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange
 				nil,
 				false,
 			))
-
-		case *index.TimestampValue:
-			upper := termRange.Upper.(*index.TimestampValue)
-			rangeQuery.AddMust(bluge.NewDateRangeInclusiveQuery(
-				time.Unix(0, lower.Value),
-				time.Unix(0, upper.Value),
-				termRange.IncludesLower,
-				termRange.IncludesUpper,
-			).
-				SetField(fk))
-			rangeNode.Append(newTermRangeInclusiveNode(
-				strconv.FormatInt(lower.Value, 10),
-				strconv.FormatInt(upper.Value, 10),
-				termRange.IncludesLower,
-				termRange.IncludesUpper,
-				nil,
-				true,
-			))
-
 		default:
+			logger.Panicf("unexpected field type: %T", lower)
 		}
+	}
+	if n := appendTimeRangeToQuery(rangeQuery, fieldKey); n != nil {
+		rangeNode.Append(n)
 	}
 
 	sortedKey := fk
@@ -279,14 +264,36 @@ func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange
 	return result, nil
 }
 
-func (s *store) MatchField(fieldKey index.FieldKey) (list posting.List, err error) {
+func appendTimeRangeToQuery(query *bluge.BooleanQuery, fieldKey index.FieldKey) node {
+	if fieldKey.TimeRange == nil || !fieldKey.TimeRange.Valid() {
+		return nil
+	}
+	lower := numeric.Float64ToInt64(fieldKey.TimeRange.Lower.(*index.FloatTermValue).Value)
+	upper := numeric.Float64ToInt64(fieldKey.TimeRange.Upper.(*index.FloatTermValue).Value)
+	query.AddMust(bluge.NewDateRangeInclusiveQuery(
+		time.Unix(0, lower),
+		time.Unix(0, upper),
+		fieldKey.TimeRange.IncludesLower,
+		fieldKey.TimeRange.IncludesUpper,
+	).SetField(timestampField))
+	return newTermRangeInclusiveNode(
+		strconv.FormatInt(lower, 10),
+		strconv.FormatInt(upper, 10),
+		fieldKey.TimeRange.IncludesLower,
+		fieldKey.TimeRange.IncludesUpper,
+		nil,
+		true,
+	)
+}
+
+func (s *store) MatchField(fieldKey index.FieldKey) (posting.List, posting.List, error) {
 	return s.Range(fieldKey, index.RangeOpts{})
 }
 
-func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
+func (s *store) MatchTerms(field index.Field) (list posting.List, timestamps posting.List, err error) {
 	reader, err := s.writer.Reader()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var query *bluge.BooleanQuery
@@ -300,35 +307,37 @@ func (s *store) MatchTerms(field index.Field) (list posting.List, err error) {
 			strconv.FormatFloat(field.GetFloat(), 'f', -1, 64)).
 			SetField(field.Key.Marshal()))
 	case nil:
-		return roaring.DummyPostingList, nil
+		return roaring.DummyPostingList, roaring.DummyPostingList, nil
 	default:
-		return nil, errors.Errorf("unexpected field type: %T", field.GetTerm())
+		return nil, nil, errors.Errorf("unexpected field type: %T", field.GetTerm())
 	}
 	query.AddMust(bluge.NewTermQuery(string(field.Key.SeriesID.Marshal())).
 		SetField(seriesIDField))
+	_ = appendTimeRangeToQuery(query, field.Key)
 
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	iter := newBlugeMatchIterator(documentMatchIterator, reader, defaultProjection)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
-	list = roaring.NewPostingList()
+	list, timestamps = roaring.NewPostingList(), roaring.NewPostingList()
 	for iter.Next() {
 		list.Insert(iter.Val().DocID)
+		timestamps.Insert(uint64(iter.Val().Timestamp))
 	}
-	return list, err
+	return list, timestamps, err
 }
 
-func (s *store) Match(fieldKey index.FieldKey, matches []string, opts *modelv1.Condition_MatchOption) (posting.List, error) {
+func (s *store) Match(fieldKey index.FieldKey, matches []string, opts *modelv1.Condition_MatchOption) (posting.List, posting.List, error) {
 	if len(matches) == 0 || fieldKey.Analyzer == index.AnalyzerUnspecified {
-		return roaring.DummyPostingList, nil
+		return roaring.DummyPostingList, roaring.DummyPostingList, nil
 	}
 	reader, err := s.writer.Reader()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	analyzer, operator := getMatchOptions(fieldKey.Analyzer, opts)
 	fk := fieldKey.Marshal()
@@ -338,19 +347,21 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string, opts *modelv1.C
 		query.AddMust(bluge.NewMatchQuery(m).SetField(fk).
 			SetAnalyzer(analyzer).SetOperator(operator))
 	}
+	_ = appendTimeRangeToQuery(query, fieldKey)
 	documentMatchIterator, err := reader.Search(context.Background(), bluge.NewAllMatches(query))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	iter := newBlugeMatchIterator(documentMatchIterator, reader, defaultProjection)
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
-	list := roaring.NewPostingList()
+	list, timestamps := roaring.NewPostingList(), roaring.NewPostingList()
 	for iter.Next() {
 		list.Insert(iter.Val().DocID)
+		timestamps.Insert(uint64(iter.Val().Timestamp))
 	}
-	return list, err
+	return list, timestamps, err
 }
 
 func getMatchOptions(analyzerOnIndexRule string, opts *modelv1.Condition_MatchOption) (*analysis.Analyzer, bluge.MatchQueryOperator) {
@@ -369,14 +380,15 @@ func getMatchOptions(analyzerOnIndexRule string, opts *modelv1.Condition_MatchOp
 	return analyzer, bluge.MatchQueryOperator(operator)
 }
 
-func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, err error) {
+func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, timestamps posting.List, err error) {
 	iter, err := s.Iterator(context.TODO(), fieldKey, opts, modelv1.Sort_SORT_ASC, defaultRangePreloadSize)
 	if err != nil {
-		return roaring.DummyPostingList, err
+		return roaring.DummyPostingList, roaring.DummyPostingList, err
 	}
-	list = roaring.NewPostingList()
+	list, timestamps = roaring.NewPostingList(), roaring.NewPostingList()
 	for iter.Next() {
 		list.Insert(iter.Val().DocID)
+		timestamps.Insert(uint64(iter.Val().Timestamp))
 	}
 	err = multierr.Append(err, iter.Close())
 	return
@@ -461,7 +473,7 @@ func (bmi *blugeMatchIterator) setVal(field string, value []byte) bool {
 		bmi.current.DocID = convert.BytesToUint64(value)
 	case seriesIDField:
 		bmi.current.SeriesID = common.SeriesID(convert.BytesToUint64(value))
-	case TimestampField:
+	case timestampField:
 		ts, errTime := bluge.DecodeDateTime(value)
 		if errTime != nil {
 			bmi.err = errTime

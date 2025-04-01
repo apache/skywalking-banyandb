@@ -61,6 +61,7 @@ var (
 
 // FieldKey is the key of field in a document.
 type FieldKey struct {
+	TimeRange   *RangeOpts
 	Analyzer    string
 	TagName     string
 	SeriesID    common.SeriesID
@@ -167,17 +168,6 @@ func (f FloatTermValue) String() string {
 	return strconv.FormatInt(numeric.Float64ToInt64(f.Value), 10)
 }
 
-// TimestampValue represents a int term value.
-type TimestampValue struct {
-	Value int64
-}
-
-func (TimestampValue) isTermValue() {}
-
-func (i TimestampValue) String() string {
-	return strconv.FormatInt(i.Value, 10)
-}
-
 // RangeOpts contains options to performance a continuous scan.
 type RangeOpts struct {
 	Upper         IsTermValue
@@ -205,10 +195,6 @@ func (r RangeOpts) Valid() bool {
 		if r.Lower.(*FloatTermValue).Value > upper.Value {
 			return false
 		}
-	case *TimestampValue:
-		if r.Lower.(*TimestampValue).Value > upper.Value {
-			return false
-		}
 	default:
 		return false
 	}
@@ -231,16 +217,6 @@ func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) 
 	return RangeOpts{
 		Lower:         &BytesTermValue{Value: upperBytes},
 		Upper:         &BytesTermValue{Value: lowerBytes},
-		IncludesLower: includesLower,
-		IncludesUpper: includesUpper,
-	}
-}
-
-// NewTimeRangeOpts creates a new int range option.
-func NewTimeRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
-	return RangeOpts{
-		Lower:         &TimestampValue{Value: lower},
-		Upper:         &TimestampValue{Value: upper},
 		IncludesLower: includesLower,
 		IncludesUpper: includesUpper,
 	}
@@ -354,10 +330,10 @@ type FieldIterable interface {
 // Searcher allows searching a field either by its key or by its key and term.
 type Searcher interface {
 	FieldIterable
-	Match(fieldKey FieldKey, match []string, opts *modelv1.Condition_MatchOption) (list posting.List, err error)
-	MatchField(fieldKey FieldKey) (list posting.List, err error)
-	MatchTerms(field Field) (list posting.List, err error)
-	Range(fieldKey FieldKey, opts RangeOpts) (list posting.List, err error)
+	Match(fieldKey FieldKey, match []string, opts *modelv1.Condition_MatchOption) (list posting.List, timestamps posting.List, err error)
+	MatchField(fieldKey FieldKey) (list posting.List, timestamps posting.List, err error)
+	MatchTerms(field Field) (list posting.List, timestamps posting.List, err error)
+	Range(fieldKey FieldKey, opts RangeOpts) (list posting.List, timestamps posting.List, err error)
 }
 
 // Query is an abstract of an index query.
@@ -464,5 +440,5 @@ type GetSearcher func(location databasev1.IndexRule_Type) (Searcher, error)
 // Filter is a node in the filter tree.
 type Filter interface {
 	fmt.Stringer
-	Execute(getSearcher GetSearcher, seriesID common.SeriesID) (posting.List, error)
+	Execute(getSearcher GetSearcher, seriesID common.SeriesID, timeRange *RangeOpts) (posting.List, posting.List, error)
 }
