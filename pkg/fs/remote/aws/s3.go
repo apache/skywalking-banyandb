@@ -21,6 +21,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"io"
 	"path"
 	"strings"
@@ -47,7 +48,6 @@ func NewFS(path string) (remote.FS, error) {
 	}
 
 	opts := []func(*config.LoadOptions) error{
-		config.WithSharedConfigProfile("banyandb"),
 		config.WithClientLogMode(aws.LogRetries),
 	}
 
@@ -90,9 +90,10 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 	key := s.getFullPath(path)
 
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
-		Body:   data,
+		Bucket:            aws.String(s.bucket),
+		Key:               aws.String(key),
+		Body:              data,
+		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
 	})
 	if err != nil {
 		return err
@@ -103,8 +104,9 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 func (s *s3FS) Download(ctx context.Context, path string) (io.ReadCloser, error) {
 	key := s.getFullPath(path)
 	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Bucket:       aws.String(s.bucket),
+		Key:          aws.String(key),
+		ChecksumMode: types.ChecksumModeEnabled,
 	})
 	if err != nil {
 		return nil, err
