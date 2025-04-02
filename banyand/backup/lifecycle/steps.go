@@ -147,7 +147,7 @@ func parseGroup(ctx context.Context, g *commonv1.Group, nodeLabels map[string]st
 	if err = nodeSel.PreRun(ctx); err != nil {
 		return 0, nil, nil, errors.WithMessage(err, "failed to run node selector")
 	}
-	client := pub.New(nil)
+	client := pub.NewWithoutMetadata()
 	if g.Catalog == commonv1.Catalog_CATALOG_STREAM {
 		_ = grpc.NewClusterNodeRegistry(data.TopicStreamWrite, client, nodeSel)
 	} else {
