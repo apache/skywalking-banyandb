@@ -83,11 +83,11 @@
       <el-form-item label="Segment Interval Number" prop="segmentIntervalNum" required label-width="200">
         <el-input-number v-model="stage.segmentIntervalNum" autocomplete="off" style="width: 100%" />
       </el-form-item>
-      <el-form-item label="Default Node Selector" prop="defaultNodeSelector" required label-width="200">
-        <el-input v-model="stage.defaultNodeSelector" autocomplete="off" />
+      <el-form-item label="Node Selector" prop="nodeSelector" required label-width="200">
+        <el-input v-model="stage.nodeSelector" autocomplete="off" />
       </el-form-item>
       <el-form-item label="Close" prop="close" label-width="200">
-        <el-switch v-model="stage.close" style="width: 100%" />
+        <el-switch v-model="stage.close" />
       </el-form-item>
     </el-form>
     <template #footer>

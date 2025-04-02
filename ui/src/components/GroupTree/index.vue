@@ -74,15 +74,15 @@
     formLabelWidth: '170px',
   });
   const groupForm = reactive({
-      name: '',
-      catalog: 'CATALOG_STREAM',
-      shardNum: 1,
-      segmentIntervalUnit: 'UNIT_DAY',
-      segmentIntervalNum: 1,
-      ttlUnit: 'UNIT_DAY',
-      ttlNum: 3,
-      stages: [],
-    })
+    name: '',
+    catalog: 'CATALOG_STREAM',
+    shardNum: 1,
+    segmentIntervalUnit: 'UNIT_DAY',
+    segmentIntervalNum: 1,
+    ttlUnit: 'UNIT_DAY',
+    ttlNum: 3,
+    stages: [],
+  });
 
   // Eventbus
   const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
@@ -100,7 +100,7 @@
   const emit = defineEmits(['setWidth']);
   onMounted(() => {
     getGroupLists();
-  })
+  });
 
   // init data
   function getGroupLists() {
@@ -435,7 +435,7 @@
       if (Object.keys(TypeMap).includes(currentNode.value.type)) {
         return deleteSecondaryDataModelFunction(TypeMap[currentNode.value.type]);
       }
-      if (props.type === TargetTypes.Group) {
+      if (currentNode.value.type === TargetTypes.Group) {
         return deleteGroupFunction();
       }
       return deleteResource();
@@ -495,39 +495,39 @@
   }
   function handleGroup() {
     return {
-          group: {
-            metadata: {
-              group: '',
-              name: groupForm.name,
-            },
-            catalog: groupForm.catalog,
-            resourceOpts: {
-              shardNum: groupForm.shardNum,
-              segmentInterval: {
-                unit: groupForm.segmentIntervalUnit,
-                num: groupForm.segmentIntervalNum,
-              },
-              ttl: {
-                unit: groupForm.ttlUnit,
-                num: groupForm.ttlNum,
-              },
-              stages: groupForm.stages.map((d) => ({
-                name: d.name,
-                shardNum: d.shardNum,
-                nodeSelector: d.nodeSelector,
-                close: d.close,
-                ttl: {
-                  unit: d.ttlUnit,
-                  num: d.ttlNum,
-                },
-                segmentInterval: {
-                unit: d.segmentIntervalUnit,
-                num: d.segmentIntervalNum,
-                },
-              })),
-            },
+      group: {
+        metadata: {
+          group: '',
+          name: groupForm.name,
+        },
+        catalog: groupForm.catalog,
+        resourceOpts: {
+          shardNum: groupForm.shardNum,
+          segmentInterval: {
+            unit: groupForm.segmentIntervalUnit,
+            num: groupForm.segmentIntervalNum,
           },
-        };
+          ttl: {
+            unit: groupForm.ttlUnit,
+            num: groupForm.ttlNum,
+          },
+          stages: groupForm.stages.map((d) => ({
+            name: d.name,
+            shardNum: d.shardNum,
+            nodeSelector: d.nodeSelector,
+            close: d.close,
+            ttl: {
+              unit: d.ttlUnit,
+              num: d.ttlNum,
+            },
+            segmentInterval: {
+              unit: d.segmentIntervalUnit,
+              num: d.segmentIntervalNum,
+            },
+          })),
+        },
+      },
+    };
   }
   function createGroupFunction() {
     ruleForm.value.validate((valid) => {
@@ -573,14 +573,14 @@
   // init form data
   function clearGroupForm() {
     data.dialogGroupVisible = false;
-      groupForm.name = '';
-      groupForm.catalog = 'CATALOG_STREAM';
-      groupForm.shardNum = 1;
-      groupForm.segmentIntervalUnit = 'UNIT_DAY';
-      groupForm.segmentIntervalNum = 1;
-      groupForm.ttlUnit = 'UNIT_DAY';
-      groupForm.ttlNum = 3;
-      groupForm.stages = [];
+    groupForm.name = '';
+    groupForm.catalog = 'CATALOG_STREAM';
+    groupForm.shardNum = 1;
+    groupForm.segmentIntervalUnit = 'UNIT_DAY';
+    groupForm.segmentIntervalNum = 1;
+    groupForm.ttlUnit = 'UNIT_DAY';
+    groupForm.ttlNum = 3;
+    groupForm.stages = [];
   }
   function initActiveNode() {
     const { group, name, type } = route.params;
@@ -699,6 +699,7 @@
       :title="`${data.setGroup} group`"
       v-model="data.dialogGroupVisible"
       :show-close="false"
+      :destroy-on-close="true"
     >
       <el-form ref="ruleForm" :rules="Rules" :model="groupForm" label-position="left">
         <el-form-item label="group name" :label-width="data.formLabelWidth" prop="name">
@@ -743,15 +744,15 @@
                   type="primary"
                   @click.prevent="openEditStage(scope.$index)"
                   style="color: var(--color-main); font-weight: bold"
-                  >
-                    Edit
-                  </el-button>
-                  <el-popconfirm @confirm="deleteStage(scope.$index)" title="Are you sure to delete this?">
-                    <template #reference>
-                      <el-button link type="danger" style="color: red; font-weight: bold">Delete</el-button>
-                    </template>
-                  </el-popconfirm>
-                </template>
+                >
+                  Edit
+                </el-button>
+                <el-popconfirm @confirm="deleteStage(scope.$index)" title="Are you sure to delete this?">
+                  <template #reference>
+                    <el-button link type="danger" style="color: red; font-weight: bold">Delete</el-button>
+                  </template>
+                </el-popconfirm>
+              </template>
             </el-table-column>
           </el-table>
         </el-form-item>
