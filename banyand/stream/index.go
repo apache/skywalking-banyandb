@@ -90,11 +90,15 @@ func (e *elementIndex) Search(ctx context.Context, seriesList []uint64, filter i
 			continue
 		}
 		if result == nil {
-			result, resultTS = pl, plTS
+			result = pl
 		} else {
 			if err := result.Union(pl); err != nil {
 				return nil, nil, err
 			}
+		}
+		if resultTS == nil {
+			resultTS = plTS
+		} else {
 			if err := resultTS.Union(plTS); err != nil {
 				return nil, nil, err
 			}
