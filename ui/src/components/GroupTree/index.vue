@@ -390,9 +390,17 @@
     groupForm.segmentIntervalNum = currentNode.value.resourceOpts?.segmentInterval?.num;
     groupForm.ttlUnit = currentNode.value.resourceOpts?.ttl?.unit;
     groupForm.ttlNum = currentNode.value.resourceOpts?.ttl?.num;
-    groupForm.stages = currentNode.value.resourceOpts?.stages;
-    dialogGroupVisible = true;
-    setGroup = 'edit';
+    groupForm.stages = currentNode.value.resourceOpts?.stages.map((d) => ({
+        ...d,
+        ttlUnit: d.ttl.unit,
+        ttlNum: d.ttl.num,
+        segmentIntervalUnit: d.segmentInterval.unit,
+        segmentIntervalNum: d.segmentInterval.num,
+        segmentInterval: undefined,
+        ttl: undefined
+      }));
+    data.dialogGroupVisible = true;
+    data.setGroup = 'edit';
   }
   function openCreateResource() {
     const route = {
