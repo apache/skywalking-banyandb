@@ -35,7 +35,15 @@
   import { useRouter, useRoute } from 'vue-router';
   import { ref, reactive } from 'vue';
   import { Search } from '@element-plus/icons-vue';
-  import {StageFields, rules, defaultProps, TargetTypes, catalogToGroupType, groupTypeToCatalog, TypeMap} from './data';
+  import {
+    StageFields,
+    rules,
+    defaultProps,
+    TargetTypes,
+    catalogToGroupType,
+    groupTypeToCatalog,
+    TypeMap,
+  } from './data';
 
   const router = useRouter();
   const route = useRoute();

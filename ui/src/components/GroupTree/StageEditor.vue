@@ -19,7 +19,7 @@
 
 <script setup>
   import { ref } from 'vue';
-  import {StageConfig} from './data';
+  import { StageConfig } from './data';
 
   const showDialog = ref(false);
   const ruleForm = ref();
@@ -60,25 +60,25 @@
   <el-dialog v-model="showDialog" :title="title" width="30%">
     <el-form ref="ruleForm" :model="stage" label-position="left">
       <el-form-item label="Name" prop="name" required label-width="150">
-        <el-input v-model="stage.name" autocomplete="off"></el-input>
+        <el-input v-model="stage.name" autocomplete="off" />
       </el-form-item>
       <el-form-item label="Shard Number" prop="shardNum" required label-width="150">
-        <el-input-number v-model="stage.shardNum" autocomplete="off"></el-input>
+        <el-input-number v-model="stage.shardNum" autocomplete="off" />
       </el-form-item>
       <el-form-item label="TTL Unit" prop="ttlUnit" required label-width="150">
-        <el-input v-model="stage.ttlUnit" autocomplete="off"></el-input>
+        <el-input v-model="stage.ttlUnit" autocomplete="off" />
       </el-form-item>
       <el-form-item label="TTL Number" prop="ttlNum" required label-width="150">
-        <el-input-number v-model="stage.ttlNum" autocomplete="off"></el-input>
+        <el-input-number v-model="stage.ttlNum" autocomplete="off" />
       </el-form-item>
       <el-form-item label="Segment Interval Unit" prop="segmentIntervalUnit" required label-width="150">
-        <el-input v-model="stage.segmentIntervalUnit" autocomplete="off"></el-input>
+        <el-input v-model="stage.segmentIntervalUnit" autocomplete="off" />
       </el-form-item>
       <el-form-item label="Segment Interval Number" prop="segmentIntervalNum" required label-width="150">
-        <el-input-number v-model="stage.segmentIntervalNum" autocomplete="off"></el-input>
+        <el-input-number v-model="stage.segmentIntervalNum" autocomplete="off" />
       </el-form-item>
       <el-form-item label="Default Node Selector" prop="defaultNodeSelector" required label-width="150">
-        <el-input v-model="stage.defaultNodeSelector" autocomplete="off"></el-input>
+        <el-input v-model="stage.defaultNodeSelector" autocomplete="off" />
       </el-form-item>
     </el-form>
     <template #footer>

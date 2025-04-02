@@ -18,14 +18,14 @@
  */
 
 export const StageFields = [
-  {label: 'Name', key: 'name'},
-  {label: 'Shard Number', key: 'shardNum'},
-  {label: 'TTL Unit', key: 'ttlUnit'},
-  {label: 'TTL Number', key: 'ttlNum'},
-  {label: 'Segment Interval Unit', key: 'segmentIntervalUnit'},
-  {label: 'Segment Interval Number', key: 'segmentIntervalNum'},
-  {label: 'Default Node Selector', key: 'defaultNodeSelector'},
-]
+  { label: 'Name', key: 'name' },
+  { label: 'Shard Number', key: 'shardNum' },
+  { label: 'TTL Unit', key: 'ttlUnit' },
+  { label: 'TTL Number', key: 'ttlNum' },
+  { label: 'Segment Interval Unit', key: 'segmentIntervalUnit' },
+  { label: 'Segment Interval Number', key: 'segmentIntervalNum' },
+  { label: 'Default Node Selector', key: 'defaultNodeSelector' },
+];
 export const StageConfig = {
   name: '',
   shardNum: NaN,
@@ -36,7 +36,7 @@ export const StageConfig = {
   defaultNodeSelector: '',
 };
 
-export   const rules = {
+export const rules = {
   name: [
     {
       required: true,
