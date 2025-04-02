@@ -58,7 +58,7 @@ func NewEntityLocator(families []*databasev1.TagFamilySpec, entity *databasev1.E
 // Find the entity from a tag family, prepend a subject to the entity.
 func (e EntityLocator) Find(subject string, value []*modelv1.TagFamilyForWrite) (pbv1.Entity, pbv1.EntityValues, error) {
 	entityValues := make(pbv1.EntityValues, len(e.TagLocators)+1)
-	entityValues[0] = pbv1.StrValue(subject)
+	entityValues[0] = pbv1.EntityStrValue(subject)
 	for i, index := range e.TagLocators {
 		tag, err := GetTagByOffset(value, index.FamilyOffset, index.TagOffset)
 		if err != nil {

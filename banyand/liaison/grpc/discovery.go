@@ -18,6 +18,7 @@
 package grpc
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -37,29 +38,35 @@ import (
 var errNotExist = errors.New("the object doesn't exist")
 
 type discoveryService struct {
-	metadataRepo metadata.Repo
-	nodeRegistry NodeRegistry
-	groupRepo    *groupRepo
-	entityRepo   *entityRepo
-	log          *logger.Logger
-	kind         schema.Kind
+	metadataRepo    metadata.Repo
+	nodeRegistry    NodeRegistry
+	groupRepo       *groupRepo
+	entityRepo      *entityRepo
+	shardingKeyRepo *shardingKeyRepo
+	log             *logger.Logger
+	kind            schema.Kind
 }
 
 func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
-	sr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
+	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
+	sr := &shardingKeyRepo{shardingKeysMap: make(map[identity]partition.ShardingKeyLocator)}
 	return &discoveryService{
-		groupRepo:    sr,
-		entityRepo:   er,
-		kind:         kind,
-		metadataRepo: metadataRepo,
-		nodeRegistry: nodeRegistry,
+		groupRepo:       gr,
+		entityRepo:      er,
+		shardingKeyRepo: sr,
+		kind:            kind,
+		metadataRepo:    metadataRepo,
+		nodeRegistry:    nodeRegistry,
 	}
 }
 
 func (ds *discoveryService) initialize() error {
 	ds.metadataRepo.RegisterHandler("liaison", schema.KindGroup, ds.groupRepo)
 	ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.entityRepo)
+	if ds.kind == schema.KindMeasure {
+		ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.shardingKeyRepo)
+	}
 	return nil
 }
 
@@ -67,6 +74,7 @@ func (ds *discoveryService) SetLogger(log *logger.Logger) {
 	ds.log = log
 	ds.groupRepo.log = log
 	ds.entityRepo.log = log
+	ds.shardingKeyRepo.log = log
 }
 
 func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (pbv1.Entity, pbv1.EntityValues, common.ShardID, error) {
@@ -74,11 +82,41 @@ func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []
 	if !existed {
 		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
 	}
-	locator, existed := ds.entityRepo.getLocator(getID(metadata))
+	entityLocator, existed := ds.entityRepo.getLocator(getID(metadata))
 	if !existed {
-		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the locator by: %v", metadata)
+		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
 	}
-	return locator.Locate(metadata.Name, tagFamilies, shardNum)
+	entity, entityValues, shardID, err := entityLocator.Locate(metadata.Name, tagFamilies, shardNum)
+	if err != nil {
+		return nil, nil, common.ShardID(0), err
+	}
+
+	topNAggregations, err := ds.metadataRepo.TopNAggregationRegistry().ListTopNAggregation(context.TODO(), schema.ListOpt{Group: metadata.Group})
+	if err != nil {
+		return nil, nil, common.ShardID(0), err
+	}
+	isTopNSourceMeaure := func(topNAggregations []*databasev1.TopNAggregation, measureName string) bool {
+		for _, topNAggregation := range topNAggregations {
+			if measureName == topNAggregation.SourceMeasure.Name {
+				return true
+			}
+		}
+		return false
+	}
+	if isTopNSourceMeaure(topNAggregations, metadata.Name) {
+		shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(getID(metadata))
+		if !existed {
+			return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the sharding key locator by: %v", metadata)
+		}
+		if shardingKeyLocator.IsEmpty() {
+			return entity, entityValues, shardID, nil
+		}
+		shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
+		if err != nil {
+			return nil, nil, common.ShardID(0), err
+		}
+	}
+	return entity, entityValues, shardID, nil
 }
 
 type identity struct {
@@ -256,4 +294,74 @@ func (e *entityRepo) getLocator(id identity) (partition.EntityLocator, bool) {
 		return partition.EntityLocator{}, false
 	}
 	return el, true
+}
+
+var _ schema.EventHandler = (*shardingKeyRepo)(nil)
+
+type shardingKeyRepo struct {
+	schema.UnimplementedOnInitHandler
+	log             *logger.Logger
+	shardingKeysMap map[identity]partition.ShardingKeyLocator
+	sync.RWMutex
+}
+
+// OnAddOrUpdate implements schema.EventHandler.
+func (s *shardingKeyRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
+	var sl partition.ShardingKeyLocator
+	var id identity
+	var modRevision int64
+	if schemaMetadata.Kind != schema.KindMeasure {
+		return
+	}
+	measure := schemaMetadata.Spec.(*databasev1.Measure)
+	modRevision = measure.GetMetadata().GetModRevision()
+	sl = partition.NewShardingKeyLocator(measure.TagFamilies, measure.ShardingKey, modRevision)
+	id = getID(measure.GetMetadata())
+	if le := s.log.Debug(); le.Enabled() {
+		le.
+			Str("action", "add_or_update").
+			Stringer("subject", id).
+			Str("kind", "measure").
+			Msg("entity added or updated")
+	}
+	tl := make([]partition.TagLocator, 0, len(sl.TagLocators))
+	for _, l := range sl.TagLocators {
+		tl = append(tl, partition.TagLocator{
+			FamilyOffset: l.FamilyOffset,
+			TagOffset:    l.TagOffset,
+		})
+	}
+	s.RWMutex.Lock()
+	defer s.RWMutex.Unlock()
+	s.shardingKeysMap[id] = partition.ShardingKeyLocator{TagLocators: tl, ModRevision: modRevision}
+}
+
+// OnDelete implements schema.EventHandler.
+func (s *shardingKeyRepo) OnDelete(schemaMetadata schema.Metadata) {
+	var id identity
+	if schemaMetadata.Kind != schema.KindMeasure {
+		return
+	}
+	measure := schemaMetadata.Spec.(*databasev1.Measure)
+	id = getID(measure.GetMetadata())
+	if le := s.log.Debug(); le.Enabled() {
+		le.
+			Str("action", "delete").
+			Stringer("subject", id).
+			Str("kind", "measure").
+			Msg("entity deleted")
+	}
+	s.RWMutex.Lock()
+	defer s.RWMutex.Unlock()
+	delete(s.shardingKeysMap, id)
+}
+
+func (s *shardingKeyRepo) getLocator(id identity) (partition.ShardingKeyLocator, bool) {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	sl, ok := s.shardingKeysMap[id]
+	if !ok {
+		return partition.ShardingKeyLocator{}, false
+	}
+	return sl, true
 }

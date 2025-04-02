@@ -22,42 +22,38 @@ import (
 	"strings"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-// Entry is an element in an Entity.
-type Entry []byte
+// ShardingKey determines the distribution of topN-related data.
+// It is defined in the Measure schema.
+type ShardingKey []Entry
 
-// Entity denotes an identity of a Series.
-// It is defined in the Stream or Measure schema.
-type Entity []Entry
-
-// Marshal encodes an Entity to bytes.
-func (e Entity) Marshal() []byte {
-	data := make([][]byte, len(e))
-	for i, entry := range e {
+// Marshal encodes a ShardingKey to bytes.
+func (s ShardingKey) Marshal() []byte {
+	data := make([][]byte, len(s))
+	for i, entry := range s {
 		data[i] = entry
 	}
 	return bytes.Join(data, nil)
 }
 
-// EntityValue represents the value of a tag which is a part of an entity.
-type EntityValue = *modelv1.TagValue
+// ShardingKeyValue represents the value of a tag which is a part of a ShardingKey.
+type ShardingKeyValue = *modelv1.TagValue
 
-// EntityValues is the encoded Entity.
-type EntityValues []EntityValue
+// ShardingKeyValues is the encoded ShardingKey.
+type ShardingKeyValues []ShardingKeyValue
 
-// Encode EntityValues to tag values.
-func (evs EntityValues) Encode() (result []*modelv1.TagValue) {
-	for _, v := range evs {
-		result = append(result, v)
+// Encode ShardingKeyValues to tag values.
+func (svs ShardingKeyValues) Encode() (result []*modelv1.TagValue) {
+	for _, sv := range svs {
+		result = append(result, sv)
 	}
 	return
 }
 
-// ToEntity transforms EntityValues to Entity.
-func (evs EntityValues) ToEntity() (result Entity, err error) {
-	for _, v := range evs {
+// ToShardingKey transforms ShardingKeyValues to ShardingKey.
+func (svs ShardingKeyValues) ToShardingKey() (result ShardingKey, err error) {
+	for _, v := range svs {
 		entry, errMarshal := MarshalTagValue(v)
 		if errMarshal != nil {
 			return nil, err
@@ -68,9 +64,9 @@ func (evs EntityValues) ToEntity() (result Entity, err error) {
 }
 
 // String outputs the string represent of an EntityValue.
-func (evs EntityValues) String() string {
+func (svs ShardingKeyValues) String() string {
 	var strBuilder strings.Builder
-	vv := evs.Encode()
+	vv := svs.Encode()
 	for i := 0; i < len(vv); i++ {
 		strBuilder.WriteString(vv[i].String())
 		if i < len(vv)-1 {
@@ -80,22 +76,18 @@ func (evs EntityValues) String() string {
 	return strBuilder.String()
 }
 
-// EntityStrValue returns an EntityValue which wraps a string value.
-func EntityStrValue(v string) EntityValue {
+// ShardingKeyStrValue returns a ShardingKeyValue which wraps a string value.
+func ShardingKeyStrValue(v string) ShardingKeyValue {
 	return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: v}}}
 }
 
-// HashEntity runs hash function (e.g. with xxhash algorithm) on each segment of the Entity,
+// HashShardingKey runs hash function (e.g. with xxhash algorithm) on each segment of the ShardingKey,
 // and concatenates all uint64 in byte array. So the return length of the byte array will be
 // 8 (every uint64 has 8 bytes) * length of the input.
-func HashEntity(entity Entity) []byte {
-	result := make([]byte, 0, len(entity)*8)
-	for _, entry := range entity {
+func HashShardingKey(shardingKey ShardingKey) []byte {
+	result := make([]byte, 0, len(shardingKey)*8)
+	for _, entry := range shardingKey {
 		result = append(result, hash(entry)...)
 	}
 	return result
-}
-
-func hash(entry []byte) []byte {
-	return convert.Uint64ToBytes(convert.Hash(entry))
 }
