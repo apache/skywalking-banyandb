@@ -702,7 +702,7 @@
       <div class="resizer" @mousedown="mouseDown"></div>
     </div>
     <el-dialog
-      width="900px"
+      width="1000px"
       center
       :title="`${data.setGroup} group`"
       v-model="data.dialogGroupVisible"
