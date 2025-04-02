@@ -35,9 +35,10 @@
   import { useRouter, useRoute } from 'vue-router';
   import { ref, reactive, onMounted } from 'vue';
   import { Search } from '@element-plus/icons-vue';
+  import StageEditor from './StageEditor.vue';
   import {
     StageFields,
-    rules,
+    Rules,
     DefaultProps,
     TargetTypes,
     CatalogToGroupType,
@@ -492,10 +493,8 @@
   function confirmForm() {
     data.setGroup === 'create' ? createGroupFunction() : editGroupFunction();
   }
-  function createGroupFunction() {
-    ruleForm.value.validate((valid) => {
-      if (valid) {
-        const dataList = {
+  function handleGroup() {
+    return {
           group: {
             metadata: {
               group: '',
@@ -512,11 +511,28 @@
                 unit: groupForm.ttlUnit,
                 num: groupForm.ttlNum,
               },
-              stages: groupForm.stages,
+              stages: groupForm.stages.map((d) => ({
+                name: d.name,
+                shardNum: d.shardNum,
+                nodeSelector: d.nodeSelector,
+                close: d.close,
+                ttl: {
+                  unit: d.ttlUnit,
+                  num: d.ttlNum,
+                },
+                segmentInterval: {
+                unit: d.segmentIntervalUnit,
+                num: d.segmentIntervalNum,
+                },
+              })),
             },
           },
         };
-        createGroup(dataList)
+  }
+  function createGroupFunction() {
+    ruleForm.value.validate((valid) => {
+      if (valid) {
+        createGroup(handleGroup())
           .then((res) => {
             if (res.status === 200) {
               getGroupLists();
@@ -537,28 +553,7 @@
     const name = data.groupLists[data.clickIndex].metadata.name;
     ruleForm.value.validate((valid) => {
       if (valid) {
-        const dataList = {
-          group: {
-            metadata: {
-              group: '',
-              name: groupForm.name,
-            },
-            catalog: groupForm.catalog,
-            resourceOpts: {
-              shardNum: groupForm.shardNum,
-              segmentInterval: {
-                unit: groupForm.segmentIntervalUnit,
-                num: groupForm.segmentIntervalNum,
-              },
-              ttl: {
-                unit: groupForm.ttlUnit,
-                num: groupForm.ttlNum,
-              },
-              stages: groupForm.stages,
-            },
-          },
-        };
-        editGroup(name, dataList)
+        editGroup(name, handleGroup())
           .then((res) => {
             if (res.status === 200) {
               getGroupLists();
@@ -699,13 +694,13 @@
       <div class="resizer" @mousedown="mouseDown"></div>
     </div>
     <el-dialog
-      width="25%"
+      width="900px"
       center
       :title="`${data.setGroup} group`"
       v-model="data.dialogGroupVisible"
       :show-close="false"
     >
-      <el-form ref="ruleForm" :rules="rules" :model="groupForm" label-position="left">
+      <el-form ref="ruleForm" :rules="Rules" :model="groupForm" label-position="left">
         <el-form-item label="group name" :label-width="data.formLabelWidth" prop="name">
           <el-input :disabled="data.setGroup === 'edit'" v-model="groupForm.name" autocomplete="off"> </el-input>
         </el-form-item>
@@ -774,6 +769,7 @@
       <div v-for="m in data.operationMenus" @click="m.fn">{{ m.label }}</div>
     </div>
   </div>
+  <StageEditor ref="stageEditorRef" />
 </template>
 
 <style lang="scss" scoped>

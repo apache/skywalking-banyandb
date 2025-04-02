@@ -25,18 +25,19 @@ export const StageFields = [
   { label: 'Segment Interval Unit', key: 'segmentIntervalUnit' },
   { label: 'Segment Interval Number', key: 'segmentIntervalNum' },
   { label: 'Default Node Selector', key: 'defaultNodeSelector' },
+  { label: 'Close', key: 'close'},
 ];
 export const StageConfig = {
   name: '',
-  shardNum: NaN,
-  ttlUnit: '',
-  ttlNum: NaN,
-  segmentIntervalUnit: '',
-  segmentIntervalNum: NaN,
+  shardNum: 1,
+  ttlUnit: 'UNIT_DAY',
+  ttlNum: 3,
+  segmentIntervalUnit: 'UNIT_DAY',
+  segmentIntervalNum: 1,
   defaultNodeSelector: '',
 };
 
-export const rules = {
+export const Rules = {
   name: [
     {
       required: true,
@@ -88,7 +89,7 @@ export const rules = {
   ],
   stages: [
     {
-      required: true,
+      required: false,
       message: 'Please ass the stages of the group',
       trigger: 'blur',
     },

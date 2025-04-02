@@ -34,7 +34,7 @@
     if (!ruleForm.value) return;
     await ruleForm.value.validate((valid) => {
       if (valid) {
-        promiseResolve(JSON.parse(JSON.stringify(stage)));
+        promiseResolve(JSON.parse(JSON.stringify(stage.value)));
         showDialog.value = false;
       }
     });
@@ -57,28 +57,37 @@
 </script>
 
 <template>
-  <el-dialog v-model="showDialog" :title="title" width="30%">
+  <el-dialog v-model="showDialog" :title="title" width="600px">
     <el-form ref="ruleForm" :model="stage" label-position="left">
-      <el-form-item label="Name" prop="name" required label-width="150">
-        <el-input v-model="stage.name" autocomplete="off" />
+      <el-form-item label="Name" prop="name" required label-width="200">
+        <el-input v-model="stage.name" autocomplete="off" style="width: 100%" />
       </el-form-item>
-      <el-form-item label="Shard Number" prop="shardNum" required label-width="150">
-        <el-input-number v-model="stage.shardNum" autocomplete="off" />
+      <el-form-item label="Shard Number" prop="shardNum" required label-width="200">
+        <el-input-number v-model="stage.shardNum" autocomplete="off" style="width: 100%" />
       </el-form-item>
-      <el-form-item label="TTL Unit" prop="ttlUnit" required label-width="150">
-        <el-input v-model="stage.ttlUnit" autocomplete="off" />
+      <el-form-item label="TTL Unit" prop="ttlUnit" required label-width="200">
+        <el-select v-model="stage.ttlUnit" placeholder="please select" style="width: 100%">
+          <el-option label="Hour" value="UNIT_HOUR"></el-option>
+          <el-option label="Day" value="UNIT_DAY"></el-option>
+        </el-select>
       </el-form-item>
-      <el-form-item label="TTL Number" prop="ttlNum" required label-width="150">
-        <el-input-number v-model="stage.ttlNum" autocomplete="off" />
+      <el-form-item label="TTL Number" prop="ttlNum" required label-width="200">
+        <el-input-number v-model="stage.ttlNum" autocomplete="off" style="width: 100%" />
       </el-form-item>
-      <el-form-item label="Segment Interval Unit" prop="segmentIntervalUnit" required label-width="150">
-        <el-input v-model="stage.segmentIntervalUnit" autocomplete="off" />
+      <el-form-item label="Segment Interval Unit" prop="segmentIntervalUnit" required label-width="200">
+        <el-select v-model="stage.segmentIntervalUnit" placeholder="please select" style="width: 100%">
+          <el-option label="Hour" value="UNIT_HOUR"></el-option>
+          <el-option label="Day" value="UNIT_DAY"></el-option>
+        </el-select>
       </el-form-item>
-      <el-form-item label="Segment Interval Number" prop="segmentIntervalNum" required label-width="150">
-        <el-input-number v-model="stage.segmentIntervalNum" autocomplete="off" />
+      <el-form-item label="Segment Interval Number" prop="segmentIntervalNum" required label-width="200">
+        <el-input-number v-model="stage.segmentIntervalNum" autocomplete="off" style="width: 100%" />
       </el-form-item>
-      <el-form-item label="Default Node Selector" prop="defaultNodeSelector" required label-width="150">
+      <el-form-item label="Default Node Selector" prop="defaultNodeSelector" required label-width="200">
         <el-input v-model="stage.defaultNodeSelector" autocomplete="off" />
+      </el-form-item>
+      <el-form-item label="Close" prop="close" label-width="200">
+        <el-switch v-model="stage.close" style="width: 100%" />
       </el-form-item>
     </el-form>
     <template #footer>
