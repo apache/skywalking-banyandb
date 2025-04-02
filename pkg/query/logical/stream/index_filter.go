@@ -211,20 +211,24 @@ func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp l
 		if err != nil {
 			return nil, nil, err
 		}
-		if result == nil {
-			result = r
-			continue
-		}
-		result, err = lp.merge(result, r)
-		if err != nil {
+		if result, err = merge(result, r, lp); err != nil {
 			return nil, nil, err
 		}
-		resultTS, err = lp.merge(resultTS, rt)
-		if err != nil {
+		if resultTS, err = merge(resultTS, rt, lp); err != nil {
 			return nil, nil, err
 		}
 	}
 	return result, resultTS, nil
+}
+
+func merge(result posting.List, list posting.List, lp logicalOP) (posting.List, error) {
+	if result == nil {
+		return list, nil
+	}
+	if list == nil {
+		return result, nil
+	}
+	return lp.merge(result, list)
 }
 
 type andNode struct {
