@@ -35,6 +35,7 @@
   import { useRouter, useRoute } from 'vue-router';
   import { ref, reactive } from 'vue';
   import { Search } from '@element-plus/icons-vue';
+  import {StageFields, rules, defaultProps, TargetTypes, catalogToGroupType, groupTypeToCatalog, TypeMap} from './data';
 
   const router = useRouter();
   const route = useRoute();
@@ -71,89 +72,6 @@
     activeNode: '',
     formLabelWidth: '170px',
   });
-
-  const defaultProps = {
-    children: 'children',
-    label: 'name',
-  };
-
-  const TargetTypes = {
-    Group: 'group',
-    Resources: 'resources',
-  };
-  // catalog to group type
-  const catalogToGroupType = {
-    CATALOG_MEASURE: 'measure',
-    CATALOG_STREAM: 'stream',
-    CATALOG_PROPERTY: 'property',
-  };
-
-  // group type to catalog
-  const groupTypeToCatalog = {
-    measure: 'CATALOG_MEASURE',
-    stream: 'CATALOG_STREAM',
-    property: 'CATALOG_PROPERTY',
-  };
-
-  const TypeMap = {
-    topNAggregation: 'topn-agg',
-    indexRule: 'index-rule',
-    indexRuleBinding: 'index-rule-binding',
-    children: 'children',
-  };
-
-  // rules
-  const rules = {
-    name: [
-      {
-        required: true,
-        message: 'Please enter the name of the group',
-        trigger: 'blur',
-      },
-    ],
-    catalog: [
-      {
-        required: true,
-        message: 'Please select the type of the group',
-        trigger: 'blur',
-      },
-    ],
-    shardNum: [
-      {
-        required: true,
-        message: 'Please select the shard num of the group',
-        trigger: 'blur',
-      },
-    ],
-    segmentIntervalUnit: [
-      {
-        required: true,
-        message: 'Please select the segment interval unit of the group',
-        trigger: 'blur',
-      },
-    ],
-    segmentIntervalNum: [
-      {
-        required: true,
-        message: 'Please select the segment Interval num of the group',
-        trigger: 'blur',
-      },
-    ],
-    ttlUnit: [
-      {
-        required: true,
-        message: 'Please select the ttl unit of the group',
-        trigger: 'blur',
-      },
-    ],
-    ttlNum: [
-      {
-        required: true,
-        message: 'Please select the ttl num of the group',
-        trigger: 'blur',
-      },
-    ],
-  };
 
   // Eventbus
   const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
@@ -789,6 +707,12 @@
         </el-form-item>
         <el-form-item label="ttl num" :label-width="data.formLabelWidth" prop="ttlNum">
           <el-input-number v-model="data.groupForm.ttlNum" :min="1" />
+        </el-form-item>
+        <el-form-item label="stages" :label-width="data.formLabelWidth" prop="stages">
+          <el-button size="small" type="primary" color="#6E38F7" @click="openAddSatge">Add Satge</el-button>
+          <el-table style="margin-top: 10px" :data="data.groupForm.stages" border>
+            <el-table-column v-for="fiels in StageFields" :label="fiels.label" :prop="fiels.key" :key="fiels.key" />
+          </el-table>
         </el-form-item>
       </el-form>
       <div slot="footer" class="dialog-footer footer">
