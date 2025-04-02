@@ -90,8 +90,8 @@ func (mf mockFilter) String() string {
 	return "filter"
 }
 
-func (mf mockFilter) Execute(_ index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
-	return mf.index[mf.value][seriesID], nil
+func (mf mockFilter) Execute(_ index.GetSearcher, seriesID common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
+	return mf.index[mf.value][seriesID], roaring.DummyPostingList, nil
 }
 
 type databaseSupplier struct {

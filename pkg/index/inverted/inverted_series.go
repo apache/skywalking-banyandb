@@ -115,7 +115,7 @@ func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string)
 	}
 
 	if d.Timestamp > 0 {
-		doc.AddField(bluge.NewDateTimeField(TimestampField, time.Unix(0, d.Timestamp)).StoreValue())
+		doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
 	}
 	if d.Version > 0 {
 		vf := bluge.NewStoredOnlyField(versionField, convert.Int64ToBytes(d.Version))
@@ -181,7 +181,7 @@ func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery 
 	}
 	if timeRange != nil {
 		q := bluge.NewDateRangeInclusiveQuery(timeRange.Start, timeRange.End, timeRange.IncludeStart, timeRange.IncludeEnd)
-		q.SetField(TimestampField)
+		q.SetField(timestampField)
 		query.AddMust(q)
 		node.Append(newTimeRangeNode(timeRange))
 	}
@@ -236,7 +236,7 @@ func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey
 			switch field {
 			case docIDField:
 				doc.Key.EntityValues = value
-			case TimestampField:
+			case timestampField:
 				var ts time.Time
 				ts, errTime = bluge.DecodeDateTime(value)
 				if errTime != nil {
@@ -276,7 +276,7 @@ func (s *store) SeriesSort(ctx context.Context, indexQuery index.Query, orderBy 
 	var sortedKey string
 	switch orderBy.Type {
 	case index.OrderByTypeTime:
-		sortedKey = TimestampField
+		sortedKey = timestampField
 	case index.OrderByTypeIndex:
 		fieldKey := index.FieldKey{
 			IndexRuleID: orderBy.Index.Metadata.Id,
@@ -368,7 +368,7 @@ func (si *seriesIterator) setVal(field string, value []byte) bool {
 	switch field {
 	case docIDField:
 		si.current.EntityValues = value
-	case TimestampField:
+	case timestampField:
 		ts, errTime := bluge.DecodeDateTime(value)
 		if errTime != nil {
 			si.err = errTime
