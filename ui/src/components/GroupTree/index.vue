@@ -33,8 +33,18 @@
   import { ElMessage, ElMessageBox } from 'element-plus';
   import { watch, getCurrentInstance } from '@vue/runtime-core';
   import { useRouter, useRoute } from 'vue-router';
-  import { ref, reactive } from 'vue';
+  import { ref, reactive, onMounted, computed } from 'vue';
   import { Search } from '@element-plus/icons-vue';
+  import StageEditor from './StageEditor.vue';
+  import {
+    StageFields,
+    Rules,
+    DefaultProps,
+    TargetTypes,
+    CatalogToGroupType,
+    GroupTypeToCatalog,
+    TypeMap,
+  } from './data';
 
   const router = useRouter();
   const route = useRoute();
@@ -46,6 +56,7 @@
   const filterText = ref('');
   const currentNode = ref({});
   const resizable = ref();
+  const stageEditorRef = ref(null);
   // Data
   const data = reactive({
     groupLists: [],
@@ -59,102 +70,54 @@
     // create/edit group
     dialogGroupVisible: false,
     setGroup: 'create',
-    groupForm: {
-      name: null,
-      catalog: 'CATALOG_STREAM',
-      shardNum: 1,
-      segmentIntervalUnit: 'UNIT_DAY',
-      segmentIntervalNum: 1,
-      ttlUnit: 'UNIT_DAY',
-      ttlNum: 3,
-    },
     activeNode: '',
     formLabelWidth: '170px',
+    clickIndex: NaN,
   });
-
-  const defaultProps = {
-    children: 'children',
-    label: 'name',
-  };
-
-  const TargetTypes = {
-    Group: 'group',
-    Resources: 'resources',
-  };
-  // catalog to group type
-  const catalogToGroupType = {
-    CATALOG_MEASURE: 'measure',
-    CATALOG_STREAM: 'stream',
-    CATALOG_PROPERTY: 'property',
-  };
-
-  // group type to catalog
-  const groupTypeToCatalog = {
-    measure: 'CATALOG_MEASURE',
-    stream: 'CATALOG_STREAM',
-    property: 'CATALOG_PROPERTY',
-  };
-
-  const TypeMap = {
-    topNAggregation: 'topn-agg',
-    indexRule: 'index-rule',
-    indexRuleBinding: 'index-rule-binding',
-    children: 'children',
-  };
-
-  // rules
-  const rules = {
-    name: [
-      {
-        required: true,
-        message: 'Please enter the name of the group',
-        trigger: 'blur',
+  const groupForm = reactive({
+    name: '',
+    catalog: 'CATALOG_STREAM',
+    shardNum: 1,
+    segmentIntervalUnit: 'UNIT_DAY',
+    segmentIntervalNum: 1,
+    ttlUnit: 'UNIT_DAY',
+    ttlNum: 3,
+    stages: [],
+  });
+  const getGroupForm = computed(() => ({
+    group: {
+      metadata: {
+        group: '',
+        name: groupForm.name,
       },
-    ],
-    catalog: [
-      {
-        required: true,
-        message: 'Please select the type of the group',
-        trigger: 'blur',
+      catalog: groupForm.catalog,
+      resourceOpts: {
+        shardNum: groupForm.shardNum,
+        segmentInterval: {
+          unit: groupForm.segmentIntervalUnit,
+          num: groupForm.segmentIntervalNum,
+        },
+        ttl: {
+          unit: groupForm.ttlUnit,
+          num: groupForm.ttlNum,
+        },
+        stages: groupForm.stages.map((d) => ({
+          name: d.name,
+          shardNum: d.shardNum,
+          nodeSelector: d.nodeSelector,
+          close: d.close,
+          ttl: {
+            unit: d.ttlUnit,
+            num: d.ttlNum,
+          },
+          segmentInterval: {
+            unit: d.segmentIntervalUnit,
+            num: d.segmentIntervalNum,
+          },
+        })),
       },
-    ],
-    shardNum: [
-      {
-        required: true,
-        message: 'Please select the shard num of the group',
-        trigger: 'blur',
-      },
-    ],
-    segmentIntervalUnit: [
-      {
-        required: true,
-        message: 'Please select the segment interval unit of the group',
-        trigger: 'blur',
-      },
-    ],
-    segmentIntervalNum: [
-      {
-        required: true,
-        message: 'Please select the segment Interval num of the group',
-        trigger: 'blur',
-      },
-    ],
-    ttlUnit: [
-      {
-        required: true,
-        message: 'Please select the ttl unit of the group',
-        trigger: 'blur',
-      },
-    ],
-    ttlNum: [
-      {
-        required: true,
-        message: 'Please select the ttl num of the group',
-        trigger: 'blur',
-      },
-    ],
-  };
-
+    },
+  }));
   // Eventbus
   const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
 
@@ -169,6 +132,9 @@
 
   // emit event
   const emit = defineEmits(['setWidth']);
+  onMounted(() => {
+    getGroupLists();
+  });
 
   // init data
   function getGroupLists() {
@@ -176,7 +142,7 @@
     loading.value = true;
     getGroupList().then((res) => {
       if (res.status === 200) {
-        data.groupLists = res.data.group.filter((d) => catalogToGroupType[d.catalog] === props.type);
+        data.groupLists = res.data.group.filter((d) => CatalogToGroupType[d.catalog] === props.type);
         let promise = data.groupLists.map((item) => {
           const type = props.type;
           const name = item.metadata.name;
@@ -447,17 +413,26 @@
 
   function openCreateGroup() {
     data.setGroup = 'create';
-    data.groupForm.catalog = groupTypeToCatalog[props.type];
+    groupForm.catalog = GroupTypeToCatalog[props.type];
     data.dialogGroupVisible = true;
   }
   function openEditGroup() {
-    data.groupForm.name = currentNode.value.name;
-    data.groupForm.catalog = currentNode.value.catalog;
-    data.groupForm.shardNum = currentNode.value.resourceOpts?.shardNum;
-    data.groupForm.segmentIntervalUnit = currentNode.value.resourceOpts?.segmentInterval?.unit;
-    data.groupForm.segmentIntervalNum = currentNode.value.resourceOpts?.segmentInterval?.num;
-    data.groupForm.ttlUnit = currentNode.value.resourceOpts?.ttl?.unit;
-    data.groupForm.ttlNum = currentNode.value.resourceOpts?.ttl?.num;
+    groupForm.name = currentNode.value.name;
+    groupForm.catalog = currentNode.value.catalog;
+    groupForm.shardNum = currentNode.value.resourceOpts?.shardNum;
+    groupForm.segmentIntervalUnit = currentNode.value.resourceOpts?.segmentInterval?.unit;
+    groupForm.segmentIntervalNum = currentNode.value.resourceOpts?.segmentInterval?.num;
+    groupForm.ttlUnit = currentNode.value.resourceOpts?.ttl?.unit;
+    groupForm.ttlNum = currentNode.value.resourceOpts?.ttl?.num;
+    groupForm.stages = currentNode.value.resourceOpts?.stages.map((d) => ({
+      ...d,
+      ttlUnit: d.ttl.unit,
+      ttlNum: d.ttl.num,
+      segmentIntervalUnit: d.segmentInterval.unit,
+      segmentIntervalNum: d.segmentInterval.num,
+      segmentInterval: undefined,
+      ttl: undefined,
+    }));
     data.dialogGroupVisible = true;
     data.setGroup = 'edit';
   }
@@ -502,7 +477,7 @@
       if (Object.keys(TypeMap).includes(currentNode.value.type)) {
         return deleteSecondaryDataModelFunction(TypeMap[currentNode.value.type]);
       }
-      if (props.type === TargetTypes.Group) {
+      if (currentNode.value.type === TargetTypes.Group) {
         return deleteGroupFunction();
       }
       return deleteResource();
@@ -560,30 +535,11 @@
   function confirmForm() {
     data.setGroup === 'create' ? createGroupFunction() : editGroupFunction();
   }
+
   function createGroupFunction() {
     ruleForm.value.validate((valid) => {
       if (valid) {
-        const dataList = {
-          group: {
-            metadata: {
-              group: '',
-              name: data.groupForm.name,
-            },
-            catalog: data.groupForm.catalog,
-            resourceOpts: {
-              shardNum: data.groupForm.shardNum,
-              segmentInterval: {
-                unit: data.groupForm.segmentIntervalUnit,
-                num: data.groupForm.segmentIntervalNum,
-              },
-              ttl: {
-                unit: data.groupForm.ttlUnit,
-                num: data.groupForm.ttlNum,
-              },
-            },
-          },
-        };
-        createGroup(dataList)
+        createGroup(getGroupForm.value)
           .then((res) => {
             if (res.status === 200) {
               getGroupLists();
@@ -601,30 +557,10 @@
     });
   }
   function editGroupFunction() {
-    const name = data.groupLists[data.clickIndex].metadata.name;
+    const name = currentNode.value.name;
     ruleForm.value.validate((valid) => {
       if (valid) {
-        const dataList = {
-          group: {
-            metadata: {
-              group: '',
-              name: data.groupForm.name,
-            },
-            catalog: data.groupForm.catalog,
-            resourceOpts: {
-              shardNum: data.groupForm.shardNum,
-              segmentInterval: {
-                unit: data.groupForm.segmentIntervalUnit,
-                num: data.groupForm.segmentIntervalNum,
-              },
-              ttl: {
-                unit: data.groupForm.ttlUnit,
-                num: data.groupForm.ttlNum,
-              },
-            },
-          },
-        };
-        editGroup(name, dataList)
+        editGroup(name, getGroupForm.value)
           .then((res) => {
             if (res.status === 200) {
               getGroupLists();
@@ -644,15 +580,14 @@
   // init form data
   function clearGroupForm() {
     data.dialogGroupVisible = false;
-    data.groupForm = {
-      name: null,
-      catalog: 'CATALOG_STREAM',
-      shardNum: 1,
-      segmentIntervalUnit: 'UNIT_DAY',
-      segmentIntervalNum: 1,
-      ttlUnit: 'UNIT_DAY',
-      ttlNum: 3,
-    };
+    groupForm.name = '';
+    groupForm.catalog = 'CATALOG_STREAM';
+    groupForm.shardNum = 1;
+    groupForm.segmentIntervalUnit = 'UNIT_DAY';
+    groupForm.segmentIntervalNum = 1;
+    groupForm.ttlUnit = 'UNIT_DAY';
+    groupForm.ttlNum = 3;
+    groupForm.stages = [];
   }
   function initActiveNode() {
     const { group, name, type } = route.params;
@@ -690,15 +625,29 @@
     document.removeEventListener('mouseup', onMouseUp);
   }
 
-  getGroupLists();
+  const openAddStage = () => {
+    stageEditorRef.value.openDialog().then((res) => {
+      groupForm.stages.push(res);
+    });
+  };
 
-  $bus.on('resetAside', (data) => {
+  const openEditStage = (index) => {
+    stageEditorRef.value.openDialog(groupForm.stages[index]).then((res) => {
+      groupForm.stages[index] = res;
+    });
+  };
+
+  const deleteStage = (index) => {
+    groupForm.stages.splice(index, 1);
+  };
+
+  $bus.on('resetAside', () => {
     router.push({
       name: `${props.type}Start`,
     });
   });
 
-  $bus.on('refreshAside', (data) => {
+  $bus.on('refreshAside', () => {
     getGroupLists();
   });
   watch(filterText, (val) => {
@@ -725,7 +674,7 @@
           ref="treeRef"
           v-loading="loading"
           :data="data.groupLists"
-          :props="defaultProps"
+          :props="DefaultProps"
           :filter-node-method="filterNode"
           @node-click="viewResources"
           @node-contextmenu="openOperationMenus"
@@ -752,43 +701,67 @@
       <div class="resizer" @mousedown="mouseDown"></div>
     </div>
     <el-dialog
-      width="25%"
+      width="1100px"
       center
       :title="`${data.setGroup} group`"
       v-model="data.dialogGroupVisible"
       :show-close="false"
+      :destroy-on-close="true"
     >
-      <el-form ref="ruleForm" :rules="rules" :model="data.groupForm" label-position="left">
-        <el-form-item label="group name" :label-width="data.formLabelWidth" prop="name">
-          <el-input :disabled="data.setGroup === 'edit'" v-model="data.groupForm.name" autocomplete="off"> </el-input>
+      <el-form ref="ruleForm" :rules="Rules" :model="groupForm" label-position="left">
+        <el-form-item label="Group name" :label-width="data.formLabelWidth" prop="name">
+          <el-input :disabled="data.setGroup === 'edit'" v-model="groupForm.name" autocomplete="off"> </el-input>
         </el-form-item>
-        <el-form-item label="group type" :label-width="data.formLabelWidth" prop="catalog">
-          <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
+        <el-form-item label="Group type" :label-width="data.formLabelWidth" prop="catalog">
+          <el-select v-model="groupForm.catalog" placeholder="please select" style="width: 100%">
             <el-option label="Stream" value="CATALOG_STREAM"></el-option>
             <el-option label="Measure" value="CATALOG_MEASURE"></el-option>
             <el-option label="Property" value="CATALOG_PROPERTY"></el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="shard num" :label-width="data.formLabelWidth" prop="shardNum">
-          <el-input-number v-model="data.groupForm.shardNum" :min="1" />
+        <el-form-item label="Shard num" :label-width="data.formLabelWidth" prop="shardNum">
+          <el-input-number v-model="groupForm.shardNum" :min="1" />
         </el-form-item>
-        <el-form-item label="segment interval unit" :label-width="data.formLabelWidth" prop="segmentIntervalUnit">
-          <el-select v-model="data.groupForm.segmentIntervalUnit" placeholder="please select" style="width: 100%">
+        <el-form-item label="Segment interval unit" :label-width="data.formLabelWidth" prop="segmentIntervalUnit">
+          <el-select v-model="groupForm.segmentIntervalUnit" placeholder="please select" style="width: 100%">
             <el-option label="Hour" value="UNIT_HOUR"></el-option>
             <el-option label="Day" value="UNIT_DAY"></el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="segment interval num" :label-width="data.formLabelWidth" prop="segmentIntervalNum">
-          <el-input-number v-model="data.groupForm.segmentIntervalNum" :min="1" />
+        <el-form-item label="Segment interval num" :label-width="data.formLabelWidth" prop="segmentIntervalNum">
+          <el-input-number v-model="groupForm.segmentIntervalNum" :min="1" />
         </el-form-item>
-        <el-form-item label="ttl unit" :label-width="data.formLabelWidth" prop="ttlUnit">
-          <el-select v-model="data.groupForm.ttlUnit" placeholder="please select" style="width: 100%">
+        <el-form-item label="TTL unit" :label-width="data.formLabelWidth" prop="ttlUnit">
+          <el-select v-model="groupForm.ttlUnit" placeholder="please select" style="width: 100%">
             <el-option label="Hour" value="UNIT_HOUR"></el-option>
             <el-option label="Day" value="UNIT_DAY"></el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="ttl num" :label-width="data.formLabelWidth" prop="ttlNum">
-          <el-input-number v-model="data.groupForm.ttlNum" :min="1" />
+        <el-form-item label="TTL num" :label-width="data.formLabelWidth" prop="ttlNum">
+          <el-input-number v-model="groupForm.ttlNum" :min="1" />
+        </el-form-item>
+        <el-form-item label="Stages" :label-width="data.formLabelWidth" prop="stages">
+          <el-button size="small" type="primary" color="#6E38F7" @click="openAddStage">Add Stage</el-button>
+          <el-table style="margin-top: 10px" :data="groupForm.stages" border>
+            <el-table-column v-for="fiels in StageFields" :label="fiels.label" :prop="fiels.key" :key="fiels.key" />
+            <el-table-column label="Operator" width="150">
+              <template #default="scope">
+                <el-button
+                  link
+                  type="primary"
+                  @click.prevent="openEditStage(scope.$index)"
+                  style="color: var(--color-main); font-weight: bold"
+                >
+                  Edit
+                </el-button>
+                <el-popconfirm @confirm="deleteStage(scope.$index)" title="Are you sure to delete this?">
+                  <template #reference>
+                    <el-button link type="danger" style="color: red; font-weight: bold">Delete</el-button>
+                  </template>
+                </el-popconfirm>
+              </template>
+            </el-table-column>
+          </el-table>
         </el-form-item>
       </el-form>
       <div slot="footer" class="dialog-footer footer">
@@ -804,6 +777,7 @@
       <div v-for="m in data.operationMenus" @click="m.fn">{{ m.label }}</div>
     </div>
   </div>
+  <StageEditor ref="stageEditorRef" />
 </template>
 
 <style lang="scss" scoped>
