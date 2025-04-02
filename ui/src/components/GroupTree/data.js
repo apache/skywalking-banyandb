@@ -95,7 +95,7 @@ export const rules = {
   ],
 };
 
-export const defaultProps = {
+export const DefaultProps = {
   children: 'children',
   label: 'name',
 };
@@ -105,14 +105,14 @@ export const TargetTypes = {
   Resources: 'resources',
 };
 // catalog to group type
-export const catalogToGroupType = {
+export const CatalogToGroupType = {
   CATALOG_MEASURE: 'measure',
   CATALOG_STREAM: 'stream',
   CATALOG_PROPERTY: 'property',
 };
 
 // group type to catalog
-export const groupTypeToCatalog = {
+export const GroupTypeToCatalog = {
   measure: 'CATALOG_MEASURE',
   stream: 'CATALOG_STREAM',
   property: 'CATALOG_PROPERTY',

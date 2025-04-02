@@ -33,15 +33,15 @@
   import { ElMessage, ElMessageBox } from 'element-plus';
   import { watch, getCurrentInstance } from '@vue/runtime-core';
   import { useRouter, useRoute } from 'vue-router';
-  import { ref, reactive } from 'vue';
+  import { ref, reactive, onMounted } from 'vue';
   import { Search } from '@element-plus/icons-vue';
   import {
     StageFields,
     rules,
-    defaultProps,
+    DefaultProps,
     TargetTypes,
-    catalogToGroupType,
-    groupTypeToCatalog,
+    CatalogToGroupType,
+    GroupTypeToCatalog,
     TypeMap,
   } from './data';
 
@@ -55,6 +55,7 @@
   const filterText = ref('');
   const currentNode = ref({});
   const resizable = ref();
+  const stageEditorRef = ref(null);
   // Data
   const data = reactive({
     groupLists: [],
@@ -68,18 +69,19 @@
     // create/edit group
     dialogGroupVisible: false,
     setGroup: 'create',
-    groupForm: {
-      name: null,
+    activeNode: '',
+    formLabelWidth: '170px',
+  });
+  const groupForm = reactive({
+      name: '',
       catalog: 'CATALOG_STREAM',
       shardNum: 1,
       segmentIntervalUnit: 'UNIT_DAY',
       segmentIntervalNum: 1,
       ttlUnit: 'UNIT_DAY',
       ttlNum: 3,
-    },
-    activeNode: '',
-    formLabelWidth: '170px',
-  });
+      stages: [],
+    })
 
   // Eventbus
   const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
@@ -95,6 +97,9 @@
 
   // emit event
   const emit = defineEmits(['setWidth']);
+  onMounted(() => {
+    getGroupLists();
+  })
 
   // init data
   function getGroupLists() {
@@ -102,7 +107,7 @@
     loading.value = true;
     getGroupList().then((res) => {
       if (res.status === 200) {
-        data.groupLists = res.data.group.filter((d) => catalogToGroupType[d.catalog] === props.type);
+        data.groupLists = res.data.group.filter((d) => CatalogToGroupType[d.catalog] === props.type);
         let promise = data.groupLists.map((item) => {
           const type = props.type;
           const name = item.metadata.name;
@@ -373,19 +378,20 @@
 
   function openCreateGroup() {
     data.setGroup = 'create';
-    data.groupForm.catalog = groupTypeToCatalog[props.type];
+    groupForm.catalog = GroupTypeToCatalog[props.type];
     data.dialogGroupVisible = true;
   }
   function openEditGroup() {
-    data.groupForm.name = currentNode.value.name;
-    data.groupForm.catalog = currentNode.value.catalog;
-    data.groupForm.shardNum = currentNode.value.resourceOpts?.shardNum;
-    data.groupForm.segmentIntervalUnit = currentNode.value.resourceOpts?.segmentInterval?.unit;
-    data.groupForm.segmentIntervalNum = currentNode.value.resourceOpts?.segmentInterval?.num;
-    data.groupForm.ttlUnit = currentNode.value.resourceOpts?.ttl?.unit;
-    data.groupForm.ttlNum = currentNode.value.resourceOpts?.ttl?.num;
-    data.dialogGroupVisible = true;
-    data.setGroup = 'edit';
+    groupForm.name = currentNode.value.name;
+    groupForm.catalog = currentNode.value.catalog;
+    groupForm.shardNum = currentNode.value.resourceOpts?.shardNum;
+    groupForm.segmentIntervalUnit = currentNode.value.resourceOpts?.segmentInterval?.unit;
+    groupForm.segmentIntervalNum = currentNode.value.resourceOpts?.segmentInterval?.num;
+    groupForm.ttlUnit = currentNode.value.resourceOpts?.ttl?.unit;
+    groupForm.ttlNum = currentNode.value.resourceOpts?.ttl?.num;
+    groupForm.stages = currentNode.value.resourceOpts?.stages;
+    dialogGroupVisible = true;
+    setGroup = 'edit';
   }
   function openCreateResource() {
     const route = {
@@ -493,19 +499,20 @@
           group: {
             metadata: {
               group: '',
-              name: data.groupForm.name,
+              name: groupForm.name,
             },
-            catalog: data.groupForm.catalog,
+            catalog: groupForm.catalog,
             resourceOpts: {
-              shardNum: data.groupForm.shardNum,
+              shardNum: groupForm.shardNum,
               segmentInterval: {
-                unit: data.groupForm.segmentIntervalUnit,
-                num: data.groupForm.segmentIntervalNum,
+                unit: groupForm.segmentIntervalUnit,
+                num: groupForm.segmentIntervalNum,
               },
               ttl: {
-                unit: data.groupForm.ttlUnit,
-                num: data.groupForm.ttlNum,
+                unit: groupForm.ttlUnit,
+                num: groupForm.ttlNum,
               },
+              stages: groupForm.stages,
             },
           },
         };
@@ -534,19 +541,20 @@
           group: {
             metadata: {
               group: '',
-              name: data.groupForm.name,
+              name: groupForm.name,
             },
-            catalog: data.groupForm.catalog,
+            catalog: groupForm.catalog,
             resourceOpts: {
-              shardNum: data.groupForm.shardNum,
+              shardNum: groupForm.shardNum,
               segmentInterval: {
-                unit: data.groupForm.segmentIntervalUnit,
-                num: data.groupForm.segmentIntervalNum,
+                unit: groupForm.segmentIntervalUnit,
+                num: groupForm.segmentIntervalNum,
               },
               ttl: {
-                unit: data.groupForm.ttlUnit,
-                num: data.groupForm.ttlNum,
+                unit: groupForm.ttlUnit,
+                num: groupForm.ttlNum,
               },
+              stages: groupForm.stages,
             },
           },
         };
@@ -570,15 +578,14 @@
   // init form data
   function clearGroupForm() {
     data.dialogGroupVisible = false;
-    data.groupForm = {
-      name: null,
-      catalog: 'CATALOG_STREAM',
-      shardNum: 1,
-      segmentIntervalUnit: 'UNIT_DAY',
-      segmentIntervalNum: 1,
-      ttlUnit: 'UNIT_DAY',
-      ttlNum: 3,
-    };
+      groupForm.name = '';
+      groupForm.catalog = 'CATALOG_STREAM';
+      groupForm.shardNum = 1;
+      groupForm.segmentIntervalUnit = 'UNIT_DAY';
+      groupForm.segmentIntervalNum = 1;
+      groupForm.ttlUnit = 'UNIT_DAY';
+      groupForm.ttlNum = 3;
+      groupForm.stages = [];
   }
   function initActiveNode() {
     const { group, name, type } = route.params;
@@ -616,15 +623,29 @@
     document.removeEventListener('mouseup', onMouseUp);
   }
 
-  getGroupLists();
+  const openAddStage = () => {
+    stageEditorRef.value.openDialog().then((res) => {
+      groupForm.stages.push(res);
+    });
+  };
 
-  $bus.on('resetAside', (data) => {
+  const openEditStage = (index) => {
+    stageEditorRef.value.openDialog(groupForm.stages[index]).then((res) => {
+      groupForm.stages[index] = res;
+    });
+  };
+
+  const deleteStage = (index) => {
+    groupForm.stages.splice(index, 1);
+  };
+
+  $bus.on('resetAside', () => {
     router.push({
       name: `${props.type}Start`,
     });
   });
 
-  $bus.on('refreshAside', (data) => {
+  $bus.on('refreshAside', () => {
     getGroupLists();
   });
   watch(filterText, (val) => {
@@ -651,7 +672,7 @@
           ref="treeRef"
           v-loading="loading"
           :data="data.groupLists"
-          :props="defaultProps"
+          :props="DefaultProps"
           :filter-node-method="filterNode"
           @node-click="viewResources"
           @node-contextmenu="openOperationMenus"
@@ -684,42 +705,59 @@
       v-model="data.dialogGroupVisible"
       :show-close="false"
     >
-      <el-form ref="ruleForm" :rules="rules" :model="data.groupForm" label-position="left">
+      <el-form ref="ruleForm" :rules="rules" :model="groupForm" label-position="left">
         <el-form-item label="group name" :label-width="data.formLabelWidth" prop="name">
-          <el-input :disabled="data.setGroup === 'edit'" v-model="data.groupForm.name" autocomplete="off"> </el-input>
+          <el-input :disabled="data.setGroup === 'edit'" v-model="groupForm.name" autocomplete="off"> </el-input>
         </el-form-item>
         <el-form-item label="group type" :label-width="data.formLabelWidth" prop="catalog">
-          <el-select v-model="data.groupForm.catalog" placeholder="please select" style="width: 100%">
+          <el-select v-model="groupForm.catalog" placeholder="please select" style="width: 100%">
             <el-option label="Stream" value="CATALOG_STREAM"></el-option>
             <el-option label="Measure" value="CATALOG_MEASURE"></el-option>
             <el-option label="Property" value="CATALOG_PROPERTY"></el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="shard num" :label-width="data.formLabelWidth" prop="shardNum">
-          <el-input-number v-model="data.groupForm.shardNum" :min="1" />
+          <el-input-number v-model="groupForm.shardNum" :min="1" />
         </el-form-item>
         <el-form-item label="segment interval unit" :label-width="data.formLabelWidth" prop="segmentIntervalUnit">
-          <el-select v-model="data.groupForm.segmentIntervalUnit" placeholder="please select" style="width: 100%">
+          <el-select v-model="groupForm.segmentIntervalUnit" placeholder="please select" style="width: 100%">
             <el-option label="Hour" value="UNIT_HOUR"></el-option>
             <el-option label="Day" value="UNIT_DAY"></el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="segment interval num" :label-width="data.formLabelWidth" prop="segmentIntervalNum">
-          <el-input-number v-model="data.groupForm.segmentIntervalNum" :min="1" />
+          <el-input-number v-model="groupForm.segmentIntervalNum" :min="1" />
         </el-form-item>
         <el-form-item label="ttl unit" :label-width="data.formLabelWidth" prop="ttlUnit">
-          <el-select v-model="data.groupForm.ttlUnit" placeholder="please select" style="width: 100%">
+          <el-select v-model="groupForm.ttlUnit" placeholder="please select" style="width: 100%">
             <el-option label="Hour" value="UNIT_HOUR"></el-option>
             <el-option label="Day" value="UNIT_DAY"></el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="ttl num" :label-width="data.formLabelWidth" prop="ttlNum">
-          <el-input-number v-model="data.groupForm.ttlNum" :min="1" />
+          <el-input-number v-model="groupForm.ttlNum" :min="1" />
         </el-form-item>
         <el-form-item label="stages" :label-width="data.formLabelWidth" prop="stages">
-          <el-button size="small" type="primary" color="#6E38F7" @click="openAddSatge">Add Satge</el-button>
-          <el-table style="margin-top: 10px" :data="data.groupForm.stages" border>
+          <el-button size="small" type="primary" color="#6E38F7" @click="openAddStage">Add Stage</el-button>
+          <el-table style="margin-top: 10px" :data="groupForm.stages" border>
             <el-table-column v-for="fiels in StageFields" :label="fiels.label" :prop="fiels.key" :key="fiels.key" />
+            <el-table-column label="Operator" width="150">
+              <template #default="scope">
+                <el-button
+                  link
+                  type="primary"
+                  @click.prevent="openEditStage(scope.$index)"
+                  style="color: var(--color-main); font-weight: bold"
+                  >
+                    Edit
+                  </el-button>
+                  <el-popconfirm @confirm="deleteStage(scope.$index)" title="Are you sure to delete this?">
+                    <template #reference>
+                      <el-button link type="danger" style="color: red; font-weight: bold">Delete</el-button>
+                    </template>
+                  </el-popconfirm>
+                </template>
+            </el-table-column>
           </el-table>
         </el-form-item>
       </el-form>
