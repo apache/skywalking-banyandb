@@ -19,12 +19,12 @@
 
 export const StageFields = [
   { label: 'Name', key: 'name' },
-  { label: 'Shard Number', key: 'shardNum' },
-  { label: 'TTL Unit', key: 'ttlUnit' },
-  { label: 'TTL Number', key: 'ttlNum' },
-  { label: 'Segment Interval Unit', key: 'segmentIntervalUnit' },
-  { label: 'Segment Interval Number', key: 'segmentIntervalNum' },
-  { label: 'Node Selector', key: 'nodeSelector' },
+  { label: 'Shard number', key: 'shardNum' },
+  { label: 'TTL unit', key: 'ttlUnit' },
+  { label: 'TTL number', key: 'ttlNum' },
+  { label: 'Segment interval unit', key: 'segmentIntervalUnit' },
+  { label: 'Segment interval number', key: 'segmentIntervalNum' },
+  { label: 'Node selector', key: 'nodeSelector' },
   { label: 'Close', key: 'close' },
 ];
 export const StageConfig = {

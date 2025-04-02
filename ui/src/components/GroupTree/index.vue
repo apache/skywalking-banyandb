@@ -33,7 +33,7 @@
   import { ElMessage, ElMessageBox } from 'element-plus';
   import { watch, getCurrentInstance } from '@vue/runtime-core';
   import { useRouter, useRoute } from 'vue-router';
-  import { ref, reactive, onMounted } from 'vue';
+  import { ref, reactive, onMounted, computed } from 'vue';
   import { Search } from '@element-plus/icons-vue';
   import StageEditor from './StageEditor.vue';
   import {
@@ -72,6 +72,7 @@
     setGroup: 'create',
     activeNode: '',
     formLabelWidth: '170px',
+    clickIndex: NaN,
   });
   const groupForm = reactive({
     name: '',
@@ -83,7 +84,40 @@
     ttlNum: 3,
     stages: [],
   });
-
+  const getGroupForm = computed(() => ({
+    group: {
+      metadata: {
+        group: '',
+        name: groupForm.name,
+      },
+      catalog: groupForm.catalog,
+      resourceOpts: {
+        shardNum: groupForm.shardNum,
+        segmentInterval: {
+          unit: groupForm.segmentIntervalUnit,
+          num: groupForm.segmentIntervalNum,
+        },
+        ttl: {
+          unit: groupForm.ttlUnit,
+          num: groupForm.ttlNum,
+        },
+        stages: groupForm.stages.map((d) => ({
+          name: d.name,
+          shardNum: d.shardNum,
+          nodeSelector: d.nodeSelector,
+          close: d.close,
+          ttl: {
+            unit: d.ttlUnit,
+            num: d.ttlNum,
+          },
+          segmentInterval: {
+            unit: d.segmentIntervalUnit,
+            num: d.segmentIntervalNum,
+          },
+        })),
+      },
+    },
+  }));
   // Eventbus
   const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
 
@@ -501,46 +535,11 @@
   function confirmForm() {
     data.setGroup === 'create' ? createGroupFunction() : editGroupFunction();
   }
-  function handleGroup() {
-    return {
-      group: {
-        metadata: {
-          group: '',
-          name: groupForm.name,
-        },
-        catalog: groupForm.catalog,
-        resourceOpts: {
-          shardNum: groupForm.shardNum,
-          segmentInterval: {
-            unit: groupForm.segmentIntervalUnit,
-            num: groupForm.segmentIntervalNum,
-          },
-          ttl: {
-            unit: groupForm.ttlUnit,
-            num: groupForm.ttlNum,
-          },
-          stages: groupForm.stages.map((d) => ({
-            name: d.name,
-            shardNum: d.shardNum,
-            nodeSelector: d.nodeSelector,
-            close: d.close,
-            ttl: {
-              unit: d.ttlUnit,
-              num: d.ttlNum,
-            },
-            segmentInterval: {
-              unit: d.segmentIntervalUnit,
-              num: d.segmentIntervalNum,
-            },
-          })),
-        },
-      },
-    };
-  }
+
   function createGroupFunction() {
     ruleForm.value.validate((valid) => {
       if (valid) {
-        createGroup(handleGroup())
+        createGroup(getGroupForm.value)
           .then((res) => {
             if (res.status === 200) {
               getGroupLists();
@@ -558,10 +557,10 @@
     });
   }
   function editGroupFunction() {
-    const name = data.groupLists[data.clickIndex].metadata.name;
+    const name = currentNode.value.name;
     ruleForm.value.validate((valid) => {
       if (valid) {
-        editGroup(name, handleGroup())
+        editGroup(name, getGroupForm.value)
           .then((res) => {
             if (res.status === 200) {
               getGroupLists();
@@ -702,7 +701,7 @@
       <div class="resizer" @mousedown="mouseDown"></div>
     </div>
     <el-dialog
-      width="1000px"
+      width="1100px"
       center
       :title="`${data.setGroup} group`"
       v-model="data.dialogGroupVisible"
@@ -710,38 +709,38 @@
       :destroy-on-close="true"
     >
       <el-form ref="ruleForm" :rules="Rules" :model="groupForm" label-position="left">
-        <el-form-item label="group name" :label-width="data.formLabelWidth" prop="name">
+        <el-form-item label="Group name" :label-width="data.formLabelWidth" prop="name">
           <el-input :disabled="data.setGroup === 'edit'" v-model="groupForm.name" autocomplete="off"> </el-input>
         </el-form-item>
-        <el-form-item label="group type" :label-width="data.formLabelWidth" prop="catalog">
+        <el-form-item label="Group type" :label-width="data.formLabelWidth" prop="catalog">
           <el-select v-model="groupForm.catalog" placeholder="please select" style="width: 100%">
             <el-option label="Stream" value="CATALOG_STREAM"></el-option>
             <el-option label="Measure" value="CATALOG_MEASURE"></el-option>
             <el-option label="Property" value="CATALOG_PROPERTY"></el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="shard num" :label-width="data.formLabelWidth" prop="shardNum">
+        <el-form-item label="Shard num" :label-width="data.formLabelWidth" prop="shardNum">
           <el-input-number v-model="groupForm.shardNum" :min="1" />
         </el-form-item>
-        <el-form-item label="segment interval unit" :label-width="data.formLabelWidth" prop="segmentIntervalUnit">
+        <el-form-item label="Segment interval unit" :label-width="data.formLabelWidth" prop="segmentIntervalUnit">
           <el-select v-model="groupForm.segmentIntervalUnit" placeholder="please select" style="width: 100%">
             <el-option label="Hour" value="UNIT_HOUR"></el-option>
             <el-option label="Day" value="UNIT_DAY"></el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="segment interval num" :label-width="data.formLabelWidth" prop="segmentIntervalNum">
+        <el-form-item label="Segment interval num" :label-width="data.formLabelWidth" prop="segmentIntervalNum">
           <el-input-number v-model="groupForm.segmentIntervalNum" :min="1" />
         </el-form-item>
-        <el-form-item label="ttl unit" :label-width="data.formLabelWidth" prop="ttlUnit">
+        <el-form-item label="TTL unit" :label-width="data.formLabelWidth" prop="ttlUnit">
           <el-select v-model="groupForm.ttlUnit" placeholder="please select" style="width: 100%">
             <el-option label="Hour" value="UNIT_HOUR"></el-option>
             <el-option label="Day" value="UNIT_DAY"></el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="ttl num" :label-width="data.formLabelWidth" prop="ttlNum">
+        <el-form-item label="TTL num" :label-width="data.formLabelWidth" prop="ttlNum">
           <el-input-number v-model="groupForm.ttlNum" :min="1" />
         </el-form-item>
-        <el-form-item label="stages" :label-width="data.formLabelWidth" prop="stages">
+        <el-form-item label="Stages" :label-width="data.formLabelWidth" prop="stages">
           <el-button size="small" type="primary" color="#6E38F7" @click="openAddStage">Add Stage</el-button>
           <el-table style="margin-top: 10px" :data="groupForm.stages" border>
             <el-table-column v-for="fiels in StageFields" :label="fiels.label" :prop="fiels.key" :key="fiels.key" />
