@@ -26,11 +26,13 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 )
 
@@ -103,7 +105,7 @@ func searchSeries(ctx context.Context, qo queryOptions, segment storage.Segment[
 }
 
 func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *option], qo queryOptions,
-	l *logger.Logger, pm *protector.Memory,
+	l *logger.Logger, pm *protector.Memory, tr *index.RangeOpts,
 ) (bc *blockScanner, err error) {
 	tabs := segment.Tables()
 	finalizers := make([]scanFinalizer, 0, len(tabs)+1)
@@ -119,17 +121,21 @@ func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *opt
 	var size, offset int
 	filterIndex := make(map[uint64]posting.List)
 	for i := range tabs {
+		filter, filterTS, err := search(ctx, qo, qo.sortedSids, tabs[i], tr)
+		if err != nil {
+			return nil, err
+		}
+		if filter != nil && filter.IsEmpty() {
+			continue
+		}
+		minTimestamp, maxTimestamp := updateTimeRange(filterTS, qo.minTimestamp, qo.maxTimestamp)
 		snp := tabs[i].currentSnapshot()
-		parts, size = snp.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
+		parts, size = snp.getParts(parts, minTimestamp, maxTimestamp)
 		if size < 1 {
 			snp.decRef()
 			continue
 		}
 		finalizers = append(finalizers, snp.decRef)
-		filter, err := search(ctx, qo, qo.sortedSids, tabs[i])
-		if err != nil {
-			return nil, err
-		}
 		for j := offset; j < offset+size; j++ {
 			filterIndex[parts[j].partMetadata.ID] = filter
 		}
@@ -155,22 +161,37 @@ func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *opt
 	}, nil
 }
 
-func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, tw *tsTable) (posting.List, error) {
+func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, tw *tsTable, tr *index.RangeOpts) (pl posting.List, plTS posting.List, err error) {
 	if qo.Filter == nil || qo.Filter == logicalstream.ENode {
-		return nil, nil
+		return nil, nil, nil
+	}
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		span, _ := tracer.StartSpan(ctx, "scan local index")
+		span.Tagf("sids", "%d", len(seriesList))
+		span.Tag("tab", tw.p.String())
+		defer func() {
+			if pl != nil {
+				span.Tagf("got", "%d", pl.Len())
+			}
+			if err != nil {
+				span.Error(err)
+			}
+			span.Stop()
+		}()
 	}
 	sid := make([]uint64, len(seriesList))
 	for i := range seriesList {
 		sid[i] = uint64(seriesList[i])
 	}
-	pl, err := tw.Index().Search(ctx, sid, qo.Filter)
+	pl, plTS, err = tw.Index().Search(ctx, sid, qo.Filter, tr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if pl == nil {
-		return roaring.DummyPostingList, nil
+		return roaring.DummyPostingList, roaring.DummyPostingList, nil
 	}
-	return pl, nil
+	return pl, plTS, nil
 }
 
 type scanFinalizer func()

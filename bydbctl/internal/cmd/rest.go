@@ -229,7 +229,7 @@ func parseTime(timestamp string) (time.Time, error) {
 	if len(timestamp) < 1 {
 		return time.Time{}, errors.New("time is empty")
 	}
-	t, errAbsoluteTime := time.Parse(timestamp, time.RFC3339)
+	t, errAbsoluteTime := time.Parse(time.RFC3339, timestamp)
 	if errAbsoluteTime == nil {
 		return t, nil
 	}
