@@ -22,4 +22,6 @@ type FsConfig struct {
 	S3ConfigFilePath     string
 	S3CredentialFilePath string
 	S3ProfileName        string
+	S3StorageClass       string
+	S3ChecksumAlgorithm  string
 }

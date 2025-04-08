@@ -46,19 +46,17 @@ import (
 )
 
 type backupOptions struct {
-	streamRoot           string
-	measureRoot          string
-	propertyRoot         string
-	dest                 string
-	timeStyle            string
-	schedule             string
-	gRPCAddr             string
-	cert                 string
-	s3ConfigFilePath     string
-	s3CredentialFilePath string
-	s3ProfileName        string
-	enableTLS            bool
-	insecure             bool
+	fsConfig     remote.FsConfig
+	gRPCAddr     string
+	cert         string
+	timeStyle    string
+	schedule     string
+	streamRoot   string
+	measureRoot  string
+	propertyRoot string
+	dest         string
+	enableTLS    bool
+	insecure     bool
 }
 
 // NewBackupCommand creates a new backup command.
@@ -117,27 +115,19 @@ func NewBackupCommand() *cobra.Command {
 		"",
 		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
 	)
-	cmd.Flags().StringVar(&backupOpts.s3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
-	cmd.Flags().StringVar(&backupOpts.s3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
-	cmd.Flags().StringVar(&backupOpts.s3ProfileName, "s3-profile", "", "S3 profile name")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ProfileName, "s3-profile", "", "S3 profile name")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ChecksumAlgorithm, "s3-checksum-algorithm", "", "S3 checksum algorithm")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3StorageClass, "s3-storage-class", "", "S3 upload storage class")
 	return cmd
-}
-
-func loadFSConfig(options backupOptions) remote.FsConfig {
-	fsConfig := remote.FsConfig{
-		S3ConfigFilePath:     options.s3ConfigFilePath,
-		S3CredentialFilePath: options.s3CredentialFilePath,
-		S3ProfileName:        options.s3ProfileName,
-	}
-	return fsConfig
 }
 
 func backupAction(options backupOptions) error {
 	if options.dest == "" {
 		return errors.New("dest is required")
 	}
-	fsConfig := loadFSConfig(options)
-	fs, err := newFS(options.dest, &fsConfig)
+	fs, err := newFS(options.dest, &options.fsConfig)
 	if err != nil {
 		return err
 	}

@@ -35,9 +35,11 @@ import (
 
 // todo: Maybe we can bring in minio, oss
 type s3FS struct {
-	client   *s3.Client
-	bucket   string
-	basePath string
+	client            *s3.Client
+	bucket            string
+	basePath          string
+	checksumAlgorithm types.ChecksumAlgorithm
+	storageClass      types.StorageClass
 }
 
 // NewFS creates a new instance of the file system for accessing S3 storage.
@@ -59,11 +61,19 @@ func NewFS(path string, userConfig *remote.FsConfig) (remote.FS, error) {
 
 	client := s3.NewFromConfig(awsCfg)
 
-	return &s3FS{
+	fs := &s3FS{
 		client:   client,
 		bucket:   bucket,
 		basePath: basePath,
-	}, nil
+	}
+
+	if userConfig.S3ChecksumAlgorithm != "" {
+		fs.checksumAlgorithm = types.ChecksumAlgorithm(userConfig.S3ChecksumAlgorithm)
+	}
+	if userConfig.S3StorageClass != "" {
+		fs.storageClass = types.StorageClass(userConfig.S3StorageClass)
+	}
+	return fs, nil
 }
 
 func buildAWSCfgOptions(userConfig *remote.FsConfig) []func(*config.LoadOptions) error {
@@ -112,7 +122,8 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 		Bucket:            aws.String(s.bucket),
 		Key:               aws.String(key),
 		Body:              data,
-		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+		ChecksumAlgorithm: s.checksumAlgorithm,
+		StorageClass:      s.storageClass,
 	})
 	if err != nil {
 		return err
