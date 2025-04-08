@@ -333,7 +333,7 @@ func queryAllMeasurements(svcs *services, expectedSize int, newTag []string, new
 		switch d := data.(type) {
 		case *streamv1.QueryResponse:
 			if len(d.Elements) != expectedSize {
-				GinkgoWriter.Printf("actual: %s", d.Elements)
+				GinkgoWriter.Printf("expected: %d actual: %d \n", expectedSize, len(d.Elements))
 				return false
 			}
 			resp = d

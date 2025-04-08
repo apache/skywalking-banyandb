@@ -158,22 +158,38 @@ export function deleteSecondaryDataModel(type, group, name) {
 
 export function fetchProperties(data) {
   return request({
-    url: `/api/v1/property/query`,
+    url: `/api/v1/property/data/query`,
     method: 'post',
     data,
   });
 }
 
-export function deleteProperty(group, name, id) {
+export function deleteProperty(group, name) {
   return request({
-    url: `/api/v1/property/${group}/${name}/${id}`,
+    url: `/api/v1/property/schema/${group}/${name}`,
     method: 'delete',
+  });
+}
+
+export function updateProperty(group, name, data) {
+  return request({
+    url: `/api/v1/property/schema/${group}/${name}`,
+    method: 'put',
+    data: data,
+  });
+}
+
+export function createProperty(data) {
+  return request({
+    url: `/api/v1/property/schema`,
+    method: 'post',
+    data: data,
   });
 }
 
 export function applyProperty(group, name, id, data) {
   return request({
-    url: `/api/v1/property/${group}/${name}/${id}`,
+    url: `/api/v1/property/data/${group}/${name}/${id}`,
     method: 'put',
     data: data,
   });

@@ -65,7 +65,9 @@ func (s *server) handleEOF(stream clusterv1.Service_SendServer, topic *bus.Topic
 	}
 	if errSend := stream.Send(resp); errSend != nil {
 		s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send write response")
-		s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+		if writeEntity != nil {
+			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+		}
 	}
 }
 

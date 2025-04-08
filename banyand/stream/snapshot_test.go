@@ -534,3 +534,26 @@ func TestSnapshotFunctionality(t *testing.T) {
 		}
 	}
 }
+
+func TestGetDisjointParts(t *testing.T) {
+	p1 := &part{partMetadata: partMetadata{ID: 1, MinTimestamp: 1, MaxTimestamp: 3}}
+	p2 := &part{partMetadata: partMetadata{ID: 2, MinTimestamp: 2, MaxTimestamp: 4}}
+	p3 := &part{partMetadata: partMetadata{ID: 3, MinTimestamp: 5, MaxTimestamp: 7}}
+	p4 := &part{partMetadata: partMetadata{ID: 4, MinTimestamp: 6, MaxTimestamp: 8}}
+
+	parts := []*part{p1, p2, p3, p4}
+
+	groupsAsc := getDisjointParts(parts, true)
+	require.Equal(t, 2, len(groupsAsc), "expected 2 groups in ascending order")
+	require.Equal(t, 2, len(groupsAsc[0]), "first group should have 2 parts")
+	require.Equal(t, 2, len(groupsAsc[1]), "second group should have 2 parts")
+	require.Equal(t, p1, groupsAsc[0][0])
+	require.Equal(t, p2, groupsAsc[0][1])
+	require.Equal(t, p3, groupsAsc[1][0])
+	require.Equal(t, p4, groupsAsc[1][1])
+
+	groupsDesc := getDisjointParts(parts, false)
+	require.Equal(t, 2, len(groupsDesc), "expected 2 groups in descending order")
+	require.Equal(t, groupsAsc[1], groupsDesc[0], "first group in descending order should match second group in ascending order")
+	require.Equal(t, groupsAsc[0], groupsDesc[1], "second group in descending order should match first group in ascending order")
+}

@@ -82,6 +82,13 @@ func (p *postingsList) IsEmpty() bool {
 	return p.bitmap.IsEmpty()
 }
 
+func (p *postingsList) Min() (uint64, error) {
+	if p.IsEmpty() {
+		return 0, posting.ErrListEmpty
+	}
+	return p.bitmap.Minimum(), nil
+}
+
 func (p *postingsList) Max() (uint64, error) {
 	if p.IsEmpty() {
 		return 0, posting.ErrListEmpty

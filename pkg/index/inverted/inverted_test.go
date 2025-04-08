@@ -18,9 +18,11 @@
 package inverted
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/blugelabs/bluge/numeric"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -141,7 +143,7 @@ func TestStore_Match(t *testing.T) {
 		name := strings.Join(tt.matches, "-")
 		t.Run(name, func(t *testing.T) {
 			tester := assert.New(t)
-			list, err := s.Match(serviceName, tt.matches, &modelv1.Condition_MatchOption{
+			list, _, err := s.Match(serviceName, tt.matches, &modelv1.Condition_MatchOption{
 				Operator: tt.operator,
 			})
 			if tt.wantErr {
@@ -196,7 +198,7 @@ func TestStore_SeriesMatch(t *testing.T) {
 	for _, tt := range tests {
 		name := strings.Join(tt.matches, " and ")
 		t.Run(name, func(t *testing.T) {
-			list, err := s.Match(serviceName, tt.matches, &modelv1.Condition_MatchOption{
+			list, _, err := s.Match(serviceName, tt.matches, &modelv1.Condition_MatchOption{
 				Operator: tt.operator,
 			})
 			if tt.wantErr {
@@ -346,7 +348,7 @@ func TestStore_NumericMatch(t *testing.T) {
 		},
 	)
 	tester.NoError(s.Batch(batch))
-	l, err := s.MatchTerms(index.NewIntField(durationName, 50))
+	l, _, err := s.MatchTerms(index.NewIntField(durationName, 50))
 	tester.NoError(err)
 	tester.NotNil(l)
 	tester.True(roaring.NewPostingListWithInitialData(1).Equal(l))
@@ -399,4 +401,157 @@ func TestStore_TakeFileSnapshot(t *testing.T) {
 	fileSystem := fs.NewLocalFileSystem()
 	entries := fileSystem.ReadDir(snapshotDir)
 	tester.True(len(entries) > 0, "Expected snapshot to produce files")
+}
+
+func TestStore_TimeRangeFiltering(t *testing.T) {
+	tester := require.New(t)
+	path, fn := setUp(tester)
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+
+	var batch index.Batch
+	serviceName := index.FieldKey{
+		IndexRuleID: 6,
+		SeriesID:    common.SeriesID(11),
+	}
+
+	ts1 := int64(1609459200000000000) // 2021-01-01
+	ts2 := int64(1609545600000000000) // 2021-01-02
+	ts3 := int64(1609632000000000000) // 2021-01-03
+	ts4 := int64(1609718400000000000) // 2021-01-04
+
+	batch.Documents = append(batch.Documents,
+		index.Document{
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "svc1"),
+			},
+			DocID:     1,
+			Timestamp: ts1,
+		},
+		index.Document{
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "svc2"),
+			},
+			DocID:     2,
+			Timestamp: ts2,
+		},
+		index.Document{
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "svc3"),
+			},
+			DocID:     3,
+			Timestamp: ts3,
+		},
+		index.Document{
+			Fields: []index.Field{
+				index.NewStringField(serviceName, "svc4"),
+			},
+			DocID:     4,
+			Timestamp: ts4,
+		},
+	)
+	tester.NoError(s.Batch(batch))
+
+	// Define a time range for querying (2021-01-02 to 2021-01-03)
+	timeRange := &index.RangeOpts{
+		Lower:         &index.FloatTermValue{Value: numeric.Int64ToFloat64(ts2)},
+		Upper:         &index.FloatTermValue{Value: numeric.Int64ToFloat64(ts3)},
+		IncludesLower: true,
+		IncludesUpper: true,
+	}
+
+	t.Run("Iterator with time range", func(_ *testing.T) {
+		fieldKey := serviceName
+		fieldKey.TimeRange = timeRange
+
+		iter, err := s.Iterator(context.Background(), fieldKey, index.RangeOpts{}, modelv1.Sort_SORT_ASC, 100)
+		tester.NoError(err)
+		defer iter.Close()
+
+		docIDs := make(map[uint64]bool)
+		timestamps := make(map[int64]bool)
+		for iter.Next() {
+			doc := iter.Val()
+			docIDs[doc.DocID] = true
+			timestamps[doc.Timestamp] = true
+		}
+		tester.Equal(2, len(docIDs), "Expected exactly 2 documents")
+		tester.True(docIDs[2], "Expected DocID 2 to be in results")
+		tester.True(docIDs[3], "Expected DocID 3 to be in results")
+
+		tester.Equal(2, len(timestamps), "Expected exactly 2 timestamps")
+		tester.True(timestamps[ts2], "Expected timestamp for 2021-01-02 to be in results")
+		tester.True(timestamps[ts3], "Expected timestamp for 2021-01-03 to be in results")
+	})
+
+	t.Run("MatchField with time range", func(_ *testing.T) {
+		fieldKey := serviceName
+		fieldKey.TimeRange = timeRange
+
+		list, timestamps, err := s.MatchField(fieldKey)
+		tester.NoError(err)
+
+		expected := roaring.NewPostingListWithInitialData(2, 3)
+		tester.Equal(expected, list)
+
+		expectedTimestamps := roaring.NewPostingListWithInitialData(uint64(ts2), uint64(ts3))
+		tester.Equal(expectedTimestamps, timestamps, "Timestamps should match documents within the time range")
+	})
+
+	t.Run("MatchTerms with time range", func(_ *testing.T) {
+		fieldKey := serviceName
+		fieldKey.TimeRange = timeRange
+
+		field := index.NewStringField(fieldKey, "svc2")
+		list, timestamps, err := s.MatchTerms(field)
+		tester.NoError(err)
+
+		expected := roaring.NewPostingListWithInitialData(2)
+		tester.Equal(expected, list)
+
+		expectedTimestamps := roaring.NewPostingListWithInitialData(uint64(ts2))
+		tester.Equal(expectedTimestamps, timestamps, "Timestamps should match the document with DocID 2")
+
+		field = index.NewStringField(fieldKey, "svc1")
+		list, timestamps, err = s.MatchTerms(field)
+		tester.NoError(err)
+
+		tester.True(list.IsEmpty())
+		tester.True(timestamps.IsEmpty(), "Timestamps should be empty for empty result set")
+	})
+
+	t.Run("Match with time range", func(_ *testing.T) {
+		fieldKey := serviceName
+		fieldKey.TimeRange = timeRange
+		fieldKey.Analyzer = index.AnalyzerKeyword
+
+		matches := []string{"svc"}
+		list, timestamps, err := s.Match(fieldKey, matches, nil)
+		tester.NoError(err)
+
+		tester.True(list.IsEmpty())
+		tester.True(timestamps.IsEmpty(), "Timestamps should be empty for empty result set")
+
+		matches = []string{"svc3"}
+		list, timestamps, err = s.Match(fieldKey, matches, nil)
+		tester.NoError(err)
+		expected := roaring.NewPostingListWithInitialData(3)
+		tester.Equal(expected, list)
+
+		expectedTimestamps := roaring.NewPostingListWithInitialData(uint64(ts3))
+		tester.Equal(expectedTimestamps, timestamps, "Timestamps should match the document with DocID 3")
+
+		matches = []string{"svc4"}
+		list, timestamps, err = s.Match(fieldKey, matches, nil)
+		tester.NoError(err)
+		tester.True(list.IsEmpty())
+		tester.True(timestamps.IsEmpty(), "Timestamps should be empty for empty result set")
+	})
 }
