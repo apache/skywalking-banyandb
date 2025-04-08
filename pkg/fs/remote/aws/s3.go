@@ -21,7 +21,6 @@ package aws
 import (
 	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"io"
 	"path"
 	"strings"
@@ -29,27 +28,31 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
 // todo: Maybe we can bring in minio, oss
 type s3FS struct {
-	client   *s3.Client
-	bucket   string
-	basePath string
+	client            *s3.Client
+	bucket            string
+	basePath          string
+	checksumAlgorithm types.ChecksumAlgorithm
+	storageClass      types.StorageClass
 }
 
 // NewFS creates a new instance of the file system for accessing S3 storage.
-func NewFS(path string) (remote.FS, error) {
+func NewFS(path string, userConfig *remote.FsConfig) (remote.FS, error) {
 	bucket, basePath := extractBucketAndBase(path)
 	if bucket == "" {
 		return nil, fmt.Errorf("bucket name not provided")
 	}
-
-	opts := []func(*config.LoadOptions) error{
-		config.WithClientLogMode(aws.LogRetries),
+	if userConfig == nil {
+		return nil, fmt.Errorf("userConfig is nil")
 	}
+
+	opts := buildAWSCfgOptions(userConfig)
 
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(), opts...)
 	if err != nil {
@@ -58,11 +61,37 @@ func NewFS(path string) (remote.FS, error) {
 
 	client := s3.NewFromConfig(awsCfg)
 
-	return &s3FS{
+	fs := &s3FS{
 		client:   client,
 		bucket:   bucket,
 		basePath: basePath,
-	}, nil
+	}
+
+	if userConfig.S3ChecksumAlgorithm != "" {
+		fs.checksumAlgorithm = types.ChecksumAlgorithm(userConfig.S3ChecksumAlgorithm)
+	}
+	if userConfig.S3StorageClass != "" {
+		fs.storageClass = types.StorageClass(userConfig.S3StorageClass)
+	}
+	return fs, nil
+}
+
+func buildAWSCfgOptions(userConfig *remote.FsConfig) []func(*config.LoadOptions) error {
+	opts := []func(*config.LoadOptions) error{
+		config.WithClientLogMode(aws.LogRetries),
+	}
+
+	if userConfig.S3ProfileName != "" {
+		opts = append(opts, config.WithSharedConfigProfile(userConfig.S3ProfileName))
+	}
+	if userConfig.S3ConfigFilePath != "" {
+		opts = append(opts, config.WithSharedConfigFiles([]string{userConfig.S3ConfigFilePath}))
+	}
+	if userConfig.S3CredentialFilePath != "" {
+		opts = append(opts, config.WithSharedCredentialsFiles([]string{userConfig.S3CredentialFilePath}))
+	}
+
+	return opts
 }
 
 func extractBucketAndBase(path string) (bucket, basePath string) {
@@ -93,7 +122,8 @@ func (s *s3FS) Upload(ctx context.Context, path string, data io.Reader) error {
 		Bucket:            aws.String(s.bucket),
 		Key:               aws.String(key),
 		Body:              data,
-		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+		ChecksumAlgorithm: s.checksumAlgorithm,
+		StorageClass:      s.storageClass,
 	})
 	if err != nil {
 		return err
