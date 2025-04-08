@@ -70,7 +70,8 @@ func newRunCommand() *cobra.Command {
 			if source == "" {
 				return errors.New("source is required")
 			}
-			fs, err := newFS(source)
+			cfg := new(remote.FsConfig)
+			fs, err := newFS(source, cfg)
 			if err != nil {
 				return err
 			}

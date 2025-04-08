@@ -30,6 +30,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
 func TestNewFS(t *testing.T) {
@@ -39,12 +40,12 @@ func TestNewFS(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid file scheme", "file:///tmp", false},
-		{"valid s3 scheme", "s3:///tmp", false},
 		{"malformed URL", ":invalid", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := newFS(tt.dest)
+			cfg := new(remote.FsConfig)
+			_, err := newFS(tt.dest, cfg)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("newFS() error = %v, wantErr %v", err, tt.wantErr)
 			}

@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
 // NewTimeDirCommand creates a new time-dir command.
@@ -60,7 +61,8 @@ func newListCmd() *cobra.Command {
 			}
 
 			// Create a remote file system client using the provided URL.
-			fs, err := newFS(dest)
+			cfg := new(remote.FsConfig)
+			fs, err := newFS(dest, cfg)
 			if err != nil {
 				return err
 			}
