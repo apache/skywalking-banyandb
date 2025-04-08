@@ -193,9 +193,19 @@ const router = createRouter({
               },
             },
             {
-              path: '/banyandb/property/operator-read/:type/:operator/:group',
+              path: '/banyandb/property/operator-read/:type/:operator/:group/:name',
               name: 'property',
               component: () => import('@/components/Property/PropertyRead.vue'),
+            },
+            {
+              path: '/banyandb/property/operator-edit/:type/:operator/:group/:name',
+              name: 'edit-property',
+              component: () => import('@/views/Property/createEdit.vue'),
+            },
+            {
+              path: '/banyandb/property/operator-create/:type/:operator/:group',
+              name: 'create-property',
+              component: () => import('@/views/Property/createEdit.vue'),
             },
           ],
         },

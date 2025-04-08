@@ -86,9 +86,10 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	eg, ok := dst[gn]
 	if !ok {
 		eg = &elementsInGroup{
-			tsdb:     tsdb,
-			tables:   make([]*elementsInTable, 0),
-			segments: make([]storage.Segment[*tsTable, option], 0),
+			tsdb:        tsdb,
+			tables:      make([]*elementsInTable, 0),
+			segments:    make([]storage.Segment[*tsTable, option], 0),
+			docIDsAdded: make(map[uint64]struct{}), // Initialize the map
 		}
 		dst[gn] = eg
 	}
@@ -215,10 +216,15 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		Timestamp: ts,
 	})
 
-	eg.docs = append(eg.docs, index.Document{
-		DocID:        uint64(series.ID),
-		EntityValues: series.Buffer,
-	})
+	docID := uint64(series.ID)
+	if _, exists := eg.docIDsAdded[docID]; !exists {
+		eg.docs = append(eg.docs, index.Document{
+			DocID:        docID,
+			EntityValues: series.Buffer,
+		})
+		eg.docIDsAdded[docID] = struct{}{}
+	}
+
 	return dst, nil
 }
 

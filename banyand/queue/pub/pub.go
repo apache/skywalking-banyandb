@@ -225,8 +225,14 @@ func New(metadata metadata.Repo) queue.Client {
 		registered: make(map[string]*databasev1.Node),
 		handlers:   make(map[bus.Topic]schema.EventHandler),
 		closer:     run.NewCloser(1),
-		log:        logger.GetLogger("server-queue-pub"),
 	}
+}
+
+// NewWithoutMetadata returns a new queue client without metadata.
+func NewWithoutMetadata() queue.Client {
+	p := New(nil)
+	p.(*pub).log = logger.GetLogger("queue-client")
+	return p
 }
 
 func (*pub) Name() string {
@@ -234,7 +240,10 @@ func (*pub) Name() string {
 }
 
 func (p *pub) PreRun(context.Context) error {
-	p.metadata.RegisterHandler("queue-client", schema.KindNode, p)
+	if p.metadata != nil {
+		p.metadata.RegisterHandler("queue-client", schema.KindNode, p)
+	}
+	p.log = logger.GetLogger("server-queue-pub")
 	return nil
 }
 

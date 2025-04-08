@@ -36,9 +36,6 @@
     const name = data.tabsList[data.activeTabIndex].route.params.name
       ? data.tabsList[data.activeTabIndex].route.params.name
       : null;
-    if (group) {
-      $bus.emit('changeAside', { group, name });
-    }
   }
   function removeTab(index) {
     const len = data.tabsList.length;
@@ -80,7 +77,6 @@
       add.type = type === 'index-rule' || type === 'index-rule-binding' ? `Create-${type}` : 'Create';
     }
     data.tabsList.push(add);
-    $bus.emit('changeAside', { group, name });
   }
   $bus.on('AddTabs', (tab) => {
     const index = data.tabsList.findIndex((item) => {
