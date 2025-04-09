@@ -215,8 +215,7 @@ func (m *mockHandler) OnDelete(_ schema.Metadata) {
 }
 
 func newPub() *pub {
-	p := New(nil).(*pub)
-	p.log = logger.GetLogger("pub")
+	p := NewWithoutMetadata().(*pub)
 	p.Register(data.TopicStreamWrite, &mockHandler{})
 	p.Register(data.TopicMeasureWrite, &mockHandler{})
 	return p

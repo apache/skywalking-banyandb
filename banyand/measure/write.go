@@ -87,9 +87,11 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	dpg, ok := dst[gn]
 	if !ok {
 		dpg = &dataPointsInGroup{
-			tsdb:     tsdb,
-			tables:   make([]*dataPointsInTable, 0),
-			segments: make([]storage.Segment[*tsTable, option], 0),
+			tsdb:            tsdb,
+			tables:          make([]*dataPointsInTable, 0),
+			segments:        make([]storage.Segment[*tsTable, option], 0),
+			metadataDocMap:  make(map[uint64]int),
+			indexModeDocMap: make(map[uint64]int),
 		}
 		dst[gn] = dpg
 	}
@@ -146,7 +148,13 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			Version:      req.DataPoint.Version,
 			Timestamp:    ts,
 		}
-		dpg.indexModeDocs = append(dpg.indexModeDocs, doc)
+
+		if pos, exists := dpg.indexModeDocMap[doc.DocID]; exists {
+			dpg.indexModeDocs[pos] = doc
+		} else {
+			dpg.indexModeDocMap[doc.DocID] = len(dpg.indexModeDocs)
+			dpg.indexModeDocs = append(dpg.indexModeDocs, doc)
+		}
 		return dst, nil
 	}
 
@@ -157,7 +165,13 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		EntityValues: series.Buffer,
 		Fields:       fields,
 	}
-	dpg.metadataDocs = append(dpg.metadataDocs, doc)
+
+	if pos, exists := dpg.metadataDocMap[doc.DocID]; exists {
+		dpg.metadataDocs[pos] = doc
+	} else {
+		dpg.metadataDocMap[doc.DocID] = len(dpg.metadataDocs)
+		dpg.metadataDocs = append(dpg.metadataDocs, doc)
+	}
 
 	if p, _ := w.schemaRepo.topNProcessorMap.Load(getKey(stm.schema.GetMetadata())); p != nil {
 		p.(*topNProcessorManager).onMeasureWrite(uint64(series.ID), uint32(shardID), &measurev1.InternalWriteRequest{
