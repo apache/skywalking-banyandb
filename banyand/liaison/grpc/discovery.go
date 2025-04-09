@@ -18,7 +18,6 @@
 package grpc
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -82,7 +81,8 @@ func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []
 	if !existed {
 		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
 	}
-	entityLocator, existed := ds.entityRepo.getLocator(getID(metadata))
+	id := getID(metadata)
+	entityLocator, existed := ds.entityRepo.getLocator(id)
 	if !existed {
 		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
 	}
@@ -91,20 +91,8 @@ func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []
 		return nil, nil, common.ShardID(0), err
 	}
 
-	topNAggregations, err := ds.metadataRepo.TopNAggregationRegistry().ListTopNAggregation(context.TODO(), schema.ListOpt{Group: metadata.Group})
-	if err != nil {
-		return nil, nil, common.ShardID(0), err
-	}
-	isTopNSourceMeaure := func(topNAggregations []*databasev1.TopNAggregation, measureName string) bool {
-		for _, topNAggregation := range topNAggregations {
-			if measureName == topNAggregation.SourceMeasure.Name {
-				return true
-			}
-		}
-		return false
-	}
-	if isTopNSourceMeaure(topNAggregations, metadata.Name) {
-		shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(getID(metadata))
+	if _, ok := ds.shardingKeyRepo.shardingKeysMap[id]; ok {
+		shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(id)
 		if !existed {
 			return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the sharding key locator by: %v", metadata)
 		}
@@ -314,6 +302,9 @@ func (s *shardingKeyRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 		return
 	}
 	measure := schemaMetadata.Spec.(*databasev1.Measure)
+	if measure.GetShardingKey() == nil {
+		return
+	}
 	modRevision = measure.GetMetadata().GetModRevision()
 	sl = partition.NewShardingKeyLocator(measure.TagFamilies, measure.ShardingKey, modRevision)
 	id = getID(measure.GetMetadata())
@@ -322,7 +313,7 @@ func (s *shardingKeyRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 			Str("action", "add_or_update").
 			Stringer("subject", id).
 			Str("kind", "measure").
-			Msg("entity added or updated")
+			Msg("sharding key added or updated")
 	}
 	tl := make([]partition.TagLocator, 0, len(sl.TagLocators))
 	for _, l := range sl.TagLocators {
@@ -343,13 +334,16 @@ func (s *shardingKeyRepo) OnDelete(schemaMetadata schema.Metadata) {
 		return
 	}
 	measure := schemaMetadata.Spec.(*databasev1.Measure)
+	if measure.GetShardingKey() == nil {
+		return
+	}
 	id = getID(measure.GetMetadata())
 	if le := s.log.Debug(); le.Enabled() {
 		le.
 			Str("action", "delete").
 			Stringer("subject", id).
 			Str("kind", "measure").
-			Msg("entity deleted")
+			Msg("sharding key deleted")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
