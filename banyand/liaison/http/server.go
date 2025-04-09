@@ -20,21 +20,18 @@ package http
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/go-chi/chi/v5"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/grpc"
+	gmux "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -46,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 var (
@@ -72,7 +70,7 @@ type Server interface {
 
 type server struct {
 	creds        credentials.TransportCredentials
-	tlsReloader  *TLSReloader // Added for dynamic certificate reloading
+	tlsReloader  *pkgtls.Reloader
 	l            *logger.Logger
 	clientCloser context.CancelFunc
 	mux          *chi.Mux
@@ -148,7 +146,7 @@ func (p *server) PreRun(_ context.Context) error {
 	if p.tls {
 		p.l.Debug().Str("certFile", p.certFile).Str("keyFile", p.keyFile).Msg("Initializing TLSReloader for HTTP")
 		var err error
-		p.tlsReloader, err = NewTLSReloader(p.certFile, p.keyFile, p.l)
+		p.tlsReloader, err = pkgtls.NewReloader(p.certFile, p.keyFile, p.l)
 		if err != nil {
 			p.l.Error().Err(err).Msg("Failed to initialize TLSReloader for HTTP")
 			return err
@@ -170,10 +168,7 @@ func (p *server) PreRun(_ context.Context) error {
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 	if p.tls {
-		p.srv.TLSConfig = &tls.Config{
-			GetCertificate: p.tlsReloader.GetCertificate, // Use dynamic certificate loading
-			MinVersion:     tls.VersionTLS12,
-		}
+		p.srv.TLSConfig = p.tlsReloader.GetTLSConfig()
 	}
 
 	return nil
@@ -182,11 +177,11 @@ func (p *server) PreRun(_ context.Context) error {
 func (p *server) Serve() run.StopNotify {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
-	opts := make([]grpc.DialOption, 0, 1)
+	opts := make([]gmux.DialOption, 0, 1)
 	if p.creds == nil {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		opts = append(opts, gmux.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
-		opts = append(opts, grpc.WithTransportCredentials(p.creds))
+		opts = append(opts, gmux.WithTransportCredentials(p.creds))
 	}
 	client, err := healthcheck.NewClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
@@ -305,172 +300,5 @@ func serveFileContents(file string, files http.FileSystem) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		http.ServeContent(w, r, fi.Name(), fi.ModTime(), index)
-	}
-}
-
-// TLSReloader manages dynamic reloading of TLS certificates and keys for the HTTP server.
-type TLSReloader struct {
-	watcher  *fsnotify.Watcher // 8 bytes
-	cert     *tls.Certificate  // 8 bytes
-	log      *logger.Logger    // 8 bytes
-	stopCh   chan struct{}     // 8 bytes
-	certFile string            // 16 bytes
-	keyFile  string            // 16 bytes
-	mu       sync.RWMutex      // 24 bytes
-}
-
-// NewTLSReloader creates a new TLSReloader instance for the HTTP server.
-func NewTLSReloader(certFile, keyFile string, log *logger.Logger) (*TLSReloader, error) {
-	fmt.Println("HTTP NewTLSReloader called with certFile=", certFile, "keyFile=", keyFile) // Temporary debug
-	log.Warn().Str("certFile", certFile).Str("keyFile", keyFile).Msg("HTTP NewTLSReloader called")
-
-	if certFile == "" || keyFile == "" {
-		return nil, errors.New("certFile and keyFile must be provided")
-	}
-
-	if log == nil {
-		return nil, errors.New("logger must not be nil")
-	}
-
-	// Initialize the watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create fsnotify watcher")
-	}
-
-	// Load initial certificate
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		watcher.Close()
-		return nil, errors.Wrap(err, "failed to load initial TLS certificate")
-	}
-
-	log.Info().Str("certFile", certFile).Str("keyFile", keyFile).Msg("Successfully loaded initial TLS certificates for HTTP")
-
-	tr := &TLSReloader{
-		certFile: certFile,
-		keyFile:  keyFile,
-		cert:     &cert,
-		log:      log,
-		watcher:  watcher,
-		stopCh:   make(chan struct{}),
-	}
-
-	return tr, nil
-}
-
-// Start begins monitoring the TLS certificate and key files for changes.
-func (tr *TLSReloader) Start() error {
-	fmt.Println("HTTP Starting TLS file monitoring for certFile=", tr.certFile, "keyFile=", tr.keyFile) // Temporary debug
-	tr.log.Warn().Str("certFile", tr.certFile).Str("keyFile", tr.keyFile).Msg("HTTP Starting TLS file monitoring")
-
-	// Add files to the watcher
-	err := tr.watcher.Add(tr.certFile)
-	if err != nil {
-		tr.log.Error().Err(err).Str("file", tr.certFile).Msg("Failed to add cert file to watcher")
-		return errors.Wrapf(err, "failed to watch cert file: %s", tr.certFile)
-	}
-	tr.log.Debug().Str("file", tr.certFile).Msg("Added cert file to watcher")
-
-	err = tr.watcher.Add(tr.keyFile)
-	if err != nil {
-		tr.log.Error().Err(err).Str("file", tr.keyFile).Msg("Failed to add key file to watcher")
-		return errors.Wrapf(err, "failed to watch key file: %s", tr.keyFile)
-	}
-	tr.log.Debug().Str("file", tr.keyFile).Msg("Added key file to watcher")
-
-	// Start the file watching loop in a goroutine
-	go tr.watchFiles()
-
-	return nil
-}
-
-// watchFiles monitors the certificate and key files for changes and reloads credentials.
-func (tr *TLSReloader) watchFiles() {
-	fmt.Println("HTTP TLS file watcher loop started") // Temporary debug
-	tr.log.Warn().Msg("HTTP TLS file watcher loop started")
-	for {
-		select {
-		case event, ok := <-tr.watcher.Events:
-			if !ok {
-				tr.log.Warn().Msg("Watcher events channel closed unexpectedly")
-				return
-			}
-			// Log the event for debugging
-			tr.log.Debug().Str("file", event.Name).Str("op", event.Op.String()).Msg("Detected file event")
-
-			// Handle file removal (e.g., during replacement)
-			if event.Op&fsnotify.Remove == fsnotify.Remove {
-				tr.log.Info().Str("file", event.Name).Msg("File removed, re-adding to watcher")
-				if event.Name == tr.certFile {
-					if err := tr.watcher.Add(tr.certFile); err != nil {
-						tr.log.Error().Err(err).Str("file", tr.certFile).Msg("Failed to re-add cert file to watcher")
-					} else {
-						tr.log.Debug().Str("file", tr.certFile).Msg("Re-added cert file to watcher")
-					}
-				} else if event.Name == tr.keyFile {
-					if err := tr.watcher.Add(tr.keyFile); err != nil {
-						tr.log.Error().Err(err).Str("file", tr.keyFile).Msg("Failed to re-add key file to watcher")
-					} else {
-						tr.log.Debug().Str("file", tr.keyFile).Msg("Re-added key file to watcher")
-					}
-				}
-			}
-
-			// Reload credentials on write, rename, or create events
-			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Rename == fsnotify.Rename || event.Op&fsnotify.Create == fsnotify.Create {
-				tr.log.Info().Str("file", event.Name).Msg("Detected uploaded/changed certificate")
-				if err := tr.reloadCertificate(); err != nil {
-					tr.log.Error().Err(err).Str("file", event.Name).Msg("Failed to reload TLS certificate")
-				} else {
-					tr.log.Info().Str("file", event.Name).Msg("Successfully updated TLS certificate")
-				}
-			}
-
-		case err, ok := <-tr.watcher.Errors:
-			if !ok {
-				tr.log.Warn().Msg("Watcher errors channel closed unexpectedly")
-				return
-			}
-			tr.log.Error().Err(err).Msg("Error in file watcher")
-
-		case <-tr.stopCh:
-			tr.log.Info().Msg("Stopping TLS file watcher")
-			return
-		}
-	}
-}
-
-// reloadCertificate reloads the TLS certificate from the certificate and key files.
-func (tr *TLSReloader) reloadCertificate() error {
-	tr.log.Debug().Msg("Attempting to reload TLS certificate")
-	newCert, err := tls.LoadX509KeyPair(tr.certFile, tr.keyFile)
-	if err != nil {
-		tr.log.Error().Err(err).Str("certFile", tr.certFile).Str("keyFile", tr.keyFile).Msg("Failed to reload TLS certificate")
-		return errors.Wrap(err, "failed to reload TLS certificate")
-	}
-
-	tr.mu.Lock()
-	tr.cert = &newCert
-	tr.mu.Unlock()
-
-	tr.log.Debug().Msg("TLS certificate updated in memory")
-	return nil
-}
-
-// GetCertificate returns the current TLS certificate for the HTTP server.
-func (tr *TLSReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-	tr.mu.RLock()
-	defer tr.mu.RUnlock()
-	tr.log.Debug().Msg("Fetching current TLS certificate")
-	return tr.cert, nil
-}
-
-// Stop gracefully stops the TLS reloader.
-func (tr *TLSReloader) Stop() {
-	tr.log.Info().Msg("Stopping TLSReloader for HTTP")
-	close(tr.stopCh)
-	if err := tr.watcher.Close(); err != nil {
-		tr.log.Error().Err(err).Msg("Failed to close fsnotify watcher")
 	}
 }
