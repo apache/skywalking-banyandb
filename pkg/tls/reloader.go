@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package tls provides common TLS utilities for HTTP and gRPC servers.
+// Package tls provides common TLS utilities for HTTP and gRPC servers .
 package tls
 
 import (
