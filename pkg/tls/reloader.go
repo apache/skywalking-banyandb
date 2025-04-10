@@ -163,7 +163,7 @@ func (r *Reloader) reloadCertificate() error {
 	return nil
 }
 
-// GetCertificate returns the current TLS certificate for TLS Config's GetCertificate callback.
+// getCertificate returns the current TLS certificate for TLS Config's GetCertificate callback.
 func (r *Reloader) getCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
