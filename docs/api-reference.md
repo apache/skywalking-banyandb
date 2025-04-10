@@ -80,6 +80,7 @@
     - [IndexRuleBinding](#banyandb-database-v1-IndexRuleBinding)
     - [Measure](#banyandb-database-v1-Measure)
     - [Property](#banyandb-database-v1-Property)
+    - [ShardingKey](#banyandb-database-v1-ShardingKey)
     - [Stream](#banyandb-database-v1-Stream)
     - [Subject](#banyandb-database-v1-Subject)
     - [TagFamilySpec](#banyandb-database-v1-TagFamilySpec)
@@ -1277,6 +1278,7 @@ Measure intends to store data point
 | interval | [string](#string) |  | interval indicates how frequently to send a data point valid time units are &#34;ns&#34;, &#34;us&#34; (or &#34;µs&#34;), &#34;ms&#34;, &#34;s&#34;, &#34;m&#34;, &#34;h&#34;, &#34;d&#34;. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the measure is updated |
 | index_mode | [bool](#bool) |  | index_mode specifies whether the data should be stored exclusively in the index, meaning it will not be stored in the data storage system. |
+| sharding_key | [ShardingKey](#banyandb-database-v1-ShardingKey) |  | sharding_key determines the distribution of TopN-related data. |
 
 
 
@@ -1294,6 +1296,21 @@ Property stores the user defined data
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
 | tags | [TagSpec](#banyandb-database-v1-TagSpec) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
+
+
+
+
+
+
+<a name="banyandb-database-v1-ShardingKey"></a>
+
+### ShardingKey
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tag_names | [string](#string) | repeated |  |
 
 
 

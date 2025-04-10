@@ -39,7 +39,7 @@ func Initialize(addr string, now time.Time) {
 	// stream
 	casesstreamdata.Write(conn, "sw", now, interval)
 	casesstreamdata.Write(conn, "duplicated", now, 0)
-	// // measure
+	// measure
 	interval = time.Minute
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data_old.json", now.AddDate(0, 0, -2), interval)
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data.json", now, interval)

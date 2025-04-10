@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.9.0
+
+### Features
+
+- Add sharding_key for TopNAggregation source measure
+
 ## 0.8.0
 
 ### Features
@@ -12,7 +18,7 @@ Release Notes.
 - Measure: Introduce "index_mode" to save data exclusively in the series index, ideal for non-timeseries measures.
 - Index: Use numeric index type to support Int and Float
 - TopN: Group top n pre-calculation result by the group key in the new introduced `_top_n_result` measure, which is used to store the pre-calculation result.
-- Index Mode: Index `measure_nam` and `tags` in `entity` to improve the query performance.
+- Index Mode: Index `measure_name` and `tags` in `entity` to improve the query performance.
 - Encoding: Improve the performance of encoding and decoding the variable-length int64.
 - Index: Add a cache to improve the performance of the series index write.
 - Read cpu quota and limit from the cgroup file system to set gomaxprocs.
