@@ -46,6 +46,11 @@
       "entity_id"
     ]
   },
+  "sharding_key": {
+    "tag_names": [
+      "service_id"
+    ]
+  },
   "interval": "1m",
   "updated_at": "2021-04-15T01:30:15.01Z"
 }
