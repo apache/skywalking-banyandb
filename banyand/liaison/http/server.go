@@ -31,7 +31,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/grpc"
+	gmux "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 var (
@@ -69,6 +70,7 @@ type Server interface {
 
 type server struct {
 	creds        credentials.TransportCredentials
+	tlsReloader  *pkgtls.Reloader
 	l            *logger.Logger
 	clientCloser context.CancelFunc
 	mux          *chi.Mux
@@ -134,27 +136,52 @@ func (p *server) GetPort() *uint32 {
 
 func (p *server) PreRun(_ context.Context) error {
 	p.l = logger.GetLogger(p.Name())
+	p.l.Info().Str("level", p.l.GetLevel().String()).Msg("Logger initialized")
+
+	// Log flag values after parsing
+	p.l.Debug().Bool("tls", p.tls).Str("certFile", p.certFile).Str("keyFile", p.keyFile).Msg("Flag values after parsing")
+
+	// Initialize TLSReloader if TLS is enabled
+	p.l.Debug().Bool("tls", p.tls).Msg("HTTP TLS flag is set")
+	if p.tls {
+		p.l.Debug().Str("certFile", p.certFile).Str("keyFile", p.keyFile).Msg("Initializing TLSReloader for HTTP")
+		var err error
+		p.tlsReloader, err = pkgtls.NewReloader(p.certFile, p.keyFile, p.l)
+		if err != nil {
+			p.l.Error().Err(err).Msg("Failed to initialize TLSReloader for HTTP")
+			return err
+		}
+	} else {
+		p.l.Warn().Msg("HTTP TLS is disabled, skipping TLSReloader initialization")
+	}
+
 	p.mux = chi.NewRouter()
 
 	if err := p.setRootPath(); err != nil {
 		return err
 	}
+
+	// Configure the HTTP server with dynamic TLS if enabled
 	p.srv = &http.Server{
 		Addr:              p.listenAddr,
 		Handler:           p.mux,
 		ReadHeaderTimeout: 3 * time.Second,
 	}
+	if p.tls {
+		p.srv.TLSConfig = p.tlsReloader.GetTLSConfig()
+	}
+
 	return nil
 }
 
 func (p *server) Serve() run.StopNotify {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
-	opts := make([]grpc.DialOption, 0, 1)
+	opts := make([]gmux.DialOption, 0, 1)
 	if p.creds == nil {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		opts = append(opts, gmux.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
-		opts = append(opts, grpc.WithTransportCredentials(p.creds))
+		opts = append(opts, gmux.WithTransportCredentials(p.creds))
 	}
 	client, err := healthcheck.NewClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
@@ -187,7 +214,14 @@ func (p *server) Serve() run.StopNotify {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		var err error
 		if p.tls {
-			err = p.srv.ListenAndServeTLS(p.certFile, p.keyFile)
+			// Start the TLSReloader file monitoring
+			if startErr := p.tlsReloader.Start(); startErr != nil {
+				p.l.Error().Err(startErr).Msg("Failed to start TLSReloader for HTTP")
+				close(p.stopCh)
+				return
+			}
+			// Use TLS with dynamic certificate loading
+			err = p.srv.ListenAndServeTLS("", "") // Empty strings because TLSConfig is set
 		} else {
 			err = p.srv.ListenAndServe()
 		}
@@ -201,6 +235,9 @@ func (p *server) Serve() run.StopNotify {
 }
 
 func (p *server) GracefulStop() {
+	if p.tlsReloader != nil {
+		p.tlsReloader.Stop()
+	}
 	if err := p.srv.Close(); err != nil {
 		p.l.Error().Err(err)
 	}
