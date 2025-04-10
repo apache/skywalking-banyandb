@@ -48,8 +48,8 @@ type discoveryService struct {
 
 func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
 	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
-	er := &entityRepo{entitiesMap: make(map[identity]partition.EntityLocator)}
-	sr := &shardingKeyRepo{shardingKeysMap: make(map[identity]partition.ShardingKeyLocator)}
+	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator)}
+	sr := &shardingKeyRepo{shardingKeysMap: make(map[identity]partition.Locator)}
 	return &discoveryService{
 		groupRepo:       gr,
 		entityRepo:      er,
@@ -91,18 +91,13 @@ func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []
 		return nil, nil, common.ShardID(0), err
 	}
 
-	if _, ok := ds.shardingKeyRepo.shardingKeysMap[id]; ok {
-		shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(id)
-		if !existed {
-			return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the sharding key locator by: %v", metadata)
-		}
-		if shardingKeyLocator.IsEmpty() {
-			return entity, entityValues, shardID, nil
-		}
-		shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
-		if err != nil {
-			return nil, nil, common.ShardID(0), err
-		}
+	shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(id)
+	if !existed {
+		return entity, entityValues, shardID, nil
+	}
+	_, _, shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
+	if err != nil {
+		return nil, nil, common.ShardID(0), err
 	}
 	return entity, entityValues, shardID, nil
 }
@@ -189,25 +184,25 @@ var _ schema.EventHandler = (*entityRepo)(nil)
 type entityRepo struct {
 	schema.UnimplementedOnInitHandler
 	log         *logger.Logger
-	entitiesMap map[identity]partition.EntityLocator
+	entitiesMap map[identity]partition.Locator
 	sync.RWMutex
 }
 
 // OnAddOrUpdate implements schema.EventHandler.
 func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
-	var el partition.EntityLocator
+	var l partition.Locator
 	var id identity
 	var modRevision int64
 	switch schemaMetadata.Kind {
 	case schema.KindMeasure:
 		measure := schemaMetadata.Spec.(*databasev1.Measure)
 		modRevision = measure.GetMetadata().GetModRevision()
-		el = partition.NewEntityLocator(measure.TagFamilies, measure.Entity, modRevision)
+		l = partition.NewEntityLocator(measure.TagFamilies, measure.Entity, modRevision)
 		id = getID(measure.GetMetadata())
 	case schema.KindStream:
 		stream := schemaMetadata.Spec.(*databasev1.Stream)
 		modRevision = stream.GetMetadata().GetModRevision()
-		el = partition.NewEntityLocator(stream.TagFamilies, stream.Entity, modRevision)
+		l = partition.NewEntityLocator(stream.TagFamilies, stream.Entity, modRevision)
 		id = getID(stream.GetMetadata())
 	default:
 		return
@@ -228,16 +223,9 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 			Str("kind", kind).
 			Msg("entity added or updated")
 	}
-	en := make([]partition.TagLocator, 0, len(el.TagLocators))
-	for _, l := range el.TagLocators {
-		en = append(en, partition.TagLocator{
-			FamilyOffset: l.FamilyOffset,
-			TagOffset:    l.TagOffset,
-		})
-	}
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
-	e.entitiesMap[id] = partition.EntityLocator{TagLocators: en, ModRevision: modRevision}
+	e.entitiesMap[id] = partition.Locator{TagLocators: l.TagLocators, ModRevision: modRevision}
 }
 
 // OnDelete implements schema.EventHandler.
@@ -274,12 +262,12 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 	delete(e.entitiesMap, id)
 }
 
-func (e *entityRepo) getLocator(id identity) (partition.EntityLocator, bool) {
+func (e *entityRepo) getLocator(id identity) (partition.Locator, bool) {
 	e.RWMutex.RLock()
 	defer e.RWMutex.RUnlock()
 	el, ok := e.entitiesMap[id]
 	if !ok {
-		return partition.EntityLocator{}, false
+		return partition.Locator{}, false
 	}
 	return el, true
 }
@@ -289,25 +277,22 @@ var _ schema.EventHandler = (*shardingKeyRepo)(nil)
 type shardingKeyRepo struct {
 	schema.UnimplementedOnInitHandler
 	log             *logger.Logger
-	shardingKeysMap map[identity]partition.ShardingKeyLocator
+	shardingKeysMap map[identity]partition.Locator
 	sync.RWMutex
 }
 
 // OnAddOrUpdate implements schema.EventHandler.
 func (s *shardingKeyRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
-	var sl partition.ShardingKeyLocator
-	var id identity
-	var modRevision int64
 	if schemaMetadata.Kind != schema.KindMeasure {
 		return
 	}
 	measure := schemaMetadata.Spec.(*databasev1.Measure)
-	if measure.GetShardingKey() == nil {
+	shardingKey := measure.GetShardingKey()
+	if shardingKey == nil || len(shardingKey.GetTagNames()) == 0 {
 		return
 	}
-	modRevision = measure.GetMetadata().GetModRevision()
-	sl = partition.NewShardingKeyLocator(measure.TagFamilies, measure.ShardingKey, modRevision)
-	id = getID(measure.GetMetadata())
+	l := partition.NewShardingKeyLocator(measure.TagFamilies, measure.ShardingKey)
+	id := getID(measure.GetMetadata())
 	if le := s.log.Debug(); le.Enabled() {
 		le.
 			Str("action", "add_or_update").
@@ -315,29 +300,22 @@ func (s *shardingKeyRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 			Str("kind", "measure").
 			Msg("sharding key added or updated")
 	}
-	tl := make([]partition.TagLocator, 0, len(sl.TagLocators))
-	for _, l := range sl.TagLocators {
-		tl = append(tl, partition.TagLocator{
-			FamilyOffset: l.FamilyOffset,
-			TagOffset:    l.TagOffset,
-		})
-	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
-	s.shardingKeysMap[id] = partition.ShardingKeyLocator{TagLocators: tl, ModRevision: modRevision}
+	s.shardingKeysMap[id] = partition.Locator{TagLocators: l.TagLocators}
 }
 
 // OnDelete implements schema.EventHandler.
 func (s *shardingKeyRepo) OnDelete(schemaMetadata schema.Metadata) {
-	var id identity
 	if schemaMetadata.Kind != schema.KindMeasure {
 		return
 	}
 	measure := schemaMetadata.Spec.(*databasev1.Measure)
-	if measure.GetShardingKey() == nil {
+	shardingKey := measure.GetShardingKey()
+	if shardingKey == nil || len(shardingKey.GetTagNames()) == 0 {
 		return
 	}
-	id = getID(measure.GetMetadata())
+	id := getID(measure.GetMetadata())
 	if le := s.log.Debug(); le.Enabled() {
 		le.
 			Str("action", "delete").
@@ -350,12 +328,12 @@ func (s *shardingKeyRepo) OnDelete(schemaMetadata schema.Metadata) {
 	delete(s.shardingKeysMap, id)
 }
 
-func (s *shardingKeyRepo) getLocator(id identity) (partition.ShardingKeyLocator, bool) {
+func (s *shardingKeyRepo) getLocator(id identity) (partition.Locator, bool) {
 	s.RWMutex.RLock()
 	defer s.RWMutex.RUnlock()
 	sl, ok := s.shardingKeysMap[id]
 	if !ok {
-		return partition.ShardingKeyLocator{}, false
+		return partition.Locator{}, false
 	}
 	return sl, true
 }
