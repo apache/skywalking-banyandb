@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/fadvis"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -41,6 +42,11 @@ const (
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
 )
+
+// Index directory name used in this package, might be different from the one in stream package
+const indexDirName = "index"
+
+// Functions SetMemoryProtector and SetFadvisThreshold have been moved to fadvis_adapt.go
 
 type part struct {
 	primary              fs.Reader
@@ -184,6 +190,12 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
+	// Skip metadata index directory
+	if filepath.Base(path) == indexDirName {
+		return
+	}
+
+	// Flush all data files
 	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(path, metaFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(path, primaryFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.timestamps.Buf, filepath.Join(path, timestampsFilename), storage.FilePerm)
@@ -197,7 +209,20 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 
+	// Sync to disk
 	fileSystem.SyncPath(path)
+
+	// Apply fadvis to large files
+	primaryPath := filepath.Join(path, primaryFilename)
+	fadvis.ApplyIfLarge(primaryPath)
+
+	timestampsPath := filepath.Join(path, timestampsFilename)
+	fadvis.ApplyIfLarge(timestampsPath)
+
+	for name := range mp.tagFamilies {
+		fieldPath := filepath.Join(path, name+tagFamiliesFilenameExt)
+		fadvis.ApplyIfLarge(fieldPath)
+	}
 }
 
 func uncompressedDataPointSizeBytes(index int, dps *dataPoints) uint64 {
@@ -332,4 +357,12 @@ func partPath(root string, epoch uint64) string {
 
 func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
+}
+
+func (p *part) mustFlush() {
+	// Create directories
+	p.fileSystem.MkdirIfNotExist(p.path, storage.DirPerm)
+
+	// Sync the directory to ensure all files are written
+	p.fileSystem.SyncPath(p.path)
 }

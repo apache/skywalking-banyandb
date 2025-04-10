@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/fadvis"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -41,6 +42,8 @@ const (
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
 )
+
+// Functions SetMemoryProtector and SetFadvisThreshold have been moved to fadvis_adapt.go
 
 type part struct {
 	primary              fs.Reader
@@ -167,6 +170,12 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
+	// Skip metadata index directory
+	if filepath.Base(path) == elementIndexFilename {
+		return
+	}
+
+	// Flush all data files
 	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(path, metaFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(path, primaryFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.timestamps.Buf, filepath.Join(path, timestampsFilename), storage.FilePerm)
@@ -179,7 +188,20 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 
+	// Sync to disk
 	fileSystem.SyncPath(path)
+
+	// Apply fadvis to large files
+	primaryPath := filepath.Join(path, primaryFilename)
+	fadvis.ApplyIfLarge(primaryPath)
+
+	timestampsPath := filepath.Join(path, timestampsFilename)
+	fadvis.ApplyIfLarge(timestampsPath)
+
+	for name := range mp.tagFamilies {
+		fieldPath := filepath.Join(path, name+tagFamiliesFilenameExt)
+		fadvis.ApplyIfLarge(fieldPath)
+	}
 }
 
 func uncompressedElementSizeBytes(index int, es *elements) uint64 {

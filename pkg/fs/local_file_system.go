@@ -509,6 +509,14 @@ func (file *LocalFile) Close() error {
 	return nil
 }
 
+// GetFD returns the file descriptor of the file.
+func (file *LocalFile) GetFD() int {
+	if file.file == nil {
+		return -1
+	}
+	return int(file.file.Fd())
+}
+
 type seqReader struct {
 	reader   *bufio.Reader
 	fileName string

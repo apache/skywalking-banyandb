@@ -20,8 +20,9 @@
 package fadvis
 
 import (
-	"golang.org/x/sys/unix"
 	"os"
+
+	"golang.org/x/sys/unix"
 )
 
 // Apply applies POSIX_FADV_DONTNEED to the specified file path.
@@ -40,4 +41,30 @@ func Apply(path string) error {
 	}
 
 	return unix.Fadvise(int(f.Fd()), 0, 0, unix.FADV_DONTNEED)
+}
+
+// MustApply applies POSIX_FADV_DONTNEED to the specified file path and panics on error
+func MustApply(path string) {
+	if err := Apply(path); err != nil {
+		panic(err)
+	}
+}
+
+// ApplySequential applies POSIX_FADV_SEQUENTIAL to the specified file path.
+// This hint tells the kernel that the application is going to read from the file sequentially.
+func ApplySequential(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return unix.Fadvise(int(f.Fd()), 0, 0, unix.FADV_SEQUENTIAL)
+}
+
+// MustApplySequential applies POSIX_FADV_SEQUENTIAL to the specified file path and panics on error
+func MustApplySequential(path string) {
+	if err := ApplySequential(path); err != nil {
+		panic(err)
+	}
 }

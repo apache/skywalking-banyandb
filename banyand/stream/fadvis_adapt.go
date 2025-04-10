@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -14,29 +14,21 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-//go:build !linux
-// +build !linux
 
-package fadvis
+// Package stream implements the stream module for BanyanDB.
+package stream
 
-// Apply is a no-op on non-Linux platforms.
-// The POSIX_FADV_DONTNEED functionality is specific to Linux.
-func Apply(path string) error {
-	// No-op on non-Linux platforms
-	return nil
+import (
+	"github.com/apache/skywalking-banyandb/banyand/fadvis"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
+)
+
+// SetMemoryProtector sets the global Memory protector instance
+func SetMemoryProtector(mp *protector.Memory) {
+	fadvis.SetMemoryProtector(mp)
 }
 
-// MustApply is a no-op on non-Linux platforms.
-func MustApply(path string) {
-	// No-op
-}
-
-// ApplySequential is a no-op on non-Linux platforms.
-func ApplySequential(path string) error {
-	return nil
-}
-
-// MustApplySequential is a no-op on non-Linux platforms.
-func MustApplySequential(path string) {
-	// No-op
+// SetFadvisThreshold sets the large file threshold
+func SetFadvisThreshold(threshold int64) {
+	fadvis.SetThreshold(threshold)
 }
