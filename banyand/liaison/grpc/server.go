@@ -20,9 +20,12 @@ package grpc
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"net"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
@@ -46,6 +49,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
+	"google.golang.org/grpc/credentials"
 )
 
 const defaultRecvSize = 10 << 20
@@ -253,7 +257,13 @@ func (s *server) Serve() run.StopNotify {
 			close(s.stopCh)
 			return s.stopCh
 		}
-		opts = append(opts, grpclib.Creds(s.tlsReloader.GetGRPCTransportCredentials()))
+		s.log.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).Msg("Starting TLS file monitoring")
+		tlsConfig := &tls.Config{
+			GetCertificate: s.tlsReloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpclib.Creds(creds))
 	}
 	grpcPanicRecoveryHandler := func(p any) (err error) {
 		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")

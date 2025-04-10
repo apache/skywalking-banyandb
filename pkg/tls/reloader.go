@@ -111,13 +111,8 @@ func (r *Reloader) watchFiles() {
 				return
 			}
 
-			// Log the event for debugging
 			r.log.Debug().Str("file", event.Name).Str("op", event.Op.String()).Msg("Detected file event")
 
-			// We need to watch for Remove operations because certificate rotation tools often
-			// remove the old file and create a new one with the same name, rather than just
-			// modifying the existing file. Without re-adding the file to the watcher after removal,
-			// we would lose track of future changes to that file.
 			if event.Op&fsnotify.Remove == fsnotify.Remove {
 				r.log.Info().Str("file", event.Name).Msg("File removed, re-adding to watcher")
 				if event.Name == r.certFile {
@@ -135,7 +130,6 @@ func (r *Reloader) watchFiles() {
 				}
 			}
 
-			// Reload credentials on write, rename, or create events
 			if event.Op&fsnotify.Write == fsnotify.Write ||
 				event.Op&fsnotify.Rename == fsnotify.Rename ||
 				event.Op&fsnotify.Create == fsnotify.Create {
