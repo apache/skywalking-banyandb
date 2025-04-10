@@ -20,7 +20,6 @@ package grpc
 
 import (
 	"context"
-	"crypto/tls"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -256,10 +255,7 @@ func (s *server) Serve() run.StopNotify {
 			return s.stopCh
 		}
 		s.log.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).Msg("Starting TLS file monitoring")
-		tlsConfig := &tls.Config{
-			GetCertificate: s.tlsReloader.GetCertificate,
-			MinVersion:     tls.VersionTLS12,
-		}
+		tlsConfig := s.tlsReloader.GetTLSConfig()
 		creds := credentials.NewTLS(tlsConfig)
 		opts = append(opts, grpclib.Creds(creds))
 	}

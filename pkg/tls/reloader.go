@@ -188,7 +188,7 @@ func (r *Reloader) Stop() {
 // GetTLSConfig returns a TLS config using this reloader's certificate.
 func (r *Reloader) GetTLSConfig() *tls.Config {
 	return &tls.Config{
-		GetCertificate: r.GetCertificate,
+		GetCertificate: r.getCertificate,
 		MinVersion:     tls.VersionTLS12,
 		NextProtos:     []string{"h2"},
 	}
@@ -197,4 +197,11 @@ func (r *Reloader) GetTLSConfig() *tls.Config {
 // GetGRPCTransportCredentials returns transport credentials for gRPC using this reloader.
 func (r *Reloader) GetGRPCTransportCredentials() credentials.TransportCredentials {
 	return credentials.NewTLS(r.GetTLSConfig())
+}
+
+// getCertificate returns the current TLS certificate for TLS Config's GetCertificate callback.
+func (r *Reloader) getCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cert, nil
 }
