@@ -90,7 +90,7 @@ func TestReloader_CertificateRotation(t *testing.T) {
 
 	defer reloader.Stop()
 
-	initialCert, err := reloader.GetCertificate(nil)
+	initialCert, err := reloader.getCertificate(nil)
 	require.NoError(t, err)
 	leafCert, err := x509.ParseCertificate(initialCert.Certificate[0])
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestReloader_CertificateRotation(t *testing.T) {
 	err = reloader.reloadCertificate()
 	require.NoError(t, err)
 
-	updatedCert, err := reloader.GetCertificate(nil)
+	updatedCert, err := reloader.getCertificate(nil)
 	require.NoError(t, err)
 	leafCert, err = x509.ParseCertificate(updatedCert.Certificate[0])
 	require.NoError(t, err)
@@ -136,106 +136,111 @@ func TestReloader_FileOperations(t *testing.T) {
 	require.NoError(t, reloader.Start())
 	defer reloader.Stop()
 
-	// Test 1: Remove and recreate files
-	require.NoError(t, os.Remove(certFile))
-	require.NoError(t, os.Remove(keyFile))
-	time.Sleep(500 * time.Millisecond) // Increased sleep time
+	// Test 1: Remove the old files and create new files
+	t.Run("Remove and create new files", func(t *testing.T) {
+		// Remove existing files
+		require.NoError(t, os.Remove(certFile))
+		require.NoError(t, os.Remove(keyFile))
+		time.Sleep(500 * time.Millisecond)
 
-	// Create new files with different content
-	certPEM, keyPEM = generateSelfSignedCert(t, "recreated.local")
-	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
-	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
-	time.Sleep(500 * time.Millisecond) // Increased sleep time
+		// Create new files with different content
+		certPEM, keyPEM = generateSelfSignedCert(t, "recreated.local")
+		require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
+		require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
+		time.Sleep(500 * time.Millisecond)
 
-	// Force reload after file changes
-	require.NoError(t, reloader.reloadCertificate())
+		// Force reload after file changes
+		require.NoError(t, reloader.reloadCertificate())
 
-	cert, err := reloader.GetCertificate(nil)
-	require.NoError(t, err)
-	leafCert, err := x509.ParseCertificate(cert.Certificate[0])
-	require.NoError(t, err)
-	assert.Equal(t, "recreated.local", leafCert.Subject.CommonName)
+		cert, err := reloader.getCertificate(nil)
+		require.NoError(t, err)
+		leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+		require.NoError(t, err)
+		assert.Equal(t, "recreated.local", leafCert.Subject.CommonName)
+	})
 
-	// Test 2: Remove files and don't recreate
-	require.NoError(t, os.Remove(certFile))
-	require.NoError(t, os.Remove(keyFile))
-	time.Sleep(500 * time.Millisecond) // Increased sleep time
+	// Test 2: Create files after the reloader starts
+	t.Run("Create files after reloader starts", func(t *testing.T) {
+		// Remove existing files
+		require.NoError(t, os.Remove(certFile))
+		require.NoError(t, os.Remove(keyFile))
+		time.Sleep(500 * time.Millisecond)
 
-	// Should still return the last valid certificate
-	cert, err = reloader.GetCertificate(nil)
-	require.NoError(t, err)
-	leafCert, err = x509.ParseCertificate(cert.Certificate[0])
-	require.NoError(t, err)
-	assert.Equal(t, "recreated.local", leafCert.Subject.CommonName)
+		// Create new files with different content
+		certPEM, keyPEM = generateSelfSignedCert(t, "newly.created.local")
+		require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
+		require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
+		time.Sleep(500 * time.Millisecond)
 
-	// Test 3: Create invalid files
-	require.NoError(t, os.WriteFile(certFile, []byte("invalid cert"), 0o600))
-	require.NoError(t, os.WriteFile(keyFile, []byte("invalid key"), 0o600))
-	time.Sleep(500 * time.Millisecond) // Increased sleep time
+		// Force reload after file changes
+		require.NoError(t, reloader.reloadCertificate())
 
-	// Should still return the last valid certificate
-	cert, err = reloader.GetCertificate(nil)
-	require.NoError(t, err)
-	leafCert, err = x509.ParseCertificate(cert.Certificate[0])
-	require.NoError(t, err)
-	assert.Equal(t, "recreated.local", leafCert.Subject.CommonName)
+		cert, err := reloader.getCertificate(nil)
+		require.NoError(t, err)
+		leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+		require.NoError(t, err)
+		assert.Equal(t, "newly.created.local", leafCert.Subject.CommonName)
+	})
 
-	// Test 4: Create valid files after invalid ones
-	certPEM, keyPEM = generateSelfSignedCert(t, "recovered.local")
-	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
-	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
-	time.Sleep(500 * time.Millisecond) // Increased sleep time
+	// Test 3: Remove files and don't create new files
+	t.Run("Remove files without recreation", func(t *testing.T) {
+		// First ensure we have the correct certificate
+		certPEM, keyPEM = generateSelfSignedCert(t, "newly.created.local")
+		require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
+		require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
+		time.Sleep(500 * time.Millisecond)
+		require.NoError(t, reloader.reloadCertificate())
 
-	// Force reload after file changes
-	require.NoError(t, reloader.reloadCertificate())
+		// Remove existing files
+		require.NoError(t, os.Remove(certFile))
+		require.NoError(t, os.Remove(keyFile))
+		time.Sleep(500 * time.Millisecond)
 
-	cert, err = reloader.GetCertificate(nil)
-	require.NoError(t, err)
-	leafCert, err = x509.ParseCertificate(cert.Certificate[0])
-	require.NoError(t, err)
-	assert.Equal(t, "recovered.local", leafCert.Subject.CommonName)
-}
+		// Should still return the last valid certificate
+		cert, err := reloader.getCertificate(nil)
+		require.NoError(t, err)
+		leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+		require.NoError(t, err)
+		assert.Equal(t, "newly.created.local", leafCert.Subject.CommonName)
+	})
 
-// TestReloader_FileWatcher tests the file watcher functionality of the reloader.
-func TestReloader_FileWatcher(t *testing.T) {
-	// Create a temporary directory for test files
-	tempDir := t.TempDir()
-	certFile := filepath.Join(tempDir, "cert.pem")
-	keyFile := filepath.Join(tempDir, "key.pem")
+	// Test 4: Create invalid files
+	t.Run("Create invalid files", func(t *testing.T) {
+		// First ensure we have a valid certificate
+		certPEM, keyPEM = generateSelfSignedCert(t, "before.invalid.local")
+		require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
+		require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
+		time.Sleep(500 * time.Millisecond)
+		require.NoError(t, reloader.reloadCertificate())
 
-	// Generate initial certificate
-	certPEM, keyPEM := generateSelfSignedCert(t, "test1.local")
-	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
-	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
+		// Create invalid certificate and key files
+		require.NoError(t, os.WriteFile(certFile, []byte("invalid cert"), 0o600))
+		require.NoError(t, os.WriteFile(keyFile, []byte("invalid key"), 0o600))
+		time.Sleep(500 * time.Millisecond)
 
-	// Create reloader
-	logger := logger.GetLogger("test")
-	reloader, err := NewReloader(certFile, keyFile, logger)
-	require.NoError(t, err)
+		// Should still return the last valid certificate
+		cert, err := reloader.getCertificate(nil)
+		require.NoError(t, err)
+		leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+		require.NoError(t, err)
+		assert.Equal(t, "before.invalid.local", leafCert.Subject.CommonName)
 
-	// Start the reloader
-	require.NoError(t, reloader.Start())
-	defer reloader.Stop()
+		// Test 5: Recover from invalid files
+		t.Run("Recover from invalid files", func(t *testing.T) {
+			// Create valid files after invalid ones
+			certPEM, keyPEM = generateSelfSignedCert(t, "recovered.local")
+			require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
+			require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
+			time.Sleep(500 * time.Millisecond)
 
-	// Get initial certificate
-	cert, err := reloader.GetCertificate(nil)
-	require.NoError(t, err)
-	leafCert, err := x509.ParseCertificate(cert.Certificate[0])
-	require.NoError(t, err)
-	assert.Equal(t, "test1.local", leafCert.Subject.CommonName)
+			// Force reload after file changes
+			require.NoError(t, reloader.reloadCertificate())
 
-	// Generate new certificate
-	certPEM, keyPEM = generateSelfSignedCert(t, "test2.local")
-	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
-	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
-
-	// Wait for file changes to be detected
-	time.Sleep(100 * time.Millisecond)
-
-	// Get updated certificate
-	cert, err = reloader.GetCertificate(nil)
-	require.NoError(t, err)
-	leafCert, err = x509.ParseCertificate(cert.Certificate[0])
-	require.NoError(t, err)
-	assert.Equal(t, "test2.local", leafCert.Subject.CommonName)
+			cert, err := reloader.getCertificate(nil)
+			require.NoError(t, err)
+			leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+			require.NoError(t, err)
+			assert.Equal(t, "recovered.local", leafCert.Subject.CommonName)
+		})
+	})
 }

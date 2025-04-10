@@ -20,7 +20,6 @@ package http
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -169,10 +168,7 @@ func (p *server) PreRun(_ context.Context) error {
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 	if p.tls {
-		p.srv.TLSConfig = &tls.Config{
-			GetCertificate: p.tlsReloader.GetCertificate,
-			MinVersion:     tls.VersionTLS12,
-		}
+		p.srv.TLSConfig = p.tlsReloader.GetTLSConfig()
 	}
 
 	return nil
