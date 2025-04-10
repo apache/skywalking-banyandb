@@ -48,3 +48,12 @@ var TopNQueryKindVersion = common.KindVersion{
 
 // TopicTopNQuery is the top-n query topic.
 var TopicTopNQuery = bus.BiTopic(TopNQueryKindVersion.String())
+
+// MeasureDeleteExpiredSegmentsKindVersion is the version tag of measure delete kind.
+var MeasureDeleteExpiredSegmentsKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "measure-delete-expired-segments",
+}
+
+// TopicMeasureDeleteExpiredSegments is the measure delete topic.
+var TopicMeasureDeleteExpiredSegments = bus.BiTopic(MeasureDeleteExpiredSegmentsKindVersion.String())

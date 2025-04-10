@@ -41,7 +41,7 @@ import (
 func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	metaSvc, err := metadata.NewClient(false)
+	metaSvc, err := metadata.NewClient(true, false)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
@@ -80,11 +80,22 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	)
 	liaisonGroup := run.NewGroup("liaison")
 	liaisonGroup.Register(units...)
+	var nodeSelector string
 	liaisonCmd := &cobra.Command{
 		Use:     "liaison",
 		Version: version.Build(),
 		Short:   "Run as the liaison server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			if nodeSelector != "" {
+				var ls *pub.LabelSelector
+				ls, err = pub.ParseLabelSelector(nodeSelector)
+				if err != nil {
+					return err
+				}
+				for _, sel := range []node.Selector{measureNodeSel, streamNodeSel, propertyNodeSel} {
+					sel.SetNodeSelector(ls)
+				}
+			}
 			node, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort())
 			if err != nil {
 				return err
@@ -99,5 +110,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		},
 	}
 	liaisonCmd.Flags().AddFlagSet(liaisonGroup.RegisterFlags().FlagSet)
+	liaisonCmd.PersistentFlags().StringVar(&nodeSelector, "data-node-selector", "",
+		"the data node selector. e.g. key1=value1,key2=value2. If not set, all nodes are selected")
 	return liaisonCmd
 }

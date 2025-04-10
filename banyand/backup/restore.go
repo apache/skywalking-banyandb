@@ -30,6 +30,7 @@ import (
 	"go.uber.org/multierr"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
@@ -129,19 +130,20 @@ func newRunCommand() *cobra.Command {
 }
 
 func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Catalog) error {
-	remotePrefix := filepath.Join(timeDir, getCatalogName(catalog), "/")
+	catalogName := snapshot.CatalogName(catalog)
+	remotePrefix := filepath.Join(timeDir, catalogName, "/")
 
 	remoteFiles, err := fs.List(context.Background(), remotePrefix)
 	if err != nil {
 		return fmt.Errorf("failed to list remote files: %w", err)
 	}
 
-	localDir := filepath.Join(getLocalDir(rootPath, catalog), storage.DataDir)
+	localDir := filepath.Join(snapshot.LocalDir(rootPath, catalog), storage.DataDir)
 	if err = os.MkdirAll(localDir, storage.DirPerm); err != nil {
 		return fmt.Errorf("failed to create local directory %s: %w", localDir, err)
 	}
 
-	logger.Infof("Restoring %s to %s from %s", getCatalogName(catalog), localDir, remotePrefix)
+	logger.Infof("Restoring %s to %s from %s", catalogName, localDir, remotePrefix)
 
 	remoteRelSet := make(map[string]bool)
 	var relPath string
@@ -169,12 +171,12 @@ func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Cat
 	}
 
 	for _, remoteFile := range remoteFiles {
-		relPath, err := filepath.Rel(timeDir, remoteFile)
+		relPath, err := filepath.Rel(filepath.Join(timeDir, catalogName), remoteFile)
 		if err != nil {
 			return fmt.Errorf("failed to get relative path for %s: %w", remoteFile, err)
 		}
 		relPath = filepath.ToSlash(relPath)
-		localPath := filepath.Join(rootPath, relPath)
+		localPath := filepath.Join(rootPath, catalogName, storage.DataDir, relPath)
 
 		if !contains(localFiles, relPath) {
 			if err := os.MkdirAll(filepath.Dir(localPath), storage.DirPerm); err != nil {
@@ -202,24 +204,6 @@ func cleanEmptyDirs(dir, stopDir string) {
 		}
 		_ = os.Remove(dir)
 		dir = filepath.Dir(dir)
-	}
-}
-
-func getLocalDir(rootPath string, catalog commonv1.Catalog) string {
-	return filepath.Join(rootPath, getCatalogName(catalog))
-}
-
-func getCatalogName(catalog commonv1.Catalog) string {
-	switch catalog {
-	case commonv1.Catalog_CATALOG_STREAM:
-		return "stream"
-	case commonv1.Catalog_CATALOG_MEASURE:
-		return "measure"
-	case commonv1.Catalog_CATALOG_PROPERTY:
-		return "property"
-	default:
-		logger.Panicf("unknown catalog type: %v", catalog)
-		return ""
 	}
 }
 

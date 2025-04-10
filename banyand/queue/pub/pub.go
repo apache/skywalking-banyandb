@@ -110,11 +110,11 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 			if sel == "" {
 				matches = bypassMatches
 			} else {
-				selector, err := parseLabelSelector(sel)
+				selector, err := ParseLabelSelector(sel)
 				if err != nil {
 					return nil, fmt.Errorf("failed to parse node selector: %w", err)
 				}
-				matches = selector.matches
+				matches = selector.Matches
 			}
 			for _, n := range nodes {
 				tr := metadata.FindSegmentsBoundary(n, g)
@@ -228,13 +228,22 @@ func New(metadata metadata.Repo) queue.Client {
 	}
 }
 
+// NewWithoutMetadata returns a new queue client without metadata.
+func NewWithoutMetadata() queue.Client {
+	p := New(nil)
+	p.(*pub).log = logger.GetLogger("queue-client")
+	return p
+}
+
 func (*pub) Name() string {
 	return "queue-client"
 }
 
 func (p *pub) PreRun(context.Context) error {
+	if p.metadata != nil {
+		p.metadata.RegisterHandler("queue-client", schema.KindNode, p)
+	}
 	p.log = logger.GetLogger("server-queue-pub")
-	p.metadata.RegisterHandler("queue-client", schema.KindNode, p)
 	return nil
 }
 

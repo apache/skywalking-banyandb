@@ -258,13 +258,13 @@ func DataNodeWithAddrAndDir(etcdEndpoint string, flags ...string) (string, strin
 }
 
 // LiaisonNode runs a liaison node.
-func LiaisonNode(etcdEndpoint string) (string, func()) {
+func LiaisonNode(etcdEndpoint string, flags ...string) (string, func()) {
 	ports, err := test.AllocateFreePorts(2)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
 	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	nodeHost := "127.0.0.1"
-	closeFn := CMD("liaison",
+	flags = append(flags, "liaison",
 		"--grpc-host="+host,
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
 		"--http-host="+host,
@@ -272,7 +272,9 @@ func LiaisonNode(etcdEndpoint string) (string, func()) {
 		"--http-grpc-addr="+addr,
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
-		"--node-host", nodeHost)
+		"--node-host", nodeHost,
+	)
+	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
 		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))

@@ -281,12 +281,27 @@ func (fs *localFileSystem) MustGetFreeSpace(path string) uint64 {
 }
 
 func (fs *localFileSystem) CreateHardLink(srcPath, destPath string, filter func(string) bool) error {
-	_, err := os.Stat(srcPath)
+	fi, err := os.Stat(srcPath)
 	if err != nil {
 		return &FileSystemError{
 			Code:    IsNotExistError,
 			Message: fmt.Sprintf("Source path does not exist: %s, error: %v", srcPath, err),
 		}
+	}
+	if !fi.IsDir() {
+		if err = os.Link(srcPath, destPath); err != nil {
+			code := otherError
+			if os.IsExist(err) {
+				code = isExistError
+			} else if os.IsPermission(err) {
+				code = permissionError
+			}
+			return &FileSystemError{
+				Code:    code,
+				Message: fmt.Sprintf("Failed to create hard link from %s to %s: %v", srcPath, destPath, err),
+			}
+		}
+		return nil
 	}
 
 	err = filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
@@ -530,13 +545,13 @@ func (w *seqWriter) Path() string {
 }
 
 func (w *seqWriter) Close() error {
+	defer releaseWriter(w.writer)
 	if err := w.writer.Flush(); err != nil {
 		return &FileSystemError{
 			Code:    closeError,
 			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", w.fileName, err),
 		}
 	}
-	releaseWriter(w.writer)
 	return nil
 }
 

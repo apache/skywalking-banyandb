@@ -31,6 +31,8 @@ type List interface {
 
 	IsEmpty() bool
 
+	Min() (uint64, error)
+
 	Max() (uint64, error)
 
 	Len() int

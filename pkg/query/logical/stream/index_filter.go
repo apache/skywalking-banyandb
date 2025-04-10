@@ -32,7 +32,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-// buildLocalFilter returns a new index.Filter for local indices.
 func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 	entityDict map[string]int, entity []*modelv1.TagValue,
 ) (index.Filter, [][]*modelv1.TagValue, error) {
@@ -169,16 +168,20 @@ type fieldKey struct {
 	*databasev1.IndexRule
 }
 
-func newFieldKey(indexRule *databasev1.IndexRule) fieldKey {
+func newFieldKeyWithIndexRule(indexRule *databasev1.IndexRule) fieldKey {
 	return fieldKey{indexRule}
 }
 
-func (fk fieldKey) toIndex(seriesID common.SeriesID) index.FieldKey {
-	return index.FieldKey{
-		IndexRuleID: fk.Metadata.Id,
-		Analyzer:    fk.Analyzer,
-		SeriesID:    seriesID,
+func (fk fieldKey) toIndex(seriesID common.SeriesID, tr *index.RangeOpts) index.FieldKey {
+	ifk := index.FieldKey{
+		SeriesID:  seriesID,
+		TimeRange: tr,
 	}
+	if fk.Metadata != nil {
+		ifk.IndexRuleID = fk.Metadata.Id
+		ifk.Analyzer = fk.Analyzer
+	}
+	return ifk
 }
 
 type logicalOP interface {
@@ -198,26 +201,34 @@ func (n *node) append(sub index.Filter) *node {
 	return n
 }
 
-func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp logicalOP) (posting.List, error) {
+func execute(searcher index.GetSearcher, seriesID common.SeriesID, n *node, lp logicalOP, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	if len(n.SubNodes) < 1 {
-		return bList, nil
+		return bList, bList, nil
 	}
-	var result posting.List
+	var result, resultTS posting.List
 	for _, sn := range n.SubNodes {
-		r, err := sn.Execute(searcher, seriesID)
+		r, rt, err := sn.Execute(searcher, seriesID, tr)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if result == nil {
-			result = r
-			continue
+		if result, err = merge(result, r, lp); err != nil {
+			return nil, nil, err
 		}
-		result, err = lp.merge(result, r)
-		if err != nil {
-			return nil, err
+		if resultTS, err = merge(resultTS, rt, lp); err != nil {
+			return nil, nil, err
 		}
 	}
-	return result, nil
+	return result, resultTS, nil
+}
+
+func merge(result posting.List, list posting.List, lp logicalOP) (posting.List, error) {
+	if result == nil {
+		return list, nil
+	}
+	if list == nil {
+		return result, nil
+	}
+	return lp.merge(result, list)
 }
 
 type andNode struct {
@@ -249,8 +260,8 @@ func (an *andNode) merge(list ...posting.List) (posting.List, error) {
 	return result, nil
 }
 
-func (an *andNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
-	return execute(searcher, seriesID, an.node, an)
+func (an *andNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
+	return execute(searcher, seriesID, an.node, an, tr)
 }
 
 func (an *andNode) MarshalJSON() ([]byte, error) {
@@ -294,8 +305,8 @@ func (on *orNode) merge(list ...posting.List) (posting.List, error) {
 	return result, nil
 }
 
-func (on *orNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
-	return execute(searcher, seriesID, on.node, on)
+func (on *orNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
+	return execute(searcher, seriesID, on.node, on, tr)
 }
 
 func (on *orNode) MarshalJSON() ([]byte, error) {
@@ -310,8 +321,8 @@ func (on *orNode) String() string {
 
 type leaf struct {
 	index.Filter
-	Key  fieldKey
 	Expr logical.LiteralExpr
+	Key  fieldKey
 }
 
 func (l *leaf) MarshalJSON() ([]byte, error) {
@@ -323,32 +334,39 @@ func (l *leaf) MarshalJSON() ([]byte, error) {
 
 type not struct {
 	index.Filter
-	Key   fieldKey
 	Inner index.Filter
+	Key   fieldKey
 }
 
 func newNot(indexRule *databasev1.IndexRule, inner index.Filter) *not {
 	return &not{
-		Key:   newFieldKey(indexRule),
+		Key:   newFieldKeyWithIndexRule(indexRule),
 		Inner: inner,
 	}
 }
 
-func (n *not) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+func (n *not) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	s, err := searcher(n.Key.Type)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	all, err := s.MatchField(n.Key.toIndex(seriesID))
+	all, allTS, err := s.MatchField(n.Key.toIndex(seriesID, tr))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	list, err := n.Inner.Execute(searcher, seriesID)
+	list, listTS, err := n.Inner.Execute(searcher, seriesID, tr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	err = all.Difference(list)
-	return all, err
+	if err != nil {
+		return nil, nil, err
+	}
+	err = allTS.Difference(listTS)
+	if err != nil {
+		return nil, nil, err
+	}
+	return all, allTS, err
 }
 
 func (n *not) MarshalJSON() ([]byte, error) {
@@ -368,18 +386,18 @@ type eq struct {
 func newEq(indexRule *databasev1.IndexRule, values logical.LiteralExpr) *eq {
 	return &eq{
 		leaf: &leaf{
-			Key:  newFieldKey(indexRule),
+			Key:  newFieldKeyWithIndexRule(indexRule),
 			Expr: values,
 		},
 	}
 }
 
-func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	s, err := searcher(eq.Key.Type)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.MatchTerms(eq.Expr.Field(eq.Key.toIndex(seriesID)))
+	return s.MatchTerms(eq.Expr.Field(eq.Key.toIndex(seriesID, tr)))
 }
 
 func (eq *eq) MarshalJSON() ([]byte, error) {
@@ -400,17 +418,17 @@ type match struct {
 func newMatch(indexRule *databasev1.IndexRule, values logical.LiteralExpr, opts *modelv1.Condition_MatchOption) *match {
 	return &match{
 		leaf: &leaf{
-			Key:  newFieldKey(indexRule),
+			Key:  newFieldKeyWithIndexRule(indexRule),
 			Expr: values,
 		},
 		opts: opts,
 	}
 }
 
-func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	s, err := searcher(match.Key.Type)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	bb := match.Expr.Bytes()
 	matches := make([]string, len(bb))
@@ -418,7 +436,7 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 		matches[i] = string(v)
 	}
 	return s.Match(
-		match.Key.toIndex(seriesID),
+		match.Key.toIndex(seriesID, tr),
 		matches,
 		match.opts,
 	)
@@ -442,18 +460,18 @@ type rangeOp struct {
 func newRange(indexRule *databasev1.IndexRule, opts index.RangeOpts) *rangeOp {
 	return &rangeOp{
 		leaf: &leaf{
-			Key: newFieldKey(indexRule),
+			Key: newFieldKeyWithIndexRule(indexRule),
 		},
 		Opts: opts,
 	}
 }
 
-func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID) (posting.List, error) {
+func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	s, err := searcher(r.Key.Type)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.Range(r.Key.toIndex(seriesID), r.Opts)
+	return s.Range(r.Key.toIndex(seriesID, tr), r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
@@ -476,7 +494,9 @@ func (r *rangeOp) MarshalJSON() ([]byte, error) {
 			builder.WriteString(")")
 		}
 	}
-	data["key"] = r.Key.IndexRule.Metadata.Name + ":" + r.Key.Metadata.Group
+	if r.Key.IndexRule != nil && r.Key.IndexRule.Metadata != nil && r.Key.Metadata != nil {
+		data["key"] = r.Key.IndexRule.Metadata.Name + ":" + r.Key.Metadata.Group
+	}
 	data["range"] = builder.String()
 	return json.Marshal(data)
 }
@@ -493,8 +513,8 @@ var (
 
 type emptyNode struct{}
 
-func (an emptyNode) Execute(_ index.GetSearcher, _ common.SeriesID) (posting.List, error) {
-	return bList, nil
+func (an emptyNode) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
+	return bList, bList, nil
 }
 
 func (an emptyNode) String() string {
@@ -510,6 +530,10 @@ func (bl bypassList) Contains(_ uint64) bool {
 
 func (bl bypassList) IsEmpty() bool {
 	return false
+}
+
+func (bl bypassList) Min() (uint64, error) {
+	panic("not invoked")
 }
 
 func (bl bypassList) Max() (uint64, error) {

@@ -49,6 +49,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -58,6 +59,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
@@ -76,22 +78,19 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	if property.Metadata == nil {
 		return nil, schema.BadRequest("metadata", "metadata should not be nil")
 	}
-	if property.Metadata == nil {
-		return nil, schema.BadRequest("metadata", "metadata should not be nil")
+	if property.Metadata.Group == "" {
+		return nil, schema.BadRequest("metadata.group", "group should not be nil")
 	}
-	if property.Metadata.Container == nil {
-		return nil, schema.BadRequest("metadata.container", "container should not be nil")
+	if property.Metadata.Name == "" {
+		return nil, schema.BadRequest("metadata.name", "name should not be empty")
 	}
-	if property.Metadata.Container.Name == "" {
-		return nil, schema.BadRequest("metadata.container.name", "container.name should not be empty")
-	}
-	if property.Metadata.Id == "" {
-		return nil, schema.BadRequest("metadata.id", "id should not be empty")
+	if property.Id == "" {
+		return nil, schema.BadRequest("id", "id should not be empty")
 	}
 	if len(property.Tags) == 0 {
 		return nil, schema.BadRequest("tags", "tags should not be empty")
 	}
-	g := req.Property.Metadata.Container.Group
+	g := req.Property.Metadata.Group
 	ps.metrics.totalStarted.Inc(1, g, "property", "apply")
 	start := time.Now()
 	defer func() {
@@ -114,10 +113,36 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	if group.ResourceOpts.ShardNum == 0 {
 		return nil, errors.Errorf("group %s has no shard number", g)
 	}
+	var propSchema *databasev1.Property
+	propSchema, err = ps.schemaRegistry.PropertyRegistry().GetProperty(ctx, &commonv1.Metadata{
+		Group: g,
+		Name:  property.Metadata.Name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(propSchema.Tags) < len(property.Tags) {
+		return nil, errors.Errorf("property %s tags count mismatch", property.Metadata.Name)
+	}
+	for _, tag := range property.Tags {
+		found := false
+		for _, ts := range propSchema.Tags {
+			if ts.Name == tag.Key {
+				typ := databasev1.TagType(pbv1.MustTagValueToValueType(tag.Value))
+				if typ != databasev1.TagType_TAG_TYPE_UNSPECIFIED && ts.Type != typ {
+					return nil, errors.Errorf("property %s tag %s type mismatch", property.Metadata.Name, tag.Key)
+				}
+				found = true
+			}
+		}
+		if !found {
+			return nil, errors.Errorf("property %s tag %s not found", property.Metadata.Name, tag.Key)
+		}
+	}
 	qResp, err := ps.Query(ctx, &propertyv1.QueryRequest{
-		Groups:    []string{g},
-		Container: property.Metadata.Container.Name,
-		Ids:       []string{property.Metadata.Id},
+		Groups: []string{g},
+		Name:   property.Metadata.Name,
+		Ids:    []string{property.Id},
 	})
 	if err != nil {
 		return nil, err
@@ -194,11 +219,11 @@ func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, sh
 ) (*propertyv1.ApplyResponse, error) {
 	ns := now.UnixNano()
 	if prev != nil {
-		cur.Metadata.Container.CreateRevision = prev.Metadata.Container.CreateRevision
+		cur.Metadata.CreateRevision = prev.Metadata.CreateRevision
 	} else {
-		cur.Metadata.Container.CreateRevision = ns
+		cur.Metadata.CreateRevision = ns
 	}
-	cur.Metadata.Container.ModRevision = ns
+	cur.Metadata.ModRevision = ns
 	cur.UpdatedAt = timestamppb.New(now)
 	f, err := ps.pipeline.Publish(ctx, data.TopicPropertyUpdate, bus.NewMessageWithNode(bus.MessageID(time.Now().Unix()), node, &propertyv1.InternalUpdateRequest{
 		ShardId:  shardID,
@@ -221,8 +246,8 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 	if req.Group == "" {
 		return nil, schema.BadRequest("group", "group should not be nil")
 	}
-	if req.Container == "" {
-		return nil, schema.BadRequest("metadata.container", "container should not be nil")
+	if req.Name == "" {
+		return nil, schema.BadRequest("name", "name should not be nil")
 	}
 	g := req.Group
 	ps.metrics.totalStarted.Inc(1, g, "property", "delete")
@@ -235,8 +260,8 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 		}
 	}()
 	qReq := &propertyv1.QueryRequest{
-		Groups:    []string{g},
-		Container: req.Container,
+		Groups: []string{g},
+		Name:   req.Name,
 	}
 	if len(req.Id) > 0 {
 		qReq.Ids = []string{req.Id}
@@ -322,7 +347,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 						res[entity] = &p
 						continue
 					}
-					if cur.Metadata.Container.ModRevision < p.Metadata.Container.ModRevision {
+					if cur.Metadata.ModRevision < p.Metadata.ModRevision {
 						res[entity] = &p
 						err = ps.remove([][]byte{getPropertyID(cur)})
 						if err != nil {
@@ -382,9 +407,9 @@ func (ps *propertyServer) remove(ids [][]byte) error {
 }
 
 func getPropertyID(prop *propertyv1.Property) []byte {
-	return convert.StringToBytes(getEntity(prop) + "/" + strconv.FormatInt(prop.Metadata.Container.ModRevision, 10))
+	return convert.StringToBytes(getEntity(prop) + "/" + strconv.FormatInt(prop.Metadata.ModRevision, 10))
 }
 
 func getEntity(prop *propertyv1.Property) string {
-	return strings.Join([]string{prop.Metadata.Container.Group, prop.Metadata.Container.Name, prop.Metadata.Id}, "/")
+	return strings.Join([]string{prop.Metadata.Group, prop.Metadata.Name, prop.Id}, "/")
 }

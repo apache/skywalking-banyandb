@@ -22,10 +22,10 @@
   import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
-  import { onMounted, reactive, ref } from 'vue';
+  import { reactive, ref, watch, onMounted } from 'vue';
   import { RefreshRight, Search } from '@element-plus/icons-vue';
   import { yamlToJson } from '@/utils/yaml';
-  import PropertyEditror from './PropertyEditror.vue';
+  import PropertyEditor from './PropertyEditor.vue';
   import PropertyValueReader from './PropertyValueReader.vue';
   import FormHeader from '../common/FormHeader.vue';
 
@@ -37,18 +37,18 @@
   const propertyEditorRef = ref();
   const propertyValueViewerRef = ref();
   const yamlRef = ref(null);
-  const yamlCode = ref(`container: ''
-limit: 10`);
   const data = reactive({
-    group: '',
+    group: route.params.group,
     tableData: [],
+    name: route.params.name,
   });
+  const yamlCode = ref(`name: ${data.name}
+limit: 10`);
   const getProperties = (params) => {
     $loadingCreate();
-    const group = route.params.group;
-    fetchProperties({ groups: [group], limit: 6, ...params })
+    fetchProperties({ groups: [data.group], name: data.name, limit: 10, ...params })
       .then((res) => {
-        if (res.status === 200 && group === route.params.group) {
+        if (res.status === 200) {
           data.tableData = res.data.properties.map((item) => {
             item.tags.forEach((tag) => {
               tag.value = JSON.stringify(tag.value);
@@ -78,23 +78,14 @@ limit: 10`);
   const openEditField = (index) => {
     const item = data.tableData[index];
     const param = {
-      group: item.metadata.container.group,
-      name: item.metadata.container.name,
-      containerID: item.metadata.container.id,
-      modRevision: item.metadata.container.modRevision,
-      createRevision: item.metadata.container.createRevision,
-      id: item.metadata.id,
+      group: item.metadata.group,
+      name: item.metadata.name,
+      modRevision: item.metadata.modRevision,
+      createRevision: item.metadata.createRevision,
+      id: item.id,
       tags: JSON.parse(JSON.stringify(item.tags)),
     };
     propertyEditorRef?.value.openDialog(true, param).then(() => {
-      getProperties();
-    });
-  };
-  const openAddProperty = () => {
-    let dataForm = {
-      group: data.group,
-    };
-    propertyEditorRef?.value.openDialog(false, dataForm).then(() => {
       getProperties();
     });
   };
@@ -119,7 +110,7 @@ limit: 10`);
   const deleteTableData = (index) => {
     const item = data.tableData[index];
     $loadingCreate();
-    deleteProperty(item.metadata.container.group, item.metadata.container.name, item.metadata.id)
+    deleteProperty(item.metadata.group, item.metadata.name, item.id)
       .then((res) => {
         if (res.status === 200) {
           ElMessage({
@@ -144,6 +135,17 @@ limit: 10`);
   onMounted(() => {
     getProperties();
   });
+  watch(
+    () => route.params,
+    () => {
+      const { group, name } = route.params;
+      data.name = name;
+      data.group = group;
+      yamlCode.value = `name: ${data.name}
+limit: 10`;
+      getProperties();
+    },
+  );
 </script>
 <template>
   <div>
@@ -152,7 +154,6 @@ limit: 10`);
         <FormHeader :fields="data" />
       </template>
       <div class="button-group-operator">
-        <el-button size="small" type="primary" color="#6E38F7" @click="openAddProperty">Apply Property</el-button>
         <div>
           <el-button size="small" :icon="Search" @click="searchProperties" plain />
           <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
@@ -160,18 +161,11 @@ limit: 10`);
       </div>
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
       <el-table :data="data.tableData" style="width: 100%; margin-top: 20px" border>
-        <el-table-column label="Container">
-          <el-table-column label="Group" prop="metadata.container.group" width="100"></el-table-column>
-          <el-table-column label="Name" prop="metadata.container.name" width="120"></el-table-column>
-          <el-table-column label="ID" prop="metadata.container.id" width="100"></el-table-column>
-          <el-table-column label="ModRevision" prop="metadata.container.modRevision" width="120"></el-table-column>
-          <el-table-column
-            label="CreateRevision"
-            prop="metadata.container.createRevision"
-            width="140"
-          ></el-table-column>
-        </el-table-column>
-        <el-table-column label="ID" prop="metadata.id" width="150"></el-table-column>
+        <el-table-column label="Group" prop="metadata.group" width="100"></el-table-column>
+        <el-table-column label="Name" prop="metadata.name" width="120"></el-table-column>
+        <el-table-column label="ModRevision" prop="metadata.modRevision" width="120"></el-table-column>
+        <el-table-column label="CreateRevision" prop="metadata.createRevision" width="140"></el-table-column>
+        <el-table-column label="ID" prop="id" width="150"></el-table-column>
         <el-table-column label="Tags">
           <template #default="scope">
             <el-table :data="scope.row.tags">
@@ -209,7 +203,7 @@ limit: 10`);
         </el-table-column>
       </el-table>
     </el-card>
-    <PropertyEditror ref="propertyEditorRef"></PropertyEditror>
+    <PropertyEditor ref="propertyEditorRef"></PropertyEditor>
     <PropertyValueReader ref="propertyValueViewerRef"></PropertyValueReader>
   </div>
 </template>

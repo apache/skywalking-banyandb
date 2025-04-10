@@ -64,6 +64,7 @@ type Registry interface {
 	Group
 	TopNAggregation
 	Node
+	Property
 	RegisterHandler(string, Kind, EventHandler)
 	NewWatcher(string, Kind, ...WatcherOption) *watcher
 	Register(context.Context, Metadata, bool) error
@@ -120,6 +121,11 @@ func (m Metadata) key() (string, error) {
 		}), nil
 	case KindNode:
 		return formatNodeKey(m.Name), nil
+	case KindProperty:
+		return formatPropertyKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		}), nil
 	default:
 		return "", errUnsupportedEntityType
 	}
@@ -199,4 +205,13 @@ type Node interface {
 	RegisterNode(ctx context.Context, node *databasev1.Node, forced bool) error
 	GetNode(ctx context.Context, node string) (*databasev1.Node, error)
 	UpdateNode(ctx context.Context, node *databasev1.Node) error
+}
+
+// Property allows CRUD property schemas in a group.
+type Property interface {
+	GetProperty(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Property, error)
+	ListProperty(ctx context.Context, opt ListOpt) ([]*databasev1.Property, error)
+	CreateProperty(ctx context.Context, property *databasev1.Property) error
+	UpdateProperty(ctx context.Context, property *databasev1.Property) error
+	DeleteProperty(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }

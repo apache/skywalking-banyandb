@@ -41,6 +41,8 @@ import (
 
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -65,6 +67,7 @@ var (
 
 type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
+	streamv1.UnimplementedStreamServiceServer
 	creds     credentials.TransportCredentials
 	omr       observability.MetricsRegistry
 	httpSrv   *http.Server
@@ -180,6 +183,8 @@ func (s *server) Serve() run.StopNotify {
 	clusterv1.RegisterServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
+	streamv1.RegisterStreamServiceServer(s.ser, &streamService{ser: s})
+	measurev1.RegisterMeasureServiceServer(s.ser, &measureService{ser: s})
 
 	var ctx context.Context
 	ctx, s.clientCloser = context.WithCancel(context.Background())

@@ -131,6 +131,8 @@ catalog:
         path: "/operation/backup"
       - name: "Restore"
         path: "/operation/restore"
+      - name: "Lifecycle Management"
+        path: "/operation/lifecycle"
   - name: "File Format"
     catalog:
       - name: "v1.2.0"

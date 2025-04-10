@@ -27,6 +27,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -38,9 +39,12 @@ var (
 )
 
 // Selector keeps all data nodes in the memory and can provide different algorithm to pick an available node.
+//
+//go:generate mockgen -destination=mock/node_selector_mock.go -package=mock github.com/apache/skywalking-banyandb/pkg/node Selector
 type Selector interface {
 	AddNode(node *databasev1.Node)
 	RemoveNode(node *databasev1.Node)
+	SetNodeSelector(selector *pub.LabelSelector)
 	Pick(group, name string, shardID uint32) (string, error)
 	run.PreRunner
 	fmt.Stringer
@@ -59,6 +63,9 @@ type pickFirstSelector struct {
 	nodeIDs   []string
 	mu        sync.RWMutex
 }
+
+// SetNodeSelector implements Selector.
+func (p *pickFirstSelector) SetNodeSelector(_ *pub.LabelSelector) {}
 
 // String implements Selector.
 func (p *pickFirstSelector) String() string {

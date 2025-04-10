@@ -155,7 +155,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 
 				// Verify that the restored files exist.
 				// The remote backup data for each catalog is under: destDir/<latestTimedir>/<catalog>
-				remoteDataDir := filepath.Join(destDir, latestTimedir, cat, "data")
+				remoteDataDir := filepath.Join(destDir, latestTimedir, cat)
 				restoredDataDir := filepath.Join(newCatalogDir, cat, "data")
 				var remoteEntries, restoredEntries []os.DirEntry
 				remoteEntries, err = os.ReadDir(remoteDataDir)

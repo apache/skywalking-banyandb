@@ -23,6 +23,7 @@
   import { getCurrentInstance } from '@vue/runtime-core';
   import TagEditor from './TagEditor.vue';
   import { ElMessage } from 'element-plus';
+  import { rules, strategyGroup, formConfig } from './data';
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose;
   const showDialog = ref(false);
@@ -30,49 +31,20 @@
   const tagEditorRef = ref();
   const ruleForm = ref();
   const formData = reactive({
-    strategy: 'STRATEGY_UNSPECIFIED',
+    strategy: strategyGroup[0].value,
     group: '',
     name: '',
-    containerID: '',
     modRevision: 0,
     createRevision: 0,
     id: '',
     tags: [],
   });
-  const validateTags = (rule, value, callback) => {
-    if (value.length <= 0) {
-      callback(new Error('Please add the tags'));
-    } else {
-      callback();
-    }
-  };
-  const rules = {
-    strategy: [{ required: true, message: 'please select the apply method.', trigger: 'blur' }],
-    group: [{ required: true, message: 'Please enter the group.', trigger: 'blur' }],
-    name: [{ required: true, message: 'Please enter the name.', trigger: 'blur' }],
-    containerID: [{ required: true, message: 'Please enter the container id.', trigger: 'blur' }],
-    id: [{ required: true, message: 'Please enter the ID.', trigger: 'blur' }],
-    tags: [{ required: true, validator: validateTags, trigger: 'blur' }],
-  };
-  const strategyGroup = [
-    { label: 'STRATEGY_UNSPECIFIED', value: 'STRATEGY_UNSPECIFIED' },
-    { label: 'STRATEGY_MERGE', value: 'STRATEGY_MERGE' },
-    { label: 'STRATEGY_REPLACE', value: 'STRATEGY_REPLACE' },
-  ];
-  const formConfig = [
-    { label: 'Strategy', prop: 'strategy', type: 'select', selectGroup: strategyGroup },
-    { label: 'Container Group', prop: 'group', type: 'input', disabled: true },
-    { label: 'Container Name', prop: 'name', type: 'input' },
-    { label: 'Container ID', prop: 'containerID', type: 'input' },
-    { label: 'ID', prop: 'id', type: 'input' },
-  ];
   let promiseResolve;
 
   const initData = () => {
-    formData.strategy = 'STRATEGY_UNSPECIFIED';
+    formData.strategy = strategyGroup[0].value;
     formData.group = '';
     formData.name = '';
-    formData.containerID = '';
     formData.modRevision = 0;
     formData.createRevision = 0;
     formData.id = '';
@@ -104,15 +76,12 @@
         const param = {
           strategy: formData.strategy,
           property: {
+            id: formData.id,
             metadata: {
-              container: {
-                createRevision: formData.createRevision,
-                group: formData.group,
-                id: formData.containerID,
-                modRevision: formData.modRevision,
-                name: formData.name,
-              },
-              id: formData.id,
+              createRevision: formData.createRevision,
+              group: formData.group,
+              modRevision: formData.modRevision,
+              name: formData.name,
             },
             tags: formData.tags.map((item) => {
               return {
@@ -156,7 +125,6 @@
     }
     formData.group = data?.group || '';
     formData.name = data?.name || '';
-    formData.containerID = data?.containerID || '';
     formData.modRevision = data?.modRevision || 0;
     formData.createRevision = data?.createRevision || 0;
     formData.id = data?.id || '';

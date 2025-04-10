@@ -226,10 +226,12 @@ type dataPointsInTable struct {
 }
 
 type dataPointsInGroup struct {
-	tsdb          storage.TSDB[*tsTable, option]
-	metadataDocs  index.Documents
-	indexModeDocs index.Documents
-	tables        []*dataPointsInTable
-	segments      []storage.Segment[*tsTable, option]
-	latestTS      int64
+	tsdb            storage.TSDB[*tsTable, option]
+	metadataDocs    index.Documents
+	indexModeDocs   index.Documents
+	metadataDocMap  map[uint64]int
+	indexModeDocMap map[uint64]int
+	tables          []*dataPointsInTable
+	segments        []storage.Segment[*tsTable, option]
+	latestTS        int64
 }

@@ -201,6 +201,8 @@ func (e *etcdSchemaRegistry) Compact(ctx context.Context, revision int64) error 
 }
 
 func (e *etcdSchemaRegistry) StartWatcher() {
+	e.mux.RLock()
+	defer e.mux.RUnlock()
 	for _, w := range e.watchers {
 		w.Start()
 	}
@@ -209,6 +211,8 @@ func (e *etcdSchemaRegistry) StartWatcher() {
 func (e *etcdSchemaRegistry) Close() error {
 	e.closer.Done()
 	e.closer.CloseThenWait()
+	e.mux.RLock()
+	defer e.mux.RUnlock()
 	for i := range e.watchers {
 		e.watchers[i].Close()
 	}

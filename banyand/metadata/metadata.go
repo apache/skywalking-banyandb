@@ -38,6 +38,8 @@ type IndexFilter interface {
 }
 
 // Repo is the facade to interact with the metadata repository.
+//
+//go:generate mockgen -destination=repo_mock.go -package=metadata github.com/apache/skywalking-banyandb/banyand/metadata Repo
 type Repo interface {
 	IndexFilter
 	StreamRegistry() schema.Stream
@@ -48,6 +50,8 @@ type Repo interface {
 	TopNAggregationRegistry() schema.TopNAggregation
 	RegisterHandler(string, schema.Kind, schema.EventHandler)
 	UpdateSegmentsBoundary(stage, group string, boundary *modelv1.TimeRange)
+	NodeRegistry() schema.Node
+	PropertyRegistry() schema.Property
 }
 
 // Service is the metadata repository.

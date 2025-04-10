@@ -61,6 +61,7 @@ var (
 
 // FieldKey is the key of field in a document.
 type FieldKey struct {
+	TimeRange   *RangeOpts
 	Analyzer    string
 	TagName     string
 	SeriesID    common.SeriesID
@@ -329,10 +330,10 @@ type FieldIterable interface {
 // Searcher allows searching a field either by its key or by its key and term.
 type Searcher interface {
 	FieldIterable
-	Match(fieldKey FieldKey, match []string, opts *modelv1.Condition_MatchOption) (list posting.List, err error)
-	MatchField(fieldKey FieldKey) (list posting.List, err error)
-	MatchTerms(field Field) (list posting.List, err error)
-	Range(fieldKey FieldKey, opts RangeOpts) (list posting.List, err error)
+	Match(fieldKey FieldKey, match []string, opts *modelv1.Condition_MatchOption) (list posting.List, timestamps posting.List, err error)
+	MatchField(fieldKey FieldKey) (list posting.List, timestamps posting.List, err error)
+	MatchTerms(field Field) (list posting.List, timestamps posting.List, err error)
+	Range(fieldKey FieldKey, opts RangeOpts) (list posting.List, timestamps posting.List, err error)
 }
 
 // Query is an abstract of an index query.
@@ -439,5 +440,5 @@ type GetSearcher func(location databasev1.IndexRule_Type) (Searcher, error)
 // Filter is a node in the filter tree.
 type Filter interface {
 	fmt.Stringer
-	Execute(getSearcher GetSearcher, seriesID common.SeriesID) (posting.List, error)
+	Execute(getSearcher GetSearcher, seriesID common.SeriesID, timeRange *RangeOpts) (posting.List, posting.List, error)
 }

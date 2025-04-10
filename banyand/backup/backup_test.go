@@ -28,6 +28,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 )
 
@@ -78,7 +79,7 @@ func TestGetSnapshotDir(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := getSnapshotDir(tt.snapshot, tt.streamRoot, tt.measureRoot, tt.propRoot)
+			got, err := snapshot.Dir(tt.snapshot, tt.streamRoot, tt.measureRoot, tt.propRoot)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("getSnapshotDir() error = %v, wantErr %v", err, tt.wantErr)
 				return

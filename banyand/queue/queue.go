@@ -44,6 +44,8 @@ type Client interface {
 	bus.Broadcaster
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	Register(bus.Topic, schema.EventHandler)
+	OnAddOrUpdate(md schema.Metadata)
+	GracefulStop()
 }
 
 // Server is the interface for receiving data from the queue.
@@ -54,6 +56,8 @@ type Server interface {
 }
 
 // BatchPublisher is the interface for publishing data in batch.
+//
+//go:generate mockgen -destination=./batch_publisher_mock.go -package=queue . BatchPublisher
 type BatchPublisher interface {
 	bus.Publisher
 	Close() (map[string]*common.Error, error)

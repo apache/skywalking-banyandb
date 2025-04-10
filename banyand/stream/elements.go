@@ -207,9 +207,10 @@ type elementsInTable struct {
 }
 
 type elementsInGroup struct {
-	tsdb     storage.TSDB[*tsTable, option]
-	docs     index.Documents
-	tables   []*elementsInTable
-	segments []storage.Segment[*tsTable, option]
-	latestTS int64
+	tsdb        storage.TSDB[*tsTable, option]
+	docIDsAdded map[uint64]struct{}
+	docs        index.Documents
+	tables      []*elementsInTable
+	segments    []storage.Segment[*tsTable, option]
+	latestTS    int64
 }

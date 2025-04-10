@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 )
@@ -39,7 +40,7 @@ func TestRestoreDownload(t *testing.T) {
 	}
 
 	timeDir := "2023-10-10"
-	remoteFilePath := filepath.Join(timeDir, getCatalogName(commonv1.Catalog_CATALOG_STREAM), storage.DataDir, "test.txt")
+	remoteFilePath := filepath.Join(timeDir, snapshot.CatalogName(commonv1.Catalog_CATALOG_STREAM), "test.txt")
 	content := "hello"
 	err = fs.Upload(context.Background(), remoteFilePath, strings.NewReader(content))
 	if err != nil {
@@ -51,7 +52,7 @@ func TestRestoreDownload(t *testing.T) {
 		t.Fatalf("restoreCatalog failed: %v", err)
 	}
 
-	localFilePath := filepath.Join(localRestoreDir, getCatalogName(commonv1.Catalog_CATALOG_STREAM), storage.DataDir, "test.txt")
+	localFilePath := filepath.Join(localRestoreDir, snapshot.CatalogName(commonv1.Catalog_CATALOG_STREAM), storage.DataDir, "test.txt")
 	got, err := os.ReadFile(localFilePath)
 	if err != nil {
 		t.Fatalf("failed to read local file: %v", err)

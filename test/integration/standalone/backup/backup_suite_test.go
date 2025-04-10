@@ -98,16 +98,28 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		},
 	})
 	Expect(err).NotTo(HaveOccurred())
-	client := propertyv1.NewPropertyServiceClient(connection)
-	md := &propertyv1.Metadata{
-		Container: &commonv1.Metadata{
-			Name:  "p",
-			Group: "g",
+	pClient := databasev1.NewPropertyRegistryServiceClient(connection)
+	_, err = pClient.Create(context.Background(), &databasev1.PropertyRegistryServiceCreateRequest{
+		Property: &databasev1.Property{
+			Metadata: &commonv1.Metadata{
+				Group: "g",
+				Name:  "p",
+			},
+			Tags: []*databasev1.TagSpec{
+				{Name: "t1", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "t2", Type: databasev1.TagType_TAG_TYPE_STRING},
+			},
 		},
-		Id: "1",
+	})
+	Expect(err).NotTo(HaveOccurred())
+	client := propertyv1.NewPropertyServiceClient(connection)
+	md := &commonv1.Metadata{
+		Name:  "p",
+		Group: "g",
 	}
 	resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 		Metadata: md,
+		Id:       "1",
 		Tags: []*modelv1.Tag{
 			{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},

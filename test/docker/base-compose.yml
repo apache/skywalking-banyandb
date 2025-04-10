@@ -59,7 +59,8 @@ services:
       - sw_agent:/skywalking-java-agent
 
   oap:
-    image: "ghcr.io/apache/skywalking/oap:${SW_OAP_COMMIT}"
+    # TODO: Update the image to the latest version
+    image: "docker.io/hanahmily/oap:ca528d984506faee1276232f4ebd31eaba9db40c"
     expose:
       - 11800
       - 12800

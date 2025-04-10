@@ -57,10 +57,11 @@ const flagEtcdTLSCertFile = "etcd-tls-cert-file"
 const flagEtcdTLSKeyFile = "etcd-tls-key-file"
 
 // NewClient returns a new metadata client.
-func NewClient(forceRegisterNode bool) (Service, error) {
+func NewClient(toRegisterNode, forceRegisterNode bool) (Service, error) {
 	return &clientService{
 		closer:            run.NewCloser(1),
 		forceRegisterNode: forceRegisterNode,
+		toRegisterNode:    toRegisterNode,
 	}, nil
 }
 
@@ -79,6 +80,7 @@ type clientService struct {
 	etcdFullSyncInterval time.Duration
 	nodeInfoMux          sync.Mutex
 	forceRegisterNode    bool
+	toRegisterNode       bool
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -132,7 +134,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			schema.ConfigureEtcdTLSCertAndKey(s.etcdTLSCertFile, s.etcdTLSKeyFile),
 			schema.ConfigureWatchCheckInterval(s.etcdFullSyncInterval),
 		)
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			select {
 			case <-stopCh:
 				return errors.New("pre-run interrupted")
@@ -150,6 +152,9 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			break
 		}
 		return err
+	}
+	if !s.toRegisterNode {
+		return nil
 	}
 
 	val := ctx.Value(common.ContextNodeKey)
@@ -245,6 +250,14 @@ func (s *clientService) GroupRegistry() schema.Group {
 }
 
 func (s *clientService) TopNAggregationRegistry() schema.TopNAggregation {
+	return s.schemaRegistry
+}
+
+func (s *clientService) NodeRegistry() schema.Node {
+	return s.schemaRegistry
+}
+
+func (s *clientService) PropertyRegistry() schema.Property {
 	return s.schemaRegistry
 }
 

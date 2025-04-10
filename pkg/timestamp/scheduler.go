@@ -170,12 +170,15 @@ func newTask(l *logger.Logger, name string, clock clock.Clock, schedule cron.Sch
 		clock:    clock,
 		schedule: schedule,
 		action:   action,
-		closer:   run.NewCloser(1),
+		closer:   run.NewCloser(0),
 		metrics:  &SchedulerMetrics{},
 	}
 }
 
 func (t *task) run() {
+	if !t.closer.AddRunning() {
+		return
+	}
 	defer t.closer.Done()
 	now := t.clock.Now()
 	t.l.Info().Str("name", t.name).Time("now", now).Msg("start")
@@ -205,7 +208,21 @@ func (t *task) run() {
 						t.metrics.TotalTasksPanic.Add(1)
 					}
 				}()
-				return t.action(now, t.l)
+				resultCh := make(chan bool, 1)
+				timeoutCh := t.clock.Timer(5 * time.Minute).C
+
+				go func() {
+					resultCh <- t.action(now, t.l)
+				}()
+
+				select {
+				case result := <-resultCh:
+					return result
+				case <-timeoutCh:
+					t.l.Error().Str("name", t.name).Msg("action timed out")
+					t.metrics.TotalTasksTimeout.Add(1)
+					return true
+				}
 			}() {
 				t.l.Info().Str("name", t.name).Msg("action stops the task")
 				return
@@ -229,5 +246,6 @@ type SchedulerMetrics struct {
 	TotalTasksStarted             atomic.Uint64
 	TotalTasksFinished            atomic.Uint64
 	TotalTasksPanic               atomic.Uint64
+	TotalTasksTimeout             atomic.Uint64
 	TotalTaskLatencyInNanoseconds atomic.Int64
 }

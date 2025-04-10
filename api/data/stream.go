@@ -39,3 +39,12 @@ var StreamQueryKindVersion = common.KindVersion{
 
 // TopicStreamQuery is the stream query topic.
 var TopicStreamQuery = bus.BiTopic(StreamQueryKindVersion.String())
+
+// StreamDeleteExpiredSegmentsKindVersion is the version tag of stream delete segments kind.
+var StreamDeleteExpiredSegmentsKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "stream-delete-expired-segments",
+}
+
+// TopicDeleteExpiredStreamSegments is the delete stream segments topic.
+var TopicDeleteExpiredStreamSegments = bus.BiTopic(StreamDeleteExpiredSegmentsKindVersion.String())

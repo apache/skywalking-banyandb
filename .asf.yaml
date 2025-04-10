@@ -41,6 +41,6 @@ github:
           - Continuous Integration
       required_pull_request_reviews:
         dismiss_stale_reviews: true
+        required_approving_review_count: 1
     # Protect 0.7.x release branch
-    v0.7.x:
-      whatever: Just a placehold to make it take effects
+    v0.7.x: {}

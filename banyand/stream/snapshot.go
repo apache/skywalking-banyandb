@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort" // added for sorting parts
 	"sync"
 	"sync/atomic"
 	"time"
@@ -134,6 +135,49 @@ func (s *snapshot) remove(nextEpoch uint64, merged map[uint64]struct{}) snapshot
 	return result
 }
 
+func getDisjointParts(parts []*part, asc bool) [][]*part {
+	if len(parts) == 0 {
+		return nil
+	}
+	sort.Slice(parts, func(i, j int) bool {
+		return parts[i].partMetadata.MinTimestamp < parts[j].partMetadata.MinTimestamp
+	})
+
+	var groups [][]*part
+	var currentGroup []*part
+	var boundary int64
+	for _, p := range parts {
+		pMin := p.partMetadata.MinTimestamp
+		pMax := p.partMetadata.MaxTimestamp
+		if len(currentGroup) == 0 {
+			currentGroup = append(currentGroup, p)
+			boundary = pMax
+		} else {
+			if pMin <= boundary {
+				currentGroup = append(currentGroup, p)
+				if pMax > boundary {
+					boundary = pMax
+				}
+			} else {
+				groups = append(groups, currentGroup)
+				currentGroup = []*part{p}
+				boundary = pMax
+			}
+		}
+	}
+
+	if len(currentGroup) > 0 {
+		groups = append(groups, currentGroup)
+	}
+
+	if !asc {
+		for i, j := 0, len(groups)-1; i < j; i, j = i+1, j-1 {
+			groups[i], groups[j] = groups[j], groups[i]
+		}
+	}
+	return groups
+}
+
 func snapshotName(snapshot uint64) string {
 	return fmt.Sprintf("%016x%s", snapshot, snapshotSuffix)
 }
@@ -234,7 +278,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 		gg = s.s.schemaRepo.LoadAllGroups()
 	} else {
 		for _, g := range groups {
-			if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
+			if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 				continue
 			}
 			group, ok := s.s.schemaRepo.LoadGroup(g.Group)
@@ -258,7 +302,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn, storage.DataDir), g.GetSchema().Metadata.Name); err != nil {
+		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn, g.GetSchema().Metadata.Name), g.GetSchema().Metadata.Name); err != nil {
 			s.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue

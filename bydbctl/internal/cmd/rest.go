@@ -229,7 +229,7 @@ func parseTime(timestamp string) (time.Time, error) {
 	if len(timestamp) < 1 {
 		return time.Time{}, errors.New("time is empty")
 	}
-	t, errAbsoluteTime := time.Parse(timestamp, time.RFC3339)
+	t, errAbsoluteTime := time.Parse(time.RFC3339, timestamp)
 	if errAbsoluteTime == nil {
 		return t, nil
 	}
@@ -259,11 +259,7 @@ func parseFromYAMLForProperty(reader io.Reader) (requests []reqBody, err error) 
 		if !ok {
 			return nil, errors.WithMessage(errMalformedInput, "absent node: metadata")
 		}
-		container, ok := metadata["container"].(map[string]interface{})
-		if !ok {
-			return nil, errors.WithMessage(errMalformedInput, "absent node: container")
-		}
-		group, ok := container["group"].(string)
+		group, ok := metadata["group"].(string)
 		if !ok {
 			group = viper.GetString("group")
 			if group == "" {
@@ -271,11 +267,11 @@ func parseFromYAMLForProperty(reader io.Reader) (requests []reqBody, err error) 
 			}
 			metadata["group"] = group
 		}
-		name, ok = container["name"].(string)
+		name, ok = metadata["name"].(string)
 		if !ok {
 			return nil, errors.WithMessage(errMalformedInput, "absent node: name in metadata")
 		}
-		id, ok = metadata["id"].(string)
+		id, ok = data["id"].(string)
 		if !ok {
 			return nil, errors.WithMessage(errMalformedInput, "absent node: id")
 		}
