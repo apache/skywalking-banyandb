@@ -21,11 +21,9 @@ package grpc
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"net"
 	"runtime/debug"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
@@ -33,6 +31,7 @@ import (
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
@@ -49,7 +48,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
-	"google.golang.org/grpc/credentials"
 )
 
 const defaultRecvSize = 10 << 20

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package tls provides common TLS utilities for HTTP and gRPC servers .
+// Package tls provides common TLS utilities for HTTP and gRPC servers.
 package tls
 
 import (
@@ -83,7 +83,6 @@ func NewReloader(certFile, keyFile string, log *logger.Logger) (*Reloader, error
 func (r *Reloader) Start() error {
 	r.log.Info().Str("certFile", r.certFile).Str("keyFile", r.keyFile).Msg("Starting TLS file monitoring")
 
-	// Add files to the watcher
 	err := r.watcher.Add(r.certFile)
 	if err != nil {
 		return errors.Wrapf(err, "failed to watch cert file: %s", r.certFile)
@@ -94,13 +93,11 @@ func (r *Reloader) Start() error {
 		return errors.Wrapf(err, "failed to watch key file: %s", r.keyFile)
 	}
 
-	// Start the file watching loop in a goroutine
 	go r.watchFiles()
 
 	return nil
 }
 
-// watchFiles monitors the certificate and key files for changes and reloads credentials.
 func (r *Reloader) watchFiles() {
 	r.log.Info().Msg("TLS file watcher loop started")
 	for {
@@ -151,7 +148,6 @@ func (r *Reloader) watchFiles() {
 	}
 }
 
-// reloadCertificate reloads the TLS certificate from the certificate and key files.
 func (r *Reloader) reloadCertificate() error {
 	r.log.Debug().Msg("Attempting to reload TLS certificate")
 	newCert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
