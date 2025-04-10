@@ -19,6 +19,7 @@ package stream
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -331,4 +332,40 @@ func partPath(root string, epoch uint64) string {
 
 func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
+}
+
+// mustFlush syncs the directory and applies fadvis to large files if needed
+func (p *part) mustFlush() {
+	fs := p.fileSystem
+
+	// Create directories if needed
+	fs.MkdirIfNotExist(p.path, 0o750)
+
+	// Initialize file path variables
+	primaryFile := filepath.Join(p.path, primaryFilename)
+	timestampsFile := filepath.Join(p.path, timestampsFilename)
+
+	// In the part struct, primary, timestamps, and tagFamilies fields are of fs.Reader type
+	// Unlike bytes.Buffer in memPart, they cannot be flushed directly
+	// This method is mainly used for syncing directories and applying fadvis,
+	// rather than writing memory data to disk like memPart.mustFlush
+
+	// Sync the directory to ensure all files are flushed to disk
+	fs.SyncPath(p.path)
+
+	// Apply fadvis to large files to improve file system performance
+	if _, err := os.Stat(primaryFile); err == nil && p.primary != nil {
+		fadvis.ApplyIfLarge(primaryFile)
+	}
+
+	if _, err := os.Stat(timestampsFile); err == nil && p.timestamps != nil {
+		fadvis.ApplyIfLarge(timestampsFile)
+	}
+
+	for name, _ := range p.tagFamilies {
+		tfFile := filepath.Join(p.path, name+tagFamiliesFilenameExt)
+		if _, err := os.Stat(tfFile); err == nil {
+			fadvis.ApplyIfLarge(tfFile)
+		}
+	}
 }
