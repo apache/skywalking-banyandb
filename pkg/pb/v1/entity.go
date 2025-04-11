@@ -29,7 +29,7 @@ import (
 type Entry []byte
 
 // Entity denotes an identity of a Series.
-// It defined by Stream or Measure schema.
+// It is defined in the Stream or Measure schema.
 type Entity []Entry
 
 // Marshal encodes an Entity to bytes.
@@ -80,8 +80,8 @@ func (evs EntityValues) String() string {
 	return strBuilder.String()
 }
 
-// StrValue returns an EntityValue which wraps a string value.
-func StrValue(v string) EntityValue {
+// EntityStrValue returns an EntityValue which wraps a string value.
+func EntityStrValue(v string) EntityValue {
 	return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: v}}}
 }
 
