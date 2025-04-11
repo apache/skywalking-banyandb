@@ -19,12 +19,14 @@ package stream
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/fadvis"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -41,6 +43,8 @@ const (
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
 )
+
+// Functions SetMemoryProtector and SetFadvisThreshold have been moved to fadvis_adapt.go.
 
 type part struct {
 	primary              fs.Reader
@@ -167,6 +171,12 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
+	// Skip metadata index directory
+	if filepath.Base(path) == elementIndexFilename {
+		return
+	}
+
+	// Flush all data files
 	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(path, metaFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(path, primaryFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.timestamps.Buf, filepath.Join(path, timestampsFilename), storage.FilePerm)
@@ -179,7 +189,20 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 
+	// Sync to disk
 	fileSystem.SyncPath(path)
+
+	// Apply fadvis to large files
+	primaryPath := filepath.Join(path, primaryFilename)
+	fadvis.ApplyIfLarge(primaryPath)
+
+	timestampsPath := filepath.Join(path, timestampsFilename)
+	fadvis.ApplyIfLarge(timestampsPath)
+
+	for name := range mp.tagFamilies {
+		fieldPath := filepath.Join(path, name+tagFamiliesFilenameExt)
+		fadvis.ApplyIfLarge(fieldPath)
+	}
 }
 
 func uncompressedElementSizeBytes(index int, es *elements) uint64 {
@@ -256,8 +279,8 @@ func (pw *partWrapper) String() string {
 }
 
 func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
-	var p part
 	partPath := partPath(root, id)
+	var p part
 	p.path = partPath
 	p.fileSystem = fileSystem
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
@@ -288,6 +311,10 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 			p.tagFamilies[removeExt(e.Name(), tagFamiliesFilenameExt)] = mustOpenReader(path.Join(partPath, e.Name()), fileSystem)
 		}
 	}
+
+	// Apply fadvis to large part files after opening.
+	p.applyFadvisToPartFiles()
+
 	return &p
 }
 
@@ -309,4 +336,40 @@ func partPath(root string, epoch uint64) string {
 
 func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
+}
+
+// applyFadvisToPartFiles syncs the directory and applies fadvis to large files if needed.
+func (p *part) applyFadvisToPartFiles() {
+	fs := p.fileSystem
+
+	// Create directories if needed
+	fs.MkdirIfNotExist(p.path, 0o750)
+
+	// Initialize file path variables
+	primaryFile := filepath.Join(p.path, primaryFilename)
+	timestampsFile := filepath.Join(p.path, timestampsFilename)
+
+	// In the part struct, primary, timestamps, and tagFamilies fields are of fs.Reader type
+	// Unlike bytes.Buffer in memPart, they cannot be flushed directly
+	// This method is mainly used for syncing directories and applying fadvis,
+	// rather than writing memory data to disk like memPart.mustFlush
+
+	// Sync the directory to ensure all files are flushed to disk
+	fs.SyncPath(p.path)
+
+	// Apply fadvis to large files to improve file system performance
+	if _, err := os.Stat(primaryFile); err == nil && p.primary != nil {
+		fadvis.ApplyIfLarge(primaryFile)
+	}
+
+	if _, err := os.Stat(timestampsFile); err == nil && p.timestamps != nil {
+		fadvis.ApplyIfLarge(timestampsFile)
+	}
+
+	for name := range p.tagFamilies {
+		tfFile := filepath.Join(p.path, name+tagFamiliesFilenameExt)
+		if _, err := os.Stat(tfFile); err == nil {
+			fadvis.ApplyIfLarge(tfFile)
+		}
+	}
 }
