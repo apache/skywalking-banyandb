@@ -33,19 +33,17 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
-var (
-	// Logger for fadvis operations specific to stream package
-	streamFadvisLog = logger.GetLogger("stream-fadvis")
-)
+// Logger for fadvis operations specific to stream package.
+var streamFadvisLog = logger.GetLogger("stream-fadvis")
 
 type seqReader struct {
-	sr        fs.SeqReader
-	r         fs.Reader
-	bytesRead uint64
+	sr fs.SeqReader
+	r  fs.Reader
 	// File path for fadvis operations
 	filePath string
 	// File size to determine if it's a large file
-	fileSize int64
+	fileSize  int64
+	bytesRead uint64
 	// Flag indicating if this is a large file
 	isLargeFile bool
 }

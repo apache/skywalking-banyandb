@@ -199,7 +199,7 @@ func (m *Memory) Serve() run.StopNotify {
 	return m.closed
 }
 
-// GetThreshold returns the threshold for large file detection (1% of page cache)
+// GetThreshold returns the threshold for large file detection (1% of page cache).
 func (m *Memory) GetThreshold() int64 {
 	pageCachePercent := 100 - m.allowedPercent
 

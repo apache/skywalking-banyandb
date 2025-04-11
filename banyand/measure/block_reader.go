@@ -33,19 +33,17 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
-var (
-	// Logger for fadvis operations specific to measure package
-	measureFadvisLog = logger.GetLogger("measure-fadvis")
-)
+// Logger for fadvis operations specific to measure package.
+var measureFadvisLog = logger.GetLogger("measure-fadvis")
 
 type seqReader struct {
-	sr        fs.SeqReader
-	r         fs.Reader
-	bytesRead uint64
+	sr fs.SeqReader
+	r  fs.Reader
 	// File path for fadvis operations
 	filePath string
 	// File size to determine if it's a large file
-	fileSize int64
+	fileSize  int64
+	bytesRead uint64
 	// Flag indicating if this is a large file
 	isLargeFile bool
 }
@@ -283,4 +281,4 @@ func releaseBlockReader(br *blockReader) {
 	blockReaderPool.Put(br)
 }
 
-// Note: Threshold setting is now managed by the fadvis package and does not need to be initialized here
+// Note: Threshold setting is now managed by the fadvis package and does not need to be initialized here.

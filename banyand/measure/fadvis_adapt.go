@@ -23,12 +23,12 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 )
 
-// SetMemoryProtector sets the global Memory protector instance
+// SetMemoryProtector sets the global Memory protector instance.
 func SetMemoryProtector(mp *protector.Memory) {
 	fadvis.SetMemoryProtector(mp)
 }
 
-// SetFadvisThreshold sets the large file threshold
+// SetFadvisThreshold sets the large file threshold.
 func SetFadvisThreshold(threshold int64) {
 	fadvis.SetThreshold(threshold)
 }

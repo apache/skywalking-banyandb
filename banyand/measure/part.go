@@ -44,10 +44,10 @@ const (
 	tagFamiliesFilenameExt         = ".tf"
 )
 
-// Index directory name used in this package, might be different from the one in stream package
+// Index directory name used in this package, might be different from the one in stream package.
 const indexDirName = "index"
 
-// Functions SetMemoryProtector and SetFadvisThreshold have been moved to fadvis_adapt.go
+// Functions SetMemoryProtector and SetFadvisThreshold have been moved to fadvis_adapt.go.
 
 type part struct {
 	primary              fs.Reader
@@ -74,7 +74,7 @@ func (p *part) close() {
 }
 
 func (p *part) String() string {
-	return fmt.Sprintf("part %d", p.partMetadata.ID)
+	return fmt.Sprintf("part{path: %q, metadata: %q}", p.path, p.partMetadata.String())
 }
 
 func openMemPart(mp *memPart) *part {
@@ -337,6 +337,10 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 			p.tagFamilies[removeExt(e.Name(), tagFamiliesFilenameExt)] = mustOpenReader(path.Join(partPath, e.Name()), fileSystem)
 		}
 	}
+
+	// Apply fadvis to large part files after opening
+	p.applyFadvisToPartFiles()
+
 	return &p
 }
 
@@ -360,7 +364,8 @@ func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
 }
 
-func (p *part) mustFlush() {
+// applyFadvisToPartFiles syncs the directory and applies fadvis to large files if needed.
+func (p *part) applyFadvisToPartFiles() {
 	fs := p.fileSystem
 
 	// Create directories if needed
@@ -387,7 +392,7 @@ func (p *part) mustFlush() {
 		fadvis.ApplyIfLarge(timestampsFile)
 	}
 
-	for name, _ := range p.tagFamilies {
+	for name := range p.tagFamilies {
 		tfFile := filepath.Join(p.path, name+tagFamiliesFilenameExt)
 		if _, err := os.Stat(tfFile); err == nil {
 			fadvis.ApplyIfLarge(tfFile)

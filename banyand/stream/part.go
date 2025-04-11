@@ -44,7 +44,7 @@ const (
 	tagFamiliesFilenameExt         = ".tf"
 )
 
-// Functions SetMemoryProtector and SetFadvisThreshold have been moved to fadvis_adapt.go
+// Functions SetMemoryProtector and SetFadvisThreshold have been moved to fadvis_adapt.go.
 
 type part struct {
 	primary              fs.Reader
@@ -279,8 +279,8 @@ func (pw *partWrapper) String() string {
 }
 
 func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
-	var p part
 	partPath := partPath(root, id)
+	var p part
 	p.path = partPath
 	p.fileSystem = fileSystem
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
@@ -311,6 +311,10 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 			p.tagFamilies[removeExt(e.Name(), tagFamiliesFilenameExt)] = mustOpenReader(path.Join(partPath, e.Name()), fileSystem)
 		}
 	}
+
+	// Apply fadvis to large part files after opening.
+	p.applyFadvisToPartFiles()
+
 	return &p
 }
 
@@ -334,8 +338,8 @@ func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
 }
 
-// mustFlush syncs the directory and applies fadvis to large files if needed
-func (p *part) mustFlush() {
+// applyFadvisToPartFiles syncs the directory and applies fadvis to large files if needed.
+func (p *part) applyFadvisToPartFiles() {
 	fs := p.fileSystem
 
 	// Create directories if needed
@@ -362,7 +366,7 @@ func (p *part) mustFlush() {
 		fadvis.ApplyIfLarge(timestampsFile)
 	}
 
-	for name, _ := range p.tagFamilies {
+	for name := range p.tagFamilies {
 		tfFile := filepath.Join(p.path, name+tagFamiliesFilenameExt)
 		if _, err := os.Stat(tfFile); err == nil {
 			fadvis.ApplyIfLarge(tfFile)

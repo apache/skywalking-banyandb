@@ -17,26 +17,29 @@
 //go:build !linux
 // +build !linux
 
+// Package fadvis provides file system hint utilities.
+// This file contains non-Linux stub implementations that no-op
+// to ensure cross-platform compatibility.
 package fadvis
 
 // Apply is a no-op on non-Linux platforms.
 // The POSIX_FADV_DONTNEED functionality is specific to Linux.
-func Apply(path string) error {
+func Apply(_ string) error {
 	// No-op on non-Linux platforms
 	return nil
 }
 
 // MustApply is a no-op on non-Linux platforms.
-func MustApply(path string) {
+func MustApply(_ string) {
 	// No-op
 }
 
 // ApplySequential is a no-op on non-Linux platforms.
-func ApplySequential(path string) error {
+func ApplySequential(_ string) error {
 	return nil
 }
 
 // MustApplySequential is a no-op on non-Linux platforms.
-func MustApplySequential(path string) {
+func MustApplySequential(_ string) {
 	// No-op
 }

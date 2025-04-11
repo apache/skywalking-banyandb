@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package fadvis provides utilities for applying posix_fadvise
+// to optimize file system performance for large files.
 package fadvis
 
 import (
@@ -27,26 +29,24 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// Default threshold for file size, files larger than this will use fadvis
+// Default threshold for file size, files larger than this will use fadvis.
 var (
-	// LargeFileThreshold is the threshold in bytes for considering a file as large
+	// LargeFileThreshold is the threshold in bytes for considering a file as large.
 	LargeFileThreshold atomic.Int64
-	// Log is the logger for fadvis related operations
+	// Log is the logger for fadvis related operations.
 	Log = logger.GetLogger("fadvis-helper")
-	// Global Memory protector instance
-	memoryProtector     *protector.Memory
+	// Only use once to ensure SetMemoryProtector is called only once.
 	memoryProtectorOnce sync.Once
 )
 
 func init() {
-	// Default 64MB
+	// Default 64MB.
 	LargeFileThreshold.Store(64 * 1024 * 1024)
 }
 
-// SetMemoryProtector sets the global Memory protector instance
+// SetMemoryProtector sets the threshold from the Memory protector instance.
 func SetMemoryProtector(mp *protector.Memory) {
 	memoryProtectorOnce.Do(func() {
-		memoryProtector = mp
 		if mp != nil {
 			// Get threshold from Memory protector
 			if threshold := mp.GetThreshold(); threshold > 0 {
@@ -56,7 +56,7 @@ func SetMemoryProtector(mp *protector.Memory) {
 	})
 }
 
-// SetThreshold sets the large file threshold
+// SetThreshold sets the large file threshold.
 func SetThreshold(threshold int64) {
 	if threshold > 0 {
 		LargeFileThreshold.Store(threshold)
@@ -64,12 +64,12 @@ func SetThreshold(threshold int64) {
 	}
 }
 
-// GetThreshold returns the current large file threshold
+// GetThreshold returns the current large file threshold.
 func GetThreshold() int64 {
 	return LargeFileThreshold.Load()
 }
 
-// ApplyIfLarge applies fadvis to the file if it's larger than the threshold
+// ApplyIfLarge applies fadvis to the file if it's larger than the threshold.
 func ApplyIfLarge(filePath string) {
 	if fileInfo, err := os.Stat(filePath); err == nil {
 		threshold := LargeFileThreshold.Load()
@@ -82,7 +82,7 @@ func ApplyIfLarge(filePath string) {
 	}
 }
 
-// MustApplyIfLarge applies fadvis to the file if it's larger than the threshold, panics on error
+// MustApplyIfLarge applies fadvis to the file if it's larger than the threshold, panics on error.
 func MustApplyIfLarge(filePath string) {
 	if fileInfo, err := os.Stat(filePath); err == nil {
 		threshold := LargeFileThreshold.Load()
