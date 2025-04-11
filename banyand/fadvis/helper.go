@@ -92,12 +92,3 @@ func MustApplyIfLarge(filePath string) {
 		}
 	}
 }
-
-// MustApplySequentialIfLarge applies sequential fadvis hint to the file if it's larger than the threshold
-func MustApplySequentialIfLarge(filePath string, size int) {
-	threshold := LargeFileThreshold.Load()
-	if int64(size) > threshold {
-		Log.Info().Str("path", filePath).Msg("applying sequential fadvis for large file")
-		fadvis.MustApplySequential(filePath)
-	}
-}

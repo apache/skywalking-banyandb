@@ -96,12 +96,6 @@ func TestApplyIfLarge(t *testing.T) {
 		MustApplyIfLarge(smallFileName)
 		MustApplyIfLarge(largeFileName)
 	}, "MustApplyIfLarge should not panic")
-
-	// Test MustApplySequentialIfLarge (should not panic)
-	assert.NotPanics(t, func() {
-		MustApplySequentialIfLarge(smallFileName, int(smallSize))
-		MustApplySequentialIfLarge(largeFileName, int(largeSize))
-	}, "MustApplySequentialIfLarge should not panic")
 }
 
 // Helper function to create a test file with specified size
