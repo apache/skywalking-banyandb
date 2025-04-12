@@ -481,7 +481,7 @@ Metadata is for multi-tenant, multi-model use
 | segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
 | ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
 | stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
-| default_node_selector | [string](#string) |  | default_node_selector is the default node selector for queries if node_selector is not specified |
+| default_stage | [string](#string) |  | default_stage is the name of the default stage |
 
 
 
@@ -2961,7 +2961,7 @@ QueryRequest is the request contract for query.
 | limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned. If top is specified, limit processes the dataset based on top&#39;s output |
 | order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| node_selector | [string](#string) |  | node_selector is used to specify the target node for the query |
+| stage | [string](#string) |  | stage is used to specify the stage of the data points in the lifecycle |
 
 
 
@@ -3471,7 +3471,6 @@ QueryRequest is the request contract for query.
 | tag_projection | [string](#string) | repeated | tag_projection can be used to select tags of the data points in the response |
 | limit | [uint32](#uint32) |  |  |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| node_selector | [string](#string) |  | node_selector is used to select the node to query |
 
 
 
@@ -3571,7 +3570,7 @@ QueryRequest is the request contract for query.
 | criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | tag_families are indexed. |
 | projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | projection can be used to select the key names of the element in the response |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| node_selector | [string](#string) |  | node_selector is used to select the node to query |
+| stage | [string](#string) |  | stage is used to specify the stage of the query in the lifecycle |
 
 
 

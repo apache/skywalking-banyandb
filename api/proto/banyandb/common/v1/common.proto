@@ -93,8 +93,8 @@ message ResourceOpts {
   IntervalRule ttl = 3;
   // stages defines the ordered lifecycle stages. Data progresses through these stages sequentially.
   repeated LifecycleStage stages = 4;
-  // default_node_selector is the default node selector for queries if node_selector is not specified
-  string default_node_selector = 5;
+  // default_stage is the name of the default stage
+  string default_stage = 5;
 }
 
 // Group is an internal object for Group management

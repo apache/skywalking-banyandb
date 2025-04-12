@@ -162,14 +162,27 @@ func (s *groupRepo) shardNum(groupName string) (uint32, bool) {
 	return r.ShardNum, true
 }
 
-func (s *groupRepo) getNodeSelector(groupName string) (string, bool) {
+func (s *groupRepo) getNodeSelector(groupName, stageName string) (string, bool) {
 	s.RWMutex.RLock()
 	defer s.RWMutex.RUnlock()
 	r, ok := s.resourceOpts[groupName]
 	if !ok {
 		return "", false
 	}
-	return r.DefaultNodeSelector, true
+	if len(stageName) == 0 {
+		stageName = r.DefaultStage
+	}
+	if len(stageName) == 0 {
+		return "", false
+	}
+
+	for _, stage := range r.Stages {
+		if stage.Name == stageName {
+			return stage.NodeSelector, true
+		}
+	}
+
+	return "", false
 }
 
 func getID(metadata *commonv1.Metadata) identity {

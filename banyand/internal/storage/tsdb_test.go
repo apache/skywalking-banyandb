@@ -66,7 +66,8 @@ func TestOpenTSDB(t *testing.T) {
 		defer seg.DecRef()
 
 		db := tsdb.(*database[*MockTSTable, any])
-		require.Equal(t, len(db.segmentController.segments()), 1)
+		ss, _ := db.segmentController.segments(false)
+		require.Equal(t, len(ss), 1)
 		tsdb.Close()
 	})
 
@@ -99,7 +100,7 @@ func TestOpenTSDB(t *testing.T) {
 		seg.DecRef()
 
 		db := tsdb.(*database[*MockTSTable, any])
-		segs := db.segmentController.segments()
+		segs, _ := db.segmentController.segments(false)
 		require.Equal(t, len(segs), 1)
 		for i := range segs {
 			segs[i].DecRef()
@@ -112,7 +113,7 @@ func TestOpenTSDB(t *testing.T) {
 		require.NotNil(t, tsdb)
 
 		db = tsdb.(*database[*MockTSTable, any])
-		segs = db.segmentController.segments()
+		segs, _ = db.segmentController.segments(false)
 		require.Equal(t, len(segs), 1)
 		for i := range segs {
 			segs[i].DecRef()

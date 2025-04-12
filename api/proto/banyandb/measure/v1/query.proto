@@ -111,6 +111,6 @@ message QueryRequest {
   model.v1.QueryOrder order_by = 12;
   // trace is used to enable trace for the query
   bool trace = 13;
-  // node_selector is used to specify the target node for the query
-  string node_selector = 14;
+  // stage is used to specify the stage of the data points in the lifecycle
+  string stage = 14;
 }

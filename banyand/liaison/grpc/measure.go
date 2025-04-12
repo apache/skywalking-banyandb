@@ -217,11 +217,7 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 	}
 	nodeSelectors := make(map[string]string)
 	for _, g := range req.Groups {
-		if req.NodeSelector != "" {
-			nodeSelectors[g] = req.NodeSelector
-			continue
-		}
-		if ns, exist := ms.groupRepo.getNodeSelector(g); exist {
+		if ns, exist := ms.groupRepo.getNodeSelector(g, req.Stage); exist {
 			nodeSelectors[g] = ns
 			continue
 		}
