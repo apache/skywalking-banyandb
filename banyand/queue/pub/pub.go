@@ -50,10 +50,8 @@ import (
 )
 
 var (
-	_          run.PreRunner = (*pub)(nil)
-	_          run.Service   = (*pub)(nil)
-	tlsEnabled bool
-	caCertPath string
+	_ run.PreRunner = (*pub)(nil)
+	_ run.Service   = (*pub)(nil)
 )
 
 type pub struct {
@@ -66,12 +64,14 @@ type pub struct {
 	evictable  map[string]evictNode
 	closer     *run.Closer
 	mu         sync.RWMutex
+	tlsEnabled bool
+	caCertPath string
 }
 
 func (p *pub) FlagSet() *flag.FlagSet {
 	fs := flag.NewFlagSet("pub", flag.ExitOnError)
-	fs.BoolVar(&tlsEnabled, "tls", false, "enable TLS for pub client")
-	fs.StringVar(&caCertPath, "ca-cert", "", "CA certificate file to verify the server")
+	fs.BoolVar(&p.tlsEnabled, "tls", false, "enable TLS for pub client")
+	fs.StringVar(&p.caCertPath, "ca-cert", "", "CA certificate file to verify the server")
 	return fs
 }
 
@@ -343,11 +343,10 @@ func isFailoverError(err error) bool {
 	return s.Code() == codes.Unavailable || s.Code() == codes.DeadlineExceeded
 }
 
-func getClientTransportCredentials() (grpc.DialOption, error) {
-	opts, err := grpchelper.SecureOptions(nil, tlsEnabled, false, caCertPath)
+func (p *pub) getClientTransportCredentials() (grpc.DialOption, error) {
+	opts, err := grpchelper.SecureOptions(nil, p.tlsEnabled, false, p.caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS config: %w", err)
 	}
 	return opts[0], nil
-
 }

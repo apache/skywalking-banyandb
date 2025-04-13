@@ -107,7 +107,7 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	if _, ok := p.evictable[name]; ok {
 		return
 	}
-	credOpt, err := getClientTransportCredentials()
+	credOpt, err := p.getClientTransportCredentials()
 	if err != nil {
 		p.log.Error().Err(err).Msg("failed to load client TLS credentials")
 		return
@@ -256,7 +256,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 		for {
 			select {
 			case <-time.After(backoff):
-				credOpt, errEvict := getClientTransportCredentials()
+				credOpt, errEvict := p.getClientTransportCredentials()
 				if errEvict != nil {
 					p.log.Error().Err(errEvict).Msg("failed to load client TLS credentials (evict)")
 					return
