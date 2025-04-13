@@ -348,5 +348,7 @@ func (p *pub) getClientTransportCredentials() (grpc.DialOption, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS config: %w", err)
 	}
+	// We expect SecureOptions to return exactly one option for TLS transport credentials.
+	// If that changes in the future, this function should be updated to return a full option set.
 	return opts[0], nil
 }
