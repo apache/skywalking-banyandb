@@ -76,6 +76,17 @@ If you want to enable TLS for the communication between the client and liaison/s
 - `--http-grpc-cert-file string`: The gRPC TLS certificate file if the gRPC server enables TLS. It should be the same as the `cert-file`.
 - `--http-key-file string`: The TLS key file of the HTTP server.
 - `--http-cert-file string`: The TLS certificate file of the HTTP server.
+Note: These TLS flags also apply to the internal queue client responsible for communication between Liaison and Data nodes.
+
+#### Server-side (Liaison/Data nodes):
+
+Enable TLS and specify the key and certificate:
+
+```sh
+--tls=true
+--cert-file=/etc/banyandb/certs/server.crt
+--key-file=/etc/banyandb/certs/server.key
+```
 
 ### Data & Storage
 
