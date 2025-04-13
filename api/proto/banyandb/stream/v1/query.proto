@@ -78,5 +78,5 @@ message QueryRequest {
   // trace is used to enable trace for the query
   bool trace = 9;
   // stage is used to specify the stage of the query in the lifecycle
-  string stage = 10;
+  repeated string stages = 10;
 }
