@@ -31,7 +31,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	gmux "google.golang.org/grpc"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -177,11 +177,11 @@ func (p *server) PreRun(_ context.Context) error {
 func (p *server) Serve() run.StopNotify {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
-	opts := make([]gmux.DialOption, 0, 1)
+	opts := make([]grpc.DialOption, 0, 1)
 	if p.creds == nil {
-		opts = append(opts, gmux.WithTransportCredentials(insecure.NewCredentials()))
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
-		opts = append(opts, gmux.WithTransportCredentials(p.creds))
+		opts = append(opts, grpc.WithTransportCredentials(p.creds))
 	}
 	client, err := healthcheck.NewClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {

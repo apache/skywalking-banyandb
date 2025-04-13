@@ -20,7 +20,9 @@ package tls
 
 import (
 	"crypto/tls"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/pkg/errors"
@@ -28,13 +30,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
-
-// Config contains TLS configuration options.
-type Config struct {
-	CertFile string
-	KeyFile  string
-	Enabled  bool
-}
 
 // Reloader manages dynamic reloading of TLS certificates and keys for servers.
 type Reloader struct {
@@ -104,33 +99,64 @@ func (r *Reloader) watchFiles() {
 		select {
 		case event, ok := <-r.watcher.Events:
 			if !ok {
-				r.log.Warn().Msg("Watcher events channel closed unexpectedly")
+				r.log.Info().Msg("Watcher events channel closed")
 				return
 			}
 
 			r.log.Debug().Str("file", event.Name).Str("op", event.Op.String()).Msg("Detected file event")
 
-			if event.Op&fsnotify.Remove == fsnotify.Remove {
-				r.log.Info().Str("file", event.Name).Msg("File removed, re-adding to watcher")
-				if event.Name == r.certFile {
-					if err := r.watcher.Add(r.certFile); err != nil {
-						r.log.Error().Err(err).Str("file", r.certFile).Msg("Failed to re-add cert file to watcher")
-					} else {
-						r.log.Debug().Str("file", r.certFile).Msg("Re-added cert file to watcher")
+			// Handle file removal and creation
+			if event.Op&fsnotify.Remove == fsnotify.Remove || event.Op&fsnotify.Create == fsnotify.Create {
+				r.log.Info().Str("file", event.Name).Msg("File removed or created, waiting for stability")
+
+				// Remove from watcher first to avoid duplicate watches
+				_ = r.watcher.Remove(event.Name)
+
+				// Wait for file operations to complete
+				time.Sleep(200 * time.Millisecond)
+
+				// Try to re-add files to watcher with retries
+				maxRetries := 3
+				for i := 0; i < maxRetries; i++ {
+					if event.Name == r.certFile {
+						if _, err := os.Stat(r.certFile); err == nil {
+							if err := r.watcher.Add(r.certFile); err != nil {
+								r.log.Error().Err(err).Str("file", r.certFile).Msg("Failed to re-add cert file to watcher")
+							} else {
+								r.log.Debug().Str("file", r.certFile).Msg("Re-added cert file to watcher")
+								break
+							}
+						}
+					} else if event.Name == r.keyFile {
+						if _, err := os.Stat(r.keyFile); err == nil {
+							if err := r.watcher.Add(r.keyFile); err != nil {
+								r.log.Error().Err(err).Str("file", r.keyFile).Msg("Failed to re-add key file to watcher")
+							} else {
+								r.log.Debug().Str("file", r.keyFile).Msg("Re-added key file to watcher")
+								break
+							}
+						}
 					}
-				} else if event.Name == r.keyFile {
-					if err := r.watcher.Add(r.keyFile); err != nil {
-						r.log.Error().Err(err).Str("file", r.keyFile).Msg("Failed to re-add key file to watcher")
-					} else {
-						r.log.Debug().Str("file", r.keyFile).Msg("Re-added key file to watcher")
+					if i < maxRetries-1 {
+						time.Sleep(100 * time.Millisecond)
 					}
 				}
+
+				// Attempt to reload the certificate
+				if err := r.reloadCertificate(); err != nil {
+					r.log.Error().Err(err).Str("file", event.Name).Msg("Failed to reload TLS certificate")
+				} else {
+					r.log.Info().Str("file", event.Name).Msg("Successfully updated TLS certificate")
+				}
+				continue
 			}
 
-			if event.Op&fsnotify.Write == fsnotify.Write ||
-				event.Op&fsnotify.Rename == fsnotify.Rename ||
-				event.Op&fsnotify.Create == fsnotify.Create {
-				r.log.Info().Str("file", event.Name).Msg("Detected certificate change")
+			// Handle file modifications
+			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Rename == fsnotify.Rename {
+				r.log.Info().Str("file", event.Name).Msg("Detected certificate modification")
+
+				time.Sleep(200 * time.Millisecond) // Increased delay to ensure file is fully written
+
 				if err := r.reloadCertificate(); err != nil {
 					r.log.Error().Err(err).Str("file", event.Name).Msg("Failed to reload TLS certificate")
 				} else {
@@ -140,7 +166,7 @@ func (r *Reloader) watchFiles() {
 
 		case err, ok := <-r.watcher.Errors:
 			if !ok {
-				r.log.Warn().Msg("Watcher errors channel closed unexpectedly")
+				r.log.Info().Msg("Watcher errors channel closed")
 				return
 			}
 			r.log.Error().Err(err).Msg("Error in file watcher")
@@ -148,6 +174,7 @@ func (r *Reloader) watchFiles() {
 	}
 }
 
+// reloadCertificate reloads the certificate from disk.
 func (r *Reloader) reloadCertificate() error {
 	r.log.Debug().Msg("Attempting to reload TLS certificate")
 	newCert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
@@ -163,18 +190,11 @@ func (r *Reloader) reloadCertificate() error {
 	return nil
 }
 
-// getCertificate returns the current TLS certificate for TLS Config's GetCertificate callback.
-func (r *Reloader) getCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+// getCertificate returns the current certificate.
+func (r *Reloader) getCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cert, nil
-}
-
-// GetCertificateForTLS returns the current TLS certificate.
-func (r *Reloader) GetCertificateForTLS() *tls.Certificate {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.cert
 }
 
 // Stop gracefully stops the TLS reloader.
