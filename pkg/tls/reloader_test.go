@@ -423,7 +423,7 @@ func TestReloader_TLSConfigOptions(t *testing.T) {
 		log := logger.GetLogger("tls-test")
 		reloader, err := NewReloader(certFile, keyFile, log)
 		require.NoError(t, err)
-		
+
 		config := reloader.GetTLSConfig()
 		assert.NotNil(t, config.GetCertificate)
 		assert.Equal(t, uint16(tls.VersionTLS12), config.MinVersion)
@@ -444,7 +444,7 @@ func TestReloader_TLSConfigOptions(t *testing.T) {
 		log := logger.GetLogger("tls-test")
 		reloader, err := NewReloader(certFile, keyFile, log)
 		require.NoError(t, err)
-		
+
 		creds := reloader.GetGRPCTransportCredentials()
 		assert.NotNil(t, creds)
 		info := creds.Info()
@@ -529,13 +529,13 @@ func TestReloader_FileWatcherEvents(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, reloader.Start())
 		defer reloader.Stop()
-		
+
 		newCertFile := filepath.Join(tempDir, "cert.pem.new")
 		require.NoError(t, os.Rename(certFile, newCertFile))
 		time.Sleep(100 * time.Millisecond)
 		require.NoError(t, os.Rename(newCertFile, certFile))
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Verify certificate still works
 		tlsConfig := reloader.GetTLSConfig()
 		cert, err := tlsConfig.GetCertificate(nil)
@@ -558,13 +558,13 @@ func TestReloader_FileWatcherEvents(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, reloader.Start())
 		defer reloader.Stop()
-		
+
 		newKeyFile := filepath.Join(tempDir, "key.pem.new")
 		require.NoError(t, os.Rename(keyFile, newKeyFile))
 		time.Sleep(100 * time.Millisecond)
 		require.NoError(t, os.Rename(newKeyFile, keyFile))
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Verify certificate still works
 		tlsConfig := reloader.GetTLSConfig()
 		cert, err := tlsConfig.GetCertificate(nil)
@@ -588,12 +588,12 @@ func TestReloader_FileWatcherEvents(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, reloader.Start())
 		defer reloader.Stop()
-		
+
 		require.NoError(t, os.Chmod(certFile, 0o644))
 		time.Sleep(100 * time.Millisecond)
 		require.NoError(t, os.Chmod(certFile, 0o600))
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Verify certificate still works
 		tlsConfig := reloader.GetTLSConfig()
 		cert, err := tlsConfig.GetCertificate(nil)
@@ -622,7 +622,7 @@ func TestReloader_WatcherErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 		defer reloader.Stop()
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Get initial certificate state
 		initialConfig := reloader.GetTLSConfig()
 		initialCert, err := initialConfig.GetCertificate(nil)
@@ -667,7 +667,7 @@ func TestReloader_WatcherErrorHandling(t *testing.T) {
 		err = reloader.Start()
 		require.NoError(t, err)
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Get initial config state
 		config := reloader.GetTLSConfig()
 		require.NotNil(t, config)
@@ -759,7 +759,7 @@ func TestReloader_WatchFilesErrorPaths(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, reloader.Start())
 		defer reloader.Stop()
-		
+
 		// Get initial state
 		initialConfig := reloader.GetTLSConfig()
 		initialCert, err := initialConfig.GetCertificate(nil)
@@ -806,7 +806,7 @@ func TestReloader_WatchFilesErrorPaths(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, reloader.Start())
 		defer reloader.Stop()
-		
+
 		// Get initial state
 		initialConfig := reloader.GetTLSConfig()
 		initialCert, err := initialConfig.GetCertificate(nil)
@@ -853,7 +853,7 @@ func TestReloader_WatchFilesErrorPaths(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, reloader.Start())
 		defer reloader.Stop()
-		
+
 		// Get initial state
 		initialConfig := reloader.GetTLSConfig()
 		initialCert, err := initialConfig.GetCertificate(nil)
@@ -892,7 +892,7 @@ func TestReloader_WatchFilesErrorPaths(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, reloader.Start())
 		defer reloader.Stop()
-		
+
 		newCertFile := filepath.Join(tempDir, "renamed_cert.pem")
 
 		// Rename the certificate file
