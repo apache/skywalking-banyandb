@@ -261,6 +261,10 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
 	p := mustOpenFilePart(partID, root, fileSystem)
+
+	// Apply fadvis to the merged part files
+	p.applyFadvisToPartFiles()
+
 	return newPartWrapper(nil, p), nil
 }
 
