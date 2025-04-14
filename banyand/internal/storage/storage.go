@@ -105,7 +105,7 @@ type IndexDB interface {
 type TSDB[T TSTable, O any] interface {
 	io.Closer
 	CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], error)
-	SelectSegments(timeRange timestamp.TimeRange) []Segment[T, O]
+	SelectSegments(timeRange timestamp.TimeRange) ([]Segment[T, O], error)
 	Tick(ts int64)
 	UpdateOptions(opts *commonv1.ResourceOpts)
 	TakeFileSnapshot(dst string) error

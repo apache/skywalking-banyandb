@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -162,14 +163,35 @@ func (s *groupRepo) shardNum(groupName string) (uint32, bool) {
 	return r.ShardNum, true
 }
 
-func (s *groupRepo) getNodeSelector(groupName string) (string, bool) {
+func (s *groupRepo) getNodeSelector(groupName string, stages []string) ([]string, bool) {
 	s.RWMutex.RLock()
 	defer s.RWMutex.RUnlock()
 	r, ok := s.resourceOpts[groupName]
 	if !ok {
-		return "", false
+		return nil, false
 	}
-	return r.DefaultNodeSelector, true
+	if len(stages) == 0 {
+		stages = r.DefaultStages
+	}
+	if len(stages) == 0 {
+		return nil, false
+	}
+
+	var nodeSelectors []string
+	for _, stage := range r.Stages {
+		for _, sn := range stages {
+			if strings.EqualFold(sn, stage.Name) {
+				ns := stage.NodeSelector
+				ns = strings.TrimSpace(ns)
+				if ns == "" {
+					continue
+				}
+				nodeSelectors = append(nodeSelectors, ns)
+				break
+			}
+		}
+	}
+	return nodeSelectors, true
 }
 
 func getID(metadata *commonv1.Metadata) identity {
