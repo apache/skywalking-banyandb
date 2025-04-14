@@ -26,7 +26,6 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/pkg/errors"
-	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -212,9 +211,4 @@ func (r *Reloader) GetTLSConfig() *tls.Config {
 		MinVersion:     tls.VersionTLS12,
 		NextProtos:     []string{"h2"},
 	}
-}
-
-// GetGRPCTransportCredentials returns transport credentials for gRPC using this reloader.
-func (r *Reloader) GetGRPCTransportCredentials() credentials.TransportCredentials {
-	return credentials.NewTLS(r.GetTLSConfig())
 }

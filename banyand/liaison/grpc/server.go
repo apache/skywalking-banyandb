@@ -30,6 +30,7 @@ import (
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
@@ -254,7 +255,8 @@ func (s *server) Serve() run.StopNotify {
 			return s.stopCh
 		}
 		s.log.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).Msg("Starting TLS file monitoring")
-		creds := s.tlsReloader.GetGRPCTransportCredentials()
+		tlsConfig := s.tlsReloader.GetTLSConfig()
+		creds := credentials.NewTLS(tlsConfig)
 		opts = append(opts, grpclib.Creds(creds))
 	}
 	grpcPanicRecoveryHandler := func(p any) (err error) {
