@@ -81,8 +81,9 @@ func TestSegmentBoundaryUpdateFn(t *testing.T) {
 			t.Logf("current time: %s", ts.Format(time.RFC3339))
 			expected := i + 2
 			require.EventuallyWithTf(t, func(ct *assert.CollectT) {
-				if len(segCtrl.segments()) != expected {
-					ct.Errorf("expect %d segments, got %d", expected, len(segCtrl.segments()))
+				segments, _ := segCtrl.segments(false)
+				if len(segments) != expected {
+					ct.Errorf("expect %d segments, got %d", expected, len(segments))
 				}
 			}, flags.EventuallyTimeout, time.Millisecond, "wait for %d segment to be created", expected)
 			ts = ts.Add(time.Hour)
@@ -111,7 +112,8 @@ func TestForwardRotation(t *testing.T) {
 		t.Logf("current time: %s", ts.Format(time.RFC3339))
 		tsdb.Tick(ts.UnixNano())
 		assert.Eventually(t, func() bool {
-			return len(segCtrl.segments()) == 2
+			segments, _ := segCtrl.segments(false)
+			return len(segments) == 2
 		}, flags.EventuallyTimeout, time.Millisecond, "wait for the second segment to be created")
 	})
 
@@ -122,7 +124,8 @@ func TestForwardRotation(t *testing.T) {
 		t.Logf("current time: %s", ts.Format(time.RFC3339))
 		tsdb.Tick(ts.UnixNano())
 		assert.Never(t, func() bool {
-			return len(segCtrl.segments()) == 2
+			segments, _ := segCtrl.segments(false)
+			return len(segments) == 2
 		}, flags.NeverTimeout, time.Millisecond, "wait for the second segment never to be created")
 	})
 }
@@ -140,8 +143,9 @@ func TestRetention(t *testing.T) {
 			tsdb.Tick(ts.UnixNano())
 			expected := i + 2
 			require.EventuallyWithTf(t, func(ct *assert.CollectT) {
-				if len(segCtrl.segments()) != expected {
-					ct.Errorf("expect %d segments, got %d", expected, len(segCtrl.segments()))
+				segments, _ := segCtrl.segments(false)
+				if len(segments) != expected {
+					ct.Errorf("expect %d segments, got %d", expected, len(segments))
 				}
 			}, flags.EventuallyTimeout, time.Millisecond, "wait for %d segment to be created", expected)
 			// amend the time to the next day
@@ -151,7 +155,8 @@ func TestRetention(t *testing.T) {
 		c.Set(ts)
 		tsdb.Tick(ts.UnixNano())
 		assert.Eventually(t, func() bool {
-			return len(segCtrl.segments()) == 4
+			segments, _ := segCtrl.segments(false)
+			return len(segments) == 4
 		}, flags.EventuallyTimeout, time.Millisecond, "wait for the 1st segment to be deleted")
 	})
 
@@ -165,7 +170,7 @@ func TestRetention(t *testing.T) {
 			tsdb.Tick(ts.UnixNano())
 			ts = ts.Add(time.Hour)
 			require.EventuallyWithTf(t, func(ct *assert.CollectT) {
-				ss := segCtrl.segments()
+				ss, _ := segCtrl.segments(false)
 				defer func() {
 					for i := range ss {
 						ss[i].DecRef()
@@ -184,7 +189,7 @@ func TestRetention(t *testing.T) {
 			c.Set(ts)
 			tsdb.Tick(ts.UnixNano())
 			require.EventuallyWithTf(t, func(ct *assert.CollectT) {
-				ss := segCtrl.segments()
+				ss, _ := segCtrl.segments(false)
 				defer func() {
 					for i := range ss {
 						ss[i].DecRef()
@@ -233,7 +238,8 @@ func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *
 	defer seg.DecRef()
 
 	db := tsdb.(*database[*MockTSTable, any])
-	require.Equal(t, len(db.segmentController.segments()), 1)
+	segments, _ := db.segmentController.segments(false)
+	require.Equal(t, len(segments), 1)
 	return db, mc, db.segmentController, tracker, func() {
 		tsdb.Close()
 		defFn()
