@@ -44,17 +44,21 @@ import (
 // ErrExpiredData is returned when the data is expired.
 var ErrExpiredData = errors.New("expired data")
 
+// ErrSegmentClosed is returned when trying to access a closed segment.
+var ErrSegmentClosed = errors.New("segment closed")
+
 type segment[T TSTable, O any] struct {
-	metrics  any
-	option   O
-	creator  TSTableCreator[T, O]
-	l        *logger.Logger
-	index    *seriesIndex
-	sLst     atomic.Pointer[[]*shard[T]]
-	position common.Position
+	metrics      any
+	tsdbOpts     *TSDBOpts[T, O]
+	l            *logger.Logger
+	index        *seriesIndex
+	sLst         atomic.Pointer[[]*shard[T]]
+	indexMetrics *inverted.Metrics
+	position     common.Position
 	timestamp.TimeRange
 	suffix        string
 	location      string
+	lastAccessed  atomic.Int64
 	mu            sync.Mutex
 	refCount      int32
 	mustBeDeleted uint32
@@ -74,24 +78,20 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 	})
 	options := sc.getOptions()
 	id := generateSegID(options.SegmentInterval.Unit, suffixInteger)
-	sir, err := newSeriesIndex(ctx, path, options.SeriesIndexFlushTimeoutSeconds, options.SeriesIndexCacheMaxBytes, sc.indexMetrics)
-	if err != nil {
-		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
-	}
+
 	s = &segment[T, O]{
-		id:        id,
-		location:  path,
-		suffix:    suffix,
-		TimeRange: timestamp.NewSectionTimeRange(startTime, endTime),
-		position:  p,
-		refCount:  1,
-		index:     sir,
-		metrics:   sc.metrics,
-		creator:   options.TSTableCreator,
-		option:    options.Option,
+		id:           id,
+		location:     path,
+		suffix:       suffix,
+		TimeRange:    timestamp.NewSectionTimeRange(startTime, endTime),
+		position:     p,
+		metrics:      sc.metrics,
+		indexMetrics: sc.indexMetrics,
+		tsdbOpts:     options,
 	}
 	s.l = logger.Fetch(ctx, s.String())
-	return s, s.loadShards(int(options.ShardNum))
+	s.lastAccessed.Store(time.Now().UnixNano())
+	return s, s.initialize(ctx)
 }
 
 func (s *segment[T, O]) loadShards(shardNum int) error {
@@ -104,7 +104,7 @@ func (s *segment[T, O]) loadShards(shardNum int) error {
 			return nil
 		}
 		s.l.Info().Int("shard_id", shardID).Msg("loaded a existed shard")
-		_, err = s.CreateTSTableIfNotExist(common.ShardID(shardID))
+		_, err = s.createShardIfNotExist(common.ShardID(shardID))
 		return err
 	})
 }
@@ -123,31 +123,99 @@ func (s *segment[T, O]) Tables() (tt []T) {
 	return tt
 }
 
-func (s *segment[T, O]) incRef() {
+func (s *segment[T, O]) incRef(ctx context.Context) error {
+	s.lastAccessed.Store(time.Now().UnixNano())
+	if atomic.LoadInt32(&s.refCount) <= 0 {
+		return s.initialize(ctx)
+	}
 	atomic.AddInt32(&s.refCount, 1)
+	return nil
+}
+
+func (s *segment[T, O]) initialize(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if atomic.LoadInt32(&s.refCount) > 0 {
+		return nil
+	}
+
+	ctx = context.WithValue(ctx, logger.ContextKey, s.l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return s.position
+	})
+
+	sir, err := newSeriesIndex(ctx, s.location, s.tsdbOpts.SeriesIndexFlushTimeoutSeconds, s.tsdbOpts.SeriesIndexCacheMaxBytes, s.indexMetrics)
+	if err != nil {
+		return errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
+	}
+	s.index = sir
+
+	err = s.loadShards(int(s.tsdbOpts.ShardNum))
+	if err != nil {
+		s.index.Close()
+		s.index = nil
+		return errors.Wrap(errOpenDatabase, errors.WithMessage(err, "load shards failed").Error())
+	}
+	atomic.StoreInt32(&s.refCount, 1)
+
+	s.l.Info().Stringer("seg", s).Msg("segment initialized")
+	return nil
 }
 
 func (s *segment[T, O]) DecRef() {
-	n := atomic.AddInt32(&s.refCount, -1)
-	if n > 0 {
+	shouldCleanup := false
+
+	if atomic.LoadInt32(&s.refCount) <= 0 && atomic.LoadUint32(&s.mustBeDeleted) != 0 {
+		shouldCleanup = true
+	} else {
+		for {
+			current := atomic.LoadInt32(&s.refCount)
+			if current <= 0 {
+				return
+			}
+
+			if atomic.CompareAndSwapInt32(&s.refCount, current, current-1) {
+				shouldCleanup = current == 1
+				break
+			}
+		}
+	}
+
+	if !shouldCleanup {
 		return
 	}
+
+	s.performCleanup()
+}
+
+func (s *segment[T, O]) performCleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if atomic.LoadInt32(&s.refCount) > 0 && atomic.LoadUint32(&s.mustBeDeleted) == 0 {
+		return
+	}
 
 	deletePath := ""
 	if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
 		deletePath = s.location
 	}
 
-	if err := s.index.Close(); err != nil {
-		s.l.Panic().Err(err).Msg("failed to close the series index")
+	if s.index != nil {
+		if err := s.index.Close(); err != nil {
+			s.l.Panic().Err(err).Msg("failed to close the series index")
+		}
+		s.index = nil
 	}
 
 	sLst := s.sLst.Load()
 	if sLst != nil {
-		for _, s := range *sLst {
-			s.close()
+		for _, shard := range *sLst {
+			shard.close()
+		}
+		if deletePath == "" {
+			s.sLst.Store(&[]*shard[T]{})
 		}
 	}
 
@@ -167,6 +235,10 @@ func (s *segment[T, O]) CreateTSTableIfNotExist(id common.ShardID) (T, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createShardIfNotExist(id)
+}
+
+func (s *segment[T, O]) createShardIfNotExist(id common.ShardID) (T, error) {
 	if s, ok := s.getShard(id); ok {
 		return s.table, nil
 	}
@@ -218,13 +290,14 @@ type segmentController[T TSTable, O any] struct {
 	location                string
 	lst                     []*segment[T, O]
 	deadline                atomic.Int64
+	idleTimeout             time.Duration
 	optsMutex               sync.RWMutex
 	sync.RWMutex
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
 	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
-	segmentsBoundaryUpdateFn SegmentBoundaryUpdateFn,
+	segmentsBoundaryUpdateFn SegmentBoundaryUpdateFn, idleTimeout time.Duration,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	p := common.GetPosition(ctx)
@@ -239,6 +312,7 @@ func newSegmentController[T TSTable, O any](ctx context.Context, location string
 		segmentBoundaryUpdateFn: segmentsBoundaryUpdateFn,
 		stage:                   p.Stage,
 		db:                      p.Database,
+		idleTimeout:             idleTimeout,
 	}
 }
 
@@ -261,21 +335,24 @@ func (sc *segmentController[T, O]) updateOptions(resourceOpts *commonv1.Resource
 	sc.opts.ShardNum = resourceOpts.ShardNum
 }
 
-func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange) (tt []Segment[T, O]) {
+func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange) (tt []Segment[T, O], err error) {
 	sc.RLock()
 	defer sc.RUnlock()
 	last := len(sc.lst) - 1
+	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
 	for i := range sc.lst {
 		s := sc.lst[last-i]
 		if s.GetTimeRange().End.Before(timeRange.Start) {
 			break
 		}
 		if s.Overlapping(timeRange) {
-			s.incRef()
+			if err = s.incRef(ctx); err != nil {
+				return nil, err
+			}
 			tt = append(tt, s)
 		}
 	}
-	return tt
+	return tt, nil
 }
 
 func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], error) {
@@ -287,16 +364,16 @@ func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], 
 	if err != nil {
 		return nil, err
 	}
-	s.incRef()
 	sc.notifySegmentBoundaryUpdate()
-	return s, nil
+	return s, s.incRef(context.WithValue(context.Background(), logger.ContextKey, sc.l))
 }
 
 func (sc *segmentController[T, O]) notifySegmentBoundaryUpdate() {
 	if sc.segmentBoundaryUpdateFn == nil {
 		return
 	}
-	segs := sc.segments()
+	// No error if we do not open closed segments.
+	segs, _ := sc.segments(false)
 	defer func() {
 		for i := range segs {
 			segs[i].DecRef()
@@ -312,15 +389,49 @@ func (sc *segmentController[T, O]) notifySegmentBoundaryUpdate() {
 	sc.segmentBoundaryUpdateFn(sc.stage, sc.db, tr)
 }
 
-func (sc *segmentController[T, O]) segments() (ss []*segment[T, O]) {
+func (sc *segmentController[T, O]) segments(reopenClosed bool) (ss []*segment[T, O], err error) {
 	sc.RLock()
 	defer sc.RUnlock()
 	r := make([]*segment[T, O], len(sc.lst))
+	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
 	for i := range sc.lst {
-		sc.lst[i].incRef()
+		if reopenClosed {
+			if err = sc.lst[i].incRef(ctx); err != nil {
+				return nil, err
+			}
+		} else {
+			if atomic.LoadInt32(&sc.lst[i].refCount) > 0 {
+				atomic.AddInt32(&sc.lst[i].refCount, 1)
+			}
+		}
 		r[i] = sc.lst[i]
 	}
-	return r
+	return r, nil
+}
+
+func (sc *segmentController[T, O]) closeIdleSegments() int {
+	maxIdleTime := sc.idleTimeout
+
+	now := time.Now().UnixNano()
+	idleThreshold := now - maxIdleTime.Nanoseconds()
+
+	segs, _ := sc.segments(false)
+	closedCount := 0
+
+	for _, seg := range segs {
+		lastAccess := seg.lastAccessed.Load()
+		// Only consider segments that have been idle for longer than the threshold
+		// and have active references (are not already closed)
+		if lastAccess < idleThreshold && atomic.LoadInt32(&seg.refCount) > 0 {
+			seg.DecRef()
+		}
+		seg.DecRef()
+		if atomic.LoadInt32(&seg.refCount) == 0 {
+			closedCount++
+		}
+	}
+
+	return closedCount
 }
 
 func (sc *segmentController[T, O]) format(tm time.Time) string {
@@ -446,7 +557,8 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 }
 
 func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, err error) {
-	for _, s := range sc.segments() {
+	ss, _ := sc.segments(false)
+	for _, s := range ss {
 		if s.Before(deadline) {
 			hasSegment = true
 			id := s.id
@@ -468,7 +580,8 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 		IncludeStart: true,
 		IncludeEnd:   false,
 	}
-	for _, s := range sc.segments() {
+	ss, _ := sc.segments(false)
+	for _, s := range ss {
 		if s.Before(deadline) {
 			if timeRange.Start.IsZero() {
 				timeRange.Start = s.Start
@@ -483,7 +596,8 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 func (sc *segmentController[T, O]) deleteExpiredSegments(timeRange timestamp.TimeRange) int64 {
 	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	var count int64
-	for _, s := range sc.segments() {
+	ss, _ := sc.segments(false)
+	for _, s := range ss {
 		if s.Before(deadline) && s.Overlapping(timeRange) {
 			s.delete()
 			sc.Lock()

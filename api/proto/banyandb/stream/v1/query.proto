@@ -77,6 +77,6 @@ message QueryRequest {
   model.v1.TagProjection projection = 8 [(validate.rules).message.required = true];
   // trace is used to enable trace for the query
   bool trace = 9;
-  // node_selector is used to select the node to query
-  string node_selector = 10;
+  // stage is used to specify the stage of the query in the lifecycle
+  repeated string stages = 10;
 }
