@@ -237,10 +237,10 @@
             const arr = [];
             tagFamilies.forEach((item) => {
               item.tags.forEach((tag) => {
-                let entityIndex = entity.findIndex((entityItem) => {
+                const entityIndex = entity.findIndex((entityItem) => {
                   return entityItem === tag.name;
                 });
-                let shardingKeyIndex = shardingKey.findIndex((shardingKeyItem) => {
+                const shardingKeyIndex = shardingKey.findIndex((shardingKeyItem) => {
                   return shardingKeyItem === tag.name;
                 });
                 let obj = {
