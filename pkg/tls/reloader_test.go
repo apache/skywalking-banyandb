@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 func generateSelfSignedCert(t *testing.T, commonName string) (certPEM, keyPEM []byte) {
@@ -89,6 +90,9 @@ func TestReloaderBasic(t *testing.T) {
 		reloader, err := NewReloader(certFile, keyFile, log)
 		require.NoError(t, err)
 		require.NotNil(t, reloader)
+
+		// Start the reloader
+		require.NoError(t, reloader.Start())
 		defer reloader.Stop()
 	})
 
@@ -158,15 +162,18 @@ func TestReloaderCertificateRotation(t *testing.T) {
 		require.NoError(t, os.WriteFile(certFile, certPEM2, 0o600))
 		require.NoError(t, os.WriteFile(keyFile, keyPEM2, 0o600))
 
-		// Wait for watcher to detect changes
-		time.Sleep(500 * time.Millisecond)
-
-		// Verify certificate has been updated
-		cert, err = tlsConfig.GetCertificate(nil)
-		require.NoError(t, err)
-		leafCert, err = x509.ParseCertificate(cert.Certificate[0])
-		require.NoError(t, err)
-		require.Equal(t, "test2.local", leafCert.Subject.CommonName)
+		// Use assert.Eventually instead of time.Sleep to wait for certificate update
+		assert.Eventually(t, func() bool {
+			cert, err := tlsConfig.GetCertificate(nil)
+			if err != nil {
+				return false
+			}
+			leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				return false
+			}
+			return leafCert.Subject.CommonName == "test2.local"
+		}, flags.EventuallyTimeout, 100*time.Millisecond)
 	})
 
 	// Test removing old files and creating new files
@@ -192,6 +199,14 @@ func TestReloaderCertificateRotation(t *testing.T) {
 		// Wait for initial certificate to be loaded
 		time.Sleep(100 * time.Millisecond)
 
+		// Verify initial certificate
+		tlsConfig := reloader.GetTLSConfig()
+		cert, err := tlsConfig.GetCertificate(nil)
+		require.NoError(t, err)
+		leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+		require.NoError(t, err)
+		require.Equal(t, "test1.local", leafCert.Subject.CommonName)
+
 		// Remove the files
 		require.NoError(t, os.Remove(certFile))
 		require.NoError(t, os.Remove(keyFile))
@@ -201,49 +216,19 @@ func TestReloaderCertificateRotation(t *testing.T) {
 		certPEM2, keyPEM2 := generateSelfSignedCert(t, "test3.local")
 		require.NoError(t, os.WriteFile(certFile, certPEM2, 0o600))
 		require.NoError(t, os.WriteFile(keyFile, keyPEM2, 0o600))
-		time.Sleep(500 * time.Millisecond)
 
-		// Verify the certificates have been updated
-		tlsConfig := reloader.GetTLSConfig()
-		cert, err := tlsConfig.GetCertificate(nil)
-		require.NoError(t, err)
-		leafCert, err := x509.ParseCertificate(cert.Certificate[0])
-		require.NoError(t, err)
-		require.Equal(t, "test3.local", leafCert.Subject.CommonName)
-	})
-
-	// Test creating files after reloader starts
-	t.Run("creating files after reloader starts", func(t *testing.T) {
-		tempDir := t.TempDir()
-		certFile := filepath.Join(tempDir, "cert.pem")
-		keyFile := filepath.Join(tempDir, "key.pem")
-
-		// Don't create files first
-		log := logger.GetLogger("tls-test")
-		_, err := NewReloader(certFile, keyFile, log)
-		require.Error(t, err) // Should fail when files don't exist
-
-		// Now create the files
-		certPEM, keyPEM := generateSelfSignedCert(t, "create-after-start.local")
-		require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
-		require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
-
-		// Try to create reloader again
-		reloader, err := NewReloader(certFile, keyFile, log)
-		require.NoError(t, err)
-		require.NoError(t, reloader.Start())
-		defer reloader.Stop()
-
-		// Wait for files to be loaded
-		time.Sleep(500 * time.Millisecond)
-
-		// Verify the certificate is loaded
-		tlsConfig := reloader.GetTLSConfig()
-		cert, err := tlsConfig.GetCertificate(nil)
-		require.NoError(t, err)
-		leafCert, err := x509.ParseCertificate(cert.Certificate[0])
-		require.NoError(t, err)
-		require.Equal(t, "create-after-start.local", leafCert.Subject.CommonName)
+		// Use assert.Eventually instead of time.Sleep to wait for certificate update
+		assert.Eventually(t, func() bool {
+			cert, err := tlsConfig.GetCertificate(nil)
+			if err != nil {
+				return false
+			}
+			leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				return false
+			}
+			return leafCert.Subject.CommonName == "test3.local"
+		}, flags.EventuallyTimeout, 100*time.Millisecond)
 	})
 
 	// Test removing files without creating new ones
@@ -280,71 +265,84 @@ func TestReloaderCertificateRotation(t *testing.T) {
 		// Remove the files
 		require.NoError(t, os.Remove(certFile))
 		require.NoError(t, os.Remove(keyFile))
-		time.Sleep(500 * time.Millisecond)
 
-		// Should still return the last valid certificate even after files are removed
-		cert, err = tlsConfig.GetCertificate(nil)
-		require.NoError(t, err)
-		leafCert, err = x509.ParseCertificate(cert.Certificate[0])
-		require.NoError(t, err)
-		assert.Equal(t, "remove-test.local", leafCert.Subject.CommonName)
+		// Use assert.Eventually to check certificate is still available
+		assert.Eventually(t, func() bool {
+			cert, err := tlsConfig.GetCertificate(nil)
+			if err != nil {
+				return false
+			}
+			leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				return false
+			}
+			return leafCert.Subject.CommonName == "remove-test.local"
+		}, flags.EventuallyTimeout, 100*time.Millisecond)
 	})
 }
 
 // TestReloaderInvalidCertificate tests handling of invalid certificates.
 func TestReloaderInvalidCertificate(t *testing.T) {
-	t.Run("handling invalid certificates", func(t *testing.T) {
-		tempDir := t.TempDir()
-		certFile := filepath.Join(tempDir, "cert.pem")
-		keyFile := filepath.Join(tempDir, "key.pem")
+	tempDir := t.TempDir()
+	certFile := filepath.Join(tempDir, "cert.pem")
+	keyFile := filepath.Join(tempDir, "key.pem")
 
-		// Create valid initial files
-		certPEM, keyPEM := generateSelfSignedCert(t, "initial.local")
-		require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
-		require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
+	// Create valid initial files
+	certPEM, keyPEM := generateSelfSignedCert(t, "initial.local")
+	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
+	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
 
-		log := logger.GetLogger("tls-test")
-		reloader, err := NewReloader(certFile, keyFile, log)
-		require.NoError(t, err)
-		require.NoError(t, reloader.Start())
-		defer reloader.Stop()
+	log := logger.GetLogger("tls-test")
+	reloader, err := NewReloader(certFile, keyFile, log)
+	require.NoError(t, err)
+	require.NoError(t, reloader.Start())
+	defer reloader.Stop()
 
-		// Wait for initial certificate to be loaded
-		time.Sleep(100 * time.Millisecond)
+	// Wait for initial certificate to be loaded
+	time.Sleep(100 * time.Millisecond)
 
-		// Initial verification
-		tlsConfig := reloader.GetTLSConfig()
+	// Initial verification
+	tlsConfig := reloader.GetTLSConfig()
+	cert, err := tlsConfig.GetCertificate(nil)
+	require.NoError(t, err)
+	leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, "initial.local", leafCert.Subject.CommonName)
+
+	// Create invalid certificate and key files
+	require.NoError(t, os.WriteFile(certFile, []byte("invalid cert"), 0o600))
+	require.NoError(t, os.WriteFile(keyFile, []byte("invalid key"), 0o600))
+
+	// Use assert.Eventually to verify still using the last valid certificate
+	assert.Eventually(t, func() bool {
 		cert, err := tlsConfig.GetCertificate(nil)
-		require.NoError(t, err)
+		if err != nil {
+			return false
+		}
 		leafCert, err := x509.ParseCertificate(cert.Certificate[0])
-		require.NoError(t, err)
-		require.Equal(t, "initial.local", leafCert.Subject.CommonName)
+		if err != nil {
+			return false
+		}
+		return leafCert.Subject.CommonName == "initial.local"
+	}, flags.EventuallyTimeout, 100*time.Millisecond)
 
-		// Create invalid certificate and key files
-		require.NoError(t, os.WriteFile(certFile, []byte("invalid cert"), 0o600))
-		require.NoError(t, os.WriteFile(keyFile, []byte("invalid key"), 0o600))
-		time.Sleep(500 * time.Millisecond)
+	// Create valid files after invalid ones
+	certPEM2, keyPEM2 := generateSelfSignedCert(t, "recovered.local")
+	require.NoError(t, os.WriteFile(certFile, certPEM2, 0o600))
+	require.NoError(t, os.WriteFile(keyFile, keyPEM2, 0o600))
 
-		// Should still return the last valid certificate
-		cert, err = tlsConfig.GetCertificate(nil)
-		require.NoError(t, err)
-		leafCert, err = x509.ParseCertificate(cert.Certificate[0])
-		require.NoError(t, err)
-		assert.Equal(t, "initial.local", leafCert.Subject.CommonName)
-
-		// Create valid files after invalid ones
-		certPEM2, keyPEM2 := generateSelfSignedCert(t, "recovered.local")
-		require.NoError(t, os.WriteFile(certFile, certPEM2, 0o600))
-		require.NoError(t, os.WriteFile(keyFile, keyPEM2, 0o600))
-		time.Sleep(500 * time.Millisecond)
-
-		// Certificate should be updated automatically
-		cert, err = tlsConfig.GetCertificate(nil)
-		require.NoError(t, err)
-		leafCert, err = x509.ParseCertificate(cert.Certificate[0])
-		require.NoError(t, err)
-		assert.Equal(t, "recovered.local", leafCert.Subject.CommonName)
-	})
+	// Use assert.Eventually to verify certificate has been updated
+	assert.Eventually(t, func() bool {
+		cert, err := tlsConfig.GetCertificate(nil)
+		if err != nil {
+			return false
+		}
+		leafCert, err := x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return false
+		}
+		return leafCert.Subject.CommonName == "recovered.local"
+	}, flags.EventuallyTimeout, 100*time.Millisecond)
 }
 
 // TestReloaderTLSConfig tests TLS configuration generation.

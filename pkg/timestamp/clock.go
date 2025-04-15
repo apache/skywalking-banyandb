@@ -47,7 +47,18 @@ func NewClock() Clock {
 
 // NewMockClock returns an instance of a mock clock.
 func NewMockClock() MockClock {
-	return clock.NewMock()
+	return &mockClockWrapper{clock.NewMock()}
+}
+
+type mockClockWrapper struct {
+	*clock.Mock
+}
+
+// TriggerTimer sends the current time to timer.C.
+func (m *mockClockWrapper) TriggerTimer() bool {
+	// Advance time by a tiny amount to trigger any pending timers
+	m.Add(1 * time.Nanosecond)
+	return true
 }
 
 var clockKey = contextClockKey{}
