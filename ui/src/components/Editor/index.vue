@@ -243,7 +243,7 @@
                 const shardingKeyIndex = shardingKey.findIndex((shardingKeyItem) => {
                   return shardingKeyItem === tag.name;
                 });
-                let obj = {
+                const obj = {
                   tagFamily: item.name,
                   tag: tag.name,
                   type: tag.type,
