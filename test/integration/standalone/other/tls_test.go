@@ -272,7 +272,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		defer newGrpcConn.Close()
 
-		// Verify data access works through the new connection
+		// Verify data access works through a new connection
 		gm.Eventually(func(innerGm gm.Gomega) {
 			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
 				Connection: newGrpcConn,
