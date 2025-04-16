@@ -20,13 +20,17 @@ package http
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/go-chi/chi/v5"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/pkg/errors"
@@ -69,12 +73,14 @@ type Server interface {
 }
 
 type server struct {
+	// 64-bit aligned fields (pointers)
 	creds        credentials.TransportCredentials
 	tlsReloader  *pkgtls.Reloader
 	l            *logger.Logger
 	clientCloser context.CancelFunc
 	mux          *chi.Mux
 	srv          *http.Server
+	certWatcher  *fsnotify.Watcher
 	stopCh       chan struct{}
 	host         string
 	listenAddr   string
@@ -82,8 +88,11 @@ type server struct {
 	keyFile      string
 	certFile     string
 	grpcCert     string
-	port         uint32
-	tls          bool
+
+	// 32-bit fields
+	port uint32
+	_    [3]byte // padding
+	tls  bool
 }
 
 func (p *server) FlagSet() *run.FlagSet {
@@ -104,9 +113,10 @@ func (p *server) Validate() error {
 		return errNoAddr
 	}
 	if p.grpcCert != "" {
-		creds, errTLS := credentials.NewClientTLSFromFile(p.grpcCert, "")
-		if errTLS != nil {
-			return errors.Wrap(errTLS, "failed to load the grpc cert")
+		var err error
+		creds, err := credentials.NewClientTLSFromFile(p.grpcCert, "")
+		if err != nil {
+			return errors.Wrap(err, "failed to load the grpc cert")
 		}
 		p.creds = creds
 	}
@@ -155,6 +165,96 @@ func (p *server) PreRun(_ context.Context) error {
 		p.l.Warn().Msg("HTTP TLS is disabled, skipping TLSReloader initialization")
 	}
 
+	// Initialize gRPC client with cert file
+	if p.grpcCert != "" {
+		p.l.Debug().Str("grpcCert", p.grpcCert).Msg("Initializing TLS credentials for gRPC connection")
+
+		// Load the client cert directly - for client certs we don't need a reloader
+		// as we only need the public cert to verify the server's identity
+		cert, err := os.ReadFile(p.grpcCert)
+		if err != nil {
+			p.l.Error().Err(err).Msg("Failed to read gRPC cert file")
+			return err
+		}
+
+		certPool := x509.NewCertPool()
+		if !certPool.AppendCertsFromPEM(cert) {
+			p.l.Error().Msg("Failed to append gRPC cert to pool")
+			return errors.New("failed to append gRPC cert to pool")
+		}
+
+		// Extract hostname from grpcAddr
+		host, _, err := net.SplitHostPort(p.grpcAddr)
+		if err != nil {
+			p.l.Error().Err(err).Msg("Failed to split gRPC address")
+			return err
+		}
+		if host == "" || host == "0.0.0.0" || host == "[::]" {
+			host = "localhost"
+		}
+
+		p.creds = credentials.NewTLS(&tls.Config{
+			RootCAs:    certPool,
+			ServerName: host,
+			MinVersion: tls.VersionTLS12,
+		})
+
+		// Set up a file watcher to monitor certificate changes
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			p.l.Error().Err(err).Msg("Failed to create watcher for gRPC cert")
+			return err
+		}
+
+		if err = watcher.Add(p.grpcCert); err != nil {
+			p.l.Error().Err(err).Msg("Failed to watch gRPC cert file")
+			watcher.Close()
+			return err
+		}
+
+		p.certWatcher = watcher
+
+		// Start a goroutine to watch for certificate changes
+		go func() {
+			for {
+				select {
+				case event, ok := <-p.certWatcher.Events:
+					if !ok {
+						return
+					}
+					if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+						p.l.Info().Str("certFile", p.grpcCert).Msg("Reloading gRPC TLS certificate")
+						newCert, err := os.ReadFile(p.grpcCert)
+						if err != nil {
+							p.l.Error().Err(err).Msg("Failed to read updated gRPC cert file")
+							continue
+						}
+
+						newCertPool := x509.NewCertPool()
+						if !newCertPool.AppendCertsFromPEM(newCert) {
+							p.l.Error().Msg("Failed to append updated gRPC cert to pool")
+							continue
+						}
+
+						p.creds = credentials.NewTLS(&tls.Config{
+							RootCAs:    newCertPool,
+							ServerName: host,
+							MinVersion: tls.VersionTLS12,
+						})
+						p.l.Info().Msg("Successfully updated gRPC client TLS credentials")
+					}
+				case err, ok := <-p.certWatcher.Errors:
+					if !ok {
+						return
+					}
+					p.l.Error().Err(err).Msg("Error watching gRPC cert file")
+				case <-p.stopCh:
+					return
+				}
+			}
+		}()
+	}
+
 	p.mux = chi.NewRouter()
 
 	if err := p.setRootPath(); err != nil {
@@ -178,6 +278,16 @@ func (p *server) Serve() run.StopNotify {
 	var ctx context.Context
 	ctx, p.clientCloser = context.WithCancel(context.Background())
 	opts := make([]grpc.DialOption, 0, 1)
+
+	// Start TLS reloader for HTTP server
+	if p.tls && p.tlsReloader != nil {
+		if err := p.tlsReloader.Start(); err != nil {
+			p.l.Error().Err(err).Msg("Failed to start TLSReloader for HTTP")
+			close(p.stopCh)
+			return p.stopCh
+		}
+	}
+
 	if p.creds == nil {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
@@ -214,12 +324,7 @@ func (p *server) Serve() run.StopNotify {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		var err error
 		if p.tls {
-			// Start the TLSReloader file monitoring
-			if startErr := p.tlsReloader.Start(); startErr != nil {
-				p.l.Error().Err(startErr).Msg("Failed to start TLSReloader for HTTP")
-				close(p.stopCh)
-				return
-			}
+			// Start the TLSReloader file monitoring already done above
 			// Use TLS with dynamic certificate loading
 			err = p.srv.ListenAndServeTLS("", "") // Empty strings because TLSConfig is set
 		} else {
@@ -237,6 +342,9 @@ func (p *server) Serve() run.StopNotify {
 func (p *server) GracefulStop() {
 	if p.tlsReloader != nil {
 		p.tlsReloader.Stop()
+	}
+	if p.certWatcher != nil {
+		p.certWatcher.Close()
 	}
 	if err := p.srv.Close(); err != nil {
 		p.l.Error().Err(err)

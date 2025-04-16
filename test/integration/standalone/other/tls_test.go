@@ -18,6 +18,10 @@
 package integration_other_test
 
 import (
+	cryptotls "crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -148,6 +152,130 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		gm.Eventually(func(innerGm gm.Gomega) {
 			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
 				Connection: newConn,
+				BaseTime:   testBaseTime,
+			}, helpers.Args{Input: "all", Duration: 25 * time.Minute, Offset: -20 * time.Minute})
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
+	})
+
+	g.It("queries an updated HTTP server", func() {
+		// Create a temporary directory for certificate files
+		tempDir, err := os.MkdirTemp("", "http-tls-test-*")
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		defer os.RemoveAll(tempDir)
+
+		// Copy the original certificate and key to the temporary directory
+		tempCertFile := filepath.Join(tempDir, "cert.pem")
+		tempKeyFile := filepath.Join(tempDir, "key.pem")
+
+		// Read original certificate and key
+		originalCert, err := os.ReadFile(certFile)
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		originalKey, err := os.ReadFile(keyFile)
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+
+		// Write to temporary location
+		err = os.WriteFile(tempCertFile, originalCert, 0o600)
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		err = os.WriteFile(tempKeyFile, originalKey, 0o600)
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+
+		// Start a new server using the temporary certificate files
+		grpcAddr, httpAddr, tempDeferFn := setup.StandaloneWithTLS(tempCertFile, tempKeyFile)
+		defer tempDeferFn()
+
+		// Create a secure HTTP client with the initial certificates
+		httpClient := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &cryptotls.Config{
+					InsecureSkipVerify: false,
+					RootCAs:            x509.NewCertPool(),
+					MinVersion:         cryptotls.VersionTLS12,
+				},
+			},
+		}
+		// Add the cert to the pool
+		certPool := httpClient.Transport.(*http.Transport).TLSClientConfig.RootCAs
+		certPool.AppendCertsFromPEM(originalCert)
+
+		// Verify HTTP server is working with original certificates
+		healthCheckURL := fmt.Sprintf("https://%s/api/healthz", httpAddr)
+		gm.Eventually(func() error {
+			var respErr error
+			resp, respErr := httpClient.Get(healthCheckURL)
+			if respErr != nil {
+				return respErr
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			}
+			return nil
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
+
+		// Create a gRPC connection to populate test data
+		creds, err := credentials.NewClientTLSFromFile(tempCertFile, "localhost")
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		grpcConn, err := grpchelper.Conn(grpcAddr, 10*time.Second, grpclib.WithTransportCredentials(creds))
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		defer grpcConn.Close()
+
+		// Populate test data
+		ns := timestamp.NowMilli().UnixNano()
+		testBaseTime := time.Unix(0, ns-ns%int64(time.Minute))
+		casesMeasureData.Write(grpcConn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", testBaseTime, interval)
+
+		// Generate a new certificate with a different CommonName
+		certPEM, keyPEM, err := tls.GenerateSelfSignedCert("updated-localhost", []string{"localhost"})
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+
+		// Update the certificate files in the temporary location
+		err = os.WriteFile(tempCertFile, certPEM, 0o600)
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		err = os.WriteFile(tempKeyFile, keyPEM, 0o600)
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+
+		// Wait for the server to reload the certificates
+		time.Sleep(1 * time.Second)
+
+		// Create a new HTTP client with updated certificates
+		newHTTPClient := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &cryptotls.Config{
+					InsecureSkipVerify: false,
+					RootCAs:            x509.NewCertPool(),
+					MinVersion:         cryptotls.VersionTLS12,
+				},
+			},
+		}
+		// Add the new cert to the pool
+		newCertPool := newHTTPClient.Transport.(*http.Transport).TLSClientConfig.RootCAs
+		newCertPool.AppendCertsFromPEM(certPEM)
+
+		// Verify HTTP server works with the new certificates
+		gm.Eventually(func() error {
+			var respErr2 error
+			resp, respErr2 := newHTTPClient.Get(healthCheckURL)
+			if respErr2 != nil {
+				return respErr2
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			}
+			return nil
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
+
+		// Create a new gRPC connection with updated certificates
+		newCreds, err := credentials.NewClientTLSFromFile(tempCertFile, "updated-localhost")
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		newGrpcConn, err := grpchelper.Conn(grpcAddr, 10*time.Second, grpclib.WithTransportCredentials(newCreds))
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		defer newGrpcConn.Close()
+
+		// Verify data access works through the new connection
+		gm.Eventually(func(innerGm gm.Gomega) {
+			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
+				Connection: newGrpcConn,
 				BaseTime:   testBaseTime,
 			}, helpers.Args{Input: "all", Duration: 25 * time.Minute, Offset: -20 * time.Minute})
 		}, flags.EventuallyTimeout).Should(gm.Succeed())
