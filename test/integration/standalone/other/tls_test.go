@@ -18,12 +18,6 @@
 package integration_other_test
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -40,46 +34,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/tls"
 	casesMeasureData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
-
-// generateSelfSignedCert creates a new self-signed certificate for testing.
-func generateSelfSignedCert(commonName string) (certPEM, keyPEM []byte, err error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: commonName,
-		},
-		DNSNames:              []string{commonName, "localhost"},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(time.Hour * 24),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	certPEM = pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: certDER,
-	})
-
-	keyPEM = pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
-	})
-
-	return certPEM, keyPEM, nil
-}
 
 var _ = g.Describe("Query service_cpm_minute", func() {
 	var deferFn func()
@@ -154,8 +111,21 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		defer tempConn.Close()
 
+		// Populate test data and verify with original certificate connection first
+		ns := timestamp.NowMilli().UnixNano()
+		testBaseTime := time.Unix(0, ns-ns%int64(time.Minute))
+		casesMeasureData.Write(tempConn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", testBaseTime, interval)
+
+		// Verify using the initial connection before updating certificates
+		gm.Eventually(func(innerGm gm.Gomega) {
+			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
+				Connection: tempConn,
+				BaseTime:   testBaseTime,
+			}, helpers.Args{Input: "all", Duration: 25 * time.Minute, Offset: -20 * time.Minute})
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
+
 		// Generate a new certificate with a different CommonName
-		certPEM, keyPEM, err := generateSelfSignedCert("localhost-new")
+		certPEM, keyPEM, err := tls.GenerateSelfSignedCert("updated-localhost", []string{"localhost"})
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 
 		// Update the certificate files in the temporary location
@@ -168,16 +138,11 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		time.Sleep(1 * time.Second)
 
 		// Create a new connection with the updated certificates
-		newCreds, err := credentials.NewClientTLSFromFile(tempCertFile, "localhost-new")
+		newCreds, err := credentials.NewClientTLSFromFile(tempCertFile, "updated-localhost")
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		newConn, err := grpchelper.Conn(tempAddr, 10*time.Second, grpclib.WithTransportCredentials(newCreds))
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		defer newConn.Close()
-
-		// Populate the test data
-		ns := timestamp.NowMilli().UnixNano()
-		testBaseTime := time.Unix(0, ns-ns%int64(time.Minute))
-		casesMeasureData.Write(tempConn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", testBaseTime, interval)
 
 		// Verify using the connection with new certificates
 		gm.Eventually(func(innerGm gm.Gomega) {
