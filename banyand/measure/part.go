@@ -19,14 +19,12 @@ package measure
 
 import (
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/fadvis"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -212,18 +210,6 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 
 	// Sync to disk
 	fileSystem.SyncPath(path)
-
-	// Apply fadvis to large files
-	primaryPath := filepath.Join(path, primaryFilename)
-	fadvis.ApplyIfLarge(primaryPath)
-
-	timestampsPath := filepath.Join(path, timestampsFilename)
-	fadvis.ApplyIfLarge(timestampsPath)
-
-	for name := range mp.tagFamilies {
-		fieldPath := filepath.Join(path, name+tagFamiliesFilenameExt)
-		fadvis.ApplyIfLarge(fieldPath)
-	}
 }
 
 func uncompressedDataPointSizeBytes(index int, dps *dataPoints) uint64 {
@@ -337,10 +323,6 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 			p.tagFamilies[removeExt(e.Name(), tagFamiliesFilenameExt)] = mustOpenReader(path.Join(partPath, e.Name()), fileSystem)
 		}
 	}
-
-	// Apply fadvis to large part files after opening
-	p.applyFadvisToPartFiles()
-
 	return &p
 }
 
@@ -362,40 +344,4 @@ func partPath(root string, epoch uint64) string {
 
 func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
-}
-
-// applyFadvisToPartFiles syncs the directory and applies fadvis to large files if needed.
-func (p *part) applyFadvisToPartFiles() {
-	fs := p.fileSystem
-
-	// Create directories if needed
-	fs.MkdirIfNotExist(p.path, 0o750)
-
-	// Initialize file path variables
-	primaryFile := filepath.Join(p.path, primaryFilename)
-	timestampsFile := filepath.Join(p.path, timestampsFilename)
-
-	// In the part struct, primary, timestamps, and tagFamilies fields are of fs.Reader type
-	// Unlike bytes.Buffer in memPart, they cannot be flushed directly
-	// This method is mainly used for syncing directories and applying fadvis,
-	// rather than writing memory data to disk like memPart.mustFlush
-
-	// Sync the directory to ensure all files are flushed to disk
-	fs.SyncPath(p.path)
-
-	// Apply fadvis to large files to improve file system performance
-	if _, err := os.Stat(primaryFile); err == nil && p.primary != nil {
-		fadvis.ApplyIfLarge(primaryFile)
-	}
-
-	if _, err := os.Stat(timestampsFile); err == nil && p.timestamps != nil {
-		fadvis.ApplyIfLarge(timestampsFile)
-	}
-
-	for name := range p.tagFamilies {
-		tfFile := filepath.Join(p.path, name+tagFamiliesFilenameExt)
-		if _, err := os.Stat(tfFile); err == nil {
-			fadvis.ApplyIfLarge(tfFile)
-		}
-	}
 }
