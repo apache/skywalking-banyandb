@@ -25,43 +25,26 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/apache/skywalking-banyandb/banyand/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	pkgfadvis "github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
-// Logger for fadvis operations specific to measure package.
-var measureFadvisLog = logger.GetLogger("measure-fadvis")
-
 type seqReader struct {
 	sr fs.SeqReader
 	r  fs.Reader
-	// File path for fadvis operations
+	// File path for reference
 	filePath string
-	// File size to determine if it's a large file
+	// File size for reference
 	fileSize  int64
 	bytesRead uint64
-	// Flag indicating if this is a large file
-	isLargeFile bool
+	// Current read offset
+	readOffset int64
 }
 
 func (sr *seqReader) reset() {
 	// If it's a large file, apply fadvis when resetting
-	if sr.isLargeFile && sr.filePath != "" {
-		// Skip metadata index directory
-		if filepath.Base(filepath.Dir(sr.filePath)) == indexDirName {
-			return
-		}
-		if err := pkgfadvis.Apply(sr.filePath); err != nil {
-			measureFadvisLog.Warn().Err(err).Str("path", sr.filePath).Msg("failed to apply fadvis")
-		} else {
-			measureFadvisLog.Debug().Str("path", sr.filePath).Msg("applied fadvis to file")
-		}
-	}
-
 	sr.r = nil
 	if sr.sr != nil {
 		fs.MustClose(sr.sr)
@@ -70,7 +53,7 @@ func (sr *seqReader) reset() {
 	sr.bytesRead = 0
 	sr.filePath = ""
 	sr.fileSize = 0
-	sr.isLargeFile = false
+	sr.readOffset = 0
 }
 
 func (sr *seqReader) Path() string {
@@ -82,23 +65,16 @@ func (sr *seqReader) init(r fs.Reader) {
 	sr.sr = r.SequentialRead()
 	sr.r = r
 	sr.filePath = r.Path()
+	sr.readOffset = 0
 
 	// Skip metadata index directory
 	if filepath.Base(filepath.Dir(sr.filePath)) == indexDirName {
 		return
 	}
 
-	// Get file size and determine if it's a large file
+	// Get file size for reference
 	if fileInfo, err := os.Stat(sr.filePath); err == nil {
 		sr.fileSize = fileInfo.Size()
-		sr.isLargeFile = sr.fileSize > fadvis.GetThreshold()
-		if sr.isLargeFile {
-			measureFadvisLog.Debug().
-				Str("path", sr.filePath).
-				Int64("size", sr.fileSize).
-				Int64("threshold", fadvis.GetThreshold()).
-				Msg("large file detected, will apply fadvis on close")
-		}
 	}
 }
 
@@ -106,6 +82,11 @@ func (sr *seqReader) mustReadFull(data []byte) {
 	n, err := io.ReadFull(sr.sr, data)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
+			// An EOF should be treated as an error if data is expected to be read.
+			// EOF is only allowed when zero bytes are read.
+			if len(data) > 0 {
+				logger.Panicf("unexpected EOF when reading data, expected %d bytes", len(data))
+			}
 			return
 		}
 		logger.Panicf("cannot read data: %v", err)
@@ -113,7 +94,9 @@ func (sr *seqReader) mustReadFull(data []byte) {
 	if n != len(data) {
 		logger.Panicf("cannot read full data: %d/%d", n, len(data))
 	}
+
 	sr.bytesRead += uint64(n)
+	sr.readOffset += int64(n)
 }
 
 func generateSeqReader() *seqReader {
@@ -280,5 +263,3 @@ func releaseBlockReader(br *blockReader) {
 	br.reset()
 	blockReaderPool.Put(br)
 }
-
-// Note: Threshold setting is now managed by the fadvis package and does not need to be initialized here.

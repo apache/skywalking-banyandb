@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -134,7 +135,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 
 	// Set the global Memory protector instance
-	SetMemoryProtector(s.pm)
+	fadvis.SetMemoryProtector(s.pm)
 
 	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
 	path := path.Join(s.root, s.Name())
