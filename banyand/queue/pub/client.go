@@ -107,12 +107,12 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	if _, ok := p.evictable[name]; ok {
 		return
 	}
-	credOpt, err := p.getClientTransportCredentials()
+	credOpts, err := p.getClientTransportCredentials()
 	if err != nil {
 		p.log.Error().Err(err).Msg("failed to load client TLS credentials")
 		return
 	}
-	conn, err := grpc.NewClient(address, credOpt, grpc.WithDefaultServiceConfig(retryPolicy))
+	conn, err := grpc.NewClient(address, append(credOpts, grpc.WithDefaultServiceConfig(retryPolicy))...)
 	if err != nil {
 		p.log.Error().Err(err).Msg("failed to connect to grpc server")
 		return
@@ -256,12 +256,12 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 		for {
 			select {
 			case <-time.After(backoff):
-				credOpt, errEvict := p.getClientTransportCredentials()
+				credOpts, errEvict := p.getClientTransportCredentials()
 				if errEvict != nil {
 					p.log.Error().Err(errEvict).Msg("failed to load client TLS credentials (evict)")
 					return
 				}
-				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, credOpt, grpc.WithDefaultServiceConfig(retryPolicy))
+				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, append(credOpts, grpc.WithDefaultServiceConfig(retryPolicy))...)
 				if errEvict == nil && p.healthCheck(en.n.String(), connEvict) {
 					func() {
 						p.mu.Lock()

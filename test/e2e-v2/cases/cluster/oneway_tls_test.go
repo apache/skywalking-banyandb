@@ -40,10 +40,10 @@ import (
 //
 // Note for contributors:
 // - This test requires a TLS-enabled liaison node running at localhost:17914.
-// - To run this test, you must generate test certs based on test/testdata/certs/cert.conf:
+// - To run this test, you must generate test certs based on test/testdata/certs/cert.conf.template:
 //
 //     openssl req -x509 -newkey rsa:4096 -nodes -keyout test/testdata/certs/server.key \
-//       -out test/testdata/certs/server.crt -days 365 -config test/testdata/certs/cert.conf \
+//       -out test/testdata/certs/server.crt -days 365 -config test/testdata/certs/cert.conf.template \
 //       -extensions v3_req
 //
 // - Ensure the server is started with TLS flags:
@@ -61,17 +61,17 @@ func TestWriteMeasureViaLiaison(t *testing.T) {
 	// Load TLS credentials from test certs.
 	creds, err := credentials.NewClientTLSFromFile(certPath, "")
 	if err != nil {
-		t.Fatalf("❌ Failed to load TLS credentials: %v", err)
+		t.Fatalf(" Failed to load TLS credentials: %v", err)
 	}
 
 	// Connect to the Liaison node over TLS.
 	conn, err := grpc.DialContext(ctx, "localhost:17914", grpc.WithTransportCredentials(creds))
 	if err != nil {
-		t.Fatalf("❌ Failed to create gRPC client: %v", err)
+		t.Fatalf(" Failed to create gRPC client: %v", err)
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
-			t.Logf("⚠️ Failed to close gRPC connection: %v", err)
+			t.Logf("⚠ Failed to close gRPC connection: %v", err)
 		}
 	}()
 
@@ -80,7 +80,7 @@ func TestWriteMeasureViaLiaison(t *testing.T) {
 	// Open a gRPC stream to send a Measure WriteRequest.
 	stream, err := client.Write(context.Background())
 	if err != nil {
-		t.Fatalf("❌ Failed to open stream: %v", err)
+		t.Fatalf(" Failed to open stream: %v", err)
 	}
 
 	// Construct the request.
@@ -116,11 +116,11 @@ func TestWriteMeasureViaLiaison(t *testing.T) {
 
 	// Send the request and close the stream.
 	if err := stream.Send(req); err != nil {
-		t.Fatalf("❌ Failed to send WriteRequest: %v", err)
+		t.Fatalf(" Failed to send WriteRequest: %v", err)
 	}
 	if err := stream.CloseSend(); err != nil {
-		t.Fatalf("❌ Failed to close stream: %v", err)
+		t.Fatalf(" Failed to close stream: %v", err)
 	}
 
-	t.Log("✅ WriteRequest sent via streaming successfully")
+	t.Log(" WriteRequest sent via streaming successfully")
 }

@@ -1,18 +1,54 @@
-# 📄 TLS Certificates for Integration Tests
+# TLS Test Certificates
 
-This folder contains the configuration and setup instructions for generating self-signed TLS certificates used in integration tests.
+This folder contains everything you need to generate a self‑signed CA and a server certificate that’s valid for both `localhost` and your machine’s real hostname.
 
-## 🛠 How to Generate TLS Certs
+## Prerequisites
 
-1. Navigate to this directory:
+- Bash (or any POSIX shell)
+- OpenSSL (v1.1.1 or later)
+- `envsubst` (part of GNU gettext)
 
-    ```bash
-    cd test/testdata/certs
+## Steps
 
+1. **Set the HOSTNAME variable**
+   ```bash
+   export HOSTNAME=$(hostname)
+2. **Generate your test CA (valid for 10 years)**
 
-2. Run this command to generate the certificate and key using the cert.conf file:
+   ```bash
+   openssl req \
+   -x509 -nodes \
+   -newkey rsa:4096 \
+   -days 3650 \
+   -keyout ca.key \
+   -out ca.crt \
+   -subj "/CN=MyTestCA"
 
-    ```bash
-    openssl req -x509 -newkey rsa:4096 -nodes \
-    -keyout server.key -out server.crt \
-    -days 365 -config cert.conf -extensions v3_req
+3. Render the OpenSSL config with your hostname, and create a CSR + key:
+   ```bash
+   sed "s/\${HOSTNAME}/$HOSTNAME/g" cert.conf.template > cert.conf
+   ```
+   ```bash
+   openssl req \
+   -newkey rsa:2048 -nodes \
+   -keyout server.key \
+   -out server.csr \
+   -config cert.conf
+   
+4. Sign the server CSR with your CA (valid for 1 year):
+   ```bash
+   openssl x509 \
+   -req \
+   -in server.csr \
+   -CA ca.crt \
+   -CAkey ca.key \
+   -CAcreateserial \
+   -out server.crt \
+   -days 365 \
+   -sha256 \
+   -extensions v3_req \
+   -extfile cert.conf
+   
+5. Clean up (optional):
+   ```bash
+   rm cert.conf server.csr ca.srl

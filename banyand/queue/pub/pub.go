@@ -20,7 +20,6 @@ package pub
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"google.golang.org/grpc"
@@ -52,6 +51,7 @@ import (
 var (
 	_ run.PreRunner = (*pub)(nil)
 	_ run.Service   = (*pub)(nil)
+	_ run.Config    = (*pub)(nil)
 )
 
 type pub struct {
@@ -68,11 +68,19 @@ type pub struct {
 	caCertPath string
 }
 
-func (p *pub) FlagSet() *flag.FlagSet {
-	fs := flag.NewFlagSet("pub", flag.ExitOnError)
-	fs.BoolVar(&p.tlsEnabled, "tls", false, "enable TLS for pub client")
-	fs.StringVar(&p.caCertPath, "ca-cert", "", "CA certificate file to verify the server")
+func (p *pub) FlagSet() *run.FlagSet {
+	fs := run.NewFlagSet("queue-client")
+	fs.BoolVar(&p.tlsEnabled, "internal-tls", false, "enable TLS for pub client")
+	fs.StringVar(&p.caCertPath, "internal-ca-cert", "", "CA certificate file to verify the server")
 	return fs
+}
+
+func (p *pub) Validate() error {
+	// simple sanity‑check: if TLS is on, a CA bundle must be provided
+	if p.tlsEnabled && p.caCertPath == "" {
+		return fmt.Errorf("--internal-tls requires --internal-ca-cert")
+	}
+	return nil
 }
 
 func (p *pub) Register(topic bus.Topic, handler schema.EventHandler) {
@@ -343,12 +351,10 @@ func isFailoverError(err error) bool {
 	return s.Code() == codes.Unavailable || s.Code() == codes.DeadlineExceeded
 }
 
-func (p *pub) getClientTransportCredentials() (grpc.DialOption, error) {
+func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
 	opts, err := grpchelper.SecureOptions(nil, p.tlsEnabled, false, p.caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS config: %w", err)
 	}
-	// We expect SecureOptions to return exactly one option for TLS transport credentials.
-	// If that changes in the future, this function should be updated to return a full option set.
-	return opts[0], nil
+	return opts, nil
 }
