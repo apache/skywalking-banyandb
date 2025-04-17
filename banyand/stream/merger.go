@@ -243,14 +243,15 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	dstPath := partPath(root, partID)
 
 	// For memory parts, ensure they are flushed to disk first if needed
-	for i := range parts {
-		if parts[i].mp != nil {
-			// This is a memory part that might not have been flushed
-			// We need to make sure it's properly synced before reading
-			tmpPath := partPath(root, uint64(i))
-			parts[i].mp.mustFlush(fileSystem, tmpPath)
-			// Update the part to use the file-based version
-			parts[i].p = mustOpenFilePart(uint64(i), root, fileSystem)
+	for _, pw := range parts {
+		if pw.mp != nil {
+			// flush to its own ID‑based path
+			tmpPath := partPath(root, pw.ID())
+			pw.mp.mustFlush(fileSystem, tmpPath)
+
+			// reopen as file part
+			pw.p = mustOpenFilePart(pw.ID(), root, fileSystem)
+			pw.mp = nil
 		}
 	}
 
