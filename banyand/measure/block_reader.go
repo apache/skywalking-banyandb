@@ -82,6 +82,11 @@ func (sr *seqReader) mustReadFull(data []byte) {
 	n, err := io.ReadFull(sr.sr, data)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
+			// An EOF should be treated as an error if data is expected to be read.
+			// EOF is only allowed when zero bytes are read.
+			if len(data) > 0 {
+				logger.Panicf("unexpected EOF when reading data, expected %d bytes", len(data))
+			}
 			return
 		}
 		logger.Panicf("cannot read data: %v", err)
