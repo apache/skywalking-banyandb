@@ -238,32 +238,7 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	if len(parts) == 0 {
 		return nil, errNoPartToMerge
 	}
-
-	// Prepare the destination path
 	dstPath := partPath(root, partID)
-
-	// For memory parts, ensure they are flushed to disk first if needed
-	for _, pw := range parts {
-		if pw.mp != nil {
-			// flush to its own ID‑based path
-			tmpPath := partPath(root, pw.ID())
-			pw.mp.mustFlush(fileSystem, tmpPath)
-
-			// reopen as file part
-			pw.p = mustOpenFilePart(pw.ID(), root, fileSystem)
-			pw.mp = nil
-		}
-	}
-
-	// Ensure all directories are synced before proceeding
-	fileSystem.SyncPath(root)
-
-	// Safely prepare the destination directory
-	// First try to remove it if it exists (ignoring errors if it doesn't)
-	_ = fileSystem.DeleteFile(dstPath)
-	// Then create it fresh
-	fileSystem.MkdirIfNotExist(dstPath, 0o750)
-
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
 		pmi := generatePartMergeIter()
@@ -285,10 +260,7 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 		return nil, err
 	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
-
-	// Ensure all changes are synced to disk
 	fileSystem.SyncPath(dstPath)
-
 	p := mustOpenFilePart(partID, root, fileSystem)
 	return newPartWrapper(nil, p), nil
 }
