@@ -239,9 +239,8 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 		return nil, errNoPartToMerge
 	}
 	
-	// Ensure the destination directory exists
+	// Prepare the destination path
 	dstPath := partPath(root, partID)
-	fileSystem.MkdirIfNotExist(dstPath, 0o750)
 	
 	// For memory parts, ensure they are flushed to disk first if needed
 	for i := range parts {
@@ -257,6 +256,10 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	
 	// Ensure all directories are synced before proceeding
 	fileSystem.SyncPath(root)
+	
+	// Now create the destination directory - after flushing memory parts
+	// to avoid conflicts with mustFlush which uses MkdirPanicIfExist
+	fileSystem.MkdirPanicIfExist(dstPath, 0o750)
 	
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
