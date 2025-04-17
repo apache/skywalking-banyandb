@@ -238,7 +238,26 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	if len(parts) == 0 {
 		return nil, errNoPartToMerge
 	}
+	
+	// Ensure the destination directory exists
 	dstPath := partPath(root, partID)
+	fileSystem.MkdirIfNotExist(dstPath, 0o750)
+	
+	// For memory parts, ensure they are flushed to disk first if needed
+	for i := range parts {
+		if parts[i].mp != nil {
+			// This is a memory part that might not have been flushed
+			// We need to make sure it's properly synced before reading
+			tmpPath := partPath(root, uint64(i))
+			parts[i].mp.mustFlush(fileSystem, tmpPath)
+			// Update the part to use the file-based version
+			parts[i].p = mustOpenFilePart(uint64(i), root, fileSystem)
+		}
+	}
+	
+	// Ensure all directories are synced before proceeding
+	fileSystem.SyncPath(root)
+	
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
 		pmi := generatePartMergeIter()
@@ -260,7 +279,10 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 		return nil, err
 	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
+	
+	// Ensure all changes are synced to disk
 	fileSystem.SyncPath(dstPath)
+	
 	p := mustOpenFilePart(partID, root, fileSystem)
 	return newPartWrapper(nil, p), nil
 }
