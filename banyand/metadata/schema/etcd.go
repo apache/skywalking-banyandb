@@ -172,7 +172,7 @@ func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler Eve
 		return
 	}
 	for i := range kinds {
-		e.registerToWatcher(name, kinds[i], 0, handler)
+		e.registerToWatcher(name, kinds[i], -1, handler)
 	}
 }
 
@@ -186,7 +186,7 @@ func (e *etcdSchemaRegistry) registerToWatcher(name string, kind Kind, revision 
 		return
 	}
 	e.l.Info().Str("name", name).Stringer("kind", kind).Msg("registering to a new watcher")
-	w := e.newWatcherWithRevision(name, kind, revision, CheckInterval(e.checkInterval))
+	w := e.NewWatcher(name, kind, revision, CheckInterval(e.checkInterval))
 	w.AddHandler(handler)
 	e.watchers[kind] = w
 }
@@ -578,11 +578,7 @@ func (e *etcdSchemaRegistry) revokeLease(lease *clientv3.LeaseGrantResponse) {
 	}
 }
 
-func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, opts ...WatcherOption) *watcher {
-	return e.newWatcherWithRevision(name, kind, 0, opts...)
-}
-
-func (e *etcdSchemaRegistry) newWatcherWithRevision(name string, kind Kind, revision int64, opts ...WatcherOption) *watcher {
+func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, revision int64, opts ...WatcherOption) *watcher {
 	wc := watcherConfig{
 		key:           e.prependNamespace(kind.key()),
 		kind:          kind,

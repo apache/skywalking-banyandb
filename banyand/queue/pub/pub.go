@@ -95,7 +95,9 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	var nodes []*databasev1.Node
 	p.mu.RLock()
 	for k := range p.active {
-		nodes = append(nodes, p.registered[k])
+		if n := p.registered[k]; n != nil {
+			nodes = append(nodes, n)
+		}
 	}
 	p.mu.RUnlock()
 	if len(nodes) == 0 {
@@ -104,7 +106,7 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	names := make(map[string]struct{})
 	if len(messages.NodeSelectors()) == 0 {
 		for _, n := range nodes {
-			names[n.Metadata.Name] = struct{}{}
+			names[n.Metadata.GetName()] = struct{}{}
 		}
 	} else {
 		for g, sel := range messages.NodeSelectors() {
