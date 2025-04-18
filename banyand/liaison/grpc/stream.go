@@ -213,17 +213,13 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 			span.Stop()
 		}()
 	}
-	nodeSelectors := make(map[string]string)
+	nodeSelectors := make(map[string][]string)
 	for _, g := range req.Groups {
-		if req.NodeSelector != "" {
-			nodeSelectors[g] = req.NodeSelector
-			continue
-		}
-		if ns, exist := s.groupRepo.getNodeSelector(g); exist {
+		if ns, exist := s.groupRepo.getNodeSelector(g, req.Stages); exist {
 			nodeSelectors[g] = ns
-			continue
+		} else {
+			nodeSelectors[g] = nil
 		}
-		nodeSelectors[g] = ""
 	}
 	message := bus.NewMessageWithNodeSelectors(bus.MessageID(now.UnixNano()), nodeSelectors, req.TimeRange, req)
 	feat, errQuery := s.broadcaster.Publish(ctx, data.TopicStreamQuery, message)

@@ -64,6 +64,8 @@ tag_families:
     type: TAG_TYPE_STRING
   - name: entity_id
     type: TAG_TYPE_STRING
+  - name: service_id
+    type: TAG_TYPE_STRING
 fields:
 - name: total
   field_type: FIELD_TYPE_INT
@@ -76,6 +78,9 @@ fields:
 entity:
   tag_names:
   - entity_id
+sharding_key:
+  tag_names:
+  - service_id
 index_mode: false
 interval: 1m
 ```
@@ -94,7 +99,9 @@ interval: 1m
 * **INT_ARRAY** : A group of integers
 * **DATA_BINARY** : Raw binary
 
-A group of selected tags composite an `entity` that points out a specific time series the data point belongs to. The database engine has capacities to encode and compress values in the same time series. Users should select appropriate tag combinations to optimize the data size. Another role of `entity` is the sharding key of data points, determining how to fragment data between shards.
+A group of selected tags composite an `entity` that points out a specific time series the data point belongs to. The database engine has capacities to encode and compress values in the same time series. Users should select appropriate tag combinations to optimize the data size.
+
+To determine the distribution of data across shards, `sharding_key` can be optionally configured by specifying a set of tags. If `sharding_key` is not provided, the system will use `entity` for sharding by default.
 
 `Fields` are also key-value pairs like tags. But the value of each field is the actual value of a single data point. The database engine would encode and compress the field's values in the same time series. The query operation is forbidden to filter data points based on a field's value. You could apply aggregation
 functions to them.

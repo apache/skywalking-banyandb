@@ -327,8 +327,8 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNodeWithLabels("node2", addr2, node2Labels, node2Boundaries)
 			p.OnAddOrUpdate(node2)
 
-			nodeSelectors := map[string]string{
-				group1: "",
+			nodeSelectors := map[string][]string{
+				group1: {""},
 			}
 
 			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,
@@ -384,8 +384,8 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNodeWithLabels("node2", addr2, node2Labels, node2Boundaries)
 			p.OnAddOrUpdate(node2)
 
-			nodeSelectors := map[string]string{
-				group1: "role=ingest",
+			nodeSelectors := map[string][]string{
+				group1: {"role=ingest"},
 			}
 
 			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,
@@ -459,8 +459,8 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 				End:   timestamppb.New(now.Add(-1 * time.Hour).Add(-30 * time.Minute)),
 			}
 
-			nodeSelectors := map[string]string{
-				group1: "",
+			nodeSelectors := map[string][]string{
+				group1: {""},
 			}
 
 			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,
@@ -553,8 +553,8 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 				End:   timestamppb.New(now.Add(30 * time.Minute)),
 			}
 
-			nodeSelectors := map[string]string{
-				group1: "env=prod",
+			nodeSelectors := map[string][]string{
+				group1: {"env=prod"},
 			}
 
 			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,

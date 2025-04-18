@@ -29,6 +29,9 @@ type LabelSelector struct {
 	criteria []condition
 }
 
+// MatchFunc is a function that matches labels.
+type MatchFunc func(labels map[string]string) bool
+
 type condition struct {
 	Key    string
 	Values []string

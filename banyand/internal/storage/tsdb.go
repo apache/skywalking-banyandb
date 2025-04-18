@@ -67,6 +67,7 @@ type TSDBOpts[T TSTable, O any] struct {
 	SeriesIndexCacheMaxBytes       int
 	ShardNum                       uint32
 	DisableRetention               bool
+	SegmentIdleTimeout             time.Duration
 }
 
 type (
@@ -136,8 +137,8 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		logger:    l,
 		tsEventCh: make(chan int64),
 		p:         p,
-		segmentController: newSegmentController[T](ctx, location,
-			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentBoundaryUpdateFn),
+		segmentController: newSegmentController(ctx, location,
+			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentBoundaryUpdateFn, opts.SegmentIdleTimeout),
 		metrics:          newMetrics(opts.StorageMetricsFactory),
 		disableRetention: opts.DisableRetention,
 	}
@@ -162,9 +163,9 @@ func (d *database[T, O]) CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], e
 	return d.segmentController.createSegment(ts)
 }
 
-func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange) []Segment[T, O] {
+func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange) ([]Segment[T, O], error) {
 	if d.closed.Load() {
-		return nil
+		return nil, nil
 	}
 	return d.segmentController.selectSegments(timeRange)
 }
@@ -181,7 +182,10 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 		return errors.New("database is closed")
 	}
 
-	segments := d.segmentController.segments()
+	segments, err := d.segmentController.segments(true)
+	if err != nil {
+		return errors.Wrap(err, "failed to get segments")
+	}
 	defer func() {
 		for _, seg := range segments {
 			seg.DecRef()
@@ -239,7 +243,7 @@ func (d *database[T, O]) collect() {
 	}
 	d.metrics.lastTickTime.Set(float64(d.latestTickTime.Load()))
 	refCount := int32(0)
-	ss := d.segmentController.segments()
+	ss, _ := d.segmentController.segments(false)
 	for _, s := range ss {
 		for _, t := range s.Tables() {
 			t.Collect(d.segmentController.metrics)

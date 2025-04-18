@@ -33,6 +33,7 @@
       type: 'TAG_TYPE_INT',
       indexedOnly: false,
       entity: false,
+      shardingKey: false,
     },
     tagFamilyOptions: [],
     tagOperator: 'Add',
@@ -170,6 +171,7 @@
       type: 'TAG_TYPE_INT',
       indexedOnly: false,
       entity: false,
+      shardingKey: false,
     };
   }
   function addTagFamily() {
@@ -227,6 +229,7 @@
     <el-table-column label="Type" prop="type"></el-table-column>
     <el-table-column label="IndexedOnly" prop="indexedOnly"></el-table-column>
     <el-table-column label="Entity" prop="entity"></el-table-column>
+    <el-table-column label="ShardingKey" prop="shardingKey"></el-table-column>
     <el-table-column label="Operator">
       <template #default="scope">
         <el-button
@@ -280,6 +283,9 @@
       </el-form-item>
       <el-form-item label="Entity" prop="entity">
         <el-switch v-model="data.form.entity" />
+      </el-form-item>
+      <el-form-item label="ShardingKey" prop="shardingKey">
+        <el-switch v-model="data.form.shardingKey" />
       </el-form-item>
     </el-form>
     <span class="dialog-footer">

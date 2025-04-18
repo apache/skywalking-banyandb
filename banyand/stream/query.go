@@ -43,15 +43,55 @@ import (
 const checkDoneEvery = 128
 
 func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
+	if err = validateQueryInput(sqo); err != nil {
+		return nil, err
+	}
+
+	tsdb, err := s.getTSDB()
+	if err != nil {
+		return nil, err
+	}
+
+	segments, err := tsdb.SelectSegments(*sqo.TimeRange)
+	if err != nil {
+		return nil, err
+	}
+	if len(segments) < 1 {
+		return bypassQueryResultInstance, nil
+	}
+
+	defer func() {
+		if err != nil {
+			sqr.Release()
+		}
+	}()
+
+	series := prepareSeriesData(sqo)
+	qo := prepareQueryOptions(sqo)
+	tr := index.NewIntRangeOpts(qo.minTimestamp, qo.maxTimestamp, true, true)
+
+	if sqo.Order == nil || sqo.Order.Index == nil {
+		return s.executeTimeSeriesQuery(segments, series, qo, &tr), nil
+	}
+
+	return s.executeIndexedQuery(ctx, segments, series, sqo, &tr)
+}
+
+func validateQueryInput(sqo model.StreamQueryOptions) error {
 	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
-		return nil, errors.New("invalid query options: timeRange and series are required")
+		return errors.New("invalid query options: timeRange and series are required")
 	}
 	if len(sqo.TagProjection) == 0 {
-		return nil, errors.New("invalid query options: tagProjection is required")
+		return errors.New("invalid query options: tagProjection is required")
 	}
+	return nil
+}
+
+func (s *stream) getTSDB() (storage.TSDB[*tsTable, option], error) {
 	var tsdb storage.TSDB[*tsTable, option]
 	db := s.tsdb.Load()
 	if db == nil {
+		var err error
 		tsdb, err = s.schemaRepo.loadTSDB(s.group)
 		if err != nil {
 			return nil, err
@@ -60,15 +100,10 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	} else {
 		tsdb = db.(storage.TSDB[*tsTable, option])
 	}
-	segments := tsdb.SelectSegments(*sqo.TimeRange)
-	if len(segments) < 1 {
-		return bypassQueryResultInstance, nil
-	}
-	defer func() {
-		if err != nil {
-			sqr.Release()
-		}
-	}()
+	return tsdb, nil
+}
+
+func prepareSeriesData(sqo model.StreamQueryOptions) []*pbv1.Series {
 	series := make([]*pbv1.Series, len(sqo.Entities))
 	for i := range sqo.Entities {
 		series[i] = &pbv1.Series{
@@ -76,78 +111,61 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 			EntityValues: sqo.Entities[i],
 		}
 	}
-	qo := queryOptions{
+	return series
+}
+
+func prepareQueryOptions(sqo model.StreamQueryOptions) queryOptions {
+	return queryOptions{
 		StreamQueryOptions: sqo,
 		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
 	}
-	tr := index.NewIntRangeOpts(qo.minTimestamp, qo.maxTimestamp, true, true)
+}
 
-	if sqo.Order == nil || sqo.Order.Index == nil {
-		result := &tsResult{
-			segments: segments,
-			series:   series,
-			qo:       qo,
-			sm:       s,
-			pm:       s.pm,
-			l:        s.l,
-			tr:       &tr,
-		}
-		if sqo.Order == nil {
-			result.asc = true
-		} else if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-			result.asc = true
-		}
-		return result, nil
+func (s *stream) executeTimeSeriesQuery(
+	segments []storage.Segment[*tsTable, option],
+	series []*pbv1.Series,
+	qo queryOptions,
+	tr *index.RangeOpts,
+) model.StreamQueryResult {
+	result := &tsResult{
+		segments: segments,
+		series:   series,
+		qo:       qo,
+		sm:       s,
+		pm:       s.pm,
+		l:        s.l,
+		tr:       tr,
 	}
-	var result idxResult
-	result.pm = s.pm
-	result.segments = segments
-	result.sm = s
-	result.qo = queryOptions{
-		StreamQueryOptions: sqo,
-		seriesToEntity:     make(map[common.SeriesID][]*modelv1.TagValue),
+
+	// Determine ascending order
+	if qo.Order == nil {
+		result.asc = true
+	} else if qo.Order.Sort == modelv1.Sort_SORT_ASC || qo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+		result.asc = true
 	}
-	var sl pbv1.SeriesList
-	seriesFilter := roaring.NewPostingList()
-	var resultTS posting.List
-	for i := range result.segments {
-		sl, err = result.segments[i].Lookup(ctx, series)
-		if err != nil {
-			return nil, err
-		}
-		var filter, filterTS posting.List
-		if filter, filterTS, err = indexSearch(ctx, sqo, segments[i].Tables(), sl.ToList().ToSlice(), &tr); err != nil {
-			return nil, err
-		}
-		if filter != nil && filter.IsEmpty() {
-			continue
-		}
-		if result.qo.elementFilter == nil {
-			result.qo.elementFilter = filter
-			resultTS = filterTS
-		} else {
-			if err = result.qo.elementFilter.Union(filter); err != nil {
-				return nil, err
-			}
-			if err = resultTS.Union(filterTS); err != nil {
-				return nil, err
-			}
-		}
-		for j := range sl {
-			if seriesFilter.Contains(uint64(sl[j].ID)) {
-				continue
-			}
-			seriesFilter.Insert(uint64(sl[j].ID))
-			result.qo.seriesToEntity[sl[j].ID] = sl[j].EntityValues
-		}
-		result.tabs = append(result.tabs, result.segments[i].Tables()...)
+
+	return result
+}
+
+func (s *stream) executeIndexedQuery(
+	ctx context.Context,
+	segments []storage.Segment[*tsTable, option],
+	series []*pbv1.Series,
+	sqo model.StreamQueryOptions,
+	tr *index.RangeOpts,
+) (model.StreamQueryResult, error) {
+	result, seriesFilter, resultTS, err := s.processSegmentsAndBuildFilters(ctx, segments, series, sqo, tr)
+	if err != nil {
+		return nil, err
 	}
 
 	if seriesFilter.IsEmpty() {
 		result.Release()
 		return nil, nil
 	}
+
+	// Update time range if needed
 	sids := seriesFilter.ToSlice()
 	startTS := sqo.TimeRange.Start.UnixNano()
 	endTS := sqo.TimeRange.End.UnixNano()
@@ -156,13 +174,80 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		newTR := timestamp.NewTimeRange(time.Unix(0, minTS), time.Unix(0, maxTS), sqo.TimeRange.IncludeStart, sqo.TimeRange.IncludeEnd)
 		sqo.TimeRange = &newTR
 	}
+
+	// Perform index-based sorting
 	if result.sortingIter, err = s.indexSort(ctx, sqo, result.tabs, sids); err != nil {
 		return nil, err
 	}
+
+	// Set ascending flag
 	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
 		result.asc = true
 	}
+
 	return &result, nil
+}
+
+func (s *stream) processSegmentsAndBuildFilters(
+	ctx context.Context,
+	segments []storage.Segment[*tsTable, option],
+	series []*pbv1.Series,
+	sqo model.StreamQueryOptions,
+	tr *index.RangeOpts,
+) (idxResult, posting.List, posting.List, error) {
+	var result idxResult
+	result.pm = s.pm
+	result.segments = segments
+	result.sm = s
+	result.qo = queryOptions{
+		StreamQueryOptions: sqo,
+		seriesToEntity:     make(map[common.SeriesID][]*modelv1.TagValue),
+	}
+
+	seriesFilter := roaring.NewPostingList()
+	var resultTS posting.List
+	var sl pbv1.SeriesList
+	var err error
+
+	for i := range result.segments {
+		sl, err = result.segments[i].Lookup(ctx, series)
+		if err != nil {
+			return result, nil, nil, err
+		}
+
+		var filter, filterTS posting.List
+		if filter, filterTS, err = indexSearch(ctx, sqo, segments[i].Tables(), sl.ToList().ToSlice(), tr); err != nil {
+			return result, nil, nil, err
+		}
+
+		if filter != nil && filter.IsEmpty() {
+			continue
+		}
+
+		if result.qo.elementFilter == nil {
+			result.qo.elementFilter = filter
+			resultTS = filterTS
+		} else {
+			if err = result.qo.elementFilter.Union(filter); err != nil {
+				return result, nil, nil, err
+			}
+			if err = resultTS.Union(filterTS); err != nil {
+				return result, nil, nil, err
+			}
+		}
+
+		for j := range sl {
+			if seriesFilter.Contains(uint64(sl[j].ID)) {
+				continue
+			}
+			seriesFilter.Insert(uint64(sl[j].ID))
+			result.qo.seriesToEntity[sl[j].ID] = sl[j].EntityValues
+		}
+
+		result.tabs = append(result.tabs, result.segments[i].Tables()...)
+	}
+
+	return result, seriesFilter, resultTS, nil
 }
 
 type queryOptions struct {

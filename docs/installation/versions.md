@@ -5,6 +5,7 @@ OAP releases, you need to pick the proper API versions.
 
 | API Version | BanyanDB Release Version |
 |-------------|--------------------------|
+| 0.9         | 0.9                      |
 | 0.8         | 0.8                      |
 
 SkyWalking OAP release(since 10.2.0) includes `/config/bydb.dependencies.properties` in the binary indicates required

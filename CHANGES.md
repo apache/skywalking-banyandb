@@ -7,6 +7,11 @@ Release Notes.
 ### Features
 
 - Add sharding_key for TopNAggregation source measure
+- API: Update the data matching rule from the node selector to the stage name.
+
+### Bug Fixes
+
+- Fix the deadlock issue when loading a closed segment.
 
 ## 0.8.0
 

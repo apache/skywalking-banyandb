@@ -215,17 +215,13 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 			span.Stop()
 		}()
 	}
-	nodeSelectors := make(map[string]string)
+	nodeSelectors := make(map[string][]string)
 	for _, g := range req.Groups {
-		if req.NodeSelector != "" {
-			nodeSelectors[g] = req.NodeSelector
-			continue
-		}
-		if ns, exist := ms.groupRepo.getNodeSelector(g); exist {
+		if ns, exist := ms.groupRepo.getNodeSelector(g, req.Stages); exist {
 			nodeSelectors[g] = ns
-			continue
+		} else {
+			nodeSelectors[g] = nil
 		}
-		nodeSelectors[g] = ""
 	}
 
 	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessageWithNodeSelectors(bus.MessageID(now.UnixNano()), nodeSelectors, req.TimeRange, req))
