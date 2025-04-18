@@ -83,6 +83,7 @@
     ttlUnit: 'UNIT_DAY',
     ttlNum: 3,
     stages: [],
+    defaultStages: [],
   });
   const getGroupForm = computed(() => ({
     group: {
@@ -115,6 +116,7 @@
             num: d.segmentIntervalNum,
           },
         })),
+        defaultStages: groupForm.defaultStages,
       },
     },
   }));
@@ -739,6 +741,9 @@
         </el-form-item>
         <el-form-item label="TTL num" :label-width="data.formLabelWidth" prop="ttlNum">
           <el-input-number v-model="groupForm.ttlNum" :min="1" />
+        </el-form-item>
+        <el-form-item label="Default stages" :label-width="data.formLabelWidth" prop="defaultStages">
+          <el-input-tag v-model="groupForm.defaultStages" placeholder="Please input stages" />
         </el-form-item>
         <el-form-item label="Stages" :label-width="data.formLabelWidth" prop="stages">
           <el-button size="small" type="primary" color="#6E38F7" @click="openAddStage">Add Stage</el-button>
