@@ -49,6 +49,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
+	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
 
 func TestBackup(t *testing.T) {
@@ -152,6 +153,8 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		<-server.StopNotify()
 		spaceDef()
 	}
+	err = dockertesthelper.InitMinIOContainer()
+	Expect(err).NotTo(HaveOccurred())
 	return []byte(dataAddr)
 }, func(address []byte) {
 	var err error
@@ -169,6 +172,7 @@ var _ = SynchronizedAfterSuite(func() {
 	if connection != nil {
 		Expect(connection.Close()).To(Succeed())
 	}
+	dockertesthelper.CloseMinioContainer()
 }, func() {
 	if deferFunc != nil {
 		deferFunc()
