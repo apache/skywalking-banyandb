@@ -1,0 +1,18 @@
+[ req ]
+distinguished_name = req_distinguished_name
+req_extensions     = v3_req
+prompt             = no
+
+[ req_distinguished_name ]
+# Common Name will be replaced with the local hostname at runtime
+CN = ${HOSTNAME}
+
+[ v3_req ]
+# add the SAN extension
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = localhost
+DNS.2 = ${HOSTNAME}
+IP.1  = 127.0.0.1
+IP.2  = ::1
