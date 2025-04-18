@@ -104,7 +104,7 @@
         stages: groupForm.stages.map((d) => ({
           name: d.name,
           shardNum: d.shardNum,
-          nodeSelector: d.nodeSelector,
+          stages: d.stages,
           close: d.close,
           ttl: {
             unit: d.ttlUnit,

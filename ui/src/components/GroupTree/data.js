@@ -24,7 +24,7 @@ export const StageFields = [
   { label: 'TTL number', key: 'ttlNum' },
   { label: 'Segment interval unit', key: 'segmentIntervalUnit' },
   { label: 'Segment interval number', key: 'segmentIntervalNum' },
-  { label: 'Node selector', key: 'nodeSelector' },
+  { label: 'Stages', key: 'stages' },
   { label: 'Close', key: 'close' },
 ];
 export const StageConfig = {
@@ -34,7 +34,7 @@ export const StageConfig = {
   ttlNum: 3,
   segmentIntervalUnit: 'UNIT_DAY',
   segmentIntervalNum: 1,
-  NodeSelector: '',
+  stages: [],
 };
 
 export const Rules = {
