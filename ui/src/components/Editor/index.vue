@@ -233,7 +233,7 @@
             data.form.indexMode = res.data[String(data.type)].indexMode;
             const tagFamilies = res.data[String(data.type)].tagFamilies;
             const entity = res.data[String(data.type)].entity.tagNames;
-            const shardingKey = res.data[String(data.type)].shardingKey.tagNames;
+            const shardingKey = res.data[String(data.type)].shardingKey?.tagNames;
             const arr = [];
             tagFamilies.forEach((item) => {
               item.tags.forEach((tag) => {
