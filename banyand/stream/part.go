@@ -42,6 +42,8 @@ const (
 	tagFamiliesFilenameExt         = ".tf"
 )
 
+// Functions SetMemoryProtector and SetFadvisThreshold have been moved to fadvis_adapt.go.
+
 type part struct {
 	primary              fs.Reader
 	timestamps           fs.Reader
@@ -165,20 +167,24 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 }
 
 func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
-	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
+	fileSystem.MkdirIfNotExist(path, storage.DirPerm)
 
 	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(path, metaFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(path, primaryFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.timestamps.Buf, filepath.Join(path, timestampsFilename), storage.FilePerm)
 	for name, tf := range mp.tagFamilies {
-		fs.MustFlush(fileSystem, tf.Buf, filepath.Join(path, name+tagFamiliesFilenameExt), storage.FilePerm)
+		tagFamilyPath := filepath.Join(path, name+tagFamiliesFilenameExt)
+		fs.MustFlush(fileSystem, tf.Buf, tagFamilyPath, storage.FilePerm)
 	}
 	for name, tfh := range mp.tagFamilyMetadata {
-		fs.MustFlush(fileSystem, tfh.Buf, filepath.Join(path, name+tagFamiliesMetadataFilenameExt), storage.FilePerm)
+		tagFamilyMetaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
+		fs.MustFlush(fileSystem, tfh.Buf, tagFamilyMetaPath, storage.FilePerm)
 	}
 
+	// Write part metadata
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 
+	// Sync to disk
 	fileSystem.SyncPath(path)
 }
 

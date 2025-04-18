@@ -198,3 +198,37 @@ func (m *Memory) Serve() run.StopNotify {
 	}()
 	return m.closed
 }
+
+// GetThreshold returns the threshold for large file detection (1% of page cache).
+func (m *Memory) GetThreshold() int64 {
+	pageCachePercent := 100 - m.allowedPercent
+
+	var totalMemory int64
+	if m.allowedBytes > 0 {
+		totalMemory = int64(uint64(m.allowedBytes) * 100 / uint64(m.allowedPercent))
+	} else {
+		cgLimit, err := cgroups.MemoryLimit()
+		if err != nil {
+			m.l.Warn().Err(err).Msg("failed to get memory limit from cgroups, using default threshold")
+			return 64 * 1024 * 1024
+		}
+		totalMemory = cgLimit
+	}
+
+	pageCacheSize := totalMemory * int64(pageCachePercent) / 100
+
+	threshold := pageCacheSize / 100
+
+	if threshold < 1024*1024 {
+		threshold = 1024 * 1024
+	}
+
+	m.l.Debug().
+		Int64("totalMemory", totalMemory).
+		Int("pageCachePercent", pageCachePercent).
+		Int64("pageCacheSize", pageCacheSize).
+		Int64("threshold", threshold).
+		Msg("calculated fadvis threshold")
+
+	return threshold
+}

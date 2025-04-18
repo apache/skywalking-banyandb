@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -30,18 +32,28 @@ import (
 )
 
 type seqReader struct {
-	sr        fs.SeqReader
-	r         fs.Reader
+	sr fs.SeqReader
+	r  fs.Reader
+	// File path for reference
+	filePath string
+	// File size for reference
+	fileSize  int64
 	bytesRead uint64
+	// Current read offset
+	readOffset int64
 }
 
 func (sr *seqReader) reset() {
+	// If it's a large file, apply fadvis when resetting
 	sr.r = nil
 	if sr.sr != nil {
 		fs.MustClose(sr.sr)
 	}
 	sr.sr = nil
 	sr.bytesRead = 0
+	sr.filePath = ""
+	sr.fileSize = 0
+	sr.readOffset = 0
 }
 
 func (sr *seqReader) Path() string {
@@ -52,12 +64,29 @@ func (sr *seqReader) init(r fs.Reader) {
 	sr.reset()
 	sr.sr = r.SequentialRead()
 	sr.r = r
+	sr.filePath = r.Path()
+	sr.readOffset = 0
+
+	// Skip metadata index directory
+	if filepath.Base(filepath.Dir(sr.filePath)) == indexDirName {
+		return
+	}
+
+	// Get file size for reference
+	if fileInfo, err := os.Stat(sr.filePath); err == nil {
+		sr.fileSize = fileInfo.Size()
+	}
 }
 
 func (sr *seqReader) mustReadFull(data []byte) {
 	n, err := io.ReadFull(sr.sr, data)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
+			// An EOF should be treated as an error if data is expected to be read.
+			// EOF is only allowed when zero bytes are read.
+			if len(data) > 0 {
+				logger.Panicf("unexpected EOF when reading data, expected %d bytes", len(data))
+			}
 			return
 		}
 		logger.Panicf("cannot read data: %v", err)
@@ -65,7 +94,9 @@ func (sr *seqReader) mustReadFull(data []byte) {
 	if n != len(data) {
 		logger.Panicf("cannot read full data: %d/%d", n, len(data))
 	}
+
 	sr.bytesRead += uint64(n)
+	sr.readOffset += int64(n)
 }
 
 func generateSeqReader() *seqReader {

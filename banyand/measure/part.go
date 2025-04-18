@@ -42,6 +42,11 @@ const (
 	tagFamiliesFilenameExt         = ".tf"
 )
 
+// Index directory name used in this package, might be different from the one in stream package.
+const indexDirName = "index"
+
+// Functions SetMemoryProtector and SetFadvisThreshold have been moved to fadvis_adapt.go.
+
 type part struct {
 	primary              fs.Reader
 	timestamps           fs.Reader
@@ -67,7 +72,7 @@ func (p *part) close() {
 }
 
 func (p *part) String() string {
-	return fmt.Sprintf("part %d", p.partMetadata.ID)
+	return fmt.Sprintf("part{path: %q, metadata: %q}", p.path, p.partMetadata.String())
 }
 
 func openMemPart(mp *memPart) *part {
@@ -184,6 +189,12 @@ func (mp *memPart) mustInitFromDataPoints(dps *dataPoints) {
 func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
+	// Skip metadata index directory
+	if filepath.Base(path) == indexDirName {
+		return
+	}
+
+	// Flush all data files
 	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(path, metaFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(path, primaryFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.timestamps.Buf, filepath.Join(path, timestampsFilename), storage.FilePerm)
@@ -197,6 +208,7 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 
+	// Sync to disk
 	fileSystem.SyncPath(path)
 }
 
