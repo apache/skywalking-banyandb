@@ -162,9 +162,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	casesbackup.SharedContext = helpers.BackupSharedContext{
-		DataAddr:   dataAddr,
-		Connection: connection,
-		RootDir:    dir,
+		DataAddr:          dataAddr,
+		Connection:        connection,
+		RootDir:           dir,
+		BucketName:        dockertesthelper.BucketName,
+		S3ConfigPath:      dockertesthelper.S3ConfigPath,
+		S3CredentialsPath: dockertesthelper.S3CredentialsPath,
 	}
 })
 

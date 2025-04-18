@@ -23,15 +23,6 @@ const (
 	// MinioContainerName is the name of the MinIO container.
 	MinioContainerName = "banyandb-minio-test-abc"
 
-	// BucketName is the name of the cloud storage bucket.
-	BucketName = "test-bucket"
-
-	// ConfigPath is the directory for MinIO configuration.
-	ConfigPath = "/tmp/banyandb/s3/config"
-
-	// CredentialsPath is the directory for MinIO credentials.
-	CredentialsPath = "/tmp/banyandb/s3/credentials"
-
 	// ConfigContent is the content of the MinIO config file.
 	ConfigContent = `[default]
 output = json

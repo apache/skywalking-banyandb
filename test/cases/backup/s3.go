@@ -29,14 +29,12 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
-	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
 
 var _ = ginkgo.Describe("s3FS Integration", func() {
 	var (
 		fs       remote.FS
 		ctx      context.Context
-		bucket   = dockertesthelper.BucketName
 		prefix   = "test-prefix"
 		testKey  = "hello.txt"
 		testData = "Hello, World!"
@@ -44,10 +42,11 @@ var _ = ginkgo.Describe("s3FS Integration", func() {
 
 	ginkgo.BeforeEach(func() {
 		ctx = context.Background()
+		bucket := SharedContext.BucketName
 
 		fsConfig := &remote.FsConfig{
-			S3ConfigFilePath:     dockertesthelper.ConfigPath,
-			S3CredentialFilePath: dockertesthelper.CredentialsPath,
+			S3ConfigFilePath:     SharedContext.S3ConfigPath,
+			S3CredentialFilePath: SharedContext.S3CredentialsPath,
 		}
 
 		var err error

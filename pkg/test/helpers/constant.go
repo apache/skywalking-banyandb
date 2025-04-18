@@ -73,9 +73,12 @@ func TimeRange(args Args, shardContext SharedContext) *modelv1.TimeRange {
 
 // BackupSharedContext is the context shared between test cases in the snapshot testing.
 type BackupSharedContext struct {
-	DataAddr   string
-	Connection *grpclib.ClientConn
-	RootDir    string
+	DataAddr          string
+	Connection        *grpclib.ClientConn
+	RootDir           string
+	S3ConfigPath      string
+	S3CredentialsPath string
+	BucketName        string
 }
 
 // LifecycleSharedContext is the context shared between test cases in the lifecycle testing.

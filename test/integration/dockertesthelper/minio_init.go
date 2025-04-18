@@ -28,26 +28,35 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
+
+	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
 )
 
 var (
 	minioPool *dockertest.Pool
 	minioRes  *dockertest.Resource
+	// BucketName is the name of the bucket used in integration tests.
+	BucketName = "test-bucket"
+	// S3ConfigPath is the path of s3 config file, it is random.
+	S3ConfigPath string
+	// S3CredentialsPath is the path of s3 credentials file, it is random.
+	S3CredentialsPath string
 )
 
 // InitMinIOContainer initializes a MinIO container for integration tests.
 func InitMinIOContainer() error {
 	var err error
-	if err = os.MkdirAll(filepath.Dir(ConfigPath), 0o600); err != nil {
-		return fmt.Errorf("cannot create config directory: %w", err)
+	tempDir, err := os.MkdirTemp("", "banyandb-s3-")
+	if err != nil {
+		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	if err = os.WriteFile(ConfigPath, []byte(ConfigContent), 0o600); err != nil {
+	S3ConfigPath = filepath.Join(tempDir, "config")
+	S3CredentialsPath = filepath.Join(tempDir, "credentials")
+	casesbackup.SharedContext.BucketName = BucketName
+	if err = os.WriteFile(S3ConfigPath, []byte(ConfigContent), 0o600); err != nil {
 		return fmt.Errorf("cannot write config file: %w", err)
 	}
-	if err = os.MkdirAll(filepath.Dir(CredentialsPath), 0o600); err != nil {
-		return fmt.Errorf("cannot create credentials directory: %w", err)
-	}
-	if err = os.WriteFile(CredentialsPath, []byte(CredentialsContent), 0o600); err != nil {
+	if err = os.WriteFile(S3CredentialsPath, []byte(CredentialsContent), 0o600); err != nil {
 		return fmt.Errorf("cannot write credentials file: %w", err)
 	}
 

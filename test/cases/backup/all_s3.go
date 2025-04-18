@@ -31,7 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/backup"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
-	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
 
 var _ = ginkgo.Describe("Backup All By S3", func() {
@@ -41,7 +40,7 @@ var _ = ginkgo.Describe("Backup All By S3", func() {
 			destDir, err := os.MkdirTemp("", "backup-restore-dest")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer os.RemoveAll(destDir)
-			bucketName := dockertesthelper.BucketName
+			bucketName := SharedContext.BucketName
 			destURL := "s3:///" + bucketName + destDir
 
 			backupCmd := backup.NewBackupCommand()
@@ -52,15 +51,15 @@ var _ = ginkgo.Describe("Backup All By S3", func() {
 				"--property-root-path", SharedContext.RootDir,
 				"--dest", destURL,
 				"--time-style", "daily",
-				"--s3-credential-file", dockertesthelper.CredentialsPath,
-				"--s3-config-file", dockertesthelper.ConfigPath,
+				"--s3-credential-file", SharedContext.S3CredentialsPath,
+				"--s3-config-file", SharedContext.S3ConfigPath,
 			})
 			err = backupCmd.Execute()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			fs, err := aws.NewFS(filepath.Join(bucketName, destDir), &remote.FsConfig{
-				S3ConfigFilePath:     dockertesthelper.ConfigPath,
-				S3CredentialFilePath: dockertesthelper.CredentialsPath,
+				S3ConfigFilePath:     SharedContext.S3ConfigPath,
+				S3CredentialFilePath: SharedContext.S3CredentialsPath,
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -92,8 +91,8 @@ var _ = ginkgo.Describe("Backup All By S3", func() {
 			listCmd := backup.NewTimeDirCommand()
 			listCmd.SetArgs([]string{
 				"list", "--dest", destURL,
-				"--s3-credential-file", dockertesthelper.CredentialsPath,
-				"--s3-config-file", dockertesthelper.ConfigPath,
+				"--s3-credential-file", SharedContext.S3CredentialsPath,
+				"--s3-config-file", SharedContext.S3ConfigPath,
 			})
 			listOut := &bytes.Buffer{}
 			listCmd.SetOut(listOut)
@@ -166,8 +165,8 @@ var _ = ginkgo.Describe("Backup All By S3", func() {
 				"--stream-root-path", newCatalogDir,
 				"--measure-root-path", newCatalogDir,
 				"--property-root-path", newCatalogDir,
-				"--s3-credential-file", dockertesthelper.CredentialsPath,
-				"--s3-config-file", dockertesthelper.ConfigPath,
+				"--s3-credential-file", SharedContext.S3CredentialsPath,
+				"--s3-config-file", SharedContext.S3ConfigPath,
 			})
 			restoreOut := &bytes.Buffer{}
 			restoreCmd.SetOut(restoreOut)
