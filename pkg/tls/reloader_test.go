@@ -343,3 +343,143 @@ func TestReloaderTLSConfig(t *testing.T) {
 	info := creds.Info()
 	assert.Equal(t, "tls", info.SecurityProtocol)
 }
+
+// TestClientCertReloader tests the client certificate reloader functionality.
+func TestClientCertReloader(t *testing.T) {
+	tempDir := t.TempDir()
+	certFile := filepath.Join(tempDir, "cert.pem")
+
+	// Create a self-signed CA certificate
+	certPEM, _, err := GenerateSelfSignedCert("ca.test.local", []string{"ca.test.local"})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
+
+	log := logger.GetLogger("tls-test")
+
+	// Test basic initialization
+	t.Run("initialization", func(t *testing.T) {
+		reloader, err := NewClientCertReloader(certFile, log)
+		require.NoError(t, err)
+		require.NotNil(t, reloader)
+
+		// Start the reloader
+		require.NoError(t, reloader.Start())
+		defer reloader.Stop()
+
+		// Test GetClientTLSConfig
+		clientConfig, err := reloader.GetClientTLSConfig("server.example.com")
+		require.NoError(t, err)
+		assert.NotNil(t, clientConfig.RootCAs)
+		assert.Equal(t, "server.example.com", clientConfig.ServerName)
+		assert.Equal(t, uint16(tls.VersionTLS12), clientConfig.MinVersion)
+	})
+
+	// Test certificate updates
+	t.Run("certificate updates", func(t *testing.T) {
+		reloader, err := NewClientCertReloader(certFile, log)
+		require.NoError(t, err)
+		require.NoError(t, reloader.Start())
+		defer reloader.Stop()
+
+		// Get update channel
+		updateCh := reloader.GetUpdateChannel()
+
+		// Create a channel to notify when update is received
+		updateReceived := make(chan struct{})
+		go func() {
+			<-updateCh
+			close(updateReceived)
+		}()
+
+		// Allow time for watcher to be fully established
+		time.Sleep(100 * time.Millisecond)
+
+		// Replace the certificate
+		certPEM2, _, err := GenerateSelfSignedCert("updated-ca.test.local", []string{"updated-ca.test.local"})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(certFile, certPEM2, 0o600))
+
+		// Verify notification is received
+		select {
+		case <-updateReceived:
+			// Notification received
+		case <-time.After(flags.EventuallyTimeout):
+			assert.Fail(t, "Timed out waiting for certificate update notification")
+		}
+
+		// Verify client gets new config
+		updatedConfig, err := reloader.GetClientTLSConfig("server.example.com")
+		require.NoError(t, err)
+		assert.NotNil(t, updatedConfig.RootCAs)
+
+		// Verify TLS config works correctly with the server name
+		assert.Equal(t, "server.example.com", updatedConfig.ServerName)
+	})
+
+	// Test error conditions
+	t.Run("error cases", func(t *testing.T) {
+		// Empty path
+		_, err := NewClientCertReloader("", log)
+		assert.Error(t, err)
+
+		// Invalid file content
+		invalidCertFile := filepath.Join(tempDir, "invalid.pem")
+		require.NoError(t, os.WriteFile(invalidCertFile, []byte("invalid certificate"), 0o600))
+		_, err = NewClientCertReloader(invalidCertFile, log)
+		assert.Error(t, err)
+
+		// Nil logger
+		_, err = NewClientCertReloader(certFile, nil)
+		assert.Error(t, err)
+	})
+
+	// Test removing and recreating certificate file
+	t.Run("remove and recreate certificate", func(t *testing.T) {
+		reloader, err := NewClientCertReloader(certFile, log)
+		require.NoError(t, err)
+		require.NoError(t, reloader.Start())
+		defer reloader.Stop()
+
+		// Get initial client config
+		initialConfig, err := reloader.GetClientTLSConfig("server.example.com")
+		require.NoError(t, err)
+		assert.NotNil(t, initialConfig.RootCAs)
+
+		// Get update channel
+		updateCh := reloader.GetUpdateChannel()
+		updateReceived := make(chan struct{})
+		go func() {
+			<-updateCh
+			close(updateReceived)
+		}()
+
+		// Allow time for watcher to be fully established
+		time.Sleep(100 * time.Millisecond)
+
+		// Remove certificate file
+		require.NoError(t, os.Remove(certFile))
+
+		// Wait a moment
+		time.Sleep(100 * time.Millisecond)
+
+		// Create a new certificate file
+		certPEM3, _, err := GenerateSelfSignedCert("recreated-ca.test.local", []string{"recreated-ca.test.local"})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(certFile, certPEM3, 0o600))
+
+		// Verify update is received
+		select {
+		case <-updateReceived:
+			// Notification received
+		case <-time.After(flags.EventuallyTimeout):
+			assert.Fail(t, "Timed out waiting for certificate update notification after recreation")
+		}
+
+		// Verify config works with new certificate
+		time.Sleep(100 * time.Millisecond) // Give time for reloader to update
+		assert.Eventually(t, func() bool {
+			newConfig, err := reloader.GetClientTLSConfig("server.example.com")
+			return err == nil && newConfig.RootCAs != nil
+		}, flags.EventuallyTimeout, 100*time.Millisecond)
+	})
+}
