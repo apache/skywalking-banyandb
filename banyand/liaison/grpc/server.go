@@ -46,6 +46,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 const defaultRecvSize = 10 << 20
@@ -75,11 +76,11 @@ type NodeRegistries struct {
 
 type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
-	creds      credentials.TransportCredentials
-	omr        observability.MetricsRegistry
-	measureSVC *measureService
-	ser        *grpclib.Server
-	log        *logger.Logger
+	tlsReloader *pkgtls.Reloader
+	omr         observability.MetricsRegistry
+	measureSVC  *measureService
+	ser         *grpclib.Server
+	log         *logger.Logger
 	*propertyServer
 	*topNAggregationRegistryServer
 	*groupRegistryServer
@@ -184,6 +185,16 @@ func (s *server) PreRun(_ context.Context) error {
 	s.groupRegistryServer.metrics = metrics
 	s.topNAggregationRegistryServer.metrics = metrics
 	s.propertyRegistryServer.metrics = metrics
+
+	if s.tls {
+		var err error
+		s.tlsReloader, err = pkgtls.NewReloader(s.certFile, s.keyFile, s.log)
+		if err != nil {
+			s.log.Error().Err(err).Msg("Failed to initialize TLSReloader for gRPC")
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -232,18 +243,21 @@ func (s *server) Validate() error {
 	if s.keyFile == "" {
 		return errServerKey
 	}
-	creds, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
-	if errTLS != nil {
-		return errors.Wrap(errTLS, "failed to load cert and key")
-	}
-	s.creds = creds
 	return nil
 }
 
 func (s *server) Serve() run.StopNotify {
 	var opts []grpclib.ServerOption
 	if s.tls {
-		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
+		if err := s.tlsReloader.Start(); err != nil {
+			s.log.Error().Err(err).Msg("Failed to start TLSReloader for gRPC")
+			close(s.stopCh)
+			return s.stopCh
+		}
+		s.log.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).Msg("Starting TLS file monitoring")
+		tlsConfig := s.tlsReloader.GetTLSConfig()
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpclib.Creds(creds))
 	}
 	grpcPanicRecoveryHandler := func(p any) (err error) {
 		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
@@ -269,7 +283,6 @@ func (s *server) Serve() run.StopNotify {
 	commonv1.RegisterServiceServer(s.ser, &apiVersionService{})
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
 	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
-	// register *Registry
 	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
 	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
 	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)
@@ -282,6 +295,7 @@ func (s *server) Serve() run.StopNotify {
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})
+	s.log.Info().Str("addr", s.addr).Msg("Starting gRPC server")
 	go func() {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
@@ -301,6 +315,9 @@ func (s *server) Serve() run.StopNotify {
 
 func (s *server) GracefulStop() {
 	s.log.Info().Msg("stopping")
+	if s.tls && s.tlsReloader != nil {
+		s.tlsReloader.Stop()
+	}
 	stopped := make(chan struct{})
 	go func() {
 		s.ser.GracefulStop()
