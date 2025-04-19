@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
 // NewTimeDirCommand creates a new time-dir command.
@@ -48,9 +49,11 @@ func NewTimeDirCommand() *cobra.Command {
 }
 
 func newListCmd() *cobra.Command {
-	var dest string
-	var prefix string
-
+	var (
+		dest     string
+		fsConfig remote.FsConfig
+		prefix   string
+	)
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List remote time directories in the remote file system",
@@ -60,7 +63,7 @@ func newListCmd() *cobra.Command {
 			}
 
 			// Create a remote file system client using the provided URL.
-			fs, err := newFS(dest)
+			fs, err := newFS(dest, &fsConfig)
 			if err != nil {
 				return err
 			}
@@ -97,6 +100,9 @@ func newListCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&dest, "dest", "", "Destination URL of the remote file system (e.g., file:///backups)")
 	cmd.Flags().StringVar(&prefix, "prefix", "", "Prefix in the remote file system to list")
+	cmd.Flags().StringVar(&fsConfig.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
+	cmd.Flags().StringVar(&fsConfig.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
+	cmd.Flags().StringVar(&fsConfig.S3ProfileName, "s3-profile", "", "S3 profile name")
 	return cmd
 }
 

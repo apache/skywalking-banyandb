@@ -49,6 +49,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
+	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
 
 func TestBackup(t *testing.T) {
@@ -152,6 +153,8 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		<-server.StopNotify()
 		spaceDef()
 	}
+	err = dockertesthelper.InitMinIOContainer()
+	Expect(err).NotTo(HaveOccurred())
 	return []byte(dataAddr)
 }, func(address []byte) {
 	var err error
@@ -159,9 +162,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	casesbackup.SharedContext = helpers.BackupSharedContext{
-		DataAddr:   dataAddr,
-		Connection: connection,
-		RootDir:    dir,
+		DataAddr:          dataAddr,
+		Connection:        connection,
+		RootDir:           dir,
+		BucketName:        dockertesthelper.BucketName,
+		S3ConfigPath:      dockertesthelper.S3ConfigPath,
+		S3CredentialsPath: dockertesthelper.S3CredentialsPath,
 	}
 })
 
@@ -169,6 +175,7 @@ var _ = SynchronizedAfterSuite(func() {
 	if connection != nil {
 		Expect(connection.Close()).To(Succeed())
 	}
+	dockertesthelper.CloseMinioContainer()
 }, func() {
 	if deferFunc != nil {
 		deferFunc()

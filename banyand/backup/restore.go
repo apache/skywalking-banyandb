@@ -59,6 +59,7 @@ func newRunCommand() *cobra.Command {
 		streamRoot   string
 		measureRoot  string
 		propertyRoot string
+		fsConfig     remote.FsConfig
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -70,7 +71,7 @@ func newRunCommand() *cobra.Command {
 			if source == "" {
 				return errors.New("source is required")
 			}
-			fs, err := newFS(source)
+			fs, err := newFS(source, &fsConfig)
 			if err != nil {
 				return err
 			}
@@ -125,6 +126,9 @@ func newRunCommand() *cobra.Command {
 	cmd.Flags().StringVar(&streamRoot, "stream-root-path", "/tmp", "Root directory for stream catalog")
 	cmd.Flags().StringVar(&measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
 	cmd.Flags().StringVar(&propertyRoot, "property-root-path", "/tmp", "Root directory for property catalog")
+	cmd.Flags().StringVar(&fsConfig.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
+	cmd.Flags().StringVar(&fsConfig.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
+	cmd.Flags().StringVar(&fsConfig.S3ProfileName, "s3-profile", "", "S3 profile name")
 
 	return cmd
 }
