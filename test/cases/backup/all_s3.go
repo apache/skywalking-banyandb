@@ -211,6 +211,35 @@ var _ = ginkgo.Describe("Backup All By S3", func() {
 				_, err = os.Stat(timedirFile)
 				gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue())
 			}
+
+			clearSnapshotDirs()
 		})
 	})
 })
+
+func removeAllFilesInDir(dir string) error {
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == dir {
+			return nil
+		}
+		if info.IsDir() {
+			return os.RemoveAll(path)
+		}
+		return os.Remove(path)
+	})
+}
+
+func clearSnapshotDirs() {
+	snpDirs := []string{
+		filepath.Join(SharedContext.RootDir, "measure", "snapshots"),
+		filepath.Join(SharedContext.RootDir, "stream", "snapshots"),
+		filepath.Join(SharedContext.RootDir, "property", "snapshots"),
+	}
+
+	for _, dir := range snpDirs {
+		_ = removeAllFilesInDir(dir)
+	}
+}
