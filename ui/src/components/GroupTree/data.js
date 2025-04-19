@@ -34,7 +34,7 @@ export const StageConfig = {
   ttlNum: 3,
   segmentIntervalUnit: 'UNIT_DAY',
   segmentIntervalNum: 1,
-  NodeSelector: '',
+  nodeSelector: '',
 };
 
 export const Rules = {
