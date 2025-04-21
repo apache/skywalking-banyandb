@@ -7,6 +7,12 @@ Release Notes.
 ### Features
 
 - Add sharding_key for TopNAggregation source measure
+- API: Update the data matching rule from the node selector to the stage name.
+
+### Bug Fixes
+
+- Fix the deadlock issue when loading a closed segment.
+- Fix the issue that the etcd watcher gets the historical node registration events.
 
 ## 0.8.0
 

@@ -48,7 +48,7 @@ type (
 // Message is send on the bus to all subscribed listeners.
 type Message struct {
 	payload       payload
-	nodeSelectors map[string]string
+	nodeSelectors map[string][]string
 	timeRange     *modelv1.TimeRange
 	node          string
 	id            MessageID
@@ -71,7 +71,7 @@ func (m Message) Node() string {
 }
 
 // NodeSelectors returns the node selectors of the Message.
-func (m Message) NodeSelectors() map[string]string {
+func (m Message) NodeSelectors() map[string][]string {
 	return m.nodeSelectors
 }
 
@@ -102,7 +102,7 @@ func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
 
 // NewMessageWithNodeSelectors returns a new Message with a MessageID and NodeSelectors and embed data.
 // Nodes matching any of the selectors will receive the message.
-func NewMessageWithNodeSelectors(id MessageID, nodeSelectors map[string]string, timeRange *modelv1.TimeRange, data interface{}) Message {
+func NewMessageWithNodeSelectors(id MessageID, nodeSelectors map[string][]string, timeRange *modelv1.TimeRange, data interface{}) Message {
 	return Message{id: id, nodeSelectors: nodeSelectors, timeRange: timeRange, payload: data}
 }
 

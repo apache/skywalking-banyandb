@@ -27,8 +27,13 @@ var (
 
 	neverTimeout string
 
+	consistentlyTimeout string
+
 	// EventuallyTimeout is the timeout of async time cases execution.
 	EventuallyTimeout time.Duration
+
+	// ConsistentlyTimeout is the timeout of async time cases execution.
+	ConsistentlyTimeout time.Duration
 
 	// NeverTimeout is the timeout of async time cases execution.
 	NeverTimeout time.Duration
@@ -44,6 +49,9 @@ func init() {
 	if neverTimeout == "" {
 		neverTimeout = "2s"
 	}
+	if consistentlyTimeout == "" {
+		consistentlyTimeout = "5s"
+	}
 	d, err := time.ParseDuration(eventuallyTimeout)
 	if err != nil {
 		panic(err)
@@ -54,4 +62,9 @@ func init() {
 		panic(err)
 	}
 	NeverTimeout = d
+	d, err = time.ParseDuration(consistentlyTimeout)
+	if err != nil {
+		panic(err)
+	}
+	ConsistentlyTimeout = d
 }

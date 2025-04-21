@@ -107,13 +107,17 @@ func (p *pub) Serve() run.StopNotify {
 	return p.closer.CloseNotify()
 }
 
-func bypassMatches(_ map[string]string) bool { return true }
+var bypassMatches = []MatchFunc{bypassMatch}
+
+func bypassMatch(_ map[string]string) bool { return true }
 
 func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
 	var nodes []*databasev1.Node
 	p.mu.RLock()
 	for k := range p.active {
-		nodes = append(nodes, p.registered[k])
+		if n := p.registered[k]; n != nil {
+			nodes = append(nodes, n)
+		}
 	}
 	p.mu.RUnlock()
 	if len(nodes) == 0 {
@@ -122,27 +126,32 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	names := make(map[string]struct{})
 	if len(messages.NodeSelectors()) == 0 {
 		for _, n := range nodes {
-			names[n.Metadata.Name] = struct{}{}
+			names[n.Metadata.GetName()] = struct{}{}
 		}
 	} else {
 		for g, sel := range messages.NodeSelectors() {
-			var matches func(map[string]string) bool
-			if sel == "" {
+			var matches []MatchFunc
+			if sel == nil {
 				matches = bypassMatches
 			} else {
-				selector, err := ParseLabelSelector(sel)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse node selector: %w", err)
+				for _, s := range sel {
+					selector, err := ParseLabelSelector(s)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse node selector: %w", err)
+					}
+					matches = append(matches, selector.Matches)
 				}
-				matches = selector.Matches
 			}
 			for _, n := range nodes {
 				tr := metadata.FindSegmentsBoundary(n, g)
 				if tr == nil {
 					continue
 				}
-				if matches(n.Labels) && timestamp.PbHasOverlap(messages.TimeRange(), tr) {
-					names[n.Metadata.Name] = struct{}{}
+				for _, m := range matches {
+					if m(n.Labels) && timestamp.PbHasOverlap(messages.TimeRange(), tr) {
+						names[n.Metadata.Name] = struct{}{}
+						break
+					}
 				}
 			}
 		}
