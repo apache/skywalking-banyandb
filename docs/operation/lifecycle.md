@@ -192,7 +192,7 @@ resource_opts:
 EOF
 ```
 
-1. **Run the lifecycle agent:**
+3. **Run the lifecycle agent:**
 
 `lifecycle` connects to the `hot` node to manage data migration:
 
@@ -206,7 +206,7 @@ EOF
      --progress-file /data/progress.json
    ```
 
-2. **Verify migration:**
+4. **Verify migration:**
    - Check logs for progress details.
    - Query both hot and warm nodes to ensure data availability.
 
