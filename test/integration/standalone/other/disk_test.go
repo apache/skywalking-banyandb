@@ -82,7 +82,10 @@ var _ = g.Describe("Disk", func() {
 		ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
 		server, err := embeddedetcd.NewServer(
 			embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-			embeddedetcd.RootDir(dir))
+			embeddedetcd.RootDir(dir),
+			embeddedetcd.AutoCompactionMode("periodic"),
+			embeddedetcd.AutoCompactionRetention("1h"),
+		)
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 		<-server.ReadyNotify()
 		g.By("Loading schema")

@@ -63,9 +63,27 @@ func ConfigureListener(lcs, lps []string) Option {
 	}
 }
 
+// AutoCompactionMode sets the auto compaction mode.
+func AutoCompactionMode(mode string) Option {
+	return func(config *config) {
+		config.autoCompactionMode = mode
+	}
+}
+
+// AutoCompactionRetention sets the auto compaction retention.
+func AutoCompactionRetention(retention string) Option {
+	return func(config *config) {
+		config.autoCompactionRetention = retention
+	}
+}
+
 type config struct {
 	// rootDir is the root directory for etcd storage
 	rootDir string
+	// autoCompactionMode is the auto compaction mode
+	autoCompactionMode string
+	// autoCompactionRetention is the auto compaction retention
+	autoCompactionRetention string
 	// listenerClientURLs is the listener for client
 	listenerClientURLs []string
 	// listenerPeerURLs is the listener for peer
@@ -152,6 +170,8 @@ func newEmbedEtcdConfig(config *config, logger *zap.Logger) (*embed.Config, erro
 	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = cURLs, cURLs
 	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = pURLs, pURLs
 	cfg.InitialCluster = cfg.InitialClusterFromName(cfg.Name)
+	cfg.AutoCompactionMode = config.autoCompactionMode
+	cfg.AutoCompactionRetention = config.autoCompactionRetention
 
 	cfg.BackendBatchInterval = 500 * time.Millisecond
 	cfg.BackendBatchLimit = 10000

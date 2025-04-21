@@ -108,7 +108,10 @@ func initServerAndRegister(t *testing.T) (schema.Registry, func()) {
 	endpoints := []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
 	server, err := embeddedetcd.NewServer(
 		embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(path))
+		embeddedetcd.RootDir(path),
+		embeddedetcd.AutoCompactionMode("periodic"),
+		embeddedetcd.AutoCompactionRetention("1h"),
+	)
 	req.NoError(err)
 	req.NotNil(server)
 	<-server.ReadyNotify()

@@ -31,10 +31,12 @@ import (
 
 type server struct {
 	metadata.Service
-	metaServer      embeddedetcd.Server
-	rootDir         string
-	listenClientURL []string
-	listenPeerURL   []string
+	metaServer              embeddedetcd.Server
+	rootDir                 string
+	autoCompactionMode      string
+	autoCompactionRetention string
+	listenClientURL         []string
+	listenPeerURL           []string
 }
 
 func (s *server) Name() string {
@@ -48,6 +50,8 @@ func (s *server) Role() databasev1.Role {
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
 	fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
+	fs.StringVar(&s.autoCompactionMode, "etcd-auto-compaction-mode", "periodic", "auto compaction mode")
+	fs.StringVar(&s.autoCompactionRetention, "etcd-auto-compaction-retention", "1h", "auto compaction retention")
 	fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
 	fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
 	return fs
@@ -72,7 +76,8 @@ func (s *server) Validate() error {
 
 func (s *server) PreRun(ctx context.Context) error {
 	var err error
-	s.metaServer, err = embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL))
+	s.metaServer, err = embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
+		embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention))
 	if err != nil {
 		return err
 	}

@@ -102,7 +102,10 @@ var _ = ginkgo.Describe("Watcher", func() {
 		endpoints = []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
 		server, err = embeddedetcd.NewServer(
 			embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-			embeddedetcd.RootDir(path))
+			embeddedetcd.RootDir(path),
+			embeddedetcd.AutoCompactionMode("periodic"),
+			embeddedetcd.AutoCompactionRetention("1h"),
+		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
 		registry, err = schema.NewEtcdSchemaRegistry(
