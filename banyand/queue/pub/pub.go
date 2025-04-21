@@ -70,15 +70,15 @@ type pub struct {
 
 func (p *pub) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("queue-client")
-	fs.BoolVar(&p.tlsEnabled, "internal-tls", false, "enable TLS for pub client")
-	fs.StringVar(&p.caCertPath, "internal-ca-cert", "", "CA certificate file to verify the server")
+	fs.BoolVar(&p.tlsEnabled, "internal-tls", false, "enable internal TLS")
+	fs.StringVar(&p.caCertPath, "internal-ca-cert", "", "CA certificate file to verify the internal data server")
 	return fs
 }
 
 func (p *pub) Validate() error {
 	// simple sanity‑check: if TLS is on, a CA bundle must be provided
 	if p.tlsEnabled && p.caCertPath == "" {
-		return fmt.Errorf("--internal-tls requires --internal-ca-cert")
+		return fmt.Errorf("TLS is enabled (--internal-tls), but no CA certificate file was provided (--internal-ca-cert is required)")
 	}
 	return nil
 }

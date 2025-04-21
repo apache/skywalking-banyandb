@@ -3,8 +3,9 @@
 
 // Licensed to the Apache Software Foundation (ASF) under one or more
 // contributor license agreements.  See the NOTICE file distributed with
-// this work for additional information regarding copyright ownership.
-// ASF licenses this file to you under the Apache License, Version 2.0.
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you
+// under the Apache License, Version 2.0.
 
 package pub
 
@@ -16,11 +17,13 @@ import (
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/health"
-	"google.golang.org/grpc/health/grpc_health_v1"
+	health "google.golang.org/grpc/health"
+	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/protobuf/types/known/anypb"
 	"io"
 	"net"
 	"path/filepath"
+	"testing"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
@@ -29,106 +32,102 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-/* -------------------------------------------------------------------------- */
-/*                               test helpers                                 */
-/* -------------------------------------------------------------------------- */
+func TestPubTLS(t *testing.T) {
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.RunSpecs(t, "queue‑pub TLS dial‑out Suite")
+}
 
-// mockService implements clusterv1.ServiceServer and just drains the stream.
 type mockService struct {
 	clusterv1.UnimplementedServiceServer
 }
 
 func (m *mockService) Send(stream clusterv1.Service_SendServer) error {
-	for {
-		if _, err := stream.Recv(); err != nil {
-			// client will see io.EOF when we close normally
-			return err
-		}
+	_, err := stream.Recv()
+	if err != nil {
+		return err
 	}
+	anyBody, err := anypb.New(&streamv1.QueryResponse{})
+	if err != nil {
+		return err
+	}
+	if err := stream.Send(&clusterv1.SendResponse{Body: anyBody}); err != nil {
+		return err
+	}
+	return io.EOF
 }
 
-// tlsServer spins a gRPC server that uses the repo’s test certs and
-// returns a close func().
 func tlsServer(addr string) func() {
-	crtDir := filepath.Join("..", "..", "..", "test", "testdata", "certs") // repo‑relative
+	crtDir := filepath.Join("testdata", "certs")
 	cert, err := tls.LoadX509KeyPair(
 		filepath.Join(crtDir, "server.crt"),
 		filepath.Join(crtDir, "server.key"),
 	)
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 
-	creds := credentials.NewTLS(&tls.Config{
-		Certificates: []tls.Certificate{cert},
-	})
-
+	creds := credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{cert}})
 	lis, err := net.Listen("tcp", addr)
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 
-	s := grpc.NewServer(grpc.Creds(creds))
-	clusterv1.RegisterServiceServer(s, &mockService{})
+	srv := grpc.NewServer(grpc.Creds(creds))
+	clusterv1.RegisterServiceServer(srv, &mockService{})
 
 	hs := health.NewServer()
-	hs.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
-	grpc_health_v1.RegisterHealthServer(s, hs)
+	hs.SetServingStatus("", healthv1.HealthCheckResponse_SERVING)
+	healthv1.RegisterHealthServer(srv, hs)
 
-	go func() { _ = s.Serve(lis) }()
-
-	return func() { s.Stop() }
+	go func() { _ = srv.Serve(lis) }()
+	return func() { srv.Stop() }
 }
 
-// newTLSPub returns a *pub with internal‑tls enabled and the CA bundle set.
 func newTLSPub() *pub {
 	p := NewWithoutMetadata().(*pub)
 	p.tlsEnabled = true
-	p.caCertPath = filepath.Join("..", "..", "..", "test", "testdata", "certs", "ca.crt")
-
-	// we don’t use metadata in this test, so PreRun only initialises logging
+	p.caCertPath = filepath.Join("testdata", "certs", "ca.crt")
 	gomega.Expect(p.PreRun(context.Background())).ShouldNot(gomega.HaveOccurred())
 	return p
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                    Test                                    */
-/* -------------------------------------------------------------------------- */
+var _ = ginkgo.Describe("Broadcast over one‑way TLS", func() {
+	var before []gleak.Goroutine
 
-var _ = ginkgo.Describe("queue‑pub TLS dial‑out", func() {
-	var goods []gleak.Goroutine
-
-	ginkgo.BeforeEach(func() { goods = gleak.Goroutines() })
+	ginkgo.BeforeEach(func() {
+		before = gleak.Goroutines()
+	})
 	ginkgo.AfterEach(func() {
 		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).
-			ShouldNot(gleak.HaveLeaked(goods))
+			ShouldNot(gleak.HaveLeaked(before))
 	})
 
-	ginkgo.It("establishes a TLS connection and publishes", func() {
-		addr := getAddress()       // helper from pub_test.go
-		closeFn := tlsServer(addr) // mock Data‑Node (sub) with TLS
-		defer closeFn()
+	ginkgo.It("establishes TLS and broadcasts a QueryRequest", func() {
+		addr := getAddress()
+		stop := tlsServer(addr)
+		defer stop()
 
 		p := newTLSPub()
 		defer p.GracefulStop()
 
-		node := getDataNode("node‑tls", addr)
+		node := getDataNode("node-tls", addr)
 		p.OnAddOrUpdate(node)
 
-		// wait until the node is moved to the active map by the health‑check
 		gomega.Eventually(func() int {
 			p.mu.RLock()
 			defer p.mu.RUnlock()
 			return len(p.active)
 		}, flags.EventuallyTimeout).Should(gomega.Equal(1))
 
-		/* ----------  exercise Publish path (hits getClientTransportCredentials) ---------- */
-
-		ctx := context.Background()
-		fut, err := p.Publish(ctx, data.TopicStreamWrite,
-			bus.NewMessageWithNode(bus.MessageID(1), node.Metadata.Name,
-				&streamv1.InternalWriteRequest{}),
+		futures, err := p.Broadcast(
+			flags.EventuallyTimeout,
+			data.TopicStreamQuery,
+			bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}),
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(futures).Should(gomega.HaveLen(1))
 
-		// no response expected from mock, so Get() will return io.EOF – that’s OK.
-		_, err = fut.Get()
-		gomega.Expect(err).Should(gomega.MatchError(io.EOF))
+		msgs, err := futures[0].GetAll()
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(msgs).Should(gomega.HaveLen(1))
+
+		_, ok := msgs[0].Data().(*streamv1.QueryResponse)
+		gomega.Expect(ok).To(gomega.BeTrue())
 	})
 })
