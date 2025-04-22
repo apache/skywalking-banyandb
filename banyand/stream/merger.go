@@ -223,7 +223,7 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst
 func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
 	var needSize uint64
 	for i := range parts {
-		needSize = +parts[i].p.partMetadata.CompressedSizeBytes
+		needSize += parts[i].p.partMetadata.CompressedSizeBytes
 	}
 	if tst.tryReserveDiskSpace(needSize) {
 		return needSize
