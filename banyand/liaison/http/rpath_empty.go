@@ -20,6 +20,6 @@
 
 package http
 
-func (p *server) setRootPath() error {
+func (p *server) setRootPath(_ *chi.Mux) error {
 	return nil
 }

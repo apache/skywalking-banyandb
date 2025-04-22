@@ -41,12 +41,12 @@ type Reloader struct {
 	watcher       *fsnotify.Watcher
 	log           *logger.Logger
 	debounceTimer *time.Timer
-	mu            sync.RWMutex
-	lastCertHash  []byte
-	lastKeyHash   []byte
+	updateCh      chan struct{}
 	certFile      string
 	keyFile       string
-	updateCh      chan struct{}
+	lastCertHash  []byte
+	lastKeyHash   []byte
+	mu            sync.RWMutex
 }
 
 // NewReloader creates a new TLSReloader instance.
@@ -359,11 +359,6 @@ func (r *Reloader) GetUpdateChannel() <-chan struct{} {
 // Stop gracefully stops the TLS reloader.
 func (r *Reloader) Stop() {
 	r.log.Info().Msg("Stopping TLS Reloader")
-
-	// Stop the debounce timer if it exists
-	if r.debounceTimer != nil {
-		r.debounceTimer.Stop()
-	}
 
 	if err := r.watcher.Close(); err != nil {
 		r.log.Error().Err(err).Msg("Failed to close fsnotify watcher")

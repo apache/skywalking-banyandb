@@ -34,6 +34,8 @@ banyand liaison --http-tls=true --http-key-file=server.key --http-cert-file=serv
 
 > Note: BanyanDB does not support TLS between liaison and data nodes.
 
+The key and certificate files can be reloaded automatically when they are updated. You can update the files or recreate the files, and the server will automatically reload them.
+
 ## Authorization
 
 BanyanDB does not have built-in authorization mechanisms. However, you can use external tools like [Envoy](https://www.envoyproxy.io/) or [Istio](https://istio.io/) to manage access control and authorization.

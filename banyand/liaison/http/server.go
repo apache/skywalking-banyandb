@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -69,32 +70,25 @@ type Server interface {
 }
 
 type server struct {
-	// Pointers (64-bit)
 	creds           credentials.TransportCredentials
 	tlsReloader     *pkgtls.Reloader
 	grpcTLSReloader *pkgtls.Reloader
 	l               *logger.Logger
-	clientCloser    context.CancelFunc
-	mux             *chi.Mux
+	handlerWrapper  *atomicHandler
 	srv             *http.Server
 	stopCh          chan struct{}
 	gwMux           *runtime.ServeMux
 	grpcClient      *healthcheck.Client
 	grpcCtx         context.Context
 	grpcCancel      context.CancelFunc
-
-	// Strings (pointers on 64-bit systems)
-	host       string
-	listenAddr string
-	grpcAddr   string
-	keyFile    string
-	certFile   string
-	grpcCert   string
-
-	// 32-bit and smaller
-	port uint32
-	tls  bool
-	_    [3]byte // padding
+	host            string
+	listenAddr      string
+	grpcAddr        string
+	keyFile         string
+	certFile        string
+	grpcCert        string
+	port            uint32
+	tls             bool
 }
 
 func (p *server) FlagSet() *run.FlagSet {
@@ -185,7 +179,6 @@ func (p *server) PreRun(_ context.Context) error {
 		// Start a goroutine to watch for certificate update events
 		go func() {
 			p.l.Info().Msg("Certificate update notification goroutine started")
-			var debounceTimer *time.Timer
 
 			for {
 				select {
@@ -194,61 +187,54 @@ func (p *server) PreRun(_ context.Context) error {
 					p.l.Info().Msg("Received certificate update notification")
 
 					// Debounce multiple notifications that might come in rapid succession
-					if debounceTimer == nil {
-						debounceTimer = time.AfterFunc(500*time.Millisecond, func() {
-							p.l.Info().Msg("Processing certificate update after debounce")
+					func() {
+						p.l.Info().Msg("Processing certificate update after debounce")
 
-							// Cancel existing gRPC connections
-							if p.grpcCancel != nil {
+						// Cancel existing gRPC connections
+						prevGRPCCancel := p.grpcCancel
+						if prevGRPCCancel != nil {
+							defer func() {
 								p.l.Info().Msg("Canceling existing gRPC connections")
-								p.grpcCancel()
-							}
+								prevGRPCCancel()
+							}()
+						}
 
-							// Create a new context for the new connections
-							p.grpcCtx, p.grpcCancel = context.WithCancel(context.Background())
+						// Create a new context for the new connections
+						p.grpcCtx, p.grpcCancel = context.WithCancel(context.Background())
 
-							// Force a short delay to ensure all resources are properly cleaned up
-							time.Sleep(200 * time.Millisecond)
+						// Force a short delay to ensure all resources are properly cleaned up
+						time.Sleep(200 * time.Millisecond)
 
-							// Re-create the gateway with updated credentials
-							if p.gwMux != nil {
-								p.l.Info().Msg("Re-creating gateway with updated credentials")
-							}
+						// Re-create the gateway with updated credentials
+						if p.gwMux != nil {
+							p.l.Info().Msg("Re-creating gateway with updated credentials")
+						}
 
-							// Reinitialize the gRPC client (which will get fresh credentials from the reloader)
-							if err := p.initGRPCClient(); err != nil {
-								p.l.Error().Err(err).Msg("Failed to reinitialize gRPC client after credential update")
-							} else {
-								p.l.Info().Msg("Successfully reinitialized gRPC client with new credentials")
-							}
-						})
-					} else {
-						// Reset the timer if it's already running
-						debounceTimer.Reset(500 * time.Millisecond)
-					}
+						// Reinitialize the gRPC client (which will get fresh credentials from the reloader)
+						if err := p.initGRPCClient(); err != nil {
+							p.l.Error().Err(err).Msg("Failed to reinitialize gRPC client after credential update")
+						} else {
+							p.l.Info().Msg("Successfully reinitialized gRPC client with new credentials")
+						}
+					}()
 
 				case <-p.stopCh:
 					p.l.Info().Msg("Stopping certificate update notification listener")
-					if debounceTimer != nil {
-						debounceTimer.Stop()
-					}
 					return
 				}
 			}
 		}()
 	}
 
-	p.mux = chi.NewRouter()
-
-	if err := p.setRootPath(); err != nil {
-		return err
-	}
+	p.handlerWrapper = &atomicHandler{}
 
 	// Configure the HTTP server with dynamic TLS if enabled
 	p.srv = &http.Server{
 		Addr:              p.listenAddr,
-		Handler:           p.mux,
+		Handler:           p.handlerWrapper,
 		ReadHeaderTimeout: 3 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	if p.tls {
 		p.srv.TLSConfig = p.tlsReloader.GetTLSConfig()
@@ -259,7 +245,6 @@ func (p *server) PreRun(_ context.Context) error {
 
 func (p *server) Serve() run.StopNotify {
 	p.grpcCtx, p.grpcCancel = context.WithCancel(context.Background())
-	p.clientCloser = func() {}
 
 	// Start TLS reloader for HTTP server
 	if p.tls && p.tlsReloader != nil {
@@ -278,6 +263,7 @@ func (p *server) Serve() run.StopNotify {
 	}
 
 	go func() {
+		defer close(p.stopCh)
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start liaison http server")
 		var err error
 		if p.tls {
@@ -288,10 +274,8 @@ func (p *server) Serve() run.StopNotify {
 			err = p.srv.ListenAndServe()
 		}
 		if err != http.ErrServerClosed {
-			p.l.Error().Err(err)
+			p.l.Error().Err(err).Msg("HTTP server failed")
 		}
-
-		close(p.stopCh)
 	}()
 	return p.stopCh
 }
@@ -373,8 +357,10 @@ func (p *server) initGRPCClient() error {
 	newMux.Mount("/api", http.StripPrefix("/api", p.gwMux))
 
 	// Replace the old mux with the new one
-	p.mux = newMux
-	p.srv.Handler = p.mux
+	if err := p.setRootPath(newMux); err != nil {
+		return err
+	}
+	p.handlerWrapper.Store(newMux)
 
 	return nil
 }
@@ -392,7 +378,6 @@ func (p *server) GracefulStop() {
 	if err := p.srv.Close(); err != nil {
 		p.l.Error().Err(err)
 	}
-	p.clientCloser()
 }
 
 func intercept404(handler, on404 http.Handler) http.HandlerFunc {
@@ -452,4 +437,21 @@ func serveFileContents(file string, files http.FileSystem) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		http.ServeContent(w, r, fi.Name(), fi.ModTime(), index)
 	}
+}
+
+type atomicHandler struct {
+	value atomic.Value // stores http.Handler
+}
+
+func (h *atomicHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	handler, ok := h.value.Load().(http.Handler)
+	if ok && handler != nil {
+		handler.ServeHTTP(w, r)
+	} else {
+		http.NotFound(w, r)
+	}
+}
+
+func (h *atomicHandler) Store(handler http.Handler) {
+	h.value.Store(handler)
 }
