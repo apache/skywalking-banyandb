@@ -64,8 +64,8 @@ type pub struct {
 	evictable  map[string]evictNode
 	closer     *run.Closer
 	mu         sync.RWMutex
-	tlsEnabled bool
 	caCertPath string
+	tlsEnabled bool
 }
 
 func (p *pub) FlagSet() *run.FlagSet {
