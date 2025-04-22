@@ -99,6 +99,9 @@ The following flags are used to configure the stream storage engine:
 The following flags are used to configure the embedded etcd storage engine which is only used when running as a standalone server:
 
 - `--metadata-root-path string`: The root path of metadata (default: "/tmp").
+- `--etcd-auto-compaction-mode string`: Auto compaction mode (default: "periodic").
+- `--etcd-auto-compaction-retention string`: Auto compaction retention (default: "1h").
+- `--quota-backend-bytes bytes`: Quota for backend storage (default: 2.00GiB).
 
 The following flags are used to configure the memory protector:
 
