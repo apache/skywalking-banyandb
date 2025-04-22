@@ -21,14 +21,13 @@ package pub
 import (
 	"context"
 	"fmt"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
-	"google.golang.org/grpc"
 	"io"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -43,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
