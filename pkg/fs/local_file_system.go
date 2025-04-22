@@ -22,6 +22,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"github.com/apache/skywalking-banyandb/pkg/sysadvice"
 	"io"
 	"os"
 	"path/filepath"
@@ -30,7 +31,6 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
-	"golang.org/x/sys/unix"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -762,7 +762,7 @@ func (file *LocalFile) applyFadvis(offset int64, length int64) {
 	}
 
 	// Apply fadvis directly using unix.Fadvise
-	err := unix.Fadvise(int(file.file.Fd()), offset, length, unix.FADV_DONTNEED)
+	err := sysadvice.ApplyFadviseToFD(file.file.Fd(), offset, length)
 	if err != nil {
 		logger.GetLogger(moduleName).Warn().
 			Err(err).
