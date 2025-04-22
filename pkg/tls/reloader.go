@@ -156,6 +156,38 @@ func (r *Reloader) Start() error {
 	return nil
 }
 
+func (r *Reloader) isFileStable(filePath string) bool {
+	const (
+		checks     = 3
+		delay      = 200 * time.Millisecond
+		maxRetries = 5
+	)
+
+	var lastSize int64
+	retryCount := 0
+	for i := 0; i < checks; i++ {
+		if fi, err := os.Stat(filePath); err == nil {
+			retryCount = 0 // reset retry count if file exists
+			if i > 0 && fi.Size() != lastSize {
+				return false
+			}
+			lastSize = fi.Size()
+		} else if os.IsNotExist(err) {
+			retryCount++
+			if retryCount > maxRetries {
+				r.log.Error().Str("file", filePath).Msgf("File does not exist after %d retries", maxRetries)
+				return false
+			}
+			i--
+			time.Sleep(time.Second)
+			r.log.Debug().Str("file", filePath).Msg("File does not exist, retrying")
+			continue
+		}
+		time.Sleep(delay)
+	}
+	return true
+}
+
 // computeFileHash calculates a SHA-256 hash of a file's contents.
 func (r *Reloader) computeFileHash(filePath string) ([]byte, error) {
 	content, err := os.ReadFile(filePath)
@@ -239,19 +271,19 @@ func (r *Reloader) watchFiles() {
 			if event.Op&(fsnotify.Remove|fsnotify.Create|fsnotify.Write|fsnotify.Rename) != 0 {
 				// Special handling for removal/creation
 				if event.Op&(fsnotify.Remove|fsnotify.Create) != 0 {
-					r.log.Info().Str("file", event.Name).Msg("File removed or created, waiting for stability")
+					r.log.Info().Str("file", event.Name).Msg("File removed or created, performing stability checks")
 
 					// Remove from watcher first to avoid duplicate watches
 					_ = r.watcher.Remove(event.Name)
 
 					// Wait for file operations to complete
-					time.Sleep(200 * time.Millisecond)
+					time.Sleep(1 * time.Second)
 
 					// Try to re-add files to watcher with retries
-					maxRetries := 3
+					maxRetries := 5
 					for i := 0; i < maxRetries; i++ {
 						if event.Name == r.certFile {
-							if _, err := os.Stat(r.certFile); err == nil {
+							if r.isFileStable(r.certFile) {
 								if err := r.watcher.Add(r.certFile); err != nil {
 									r.log.Error().Err(err).Str("file", r.certFile).Msg("Failed to re-add cert file to watcher")
 								} else {
@@ -260,7 +292,7 @@ func (r *Reloader) watchFiles() {
 								}
 							}
 						} else if event.Name == r.keyFile {
-							if _, err := os.Stat(r.keyFile); err == nil {
+							if r.isFileStable(r.keyFile) {
 								if err := r.watcher.Add(r.keyFile); err != nil {
 									r.log.Error().Err(err).Str("file", r.keyFile).Msg("Failed to re-add key file to watcher")
 								} else {
@@ -270,7 +302,9 @@ func (r *Reloader) watchFiles() {
 							}
 						}
 						if i < maxRetries-1 {
-							time.Sleep(100 * time.Millisecond)
+							time.Sleep(500 * time.Millisecond)
+						} else {
+							logger.Panicf("Failed to re-add file to watcher after %d attempts", maxRetries)
 						}
 					}
 				} else {
