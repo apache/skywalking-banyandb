@@ -18,6 +18,8 @@
 //go:build linux
 // +build linux
 
+// Package sysadvice provides platform-specific system advisory utilities,
+// including wrappers for syscall-level optimization like fadvise.
 package sysadvice
 
 import (

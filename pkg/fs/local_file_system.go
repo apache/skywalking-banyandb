@@ -22,7 +22,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"github.com/apache/skywalking-banyandb/pkg/sysadvice"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,6 +33,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/sysadvice"
 )
 
 const (
