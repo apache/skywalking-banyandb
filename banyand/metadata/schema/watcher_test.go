@@ -105,6 +105,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 			embeddedetcd.RootDir(path),
 			embeddedetcd.AutoCompactionMode("periodic"),
 			embeddedetcd.AutoCompactionRetention("1h"),
+			embeddedetcd.QuotaBackendBytes(2*1024*1024),
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()

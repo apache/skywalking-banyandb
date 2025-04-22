@@ -69,7 +69,9 @@ var _ = ginkgo.Describe("etcd_register", func() {
 			embeddedetcd.ConfigureListener(endpoints, peers),
 			embeddedetcd.RootDir(path),
 			embeddedetcd.AutoCompactionMode("periodic"),
-			embeddedetcd.AutoCompactionRetention("1h"))
+			embeddedetcd.AutoCompactionRetention("1h"),
+			embeddedetcd.QuotaBackendBytes(2*1024*1024),
+		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
 		r, err = schema.NewEtcdSchemaRegistry(
@@ -115,7 +117,9 @@ var _ = ginkgo.Describe("etcd_register", func() {
 			embeddedetcd.ConfigureListener(endpoints, peers),
 			embeddedetcd.RootDir(path),
 			embeddedetcd.AutoCompactionMode("periodic"),
-			embeddedetcd.AutoCompactionRetention("1h"))
+			embeddedetcd.AutoCompactionRetention("1h"),
+			embeddedetcd.QuotaBackendBytes(2*1024*1024),
+		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
 
