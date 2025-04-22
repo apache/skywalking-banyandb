@@ -19,7 +19,6 @@ package measure
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"path"
 	"path/filepath"
 	"strings"
@@ -38,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"

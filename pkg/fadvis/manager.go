@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package fadvis manages file access strategies based on runtime memory thresholds.
 package fadvis
 
 import (
@@ -35,7 +36,7 @@ type ThresholdProvider interface {
 	GetThreshold() int64
 }
 
-// Global FadvisManager instance
+// Global FadvisManager instance.
 var defaultManager *Manager
 
 // SetManager sets the global FadvisManager instance.
@@ -50,16 +51,16 @@ func GetManager() *Manager {
 
 // Manager manages the fadvis threshold and periodically updates it.
 type Manager struct {
-	// threshold is the current threshold for large file detection.
-	threshold atomic.Int64
-	// thresholdProvider is used to calculate the threshold.
-	thresholdProvider ThresholdProvider
-	// updateInterval is the interval for updating the threshold.
-	updateInterval time.Duration
 	// logger for the fadvis manager.
 	l *logger.Logger
 	// closed channel for stopping the manager.
 	closed chan struct{}
+	// thresholdProvider is used to calculate the threshold.
+	thresholdProvider ThresholdProvider
+	// updateInterval is the interval for updating the threshold.
+	updateInterval time.Duration
+	// threshold is the current threshold for large file detection.
+	threshold atomic.Int64
 }
 
 // NewManager creates a new fadvis manager.

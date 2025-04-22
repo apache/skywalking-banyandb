@@ -22,7 +22,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"io"
 	"os"
 	"path/filepath"
@@ -30,25 +29,24 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shirou/gopsutil/v3/disk"
+	"golang.org/x/sys/unix"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
-	"github.com/shirou/gopsutil/v3/disk"
 )
 
 const (
 	defaultIOSize = 256 * 1024
-	// defaultLargeFileThreshold is the default threshold for large files (10MB)
+	// defaultLargeFileThreshold is the default threshold for large files (10MB).
 	defaultLargeFileThreshold = 10 * 1024 * 1024 // 10MB
-	// thresholdUpdateInterval is the interval for updating the threshold
+	// thresholdUpdateInterval is the interval for updating the threshold.
 	thresholdUpdateInterval = 30 * time.Minute
 )
 
 var (
-	// largeFileThreshold is the threshold for large files
-	largeFileThreshold int64 = defaultLargeFileThreshold
-	// thresholdMutex protects largeFileThreshold
-	thresholdMutex sync.RWMutex
-	// thresholdUpdateTimer is the timer for updating the threshold
+	largeFileThreshold   int64 = defaultLargeFileThreshold
+	thresholdMutex       sync.RWMutex
 	thresholdUpdateTimer *time.Timer
 )
 
@@ -641,7 +639,7 @@ func releaseWriter(bw *bufio.Writer) {
 
 var bufWriterPool = pool.Register[*bufio.Writer]("fs-bufWriter")
 
-// isLargeFile checks if a file is large enough to need fadvis
+// isLargeFile checks if a file is large enough to need fadvis.
 func isLargeFile(file *os.File) bool {
 	if file == nil {
 		return false
@@ -657,7 +655,7 @@ func isLargeFile(file *os.File) bool {
 	return fileInfo.Size() > GetLargeFileThreshold()
 }
 
-// InitThresholdManager initializes the threshold manager
+// InitThresholdManager initializes the threshold manager.
 func InitThresholdManager() {
 	// Update threshold immediately
 	updateThreshold()
@@ -670,7 +668,7 @@ func InitThresholdManager() {
 	})
 }
 
-// StopThresholdManager stops the threshold manager
+// StopThresholdManager stops the threshold manager.
 func StopThresholdManager() {
 	if thresholdUpdateTimer != nil {
 		thresholdUpdateTimer.Stop()
@@ -678,7 +676,7 @@ func StopThresholdManager() {
 	}
 }
 
-// SetLargeFileThreshold sets the threshold for large files
+// SetLargeFileThreshold sets the threshold for large files.
 func SetLargeFileThreshold(threshold int64) {
 	thresholdMutex.Lock()
 	defer thresholdMutex.Unlock()
@@ -689,7 +687,7 @@ func SetLargeFileThreshold(threshold int64) {
 		Msg("large file threshold updated")
 }
 
-// GetLargeFileThreshold returns the current threshold for large files
+// GetLargeFileThreshold returns the current threshold for large files.
 func GetLargeFileThreshold() int64 {
 	thresholdMutex.RLock()
 	defer thresholdMutex.RUnlock()
@@ -697,7 +695,7 @@ func GetLargeFileThreshold() int64 {
 	return largeFileThreshold
 }
 
-// updateThreshold updates the threshold based on system memory
+// updateThreshold updates the threshold based on system memory.
 func updateThreshold() {
 	// Get system memory info
 	memInfo, err := disk.Usage("/")
@@ -719,7 +717,7 @@ func updateThreshold() {
 	SetLargeFileThreshold(threshold)
 }
 
-// trackRead tracks a read operation and updates the cumulative read size
+// trackRead tracks a read operation and updates the cumulative read size.
 func (file *LocalFile) trackRead(size int) {
 	if size <= 0 {
 		return
@@ -731,7 +729,7 @@ func (file *LocalFile) trackRead(size int) {
 	file.cumulativeReadSize += int64(size)
 }
 
-// applyFadvis applies DONTNEED to the file with specific offset and length
+// applyFadvis applies DONTNEED to the file with specific offset and length.
 func (file *LocalFile) applyFadvis(offset int64, length int64) {
 	// Only apply on Linux
 	if !isFadvisSupported() {
@@ -783,7 +781,7 @@ func (file *LocalFile) applyFadvis(offset int64, length int64) {
 	}
 }
 
-// isFadvisSupported returns true if fadvis is supported on the current platform
+// isFadvisSupported returns true if fadvis is supported on the current platform.
 func isFadvisSupported() bool {
 	return runtime.GOOS == "linux"
 }
