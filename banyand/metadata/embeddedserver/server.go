@@ -35,9 +35,9 @@ type server struct {
 	rootDir                 string
 	autoCompactionMode      string
 	autoCompactionRetention string
-	quotaBackendBytes       int64
 	listenClientURL         []string
 	listenPeerURL           []string
+	quotaBackendBytes       int64
 }
 
 func (s *server) Name() string {
@@ -53,7 +53,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
 	fs.StringVar(&s.autoCompactionMode, "etcd-auto-compaction-mode", "periodic", "auto compaction mode")
 	fs.StringVar(&s.autoCompactionRetention, "etcd-auto-compaction-retention", "1h", "auto compaction retention")
-	fs.Int64Var(&s.quotaBackendBytes, "etcd-quota-backend-bytes", 2*1024*1024*1024, "quota for backend storage")
+	fs.Int64Var(&s.quotaBackendBytes, "etcd-quota-backend-bytes", 2*1024*1024, "quota for backend storage, unit")
 	fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
 	fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
 	return fs

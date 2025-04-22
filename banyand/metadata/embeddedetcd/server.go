@@ -120,9 +120,12 @@ func (e *server) Close() error {
 // NewServer returns a new etcd server.
 func NewServer(options ...Option) (Server, error) {
 	conf := &config{
-		rootDir:            os.TempDir(),
-		listenerClientURLs: []string{embed.DefaultListenClientURLs},
-		listenerPeerURLs:   []string{embed.DefaultListenPeerURLs},
+		rootDir:                 os.TempDir(),
+		listenerClientURLs:      []string{embed.DefaultListenClientURLs},
+		listenerPeerURLs:        []string{embed.DefaultListenPeerURLs},
+		autoCompactionMode:      "periodic",
+		autoCompactionRetention: "1h",
+		quotaBackendBytes:       2 * 1024 * 1024,
 	}
 	for _, opt := range options {
 		opt(conf)
