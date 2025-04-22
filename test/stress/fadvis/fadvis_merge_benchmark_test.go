@@ -24,8 +24,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-
-	"github.com/apache/skywalking-banyandb/banyand/fadvis"
 )
 
 // BenchmarkMergeOperations tests the performance of merge operations with and without fadvis.
@@ -47,7 +45,7 @@ func BenchmarkMergeOperations(b *testing.B) {
 			defer os.RemoveAll(testDir)
 
 			// Set threshold to enable fadvis for large files
-			originalThreshold := fadvis.GetThreshold()
+			originalThreshold := manager.GetThreshold()
 			fadvis.SetThreshold(64 * 1024 * 1024) // 64MB
 			defer fadvis.SetThreshold(originalThreshold)
 
