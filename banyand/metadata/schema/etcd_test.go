@@ -111,6 +111,7 @@ func initServerAndRegister(t *testing.T) (schema.Registry, func()) {
 		embeddedetcd.RootDir(path),
 		embeddedetcd.AutoCompactionMode("periodic"),
 		embeddedetcd.AutoCompactionRetention("1h"),
+		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
 	)
 	req.NoError(err)
 	req.NotNil(server)

@@ -78,6 +78,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		embeddedetcd.RootDir(srcDir),
 		embeddedetcd.AutoCompactionMode("periodic"),
 		embeddedetcd.AutoCompactionRetention("1h"),
+		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
 	)
 	Expect(err).ShouldNot(HaveOccurred())
 	<-server.ReadyNotify()

@@ -77,6 +77,13 @@ func AutoCompactionRetention(retention string) Option {
 	}
 }
 
+// QuotaBackendBytes sets the quota for backend storage.
+func QuotaBackendBytes(quota int64) Option {
+	return func(config *config) {
+		config.quotaBackendBytes = quota
+	}
+}
+
 type config struct {
 	// rootDir is the root directory for etcd storage
 	rootDir string
@@ -88,6 +95,8 @@ type config struct {
 	listenerClientURLs []string
 	// listenerPeerURLs is the listener for peer
 	listenerPeerURLs []string
+	// quotaBackendBytes is the quota for backend storage
+	quotaBackendBytes int64
 }
 
 func (e *server) ReadyNotify() <-chan struct{} {
@@ -111,9 +120,12 @@ func (e *server) Close() error {
 // NewServer returns a new etcd server.
 func NewServer(options ...Option) (Server, error) {
 	conf := &config{
-		rootDir:            os.TempDir(),
-		listenerClientURLs: []string{embed.DefaultListenClientURLs},
-		listenerPeerURLs:   []string{embed.DefaultListenPeerURLs},
+		rootDir:                 os.TempDir(),
+		listenerClientURLs:      []string{embed.DefaultListenClientURLs},
+		listenerPeerURLs:        []string{embed.DefaultListenPeerURLs},
+		autoCompactionMode:      "periodic",
+		autoCompactionRetention: "1h",
+		quotaBackendBytes:       2 * 1024 * 1024 * 1024,
 	}
 	for _, opt := range options {
 		opt(conf)
@@ -172,6 +184,7 @@ func newEmbedEtcdConfig(config *config, logger *zap.Logger) (*embed.Config, erro
 	cfg.InitialCluster = cfg.InitialClusterFromName(cfg.Name)
 	cfg.AutoCompactionMode = config.autoCompactionMode
 	cfg.AutoCompactionRetention = config.autoCompactionRetention
+	cfg.QuotaBackendBytes = config.quotaBackendBytes
 
 	cfg.BackendBatchInterval = 500 * time.Millisecond
 	cfg.BackendBatchLimit = 10000

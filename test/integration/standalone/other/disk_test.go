@@ -85,6 +85,7 @@ var _ = g.Describe("Disk", func() {
 			embeddedetcd.RootDir(dir),
 			embeddedetcd.AutoCompactionMode("periodic"),
 			embeddedetcd.AutoCompactionRetention("1h"),
+			embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
 		)
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 		<-server.ReadyNotify()

@@ -37,6 +37,7 @@ type server struct {
 	autoCompactionRetention string
 	listenClientURL         []string
 	listenPeerURL           []string
+	quotaBackendBytes       run.Bytes
 }
 
 func (s *server) Name() string {
@@ -54,6 +55,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.autoCompactionRetention, "etcd-auto-compaction-retention", "1h", "auto compaction retention")
 	fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
 	fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
+	fs.VarP(&s.quotaBackendBytes, "quota-backend-bytes", "", "Quota for backend storage")
 	return fs
 }
 
@@ -67,6 +69,15 @@ func (s *server) Validate() error {
 	if s.listenPeerURL == nil {
 		return errors.New("listenPeerURL is empty")
 	}
+	if s.autoCompactionMode == "" {
+		return errors.New("autoCompactionMode is empty")
+	}
+	if s.autoCompactionMode != "periodic" && s.autoCompactionMode != "revision" {
+		return errors.New("autoCompactionMode is invalid")
+	}
+	if s.autoCompactionRetention == "" {
+		return errors.New("autoCompactionRetention is empty")
+	}
 	if err := s.Service.FlagSet().Set(metadata.FlagEtcdEndpointsName,
 		strings.Join(s.listenClientURL, ",")); err != nil {
 		return err
@@ -77,7 +88,8 @@ func (s *server) Validate() error {
 func (s *server) PreRun(ctx context.Context) error {
 	var err error
 	s.metaServer, err = embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
-		embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention))
+		embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention),
+		embeddedetcd.QuotaBackendBytes(int64(s.quotaBackendBytes)))
 	if err != nil {
 		return err
 	}
