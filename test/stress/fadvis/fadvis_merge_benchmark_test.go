@@ -24,7 +24,6 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/apache/skywalking-banyandb/banyand/fadvis"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,22 +44,24 @@ func BenchmarkMergeOperations(b *testing.B) {
 	// Run benchmark with fadvise disabled
 	b.Run("WithoutFadvise", func(b *testing.B) {
 		// Set the fadvis threshold to a high value to disable it
-		fadvis.SetThreshold(terabyte)
+		setTestThreshold(terabyte)
 		for i := 0; i < b.N; i++ {
 			outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
 			// Use the simulateMergeOperation from test_helpers.go which uses fs package
-			simulateMergeOperation(b, outputFile, parts)
+			err := simulateMergeOperation(b, parts, outputFile)
+			require.NoError(b, err)
 		}
 	})
 
 	// Run benchmark with fadvise enabled
 	b.Run("WithFadvise", func(b *testing.B) {
-		// Set the fadvis threshold to enable it for large files
-		fadvis.SetThreshold(DefaultThreshold)
+		// Set the fadvis threshold to enable it for our test files
+		setTestThreshold(DefaultThreshold)
 		for i := 0; i < b.N; i++ {
-			outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
+			outputFile := filepath.Join(testDir, fmt.Sprintf("merged_fadvis_%d", i))
 			// Use the simulateMergeOperation from test_helpers.go which uses fs package
-			simulateMergeOperation(b, outputFile, parts)
+			err := simulateMergeOperation(b, parts, outputFile)
+			require.NoError(b, err)
 		}
 	})
 }
@@ -72,32 +73,40 @@ func BenchmarkSequentialMergeOperations(b *testing.B) {
 	}
 
 	// Create a temporary directory for the test
-	testDir, err := os.MkdirTemp("", "fadvis_merge_benchmark")
+	testDir, err := os.MkdirTemp("", "fadvis_sequential_merge_benchmark")
 	require.NoError(b, err)
 	defer os.RemoveAll(testDir)
 
 	// Prepare test files
-	parts := createTestParts(b, testDir, 10, LargeFileSize)
+	parts := createTestParts(b, testDir, 5, LargeFileSize)
 
 	// Run benchmark with fadvise disabled
 	b.Run("WithoutFadvise", func(b *testing.B) {
 		// Set the fadvis threshold to a high value to disable it
-		fadvis.SetThreshold(terabyte)
+		setTestThreshold(terabyte)
 		for i := 0; i < b.N; i++ {
-			outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
-			// Use the simulateMergeOperation from test_helpers.go which uses fs package
-			simulateMergeOperation(b, outputFile, parts)
+			// Perform multiple sequential merge operations
+			for j := 0; j < 3; j++ {
+				outputFile := filepath.Join(testDir, fmt.Sprintf("seq_merged_%d_%d", i, j))
+				// Use the simulateMergeOperation from test_helpers.go which uses fs package
+				err := simulateMergeOperation(b, parts, outputFile)
+				require.NoError(b, err)
+			}
 		}
 	})
 
 	// Run benchmark with fadvise enabled
 	b.Run("WithFadvise", func(b *testing.B) {
-		// Set the fadvis threshold to enable it for large files
-		fadvis.SetThreshold(DefaultThreshold)
+		// Set the fadvis threshold to enable it for our test files
+		setTestThreshold(DefaultThreshold)
 		for i := 0; i < b.N; i++ {
-			outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
-			// Use the simulateMergeOperation from test_helpers.go which uses fs package
-			simulateMergeOperation(b, outputFile, parts)
+			// Perform multiple sequential merge operations
+			for j := 0; j < 3; j++ {
+				outputFile := filepath.Join(testDir, fmt.Sprintf("seq_merged_fadvis_%d_%d", i, j))
+				// Use the simulateMergeOperation from test_helpers.go which uses fs package
+				err := simulateMergeOperation(b, parts, outputFile)
+				require.NoError(b, err)
+			}
 		}
 	})
 }

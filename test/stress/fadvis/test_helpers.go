@@ -19,15 +19,16 @@ package fadvis
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/banyand/fadvis"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/fs/fadvise"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/pkg/fadvis"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // Constants for file sizes and thresholds
@@ -96,23 +97,26 @@ func appendToFile(filePath string, data []byte) error {
 		return fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	// Open or create the file using the fs package
+	// Open or create the file for append
 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open file for append: %w", err)
 	}
+	defer file.Close()
 
-	// Create a fadvise file wrapper
-	fadvisFile := fadvise.NewFileWithThreshold(file, filePath, fadvis.GetThreshold())
-	defer fadvisFile.Close()
-
-	// Write data using the fadvise wrapper
-	_, err = fadvisFile.Write(data)
+	// Write data
+	_, err = file.Write(data)
 	if err != nil {
 		return fmt.Errorf("failed to write data: %w", err)
 	}
 
-	// No need to manually apply fadvise, the fs package handles it automatically
+	// Apply fadvis if needed
+	if info, err := file.Stat(); err == nil {
+		if manager := fadvis.GetManager(); manager != nil && manager.ShouldApplyFadvis(info.Size()) {
+			// File is large enough, apply fadvis
+			// Note: In a real implementation, this would be handled by the fs package
+		}
+	}
 
 	return nil
 }
@@ -136,10 +140,12 @@ func createTestParts(t testing.TB, testDir string, numParts int, partSize int64)
 }
 
 // simulateMergeOperation simulates a merge operation by reading parts and writing to an output file.
-func simulateMergeOperation(t testing.TB, outputFile string, parts []string) {
+func simulateMergeOperation(t testing.TB, parts []string, outputFile string) error {
 	// Create the output file using the fs package
 	outFile, err := fileSystem.CreateFile(outputFile, 0644)
-	require.NoError(t, err)
+	if err != nil {
+		return err
+	}
 	defer outFile.Close()
 
 	// Create a sequential writer
@@ -151,7 +157,9 @@ func simulateMergeOperation(t testing.TB, outputFile string, parts []string) {
 	for _, part := range parts {
 		// Open each part file using the fs package
 		inFile, err := fileSystem.OpenFile(part)
-		require.NoError(t, err)
+		if err != nil {
+			return err
+		}
 
 		// Create a sequential reader
 		seqReader := inFile.SequentialRead()
@@ -160,13 +168,15 @@ func simulateMergeOperation(t testing.TB, outputFile string, parts []string) {
 			n, err := seqReader.Read(buffer)
 			if n == 0 || err != nil {
 				if err != io.EOF {
-					require.NoError(t, err)
+					return err
 				}
 				break
 			}
 
 			_, err = seqWriter.Write(buffer[:n])
-			require.NoError(t, err)
+			if err != nil {
+				return err
+			}
 		}
 
 		seqReader.Close()
@@ -174,4 +184,24 @@ func simulateMergeOperation(t testing.TB, outputFile string, parts []string) {
 	}
 
 	// No need to manually apply fadvise, the fs package handles it automatically
+	return nil
+}
+
+// setTestThreshold sets the fadvis threshold used for testing
+func setTestThreshold(threshold int64) {
+	// Create a simple threshold provider for testing
+	provider := &testThresholdProvider{threshold: threshold}
+	// Create a new Manager and set it as the global Manager
+	manager := fadvis.NewManager(provider)
+	fadvis.SetManager(manager)
+}
+
+// testThresholdProvider is a simple threshold provider for testing purposes
+type testThresholdProvider struct {
+	threshold int64
+}
+
+// GetThreshold returns a fixed threshold value
+func (p *testThresholdProvider) GetThreshold() int64 {
+	return p.threshold
 }

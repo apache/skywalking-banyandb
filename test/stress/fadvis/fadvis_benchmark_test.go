@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
-
-	"github.com/apache/skywalking-banyandb/banyand/fadvis"
 )
 
 // BenchmarkWritePerformance tests write performance with and without fadvis.
@@ -35,7 +33,7 @@ func BenchmarkWritePerformance(b *testing.B) {
 			defer cleanup()
 
 			// Set the fadvis threshold
-			fadvis.SetThreshold(64 * 1024 * 1024)
+			setTestThreshold(64 * 1024 * 1024)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -53,7 +51,7 @@ func BenchmarkWritePerformance(b *testing.B) {
 			defer cleanup()
 
 			// Set the fadvis threshold to a high value to disable it
-			fadvis.SetThreshold(1 * 1024 * 1024 * 1024 * 1024)
+			setTestThreshold(1 * 1024 * 1024 * 1024 * 1024)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -77,7 +75,7 @@ func BenchmarkReadPerformance(b *testing.B) {
 			defer cleanup()
 
 			// Set the fadvis threshold
-			fadvis.SetThreshold(64 * 1024 * 1024)
+			setTestThreshold(64 * 1024 * 1024)
 
 			// Create a test file
 			filePath := filepath.Join(testDir, "read_test.dat")
@@ -105,7 +103,7 @@ func BenchmarkReadPerformance(b *testing.B) {
 			defer cleanup()
 
 			// Set the fadvis threshold to a high value to disable it
-			fadvis.SetThreshold(1 * 1024 * 1024 * 1024 * 1024)
+			setTestThreshold(1 * 1024 * 1024 * 1024 * 1024)
 
 			// Create a test file
 			filePath := filepath.Join(testDir, "read_test.dat")
@@ -140,7 +138,7 @@ func BenchmarkMultipleReads(b *testing.B) {
 		defer cleanup()
 
 		// Set the fadvis threshold
-		fadvis.SetThreshold(64 * 1024 * 1024)
+		setTestThreshold(64 * 1024 * 1024)
 
 		// Create a test file
 		filePath := filepath.Join(testDir, "multiple_read_test.dat")
@@ -170,7 +168,7 @@ func BenchmarkMultipleReads(b *testing.B) {
 		defer cleanup()
 
 		// Set the fadvis threshold to a high value to disable it
-		fadvis.SetThreshold(1 * 1024 * 1024 * 1024 * 1024)
+		setTestThreshold(1 * 1024 * 1024 * 1024 * 1024)
 
 		// Create a test file
 		filePath := filepath.Join(testDir, "multiple_read_test.dat")
@@ -205,7 +203,7 @@ func BenchmarkMixedWorkload(b *testing.B) {
 		defer cleanup()
 
 		// Set the fadvis threshold
-		fadvis.SetThreshold(64 * 1024 * 1024)
+		setTestThreshold(64 * 1024 * 1024)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -239,7 +237,7 @@ func BenchmarkMixedWorkload(b *testing.B) {
 		defer cleanup()
 
 		// Set the fadvis threshold to a high value to disable it
-		fadvis.SetThreshold(1 * 1024 * 1024 * 1024 * 1024)
+		setTestThreshold(1 * 1024 * 1024 * 1024 * 1024)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

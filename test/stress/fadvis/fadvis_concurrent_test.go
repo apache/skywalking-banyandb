@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/banyand/fadvis"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,7 +74,8 @@ func benchmarkConcurrentMerges(b *testing.B, testDir string, parts []string) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
-		simulateMergeOperation(b, outputFile, parts)
+		err := simulateMergeOperation(b, parts, outputFile)
+		require.NoError(b, err)
 	}
 }
 
@@ -107,9 +107,7 @@ func BenchmarkThresholdAdaptation(b *testing.B) {
 			defer cleanup()
 
 			// Set the threshold based on memory pressure
-			oldThreshold := fadvis.GetThreshold()
-			fadvis.SetThreshold(tt.threshold)
-			defer fadvis.SetThreshold(oldThreshold)
+			setTestThreshold(tt.threshold)
 
 			// Create test file
 			testFile := filepath.Join(tempDir, "test_file")
@@ -120,9 +118,9 @@ func BenchmarkThresholdAdaptation(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				if tt.memoryPressure == "high" {
 					// Simulate memory pressure by lowering threshold
-					fadvis.SetThreshold(40 * 1024 * 1024)
+					setTestThreshold(40 * 1024 * 1024)
 					time.Sleep(100 * time.Millisecond)
-					fadvis.SetThreshold(tt.threshold)
+					setTestThreshold(tt.threshold)
 				}
 				time.Sleep(100 * time.Millisecond)
 
