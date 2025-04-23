@@ -30,7 +30,6 @@ const topnSchemaPath = "/api/v1/topn-agg/schema"
 
 var topnSchemaPathWithParams = topnSchemaPath + pathTemp
 
-// topn get -g {group}
 func newTopnCmd() *cobra.Command {
 	topnCmd := &cobra.Command{
 		Use:     "topn",
@@ -38,7 +37,7 @@ func newTopnCmd() *cobra.Command {
 		Short:   "Topn operation",
 	}
 
-	// http://127.0.0.1:17913/api/v1/topn-agg/schema
+	// e.g. http://127.0.0.1:17913/api/v1/topn-agg/schema
 	createCmd := &cobra.Command{
 		Use:     "create -f [file|dir|-]",
 		Version: version.Build(),
@@ -68,7 +67,7 @@ func newTopnCmd() *cobra.Command {
 		},
 	}
 
-	// http://127.0.0.1:17913/api/v1/topn-agg/schema/{sw_metric}/{my_measure_topn}
+	// e.g. http://127.0.0.1:17913/api/v1/topn-agg/schema/{sw_metric}/{my_measure_topn}
 	updateCmd := &cobra.Command{
 		Use:     "update -f [file|dir|-]",
 		Version: version.Build(),
@@ -100,7 +99,7 @@ func newTopnCmd() *cobra.Command {
 		},
 	}
 
-	// http://127.0.0.1:17913/api/v1/topn-agg/schema/{sw_metric}/{my_measure_topn}
+	// e.g. http://127.0.0.1:17913/api/v1/topn-agg/schema/{sw_metric}/{my_measure_topn}
 	getCmd := &cobra.Command{
 		Use:     "get [-g group] -n name",
 		Version: version.Build(),
@@ -128,7 +127,7 @@ func newTopnCmd() *cobra.Command {
 	}
 	bindNameFlag(getCmd, deleteCmd)
 
-	// api/v1/topn-agg/schema/lists/{sw_metric}
+	// e.g. http://127.0.0.1:17913/api/v1/topn-agg/schema/lists/{sw_metric}
 	listCmd := &cobra.Command{
 		Use:     "list [-g group]",
 		Version: version.Build(),
@@ -140,7 +139,7 @@ func newTopnCmd() *cobra.Command {
 		},
 	}
 
-	// http://127.0.0.1:17913/api/v1/measure/topn
+	// e.g. http://127.0.0.1:17913/api/v1/measure/topn
 	queryCmd := &cobra.Command{
 		Use:     "query [-s start_time] [-e end_time] -f [file|dir|-]",
 		Version: version.Build(),
