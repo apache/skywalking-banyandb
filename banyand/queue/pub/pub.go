@@ -27,6 +27,7 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -41,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -49,6 +51,7 @@ import (
 var (
 	_ run.PreRunner = (*pub)(nil)
 	_ run.Service   = (*pub)(nil)
+	_ run.Config    = (*pub)(nil)
 )
 
 type pub struct {
@@ -60,7 +63,24 @@ type pub struct {
 	active     map[string]*client
 	evictable  map[string]evictNode
 	closer     *run.Closer
+	caCertPath string
 	mu         sync.RWMutex
+	tlsEnabled bool
+}
+
+func (p *pub) FlagSet() *run.FlagSet {
+	fs := run.NewFlagSet("queue-client")
+	fs.BoolVar(&p.tlsEnabled, "internal-tls", false, "enable internal TLS")
+	fs.StringVar(&p.caCertPath, "internal-ca-cert", "", "CA certificate file to verify the internal data server")
+	return fs
+}
+
+func (p *pub) Validate() error {
+	// simple sanity‑check: if TLS is on, a CA bundle must be provided
+	if p.tlsEnabled && p.caCertPath == "" {
+		return fmt.Errorf("TLS is enabled (--internal-tls), but no CA certificate file was provided (--internal-ca-cert is required)")
+	}
+	return nil
 }
 
 func (p *pub) Register(topic bus.Topic, handler schema.EventHandler) {
@@ -95,7 +115,9 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	var nodes []*databasev1.Node
 	p.mu.RLock()
 	for k := range p.active {
-		nodes = append(nodes, p.registered[k])
+		if n := p.registered[k]; n != nil {
+			nodes = append(nodes, n)
+		}
 	}
 	p.mu.RUnlock()
 	if len(nodes) == 0 {
@@ -104,7 +126,7 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	names := make(map[string]struct{})
 	if len(messages.NodeSelectors()) == 0 {
 		for _, n := range nodes {
-			names[n.Metadata.Name] = struct{}{}
+			names[n.Metadata.GetName()] = struct{}{}
 		}
 	} else {
 		for g, sel := range messages.NodeSelectors() {
@@ -336,4 +358,12 @@ func isFailoverError(err error) bool {
 		return false
 	}
 	return s.Code() == codes.Unavailable || s.Code() == codes.DeadlineExceeded
+}
+
+func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
+	opts, err := grpchelper.SecureOptions(nil, p.tlsEnabled, false, p.caCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load TLS config: %w", err)
+	}
+	return opts, nil
 }

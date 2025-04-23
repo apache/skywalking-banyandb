@@ -66,7 +66,7 @@ type Registry interface {
 	Node
 	Property
 	RegisterHandler(string, Kind, EventHandler)
-	NewWatcher(string, Kind, ...WatcherOption) *watcher
+	NewWatcher(string, Kind, int64, ...WatcherOption) *watcher
 	Register(context.Context, Metadata, bool) error
 	Compact(context.Context, int64) error
 	StartWatcher()
