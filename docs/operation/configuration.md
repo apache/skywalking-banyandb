@@ -77,14 +77,16 @@ If you want to enable TLS for the communication between the client and liaison/s
 - `--http-key-file string`: The TLS key file of the HTTP server.
 - `--http-cert-file string`: The TLS certificate file of the HTTP server.
 
-Internal queue TLS (Liaison ↔ Data)
+#### Internal queue TLS (Liaison ↔ Data)
+
 Enable TLS on the internal gRPC queue that the Liaison uses to push data into every Data‑Node:
 
 - `--internal-tls`: enable TLS on the queue client inside Liaison; if false the queue uses plain TCP.
 - `--internal-ca-cert <path>`: PEM‑encoded CA (or bundle) that the queue client uses to verify Data‑Node server certificates.
 
-Server certificates
-Each Liaison/Data process still advertises its certificate with the public flags shown above (--tls, --cert-file, --key-file).
+#### Server certificates
+
+Each Liaison/Data process still advertises its certificate with the public flags shown above (`--tls`, `--cert-file`, `--key-file`).
 The same certificate/key pair can be reused for both external traffic and the internal queue.
 
 ### Data & Storage

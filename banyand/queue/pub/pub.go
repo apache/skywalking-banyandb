@@ -63,8 +63,8 @@ type pub struct {
 	active     map[string]*client
 	evictable  map[string]evictNode
 	closer     *run.Closer
-	mu         sync.RWMutex
 	caCertPath string
+	mu         sync.RWMutex
 	tlsEnabled bool
 }
 
