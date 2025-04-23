@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -48,8 +48,8 @@ import (
 )
 
 func TestBackup(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Backup Suite", Label(integration_standalone.Labels...))
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.RunSpecs(t, "Backup Suite", ginkgo.Label(integration_standalone.Labels...))
 }
 
 var (
@@ -59,31 +59,31 @@ var (
 	goods      []gleak.Goroutine
 )
 
-var _ = SynchronizedBeforeSuite(func() []byte {
+var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	goods = gleak.Goroutines()
-	Expect(logger.Init(logger.Logging{
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
-	})).To(Succeed())
+	})).To(gomega.Succeed())
 	var err error
 	dir, _, err = test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var ports []int
 	ports, err = test.AllocateFreePorts(4)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var addr string
 	addr, _, deferFunc = setup.ClosableStandalone(dir, ports)
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
 	test_cases.Initialize(addr, now)
 	err = dockertesthelper.InitMinIOContainer()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	casesbackup.SharedContext = helpers.BackupSharedContext{
 		DataAddr:          string(address),
 		Connection:        connection,
@@ -103,7 +103,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	pClient := databasev1.NewPropertyRegistryServiceClient(connection)
 	_, err = pClient.Create(context.Background(), &databasev1.PropertyRegistryServiceCreateRequest{
 		Property: &databasev1.Property{
@@ -117,7 +117,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	client := propertyv1.NewPropertyServiceClient(connection)
 	md := &commonv1.Metadata{
 		Name:  "p",
@@ -131,20 +131,20 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
 		},
 	}})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(resp.Created).To(BeTrue())
-	Expect(resp.TagsNum).To(Equal(uint32(2)))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(resp.Created).To(gomega.BeTrue())
+	gomega.Expect(resp.TagsNum).To(gomega.Equal(uint32(2)))
 })
 
-var _ = SynchronizedAfterSuite(func() {
+var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+		gomega.Expect(connection.Close()).To(gomega.Succeed())
 	}
 	dockertesthelper.CloseMinioContainer()
 }, func() {
 	if deferFunc != nil {
 		deferFunc()
 	}
-	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+	gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+	gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 })

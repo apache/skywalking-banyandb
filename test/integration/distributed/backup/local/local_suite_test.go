@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -52,8 +52,8 @@ import (
 )
 
 func TestBackup(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Backup Suite")
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.RunSpecs(t, "Distributed Backup Suite")
 }
 
 var (
@@ -64,45 +64,46 @@ var (
 	dataAddr   string
 )
 
-var _ = SynchronizedBeforeSuite(func() []byte {
-	Expect(logger.Init(logger.Logging{
+var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
-	})).To(Succeed())
+	})).To(gomega.Succeed())
 	goods = gleak.Goroutines()
-	By("Starting etcd server")
+	ginkgo.By("Starting etcd server")
 	ports, err := test.AllocateFreePorts(2)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var spaceDef func()
 	dir, spaceDef, err = test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
 	server, err := embeddedetcd.NewServer(
 		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
 		embeddedetcd.RootDir(dir))
-	Expect(err).ShouldNot(HaveOccurred())
+	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 	<-server.ReadyNotify()
-	By("Loading schema")
+	ginkgo.By("Loading schema")
 	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
 		schema.Namespace(metadata.DefaultNamespace),
 		schema.ConfigureServerEndpoints([]string{ep}),
 	)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer schemaRegistry.Close()
 	ctx := context.Background()
 	test_stream.PreloadSchema(ctx, schemaRegistry)
 	test_measure.PreloadSchema(ctx, schemaRegistry)
-	By("Starting data node 0")
+	ginkgo.By("Starting data node 0")
 	var closeDataNode0 func()
 	dataAddr, dir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep)
-	By("Starting liaison node")
+	ginkgo.By("Starting liaison node")
 	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
-	By("Initializing test cases")
+	ginkgo.By("Initializing test cases")
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
 	test_cases.Initialize(liaisonAddr, now)
-	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
+	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer conn.Close()
 	gClient := databasev1.NewGroupRegistryServiceClient(conn)
 	_, err = gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{
@@ -114,7 +115,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	pClient := databasev1.NewPropertyRegistryServiceClient(conn)
 	_, err = pClient.Create(context.Background(), &databasev1.PropertyRegistryServiceCreateRequest{
 		Property: &databasev1.Property{
@@ -128,7 +129,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	client := propertyv1.NewPropertyServiceClient(conn)
 	md := &commonv1.Metadata{
 		Name:  "p",
@@ -142,9 +143,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
 		},
 	}})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(resp.Created).To(BeTrue())
-	Expect(resp.TagsNum).To(Equal(uint32(2)))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(resp.Created).To(gomega.BeTrue())
+	gomega.Expect(resp.TagsNum).To(gomega.Equal(uint32(2)))
 	deferFunc = func() {
 		closerLiaisonNode()
 		closeDataNode0()
@@ -157,7 +158,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	var err error
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	casesbackup.SharedContext = helpers.BackupSharedContext{
 		DataAddr:   dataAddr,
 		Connection: connection,
@@ -166,14 +167,14 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	}
 })
 
-var _ = SynchronizedAfterSuite(func() {
+var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+		gomega.Expect(connection.Close()).To(gomega.Succeed())
 	}
 }, func() {
 	if deferFunc != nil {
 		deferFunc()
 	}
-	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+	gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+	gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should((gmatcher.HaveZeroRef()))
 })
