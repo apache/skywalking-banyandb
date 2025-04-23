@@ -221,6 +221,9 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 			nodeSelectors[g] = nil
 		}
 	}
+	if len(req.Stages) > 0 && len(nodeSelectors) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "no node in the stage %s in group %s", req.Stages, req.Groups)
+	}
 	message := bus.NewMessageWithNodeSelectors(bus.MessageID(now.UnixNano()), nodeSelectors, req.TimeRange, req)
 	feat, errQuery := s.broadcaster.Publish(ctx, data.TopicStreamQuery, message)
 	if errQuery != nil {

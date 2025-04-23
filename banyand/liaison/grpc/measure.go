@@ -223,6 +223,9 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 			nodeSelectors[g] = nil
 		}
 	}
+	if len(req.Stages) > 0 && len(nodeSelectors) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "no node in the stage %s in group %s", req.Stages, req.Groups)
+	}
 
 	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessageWithNodeSelectors(bus.MessageID(now.UnixNano()), nodeSelectors, req.TimeRange, req))
 	if err != nil {
