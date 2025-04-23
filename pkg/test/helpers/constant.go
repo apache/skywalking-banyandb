@@ -79,6 +79,7 @@ type BackupSharedContext struct {
 	S3ConfigPath      string
 	S3CredentialsPath string
 	BucketName        string
+	FSType            string
 }
 
 // LifecycleSharedContext is the context shared between test cases in the lifecycle testing.

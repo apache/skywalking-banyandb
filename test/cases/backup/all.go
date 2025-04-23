@@ -19,24 +19,41 @@ package backup_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/banyand/backup"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 )
 
 var _ = ginkgo.Describe("Backup All", func() {
 	_ = ginkgo.Describe("Backup and Restore Integration", func() {
 		ginkgo.It("should backup, create timedir and restore data correctly", func() {
+			bucketName := SharedContext.BucketName
+			var destURL string
+			var fs remote.FS
+			fsType := SharedContext.FSType
 			ginkgo.By("Backup data to a remote destination")
 			destDir, err := os.MkdirTemp("", "backup-restore-dest")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer os.RemoveAll(destDir)
-			destURL := "file://" + destDir
+
+			if fsType == "file" {
+				destURL = fsType + "://" + destDir
+			} else if fsType == "s3" {
+				destURL = "s3:///" + bucketName + destDir
+				fs, err = aws.NewFS(filepath.Join(bucketName, destDir), &remote.FsConfig{
+					S3ConfigFilePath:     SharedContext.S3ConfigPath,
+					S3CredentialFilePath: SharedContext.S3CredentialsPath,
+				})
+			}
 
 			backupCmd := backup.NewBackupCommand()
 			backupCmd.SetArgs([]string{
@@ -46,18 +63,38 @@ var _ = ginkgo.Describe("Backup All", func() {
 				"--property-root-path", SharedContext.RootDir,
 				"--dest", destURL,
 				"--time-style", "daily",
+				"--s3-credential-file", SharedContext.S3CredentialsPath,
+				"--s3-config-file", SharedContext.S3ConfigPath,
 			})
 			err = backupCmd.Execute()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			var backupTimeDir string
-			entries, err := os.ReadDir(destDir)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			for _, entry := range entries {
-				if entry.IsDir() {
-					backupTimeDir = entry.Name()
-					break
+			if fsType == "file" {
+				entries, err := os.ReadDir(destDir)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				for _, entry := range entries {
+					if entry.IsDir() {
+						backupTimeDir = entry.Name()
+						break
+					}
 				}
+			} else {
+				ctx := context.Background()
+				entries, err := fs.List(ctx, "")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				datePattern := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+				for _, entry := range entries {
+					dirName := entry
+					if slashIndex := strings.Index(entry, "/"); slashIndex > 0 {
+						dirName = entry[:slashIndex]
+					}
+					if datePattern.MatchString(dirName) {
+						backupTimeDir = dirName
+						break
+					}
+				}
+
 			}
 			gomega.Expect(backupTimeDir).NotTo(gomega.BeEmpty())
 
@@ -67,7 +104,11 @@ var _ = ginkgo.Describe("Backup All", func() {
 			defer os.RemoveAll(newCatalogDir)
 
 			listCmd := backup.NewTimeDirCommand()
-			listCmd.SetArgs([]string{"list", "--dest", destURL})
+			listCmd.SetArgs([]string{
+				"list", "--dest", destURL,
+				"--s3-credential-file", SharedContext.S3CredentialsPath,
+				"--s3-config-file", SharedContext.S3ConfigPath,
+			})
 			listOut := &bytes.Buffer{}
 			listCmd.SetOut(listOut)
 			listCmd.SetErr(listOut)
@@ -139,6 +180,8 @@ var _ = ginkgo.Describe("Backup All", func() {
 				"--stream-root-path", newCatalogDir,
 				"--measure-root-path", newCatalogDir,
 				"--property-root-path", newCatalogDir,
+				"--s3-credential-file", SharedContext.S3CredentialsPath,
+				"--s3-config-file", SharedContext.S3ConfigPath,
 			})
 			restoreOut := &bytes.Buffer{}
 			restoreCmd.SetOut(restoreOut)
@@ -155,14 +198,15 @@ var _ = ginkgo.Describe("Backup All", func() {
 
 				// Verify that the restored files exist.
 				// The remote backup data for each catalog is under: destDir/<latestTimedir>/<catalog>
-				remoteDataDir := filepath.Join(destDir, latestTimedir, cat)
+				remoteDataDir := filepath.Join(latestTimedir, cat)
 				restoredDataDir := filepath.Join(newCatalogDir, cat, "data")
-				var remoteEntries, restoredEntries []os.DirEntry
-				remoteEntries, err = os.ReadDir(remoteDataDir)
+				var restoredEntries []os.DirEntry
+				var remoteList []string
+				remoteList, err = fs.List(context.Background(), remoteDataDir)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				restoredEntries, err = os.ReadDir(restoredDataDir)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(len(restoredEntries)).To(gomega.Equal(len(remoteEntries)))
+				gomega.Expect(len(restoredEntries)).To(gomega.Equal(len(remoteList)))
 			}
 
 			// Verify that the timedir file is removed from the new catalog's root path (after a successful restore).
@@ -171,6 +215,35 @@ var _ = ginkgo.Describe("Backup All", func() {
 				_, err = os.Stat(timedirFile)
 				gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue())
 			}
+			clearSnapshotDirs()
+
 		})
 	})
 })
+
+func removeAllFilesInDir(dir string) error {
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == dir {
+			return nil
+		}
+		if info.IsDir() {
+			return os.RemoveAll(path)
+		}
+		return os.Remove(path)
+	})
+}
+
+func clearSnapshotDirs() {
+	snpDirs := []string{
+		filepath.Join(SharedContext.RootDir, "measure", "snapshots"),
+		filepath.Join(SharedContext.RootDir, "stream", "snapshots"),
+		filepath.Join(SharedContext.RootDir, "property", "snapshots"),
+	}
+
+	for _, dir := range snpDirs {
+		_ = removeAllFilesInDir(dir)
+	}
+}
