@@ -15,11 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package backup_test
+package local_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -33,9 +32,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -43,18 +39,16 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
-	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
+	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
 )
 
 func TestBackup(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Backup Suite")
+	RunSpecs(t, "Backup Suite", Label(integration_standalone.Labels...))
 }
 
 var (
@@ -62,50 +56,39 @@ var (
 	dir        string
 	deferFunc  func()
 	goods      []gleak.Goroutine
-	dataAddr   string
 )
 
 var _ = SynchronizedBeforeSuite(func() []byte {
+	goods = gleak.Goroutines()
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
 	})).To(Succeed())
-	goods = gleak.Goroutines()
-	By("Starting etcd server")
-	ports, err := test.AllocateFreePorts(2)
+	var err error
+	dir, _, err = test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-	var spaceDef func()
-	dir, spaceDef, err = test.NewSpace()
+	var ports []int
+	ports, err = test.AllocateFreePorts(4)
 	Expect(err).NotTo(HaveOccurred())
-	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-	server, err := embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(dir))
-	Expect(err).ShouldNot(HaveOccurred())
-	<-server.ReadyNotify()
-	By("Loading schema")
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{ep}),
-	)
-	Expect(err).NotTo(HaveOccurred())
-	defer schemaRegistry.Close()
-	ctx := context.Background()
-	test_stream.PreloadSchema(ctx, schemaRegistry)
-	test_measure.PreloadSchema(ctx, schemaRegistry)
-	By("Starting data node 0")
-	var closeDataNode0 func()
-	dataAddr, dir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep)
-	By("Starting liaison node")
-	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
-	By("Initializing test cases")
+	var addr string
+	addr, _, deferFunc = setup.ClosableStandalone(dir, ports)
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
-	test_cases.Initialize(liaisonAddr, now)
-	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	test_cases.Initialize(addr, now)
+
+	return []byte(addr)
+}, func(address []byte) {
+	var err error
+	connection, err = grpchelper.Conn(string(address), 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
-	defer conn.Close()
-	gClient := databasev1.NewGroupRegistryServiceClient(conn)
+	casesbackup.SharedContext = helpers.BackupSharedContext{
+		DataAddr:   string(address),
+		Connection: connection,
+		RootDir:    dir,
+		FSType:     "local",
+	}
+	gClient := databasev1.NewGroupRegistryServiceClient(connection)
 	_, err = gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{
 		Group: &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "g"},
@@ -116,7 +99,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		},
 	})
 	Expect(err).NotTo(HaveOccurred())
-	pClient := databasev1.NewPropertyRegistryServiceClient(conn)
+	pClient := databasev1.NewPropertyRegistryServiceClient(connection)
 	_, err = pClient.Create(context.Background(), &databasev1.PropertyRegistryServiceCreateRequest{
 		Property: &databasev1.Property{
 			Metadata: &commonv1.Metadata{
@@ -130,7 +113,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		},
 	})
 	Expect(err).NotTo(HaveOccurred())
-	client := propertyv1.NewPropertyServiceClient(conn)
+	client := propertyv1.NewPropertyServiceClient(connection)
 	md := &commonv1.Metadata{
 		Name:  "p",
 		Group: "g",
@@ -146,36 +129,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(resp.Created).To(BeTrue())
 	Expect(resp.TagsNum).To(Equal(uint32(2)))
-	deferFunc = func() {
-		closerLiaisonNode()
-		closeDataNode0()
-		_ = server.Close()
-		<-server.StopNotify()
-		spaceDef()
-	}
-	err = dockertesthelper.InitMinIOContainer()
-	Expect(err).NotTo(HaveOccurred())
-	return []byte(dataAddr)
-}, func(address []byte) {
-	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
-	casesbackup.SharedContext = helpers.BackupSharedContext{
-		DataAddr:          dataAddr,
-		Connection:        connection,
-		RootDir:           dir,
-		BucketName:        dockertesthelper.BucketName,
-		S3ConfigPath:      dockertesthelper.S3ConfigPath,
-		S3CredentialsPath: dockertesthelper.S3CredentialsPath,
-	}
 })
 
 var _ = SynchronizedAfterSuite(func() {
 	if connection != nil {
 		Expect(connection.Close()).To(Succeed())
 	}
-	dockertesthelper.CloseMinioContainer()
 }, func() {
 	if deferFunc != nil {
 		deferFunc()
