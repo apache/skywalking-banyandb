@@ -20,6 +20,8 @@ package s3
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -36,6 +38,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -63,6 +67,8 @@ var (
 	deferFunc  func()
 	goods      []gleak.Goroutine
 	dataAddr   string
+	destDir    string
+	fs         remote.FS
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -76,6 +82,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var spaceDef func()
 	dir, spaceDef, err = test.NewSpace()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	destDir, err = os.MkdirTemp("", "backup-restore-dest")
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
 	server, err := embeddedetcd.NewServer(
@@ -155,6 +163,11 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	}
 	err = dockertesthelper.InitMinIOContainer()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	fs, err = aws.NewFS(filepath.Join(dockertesthelper.BucketName, destDir), &remote.FsConfig{
+		S3ConfigFilePath:     dockertesthelper.S3ConfigPath,
+		S3CredentialFilePath: dockertesthelper.S3CredentialsPath,
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return []byte(dataAddr)
 }, func(address []byte) {
 	var err error
@@ -162,13 +175,16 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	casesbackup.SharedContext = helpers.BackupSharedContext{
-		DataAddr:          dataAddr,
-		Connection:        connection,
-		RootDir:           dir,
-		BucketName:        dockertesthelper.BucketName,
-		S3ConfigPath:      dockertesthelper.S3ConfigPath,
-		S3CredentialsPath: dockertesthelper.S3CredentialsPath,
-		FSType:            "s3",
+		DataAddr:   dataAddr,
+		Connection: connection,
+		RootDir:    dir,
+		DestDir:    destDir,
+		DestURL:    "s3:///" + dockertesthelper.BucketName + destDir,
+		FS:         fs,
+		S3Args: []string{
+			"--s3-credential-file", dockertesthelper.S3CredentialsPath,
+			"--s3-config-file", dockertesthelper.S3ConfigPath,
+		},
 	}
 })
 

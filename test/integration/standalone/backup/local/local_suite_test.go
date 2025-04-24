@@ -19,6 +19,7 @@ package local_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -32,6 +33,8 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -53,9 +56,11 @@ func TestBackup(t *testing.T) {
 
 var (
 	connection *grpc.ClientConn
+	fs         remote.FS
 	dir        string
 	deferFunc  func()
 	goods      []gleak.Goroutine
+	destDir    string
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -66,6 +71,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	})).To(gomega.Succeed())
 	var err error
 	dir, _, err = test.NewSpace()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	destDir, err = os.MkdirTemp("", "backup-restore-dest")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	fs, err = local.NewFS(destDir)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var ports []int
 	ports, err = test.AllocateFreePorts(4)
@@ -86,7 +95,9 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		DataAddr:   string(address),
 		Connection: connection,
 		RootDir:    dir,
-		FSType:     "local",
+		DestDir:    destDir,
+		DestURL:    "file" + "://" + destDir,
+		FS:         fs,
 	}
 	gClient := databasev1.NewGroupRegistryServiceClient(connection)
 	_, err = gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{

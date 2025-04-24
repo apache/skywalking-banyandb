@@ -19,6 +19,8 @@ package s3
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -32,6 +34,8 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -57,6 +61,8 @@ var (
 	dir        string
 	deferFunc  func()
 	goods      []gleak.Goroutine
+	destDir    string
+	fs         remote.FS
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -68,6 +74,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	var err error
 	dir, _, err = test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	destDir, err = os.MkdirTemp("", "backup-restore-dest")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var ports []int
 	ports, err = test.AllocateFreePorts(4)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -78,6 +86,11 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	test_cases.Initialize(addr, now)
 	err = dockertesthelper.InitMinIOContainer()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	fs, err = aws.NewFS(filepath.Join(dockertesthelper.BucketName, destDir), &remote.FsConfig{
+		S3ConfigFilePath:     dockertesthelper.S3ConfigPath,
+		S3CredentialFilePath: dockertesthelper.S3CredentialsPath,
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return []byte(addr)
 }, func(address []byte) {
 	var err error
@@ -85,13 +98,16 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	casesbackup.SharedContext = helpers.BackupSharedContext{
-		DataAddr:          string(address),
-		Connection:        connection,
-		RootDir:           dir,
-		BucketName:        dockertesthelper.BucketName,
-		S3ConfigPath:      dockertesthelper.S3ConfigPath,
-		S3CredentialsPath: dockertesthelper.S3CredentialsPath,
-		FSType:            "s3",
+		DataAddr:   string(address),
+		Connection: connection,
+		RootDir:    dir,
+		DestDir:    destDir,
+		FS:         fs,
+		DestURL:    "s3:///" + dockertesthelper.BucketName + destDir,
+		S3Args: []string{
+			"--s3-credential-file", dockertesthelper.S3CredentialsPath,
+			"--s3-config-file", dockertesthelper.S3ConfigPath,
+		},
 	}
 	gClient := databasev1.NewGroupRegistryServiceClient(connection)
 	_, err = gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{

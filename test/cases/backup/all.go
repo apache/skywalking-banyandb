@@ -29,73 +29,45 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/banyand/backup"
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 )
 
 var _ = ginkgo.Describe("Backup All", func() {
 	_ = ginkgo.Describe("Backup and Restore Integration", func() {
 		ginkgo.It("should backup, create timedir and restore data correctly", func() {
-			bucketName := SharedContext.BucketName
-			var destURL string
-			var fs remote.FS
-			fsType := SharedContext.FSType
+			destDir := SharedContext.DestDir
+			destURL := SharedContext.DestURL
+			fs := SharedContext.FS
 			ginkgo.By("Backup data to a remote destination")
-			destDir, err := os.MkdirTemp("", "backup-restore-dest")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer os.RemoveAll(destDir)
-
-			if fsType == "local" {
-				destURL = "file" + "://" + destDir
-			} else if fsType == "s3" {
-				destURL = "s3:///" + bucketName + destDir
-				fs, err = aws.NewFS(filepath.Join(bucketName, destDir), &remote.FsConfig{
-					S3ConfigFilePath:     SharedContext.S3ConfigPath,
-					S3CredentialFilePath: SharedContext.S3CredentialsPath,
-				})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			}
+			defer clearSnapshotDirs()
 
 			backupCmd := backup.NewBackupCommand()
-			backupCmd.SetArgs([]string{
+			backupCmd.SetArgs(append([]string{
 				"--grpc-addr", SharedContext.DataAddr,
 				"--stream-root-path", SharedContext.RootDir,
 				"--measure-root-path", SharedContext.RootDir,
 				"--property-root-path", SharedContext.RootDir,
 				"--dest", destURL,
 				"--time-style", "daily",
-				"--s3-credential-file", SharedContext.S3CredentialsPath,
-				"--s3-config-file", SharedContext.S3ConfigPath,
-			})
-			err = backupCmd.Execute()
+			}, SharedContext.S3Args...))
+
+			err := backupCmd.Execute()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			var backupTimeDir string
-			if fsType == "local" {
-				entries, inErr := os.ReadDir(destDir)
-				gomega.Expect(inErr).NotTo(gomega.HaveOccurred())
-				for _, entry := range entries {
-					if entry.IsDir() {
-						backupTimeDir = entry.Name()
-						break
-					}
+			ctx := context.Background()
+			entries, inErr := fs.List(ctx, "")
+			gomega.Expect(inErr).NotTo(gomega.HaveOccurred())
+			datePattern := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+			for _, entry := range entries {
+				dirName := entry
+				if slashIndex := strings.Index(entry, "/"); slashIndex > 0 {
+					dirName = entry[:slashIndex]
 				}
-			} else {
-				ctx := context.Background()
-				entries, inErr := fs.List(ctx, "")
-				gomega.Expect(inErr).NotTo(gomega.HaveOccurred())
-				datePattern := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-				for _, entry := range entries {
-					dirName := entry
-					if slashIndex := strings.Index(entry, "/"); slashIndex > 0 {
-						dirName = entry[:slashIndex]
-					}
-					if datePattern.MatchString(dirName) {
-						backupTimeDir = dirName
-						break
-					}
+				if datePattern.MatchString(dirName) {
+					backupTimeDir = dirName
+					break
 				}
-
 			}
 			gomega.Expect(backupTimeDir).NotTo(gomega.BeEmpty())
 
@@ -105,11 +77,10 @@ var _ = ginkgo.Describe("Backup All", func() {
 			defer os.RemoveAll(newCatalogDir)
 
 			listCmd := backup.NewTimeDirCommand()
-			listCmd.SetArgs([]string{
+			listCmd.SetArgs(append([]string{
 				"list", "--dest", destURL,
-				"--s3-credential-file", SharedContext.S3CredentialsPath,
-				"--s3-config-file", SharedContext.S3ConfigPath,
-			})
+			}, SharedContext.S3Args...))
+
 			listOut := &bytes.Buffer{}
 			listCmd.SetOut(listOut)
 			listCmd.SetErr(listOut)
@@ -175,15 +146,13 @@ var _ = ginkgo.Describe("Backup All", func() {
 
 			ginkgo.By("Restore data from the remote destination")
 			restoreCmd := backup.NewRestoreCommand()
-			restoreCmd.SetArgs([]string{
+			restoreCmd.SetArgs(append([]string{
 				"run",
 				"--source", destURL,
 				"--stream-root-path", newCatalogDir,
 				"--measure-root-path", newCatalogDir,
 				"--property-root-path", newCatalogDir,
-				"--s3-credential-file", SharedContext.S3CredentialsPath,
-				"--s3-config-file", SharedContext.S3ConfigPath,
-			})
+			}, SharedContext.S3Args...))
 			restoreOut := &bytes.Buffer{}
 			restoreCmd.SetOut(restoreOut)
 			restoreCmd.SetErr(restoreOut)
@@ -200,26 +169,15 @@ var _ = ginkgo.Describe("Backup All", func() {
 				// Verify that the restored files exist.
 				// The remote backup data for each catalog is under: destDir/<latestTimedir>/<catalog>
 				restoredDataDir := filepath.Join(newCatalogDir, cat, "data")
-				var restoredEntries []os.DirEntry
-				var remoteEntries []os.DirEntry
 				var remoteList []string
-				if fsType == "s3" {
-					var count int
-					remoteDataDir := filepath.Join(latestTimedir, cat)
-					remoteList, err = fs.List(context.Background(), remoteDataDir)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					count, err = countFilesRecursive(restoredDataDir)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					gomega.Expect(count).To(gomega.Equal(len(remoteList)))
-				} else {
-					restoredEntries, err = os.ReadDir(restoredDataDir)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					remoteDataDir := filepath.Join(destDir, latestTimedir, cat)
-					remoteEntries, err = os.ReadDir(remoteDataDir)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					gomega.Expect(len(restoredEntries)).To(gomega.Equal(len(remoteEntries)))
-				}
+				var count int
+				remoteDataDir := filepath.Join(latestTimedir, cat)
+				remoteList, err = fs.List(context.Background(), remoteDataDir)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				count, err = countFilesRecursive(restoredDataDir)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(count).To(gomega.Equal(len(remoteList)))
+
 			}
 
 			// Verify that the timedir file is removed from the new catalog's root path (after a successful restore).
@@ -228,7 +186,6 @@ var _ = ginkgo.Describe("Backup All", func() {
 				_, err = os.Stat(timedirFile)
 				gomega.Expect(os.IsNotExist(err)).To(gomega.BeTrue())
 			}
-			clearSnapshotDirs()
 		})
 	})
 })

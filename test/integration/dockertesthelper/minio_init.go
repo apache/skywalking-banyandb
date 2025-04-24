@@ -28,8 +28,6 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
-
-	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
 )
 
 var (
@@ -52,7 +50,6 @@ func InitMinIOContainer() error {
 	}
 	S3ConfigPath = filepath.Join(tempDir, "config")
 	S3CredentialsPath = filepath.Join(tempDir, "credentials")
-	casesbackup.SharedContext.BucketName = BucketName
 	if err = os.WriteFile(S3ConfigPath, []byte(ConfigContent), 0o600); err != nil {
 		return fmt.Errorf("cannot write config file: %w", err)
 	}

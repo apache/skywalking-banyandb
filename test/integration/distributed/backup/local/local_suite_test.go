@@ -20,6 +20,7 @@ package local_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -36,6 +37,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -62,6 +65,8 @@ var (
 	deferFunc  func()
 	goods      []gleak.Goroutine
 	dataAddr   string
+	destDir    string
+	fs         remote.FS
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -75,6 +80,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var spaceDef func()
 	dir, spaceDef, err = test.NewSpace()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	destDir, err = os.MkdirTemp("", "backup-restore-dest")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	fs, err = local.NewFS(destDir)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
 	server, err := embeddedetcd.NewServer(
@@ -163,7 +172,9 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		DataAddr:   dataAddr,
 		Connection: connection,
 		RootDir:    dir,
-		FSType:     "local",
+		DestDir:    destDir,
+		DestURL:    "file" + "://" + destDir,
+		FS:         fs,
 	}
 })
 
