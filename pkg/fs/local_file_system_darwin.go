@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd
-// +build darwin dragonfly freebsd linux netbsd openbsd
+//go:build darwin
+// +build darwin
 
 package fs
 
@@ -110,4 +110,14 @@ func CompareINode(srcPath, destPath string) error {
 		return fmt.Errorf("src file inode: %d, dest file inode: %d", srcStat.Ino, destStat.Ino)
 	}
 	return nil
+}
+
+// ApplyFadviseToFD is a no-op on non-Linux systems.
+func ApplyFadviseToFD(fd uintptr, offset int64, length int64) error {
+	return nil
+}
+
+// IsFadvisSupported returns true if fadvis is supported on the current platform.
+func IsFadvisSupported() bool {
+	return false
 }

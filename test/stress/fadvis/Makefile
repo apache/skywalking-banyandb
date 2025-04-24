@@ -20,9 +20,9 @@ ROOTDIR := $(shell cd ../../../ && pwd)
 PWD := $(shell pwd)
 REPORTS_DIR := $(PWD)/reports
 
-.PHONY: benchmark benchmark-write benchmark-read benchmark-merge benchmark-mixed benchmark-concurrent benchmark-threshold clean
+.PHONY: all-benchmarks benchmark-write benchmark-read benchmark-merge benchmark-sequential-merge benchmark-multiple-reads benchmark-mixed benchmark-concurrent benchmark-threshold benchmark-memory clean help
 
-benchmark: clean
+all-benchmarks: clean
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running all fadvis benchmarks..."
 	@go test -bench=. -benchmem -count=3 | tee $(REPORTS_DIR)/all_benchmarks.txt
@@ -37,7 +37,7 @@ benchmark-write:
 benchmark-read:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running read performance benchmarks..."
-	@go test -bench=BenchmarkReadPerformance -benchmem -count=3 | tee $(REPORTS_DIR)/read_benchmarks.txt
+	@go test -v -bench=BenchmarkReadPerformance -benchtime=5s -run=^$ ./test/stress/fadvis/ -benchmem | tee $(REPORTS_DIR)/read_benchmarks.txt
 	@echo "Read benchmark results saved to $(REPORTS_DIR)/read_benchmarks.txt"
 
 benchmark-merge:
@@ -67,7 +67,7 @@ benchmark-mixed:
 benchmark-concurrent:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running concurrent operations benchmarks..."
-	@go test -bench=BenchmarkConcurrent -benchmem -count=3 | tee $(REPORTS_DIR)/concurrent_benchmarks.txt
+	@go test -v -bench=BenchmarkConcurrent -benchtime=5s -run=^$ ./test/stress/fadvis/ -benchmem | tee $(REPORTS_DIR)/concurrent_benchmarks.txt
 	@echo "Concurrent operations benchmark results saved to $(REPORTS_DIR)/concurrent_benchmarks.txt"
 
 benchmark-threshold:
@@ -97,7 +97,7 @@ clean:
 
 help:
 	@echo "Available targets:"
-	@echo "  benchmark               - Run all benchmarks with multiple iterations"
+	@echo "  all-benchmarks          - Run all benchmarks with multiple iterations"
 	@echo "  benchmark-write         - Run write performance benchmarks"
 	@echo "  benchmark-read          - Run read performance benchmarks"
 	@echo "  benchmark-merge         - Run merge operation benchmarks"
@@ -106,6 +106,6 @@ help:
 	@echo "  benchmark-mixed         - Run mixed workload benchmarks"
 	@echo "  benchmark-concurrent    - Run concurrent operations benchmarks"
 	@echo "  benchmark-threshold     - Run threshold adaptation benchmarks"
-	@echo "  benchmark-memory        - Run all benchmarks with memory monitoring"
+	@echo "  benchmark-memory        - Run benchmarks with memory usage monitoring"
 	@echo "  clean                   - Clean up reports directory"
-	@echo "  help                    - Show this help message" 
+	@echo "  help                    - Show this help message"

@@ -52,7 +52,7 @@ These tests are managed through the Makefile, which provides multiple running op
 ### Run All Benchmark Tests
 
 ```bash
-make benchmark
+make all-benchmarks
 ```
 
 ### Run Specific Types of Benchmark Tests
@@ -97,40 +97,35 @@ This command will monitor system memory and cache usage while running benchmark 
 make clean
 ```
 
+### Show Help
+
+```bash
+make help
+```
+
 ## Interpreting Test Results
 
-Test results will be saved in the `reports` directory, including:
+The benchmark results will be saved to the `reports` directory. Each test will generate a separate report file with detailed performance metrics.
 
-- Benchmark performance data: execution time, memory allocation, etc.
-- Memory monitoring data: system cache usage changes
+Key metrics to look for:
 
-### Key Metrics
+- **Operations per Second**: Higher is better, indicates throughput
+- **Nanoseconds per Operation**: Lower is better, indicates latency
+- **Bytes per Operation**: Memory usage per operation
+- **Allocations per Operation**: Number of memory allocations
 
-1. **Execution Time (ns/op)**: Average execution time per operation, lower values indicate better performance
-2. **Memory Allocation (B/op)**: Amount of memory allocated per operation, related to system efficiency
-3. **Allocation Count (allocs/op)**: Number of memory allocations per operation, reflects memory management efficiency
-4. **System Cache Usage**: System cache usage recorded in `memory_stats.txt`, reflects the effectiveness of fadvis
+## Implementation Details
 
-### Expected Results
+The benchmark tests use the following components:
 
-1. **Short-term Performance**: Disabled fadvis may show slightly better performance in the short term because file data may remain in the cache
-2. **Long-term Performance**: Enabled fadvis should demonstrate more stable performance and lower memory usage over extended runtime
-3. **System Stability**: Enabled fadvis should show better system stability and less memory pressure when handling large quantities of large files
-4. **Concurrent Performance**: The benefit of fadvis should be more pronounced under high concurrent workloads
-5. **Memory Adaptation**: The system should perform better with appropriate threshold settings that adapt to available memory
+- **fs package**: For file system operations with automatic fadvis application
+- **fadvis package**: For threshold management and fadvis application
+- **cgroups package**: For getting system memory information
 
-## Memory Threshold Considerations
-
-The current implementation sets the fadvis threshold at startup based on available memory at that time. This approach may have limitations:
-
-1. **Changing Memory Pressure**: If memory availability changes significantly during runtime (due to other processes or workload changes), the initially set threshold may become suboptimal
-2. **Resource Competition**: In environments with fluctuating workloads, a static threshold might not adapt well to changing conditions
-3. **Long-running Services**: For services running for extended periods, memory conditions might change drastically from startup conditions
-
-These tests help evaluate these considerations and can inform potential improvements such as periodic threshold updates or dynamic threshold adaptation.
+The tests dynamically calculate fadvis thresholds based on actual system memory, using the same logic as in production code (1% of page cache size, which is typically 25% of total memory).
 
 ## Notes
 
-- These tests are primarily targeted at Linux systems, as `posix_fadvise` is a Linux-specific system call
-- The tests create temporary large files, so ensure the test system has sufficient disk space
-- For reliable results, it's recommended to run tests on a system with low load 
+- These tests are designed to run on Linux systems, as the fadvis feature is only supported on Linux.
+- Some tests may require significant disk space for creating large test files.
+- Memory monitoring is especially useful for observing the effects of fadvis on system cache usage.

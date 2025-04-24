@@ -26,6 +26,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -194,6 +195,44 @@ func setTestThreshold(threshold int64) {
 	// Create a new Manager and set it as the global Manager
 	manager := fadvis.NewManager(provider)
 	fadvis.SetManager(manager)
+}
+
+// setRealisticThreshold sets a realistic fadvis threshold based on system memory
+// It calculates threshold as 1% of page cache (which is 25% of total memory)
+// This mimics the actual production logic in fadvis.Manager
+func setRealisticThreshold() {
+	// Calculate threshold using the same logic as in protector.Memory.GetThreshold
+	threshold := calculateRealisticThreshold()
+
+	setTestThreshold(threshold)
+}
+
+// calculateRealisticThreshold calculates a realistic threshold based on system memory
+// using the same logic as in protector.Memory.GetThreshold
+func calculateRealisticThreshold() int64 {
+	// Default page cache percent (100 - allowedPercent)
+	// In production, allowedPercent is typically 75%, so pageCachePercent is 25%
+	pageCachePercent := 25
+
+	// Get memory limit from cgroups
+	totalMemory, err := cgroups.MemoryLimit()
+	if err != nil {
+		// Fallback to a reasonable default if we can't get memory info
+		return 64 * 1024 * 1024 // 64MB fallback
+	}
+
+	// Calculate page cache size (pageCachePercent% of total memory)
+	pageCacheSize := totalMemory * int64(pageCachePercent) / 100
+
+	// Calculate threshold as 1% of page cache
+	threshold := pageCacheSize / 100
+
+	// Set a minimum threshold to avoid too small values
+	if threshold < 1024*1024 { // 1MB minimum
+		threshold = 1024 * 1024
+	}
+
+	return threshold
 }
 
 // testThresholdProvider is a simple threshold provider for testing purposes

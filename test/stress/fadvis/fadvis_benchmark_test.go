@@ -32,8 +32,8 @@ func BenchmarkWritePerformance(b *testing.B) {
 			testDir, cleanup := setupTestEnvironment(b)
 			defer cleanup()
 
-			// Set the fadvis threshold
-			setTestThreshold(64 * 1024 * 1024)
+			// Set a realistic fadvis threshold based on system memory
+			setRealisticThreshold()
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -74,8 +74,8 @@ func BenchmarkReadPerformance(b *testing.B) {
 			testDir, cleanup := setupTestEnvironment(b)
 			defer cleanup()
 
-			// Set the fadvis threshold
-			setTestThreshold(64 * 1024 * 1024)
+			// Set a realistic fadvis threshold based on system memory
+			setRealisticThreshold()
 
 			// Create a test file
 			filePath := filepath.Join(testDir, "read_test.dat")
@@ -137,8 +137,8 @@ func BenchmarkMultipleReads(b *testing.B) {
 		testDir, cleanup := setupTestEnvironment(b)
 		defer cleanup()
 
-		// Set the fadvis threshold
-		setTestThreshold(64 * 1024 * 1024)
+		// Set a realistic fadvis threshold based on system memory
+		setRealisticThreshold()
 
 		// Create a test file
 		filePath := filepath.Join(testDir, "multiple_read_test.dat")
@@ -202,8 +202,8 @@ func BenchmarkMixedWorkload(b *testing.B) {
 		testDir, cleanup := setupTestEnvironment(b)
 		defer cleanup()
 
-		// Set the fadvis threshold
-		setTestThreshold(64 * 1024 * 1024)
+		// Set a realistic fadvis threshold based on system memory
+		setRealisticThreshold()
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

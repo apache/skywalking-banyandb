@@ -25,7 +25,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 
@@ -33,22 +32,27 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
-	"github.com/apache/skywalking-banyandb/pkg/sysadvice"
 )
 
 const (
 	defaultIOSize = 256 * 1024
 	// defaultLargeFileThreshold is the default threshold for large files (10MB).
 	defaultLargeFileThreshold = 10 * 1024 * 1024 // 10MB
-	// thresholdUpdateInterval is the interval for updating the threshold.
-	thresholdUpdateInterval = 30 * time.Minute
 )
 
-var (
-	largeFileThreshold   int64 = defaultLargeFileThreshold
-	thresholdMutex       sync.RWMutex
-	thresholdUpdateTimer *time.Timer
-)
+// ThresholdProvider is an interface for providing file size thresholds.
+type ThresholdProvider interface {
+	// ShouldApplyFadvis checks if fadvis should be applied to a file of the given size.
+	ShouldApplyFadvis(fileSize int64) bool
+}
+
+// Global threshold provider that can be set by external packages
+var defaultThresholdProvider ThresholdProvider
+
+// SetThresholdProvider sets the global threshold provider
+func SetThresholdProvider(provider ThresholdProvider) {
+	defaultThresholdProvider = provider
+}
 
 // localFileSystem implements the File System interface.
 type localFileSystem struct {
@@ -65,9 +69,6 @@ type LocalFile struct {
 
 // NewLocalFileSystem is used to create the Local File system.
 func NewLocalFileSystem() FileSystem {
-	// Initialize the threshold manager
-	InitThresholdManager()
-
 	return &localFileSystem{
 		logger: logger.GetLogger(moduleName),
 	}
@@ -407,7 +408,7 @@ func (file *LocalFile) Write(buffer []byte) (int, error) {
 	size, err := file.file.Write(buffer)
 
 	// Apply fadvis if write was successful and file is marked as large
-	if err == nil && size > 0 && file.isLargeFile && isFadvisSupported() {
+	if err == nil && size > 0 && file.isLargeFile {
 		file.applyFadvis(0, 0)
 	}
 	switch {
@@ -641,80 +642,29 @@ var bufWriterPool = pool.Register[*bufio.Writer]("fs-bufWriter")
 
 // isLargeFile checks if a file is large enough to need fadvis.
 func isLargeFile(file *os.File) bool {
-	if file == nil {
+	// Skip if fadvis is not supported
+	if !IsFadvisSupported() {
 		return false
 	}
 
-	// Get file information
+	// Get file info
 	fileInfo, err := file.Stat()
 	if err != nil {
+		logger.GetLogger(moduleName).Warn().Err(err).Msg("failed to get file info")
 		return false
 	}
 
-	// Check against current threshold
-	return fileInfo.Size() > GetLargeFileThreshold()
-}
+	// Get the file size
+	fileSize := fileInfo.Size()
 
-// InitThresholdManager initializes the threshold manager.
-func InitThresholdManager() {
-	// Update threshold immediately
-	updateThreshold()
-
-	// Start a timer to update the threshold periodically
-	thresholdUpdateTimer = time.AfterFunc(thresholdUpdateInterval, func() {
-		updateThreshold()
-		// Reset the timer for the next update
-		thresholdUpdateTimer.Reset(thresholdUpdateInterval)
-	})
-}
-
-// StopThresholdManager stops the threshold manager.
-func StopThresholdManager() {
-	if thresholdUpdateTimer != nil {
-		thresholdUpdateTimer.Stop()
-		thresholdUpdateTimer = nil
-	}
-}
-
-// SetLargeFileThreshold sets the threshold for large files.
-func SetLargeFileThreshold(threshold int64) {
-	thresholdMutex.Lock()
-	defer thresholdMutex.Unlock()
-
-	largeFileThreshold = threshold
-	logger.GetLogger(moduleName).Info().
-		Int64("threshold", threshold).
-		Msg("large file threshold updated")
-}
-
-// GetLargeFileThreshold returns the current threshold for large files.
-func GetLargeFileThreshold() int64 {
-	thresholdMutex.RLock()
-	defer thresholdMutex.RUnlock()
-
-	return largeFileThreshold
-}
-
-// updateThreshold updates the threshold based on system memory.
-func updateThreshold() {
-	// Get system memory info
-	memInfo, err := disk.Usage("/")
-	if err != nil {
-		logger.GetLogger(moduleName).Warn().
-			Err(err).
-			Msg("failed to get system memory info, using default threshold")
-		return
+	// If no threshold provider is set, use a default threshold
+	if defaultThresholdProvider == nil {
+		// Default threshold is 10MB
+		return fileSize > defaultLargeFileThreshold
 	}
 
-	// Calculate threshold based on available memory
-	// Use 1% of total memory as threshold, with a minimum of 10MB
-	threshold := int64(memInfo.Total / 100)
-	if threshold < defaultLargeFileThreshold {
-		threshold = defaultLargeFileThreshold
-	}
-
-	// Update the threshold
-	SetLargeFileThreshold(threshold)
+	// Use the provider to determine if fadvis should be applied
+	return defaultThresholdProvider.ShouldApplyFadvis(fileSize)
 }
 
 // trackRead tracks a read operation and updates the cumulative read size.
@@ -731,21 +681,19 @@ func (file *LocalFile) trackRead(size int) {
 
 // applyFadvis applies DONTNEED to the file with specific offset and length.
 func (file *LocalFile) applyFadvis(offset int64, length int64) {
-	// Only apply on Linux
-	if !isFadvisSupported() {
+	// Skip if fadvis is not supported
+	if !IsFadvisSupported() {
 		return
 	}
 
-	file.mutex.Lock()
-	defer file.mutex.Unlock()
-
+	// Skip if file is not open
 	if file.file == nil {
 		return
 	}
 
-	// If length is 0, use the cumulative read size
-	if length == 0 {
-		length = file.cumulativeReadSize
+	// Skip if file is not large enough
+	if !file.isLargeFile {
+		return
 	}
 
 	// If both offset and length are 0, apply to the entire file
@@ -761,8 +709,13 @@ func (file *LocalFile) applyFadvis(offset int64, length int64) {
 		length = fileInfo.Size()
 	}
 
-	// Apply fadvis directly using unix.Fadvise
-	err := sysadvice.ApplyFadviseToFD(file.file.Fd(), offset, length)
+	// Log fadvis attempt to /tmp/fadvis.log
+	logFile, _ := os.OpenFile("/tmp/fadvis.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	fmt.Fprintf(logFile, "Applying fadvis to %s, offset=%d, length=%d\n", file.file.Name(), offset, length)
+	logFile.Close()
+
+	// Apply fadvis directly using platform-specific implementation
+	err := ApplyFadviseToFD(file.file.Fd(), offset, length)
 	if err != nil {
 		logger.GetLogger(moduleName).Warn().
 			Err(err).
@@ -779,9 +732,5 @@ func (file *LocalFile) applyFadvis(offset int64, length int64) {
 			Int64("cumulativeRead", file.cumulativeReadSize).
 			Msg("applied fadvis to large file")
 	}
-}
 
-// isFadvisSupported returns true if fadvis is supported on the current platform.
-func isFadvisSupported() bool {
-	return runtime.GOOS == "linux"
 }

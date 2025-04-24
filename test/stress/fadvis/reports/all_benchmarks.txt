@@ -1,0 +1,66 @@
+{"level":"info","time":"2025-04-24T10:09:33Z","message":"maxprocs: Leaving GOMAXPROCS=8: CPU quota undefined"}
+goos: linux
+goarch: arm64
+pkg: github.com/apache/skywalking-banyandb/test/stress/fadvis
+BenchmarkWritePerformance/Size_1MB_FadvisEnabled-8         	    3014	    377545 ns/op	     920 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_1MB_FadvisEnabled-8         	    3337	    346977 ns/op	     921 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_1MB_FadvisEnabled-8         	    3016	    383135 ns/op	     920 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_1MB_FadvisDisabled-8        	    3132	    362234 ns/op	     919 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_1MB_FadvisDisabled-8        	    3363	    368252 ns/op	     920 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_1MB_FadvisDisabled-8        	    3322	    359061 ns/op	     919 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_256MB_FadvisEnabled-8       	    3150	    370672 ns/op	     920 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_256MB_FadvisEnabled-8       	    2709	    387329 ns/op	     919 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_256MB_FadvisEnabled-8       	    3384	    362387 ns/op	     920 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_256MB_FadvisDisabled-8      	    3219	    378640 ns/op	     921 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_256MB_FadvisDisabled-8      	    3115	    375739 ns/op	     920 B/op	      10 allocs/op
+BenchmarkWritePerformance/Size_256MB_FadvisDisabled-8      	    3454	    354312 ns/op	     919 B/op	      10 allocs/op
+BenchmarkReadPerformance/Size_1MB_FadvisEnabled-8          	    3133	    397946 ns/op	 1057163 B/op	       5 allocs/op
+BenchmarkReadPerformance/Size_1MB_FadvisEnabled-8          	    3148	    637854 ns/op	 1057160 B/op	       5 allocs/op
+BenchmarkReadPerformance/Size_1MB_FadvisEnabled-8          	    5934	    213798 ns/op	 1057154 B/op	       5 allocs/op
+BenchmarkReadPerformance/Size_1MB_FadvisDisabled-8         	    4964	    213663 ns/op	 1057168 B/op	       5 allocs/op
+BenchmarkReadPerformance/Size_1MB_FadvisDisabled-8         	    5922	    203286 ns/op	 1057153 B/op	       5 allocs/op
+BenchmarkReadPerformance/Size_1MB_FadvisDisabled-8         	    5361	    244943 ns/op	 1057170 B/op	       5 allocs/op
+BenchmarkReadPerformance/Size_256MB_FadvisEnabled-8        	      14	  77309652 ns/op	268444101 B/op	       7 allocs/op
+BenchmarkReadPerformance/Size_256MB_FadvisEnabled-8        	      15	  75852672 ns/op	268444107 B/op	       7 allocs/op
+BenchmarkReadPerformance/Size_256MB_FadvisEnabled-8        	      15	  75199253 ns/op	268444100 B/op	       7 allocs/op
+BenchmarkReadPerformance/Size_256MB_FadvisDisabled-8       	      13	  77757753 ns/op	268444110 B/op	       7 allocs/op
+BenchmarkReadPerformance/Size_256MB_FadvisDisabled-8       	      15	  74935433 ns/op	268444139 B/op	       7 allocs/op
+BenchmarkReadPerformance/Size_256MB_FadvisDisabled-8       	      14	  76628467 ns/op	268444108 B/op	       7 allocs/op
+BenchmarkMultipleReads/MultipleReads_FadvisEnabled-8       	       3	 361528111 ns/op	1342220536 B/op	      36 allocs/op
+BenchmarkMultipleReads/MultipleReads_FadvisEnabled-8       	       3	 370999931 ns/op	1342220472 B/op	      35 allocs/op
+BenchmarkMultipleReads/MultipleReads_FadvisEnabled-8       	       3	 352735264 ns/op	1342220568 B/op	      36 allocs/op
+BenchmarkMultipleReads/MultipleReads_FadvisDisabled-8      	       3	 378258389 ns/op	1342220472 B/op	      35 allocs/op
+BenchmarkMultipleReads/MultipleReads_FadvisDisabled-8      	       3	 366394931 ns/op	1342220664 B/op	      37 allocs/op
+BenchmarkMultipleReads/MultipleReads_FadvisDisabled-8      	       3	 380747445 ns/op	1342220600 B/op	      36 allocs/op
+BenchmarkMixedWorkload/MixedWorkload_FadvisEnabled-8       	      10	1238228176 ns/op	268447235 B/op	      30 allocs/op
+BenchmarkMixedWorkload/MixedWorkload_FadvisEnabled-8       	       6	 184483222 ns/op	268447114 B/op	      29 allocs/op
+BenchmarkMixedWorkload/MixedWorkload_FadvisEnabled-8       	       6	 190996396 ns/op	268447200 B/op	      30 allocs/op
+BenchmarkMixedWorkload/MixedWorkload_FadvisDisabled-8      	       7	 177829262 ns/op	268447245 B/op	      31 allocs/op
+BenchmarkMixedWorkload/MixedWorkload_FadvisDisabled-8      	       1	1023467126 ns/op	268447328 B/op	      32 allocs/op
+BenchmarkMixedWorkload/MixedWorkload_FadvisDisabled-8      	       4	 319474834 ns/op	268447328 B/op	      32 allocs/op
+BenchmarkConcurrentOperations/ConcurrentReads-8            	       1	2078685876 ns/op	2097238528 B/op	      83 allocs/op
+BenchmarkConcurrentOperations/ConcurrentReads-8            	       1	2251266459 ns/op	2097238432 B/op	      82 allocs/op
+BenchmarkConcurrentOperations/ConcurrentReads-8            	       1	1527608459 ns/op	2097238720 B/op	      85 allocs/op
+BenchmarkConcurrentMerges/ConcurrentMerges-8               	      13	  80556712 ns/op	  111966 B/op	      41 allocs/op
+BenchmarkConcurrentMerges/ConcurrentMerges-8               	      25	  45435095 ns/op	   52903 B/op	      40 allocs/op
+BenchmarkConcurrentMerges/ConcurrentMerges-8               	      32	  48565134 ns/op	   43680 B/op	      39 allocs/op
+BenchmarkThresholdAdaptation/SmallFileNormalMemory-8       	      10	 112054229 ns/op	10494398 B/op	       7 allocs/op
+BenchmarkThresholdAdaptation/SmallFileNormalMemory-8       	       9	 111555282 ns/op	10494389 B/op	       7 allocs/op
+BenchmarkThresholdAdaptation/SmallFileNormalMemory-8       	       9	 112176213 ns/op	10494410 B/op	       7 allocs/op
+BenchmarkThresholdAdaptation/LargeFileHighMemoryPressure-8 	       4	 288145834 ns/op	209742512 B/op	      96 allocs/op
+BenchmarkThresholdAdaptation/LargeFileHighMemoryPressure-8 	       4	 311006584 ns/op	209742512 B/op	      96 allocs/op
+BenchmarkThresholdAdaptation/LargeFileHighMemoryPressure-8 	       4	 308036000 ns/op	209742512 B/op	      96 allocs/op
+BenchmarkMergeOperations/WithoutFadvise-8                  	       1	4861176419 ns/op	  804312 B/op	      95 allocs/op
+BenchmarkMergeOperations/WithoutFadvise-8                  	       1	4051911086 ns/op	  541672 B/op	      89 allocs/op
+BenchmarkMergeOperations/WithoutFadvise-8                  	       1	3284313252 ns/op	  541848 B/op	      91 allocs/op
+BenchmarkMergeOperations/WithFadvise-8                     	       1	5159818128 ns/op	  288328 B/op	     127 allocs/op
+BenchmarkMergeOperations/WithFadvise-8                     	       1	3036553709 ns/op	  812408 B/op	     127 allocs/op
+BenchmarkMergeOperations/WithFadvise-8                     	       1	3206670835 ns/op	  550568 B/op	     129 allocs/op
+BenchmarkSequentialMergeOperations/WithoutFadvise-8        	       1	3518108043 ns/op	 1086360 B/op	     147 allocs/op
+BenchmarkSequentialMergeOperations/WithoutFadvise-8        	       1	3891428335 ns/op	  824344 B/op	     147 allocs/op
+BenchmarkSequentialMergeOperations/WithoutFadvise-8        	       1	3848166793 ns/op	  824376 B/op	     147 allocs/op
+BenchmarkSequentialMergeOperations/WithFadvise-8           	       1	5990321961 ns/op	  832728 B/op	     182 allocs/op
+BenchmarkSequentialMergeOperations/WithFadvise-8           	       1	5236935628 ns/op	  308048 B/op	     175 allocs/op
+BenchmarkSequentialMergeOperations/WithFadvise-8           	       1	3912231043 ns/op	 1095312 B/op	     187 allocs/op
+PASS
+ok  	github.com/apache/skywalking-banyandb/test/stress/fadvis	149.778s

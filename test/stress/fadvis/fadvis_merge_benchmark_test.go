@@ -55,8 +55,8 @@ func BenchmarkMergeOperations(b *testing.B) {
 
 	// Run benchmark with fadvise enabled
 	b.Run("WithFadvise", func(b *testing.B) {
-		// Set the fadvis threshold to enable it for our test files
-		setTestThreshold(DefaultThreshold)
+		// Set a realistic fadvis threshold based on system memory
+		setRealisticThreshold()
 		for i := 0; i < b.N; i++ {
 			outputFile := filepath.Join(testDir, fmt.Sprintf("merged_fadvis_%d", i))
 			// Use the simulateMergeOperation from test_helpers.go which uses fs package
@@ -97,8 +97,8 @@ func BenchmarkSequentialMergeOperations(b *testing.B) {
 
 	// Run benchmark with fadvise enabled
 	b.Run("WithFadvise", func(b *testing.B) {
-		// Set the fadvis threshold to enable it for our test files
-		setTestThreshold(DefaultThreshold)
+		// Set a realistic fadvis threshold based on system memory
+		setRealisticThreshold()
 		for i := 0; i < b.N; i++ {
 			// Perform multiple sequential merge operations
 			for j := 0; j < 3; j++ {

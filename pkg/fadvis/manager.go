@@ -26,6 +26,7 @@ import (
 	"github.com/dustin/go-humanize"
 
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -156,4 +157,7 @@ func (m *Manager) ShouldApplyFadvis(fileSize int64) bool {
 func SetMemoryProtector(mp *protector.Memory) {
 	manager := NewManager(mp)
 	SetManager(manager)
+	
+	// Register the manager as a ThresholdProvider with the fs package
+	fs.SetThresholdProvider(manager)
 }

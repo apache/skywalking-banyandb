@@ -84,19 +84,16 @@ func BenchmarkThresholdAdaptation(b *testing.B) {
 	tests := []struct {
 		name           string
 		fileSize       int64
-		threshold      int64
 		memoryPressure string
 	}{
 		{
-			name:           "SmallFileHighThreshold",
+			name:           "SmallFileNormalMemory",
 			fileSize:       10 * 1024 * 1024,
-			threshold:      100 * 1024 * 1024,
 			memoryPressure: "normal",
 		},
 		{
-			name:           "LargeFileLowThreshold",
+			name:           "LargeFileHighMemoryPressure",
 			fileSize:       200 * 1024 * 1024,
-			threshold:      50 * 1024 * 1024,
 			memoryPressure: "high",
 		},
 	}
@@ -106,8 +103,8 @@ func BenchmarkThresholdAdaptation(b *testing.B) {
 			tempDir, cleanup := setupTestEnvironment(b)
 			defer cleanup()
 
-			// Set the threshold based on memory pressure
-			setTestThreshold(tt.threshold)
+			// Set a realistic fadvis threshold based on system memory
+			setRealisticThreshold()
 
 			// Create test file
 			testFile := filepath.Join(tempDir, "test_file")
@@ -117,10 +114,15 @@ func BenchmarkThresholdAdaptation(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				if tt.memoryPressure == "high" {
-					// Simulate memory pressure by lowering threshold
-					setTestThreshold(40 * 1024 * 1024)
+					// Simulate high memory pressure by setting a lower threshold
+					// In real system, this would be automatically adjusted based on memory pressure
+					// Here we simulate by manually setting a lower threshold (25% of normal)
+					normalThreshold := calculateRealisticThreshold()
+					lowThreshold := normalThreshold / 4 // 25% of normal threshold
+					setTestThreshold(lowThreshold)
 					time.Sleep(100 * time.Millisecond)
-					setTestThreshold(tt.threshold)
+					// Reset to normal threshold
+					setRealisticThreshold()
 				}
 				time.Sleep(100 * time.Millisecond)
 
