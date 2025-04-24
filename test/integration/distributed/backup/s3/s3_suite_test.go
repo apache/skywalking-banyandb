@@ -18,41 +18,15 @@
 package s3
 
 import (
-	"context"
-	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/onsi/gomega/gleak"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/pool"
-	"github.com/apache/skywalking-banyandb/pkg/test"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
-	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
-	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	test_cases "github.com/apache/skywalking-banyandb/test/cases"
-	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
+	"github.com/apache/skywalking-banyandb/test/integration/distributed/backup"
 	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
 
@@ -61,142 +35,42 @@ func TestBackup(t *testing.T) {
 	ginkgo.RunSpecs(t, "Distributed Backup Suite")
 }
 
-var (
-	connection *grpc.ClientConn
-	dir        string
-	deferFunc  func()
-	goods      []gleak.Goroutine
-	dataAddr   string
-	destDir    string
-	fs         remote.FS
-)
+var testVars *backup.CommonTestVars
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
-	gomega.Expect(logger.Init(logger.Logging{
-		Env:   "dev",
-		Level: flags.LogLevel,
-	})).To(gomega.Succeed())
-	goods = gleak.Goroutines()
-	ginkgo.By("Starting etcd server")
-	ports, err := test.AllocateFreePorts(2)
+	var err error
+	testVars, err = backup.InitializeTestSuite()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	var spaceDef func()
-	dir, spaceDef, err = test.NewSpace()
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	destDir, err = os.MkdirTemp("", "backup-restore-dest")
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-	server, err := embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(dir))
-	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-	<-server.ReadyNotify()
-	ginkgo.By("Loading schema")
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{ep}),
-	)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	defer schemaRegistry.Close()
-	ctx := context.Background()
-	test_stream.PreloadSchema(ctx, schemaRegistry)
-	test_measure.PreloadSchema(ctx, schemaRegistry)
-	ginkgo.By("Starting data node 0")
-	var closeDataNode0 func()
-	dataAddr, dir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep)
-	ginkgo.By("Starting liaison node")
-	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
-	ginkgo.By("Initializing test cases")
-	ns := timestamp.NowMilli().UnixNano()
-	now := time.Unix(0, ns-ns%int64(time.Minute))
-	test_cases.Initialize(liaisonAddr, now)
-	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	defer conn.Close()
-	gClient := databasev1.NewGroupRegistryServiceClient(conn)
-	_, err = gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{
-		Group: &commonv1.Group{
-			Metadata: &commonv1.Metadata{Name: "g"},
-			Catalog:  commonv1.Catalog_CATALOG_PROPERTY,
-			ResourceOpts: &commonv1.ResourceOpts{
-				ShardNum: 2,
-			},
-		},
-	})
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	pClient := databasev1.NewPropertyRegistryServiceClient(conn)
-	_, err = pClient.Create(context.Background(), &databasev1.PropertyRegistryServiceCreateRequest{
-		Property: &databasev1.Property{
-			Metadata: &commonv1.Metadata{
-				Group: "g",
-				Name:  "p",
-			},
-			Tags: []*databasev1.TagSpec{
-				{Name: "t1", Type: databasev1.TagType_TAG_TYPE_STRING},
-				{Name: "t2", Type: databasev1.TagType_TAG_TYPE_STRING},
-			},
-		},
-	})
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	client := propertyv1.NewPropertyServiceClient(conn)
-	md := &commonv1.Metadata{
-		Name:  "p",
-		Group: "g",
-	}
-	resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
-		Metadata: md,
-		Id:       "1",
-		Tags: []*modelv1.Tag{
-			{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
-			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
-		},
-	}})
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	gomega.Expect(resp.Created).To(gomega.BeTrue())
-	gomega.Expect(resp.TagsNum).To(gomega.Equal(uint32(2)))
-	deferFunc = func() {
-		closerLiaisonNode()
-		closeDataNode0()
-		_ = server.Close()
-		<-server.StopNotify()
-		spaceDef()
-	}
+
 	err = dockertesthelper.InitMinIOContainer()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	fs, err = aws.NewFS(filepath.Join(dockertesthelper.BucketName, destDir), &remote.FsConfig{
+
+	fs, err := aws.NewFS(filepath.Join(dockertesthelper.BucketName, testVars.DestDir), &remote.FsConfig{
 		S3ConfigFilePath:     dockertesthelper.S3ConfigPath,
 		S3CredentialFilePath: dockertesthelper.S3CredentialsPath,
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	return []byte(dataAddr)
+	testVars.FS = fs
+
+	return []byte(testVars.DataAddr)
 }, func(address []byte) {
 	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	testVars.Connection, err = backup.SetupClientConnection(string(address))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	casesbackup.SharedContext = helpers.BackupSharedContext{
-		DataAddr:   dataAddr,
-		Connection: connection,
-		RootDir:    dir,
-		DestDir:    destDir,
-		DestURL:    "s3:///" + dockertesthelper.BucketName + destDir,
-		FS:         fs,
-		S3Args: []string{
+
+	backup.SetupSharedContext(testVars,
+		"s3:///"+dockertesthelper.BucketName+testVars.DestDir,
+		[]string{
 			"--s3-credential-file", dockertesthelper.S3CredentialsPath,
 			"--s3-config-file", dockertesthelper.S3ConfigPath,
-		},
-	}
+		})
 })
 
 var _ = ginkgo.SynchronizedAfterSuite(func() {
-	if connection != nil {
-		gomega.Expect(connection.Close()).To(gomega.Succeed())
+	if testVars.Connection != nil {
+		gomega.Expect(testVars.Connection.Close()).To(gomega.Succeed())
 	}
 	dockertesthelper.CloseMinioContainer()
 }, func() {
-	if deferFunc != nil {
-		deferFunc()
-	}
-	gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+	backup.TeardownSuite(testVars)
 })
