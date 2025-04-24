@@ -19,11 +19,13 @@ package cmd
 
 import (
 	"fmt"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/version"
+
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
+
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
 const topnSchemaPath = "/api/v1/topn-agg/schema"

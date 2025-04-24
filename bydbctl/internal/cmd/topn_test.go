@@ -19,6 +19,16 @@ package cmd_test
 
 import (
 	"fmt"
+	"strings"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
+	"github.com/zenizh/go-capturer"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
@@ -27,14 +37,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
-	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"strings"
-	"time"
 )
 
 var _ = Describe("Topn Schema Operation", func() {
@@ -128,7 +130,7 @@ lru_size: 10`))
 	})
 
 	It("get topn schema", func() {
-		rootCmd.SetArgs([]string{"measure", "get", "-g", "group1", "-n", "name2"})
+		rootCmd.SetArgs([]string{"topn", "get", "-g", "group1", "-n", "name2"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -241,19 +243,17 @@ var _ = Describe("Topn Data Query", func() {
 		addr = httpSchema + addr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
-	})
 
-	It("query all topn data", func() {
 		conn, err := grpclib.NewClient(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
 		)
 		Expect(err).NotTo(HaveOccurred())
-		cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
+		cases_measure_data.Write(conn, "service_instance_cpm_minute", "sw_metric", "service_instance_cpm_minute_data.json", now, interval)
 		rootCmd.SetArgs([]string{"measure", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
-name: service_cpm_minute
+name: service_instance_cpm_minute
 groups: ["sw_metric"]
 timeRange:
   begin: %s
@@ -262,7 +262,9 @@ tagProjection:
   tagFamilies:
     - name: default
       tags:
-        - id`, startStr, endStr)))
+        - id
+        - entity_id
+        - service_id`, startStr, endStr)))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				Expect(err).NotTo(HaveOccurred())
@@ -277,30 +279,9 @@ tagProjection:
 			GinkgoWriter.Println(resp)
 			return len(resp.DataPoints)
 		}, flags.EventuallyTimeout).Should(Equal(6))
+	})
 
-		rootCmd.SetArgs([]string{"topn", "create", "-a", addr, "-f", "-"})
-		createTopn := func() string {
-			rootCmd.SetIn(strings.NewReader(`
-metadata:
-  name: service_instance_cpm_minute_top_bottom_100
-  group: sw_metric
-source_measure:
-  name: service_cpm_minute
-  group: sw_metric
-field_name: value
-field_value_sort: SORT_UNSPECIFIED
-group_by_tag_names:
-  - id
-counters_number: 100
-lru_size: 10`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
-		}
-		Eventually(createTopn, flags.EventuallyTimeout).Should(ContainSubstring("topn sw_metric.service_instance_cpm_minute_top_bottom_100 is created"))
+	It("query all topn data", func() {
 		rootCmd.SetArgs([]string{"topn", "query", "-a", addr, "-f", "-"})
 		issue1 := func() string {
 			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
@@ -324,8 +305,8 @@ fieldValueSort: 1`, startStr, endStr)))
 			resp := new(measurev1.TopNResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
-			return len(resp.Lists)
-		}, flags.EventuallyTimeout).Should(Equal(6))
+			return len(resp.Lists[0].Items)
+		}, flags.EventuallyTimeout).Should(Equal(3))
 	})
 
 	DescribeTable("query topn data with time range flags", func(timeArgs ...string) {
@@ -336,30 +317,7 @@ fieldValueSort: 1`, startStr, endStr)))
 		Expect(err).NotTo(HaveOccurred())
 		now := timestamp.NowMilli()
 		interval := time.Minute
-		cases_measure_data.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
-		rootCmd.SetArgs([]string{"topn", "create", "-a", addr, "-f", "-"})
-		createTopn := func() string {
-			rootCmd.SetIn(strings.NewReader(`
-metadata:
-  name: service_instance_cpm_minute_top_bottom_100
-  group: sw_metric
-source_measure:
-  name: service_cpm_minute
-  group: sw_metric
-field_name: value
-field_value_sort: SORT_UNSPECIFIED
-group_by_tag_names:
-  - id
-counters_number: 100
-lru_size: 10`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
-		}
-		Eventually(createTopn, flags.EventuallyTimeout).Should(ContainSubstring("topn sw_metric.service_instance_cpm_minute_top_bottom_100 is created"))
+		cases_measure_data.Write(conn, "service_instance_cpm_minute", "sw_metric", "service_instance_cpm_minute_data.json", now, interval)
 
 		args := []string{"topn", "query", "-a", addr}
 		args = append(args, timeArgs...)
@@ -384,8 +342,8 @@ fieldValueSort: 1`))
 			resp := new(measurev1.TopNResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
-			return len(resp.Lists)
-		}, flags.EventuallyTimeout).Should(Equal(6))
+			return len(resp.Lists[0].Items)
+		}, flags.EventuallyTimeout).Should(Equal(3))
 	},
 		Entry("relative start", "--start", "-30m"),
 		Entry("relative end", "--end", "0m"),
