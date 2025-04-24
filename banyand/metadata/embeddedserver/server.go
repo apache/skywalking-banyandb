@@ -21,18 +21,24 @@ package embeddedserver
 import (
 	"context"
 	"errors"
-	"strings"
-
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/robfig/cron/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"strings"
+	"time"
 )
 
 type server struct {
 	metadata.Service
 	metaServer              embeddedetcd.Server
+	scheduler               *timestamp.Scheduler
 	rootDir                 string
+	defragCron              string
 	autoCompactionMode      string
 	autoCompactionRetention string
 	listenClientURL         []string
@@ -53,6 +59,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
 	fs.StringVar(&s.autoCompactionMode, "etcd-auto-compaction-mode", "periodic", "auto compaction mode")
 	fs.StringVar(&s.autoCompactionRetention, "etcd-auto-compaction-retention", "1h", "auto compaction retention")
+	fs.StringVar(&s.defragCron, "etcd-defrag-cron", "@daily", "defragmentation to free up disk space")
 	fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
 	fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
 	fs.VarP(&s.quotaBackendBytes, "quota-backend-bytes", "", "Quota for backend storage")
@@ -90,6 +97,7 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.metaServer, err = embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
 		embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention),
 		embeddedetcd.QuotaBackendBytes(int64(s.quotaBackendBytes)))
+	s.RegisterDefrag()
 	if err != nil {
 		return err
 	}
@@ -98,6 +106,7 @@ func (s *server) PreRun(ctx context.Context) error {
 }
 
 func (s *server) Serve() run.StopNotify {
+	s.RegisterDefrag()
 	_ = s.Service.Serve()
 	return s.metaServer.StoppingNotify()
 }
@@ -119,4 +128,38 @@ func NewService(_ context.Context) (metadata.Service, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *server) RegisterDefrag() {
+	etcdLogger := logger.GetLogger().Named("etcd-server")
+
+	if s.scheduler == nil {
+		s.scheduler = timestamp.NewScheduler(etcdLogger, timestamp.NewClock())
+	}
+
+	defrag := func(_ time.Time, _ *logger.Logger) bool {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints: s.listenClientURL,
+		})
+		if err != nil {
+			etcdLogger.Error().Err(err).Msg("failed to create client")
+			return false
+		}
+		for _, endpoint := range s.listenClientURL {
+			_, err := cli.Defragment(context.Background(), endpoint)
+			if err != nil {
+				etcdLogger.Error().Err(err).Msg("failed to execute defragmentation")
+				return false
+			}
+		}
+		if err != nil {
+			etcdLogger.Error().Err(err).Msg("failed to execute defragmentation")
+			return false
+		}
+		return true
+	}
+	err := s.scheduler.Register("defrag", cron.Descriptor, s.defragCron, defrag)
+	if err != nil {
+		etcdLogger.Error().Err(err).Msg("failed to register defragmentation")
+	}
 }
