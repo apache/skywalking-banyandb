@@ -21,22 +21,25 @@ package embeddedserver
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
+
+	"github.com/robfig/cron/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
+
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/robfig/cron/v3"
-	clientv3 "go.etcd.io/etcd/client/v3"
-	"strings"
-	"time"
 )
 
 type server struct {
 	metadata.Service
 	metaServer              embeddedetcd.Server
 	scheduler               *timestamp.Scheduler
+	ecli                    *clientv3.Client
 	rootDir                 string
 	defragCron              string
 	autoCompactionMode      string
@@ -97,7 +100,6 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.metaServer, err = embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
 		embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention),
 		embeddedetcd.QuotaBackendBytes(int64(s.quotaBackendBytes)))
-	s.RegisterDefrag()
 	if err != nil {
 		return err
 	}
@@ -106,13 +108,21 @@ func (s *server) PreRun(ctx context.Context) error {
 }
 
 func (s *server) Serve() run.StopNotify {
-	s.RegisterDefrag()
+	s.RegisterDefrag(context.Background())
 	_ = s.Service.Serve()
 	return s.metaServer.StoppingNotify()
 }
 
 func (s *server) GracefulStop() {
 	s.Service.GracefulStop()
+	if s.ecli != nil {
+		_ = s.ecli.Close()
+	}
+	if s.scheduler != nil {
+		if !s.scheduler.Closed() {
+			s.scheduler.Close()
+		}
+	}
 	if s.metaServer != nil {
 		s.metaServer.Close()
 		<-s.metaServer.StopNotify()
@@ -130,35 +140,36 @@ func NewService(_ context.Context) (metadata.Service, error) {
 	return s, nil
 }
 
-func (s *server) RegisterDefrag() {
-	etcdLogger := logger.GetLogger().Named("etcd-server")
+func (s *server) RegisterDefrag(ctx context.Context) {
+	var (
+		err        error
+		etcdLogger = logger.GetLogger().Named("etcd-server")
+		defrag     = func(_ time.Time, _ *logger.Logger) bool {
+			for _, endpoint := range s.listenClientURL {
+				_, err = s.ecli.Defragment(ctx, endpoint)
+				if err != nil {
+					etcdLogger.Error().Err(err).Msg("failed to execute defragmentation")
+					return false
+				}
+			}
+			return true
+		}
+	)
 
-	if s.scheduler == nil {
-		s.scheduler = timestamp.NewScheduler(etcdLogger, timestamp.NewClock())
-	}
-
-	defrag := func(_ time.Time, _ *logger.Logger) bool {
-		cli, err := clientv3.New(clientv3.Config{
+	if s.ecli == nil {
+		s.ecli, err = clientv3.New(clientv3.Config{
 			Endpoints: s.listenClientURL,
 		})
 		if err != nil {
 			etcdLogger.Error().Err(err).Msg("failed to create client")
-			return false
+			return
 		}
-		for _, endpoint := range s.listenClientURL {
-			_, err := cli.Defragment(context.Background(), endpoint)
-			if err != nil {
-				etcdLogger.Error().Err(err).Msg("failed to execute defragmentation")
-				return false
-			}
-		}
-		if err != nil {
-			etcdLogger.Error().Err(err).Msg("failed to execute defragmentation")
-			return false
-		}
-		return true
 	}
-	err := s.scheduler.Register("defrag", cron.Descriptor, s.defragCron, defrag)
+	if s.scheduler == nil {
+		s.scheduler = timestamp.NewScheduler(etcdLogger, timestamp.NewClock())
+	}
+
+	err = s.scheduler.Register("defrag", cron.Descriptor, s.defragCron, defrag)
 	if err != nil {
 		etcdLogger.Error().Err(err).Msg("failed to register defragmentation")
 	}
