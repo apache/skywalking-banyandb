@@ -243,7 +243,9 @@ var _ = Describe("Topn Data Query", func() {
 		addr = httpSchema + addr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
+	})
 
+	It("query all topn data", func() {
 		conn, err := grpclib.NewClient(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
@@ -279,9 +281,7 @@ tagProjection:
 			GinkgoWriter.Println(resp)
 			return len(resp.DataPoints)
 		}, flags.EventuallyTimeout).Should(Equal(6))
-	})
 
-	It("query all topn data", func() {
 		rootCmd.SetArgs([]string{"topn", "query", "-a", addr, "-f", "-"})
 		issue1 := func() string {
 			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
