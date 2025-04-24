@@ -108,12 +108,16 @@
         const arr = tagEditorRef.value.getTagFamilies();
         const tagFamilies = [];
         const entity = [];
+        const shardingKey = [];
         arr.forEach((item) => {
           const index = tagFamilies.findIndex((tagItem) => {
             return tagItem.name === item.tagFamily;
           });
           if (item.entity === true) {
             entity.push(item.tag);
+          }
+          if (item.shardingKey === true) {
+            shardingKey.push(item.tag);
           }
           if (index >= 0) {
             let obj = {
@@ -136,11 +140,12 @@
           tagFamilies.push(obj);
         });
         if (entity.length === 0) {
-          return ElMessage({
+          ElMessage({
             message: 'At least one Entity is required',
             type: 'error',
             duration: 5000,
           });
+          return;
         }
         const form = {
           metadata: {
@@ -151,6 +156,9 @@
           tagFamilies: tagFamilies,
           entity: {
             tagNames: entity,
+          },
+          shardingKey: {
+            tagNames: shardingKey,
           },
         };
         if (data.type === 'measure') {
@@ -225,18 +233,23 @@
             data.form.indexMode = res.data[String(data.type)].indexMode;
             const tagFamilies = res.data[String(data.type)].tagFamilies;
             const entity = res.data[String(data.type)].entity.tagNames;
+            const shardingKey = res.data[String(data.type)].shardingKey?.tagNames;
             const arr = [];
             tagFamilies.forEach((item) => {
               item.tags.forEach((tag) => {
-                let index = entity.findIndex((entityItem) => {
+                const entityIndex = entity.findIndex((entityItem) => {
                   return entityItem === tag.name;
                 });
-                let obj = {
+                const shardingKeyIndex = shardingKey.findIndex((shardingKeyItem) => {
+                  return shardingKeyItem === tag.name;
+                });
+                const obj = {
                   tagFamily: item.name,
                   tag: tag.name,
                   type: tag.type,
                   indexedOnly: tag.indexedOnly,
-                  entity: index >= 0 ? true : false,
+                  entity: entityIndex >= 0 ? true : false,
+                  shardingKey: shardingKeyIndex >= 0 ? true : false,
                 };
                 arr.push(obj);
               });

@@ -81,6 +81,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		server    embeddedetcd.Server
 		registry  schema.Registry
 		defFn     func()
+		endpoints []string
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -98,7 +99,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		if err != nil {
 			panic("fail to find free ports")
 		}
-		endpoints := []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
+		endpoints = []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
 		server, err = embeddedetcd.NewServer(
 			embeddedetcd.ConfigureListener(endpoints, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
 			embeddedetcd.RootDir(path))
@@ -172,7 +173,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		}
 
 		// Start the watcher
-		watcher := registry.NewWatcher("test", schema.KindMeasure)
+		watcher := registry.NewWatcher("test", schema.KindMeasure, 0)
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {
@@ -191,7 +192,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		}, flags.EventuallyTimeout).Should(gomega.BeTrue())
 	})
 	ginkgo.It("should handle watch events", func() {
-		watcher := registry.NewWatcher("test", schema.KindStream)
+		watcher := registry.NewWatcher("test", schema.KindStream, 0)
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {
@@ -316,7 +317,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		watcher := registry.NewWatcher("test", schema.KindMeasure, schema.CheckInterval(1*time.Second))
+		watcher := registry.NewWatcher("test", schema.KindMeasure, 0, schema.CheckInterval(1*time.Second))
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {
@@ -331,7 +332,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 	})
 
 	ginkgo.It("should detect deletions", func() {
-		watcher := registry.NewWatcher("test", schema.KindMeasure, schema.CheckInterval(1*time.Second))
+		watcher := registry.NewWatcher("test", schema.KindMeasure, 0, schema.CheckInterval(1*time.Second))
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {
@@ -395,12 +396,12 @@ var _ = ginkgo.Describe("Watcher", func() {
 
 		gomega.Eventually(func() int {
 			return int(mockedObj.deleteCalledNum.Load())
-		}, 5*time.Second).Should(gomega.Equal(1))
+		}, flags.EventuallyTimeout).Should(gomega.Equal(1))
 		gomega.Expect(mockedObj.Data()).NotTo(gomega.HaveKey(measureName))
 	})
 
 	ginkgo.It("should recover state after compaction", func() {
-		watcher := registry.NewWatcher("test", schema.KindMeasure, schema.CheckInterval(1*time.Hour))
+		watcher := registry.NewWatcher("test", schema.KindMeasure, 0, schema.CheckInterval(1*time.Hour))
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {
@@ -487,6 +488,74 @@ var _ = ginkgo.Describe("Watcher", func() {
 
 		gomega.Eventually(func() int {
 			return int(mockedObj.addOrUpdateCalledNum.Load())
-		}, 5*time.Second).Should(gomega.BeNumerically(">=", 2))
+		}, flags.EventuallyTimeout).Should(gomega.BeNumerically(">=", 2))
+	})
+
+	ginkgo.It("should not load node with revision -1", func() {
+		err := registry.RegisterNode(context.Background(), &databasev1.Node{
+			Metadata: &commonv1.Metadata{
+				Name: "testnode",
+			},
+			Roles: []databasev1.Role{
+				databasev1.Role_ROLE_DATA,
+			},
+		}, false)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		nn, err := registry.ListNode(context.Background(), databasev1.Role_ROLE_DATA)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(len(nn)).To(gomega.Equal(1))
+		gomega.Expect(nn[0].Metadata.Name).To(gomega.Equal("testnode"))
+
+		err = registry.Close()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		// Recreate registry for this test
+		registry, err = schema.NewEtcdSchemaRegistry(
+			schema.Namespace("test"),
+			schema.ConfigureServerEndpoints(endpoints),
+		)
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		watcher := registry.NewWatcher("test", schema.KindNode, -1, schema.CheckInterval(1*time.Hour))
+		watcher.AddHandler(mockedObj)
+		watcher.Start()
+		ginkgo.DeferCleanup(func() {
+			watcher.Close()
+		})
+		gomega.Consistently(func() int {
+			return int(mockedObj.addOrUpdateCalledNum.Load())
+		}, flags.ConsistentlyTimeout).Should(gomega.BeZero())
+	})
+
+	ginkgo.It("should load and delete node with revision 0", func() {
+		// Register node again for this test
+		err := registry.RegisterNode(context.Background(), &databasev1.Node{
+			Metadata: &commonv1.Metadata{
+				Name: "testnode",
+			},
+			Roles: []databasev1.Role{
+				databasev1.Role_ROLE_DATA,
+			},
+		}, false)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		err = registry.Close()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		// Recreate registry for this test
+		registry, err = schema.NewEtcdSchemaRegistry(
+			schema.Namespace("test"),
+			schema.ConfigureServerEndpoints(endpoints),
+		)
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		watcher := registry.NewWatcher("test", schema.KindNode, 0, schema.CheckInterval(1*time.Hour))
+		watcher.AddHandler(mockedObj)
+		watcher.Start()
+		ginkgo.DeferCleanup(func() {
+			watcher.Close()
+		})
+		gomega.Eventually(func() int {
+			return int(mockedObj.addOrUpdateCalledNum.Load())
+		}, flags.EventuallyTimeout).Should(gomega.Equal(1))
+		gomega.Eventually(func() int {
+			return int(mockedObj.deleteCalledNum.Load())
+		}, flags.EventuallyTimeout).Should(gomega.Equal(1))
+		gomega.Expect(mockedObj.Data()).To(gomega.BeEmpty())
 	})
 })
