@@ -60,12 +60,12 @@ func (s *server) Role() databasev1.Role {
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
 	fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
-	fs.StringVar(&s.autoCompactionMode, "etcd-auto-compaction-mode", "periodic", "auto compaction mode")
-	fs.StringVar(&s.autoCompactionRetention, "etcd-auto-compaction-retention", "1h", "auto compaction retention")
-	fs.StringVar(&s.defragCron, "etcd-defrag-cron", "@daily", "defragmentation to free up disk space")
+	fs.StringVar(&s.autoCompactionMode, "etcd-auto-compaction-mode", "periodic", "auto compaction mode: 'periodic' or 'revision'")
+	fs.StringVar(&s.autoCompactionRetention, "etcd-auto-compaction-retention", "1h", "auto compaction retention: e.g. '1h', '30m', '24h' for periodic; '1000' for revision")
+	fs.StringVar(&s.defragCron, "etcd-defrag-cron", "@daily", "defragmentation cron: e.g. '@daily', '@hourly', '0 0 * * 0', '0 */6 * * *'")
 	fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
 	fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
-	fs.VarP(&s.quotaBackendBytes, "quota-backend-bytes", "", "Quota for backend storage")
+	fs.VarP(&s.quotaBackendBytes, "etcd-quota-backend-bytes", "", "Quota for backend storage")
 	return fs
 }
 
@@ -108,21 +108,21 @@ func (s *server) PreRun(ctx context.Context) error {
 }
 
 func (s *server) Serve() run.StopNotify {
-	s.RegisterDefrag(context.Background())
 	_ = s.Service.Serve()
+	s.RegisterDefrag()
 	return s.metaServer.StoppingNotify()
 }
 
 func (s *server) GracefulStop() {
-	s.Service.GracefulStop()
-	if s.ecli != nil {
-		_ = s.ecli.Close()
-	}
 	if s.scheduler != nil {
 		if !s.scheduler.Closed() {
 			s.scheduler.Close()
 		}
 	}
+	if s.ecli != nil {
+		_ = s.ecli.Close()
+	}
+	s.Service.GracefulStop()
 	if s.metaServer != nil {
 		s.metaServer.Close()
 		<-s.metaServer.StopNotify()
@@ -140,12 +140,14 @@ func NewService(_ context.Context) (metadata.Service, error) {
 	return s, nil
 }
 
-func (s *server) RegisterDefrag(ctx context.Context) {
+func (s *server) RegisterDefrag() {
 	var (
 		err        error
 		etcdLogger = logger.GetLogger().Named("etcd-server")
 		defrag     = func(_ time.Time, _ *logger.Logger) bool {
 			for _, endpoint := range s.listenClientURL {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
 				_, err = s.ecli.Defragment(ctx, endpoint)
 				if err != nil {
 					etcdLogger.Error().Err(err).Msg("failed to execute defragmentation")
@@ -154,22 +156,19 @@ func (s *server) RegisterDefrag(ctx context.Context) {
 			}
 			return true
 		}
+		parser = cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor
 	)
 
-	if s.ecli == nil {
-		s.ecli, err = clientv3.New(clientv3.Config{
-			Endpoints: s.listenClientURL,
-		})
-		if err != nil {
-			etcdLogger.Error().Err(err).Msg("failed to create client")
-			return
-		}
+	s.ecli, err = clientv3.New(clientv3.Config{
+		Endpoints: s.listenClientURL,
+	})
+	if err != nil {
+		etcdLogger.Error().Err(err).Msg("failed to create client")
+		return
 	}
-	if s.scheduler == nil {
-		s.scheduler = timestamp.NewScheduler(etcdLogger, timestamp.NewClock())
-	}
+	s.scheduler = timestamp.NewScheduler(etcdLogger, timestamp.NewClock())
 
-	err = s.scheduler.Register("defrag", cron.Descriptor, s.defragCron, defrag)
+	err = s.scheduler.Register("defrag", parser, s.defragCron, defrag)
 	if err != nil {
 		etcdLogger.Error().Err(err).Msg("failed to register defragmentation")
 	}
