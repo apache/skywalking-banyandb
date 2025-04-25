@@ -146,7 +146,7 @@ func (s *server) RegisterDefrag() {
 		etcdLogger = logger.GetLogger().Named("etcd-server")
 		defrag     = func(_ time.Time, _ *logger.Logger) bool {
 			for _, endpoint := range s.listenClientURL {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				_, err = s.ecli.Defragment(ctx, endpoint)
 				if err != nil {
