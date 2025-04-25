@@ -25,7 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
@@ -61,10 +61,7 @@ type localFileSystem struct {
 
 // LocalFile implements the File interface.
 type LocalFile struct {
-	file               *os.File
-	isLargeFile        bool // Flag indicating if the file is large and should have fadvis applied
-	cumulativeReadSize int64
-	mutex              sync.Mutex
+	file *os.File
 }
 
 // NewLocalFileSystem is used to create the Local File system.
@@ -152,11 +149,8 @@ func (fs *localFileSystem) CreateFile(name string, permission Mode) (File, error
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	switch {
 	case err == nil:
-		// Check if the file is large and should have fadvis applied
-		isLarge := isLargeFile(file)
 		return &LocalFile{
-			file:        file,
-			isLargeFile: isLarge,
+			file: file,
 		}, nil
 	case os.IsExist(err):
 		return nil, &FileSystemError{
@@ -180,11 +174,8 @@ func (fs *localFileSystem) OpenFile(name string) (File, error) {
 	file, err := os.Open(name)
 	switch {
 	case err == nil:
-		// Check if the file is large and should have fadvis applied
-		isLarge := isLargeFile(file)
 		return &LocalFile{
-			file:        file,
-			isLargeFile: isLarge,
+			file: file,
 		}, nil
 	case os.IsNotExist(err):
 		return nil, &FileSystemError{
@@ -406,11 +397,6 @@ func (fs *localFileSystem) CreateHardLink(srcPath, destPath string, filter func(
 // Write adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
 	size, err := file.file.Write(buffer)
-
-	// Apply fadvis if write was successful and file is marked as large
-	if err == nil && size > 0 && file.isLargeFile {
-		file.applyFadvis(0, 0)
-	}
 	switch {
 	case err == nil:
 		return size, nil
@@ -468,17 +454,29 @@ func (file *LocalFile) SequentialWrite() SeqWriter {
 	return &seqWriter{writer: writer, fileName: file.file.Name()}
 }
 
+// SequentialRead is used to read the entire file using streaming read.
+// If skipFadvise is provided and true, fadvise will not be applied.
+func (file *LocalFile) SequentialRead(skipFadvise ...bool) SeqReader {
+	// Default value is false (apply fadvise)
+	skipFadv := false
+	
+	// If parameter is provided, use it
+	if len(skipFadvise) > 0 && skipFadvise[0] {
+		skipFadv = true
+	}
+	
+	// Metadata index paths always skip fadvise
+	if isMetadataIndexPath(file.file.Name()) {
+		skipFadv = true
+	}
+	
+	reader := generateReader(file.file)
+	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), length: 0, skipFadvise: skipFadv}
+}
+
 // Read is used to read a specified location of file.
 func (file *LocalFile) Read(offset int64, buffer []byte) (int, error) {
 	rsize, err := file.file.ReadAt(buffer, offset)
-	// Track read operation if successful and file is large
-	if err == nil && rsize > 0 && file.isLargeFile {
-		// Track cumulative read size
-		file.trackRead(rsize)
-
-		// Apply fadvis
-		file.applyFadvis(offset, int64(rsize))
-	}
 	if err != nil {
 		return readErrorHandle("Read operation", err, file.file.Name(), rsize)
 	}
@@ -495,26 +493,11 @@ func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 		if err != nil {
 			return readErrorHandle("Readv operation", err, file.file.Name(), rsize)
 		}
-		// Track read operation if successful and file is large
-		if rsize > 0 && file.isLargeFile {
-			// Track cumulative read size
-			file.trackRead(rsize)
-		}
 		size += rsize
 		currentOffset += int64(rsize)
 	}
-	// Apply fadvis if read was successful and file is marked as large
-	if size > 0 && file.isLargeFile {
-		file.applyFadvis(offset, int64(size))
-	}
 
 	return size, nil
-}
-
-// SequentialRead is used to read the entire file using streaming read.
-func (file *LocalFile) SequentialRead() SeqReader {
-	reader := generateReader(file.file)
-	return &seqReader{reader: reader, fileName: file.file.Name()}
 }
 
 // Size is used to get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
@@ -561,15 +544,26 @@ func (file *LocalFile) Close() error {
 }
 
 type seqReader struct {
-	reader   *bufio.Reader
-	fileName string
+	reader     *bufio.Reader
+	file       *os.File
+	fileName   string
+	length     int64
+	skipFadvise bool
 }
 
 func (i *seqReader) Read(p []byte) (int, error) {
 	rsize, err := i.reader.Read(p)
+	if rsize > 0 && i.file != nil && !i.skipFadvise {
+		offset := i.length
+		_ = ApplyFadviseToFD(i.file.Fd(), offset, int64(rsize))
+		i.length += int64(rsize)
+	} else if rsize > 0 {
+		i.length += int64(rsize)
+	}
 	if err != nil {
 		return readErrorHandle("ReadStream operation", err, i.fileName, rsize)
 	}
+
 	return rsize, nil
 }
 
@@ -578,6 +572,11 @@ func (i *seqReader) Path() string {
 }
 
 func (i *seqReader) Close() error {
+	if i.file != nil {
+		if !i.skipFadvise {
+			_ = ApplyFadviseToFD(i.file.Fd(), 0, 0)
+		}
+	}
 	releaseReader(i.reader)
 	return nil
 }
@@ -640,97 +639,11 @@ func releaseWriter(bw *bufio.Writer) {
 
 var bufWriterPool = pool.Register[*bufio.Writer]("fs-bufWriter")
 
-// isLargeFile checks if a file is large enough to need fadvis.
-func isLargeFile(file *os.File) bool {
-	// Skip if fadvis is not supported
-	if !IsFadvisSupported() {
-		return false
-	}
-
-	// Get file info
-	fileInfo, err := file.Stat()
-	if err != nil {
-		logger.GetLogger(moduleName).Warn().Err(err).Msg("failed to get file info")
-		return false
-	}
-
-	// Get the file size
-	fileSize := fileInfo.Size()
-
-	// If no threshold provider is set, use a default threshold
-	if defaultThresholdProvider == nil {
-		// Default threshold is 10MB
-		return fileSize > defaultLargeFileThreshold
-	}
-
-	// Use the provider to determine if fadvis should be applied
-	return defaultThresholdProvider.ShouldApplyFadvis(fileSize)
+// IsFadvisSupported returns whether the file system supports fadvise.
+func (fs *localFileSystem) IsFadvisSupported() bool {
+	return IsFadvisSupported()
 }
 
-// trackRead tracks a read operation and updates the cumulative read size.
-func (file *LocalFile) trackRead(size int) {
-	if size <= 0 {
-		return
-	}
-
-	file.mutex.Lock()
-	defer file.mutex.Unlock()
-
-	file.cumulativeReadSize += int64(size)
-}
-
-// applyFadvis applies DONTNEED to the file with specific offset and length.
-func (file *LocalFile) applyFadvis(offset int64, length int64) {
-	// Skip if fadvis is not supported
-	if !IsFadvisSupported() {
-		return
-	}
-
-	// Skip if file is not open
-	if file.file == nil {
-		return
-	}
-
-	// Skip if file is not large enough
-	if !file.isLargeFile {
-		return
-	}
-
-	// If both offset and length are 0, apply to the entire file
-	if offset == 0 && length == 0 {
-		fileInfo, err := file.file.Stat()
-		if err != nil {
-			logger.GetLogger(moduleName).Warn().
-				Err(err).
-				Str("path", file.file.Name()).
-				Msg("failed to get file size for fadvis")
-			return
-		}
-		length = fileInfo.Size()
-	}
-
-	// Log fadvis attempt to /tmp/fadvis.log
-	logFile, _ := os.OpenFile("/tmp/fadvis.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	fmt.Fprintf(logFile, "Applying fadvis to %s, offset=%d, length=%d\n", file.file.Name(), offset, length)
-	logFile.Close()
-
-	// Apply fadvis directly using platform-specific implementation
-	err := ApplyFadviseToFD(file.file.Fd(), offset, length)
-	if err != nil {
-		logger.GetLogger(moduleName).Warn().
-			Err(err).
-			Str("path", file.file.Name()).
-			Int64("offset", offset).
-			Int64("length", length).
-			Int64("cumulativeRead", file.cumulativeReadSize).
-			Msg("failed to apply fadvis to file")
-	} else {
-		logger.GetLogger(moduleName).Debug().
-			Str("path", file.file.Name()).
-			Int64("offset", offset).
-			Int64("length", length).
-			Int64("cumulativeRead", file.cumulativeReadSize).
-			Msg("applied fadvis to large file")
-	}
-
+func isMetadataIndexPath(p string) bool {
+	return strings.Contains(p, "/metadata_index/")
 }

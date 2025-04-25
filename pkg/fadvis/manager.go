@@ -153,6 +153,15 @@ func (m *Manager) ShouldApplyFadvis(fileSize int64) bool {
 	return fileSize > m.threshold.Load()
 }
 
+// ShouldCache returns whether a file at the given path should be cached.
+// This is the inverse of ShouldApplyFadvis for empty/new files.
+func (m *Manager) ShouldCache(path string) bool {
+	// For new files, we can't determine size, so we use the path to make a decision
+	// In this implementation, we'll assume all files should be cached
+	// Upper layers can override this based on their knowledge of expected file sizes
+	return true
+}
+
 // SetMemoryProtector sets the global Memory protector instance for fadvis threshold management.
 func SetMemoryProtector(mp *protector.Memory) {
 	manager := NewManager(mp)

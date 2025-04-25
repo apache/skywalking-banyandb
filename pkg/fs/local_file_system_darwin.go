@@ -121,3 +121,11 @@ func ApplyFadviseToFD(fd uintptr, offset int64, length int64) error {
 func IsFadvisSupported() bool {
 	return false
 }
+
+// SyncAndDropCache syncs the file data to disk but doesn't drop it from the page cache on macOS.
+func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
+	// On macOS, we can sync the file but can't drop it from page cache
+	// Call fdatasync to ensure data is synced to disk
+	return unix.FcntlFlock(fd, unix.F_FULLFSYNC, &unix.Flock_t{})
+	// No FADV_DONTNEED equivalent on macOS
+}

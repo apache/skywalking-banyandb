@@ -60,7 +60,8 @@ type Reader interface {
 	// Read the entire file at a specified offset.
 	Read(offset int64, buffer []byte) (int, error)
 	// Read the entire file using sequential read.
-	SequentialRead() SeqReader
+	// If skipFadvise is true, fadvise will not be applied.
+	SequentialRead(skipFadvise ...bool) SeqReader
 	// Returns the absolute path of the file.
 	Path() string
 	// Close File.
@@ -121,6 +122,8 @@ type FileSystem interface {
 	MustGetFreeSpace(path string) uint64
 	// CreateHardLink creates hard links in destPath for files in srcPath that pass the filter.
 	CreateHardLink(srcPath, destPath string, filter func(string) bool) error
+	// IsFadvisSupported returns whether the file system supports fadvise.
+	IsFadvisSupported() bool
 }
 
 // DirEntry is the interface that wraps the basic information about a file or directory.
@@ -133,11 +136,21 @@ type DirEntry interface {
 }
 
 // MustCreateFile creates a new file with the specified name and permission.
-func MustCreateFile(fs FileSystem, path string, permission Mode) File {
+// If cached is false, it will sync the file data to disk and then apply FADV_DONTNEED to tell the OS not to cache it.
+func MustCreateFile(fs FileSystem, path string, permission Mode, cached bool) File {
 	f, err := fs.CreateFile(path, permission)
 	if err != nil {
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("cannot create file")
 	}
+	
+	// If the file should not be cached, sync it and apply FADV_DONTNEED
+	if !cached && fs.IsFadvisSupported() {
+		localFile, ok := f.(*LocalFile)
+		if ok && localFile.file != nil {
+			_ = SyncAndDropCache(localFile.file.Fd(), 0, 0)
+		}
+	}
+	
 	return f
 }
 

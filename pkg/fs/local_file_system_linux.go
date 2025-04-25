@@ -121,3 +121,14 @@ func ApplyFadviseToFD(fd uintptr, offset int64, length int64) error {
 func IsFadvisSupported() bool {
 	return true
 }
+
+// SyncAndDropCache syncs the file data to disk and then drops it from the page cache.
+func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
+	// First, ensure data is synced to disk using fdatasync
+	if err := unix.Fdatasync(int(fd)); err != nil {
+		return err
+	}
+	
+	// Then drop the page cache using FADV_DONTNEED
+	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
+}

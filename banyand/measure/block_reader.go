@@ -21,23 +21,17 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"io"
 )
 
 type seqReader struct {
-	sr         fs.SeqReader
-	r          fs.Reader
-	filePath   string
-	fileSize   int64
-	bytesRead  uint64
-	readOffset int64
+	sr        fs.SeqReader
+	r         fs.Reader
+	bytesRead uint64
 }
 
 func (sr *seqReader) reset() {
@@ -47,9 +41,6 @@ func (sr *seqReader) reset() {
 	}
 	sr.sr = nil
 	sr.bytesRead = 0
-	sr.readOffset = 0
-	sr.filePath = ""
-	sr.fileSize = 0
 }
 
 func (sr *seqReader) Path() string {
@@ -60,18 +51,6 @@ func (sr *seqReader) init(r fs.Reader) {
 	sr.reset()
 	sr.sr = r.SequentialRead()
 	sr.r = r
-	sr.filePath = r.Path()
-	sr.readOffset = 0
-
-	// Skip metadata index directory
-	if filepath.Base(filepath.Dir(sr.filePath)) == indexDirName {
-		return
-	}
-
-	// Get file size for reference
-	if fileInfo, err := os.Stat(sr.filePath); err == nil {
-		sr.fileSize = fileInfo.Size()
-	}
 }
 
 func (sr *seqReader) mustReadFull(data []byte) {
@@ -86,7 +65,6 @@ func (sr *seqReader) mustReadFull(data []byte) {
 		logger.Panicf("cannot read full data: %d/%d", n, len(data))
 	}
 	sr.bytesRead += uint64(n)
-	sr.readOffset += int64(n)
 }
 
 func generateSeqReader() *seqReader {
