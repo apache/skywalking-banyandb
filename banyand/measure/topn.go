@@ -454,7 +454,7 @@ func (manager *topNProcessorManager) start(topNSchema *databasev1.TopNAggregatio
 
 func (manager *topNProcessorManager) removeProcessors(topNSchema *databasev1.TopNAggregation) []*topNStreamingProcessor {
 	var processors []*topNStreamingProcessor
-	for i := range manager.processorList {
+	for i := len(manager.processorList) - 1; i >= 0; i-- {
 		if manager.processorList[i].topNSchema.GetMetadata().GetName() == topNSchema.GetMetadata().GetName() {
 			processors = append(processors, manager.processorList[i])
 			manager.processorList = append(manager.processorList[:i], manager.processorList[i+1:]...)

@@ -114,7 +114,7 @@ source_measure:
   name: name1
   group: group1
 field_name: value
-field_value_sort: SORT_DESC
+field_value_sort: SORT_UNSPECIFIED
 group_by_tag_names:
   - id
 counters_number: 10000
@@ -151,7 +151,7 @@ source_measure:
   name: name1
   group: group1
 field_name: value
-field_value_sort: SORT_DESC
+field_value_sort: SORT_UNSPECIFIED
 group_by_tag_names:
   - id
   - entity_id
