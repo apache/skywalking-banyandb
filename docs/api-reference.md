@@ -3112,6 +3112,7 @@ TopNRequest is the request contract for query.
 | conditions | [banyandb.model.v1.Condition](#banyandb-model-v1-Condition) | repeated | criteria select counters. Only equals are acceptable. |
 | field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
+| stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
 
 
 

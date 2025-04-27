@@ -83,12 +83,30 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("query plan")
 	}
+	nodeSelectors := make(map[string][]string)
+	for _, g := range queryCriteria.Groups {
+		if gs, ok := p.measureService.LoadGroup(g); ok {
+			if ns, exist := p.parseNodeSelector(queryCriteria.Stages, gs.GetSchema().ResourceOpts); exist {
+				nodeSelectors[g] = ns
+			}
+		} else {
+			ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("group not found")
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("group %s not found", g))
+			return
+		}
+	}
+	if len(queryCriteria.Stages) > 0 && len(nodeSelectors) == 0 {
+		ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("no stage found")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("no stage found"))
+		return
+	}
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "distributed-%s", p.queryService.nodeID)
 		span.Tag("plan", plan.String())
+		span.Tagf("nodeSelectors", "%v", nodeSelectors)
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
@@ -103,9 +121,11 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 			span.Stop()
 		}()
 	}
+
 	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithDistributedExecutionContext(ctx, &distributedContext{
-		Broadcaster: p.broadcaster,
-		timeRange:   queryCriteria.TimeRange,
+		Broadcaster:   p.broadcaster,
+		timeRange:     queryCriteria.TimeRange,
+		nodeSelectors: nodeSelectors,
 	}))
 	if err != nil {
 		ml.Error().Err(err).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
