@@ -253,3 +253,8 @@ type contextNodeKey struct{}
 var ContextNodeRolesKey = contextNodeRolesKey{}
 
 type contextNodeRolesKey struct{}
+
+// ContextNodeSelectorKey is a context key to store the node selector.
+var ContextNodeSelectorKey = contextNodeSelectorKey{}
+
+type contextNodeSelectorKey struct{}
