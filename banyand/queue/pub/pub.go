@@ -161,6 +161,10 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 		l.Msgf("broadcasting message to %s nodes", names)
 	}
 
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no nodes match the selector %v", messages.NodeSelectors())
+	}
+
 	futureCh := make(chan publishResult, len(names))
 	var wg sync.WaitGroup
 	for n := range names {

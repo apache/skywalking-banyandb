@@ -79,12 +79,30 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	if p.log.Debug().Enabled() {
 		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
+	nodeSelectors := make(map[string][]string)
+	for _, g := range queryCriteria.Groups {
+		if gs, ok := p.streamService.LoadGroup(g); ok {
+			if ns, exist := p.parseNodeSelector(queryCriteria.Stages, gs.GetSchema().ResourceOpts); exist {
+				nodeSelectors[g] = ns
+			}
+		} else {
+			p.log.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("group not found")
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("group %s not found", g))
+			return
+		}
+	}
+	if len(queryCriteria.Stages) > 0 && len(nodeSelectors) == 0 {
+		p.log.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("no stage found")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("no stage found"))
+		return
+	}
 	if queryCriteria.Trace {
 		var tracer *query.Tracer
 		var span *query.Span
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "distributed-%s", p.queryService.nodeID)
 		span.Tag("plan", plan.String())
+		span.Tagf("nodeSelectors", "%v", nodeSelectors)
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
@@ -102,8 +120,9 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	se := plan.(executor.StreamExecutable)
 	defer se.Close()
 	entities, err := se.Execute(executor.WithDistributedExecutionContext(ctx, &distributedContext{
-		Broadcaster: p.broadcaster,
-		timeRange:   queryCriteria.TimeRange,
+		Broadcaster:   p.broadcaster,
+		timeRange:     queryCriteria.TimeRange,
+		nodeSelectors: nodeSelectors,
 	}))
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
