@@ -92,7 +92,6 @@
     codeStorage: [],
   });
   const tableHeader = computed(() => {
-    console.log(data.tableTags.concat(data.tableFields))
     return data.tableTags.concat(data.tableFields);
   });
   watch(
