@@ -419,7 +419,7 @@ orderBy:
         >
           <template #default="scope">
             <el-popover
-              v-if="item.type.includes(`ARRAY`) && scope.row[item.name] !== `Null`"
+              v-if="(item.type || item.fieldType)?.includes(`ARRAY`) && scope.row[item.name] !== `Null`"
               effect="dark"
               trigger="hover"
               placement="top"
