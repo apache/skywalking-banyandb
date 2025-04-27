@@ -178,20 +178,20 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string) {
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
-	
+
 	// Check if files should be cached using the fadvis manager
 	shouldCache := true
 	if fadvis.GetManager() != nil {
 		shouldCache = fadvis.GetManager().ShouldCache(path)
 	}
-	
+
 	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer) {
 		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
 		dataPath := filepath.Join(path, name+tagFamiliesFilenameExt)
 		return fs.MustCreateFile(fileSystem, metaPath, storage.FilePerm, shouldCache),
 			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache)
 	}
-	
+
 	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
 	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
 	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm, shouldCache))

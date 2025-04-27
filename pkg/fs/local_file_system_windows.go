@@ -19,8 +19,11 @@ package fs
 
 import (
 	"fmt"
-	"golang.org/x/sys/windows"
 	"os"
+
+	"golang.org/x/sys/windows"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // localFileSystem is the implementation of FileSystem interface.
@@ -82,8 +85,11 @@ func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 	// On Windows, we can flush file buffers but don't have a direct equivalent to FADV_DONTNEED
 	// Convert the file descriptor to a Windows handle
 	handle := windows.Handle(fd)
-
-	// Call FlushFileBuffers to ensure data is synced to disk
-	return windows.FlushFileBuffers(handle)
-	// Windows doesn't have a direct equivalent to FADV_DONTNEED
+	if err := windows.FlushFileBuffers(handle); err != nil {
+		return err
+	}
+	logger.GetLogger(moduleName).
+		Debug().
+		Msg("SyncAndDropCache: flush succeeded, page-cache drop unsupported on windows")
+	return nil
 }

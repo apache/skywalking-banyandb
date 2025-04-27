@@ -111,9 +111,12 @@ func (m *Manager) Serve() run.StopNotify {
 		ticker := time.NewTicker(m.updateInterval)
 		defer ticker.Stop()
 
+		m.updateThreshold()
+
 		for {
 			select {
 			case <-m.closed:
+				m.l.Info().Msg("fadvis manager stopped")
 				return
 			case <-ticker.C:
 				m.updateThreshold()
@@ -166,7 +169,17 @@ func (m *Manager) ShouldCache(path string) bool {
 func SetMemoryProtector(mp *protector.Memory) {
 	manager := NewManager(mp)
 	SetManager(manager)
-	
+
 	// Register the manager as a ThresholdProvider with the fs package
 	fs.SetThresholdProvider(manager)
+}
+
+// CleanupForTesting stops the default manager if it exists.
+// This function is intended to be called in test teardown functions to prevent goroutine leaks.
+func CleanupForTesting() {
+	if defaultManager != nil {
+		defaultManager.GracefulStop()
+		// Wait a short time to ensure the goroutine has a chance to exit
+		time.Sleep(100 * time.Millisecond)
+	}
 }

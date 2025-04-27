@@ -68,6 +68,8 @@ func benchmarkConcurrentReads(b *testing.B, files []string) {
 			require.NotEmpty(b, data)
 		}
 	}
+	capturePageCacheStats(b, "after_concurrent_read")
+	capturePageCacheStatsWithDelay(b, "after_concurrent_read", 3)
 }
 
 func benchmarkConcurrentMerges(b *testing.B, testDir string, parts []string) {
@@ -77,6 +79,8 @@ func benchmarkConcurrentMerges(b *testing.B, testDir string, parts []string) {
 		err := simulateMergeOperation(b, parts, outputFile)
 		require.NoError(b, err)
 	}
+	capturePageCacheStats(b, "after_concurrent_merge")
+	capturePageCacheStatsWithDelay(b, "after_concurrent_merge", 3)
 }
 
 // BenchmarkThresholdAdaptation tests how the system adapts to changing memory thresholds

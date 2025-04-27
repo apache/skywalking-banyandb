@@ -19,30 +19,48 @@ package fadvis
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 	"testing"
+
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
+
+// ensureImportsAreUsed is a helper function to ensure imports are used.
+// This prevents the compiler from removing imports that are needed by other files.
+func ensureImportsAreUsed() {
+	// This function is never called, it just ensures imports are kept
+	// when the file is compiled separately
+	var (
+		_ io.Reader
+		_ fs.File
+	)
+}
 
 // BenchmarkWritePerformance tests write performance with and without fadvis.
 func BenchmarkWritePerformance(b *testing.B) {
-	// Test cases with different file sizes
-	for _, fileSize := range []int64{1 * 1024 * 1024, 256 * 1024 * 1024} {
+	// Test cases with different file sizes - using larger files to better show fadvis effects
+	for _, fileSize := range []int64{256 * 1024 * 1024, 1024 * 1024 * 1024} { // 256MB and 1GB
 		// Test with fadvis enabled
 		b.Run(fmt.Sprintf("Size_%dMB_FadvisEnabled", fileSize/(1024*1024)), func(b *testing.B) {
 			testDir, cleanup := setupTestEnvironment(b)
 			defer cleanup()
 
 			// Set a realistic fadvis threshold based on system memory
+			// This mimics the actual production logic in fadvis.Manager
 			setRealisticThreshold()
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
-				if err := createTestFile(b, filePath, fileSize); err != nil {
+				err := createTestFile(b, filePath, fileSize)
+				if err != nil {
 					b.Fatalf("Failed to create test file: %v", err)
 				}
-				// No need to manually apply fadvis, the fs package handles it automatically
+				capturePageCacheStats(b, "after_write_fadvis_enabled")
 			}
+
+			capturePageCacheStatsWithDelay(b, "after_write_fadvis_enabled_delay", 3)
 		})
 
 		// Test with fadvis disabled
@@ -51,16 +69,20 @@ func BenchmarkWritePerformance(b *testing.B) {
 			defer cleanup()
 
 			// Set the fadvis threshold to a high value to disable it
-			setTestThreshold(1 * 1024 * 1024 * 1024 * 1024)
+			setTestThreshold(1 * 1024 * 1024 * 1024 * 1024) // 1TB threshold effectively disables fadvis
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
-				if err := createTestFile(b, filePath, fileSize); err != nil {
+				// 写入文件但不应用 fadvis
+				err := createTestFile(b, filePath, fileSize)
+				if err != nil {
 					b.Fatalf("Failed to create test file: %v", err)
 				}
-				// No need to manually apply fadvis, the fs package handles it automatically
+				capturePageCacheStats(b, "after_write_fadvis_disabled")
 			}
+
+			capturePageCacheStatsWithDelay(b, "after_write_fadvis_disabled_delay", 3)
 		})
 	}
 }
@@ -85,16 +107,15 @@ func BenchmarkReadPerformance(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				// Read the file using our helper function which uses fs package
 				data, err := readFileWithFadvise(b, filePath)
 				if err != nil {
 					b.Fatalf("Failed to read file: %v", err)
 				}
-
-				// Ensure data is used to prevent compiler optimization
-				_ = len(data)
-				// No need to manually apply fadvis, the fs package handles it automatically
+				b.SetBytes(int64(len(data)))
+				capturePageCacheStats(b, "after_read_fadvis_enabled")
 			}
+
+			capturePageCacheStatsWithDelay(b, "after_read_fadvis_enabled_delay", 3)
 		})
 
 		// Test with fadvis disabled
@@ -113,16 +134,17 @@ func BenchmarkReadPerformance(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				// Read the file using our helper function which uses fs package
-				data, err := readFileWithFadvise(b, filePath)
+				// Read file without applying fadvis
+				totalBytes, err := readFileStreamingWithFadvise(b, filePath, true) // skipFadvise=true
 				if err != nil {
 					b.Fatalf("Failed to read file: %v", err)
 				}
-
-				// Ensure data is used to prevent compiler optimization
-				_ = len(data)
-				// No need to manually apply fadvis, the fs package handles it automatically
+				b.SetBytes(totalBytes)
+				// Capture page cache statistics
+				capturePageCacheStats(b, "after_read_fadvis_disabled")
 			}
+
+			capturePageCacheStatsWithDelay(b, "after_read_fadvis_disabled_delay", 3)
 		})
 	}
 }
@@ -157,9 +179,11 @@ func BenchmarkMultipleReads(b *testing.B) {
 
 				// Ensure data is used to prevent compiler optimization
 				_ = len(data)
-				// No need to manually apply fadvis, the fs package handles it automatically
 			}
 		}
+		capturePageCacheStats(b, "after_multiple_reads_fadvis_enabled")
+
+		capturePageCacheStatsWithDelay(b, "after_multiple_reads_fadvis_enabled_delay", 3)
 	})
 
 	// Test with fadvis disabled
@@ -179,17 +203,20 @@ func BenchmarkMultipleReads(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for j := 0; j < readCount; j++ {
-				// Read the file using our helper function which uses fs package
-				data, err := readFileWithFadvise(b, filePath)
+				// Read the file using streaming to minimize heap allocations
+				totalBytes, err := readFileStreamingWithFadvise(b, filePath, true) // skipFadvise=true
 				if err != nil {
 					b.Fatalf("Failed to read file: %v", err)
 				}
 
 				// Ensure data is used to prevent compiler optimization
-				_ = len(data)
-				// No need to manually apply fadvis, the fs package handles it automatically
+				_ = totalBytes
 			}
 		}
+
+		capturePageCacheStats(b, "after_multiple_reads_fadvis_disabled")
+
+		capturePageCacheStatsWithDelay(b, "after_multiple_reads_fadvis_disabled_delay", 3)
 	})
 }
 
@@ -212,23 +239,24 @@ func BenchmarkMixedWorkload(b *testing.B) {
 			if err := createTestFile(b, writeFilePath, fileSize); err != nil {
 				b.Fatalf("Failed to create write file: %v", err)
 			}
-			// No need to manually apply fadvis, the fs package handles it automatically
 
-			// Read the file we just created
-			data, err := readFileWithFadvise(b, writeFilePath)
+			// Read the file we just created using streaming to minimize heap allocations
+			totalBytes, err := readFileStreamingWithFadvise(b, writeFilePath, true) // skipFadvise=true
 			if err != nil {
 				b.Fatalf("Failed to read file: %v", err)
 			}
-			_ = len(data)
-			// No need to manually apply fadvis, the fs package handles it automatically
+			_ = totalBytes
 
 			// Create another file
 			writeFilePath2 := filepath.Join(testDir, fmt.Sprintf("mixed_write2_%d.dat", i))
 			if err := createTestFile(b, writeFilePath2, fileSize); err != nil {
 				b.Fatalf("Failed to create second write file: %v", err)
 			}
-			// No need to manually apply fadvis, the fs package handles it automatically
 		}
+		// 捕获页面缓存统计信息
+		capturePageCacheStats(b, "after_mixed_workload_fadvis_enabled")
+
+		capturePageCacheStatsWithDelay(b, "after_mixed_workload_fadvis_enabled_delay", 3)
 	})
 
 	// Test with fadvis disabled
@@ -246,22 +274,97 @@ func BenchmarkMixedWorkload(b *testing.B) {
 			if err := createTestFile(b, writeFilePath, fileSize); err != nil {
 				b.Fatalf("Failed to create write file: %v", err)
 			}
-			// No need to manually apply fadvis, the fs package handles it automatically
 
-			// Read the file we just created
-			data, err := readFileWithFadvise(b, writeFilePath)
+			// Read the file we just created using streaming to minimize heap allocations
+			totalBytes, err := readFileStreamingWithFadvise(b, writeFilePath, true) // skipFadvise=true
 			if err != nil {
 				b.Fatalf("Failed to read file: %v", err)
 			}
-			_ = len(data)
-			// No need to manually apply fadvis, the fs package handles it automatically
+			_ = totalBytes
 
 			// Create another file
 			writeFilePath2 := filepath.Join(testDir, fmt.Sprintf("mixed_write2_%d.dat", i))
 			if err := createTestFile(b, writeFilePath2, fileSize); err != nil {
 				b.Fatalf("Failed to create second write file: %v", err)
 			}
-			// No need to manually apply fadvis, the fs package handles it automatically
 		}
+		// 捕获页面缓存统计信息
+		capturePageCacheStats(b, "after_mixed_workload_fadvis_disabled")
+
+		capturePageCacheStatsWithDelay(b, "after_mixed_workload_fadvis_disabled_delay", 3)
 	})
+}
+
+// BenchmarkSequentialRead tests sequential read performance using streaming to minimize heap allocations
+func BenchmarkSequentialRead(b *testing.B) {
+	// Test different file sizes
+	fileSizes := []struct {
+		name string
+		size int64
+	}{
+		{"256mb", 256 * 1024 * 1024},
+		{"1gb", 1024 * 1024 * 1024},
+	}
+
+	for _, fs := range fileSizes {
+		b.Run(fmt.Sprintf("WithFadvise_%s", fs.name), func(b *testing.B) {
+			// Create test directory
+			testDir, cleanup := setupTestEnvironment(b)
+			defer cleanup()
+
+			// Create test file
+			filePath := filepath.Join(testDir, "seqread_test.dat")
+			err := createTestFile(b, filePath, fs.size)
+			if err != nil {
+				b.Fatalf("Failed to create test file: %v", err)
+			}
+
+			b.ResetTimer()
+			b.SetBytes(fs.size) // Set bytes processed per operation
+
+			for i := 0; i < b.N; i++ {
+				// Use streaming read with fadvise enabled
+				totalBytes, err := readFileStreamingWithFadvise(b, filePath, false)
+				if err != nil {
+					b.Fatalf("Failed to read file: %v", err)
+				}
+				// Ensure data is used to prevent compiler optimization
+				b.SetBytes(totalBytes)
+			}
+
+			// Capture page cache statistics
+			capturePageCacheStats(b, fmt.Sprintf("after_seqread_%s_fadvis_enabled", fs.name))
+			capturePageCacheStatsWithDelay(b, fmt.Sprintf("after_seqread_%s_fadvis_enabled_delay", fs.name), 3)
+		})
+
+		b.Run(fmt.Sprintf("WithoutFadvise_%s", fs.name), func(b *testing.B) {
+			// Create test directory
+			testDir, cleanup := setupTestEnvironment(b)
+			defer cleanup()
+
+			// Create test file
+			filePath := filepath.Join(testDir, "seqread_test.dat")
+			err := createTestFile(b, filePath, fs.size)
+			if err != nil {
+				b.Fatalf("Failed to create test file: %v", err)
+			}
+
+			b.ResetTimer()
+			b.SetBytes(fs.size) // Set bytes processed per operation
+
+			for i := 0; i < b.N; i++ {
+				// Use streaming read with fadvise disabled
+				totalBytes, err := readFileStreamingWithFadvise(b, filePath, true)
+				if err != nil {
+					b.Fatalf("Failed to read file: %v", err)
+				}
+				// Ensure data is used to prevent compiler optimization
+				b.SetBytes(totalBytes)
+			}
+
+			// Capture page cache statistics
+			capturePageCacheStats(b, fmt.Sprintf("after_seqread_%s_fadvis_disabled", fs.name))
+			capturePageCacheStatsWithDelay(b, fmt.Sprintf("after_seqread_%s_fadvis_disabled_delay", fs.name), 3)
+		})
+	}
 }

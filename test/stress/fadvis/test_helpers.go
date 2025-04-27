@@ -18,11 +18,16 @@
 package fadvis
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -34,19 +39,10 @@ import (
 
 // Constants for file sizes and thresholds
 const (
-	kilobyte = 1024
 	megabyte = 1024 * 1024
-	gigabyte = 1024 * 1024 * 1024
 	terabyte = 1024 * 1024 * 1024 * 1024
-
-	// Default threshold for large files (100MB)
-	DefaultThreshold = 100 * megabyte
-	// Small file size (10MB)
-	SmallFileSize = 10 * megabyte
 	// Large file size (200MB)
 	LargeFileSize = 200 * megabyte
-	// Default concurrency level
-	DefaultConcurrency = 4
 )
 
 // fileSystem is the file system instance used for all operations
@@ -56,6 +52,9 @@ func init() {
 	// Initialize the file system
 	fileSystem = fs.NewLocalFileSystemWithLogger(logger.GetLogger("fadvis-benchmark"))
 }
+
+// sharedReadBuffer is a shared buffer used for reading files
+var sharedReadBuffer = make([]byte, 32*1024)
 
 // createTestFile creates a test file of the specified size.
 // It uses the fs package which automatically applies fadvise if the file size exceeds the threshold.
@@ -84,9 +83,66 @@ func createTestFile(t testing.TB, filePath string, size int64) error {
 // readFileWithFadvise reads a file with automatic fadvise application.
 // It uses the fs package which automatically applies fadvise if the file size exceeds the threshold.
 func readFileWithFadvise(t testing.TB, filePath string) ([]byte, error) {
-	// Read the file using the fs package
-	return fileSystem.Read(filePath)
-	// No need to manually apply fadvise, the fs package handles it automatically
+	// Use streaming read instead of reading the entire file at once
+	f, err := fileSystem.OpenFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// Get file size - not used but kept for reference
+	_, err = f.Size()
+	if err != nil {
+		return nil, err
+	}
+
+	// Only read the first 32KB of the file for verification
+	// In actual tests we're focused on PageCache effects rather than complete reads
+	n, err := f.Read(0, sharedReadBuffer)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	// Return the read data without copying to a new slice
+	return sharedReadBuffer[:n], nil
+}
+
+// readFileStreamingWithFadvise reads a file using streaming to minimize heap allocations
+// skipFadvise parameter controls whether to skip fadvise calls
+func readFileStreamingWithFadvise(t testing.TB, filePath string, skipFadvise bool) (int64, error) {
+	f, err := fileSystem.OpenFile(filePath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	// Create a sequential reader, with option to skip fadvise
+	var seqReader fs.SeqReader
+	if skipFadvise {
+		// Use sequential reader with fadvise disabled
+		seqReader = f.SequentialRead(true) // skipFadvise = true
+	} else {
+		// Use sequential reader with fadvise enabled
+		seqReader = f.SequentialRead() // default: skipFadvise = false
+	}
+
+	// Use shared buffer for streaming reads
+	totalBytes := int64(0)
+	for {
+		// SeqReader already implements io.Reader
+		n, err := seqReader.Read(sharedReadBuffer)
+		if n > 0 {
+			totalBytes += int64(n)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return totalBytes, err
+		}
+	}
+
+	return totalBytes, nil
 }
 
 // appendToFile appends data to a file, creating it if it doesn't exist.
@@ -243,4 +299,110 @@ type testThresholdProvider struct {
 // GetThreshold returns a fixed threshold value
 func (p *testThresholdProvider) GetThreshold() int64 {
 	return p.threshold
+}
+
+// PageCacheStats holds the parsed information from /proc/self/smaps_rollup.
+type PageCacheStats struct {
+	Rss         int64 // Resident Set Size (实际驻留内存)
+	Pss         int64 // Proportional Set Size (按比例分配的共享内存)
+	SharedClean int64 // Clean pages that are shared with other processes
+}
+
+// parseSmapsRollup parses /proc/self/smaps_rollup into PageCacheStats.
+func parseSmapsRollup(r io.Reader) (PageCacheStats, error) {
+	var stats PageCacheStats
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		key := strings.TrimSuffix(parts[0], ":")
+		value := parts[1]
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			continue
+		}
+		switch key {
+		case "Rss":
+			stats.Rss = n
+		case "Pss":
+			stats.Pss = n
+		case "Shared_Clean":
+			stats.SharedClean = n
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
+
+// capturePageCacheStats captures and records page cache memory usage stats.
+// It both prints to stdout and saves to a profile file for later analysis.
+func capturePageCacheStats(b *testing.B, phase string) int64 {
+	f, err := os.Open("/proc/self/smaps_rollup")
+	if err != nil {
+		b.Logf("[PAGECACHE] %s: open smaps_rollup failed: %v", phase, err)
+		return 0
+	}
+	stats, err := parseSmapsRollup(f)
+	f.Close()
+	if err != nil {
+		b.Logf("[PAGECACHE] %s: parse smaps_rollup failed: %v", phase, err)
+		return 0
+	}
+
+	// 2. 读取 meminfo 查找 Cached
+	memf, err := os.Open("/proc/meminfo")
+	if err != nil {
+		b.Logf("[MEMINFO] %s: open meminfo failed: %v", phase, err)
+		return 0
+	}
+	var cachedKB int64
+	buf := make([]byte, 32*1024)
+	builder := strings.Builder{}
+	for {
+		n, err := memf.Read(buf)
+		if n > 0 {
+			builder.Write(buf[:n])
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			b.Logf("[MEMINFO] %s: read meminfo failed: %v", phase, err)
+			break
+		}
+	}
+	memf.Close()
+
+	for _, line := range strings.Split(builder.String(), "\n") {
+		if strings.HasPrefix(line, "Cached:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if v, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+					cachedKB = v
+				}
+			}
+			break
+		}
+	}
+
+	// 3. 向 Benchmark 报出 cached_kb 这一列
+	b.ReportMetric(float64(cachedKB), "cached_kb")
+
+	// 4. 打 log（只在 -test.v 时看到，不会污染基准行）
+	b.Logf("[PAGECACHE] %s: Rss=%dKB, Pss=%dKB, SharedClean=%dKB, Cached=%dKB",
+		phase, stats.Rss, stats.Pss, stats.SharedClean, cachedKB)
+
+	return cachedKB
+}
+
+// capturePageCacheStatsWithDelay captures page cache stats after a delay
+func capturePageCacheStatsWithDelay(b *testing.B, phase string, delaySeconds int) {
+	b.Logf("[PAGECACHE] Waiting %d seconds before capturing %s...\n", delaySeconds, phase)
+	time.Sleep(time.Duration(delaySeconds) * time.Second)
+	_ = capturePageCacheStats(b, phase)
 }

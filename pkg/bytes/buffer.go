@@ -63,7 +63,7 @@ func (b *Buffer) Read(offset int64, buffer []byte) (int, error) {
 }
 
 // SequentialRead implements fs.Reader.
-func (b *Buffer) SequentialRead() fs.SeqReader {
+func (b *Buffer) SequentialRead(skipFadvise ...bool) fs.SeqReader {
 	return &reader{bb: b}
 }
 

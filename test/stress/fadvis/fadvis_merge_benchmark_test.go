@@ -51,6 +51,8 @@ func BenchmarkMergeOperations(b *testing.B) {
 			err := simulateMergeOperation(b, parts, outputFile)
 			require.NoError(b, err)
 		}
+		capturePageCacheStats(b, "after_merge_fadvis_disabled")
+		capturePageCacheStatsWithDelay(b, "after_merge_fadvis_disabled_delay", 3)
 	})
 
 	// Run benchmark with fadvise enabled
@@ -63,6 +65,8 @@ func BenchmarkMergeOperations(b *testing.B) {
 			err := simulateMergeOperation(b, parts, outputFile)
 			require.NoError(b, err)
 		}
+		capturePageCacheStats(b, "after_merge_fadvis_enabled")
+		capturePageCacheStatsWithDelay(b, "after_merge_fadvis_enabled_delay", 3)
 	})
 }
 
@@ -93,6 +97,8 @@ func BenchmarkSequentialMergeOperations(b *testing.B) {
 				require.NoError(b, err)
 			}
 		}
+		capturePageCacheStats(b, "after_sequential_merge_fadvis_disabled")
+		capturePageCacheStatsWithDelay(b, "after_sequential_merge_fadvis_disabled_delay", 3)
 	})
 
 	// Run benchmark with fadvise enabled
@@ -108,5 +114,7 @@ func BenchmarkSequentialMergeOperations(b *testing.B) {
 				require.NoError(b, err)
 			}
 		}
+		capturePageCacheStats(b, "after_sequential_merge_fadvis_enabled")
+		capturePageCacheStatsWithDelay(b, "after_sequential_merge_fadvis_enabled_delay", 3)
 	})
 }

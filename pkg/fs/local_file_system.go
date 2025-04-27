@@ -227,6 +227,10 @@ func (fs *localFileSystem) Write(buffer []byte, name string, permission Mode) (i
 		}
 	}
 
+	if fs.IsFadvisSupported() {
+		_ = SyncAndDropCache(file.Fd(), 0, 0)
+	}
+
 	return size, nil
 }
 
@@ -451,7 +455,7 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 // SequentialWrite supports appending consecutive buffers to the end of the file.
 func (file *LocalFile) SequentialWrite() SeqWriter {
 	writer := generateWriter(file.file)
-	return &seqWriter{writer: writer, fileName: file.file.Name()}
+	return &seqWriter{writer: writer, file: file.file, fileName: file.file.Name()}
 }
 
 // SequentialRead is used to read the entire file using streaming read.
@@ -459,17 +463,17 @@ func (file *LocalFile) SequentialWrite() SeqWriter {
 func (file *LocalFile) SequentialRead(skipFadvise ...bool) SeqReader {
 	// Default value is false (apply fadvise)
 	skipFadv := false
-	
+
 	// If parameter is provided, use it
 	if len(skipFadvise) > 0 && skipFadvise[0] {
 		skipFadv = true
 	}
-	
+
 	// Metadata index paths always skip fadvise
 	if isMetadataIndexPath(file.file.Name()) {
 		skipFadv = true
 	}
-	
+
 	reader := generateReader(file.file)
 	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), length: 0, skipFadvise: skipFadv}
 }
@@ -544,10 +548,10 @@ func (file *LocalFile) Close() error {
 }
 
 type seqReader struct {
-	reader     *bufio.Reader
-	file       *os.File
-	fileName   string
-	length     int64
+	reader      *bufio.Reader
+	file        *os.File
+	fileName    string
+	length      int64
 	skipFadvise bool
 }
 
@@ -583,6 +587,7 @@ func (i *seqReader) Close() error {
 
 type seqWriter struct {
 	writer   *bufio.Writer
+	file     *os.File
 	fileName string
 }
 
@@ -601,6 +606,10 @@ func (w *seqWriter) Close() error {
 			Code:    closeError,
 			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", w.fileName, err),
 		}
+	}
+
+	if w.file != nil {
+		_ = SyncAndDropCache(w.file.Fd(), 0, 0)
 	}
 	return nil
 }
