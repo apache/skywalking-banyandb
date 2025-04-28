@@ -138,11 +138,14 @@ func NewService(_ context.Context) (metadata.Service, error) {
 	return s, nil
 }
 
-func performDefrag(listenURL string, ecli *clientv3.Client) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := ecli.Defragment(ctx, listenURL)
-	return err
+func performDefrag(listenURLs []string, ecli *clientv3.Client) error {
+	for _, listenURL := range listenURLs {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := ecli.Defragment(ctx, listenURL)
+		return err
+	}
+	return nil
 }
 
 func (s *server) registerDefrag() {
@@ -150,11 +153,9 @@ func (s *server) registerDefrag() {
 		err        error
 		etcdLogger = logger.GetLogger().Named("etcd-server")
 		defrag     = func(_ time.Time, _ *logger.Logger) bool {
-			for _, endpoint := range s.listenClientURL {
-				if err = performDefrag(endpoint, s.ecli); err != nil {
-					etcdLogger.Error().Err(err).Msg("failed to execute defragmentation")
-					return false
-				}
+			if err = performDefrag(s.listenClientURL, s.ecli); err != nil {
+				etcdLogger.Error().Err(err).Msg("failed to execute defragmentation")
+				return false
 			}
 			return true
 		}
