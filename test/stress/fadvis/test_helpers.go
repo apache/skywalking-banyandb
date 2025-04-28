@@ -303,8 +303,8 @@ func (p *testThresholdProvider) GetThreshold() int64 {
 
 // PageCacheStats holds the parsed information from /proc/self/smaps_rollup.
 type PageCacheStats struct {
-	Rss         int64 // Resident Set Size (实际驻留内存)
-	Pss         int64 // Proportional Set Size (按比例分配的共享内存)
+	Rss         int64 // Resident Set Size
+	Pss         int64 // Proportional Set Size
 	SharedClean int64 // Clean pages that are shared with other processes
 }
 
@@ -354,7 +354,6 @@ func capturePageCacheStats(b *testing.B, phase string) int64 {
 		return 0
 	}
 
-	// 2. 读取 meminfo 查找 Cached
 	memf, err := os.Open("/proc/meminfo")
 	if err != nil {
 		b.Logf("[MEMINFO] %s: open meminfo failed: %v", phase, err)
@@ -390,10 +389,8 @@ func capturePageCacheStats(b *testing.B, phase string) int64 {
 		}
 	}
 
-	// 3. 向 Benchmark 报出 cached_kb 这一列
 	b.ReportMetric(float64(cachedKB), "cached_kb")
 
-	// 4. 打 log（只在 -test.v 时看到，不会污染基准行）
 	b.Logf("[PAGECACHE] %s: Rss=%dKB, Pss=%dKB, SharedClean=%dKB, Cached=%dKB",
 		phase, stats.Rss, stats.Pss, stats.SharedClean, cachedKB)
 

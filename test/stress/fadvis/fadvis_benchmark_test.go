@@ -74,7 +74,6 @@ func BenchmarkWritePerformance(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
-				// 写入文件但不应用 fadvis
 				err := createTestFile(b, filePath, fileSize)
 				if err != nil {
 					b.Fatalf("Failed to create test file: %v", err)
@@ -253,7 +252,6 @@ func BenchmarkMixedWorkload(b *testing.B) {
 				b.Fatalf("Failed to create second write file: %v", err)
 			}
 		}
-		// 捕获页面缓存统计信息
 		capturePageCacheStats(b, "after_mixed_workload_fadvis_enabled")
 
 		capturePageCacheStatsWithDelay(b, "after_mixed_workload_fadvis_enabled_delay", 3)
@@ -288,7 +286,6 @@ func BenchmarkMixedWorkload(b *testing.B) {
 				b.Fatalf("Failed to create second write file: %v", err)
 			}
 		}
-		// 捕获页面缓存统计信息
 		capturePageCacheStats(b, "after_mixed_workload_fadvis_disabled")
 
 		capturePageCacheStatsWithDelay(b, "after_mixed_workload_fadvis_disabled_delay", 3)

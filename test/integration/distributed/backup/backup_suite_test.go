@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -49,7 +50,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
-	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 )
 
 func TestBackup(t *testing.T) {
@@ -170,7 +170,7 @@ var _ = SynchronizedAfterSuite(func() {
 	if connection != nil {
 		Expect(connection.Close()).To(Succeed())
 	}
-	// 清理 fadvis manager 以防止 goroutine 泄漏
+	// clean up fadvis manager avoiding memory leak
 	fadvis.CleanupForTesting()
 }, func() {
 	if deferFunc != nil {
