@@ -53,12 +53,11 @@
     FIELD_TYPE_FLOAT: 'float',
     FIELD_TYPE_DATA_BINARY: 'binaryData',
   };
-  const filterConfig = {
+  const filterConfig = reactive({
     groups: [],
     name: '',
     offset: null,
     limit: null,
-    //criteria: {},
     projection: {
       tagFamilies: [
         {
@@ -67,7 +66,7 @@
         },
       ],
     },
-  };
+  });
   const data = reactive({
     fields: [],
     tableFields: [],
@@ -249,8 +248,8 @@ orderBy:
     data.loading = false;
   }
   function setTableFilterConfig() {
-    let tagFamily = data.resourceData.tagFamilies[data.tagFamily];
-    let tagsList = [];
+    const tagFamily = data.resourceData.tagFamilies[data.tagFamily];
+    const tagsList = [];
     tagFamily.tags.forEach((item) => {
       tagsList.push(item.name);
     });
