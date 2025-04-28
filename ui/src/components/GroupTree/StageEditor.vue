@@ -45,6 +45,7 @@
       title.value = 'Edit Stage';
     } else {
       title.value = 'Add Stage';
+      stage.value = StageConfig;
     }
     showDialog.value = true;
     return new Promise((resolve) => {
