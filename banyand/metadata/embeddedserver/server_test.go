@@ -39,12 +39,13 @@ func TestDefragment(t *testing.T) {
 
 var _ = ginkgo.Describe("Defragment", func() {
 	var (
-		etcdClient *clientv3.Client
-		etcdServer embeddedetcd.Server
-		path       string
-		defFn      func()
-		err        error
-		endpoints  []string
+		etcdClient          *clientv3.Client
+		etcdServer          embeddedetcd.Server
+		path                string
+		defFn               func()
+		err                 error
+		endpoints, peerURLs []string
+		ports               []int
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -56,11 +57,11 @@ var _ = ginkgo.Describe("Defragment", func() {
 		path, defFn, err = test.NewSpace()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		ports, err := test.AllocateFreePorts(2)
+		ports, err = test.AllocateFreePorts(2)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		endpoints = []string{fmt.Sprintf("http://127.0.0.1:%d", ports[0])}
-		peerURLs := []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}
+		peerURLs = []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}
 
 		etcdServer, err = embeddedetcd.NewServer(
 			embeddedetcd.RootDir(path),
@@ -96,22 +97,22 @@ var _ = ginkgo.Describe("Defragment", func() {
 	ginkgo.It("should successfully perform defragmentation", func() {
 		ctx := context.Background()
 		for i := 0; i < 100; i++ {
-			_, err := etcdClient.Put(ctx, fmt.Sprintf("key-%d", i), fmt.Sprintf("value-%d", i))
+			_, err = etcdClient.Put(ctx, fmt.Sprintf("key-%d", i), fmt.Sprintf("value-%d", i))
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 
 		for i := 0; i < 50; i++ {
-			_, err := etcdClient.Delete(ctx, fmt.Sprintf("key-%d", i))
+			_, err = etcdClient.Delete(ctx, fmt.Sprintf("key-%d", i))
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 
-		err := performDefrag(endpoints, etcdClient)
+		err = performDefrag(endpoints, etcdClient)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
 	ginkgo.It("should handle invalid endpoints", func() {
 		invalidEndpoints := []string{"http://invalid-host:12345"}
-		err := performDefrag(invalidEndpoints, etcdClient)
+		err = performDefrag(invalidEndpoints, etcdClient)
 		gomega.Expect(err).To(gomega.HaveOccurred())
 	})
 })
