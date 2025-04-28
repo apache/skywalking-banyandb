@@ -90,6 +90,7 @@
     tableData: [],
     code: null,
     codeStorage: [],
+    byStages: false,
   });
   const tableHeader = computed(() => {
     return data.tableTags.concat(data.tableFields);
@@ -147,15 +148,20 @@
         },
       };
       timeRange = jsonToYaml(timeRange).data;
-      data.code = ref(
+      data.code =
         `${timeRange}offset: 0
 limit: 10
-stages: ["hot"]
 orderBy:
   indexRuleName: ""
   sort: SORT_UNSPECIFIED
-`,
-      );
+`
+    }
+  }
+  function setCode() {
+    if (data.byStages) {
+      data.code = `${data.code}stages: ["hot"]`
+    } else {
+      initCode();
     }
   }
   function initData() {
@@ -381,6 +387,7 @@ orderBy:
               :align="`right`"
             >
             </el-date-picker>
+            <el-checkbox  v-model="data.byStages" @change="setCode" label="By stages" size="large" style="margin-right: 10px;" />
             <el-button :icon="Search" @click="searchTableData" style="flex: 0 0 auto" color="#6E38F7" plain></el-button>
           </div>
         </el-col>
