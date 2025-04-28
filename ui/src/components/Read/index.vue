@@ -58,6 +58,7 @@
     name: '',
     offset: null,
     limit: null,
+    stages: undefined,
     projection: {
       tagFamilies: [
         {
