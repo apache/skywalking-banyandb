@@ -150,6 +150,7 @@
       data.code = ref(
         `${timeRange}offset: 0
 limit: 10
+stages: ["hot"]
 orderBy:
   indexRuleName: ""
   sort: SORT_UNSPECIFIED
