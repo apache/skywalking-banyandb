@@ -28,6 +28,8 @@ services:
 
   liaison:
     hostname: liaison
+    ports:
+      - 17913:17913
     expose:
       - 17912
       - 2121

@@ -21,12 +21,14 @@ package dquery
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -41,7 +43,8 @@ import (
 )
 
 const (
-	moduleName = "distributed-query"
+	moduleName   = "distributed-query"
+	hotStageName = "hot"
 )
 
 var (
@@ -52,16 +55,17 @@ var (
 )
 
 type queryService struct {
-	metaService metadata.Repo
-	pipeline    queue.Server
-	omr         observability.MetricsRegistry
-	log         *logger.Logger
-	sqp         *streamQueryProcessor
-	mqp         *measureQueryProcessor
-	tqp         *topNQueryProcessor
-	closer      *run.Closer
-	nodeID      string
-	slowQuery   time.Duration
+	metaService          metadata.Repo
+	pipeline             queue.Server
+	omr                  observability.MetricsRegistry
+	log                  *logger.Logger
+	sqp                  *streamQueryProcessor
+	mqp                  *measureQueryProcessor
+	tqp                  *topNQueryProcessor
+	closer               *run.Closer
+	nodeID               string
+	hotStageNodeSelector string
+	slowQuery            time.Duration
 }
 
 // NewService return a new query service.
@@ -109,11 +113,17 @@ func (q *queryService) PreRun(ctx context.Context) error {
 	}
 	node := val.(common.Node)
 	q.nodeID = node.NodeID
+	val = ctx.Value(common.ContextNodeSelectorKey)
+	if val != nil {
+		q.hotStageNodeSelector = val.(string)
+	}
+
 	q.log = logger.GetLogger(moduleName)
 	q.sqp.streamService = stream.NewPortableRepository(q.metaService, q.log,
 		schema.NewMetrics(q.omr.With(streamScope)))
 	q.mqp.measureService = measure.NewPortableRepository(q.metaService, q.log,
 		schema.NewMetrics(q.omr.With(measureScope)))
+	q.tqp.measureService = q.mqp.measureService
 	return multierr.Combine(
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
 		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
@@ -132,13 +142,50 @@ func (q *queryService) Serve() run.StopNotify {
 	return q.closer.CloseNotify()
 }
 
+func (q *queryService) parseNodeSelector(stages []string, resource *commonv1.ResourceOpts) ([]string, bool) {
+	if len(stages) == 0 {
+		stages = resource.DefaultStages
+	}
+	if len(stages) == 0 {
+		return nil, false
+	}
+
+	var nodeSelectors []string
+	for _, stage := range resource.Stages {
+		for _, sn := range stages {
+			if strings.EqualFold(sn, stage.Name) {
+				ns := stage.NodeSelector
+				ns = strings.TrimSpace(ns)
+				if ns == "" {
+					continue
+				}
+				nodeSelectors = append(nodeSelectors, ns)
+				break
+			}
+			if strings.EqualFold(sn, hotStageName) && q.hotStageNodeSelector != "" {
+				nodeSelectors = append(nodeSelectors, q.hotStageNodeSelector)
+				break
+			}
+		}
+	}
+	if len(nodeSelectors) == 0 {
+		return nil, false
+	}
+	return nodeSelectors, true
+}
+
 var _ executor.DistributedExecutionContext = (*distributedContext)(nil)
 
 type distributedContext struct {
 	bus.Broadcaster
-	timeRange *modelv1.TimeRange
+	timeRange     *modelv1.TimeRange
+	nodeSelectors map[string][]string
 }
 
 func (dc *distributedContext) TimeRange() *modelv1.TimeRange {
 	return dc.timeRange
+}
+
+func (dc *distributedContext) NodeSelectors() map[string][]string {
+	return dc.nodeSelectors
 }
