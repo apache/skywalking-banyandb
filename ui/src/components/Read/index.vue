@@ -159,7 +159,7 @@ orderBy:
   function setCode() {
     const json = yamlToJson(data.code);
     if (data.byStages) {
-      json.data.stages = ["hot"];
+      json.data.stages = ['hot'];
     } else {
       delete json.data.stages;
     }
