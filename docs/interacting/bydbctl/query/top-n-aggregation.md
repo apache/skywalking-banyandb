@@ -43,16 +43,10 @@ topNAggregation:
   - service_id
   lruSize: 10
   metadata:
-    createRevision: "578"
     group: sw_metric
-    id: 0
-    modRevision: "578"
     name: service_instance_cpm_minute_top_bottom_100
   sourceMeasure:
-    createRevision: "0"
     group: sw_metric
-    id: 0
-    modRevision: "0"
     name: service_instance_cpm_minute
   updatedAt: null
 ```
@@ -77,8 +71,8 @@ timeRange:
   begin: 2021-09-01T23:10:00+08:00
   end: 2021-09-01T23:35:00+08:00
 topN: 3
-agg: 2
-fieldValueSort: 1
+agg: "AGGREGATION_FUNCTION_MAX"
+fieldValueSort: "SORT_DESC"
 EOF
 ```
 
@@ -95,8 +89,8 @@ tagProjection:
     - name: "default"
       tags: ["service_id"]
 topN: 3
-agg: 2
-fieldValueSort: 1
+agg: "AGGREGATION_FUNCTION_MAX"
+fieldValueSort: "SORT_DESC"
 EOF
 ```
 
@@ -108,44 +102,20 @@ The below command could query data with a filter where the service_id is `svc_1`
 bydbctl topn query -f - <<EOF
 name: "service_instance_cpm_minute_top_bottom_100"
 groups: ["sw_metric"]
-tagProjection:
-  tagFamilies:
-    - name: "default"
-      tags: ["service_id"]
 topN: 3
-agg: 2
-fieldValueSort: 1
-criteria:
-  condition:
-    name: "service_id"
+agg: "AGGREGATION_FUNCTION_MAX"
+fieldValueSort: "SORT_DESC"
+conditions:
+  - name: "service_id"
     op: "BINARY_OP_EQ"
     value:
       str:
         value: "svc_1"
 EOF
 ```
+Note: Only tags defined in `groupByTagNames` and used with the `EQ` operation are supported for filtering.
 
 More filter operations can be found in [here](filter-operation.md).
-
-### Query ordered by time-series
-
-The below command could query data order by time-series in descending [order](../../../api-reference.md#sort) :
-
-```shell
-bydbctl topn query -f - <<EOF
-name: "service_instance_cpm_minute_top_bottom_100"
-groups: ["sw_metric"]
-tagProjection:
-  tagFamilies:
-    - name: "default"
-      tags: ["service_id"]
-topN: 3
-agg: 2
-fieldValueSort: 1
-orderBy:
-  sort: "SORT_DESC"
-EOF
-```
 
 ### More examples can be found in [here](https://github.com/apache/skywalking-banyandb/tree/main/test/cases/topn/data/input).
 
