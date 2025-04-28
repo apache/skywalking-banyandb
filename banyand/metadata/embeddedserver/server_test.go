@@ -23,13 +23,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/test"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	clientv3 "go.etcd.io/etcd/client/v3"
+
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 func TestDefragment(t *testing.T) {
