@@ -156,11 +156,13 @@ orderBy:
     }
   }
   function setCode() {
+    const json = yamlToJson(data.code);
     if (data.byStages) {
-      data.code = `${data.code}stages: ["hot"]`;
+      json.data.stages = ["hot"];
     } else {
-      initCode();
+      delete json.data.stages;
     }
+    data.code = jsonToYaml(json.data).data;
   }
   function initData() {
     $loadingCreate();
