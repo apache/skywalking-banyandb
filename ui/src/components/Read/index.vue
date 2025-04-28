@@ -163,6 +163,14 @@ orderBy:
     } else {
       delete json.data.stages;
     }
+    if (!json.data.hasOwnProperty('timeRange')) {
+      json.data.timeRange = {
+        begin: '',
+        end: '',
+      };
+    }
+    json.data.timeRange.begin = data.timeValue ? new Date(data.timeValue[0]) : null;
+    json.data.timeRange.end = data.timeValue ? new Date(data.timeValue[1]) : null;
     data.code = jsonToYaml(json.data).data;
   }
   function initData() {
