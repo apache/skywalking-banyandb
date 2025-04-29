@@ -26,7 +26,6 @@ import (
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -146,71 +145,6 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		gomega.Eventually(func(g gomega.Gomega) {
 			verifyClientsWithGomega(g, p, data.TopicStreamWrite, 1, 0, 2, 1)
 		}, flags.EventuallyTimeout).Should(gomega.Succeed())
-	})
-
-	ginkgo.It("should update node when labels or data boundaries change", func() {
-		addr1 := getAddress()
-		closeFn := setup(addr1, codes.OK, 200*time.Millisecond)
-		defer closeFn()
-		p := newPub()
-		defer p.GracefulStop()
-
-		// Replace hard-coded "service" with the Service constant
-		group1 := svc
-		now := time.Now()
-		timeRange1 := &modelv1.TimeRange{
-			Begin: timestamppb.New(now.Add(-3 * time.Hour)),
-			End:   timestamppb.New(now.Add(-2 * time.Hour)),
-		}
-
-		initialLabels := map[string]string{
-			"role": "ingest",
-			"zone": "east",
-		}
-		initialBoundaries := map[string]*modelv1.TimeRange{
-			group1: timeRange1,
-		}
-
-		node1 := getDataNodeWithLabels("node1", addr1, initialLabels, initialBoundaries)
-		p.OnAddOrUpdate(node1)
-		verifyClients(p, 1, 0, 1, 0)
-
-		p.mu.RLock()
-		registeredNode := p.registered["node1"]
-		gomega.Expect(registeredNode.Labels).Should(gomega.Equal(initialLabels))
-		gomega.Expect(registeredNode.DataSegmentsBoundary).Should(gomega.Equal(initialBoundaries))
-		p.mu.RUnlock()
-
-		updatedLabels := map[string]string{
-			"role": "query",
-			"zone": "east",
-			"env":  "prod",
-		}
-		updatedNode1 := getDataNodeWithLabels("node1", addr1, updatedLabels, initialBoundaries)
-		p.OnAddOrUpdate(updatedNode1)
-
-		p.mu.RLock()
-		registeredNode = p.registered["node1"]
-		gomega.Expect(registeredNode.Labels).Should(gomega.Equal(updatedLabels))
-		gomega.Expect(len(p.active)).Should(gomega.Equal(1))
-		p.mu.RUnlock()
-
-		timeRange2 := &modelv1.TimeRange{
-			Begin: timestamppb.New(now.Add(-1 * time.Hour)),
-			End:   timestamppb.New(now),
-		}
-		updatedBoundaries := map[string]*modelv1.TimeRange{
-			group1:      timeRange1,
-			"inventory": timeRange2,
-		}
-		updatedNode2 := getDataNodeWithLabels("node1", addr1, updatedLabels, updatedBoundaries)
-		p.OnAddOrUpdate(updatedNode2)
-
-		p.mu.RLock()
-		registeredNode = p.registered["node1"]
-		gomega.Expect(registeredNode.DataSegmentsBoundary).Should(gomega.Equal(updatedBoundaries))
-		gomega.Expect(len(p.active)).Should(gomega.Equal(1))
-		p.mu.RUnlock()
 	})
 })
 

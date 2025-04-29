@@ -38,15 +38,17 @@ type SharedContext struct {
 
 // Args is a wrapper seals all necessary info for table specs.
 type Args struct {
-	Begin     *timestamppb.Timestamp
-	End       *timestamppb.Timestamp
-	Input     string
-	Want      string
-	Offset    time.Duration
-	Duration  time.Duration
-	WantEmpty bool
-	WantErr   bool
-	DisOrder  bool
+	Begin           *timestamppb.Timestamp
+	End             *timestamppb.Timestamp
+	Input           string
+	Want            string
+	Stages          []string
+	Offset          time.Duration
+	Duration        time.Duration
+	WantEmpty       bool
+	WantErr         bool
+	DisOrder        bool
+	IgnoreElementID bool
 }
 
 // UnmarshalYAML decodes YAML raw bytes to proto.Message.
@@ -80,9 +82,11 @@ type BackupSharedContext struct {
 
 // LifecycleSharedContext is the context shared between test cases in the lifecycle testing.
 type LifecycleSharedContext struct {
-	DataAddr   string
-	Connection *grpclib.ClientConn
-	SrcDir     string
-	DestDir    string
-	EtcdAddr   string
+	BaseTime    time.Time
+	Connection  *grpclib.ClientConn
+	LiaisonAddr string
+	DataAddr    string
+	SrcDir      string
+	DestDir     string
+	EtcdAddr    string
 }
