@@ -164,7 +164,7 @@ field_name: value
 field_value_sort: SORT_UNSPECIFIED
 group_by_tag_names:
 - entity_id
-counters_number: 10000
+counters_number: 1000
 lru_size: 10
 ```
 
