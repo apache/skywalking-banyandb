@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package fadvis
+package utils
 
 import (
 	"bufio"
@@ -39,10 +39,10 @@ import (
 
 // Constants for file sizes and thresholds
 const (
-	megabyte = 1024 * 1024
-	terabyte = 1024 * 1024 * 1024 * 1024
+	Megabyte = 1024 * 1024
+	Terabyte = 1024 * 1024 * 1024 * 1024
 	// Large file size (200MB)
-	LargeFileSize = 200 * megabyte
+	LargeFileSize = 200 * Megabyte
 )
 
 // fileSystem is the file system instance used for all operations
@@ -56,9 +56,9 @@ func init() {
 // sharedReadBuffer is a shared buffer used for reading files
 var sharedReadBuffer = make([]byte, 32*1024)
 
-// createTestFile creates a test file of the specified size.
+// CreateTestFile creates a test file of the specified size.
 // It uses the fs package which automatically applies fadvise if the file size exceeds the threshold.
-func createTestFile(t testing.TB, filePath string, size int64) error {
+func CreateTestFile(t testing.TB, filePath string, size int64) error {
 	// Create parent directories if they don't exist
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return err
@@ -80,9 +80,9 @@ func createTestFile(t testing.TB, filePath string, size int64) error {
 	return nil
 }
 
-// readFileWithFadvise reads a file with automatic fadvise application.
+// ReadFileWithFadvise reads a file with automatic fadvise application.
 // It uses the fs package which automatically applies fadvise if the file size exceeds the threshold.
-func readFileWithFadvise(t testing.TB, filePath string) ([]byte, error) {
+func ReadFileWithFadvise(t testing.TB, filePath string) ([]byte, error) {
 	// Use streaming read instead of reading the entire file at once
 	f, err := fileSystem.OpenFile(filePath)
 	if err != nil {
@@ -107,9 +107,9 @@ func readFileWithFadvise(t testing.TB, filePath string) ([]byte, error) {
 	return sharedReadBuffer[:n], nil
 }
 
-// readFileStreamingWithFadvise reads a file using streaming to minimize heap allocations
+// ReadFileStreamingWithFadvise reads a file using streaming to minimize heap allocations
 // skipFadvise parameter controls whether to skip fadvise calls
-func readFileStreamingWithFadvise(t testing.TB, filePath string, skipFadvise bool) (int64, error) {
+func ReadFileStreamingWithFadvise(t testing.TB, filePath string, skipFadvise bool) (int64, error) {
 	f, err := fileSystem.OpenFile(filePath)
 	if err != nil {
 		return 0, err
@@ -145,9 +145,9 @@ func readFileStreamingWithFadvise(t testing.TB, filePath string, skipFadvise boo
 	return totalBytes, nil
 }
 
-// appendToFile appends data to a file, creating it if it doesn't exist.
+// AppendToFile appends data to a file, creating it if it doesn't exist.
 // It uses the fs package which automatically applies fadvise if the file size exceeds the threshold.
-func appendToFile(filePath string, data []byte) error {
+func AppendToFile(filePath string, data []byte) error {
 	// Check if file exists
 	_, err := os.Stat(filePath)
 	if err != nil && !os.IsNotExist(err) {
@@ -178,26 +178,26 @@ func appendToFile(filePath string, data []byte) error {
 	return nil
 }
 
-// setupTestEnvironment creates a test directory and returns a cleanup function.
-func setupTestEnvironment(t testing.TB) (string, func()) {
+// SetupTestEnvironment creates a test directory and returns a cleanup function.
+func SetupTestEnvironment(t testing.TB) (string, func()) {
 	tempDir := t.TempDir()
 	return tempDir, func() {}
 }
 
-// createTestParts creates a set of test parts for merge benchmark.
-func createTestParts(t testing.TB, testDir string, numParts int, partSize int64) []string {
+// CreateTestParts creates a set of test parts for merge benchmark.
+func CreateTestParts(t testing.TB, testDir string, numParts int, partSize int64) []string {
 	parts := make([]string, numParts)
 	for i := 0; i < numParts; i++ {
 		partPath := filepath.Join(testDir, fmt.Sprintf("part_%d", i))
-		err := createTestFile(t, partPath, partSize)
+		err := CreateTestFile(t, partPath, partSize)
 		require.NoError(t, err)
 		parts[i] = partPath
 	}
 	return parts
 }
 
-// simulateMergeOperation simulates a merge operation by reading parts and writing to an output file.
-func simulateMergeOperation(t testing.TB, parts []string, outputFile string) error {
+// SimulateMergeOperation simulates a merge operation by reading parts and writing to an output file.
+func SimulateMergeOperation(t testing.TB, parts []string, outputFile string) error {
 	// Create the output file using the fs package
 	outFile, err := fileSystem.CreateFile(outputFile, 0644)
 	if err != nil {
@@ -244,8 +244,8 @@ func simulateMergeOperation(t testing.TB, parts []string, outputFile string) err
 	return nil
 }
 
-// setTestThreshold sets the fadvis threshold used for testing
-func setTestThreshold(threshold int64) {
+// SetTestThreshold sets the fadvis threshold used for testing
+func SetTestThreshold(threshold int64) {
 	// Create a simple threshold provider for testing
 	provider := &testThresholdProvider{threshold: threshold}
 	// Create a new Manager and set it as the global Manager
@@ -253,19 +253,19 @@ func setTestThreshold(threshold int64) {
 	fadvis.SetManager(manager)
 }
 
-// setRealisticThreshold sets a realistic fadvis threshold based on system memory
+// SetRealisticThreshold sets a realistic fadvis threshold based on system memory
 // It calculates threshold as 1% of page cache (which is 25% of total memory)
 // This mimics the actual production logic in fadvis.Manager
-func setRealisticThreshold() {
+func SetRealisticThreshold() {
 	// Calculate threshold using the same logic as in protector.Memory.GetThreshold
-	threshold := calculateRealisticThreshold()
+	threshold := CalculateRealisticThreshold()
 
-	setTestThreshold(threshold)
+	SetTestThreshold(threshold)
 }
 
-// calculateRealisticThreshold calculates a realistic threshold based on system memory
+// CalculateRealisticThreshold calculates a realistic threshold based on system memory
 // using the same logic as in protector.Memory.GetThreshold
-func calculateRealisticThreshold() int64 {
+func CalculateRealisticThreshold() int64 {
 	// Default page cache percent (100 - allowedPercent)
 	// In production, allowedPercent is typically 75%, so pageCachePercent is 25%
 	pageCachePercent := 25
@@ -339,9 +339,9 @@ func parseSmapsRollup(r io.Reader) (PageCacheStats, error) {
 	return stats, nil
 }
 
-// capturePageCacheStats captures and records page cache memory usage stats.
+// CapturePageCacheStats captures and records page cache memory usage stats.
 // It both prints to stdout and saves to a profile file for later analysis.
-func capturePageCacheStats(b *testing.B, phase string) int64 {
+func CapturePageCacheStats(b *testing.B, phase string) int64 {
 	f, err := os.Open("/proc/self/smaps_rollup")
 	if err != nil {
 		b.Logf("[PAGECACHE] %s: open smaps_rollup failed: %v", phase, err)
@@ -397,9 +397,9 @@ func capturePageCacheStats(b *testing.B, phase string) int64 {
 	return cachedKB
 }
 
-// capturePageCacheStatsWithDelay captures page cache stats after a delay
-func capturePageCacheStatsWithDelay(b *testing.B, phase string, delaySeconds int) {
+// CapturePageCacheStatsWithDelay captures page cache stats after a delay
+func CapturePageCacheStatsWithDelay(b *testing.B, phase string, delaySeconds int) {
 	b.Logf("[PAGECACHE] Waiting %d seconds before capturing %s...\n", delaySeconds, phase)
 	time.Sleep(time.Duration(delaySeconds) * time.Second)
-	_ = capturePageCacheStats(b, phase)
+	_ = CapturePageCacheStats(b, phase)
 }

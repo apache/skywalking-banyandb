@@ -15,10 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package fadvis
+package benchmark
 
 import (
 	"fmt"
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 	"path/filepath"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ import (
 
 // BenchmarkConcurrentOperations tests the performance of concurrent file operations
 func BenchmarkConcurrentOperations(b *testing.B) {
-	testDir, cleanup := setupTestEnvironment(b)
+	testDir, cleanup := utils.SetupTestEnvironment(b)
 	defer cleanup()
 
 	// Create test files
@@ -36,7 +37,7 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 	files := make([]string, numFiles)
 	for i := 0; i < numFiles; i++ {
 		files[i] = filepath.Join(testDir, fmt.Sprintf("test_file_%d", i))
-		err := createTestFile(b, files[i], 200*1024*1024)
+		err := utils.CreateTestFile(b, files[i], 200*1024*1024)
 		require.NoError(b, err)
 	}
 
@@ -47,12 +48,12 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 
 // BenchmarkConcurrentMerges tests the performance of concurrent merge operations
 func BenchmarkConcurrentMerges(b *testing.B) {
-	testDir, cleanup := setupTestEnvironment(b)
+	testDir, cleanup := utils.SetupTestEnvironment(b)
 	defer cleanup()
 
 	// Create test parts for merging
 	numParts := 5 // Default number of parts
-	parts := createTestParts(b, testDir, numParts, 10*1024*1024)
+	parts := utils.CreateTestParts(b, testDir, numParts, 10*1024*1024)
 
 	b.Run("ConcurrentMerges", func(b *testing.B) {
 		benchmarkConcurrentMerges(b, testDir, parts)
@@ -63,24 +64,24 @@ func benchmarkConcurrentReads(b *testing.B, files []string) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, file := range files {
-			data, err := readFileWithFadvise(b, file)
+			data, err := utils.ReadFileWithFadvise(b, file)
 			require.NoError(b, err)
 			require.NotEmpty(b, data)
 		}
 	}
-	capturePageCacheStats(b, "after_concurrent_read")
-	capturePageCacheStatsWithDelay(b, "after_concurrent_read", 3)
+	utils.CapturePageCacheStats(b, "after_concurrent_read")
+	utils.CapturePageCacheStatsWithDelay(b, "after_concurrent_read", 3)
 }
 
 func benchmarkConcurrentMerges(b *testing.B, testDir string, parts []string) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
-		err := simulateMergeOperation(b, parts, outputFile)
+		err := utils.SimulateMergeOperation(b, parts, outputFile)
 		require.NoError(b, err)
 	}
-	capturePageCacheStats(b, "after_concurrent_merge")
-	capturePageCacheStatsWithDelay(b, "after_concurrent_merge", 3)
+	utils.CapturePageCacheStats(b, "after_concurrent_merge")
+	utils.CapturePageCacheStatsWithDelay(b, "after_concurrent_merge", 3)
 }
 
 // BenchmarkThresholdAdaptation tests how the system adapts to changing memory thresholds
@@ -104,15 +105,15 @@ func BenchmarkThresholdAdaptation(b *testing.B) {
 
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
-			tempDir, cleanup := setupTestEnvironment(b)
+			tempDir, cleanup := utils.SetupTestEnvironment(b)
 			defer cleanup()
 
-			// Set a realistic fadvis threshold based on system memory
-			setRealisticThreshold()
+			// Set a realistic utils threshold based on system memory
+			utils.SetRealisticThreshold()
 
 			// Create test file
 			testFile := filepath.Join(tempDir, "test_file")
-			err := createTestFile(b, testFile, tt.fileSize)
+			err := utils.CreateTestFile(b, testFile, tt.fileSize)
 			require.NoError(b, err)
 
 			b.ResetTimer()
@@ -121,17 +122,17 @@ func BenchmarkThresholdAdaptation(b *testing.B) {
 					// Simulate high memory pressure by setting a lower threshold
 					// In real system, this would be automatically adjusted based on memory pressure
 					// Here we simulate by manually setting a lower threshold (25% of normal)
-					normalThreshold := calculateRealisticThreshold()
+					normalThreshold := utils.CalculateRealisticThreshold()
 					lowThreshold := normalThreshold / 4 // 25% of normal threshold
-					setTestThreshold(lowThreshold)
+					utils.SetTestThreshold(lowThreshold)
 					time.Sleep(100 * time.Millisecond)
 					// Reset to normal threshold
-					setRealisticThreshold()
+					utils.SetRealisticThreshold()
 				}
 				time.Sleep(100 * time.Millisecond)
 
 				// Read the file using our integrated read function
-				data, err := readFileWithFadvise(b, testFile)
+				data, err := utils.ReadFileStreamingWithFadvise(b, testFile, false)
 				require.NoError(b, err)
 				require.NotEmpty(b, data)
 			}

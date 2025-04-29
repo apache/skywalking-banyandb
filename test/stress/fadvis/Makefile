@@ -19,15 +19,62 @@ SHELL := /bin/bash
 ROOTDIR := $(shell cd ../../../ && pwd)
 PWD := $(shell pwd)
 REPORTS_DIR := $(PWD)/reports
+BPF_DIR := $(PWD)/bpf
+BPF_HEADERS_DIR := $(BPF_DIR)/headers
 
-.PHONY: all-benchmarks benchmark-write benchmark-read benchmark-merge benchmark-sequential-merge benchmark-multiple-reads benchmark-mixed benchmark-concurrent benchmark-threshold benchmark-memory clean help
+.PHONY: all-benchmarks benchmark-write benchmark-read benchmark-merge benchmark-sequential-merge benchmark-multiple-reads benchmark-mixed benchmark-concurrent benchmark-threshold benchmark-memory clean help generate-bpf prepare-bpf-headers bpf-benchmark docker-bpf-benchmark bpf
 
-all-benchmarks: clean
+# eBPF related targets
+generate-bpf:
+	@echo "Generating eBPF code for amd64..."
+	@cd $(BPF_DIR) && TARGET=amd64 go generate ./...
+	@echo "Generating eBPF code for arm64..."
+	@cd $(BPF_DIR) && TARGET=arm64 go generate ./...
+	@echo "eBPF code generation completed for all targets."
+
+bpf: prepare-bpf-headers generate-bpf
+
+prepare-bpf-headers:
+	@echo "Preparing eBPF headers..."
+	@if [ ! -f $(BPF_HEADERS_DIR)/vmlinux.h ]; then \
+		echo "Generating vmlinux.h (requires bpftool and Linux environment)"; \
+		if command -v bpftool >/dev/null 2>&1; then \
+			bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(BPF_HEADERS_DIR)/vmlinux.h; \
+		else \
+			echo "Warning: bpftool not found. Please install bpftool or manually provide vmlinux.h"; \
+			echo "You may need to run this in a Linux environment with bpftool installed."; \
+			echo "Example: bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(BPF_HEADERS_DIR)/vmlinux.h"; \
+		fi; \
+	else \
+		echo "vmlinux.h already exists."; \
+	fi
+	@echo "Headers preparation completed."
+
+bpf-benchmark: prepare-bpf-headers generate-bpf
 	@mkdir -p $(REPORTS_DIR)
-	@echo "Running all fadvis benchmarks..."
-	@go test -bench=. -benchmem -count=3 | tee $(REPORTS_DIR)/all_benchmarks.txt
-	@echo "Benchmark results saved to $(REPORTS_DIR)/all_benchmarks.txt"
+	@echo "Running fadvis benchmarks with eBPF tracing..."
+	@go test -v -tags linux -bench=BenchmarkWithBPF -benchtime=5s -run=^$ ./... -benchmem | tee $(REPORTS_DIR)/bpf_benchmarks.txt
+	@echo "BPF benchmark results saved to $(REPORTS_DIR)/bpf_benchmarks.txt"
 
+# Docker-based eBPF testing (for cross-platform support)
+docker-bpf-benchmark:
+	@mkdir -p $(REPORTS_DIR)
+	@echo "Running eBPF benchmarks in Docker container..."
+	@docker run --rm -it \
+		--cap-add=SYS_ADMIN \
+		--privileged \
+		-v $(ROOTDIR):/skywalking-banyandb \
+		-w /skywalking-banyandb/test/stress/fadvis \
+		golang:1.21-bullseye \
+		/bin/bash -c " \
+			apt-get update && \
+			apt-get install -y linux-headers-\$(uname -r) clang llvm && \
+			make prepare-bpf-headers generate-bpf && \
+			go test -v -tags linux -bench=BenchmarkWithBPF -benchtime=5s -run=^$ ./... -benchmem \
+		" | tee $(REPORTS_DIR)/docker_bpf_benchmarks.txt
+	@echo "Docker BPF benchmark results saved to $(REPORTS_DIR)/docker_bpf_benchmarks.txt"
+
+# Existing targets
 benchmark-write:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running write performance benchmarks..."

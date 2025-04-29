@@ -15,10 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package fadvis
+package benchmark
 
 import (
 	"fmt"
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// BenchmarkMergeMemoryUsage tests the memory usage of merge operations with and without fadvis.
+// BenchmarkMergeMemoryUsage tests the memory usage of merge operations with and without utils.
 // This benchmark focuses specifically on memory usage and page cache behavior.
 func BenchmarkMergeMemoryUsage(b *testing.B) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
@@ -36,52 +37,52 @@ func BenchmarkMergeMemoryUsage(b *testing.B) {
 	}
 
 	// Create a temporary directory for the test
-	testDir, err := os.MkdirTemp("", "fadvis_memory_benchmark")
+	testDir, err := os.MkdirTemp("", "utils_memory_benchmark")
 	require.NoError(b, err)
 	defer os.RemoveAll(testDir)
 
 	// Prepare test files - use larger files to better observe memory effects
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "PREPARE_TEST_FILES")
-	parts := createTestParts(b, testDir, 5, LargeFileSize*2) // 400MB parts
+	parts := utils.CreateTestParts(b, testDir, 5, utils.LargeFileSize*2) // 400MB parts
 	b.Logf("PHASE_END: %s %s", time.Now().Format(time.RFC3339), "PREPARE_TEST_FILES")
 
 	// Create output directories
-	outputDirNoFadvise := filepath.Join(testDir, "no_fadvise")
-	outputDirWithFadvise := filepath.Join(testDir, "with_fadvise")
-	require.NoError(b, os.MkdirAll(outputDirNoFadvise, 0755))
-	require.NoError(b, os.MkdirAll(outputDirWithFadvise, 0755))
+	outputDirNoutilse := filepath.Join(testDir, "no_utilse")
+	outputDirWithutilse := filepath.Join(testDir, "with_utilse")
+	require.NoError(b, os.MkdirAll(outputDirNoutilse, 0755))
+	require.NoError(b, os.MkdirAll(outputDirWithutilse, 0755))
 
 	// Print instructions for memory monitoring
 	pid := os.Getpid()
 	b.Logf("\n\nIMPORTANT: To monitor memory usage, run in another terminal:\n")
-	b.Logf("chmod +x ./test/stress/fadvis/monitor_pagecache.sh")
-	b.Logf("./test/stress/fadvis/monitor_pagecache.sh %d 0.5 300\n\n", pid)
+	b.Logf("chmod +x ./test/stress/utils/monitor_pagecache.sh")
+	b.Logf("./test/stress/utils/monitor_pagecache.sh %d 0.5 300\n\n", pid)
 
-	// Run benchmark with fadvise disabled
-	b.Run("WithoutFadvise", func(b *testing.B) {
-		// Set the fadvis threshold to a high value to disable it
-		setTestThreshold(terabyte)
-		b.Logf("\n=== STARTING WITHOUT FADVISE TEST (PID: %d) ===", pid)
-		b.Logf("Output directory: %s", outputDirNoFadvise)
-		runMemoryProfiledMerge(b, parts, outputDirNoFadvise)
+	// Run benchmark with utilse disabled
+	b.Run("Withoututilse", func(b *testing.B) {
+		// Set the utils threshold to a high value to disable it
+		utils.SetTestThreshold(utils.Terabyte)
+		b.Logf("\n=== STARTING WITHOUT utilsE TEST (PID: %d) ===", pid)
+		b.Logf("Output directory: %s", outputDirNoutilse)
+		runMemoryProfiledMerge(b, parts, outputDirNoutilse)
 	})
 
 	// Wait between tests to allow for monitoring
 	b.Log("\n=== WAITING 10 SECONDS BETWEEN TESTS... ===")
 	time.Sleep(10 * time.Second)
 
-	// Run benchmark with fadvise enabled
-	b.Run("WithFadvise", func(b *testing.B) {
-		// Set a realistic fadvis threshold based on system memory
-		setRealisticThreshold()
-		b.Logf("\n=== STARTING WITH FADVISE TEST (PID: %d) ===", pid)
-		b.Logf("Output directory: %s", outputDirWithFadvise)
-		runMemoryProfiledMerge(b, parts, outputDirWithFadvise)
+	// Run benchmark with utilse enabled
+	b.Run("Withutilse", func(b *testing.B) {
+		// Set a realistic utils threshold based on system memory
+		utils.SetRealisticThreshold()
+		b.Logf("\n=== STARTING WITH utilsE TEST (PID: %d) ===", pid)
+		b.Logf("Output directory: %s", outputDirWithutilse)
+		runMemoryProfiledMerge(b, parts, outputDirWithutilse)
 	})
 
 	// Print final instructions
 	b.Logf("\n\nTests completed. Results are in:\n%s\n%s\n",
-		outputDirNoFadvise, outputDirWithFadvise)
+		outputDirNoutilse, outputDirWithutilse)
 }
 
 // runMemoryProfiledMerge performs merge operations with memory profiling
@@ -107,7 +108,7 @@ func runMemoryProfiledMerge(b *testing.B, parts []string, outputDir string) {
 	for i := 0; i < b.N; i++ {
 		outputFile := filepath.Join(outputDir, fmt.Sprintf("merged_%d", i))
 		b.Logf("Merging to: %s", outputFile)
-		err := simulateMergeOperation(b, parts, outputFile)
+		err := utils.SimulateMergeOperation(b, parts, outputFile)
 		require.NoError(b, err)
 
 		// Log file size after merge
@@ -184,7 +185,7 @@ func writeMemStats(outputDir string, before, after runtime.MemStats) {
 	fmt.Fprintf(f, "  HeapInuse: %d bytes\n", after.HeapInuse-before.HeapInuse)
 }
 
-// BenchmarkWriteMemoryUsage tests the memory usage of write operations with and without fadvis.
+// BenchmarkWriteMemoryUsage tests the memory usage of write operations with and without utils.
 // This benchmark focuses specifically on memory usage and page cache behavior during file writes.
 func BenchmarkWriteMemoryUsage(b *testing.B) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
@@ -192,47 +193,47 @@ func BenchmarkWriteMemoryUsage(b *testing.B) {
 	}
 
 	// Create a temporary directory for the test
-	testDir, err := os.MkdirTemp("", "fadvis_write_memory_benchmark")
+	testDir, err := os.MkdirTemp("", "utils_write_memory_benchmark")
 	require.NoError(b, err)
 	defer os.RemoveAll(testDir)
 
 	// Create output directories
-	outputDirNoFadvise := filepath.Join(testDir, "no_fadvise")
-	outputDirWithFadvise := filepath.Join(testDir, "with_fadvise")
-	require.NoError(b, os.MkdirAll(outputDirNoFadvise, 0755))
-	require.NoError(b, os.MkdirAll(outputDirWithFadvise, 0755))
+	outputDirNoutilse := filepath.Join(testDir, "no_utilse")
+	outputDirWithutilse := filepath.Join(testDir, "with_utilse")
+	require.NoError(b, os.MkdirAll(outputDirNoutilse, 0755))
+	require.NoError(b, os.MkdirAll(outputDirWithutilse, 0755))
 
 	// Print instructions for memory monitoring
 	pid := os.Getpid()
 	b.Logf("\n\nIMPORTANT: To monitor memory usage, run in another terminal:\n")
-	b.Logf("chmod +x ./test/stress/fadvis/monitor_pagecache.sh")
-	b.Logf("./test/stress/fadvis/monitor_pagecache.sh %d 0.5 300\n\n", pid)
+	b.Logf("chmod +x ./test/stress/utils/monitor_pagecache.sh")
+	b.Logf("./test/stress/utils/monitor_pagecache.sh %d 0.5 300\n\n", pid)
 
-	// Run benchmark with fadvise disabled
-	b.Run("WithoutFadvise", func(b *testing.B) {
-		// Set the fadvis threshold to a high value to disable it
-		setTestThreshold(terabyte)
-		b.Logf("\n=== STARTING WITHOUT FADVISE TEST (PID: %d) ===", pid)
-		b.Logf("Output directory: %s", outputDirNoFadvise)
-		runMemoryProfiledWrite(b, outputDirNoFadvise, LargeFileSize*2) // 400MB files
+	// Run benchmark with utilse disabled
+	b.Run("Withoututilse", func(b *testing.B) {
+		// Set the utils threshold to a high value to disable it
+		utils.SetTestThreshold(utils.Terabyte)
+		b.Logf("\n=== STARTING WITHOUT utilsE TEST (PID: %d) ===", pid)
+		b.Logf("Output directory: %s", outputDirNoutilse)
+		runMemoryProfiledWrite(b, outputDirNoutilse, utils.LargeFileSize*2) // 400MB files
 	})
 
 	// Wait between tests to allow for monitoring
 	b.Log("\n=== WAITING 10 SECONDS BETWEEN TESTS... ===")
 	time.Sleep(10 * time.Second)
 
-	// Run benchmark with fadvise enabled
-	b.Run("WithFadvise", func(b *testing.B) {
-		// Set a realistic fadvis threshold based on system memory
-		setRealisticThreshold()
-		b.Logf("\n=== STARTING WITH FADVISE TEST (PID: %d) ===", pid)
-		b.Logf("Output directory: %s", outputDirWithFadvise)
-		runMemoryProfiledWrite(b, outputDirWithFadvise, LargeFileSize*2) // 400MB files
+	// Run benchmark with utilse enabled
+	b.Run("Withutilse", func(b *testing.B) {
+		// Set a realistic utils threshold based on system memory
+		utils.SetRealisticThreshold()
+		b.Logf("\n=== STARTING WITH utilsE TEST (PID: %d) ===", pid)
+		b.Logf("Output directory: %s", outputDirWithutilse)
+		runMemoryProfiledWrite(b, outputDirWithutilse, utils.LargeFileSize*2) // 400MB files
 	})
 
 	// Print final instructions
 	b.Logf("\n\nTests completed. Results are in:\n%s\n%s\n",
-		outputDirNoFadvise, outputDirWithFadvise)
+		outputDirNoutilse, outputDirWithutilse)
 }
 
 // runMemoryProfiledWrite performs write operations with memory profiling
@@ -258,7 +259,7 @@ func runMemoryProfiledWrite(b *testing.B, outputDir string, fileSize int64) {
 	for i := 0; i < b.N; i++ {
 		filePath := filepath.Join(outputDir, fmt.Sprintf("write_test_%d.dat", i))
 		b.Logf("Writing to: %s", filePath)
-		err := createTestFile(b, filePath, fileSize)
+		err := utils.CreateTestFile(b, filePath, fileSize)
 		require.NoError(b, err)
 
 		// Log file size after write
@@ -300,7 +301,7 @@ func runMemoryProfiledWrite(b *testing.B, outputDir string, fileSize int64) {
 	b.Log("=== MEMORY MONITORING COMPLETE FOR THIS TEST ===")
 }
 
-// BenchmarkSeqReadMemoryUsage tests the memory usage of sequential read operations with and without fadvis.
+// BenchmarkSeqReadMemoryUsage tests the memory usage of sequential read operations with and without utils.
 // This benchmark focuses specifically on memory usage and page cache behavior during sequential reads.
 func BenchmarkSeqReadMemoryUsage(b *testing.B) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
@@ -308,58 +309,58 @@ func BenchmarkSeqReadMemoryUsage(b *testing.B) {
 	}
 
 	// Create a temporary directory for the test
-	testDir, err := os.MkdirTemp("", "fadvis_seqread_memory_benchmark")
+	testDir, err := os.MkdirTemp("", "utils_seqread_memory_benchmark")
 	require.NoError(b, err)
 	defer os.RemoveAll(testDir)
 
 	// Create a large test file for reading
 	testFilePath := filepath.Join(testDir, "large_test_file.dat")
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "PREPARE_TEST_FILE")
-	err = createTestFile(b, testFilePath, LargeFileSize*4) // 800MB file
+	err = utils.CreateTestFile(b, testFilePath, utils.LargeFileSize*4) // 800MB file
 	require.NoError(b, err)
 	b.Logf("PHASE_END: %s %s", time.Now().Format(time.RFC3339), "PREPARE_TEST_FILE")
 
 	// Create output directories for results
-	outputDirNoFadvise := filepath.Join(testDir, "no_fadvise")
-	outputDirWithFadvise := filepath.Join(testDir, "with_fadvise")
-	require.NoError(b, os.MkdirAll(outputDirNoFadvise, 0755))
-	require.NoError(b, os.MkdirAll(outputDirWithFadvise, 0755))
+	outputDirNoutilse := filepath.Join(testDir, "no_utilse")
+	outputDirWithutilse := filepath.Join(testDir, "with_utilse")
+	require.NoError(b, os.MkdirAll(outputDirNoutilse, 0755))
+	require.NoError(b, os.MkdirAll(outputDirWithutilse, 0755))
 
 	// Print instructions for memory monitoring
 	pid := os.Getpid()
 	b.Logf("\n\nIMPORTANT: To monitor memory usage, run in another terminal:\n")
-	b.Logf("chmod +x ./test/stress/fadvis/monitor_pagecache.sh")
-	b.Logf("./test/stress/fadvis/monitor_pagecache.sh %d 0.5 300\n\n", pid)
+	b.Logf("chmod +x ./test/stress/utils/monitor_pagecache.sh")
+	b.Logf("./test/stress/utils/monitor_pagecache.sh %d 0.5 300\n\n", pid)
 
-	// Run benchmark with fadvise disabled
-	b.Run("WithoutFadvise", func(b *testing.B) {
-		// Set the fadvis threshold to a high value to disable it
-		setTestThreshold(terabyte)
-		b.Logf("\n=== STARTING WITHOUT FADVISE TEST (PID: %d) ===", pid)
-		b.Logf("Output directory: %s", outputDirNoFadvise)
-		runMemoryProfiledSeqRead(b, testFilePath, outputDirNoFadvise, true) // skipFadvise=true
+	// Run benchmark with utilse disabled
+	b.Run("Withoututilse", func(b *testing.B) {
+		// Set the utils threshold to a high value to disable it
+		utils.SetTestThreshold(utils.Terabyte)
+		b.Logf("\n=== STARTING WITHOUT utilsE TEST (PID: %d) ===", pid)
+		b.Logf("Output directory: %s", outputDirNoutilse)
+		runMemoryProfiledSeqRead(b, testFilePath, outputDirNoutilse, true) // skiputilse=true
 	})
 
 	// Wait between tests to allow for monitoring
 	b.Log("\n=== WAITING 10 SECONDS BETWEEN TESTS... ===")
 	time.Sleep(10 * time.Second)
 
-	// Run benchmark with fadvise enabled
-	b.Run("WithFadvise", func(b *testing.B) {
-		// Set a realistic fadvis threshold based on system memory
-		setRealisticThreshold()
-		b.Logf("\n=== STARTING WITH FADVISE TEST (PID: %d) ===", pid)
-		b.Logf("Output directory: %s", outputDirWithFadvise)
-		runMemoryProfiledSeqRead(b, testFilePath, outputDirWithFadvise, false) // skipFadvise=false
+	// Run benchmark with utilse enabled
+	b.Run("Withutilse", func(b *testing.B) {
+		// Set a realistic utils threshold based on system memory
+		utils.SetRealisticThreshold()
+		b.Logf("\n=== STARTING WITH utilsE TEST (PID: %d) ===", pid)
+		b.Logf("Output directory: %s", outputDirWithutilse)
+		runMemoryProfiledSeqRead(b, testFilePath, outputDirWithutilse, false) // skiputilse=false
 	})
 
 	// Print final instructions
 	b.Logf("\n\nTests completed. Results are in:\n%s\n%s\n",
-		outputDirNoFadvise, outputDirWithFadvise)
+		outputDirNoutilse, outputDirWithutilse)
 }
 
 // runMemoryProfiledSeqRead performs sequential read operations with memory profiling
-func runMemoryProfiledSeqRead(b *testing.B, filePath string, outputDir string, skipFadvise bool) {
+func runMemoryProfiledSeqRead(b *testing.B, filePath string, outputDir string, skiputilse bool) {
 	// Reset memory stats before starting
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "MEMORY_RESET")
 	runtime.GC()
@@ -379,15 +380,15 @@ func runMemoryProfiledSeqRead(b *testing.B, filePath string, outputDir string, s
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "SEQREAD_OPERATION")
 	readStartTime := time.Now()
 	for i := 0; i < b.N; i++ {
-		b.Logf("Reading from: %s (skipFadvise=%v)", filePath, skipFadvise)
-		totalBytes, err := readFileStreamingWithFadvise(b, filePath, skipFadvise)
+		b.Logf("Reading from: %s (skiputilse=%v)", filePath, skiputilse)
+		totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, skiputilse)
 		require.NoError(b, err)
 		b.Logf("Read %d bytes", totalBytes)
-		
+
 		// Write a small summary file to the output directory
 		summaryPath := filepath.Join(outputDir, fmt.Sprintf("read_summary_%d.txt", i))
-		summaryContent := fmt.Sprintf("Read %d bytes from %s with skipFadvise=%v\n", 
-			totalBytes, filePath, skipFadvise)
+		summaryContent := fmt.Sprintf("Read %d bytes from %s with skiputilse=%v\n",
+			totalBytes, filePath, skiputilse)
 		err = os.WriteFile(summaryPath, []byte(summaryContent), 0644)
 		require.NoError(b, err)
 	}

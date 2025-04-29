@@ -19,6 +19,7 @@ package fadvis
 import (
 	"fmt"
 	"github.com/apache/skywalking-banyandb/pkg/fadvis"
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 	"os"
 	"regexp"
 	"runtime"
@@ -37,7 +38,7 @@ func TestMain(m *testing.M) {
 	_ = regexp.MustCompile(`Shared_Clean:\s+(\d+)\s+kB`)
 
 	// Warm up the memory manager
-	setRealisticThreshold()
+	utils.setRealisticThreshold()
 
 	// Force a garbage collection
 	runtime.GC()
