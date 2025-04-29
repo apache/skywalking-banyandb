@@ -419,7 +419,6 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          factory,
-		SegmentBoundaryUpdateFn:        s.metadata.UpdateSegmentsBoundary,
 		SegmentIdleTimeout:             segmentIdleTimeout,
 	}
 	return storage.OpenTSDB(

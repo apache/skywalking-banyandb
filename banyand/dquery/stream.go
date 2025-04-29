@@ -84,6 +84,10 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 		if gs, ok := p.streamService.LoadGroup(g); ok {
 			if ns, exist := p.parseNodeSelector(queryCriteria.Stages, gs.GetSchema().ResourceOpts); exist {
 				nodeSelectors[g] = ns
+			} else if len(gs.GetSchema().ResourceOpts.Stages) > 0 {
+				p.log.Error().Strs("req_stages", queryCriteria.Stages).Strs("default_stages", gs.GetSchema().GetResourceOpts().GetDefaultStages()).Msg("no stage found")
+				resp = bus.NewMessage(bus.MessageID(now), common.NewError("no stage found in request or default stages in resource opts"))
+				return
 			}
 		} else {
 			p.log.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("group not found")

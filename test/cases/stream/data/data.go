@@ -65,6 +65,7 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	query := &streamv1.QueryRequest{}
 	helpers.UnmarshalYAML(i, query)
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
+	query.Stages = args.Stages
 	c := streamv1.NewStreamServiceClient(sharedContext.Connection)
 	ctx := context.Background()
 	resp, err := c.Query(ctx, query)
@@ -86,8 +87,10 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &streamv1.QueryResponse{}
 	helpers.UnmarshalYAML(ww, want)
-	for i := range want.Elements {
-		want.Elements[i].ElementId = hex.EncodeToString(convert.Uint64ToBytes(convert.HashStr(query.Name + "|" + want.Elements[i].ElementId)))
+	if !args.IgnoreElementID {
+		for i := range want.Elements {
+			want.Elements[i].ElementId = hex.EncodeToString(convert.Uint64ToBytes(convert.HashStr(query.Name + "|" + want.Elements[i].ElementId)))
+		}
 	}
 	if args.DisOrder {
 		slices.SortFunc(want.Elements, func(a, b *streamv1.Element) int {
@@ -97,10 +100,15 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 			return strings.Compare(a.ElementId, b.ElementId)
 		})
 	}
-	success := innerGm.Expect(cmp.Equal(resp, want,
-		protocmp.IgnoreUnknown(),
+	var extra []cmp.Option
+	extra = append(extra, protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&streamv1.Element{}, "timestamp"),
-		protocmp.Transform())).
+		protocmp.Transform())
+	if args.IgnoreElementID {
+		extra = append(extra, protocmp.IgnoreFields(&streamv1.Element{}, "element_id"))
+	}
+	success := innerGm.Expect(cmp.Equal(resp, want,
+		extra...)).
 		To(gm.BeTrue(), func() string {
 			var j []byte
 			j, err = protojson.Marshal(resp)
