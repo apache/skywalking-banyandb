@@ -51,13 +51,15 @@ func TestLifecycle(t *testing.T) {
 }
 
 var (
-	connection *grpc.ClientConn
-	srcDir     string
-	destDir    string
-	deferFunc  func()
-	goods      []gleak.Goroutine
-	dataAddr   string
-	ep         string
+	connection       *grpc.ClientConn
+	srcDir           string
+	destDir          string
+	deferFunc        func()
+	goods            []gleak.Goroutine
+	dataAddr         string
+	ep               string
+	tenDaysBeforeNow time.Time
+	liaisonAddr      string
 )
 
 var _ = SynchronizedBeforeSuite(func() []byte {
@@ -90,8 +92,8 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(err).NotTo(HaveOccurred())
 	defer schemaRegistry.Close()
 	ctx := context.Background()
-	test_stream.PreloadSchema(ctx, schemaRegistry)
-	test_measure.PreloadSchema(ctx, schemaRegistry)
+	test_stream.LoadSchemaWithStages(ctx, schemaRegistry)
+	test_measure.LoadSchemaWithStages(ctx, schemaRegistry)
 	By("Starting hot data node")
 	var closeDataNode0 func()
 	dataAddr, srcDir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=hot", "--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s")
@@ -99,11 +101,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	var closeDataNode1 func()
 	_, destDir, closeDataNode1 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=warm", "--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s")
 	By("Starting liaison node")
-	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep, "--data-node-selector", "type=hot")
+	var closerLiaisonNode func()
+	liaisonAddr, closerLiaisonNode = setup.LiaisonNode(ep, "--data-node-selector", "type=hot")
 	By("Initializing test cases with 10 days before")
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
-	tenDaysBeforeNow := now.Add(-10 * 24 * time.Hour)
+	tenDaysBeforeNow = now.Add(-10 * 24 * time.Hour)
 	test_cases.Initialize(liaisonAddr, tenDaysBeforeNow)
 	deferFunc = func() {
 		closerLiaisonNode()
@@ -120,11 +123,13 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	caseslifecycle.SharedContext = helpers.LifecycleSharedContext{
-		DataAddr:   dataAddr,
-		Connection: connection,
-		SrcDir:     srcDir,
-		DestDir:    destDir,
-		EtcdAddr:   ep,
+		LiaisonAddr: liaisonAddr,
+		DataAddr:    dataAddr,
+		Connection:  connection,
+		SrcDir:      srcDir,
+		DestDir:     destDir,
+		EtcdAddr:    ep,
+		BaseTime:    tenDaysBeforeNow,
 	}
 })
 

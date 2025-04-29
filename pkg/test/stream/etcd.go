@@ -47,26 +47,12 @@ var (
 	streamStore embed.FS
 	//go:embed testdata/group.json
 	groupJSON string
+	//go:embed testdata/group_with_stages.json
+	groupWithStagesJSON string
 )
 
-// PreloadSchema loads schemas from files in the booting process.
-func PreloadSchema(ctx context.Context, e schema.Registry) error {
-	if e == nil {
-		return nil
-	}
-	g := &commonv1.Group{}
-	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
-		return err
-	}
-	_, err := e.GetGroup(ctx, g.Metadata.Name)
-	if !errors.Is(err, schema.ErrGRPCResourceNotFound) {
-		logger.Infof("group %s already exists", g.Metadata.Name)
-		return nil
-	}
-	if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
-		return innerErr
-	}
-
+// loadSchemas loads streams, index rules, and index rule bindings.
+func loadSchemas(ctx context.Context, e schema.Registry) error {
 	streams, err := streamStore.ReadDir(streamDir)
 	if err != nil {
 		return err
@@ -125,4 +111,47 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 	}
 
 	return nil
+}
+
+// LoadSchemaWithStages loads schemas from files, including group stages.
+func LoadSchemaWithStages(ctx context.Context, e schema.Registry) error {
+	if e == nil {
+		return nil
+	}
+	g := &commonv1.Group{}
+	if err := protojson.Unmarshal([]byte(groupWithStagesJSON), g); err != nil {
+		return err
+	}
+	_, err := e.GetGroup(ctx, g.Metadata.Name)
+	if !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		logger.Infof("group %s already exists", g.Metadata.Name)
+		return nil
+	}
+	if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
+		return innerErr
+	}
+
+	return loadSchemas(ctx, e)
+}
+
+// PreloadSchema loads schemas from files in the booting process.
+// This version loads group without stages.
+func PreloadSchema(ctx context.Context, e schema.Registry) error {
+	if e == nil {
+		return nil
+	}
+	g := &commonv1.Group{}
+	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
+		return err
+	}
+	_, err := e.GetGroup(ctx, g.Metadata.Name)
+	if !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+		logger.Infof("group %s already exists", g.Metadata.Name)
+		return nil
+	}
+	if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
+		return innerErr
+	}
+
+	return loadSchemas(ctx, e)
 }

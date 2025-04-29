@@ -21,7 +21,6 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -33,7 +32,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -360,51 +358,4 @@ func contains(s []string, e string) bool {
 		}
 	}
 	return false
-}
-
-func (s *clientService) UpdateSegmentsBoundary(stage, group string, boundary *modelv1.TimeRange) {
-	s.nodeInfoMux.Lock()
-	defer s.nodeInfoMux.Unlock()
-	nodeInfo := s.nodeInfo
-	b := nodeInfo.DataSegmentsBoundary
-	if b == nil {
-		b = make(map[string]*modelv1.TimeRange)
-	}
-	key := getNodeBoundaryKey(group, stage)
-	if boundary == nil {
-		delete(b, key)
-	} else {
-		b[key] = boundary
-	}
-	nodeInfo.DataSegmentsBoundary = b
-	s.nodeInfo = nodeInfo
-	if err := s.schemaRegistry.UpdateNode(context.Background(), nodeInfo); err != nil {
-		logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to update node")
-	}
-}
-
-func getNodeBoundaryKey(items ...string) string {
-	return strings.Join(items, "|")
-}
-
-// FindSegmentsBoundary finds the segments boundary for the given group.
-func FindSegmentsBoundary(nodeInfo *databasev1.Node, group string) *modelv1.TimeRange {
-	b := nodeInfo.DataSegmentsBoundary
-	if len(b) == 0 {
-		return nil
-	}
-	result := &modelv1.TimeRange{}
-	for g, tr := range b {
-		segments := strings.Split(g, "|")
-		if segments[0] != group {
-			continue
-		}
-		if result.Begin == nil || result.Begin.AsTime().After(tr.Begin.AsTime()) {
-			result.Begin = tr.Begin
-		}
-		if result.End == nil || result.End.AsTime().Before(tr.End.AsTime()) {
-			result.End = tr.End
-		}
-	}
-	return result
 }

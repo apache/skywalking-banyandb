@@ -24,7 +24,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -49,7 +48,6 @@ type Repo interface {
 	GroupRegistry() schema.Group
 	TopNAggregationRegistry() schema.TopNAggregation
 	RegisterHandler(string, schema.Kind, schema.EventHandler)
-	UpdateSegmentsBoundary(stage, group string, boundary *modelv1.TimeRange)
 	NodeRegistry() schema.Node
 	PropertyRegistry() schema.Property
 }

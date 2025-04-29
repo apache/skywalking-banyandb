@@ -19,7 +19,6 @@ package storage
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -36,77 +34,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-type boundaryUpdateTracker struct {
-	updates []*modelv1.TimeRange
-	called  int
-	mu      sync.Mutex
-}
-
-func (t *boundaryUpdateTracker) recordUpdate(_, _ string, boundary *modelv1.TimeRange) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.updates = append(t.updates, boundary)
-	t.called++
-}
-
-func TestSegmentBoundaryUpdateFn(t *testing.T) {
-	t.Run("called when a segment is created", func(t *testing.T) {
-		tsdb, c, _, tracker, dfFn := setUpDB(t)
-		defer dfFn()
-
-		// Initial segment creation should have triggered it once
-		require.Equal(t, 1, tracker.called)
-
-		// Create new segment
-		ts := c.Now().Add(23*time.Hour + time.Second)
-		tsdb.Tick(ts.UnixNano())
-
-		// Verify the function was called again
-		assert.Eventually(t, func() bool {
-			tracker.mu.Lock()
-			defer tracker.mu.Unlock()
-			return tracker.called >= 2
-		}, flags.EventuallyTimeout, time.Millisecond, "boundary update function should be called")
-	})
-
-	t.Run("called when a segment is deleted", func(t *testing.T) {
-		tsdb, c, segCtrl, tracker, dfFn := setUpDB(t)
-		defer dfFn()
-
-		ts := c.Now()
-		for i := 0; i < 4; i++ {
-			ts = ts.Add(23 * time.Hour)
-			c.Set(ts)
-			tsdb.Tick(ts.UnixNano())
-			t.Logf("current time: %s", ts.Format(time.RFC3339))
-			expected := i + 2
-			require.EventuallyWithTf(t, func(ct *assert.CollectT) {
-				segments, _ := segCtrl.segments(false)
-				if len(segments) != expected {
-					ct.Errorf("expect %d segments, got %d", expected, len(segments))
-				}
-			}, flags.EventuallyTimeout, time.Millisecond, "wait for %d segment to be created", expected)
-			ts = ts.Add(time.Hour)
-		}
-
-		tracker.mu.Lock()
-		called := tracker.called
-		tracker.mu.Unlock()
-
-		c.Set(ts)
-		tsdb.Tick(ts.UnixNano())
-
-		assert.Eventually(t, func() bool {
-			tracker.mu.Lock()
-			defer tracker.mu.Unlock()
-			return tracker.called > called
-		}, flags.EventuallyTimeout, time.Millisecond, "boundary update function should be called after deletion")
-	})
-}
-
 func TestForwardRotation(t *testing.T) {
 	t.Run("create a new segment when the time is up", func(t *testing.T) {
-		tsdb, c, segCtrl, _, dfFn := setUpDB(t)
+		tsdb, c, segCtrl, dfFn := setUpDB(t)
 		defer dfFn()
 		ts := c.Now().Add(23*time.Hour + time.Second)
 		t.Logf("current time: %s", ts.Format(time.RFC3339))
@@ -118,7 +48,7 @@ func TestForwardRotation(t *testing.T) {
 	})
 
 	t.Run("no new segment created when the time is not up", func(t *testing.T) {
-		tsdb, c, segCtrl, _, dfFn := setUpDB(t)
+		tsdb, c, segCtrl, dfFn := setUpDB(t)
 		defer dfFn()
 		ts := c.Now().Add(22*time.Hour + 59*time.Minute + 59*time.Second)
 		t.Logf("current time: %s", ts.Format(time.RFC3339))
@@ -132,7 +62,7 @@ func TestForwardRotation(t *testing.T) {
 
 func TestRetention(t *testing.T) {
 	t.Run("delete the segment and index when the TTL is up", func(t *testing.T) {
-		tsdb, c, segCtrl, _, dfFn := setUpDB(t)
+		tsdb, c, segCtrl, dfFn := setUpDB(t)
 		defer dfFn()
 		ts := c.Now()
 		for i := 0; i < 4; i++ {
@@ -161,7 +91,7 @@ func TestRetention(t *testing.T) {
 	})
 
 	t.Run("keep the segment volume stable", func(t *testing.T) {
-		tsdb, c, segCtrl, _, dfFn := setUpDB(t)
+		tsdb, c, segCtrl, dfFn := setUpDB(t)
 		defer dfFn()
 		ts := c.Now()
 		for i := 0; i < 10; i++ {
@@ -207,13 +137,8 @@ func TestRetention(t *testing.T) {
 	})
 }
 
-func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *segmentController[*MockTSTable, any], *boundaryUpdateTracker, func()) {
+func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *segmentController[*MockTSTable, any], func()) {
 	dir, defFn := test.Space(require.New(t))
-
-	// Create tracker for boundary updates
-	tracker := &boundaryUpdateTracker{
-		updates: make([]*modelv1.TimeRange, 0),
-	}
 
 	TSDBOpts := TSDBOpts[*MockTSTable, any]{
 		Location:        dir,
@@ -221,8 +146,6 @@ func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *
 		TTL:             IntervalRule{Unit: DAY, Num: 3},
 		ShardNum:        1,
 		TSTableCreator:  MockTSTableCreator,
-		// Add the boundary update function
-		SegmentBoundaryUpdateFn: tracker.recordUpdate,
 	}
 	ctx := context.Background()
 	mc := timestamp.NewMockClock()
@@ -240,7 +163,7 @@ func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *
 	db := tsdb.(*database[*MockTSTable, any])
 	segments, _ := db.segmentController.segments(false)
 	require.Equal(t, len(segments), 1)
-	return db, mc, db.segmentController, tracker, func() {
+	return db, mc, db.segmentController, func() {
 		tsdb.Close()
 		defFn()
 	}
