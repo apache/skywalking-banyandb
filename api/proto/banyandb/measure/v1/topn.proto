@@ -67,4 +67,6 @@ message TopNRequest {
   model.v1.Sort field_value_sort = 7;
   // trace is used to enable trace for the query
   bool trace = 8;
+  // stages is used to specify the stage of the data points in the lifecycle
+  repeated string stages = 9;
 }

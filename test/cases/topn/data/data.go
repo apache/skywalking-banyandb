@@ -46,6 +46,7 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	query := &measurev1.TopNRequest{}
 	helpers.UnmarshalYAML(i, query)
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
+	query.Stages = args.Stages
 	c := measurev1.NewMeasureServiceClient(sharedContext.Connection)
 	ctx := context.Background()
 	resp, err := c.TopN(ctx, query)

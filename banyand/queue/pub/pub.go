@@ -45,7 +45,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -129,7 +128,7 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 			names[n.Metadata.GetName()] = struct{}{}
 		}
 	} else {
-		for g, sel := range messages.NodeSelectors() {
+		for _, sel := range messages.NodeSelectors() {
 			var matches []MatchFunc
 			if sel == nil {
 				matches = bypassMatches
@@ -143,12 +142,8 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 				}
 			}
 			for _, n := range nodes {
-				tr := metadata.FindSegmentsBoundary(n, g)
-				if tr == nil {
-					continue
-				}
 				for _, m := range matches {
-					if m(n.Labels) && timestamp.PbHasOverlap(messages.TimeRange(), tr) {
+					if m(n.Labels) {
 						names[n.Metadata.Name] = struct{}{}
 						break
 					}
@@ -159,6 +154,10 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 
 	if l := p.log.Debug(); l.Enabled() {
 		l.Msgf("broadcasting message to %s nodes", names)
+	}
+
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no nodes match the selector %v", messages.NodeSelectors())
 	}
 
 	futureCh := make(chan publishResult, len(names))

@@ -170,6 +170,8 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span, _ = tracer.StartSpan(ctx, "distributed-client")
 		queryRequest.Trace = true
 		span.Tag("request", convert.BytesToString(logger.Proto(queryRequest)))
+		span.Tag("node_selectors", fmt.Sprintf("%v", dctx.NodeSelectors()))
+		span.Tag("time_range", dctx.TimeRange().String())
 		defer func() {
 			if err != nil {
 				span.Error(err)
@@ -178,7 +180,8 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 			}
 		}()
 	}
-	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), queryRequest))
+	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicMeasureQuery,
+		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), queryRequest))
 	if err != nil {
 		return nil, err
 	}
