@@ -65,7 +65,11 @@ var _ = ginkgo.Describe("etcd_register", func() {
 		peers = []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}
 		server, err = embeddedetcd.NewServer(
 			embeddedetcd.ConfigureListener(endpoints, peers),
-			embeddedetcd.RootDir(path))
+			embeddedetcd.RootDir(path),
+			embeddedetcd.AutoCompactionMode("periodic"),
+			embeddedetcd.AutoCompactionRetention("1h"),
+			embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
+		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
 		r, err = schema.NewEtcdSchemaRegistry(
@@ -109,7 +113,11 @@ var _ = ginkgo.Describe("etcd_register", func() {
 
 		server, err = embeddedetcd.NewServer(
 			embeddedetcd.ConfigureListener(endpoints, peers),
-			embeddedetcd.RootDir(path))
+			embeddedetcd.RootDir(path),
+			embeddedetcd.AutoCompactionMode("periodic"),
+			embeddedetcd.AutoCompactionRetention("1h"),
+			embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
+		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
 
