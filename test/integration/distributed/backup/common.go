@@ -85,7 +85,11 @@ func InitializeTestSuite() (*CommonTestVars, error) {
 	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
 	server, err := embeddedetcd.NewServer(
 		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(vars.Dir))
+		embeddedetcd.RootDir(vars.Dir),
+		embeddedetcd.AutoCompactionMode("periodic"),
+		embeddedetcd.AutoCompactionRetention("1h"),
+		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
+	)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	<-server.ReadyNotify()
 	ginkgo.By("Loading schema")
