@@ -18,9 +18,9 @@ There is an example: The etcd cluster is spread across three nodes with the addr
 Data nodes and liaison nodes are running as independent processes by
 
 ```shell
-banyand storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
-banyand storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
-banyand storage --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+banyand data --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+banyand data --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+banyand data --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
 banyand liaison --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
 ```
 
@@ -50,7 +50,7 @@ The username/password is configured in the following command:
 ***Note: recommended using environment variables to set username/password for higher security.***
 
 ```shell
-banyand storage --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
+banyand data --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
 banyand liaison --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
 ```
 
@@ -61,7 +61,7 @@ The etcd trusted certificate file can be setup by the [etcd transport security m
 - `etcd-tls-ca-file`: The path of the trusted certificate file.
 
 ```shell
-banyand storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
+banyand data --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
 banyand liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
 ```
 
@@ -74,7 +74,7 @@ The etcd client certificates can be setup by the [etcd transport security model]
 - `etcd-tls-key-file`: Key for the certificate. Must be unencrypted.
 
 ```shell
-banyand storage --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
+banyand data --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
 banyand liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
 ```
 
