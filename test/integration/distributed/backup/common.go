@@ -15,16 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package backup_test
+// Package backup and recovery tests for different storage types in distributed	mode.
+package backup
 
 import (
 	"context"
 	"fmt"
-	"testing"
+	"os"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -36,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -51,62 +53,70 @@ import (
 	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
 )
 
-func TestBackup(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Backup Suite")
+// CommonTestVars holds common test variables.
+type CommonTestVars struct {
+	DeferFunc  func()
+	Dir        string
+	DestDir    string
+	DataAddr   string
+	FS         remote.FS
+	Connection *grpc.ClientConn
+	Goods      []gleak.Goroutine
 }
 
-var (
-	connection *grpc.ClientConn
-	dir        string
-	deferFunc  func()
-	goods      []gleak.Goroutine
-	dataAddr   string
-)
+// InitializeTestSuite initializes the test suite by setting up the necessary components.
+func InitializeTestSuite() (*CommonTestVars, error) {
+	var vars CommonTestVars
+	var err error
 
-var _ = SynchronizedBeforeSuite(func() []byte {
-	Expect(logger.Init(logger.Logging{
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
-	})).To(Succeed())
-	goods = gleak.Goroutines()
-	By("Starting etcd server")
+	})).To(gomega.Succeed())
+	vars.Goods = gleak.Goroutines()
+	ginkgo.By("Starting etcd server")
 	ports, err := test.AllocateFreePorts(2)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var spaceDef func()
-	dir, spaceDef, err = test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
+	vars.Dir, spaceDef, err = test.NewSpace()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	vars.DestDir, err = os.MkdirTemp("", "backup-restore-dest")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
 	server, err := embeddedetcd.NewServer(
 		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(dir),
+		embeddedetcd.RootDir(vars.Dir),
 		embeddedetcd.AutoCompactionMode("periodic"),
 		embeddedetcd.AutoCompactionRetention("1h"),
 		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
 	)
-	Expect(err).ShouldNot(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	<-server.ReadyNotify()
-	By("Loading schema")
+	ginkgo.By("Loading schema")
 	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
 		schema.Namespace(metadata.DefaultNamespace),
 		schema.ConfigureServerEndpoints([]string{ep}),
 	)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer schemaRegistry.Close()
 	ctx := context.Background()
-	test_stream.PreloadSchema(ctx, schemaRegistry)
-	test_measure.PreloadSchema(ctx, schemaRegistry)
-	By("Starting data node 0")
+	err = test_stream.PreloadSchema(ctx, schemaRegistry)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	err = test_measure.PreloadSchema(ctx, schemaRegistry)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	ginkgo.By("Starting data node 0")
 	var closeDataNode0 func()
-	dataAddr, dir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep)
-	By("Starting liaison node")
+	vars.DataAddr, vars.Dir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep)
+	ginkgo.By("Starting liaison node")
 	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
-	By("Initializing test cases")
+	ginkgo.By("Initializing test cases")
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
 	test_cases.Initialize(liaisonAddr, now)
-	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
+	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer conn.Close()
 	gClient := databasev1.NewGroupRegistryServiceClient(conn)
 	_, err = gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{
@@ -118,7 +128,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	pClient := databasev1.NewPropertyRegistryServiceClient(conn)
 	_, err = pClient.Create(context.Background(), &databasev1.PropertyRegistryServiceCreateRequest{
 		Property: &databasev1.Property{
@@ -132,7 +142,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	client := propertyv1.NewPropertyServiceClient(conn)
 	md := &commonv1.Metadata{
 		Name:  "p",
@@ -146,37 +156,45 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
 		},
 	}})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(resp.Created).To(BeTrue())
-	Expect(resp.TagsNum).To(Equal(uint32(2)))
-	deferFunc = func() {
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(resp.Created).To(gomega.BeTrue())
+	gomega.Expect(resp.TagsNum).To(gomega.Equal(uint32(2)))
+
+	vars.DeferFunc = func() {
 		closerLiaisonNode()
 		closeDataNode0()
 		_ = server.Close()
 		<-server.StopNotify()
 		spaceDef()
 	}
-	return []byte(dataAddr)
-}, func(address []byte) {
-	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
-	casesbackup.SharedContext = helpers.BackupSharedContext{
-		DataAddr:   dataAddr,
-		Connection: connection,
-		RootDir:    dir,
-	}
-})
 
-var _ = SynchronizedAfterSuite(func() {
-	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+	return &vars, nil
+}
+
+// SetupClientConnection sets up the connection to the server.
+func SetupClientConnection(address string) (*grpc.ClientConn, error) {
+	return grpchelper.Conn(address, 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+}
+
+// SetupSharedContext sets up the context for testing.
+func SetupSharedContext(vars *CommonTestVars, destURL string, s3Args []string) {
+	casesbackup.SharedContext = helpers.BackupSharedContext{
+		DataAddr:   vars.DataAddr,
+		Connection: vars.Connection,
+		RootDir:    vars.Dir,
+		DestDir:    vars.DestDir,
+		DestURL:    destURL,
+		FS:         vars.FS,
+		S3Args:     s3Args,
 	}
-}, func() {
-	if deferFunc != nil {
-		deferFunc()
+}
+
+// TeardownSuite cleans up the test suite.
+func TeardownSuite(vars *CommonTestVars) {
+	if vars.DeferFunc != nil {
+		vars.DeferFunc()
 	}
-	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
-})
+	gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(vars.Goods))
+	gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+}

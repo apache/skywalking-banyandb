@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
 // SharedContext is the context shared between test cases in the integration testing.
@@ -77,7 +78,11 @@ func TimeRange(args Args, shardContext SharedContext) *modelv1.TimeRange {
 type BackupSharedContext struct {
 	DataAddr   string
 	Connection *grpclib.ClientConn
+	FS         remote.FS
 	RootDir    string
+	DestDir    string
+	DestURL    string
+	S3Args     []string
 }
 
 // LifecycleSharedContext is the context shared between test cases in the lifecycle testing.
