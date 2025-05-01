@@ -71,6 +71,10 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		if gs, ok := t.measureService.LoadGroup(g); ok {
 			if ns, exist := t.parseNodeSelector(request.Stages, gs.GetSchema().ResourceOpts); exist {
 				nodeSelectors[g] = ns
+			} else if len(gs.GetSchema().ResourceOpts.Stages) > 0 {
+				t.log.Error().Strs("req_stages", request.Stages).Strs("default_stages", gs.GetSchema().GetResourceOpts().GetDefaultStages()).Msg("no stage found")
+				resp = bus.NewMessage(now, common.NewError("no stage found in request or default stages in resource opts"))
+				return
 			}
 		} else {
 			t.log.Error().Str("group", g).Msg("failed to load group")

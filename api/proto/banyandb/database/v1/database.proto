@@ -20,7 +20,6 @@ syntax = "proto3";
 package banyandb.database.v1;
 
 import "banyandb/common/v1/common.proto";
-import "banyandb/model/v1/query.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
@@ -41,9 +40,6 @@ message Node {
   google.protobuf.Timestamp created_at = 5;
   // labels is a set of key-value pairs to describe the node.
   map<string, string> labels = 6;
-  // data_segments_boundary is the time range of the data segments that the node is responsible for.
-  // [start, end) is the time range.
-  map<string, model.v1.TimeRange> data_segments_boundary = 7;
 }
 
 message Shard {

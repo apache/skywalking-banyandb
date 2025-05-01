@@ -151,8 +151,8 @@ func (q *queryService) parseNodeSelector(stages []string, resource *commonv1.Res
 	}
 
 	var nodeSelectors []string
-	for _, stage := range resource.Stages {
-		for _, sn := range stages {
+	for _, sn := range stages {
+		for _, stage := range resource.Stages {
 			if strings.EqualFold(sn, stage.Name) {
 				ns := stage.NodeSelector
 				ns = strings.TrimSpace(ns)
@@ -162,10 +162,9 @@ func (q *queryService) parseNodeSelector(stages []string, resource *commonv1.Res
 				nodeSelectors = append(nodeSelectors, ns)
 				break
 			}
-			if strings.EqualFold(sn, hotStageName) && q.hotStageNodeSelector != "" {
-				nodeSelectors = append(nodeSelectors, q.hotStageNodeSelector)
-				break
-			}
+		}
+		if strings.EqualFold(sn, hotStageName) && q.hotStageNodeSelector != "" {
+			nodeSelectors = append(nodeSelectors, q.hotStageNodeSelector)
 		}
 	}
 	if len(nodeSelectors) == 0 {
