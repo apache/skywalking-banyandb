@@ -15,15 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package backup_test
+// Package backup Conduct backup and recovery tests for different storage types in standalone mode.
+package backup
 
 import (
 	"context"
-	"testing"
+	"os"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -32,6 +32,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -46,49 +47,71 @@ import (
 	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
 )
 
-func TestBackup(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Backup Suite", Label(integration_standalone.Labels...))
+// CommonTestVars is the common test variables.
+type CommonTestVars struct {
+	DeferFunc  func()
+	Connection *grpc.ClientConn
+	FS         remote.FS
+	Dir        string
+	DestDir    string
+	Goods      []gleak.Goroutine
 }
 
-var (
-	connection *grpc.ClientConn
-	dir        string
-	deferFunc  func()
-	goods      []gleak.Goroutine
-)
+// InitStandaloneEnv initializes the standalone environment.
+func InitStandaloneEnv() (*CommonTestVars, string, error) {
+	var vars CommonTestVars
+	var err error
 
-var _ = SynchronizedBeforeSuite(func() []byte {
-	goods = gleak.Goroutines()
-	Expect(logger.Init(logger.Logging{
+	vars.Goods = gleak.Goroutines()
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
-	})).To(Succeed())
-	var err error
-	dir, _, err = test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
-	var ports []int
-	ports, err = test.AllocateFreePorts(4)
-	Expect(err).NotTo(HaveOccurred())
+	})).To(gomega.Succeed())
+
+	vars.Dir, _, err = test.NewSpace()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	vars.DestDir, err = os.MkdirTemp("", "backup-restore-dest")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	ports, err := test.AllocateFreePorts(4)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 	var addr string
-	addr, _, deferFunc = setup.ClosableStandalone(dir, ports)
+	addr, _, vars.DeferFunc = setup.ClosableStandalone(vars.Dir, ports)
+
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
 	test_cases.Initialize(addr, now)
 
-	return []byte(addr)
-}, func(address []byte) {
+	return &vars, addr, nil
+}
+
+// SetupConnection sets up the connection to the server.
+func SetupConnection(vars *CommonTestVars, addr string, destURL string, s3Args []string) error {
 	var err error
-	connection, err = grpchelper.Conn(string(address), 10*time.Second,
+	vars.Connection, err = grpchelper.Conn(addr, 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
-	casesbackup.SharedContext = helpers.BackupSharedContext{
-		DataAddr:   string(address),
-		Connection: connection,
-		RootDir:    dir,
+	if err != nil {
+		return err
 	}
-	gClient := databasev1.NewGroupRegistryServiceClient(connection)
-	_, err = gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{
+
+	casesbackup.SharedContext = helpers.BackupSharedContext{
+		DataAddr:   addr,
+		Connection: vars.Connection,
+		RootDir:    vars.Dir,
+		DestDir:    vars.DestDir,
+		DestURL:    destURL,
+		FS:         vars.FS,
+		S3Args:     s3Args,
+	}
+
+	return initializeTestData(vars.Connection)
+}
+
+func initializeTestData(conn *grpc.ClientConn) error {
+	gClient := databasev1.NewGroupRegistryServiceClient(conn)
+	_, err := gClient.Create(context.Background(), &databasev1.GroupRegistryServiceCreateRequest{
 		Group: &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "g"},
 			Catalog:  commonv1.Catalog_CATALOG_PROPERTY,
@@ -97,8 +120,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
-	pClient := databasev1.NewPropertyRegistryServiceClient(connection)
+	if err != nil {
+		return err
+	}
+
+	pClient := databasev1.NewPropertyRegistryServiceClient(conn)
 	_, err = pClient.Create(context.Background(), &databasev1.PropertyRegistryServiceCreateRequest{
 		Property: &databasev1.Property{
 			Metadata: &commonv1.Metadata{
@@ -111,8 +137,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
-	client := propertyv1.NewPropertyServiceClient(connection)
+	if err != nil {
+		return err
+	}
+
+	client := propertyv1.NewPropertyServiceClient(conn)
 	md := &commonv1.Metadata{
 		Name:  "p",
 		Group: "g",
@@ -125,19 +154,26 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
 		},
 	}})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(resp.Created).To(BeTrue())
-	Expect(resp.TagsNum).To(Equal(uint32(2)))
-})
+	if err != nil {
+		return err
+	}
 
-var _ = SynchronizedAfterSuite(func() {
-	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+	gomega.Expect(resp.Created).To(gomega.BeTrue())
+	gomega.Expect(resp.TagsNum).To(gomega.Equal(uint32(2)))
+
+	return nil
+}
+
+// TeardownSuite cleans up the test suite.
+func TeardownSuite(vars *CommonTestVars) {
+	if vars.DeferFunc != nil {
+		vars.DeferFunc()
 	}
-}, func() {
-	if deferFunc != nil {
-		deferFunc()
-	}
-	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
-})
+	gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(vars.Goods))
+	gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+}
+
+// GetTestLabels returns the test labels.
+func GetTestLabels() []string {
+	return integration_standalone.Labels
+}
