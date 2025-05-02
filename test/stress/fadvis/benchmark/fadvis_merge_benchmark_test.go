@@ -27,9 +27,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
+	"github.com/stretchr/testify/require"
 )
 
 func mergeIntoWriter(parts []string, outputPath string) error {
