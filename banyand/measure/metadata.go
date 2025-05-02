@@ -323,7 +323,7 @@ func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchema
 	}
 
 	backoffStrategy := backoff.NewExponentialBackOff()
-	backoffStrategy.MaxElapsedTime = 2 * time.Minute
+	backoffStrategy.MaxElapsedTime = 0 // never stop until topN measure has been created
 
 	err := backoff.Retry(operation, backoffStrategy)
 	if err != nil {
