@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	_ = regexp.MustCompile(`Shared_Clean:\s+(\d+)\s+kB`)
 
 	// Warm up the memory manager
-	utils.setRealisticThreshold()
+	utils.SetRealisticThreshold()
 
 	// Force a garbage collection
 	runtime.GC()

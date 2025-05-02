@@ -18,66 +18,36 @@
 
 # Dockerfile: Multi-stage builder for eBPF object compilation and benchmark execution
 
-# Stage 1: Build eBPF object files
-FROM ubuntu:20.04 AS builder
+# Dockerfile for eBPF benchmark (multi-arch, makefile-driven)
 
-# Prevent interactive prompts
+FROM --platform=$BUILDPLATFORM golang:1.24-bullseye as build-env
+
+ARG TARGETARCH
+ARG TARGETOS
+ARG GOARCH=${TARGETARCH}
+ARG GOOS=${TARGETOS}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install eBPF compilation dependencies
+# === 依赖安装（用于 bpf2go 编译） ===
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates \
-        clang \
-        llvm \
-        libelf-dev \
-        linux-headers-generic \
-        linux-tools-generic \
-        linux-tools-common \
-        make \
-        git \
-        golang && \
-    update-ca-certificates && \
+        clang llvm libelf-dev bpftool make git \
+        linux-headers-$(uname -r) || true && \
     rm -rf /var/lib/apt/lists/*
 
-# Set working directory to fadvis test root
-WORKDIR /workspace/test/stress/fadvis
-
-# Copy Makefile and BPF source files
-COPY test/stress/fadvis/Makefile ./
-COPY test/stress/fadvis/bpf/ ./bpf/
-
-# Generate vmlinux.h and BPF helper headers (adjust path)
-RUN mkdir -p bpf/headers && \
-    bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/headers/vmlinux.h || \
-    echo "Warning: Failed to generate vmlinux.h, using pre-generated file if available" && \
-    cp -r /usr/include/bpf bpf/headers/ || echo "Warning: Failed to copy BPF headers"
-
-# Compile object files for both ARM64 and AMD64 architectures (make should now work)
-RUN make bpf
-
-# Stage 2: Run benchmark tests
-FROM golang:1.24-bullseye
-
-# Working directory for Go module
 WORKDIR /workspace
 
-# Copy Go module files first to leverage caching
-COPY go.mod go.sum ./
+# 复制项目源码
+COPY . .
 
-# Download dependencies before copying all source code
+# 预加载 Go mod（避免 rebuild）
 RUN go mod download
 
-COPY pkg/fadvis/ ./pkg/fadvis/
-COPY banyand/ ./banyand/
-COPY test/stress/fadvis/ ./test/stress/fadvis/
+# === 执行 Makefile 构建 BPF ===
+WORKDIR /workspace/test/stress/fadvis
+RUN make bpf
 
-# Copy the compiled BPF objects from the builder stage (adjust source path)
-COPY --from=builder /workspace/test/stress/fadvis/bpf/*.o ./test/stress/fadvis/bpf/
+# === Optional: Benchmark stage ===
+FROM build-env as benchmark
 
-# Build the necessary test code (optional, `go test` will build)
-# We can potentially remove this RUN command if `go test` handles the build fine
-RUN go build -o /dev/null ./test/stress/fadvis/... || echo "Build may have warnings, but we can proceed"
-
-# Default entrypoint to run benchmarks with focus on the fadvis tests only
-ENTRYPOINT ["go", "test", "-bench=.", "-v", "./test/stress/fadvis/..."]
+CMD ["make", "bpf-benchmark"]

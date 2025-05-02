@@ -35,6 +35,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/bpf"
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/monitor"
 )
 
 // Constants for file sizes and thresholds
@@ -251,6 +253,7 @@ func SetTestThreshold(threshold int64) {
 	// Create a new Manager and set it as the global Manager
 	manager := fadvis.NewManager(provider)
 	fadvis.SetManager(manager)
+	fs.SetGlobalThreshold(threshold)
 }
 
 // SetRealisticThreshold sets a realistic fadvis threshold based on system memory
@@ -341,23 +344,23 @@ func parseSmapsRollup(r io.Reader) (PageCacheStats, error) {
 
 // CapturePageCacheStats captures and records page cache memory usage stats.
 // It both prints to stdout and saves to a profile file for later analysis.
-func CapturePageCacheStats(b *testing.B, phase string) int64 {
+func CapturePageCacheStats(b *testing.B, phase string) (PageCacheStats, int64) {
 	f, err := os.Open("/proc/self/smaps_rollup")
 	if err != nil {
 		b.Logf("[PAGECACHE] %s: open smaps_rollup failed: %v", phase, err)
-		return 0
+		return PageCacheStats{}, 0
 	}
 	stats, err := parseSmapsRollup(f)
 	f.Close()
 	if err != nil {
 		b.Logf("[PAGECACHE] %s: parse smaps_rollup failed: %v", phase, err)
-		return 0
+		return PageCacheStats{}, 0
 	}
 
 	memf, err := os.Open("/proc/meminfo")
 	if err != nil {
 		b.Logf("[MEMINFO] %s: open meminfo failed: %v", phase, err)
-		return 0
+		return PageCacheStats{}, 0
 	}
 	var cachedKB int64
 	buf := make([]byte, 32*1024)
@@ -394,12 +397,151 @@ func CapturePageCacheStats(b *testing.B, phase string) int64 {
 	b.Logf("[PAGECACHE] %s: Rss=%dKB, Pss=%dKB, SharedClean=%dKB, Cached=%dKB",
 		phase, stats.Rss, stats.Pss, stats.SharedClean, cachedKB)
 
-	return cachedKB
+	return stats, cachedKB
 }
 
 // CapturePageCacheStatsWithDelay captures page cache stats after a delay
 func CapturePageCacheStatsWithDelay(b *testing.B, phase string, delaySeconds int) {
 	b.Logf("[PAGECACHE] Waiting %d seconds before capturing %s...\n", delaySeconds, phase)
 	time.Sleep(time.Duration(delaySeconds) * time.Second)
-	_ = CapturePageCacheStats(b, phase)
+	_, _ = CapturePageCacheStats(b, phase)
+}
+
+
+type MonitorOptions struct {
+	EnablePageCacheStats bool
+	EnableBPFStats       bool
+	DelayAfterBenchmark  time.Duration
+}
+
+
+func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
+	var (
+		beforeStats  PageCacheStats
+		beforeCached int64
+		afterStats   PageCacheStats
+		afterCached  int64
+	)
+
+	// 启动 BPF monitor
+	var m *monitor.Monitor
+	if opts.EnableBPFStats {
+		var err error
+		m, err = monitor.NewMonitor()
+		if err != nil {
+			b.Fatalf("failed to start eBPF monitor: %v", err)
+		}
+		defer m.Close()
+	}
+
+	// Capture 前状态
+	if opts.EnablePageCacheStats {
+		beforeStats, beforeCached = CapturePageCacheStats(b, "before")
+	}
+
+	b.ResetTimer()
+	f(b)
+	b.StopTimer()
+
+	// Capture 后状态
+	if opts.EnablePageCacheStats {
+		afterStats, afterCached = CapturePageCacheStats(b, "after")
+	}
+
+	// Capture delay stats
+	if opts.DelayAfterBenchmark > 0 && opts.EnablePageCacheStats {
+		CapturePageCacheStatsWithDelay(b, "after_delay", int(opts.DelayAfterBenchmark.Seconds()))
+	}
+
+	var (
+		fstats map[uint32]uint64
+		sstats map[uint32]bpf.BpfLruShrinkInfoT
+	)
+
+	if opts.EnableBPFStats && m != nil {
+		fstats, _ = m.ReadCounts()
+		sstats, _ = m.ReadShrinkStats()
+
+		b.Logf("[eBPF] Fadvise Stats: %+v", fstats)
+		// for pid, count := range fstats {
+		// 	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
+		// 	cmdlineBytes, err := os.ReadFile(cmdlinePath)
+		// 	cmdline := "[unknown]"
+		// 	if err == nil {
+		// 		cmdline = strings.ReplaceAll(string(cmdlineBytes), "\x00", " ")
+		// 	}
+		// 	b.Logf("[eBPF] Fadvise Stat: pid=%d count=%d cmd=%s", pid, count, cmdline)
+		// }
+		b.Logf("[eBPF] Shrink Stats: %+v", sstats)
+		for _, stat := range sstats {
+			if stat.NrReclaimed > 0 {
+				b.Logf("[eBPF] Shrink Detail: pid=%d comm=%s scanned=%d reclaimed=%d",
+					stat.CallerPid,
+					int8SliceToString(stat.CallerComm[:]),
+					stat.NrScanned,
+					stat.NrReclaimed,
+				)
+			}
+		}
+		if reclaimStats, err := m.ReadDirectReclaimStats(); err == nil {
+			for pid, info := range reclaimStats {
+				b.Logf("[eBPF] DirectReclaim: pid=%d comm=%s", pid, info.Comm)
+			}
+		}
+		
+	}
+
+	_ = AppendBenchmarkSummaryToCSV(b.Name(), "before", beforeStats, beforeCached, 0, 0)
+	_ = AppendBenchmarkSummaryToCSV(b.Name(), "after", afterStats, afterCached, int64(len(fstats)), int64(len(sstats)))
+}
+
+func WithMonitoringLegacy(b *testing.B, f func(b *testing.B)) {
+	WithMonitoring(b, MonitorOptions{
+		EnablePageCacheStats: true,
+		EnableBPFStats:       true,
+		DelayAfterBenchmark:  3 * time.Second,
+	}, f)
+}
+
+func AppendBenchmarkSummaryToCSV(benchmark, phase string, stats PageCacheStats, cachedKB, fadviseCount, shrinkReclaimed int64) error {
+	// 明确写入到 test/stress/fadvis/reports/summary.csv
+	outputDir := "test/stress/fadvis/reports"
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create reports dir: %w", err)
+	}
+
+	outputFile := filepath.Join(outputDir, "summary.csv")
+	isNew := false
+
+	// 如果文件不存在，先写入表头
+	if _, err := os.Stat(outputFile); os.IsNotExist(err) {
+		isNew = true
+	}
+
+	f, err := os.OpenFile(outputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open summary.csv: %w", err)
+	}
+	defer f.Close()
+
+	writer := bufio.NewWriter(f)
+	if isNew {
+		writer.WriteString("Benchmark,Phase,RSS_KB,PSS_KB,SharedClean_KB,Cached_KB,FadviseCalls,ShrinkReclaimed\n")
+	}
+	writer.WriteString(fmt.Sprintf(
+		"%s,%s,%d,%d,%d,%d,%d,%d\n",
+		benchmark, phase, stats.Rss, stats.Pss, stats.SharedClean, cachedKB, fadviseCount, shrinkReclaimed,
+	))
+	return writer.Flush()
+}
+
+func int8SliceToString(s []int8) string {
+	b := make([]byte, len(s))
+	for i, v := range s {
+		if v == 0 {
+			return string(b[:i])
+		}
+		b[i] = byte(v)
+	}
+	return string(b)
 }

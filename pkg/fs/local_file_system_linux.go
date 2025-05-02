@@ -24,8 +24,10 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+	//"runtime/debug"
 
 	"golang.org/x/sys/unix"
+	
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -116,6 +118,9 @@ func CompareINode(srcPath, destPath string) error {
 
 // ApplyFadviseToFD applies FADV_DONTNEED to the given file descriptor.
 func ApplyFadviseToFD(fd uintptr, offset int64, length int64) error {
+	
+	// fmt.Printf("[DEBUG-FADV] fadvise called with offset=%d length=%d\n", offset, length)
+	// debug.PrintStack()
 	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
 }
 
@@ -129,6 +134,18 @@ func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 	if err := unix.Fdatasync(int(fd)); err != nil {
 		return err
 	}
+	
+	file := os.NewFile(fd, "")
+    info, err := file.Stat()
+    if err != nil {
+        return err
+    }
+    size := info.Size()
+
+	if !ShouldApplyFadvis(size) {
+        return nil
+    }
+
 	if err := unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED); err != nil {
 		return err
 	}

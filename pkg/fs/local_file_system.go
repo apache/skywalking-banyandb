@@ -656,3 +656,17 @@ func (fs *localFileSystem) IsFadvisSupported() bool {
 func isMetadataIndexPath(p string) bool {
 	return strings.Contains(p, "/metadata_index/")
 }
+
+
+var globalThreshold int64 = defaultLargeFileThreshold
+
+func SetGlobalThreshold(v int64) {
+    globalThreshold = v
+}
+
+func ShouldApplyFadvis(size int64) bool {
+    if defaultThresholdProvider != nil {
+        return defaultThresholdProvider.ShouldApplyFadvis(size)
+    }
+    return size >= globalThreshold
+}

@@ -19,11 +19,12 @@ package benchmark
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 
 	"github.com/stretchr/testify/require"
 )
@@ -46,13 +47,19 @@ func BenchmarkMergeOperations(b *testing.B) {
 	b.Run("Withoututilse", func(b *testing.B) {
 		// Set the utils threshold to a high value to disable it
 		utils.SetTestThreshold(utils.Terabyte)
-		for i := 0; i < b.N; i++ {
-			outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
-			// Use the simulateMergeOperation from test_helpers.go which uses fs package
-			err := utils.SimulateMergeOperation(b, parts, outputFile)
-			require.NoError(b, err)
-		}
-		utils.CapturePageCacheStats(b, "after_merge_utils_disabled")
+
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			b.ResetTimer() // 重置计时器，确保只测量循环内的执行时间
+			for i := 0; i < b.N; i++ {
+				outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
+				// Use the simulateMergeOperation from test_helpers.go which uses fs package
+				err := utils.SimulateMergeOperation(b, parts, outputFile)
+				require.NoError(b, err)
+			}
+			b.StopTimer() // 停止计时器，确保后续的统计操作不计入基准测试时间
+			utils.CapturePageCacheStats(b, "after_merge_utils_disabled")
+		})
+
 		utils.CapturePageCacheStatsWithDelay(b, "after_merge_utils_disabled_delay", 3)
 	})
 
@@ -60,13 +67,19 @@ func BenchmarkMergeOperations(b *testing.B) {
 	b.Run("Withutilse", func(b *testing.B) {
 		// Set a realistic utils threshold based on system memory
 		utils.SetRealisticThreshold()
-		for i := 0; i < b.N; i++ {
-			outputFile := filepath.Join(testDir, fmt.Sprintf("merged_utils_%d", i))
-			// Use the simulateMergeOperation from test_helpers.go which uses fs package
-			err := utils.SimulateMergeOperation(b, parts, outputFile)
-			require.NoError(b, err)
-		}
-		utils.CapturePageCacheStats(b, "after_merge_utils_enabled")
+
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			b.ResetTimer() // 重置计时器，确保只测量循环内的执行时间
+			for i := 0; i < b.N; i++ {
+				outputFile := filepath.Join(testDir, fmt.Sprintf("merged_utils_%d", i))
+				// Use the simulateMergeOperation from test_helpers.go which uses fs package
+				err := utils.SimulateMergeOperation(b, parts, outputFile)
+				require.NoError(b, err)
+			}
+			b.StopTimer() // 停止计时器，确保后续的统计操作不计入基准测试时间
+			utils.CapturePageCacheStats(b, "after_merge_utils_enabled")
+		})
+
 		utils.CapturePageCacheStatsWithDelay(b, "after_merge_utils_enabled_delay", 3)
 	})
 }
@@ -89,16 +102,22 @@ func BenchmarkSequentialMergeOperations(b *testing.B) {
 	b.Run("Withoututilse", func(b *testing.B) {
 		// Set the utils threshold to a high value to disable it
 		utils.SetTestThreshold(utils.Terabyte)
-		for i := 0; i < b.N; i++ {
-			// Perform multiple sequential merge operations
-			for j := 0; j < 3; j++ {
-				outputFile := filepath.Join(testDir, fmt.Sprintf("seq_merged_%d_%d", i, j))
-				// Use the simulateMergeOperation from test_helpers.go which uses fs package
-				err := utils.SimulateMergeOperation(b, parts, outputFile)
-				require.NoError(b, err)
+
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			b.ResetTimer() // 重置计时器，确保只测量循环内的执行时间
+			for i := 0; i < b.N; i++ {
+				// Perform multiple sequential merge operations
+				for j := 0; j < 3; j++ {
+					outputFile := filepath.Join(testDir, fmt.Sprintf("seq_merged_%d_%d", i, j))
+					// Use the simulateMergeOperation from test_helpers.go which uses fs package
+					err := utils.SimulateMergeOperation(b, parts, outputFile)
+					require.NoError(b, err)
+				}
 			}
-		}
-		utils.CapturePageCacheStats(b, "after_sequential_merge_utils_disabled")
+			b.StopTimer() // 停止计时器，确保后续的统计操作不计入基准测试时间
+			utils.CapturePageCacheStats(b, "after_sequential_merge_utils_disabled")
+		})
+
 		utils.CapturePageCacheStatsWithDelay(b, "after_sequential_merge_utils_disabled_delay", 3)
 	})
 
@@ -106,16 +125,22 @@ func BenchmarkSequentialMergeOperations(b *testing.B) {
 	b.Run("Withutilse", func(b *testing.B) {
 		// Set a realistic utils threshold based on system memory
 		utils.SetRealisticThreshold()
-		for i := 0; i < b.N; i++ {
-			// Perform multiple sequential merge operations
-			for j := 0; j < 3; j++ {
-				outputFile := filepath.Join(testDir, fmt.Sprintf("seq_merged_utils_%d_%d", i, j))
-				// Use the simulateMergeOperation from test_helpers.go which uses fs package
-				err := utils.SimulateMergeOperation(b, parts, outputFile)
-				require.NoError(b, err)
+
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			b.ResetTimer() // 重置计时器，确保只测量循环内的执行时间
+			for i := 0; i < b.N; i++ {
+				// Perform multiple sequential merge operations
+				for j := 0; j < 3; j++ {
+					outputFile := filepath.Join(testDir, fmt.Sprintf("seq_merged_utils_%d_%d", i, j))
+					// Use the simulateMergeOperation from test_helpers.go which uses fs package
+					err := utils.SimulateMergeOperation(b, parts, outputFile)
+					require.NoError(b, err)
+				}
 			}
-		}
-		utils.CapturePageCacheStats(b, "after_sequential_merge_utils_enabled")
+			b.StopTimer() // 停止计时器，确保后续的统计操作不计入基准测试时间
+			utils.CapturePageCacheStats(b, "after_sequential_merge_utils_enabled")
+		})
+
 		utils.CapturePageCacheStatsWithDelay(b, "after_sequential_merge_utils_enabled_delay", 3)
 	})
 }

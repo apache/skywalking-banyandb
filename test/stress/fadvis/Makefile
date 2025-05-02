@@ -15,48 +15,66 @@
 # specific language governing permissions and limitations
 # under the License.
 
+
+# ========= 通用变量定义 =========
 SHELL := /bin/bash
 ROOTDIR := $(shell cd ../../../ && pwd)
 PWD := $(shell pwd)
+
 REPORTS_DIR := $(PWD)/reports
 BPF_DIR := $(PWD)/bpf
-BPF_HEADERS_DIR := $(BPF_DIR)/headers
+BPF_HEADERS_DIR := $(BPF_DIR)
+BPF_SRC := $(PWD)/bpfsrc/fadvise.c
 
-.PHONY: all-benchmarks benchmark-write benchmark-read benchmark-merge benchmark-sequential-merge benchmark-multiple-reads benchmark-mixed benchmark-concurrent benchmark-threshold benchmark-memory clean help generate-bpf prepare-bpf-headers bpf-benchmark docker-bpf-benchmark bpf
-
-# eBPF related targets
-generate-bpf:
-	@echo "Generating eBPF code for amd64..."
-	@cd $(BPF_DIR) && TARGET=amd64 go generate ./...
-	@echo "Generating eBPF code for arm64..."
-	@cd $(BPF_DIR) && TARGET=arm64 go generate ./...
-	@echo "eBPF code generation completed for all targets."
+# ========= 构建入口 =========
+.PHONY: bpf clean generate-bpf prepare-bpf-headers \
+	bpf-benchmark docker-bpf-benchmark \
+	all-benchmarks benchmark-write benchmark-read benchmark-merge \
+	benchmark-sequential-merge benchmark-multiple-reads benchmark-mixed \
+	benchmark-concurrent benchmark-threshold benchmark-memory
 
 bpf: prepare-bpf-headers generate-bpf
 
+# ========= vmlinux.h 自动生成 =========
 prepare-bpf-headers:
 	@echo "Preparing eBPF headers..."
 	@if [ ! -f $(BPF_HEADERS_DIR)/vmlinux.h ]; then \
 		echo "Generating vmlinux.h (requires bpftool and Linux environment)"; \
-		if command -v bpftool >/dev/null 2>&1; then \
-			bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(BPF_HEADERS_DIR)/vmlinux.h; \
-		else \
-			echo "Warning: bpftool not found. Please install bpftool or manually provide vmlinux.h"; \
-			echo "You may need to run this in a Linux environment with bpftool installed."; \
-			echo "Example: bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(BPF_HEADERS_DIR)/vmlinux.h"; \
-		fi; \
+		bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(BPF_HEADERS_DIR)/vmlinux.h; \
 	else \
 		echo "vmlinux.h already exists."; \
 	fi
-	@echo "Headers preparation completed."
 
+# ========= 多平台 eBPF 加载器自动生成 =========
+generate-bpf:
+	@echo "Generating eBPF code for amd64..."
+	@cd $(BPF_DIR) && \
+	GOARCH=amd64 GOOS=linux bpf2go -cc clang -target bpfel \
+		-cflags "-O2 -g -Wall -I$(BPF_HEADERS_DIR)" \
+		-output-stem bpf_x86 -go-package bpf \
+		Bpf ../bpfsrc/fadvise.c && \
+	sed -i.bak '/^\/\/go:build/c\//go:build (386 || amd64) \&\& linux' bpf_x86_bpfel.go && \
+	rm -f bpf_x86_bpfel.go.bak
+
+	@echo "Generating eBPF code for arm64..."
+	@cd $(BPF_DIR) && \
+	GOARCH=arm64 GOOS=linux bpf2go -cc clang -target bpfel \
+		-cflags "-O2 -g -Wall -I$(BPF_HEADERS_DIR)" \
+		-output-stem bpf_arm64 -go-package bpf \
+		Bpf ../bpfsrc/fadvise.c && \
+	sed -i.bak '/^\/\/go:build/c\//go:build arm64 \&\& linux' bpf_arm64_bpfel.go && \
+	rm -f bpf_arm64_bpfel.go.bak
+
+	@echo "eBPF code generation completed for amd64 and arm64."
+
+# ========= BPF 基准测试 =========
 bpf-benchmark: prepare-bpf-headers generate-bpf
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running fadvis benchmarks with eBPF tracing..."
 	@go test -v -tags linux -bench=BenchmarkWithBPF -benchtime=5s -run=^$ ./... -benchmem | tee $(REPORTS_DIR)/bpf_benchmarks.txt
 	@echo "BPF benchmark results saved to $(REPORTS_DIR)/bpf_benchmarks.txt"
 
-# Docker-based eBPF testing (for cross-platform support)
+# ========= Docker 中运行 BPF benchmark =========
 docker-bpf-benchmark:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running eBPF benchmarks in Docker container..."
@@ -68,60 +86,66 @@ docker-bpf-benchmark:
 		golang:1.21-bullseye \
 		/bin/bash -c " \
 			apt-get update && \
-			apt-get install -y linux-headers-\$(uname -r) clang llvm && \
+			apt-get install -y clang llvm bpftool && \
 			make prepare-bpf-headers generate-bpf && \
 			go test -v -tags linux -bench=BenchmarkWithBPF -benchtime=5s -run=^$ ./... -benchmem \
 		" | tee $(REPORTS_DIR)/docker_bpf_benchmarks.txt
 	@echo "Docker BPF benchmark results saved to $(REPORTS_DIR)/docker_bpf_benchmarks.txt"
 
-# Existing targets
+# ========= 通用 benchmark 流程（原有） =========
+all-benchmarks: benchmark-write benchmark-read benchmark-seqread benchmark-merge \
+	benchmark-sequential-merge benchmark-multiple-reads benchmark-mixed \
+	benchmark-concurrent-ops benchmark-concurrent-merges benchmark-threshold benchmark-memory
+
 benchmark-write:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running write performance benchmarks..."
-	@go test -bench=BenchmarkWritePerformance -benchmem -count=3 | tee $(REPORTS_DIR)/write_benchmarks.txt
-	@echo "Write benchmark results saved to $(REPORTS_DIR)/write_benchmarks.txt"
+	@go test -v -run=^$$ -bench=BenchmarkWritePerformance -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/write_benchmarks.txt
 
 benchmark-read:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running read performance benchmarks..."
-	@go test -v -bench=BenchmarkReadPerformance -benchtime=5s -run=^$ ./test/stress/fadvis/ -benchmem | tee $(REPORTS_DIR)/read_benchmarks.txt
-	@echo "Read benchmark results saved to $(REPORTS_DIR)/read_benchmarks.txt"
+	@go test -v -run=^$$ -bench=BenchmarkReadPerformance -benchmem -benchtime=5s ./benchmark | tee $(REPORTS_DIR)/read_benchmarks.txt
+
+benchmark-seqread:
+	@mkdir -p $(REPORTS_DIR)
+	@echo "Running sequential read benchmarks..."
+	@go test -v -run=^$$ -bench=BenchmarkSequentialRead -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/sequential_read_benchmarks.txt
 
 benchmark-merge:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running merge operation benchmarks..."
-	@go test -bench=BenchmarkMergeOperations -benchmem -count=3 | tee $(REPORTS_DIR)/merge_benchmarks.txt
-	@echo "Merge benchmark results saved to $(REPORTS_DIR)/merge_benchmarks.txt"
+	@go test -v -run=^$$ -bench=BenchmarkMergeOperations -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/merge_benchmarks.txt
 
 benchmark-sequential-merge:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running sequential merge operation benchmarks..."
-	@go test -bench=BenchmarkSequentialMergeOperations -benchmem -count=3 | tee $(REPORTS_DIR)/sequential_merge_benchmarks.txt
-	@echo "Sequential merge benchmark results saved to $(REPORTS_DIR)/sequential_merge_benchmarks.txt"
+	@go test -v -run=^$$ -bench=BenchmarkSequentialMergeOperations -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/sequential_merge_benchmarks.txt
 
 benchmark-multiple-reads:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running multiple reads benchmarks..."
-	@go test -bench=BenchmarkMultipleReads -benchmem -count=3 | tee $(REPORTS_DIR)/multiple_reads_benchmarks.txt
-	@echo "Multiple reads benchmark results saved to $(REPORTS_DIR)/multiple_reads_benchmarks.txt"
+	@go test -v -run=^$$ -bench=BenchmarkMultipleReads -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/multiple_reads_benchmarks.txt
 
 benchmark-mixed:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running mixed workload benchmarks..."
-	@go test -bench=BenchmarkMixedWorkload -benchmem -count=3 | tee $(REPORTS_DIR)/mixed_benchmarks.txt
-	@echo "Mixed workload benchmark results saved to $(REPORTS_DIR)/mixed_benchmarks.txt"
+	@go test -v -run=^$$ -bench=BenchmarkMixedWorkload -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/mixed_benchmarks.txt
 
-benchmark-concurrent:
+benchmark-concurrent-ops:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running concurrent operations benchmarks..."
-	@go test -v -bench=BenchmarkConcurrent -benchtime=5s -run=^$ ./test/stress/fadvis/ -benchmem | tee $(REPORTS_DIR)/concurrent_benchmarks.txt
-	@echo "Concurrent operations benchmark results saved to $(REPORTS_DIR)/concurrent_benchmarks.txt"
+	@go test -v -run=^$$ -bench=BenchmarkConcurrentOperations -benchmem -benchtime=5s ./benchmark | tee $(REPORTS_DIR)/concurrent_ops_benchmarks.txt
+
+benchmark-concurrent-merges:
+	@mkdir -p $(REPORTS_DIR)
+	@echo "Running concurrent merge benchmarks..."
+	@go test -v -run=^$$ -bench=BenchmarkConcurrentMerges -benchmem -benchtime=5s ./benchmark | tee $(REPORTS_DIR)/concurrent_merges_benchmarks.txt
 
 benchmark-threshold:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running threshold adaptation benchmarks..."
-	@go test -bench=BenchmarkThresholdAdaptation -benchmem -count=3 | tee $(REPORTS_DIR)/threshold_benchmarks.txt
-	@echo "Threshold adaptation benchmark results saved to $(REPORTS_DIR)/threshold_benchmarks.txt"
+	@go test -v -run=^$$ -bench=BenchmarkThresholdAdaptation -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/threshold_benchmarks.txt
 
 benchmark-memory:
 	@mkdir -p $(REPORTS_DIR)
@@ -131,28 +155,15 @@ benchmark-memory:
 		(while true; do grep -E 'Cached|Buffers|MemFree' /proc/meminfo >> $(REPORTS_DIR)/memory_stats.txt; sleep 1; done) & \
 		monitoring_pid=\$$! && \
 		echo 'Running benchmarks...' && \
-		go test -bench=. -benchmem -count=1 | tee $(REPORTS_DIR)/memory_benchmarks.txt && \
+		go test -bench=. -benchmem -count=1 ./benchmark | tee $(REPORTS_DIR)/memory_benchmarks.txt && \
 		kill \$$monitoring_pid && \
 		echo 'Memory usage benchmark results saved to $(REPORTS_DIR)/memory_benchmarks.txt' && \
 		echo 'Memory monitoring data saved to $(REPORTS_DIR)/memory_stats.txt'"
 
+# ========= 清理 =========
 clean:
-	@echo "Cleaning up reports directory..."
+	@echo "Cleaning up reports and BPF artifacts..."
 	@rm -rf $(REPORTS_DIR)
-	@mkdir -p $(REPORTS_DIR)
+	@rm -f $(BPF_DIR)/*_bpfel.*
+	@rm -f $(BPF_DIR)/vmlinux.h
 	@echo "Done."
-
-help:
-	@echo "Available targets:"
-	@echo "  all-benchmarks          - Run all benchmarks with multiple iterations"
-	@echo "  benchmark-write         - Run write performance benchmarks"
-	@echo "  benchmark-read          - Run read performance benchmarks"
-	@echo "  benchmark-merge         - Run merge operation benchmarks"
-	@echo "  benchmark-sequential-merge - Run sequential merge operation benchmarks"
-	@echo "  benchmark-multiple-reads - Run multiple reads benchmarks"
-	@echo "  benchmark-mixed         - Run mixed workload benchmarks"
-	@echo "  benchmark-concurrent    - Run concurrent operations benchmarks"
-	@echo "  benchmark-threshold     - Run threshold adaptation benchmarks"
-	@echo "  benchmark-memory        - Run benchmarks with memory usage monitoring"
-	@echo "  clean                   - Clean up reports directory"
-	@echo "  help                    - Show this help message"

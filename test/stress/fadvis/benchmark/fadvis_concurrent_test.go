@@ -19,10 +19,11 @@ package benchmark
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +43,9 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 	}
 
 	b.Run("ConcurrentReads", func(b *testing.B) {
-		benchmarkConcurrentReads(b, files)
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			benchmarkConcurrentReads(b, files)
+		})
 	})
 }
 
@@ -56,7 +59,9 @@ func BenchmarkConcurrentMerges(b *testing.B) {
 	parts := utils.CreateTestParts(b, testDir, numParts, 10*1024*1024)
 
 	b.Run("ConcurrentMerges", func(b *testing.B) {
-		benchmarkConcurrentMerges(b, testDir, parts)
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			benchmarkConcurrentMerges(b, testDir, parts)
+		})
 	})
 }
 

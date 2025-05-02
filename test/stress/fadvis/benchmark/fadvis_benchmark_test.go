@@ -19,10 +19,11 @@ package benchmark
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 	"io"
 	"path/filepath"
 	"testing"
+
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
@@ -41,50 +42,84 @@ func ensureImportsAreUsed() {
 // BenchmarkWritePerformance tests write performance with and without utils.
 func BenchmarkWritePerformance(b *testing.B) {
 	// Test cases with different file sizes - using larger files to better show utils effects
-	for _, fileSize := range []int64{256 * 1024 * 1024, 1024 * 1024 * 1024} { // 256MB and 1GB
-		// Test with utils enabled
-		b.Run(fmt.Sprintf("Size_%dMB_utilsEnabled", fileSize/(1024*1024)), func(b *testing.B) {
-			testDir, cleanup := utils.SetupTestEnvironment(b)
-			defer cleanup()
+	for _, fileSize := range []int64{256 << 20, 1024 << 20} {
+        // fadvis enabled by default
+        b.Run(fmt.Sprintf("Size_%dMB_utilsEnabled", fileSize>>20), func(b *testing.B) {
+            testDir, cleanup := utils.SetupTestEnvironment(b)
+            defer cleanup()
 
-			// Set a realistic utils threshold based on system memory
-			// This mimics the actual production logic in utils.Manager
-			utils.SetRealisticThreshold()
+            // set a realistic threshold based on system memory
+            utils.SetRealisticThreshold()
 
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
-				err := utils.CreateTestFile(b, filePath, fileSize)
-				if err != nil {
-					b.Fatalf("Failed to create test file: %v", err)
-				}
-				utils.CapturePageCacheStats(b, "after_write_utils_enabled")
-			}
+            fileSystem := fs.NewLocalFileSystem()
 
-			utils.CapturePageCacheStatsWithDelay(b, "after_write_utils_enabled_delay", 3)
-		})
+            utils.WithMonitoringLegacy(b, func(b *testing.B) {
+                b.ResetTimer()
+                for i := 0; i < b.N; i++ {
+                    filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
 
-		// Test with utils disabled
-		b.Run(fmt.Sprintf("Size_%dMB_utilsDisabled", fileSize/(1024*1024)), func(b *testing.B) {
-			testDir, cleanup := utils.SetupTestEnvironment(b)
-			defer cleanup()
+                    // cached=false means need to clean pagecache
+                    file := fs.MustCreateFile(fileSystem, filePath, 0644, false)
 
-			// Set the utils threshold to a high value to disable it
-			utils.SetTestThreshold(1 * 1024 * 1024 * 1024 * 1024) // 1TB threshold effectively disables utils
+                    // sequential write
+                    writer := file.SequentialWrite()
+                    buf := make([]byte, 4096)
+                    for written := int64(0); written < fileSize; written += int64(len(buf)) {
+                        if _, err := writer.Write(buf); err != nil {
+                            b.Fatalf("write failed: %v", err)
+                        }
+                    }
 
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
-				err := utils.CreateTestFile(b, filePath, fileSize)
-				if err != nil {
-					b.Fatalf("Failed to create test file: %v", err)
-				}
-				utils.CapturePageCacheStats(b, "after_write_utils_disabled")
-			}
+                    if err := writer.Close(); err != nil {
+                        b.Fatalf("writer.Close() failed: %v", err)
+                    }
+                    if err := file.Close(); err != nil {
+                        b.Fatalf("file.Close() failed: %v", err)
+                    }
+                }
+                b.StopTimer()
+            })
 
-			utils.CapturePageCacheStatsWithDelay(b, "after_write_utils_disabled_delay", 3)
-		})
-	}
+            utils.CapturePageCacheStatsWithDelay(b, "after_write_utils_enabled_delay", 3)
+        })
+
+        // fadvise disabled
+        b.Run(fmt.Sprintf("Size_%dMB_utilsDisabled", fileSize>>20), func(b *testing.B) {
+            testDir, cleanup := utils.SetupTestEnvironment(b)
+            defer cleanup()
+
+            // set the utils threshold to a high value to disable it
+            utils.SetTestThreshold(1 << 40) // 1TB
+
+            fileSystem := fs.NewLocalFileSystem()
+
+            utils.WithMonitoringLegacy(b, func(b *testing.B) {
+                b.ResetTimer()
+                for i := 0; i < b.N; i++ {
+                    filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
+
+                    // cached=true means  not to clean pagecache
+                    file := fs.MustCreateFile(fileSystem, filePath, 0644, true)
+
+                    writer := file.SequentialWrite()
+                    buf := make([]byte, 4096)
+                    for written := int64(0); written < fileSize; written += int64(len(buf)) {
+                        if _, err := writer.Write(buf); err != nil {
+                            b.Fatalf("write failed: %v", err)
+                        }
+                    }
+
+                    if err := writer.Close(); err != nil {
+                        b.Fatalf("writer.Close() failed: %v", err)
+                    }
+                    if err := file.Close(); err != nil {
+                        b.Fatalf("file.Close() failed: %v", err)
+                    }
+                }
+                b.StopTimer()
+            })
+        })
+    }
 }
 
 // BenchmarkReadPerformance tests read performance with and without utils.
@@ -105,17 +140,17 @@ func BenchmarkReadPerformance(b *testing.B) {
 				b.Fatalf("Failed to create test file: %v", err)
 			}
 
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				data, err := utils.ReadFileWithFadvise(b, filePath)
-				if err != nil {
-					b.Fatalf("Failed to read file: %v", err)
+			utils.WithMonitoringLegacy(b, func(b *testing.B) {
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					data, err := utils.ReadFileWithFadvise(b, filePath)
+					if err != nil {
+						b.Fatalf("Failed to read file: %v", err)
+					}
+					b.SetBytes(int64(len(data)))
 				}
-				b.SetBytes(int64(len(data)))
-				utils.CapturePageCacheStats(b, "after_read_utils_enabled")
-			}
-
-			utils.CapturePageCacheStatsWithDelay(b, "after_read_utils_enabled_delay", 3)
+				b.StopTimer()
+			})
 		})
 
 		// Test with utils disabled
@@ -132,19 +167,18 @@ func BenchmarkReadPerformance(b *testing.B) {
 				b.Fatalf("Failed to create test file: %v", err)
 			}
 
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				// Read file without applying utils
-				totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, true) // skiputilse=true
-				if err != nil {
-					b.Fatalf("Failed to read file: %v", err)
+			utils.WithMonitoringLegacy(b, func(b *testing.B) {
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					// Read file without applying utils
+					totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, true) // skiputilse=true
+					if err != nil {
+						b.Fatalf("Failed to read file: %v", err)
+					}
+					b.SetBytes(totalBytes)
 				}
-				b.SetBytes(totalBytes)
-				// Capture page cache statistics
-				utils.CapturePageCacheStats(b, "after_read_utils_disabled")
-			}
-
-			utils.CapturePageCacheStatsWithDelay(b, "after_read_utils_disabled_delay", 3)
+				b.StopTimer()
+			})
 		})
 	}
 }
@@ -168,22 +202,22 @@ func BenchmarkMultipleReads(b *testing.B) {
 			b.Fatalf("Failed to create test file: %v", err)
 		}
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			for j := 0; j < readCount; j++ {
-				// Read the file using our helper function which uses fs package
-				data, err := utils.ReadFileWithFadvise(b, filePath)
-				if err != nil {
-					b.Fatalf("Failed to read file: %v", err)
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for j := 0; j < readCount; j++ {
+					// Read the file using our helper function which uses fs package
+					data, err := utils.ReadFileWithFadvise(b, filePath)
+					if err != nil {
+						b.Fatalf("Failed to read file: %v", err)
+					}
+
+					// Ensure data is used to prevent compiler optimization
+					_ = len(data)
 				}
-
-				// Ensure data is used to prevent compiler optimization
-				_ = len(data)
 			}
-		}
-		utils.CapturePageCacheStats(b, "after_multiple_reads_utils_enabled")
-
-		utils.CapturePageCacheStatsWithDelay(b, "after_multiple_reads_utils_enabled_delay", 3)
+			b.StopTimer()
+		})
 	})
 
 	// Test with utils disabled
@@ -200,23 +234,22 @@ func BenchmarkMultipleReads(b *testing.B) {
 			b.Fatalf("Failed to create test file: %v", err)
 		}
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			for j := 0; j < readCount; j++ {
-				// Read the file using streaming to minimize heap allocations
-				totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, true) // skiputilse=true
-				if err != nil {
-					b.Fatalf("Failed to read file: %v", err)
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for j := 0; j < readCount; j++ {
+					// Read the file using streaming to minimize heap allocations
+					totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, true) // skiputilse=true
+					if err != nil {
+						b.Fatalf("Failed to read file: %v", err)
+					}
+
+					// Ensure data is used to prevent compiler optimization
+					_ = totalBytes
 				}
-
-				// Ensure data is used to prevent compiler optimization
-				_ = totalBytes
 			}
-		}
-
-		utils.CapturePageCacheStats(b, "after_multiple_reads_utils_disabled")
-
-		utils.CapturePageCacheStatsWithDelay(b, "after_multiple_reads_utils_disabled_delay", 3)
+			b.StopTimer()
+		})
 	})
 }
 
@@ -232,30 +265,29 @@ func BenchmarkMixedWorkload(b *testing.B) {
 		// Set a realistic utils threshold based on system memory
 		utils.SetRealisticThreshold()
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			// Create a new file
-			writeFilePath := filepath.Join(testDir, fmt.Sprintf("mixed_write_%d.dat", i))
-			if err := utils.CreateTestFile(b, writeFilePath, fileSize); err != nil {
-				b.Fatalf("Failed to create write file: %v", err)
-			}
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				// Create a new file
+				writeFilePath := filepath.Join(testDir, fmt.Sprintf("mixed_write_%d.dat", i))
+				if err := utils.CreateTestFile(b, writeFilePath, fileSize); err != nil {
+					b.Fatalf("Failed to create write file: %v", err)
+				}
 
-			// Read the file we just created using streaming to minimize heap allocations
-			totalBytes, err := utils.ReadFileStreamingWithFadvise(b, writeFilePath, true) // skiputilse=true
-			if err != nil {
-				b.Fatalf("Failed to read file: %v", err)
-			}
-			_ = totalBytes
+				// Read the file we just created using streaming to minimize heap allocations
+				totalBytes, err := utils.ReadFileStreamingWithFadvise(b, writeFilePath, true) // skiputilse=true
+				if err != nil {
+					b.Fatalf("Failed to read file: %v", err)
+				}
+				_ = totalBytes
 
-			// Create another file
-			writeFilePath2 := filepath.Join(testDir, fmt.Sprintf("mixed_write2_%d.dat", i))
-			if err := utils.CreateTestFile(b, writeFilePath2, fileSize); err != nil {
-				b.Fatalf("Failed to create second write file: %v", err)
+				// Create another file
+				writeFilePath2 := filepath.Join(testDir, fmt.Sprintf("mixed_write2_%d.dat", i))
+				if err := utils.CreateTestFile(b, writeFilePath2, fileSize); err != nil {
+					b.Fatalf("Failed to create second write file: %v", err)
+				}
 			}
-		}
-		utils.CapturePageCacheStats(b, "after_mixed_workload_utils_enabled")
-
-		utils.CapturePageCacheStatsWithDelay(b, "after_mixed_workload_utils_enabled_delay", 3)
+		})
 	})
 
 	// Test with utils disabled
@@ -266,30 +298,29 @@ func BenchmarkMixedWorkload(b *testing.B) {
 		// Set the utils threshold to a high value to disable it
 		utils.SetTestThreshold(1 * 1024 * 1024 * 1024 * 1024)
 
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			// Create a new file
-			writeFilePath := filepath.Join(testDir, fmt.Sprintf("mixed_write_%d.dat", i))
-			if err := utils.CreateTestFile(b, writeFilePath, fileSize); err != nil {
-				b.Fatalf("Failed to create write file: %v", err)
-			}
+		utils.WithMonitoringLegacy(b, func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				// Create a new file
+				writeFilePath := filepath.Join(testDir, fmt.Sprintf("mixed_write_%d.dat", i))
+				if err := utils.CreateTestFile(b, writeFilePath, fileSize); err != nil {
+					b.Fatalf("Failed to create write file: %v", err)
+				}
 
-			// Read the file we just created using streaming to minimize heap allocations
-			totalBytes, err := utils.ReadFileStreamingWithFadvise(b, writeFilePath, true) // skiputilse=true
-			if err != nil {
-				b.Fatalf("Failed to read file: %v", err)
-			}
-			_ = totalBytes
+				// Read the file we just created using streaming to minimize heap allocations
+				totalBytes, err := utils.ReadFileStreamingWithFadvise(b, writeFilePath, true) // skiputilse=true
+				if err != nil {
+					b.Fatalf("Failed to read file: %v", err)
+				}
+				_ = totalBytes
 
-			// Create another file
-			writeFilePath2 := filepath.Join(testDir, fmt.Sprintf("mixed_write2_%d.dat", i))
-			if err := utils.CreateTestFile(b, writeFilePath2, fileSize); err != nil {
-				b.Fatalf("Failed to create second write file: %v", err)
+				// Create another file
+				writeFilePath2 := filepath.Join(testDir, fmt.Sprintf("mixed_write2_%d.dat", i))
+				if err := utils.CreateTestFile(b, writeFilePath2, fileSize); err != nil {
+					b.Fatalf("Failed to create second write file: %v", err)
+				}
 			}
-		}
-		utils.CapturePageCacheStats(b, "after_mixed_workload_utils_disabled")
-
-		utils.CapturePageCacheStatsWithDelay(b, "after_mixed_workload_utils_disabled_delay", 3)
+		})
 	})
 }
 
@@ -317,22 +348,22 @@ func BenchmarkSequentialRead(b *testing.B) {
 				b.Fatalf("Failed to create test file: %v", err)
 			}
 
-			b.ResetTimer()
-			b.SetBytes(fs.size) // Set bytes processed per operation
+			utils.WithMonitoringLegacy(b, func(b *testing.B) {
+				b.ResetTimer()
+				b.SetBytes(fs.size) // Set bytes processed per operation
 
-			for i := 0; i < b.N; i++ {
-				// Use streaming read with utilse enabled
-				totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, false)
-				if err != nil {
-					b.Fatalf("Failed to read file: %v", err)
+				for i := 0; i < b.N; i++ {
+					// Use streaming read with utilse enabled
+					totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, false)
+					if err != nil {
+						b.Fatalf("Failed to read file: %v", err)
+					}
+					// Ensure data is used to prevent compiler optimization
+					b.SetBytes(totalBytes)
 				}
-				// Ensure data is used to prevent compiler optimization
-				b.SetBytes(totalBytes)
-			}
 
-			// Capture page cache statistics
-			utils.CapturePageCacheStats(b, fmt.Sprintf("after_seqread_%s_utils_enabled", fs.name))
-			utils.CapturePageCacheStatsWithDelay(b, fmt.Sprintf("after_seqread_%s_utils_enabled_delay", fs.name), 3)
+				b.StopTimer()
+			})
 		})
 
 		b.Run(fmt.Sprintf("Withoututilse_%s", fs.name), func(b *testing.B) {
@@ -347,22 +378,22 @@ func BenchmarkSequentialRead(b *testing.B) {
 				b.Fatalf("Failed to create test file: %v", err)
 			}
 
-			b.ResetTimer()
-			b.SetBytes(fs.size) // Set bytes processed per operation
+			utils.WithMonitoringLegacy(b, func(b *testing.B) {
+				b.ResetTimer()
+				b.SetBytes(fs.size) // Set bytes processed per operation
 
-			for i := 0; i < b.N; i++ {
-				// Use streaming read with utilse disabled
-				totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, true)
-				if err != nil {
-					b.Fatalf("Failed to read file: %v", err)
+				for i := 0; i < b.N; i++ {
+					// Use streaming read with utilse disabled
+					totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, true)
+					if err != nil {
+						b.Fatalf("Failed to read file: %v", err)
+					}
+					// Ensure data is used to prevent compiler optimization
+					b.SetBytes(totalBytes)
 				}
-				// Ensure data is used to prevent compiler optimization
-				b.SetBytes(totalBytes)
-			}
 
-			// Capture page cache statistics
-			utils.CapturePageCacheStats(b, fmt.Sprintf("after_seqread_%s_utils_disabled", fs.name))
-			utils.CapturePageCacheStatsWithDelay(b, fmt.Sprintf("after_seqread_%s_utils_disabled_delay", fs.name), 3)
+				b.StopTimer()
+			})
 		})
 	}
 }
