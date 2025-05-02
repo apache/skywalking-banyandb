@@ -323,7 +323,7 @@ func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchema
 	}
 
 	backoffStrategy := backoff.NewExponentialBackOff()
-	backoffStrategy.MaxElapsedTime = 2 * time.Minute
+	backoffStrategy.MaxElapsedTime = 0 // never stop until topN measure has been created
 
 	err := backoff.Retry(operation, backoffStrategy)
 	if err != nil {
@@ -419,7 +419,6 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          factory,
-		SegmentBoundaryUpdateFn:        s.metadata.UpdateSegmentsBoundary,
 		SegmentIdleTimeout:             segmentIdleTimeout,
 	}
 	return storage.OpenTSDB(

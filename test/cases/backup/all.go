@@ -19,8 +19,10 @@ package backup_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/onsi/ginkgo/v2"
@@ -32,30 +34,38 @@ import (
 var _ = ginkgo.Describe("Backup All", func() {
 	_ = ginkgo.Describe("Backup and Restore Integration", func() {
 		ginkgo.It("should backup, create timedir and restore data correctly", func() {
+			destDir := SharedContext.DestDir
+			destURL := SharedContext.DestURL
+			fs := SharedContext.FS
 			ginkgo.By("Backup data to a remote destination")
-			destDir, err := os.MkdirTemp("", "backup-restore-dest")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer os.RemoveAll(destDir)
-			destURL := "file://" + destDir
+			defer clearSnapshotDirs()
 
 			backupCmd := backup.NewBackupCommand()
-			backupCmd.SetArgs([]string{
+			backupCmd.SetArgs(append([]string{
 				"--grpc-addr", SharedContext.DataAddr,
 				"--stream-root-path", SharedContext.RootDir,
 				"--measure-root-path", SharedContext.RootDir,
 				"--property-root-path", SharedContext.RootDir,
 				"--dest", destURL,
 				"--time-style", "daily",
-			})
-			err = backupCmd.Execute()
+			}, SharedContext.S3Args...))
+
+			err := backupCmd.Execute()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			var backupTimeDir string
-			entries, err := os.ReadDir(destDir)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			ctx := context.Background()
+			entries, inErr := fs.List(ctx, "")
+			gomega.Expect(inErr).NotTo(gomega.HaveOccurred())
+			datePattern := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 			for _, entry := range entries {
-				if entry.IsDir() {
-					backupTimeDir = entry.Name()
+				dirName := entry
+				if slashIndex := strings.Index(entry, "/"); slashIndex > 0 {
+					dirName = entry[:slashIndex]
+				}
+				if datePattern.MatchString(dirName) {
+					backupTimeDir = dirName
 					break
 				}
 			}
@@ -67,7 +77,10 @@ var _ = ginkgo.Describe("Backup All", func() {
 			defer os.RemoveAll(newCatalogDir)
 
 			listCmd := backup.NewTimeDirCommand()
-			listCmd.SetArgs([]string{"list", "--dest", destURL})
+			listCmd.SetArgs(append([]string{
+				"list", "--dest", destURL,
+			}, SharedContext.S3Args...))
+
 			listOut := &bytes.Buffer{}
 			listCmd.SetOut(listOut)
 			listCmd.SetErr(listOut)
@@ -133,13 +146,13 @@ var _ = ginkgo.Describe("Backup All", func() {
 
 			ginkgo.By("Restore data from the remote destination")
 			restoreCmd := backup.NewRestoreCommand()
-			restoreCmd.SetArgs([]string{
+			restoreCmd.SetArgs(append([]string{
 				"run",
 				"--source", destURL,
 				"--stream-root-path", newCatalogDir,
 				"--measure-root-path", newCatalogDir,
 				"--property-root-path", newCatalogDir,
-			})
+			}, SharedContext.S3Args...))
 			restoreOut := &bytes.Buffer{}
 			restoreCmd.SetOut(restoreOut)
 			restoreCmd.SetErr(restoreOut)
@@ -155,14 +168,16 @@ var _ = ginkgo.Describe("Backup All", func() {
 
 				// Verify that the restored files exist.
 				// The remote backup data for each catalog is under: destDir/<latestTimedir>/<catalog>
-				remoteDataDir := filepath.Join(destDir, latestTimedir, cat)
 				restoredDataDir := filepath.Join(newCatalogDir, cat, "data")
-				var remoteEntries, restoredEntries []os.DirEntry
-				remoteEntries, err = os.ReadDir(remoteDataDir)
+				var remoteList []string
+				var count int
+				remoteDataDir := filepath.Join(latestTimedir, cat)
+				remoteList, err = fs.List(context.Background(), remoteDataDir)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				restoredEntries, err = os.ReadDir(restoredDataDir)
+				count, err = countFilesRecursive(restoredDataDir)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(len(restoredEntries)).To(gomega.Equal(len(remoteEntries)))
+				gomega.Expect(count).To(gomega.Equal(len(remoteList)))
+
 			}
 
 			// Verify that the timedir file is removed from the new catalog's root path (after a successful restore).
@@ -174,3 +189,47 @@ var _ = ginkgo.Describe("Backup All", func() {
 		})
 	})
 })
+
+func removeAllFilesInDir(dir string) error {
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == dir {
+			return nil
+		}
+		if info.IsDir() {
+			return os.RemoveAll(path)
+		}
+		return os.Remove(path)
+	})
+}
+
+func countFilesRecursive(dir string) (int, error) {
+	var count int
+	err := filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			count++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func clearSnapshotDirs() {
+	snpDirs := []string{
+		filepath.Join(SharedContext.RootDir, "measure", "snapshots"),
+		filepath.Join(SharedContext.RootDir, "stream", "snapshots"),
+		filepath.Join(SharedContext.RootDir, "property", "snapshots"),
+	}
+
+	for _, dir := range snpDirs {
+		_ = removeAllFilesInDir(dir)
+	}
+}

@@ -30,11 +30,9 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -278,41 +276,39 @@ func (s *segment[T, O]) String() string {
 }
 
 type segmentController[T TSTable, O any] struct {
-	clock                   timestamp.Clock
-	metrics                 Metrics
-	opts                    *TSDBOpts[T, O]
-	l                       *logger.Logger
-	indexMetrics            *inverted.Metrics
-	segmentBoundaryUpdateFn SegmentBoundaryUpdateFn
-	position                common.Position
-	db                      string
-	stage                   string
-	location                string
-	lst                     []*segment[T, O]
-	deadline                atomic.Int64
-	idleTimeout             time.Duration
-	optsMutex               sync.RWMutex
+	clock        timestamp.Clock
+	metrics      Metrics
+	opts         *TSDBOpts[T, O]
+	l            *logger.Logger
+	indexMetrics *inverted.Metrics
+	position     common.Position
+	db           string
+	stage        string
+	location     string
+	lst          []*segment[T, O]
+	deadline     atomic.Int64
+	idleTimeout  time.Duration
+	optsMutex    sync.RWMutex
 	sync.RWMutex
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
 	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
-	segmentsBoundaryUpdateFn SegmentBoundaryUpdateFn, idleTimeout time.Duration,
+	idleTimeout time.Duration,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	p := common.GetPosition(ctx)
 	return &segmentController[T, O]{
-		location:                location,
-		opts:                    &opts,
-		l:                       l,
-		clock:                   clock,
-		position:                common.GetPosition(ctx),
-		metrics:                 metrics,
-		indexMetrics:            indexMetrics,
-		segmentBoundaryUpdateFn: segmentsBoundaryUpdateFn,
-		stage:                   p.Stage,
-		db:                      p.Database,
-		idleTimeout:             idleTimeout,
+		location:     location,
+		opts:         &opts,
+		l:            l,
+		clock:        clock,
+		position:     common.GetPosition(ctx),
+		metrics:      metrics,
+		indexMetrics: indexMetrics,
+		stage:        p.Stage,
+		db:           p.Database,
+		idleTimeout:  idleTimeout,
 	}
 }
 
@@ -364,29 +360,7 @@ func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], 
 	if err != nil {
 		return nil, err
 	}
-	sc.notifySegmentBoundaryUpdate()
 	return s, s.incRef(context.WithValue(context.Background(), logger.ContextKey, sc.l))
-}
-
-func (sc *segmentController[T, O]) notifySegmentBoundaryUpdate() {
-	if sc.segmentBoundaryUpdateFn == nil {
-		return
-	}
-	// No error if we do not open closed segments.
-	segs, _ := sc.segments(false)
-	defer func() {
-		for i := range segs {
-			segs[i].DecRef()
-		}
-	}()
-	var tr *modelv1.TimeRange
-	if len(segs) > 0 {
-		tr = &modelv1.TimeRange{
-			Begin: timestamppb.New(segs[0].Start),
-			End:   timestamppb.New(segs[len(segs)-1].End),
-		}
-	}
-	sc.segmentBoundaryUpdateFn(sc.stage, sc.db, tr)
 }
 
 func (sc *segmentController[T, O]) segments(reopenClosed bool) (ss []*segment[T, O], err error) {
@@ -570,7 +544,6 @@ func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, 
 		}
 		s.DecRef()
 	}
-	sc.notifySegmentBoundaryUpdate()
 	return hasSegment, err
 }
 
@@ -607,7 +580,6 @@ func (sc *segmentController[T, O]) deleteExpiredSegments(timeRange timestamp.Tim
 		}
 		s.DecRef()
 	}
-	sc.notifySegmentBoundaryUpdate()
 	return count
 }
 
