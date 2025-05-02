@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"bufio"
+	"time"
 	"runtime"
 	"testing"
 
@@ -29,118 +31,108 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// BenchmarkMergeOperations tests the performance of merge operations with and without utils.
-func BenchmarkMergeOperations(b *testing.B) {
-	if runtime.GOOS != "linux" {
-		b.Skip("utilse is only supported on Linux")
-	}
+func mergeIntoWriter(parts []string, outputPath string) error {
+    fOut, err := os.Create(outputPath)
+    if err != nil {
+        return err
+    }
+    defer fOut.Close()
+    w := bufio.NewWriterSize(fOut, 4*1024)
 
-	// Create a temporary directory for the test
-	testDir, err := os.MkdirTemp("", "utils_merge_benchmark")
-	require.NoError(b, err)
-	defer os.RemoveAll(testDir)
-
-	// Prepare test files
-	parts := utils.CreateTestParts(b, testDir, 10, utils.LargeFileSize)
-
-	// Run benchmark with utilse disabled
-	b.Run("Withoututilse", func(b *testing.B) {
-		// Set the utils threshold to a high value to disable it
-		utils.SetTestThreshold(utils.Terabyte)
-
-		utils.WithMonitoringLegacy(b, func(b *testing.B) {
-			b.ResetTimer() // 重置计时器，确保只测量循环内的执行时间
-			for i := 0; i < b.N; i++ {
-				outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
-				// Use the simulateMergeOperation from test_helpers.go which uses fs package
-				err := utils.SimulateMergeOperation(b, parts, outputFile)
-				require.NoError(b, err)
-			}
-			b.StopTimer() // 停止计时器，确保后续的统计操作不计入基准测试时间
-			utils.CapturePageCacheStats(b, "after_merge_utils_disabled")
-		})
-
-		utils.CapturePageCacheStatsWithDelay(b, "after_merge_utils_disabled_delay", 3)
-	})
-
-	// Run benchmark with utilse enabled
-	b.Run("Withutilse", func(b *testing.B) {
-		// Set a realistic utils threshold based on system memory
-		utils.SetRealisticThreshold()
-
-		utils.WithMonitoringLegacy(b, func(b *testing.B) {
-			b.ResetTimer() // 重置计时器，确保只测量循环内的执行时间
-			for i := 0; i < b.N; i++ {
-				outputFile := filepath.Join(testDir, fmt.Sprintf("merged_utils_%d", i))
-				// Use the simulateMergeOperation from test_helpers.go which uses fs package
-				err := utils.SimulateMergeOperation(b, parts, outputFile)
-				require.NoError(b, err)
-			}
-			b.StopTimer() // 停止计时器，确保后续的统计操作不计入基准测试时间
-			utils.CapturePageCacheStats(b, "after_merge_utils_enabled")
-		})
-
-		utils.CapturePageCacheStatsWithDelay(b, "after_merge_utils_enabled_delay", 3)
-	})
+    for _, part := range parts {
+        fPart, err := os.Open(part)
+        if err != nil {
+            return err
+        }
+        _, err = bufio.NewReader(fPart).WriteTo(w)
+        fPart.Close()
+        if err != nil {
+            return err
+        }
+    }
+    // flush and sync
+    if err := w.Flush(); err != nil {
+        return err
+    }
+    return fOut.Sync()
 }
 
-// BenchmarkSequentialMergeOperations tests the performance of sequential merge operations.
+// BenchmarkMergeOperations compares merge with and without fadvise
+func BenchmarkMergeOperations(b *testing.B) {
+    if runtime.GOOS != "linux" {
+        b.Skip("fadvise optimization only supported on Linux")
+    }
+
+    testDir, cleanup := utils.SetupTestEnvironment(b)
+    defer cleanup()
+
+    parts := utils.CreateTestParts(b, testDir, 10, utils.LargeFileSize)
+    scenarios := []struct{
+        name   string
+        enable bool
+    }{
+        {"WithoutFadvise", false},
+        {"WithFadvise", true},
+    }
+
+    for _, sc := range scenarios {
+        b.Run(sc.name, func(b *testing.B) {
+            if sc.enable {
+                utils.SetRealisticThreshold()
+            } else {
+                utils.SetTestThreshold(utils.Terabyte)
+            }
+            utils.WithMonitoringLegacy(b, func(b *testing.B) {
+                b.ResetTimer()
+                for i := 0; i < b.N; i++ {
+                    outputPath := filepath.Join(testDir, fmt.Sprintf("merged_%s_%d.dat", sc.name, i))
+                    require.NoError(b, mergeIntoWriter(parts, outputPath))
+                }
+                b.StopTimer()
+            })
+            utils.CapturePageCacheStatsWithDelay(b, fmt.Sprintf("after_merge_%s", sc.name), 3)
+            time.Sleep(50 * time.Millisecond)
+        })
+    }
+}
+
+// BenchmarkSequentialMergeOperations compares sequential triple merges with and without fadvise
 func BenchmarkSequentialMergeOperations(b *testing.B) {
-	if runtime.GOOS != "linux" {
-		b.Skip("utilse is only supported on Linux")
-	}
+    if runtime.GOOS != "linux" {
+        b.Skip("fadvise optimization only supported on Linux")
+    }
 
-	// Create a temporary directory for the test
-	testDir, err := os.MkdirTemp("", "utils_sequential_merge_benchmark")
-	require.NoError(b, err)
-	defer os.RemoveAll(testDir)
+    testDir, cleanup := utils.SetupTestEnvironment(b)
+    defer cleanup()
 
-	// Prepare test files
-	parts := utils.CreateTestParts(b, testDir, 5, utils.LargeFileSize)
+    parts := utils.CreateTestParts(b, testDir, 5, utils.LargeFileSize)
+    scenarios := []struct{
+        name   string
+        enable bool
+    }{
+        {"WithoutFadvise", false},
+        {"WithFadvise", true},
+    }
 
-	// Run benchmark with utilse disabled
-	b.Run("Withoututilse", func(b *testing.B) {
-		// Set the utils threshold to a high value to disable it
-		utils.SetTestThreshold(utils.Terabyte)
-
-		utils.WithMonitoringLegacy(b, func(b *testing.B) {
-			b.ResetTimer() // 重置计时器，确保只测量循环内的执行时间
-			for i := 0; i < b.N; i++ {
-				// Perform multiple sequential merge operations
-				for j := 0; j < 3; j++ {
-					outputFile := filepath.Join(testDir, fmt.Sprintf("seq_merged_%d_%d", i, j))
-					// Use the simulateMergeOperation from test_helpers.go which uses fs package
-					err := utils.SimulateMergeOperation(b, parts, outputFile)
-					require.NoError(b, err)
-				}
-			}
-			b.StopTimer() // 停止计时器，确保后续的统计操作不计入基准测试时间
-			utils.CapturePageCacheStats(b, "after_sequential_merge_utils_disabled")
-		})
-
-		utils.CapturePageCacheStatsWithDelay(b, "after_sequential_merge_utils_disabled_delay", 3)
-	})
-
-	// Run benchmark with utilse enabled
-	b.Run("Withutilse", func(b *testing.B) {
-		// Set a realistic utils threshold based on system memory
-		utils.SetRealisticThreshold()
-
-		utils.WithMonitoringLegacy(b, func(b *testing.B) {
-			b.ResetTimer() // 重置计时器，确保只测量循环内的执行时间
-			for i := 0; i < b.N; i++ {
-				// Perform multiple sequential merge operations
-				for j := 0; j < 3; j++ {
-					outputFile := filepath.Join(testDir, fmt.Sprintf("seq_merged_utils_%d_%d", i, j))
-					// Use the simulateMergeOperation from test_helpers.go which uses fs package
-					err := utils.SimulateMergeOperation(b, parts, outputFile)
-					require.NoError(b, err)
-				}
-			}
-			b.StopTimer() // 停止计时器，确保后续的统计操作不计入基准测试时间
-			utils.CapturePageCacheStats(b, "after_sequential_merge_utils_enabled")
-		})
-
-		utils.CapturePageCacheStatsWithDelay(b, "after_sequential_merge_utils_enabled_delay", 3)
-	})
+    for _, sc := range scenarios {
+        b.Run(sc.name, func(b *testing.B) {
+            if sc.enable {
+                utils.SetRealisticThreshold()
+            } else {
+                utils.SetTestThreshold(utils.Terabyte)
+            }
+            utils.WithMonitoringLegacy(b, func(b *testing.B) {
+                b.ResetTimer()
+                for i := 0; i < b.N; i++ {
+                    for j := 0; j < 3; j++ {
+                        outputPath := filepath.Join(testDir, fmt.Sprintf("seq_merged_%s_%d_%d.dat", sc.name, i, j))
+                        require.NoError(b, mergeIntoWriter(parts, outputPath))
+                    }
+                }
+                b.StopTimer()
+            })
+            utils.CapturePageCacheStatsWithDelay(b, fmt.Sprintf("after_seq_merge_%s", sc.name), 3)
+            time.Sleep(50 * time.Millisecond)
+        })
+    }
 }

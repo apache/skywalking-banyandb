@@ -1,3 +1,21 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// bpf package provides functions to load and manage eBPF programs
 package bpf
 
 import (
@@ -20,9 +38,6 @@ import (
 //    -output-stem bpf_arm64 -go-package bpf \
 //    Bpf ../bpfsrc/fadvise.c
 
-// FadviseStats 表示用户态统计信息，仅聚焦我们关注的字段
-// 目前只展示成功调用数和 AdviceDontneed 类型的调用
-// 内核态结构 BpfFadviseStatsT 会包含全部类型
 
 type FadviseStats struct {
 	PID            uint32
@@ -37,7 +52,6 @@ type LruShrinkStats struct {
 	CallerComm  string
 }
 
-// RunFadvise 启动 eBPF 程序，attach sys_enter/sys_exit 以及 lru_shrink tracepoint
 func RunFadvise() (func(), error) {
 	objs := BpfObjects{}
 	if err := LoadBpfObjects(&objs, nil); err != nil {
@@ -72,7 +86,6 @@ func RunFadvise() (func(), error) {
 	return cleanup, nil
 }
 
-// GetFadviseStats 从 BPF map 中提取用户关心的统计数据
 func GetFadviseStats(objs *BpfObjects) ([]FadviseStats, error) {
 	if objs == nil || objs.FadviseStatsMap == nil {
 		return nil, fmt.Errorf("BPF objects or map not initialized")
@@ -98,7 +111,6 @@ func GetFadviseStats(objs *BpfObjects) ([]FadviseStats, error) {
 	return stats, nil
 }
 
-// GetLruShrinkStats 提取 shrink map 中的统计信息
 func GetLruShrinkStats(objs *BpfObjects) (*LruShrinkStats, error) {
 	if objs == nil || objs.ShrinkStatsMap == nil {
 		return nil, fmt.Errorf("BPF objects or map not initialized")
@@ -132,7 +144,6 @@ func int8SliceToString(s []int8) string {
 	return string(b)
 }
 
-// MonitorFadviseWithTimeout 启动 fadvise 监控并在给定时间后返回结果
 func MonitorFadviseWithTimeout(duration time.Duration) ([]FadviseStats, error) {
 	objs := BpfObjects{}
 	if err := LoadBpfObjects(&objs, nil); err != nil {

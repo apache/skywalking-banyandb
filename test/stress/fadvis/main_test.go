@@ -14,6 +14,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package fadvis provides stress testing functionality for the file advice (fadvis) system
+// which optimizes memory page cache usage for file operations.
 package fadvis
 
 import (

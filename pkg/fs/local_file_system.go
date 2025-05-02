@@ -35,21 +35,19 @@ import (
 )
 
 const (
-	defaultIOSize = 256 * 1024
-	// defaultLargeFileThreshold is the default threshold for large files (10MB).
-	defaultLargeFileThreshold = 10 * 1024 * 1024 // 10MB
+	defaultIOSize             = 256 * 1024
+	defaultLargeFileThreshold = 10 * 1024 * 1024
 )
 
 // ThresholdProvider is an interface for providing file size thresholds.
 type ThresholdProvider interface {
-	// ShouldApplyFadvis checks if fadvis should be applied to a file of the given size.
 	ShouldApplyFadvis(fileSize int64) bool
 }
 
-// Global threshold provider that can be set by external packages
+// Global threshold provider that can be set by external packages.
 var defaultThresholdProvider ThresholdProvider
 
-// SetThresholdProvider sets the global threshold provider
+// SetThresholdProvider sets the global threshold provider.
 func SetThresholdProvider(provider ThresholdProvider) {
 	defaultThresholdProvider = provider
 }
@@ -657,16 +655,19 @@ func isMetadataIndexPath(p string) bool {
 	return strings.Contains(p, "/metadata_index/")
 }
 
-
 var globalThreshold int64 = defaultLargeFileThreshold
 
+// SetGlobalThreshold sets the global file size threshold for applying fadvis.
+// Files larger than this threshold will have fadvis applied to reduce memory pressure.
 func SetGlobalThreshold(v int64) {
-    globalThreshold = v
+	globalThreshold = v
 }
 
+// ShouldApplyFadvis determines if the fadvis optimization should be applied to a file.
+// It returns true if the file size exceeds the current threshold (either from the provider or global setting).
 func ShouldApplyFadvis(size int64) bool {
-    if defaultThresholdProvider != nil {
-        return defaultThresholdProvider.ShouldApplyFadvis(size)
-    }
-    return size >= globalThreshold
+	if defaultThresholdProvider != nil {
+		return defaultThresholdProvider.ShouldApplyFadvis(size)
+	}
+	return size >= globalThreshold
 }

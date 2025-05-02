@@ -21,11 +21,12 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"io"
+
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
-	"io"
 )
 
 type seqReader struct {

@@ -181,7 +181,6 @@ func (s *service) PreRun(ctx context.Context) error {
 		return err
 	}
 	return s.localPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
-
 }
 
 func (s *service) Serve() run.StopNotify {

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// utils package provides helper functions for file operations and monitoring 
 package utils
 
 import (
@@ -82,10 +83,7 @@ func CreateTestFile(t testing.TB, filePath string, size int64) error {
 	return nil
 }
 
-// ReadFileWithFadvise reads a file with automatic fadvise application.
-// It uses the fs package which automatically applies fadvise if the file size exceeds the threshold.
 func ReadFileWithFadvise(t testing.TB, filePath string) ([]byte, error) {
-	// Use streaming read instead of reading the entire file at once
 	f, err := fileSystem.OpenFile(filePath)
 	if err != nil {
 		return nil, err

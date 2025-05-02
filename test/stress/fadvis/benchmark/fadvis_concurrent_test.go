@@ -22,72 +22,114 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"bufio"
+	"os"
 
 	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 
 	"github.com/stretchr/testify/require"
 )
 
-// BenchmarkConcurrentOperations tests the performance of concurrent file operations
-func BenchmarkConcurrentOperations(b *testing.B) {
-	testDir, cleanup := utils.SetupTestEnvironment(b)
-	defer cleanup()
+func runConcurrentReads(b *testing.B, enable bool) {
+    testDir, cleanup := utils.SetupTestEnvironment(b)
+    defer cleanup()
 
-	// Create test files
-	numFiles := 10 // Default number of concurrent files
-	files := make([]string, numFiles)
-	for i := 0; i < numFiles; i++ {
-		files[i] = filepath.Join(testDir, fmt.Sprintf("test_file_%d", i))
-		err := utils.CreateTestFile(b, files[i], 200*1024*1024)
-		require.NoError(b, err)
-	}
+    numFiles := 10
+    files := make([]string, numFiles)
+    for i := 0; i < numFiles; i++ {
+        path := filepath.Join(testDir, fmt.Sprintf("test_file_%d.dat", i))
+        require.NoError(b, utils.CreateTestFile(b, path, 200*1024*1024))
+        files[i] = path
+    }
 
-	b.Run("ConcurrentReads", func(b *testing.B) {
-		utils.WithMonitoringLegacy(b, func(b *testing.B) {
-			benchmarkConcurrentReads(b, files)
-		})
-	})
+    if enable {
+        utils.SetRealisticThreshold()
+    } else {
+        utils.SetTestThreshold(1 << 40)
+    }
+
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        for _, file := range files {
+            data, err := utils.ReadFileStreamingWithFadvise(b, file, enable)
+            require.NoError(b, err)
+            require.NotEmpty(b, data)
+        }
+    }
+    b.StopTimer()
+    utils.CapturePageCacheStatsWithDelay(b, fmt.Sprintf("after_concurrent_reads_enable=%v", enable), 3)
 }
 
-// BenchmarkConcurrentMerges tests the performance of concurrent merge operations
-func BenchmarkConcurrentMerges(b *testing.B) {
-	testDir, cleanup := utils.SetupTestEnvironment(b)
-	defer cleanup()
-
-	// Create test parts for merging
-	numParts := 5 // Default number of parts
-	parts := utils.CreateTestParts(b, testDir, numParts, 10*1024*1024)
-
-	b.Run("ConcurrentMerges", func(b *testing.B) {
-		utils.WithMonitoringLegacy(b, func(b *testing.B) {
-			benchmarkConcurrentMerges(b, testDir, parts)
-		})
-	})
+// BenchmarkConcurrentReads_WithFadvise benchmarks concurrent sequential reads with fadvise enabled
+func BenchmarkConcurrentReads_WithFadvise(b *testing.B) {
+    utils.WithMonitoringLegacy(b, func(b *testing.B) {
+        runConcurrentReads(b, true)
+    })
 }
 
-func benchmarkConcurrentReads(b *testing.B, files []string) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, file := range files {
-			data, err := utils.ReadFileWithFadvise(b, file)
-			require.NoError(b, err)
-			require.NotEmpty(b, data)
-		}
-	}
-	utils.CapturePageCacheStats(b, "after_concurrent_read")
-	utils.CapturePageCacheStatsWithDelay(b, "after_concurrent_read", 3)
+// BenchmarkConcurrentReads_WithoutFadvise benchmarks concurrent sequential reads without fadvise
+func BenchmarkConcurrentReads_WithoutFadvise(b *testing.B) {
+    utils.WithMonitoringLegacy(b, func(b *testing.B) {
+        runConcurrentReads(b, false)
+    })
 }
 
-func benchmarkConcurrentMerges(b *testing.B, testDir string, parts []string) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		outputFile := filepath.Join(testDir, fmt.Sprintf("merged_%d", i))
-		err := utils.SimulateMergeOperation(b, parts, outputFile)
-		require.NoError(b, err)
-	}
-	utils.CapturePageCacheStats(b, "after_concurrent_merge")
-	utils.CapturePageCacheStatsWithDelay(b, "after_concurrent_merge", 3)
+// helper for concurrent writes
+func runConcurrentWrites(b *testing.B, enable bool) {
+    testDir, cleanup := utils.SetupTestEnvironment(b)
+    defer cleanup()
+
+    if enable {
+        utils.SetRealisticThreshold()
+    } else {
+        utils.SetTestThreshold(1 << 40)
+    }
+
+    // Prepare test data: 4MB of 'a'
+    data := make([]byte, 4*1024*1024)
+    for i := range data {
+        data[i] = 'a'
+    }
+
+    numFiles := 5
+    outputFiles := make([]string, numFiles)
+    for i := 0; i < numFiles; i++ {
+        outputFiles[i] = filepath.Join(testDir, fmt.Sprintf("write_%d.dat", i))
+    }
+
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        for _, path := range outputFiles {
+            f, err := os.Create(path)
+            require.NoError(b, err)
+            w := bufio.NewWriterSize(f, 4*1024)
+            _, err = w.Write(data)
+            require.NoError(b, err)
+            w.Flush()
+            f.Sync()
+            f.Close()
+        }
+    }
+    b.StopTimer()
+    utils.CapturePageCacheStatsWithDelay(b, fmt.Sprintf("after_concurrent_writes_enable=%v", enable), 3)
 }
+
+// BenchmarkConcurrentWrites_WithFadvise benchmarks concurrent writes with fadvise enabled
+func BenchmarkConcurrentWrites_WithFadvise(b *testing.B) {
+    utils.WithMonitoringLegacy(b, func(b *testing.B) {
+        runConcurrentWrites(b, true)
+    })
+}
+
+// BenchmarkConcurrentWrites_WithoutFadvise benchmarks concurrent writes without fadvise
+func BenchmarkConcurrentWrites_WithoutFadvise(b *testing.B) {
+    utils.WithMonitoringLegacy(b, func(b *testing.B) {
+        runConcurrentWrites(b, false)
+    })
+}
+
+
+
 
 // BenchmarkThresholdAdaptation tests how the system adapts to changing memory thresholds
 func BenchmarkThresholdAdaptation(b *testing.B) {

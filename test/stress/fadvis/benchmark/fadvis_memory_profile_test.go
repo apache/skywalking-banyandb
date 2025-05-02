@@ -138,9 +138,9 @@ func runMemoryProfiledMerge(b *testing.B, parts []string, outputDir string) {
 	writeMemStats(outputDir, memStatsBefore, memStatsAfter)
 
 	// Sleep to allow for OS-level memory measurements
-	b.Log("\n=== WAITING FOR MEMORY RELEASE (30 seconds) ===")
-	b.Log(fmt.Sprintf("Process ID: %d", os.Getpid()))
-	b.Log(fmt.Sprintf("Output directory: %s", outputDir))
+	b.Logf("\n=== WAITING FOR MEMORY RELEASE (30 seconds) ===")
+	b.Logf("Process ID: %d", os.Getpid())
+	b.Logf("Output directory: %s", outputDir)
 
 	// Wait longer to observe memory release patterns
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "MEMORY_RELEASE_WAIT")
@@ -290,8 +290,8 @@ func runMemoryProfiledWrite(b *testing.B, outputDir string, fileSize int64) {
 
 	// Sleep to allow for OS-level memory measurements
 	b.Log("\n=== WAITING FOR MEMORY RELEASE (30 seconds) ===")
-	b.Log(fmt.Sprintf("Process ID: %d", os.Getpid()))
-	b.Log(fmt.Sprintf("Output directory: %s", outputDir))
+	b.Logf("Process ID: %d", os.Getpid())
+	b.Logf("Output directory: %s", outputDir)
 
 	// Wait longer to observe memory release patterns
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "MEMORY_RELEASE_WAIT")
@@ -414,8 +414,8 @@ func runMemoryProfiledSeqRead(b *testing.B, filePath string, outputDir string, s
 
 	// Sleep to allow for OS-level memory measurements
 	b.Log("\n=== WAITING FOR MEMORY RELEASE (30 seconds) ===")
-	b.Log(fmt.Sprintf("Process ID: %d", os.Getpid()))
-	b.Log(fmt.Sprintf("Output directory: %s", outputDir))
+	b.Logf("Process ID: %d", os.Getpid())
+	b.Logf("Output directory: %s", outputDir)
 
 	// Wait longer to observe memory release patterns
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "MEMORY_RELEASE_WAIT")
