@@ -72,40 +72,43 @@ func NewManager(provider ThresholdProvider) *Manager {
 		closed:            make(chan struct{}),
 		l:                 logger.GetLogger("fadvis-manager"),
 	}
-	// Default 64MB
 	m.threshold.Store(64 * 1024 * 1024)
 	return m
 }
 
-// Name returns the name of the manager.
+// Name returns the name of the fadvis manager.
+// This implements the run.Unit interface.
 func (m *Manager) Name() string {
 	return "fadvis-manager"
 }
 
-// FlagSet returns the flag set for the manager.
+// FlagSet returns a flagset for the fadvis manager configuration.
+// This implements the run.Unit interface.
 func (m *Manager) FlagSet() *run.FlagSet {
-	// We don't need our own flags since we use the threshold provider's configuration
 	return run.NewFlagSet(m.Name())
 }
 
-// Validate validates the manager's flags.
+// Validate validates configuration for the fadvis manager.
+// This implements the run.Unit interface.
 func (m *Manager) Validate() error {
 	return nil
 }
 
-// PreRun initializes the manager.
+// PreRun initializes the fadvis manager by updating the threshold.
+// This implements the run.Unit interface.
 func (m *Manager) PreRun(context.Context) error {
-	// Update the threshold immediately
 	m.updateThreshold()
 	return nil
 }
 
-// GracefulStop stops the manager.
+// GracefulStop stops the fadvis manager gracefully.
+// This implements the run.Unit interface.
 func (m *Manager) GracefulStop() {
 	close(m.closed)
 }
 
-// Serve starts the manager.
+// Serve starts the fadvis manager to periodically update thresholds.
+// This implements the run.Unit interface.
 func (m *Manager) Serve() run.StopNotify {
 	go func() {
 		ticker := time.NewTicker(m.updateInterval)
@@ -127,7 +130,7 @@ func (m *Manager) Serve() run.StopNotify {
 }
 
 // updateThreshold updates the threshold from the threshold provider.
-// The threshold is 1% of the page cache size, which is (100-allowedPercent)% of total memory.
+// The threshold is calculated based on memory usage from the provider.
 func (m *Manager) updateThreshold() {
 	if m.thresholdProvider == nil {
 		m.l.Warn().Msg("threshold provider is not available, using default threshold")
@@ -146,31 +149,30 @@ func (m *Manager) updateThreshold() {
 		Msg("updated fadvis threshold")
 }
 
-// GetThreshold returns the current threshold.
+// GetThreshold returns the current file size threshold.
+// Files larger than this threshold will be candidates for fadvis optimization.
 func (m *Manager) GetThreshold() int64 {
 	return m.threshold.Load()
 }
 
 // ShouldApplyFadvis checks if fadvis should be applied to a file of the given size.
+// It returns true if the file size exceeds the current threshold.
 func (m *Manager) ShouldApplyFadvis(fileSize int64) bool {
 	return fileSize > m.threshold.Load()
 }
 
 // ShouldCache returns whether a file at the given path should be cached.
-// This is the inverse of ShouldApplyFadvis for empty/new files.
+// Currently always returns true as the cache decision is made later based on file size.
 func (m *Manager) ShouldCache(_ string) bool {
-	// For new files, we can't determine size, so we use the path to make a decision
-	// In this implementation, we'll assume all files should be cached
-	// Upper layers can override this based on their knowledge of expected file sizes
 	return true
 }
 
 // SetMemoryProtector sets the global Memory protector instance for fadvis threshold management.
+// It creates a new Manager with the provided memory protector and registers it with the fs package.
 func SetMemoryProtector(mp *protector.Memory) {
 	manager := NewManager(mp)
 	SetManager(manager)
 
-	// Register the manager as a ThresholdProvider with the fs package
 	fs.SetThresholdProvider(manager)
 }
 
@@ -179,7 +181,6 @@ func SetMemoryProtector(mp *protector.Memory) {
 func CleanupForTesting() {
 	if defaultManager != nil {
 		defaultManager.GracefulStop()
-		// Wait a short time to ensure the goroutine has a chance to exit
 		time.Sleep(100 * time.Millisecond)
 	}
 }

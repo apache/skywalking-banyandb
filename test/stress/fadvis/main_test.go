@@ -20,12 +20,13 @@ package fadvis
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/pkg/fadvis"
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 	"os"
 	"regexp"
 	"runtime"
 	"testing"
+
+	"github.com/apache/skywalking-banyandb/pkg/fadvis"
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 )
 
 // TestMain is the entry point for the test package, used to initialize the test environment.
@@ -51,7 +52,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Wait for a while to ensure system stability
-	//time.Sleep(100 * time.Millisecond)
+	// time.Sleep(100 * time.Millisecond)
 
 	// Run all tests and benchmarks
 	code := m.Run()

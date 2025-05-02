@@ -19,7 +19,6 @@ package benchmark
 
 import (
 	"fmt"
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,13 +26,20 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
+)
+
+const (
+	// OSLinux represents the Linux operating system name.
+	OSLinux = "linux"
 )
 
 // BenchmarkMergeMemoryUsage tests the memory usage of merge operations with and without utils.
 // This benchmark focuses specifically on memory usage and page cache behavior.
 func BenchmarkMergeMemoryUsage(b *testing.B) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		b.Skip("This test is designed for Linux and macOS")
+	if runtime.GOOS != OSLinux {
+		b.Skip("This test is designed for Linux only since fadvis is a Linux-specific system call")
 	}
 
 	// Create a temporary directory for the test
@@ -49,8 +55,8 @@ func BenchmarkMergeMemoryUsage(b *testing.B) {
 	// Create output directories
 	outputDirNoutilse := filepath.Join(testDir, "no_utilse")
 	outputDirWithutilse := filepath.Join(testDir, "with_utilse")
-	require.NoError(b, os.MkdirAll(outputDirNoutilse, 0755))
-	require.NoError(b, os.MkdirAll(outputDirWithutilse, 0755))
+	require.NoError(b, os.MkdirAll(outputDirNoutilse, 0o755))
+	require.NoError(b, os.MkdirAll(outputDirWithutilse, 0o755))
 
 	// Print instructions for memory monitoring
 	pid := os.Getpid()
@@ -85,7 +91,7 @@ func BenchmarkMergeMemoryUsage(b *testing.B) {
 		outputDirNoutilse, outputDirWithutilse)
 }
 
-// runMemoryProfiledMerge performs merge operations with memory profiling
+// runMemoryProfiledMerge performs merge operations with memory profiling.
 func runMemoryProfiledMerge(b *testing.B, parts []string, outputDir string) {
 	// Reset memory stats before starting
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "MEMORY_RESET")
@@ -150,7 +156,7 @@ func runMemoryProfiledMerge(b *testing.B, parts []string, outputDir string) {
 	b.Log("=== MEMORY MONITORING COMPLETE FOR THIS TEST ===")
 }
 
-// writeMemStats writes memory statistics to a file
+// writeMemStats writes memory statistics to a file.
 func writeMemStats(outputDir string, before, after runtime.MemStats) {
 	f, err := os.Create(filepath.Join(outputDir, "memory_stats.txt"))
 	if err != nil {
@@ -188,8 +194,8 @@ func writeMemStats(outputDir string, before, after runtime.MemStats) {
 // BenchmarkWriteMemoryUsage tests the memory usage of write operations with and without utils.
 // This benchmark focuses specifically on memory usage and page cache behavior during file writes.
 func BenchmarkWriteMemoryUsage(b *testing.B) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		b.Skip("This test is designed for Linux and macOS")
+	if runtime.GOOS != OSLinux {
+		b.Skip("This test is designed for Linux only since fadvis is a Linux-specific system call")
 	}
 
 	// Create a temporary directory for the test
@@ -200,8 +206,8 @@ func BenchmarkWriteMemoryUsage(b *testing.B) {
 	// Create output directories
 	outputDirNoutilse := filepath.Join(testDir, "no_utilse")
 	outputDirWithutilse := filepath.Join(testDir, "with_utilse")
-	require.NoError(b, os.MkdirAll(outputDirNoutilse, 0755))
-	require.NoError(b, os.MkdirAll(outputDirWithutilse, 0755))
+	require.NoError(b, os.MkdirAll(outputDirNoutilse, 0o755))
+	require.NoError(b, os.MkdirAll(outputDirWithutilse, 0o755))
 
 	// Print instructions for memory monitoring
 	pid := os.Getpid()
@@ -236,7 +242,7 @@ func BenchmarkWriteMemoryUsage(b *testing.B) {
 		outputDirNoutilse, outputDirWithutilse)
 }
 
-// runMemoryProfiledWrite performs write operations with memory profiling
+// runMemoryProfiledWrite performs write operations with memory profiling.
 func runMemoryProfiledWrite(b *testing.B, outputDir string, fileSize int64) {
 	// Reset memory stats before starting
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "MEMORY_RESET")
@@ -304,8 +310,8 @@ func runMemoryProfiledWrite(b *testing.B, outputDir string, fileSize int64) {
 // BenchmarkSeqReadMemoryUsage tests the memory usage of sequential read operations with and without utils.
 // This benchmark focuses specifically on memory usage and page cache behavior during sequential reads.
 func BenchmarkSeqReadMemoryUsage(b *testing.B) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		b.Skip("This test is designed for Linux and macOS")
+	if runtime.GOOS != OSLinux {
+		b.Skip("This test is designed for Linux only since fadvis is a Linux-specific system call")
 	}
 
 	// Create a temporary directory for the test
@@ -323,8 +329,8 @@ func BenchmarkSeqReadMemoryUsage(b *testing.B) {
 	// Create output directories for results
 	outputDirNoutilse := filepath.Join(testDir, "no_utilse")
 	outputDirWithutilse := filepath.Join(testDir, "with_utilse")
-	require.NoError(b, os.MkdirAll(outputDirNoutilse, 0755))
-	require.NoError(b, os.MkdirAll(outputDirWithutilse, 0755))
+	require.NoError(b, os.MkdirAll(outputDirNoutilse, 0o755))
+	require.NoError(b, os.MkdirAll(outputDirWithutilse, 0o755))
 
 	// Print instructions for memory monitoring
 	pid := os.Getpid()
@@ -332,26 +338,26 @@ func BenchmarkSeqReadMemoryUsage(b *testing.B) {
 	b.Logf("chmod +x ./test/stress/utils/monitor_pagecache.sh")
 	b.Logf("./test/stress/utils/monitor_pagecache.sh %d 0.5 300\n\n", pid)
 
-	// Run benchmark with utilse disabled
+	// Run benchmark with fadvise disabled
 	b.Run("Withoututilse", func(b *testing.B) {
 		// Set the utils threshold to a high value to disable it
 		utils.SetTestThreshold(utils.Terabyte)
 		b.Logf("\n=== STARTING WITHOUT utilsE TEST (PID: %d) ===", pid)
 		b.Logf("Output directory: %s", outputDirNoutilse)
-		runMemoryProfiledSeqRead(b, testFilePath, outputDirNoutilse, true) // skiputilse=true
+		runMemoryProfiledSeqRead(b, testFilePath, outputDirNoutilse, true)
 	})
 
 	// Wait between tests to allow for monitoring
 	b.Log("\n=== WAITING 10 SECONDS BETWEEN TESTS... ===")
 	time.Sleep(10 * time.Second)
 
-	// Run benchmark with utilse enabled
+	// Run benchmark with fadvise enabled
 	b.Run("Withutilse", func(b *testing.B) {
 		// Set a realistic utils threshold based on system memory
 		utils.SetRealisticThreshold()
 		b.Logf("\n=== STARTING WITH utilsE TEST (PID: %d) ===", pid)
 		b.Logf("Output directory: %s", outputDirWithutilse)
-		runMemoryProfiledSeqRead(b, testFilePath, outputDirWithutilse, false) // skiputilse=false
+		runMemoryProfiledSeqRead(b, testFilePath, outputDirWithutilse, false)
 	})
 
 	// Print final instructions
@@ -359,7 +365,7 @@ func BenchmarkSeqReadMemoryUsage(b *testing.B) {
 		outputDirNoutilse, outputDirWithutilse)
 }
 
-// runMemoryProfiledSeqRead performs sequential read operations with memory profiling
+// runMemoryProfiledSeqRead performs sequential read operations with memory profiling.
 func runMemoryProfiledSeqRead(b *testing.B, filePath string, outputDir string, skiputilse bool) {
 	// Reset memory stats before starting
 	b.Logf("PHASE_START: %s %s", time.Now().Format(time.RFC3339), "MEMORY_RESET")
@@ -389,7 +395,7 @@ func runMemoryProfiledSeqRead(b *testing.B, filePath string, outputDir string, s
 		summaryPath := filepath.Join(outputDir, fmt.Sprintf("read_summary_%d.txt", i))
 		summaryContent := fmt.Sprintf("Read %d bytes from %s with skiputilse=%v\n",
 			totalBytes, filePath, skiputilse)
-		err = os.WriteFile(summaryPath, []byte(summaryContent), 0644)
+		err = os.WriteFile(summaryPath, []byte(summaryContent), 0o600)
 		require.NoError(b, err)
 	}
 	readEndTime := time.Now()

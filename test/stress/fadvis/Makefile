@@ -16,7 +16,7 @@
 # under the License.
 
 
-# ========= 通用变量定义 =========
+# ========= General Variable Definitions =========
 SHELL := /bin/bash
 ROOTDIR := $(shell cd ../../../ && pwd)
 PWD := $(shell pwd)
@@ -26,16 +26,16 @@ BPF_DIR := $(PWD)/bpf
 BPF_HEADERS_DIR := $(BPF_DIR)
 BPF_SRC := $(PWD)/bpfsrc/fadvise.c
 
-# ========= 构建入口 =========
+# ========= Build Entries =========
 .PHONY: bpf clean generate-bpf prepare-bpf-headers \
 	bpf-benchmark docker-bpf-benchmark \
-	all-benchmarks benchmark-write benchmark-read benchmark-merge \
+	all-benchmarks benchmark-write benchmark-seqread benchmark-merge \
 	benchmark-sequential-merge benchmark-multiple-reads benchmark-mixed \
 	benchmark-concurrent benchmark-threshold benchmark-memory
 
 bpf: prepare-bpf-headers generate-bpf
 
-# ========= vmlinux.h 自动生成 =========
+# ========= Auto Generate vmlinux.h =========
 prepare-bpf-headers:
 	@echo "Preparing eBPF headers..."
 	@if [ ! -f $(BPF_HEADERS_DIR)/vmlinux.h ]; then \
@@ -45,7 +45,7 @@ prepare-bpf-headers:
 		echo "vmlinux.h already exists."; \
 	fi
 
-# ========= 多平台 eBPF 加载器自动生成 =========
+# ========= Multi-Platform eBPF Loader Generation =========
 generate-bpf:
 	@echo "Generating eBPF code for amd64..."
 	@cd $(BPF_DIR) && \
@@ -67,14 +67,14 @@ generate-bpf:
 
 	@echo "eBPF code generation completed for amd64 and arm64."
 
-# ========= BPF 基准测试 =========
+# ========= BPF Benchmarking =========
 bpf-benchmark: prepare-bpf-headers generate-bpf
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running fadvis benchmarks with eBPF tracing..."
 	@go test -v -tags linux -bench=BenchmarkWithBPF -benchtime=5s -run=^$ ./... -benchmem | tee $(REPORTS_DIR)/bpf_benchmarks.txt
 	@echo "BPF benchmark results saved to $(REPORTS_DIR)/bpf_benchmarks.txt"
 
-# ========= Docker 中运行 BPF benchmark =========
+# ========= Running BPF Benchmark in Docker =========
 docker-bpf-benchmark:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running eBPF benchmarks in Docker container..."
@@ -92,44 +92,30 @@ docker-bpf-benchmark:
 		" | tee $(REPORTS_DIR)/docker_bpf_benchmarks.txt
 	@echo "Docker BPF benchmark results saved to $(REPORTS_DIR)/docker_bpf_benchmarks.txt"
 
-# ========= 通用 benchmark 流程（原有） =========
-all-benchmarks: benchmark-write benchmark-read benchmark-seqread benchmark-merge \
-	benchmark-sequential-merge benchmark-multiple-reads benchmark-mixed \
+# ========= General Benchmark Process (Updated) =========
+all-benchmarks: benchmark-write benchmark-seqread benchmark-multiple-reads benchmark-mixed \
 	benchmark-concurrent-ops benchmark-concurrent-merges benchmark-threshold benchmark-memory
 
 benchmark-write:
 	@mkdir -p $(REPORTS_DIR)
-	@echo "Running write performance benchmarks..."
+	@echo "Running write performance benchmarks (with/without fadvis)..."
 	@go test -v -run=^$$ -bench=BenchmarkWritePerformance -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/write_benchmarks.txt
 
-benchmark-read:
-	@mkdir -p $(REPORTS_DIR)
-	@echo "Running read performance benchmarks..."
-	@go test -v -run=^$$ -bench=BenchmarkReadPerformance -benchmem -benchtime=5s ./benchmark | tee $(REPORTS_DIR)/read_benchmarks.txt
+# Removed benchmark-read target as the corresponding test has been removed
 
 benchmark-seqread:
 	@mkdir -p $(REPORTS_DIR)
-	@echo "Running sequential read benchmarks..."
+	@echo "Running sequential read benchmarks (with/without fadvis)..."
 	@go test -v -run=^$$ -bench=BenchmarkSequentialRead -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/sequential_read_benchmarks.txt
-
-benchmark-merge:
-	@mkdir -p $(REPORTS_DIR)
-	@echo "Running merge operation benchmarks..."
-	@go test -v -run=^$$ -bench=BenchmarkMergeOperations -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/merge_benchmarks.txt
-
-benchmark-sequential-merge:
-	@mkdir -p $(REPORTS_DIR)
-	@echo "Running sequential merge operation benchmarks..."
-	@go test -v -run=^$$ -bench=BenchmarkSequentialMergeOperations -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/sequential_merge_benchmarks.txt
 
 benchmark-multiple-reads:
 	@mkdir -p $(REPORTS_DIR)
-	@echo "Running multiple reads benchmarks..."
+	@echo "Running multiple reads benchmarks (with/without fadvis)..."
 	@go test -v -run=^$$ -bench=BenchmarkMultipleReads -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/multiple_reads_benchmarks.txt
 
 benchmark-mixed:
 	@mkdir -p $(REPORTS_DIR)
-	@echo "Running mixed workload benchmarks..."
+	@echo "Running mixed workload benchmarks (with/without fadvis)..."
 	@go test -v -run=^$$ -bench=BenchmarkMixedWorkload -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/mixed_benchmarks.txt
 
 benchmark-concurrent-ops:
@@ -160,7 +146,7 @@ benchmark-memory:
 		echo 'Memory usage benchmark results saved to $(REPORTS_DIR)/memory_benchmarks.txt' && \
 		echo 'Memory monitoring data saved to $(REPORTS_DIR)/memory_stats.txt'"
 
-# ========= 清理 =========
+# ========= Cleanup =========
 clean:
 	@echo "Cleaning up reports and BPF artifacts..."
 	@rm -rf $(REPORTS_DIR)

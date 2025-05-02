@@ -28,7 +28,7 @@ ARG GOARCH=${TARGETARCH}
 ARG GOOS=${TARGETOS}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# === 依赖安装（用于 bpf2go 编译） ===
+# === Install dependencies (for bpf2go compilation) ===
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         clang llvm libelf-dev bpftool make git \
@@ -37,13 +37,13 @@ RUN apt-get update && \
 
 WORKDIR /workspace
 
-# 复制项目源码
+# Copy project source code
 COPY . .
 
-# 预加载 Go mod（避免 rebuild）
+# Preload Go modules (avoid rebuild)
 RUN go mod download
 
-# === 执行 Makefile 构建 BPF ===
+# === Execute BPF build using Makefile ===
 WORKDIR /workspace/test/stress/fadvis
 RUN make bpf
 

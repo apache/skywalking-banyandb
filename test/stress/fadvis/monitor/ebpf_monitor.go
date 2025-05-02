@@ -11,20 +11,21 @@
 // See the License for the specific language governing permissions and limitations
 // under the License.
 
-// 
+// Package monitor provides functionality for monitoring file access advice and memory reclaim.
 package monitor
 
 import (
-	"fmt"
 	"bytes"
+	"fmt"
 	"unsafe"
 
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/bpf"
 	"github.com/cilium/ebpf/link"
+
+	"github.com/apache/skywalking-banyandb/test/stress/fadvis/bpf"
 )
 
 type Monitor struct {
-	objs *bpf.BpfObjects
+	objs    *bpf.BpfObjects
 	tpEnter link.Link
 	tpExit  link.Link
 	tpLru   link.Link
@@ -78,7 +79,6 @@ func (m *Monitor) Close() {
 	}
 }
 
-// ReadCounts 批量读取每个 PID 的调用次数（基于 AdviceDontneed）
 func (m *Monitor) ReadCounts() (map[uint32]uint64, error) {
 	out := make(map[uint32]uint64)
 	iter := m.objs.FadviseStatsMap.Iterate()
@@ -102,8 +102,8 @@ func (m *Monitor) ReadShrinkStats() (map[uint32]bpf.BpfLruShrinkInfoT, error) {
 }
 
 type ReclaimInfo struct {
-	PID  uint32
 	Comm string
+	PID  uint32
 }
 
 func (m *Monitor) ReadDirectReclaimStats() (map[uint32]ReclaimInfo, error) {

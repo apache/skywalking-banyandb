@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// bpf package provides functions to load and manage eBPF programs
+// bpf package provides functions to load and manage eBPF programs.
 package bpf
 
 import (
+	"bytes"
 	"fmt"
 	"time"
-	"bytes"
 
 	"github.com/cilium/ebpf/link"
 )
@@ -38,18 +38,19 @@ import (
 //    -output-stem bpf_arm64 -go-package bpf \
 //    Bpf ../bpfsrc/fadvise.c
 
-
 type FadviseStats struct {
 	PID            uint32
 	SuccessCalls   uint64
 	AdviceDontneed uint64
 }
 
+// LruShrinkStats contains statistics about LRU shrink operations.
+// Fields are ordered by size for optimal memory layout.
 type LruShrinkStats struct {
+	CallerComm  string
 	NrScanned   uint64
 	NrReclaimed uint64
 	CallerPid   uint32
-	CallerComm  string
 }
 
 func RunFadvise() (func(), error) {
@@ -174,8 +175,8 @@ func MonitorFadviseWithTimeout(duration time.Duration) ([]FadviseStats, error) {
 }
 
 type DirectReclaimInfo struct {
-	PID  uint32
 	Comm string
+	PID  uint32
 }
 
 func int8SliceToByte(s []int8) []byte {
