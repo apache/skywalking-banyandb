@@ -34,6 +34,7 @@ BPF_SRC := $(PWD)/bpfsrc/fadvise.c
 	benchmark-concurrent benchmark-threshold benchmark-memory
 
 bpf: prepare-bpf-headers generate-bpf
+generate: bpf
 
 # ========= Auto Generate vmlinux.h =========
 prepare-bpf-headers:

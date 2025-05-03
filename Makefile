@@ -44,7 +44,7 @@ clean-build: TARGET=clean-build
 clean-build: default  ## Clean build artifacts in all projects
 
 generate: TARGET=generate
-generate: PROJECTS:=api $(PROJECTS) pkg
+generate: PROJECTS:=api $(PROJECTS) pkg test/stress/fadvis
 generate: default  ## Generate API codes
 
 build: TARGET=all
