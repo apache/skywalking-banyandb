@@ -61,7 +61,7 @@ type Reader interface {
 	Read(offset int64, buffer []byte) (int, error)
 	// Read the entire file using sequential read.
 	// If skipFadvise is true, fadvise will not be applied.
-	SequentialRead(skipFadvise ...bool) SeqReader
+	SequentialRead(cached bool) SeqReader
 	// Returns the absolute path of the file.
 	Path() string
 	// Close File.
@@ -122,8 +122,6 @@ type FileSystem interface {
 	MustGetFreeSpace(path string) uint64
 	// CreateHardLink creates hard links in destPath for files in srcPath that pass the filter.
 	CreateHardLink(srcPath, destPath string, filter func(string) bool) error
-	// IsFadvisSupported returns whether the file system supports fadvise.
-	IsFadvisSupported() bool
 }
 
 // DirEntry is the interface that wraps the basic information about a file or directory.
@@ -144,7 +142,7 @@ func MustCreateFile(fs FileSystem, path string, permission Mode, cached bool) Fi
 	}
 
 	// If the file should not be cached, sync it and apply FADV_DONTNEED
-	if !cached && fs.IsFadvisSupported() {
+	if !cached {
 		localFile, ok := f.(*LocalFile)
 		if ok && localFile.file != nil {
 			_ = SyncAndDropCache(localFile.file.Fd(), 0, 0)

@@ -37,7 +37,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -133,8 +132,7 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	fadvis.SetMemoryProtector(s.pm)
-	go fadvis.GetManager().Serve()
+	fs.SetThresholdProvider(s.pm)
 	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)

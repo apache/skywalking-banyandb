@@ -33,11 +33,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
-	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/fs/fadvismonitor/bpf"
+	"github.com/apache/skywalking-banyandb/pkg/fs/fadvismonitor/monitor"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/bpf"
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/monitor"
 )
 
 // Constants for file sizes and thresholds.
@@ -101,12 +100,8 @@ func ReadFileStreamingWithFadvise(t testing.TB, filePath string, skipFadvise boo
 	}
 	defer f.Close()
 
-	var seqReader fs.SeqReader
-	if skipFadvise {
-		seqReader = f.SequentialRead(true)
-	} else {
-		seqReader = f.SequentialRead()
-	}
+	// Use cached parameter (true to skip fadvise, false to apply it)
+	seqReader := f.SequentialRead(skipFadvise)
 
 	totalBytes := int64(0)
 	for {
@@ -178,7 +173,8 @@ func SimulateMergeOperation(t testing.TB, parts []string, outputFile string) err
 			return err
 		}
 
-		seqReader := inFile.SequentialRead()
+		// Use explicit cached=false parameter to apply fadvise
+		seqReader := inFile.SequentialRead(false)
 
 		for {
 			n, err := seqReader.Read(buffer)
@@ -204,8 +200,7 @@ func SimulateMergeOperation(t testing.TB, parts []string, outputFile string) err
 
 func SetTestThreshold(threshold int64) {
 	provider := &testThresholdProvider{threshold: threshold}
-	manager := fadvis.NewManager(provider)
-	fadvis.SetManager(manager)
+	fs.SetThresholdProvider(provider)
 	fs.SetGlobalThreshold(threshold)
 }
 
@@ -239,6 +234,16 @@ type testThresholdProvider struct {
 
 func (p *testThresholdProvider) GetThreshold() int64 {
 	return p.threshold
+}
+
+// ShouldApplyFadvis 实现 fs.ThresholdProvider 接口
+func (p *testThresholdProvider) ShouldApplyFadvis(fileSize int64, maxSize int64) bool {
+	// Use the smaller of threshold and maxSize
+	threshold := p.threshold
+	if maxSize < threshold {
+		threshold = maxSize
+	}
+	return fileSize >= threshold
 }
 
 type PageCacheStats struct {

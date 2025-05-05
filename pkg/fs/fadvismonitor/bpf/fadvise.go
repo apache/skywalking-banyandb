@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//go:build linux
+// +build linux
 
 // bpf package provides functions to load and manage eBPF programs.
 package bpf
@@ -25,18 +27,6 @@ import (
 
 	"github.com/cilium/ebpf/link"
 )
-
-// X86 platform
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target bpfel \
-//    -cc clang -cflags "-O2 -g -Wall -I../bpf" \
-//    -output-stem bpf_x86 -go-package bpf \
-//    Bpf ../bpfsrc/fadvise.c
-
-// ARM64 platform
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target bpfel \
-//    -cc clang -cflags "-O2 -g -Wall -I../bpf" \
-//    -output-stem bpf_arm64 -go-package bpf \
-//    Bpf ../bpfsrc/fadvise.c
 
 type FadviseStats struct {
 	PID            uint32

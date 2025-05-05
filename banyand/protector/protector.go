@@ -200,35 +200,49 @@ func (m *Memory) Serve() run.StopNotify {
 }
 
 // GetThreshold returns the threshold for large file detection (1% of page cache).
-func (m *Memory) GetThreshold() int64 {
-	pageCachePercent := 100 - m.allowedPercent
+func (m *Memory) GetThreshold(maxSize int64) int64 {
+	// Try reading cgroup memory limit
+	cgLimit, err := cgroups.MemoryLimit()
+	if err != nil {
+		m.l.Warn().Err(err).Msg("failed to get memory limit from cgroups, using default threshold")
+		// Fallback default threshold of 64MB
+		defaultThreshold := int64(64 * 1024 * 1024)
+		if defaultThreshold > maxSize {
+			return maxSize
+		}
+		return defaultThreshold
+	}
 
+	// Determine effective memory to use based on flags
 	var totalMemory int64
 	if m.allowedBytes > 0 {
-		totalMemory = int64(uint64(m.allowedBytes) * 100 / uint64(m.allowedPercent))
+		totalMemory = cgLimit - int64(m.allowedBytes)
 	} else {
-		cgLimit, err := cgroups.MemoryLimit()
-		if err != nil {
-			m.l.Warn().Err(err).Msg("failed to get memory limit from cgroups, using default threshold")
-			return 64 * 1024 * 1024
-		}
-		totalMemory = cgLimit
+		totalMemory = cgLimit * int64(m.allowedPercent) / 100
 	}
 
-	pageCacheSize := totalMemory * int64(pageCachePercent) / 100
-
-	threshold := pageCacheSize / 100
-
-	if threshold < 1024*1024 {
-		threshold = 1024 * 1024
+	// Compute 1% of that memory as page cache threshold
+	pageCacheSize := totalMemory / 100
+	const minThreshold = 10 << 20 // 10MB
+	if pageCacheSize < minThreshold {
+		pageCacheSize = minThreshold
 	}
 
-	m.l.Debug().
-		Int64("totalMemory", totalMemory).
-		Int("pageCachePercent", pageCachePercent).
-		Int64("pageCacheSize", pageCacheSize).
-		Int64("threshold", threshold).
-		Msg("calculated fadvis threshold")
+	// Ensure we don't exceed available disk space
+	if pageCacheSize > maxSize {
+		return maxSize
+	}
+	return pageCacheSize
+}
 
-	return threshold
+// ShouldApplyFadvis implements the fs.ThresholdProvider interface.
+// It checks if the file size exceeds the threshold for large file detection.
+func (m *Memory) ShouldApplyFadvis(fileSize int64, maxSize int64) bool {
+	return fileSize >= m.GetThreshold(maxSize)
+}
+
+// ShouldCache returns whether a file at the given path should be cached.
+// Currently always returns true as the cache decision is made based on file size.
+func (m *Memory) ShouldCache(_ string) bool {
+	return true
 }

@@ -13,6 +13,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//go:build linux
+// +build linux
 
 // Package fadvis provides stress testing functionality for the file advice (fadvis) system
 // which optimizes memory page cache usage for file operations.
@@ -25,8 +27,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/apache/skywalking-banyandb/pkg/fadvis"
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
+	"github.com/apache/skywalking-banyandb/pkg/fs/fadvismonitor/utils"
 )
 
 // TestMain is the entry point for the test package, used to initialize the test environment.
@@ -46,19 +47,11 @@ func TestMain(m *testing.M) {
 	// Force a garbage collection
 	runtime.GC()
 
-	// Ensure fadvis Manager is initialized
-	if fadvis.GetManager() == nil {
-		fadvis.SetManager(fadvis.NewManager(nil))
-	}
-
 	// Wait for a while to ensure system stability
 	// time.Sleep(100 * time.Millisecond)
 
 	// Run all tests and benchmarks
 	code := m.Run()
-
-	// Clean up fadvis Manager
-	fadvis.CleanupForTesting()
 
 	// Return test result
 	os.Exit(code)

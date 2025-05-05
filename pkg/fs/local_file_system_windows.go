@@ -75,11 +75,6 @@ func ApplyFadviseToFD(fd uintptr, offset int64, length int64) error {
 	return nil
 }
 
-// IsFadvisSupported returns true if fadvis is supported on the current platform.
-func IsFadvisSupported() bool {
-	return false
-}
-
 // SyncAndDropCache syncs the file data to disk using FlushFileBuffers on Windows.
 func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 	// On Windows, we can flush file buffers but don't have a direct equivalent to FADV_DONTNEED

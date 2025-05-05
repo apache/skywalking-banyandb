@@ -83,7 +83,8 @@ func (ph *primaryBlockMetadata) unmarshal(src []byte) ([]byte, error) {
 }
 
 func mustReadPrimaryBlockMetadata(dst []primaryBlockMetadata, r fs.Reader) []primaryBlockMetadata {
-	sr := r.SequentialRead()
+	// Use cached=false for metadata reads to avoid caching in OS page cache
+	sr := r.SequentialRead(false)
 	data, err := io.ReadAll(sr)
 	if err != nil {
 		logger.Panicf("cannot read primaryBlockMetadata entries from %s: %s", r.Path(), err)

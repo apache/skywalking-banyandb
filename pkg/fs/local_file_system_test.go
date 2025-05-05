@@ -110,7 +110,7 @@ var _ = ginkgo.Describe("Local File System", func() {
 			gomega.Expect(size == len(data)).To(gomega.BeTrue())
 
 			buffer := make([]byte, len(data))
-			iter := file.SequentialRead()
+			iter := file.SequentialRead(false)
 			defer iter.Close()
 			for {
 				size, err := iter.Read(buffer)

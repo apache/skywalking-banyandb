@@ -14,62 +14,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-bin
-include
-/build
-target
-/tmp
+BPF2GO := $(tool_bin)/bpf2go
 
-# Test binary, build with `go test -c`
-*.test
-*.log
-
-# Ginkgo test report
-*.report
-
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
-
-# editor and IDE paraphernalia
-.idea
-*.swp
-*.swo
-*~
-.vscode
-
-.DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.run
-
-# mock files
-*mock.go
-*mock_test.go
-gomock_reflect*
-
-# snky cache
-.dccache
-
-# okteto
-.stignore
-
-# profile result
-*.prof
-
-# Generated Go files by bpf2go
-pkg/fs/fadvismonitor/bpf/*_bpfel.go
-
-# eBPF compiled object files
-pkg/fs/fadvismonitor/bpf/*.o
-
-# Auto-generated vmlinux.h (from bpftool BTF)
-pkg/fs/fadvismonitor/bpf/vmlinux.h
+$(BPF2GO):
+	@echo "Installing bpf2go..."
+	@mkdir -p $(tool_bin)
+	@GOBIN=$(tool_bin) go install github.com/cilium/ebpf/cmd/bpf2go@$(BPF2GO_VERSION)

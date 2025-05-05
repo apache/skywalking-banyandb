@@ -20,34 +20,35 @@
 
 # Dockerfile for eBPF benchmark (multi-arch, makefile-driven)
 
-FROM --platform=$BUILDPLATFORM golang:1.24-bullseye as build-env
+# syntax=docker/dockerfile:1
+ARG BASE_IMAGE=golang:1.24-bullseye
+FROM --platform=$BUILDPLATFORM ${BASE_IMAGE} AS builder
 
-ARG TARGETARCH
-ARG TARGETOS
-ARG GOARCH=${TARGETARCH}
-ARG GOOS=${TARGETOS}
-ENV DEBIAN_FRONTEND=noninteractive
-
-# === Install dependencies (for bpf2go compilation) ===
+# === Install eBPF compilation and generation tools ===
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        clang llvm libelf-dev bpftool make git \
-        linux-headers-$(uname -r) || true && \
+        clang llvm libelf-dev bpftool make git && \
     rm -rf /var/lib/apt/lists/*
+
+# === Install bpf2go ===
+ARG BPF2GO_VERSION=v0.13.0
+RUN go install github.com/cilium/ebpf/cmd/bpf2go@${BPF2GO_VERSION}
 
 WORKDIR /workspace
 
-# Copy project source code
-COPY . .
-
-# Preload Go modules (avoid rebuild)
+# Copy source code and pre-download modules to speed up subsequent steps
+COPY go.mod go.sum ./
 RUN go mod download
 
-# === Execute BPF build using Makefile ===
-WORKDIR /workspace/test/stress/fadvis
-RUN make bpf
+COPY . .
 
-# === Optional: Benchmark stage ===
-FROM build-env as benchmark
+# Execute eBPF generation: vmlinux.h + eBPF objects + Go loader
+WORKDIR /workspace/pkg/fs/fadvisemonitor
+RUN make prepare-bpf-headers generate-bpf
 
+# === Benchmark stage ===
+FROM builder AS bench
+WORKDIR /workspace/pkg/fs/fadvisemonitor
+
+# Default entrypoint: run benchmark report
 CMD ["make", "bpf-benchmark"]

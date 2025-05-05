@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//go:build linux
+// +build linux
 
 // benchmark package provides benchmarks for file read/write operations.
 package benchmark
@@ -24,7 +26,7 @@ import (
 	"testing"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/utils"
+	"github.com/apache/skywalking-banyandb/pkg/fs/fadvismonitor/utils"
 )
 
 // BenchmarkWritePerformance tests write performance with and without utils.

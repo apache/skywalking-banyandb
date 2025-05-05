@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+	"math"
 
 	"golang.org/x/sys/unix"
 
@@ -119,25 +120,25 @@ func ApplyFadviseToFD(fd uintptr, offset int64, length int64) error {
 	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
 }
 
-// IsFadvisSupported returns true if fadvis is supported on the current platform.
-func IsFadvisSupported() bool {
-	return true
-}
-
 // SyncAndDropCache syncs the file data to disk and then drops it from the page cache.
 func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 	if err := unix.Fdatasync(int(fd)); err != nil {
 		return err
 	}
 
-	file := os.NewFile(fd, "")
-	info, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	size := info.Size()
+	// file := os.NewFile(fd, "")
+	// info, err := file.Stat()
+	// if err != nil {
+	// 	return err
+	// }
+	// size := info.Size()
+	var stat syscall.Stat_t
+    if err := syscall.Fstat(int(fd), &stat); err != nil {
+        return err
+    }
+    size := stat.Size
 
-	if !ShouldApplyFadvis(size) {
+	if !ShouldApplyFadvis(size, math.MaxInt64) {
 		return nil
 	}
 

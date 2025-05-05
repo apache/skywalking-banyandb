@@ -35,7 +35,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
-	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -51,11 +50,6 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	}
 	metricSvc := observability.NewMetricService(metaSvc, pipeline, "standalone", nil)
 	pm := protector.NewMemory(metricSvc)
-	// Create a FadvisManager instance using MemoryProtector as the ThresholdProvider
-	// MemoryProtector already implements the GetThreshold method, satisfying the ThresholdProvider interface
-	fadvisMgr := fadvis.NewManager(pm)
-	// Set the global FadvisManager instance
-	fadvis.SetManager(fadvisMgr)
 	propertySvc, err := property.NewService(metaSvc, pipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
@@ -91,7 +85,6 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		metaSvc,
 		metricSvc,
 		pm,
-		fadvisMgr,
 		propertySvc,
 		measureSvc,
 		streamSvc,

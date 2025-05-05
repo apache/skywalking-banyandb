@@ -23,7 +23,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
-	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -179,11 +178,7 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
-	// Check if files should be cached using the fadvis manager
 	shouldCache := true
-	if fadvis.GetManager() != nil {
-		shouldCache = fadvis.GetManager().ShouldCache(path)
-	}
 
 	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer) {
 		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)

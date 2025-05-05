@@ -10,6 +10,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and limitations
 // under the License.
+//go:build linux
+// +build linux
 
 // Package monitor provides functionality for monitoring file access advice and memory reclaim.
 package monitor
@@ -21,7 +23,7 @@ import (
 
 	"github.com/cilium/ebpf/link"
 
-	"github.com/apache/skywalking-banyandb/test/stress/fadvis/bpf"
+	"github.com/apache/skywalking-banyandb/pkg/fs/fadvismonitor/bpf"
 )
 
 type Monitor struct {

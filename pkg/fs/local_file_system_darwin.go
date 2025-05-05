@@ -119,11 +119,6 @@ func ApplyFadviseToFD(fd uintptr, offset int64, length int64) error {
 	return nil
 }
 
-// IsFadvisSupported returns true if fadvis is supported on the current platform.
-func IsFadvisSupported() bool {
-	return false
-}
-
 // SyncAndDropCache syncs the file data to disk but doesn't drop it from the page cache on macOS.
 func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 	if err := unix.FcntlFlock(fd, unix.F_FULLFSYNC, &unix.Flock_t{}); err != nil {

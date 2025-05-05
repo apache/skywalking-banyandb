@@ -29,9 +29,8 @@ BPF_SRC := $(PWD)/bpfsrc/fadvise.c
 # ========= Build Entries =========
 .PHONY: bpf clean generate-bpf prepare-bpf-headers \
 	bpf-benchmark docker-bpf-benchmark \
-	all-benchmarks benchmark-write benchmark-seqread benchmark-merge \
-	benchmark-sequential-merge benchmark-multiple-reads benchmark-mixed \
-	benchmark-concurrent benchmark-threshold benchmark-memory
+	all-benchmarks benchmark-write benchmark-seqread \
+	benchmark-multiple-reads benchmark-mixed \
 
 bpf: prepare-bpf-headers generate-bpf
 generate: bpf
@@ -78,74 +77,46 @@ bpf-benchmark: prepare-bpf-headers generate-bpf
 # ========= Running BPF Benchmark in Docker =========
 docker-bpf-benchmark:
 	@mkdir -p $(REPORTS_DIR)
-	@echo "Running eBPF benchmarks in Docker container..."
-	@docker run --rm -it \
+	@echo ">>> Building Docker image for eBPF benchmarks…"
+	@docker build --pull -t fs-fadvis-bench -f pkg/fs/fadvisemonitor/Dockerfile .
+	@echo ">>> Running benchmarks inside container…"
+	@docker run --rm \
 		--cap-add=SYS_ADMIN \
 		--privileged \
-		-v $(ROOTDIR):/skywalking-banyandb \
-		-w /skywalking-banyandb/test/stress/fadvis \
-		golang:1.21-bullseye \
-		/bin/bash -c " \
-			apt-get update && \
-			apt-get install -y clang llvm bpftool && \
-			make prepare-bpf-headers generate-bpf && \
-			go test -v -tags linux -bench=BenchmarkWithBPF -benchtime=5s -run=^$ ./... -benchmem \
-		" | tee $(REPORTS_DIR)/docker_bpf_benchmarks.txt
+		-v $(ROOTDIR):/workspace \
+		-w /workspace/pkg/fs/fadvisemonitor \
+		fs-fadvis-bench \
+		make bpf-benchmark | tee $(REPORTS_DIR)/docker_bpf_benchmarks.txt
 	@echo "Docker BPF benchmark results saved to $(REPORTS_DIR)/docker_bpf_benchmarks.txt"
 
-# ========= General Benchmark Process (Updated) =========
-all-benchmarks: benchmark-write benchmark-seqread benchmark-multiple-reads benchmark-mixed \
-	benchmark-concurrent-ops benchmark-concurrent-merges benchmark-threshold benchmark-memory
+# ========= General Benchmark Process =========
+all-benchmarks: benchmark-write benchmark-seqread benchmark-multiple-reads benchmark-mixed 
 
 benchmark-write:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running write performance benchmarks (with/without fadvis)..."
-	@go test -v -run=^$$ -bench=BenchmarkWritePerformance -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/write_benchmarks.txt
+	@ulimit -l unlimited && \
+	go test -v -run=^$$ -bench=BenchmarkWritePerformance -benchtime=3x -benchmem ./benchmark | tee $(REPORTS_DIR)/write_benchmarks.txt
 
 # Removed benchmark-read target as the corresponding test has been removed
 
 benchmark-seqread:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running sequential read benchmarks (with/without fadvis)..."
-	@go test -v -run=^$$ -bench=BenchmarkSequentialRead -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/sequential_read_benchmarks.txt
+	@ulimit -l unlimited && \
+	go test -v -run=^$$ -bench=BenchmarkSequentialRead -benchtime=3x -benchmem ./benchmark | tee $(REPORTS_DIR)/sequential_read_benchmarks.txt
 
 benchmark-multiple-reads:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running multiple reads benchmarks (with/without fadvis)..."
-	@go test -v -run=^$$ -bench=BenchmarkMultipleReads -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/multiple_reads_benchmarks.txt
+	@ulimit -l unlimited && \
+	go test -v -run=^$$ -bench=BenchmarkMultipleReads -benchtime=3x -benchmem ./benchmark | tee $(REPORTS_DIR)/multiple_reads_benchmarks.txt
 
 benchmark-mixed:
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running mixed workload benchmarks (with/without fadvis)..."
-	@go test -v -run=^$$ -bench=BenchmarkMixedWorkload -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/mixed_benchmarks.txt
-
-benchmark-concurrent-ops:
-	@mkdir -p $(REPORTS_DIR)
-	@echo "Running concurrent operations benchmarks..."
-	@go test -v -run=^$$ -bench=BenchmarkConcurrentOperations -benchmem -benchtime=5s ./benchmark | tee $(REPORTS_DIR)/concurrent_ops_benchmarks.txt
-
-benchmark-concurrent-merges:
-	@mkdir -p $(REPORTS_DIR)
-	@echo "Running concurrent merge benchmarks..."
-	@go test -v -run=^$$ -bench=BenchmarkConcurrentMerges -benchmem -benchtime=5s ./benchmark | tee $(REPORTS_DIR)/concurrent_merges_benchmarks.txt
-
-benchmark-threshold:
-	@mkdir -p $(REPORTS_DIR)
-	@echo "Running threshold adaptation benchmarks..."
-	@go test -v -run=^$$ -bench=BenchmarkThresholdAdaptation -benchmem -count=3 ./benchmark | tee $(REPORTS_DIR)/threshold_benchmarks.txt
-
-benchmark-memory:
-	@mkdir -p $(REPORTS_DIR)
-	@echo "Running memory usage benchmarks with monitoring..."
-	@bash -c "\
-		echo 'Starting cache monitoring...' && \
-		(while true; do grep -E 'Cached|Buffers|MemFree' /proc/meminfo >> $(REPORTS_DIR)/memory_stats.txt; sleep 1; done) & \
-		monitoring_pid=\$$! && \
-		echo 'Running benchmarks...' && \
-		go test -bench=. -benchmem -count=1 ./benchmark | tee $(REPORTS_DIR)/memory_benchmarks.txt && \
-		kill \$$monitoring_pid && \
-		echo 'Memory usage benchmark results saved to $(REPORTS_DIR)/memory_benchmarks.txt' && \
-		echo 'Memory monitoring data saved to $(REPORTS_DIR)/memory_stats.txt'"
+	@ulimit -l unlimited && \
+	go test -v -run=^$$ -bench=BenchmarkMixedWorkload -benchtime=3x -benchmem ./benchmark | tee $(REPORTS_DIR)/mixed_benchmarks.txt
 
 # ========= Cleanup =========
 clean:
