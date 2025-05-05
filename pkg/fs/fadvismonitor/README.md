@@ -10,40 +10,21 @@ These benchmarks cover the following scenarios:
    - Compare file writing performance with fadvis enabled vs. disabled
    - Test with files of different sizes
 
-2. **Read Performance Tests (`BenchmarkReadPerformance`)**
+2. **Sequential Read Performance Tests (`BenchmarkSequentialRead`)**
    - Compare file reading performance with fadvis enabled vs. disabled
-   - Test with files of different sizes
+   - Test with files of different sizes using streaming to minimize heap allocations
 
 3. **Multiple Reads Tests (`BenchmarkMultipleReads`)**
    - Test performance differences when repeatedly reading the same file
    - Special focus on caching behavior
 
-4. **Merge Operation Tests (`BenchmarkMergeOperations`)**
-   - Simulate merge operations in BanyanDB
-   - Test performance when merging different numbers of parts
-   - Compare differences with fadvis enabled vs. disabled
-
-5. **Sequential Merge Tests (`BenchmarkSequentialMergeOperations`)**
-   - Test multiple consecutive merge operations
-   - Observe memory usage changes during extended runtime
-
-6. **Mixed Workload Tests (`BenchmarkMixedWorkload`)**
+4. **Mixed Workload Tests (`BenchmarkMixedWorkload`)**
    - Simulate mixed read/write operations in real scenarios
    - Evaluate overall system performance and stability
 
-7. **Concurrent Operations Tests (`BenchmarkConcurrentOperations`)**
-   - Test fadvis performance under concurrent read/write operations
-   - Simulate multiple client access patterns with parallel goroutines
-   - Evaluate system stability under high concurrency
-
-8. **Concurrent Merge Tests (`BenchmarkConcurrentMerges`)**
-   - Evaluate performance when multiple merge operations happen concurrently
-   - Test system behavior when multiple CPU cores are utilized
-
-9. **Memory Threshold Adaptation Tests (`BenchmarkThresholdAdaptation`)**
-   - Test fadvis performance with different memory threshold settings
-   - Compare normal threshold vs. low memory threshold (simulating memory pressure)
-   - Evaluate effectiveness of threshold-based adaptation
+5. **BPF Tracing Tests**
+   - Use eBPF to trace and analyze fadvise system calls
+   - Provide detailed insights into kernel-level behavior
 
 ## How to Run the Tests
 
@@ -61,46 +42,30 @@ make all-benchmarks
 # Write performance tests
 make benchmark-write
 
-# Read performance tests
-make benchmark-read
-
-# Merge operation tests
-make benchmark-merge
-
-# Sequential merge tests
-make benchmark-sequential-merge
+# Sequential read performance tests
+make benchmark-seqread
 
 # Multiple reads tests
 make benchmark-multiple-reads
 
 # Mixed workload tests
 make benchmark-mixed
-
-# Concurrent operations tests
-make benchmark-concurrent
-
-# Threshold adaptation tests
-make benchmark-threshold
 ```
 
-### Tests with Memory Monitoring
+### Run BPF Tracing Tests
 
 ```bash
-make benchmark-memory
-```
+# Run with eBPF tracing (requires Linux with BPF support)
+make bpf-benchmark
 
-This command will monitor system memory and cache usage while running benchmark tests.
+# Run in Docker with BPF capabilities
+make docker-bpf-benchmark
+```
 
 ### Clean Test Results
 
 ```bash
 make clean
-```
-
-### Show Help
-
-```bash
-make help
 ```
 
 ## Interpreting Test Results
@@ -121,11 +86,17 @@ The benchmark tests use the following components:
 - **fs package**: For file system operations with automatic fadvis application
 - **fadvis package**: For threshold management and fadvis application
 - **cgroups package**: For getting system memory information
+- **disk package**: For getting available disk space information
 
-The tests dynamically calculate fadvis thresholds based on actual system memory, using the same logic as in production code (1% of page cache size, which is typically 25% of total memory).
+The tests dynamically calculate fadvis thresholds based on two factors:
+1. System memory: Using 1% of page cache size (typically 25% of total memory)
+2. Available disk space: Ensuring the threshold doesn't exceed available disk space
+
+The system will use the smaller of these two values as the effective threshold, ensuring that fadvis behavior is optimized for both memory and disk space constraints.
 
 ## Notes
 
 - These tests are designed to run on Linux systems, as the fadvis feature is only supported on Linux.
 - Some tests may require significant disk space for creating large test files.
 - Memory monitoring is especially useful for observing the effects of fadvis on system cache usage.
+- The disk space awareness feature ensures that the system doesn't attempt to use more disk space than is available when applying fadvis optimizations.

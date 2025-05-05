@@ -25,6 +25,13 @@ REPORTS_DIR := $(PWD)/reports
 BPF_DIR := $(PWD)/bpf
 BPF_HEADERS_DIR := $(BPF_DIR)
 BPF_SRC := $(PWD)/bpfsrc/fadvise.c
+tool_bin := $(ROOTDIR)/bin
+BPF2GO := $(tool_bin)/bpf2go
+BPFTL := $(shell which bpftool 2>/dev/null)
+
+include $(ROOTDIR)/scripts/build/bpftool.mk
+include $(ROOTDIR)/scripts/build/bpf2go.mk
+include $(ROOTDIR)/scripts/build/version.mk
 
 # ========= Build Entries =========
 .PHONY: bpf clean generate-bpf prepare-bpf-headers \
@@ -36,7 +43,7 @@ bpf: prepare-bpf-headers generate-bpf
 generate: bpf
 
 # ========= Auto Generate vmlinux.h =========
-prepare-bpf-headers:
+prepare-bpf-headers: $(BPFTL)
 	@echo "Preparing eBPF headers..."
 	@if [ ! -f $(BPF_HEADERS_DIR)/vmlinux.h ]; then \
 		echo "Generating vmlinux.h (requires bpftool and Linux environment)"; \
@@ -46,7 +53,8 @@ prepare-bpf-headers:
 	fi
 
 # ========= Multi-Platform eBPF Loader Generation =========
-generate-bpf:
+generate-bpf: $(BPF2GO) prepare-bpf-headers
+	@echo "Ensured bpftool and bpf2go are installed"
 	@echo "Generating eBPF code for amd64..."
 	@cd $(BPF_DIR) && \
 	GOARCH=amd64 GOOS=linux bpf2go -cc clang -target bpfel \
