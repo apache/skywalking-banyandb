@@ -125,6 +125,7 @@ func Test_block_mustInitFromElements(t *testing.T) {
 		timestamps  []int64
 		elementIDs  []uint64
 		tagFamilies [][]tagValues
+		indexedTags []map[string]map[string]struct{}
 	}
 	tests := []struct {
 		name string
@@ -176,6 +177,7 @@ func Test_block_mustInitFromElements(t *testing.T) {
 						},
 					},
 				},
+				indexedTags: []map[string]map[string]struct{}{{"arrTag": {}, "binaryTag": {}, "singleTag": {}}, {"arrTag": {}, "binaryTag": {}, "singleTag": {}}},
 			},
 			want: conventionalBlock,
 		},
@@ -183,7 +185,7 @@ func Test_block_mustInitFromElements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{}
-			b.mustInitFromElements(tt.args.timestamps, tt.args.elementIDs, tt.args.tagFamilies)
+			b.mustInitFromElements(tt.args.timestamps, tt.args.elementIDs, tt.args.tagFamilies, tt.args.indexedTags)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromElements() = %+v, want %+v", *b, tt.want)
 			}
@@ -250,13 +252,14 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 }
 
 func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
-	metaBuffer, dataBuffer := &bytes.Buffer{}, &bytes.Buffer{}
+	metaBuffer, dataBuffer, filterBuffer := &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
 	ww := &writers{
-		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer) {
-			return metaBuffer, dataBuffer
+		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer, fs.Writer) {
+			return metaBuffer, dataBuffer, filterBuffer
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
+		tagFamilyFilterWriters:   make(map[string]*writer),
 	}
 	b := &conventionalBlock
 	tagProjection := toTagProjection(*b)
@@ -317,11 +320,12 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	timestampWriter := &writer{}
 	timestampWriter.init(timestampBuffer)
 	ww := &writers{
-		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer) {
-			return &bytes.Buffer{}, &bytes.Buffer{}
+		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer, fs.Writer) {
+			return &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
+		tagFamilyFilterWriters:   make(map[string]*writer),
 		timestampsWriter:         *timestampWriter,
 	}
 	p := &part{

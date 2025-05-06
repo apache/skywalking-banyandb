@@ -150,6 +150,7 @@ type elements struct {
 	timestamps  []int64
 	elementIDs  []uint64
 	tagFamilies [][]tagValues
+	indexedTags []map[string]map[string]struct{}
 }
 
 func (e *elements) reset() {
@@ -162,6 +163,7 @@ func (e *elements) reset() {
 		}
 	}
 	e.tagFamilies = e.tagFamilies[:0]
+	e.indexedTags = e.indexedTags[:0]
 }
 
 func (e *elements) Len() int {
@@ -180,6 +182,7 @@ func (e *elements) Swap(i, j int) {
 	e.timestamps[i], e.timestamps[j] = e.timestamps[j], e.timestamps[i]
 	e.elementIDs[i], e.elementIDs[j] = e.elementIDs[j], e.elementIDs[i]
 	e.tagFamilies[i], e.tagFamilies[j] = e.tagFamilies[j], e.tagFamilies[i]
+	e.indexedTags[i], e.indexedTags[j] = e.indexedTags[j], e.indexedTags[i]
 }
 
 func generateElements() *elements {

@@ -20,6 +20,7 @@ package stream
 import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -29,6 +30,9 @@ type tag struct {
 	name      string
 	values    [][]byte
 	valueType pbv1.ValueType
+	filter    *filter.BloomFilter
+	min       int64
+	max       int64
 }
 
 func (t *tag) reset() {
@@ -39,6 +43,10 @@ func (t *tag) reset() {
 		values[i] = nil
 	}
 	t.values = values[:0]
+
+	t.filter = nil
+	t.min = 0
+	t.max = 0
 }
 
 func (t *tag) resizeValues(valuesLen int) [][]byte {
@@ -51,7 +59,7 @@ func (t *tag) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
-func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
+func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *writer) {
 	tm.reset()
 
 	tm.name = t.name
@@ -68,6 +76,20 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	}
 	tm.offset = tagWriter.bytesWritten
 	tagWriter.MustWrite(bb.Buf)
+
+	if t.filter != nil {
+		bb.Reset()
+		var err error
+		bb.Buf, err = encoding.BloomFilterToBytes(t.filter)
+		if err != nil {
+			logger.Panicf("cannot marshal filter: %v", err)
+		}
+		tagFilterWriter.MustWrite(bb.Buf)
+		tm.filterBlock.size = uint64(len(bb.Buf))
+		tm.filterBlock.offset = tagFilterWriter.bytesWritten
+		// TODO: set min/max for tagMetadata
+		tagFilterWriter.MustWrite(bb.Buf)
+	}
 }
 
 func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm tagMetadata, count uint64) {

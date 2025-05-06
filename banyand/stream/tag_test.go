@@ -63,10 +63,11 @@ func TestTag_mustWriteTo_mustReadValues(t *testing.T) {
 
 	tm := &tagMetadata{}
 
-	buf := &bytes.Buffer{}
-	w := &writer{}
+	buf, filterBuf:= &bytes.Buffer{}, &bytes.Buffer{}
+	w, fw:= &writer{}, &writer{}
 	w.init(buf)
-	original.mustWriteTo(tm, w)
+	fw.init(filterBuf)
+	original.mustWriteTo(tm, w, fw)
 	assert.Equal(t, w.bytesWritten, tm.size)
 	assert.Equal(t, uint64(len(buf.Buf)), tm.size)
 	assert.Equal(t, uint64(0), tm.offset)

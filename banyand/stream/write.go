@@ -166,6 +166,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			len(is.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
 	}
 	var fields []index.Field
+	indexedTags := make(map[string]map[string]struct{})
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.Element.TagFamilies) <= i {
@@ -178,6 +179,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		tf := tagValues{
 			tag: tagFamilySpec.Name,
 		}
+		indexedTags[tagFamilySpec.Name] = make(map[string]struct{})
 
 		for j := range tagFamilySpec.Tags {
 			var tagValue *modelv1.TagValue
@@ -189,11 +191,15 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 
 			t := tagFamilySpec.Tags[j]
 			if r, ok := tfr[t.Name]; ok && tagValue != pbv1.NullTagValue {
-				fields = appendField(fields, index.FieldKey{
-					IndexRuleID: r.GetMetadata().GetId(),
-					Analyzer:    r.Analyzer,
-					SeriesID:    series.ID,
-				}, t.Type, tagValue, r.GetNoSort())
+				if r.GetType() == databasev1.IndexRule_TYPE_INVERTED {
+					fields = appendField(fields, index.FieldKey{
+						IndexRuleID: r.GetMetadata().GetId(),
+						Analyzer:    r.Analyzer,
+						SeriesID:    series.ID,
+					}, t.Type, tagValue, r.GetNoSort())
+				} else if r.GetType() == databasev1.IndexRule_TYPE_SKIPPING {
+					indexedTags[tagFamilySpec.Name][t.Name] = struct{}{}
+				}
 			}
 			_, isEntity := is.indexRuleLocators.EntitySet[t.Name]
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
@@ -209,6 +215,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		}
 	}
 	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
+	et.elements.indexedTags = append(et.elements.indexedTags, indexedTags)
 
 	et.docs = append(et.docs, index.Document{
 		DocID:     eID,

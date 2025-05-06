@@ -163,6 +163,7 @@ message IndexRule {
   enum Type {
     TYPE_UNSPECIFIED = 0;
     TYPE_INVERTED = 1;
+    TYPE_SKIPPING = 2;
   }
   // type is the IndexType of this IndexObject.
   Type type = 3 [(validate.rules).enum.defined_only = true];
