@@ -209,11 +209,3 @@ release-push-candidate: ## Push release candidate
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
 .PHONY: vendor-update
-
-include scripts/build/base.mk
-include scripts/build/bpf2go.mk
-include scripts/build/bpftool.mk
-
-generate: $(BPF2GO) $(BPFTL)
-	@echo ">>> Generating eBPF code (platform = $(OS))..."
-	@$(MAKE) -C pkg/fs/fadvismonitor bpf

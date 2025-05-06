@@ -236,7 +236,6 @@ func (p *testThresholdProvider) GetThreshold() int64 {
 	return p.threshold
 }
 
-// ShouldApplyFadvis 实现 fs.ThresholdProvider 接口
 func (p *testThresholdProvider) ShouldApplyFadvis(fileSize int64, maxSize int64) bool {
 	// Use the smaller of threshold and maxSize
 	threshold := p.threshold

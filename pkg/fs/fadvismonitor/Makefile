@@ -28,55 +28,115 @@ BPF_SRC := $(PWD)/bpfsrc/fadvise.c
 tool_bin := $(ROOTDIR)/bin
 BPF2GO := $(tool_bin)/bpf2go
 BPFTL := $(shell which bpftool 2>/dev/null)
+IS_LINUX := $(shell uname -s | grep -i linux)
 
 include $(ROOTDIR)/scripts/build/bpftool.mk
 include $(ROOTDIR)/scripts/build/bpf2go.mk
 include $(ROOTDIR)/scripts/build/version.mk
 
 # ========= Build Entries =========
-.PHONY: bpf clean generate-bpf prepare-bpf-headers \
+.PHONY: bpf clean generate-bpf prepare-bpf-headers bpf2go-install bpftool-install \
 	bpf-benchmark docker-bpf-benchmark \
 	all-benchmarks benchmark-write benchmark-seqread \
 	benchmark-multiple-reads benchmark-mixed \
 
-bpf: prepare-bpf-headers generate-bpf
+# Automatically install bpf2go tool
+bpf2go-install:
+	@echo "Installing bpf2go tool version $(BPF2GO_VERSION)..."
+	@mkdir -p $(tool_bin)
+	@GOBIN=$(tool_bin) go install github.com/cilium/ebpf/cmd/bpf2go@$(BPF2GO_VERSION)
+	@if [ ! -f "$(BPF2GO)" ]; then \
+		echo "ERROR: Failed to install bpf2go at $(BPF2GO)"; \
+		exit 1; \
+	fi
+	@echo "bpf2go tool installed successfully at $(BPF2GO)"
+
+# Automatically install bpftool and necessary dependencies
+bpftool-install:
+ifeq ($(IS_LINUX),Linux)
+	@echo "Linux detected, ensuring bpftool is installed..."
+	@if [ -z "$(BPFTL)" ]; then \
+		echo "bpftool not found, installing..."; \
+		sudo apt-get update && sudo apt-get install -y bpftool clang llvm libelf-dev; \
+		if [ $$? -ne 0 ]; then \
+			echo "WARNING: Failed to install bpftool using apt-get"; \
+			echo "You might need to install bpftool manually"; \
+			exit 1; \
+		fi; \
+		BPFTL=$$(which bpftool); \
+		echo "bpftool installed at: $$BPFTL"; \
+	else \
+		echo "bpftool already installed at: $(BPFTL)"; \
+	fi
+else
+	@echo "Non-Linux system detected ($(shell uname -s)). Some eBPF features may not work."
+	@echo "For best results, generate eBPF code on a Linux system."
+endif
+
+bpf: bpf2go-install bpftool-install prepare-bpf-headers generate-bpf
+
 generate: bpf
 
 # ========= Auto Generate vmlinux.h =========
-prepare-bpf-headers: $(BPFTL)
+prepare-bpf-headers: bpftool-install
 	@echo "Preparing eBPF headers..."
+ifeq ($(IS_LINUX),Linux)
+	@mkdir -p $(BPF_HEADERS_DIR)
 	@if [ ! -f $(BPF_HEADERS_DIR)/vmlinux.h ]; then \
 		echo "Generating vmlinux.h (requires bpftool and Linux environment)"; \
-		bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(BPF_HEADERS_DIR)/vmlinux.h; \
+		bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(BPF_HEADERS_DIR)/vmlinux.h || \
+		( echo "Failed to generate vmlinux.h. Creating a minimal placeholder file instead."; \
+		  echo "// Placeholder vmlinux.h - generated on non-Linux system or without bpftool support" > $(BPF_HEADERS_DIR)/vmlinux.h; \
+		  echo "#define __u8 unsigned char" >> $(BPF_HEADERS_DIR)/vmlinux.h; \
+		  echo "#define __u16 unsigned short" >> $(BPF_HEADERS_DIR)/vmlinux.h; \
+		  echo "#define __u32 unsigned int" >> $(BPF_HEADERS_DIR)/vmlinux.h; \
+		  echo "#define __u64 unsigned long long" >> $(BPF_HEADERS_DIR)/vmlinux.h; ); \
 	else \
 		echo "vmlinux.h already exists."; \
 	fi
+else
+	@mkdir -p $(BPF_HEADERS_DIR)
+	@echo "Non-Linux system detected. Creating a minimal vmlinux.h placeholder..."
+	@echo "// Placeholder vmlinux.h - generated on non-Linux system" > $(BPF_HEADERS_DIR)/vmlinux.h
+	@echo "#define __u8 unsigned char" >> $(BPF_HEADERS_DIR)/vmlinux.h
+	@echo "#define __u16 unsigned short" >> $(BPF_HEADERS_DIR)/vmlinux.h
+	@echo "#define __u32 unsigned int" >> $(BPF_HEADERS_DIR)/vmlinux.h
+	@echo "#define __u64 unsigned long long" >> $(BPF_HEADERS_DIR)/vmlinux.h
+endif
 
 # ========= Multi-Platform eBPF Loader Generation =========
-generate-bpf: $(BPF2GO) prepare-bpf-headers
-	@echo "Ensured bpftool and bpf2go are installed"
+generate-bpf: bpf2go-install
+	@echo "Starting eBPF code generation process..."
+	@which clang >/dev/null || { echo "ERROR: clang not found, installing..."; sudo apt-get update && sudo apt-get install -y clang llvm; }
+	
 	@echo "Generating eBPF code for amd64..."
 	@cd $(BPF_DIR) && \
-	GOARCH=amd64 GOOS=linux bpf2go -cc clang -target bpfel \
+	GOARCH=amd64 GOOS=linux $(BPF2GO) -cc clang -target bpfel \
 		-cflags "-O2 -g -Wall -I$(BPF_HEADERS_DIR)" \
 		-output-stem bpf_x86 -go-package bpf \
-		Bpf ../bpfsrc/fadvise.c && \
-	sed -i.bak '/^\/\/go:build/c\//go:build (386 || amd64) \&\& linux' bpf_x86_bpfel.go && \
-	rm -f bpf_x86_bpfel.go.bak
+		Bpf ../bpfsrc/fadvise.c || echo "Warning: Failed to generate amd64 eBPF code"
+	@if [ -f "$(BPF_DIR)/bpf_x86_bpfel.go" ]; then \
+		cd $(BPF_DIR) && \
+		sed -i.bak '/^\/\/go:build/c\//go:build (386 || amd64) \&\& linux' bpf_x86_bpfel.go && \
+		rm -f bpf_x86_bpfel.go.bak || echo "Warning: Failed to modify bpf_x86_bpfel.go"; \
+	fi
 
 	@echo "Generating eBPF code for arm64..."
 	@cd $(BPF_DIR) && \
-	GOARCH=arm64 GOOS=linux bpf2go -cc clang -target bpfel \
+	GOARCH=arm64 GOOS=linux $(BPF2GO) -cc clang -target bpfel \
 		-cflags "-O2 -g -Wall -I$(BPF_HEADERS_DIR)" \
 		-output-stem bpf_arm64 -go-package bpf \
-		Bpf ../bpfsrc/fadvise.c && \
-	sed -i.bak '/^\/\/go:build/c\//go:build arm64 \&\& linux' bpf_arm64_bpfel.go && \
-	rm -f bpf_arm64_bpfel.go.bak
+		Bpf ../bpfsrc/fadvise.c || echo "Warning: Failed to generate arm64 eBPF code"
+	@if [ -f "$(BPF_DIR)/bpf_arm64_bpfel.go" ]; then \
+		cd $(BPF_DIR) && \
+		sed -i.bak '/^\/\/go:build/c\//go:build arm64 \&\& linux' bpf_arm64_bpfel.go && \
+		rm -f bpf_arm64_bpfel.go.bak || echo "Warning: Failed to modify bpf_arm64_bpfel.go"; \
+	fi
 
 	@echo "eBPF code generation completed for amd64 and arm64."
 
 # ========= BPF Benchmarking =========
-bpf-benchmark: prepare-bpf-headers generate-bpf
+bpf-benchmark: bpf
 	@mkdir -p $(REPORTS_DIR)
 	@echo "Running fadvis benchmarks with eBPF tracing..."
 	@go test -v -tags linux -bench=BenchmarkWithBPF -benchtime=5s -run=^$ ./... -benchmem | tee $(REPORTS_DIR)/bpf_benchmarks.txt

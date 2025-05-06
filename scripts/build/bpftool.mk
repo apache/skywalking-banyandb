@@ -16,10 +16,18 @@
 # under the License.
 #
 
+# Define the bpftool location - use 'which bpftool' if available on system
+BPFTL := $(shell which bpftool 2>/dev/null)
+IS_LINUX := $(shell uname -s | grep -i linux)
+
 $(BPFTL):
-ifeq ($(IS_LINUX), linux)
+ifeq ($(IS_LINUX),Linux)
 	@echo "Installing bpftool (Linux detected)..."
 	@sudo apt-get update && sudo apt-get install -y bpftool clang llvm libelf-dev
+	@echo "Verifying bpftool installation..."
+	@which bpftool || (echo "Failed to install bpftool" && exit 1)
+	$(eval BPFTL := $(shell which bpftool))
 else
 	@echo "Non-Linux OS detected, switching to Docker for eBPF generation..."
+	@echo "Please ensure Docker is installed and running"
 endif
