@@ -24,6 +24,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 	"github.com/apache/skywalking-banyandb/test/integration/distributed/backup"
@@ -70,7 +71,7 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if testVars.Connection != nil {
 		gomega.Expect(testVars.Connection.Close()).To(gomega.Succeed())
 	}
-	dockertesthelper.CloseMinioContainer()
 }, func() {
+	fadvis.CleanupForTesting()
 	backup.TeardownSuite(testVars)
 })

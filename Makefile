@@ -46,6 +46,8 @@ clean-build: default  ## Clean build artifacts in all projects
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
 generate: default  ## Generate API codes
+	@echo ">>> Generating eBPF code in fadvismonitor..."
+	@$(MAKE) -C pkg/fs/fadvismonitor bpf
 
 build: TARGET=all
 build: default  ## Build all projects
