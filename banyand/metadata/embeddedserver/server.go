@@ -152,14 +152,7 @@ func (s *server) registerDefrag() {
 	var (
 		err        error
 		etcdLogger = logger.GetLogger().Named("etcd-server")
-		defrag     = func(_ time.Time, _ *logger.Logger) bool {
-			if err = performDefrag(s.listenClientURL, s.ecli); err != nil {
-				etcdLogger.Error().Err(err).Msg("failed to execute defragmentation")
-				return false
-			}
-			return true
-		}
-		parser = cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor
+		parser     = cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor
 	)
 
 	s.ecli, err = clientv3.New(clientv3.Config{
@@ -171,7 +164,13 @@ func (s *server) registerDefrag() {
 	}
 	s.scheduler = timestamp.NewScheduler(etcdLogger, timestamp.NewClock())
 
-	err = s.scheduler.Register("defrag", parser, s.defragCron, defrag)
+	err = s.scheduler.Register("defrag", parser, s.defragCron, func(_ time.Time, l *logger.Logger) bool {
+		if errInner := performDefrag(s.listenClientURL, s.ecli); errInner != nil {
+			l.Error().Err(errInner).Msg("failed to execute defragmentation")
+			return false
+		}
+		return true
+	})
 	if err != nil {
 		etcdLogger.Error().Err(err).Msg("failed to register defragmentation")
 	}
