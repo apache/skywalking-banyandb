@@ -289,7 +289,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, 1)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
-		cmp.AllowUnexported(tagFamily{}, tag{}),
+		cmp.AllowUnexported(tagFamily{}, tag{}, tagFilter{}),
 	); diff != "" {
 		t.Errorf("block.unmarshalTagFamily() (-got +want):\n%s", diff)
 	}
@@ -309,7 +309,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled2.unmarshalTagFamilyFromSeqReaders(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), metaReader, valueReader)
 
 	if diff := cmp.Diff(unmarshaled2.tagFamilies[0], b.tagFamilies[0],
-		cmp.AllowUnexported(tagFamily{}, tag{}),
+		cmp.AllowUnexported(tagFamily{}, tag{}, tagFilter{}),
 	); diff != "" {
 		t.Errorf("block.unmarshalTagFamilyFromSeqReaders() (-got +want):\n%s", diff)
 	}

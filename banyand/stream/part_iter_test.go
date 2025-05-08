@@ -115,7 +115,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 			verifyPart := func(p *part) {
 				defer p.close()
 				pi := partIter{}
-				pi.init(bma, p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
+				pi.init(bma, p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp, nil)
 
 				var got []blockMetadata
 				for pi.nextBlock() {

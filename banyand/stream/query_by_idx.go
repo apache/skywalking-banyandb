@@ -83,12 +83,13 @@ func (qr *idxResult) scanParts(ctx context.Context, qo queryOptions) error {
 	ti := generateTstIter()
 	defer releaseTstIter(ti)
 	sids := qo.sortedSids
-	ti.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	ti.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp, qo.SkippingFilter)
 	if ti.Error() != nil {
 		return fmt.Errorf("cannot init tstIter: %w", ti.Error())
 	}
 	var hit int
 	var totalBlockBytes uint64
+	// TODO: skip blocks
 	for ti.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {

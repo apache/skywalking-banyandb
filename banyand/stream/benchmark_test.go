@@ -36,6 +36,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -92,6 +93,10 @@ func (mf mockFilter) String() string {
 
 func (mf mockFilter) Execute(_ index.GetSearcher, seriesID common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
 	return mf.index[mf.value][seriesID], roaring.DummyPostingList, nil
+}
+
+func (mf mockFilter) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+	return true
 }
 
 type databaseSupplier struct {
@@ -308,7 +313,8 @@ func generateStreamQueryOptions(p parameter, midx mockIndex) model.StreamQueryOp
 		Name:           "benchmark",
 		TimeRange:      &timeRange,
 		Entities:       entities,
-		Filter:         filter,
+		InvertedFilter: filter,
+		SkippingFilter: nil,
 		Order:          order,
 		TagProjection:  []model.TagProjection{tagProjection},
 		MaxElementSize: math.MaxInt32,

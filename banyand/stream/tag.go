@@ -20,7 +20,6 @@ package stream
 import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -30,9 +29,7 @@ type tag struct {
 	name      string
 	values    [][]byte
 	valueType pbv1.ValueType
-	filter    *filter.BloomFilter
-	min       int64
-	max       int64
+	tagFilter
 }
 
 func (t *tag) reset() {

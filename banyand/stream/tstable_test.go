@@ -147,7 +147,7 @@ func Test_tstIter(t *testing.T) {
 		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
 		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
-		ti.init(bma, pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
+		ti.init(bma, pp, tt.sids, tt.minTimestamp, tt.maxTimestamp, nil)
 		var got []blockMetadata
 		for ti.nextBlock() {
 			if ti.piHeap[0].curBlock.seriesID == 0 {
