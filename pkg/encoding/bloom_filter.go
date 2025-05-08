@@ -23,8 +23,9 @@ import (
 	"fmt"
 	"hash/fnv"
 
-	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/bits-and-blooms/bitset"
+
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 )
 
 // BloomFilterToBytes encodes a Bloom filter to bytes.
@@ -42,8 +43,7 @@ func BloomFilterToBytes(bf *filter.BloomFilter) ([]byte, error) {
 	}
 
 	words := bf.Bits().Words()
-	len := uint64(len(words))
-	err = binary.Write(&buf, binary.BigEndian, len)
+	err = binary.Write(&buf, binary.BigEndian, uint64(len(words)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to write bitset words length: %w", err)
 	}
@@ -58,7 +58,7 @@ func BloomFilterToBytes(bf *filter.BloomFilter) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// BloomFilterFromBytes decodes a Bloom filter from bytes.
+// BytesToBloomFilter decodes a Bloom filter from bytes.
 func BytesToBloomFilter(data []byte) (*filter.BloomFilter, error) {
 	bf := &filter.BloomFilter{}
 	bf.SetHashFunc(fnv.New64a())
@@ -78,14 +78,14 @@ func BytesToBloomFilter(data []byte) (*filter.BloomFilter, error) {
 	}
 	bf.SetK(uint(k))
 
-	var len uint64
-	err = binary.Read(buf, binary.BigEndian, &len)
+	var length uint64
+	err = binary.Read(buf, binary.BigEndian, &length)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bitset data length: %w", err)
 	}
 
-	words := make([]uint64, len)
-	for i := uint64(0); i < len; i++ {
+	words := make([]uint64, length)
+	for i := uint64(0); i < length; i++ {
 		err = binary.Read(buf, binary.BigEndian, &words[i])
 		if err != nil {
 			return nil, fmt.Errorf("failed to read bitset data word %d: %w", i, err)

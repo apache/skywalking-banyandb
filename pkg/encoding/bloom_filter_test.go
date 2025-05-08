@@ -3,9 +3,10 @@ package encoding_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestEncodeAndDecodeBloomFilter(t *testing.T) {

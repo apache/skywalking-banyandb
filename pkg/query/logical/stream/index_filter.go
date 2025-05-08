@@ -470,7 +470,7 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 	)
 }
 
-func (match *match) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+func (match *match) ShouldNotSkip(_ filter.Filter) bool {
 	logger.Panicf("Skipping index doesn't support match operation")
 	return true
 }
@@ -507,7 +507,7 @@ func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID, 
 	return s.Range(r.Key.toIndex(seriesID, tr), r.Opts)
 }
 
-func (r *rangeOp) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+func (r *rangeOp) ShouldNotSkip(_ filter.Filter) bool {
 	// TODO: implement this after min/max is supported
 	return true
 }
@@ -559,7 +559,7 @@ func (an emptyNode) String() string {
 	return "empty"
 }
 
-func (an emptyNode) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+func (an emptyNode) ShouldNotSkip(_ filter.Filter) bool {
 	return true
 }
 

@@ -26,7 +26,7 @@ import (
 func TestBloomFilter(t *testing.T) {
 	assert := assert.New(t)
 
-	bf, err:= NewBloomFilter(3, 0.01)
+	bf, err := NewBloomFilter(3, 0.01)
 	assert.Nil(err)
 	assert.NotNil(bf)
 

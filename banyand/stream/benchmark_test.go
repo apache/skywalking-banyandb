@@ -95,7 +95,7 @@ func (mf mockFilter) Execute(_ index.GetSearcher, seriesID common.SeriesID, _ *i
 	return mf.index[mf.value][seriesID], roaring.DummyPostingList, nil
 }
 
-func (mf mockFilter) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+func (mf mockFilter) ShouldNotSkip(_ filter.Filter) bool {
 	return true
 }
 

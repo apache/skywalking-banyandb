@@ -181,5 +181,12 @@ var es = &elements{
 		{},
 		{}, // empty tagFamilies for seriesID 3
 	},
-	indexedTags: []map[string]map[string]struct{}{{"arrTag": {}, "binaryTag": {}, "singleTag": {}}, {"arrTag": {}, "binaryTag": {}, "singleTag": {}}, {"singleTag": {}}, {"singleTag": {}}, {}, {}},
+	indexedTags: []map[string]map[string]struct{}{
+		{"arrTag": {}, "binaryTag": {}, "singleTag": {}},
+		{"arrTag": {}, "binaryTag": {}, "singleTag": {}},
+		{"singleTag": {}},
+		{"singleTag": {}},
+		{},
+		{},
+	},
 }

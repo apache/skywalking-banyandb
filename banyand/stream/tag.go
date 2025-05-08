@@ -26,10 +26,10 @@ import (
 )
 
 type tag struct {
+	tagFilter
 	name      string
 	values    [][]byte
 	valueType pbv1.ValueType
-	tagFilter
 }
 
 func (t *tag) reset() {

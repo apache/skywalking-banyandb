@@ -63,8 +63,8 @@ func TestTag_mustWriteTo_mustReadValues(t *testing.T) {
 
 	tm := &tagMetadata{}
 
-	buf, filterBuf:= &bytes.Buffer{}, &bytes.Buffer{}
-	w, fw:= &writer{}, &writer{}
+	buf, filterBuf := &bytes.Buffer{}, &bytes.Buffer{}
+	w, fw := &writer{}, &writer{}
 	w.init(buf)
 	fw.init(filterBuf)
 	original.mustWriteTo(tm, w, fw)

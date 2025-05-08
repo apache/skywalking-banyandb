@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package filter defines and implements data structures and interfaces for skipping index.
 package filter
 
 import (
@@ -26,13 +27,15 @@ import (
 	"github.com/bits-and-blooms/bitset"
 )
 
+// FalsePositiveRate is the default false positive rate for Bloom filter.
 const FalsePositiveRate = 0.01
 
+// BloomFilter is a probabilistic data structure designed to test whether an element is a member of a set.
 type BloomFilter struct {
+	hashFunc hash.Hash64
+	bits     *bitset.BitSet
 	m        uint64
 	k        uint
-	bits     *bitset.BitSet
-	hashFunc hash.Hash64
 }
 
 // NewBloomFilter creates a new Bloom filter with the number of items n and false positive rate p.
@@ -116,7 +119,7 @@ func (bf *BloomFilter) K() uint {
 	return bf.k
 }
 
-// BitSet returns the underlying bitset.
+// Bits returns the underlying bitset.
 func (bf *BloomFilter) Bits() *bitset.BitSet {
 	return bf.bits
 }

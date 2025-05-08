@@ -17,6 +17,7 @@
 
 package filter
 
+// Filter is an interface for filtering operations based on skipping index.
 type Filter interface {
 	ShouldNotSkip(tagName string, tagValue string) bool
 }
