@@ -27,6 +27,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -34,6 +35,7 @@ import (
 
 func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 	entityDict map[string]int, entity []*modelv1.TagValue,
+	indexRuleType databasev1.IndexRule_Type,
 ) (index.Filter, [][]*modelv1.TagValue, error) {
 	if criteria == nil {
 		return nil, [][]*modelv1.TagValue{entity}, nil
@@ -48,7 +50,7 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 		if parsedEntity != nil {
 			return nil, parsedEntity, nil
 		}
-		if ok, indexRule := schema.IndexDefined(cond.Name); ok {
+		if ok, indexRule := schema.IndexDefined(cond.Name); ok && indexRule.Type == indexRuleType {
 			return parseConditionToFilter(cond, indexRule, expr, entity)
 		}
 		return ENode, [][]*modelv1.TagValue{entity}, nil
@@ -58,16 +60,16 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 			return nil, nil, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
-			return buildLocalFilter(le.Right, schema, entityDict, entity)
+			return buildLocalFilter(le.Right, schema, entityDict, entity, indexRuleType)
 		}
 		if le.GetRight() == nil {
-			return buildLocalFilter(le.Left, schema, entityDict, entity)
+			return buildLocalFilter(le.Left, schema, entityDict, entity, indexRuleType)
 		}
-		left, leftEntities, err := buildLocalFilter(le.Left, schema, entityDict, entity)
+		left, leftEntities, err := buildLocalFilter(le.Left, schema, entityDict, entity, indexRuleType)
 		if err != nil {
 			return nil, nil, err
 		}
-		right, rightEntities, err := buildLocalFilter(le.Right, schema, entityDict, entity)
+		right, rightEntities, err := buildLocalFilter(le.Right, schema, entityDict, entity, indexRuleType)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -75,8 +77,11 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 		if entities == nil {
 			return nil, nil, nil
 		}
-		if left == nil && right == nil {
-			return nil, entities, nil
+		if left == nil {
+			return right, entities, nil
+		}
+		if right == nil {
+			return left, entities, nil
 		}
 		if left == ENode && right == ENode {
 			return ENode, entities, nil
@@ -113,7 +118,10 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 	case modelv1.Condition_BINARY_OP_EQ:
 		return newEq(indexRule, expr), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_MATCH:
-		return newMatch(indexRule, expr, cond.MatchOption), [][]*modelv1.TagValue{entity}, nil
+		if indexRule.Type == databasev1.IndexRule_TYPE_INVERTED {
+			return newMatch(indexRule, expr, cond.MatchOption), [][]*modelv1.TagValue{entity}, nil
+		}
+		return ENode, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NE:
 		return newNot(indexRule, newEq(indexRule, expr)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_HAVING:
@@ -264,6 +272,15 @@ func (an *andNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID,
 	return execute(searcher, seriesID, an.node, an, tr)
 }
 
+func (an *andNode) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+	for _, sn := range an.node.SubNodes {
+		if !sn.ShouldNotSkip(tagFamilyFilters) {
+			return false
+		}
+	}
+	return true
+}
+
 func (an *andNode) MarshalJSON() ([]byte, error) {
 	data := make(map[string]interface{}, 1)
 	data["and"] = an.node.SubNodes
@@ -307,6 +324,15 @@ func (on *orNode) merge(list ...posting.List) (posting.List, error) {
 
 func (on *orNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *index.RangeOpts) (posting.List, posting.List, error) {
 	return execute(searcher, seriesID, on.node, on, tr)
+}
+
+func (on *orNode) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+	for _, sn := range on.node.SubNodes {
+		if sn.ShouldNotSkip(tagFamilyFilters) {
+			return true
+		}
+	}
+	return false
 }
 
 func (on *orNode) MarshalJSON() ([]byte, error) {
@@ -400,6 +426,10 @@ func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *
 	return s.MatchTerms(eq.Expr.Field(eq.Key.toIndex(seriesID, tr)))
 }
 
+func (eq *eq) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+	return tagFamilyFilters.ShouldNotSkip(eq.Key.Tags[0], eq.Expr.String())
+}
+
 func (eq *eq) MarshalJSON() ([]byte, error) {
 	data := make(map[string]interface{}, 1)
 	data["eq"] = eq.leaf
@@ -442,6 +472,10 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 	)
 }
 
+func (match *match) ShouldNotSkip(_ filter.Filter) bool {
+	return true
+}
+
 func (match *match) MarshalJSON() ([]byte, error) {
 	data := make(map[string]interface{}, 1)
 	data["match"] = match.leaf
@@ -472,6 +506,11 @@ func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID, 
 		return nil, nil, err
 	}
 	return s.Range(r.Key.toIndex(seriesID, tr), r.Opts)
+}
+
+func (r *rangeOp) ShouldNotSkip(_ filter.Filter) bool {
+	// TODO: implement this after min/max is supported
+	return true
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
@@ -519,6 +558,10 @@ func (an emptyNode) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.Ran
 
 func (an emptyNode) String() string {
 	return "empty"
+}
+
+func (an emptyNode) ShouldNotSkip(_ filter.Filter) bool {
+	return true
 }
 
 type bypassList struct{}

@@ -27,6 +27,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -53,7 +54,7 @@ func (b *block) reset() {
 	b.tagFamilies = tff[:0]
 }
 
-func (b *block) mustInitFromElements(timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {
+func (b *block) mustInitFromElements(timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues, indexedTags []map[string]map[string]struct{}) {
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -66,7 +67,7 @@ func (b *block) mustInitFromElements(timestamps []int64, elementIDs []uint64, ta
 	assertTimestampsSorted(timestamps)
 	b.timestamps = append(b.timestamps, timestamps...)
 	b.elementIDs = append(b.elementIDs, elementIDs...)
-	b.mustInitFromTags(tagFamilies)
+	b.mustInitFromTags(tagFamilies, indexedTags)
 }
 
 func assertTimestampsSorted(timestamps []int64) {
@@ -78,31 +79,46 @@ func assertTimestampsSorted(timestamps []int64) {
 	}
 }
 
-func (b *block) mustInitFromTags(tagFamilies [][]tagValues) {
+func (b *block) mustInitFromTags(tagFamilies [][]tagValues, indexedTags []map[string]map[string]struct{}) {
 	elementsLen := len(tagFamilies)
 	if elementsLen == 0 {
 		return
 	}
 	for i, tff := range tagFamilies {
-		b.processTagFamilies(tff, i, elementsLen)
+		b.processTagFamilies(tff, i, elementsLen, indexedTags[i])
 	}
 }
 
-func (b *block) processTagFamilies(tff []tagValues, i int, elementsLen int) {
+func (b *block) processTagFamilies(tff []tagValues, i int, elementsLen int, indexedTags map[string]map[string]struct{}) {
 	tagFamilies := b.resizeTagFamilies(len(tff))
 	for j, tf := range tff {
 		tagFamilies[j].name = tf.tag
-		b.processTags(tf, j, i, elementsLen)
+		b.processTags(tf, j, i, elementsLen, indexedTags[tf.tag])
 	}
 }
 
-func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int) {
+func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int, indexedTags map[string]struct{}) {
 	tags := b.tagFamilies[tagFamilyIdx].resizeTags(len(tf.values))
 	for j, t := range tf.values {
 		tags[j].name = t.tag
 		tags[j].resizeValues(elementsLen)
 		tags[j].valueType = t.valueType
 		tags[j].values[i] = t.marshal()
+		// TODO: support min/max for numeric type
+		if _, ok := indexedTags[t.tag]; !ok {
+			continue
+		}
+		var err error
+		if tags[j].filter == nil {
+			tags[j].filter, err = filter.NewBloomFilter(uint64(elementsLen), filter.FalsePositiveRate)
+			if err != nil {
+				logger.Panicf("cannot create bloom filter: %v", err)
+			}
+		}
+		err = tags[j].filter.Add(t.value)
+		if err != nil {
+			logger.Panicf("cannot add value %q to bloom filter: %v", t.value, err)
+		}
 	}
 }
 
@@ -159,12 +175,12 @@ func (b *block) validate() {
 }
 
 func (b *block) marshalTagFamily(tf tagFamily, bm *blockMetadata, ww *writers) {
-	hw, w := ww.getTagMetadataWriterAndTagWriter(tf.name)
+	hw, w, fw := ww.getTagMetadataWriterAndTagWriter(tf.name)
 	cc := tf.tags
 	cfm := generateTagFamilyMetadata()
 	cmm := cfm.resizeTagMetadata(len(cc))
 	for i := range cc {
-		cc[i].mustWriteTo(&cmm[i], w)
+		cc[i].mustWriteTo(&cmm[i], w, fw)
 	}
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)

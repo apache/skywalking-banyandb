@@ -26,6 +26,7 @@ import (
 )
 
 type tag struct {
+	tagFilter
 	name      string
 	values    [][]byte
 	valueType pbv1.ValueType
@@ -39,6 +40,10 @@ func (t *tag) reset() {
 		values[i] = nil
 	}
 	t.values = values[:0]
+
+	t.filter = nil
+	t.min = 0
+	t.max = 0
 }
 
 func (t *tag) resizeValues(valuesLen int) [][]byte {
@@ -51,7 +56,7 @@ func (t *tag) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
-func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
+func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *writer) {
 	tm.reset()
 
 	tm.name = t.name
@@ -68,6 +73,19 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	}
 	tm.offset = tagWriter.bytesWritten
 	tagWriter.MustWrite(bb.Buf)
+
+	if t.filter != nil {
+		bb.Reset()
+		var err error
+		bb.Buf, err = encoding.BloomFilterToBytes(t.filter)
+		if err != nil {
+			logger.Panicf("cannot marshal filter: %v", err)
+		}
+		tm.filterBlock.size = uint64(len(bb.Buf))
+		tm.filterBlock.offset = tagFilterWriter.bytesWritten
+		// TODO: set min/max for tagMetadata
+		tagFilterWriter.MustWrite(bb.Buf)
+	}
 }
 
 func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm tagMetadata, count uint64) {

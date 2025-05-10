@@ -77,7 +77,7 @@ func BuildSimpleTagFilter(criteria *modelv1.Criteria) (TagFilter, error) {
 	return BuildTagFilter(criteria, nil, emptyIndexChecker{}, false)
 }
 
-// BuildTagFilter returns a TagFilter if predicates doesn't match any indices.
+// BuildTagFilter returns a TagFilter.
 func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, indexChecker IndexChecker, hasGlobalIndex bool) (TagFilter, error) {
 	if criteria == nil {
 		return DummyFilter, nil
@@ -88,9 +88,6 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, index
 		expr, err := parseExpr(cond.Value)
 		if err != nil {
 			return nil, err
-		}
-		if ok, _ := indexChecker.IndexDefined(cond.Name); ok {
-			return DummyFilter, nil
 		}
 		if _, ok := entityDict[cond.Name]; ok {
 			return DummyFilter, nil
@@ -148,6 +145,8 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error
 		}), nil
 	case modelv1.Condition_BINARY_OP_EQ:
 		return newEqTag(cond.Name, expr), nil
+	case modelv1.Condition_BINARY_OP_MATCH:
+		return newMatchTag(cond.Name, expr), nil
 	case modelv1.Condition_BINARY_OP_NE:
 		return newNotTag(newEqTag(cond.Name, expr)), nil
 	case modelv1.Condition_BINARY_OP_HAVING:
@@ -213,7 +212,7 @@ func (n *logicalNode) append(sub TagFilter) *logicalNode {
 	return n
 }
 
-func matchTag(accessor TagValueIndexAccessor, registry TagSpecRegistry, n *logicalNode, lp logicalNodeOP) (bool, error) {
+func isMatch(accessor TagValueIndexAccessor, registry TagSpecRegistry, n *logicalNode, lp logicalNodeOP) (bool, error) {
 	var result *bool
 	for _, sn := range n.SubNodes {
 		r, err := sn.Match(accessor, registry)
@@ -252,7 +251,7 @@ func (an *andLogicalNode) merge(bb ...bool) bool {
 }
 
 func (an *andLogicalNode) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	return matchTag(accessor, registry, an.logicalNode, an)
+	return isMatch(accessor, registry, an.logicalNode, an)
 }
 
 func (an *andLogicalNode) MarshalJSON() ([]byte, error) {
@@ -287,7 +286,7 @@ func (on *orLogicalNode) merge(bb ...bool) bool {
 }
 
 func (on *orLogicalNode) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	return matchTag(accessor, registry, on.logicalNode, on)
+	return isMatch(accessor, registry, on.logicalNode, on)
 }
 
 func (on *orLogicalNode) MarshalJSON() ([]byte, error) {
@@ -475,7 +474,7 @@ func (r *rangeTag) MarshalJSON() ([]byte, error) {
 			builder.WriteString(")")
 		}
 	}
-	data["key"] = r.tagLeaf
+	data["key"] = r.tagLeaf.Name
 	data["range"] = builder.String()
 	return json.Marshal(data)
 }
@@ -491,6 +490,37 @@ func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName s
 		}
 	}
 	return nil, errTagNotDefined
+}
+
+type matchTag struct {
+	*tagLeaf
+}
+
+func newMatchTag(tagName string, values LiteralExpr) *matchTag {
+	return &matchTag{
+		tagLeaf: &tagLeaf{
+			Name: tagName,
+			Expr: values,
+		},
+	}
+}
+
+func (m *matchTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
+	expr, err := tagExpr(accessor, registry, m.Name)
+	if err != nil {
+		return false, err
+	}
+	return expr.Contains(m.Expr), nil
+}
+
+func (m *matchTag) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	data["match"] = m.tagLeaf
+	return json.Marshal(data)
+}
+
+func (m *matchTag) String() string {
+	return convert.JSONToString(m)
 }
 
 type havingTag struct {
