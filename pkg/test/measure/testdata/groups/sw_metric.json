@@ -12,22 +12,7 @@
     "ttl": {
       "unit": "UNIT_DAY",
       "num": 7
-    },
-    "stages": [
-      {
-        "name": "warm",
-        "shard_num": 1,
-        "segment_interval": {
-          "unit": "UNIT_DAY",
-          "num": 3
-        },
-        "ttl": {
-          "unit": "UNIT_DAY",
-          "num": 30
-        },
-        "node_selector": "type=warm"
-      }
-    ]
+    }
   },
   "updated_at": "2021-04-15T01:30:15.01Z"
 }

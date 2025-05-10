@@ -86,7 +86,9 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the liaison server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			ctx := context.Background()
 			if nodeSelector != "" {
+				ctx = context.WithValue(ctx, common.ContextNodeSelectorKey, nodeSelector)
 				var ls *pub.LabelSelector
 				ls, err = pub.ParseLabelSelector(nodeSelector)
 				if err != nil {
@@ -101,8 +103,9 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 				return err
 			}
 			logger.GetLogger().Info().Msg("starting as a liaison server")
+			ctx = context.WithValue(ctx, common.ContextNodeKey, node)
 			// Spawn our go routines and wait for shutdown.
-			if err := liaisonGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, node)); err != nil {
+			if err := liaisonGroup.Run(ctx); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", liaisonGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}

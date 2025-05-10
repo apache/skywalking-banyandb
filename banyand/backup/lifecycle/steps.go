@@ -249,6 +249,7 @@ func migrateMeasure(ctx context.Context, m *databasev1.Measure, result model.Mea
 				Metadata: m.Metadata,
 				DataPoint: &measurev1.DataPointValue{
 					Timestamp: timestamppb.New(time.Unix(0, mr.Timestamps[i])),
+					Version:   mr.Versions[i],
 				},
 				MessageId: uint64(time.Now().UnixNano()),
 			}

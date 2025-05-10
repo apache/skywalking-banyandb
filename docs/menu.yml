@@ -57,6 +57,8 @@ catalog:
                 path: "/interacting/bydbctl/schema/index-rule"
               - name: "IndexRuleBinding"
                 path: "/interacting/bydbctl/schema/index-rule-binding"
+              - name: "Top N Aggregation"
+                path: "/interacting/bydbctl/schema/top-n-aggregation"
           - name: "Querying Data"
             catalog:
               - name: "Measure"
@@ -65,6 +67,8 @@ catalog:
                 path: "/interacting/bydbctl/query/stream"
               - name: "Filter Operation"
                 path: "/interacting/bydbctl/query/filter-operation"
+              - name: "Top N Aggregation"
+                path: "/interacting/bydbctl/query/top-n-aggregation"
           - name: "CRUD Property"
             path: "/interacting/bydbctl/property"
           - name: "Analyzing Data"

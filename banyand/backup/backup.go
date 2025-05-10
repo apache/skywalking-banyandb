@@ -38,27 +38,30 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
+type backupOptions struct {
+	fsConfig     remote.FsConfig
+	gRPCAddr     string
+	cert         string
+	timeStyle    string
+	schedule     string
+	streamRoot   string
+	measureRoot  string
+	propertyRoot string
+	dest         string
+	enableTLS    bool
+	insecure     bool
+}
+
 // NewBackupCommand creates a new backup command.
 func NewBackupCommand() *cobra.Command {
-	var (
-		gRPCAddr     string
-		enableTLS    bool
-		insecure     bool
-		cert         string
-		streamRoot   string
-		measureRoot  string
-		propertyRoot string
-		dest         string
-		timeStyle    string
-		schedule     string
-	)
-
+	var backupOpts backupOptions
 	cmd := &cobra.Command{
 		Short:             "Backup BanyanDB snapshots to remote storage",
 		DisableAutoGenTag: true,
@@ -67,17 +70,15 @@ func NewBackupCommand() *cobra.Command {
 			if err := config.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
-			if schedule == "" {
-				return backupAction(dest, gRPCAddr, enableTLS, insecure, cert,
-					streamRoot, measureRoot, propertyRoot, timeStyle)
+			if backupOpts.schedule == "" {
+				return backupAction(backupOpts)
 			}
 			schedLogger := logger.GetLogger().Named("backup-scheduler")
-			schedLogger.Info().Msgf("backup to %s will run with schedule: %s", dest, schedule)
+			schedLogger.Info().Msgf("backup to %s will run with schedule: %s", backupOpts.dest, backupOpts.schedule)
 			clockInstance := clock.New()
 			sch := timestamp.NewScheduler(schedLogger, clockInstance)
-			err := sch.Register("backup", cron.Descriptor, schedule, func(_ time.Time, l *logger.Logger) bool {
-				err := backupAction(dest, gRPCAddr, enableTLS, insecure, cert,
-					streamRoot, measureRoot, propertyRoot, timeStyle)
+			err := sch.Register("backup", cron.Descriptor, backupOpts.schedule, func(_ time.Time, l *logger.Logger) bool {
+				err := backupAction(backupOpts)
 				if err != nil {
 					l.Error().Err(err).Msg("backup failed")
 				} else {
@@ -99,48 +100,49 @@ func NewBackupCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&gRPCAddr, "grpc-addr", "127.0.0.1:17912", "gRPC address of the data node")
-	cmd.Flags().BoolVar(&enableTLS, "enable-tls", false, "Enable TLS for gRPC connection")
-	cmd.Flags().BoolVar(&insecure, "insecure", false, "Skip server certificate verification")
-	cmd.Flags().StringVar(&cert, "cert", "", "Path to the gRPC server certificate")
-	cmd.Flags().StringVar(&streamRoot, "stream-root-path", "/tmp", "Root directory for stream catalog")
-	cmd.Flags().StringVar(&measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
-	cmd.Flags().StringVar(&propertyRoot, "property-root-path", "/tmp", "Root directory for property catalog")
-	cmd.Flags().StringVar(&dest, "dest", "", "Destination URL (e.g., file:///backups)")
-	cmd.Flags().StringVar(&timeStyle, "time-style", "daily", "Time directory style (daily|hourly)")
+	cmd.Flags().StringVar(&backupOpts.gRPCAddr, "grpc-addr", "127.0.0.1:17912", "gRPC address of the data node")
+	cmd.Flags().BoolVar(&backupOpts.enableTLS, "enable-tls", false, "Enable TLS for gRPC connection")
+	cmd.Flags().BoolVar(&backupOpts.insecure, "insecure", false, "Skip server certificate verification")
+	cmd.Flags().StringVar(&backupOpts.cert, "cert", "", "Path to the gRPC server certificate")
+	cmd.Flags().StringVar(&backupOpts.streamRoot, "stream-root-path", "/tmp", "Root directory for stream catalog")
+	cmd.Flags().StringVar(&backupOpts.measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
+	cmd.Flags().StringVar(&backupOpts.propertyRoot, "property-root-path", "/tmp", "Root directory for property catalog")
+	cmd.Flags().StringVar(&backupOpts.dest, "dest", "", "Destination URL (e.g., file:///backups)")
+	cmd.Flags().StringVar(&backupOpts.timeStyle, "time-style", "daily", "Time directory style (daily|hourly)")
 	cmd.Flags().StringVar(
-		&schedule,
+		&backupOpts.schedule,
 		"schedule",
 		"",
 		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
 	)
-
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ProfileName, "s3-profile", "", "S3 profile name")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ChecksumAlgorithm, "s3-checksum-algorithm", "", "S3 checksum algorithm")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3StorageClass, "s3-storage-class", "", "S3 upload storage class")
 	return cmd
 }
 
-func backupAction(dest, gRPCAddr string, enableTLS, insecure bool, cert,
-	streamRoot, measureRoot, propertyRoot, timeStyle string,
-) error {
-	if dest == "" {
+func backupAction(options backupOptions) error {
+	if options.dest == "" {
 		return errors.New("dest is required")
 	}
-
-	fs, err := newFS(dest)
+	fs, err := newFS(options.dest, &options.fsConfig)
 	if err != nil {
 		return err
 	}
 	defer fs.Close()
 
-	snapshots, err := snapshot.Get(gRPCAddr, enableTLS, insecure, cert)
+	snapshots, err := snapshot.Get(options.gRPCAddr, options.enableTLS, options.insecure, options.cert)
 	if err != nil {
 		return err
 	}
 
-	timeDir := getTimeDir(timeStyle)
+	timeDir := getTimeDir(options.timeStyle)
 
 	for _, snp := range snapshots {
 		var snapshotDir string
-		snapshotDir, err = snapshot.Dir(snp, streamRoot, measureRoot, propertyRoot)
+		snapshotDir, err = snapshot.Dir(snp, options.streamRoot, options.measureRoot, options.propertyRoot)
 		if err != nil {
 			logger.Warningf("Failed to get snapshot directory for %s: %v", snp.Name, err)
 			continue
@@ -150,7 +152,7 @@ func backupAction(dest, gRPCAddr string, enableTLS, insecure bool, cert,
 	return err
 }
 
-func newFS(dest string) (remote.FS, error) {
+func newFS(dest string, config *remote.FsConfig) (remote.FS, error) {
 	u, err := url.Parse(dest)
 	if err != nil {
 		return nil, fmt.Errorf("invalid dest URL: %w", err)
@@ -159,6 +161,8 @@ func newFS(dest string) (remote.FS, error) {
 	switch u.Scheme {
 	case "file":
 		return local.NewFS(u.Path)
+	case "s3":
+		return aws.NewFS(u.Path, config)
 	default:
 		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
@@ -187,7 +191,6 @@ func backupSnapshot(fs remote.FS, snapshotDir, catalog, timeDir string) error {
 	if err != nil {
 		return err
 	}
-
 	for _, relPath := range localFiles {
 		remotePath := path.Join(timeDir, catalog, relPath)
 		if !contains(remoteFiles, remotePath) {
