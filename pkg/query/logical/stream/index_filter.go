@@ -30,7 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -78,8 +77,11 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 		if entities == nil {
 			return nil, nil, nil
 		}
-		if left == nil && right == nil {
-			return nil, entities, nil
+		if left == nil {
+			return right, entities, nil
+		}
+		if right == nil {
+			return left, entities, nil
 		}
 		if left == ENode && right == ENode {
 			return ENode, entities, nil
@@ -471,7 +473,6 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 }
 
 func (match *match) ShouldNotSkip(_ filter.Filter) bool {
-	logger.Panicf("Skipping index doesn't support match operation")
 	return true
 }
 

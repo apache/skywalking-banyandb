@@ -234,7 +234,6 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		}
 		return
 	}
-	// TODO: skip blocks
 	for ti.nextBlock() {
 		p := ti.piHeap[0]
 		batch.bss = append(batch.bss, blockScanResult{

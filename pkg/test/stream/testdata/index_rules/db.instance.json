@@ -7,7 +7,7 @@
   "tags": [
     "db.instance"
   ],
-  "type": "TYPE_INVERTED",
+  "type": "TYPE_SKIPPING",
   "analyzer": "url",
   "updated_at": "2021-04-15T01:30:15.01Z"
 }

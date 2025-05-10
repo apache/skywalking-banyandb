@@ -81,7 +81,6 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 		if err != nil {
 			logger.Panicf("cannot marshal filter: %v", err)
 		}
-		tagFilterWriter.MustWrite(bb.Buf)
 		tm.filterBlock.size = uint64(len(bb.Buf))
 		tm.filterBlock.offset = tagFilterWriter.bytesWritten
 		// TODO: set min/max for tagMetadata

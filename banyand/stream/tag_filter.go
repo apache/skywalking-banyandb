@@ -51,8 +51,11 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 	}
 	bigValuePool.Release(bb)
 	for _, tm := range tfm.tagMetadata {
-		bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
-		fs.MustReadData(filterReader, int64(tm.offset), bb.Buf)
+		if tm.filterBlock.size == 0 {
+			continue
+		}
+		bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.filterBlock.size))
+		fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
 		bf, err := encoding.BytesToBloomFilter(bb.Buf)
 		if err != nil {
 			logger.Panicf("%s: cannot unmarshal tagFamilyFilter: %v", filterReader.Path(), err)
@@ -95,10 +98,8 @@ func (tfs *tagFamilyFilters) reset() {
 }
 
 func (tfs *tagFamilyFilters) unmarshal(tagFamilies map[string]*dataBlock, metaReader, filterReader map[string]fs.Reader) {
-	tff := generateTagFamilyFilter()
-	defer releaseTagFamilyFilter(tff)
 	for tf := range tagFamilies {
-		tff.reset()
+		tff := generateTagFamilyFilter()
 		tff.unmarshal(tagFamilies[tf], metaReader[tf], filterReader[tf])
 		tfs.tagFamilyFilters = append(tfs.tagFamilyFilters, tff)
 	}
@@ -123,6 +124,9 @@ func generateTagFamilyFilters() *tagFamilyFilters {
 }
 
 func releaseTagFamilyFilters(tfs *tagFamilyFilters) {
+	for _, tff := range tfs.tagFamilyFilters {
+		releaseTagFamilyFilter(tff)
+	}
 	tfs.reset()
 	tagFamilyFiltersPool.Put(tfs)
 }

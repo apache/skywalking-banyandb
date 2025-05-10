@@ -89,7 +89,6 @@ func (qr *idxResult) scanParts(ctx context.Context, qo queryOptions) error {
 	}
 	var hit int
 	var totalBlockBytes uint64
-	// TODO: skip blocks
 	for ti.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {
