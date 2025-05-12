@@ -108,7 +108,6 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 		opts,
 		nil,           // indexMetrics
 		nil,           // metrics
-		nil,           // segmentBoundaryUpdateFn
 		5*time.Minute, // idleTimeout
 	)
 
@@ -199,7 +198,6 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 		opts,
 		nil,         // indexMetrics
 		nil,         // metrics
-		nil,         // segmentBoundaryUpdateFn
 		time.Second, // Set short idle timeout for testing
 	)
 
@@ -282,7 +280,6 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 		opts,
 		nil,         // indexMetrics
 		nil,         // metrics
-		nil,         // segmentBoundaryUpdateFn
 		idleTimeout, // short idle timeout
 	)
 
@@ -414,7 +411,6 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 		opts,
 		nil,           // indexMetrics
 		nil,           // metrics
-		nil,           // segmentBoundaryUpdateFn
 		5*time.Minute, // idleTimeout
 	)
 

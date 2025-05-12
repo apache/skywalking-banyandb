@@ -26,7 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-func newUserCmd() *cobra.Command {
+func newUseCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "use group",
 		Version: version.Build(),

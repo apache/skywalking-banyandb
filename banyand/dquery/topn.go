@@ -28,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -40,7 +41,8 @@ import (
 const defaultTopNQueryTimeout = 10 * time.Second
 
 type topNQueryProcessor struct {
-	broadcaster bus.Broadcaster
+	measureService measure.SchemaService
+	broadcaster    bus.Broadcaster
 	*queryService
 	*bus.UnImplementedHealthyListener
 }
@@ -64,11 +66,33 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	if e := t.log.Debug(); e.Enabled() {
 		e.RawJSON("req", logger.Proto(request)).Msg("received a topN query event")
 	}
+	nodeSelectors := make(map[string][]string)
+	for _, g := range request.Groups {
+		if gs, ok := t.measureService.LoadGroup(g); ok {
+			if ns, exist := t.parseNodeSelector(request.Stages, gs.GetSchema().ResourceOpts); exist {
+				nodeSelectors[g] = ns
+			} else if len(gs.GetSchema().ResourceOpts.Stages) > 0 {
+				t.log.Error().Strs("req_stages", request.Stages).Strs("default_stages", gs.GetSchema().GetResourceOpts().GetDefaultStages()).Msg("no stage found")
+				resp = bus.NewMessage(now, common.NewError("no stage found in request or default stages in resource opts"))
+				return
+			}
+		} else {
+			t.log.Error().Str("group", g).Msg("failed to load group")
+			resp = bus.NewMessage(now, common.NewError("failed to load group %s", g))
+			return
+		}
+	}
+	if len(request.Stages) > 0 && len(nodeSelectors) == 0 {
+		t.log.Error().RawJSON("req", logger.Proto(request)).Msg("no stage found")
+		resp = bus.NewMessage(now, common.NewError("no stage found"))
+		return
+	}
 	if request.Trace {
 		var tracer *pkgquery.Tracer
 		tracer, ctx = pkgquery.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, _ := tracer.StartSpan(ctx, "distributed-client")
 		span.Tag("request", convert.BytesToString(logger.Proto(request)))
+		span.Tagf("nodeSelectors", "%v", nodeSelectors)
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
@@ -85,7 +109,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	}
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
-	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessage(now, request))
+	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessageWithNodeSelectors(now, nodeSelectors, request.TimeRange, request))
 	if err != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), err))
 		return

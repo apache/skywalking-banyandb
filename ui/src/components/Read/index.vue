@@ -53,12 +53,12 @@
     FIELD_TYPE_FLOAT: 'float',
     FIELD_TYPE_DATA_BINARY: 'binaryData',
   };
-  const param = {
+  const filterConfig = reactive({
     groups: [],
     name: '',
     offset: null,
     limit: null,
-    //criteria: {},
+    stages: undefined,
     projection: {
       tagFamilies: [
         {
@@ -67,7 +67,7 @@
         },
       ],
     },
-  };
+  });
   const data = reactive({
     fields: [],
     tableFields: [],
@@ -90,6 +90,7 @@
     tableData: [],
     code: null,
     codeStorage: [],
+    byStages: false,
   });
   const tableHeader = computed(() => {
     return data.tableTags.concat(data.tableFields);
@@ -147,15 +148,30 @@
         },
       };
       timeRange = jsonToYaml(timeRange).data;
-      data.code = ref(
-        `${timeRange}offset: 0
+      data.code = `${timeRange}offset: 0
 limit: 10
 orderBy:
   indexRuleName: ""
   sort: SORT_UNSPECIFIED
-`,
-      );
+`;
     }
+  }
+  function setCode() {
+    const json = yamlToJson(data.code);
+    if (data.byStages) {
+      json.data.stages = ['hot'];
+    } else {
+      delete json.data.stages;
+    }
+    if (!json.data.hasOwnProperty('timeRange')) {
+      json.data.timeRange = {
+        begin: '',
+        end: '',
+      };
+    }
+    json.data.timeRange.begin = data.timeValue ? new Date(data.timeValue[0]) : null;
+    json.data.timeRange.end = data.timeValue ? new Date(data.timeValue[1]) : null;
+    data.code = jsonToYaml(json.data).data;
   }
   function initData() {
     $loadingCreate();
@@ -182,8 +198,8 @@ orderBy:
   function getTableData() {
     data.tableData = [];
     data.loading = true;
-    setTableParam();
-    let paramList = JSON.parse(JSON.stringify(param));
+    setTableFilterConfig();
+    let paramList = JSON.parse(JSON.stringify(filterConfig));
     if (data.type === 'measure') {
       paramList.tagProjection = paramList.projection;
       if (data.handleFields.length > 0) {
@@ -193,8 +209,6 @@ orderBy:
       }
       delete paramList.projection;
     }
-    /* paramList.offset = data.queryInfo.pagenum
-    paramList.limit = data.queryInfo.pagesize */
     paramList.name = data.resourceData.metadata.name;
     paramList.groups = [data.resourceData.metadata.group];
     getTableList(paramList, data.type)
@@ -244,15 +258,15 @@ orderBy:
     }
     data.loading = false;
   }
-  function setTableParam() {
-    let tagFamily = data.resourceData.tagFamilies[data.tagFamily];
-    let tagsList = [];
+  function setTableFilterConfig() {
+    const tagFamily = data.resourceData.tagFamilies[data.tagFamily];
+    const tagsList = [];
     tagFamily.tags.forEach((item) => {
       tagsList.push(item.name);
     });
-    param.projection.tagFamilies[0].name = tagFamily.name;
-    param.projection.tagFamilies[0].tags = tagsList;
-    //param.criteria[0].tagFamilyName = tagFamily.name
+    filterConfig.projection.tagFamilies[0].name = tagFamily.name;
+    filterConfig.projection.tagFamilies[0].tags = tagsList;
+    filterConfig.stages = data.byStages ? filterConfig.stages : undefined;
   }
   function changeTagFamilies() {
     data.tableTags = data.resourceData.tagFamilies[data.tagFamily].tags.map((item) => {
@@ -266,13 +280,12 @@ orderBy:
   }
   function handleCodeData() {
     const json = yamlToJson(data.code).data;
-    param.offset = json.offset !== undefined ? json.offset : 0;
-    param.limit = json.limit !== undefined ? json.limit : 10;
-    /* json.orderBy ? param.orderBy = json.orderBy : null */
-    delete param.timeRange;
+    filterConfig.offset = json.offset !== undefined ? json.offset : 0;
+    filterConfig.limit = json.limit !== undefined ? json.limit : 10;
+    delete filterConfig.timeRange;
     if (json.timeRange && !isNaN(Date.parse(json.timeRange.begin)) && !isNaN(Date.parse(json.timeRange.end))) {
       data.timeValue = [json.timeRange.begin, json.timeRange.end];
-      param.timeRange = json.timeRange;
+      filterConfig.timeRange = json.timeRange;
     } else if (json.timeRange.begin || json.timeRange.end) {
       data.timeValue = [];
       ElMessage({
@@ -285,12 +298,12 @@ orderBy:
     } else {
       data.timeValue = [];
     }
-    json.orderBy ? (param.orderBy = json.orderBy) : delete param.orderBy;
+    json.orderBy ? (filterConfig.orderBy = json.orderBy) : delete filterConfig.orderBy;
 
-    // Add other fields from json to param
+    // Add other fields from json to filterConfig
     Object.keys(json).forEach((key) => {
       if (!['offset', 'limit', 'timeRange', 'orderBy'].includes(key)) {
-        param[key] = json[key];
+        filterConfig[key] = json[key];
       }
     });
 
@@ -380,6 +393,13 @@ orderBy:
               :align="`right`"
             >
             </el-date-picker>
+            <el-checkbox
+              v-model="data.byStages"
+              @change="setCode"
+              label="By stages"
+              size="large"
+              style="margin-right: 10px"
+            />
             <el-button :icon="Search" @click="searchTableData" style="flex: 0 0 auto" color="#6E38F7" plain></el-button>
           </div>
         </el-col>
@@ -419,7 +439,7 @@ orderBy:
         >
           <template #default="scope">
             <el-popover
-              v-if="item.type.includes(`ARRAY`) && scope.row[item.name] !== `Null`"
+              v-if="(item.type || item.fieldType)?.includes(`ARRAY`) && scope.row[item.name] !== `Null`"
               effect="dark"
               trigger="hover"
               placement="top"

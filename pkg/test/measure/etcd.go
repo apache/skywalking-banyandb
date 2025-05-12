@@ -38,6 +38,7 @@ const (
 	indexRuleDir        = "testdata/index_rules"
 	indexRuleBindingDir = "testdata/index_rule_bindings"
 	topNAggregationDir  = "testdata/topn_aggregations"
+	groupStagesDir      = "testdata/group_stages" // new directory
 )
 
 //go:embed testdata/*
@@ -45,31 +46,52 @@ var store embed.FS
 
 // PreloadSchema loads schemas from files in the booting process.
 func PreloadSchema(ctx context.Context, e schema.Registry) error {
-	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
-		return e.CreateGroup(ctx, group)
-	}); err != nil {
-		return errors.WithStack(err)
-	}
-	if err := loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
-		_, innerErr := e.CreateMeasure(ctx, measure)
-		return innerErr
-	}); err != nil {
-		return errors.WithStack(err)
-	}
-	if err := loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
-		return e.CreateIndexRule(ctx, indexRule)
-	}); err != nil {
-		return errors.WithStack(err)
-	}
-	if err := loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
-		return e.CreateIndexRuleBinding(ctx, indexRuleBinding)
-	}); err != nil {
-		return errors.WithStack(err)
-	}
-	if err := loadSchema(topNAggregationDir, &databasev1.TopNAggregation{}, func(topN *databasev1.TopNAggregation) error {
-		return e.CreateTopNAggregation(ctx, topN)
-	}); err != nil {
-		return errors.WithStack(err)
+	return loadAllSchemas(ctx, e, groupDir)
+}
+
+// LoadSchemaWithStages loads group schemas from the groupStagesDir.
+func LoadSchemaWithStages(ctx context.Context, e schema.Registry) error {
+	return loadAllSchemas(ctx, e, groupStagesDir)
+}
+
+// loadAllSchemas is the common logic to load schemas from a given group directory.
+func loadAllSchemas(ctx context.Context, e schema.Registry, groupDirectory string) error {
+	return preloadSchemaWithFuncs(ctx, e,
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(groupDirectory, &commonv1.Group{}, func(group *commonv1.Group) error {
+				return e.CreateGroup(ctx, group)
+			})
+		},
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
+				_, innerErr := e.CreateMeasure(ctx, measure)
+				return innerErr
+			})
+		},
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
+				return e.CreateIndexRule(ctx, indexRule)
+			})
+		},
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
+				return e.CreateIndexRuleBinding(ctx, indexRuleBinding)
+			})
+		},
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(topNAggregationDir, &databasev1.TopNAggregation{}, func(topN *databasev1.TopNAggregation) error {
+				return e.CreateTopNAggregation(ctx, topN)
+			})
+		},
+	)
+}
+
+// preloadSchemaWithFuncs extracts the common logic for loading schemas.
+func preloadSchemaWithFuncs(ctx context.Context, e schema.Registry, loaders ...func(context.Context, schema.Registry) error) error {
+	for _, loader := range loaders {
+		if err := loader(ctx, e); err != nil {
+			return errors.WithStack(err)
+		}
 	}
 	return nil
 }

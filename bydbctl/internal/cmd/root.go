@@ -69,7 +69,7 @@ func RootCmdFlags(command *cobra.Command) {
 	_ = viper.BindPFlag("addr", command.PersistentFlags().Lookup("addr"))
 	viper.SetDefault("addr", "http://localhost:17913")
 
-	command.AddCommand(newGroupCmd(), newUserCmd(), newStreamCmd(), newMeasureCmd(),
+	command.AddCommand(newGroupCmd(), newUseCmd(), newStreamCmd(), newMeasureCmd(), newTopnCmd(),
 		newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newHealthCheckCmd(), newAnalyzeCmd())
 }
 

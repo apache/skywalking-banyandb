@@ -92,6 +92,7 @@ type MeasureExecutable interface {
 type DistributedExecutionContext interface {
 	bus.Broadcaster
 	TimeRange() *modelv1.TimeRange
+	NodeSelectors() map[string][]string
 }
 
 // DistributedExecutionContextKey is the key of distributed execution context in context.Context.
