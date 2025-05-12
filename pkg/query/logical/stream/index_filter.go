@@ -27,7 +27,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -272,7 +271,7 @@ func (an *andNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID,
 	return execute(searcher, seriesID, an.node, an, tr)
 }
 
-func (an *andNode) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+func (an *andNode) ShouldNotSkip(tagFamilyFilters index.FilterOp) bool {
 	for _, sn := range an.node.SubNodes {
 		if !sn.ShouldNotSkip(tagFamilyFilters) {
 			return false
@@ -326,7 +325,7 @@ func (on *orNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID, 
 	return execute(searcher, seriesID, on.node, on, tr)
 }
 
-func (on *orNode) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
+func (on *orNode) ShouldNotSkip(tagFamilyFilters index.FilterOp) bool {
 	for _, sn := range on.node.SubNodes {
 		if sn.ShouldNotSkip(tagFamilyFilters) {
 			return true
@@ -426,8 +425,8 @@ func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *
 	return s.MatchTerms(eq.Expr.Field(eq.Key.toIndex(seriesID, tr)))
 }
 
-func (eq *eq) ShouldNotSkip(tagFamilyFilters filter.Filter) bool {
-	return tagFamilyFilters.ShouldNotSkip(eq.Key.Tags[0], eq.Expr.String())
+func (eq *eq) ShouldNotSkip(tagFamilyFilters index.FilterOp) bool {
+	return tagFamilyFilters.Eq(eq.Key.Tags[0], eq.Expr.String())
 }
 
 func (eq *eq) MarshalJSON() ([]byte, error) {
@@ -472,7 +471,7 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 	)
 }
 
-func (match *match) ShouldNotSkip(_ filter.Filter) bool {
+func (match *match) ShouldNotSkip(_ index.FilterOp) bool {
 	return true
 }
 
@@ -508,9 +507,8 @@ func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID, 
 	return s.Range(r.Key.toIndex(seriesID, tr), r.Opts)
 }
 
-func (r *rangeOp) ShouldNotSkip(_ filter.Filter) bool {
-	// TODO: implement this after min/max is supported
-	return true
+func (r *rangeOp) ShouldNotSkip(tagFamilyFilters index.FilterOp) bool {
+	return tagFamilyFilters.Range(r.Key.Tags[0], r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
@@ -560,7 +558,7 @@ func (an emptyNode) String() string {
 	return "empty"
 }
 
-func (an emptyNode) ShouldNotSkip(_ filter.Filter) bool {
+func (an emptyNode) ShouldNotSkip(_ index.FilterOp) bool {
 	return true
 }
 

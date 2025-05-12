@@ -36,7 +36,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
@@ -95,7 +94,7 @@ func (mf mockFilter) Execute(_ index.GetSearcher, seriesID common.SeriesID, _ *i
 	return mf.index[mf.value][seriesID], roaring.DummyPostingList, nil
 }
 
-func (mf mockFilter) ShouldNotSkip(_ filter.Filter) bool {
+func (mf mockFilter) ShouldNotSkip(_ index.FilterOp) bool {
 	return true
 }
 

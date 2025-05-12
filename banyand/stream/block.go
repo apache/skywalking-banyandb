@@ -104,7 +104,6 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int, 
 		tags[j].resizeValues(elementsLen)
 		tags[j].valueType = t.valueType
 		tags[j].values[i] = t.marshal()
-		// TODO: support min/max for numeric type
 		if _, ok := indexedTags[t.tag]; !ok {
 			continue
 		}
@@ -118,6 +117,14 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int, 
 		err = tags[j].filter.Add(t.value)
 		if err != nil {
 			logger.Panicf("cannot add value %q to bloom filter: %v", t.value, err)
+		}
+		if t.valueType == pbv1.ValueTypeInt64 {
+			if t.primitive < tags[j].min {
+				tags[j].min = t.primitive
+			}
+			if t.primitive > tags[j].max {
+				tags[j].max = t.primitive
+			}
 		}
 	}
 }
@@ -175,7 +182,7 @@ func (b *block) validate() {
 }
 
 func (b *block) marshalTagFamily(tf tagFamily, bm *blockMetadata, ww *writers) {
-	hw, w, fw := ww.getTagMetadataWriterAndTagWriter(tf.name)
+	hw, w, fw := ww.getWriters(tf.name)
 	cc := tf.tags
 	cfm := generateTagFamilyMetadata()
 	cmm := cfm.resizeTagMetadata(len(cc))

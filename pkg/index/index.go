@@ -32,7 +32,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -442,5 +441,11 @@ type GetSearcher func(location databasev1.IndexRule_Type) (Searcher, error)
 type Filter interface {
 	fmt.Stringer
 	Execute(getSearcher GetSearcher, seriesID common.SeriesID, timeRange *RangeOpts) (posting.List, posting.List, error)
-	ShouldNotSkip(tagFamilyFilters filter.Filter) bool
+	ShouldNotSkip(tagFamilyFilters FilterOp) bool
+}
+
+// FilterOp is an interface for filtering operations based on skipping index.
+type FilterOp interface {
+	Eq(tagName string, tagValue string) bool
+	Range(tagName string, rangeOpts RangeOpts) bool
 }

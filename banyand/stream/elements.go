@@ -34,6 +34,7 @@ type tagValue struct {
 	tag       string
 	value     []byte
 	valueArr  [][]byte
+	primitive int64
 	valueType pbv1.ValueType
 }
 
@@ -41,6 +42,7 @@ func (t *tagValue) reset() {
 	t.tag = ""
 	t.value = nil
 	t.valueArr = nil
+	t.primitive = 0
 }
 
 func (t *tagValue) size() int {

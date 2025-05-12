@@ -120,7 +120,7 @@ func (sw *writers) MustClose() {
 	}
 }
 
-func (sw *writers) getTagMetadataWriterAndTagWriter(tagName string) (*writer, *writer, *writer) {
+func (sw *writers) getWriters(tagName string) (*writer, *writer, *writer) {
 	thw, ok := sw.tagFamilyMetadataWriters[tagName]
 	tw := sw.tagFamilyWriters[tagName]
 	tfw := sw.tagFamilyFilterWriters[tagName]

@@ -22,6 +22,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -105,11 +106,40 @@ func (tfs *tagFamilyFilters) unmarshal(tagFamilies map[string]*dataBlock, metaRe
 	}
 }
 
-func (tfs *tagFamilyFilters) ShouldNotSkip(tagName string, tagValue string) bool {
+func (tfs *tagFamilyFilters) Eq(tagName string, tagValue string) bool {
 	for _, tff := range tfs.tagFamilyFilters {
 		if tf, ok := (*tff)[tagName]; ok {
-			shouldNotSkip, _ := tf.filter.MightContain([]byte(tagValue))
-			return shouldNotSkip
+			res, err := tf.filter.MightContain([]byte(tagValue))
+			if err != nil {
+				logger.Panicf("failed to filter tag %s with value %s: %v", tagName, tagValue, err)
+			}
+			return res
+		}
+	}
+	return true
+}
+
+func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) bool {
+	for _, tff := range tfs.tagFamilyFilters {
+		if tf, ok := (*tff)[tagName]; ok {
+			if rangeOpts.Lower != nil {
+				lower, ok := rangeOpts.Lower.(*index.FloatTermValue)
+				if !ok {
+					logger.Panicf("lower is not a float value: %v", rangeOpts.Lower)
+				}
+				if tf.max < int64(lower.Value) || !rangeOpts.IncludesLower && tf.max == int64(lower.Value) {
+					return false
+				}
+			}
+			if rangeOpts.Upper != nil {
+				upper, ok := rangeOpts.Upper.(*index.FloatTermValue)
+				if !ok {
+					logger.Panicf("upper is not a float value: %v", rangeOpts.Upper)
+				}
+				if tf.min > int64(upper.Value) || !rangeOpts.IncludesUpper && tf.min == int64(upper.Value) {
+					return false
+				}
+			}
 		}
 	}
 	return true
