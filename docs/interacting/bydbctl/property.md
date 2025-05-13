@@ -31,7 +31,7 @@ Then, below command will create a new property:
 ```shell
 bydbctl property apply -f - <<EOF
 metadata:
-  container:
+  metadata:
     group: sw
     name: temp_data
   id: General-Service
@@ -52,7 +52,7 @@ The operation supports updating partial tags.
 ```shell
 bydbctl property apply -f - <<EOF
 metadata:
-  container:
+  metadata:
     group: sw
     name: temp_data
   id: General-Service
@@ -93,7 +93,7 @@ Query operation queries all properties in a group with a container name.
 ```shell
 bydbctl property query -f - <<EOF
 groups: ["sw"]
-container: temp_data
+name: temp_data
 EOF
 ```
 

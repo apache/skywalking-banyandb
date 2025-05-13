@@ -1,0 +1,42 @@
+{
+  "metadata": {
+    "name": "service_cpm_minute",
+    "group": "sw_updated"
+  },
+  "tag_families": [
+    {
+      "name": "default",
+      "tags": [
+        {
+          "name": "entity_id",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "extra_tag",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "name": "total",
+      "field_type": "FIELD_TYPE_INT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    },
+    {
+      "name": "extra_field",
+      "field_type": "FIELD_TYPE_STRING",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "entity_id"
+    ]
+  },
+  "interval": "1m",
+  "updated_at": "2024-06-01T00:00:00Z"
+}

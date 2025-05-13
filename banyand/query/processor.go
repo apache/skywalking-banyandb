@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -73,28 +74,32 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
 		}
 	}()
-	if len(queryCriteria.Groups) > 1 {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
-		return
-	}
-	meta := &commonv1.Metadata{
-		Name:  queryCriteria.Name,
-		Group: queryCriteria.Groups[0],
-	}
-	ec, err := p.streamService.Stream(meta)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
-		return
-	}
-	s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
-		return
+	var metadata []*commonv1.Metadata
+	var schemas []logical.Schema
+	var ecc []executor.StreamExecutionContext
+	for i := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{
+			Name:  queryCriteria.Name,
+			Group: queryCriteria.Groups[i],
+		}
+		ec, err := p.streamService.Stream(meta)
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
+			return
+		}
+		ecc = append(ecc, ec)
+		s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
+			return
+		}
+		schemas = append(schemas, s)
+		metadata = append(metadata, meta)
 	}
 
-	plan, err := logical_stream.Analyze(ctx, queryCriteria, meta, s)
+	plan, err := logical_stream.Analyze(queryCriteria, metadata, schemas, ecc)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", queryCriteria.GetName(), err))
 		return
 	}
 
@@ -123,10 +128,10 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	}
 	se := plan.(executor.StreamExecutable)
 	defer se.Close()
-	entities, err := se.Execute(executor.WithStreamExecutionContext(ctx, ec))
+	entities, err := se.Execute(ctx)
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", queryCriteria.GetName(), err))
 		return
 	}
 
@@ -161,34 +166,36 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
 		}
 	}()
-	if len(queryCriteria.Groups) > 1 {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
-		return
+	var metadata []*commonv1.Metadata
+	var schemas []logical.Schema
+	var ecc []executor.MeasureExecutionContext
+	for i := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{
+			Name:  queryCriteria.Name,
+			Group: queryCriteria.Groups[i],
+		}
+		ec, err := p.measureService.Measure(meta)
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
+			return
+		}
+		s, err := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
+			return
+		}
+		ecc = append(ecc, ec)
+		schemas = append(schemas, s)
+		metadata = append(metadata, meta)
 	}
 	ml := p.log.Named("measure", queryCriteria.Groups[0], queryCriteria.Name)
 	if e := ml.Debug(); e.Enabled() {
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	meta := &commonv1.Metadata{
-		Name:  queryCriteria.Name,
-		Group: queryCriteria.Groups[0],
-	}
-	ec, err := p.measureService.Measure(meta)
+	plan, err := logical_measure.Analyze(queryCriteria, metadata, schemas, ecc)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
-		return
-	}
-
-	s, err := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
-		return
-	}
-
-	plan, err := logical_measure.Analyze(ctx, queryCriteria, meta, s)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", queryCriteria.GetName(), err))
 		return
 	}
 	var tracer *query.Tracer
@@ -216,10 +223,10 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		e.Str("plan", plan.String()).Msg("query plan")
 	}
 
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(ctx, ec))
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(ctx)
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", queryCriteria.GetName(), err))
 		return
 	}
 	defer func() {
