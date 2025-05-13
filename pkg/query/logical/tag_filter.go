@@ -510,7 +510,7 @@ func (m *matchTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistr
 	if err != nil {
 		return false, err
 	}
-	return expr.Contains(m.Expr), nil
+	return expr.Match(m.Expr), nil
 }
 
 func (m *matchTag) MarshalJSON() ([]byte, error) {
