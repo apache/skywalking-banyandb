@@ -92,9 +92,6 @@ type tagFamilyFilters struct {
 }
 
 func (tfs *tagFamilyFilters) reset() {
-	for _, tff := range tfs.tagFamilyFilters {
-		tff.reset()
-	}
 	tfs.tagFamilyFilters = tfs.tagFamilyFilters[:0]
 }
 
