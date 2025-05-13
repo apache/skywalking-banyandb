@@ -111,6 +111,7 @@ criteria:
     value:
       str:
         value: "succeed"
+EOF
 ```
 
 You can limit the number of properties to be returned.
@@ -119,6 +120,7 @@ You can limit the number of properties to be returned.
 bydbctl property query -f - <<EOF
 groups: ["sw"]
 limit: 1
+EOF
 ```
 
 You also can return partial tags of properties(tags' projection).
@@ -127,6 +129,23 @@ You also can return partial tags of properties(tags' projection).
 bydbctl property query -f - <<EOF
 groups: ["sw"]
 tag_projection: ["name"]
+EOF
+```
+
+### Query from Multiple Groups
+
+When specifying multiple groups, use an array of group names and ensure that:
+
+* The property name is identical across groups.
+* Any tags used in filter criteria must exist in all groups with the same name and type.
+
+Example:
+
+```shell
+bydbctl property query -f - <<EOF
+groups: ["sw", "another-group"]
+name: temp_data
+EOF
 ```
 
 ## API Reference
