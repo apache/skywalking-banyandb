@@ -171,9 +171,14 @@ func loadData(stream streamv1.StreamService_WriteClient, metadata *commonv1.Meta
 
 // Write data into the server.
 func Write(conn *grpclib.ClientConn, name string, baseTime time.Time, interval time.Duration) {
+	WriteToGroup(conn, name, "default", name, baseTime, interval)
+}
+
+// WriteToGroup data into the server with a specific group.
+func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTime time.Time, interval time.Duration) {
 	metadata := &commonv1.Metadata{
 		Name:  name,
-		Group: "default",
+		Group: group,
 	}
 	schema := databasev1.NewStreamRegistryServiceClient(conn)
 	resp, err := schema.Get(context.Background(), &databasev1.StreamRegistryServiceGetRequest{Metadata: metadata})
@@ -184,7 +189,7 @@ func Write(conn *grpclib.ClientConn, name string, baseTime time.Time, interval t
 	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadData(writeClient, metadata, fmt.Sprintf("%s.json", name), baseTime, interval)
+	loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
 	gm.Eventually(func() error {
 		_, err := writeClient.Recv()

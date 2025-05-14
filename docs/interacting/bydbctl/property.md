@@ -31,7 +31,7 @@ Then, below command will create a new property:
 ```shell
 bydbctl property apply -f - <<EOF
 metadata:
-  container:
+  metadata:
     group: sw
     name: temp_data
   id: General-Service
@@ -52,7 +52,7 @@ The operation supports updating partial tags.
 ```shell
 bydbctl property apply -f - <<EOF
 metadata:
-  container:
+  metadata:
     group: sw
     name: temp_data
   id: General-Service
@@ -93,7 +93,7 @@ Query operation queries all properties in a group with a container name.
 ```shell
 bydbctl property query -f - <<EOF
 groups: ["sw"]
-container: temp_data
+name: temp_data
 EOF
 ```
 
@@ -111,6 +111,7 @@ criteria:
     value:
       str:
         value: "succeed"
+EOF
 ```
 
 You can limit the number of properties to be returned.
@@ -119,6 +120,7 @@ You can limit the number of properties to be returned.
 bydbctl property query -f - <<EOF
 groups: ["sw"]
 limit: 1
+EOF
 ```
 
 You also can return partial tags of properties(tags' projection).
@@ -127,6 +129,23 @@ You also can return partial tags of properties(tags' projection).
 bydbctl property query -f - <<EOF
 groups: ["sw"]
 tag_projection: ["name"]
+EOF
+```
+
+### Query from Multiple Groups
+
+When specifying multiple groups, use an array of group names and ensure that:
+
+* The property name is identical across groups.
+* Any tags used in filter criteria must exist in all groups with the same name and type.
+
+Example:
+
+```shell
+bydbctl property query -f - <<EOF
+groups: ["sw", "another-group"]
+name: temp_data
+EOF
 ```
 
 ## API Reference

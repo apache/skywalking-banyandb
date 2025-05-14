@@ -53,7 +53,7 @@ type Schema interface {
 	CreateFieldRef(fields ...*Field) ([]*FieldRef, error)
 	ProjTags(refs ...[]*TagRef) Schema
 	ProjFields(refs ...*FieldRef) Schema
-	Equal(Schema) bool
+	Children() []Schema
 }
 
 // TagSpec wraps offsets to access a tag in the raw data swiftly.
@@ -154,17 +154,107 @@ func (cs *CommonSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev
 // The family name of the tag is actually not used
 // since the uniqueness of the tag names can be guaranteed across families.
 func (cs *CommonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
-	tagRefs := make([][]*TagRef, len(tags))
-	for i, tagInFamily := range tags {
+	tagRefs := make([][]*TagRef, 0, len(tags))
+	for _, tagInFamily := range tags {
 		var tagRefsInFamily []*TagRef
 		for _, tag := range tagInFamily {
 			if ts, ok := cs.TagSpecMap[tag.GetTagName()]; ok {
 				tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
-			} else {
-				return nil, errors.Wrap(errTagNotDefined, tag.GetCompoundName())
 			}
 		}
-		tagRefs[i] = tagRefsInFamily
+		tagRefs = append(tagRefs, tagRefsInFamily)
 	}
 	return tagRefs, nil
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// MergeSchemas merges multiple schemas into one.
+func MergeSchemas(schemas []*CommonSchema) (*CommonSchema, error) {
+	if len(schemas) == 0 {
+		return nil, errors.New("no schemas to merge")
+	}
+
+	baseEntity := schemas[0].EntityList
+	for _, s := range schemas[1:] {
+		if !stringSliceEqual(baseEntity, s.EntityList) {
+			return nil, errors.New("schemas have different entity lists")
+		}
+	}
+
+	merged := &CommonSchema{
+		TagSpecMap: make(map[string]*TagSpec),
+		IndexRules: make([]*databasev1.IndexRule, 0),
+		EntityList: baseEntity,
+	}
+
+	indexRuleMap := make(map[string]*databasev1.IndexRule)
+
+	for _, s := range schemas {
+		for _, rule := range s.IndexRules {
+			if existedRule := indexRuleMap[rule.Metadata.Name]; existedRule == nil {
+				indexRuleMap[rule.Metadata.Name] = rule
+			} else if !stringSliceEqual(existedRule.GetTags(), rule.GetTags()) {
+				return nil, errors.Errorf("index rule %s has different tags", rule.Metadata.Name)
+			}
+		}
+	}
+	for _, rule := range indexRuleMap {
+		merged.IndexRules = append(merged.IndexRules, rule)
+	}
+
+	return merged, nil
+}
+
+func mergeTagSpecs(dst, src []*databasev1.TagSpec) []*databasev1.TagSpec {
+	res := make([]*databasev1.TagSpec, 0, len(dst)+len(src))
+	res = append(res, dst...)
+	for _, s := range src {
+		found := false
+		for i, d := range dst {
+			if d.Name == s.Name {
+				if d.Type != s.Type {
+					// If the type is different, the tag spec is not compatible.
+					// We need to set the type to unspecifed.
+					res[i].Type = databasev1.TagType_TAG_TYPE_UNSPECIFIED
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			res = append(res, s)
+		}
+	}
+	return res
+}
+
+// MergeTagFamilySpecs merges two slices of TagFamilySpec.
+func MergeTagFamilySpecs(dst []*databasev1.TagFamilySpec, src []*databasev1.TagFamilySpec) []*databasev1.TagFamilySpec {
+	res := make([]*databasev1.TagFamilySpec, 0, len(dst)+len(src))
+	res = append(res, dst...)
+	for _, s := range src {
+		found := false
+		for i, d := range dst {
+			if d.Name == s.Name {
+				res[i].Tags = mergeTagSpecs(d.Tags, s.Tags)
+				found = true
+				break
+			}
+		}
+		if !found {
+			res = append(res, s)
+		}
+	}
+	return res
 }

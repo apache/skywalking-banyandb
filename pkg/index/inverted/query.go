@@ -729,3 +729,7 @@ func (p *schema) ProjFields(...*logical.FieldRef) logical.Schema {
 func (p *schema) ProjTags(...[]*logical.TagRef) logical.Schema {
 	panic("unimplemented")
 }
+
+func (p *schema) Children() []logical.Schema {
+	return nil
+}

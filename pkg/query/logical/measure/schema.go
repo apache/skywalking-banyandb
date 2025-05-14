@@ -33,6 +33,7 @@ type schema struct {
 	measure  *databasev1.Measure
 	fieldMap map[string]*logical.FieldSpec
 	common   *logical.CommonSchema
+	children []logical.Schema
 }
 
 func (m *schema) EntityList() []string {
@@ -56,12 +57,10 @@ func (m *schema) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, erro
 }
 
 func (m *schema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
-	fieldRefs := make([]*logical.FieldRef, len(fields))
-	for idx, field := range fields {
+	fieldRefs := make([]*logical.FieldRef, 0, len(fields))
+	for _, field := range fields {
 		if fs, ok := m.fieldMap[field.Name]; ok {
-			fieldRefs[idx] = &logical.FieldRef{Field: field, Spec: fs}
-		} else {
-			return nil, errors.Wrap(errFieldNotDefined, field.Name)
+			fieldRefs = append(fieldRefs, &logical.FieldRef{Field: field, Spec: fs})
 		}
 	}
 	return fieldRefs, nil
@@ -111,4 +110,61 @@ func (m *schema) registerField(fieldIdx int, spec *databasev1.FieldSpec) {
 		FieldIdx: fieldIdx,
 		Spec:     spec,
 	}
+}
+
+func (m *schema) Children() []logical.Schema {
+	return m.children
+}
+
+func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
+	if len(schemas) == 0 {
+		return nil, nil
+	}
+	if len(schemas) == 1 {
+		return schemas[0], nil
+	}
+
+	var commonSchemas []*logical.CommonSchema
+	var tagFamilies []*databasev1.TagFamilySpec
+	fieldMap := make(map[string]*logical.FieldSpec)
+
+	for _, sm := range schemas {
+		if sm == nil {
+			continue
+		}
+		mSchema, ok := sm.(*schema)
+		if !ok {
+			continue
+		}
+
+		tagFamilies = logical.MergeTagFamilySpecs(tagFamilies, mSchema.measure.GetTagFamilies())
+
+		commonSchemas = append(commonSchemas, mSchema.common)
+
+		for name, spec := range mSchema.fieldMap {
+			if existing, exists := fieldMap[name]; exists {
+				if existing.Spec.FieldType != spec.Spec.FieldType {
+					existing.Spec.FieldType = databasev1.FieldType_FIELD_TYPE_UNSPECIFIED
+				}
+			} else {
+				fieldMap[name] = &logical.FieldSpec{
+					FieldIdx: spec.FieldIdx,
+					Spec:     spec.Spec,
+				}
+			}
+		}
+	}
+
+	mergedCommon, err := logical.MergeSchemas(commonSchemas)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := &schema{
+		common:   mergedCommon,
+		children: schemas,
+		fieldMap: fieldMap,
+	}
+	ret.common.RegisterTagFamilies(tagFamilies)
+	return ret, nil
 }
