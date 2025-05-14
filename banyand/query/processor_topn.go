@@ -23,12 +23,14 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -56,13 +58,9 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		t.log.Warn().Msg("invalid event data type")
 		return
 	}
-	if len(request.Groups) > 1 {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
-		return
-	}
-	ml := t.log.Named("topn", request.Groups[0], request.Name)
+	ml := t.log.Named("topn", strings.Join(request.Groups, ","), request.Name)
 	if e := ml.Debug(); e.Enabled() {
-		e.RawJSON("req", logger.Proto(request)).Msg("received a topn event")
+		e.RawJSON("req", logger.Proto(request)).Msg("received a topn event for groups: " + strings.Join(request.Groups, ","))
 	}
 	if request.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
 		t.log.Warn().Msg("invalid requested sort direction")
@@ -71,44 +69,56 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	if e := t.log.Debug(); e.Enabled() {
 		e.Stringer("req", request).Msg("received a topN query event")
 	}
-	topNMetadata := &commonv1.Metadata{
-		Name:  request.Name,
-		Group: request.Groups[0],
-	}
-	topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(ctx, topNMetadata)
-	if err != nil {
-		t.log.Error().Err(err).
-			Str("topN", topNMetadata.GetName()).
-			Msg("fail to get execution context")
-		return
-	}
-	if topNSchema.GetFieldValueSort() != modelv1.Sort_SORT_UNSPECIFIED &&
-		topNSchema.GetFieldValueSort() != request.GetFieldValueSort() {
-		t.log.Warn().Msg("unmatched sort direction")
-		return
-	}
-	sourceMeasure, err := t.measureService.Measure(topNSchema.GetSourceMeasure())
-	if err != nil {
-		t.log.Error().Err(err).
-			Str("topN", topNMetadata.GetName()).
-			Msg("fail to find source measure")
-		return
+	// Process all groups
+	var sourceMeasureSchemas []*databasev1.Measure
+	var topNSchemas []*databasev1.TopNAggregation
+	var ecc []executor.MeasureExecutionContext
+
+	for _, group := range request.Groups {
+		topNMetadata := &commonv1.Metadata{
+			Name:  request.Name,
+			Group: group,
+		}
+		topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(ctx, topNMetadata)
+		if err != nil {
+			t.log.Error().Err(err).
+				Str("group", group).
+				Msg("fail to get execution context")
+			return
+		}
+		if topNSchema.GetFieldValueSort() != modelv1.Sort_SORT_UNSPECIFIED &&
+			topNSchema.GetFieldValueSort() != request.GetFieldValueSort() {
+			t.log.Warn().Str("group", group).Msg("unmatched sort direction")
+			return
+		}
+		sourceMeasure, err := t.measureService.Measure(topNSchema.GetSourceMeasure())
+		if err != nil {
+			t.log.Error().Err(err).
+				Str("group", group).
+				Msg("fail to find source measure")
+			return
+		}
+		topNResultMeasure, err := t.measureService.Measure(measure.GetTopNSchemaMetadata(group))
+		if err != nil {
+			ml.Error().Err(err).Str("group", group).Msg("fail to find topn result measure")
+			return
+		}
+
+		sourceMeasureSchemas = append(sourceMeasureSchemas, sourceMeasure.GetSchema())
+		topNSchemas = append(topNSchemas, topNSchema)
+		ecc = append(ecc, topNResultMeasure)
 	}
 
-	plan, err := logical_measure.TopNAnalyze(request, sourceMeasure.GetSchema(), topNSchema)
+	plan, err := logical_measure.TopNAnalyze(request, sourceMeasureSchemas, topNSchemas, ecc)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", topNMetadata.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", request.Name, err))
 		return
 	}
 
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("topn plan")
 	}
-	topNResultMeasure, err := t.measureService.Measure(measure.GetTopNSchemaMetadata(topNMetadata.Group))
-	if err != nil {
-		ml.Error().Err(err).Str("topN", topNMetadata.GetName()).Msg("fail to find topn result measure")
-		return
-	}
+
 	var tracer *query.Tracer
 	var span *query.Span
 	if request.Trace {
@@ -129,10 +139,10 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			span.Stop()
 		}()
 	}
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithMeasureExecutionContext(ctx, topNResultMeasure))
+	mIterator, err := plan.(executor.MeasureExecutable).Execute(ctx)
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to close the topn plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", topNMetadata.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", request.Name, err))
 		return
 	}
 	defer func() {

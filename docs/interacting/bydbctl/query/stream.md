@@ -198,6 +198,42 @@ offset: 0
 EOF
 ```
 
+### Query from Multiple Groups
+
+When querying data from multiple groups, you can combine streams that share the same measure name. Note the following requirements:
+
+* Entity tag names must be identical across groups.
+* Tags with the same name across different groups must share the same type.
+* The orderBy tag and indexRuleName must be identical across groups.
+* Any tags used in filter criteria must exist in all groups with the same name and type.
+
+### Query from Multiple Groups Example
+
+When specifying multiple groups, use an array of group names. Ensure that all groups share the same stream schema as described above.
+
+```shell
+bydbctl stream query -f - <<EOF
+groups: ["stream-segment", "another-group"]
+name: "segment"
+projection:
+  tagFamilies:
+    - name: "searchable"
+      tags: ["trace_id", "latency"]
+    - name: "storage-only"
+      tags: ["start_time", "data_binary"]
+orderBy:
+  indexRuleName: "latency"
+  sort: "SORT_DESC"
+criteria:
+  condition:
+    name: "trace_id"
+    op: "BINARY_OP_EQ"
+    value:
+      str:
+        value: "example_trace_id"
+EOF
+```
+
 ### More examples can be found in [here](https://github.com/apache/skywalking-banyandb/tree/main/test/cases/stream/data/input).
 
 ## API Reference

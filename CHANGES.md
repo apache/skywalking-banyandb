@@ -50,6 +50,7 @@ Release Notes.
 - UI: Add the `stages` to groups.
 - Add time range return value from stream local index filter.
 - Deduplicate the documents on building the series index.
+- Implement multiple groups query in one request.
 
 ### Bug Fixes
 

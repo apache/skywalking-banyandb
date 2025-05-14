@@ -18,12 +18,13 @@
 package measure
 
 import (
-	"context"
+	"fmt"
 	"math"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
@@ -53,7 +54,10 @@ func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (lo
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
-func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
+func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema, ecc []executor.MeasureExecutionContext) (logical.Plan, error) {
+	if len(metadata) != len(ss) {
+		return nil, fmt.Errorf("number of schemas %d not equal to metadata count %d", len(ss), len(metadata))
+	}
 	groupByEntity := false
 	var groupByTags [][]*logical.Tag
 	if criteria.GetGroupBy() != nil {
@@ -64,13 +68,29 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 			groupByTags[i] = logical.NewTags(tagFamily.GetName(), tagFamily.GetTags()...)
 			tags = append(tags, tagFamily.GetTags()...)
 		}
-		if logical.StringSlicesEqual(s.EntityList(), tags) {
+		if logical.StringSlicesEqual(ss[0].EntityList(), tags) {
 			groupByEntity = true
 		}
 	}
-
-	// parse fields
-	plan := parseFields(criteria, metadata, groupByEntity)
+	var plan logical.UnresolvedPlan
+	var s logical.Schema
+	tagProjection := logical.ToTags(criteria.GetTagProjection())
+	if len(metadata) == 1 {
+		plan = parseFields(criteria, metadata[0], ecc[0], groupByEntity, tagProjection)
+		s = ss[0]
+	} else {
+		var err error
+		if s, err = mergeSchema(ss); err != nil {
+			return nil, err
+		}
+		plan = &unresolvedMerger{
+			criteria:      criteria,
+			metadata:      metadata,
+			ecc:           ecc,
+			tagProjection: tagProjection,
+			groupByEntity: groupByEntity,
+		}
+	}
 
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()
@@ -113,7 +133,7 @@ func Analyze(_ context.Context, criteria *measurev1.QueryRequest, metadata *comm
 }
 
 // DistributedAnalyze converts logical expressions to executable operation tree represented by Plan.
-func DistributedAnalyze(criteria *measurev1.QueryRequest, s logical.Schema) (logical.Plan, error) {
+func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (logical.Plan, error) {
 	var groupByTags [][]*logical.Tag
 	if criteria.GetGroupBy() != nil {
 		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
@@ -152,6 +172,17 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, s logical.Schema) (log
 	}
 
 	plan = limit(plan, criteria.GetOffset(), limitParameter)
+
+	var s logical.Schema
+	var err error
+	if len(ss) == 1 {
+		s = ss[0]
+	} else {
+		if s, err = mergeSchema(ss); err != nil {
+			return nil, err
+		}
+	}
+
 	p, err := plan.Analyze(s)
 	if err != nil {
 		return nil, err
@@ -166,16 +197,14 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, s logical.Schema) (log
 	return p, nil
 }
 
-// parseFields parses the query request to decide which kind of plan should be generated
-// Basically,
-// 1 - If no criteria is given, we can only scan all shards
-// 2 - If criteria is given, but all of those fields exist in the "entity" definition.
-func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, groupByEntity bool) logical.UnresolvedPlan {
+func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, ec executor.MeasureExecutionContext,
+	groupByEntity bool, tagProjection [][]*logical.Tag,
+) logical.UnresolvedPlan {
 	projFields := make([]*logical.Field, len(criteria.GetFieldProjection().GetNames()))
 	for i, fieldNameProj := range criteria.GetFieldProjection().GetNames() {
 		projFields[i] = logical.NewField(fieldNameProj)
 	}
 	timeRange := criteria.GetTimeRange()
 	return indexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		logical.ToTags(criteria.GetTagProjection()), projFields, groupByEntity, criteria.GetCriteria())
+		tagProjection, projFields, groupByEntity, criteria.GetCriteria(), ec)
 }

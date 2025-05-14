@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "name": "sw_updated"
+  },
+  "catalog": "CATALOG_MEASURE",
+  "resource_opts": {
+    "shard_num": 2,
+    "segment_interval": {
+      "unit": "UNIT_DAY",
+      "num": 1
+    },
+    "ttl": {
+      "unit": "UNIT_DAY",
+      "num": 7
+    }
+  },
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}
