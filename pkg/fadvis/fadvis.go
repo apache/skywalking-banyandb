@@ -53,10 +53,14 @@ type thresholdAdapter struct {
 }
 
 // ShouldApplyFadvis implements the fs.ThresholdProvider interface
-func (t thresholdAdapter) ShouldApplyFadvis(fileSize int64) bool {
+func (t thresholdAdapter) ShouldApplyFadvis(fileSize int64, maxSize int64) bool {
 	if t.mp == nil {
 		return fileSize >= 64*1024*1024 // Default 64MB
 	}
-	// Pass the fileSize as maxSize parameter to GetThreshold
-	return fileSize >= t.mp.GetThreshold(fileSize)
+	// Use the smaller of maxSize and the protector's threshold
+	threshold := t.mp.GetThreshold(maxSize)
+	if maxSize > 0 && maxSize < threshold {
+		threshold = maxSize
+	}
+	return fileSize >= threshold
 }

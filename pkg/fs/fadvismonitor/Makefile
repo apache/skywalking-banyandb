@@ -21,6 +21,9 @@ SHELL := /bin/bash
 ROOTDIR := $(shell cd ../../../ && pwd)
 PWD := $(shell pwd)
 
+# OS detection for platform-specific handling
+IS_LINUX := $(shell uname -s | grep -i linux)
+
 REPORTS_DIR := $(PWD)/reports
 BPF_DIR := $(PWD)/bpf
 BPF_HEADERS_DIR := $(BPF_DIR)
@@ -46,8 +49,16 @@ bpf2go-install:
 	@mkdir -p $(tool_bin)
 	@GOBIN=$(tool_bin) go install github.com/cilium/ebpf/cmd/bpf2go@$(BPF2GO_VERSION)
 	@if [ ! -f "$(BPF2GO)" ]; then \
-		echo "ERROR: Failed to install bpf2go at $(BPF2GO)"; \
-		exit 1; \
+		echo "WARNING: Failed to install bpf2go at $(BPF2GO)"; \
+		if [ "$(IS_LINUX)" = "Linux" ]; then \
+			echo "ERROR: bpf2go is required on Linux"; \
+			exit 1; \
+		fi; \
+		echo "Creating a stub bpf2go executable for non-Linux platform"; \
+		echo '#!/bin/sh' > $(BPF2GO); \
+		echo 'echo "bpf2go stub: eBPF code generation only works on Linux"' >> $(BPF2GO); \
+		echo 'exit 0' >> $(BPF2GO); \
+		chmod +x $(BPF2GO); \
 	fi
 	@echo "bpf2go tool installed successfully at $(BPF2GO)"
 
@@ -107,6 +118,8 @@ endif
 # ========= Multi-Platform eBPF Loader Generation =========
 generate-bpf: bpf2go-install
 	@echo "Starting eBPF code generation process..."
+ifeq ($(IS_LINUX),Linux)
+	@echo "Linux detected, generating eBPF code..."
 	@which clang >/dev/null || { echo "ERROR: clang not found, installing..."; sudo apt-get update && sudo apt-get install -y clang llvm; }
 	
 	@echo "Generating eBPF code for amd64..."
@@ -134,28 +147,54 @@ generate-bpf: bpf2go-install
 	fi
 
 	@echo "eBPF code generation completed for amd64 and arm64."
+else
+	@echo "Non-Linux system detected ($(shell uname -s)). Generating eBPF stub files..."
+	@mkdir -p $(BPF_DIR)
+	@# Creating stub files for eBPF on non-Linux platforms
+	@echo '//go:build (386 || amd64) && linux' > $(BPF_DIR)/bpf_x86_bpfel.go
+	@echo 'package bpf' >> $(BPF_DIR)/bpf_x86_bpfel.go
+	@echo '// This is a stub file generated on a non-Linux system' >> $(BPF_DIR)/bpf_x86_bpfel.go
+	@echo '// Real eBPF functionality is only available on Linux' >> $(BPF_DIR)/bpf_x86_bpfel.go
+	
+	@echo '//go:build arm64 && linux' > $(BPF_DIR)/bpf_arm64_bpfel.go
+	@echo 'package bpf' >> $(BPF_DIR)/bpf_arm64_bpfel.go
+	@echo '// This is a stub file generated on a non-Linux system' >> $(BPF_DIR)/bpf_arm64_bpfel.go
+	@echo '// Real eBPF functionality is only available on Linux' >> $(BPF_DIR)/bpf_arm64_bpfel.go
+	
+	@echo "Stub eBPF files created for cross-platform compatibility."
+endif
 
 # ========= BPF Benchmarking =========
 bpf-benchmark: bpf
 	@mkdir -p $(REPORTS_DIR)
-	@echo "Running fadvis benchmarks with eBPF tracing..."
+ifeq ($(IS_LINUX),Linux)
+	@echo "Running fadvis benchmarks with eBPF tracing on Linux..."
 	@go test -v -tags linux -bench=BenchmarkWithBPF -benchtime=5s -run=^$ ./... -benchmem | tee $(REPORTS_DIR)/bpf_benchmarks.txt
 	@echo "BPF benchmark results saved to $(REPORTS_DIR)/bpf_benchmarks.txt"
+else
+	@echo "eBPF benchmarks are only supported on Linux. Skipping on $(shell uname -s)."
+endif
 
 # ========= Running BPF Benchmark in Docker =========
 docker-bpf-benchmark:
 	@mkdir -p $(REPORTS_DIR)
+	@echo ">>> Checking for Docker installation..."
+	@which docker >/dev/null || { echo "ERROR: Docker not found, please install Docker first"; exit 1; }
+ifeq ($(IS_LINUX),Linux)
 	@echo ">>> Building Docker image for eBPF benchmarks…"
-	@docker build --pull -t fs-fadvis-bench -f pkg/fs/fadvisemonitor/Dockerfile .
+	@docker build --pull -t fs-fadvis-bench -f pkg/fs/fadvismonitor/Dockerfile .
 	@echo ">>> Running benchmarks inside container…"
 	@docker run --rm \
 		--cap-add=SYS_ADMIN \
 		--privileged \
 		-v $(ROOTDIR):/workspace \
-		-w /workspace/pkg/fs/fadvisemonitor \
+		-w /workspace/pkg/fs/fadvismonitor \
 		fs-fadvis-bench \
 		make bpf-benchmark | tee $(REPORTS_DIR)/docker_bpf_benchmarks.txt
 	@echo "Docker BPF benchmark results saved to $(REPORTS_DIR)/docker_bpf_benchmarks.txt"
+else
+	@echo ">>> Docker eBPF benchmarks are only supported on Linux. Skipping on $(shell uname -s)."
+endif
 
 # ========= General Benchmark Process =========
 all-benchmarks: benchmark-write benchmark-seqread benchmark-multiple-reads benchmark-mixed 
