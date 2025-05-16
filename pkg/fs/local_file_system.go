@@ -33,22 +33,23 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
-const defaultIOSize = 256 * 1024
-
 // localFileSystem implements the File System interface.
 type localFileSystem struct {
 	logger *logger.Logger
+	ioSize int
 }
 
 // LocalFile implements the File interface.
 type LocalFile struct {
-	file *os.File
+	file   *os.File
+	ioSize int
 }
 
 // NewLocalFileSystem is used to create the Local File system.
 func NewLocalFileSystem() FileSystem {
 	return &localFileSystem{
 		logger: logger.GetLogger(moduleName),
+		ioSize: 0,
 	}
 }
 
@@ -56,7 +57,25 @@ func NewLocalFileSystem() FileSystem {
 func NewLocalFileSystemWithLogger(parent *logger.Logger) FileSystem {
 	return &localFileSystem{
 		logger: parent.Named(moduleName),
+		ioSize: 0,
 	}
+}
+
+// NewLocalFileSystemWithLoggerAndIOSize is used to create the Local File system with logger and ioSize.
+func NewLocalFileSystemWithLoggerAndIOSize(parent *logger.Logger, ioSize int) FileSystem {
+	return &localFileSystem{
+		logger: parent.Named(moduleName),
+		ioSize: ioSize,
+	}
+}
+
+// Limit2IOSize is used to transfer protector memory limit to IO size.
+func Limit2IOSize(limit uint64) int {
+	ioSize := limit / 1024 / 10
+	if ioSize < 4*1024 || ioSize > 256*1024 {
+		return 0
+	}
+	return int(ioSize)
 }
 
 func readErrorHandle(operation string, err error, name string, size int) (int, error) {
@@ -131,7 +150,8 @@ func (fs *localFileSystem) CreateFile(name string, permission Mode) (File, error
 	switch {
 	case err == nil:
 		return &LocalFile{
-			file: file,
+			file:   file,
+			ioSize: fs.ioSize,
 		}, nil
 	case os.IsExist(err):
 		return nil, &FileSystemError{
@@ -156,7 +176,8 @@ func (fs *localFileSystem) OpenFile(name string) (File, error) {
 	switch {
 	case err == nil:
 		return &LocalFile{
-			file: file,
+			file:   file,
+			ioSize: fs.ioSize,
 		}, nil
 	case os.IsNotExist(err):
 		return nil, &FileSystemError{
@@ -431,7 +452,7 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 
 // SequentialWrite supports appending consecutive buffers to the end of the file.
 func (file *LocalFile) SequentialWrite() SeqWriter {
-	writer := generateWriter(file.file)
+	writer := generateWriter(file.file, file.ioSize)
 	return &seqWriter{writer: writer, fileName: file.file.Name()}
 }
 
@@ -462,7 +483,7 @@ func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 
 // SequentialRead is used to read the entire file using streaming read.
 func (file *LocalFile) SequentialRead() SeqReader {
-	reader := generateReader(file.file)
+	reader := generateReader(file.file, file.ioSize)
 	return &seqReader{reader: reader, fileName: file.file.Name()}
 }
 
@@ -555,10 +576,10 @@ func (w *seqWriter) Close() error {
 	return nil
 }
 
-func generateReader(f *os.File) *bufio.Reader {
+func generateReader(f *os.File, ioSize int) *bufio.Reader {
 	v := bufReaderPool.Get()
 	if v == nil {
-		return bufio.NewReaderSize(f, defaultIOSize)
+		return bufio.NewReaderSize(f, ioSize)
 	}
 	br := v
 	br.Reset(f)
@@ -572,10 +593,10 @@ func releaseReader(br *bufio.Reader) {
 
 var bufReaderPool = pool.Register[*bufio.Reader]("fs-bufReader")
 
-func generateWriter(f *os.File) *bufio.Writer {
+func generateWriter(f *os.File, ioSize int) *bufio.Writer {
 	v := bufWriterPool.Get()
 	if v == nil {
-		return bufio.NewWriterSize(f, defaultIOSize)
+		return bufio.NewWriterSize(f, ioSize)
 	}
 	bw := v
 	bw.Reset(f)

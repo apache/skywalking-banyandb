@@ -109,6 +109,7 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 		nil,           // indexMetrics
 		nil,           // metrics
 		5*time.Minute, // idleTimeout
+		fs.NewLocalFileSystemWithLoggerAndIOSize(logger.GetLogger("storage"), opts.IOSize),
 	)
 
 	now := time.Now().UTC()
@@ -198,7 +199,8 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 		opts,
 		nil,         // indexMetrics
 		nil,         // metrics
-		time.Second, // Set short idle timeout for testing
+		time.Second, // Set short idle timeout for testing,
+		fs.NewLocalFileSystemWithLoggerAndIOSize(logger.GetLogger("storage"), opts.IOSize),
 	)
 
 	// Test time parameters
@@ -280,7 +282,8 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 		opts,
 		nil,         // indexMetrics
 		nil,         // metrics
-		idleTimeout, // short idle timeout
+		idleTimeout, // short idle timeout,
+		fs.NewLocalFileSystemWithLoggerAndIOSize(logger.GetLogger("storage"), opts.IOSize),
 	)
 
 	// Test time parameters
@@ -411,7 +414,8 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 		opts,
 		nil,           // indexMetrics
 		nil,           // metrics
-		5*time.Minute, // idleTimeout
+		5*time.Minute, // idleTimeout,
+		fs.NewLocalFileSystemWithLoggerAndIOSize(logger.GetLogger("storage"), opts.IOSize),
 	)
 
 	// Test time parameters

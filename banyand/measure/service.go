@@ -132,7 +132,7 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
+	s.lfs = fs.NewLocalFileSystemWithLoggerAndIOSize(s.l, fs.Limit2IOSize(s.pm.GetLimit()))
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
 	observability.UpdatePath(path)

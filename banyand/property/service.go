@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -55,6 +56,7 @@ type service struct {
 	close               chan struct{}
 	db                  *database
 	l                   *logger.Logger
+	pm                  *protector.Memory
 	root                string
 	nodeID              string
 	snapshotDir         string
@@ -95,7 +97,7 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
+	s.lfs = fs.NewLocalFileSystemWithLoggerAndIOSize(s.l, fs.Limit2IOSize(s.pm.GetLimit()))
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
 	observability.UpdatePath(path)
@@ -107,7 +109,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.nodeID = node.NodeID
 
 	var err error
-	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.omr)
+	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.omr, s.lfs)
 	if err != nil {
 		return err
 	}
@@ -132,12 +134,13 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm *protector.Memory) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,
 		omr:      omr,
 		db:       &database{},
+		pm:       pm,
 		close:    make(chan struct{}),
 	}, nil
 }
