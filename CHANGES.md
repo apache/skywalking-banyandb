@@ -51,6 +51,7 @@ Release Notes.
 - Add time range return value from stream local index filter.
 - Deduplicate the documents on building the series index.
 - Implement multiple groups query in one request.
+- Replica: Replace Any with []byte Between Liaison and Data Nodes
 
 ### Bug Fixes
 

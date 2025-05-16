@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -245,10 +245,10 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		switch e := events[i].(type) {
 		case *streamv1.InternalWriteRequest:
 			writeEvent = e
-		case *anypb.Any:
+		case []byte:
 			writeEvent = &streamv1.InternalWriteRequest{}
-			if err := e.UnmarshalTo(writeEvent); err != nil {
-				w.l.Error().Err(err).RawJSON("written", logger.Proto(e)).Msg("fail to unmarshal event")
+			if err := proto.Unmarshal(e, writeEvent); err != nil {
+				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
 				continue
 			}
 		default:

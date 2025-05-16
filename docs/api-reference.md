@@ -342,7 +342,7 @@ Status is the response status for write
 | ----- | ---- | ----- | ----------- |
 | topic | [string](#string) |  |  |
 | message_id | [uint64](#uint64) |  |  |
-| body | [google.protobuf.Any](#google-protobuf-Any) |  |  |
+| body | [bytes](#bytes) |  |  |
 | batch_mod | [bool](#bool) |  |  |
 
 
@@ -360,7 +360,7 @@ Status is the response status for write
 | ----- | ---- | ----- | ----------- |
 | message_id | [uint64](#uint64) |  |  |
 | error | [string](#string) |  |  |
-| body | [google.protobuf.Any](#google-protobuf-Any) |  |  |
+| body | [bytes](#bytes) |  |  |
 | status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
 
 
