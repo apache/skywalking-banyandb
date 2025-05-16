@@ -94,6 +94,10 @@ func (mf mockFilter) Execute(_ index.GetSearcher, seriesID common.SeriesID, _ *i
 	return mf.index[mf.value][seriesID], roaring.DummyPostingList, nil
 }
 
+func (mf mockFilter) ShouldNotSkip(_ index.FilterOp) bool {
+	return true
+}
+
 type databaseSupplier struct {
 	database atomic.Value
 }
@@ -308,7 +312,8 @@ func generateStreamQueryOptions(p parameter, midx mockIndex) model.StreamQueryOp
 		Name:           "benchmark",
 		TimeRange:      &timeRange,
 		Entities:       entities,
-		Filter:         filter,
+		InvertedFilter: filter,
+		SkippingFilter: nil,
 		Order:          order,
 		TagProjection:  []model.TagProjection{tagProjection},
 		MaxElementSize: math.MaxInt32,

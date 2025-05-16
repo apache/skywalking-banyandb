@@ -23,6 +23,7 @@ import (
 	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -56,7 +57,11 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		entity[idx] = pbv1.AnyTagValue
 	}
 	var err error
-	ctx.filter, ctx.entities, err = buildLocalFilter(uis.criteria, s, entityDict, entity)
+	ctx.invertedFilter, ctx.entities, err = buildLocalFilter(uis.criteria, s, entityDict, entity, databasev1.IndexRule_TYPE_INVERTED)
+	if err != nil {
+		return nil, err
+	}
+	ctx.skippingFilter, _, err = buildLocalFilter(uis.criteria, s, entityDict, entity, databasev1.IndexRule_TYPE_SKIPPING)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +102,8 @@ func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext, ec execu
 		projectionTagRefs: ctx.projTagsRefs,
 		projectionTags:    ctx.projectionTags,
 		metadata:          uis.metadata,
-		filter:            ctx.filter,
+		invertedFilter:    ctx.invertedFilter,
+		skippingFilter:    ctx.skippingFilter,
 		entities:          ctx.entities,
 		l:                 logger.GetLogger("query", "stream", "local-index"),
 		ec:                ec,
@@ -119,7 +125,8 @@ func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criter
 
 type analyzeContext struct {
 	s                logical.Schema
-	filter           index.Filter
+	invertedFilter   index.Filter
+	skippingFilter   index.Filter
 	entities         [][]*modelv1.TagValue
 	projectionTags   []model.TagProjection
 	globalConditions []interface{}
