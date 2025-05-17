@@ -61,7 +61,7 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 				tst.RUnlock()
 				if curSnapshot != nil {
 					defer curSnapshot.decRef()
-					merged, err := tst.mergeMemParts(curSnapshot, mergeCh)
+					merged, err := tst.mergeMemParts(curSnapshot, mergeCh, tst.cache)
 					if err != nil {
 						tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
 						tst.incTotalFlushLoopErr(1)
@@ -111,7 +111,7 @@ func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher watc
 	return flusherWatchers
 }
 
-func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroduction) (bool, error) {
+func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroduction, cache *cache) (bool, error) {
 	var memParts []*partWrapper
 	mergedIDs := make(map[uint64]struct{})
 	for i := range snp.parts {
@@ -127,7 +127,7 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 	// merge memory must not be closed by the tsTable.close
 	closeCh := make(chan struct{})
 	newPart, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMergedFlusher, memParts,
-		mergedIDs, mergeCh, closeCh, "mem")
+		mergedIDs, mergeCh, closeCh, "mem", cache)
 	close(closeCh)
 	if err != nil {
 		if errors.Is(err, errClosed) {
@@ -153,7 +153,7 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 		partsCount++
 		partPath := partPath(tst.root, pw.ID())
 		pw.mp.mustFlush(tst.fileSystem, partPath)
-		newPW := newPartWrapper(nil, mustOpenFilePart(pw.ID(), tst.root, tst.fileSystem))
+		newPW := newPartWrapper(nil, mustOpenFilePart(pw.ID(), tst.root, tst.fileSystem, nil))
 		newPW.p.partMetadata.ID = pw.ID()
 		ind.flushed[newPW.ID()] = newPW
 	}

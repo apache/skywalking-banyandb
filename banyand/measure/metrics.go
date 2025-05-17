@@ -283,6 +283,8 @@ func (s *supplier) newMetrics(p common.Position) (storage.Metrics, *observabilit
 			totalFileBlocks:                factory.NewGauge("total_file_blocks", common.ShardLabelNames()...),
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
+			totalCacheRequests:             factory.NewGauge("total_cache_requests", common.ShardLabelNames()...),
+			totalCacheMisses:               factory.NewGauge("total_cache_misses", common.ShardLabelNames()...),
 		},
 	}, factory
 }
@@ -325,6 +327,8 @@ func (tst *tsTable) Collect(m storage.Metrics) {
 	metrics.totalFileBlocks.Set(float64(totalFileBlocks), tst.p.ShardLabelValues()...)
 	metrics.totalFilePartBytes.Set(float64(totalFilePartBytes), tst.p.ShardLabelValues()...)
 	metrics.totalFilePartUncompressedBytes.Set(float64(totalFilePartUncompressedBytes), tst.p.ShardLabelValues()...)
+	metrics.totalCacheRequests.Set(float64(tst.cache.requests), tst.p.ShardLabelValues()...)
+	metrics.totalCacheMisses.Set(float64(tst.cache.misses), tst.p.ShardLabelValues()...)
 }
 
 func (tst *tsTable) deleteMetrics() {
@@ -341,6 +345,8 @@ func (tst *tsTable) deleteMetrics() {
 	tst.metrics.tbMetrics.totalFileBlocks.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.totalFilePartBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.totalFilePartUncompressedBytes.Delete(tst.p.ShardLabelValues()...)
+	tst.metrics.totalCacheRequests.Delete(tst.p.ShardLabelValues()...)
+	tst.metrics.totalCacheMisses.Delete(tst.p.ShardLabelValues()...)
 }
 
 type tbMetrics struct {
@@ -355,6 +361,9 @@ type tbMetrics struct {
 	totalFileBlocks                meter.Gauge
 	totalFilePartBytes             meter.Gauge
 	totalFilePartUncompressedBytes meter.Gauge
+
+	totalCacheRequests meter.Gauge
+	totalCacheMisses   meter.Gauge
 }
 
 func (s *service) createNativeObservabilityGroup(ctx context.Context) error {

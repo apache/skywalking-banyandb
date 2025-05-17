@@ -154,7 +154,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 			partPath := partPath(tmpDir, epoch)
 			fileSystem := fs.NewLocalFileSystem()
 			mp.mustFlush(fileSystem, partPath)
-			p = mustOpenFilePart(epoch, tmpDir, fileSystem)
+			p = mustOpenFilePart(epoch, tmpDir, fileSystem, nil)
 			verifyPart(p)
 		})
 	}
@@ -220,7 +220,7 @@ func Test_partMergeIter_nextBlock(t *testing.T) {
 			partPath := partPath(tmpDir, epoch)
 			fileSystem := fs.NewLocalFileSystem()
 			mp.mustFlush(fileSystem, partPath)
-			p = mustOpenFilePart(epoch, tmpDir, fileSystem)
+			p = mustOpenFilePart(epoch, tmpDir, fileSystem, nil)
 			verifyPart(p, decoder)
 		})
 	}

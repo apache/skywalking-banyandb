@@ -53,6 +53,7 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		option:     option,
 		l:          l,
 		p:          p,
+		cache:      newCache(),
 	}
 	if m != nil {
 		tst.metrics = m.(*metrics)
@@ -121,6 +122,7 @@ type tsTable struct {
 	snapshot      *snapshot
 	introductions chan *introduction
 	loopCloser    *run.Closer
+	*cache
 	*metrics
 	p         common.Position
 	option    option
@@ -155,7 +157,7 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 			needToPersist = true
 			continue
 		}
-		p := mustOpenFilePart(id, tst.root, tst.fileSystem)
+		p := mustOpenFilePart(id, tst.root, tst.fileSystem, tst.cache)
 		p.partMetadata.ID = id
 		snp.parts = append(snp.parts, newPartWrapper(nil, p))
 		if tst.curPartID < id {
@@ -240,6 +242,7 @@ func (tst *tsTable) Close() error {
 		tst.loopCloser.CloseThenWait()
 	}
 	tst.Lock()
+	tst.cache.close()
 	defer tst.Unlock()
 	tst.deleteMetrics()
 	if tst.snapshot == nil {

@@ -277,7 +277,7 @@ func (pw *partWrapper) String() string {
 	return fmt.Sprintf("part %v", pw.p.partMetadata)
 }
 
-func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
+func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem, cache *cache) *part {
 	var p part
 	partPath := partPath(root, id)
 	p.path = partPath
@@ -287,7 +287,16 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 
 	metaPath := path.Join(partPath, metaFilename)
 	pr := mustOpenReader(metaPath, fileSystem)
-	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], pr)
+	if cache != nil {
+		if pbm := cache.get(id); pbm != nil {
+			p.primaryBlockMetadata = pbm
+		} else {
+			p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], pr)
+			cache.put(id, p.primaryBlockMetadata)
+		}
+	} else {
+		p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], pr)
+	}
 	fs.MustClose(pr)
 
 	p.primary = mustOpenReader(path.Join(partPath, primaryFilename), fileSystem)

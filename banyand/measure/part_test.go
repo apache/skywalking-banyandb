@@ -105,7 +105,7 @@ func TestMustInitFromDataPoints(t *testing.T) {
 
 			fileSystem := fs.NewLocalFileSystem()
 			mp.mustFlush(fileSystem, path)
-			p := mustOpenFilePart(epoch, tmpPath, fileSystem)
+			p := mustOpenFilePart(epoch, tmpPath, fileSystem, nil)
 			defer p.close()
 			assert.Equal(t, tt.want.BlocksCount, p.partMetadata.BlocksCount)
 			assert.Equal(t, tt.want.MinTimestamp, p.partMetadata.MinTimestamp)
