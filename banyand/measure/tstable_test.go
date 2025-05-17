@@ -98,6 +98,7 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 			tst := &tsTable{
 				loopCloser:    run.NewCloser(2),
 				introductions: make(chan *introduction),
+				cache:         newCache(),
 			}
 			flushCh := make(chan *flusherIntroduction)
 			mergeCh := make(chan *mergerIntroduction)
@@ -248,6 +249,7 @@ func Test_tstIter(t *testing.T) {
 					loopCloser:    run.NewCloser(2),
 					introductions: make(chan *introduction),
 					fileSystem:    fs.NewLocalFileSystem(),
+					cache:         newCache(),
 					root:          tmpPath,
 				}
 				tst.gc.init(tst)

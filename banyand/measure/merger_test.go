@@ -312,10 +312,10 @@ func Test_mergeParts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			verify := func(t *testing.T, pp []*partWrapper, fileSystem fs.FileSystem, root string, partID uint64) {
+			verify := func(t *testing.T, pp []*partWrapper, fileSystem fs.FileSystem, root string, partID uint64, cache *cache) {
 				closeCh := make(chan struct{})
 				defer close(closeCh)
-				p, err := mergeParts(fileSystem, closeCh, pp, partID, root)
+				p, err := mergeParts(fileSystem, closeCh, pp, partID, root, cache)
 				if tt.wantErr != nil {
 					if !errors.Is(err, tt.wantErr) {
 						t.Fatalf("Unexpected error: got %v, want %v", err, tt.wantErr)
@@ -357,7 +357,7 @@ func Test_mergeParts(t *testing.T) {
 					mp.mustInitFromDataPoints(dps)
 					pp = append(pp, newPartWrapper(mp, openMemPart(mp)))
 				}
-				verify(t, pp, fs.NewLocalFileSystem(), tmpPath, 1)
+				verify(t, pp, fs.NewLocalFileSystem(), tmpPath, 1, newCache())
 			})
 
 			t.Run("file parts", func(t *testing.T) {
@@ -374,12 +374,13 @@ func Test_mergeParts(t *testing.T) {
 					mp := generateMemPart()
 					mp.mustInitFromDataPoints(dps)
 					mp.mustFlush(fileSystem, partPath(tmpPath, uint64(i)))
-					filePW := newPartWrapper(nil, mustOpenFilePart(uint64(i), tmpPath, fileSystem))
+					filePW := newPartWrapper(nil, mustOpenFilePart(uint64(i), tmpPath, fileSystem, nil))
 					filePW.p.partMetadata.ID = uint64(i)
 					fpp = append(fpp, filePW)
 					releaseMemPart(mp)
 				}
-				verify(t, fpp, fileSystem, tmpPath, uint64(len(tt.dpsList)))
+				cache := newCache()
+				verify(t, fpp, fileSystem, tmpPath, uint64(len(tt.dpsList)), cache)
 			})
 		})
 	}

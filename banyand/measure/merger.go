@@ -95,19 +95,19 @@ func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntr
 		return nil, nil
 	}
 	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, dst,
-		toBeMerged, merges, tst.loopCloser.CloseNotify(), "file"); err != nil {
+		toBeMerged, merges, tst.loopCloser.CloseNotify(), "file", tst.cache); err != nil {
 		return dst, err
 	}
 	return dst, nil
 }
 
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
-	closeCh <-chan struct{}, typ string,
+	closeCh <-chan struct{}, typ string, cache *cache,
 ) (*partWrapper, error) {
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
 	start := time.Now()
-	newPart, err := mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root)
+	newPart, err := mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root, cache)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
 
 var errNoPartToMerge = fmt.Errorf("no part to merge")
 
-func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {
+func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string, cache *cache) (*partWrapper, error) {
 	if len(parts) == 0 {
 		return nil, errNoPartToMerge
 	}
@@ -260,7 +260,10 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
-	p := mustOpenFilePart(partID, root, fileSystem)
+	for i := range parts {
+		cache.delete(parts[i].ID())
+	}
+	p := mustOpenFilePart(partID, root, fileSystem, nil)
 	return newPartWrapper(nil, p), nil
 }
 
