@@ -31,7 +31,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -285,11 +284,11 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 	if !ok {
 		return nil, fmt.Errorf("invalid message type %T", m.Data())
 	}
-	anyMessage, err := anypb.New(message)
+	data, err := proto.Marshal(message)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal message %T: %w", m, err)
 	}
-	r.Body = anyMessage
+	r.Body = data
 	return r, nil
 }
 
@@ -323,7 +322,7 @@ func (l *future) Get() (bus.Message, error) {
 	}
 	if messageSupplier, ok := data.TopicResponseMap[t]; ok {
 		m := messageSupplier()
-		err = resp.Body.UnmarshalTo(m)
+		err = proto.Unmarshal(resp.Body, m)
 		if err != nil {
 			return bus.Message{}, err
 		}

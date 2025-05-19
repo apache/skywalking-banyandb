@@ -21,6 +21,10 @@ package pub
 import (
 	"context"
 	"crypto/tls"
+	"net"
+	"path/filepath"
+	"testing"
+
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
@@ -28,11 +32,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	health "google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/protobuf/types/known/anypb"
-	"io"
-	"net"
-	"path/filepath"
-	"testing"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
@@ -44,25 +43,6 @@ import (
 func TestPubTLS(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "queue‑pub TLS dial‑out Suite")
-}
-
-type mockService struct {
-	clusterv1.UnimplementedServiceServer
-}
-
-func (m *mockService) Send(stream clusterv1.Service_SendServer) error {
-	_, err := stream.Recv()
-	if err != nil {
-		return err
-	}
-	anyBody, err := anypb.New(&streamv1.QueryResponse{})
-	if err != nil {
-		return err
-	}
-	if err := stream.Send(&clusterv1.SendResponse{Body: anyBody}); err != nil {
-		return err
-	}
-	return io.EOF
 }
 
 func tlsServer(addr string) func() {

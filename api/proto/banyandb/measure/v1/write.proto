@@ -37,16 +37,6 @@ message DataPointValue {
   repeated model.v1.FieldValue fields = 3;
   // the version of the data point
   int64 version = 4;
-  // the type of the data point cumulative or delta
-  enum Type {
-    // TYPE_UNSPECIFIED is the default value.
-    TYPE_UNSPECIFIED = 0;
-    // TYPE_CUMULATIVE is the cumulative data
-    TYPE_CUMULATIVE = 1;
-    // TYPE_DELTA is the delta data
-    TYPE_DELTA = 2;
-  }
-  Type type = 5;
 }
 
 // WriteRequest is the request contract for write
