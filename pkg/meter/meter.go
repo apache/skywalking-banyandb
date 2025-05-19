@@ -18,6 +18,8 @@
 // Package meter provides a simple meter system for metrics. The metrics are aggregated by the meter provider.
 package meter
 
+//go:generate mockgen -destination=mock_meter.go -package=meter github.com/apache/skywalking-banyandb/pkg/meter Provider,Counter,Gauge,Histogram,Scope,Instrument
+
 type (
 	// Buckets is a slice of bucket boundaries.
 	Buckets []float64

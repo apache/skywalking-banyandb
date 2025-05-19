@@ -475,3 +475,141 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 	// Clean up
 	segment.DecRef()
 }
+
+func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
+	tempDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-expired-segments")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{
+			Database: "test-db",
+			Stage:    "test-stage",
+		}
+	})
+
+	// Use a short TTL for testing - 3 days
+	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
+		) (mockTSTable, error) {
+			return mockTSTable{ID: common.ShardID(0)}, nil
+		},
+		ShardNum: 2,
+		SegmentInterval: IntervalRule{
+			Unit: DAY,
+			Num:  1,
+		},
+		TTL: IntervalRule{
+			Unit: DAY,
+			Num:  3, // 3 days TTL
+		},
+		SeriesIndexFlushTimeoutSeconds: 10,
+		SeriesIndexCacheMaxBytes:       1024 * 1024,
+	}
+
+	// Create segment controller with a short idle timeout
+	idleTimeout := 100 * time.Millisecond
+	sc := newSegmentController[mockTSTable, mockTSTableOpener](
+		ctx,
+		tempDir,
+		l,
+		opts,
+		nil,         // indexMetrics
+		nil,         // metrics
+		idleTimeout, // short idle timeout
+	)
+
+	// Create segments spanning 6 days - some will be expired, some won't
+	now := time.Now().UTC()
+	baseDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+	// Create segments representing different days
+	// day1 through day3 should be considered expired (older than TTL)
+	// day4 through day6 should not be expired
+	segmentDates := []time.Time{
+		baseDate.AddDate(0, 0, -6), // day1 - expired
+		baseDate.AddDate(0, 0, -5), // day2 - expired
+		baseDate.AddDate(0, 0, -4), // day3 - expired
+		baseDate.AddDate(0, 0, -2), // day4 - not expired
+		baseDate.AddDate(0, 0, -1), // day5 - not expired
+		baseDate,                   // day6 - not expired (today)
+	}
+
+	var segments []*segment[mockTSTable, mockTSTableOpener]
+
+	// Create segments
+	for _, date := range segmentDates {
+		segmentPath := filepath.Join(tempDir, "segment-"+date.Format(dayFormat))
+		err := os.MkdirAll(segmentPath, DirPerm)
+		require.NoError(t, err)
+
+		// Write metadata file
+		metadataPath := filepath.Join(segmentPath, metadataFilename)
+		err = os.WriteFile(metadataPath, []byte(currentVersion), FilePerm)
+		require.NoError(t, err)
+
+		// Open segment
+		suffix := date.Format(dayFormat)
+		segment, err := sc.openSegment(ctx, date, date.Add(24*time.Hour), segmentPath, suffix)
+		require.NoError(t, err)
+
+		// Add segment to controller
+		sc.Lock()
+		sc.lst = append(sc.lst, segment)
+		sc.sortLst()
+		sc.Unlock()
+
+		segments = append(segments, segment)
+	}
+
+	// Verify all segments are initially open
+	for i, seg := range segments {
+		assert.Greater(t, seg.refCount, int32(0), "Segment %d should be open", i)
+	}
+
+	// Set the "lastAccessed" time for some segments to make them idle
+	// Make the first, third, and fifth segments idle (0, 2, 4)
+	segments[0].lastAccessed.Store(time.Now().Add(-time.Second).UnixNano()) // day1 - expired
+	segments[2].lastAccessed.Store(time.Now().Add(-time.Second).UnixNano()) // day3 - expired
+	segments[4].lastAccessed.Store(time.Now().Add(-time.Second).UnixNano()) // day5 - not expired
+
+	// Close idle segments
+	closedCount := sc.closeIdleSegments()
+	assert.Equal(t, 3, closedCount, "Should have closed 3 segments")
+
+	// Verify segments 0, 2, and 4 are closed
+	assert.Equal(t, int32(0), segments[0].refCount, "Segment 0 should be closed")
+	assert.NotNil(t, segments[1].index, "Segment 1 should remain open")
+	assert.Equal(t, int32(0), segments[2].refCount, "Segment 2 should be closed")
+	assert.NotNil(t, segments[3].index, "Segment 3 should remain open")
+	assert.Equal(t, int32(0), segments[4].refCount, "Segment 4 should be closed")
+	assert.NotNil(t, segments[5].index, "Segment 5 should remain open")
+
+	// Now delete expired segments
+	// Get the time range for segments 0, 1, and 2 (the expired ones)
+	timeRange := timestamp.NewInclusiveTimeRange(
+		segments[0].Start,
+		segments[2].End,
+	)
+
+	deletedCount := sc.deleteExpiredSegments(timeRange)
+	assert.Equal(t, int64(3), deletedCount, "Should have deleted 3 expired segments")
+
+	// Verify segment controller's segment list
+	assert.Len(t, sc.lst, 3, "Should have 3 segments remaining")
+
+	// Verify the remaining segments are the non-expired ones (day4, day5, day6)
+	expectedDates := []time.Time{
+		baseDate.AddDate(0, 0, -2), // day4
+		baseDate.AddDate(0, 0, -1), // day5
+		baseDate,                   // day6
+	}
+
+	for i, seg := range sc.lst {
+		assert.Equal(t, expectedDates[i].Format(dayFormat), seg.TimeRange.Start.Format(dayFormat),
+			"Remaining segment %d should be from the expected date", i)
+	}
+}
