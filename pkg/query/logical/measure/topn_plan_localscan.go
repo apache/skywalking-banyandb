@@ -48,6 +48,7 @@ var (
 type unresolvedLocalScan struct {
 	startTime   time.Time
 	endTime     time.Time
+	ec          executor.MeasureExecutionContext
 	name        string
 	conditions  []*modelv1.Condition
 	groupByTags []string
@@ -102,6 +103,7 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 			},
 			FieldProjection: fieldProjection,
 		},
+		ec: uls.ec,
 	}, nil
 }
 
@@ -142,12 +144,12 @@ var _ logical.Plan = (*localScan)(nil)
 
 type localScan struct {
 	s       logical.Schema
+	ec      executor.MeasureExecutionContext
 	options model.MeasureQueryOptions
 }
 
 func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
-	ec := executor.FromMeasureExecutionContext(ctx)
-	result, err := ec.Query(ctx, i.options)
+	result, err := i.ec.Query(ctx, i.options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}

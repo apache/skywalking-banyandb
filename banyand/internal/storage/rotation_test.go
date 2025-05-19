@@ -76,8 +76,9 @@ func TestRetention(t *testing.T) {
 				segments, _ := segCtrl.segments(false)
 				if len(segments) != expected {
 					ct.Errorf("expect %d segments, got %d", expected, len(segments))
+					tsdb.Tick(ts.UnixNano())
 				}
-			}, flags.EventuallyTimeout, time.Millisecond, "wait for %d segment to be created", expected)
+			}, flags.EventuallyTimeout, 500*time.Millisecond, "wait for %d segment to be created", expected)
 			// amend the time to the next day
 			ts = ts.Add(time.Hour)
 		}

@@ -48,6 +48,7 @@ type localIndexScan struct {
 	schema            logical.Schema
 	filter            index.Filter
 	result            model.StreamQueryResult
+	ec                executor.StreamExecutionContext
 	order             *logical.OrderBy
 	metadata          *commonv1.Metadata
 	l                 *logger.Logger
@@ -88,9 +89,8 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 			Sort:  i.order.Sort,
 		}
 	}
-	ec := executor.FromStreamExecutionContext(ctx)
 	var err error
-	if i.result, err = ec.Query(ctx, model.StreamQueryOptions{
+	if i.result, err = i.ec.Query(ctx, model.StreamQueryOptions{
 		Name:           i.metadata.GetName(),
 		TimeRange:      &i.timeRange,
 		Entities:       i.entities,

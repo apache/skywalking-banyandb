@@ -25,7 +25,6 @@ import (
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -76,7 +75,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 
 		if reqSupplier, ok := data.TopicRequestMap[*topic]; ok {
 			req := reqSupplier()
-			if errUnmarshal := writeEntity.Body.UnmarshalTo(req); errUnmarshal != nil {
+			if errUnmarshal := proto.Unmarshal(writeEntity.Body, req); errUnmarshal != nil {
 				s.reply(stream, writeEntity, errUnmarshal, "failed to unmarshal message")
 				continue
 			}
@@ -129,14 +128,14 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			s.reply(stream, writeEntity, nil, fmt.Sprintf("invalid response: %T", d))
 			continue
 		}
-		anyMessage, err := anypb.New(message)
+		data, err := proto.Marshal(message)
 		if err != nil {
 			s.reply(stream, writeEntity, err, "failed to marshal message")
 			continue
 		}
 		if err := stream.Send(&clusterv1.SendResponse{
 			MessageId: writeEntity.MessageId,
-			Body:      anyMessage,
+			Body:      data,
 		}); err != nil {
 			s.log.Error().Stringer("request", writeEntity).Dur("latency", time.Since(start)).Err(err).Msg("failed to send query response")
 			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
