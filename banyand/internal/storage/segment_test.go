@@ -524,6 +524,7 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 		nil,         // indexMetrics
 		nil,         // metrics
 		idleTimeout, // short idle timeout
+		fs.NewLocalFileSystemWithLoggerAndIOSize(logger.GetLogger("storage"), opts.IOSize),
 	)
 
 	// Create segments spanning 6 days - some will be expired, some won't
