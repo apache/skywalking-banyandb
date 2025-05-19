@@ -72,10 +72,7 @@ func NewLocalFileSystemWithLoggerAndIOSize(parent *logger.Logger, ioSize int) Fi
 // Limit2IOSize is used to transfer protector memory limit to IO size.
 func Limit2IOSize(limit uint64) int {
 	ioSize := limit / 1024 / 10
-	if ioSize < 4*1024 || ioSize > 256*1024 {
-		return 0
-	}
-	return int(ioSize)
+	return max(4*1024, min(256*1024, int(ioSize)))
 }
 
 func readErrorHandle(operation string, err error, name string, size int) (int, error) {
