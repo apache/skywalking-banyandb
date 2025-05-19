@@ -63,7 +63,7 @@ type TSDBOpts[T TSTable, O any] struct {
 	ShardNum                       uint32
 	DisableRetention               bool
 	SegmentIdleTimeout             time.Duration
-	IOSize                         int
+	MemoryLimit                    uint64
 }
 
 type (
@@ -119,7 +119,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	}
 	p := common.GetPosition(ctx)
 	location := filepath.Clean(opts.Location)
-	tsdbLfs := fs.NewLocalFileSystemWithLoggerAndIOSize(logger.GetLogger("storage"), opts.IOSize)
+	tsdbLfs := fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit)
 	tsdbLfs.MkdirIfNotExist(location, DirPerm)
 	l := logger.Fetch(ctx, p.Database)
 	clock, _ := timestamp.GetClock(ctx)

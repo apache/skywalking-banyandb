@@ -61,8 +61,10 @@ func NewLocalFileSystemWithLogger(parent *logger.Logger) FileSystem {
 	}
 }
 
-// NewLocalFileSystemWithLoggerAndIOSize is used to create the Local File system with logger and ioSize.
-func NewLocalFileSystemWithLoggerAndIOSize(parent *logger.Logger, ioSize int) FileSystem {
+// NewLocalFileSystemWithLoggerAndLimit is used to create the Local File system with logger and limit,
+// limit is used to set the IO size.
+func NewLocalFileSystemWithLoggerAndLimit(parent *logger.Logger, limit uint64) FileSystem {
+	ioSize := limit2IOSize(limit)
 	return &localFileSystem{
 		logger: parent.Named(moduleName),
 		ioSize: ioSize,
@@ -70,7 +72,7 @@ func NewLocalFileSystemWithLoggerAndIOSize(parent *logger.Logger, ioSize int) Fi
 }
 
 // Limit2IOSize is used to transfer protector memory limit to IO size.
-func Limit2IOSize(limit uint64) int {
+func limit2IOSize(limit uint64) int {
 	ioSize := limit / 1024 / 10
 	return max(4*1024, min(256*1024, int(ioSize)))
 }
