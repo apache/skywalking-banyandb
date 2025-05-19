@@ -244,6 +244,9 @@ func (d *database[T, O]) collect() {
 	refCount := int32(0)
 	ss, _ := d.segmentController.segments(false)
 	for _, s := range ss {
+		if atomic.LoadInt32(&s.refCount) <= 0 {
+			continue
+		}
 		for _, t := range s.Tables() {
 			t.Collect(d.segmentController.metrics)
 		}
@@ -252,6 +255,9 @@ func (d *database[T, O]) collect() {
 		refCount += atomic.LoadInt32(&s.refCount)
 	}
 	d.totalSegRefs.Set(float64(refCount))
+	if d.metrics.schedulerMetrics == nil {
+		return
+	}
 	metrics := d.scheduler.Metrics()
 	for job, m := range metrics {
 		d.metrics.schedulerMetrics.Collect(job, m)
