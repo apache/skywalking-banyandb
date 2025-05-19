@@ -78,5 +78,14 @@ jobs:
         run: make build
       - name: Test integration and banyand
         run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci
+      - if: ${{ failure() }}
+        run: |
+          ls /tmp
+      - uses: actions/upload-artifact@v4
+        if: ${{ failure() }}
+        name: Upload BanyanDB Data Folder
+        with:
+          name: test-data-${{ matrix.test.name }}
+          path: "/tmp/banyandb-test-*"
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3

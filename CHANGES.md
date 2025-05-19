@@ -74,6 +74,7 @@ Release Notes.
 - UI: Fix the Stream List.
 - Fix the oom issue when loading too many unnecessary parts into memory.
 - bydbctl: Fix the bug that the bydbctl can't parse the absolute time flag.
+- Fix the crash when collecting the metrics from a closed segment.
 
 ### Documentation
 
