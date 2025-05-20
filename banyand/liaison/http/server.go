@@ -72,23 +72,23 @@ type Server interface {
 
 type server struct {
 	creds           credentials.TransportCredentials
-	tlsReloader     *pkgtls.Reloader
-	grpcTLSReloader *pkgtls.Reloader
-	l               *logger.Logger
-	handlerWrapper  *atomicHandler
+	grpcCtx         context.Context
 	srv             *http.Server
+	grpcCancel      context.CancelFunc
+	handlerWrapper  *atomicHandler
+	grpcTLSReloader *pkgtls.Reloader
 	stopCh          chan struct{}
 	gwMux           *runtime.ServeMux
 	grpcClient      atomic.Pointer[healthcheck.Client]
-	grpcMu          sync.Mutex
-	grpcCtx         context.Context
-	grpcCancel      context.CancelFunc
+	l               *logger.Logger
+	tlsReloader     *pkgtls.Reloader
 	host            string
 	listenAddr      string
 	grpcAddr        string
 	keyFile         string
 	certFile        string
 	grpcCert        string
+	grpcMu          sync.Mutex
 	port            uint32
 	tls             bool
 }
