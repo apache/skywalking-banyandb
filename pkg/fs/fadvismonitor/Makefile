@@ -66,6 +66,16 @@ bpf2go-install:
 bpftool-install:
 ifeq ($(IS_LINUX),Linux)
 	@echo "Linux detected, ensuring bpftool is installed..."
+
+	@which clang >/dev/null || { \
+		echo ">>> clang not found. Installing..."; \
+		sudo apt-get update && sudo apt-get install -y clang llvm; \
+	}
+	@which llvm-strip >/dev/null || { \
+		echo ">>> llvm-strip not found. Installing llvm..."; \
+		sudo apt-get update && sudo apt-get install -y llvm; \
+	}
+
 	@if [ -z "$(BPFTL)" ]; then \
 		echo "bpftool not found, installing..."; \
 		sudo apt-get update && sudo apt-get install -y bpftool clang llvm libelf-dev; \
@@ -116,7 +126,7 @@ else
 endif
 
 # ========= Multi-Platform eBPF Loader Generation =========
-generate-bpf: bpf2go-install
+generate-bpf: bpf2go-install bpftool-install
 	@echo "Starting eBPF code generation process..."
 ifeq ($(IS_LINUX),Linux)
 	@echo "Linux detected, generating eBPF code..."
