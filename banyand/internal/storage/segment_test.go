@@ -109,6 +109,7 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 		nil,           // indexMetrics
 		nil,           // metrics
 		5*time.Minute, // idleTimeout
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
 	)
 
 	now := time.Now().UTC()
@@ -198,7 +199,8 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 		opts,
 		nil,         // indexMetrics
 		nil,         // metrics
-		time.Second, // Set short idle timeout for testing
+		time.Second, // Set short idle timeout for testing,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
 	)
 
 	// Test time parameters
@@ -280,7 +282,8 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 		opts,
 		nil,         // indexMetrics
 		nil,         // metrics
-		idleTimeout, // short idle timeout
+		idleTimeout, // short idle timeout,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
 	)
 
 	// Test time parameters
@@ -411,7 +414,8 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 		opts,
 		nil,           // indexMetrics
 		nil,           // metrics
-		5*time.Minute, // idleTimeout
+		5*time.Minute, // idleTimeout,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
 	)
 
 	// Test time parameters
@@ -520,6 +524,7 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 		nil,         // indexMetrics
 		nil,         // metrics
 		idleTimeout, // short idle timeout
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
 	)
 
 	// Create segments spanning 6 days - some will be expired, some won't
