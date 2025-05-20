@@ -49,7 +49,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := observability.NewMetricService(metaSvc, localPipeline, "data", nil)
 	pm := protector.NewMemory(metricSvc)
 	pipeline := sub.NewServer(metricSvc)
-	propertySvc, err := property.NewService(metaSvc, pipeline, metricSvc)
+	propertySvc, err := property.NewService(metaSvc, pipeline, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
 	}

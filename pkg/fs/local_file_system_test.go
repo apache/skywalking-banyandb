@@ -209,4 +209,16 @@ var _ = ginkgo.Describe("Local File System", func() {
 			gomega.Expect(errFS.Code).To(gomega.Equal(isExistError))
 		})
 	})
+
+	ginkgo.Context("Limit2IOSize", func() {
+		const multi = 10 * 1024 * 1024
+
+		ginkgo.It("protector memory limit to io size test", func() {
+			gomega.Expect(limit2IOSize(100 * multi)).To(gomega.Equal(100 * 1024))
+			gomega.Expect(limit2IOSize(0 * multi)).To(gomega.Equal(4 * 1024))
+			gomega.Expect(limit2IOSize(4 * multi)).To(gomega.Equal(4 * 1024))
+			gomega.Expect(limit2IOSize(300 * multi)).To(gomega.Equal(256 * 1024))
+			gomega.Expect(limit2IOSize(256 * multi)).To(gomega.Equal(256 * 1024))
+		})
+	})
 })

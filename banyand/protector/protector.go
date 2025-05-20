@@ -98,6 +98,11 @@ func (m *Memory) AcquireResource(ctx context.Context, size uint64) error {
 	}
 }
 
+// GetLimit returns the memory limit of the protector.
+func (m *Memory) GetLimit() uint64 {
+	return m.limit
+}
+
 // Name returns the name of the protector.
 func (m *Memory) Name() string {
 	return "memory-protector"

@@ -56,17 +56,20 @@ func SetThresholdProvider(provider ThresholdProvider) {
 // localFileSystem implements the File System interface.
 type localFileSystem struct {
 	logger *logger.Logger
+	ioSize int
 }
 
 // LocalFile implements the File interface.
 type LocalFile struct {
-	file *os.File
+	file   *os.File
+	ioSize int
 }
 
 // NewLocalFileSystem is used to create the Local File system.
 func NewLocalFileSystem() FileSystem {
 	return &localFileSystem{
 		logger: logger.GetLogger(moduleName),
+		ioSize: 0,
 	}
 }
 
@@ -74,7 +77,24 @@ func NewLocalFileSystem() FileSystem {
 func NewLocalFileSystemWithLogger(parent *logger.Logger) FileSystem {
 	return &localFileSystem{
 		logger: parent.Named(moduleName),
+		ioSize: 0,
 	}
+}
+
+// NewLocalFileSystemWithLoggerAndLimit is used to create the Local File system with logger and limit,
+// limit is used to set the IO size.
+func NewLocalFileSystemWithLoggerAndLimit(parent *logger.Logger, limit uint64) FileSystem {
+	ioSize := limit2IOSize(limit)
+	return &localFileSystem{
+		logger: parent.Named(moduleName),
+		ioSize: ioSize,
+	}
+}
+
+// Limit2IOSize is used to transfer protector memory limit to IO size.
+func limit2IOSize(limit uint64) int {
+	ioSize := limit / 1024 / 10
+	return max(4*1024, min(256*1024, int(ioSize)))
 }
 
 func readErrorHandle(operation string, err error, name string, size int) (int, error) {
@@ -149,7 +169,8 @@ func (fs *localFileSystem) CreateFile(name string, permission Mode) (File, error
 	switch {
 	case err == nil:
 		return &LocalFile{
-			file: file,
+			file:   file,
+			ioSize: fs.ioSize,
 		}, nil
 	case os.IsExist(err):
 		return nil, &FileSystemError{
@@ -174,7 +195,8 @@ func (fs *localFileSystem) OpenFile(name string) (File, error) {
 	switch {
 	case err == nil:
 		return &LocalFile{
-			file: file,
+			file:   file,
+			ioSize: fs.ioSize,
 		}, nil
 	case os.IsNotExist(err):
 		return nil, &FileSystemError{
@@ -460,7 +482,7 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 
 // SequentialWrite supports appending consecutive buffers to the end of the file.
 func (file *LocalFile) SequentialWrite() SeqWriter {
-	writer := generateWriter(file.file)
+	writer := generateWriter(file.file, file.ioSize)
 	return &seqWriter{writer: writer, file: file.file, fileName: file.file.Name()}
 }
 
@@ -473,7 +495,7 @@ func (file *LocalFile) SequentialRead(cached bool) SeqReader {
 		skipFadv = true
 	}
 
-	reader := generateReader(file.file)
+	reader := generateReader(file.file, file.ioSize)
 	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), length: 0, skipFadvise: skipFadv}
 }
 
@@ -502,6 +524,7 @@ func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 
 	return size, nil
 }
+
 
 // Size is used to get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
 func (file *LocalFile) Size() (int64, error) {
@@ -558,16 +581,16 @@ func (i *seqReader) Read(p []byte) (int, error) {
 	rsize, err := i.reader.Read(p)
 	if rsize > 0 && i.file != nil && !i.skipFadvise {
 		offset := i.length
-		
+
 		// Get directory of the file to check free space
 		dir := filepath.Dir(i.fileName)
 		free := uint64(math.MaxInt64) // Default to max value if we can't get free space
-		
+
 		// Try to get free space using a direct system call
 		if freeSpace, err := disk.Usage(dir); err == nil {
 			free = freeSpace.Free
 		}
-		
+
 		// Check if we should apply fadvise based on file size and available space
 		if ShouldApplyFadvis(i.length, int64(free)) {
 			_ = ApplyFadviseToFD(i.file.Fd(), offset, int64(rsize))
@@ -616,16 +639,16 @@ func (w *seqWriter) Write(p []byte) (n int, err error) {
 		}
 
 		offset := w.length
-		
+
 		// Get directory of the file to check free space
 		dir := filepath.Dir(w.fileName)
 		free := uint64(math.MaxInt64) // Default to max value if we can't get free space
-		
+
 		// Try to get free space using a direct system call
 		if freeSpace, err := disk.Usage(dir); err == nil {
 			free = freeSpace.Free
 		}
-		
+
 		// Check if we should apply fadvise based on file size and available space
 		if ShouldApplyFadvis(w.length, int64(free)) {
 			_ = ApplyFadviseToFD(w.file.Fd(), offset, int64(n))
@@ -663,10 +686,10 @@ func (w *seqWriter) Close() error {
 	return nil
 }
 
-func generateReader(f *os.File) *bufio.Reader {
+func generateReader(f *os.File, ioSize int) *bufio.Reader {
 	v := bufReaderPool.Get()
 	if v == nil {
-		return bufio.NewReaderSize(f, defaultIOSize)
+		return bufio.NewReaderSize(f, ioSize)
 	}
 	br := v
 	br.Reset(f)
@@ -680,10 +703,10 @@ func releaseReader(br *bufio.Reader) {
 
 var bufReaderPool = pool.Register[*bufio.Reader]("fs-bufReader")
 
-func generateWriter(f *os.File) *bufio.Writer {
+func generateWriter(f *os.File, ioSize int) *bufio.Writer {
 	v := bufWriterPool.Get()
 	if v == nil {
-		return bufio.NewWriterSize(f, defaultIOSize)
+		return bufio.NewWriterSize(f, ioSize)
 	}
 	bw := v
 	bw.Reset(f)
