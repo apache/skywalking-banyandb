@@ -38,12 +38,12 @@ type shard[T TSTable] struct {
 
 func (s *segment[T, O]) openShard(ctx context.Context, id common.ShardID) (*shard[T], error) {
 	location := path.Join(s.location, fmt.Sprintf(shardTemplate, int(id)))
-	lfs.MkdirIfNotExist(location, DirPerm)
+	s.lfs.MkdirIfNotExist(location, DirPerm)
 	l := logger.Fetch(ctx, "shard"+strconv.Itoa(int(id)))
 	l.Info().Int("shard_id", int(id)).Str("path", location).Msg("loading a shard")
 	p := common.GetPosition(ctx)
 	p.Shard = strconv.Itoa(int(id))
-	t, err := s.creator(lfs, location, p, l, s.TimeRange, s.option, s.metrics)
+	t, err := s.tsdbOpts.TSTableCreator(s.lfs, location, p, l, s.TimeRange, s.tsdbOpts.Option, s.metrics)
 	if err != nil {
 		return nil, err
 	}

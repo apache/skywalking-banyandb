@@ -77,6 +77,18 @@ If you want to enable TLS for the communication between the client and liaison/s
 - `--http-key-file string`: The TLS key file of the HTTP server.
 - `--http-cert-file string`: The TLS certificate file of the HTTP server.
 
+#### Internal queue TLS (Liaison ↔ Data)
+
+Enable TLS on the internal gRPC queue that the Liaison uses to push data into every Data‑Node:
+
+- `--internal-tls`: enable TLS on the queue client inside Liaison; if false the queue uses plain TCP.
+- `--internal-ca-cert <path>`: PEM‑encoded CA (or bundle) that the queue client uses to verify Data‑Node server certificates.
+
+#### Server certificates
+
+Each Liaison/Data process still advertises its certificate with the public flags shown above (`--tls`, `--cert-file`, `--key-file`).
+The same certificate/key pair can be reused for both external traffic and the internal queue.
+
 ### Data & Storage
 
 If the node is running as a data server, you can configure the health check server port:
@@ -99,6 +111,10 @@ The following flags are used to configure the stream storage engine:
 The following flags are used to configure the embedded etcd storage engine which is only used when running as a standalone server:
 
 - `--metadata-root-path string`: The root path of metadata (default: "/tmp").
+- `--etcd-auto-compaction-mode string`: The mode to compact the storage (default: "periodic").
+- `--etcd-auto-compaction-retention string`: The retention period of the storage (default: "1h").
+- `--etcd-defrag-cron string`: The scheduled task to free up disk space (default: "@daily").
+- `--quota-backend-bytes bytes`: Quota for backend storage (default: 2.00GiB).
 
 The following flags are used to configure the memory protector:
 

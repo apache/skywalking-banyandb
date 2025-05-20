@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
 // SharedContext is the context shared between test cases in the integration testing.
@@ -38,15 +39,17 @@ type SharedContext struct {
 
 // Args is a wrapper seals all necessary info for table specs.
 type Args struct {
-	Begin     *timestamppb.Timestamp
-	End       *timestamppb.Timestamp
-	Input     string
-	Want      string
-	Offset    time.Duration
-	Duration  time.Duration
-	WantEmpty bool
-	WantErr   bool
-	DisOrder  bool
+	Begin           *timestamppb.Timestamp
+	End             *timestamppb.Timestamp
+	Input           string
+	Want            string
+	Stages          []string
+	Offset          time.Duration
+	Duration        time.Duration
+	WantEmpty       bool
+	WantErr         bool
+	DisOrder        bool
+	IgnoreElementID bool
 }
 
 // UnmarshalYAML decodes YAML raw bytes to proto.Message.
@@ -75,14 +78,20 @@ func TimeRange(args Args, shardContext SharedContext) *modelv1.TimeRange {
 type BackupSharedContext struct {
 	DataAddr   string
 	Connection *grpclib.ClientConn
+	FS         remote.FS
 	RootDir    string
+	DestDir    string
+	DestURL    string
+	S3Args     []string
 }
 
 // LifecycleSharedContext is the context shared between test cases in the lifecycle testing.
 type LifecycleSharedContext struct {
-	DataAddr   string
-	Connection *grpclib.ClientConn
-	SrcDir     string
-	DestDir    string
-	EtcdAddr   string
+	BaseTime    time.Time
+	Connection  *grpclib.ClientConn
+	LiaisonAddr string
+	DataAddr    string
+	SrcDir      string
+	DestDir     string
+	EtcdAddr    string
 }

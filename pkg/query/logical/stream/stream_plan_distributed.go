@@ -152,7 +152,8 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 			}
 		}()
 	}
-	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(dctx.TimeRange().Begin.Nanos), queryRequest))
+	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicStreamQuery,
+		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), queryRequest))
 	if err != nil {
 		return nil, err
 	}

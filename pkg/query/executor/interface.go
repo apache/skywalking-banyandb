@@ -33,21 +33,6 @@ type StreamExecutionContext interface {
 	Query(ctx context.Context, opts model.StreamQueryOptions) (model.StreamQueryResult, error)
 }
 
-// StreamExecutionContextKey is the key of stream execution context in context.Context.
-type StreamExecutionContextKey struct{}
-
-var streamExecutionContextKeyInstance = StreamExecutionContextKey{}
-
-// WithStreamExecutionContext returns a new context with stream execution context.
-func WithStreamExecutionContext(ctx context.Context, ec StreamExecutionContext) context.Context {
-	return context.WithValue(ctx, streamExecutionContextKeyInstance, ec)
-}
-
-// FromStreamExecutionContext returns the stream execution context from context.Context.
-func FromStreamExecutionContext(ctx context.Context) StreamExecutionContext {
-	return ctx.Value(streamExecutionContextKeyInstance).(StreamExecutionContext)
-}
-
 // StreamExecutable allows querying in the stream schema.
 type StreamExecutable interface {
 	Execute(context.Context) ([]*streamv1.Element, error)
@@ -57,21 +42,6 @@ type StreamExecutable interface {
 // MeasureExecutionContext allows retrieving data through the measure module.
 type MeasureExecutionContext interface {
 	Query(ctx context.Context, opts model.MeasureQueryOptions) (model.MeasureQueryResult, error)
-}
-
-// MeasureExecutionContextKey is the key of measure execution context in context.Context.
-type MeasureExecutionContextKey struct{}
-
-var measureExecutionContextKeyInstance = MeasureExecutionContextKey{}
-
-// WithMeasureExecutionContext returns a new context with measure execution context.
-func WithMeasureExecutionContext(ctx context.Context, ec MeasureExecutionContext) context.Context {
-	return context.WithValue(ctx, measureExecutionContextKeyInstance, ec)
-}
-
-// FromMeasureExecutionContext returns the measure execution context from context.Context.
-func FromMeasureExecutionContext(ctx context.Context) MeasureExecutionContext {
-	return ctx.Value(measureExecutionContextKeyInstance).(MeasureExecutionContext)
 }
 
 // MIterator allows iterating in a measure data set.
@@ -92,6 +62,7 @@ type MeasureExecutable interface {
 type DistributedExecutionContext interface {
 	bus.Broadcaster
 	TimeRange() *modelv1.TimeRange
+	NodeSelectors() map[string][]string
 }
 
 // DistributedExecutionContextKey is the key of distributed execution context in context.Context.

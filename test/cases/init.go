@@ -39,7 +39,8 @@ func Initialize(addr string, now time.Time) {
 	// stream
 	casesstreamdata.Write(conn, "sw", now, interval)
 	casesstreamdata.Write(conn, "duplicated", now, 0)
-	// // measure
+	casesstreamdata.WriteToGroup(conn, "sw", "updated", "sw_updated", now.Add(time.Minute), interval)
+	// measure
 	interval = time.Minute
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data_old.json", now.AddDate(0, 0, -2), interval)
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data.json", now, interval)
@@ -57,4 +58,5 @@ func Initialize(addr string, now time.Time) {
 	casesmeasuredata.Write(conn, "service_instance_latency_minute", "sw_metric", "service_instance_latency_minute_data1.json", now.Add(1*time.Minute), interval)
 	casesmeasuredata.Write(conn, "endpoint_traffic", "sw_metric", "endpoint_traffic.json", now, interval)
 	casesmeasuredata.Write(conn, "duplicated", "exception", "duplicated.json", now, 0)
+	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_updated", "service_cpm_minute_updated_data.json", now.Add(10*time.Minute), interval)
 }

@@ -215,20 +215,7 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 			span.Stop()
 		}()
 	}
-	nodeSelectors := make(map[string]string)
-	for _, g := range req.Groups {
-		if req.NodeSelector != "" {
-			nodeSelectors[g] = req.NodeSelector
-			continue
-		}
-		if ns, exist := ms.groupRepo.getNodeSelector(g); exist {
-			nodeSelectors[g] = ns
-			continue
-		}
-		nodeSelectors[g] = ""
-	}
-
-	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessageWithNodeSelectors(bus.MessageID(now.UnixNano()), nodeSelectors, req.TimeRange, req))
+	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), req))
 	if err != nil {
 		return nil, err
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 )
 
@@ -49,39 +50,59 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
-	if len(queryCriteria.Groups) > 1 {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
-		return
-	}
 	ml := p.log.Named("measure", queryCriteria.Groups[0], queryCriteria.Name)
 	if e := ml.Debug(); e.Enabled() {
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	meta := &commonv1.Metadata{
-		Name:  queryCriteria.Name,
-		Group: queryCriteria.Groups[0],
-	}
-	ec, err := p.measureService.Measure(meta)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
-		return
+	var schemas []logical.Schema
+	for _, g := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{
+			Name:  queryCriteria.Name,
+			Group: g,
+		}
+		ec, err := p.measureService.Measure(meta)
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
+			return
+		}
+		s, err := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
+			return
+		}
+		schemas = append(schemas, s)
 	}
 
-	s, err := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+	plan, err := logical_measure.DistributedAnalyze(queryCriteria, schemas)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
-		return
-	}
-
-	plan, err := logical_measure.DistributedAnalyze(queryCriteria, s)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", queryCriteria.Name, err))
 		return
 	}
 
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("query plan")
+	}
+	nodeSelectors := make(map[string][]string)
+	for _, g := range queryCriteria.Groups {
+		if gs, ok := p.measureService.LoadGroup(g); ok {
+			if ns, exist := p.parseNodeSelector(queryCriteria.Stages, gs.GetSchema().ResourceOpts); exist {
+				nodeSelectors[g] = ns
+			} else if len(gs.GetSchema().ResourceOpts.Stages) > 0 {
+				ml.Error().Strs("req_stages", queryCriteria.Stages).Strs("default_stages", gs.GetSchema().GetResourceOpts().GetDefaultStages()).Msg("no stage found")
+				resp = bus.NewMessage(bus.MessageID(now), common.NewError("no stage found in request or default stages in resource opts"))
+				return
+			}
+		} else {
+			ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("group not found")
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("group %s not found", g))
+			return
+		}
+	}
+	if len(queryCriteria.Stages) > 0 && len(nodeSelectors) == 0 {
+		ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("no stage found")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("no stage found"))
+		return
 	}
 	var tracer *query.Tracer
 	var span *query.Span
@@ -89,6 +110,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "distributed-%s", p.queryService.nodeID)
 		span.Tag("plan", plan.String())
+		span.Tagf("nodeSelectors", "%v", nodeSelectors)
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
@@ -103,13 +125,15 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 			span.Stop()
 		}()
 	}
+
 	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithDistributedExecutionContext(ctx, &distributedContext{
-		Broadcaster: p.broadcaster,
-		timeRange:   queryCriteria.TimeRange,
+		Broadcaster:   p.broadcaster,
+		timeRange:     queryCriteria.TimeRange,
+		nodeSelectors: nodeSelectors,
 	}))
 	if err != nil {
 		ml.Error().Err(err).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", queryCriteria.Name, err))
 		return
 	}
 	defer func() {

@@ -19,8 +19,10 @@ package schema
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
+	"math/big"
 	"path"
 	"sync"
 	"time"
@@ -172,7 +174,7 @@ func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler Eve
 		return
 	}
 	for i := range kinds {
-		e.registerToWatcher(name, kinds[i], 0, handler)
+		e.registerToWatcher(name, kinds[i], -1, handler)
 	}
 }
 
@@ -186,7 +188,7 @@ func (e *etcdSchemaRegistry) registerToWatcher(name string, kind Kind, revision 
 		return
 	}
 	e.l.Info().Str("name", name).Stringer("kind", kind).Msg("registering to a new watcher")
-	w := e.newWatcherWithRevision(name, kind, revision, CheckInterval(e.checkInterval))
+	w := e.NewWatcher(name, kind, revision, CheckInterval(e.checkInterval))
 	w.AddHandler(handler)
 	e.watchers[kind] = w
 }
@@ -578,11 +580,7 @@ func (e *etcdSchemaRegistry) revokeLease(lease *clientv3.LeaseGrantResponse) {
 	}
 }
 
-func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, opts ...WatcherOption) *watcher {
-	return e.newWatcherWithRevision(name, kind, 0, opts...)
-}
-
-func (e *etcdSchemaRegistry) newWatcherWithRevision(name string, kind Kind, revision int64, opts ...WatcherOption) *watcher {
+func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, revision int64, opts ...WatcherOption) *watcher {
 	wc := watcherConfig{
 		key:           e.prependNamespace(kind.key()),
 		kind:          kind,
@@ -591,6 +589,10 @@ func (e *etcdSchemaRegistry) newWatcherWithRevision(name string, kind Kind, revi
 	}
 	for _, opt := range opts {
 		opt(&wc)
+	}
+	nBig, err := rand.Int(rand.Reader, big.NewInt(int64(5*time.Minute)))
+	if err == nil {
+		wc.checkInterval += time.Duration(nBig.Int64())
 	}
 	return newWatcher(e.client, wc, e.l.Named(fmt.Sprintf("watcher-%s[%s]", name, kind.String())))
 }

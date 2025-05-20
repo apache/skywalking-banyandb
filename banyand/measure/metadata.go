@@ -323,7 +323,7 @@ func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchema
 	}
 
 	backoffStrategy := backoff.NewExponentialBackOff()
-	backoffStrategy.MaxElapsedTime = 2 * time.Minute
+	backoffStrategy.MaxElapsedTime = 0 // never stop until topN measure has been created
 
 	err := backoff.Retry(operation, backoffStrategy)
 	if err != nil {
@@ -384,8 +384,8 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	shardNum := ro.ShardNum
 	ttl := ro.Ttl
 	segInterval := ro.SegmentInterval
+	segmentIdleTimeout := time.Duration(0)
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
-		matched := false
 		var ttlNum uint32
 		for _, st := range ro.Stages {
 			if st.Ttl.Unit != ro.Ttl.Unit {
@@ -399,13 +399,13 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			if !selector.Matches(s.nodeLabels) {
 				continue
 			}
-			matched = true
+			ttl.Num += ttlNum
 			shardNum = st.ShardNum
 			segInterval = st.SegmentInterval
+			if st.Close {
+				segmentIdleTimeout = 5 * time.Minute
+			}
 			break
-		}
-		if matched {
-			ttl.Num += ttlNum
 		}
 	}
 	opts := storage.TSDBOpts[*tsTable, option]{
@@ -419,7 +419,8 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          factory,
-		SegmentBoundaryUpdateFn:        s.metadata.UpdateSegmentsBoundary,
+		SegmentIdleTimeout:             segmentIdleTimeout,
+		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(_ common.Position) common.Position {

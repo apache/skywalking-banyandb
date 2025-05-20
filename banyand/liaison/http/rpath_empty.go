@@ -20,6 +20,8 @@
 
 package http
 
-func (p *server) setRootPath() error {
+import "github.com/go-chi/chi/v5"
+
+func (p *server) setRootPath(_ *chi.Mux) error {
 	return nil
 }

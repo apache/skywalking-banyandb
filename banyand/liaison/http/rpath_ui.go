@@ -24,10 +24,12 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/apache/skywalking-banyandb/ui"
 )
 
-func (p *server) setRootPath() error {
+func (p *server) setRootPath(mux *chi.Mux) error {
 	fSys, err := fs.Sub(ui.DistContent, "dist")
 	if err != nil {
 		return err
@@ -35,6 +37,6 @@ func (p *server) setRootPath() error {
 	httpFS := http.FS(fSys)
 	fileServer := http.FileServer(http.FS(fSys))
 	serveIndex := serveFileContents("index.html", httpFS)
-	p.mux.Mount("/", intercept404(fileServer, serveIndex))
+	mux.Mount("/", intercept404(fileServer, serveIndex))
 	return nil
 }

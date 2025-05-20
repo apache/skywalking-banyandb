@@ -30,12 +30,11 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	banyanfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -44,17 +43,22 @@ import (
 // ErrExpiredData is returned when the data is expired.
 var ErrExpiredData = errors.New("expired data")
 
+// ErrSegmentClosed is returned when trying to access a closed segment.
+var ErrSegmentClosed = errors.New("segment closed")
+
 type segment[T TSTable, O any] struct {
-	metrics  any
-	option   O
-	creator  TSTableCreator[T, O]
-	l        *logger.Logger
-	index    *seriesIndex
-	sLst     atomic.Pointer[[]*shard[T]]
-	position common.Position
+	metrics      any
+	tsdbOpts     *TSDBOpts[T, O]
+	l            *logger.Logger
+	index        *seriesIndex
+	sLst         atomic.Pointer[[]*shard[T]]
+	indexMetrics *inverted.Metrics
+	lfs          banyanfs.FileSystem
+	position     common.Position
 	timestamp.TimeRange
 	suffix        string
 	location      string
+	lastAccessed  atomic.Int64
 	mu            sync.Mutex
 	refCount      int32
 	mustBeDeleted uint32
@@ -74,24 +78,21 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 	})
 	options := sc.getOptions()
 	id := generateSegID(options.SegmentInterval.Unit, suffixInteger)
-	sir, err := newSeriesIndex(ctx, path, options.SeriesIndexFlushTimeoutSeconds, options.SeriesIndexCacheMaxBytes, sc.indexMetrics)
-	if err != nil {
-		return nil, errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
-	}
+
 	s = &segment[T, O]{
-		id:        id,
-		location:  path,
-		suffix:    suffix,
-		TimeRange: timestamp.NewSectionTimeRange(startTime, endTime),
-		position:  p,
-		refCount:  1,
-		index:     sir,
-		metrics:   sc.metrics,
-		creator:   options.TSTableCreator,
-		option:    options.Option,
+		id:           id,
+		location:     path,
+		suffix:       suffix,
+		TimeRange:    timestamp.NewSectionTimeRange(startTime, endTime),
+		position:     p,
+		metrics:      sc.metrics,
+		indexMetrics: sc.indexMetrics,
+		tsdbOpts:     options,
+		lfs:          sc.lfs,
 	}
 	s.l = logger.Fetch(ctx, s.String())
-	return s, s.loadShards(int(options.ShardNum))
+	s.lastAccessed.Store(time.Now().UnixNano())
+	return s, s.initialize(ctx)
 }
 
 func (s *segment[T, O]) loadShards(shardNum int) error {
@@ -104,7 +105,7 @@ func (s *segment[T, O]) loadShards(shardNum int) error {
 			return nil
 		}
 		s.l.Info().Int("shard_id", shardID).Msg("loaded a existed shard")
-		_, err = s.CreateTSTableIfNotExist(common.ShardID(shardID))
+		_, err = s.createShardIfNotExist(common.ShardID(shardID))
 		return err
 	})
 }
@@ -123,36 +124,104 @@ func (s *segment[T, O]) Tables() (tt []T) {
 	return tt
 }
 
-func (s *segment[T, O]) incRef() {
+func (s *segment[T, O]) incRef(ctx context.Context) error {
+	s.lastAccessed.Store(time.Now().UnixNano())
+	if atomic.LoadInt32(&s.refCount) <= 0 {
+		return s.initialize(ctx)
+	}
 	atomic.AddInt32(&s.refCount, 1)
+	return nil
+}
+
+func (s *segment[T, O]) initialize(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if atomic.LoadInt32(&s.refCount) > 0 {
+		return nil
+	}
+
+	ctx = context.WithValue(ctx, logger.ContextKey, s.l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return s.position
+	})
+
+	sir, err := newSeriesIndex(ctx, s.location, s.tsdbOpts.SeriesIndexFlushTimeoutSeconds, s.tsdbOpts.SeriesIndexCacheMaxBytes, s.indexMetrics)
+	if err != nil {
+		return errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
+	}
+	s.index = sir
+
+	err = s.loadShards(int(s.tsdbOpts.ShardNum))
+	if err != nil {
+		s.index.Close()
+		s.index = nil
+		return errors.Wrap(errOpenDatabase, errors.WithMessage(err, "load shards failed").Error())
+	}
+	atomic.StoreInt32(&s.refCount, 1)
+
+	s.l.Info().Stringer("seg", s).Msg("segment initialized")
+	return nil
 }
 
 func (s *segment[T, O]) DecRef() {
-	n := atomic.AddInt32(&s.refCount, -1)
-	if n > 0 {
+	shouldCleanup := false
+
+	if atomic.LoadInt32(&s.refCount) <= 0 && atomic.LoadUint32(&s.mustBeDeleted) != 0 {
+		shouldCleanup = true
+	} else {
+		for {
+			current := atomic.LoadInt32(&s.refCount)
+			if current <= 0 {
+				return
+			}
+
+			if atomic.CompareAndSwapInt32(&s.refCount, current, current-1) {
+				shouldCleanup = current == 1
+				break
+			}
+		}
+	}
+
+	if !shouldCleanup {
 		return
 	}
+
+	s.performCleanup()
+}
+
+func (s *segment[T, O]) performCleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if atomic.LoadInt32(&s.refCount) > 0 && atomic.LoadUint32(&s.mustBeDeleted) == 0 {
+		return
+	}
 
 	deletePath := ""
 	if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
 		deletePath = s.location
 	}
 
-	if err := s.index.Close(); err != nil {
-		s.l.Panic().Err(err).Msg("failed to close the series index")
+	if s.index != nil {
+		if err := s.index.Close(); err != nil {
+			s.l.Panic().Err(err).Msg("failed to close the series index")
+		}
+		s.index = nil
 	}
 
 	sLst := s.sLst.Load()
 	if sLst != nil {
-		for _, s := range *sLst {
-			s.close()
+		for _, shard := range *sLst {
+			shard.close()
+		}
+		if deletePath == "" {
+			s.sLst.Store(&[]*shard[T]{})
 		}
 	}
 
 	if deletePath != "" {
-		lfs.MustRMAll(deletePath)
+		s.lfs.MustRMAll(deletePath)
 	}
 }
 
@@ -167,6 +236,10 @@ func (s *segment[T, O]) CreateTSTableIfNotExist(id common.ShardID) (T, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createShardIfNotExist(id)
+}
+
+func (s *segment[T, O]) createShardIfNotExist(id common.ShardID) (T, error) {
 	if s, ok := s.getShard(id); ok {
 		return s.table, nil
 	}
@@ -206,39 +279,41 @@ func (s *segment[T, O]) String() string {
 }
 
 type segmentController[T TSTable, O any] struct {
-	clock                   timestamp.Clock
-	metrics                 Metrics
-	opts                    *TSDBOpts[T, O]
-	l                       *logger.Logger
-	indexMetrics            *inverted.Metrics
-	segmentBoundaryUpdateFn SegmentBoundaryUpdateFn
-	position                common.Position
-	db                      string
-	stage                   string
-	location                string
-	lst                     []*segment[T, O]
-	deadline                atomic.Int64
-	optsMutex               sync.RWMutex
+	clock        timestamp.Clock
+	metrics      Metrics
+	opts         *TSDBOpts[T, O]
+	l            *logger.Logger
+	indexMetrics *inverted.Metrics
+	lfs          banyanfs.FileSystem
+	position     common.Position
+	db           string
+	stage        string
+	location     string
+	lst          []*segment[T, O]
+	deadline     atomic.Int64
+	idleTimeout  time.Duration
+	optsMutex    sync.RWMutex
 	sync.RWMutex
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
 	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
-	segmentsBoundaryUpdateFn SegmentBoundaryUpdateFn,
+	idleTimeout time.Duration, lfs banyanfs.FileSystem,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	p := common.GetPosition(ctx)
 	return &segmentController[T, O]{
-		location:                location,
-		opts:                    &opts,
-		l:                       l,
-		clock:                   clock,
-		position:                common.GetPosition(ctx),
-		metrics:                 metrics,
-		indexMetrics:            indexMetrics,
-		segmentBoundaryUpdateFn: segmentsBoundaryUpdateFn,
-		stage:                   p.Stage,
-		db:                      p.Database,
+		location:     location,
+		opts:         &opts,
+		l:            l,
+		clock:        clock,
+		position:     common.GetPosition(ctx),
+		metrics:      metrics,
+		indexMetrics: indexMetrics,
+		stage:        p.Stage,
+		db:           p.Database,
+		idleTimeout:  idleTimeout,
+		lfs:          lfs,
 	}
 }
 
@@ -261,21 +336,24 @@ func (sc *segmentController[T, O]) updateOptions(resourceOpts *commonv1.Resource
 	sc.opts.ShardNum = resourceOpts.ShardNum
 }
 
-func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange) (tt []Segment[T, O]) {
+func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange) (tt []Segment[T, O], err error) {
 	sc.RLock()
 	defer sc.RUnlock()
 	last := len(sc.lst) - 1
+	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
 	for i := range sc.lst {
 		s := sc.lst[last-i]
 		if s.GetTimeRange().End.Before(timeRange.Start) {
 			break
 		}
 		if s.Overlapping(timeRange) {
-			s.incRef()
+			if err = s.incRef(ctx); err != nil {
+				return nil, err
+			}
 			tt = append(tt, s)
 		}
 	}
-	return tt
+	return tt, nil
 }
 
 func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], error) {
@@ -287,40 +365,52 @@ func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], 
 	if err != nil {
 		return nil, err
 	}
-	s.incRef()
-	sc.notifySegmentBoundaryUpdate()
-	return s, nil
+	return s, s.incRef(context.WithValue(context.Background(), logger.ContextKey, sc.l))
 }
 
-func (sc *segmentController[T, O]) notifySegmentBoundaryUpdate() {
-	if sc.segmentBoundaryUpdateFn == nil {
-		return
-	}
-	segs := sc.segments()
-	defer func() {
-		for i := range segs {
-			segs[i].DecRef()
-		}
-	}()
-	var tr *modelv1.TimeRange
-	if len(segs) > 0 {
-		tr = &modelv1.TimeRange{
-			Begin: timestamppb.New(segs[0].Start),
-			End:   timestamppb.New(segs[len(segs)-1].End),
-		}
-	}
-	sc.segmentBoundaryUpdateFn(sc.stage, sc.db, tr)
-}
-
-func (sc *segmentController[T, O]) segments() (ss []*segment[T, O]) {
+func (sc *segmentController[T, O]) segments(reopenClosed bool) (ss []*segment[T, O], err error) {
 	sc.RLock()
 	defer sc.RUnlock()
 	r := make([]*segment[T, O], len(sc.lst))
+	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
 	for i := range sc.lst {
-		sc.lst[i].incRef()
+		if reopenClosed {
+			if err = sc.lst[i].incRef(ctx); err != nil {
+				return nil, err
+			}
+		} else {
+			if atomic.LoadInt32(&sc.lst[i].refCount) > 0 {
+				atomic.AddInt32(&sc.lst[i].refCount, 1)
+			}
+		}
 		r[i] = sc.lst[i]
 	}
-	return r
+	return r, nil
+}
+
+func (sc *segmentController[T, O]) closeIdleSegments() int {
+	maxIdleTime := sc.idleTimeout
+
+	now := time.Now().UnixNano()
+	idleThreshold := now - maxIdleTime.Nanoseconds()
+
+	segs, _ := sc.segments(false)
+	closedCount := 0
+
+	for _, seg := range segs {
+		lastAccess := seg.lastAccessed.Load()
+		// Only consider segments that have been idle for longer than the threshold
+		// and have active references (are not already closed)
+		if lastAccess < idleThreshold && atomic.LoadInt32(&seg.refCount) > 0 {
+			seg.DecRef()
+		}
+		seg.DecRef()
+		if atomic.LoadInt32(&seg.refCount) == 0 {
+			closedCount++
+		}
+	}
+
+	return closedCount
 }
 
 func (sc *segmentController[T, O]) format(tm time.Time) string {
@@ -351,7 +441,7 @@ func (sc *segmentController[T, O]) open() error {
 		suffix := sc.format(start)
 		segmentPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix))
 		metadataPath := path.Join(segmentPath, metadataFilename)
-		version, err := lfs.Read(metadataPath)
+		version, err := sc.lfs.Read(metadataPath)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				emptySegments = append(emptySegments, segmentPath)
@@ -372,7 +462,7 @@ func (sc *segmentController[T, O]) open() error {
 	if len(emptySegments) > 0 {
 		sc.l.Warn().Strs("segments", emptySegments).Msg("empty segments found, removing them.")
 		for i := range emptySegments {
-			lfs.MustRMAll(emptySegments[i])
+			sc.lfs.MustRMAll(emptySegments[i])
 		}
 	}
 	return err
@@ -407,10 +497,10 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 		end = stdEnd
 	}
 	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.format(start)))
-	lfs.MkdirPanicIfExist(segPath, DirPerm)
+	sc.lfs.MkdirPanicIfExist(segPath, DirPerm)
 	data := []byte(currentVersion)
 	metadataPath := filepath.Join(segPath, metadataFilename)
-	lf, err := lfs.CreateLockFile(metadataPath, FilePerm)
+	lf, err := sc.lfs.CreateLockFile(metadataPath, FilePerm)
 	if err != nil {
 		logger.Panicf("cannot create lock file %s: %s", metadataPath, err)
 	}
@@ -446,7 +536,8 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 }
 
 func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, err error) {
-	for _, s := range sc.segments() {
+	ss, _ := sc.segments(false)
+	for _, s := range ss {
 		if s.Before(deadline) {
 			hasSegment = true
 			id := s.id
@@ -458,7 +549,6 @@ func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, 
 		}
 		s.DecRef()
 	}
-	sc.notifySegmentBoundaryUpdate()
 	return hasSegment, err
 }
 
@@ -468,7 +558,8 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 		IncludeStart: true,
 		IncludeEnd:   false,
 	}
-	for _, s := range sc.segments() {
+	ss, _ := sc.segments(false)
+	for _, s := range ss {
 		if s.Before(deadline) {
 			if timeRange.Start.IsZero() {
 				timeRange.Start = s.Start
@@ -483,7 +574,8 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 func (sc *segmentController[T, O]) deleteExpiredSegments(timeRange timestamp.TimeRange) int64 {
 	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	var count int64
-	for _, s := range sc.segments() {
+	ss, _ := sc.segments(false)
+	for _, s := range ss {
 		if s.Before(deadline) && s.Overlapping(timeRange) {
 			s.delete()
 			sc.Lock()
@@ -493,7 +585,6 @@ func (sc *segmentController[T, O]) deleteExpiredSegments(timeRange timestamp.Tim
 		}
 		s.DecRef()
 	}
-	sc.notifySegmentBoundaryUpdate()
 	return count
 }
 

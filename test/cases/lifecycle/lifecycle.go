@@ -22,12 +22,20 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/apache/skywalking-banyandb/banyand/backup/lifecycle"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
+	streamTestData "github.com/apache/skywalking-banyandb/test/cases/stream/data"
+	topNTestData "github.com/apache/skywalking-banyandb/test/cases/topn/data"
 )
 
 // SharedContext is the shared context for the snapshot test cases.
@@ -49,12 +57,87 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 		})
 		err = lifecycleCmd.Execute()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		verifySourceDirectoriesBeforeMigration()
+		verifySourceDirectoriesAfterMigration()
 		verifyDestinationDirectoriesAfterMigration()
+		conn, err := grpchelper.Conn(SharedContext.LiaisonAddr, 10*time.Second,
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		defer func() {
+			if conn != nil {
+				_ = conn.Close()
+			}
+		}()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		sc := helpers.SharedContext{
+			Connection: conn,
+			BaseTime:   SharedContext.BaseTime,
+		}
+		// Verify measure data lifecycle stages
+		verifyLifecycleStages(sc, measureTestData.VerifyFn, helpers.Args{
+			Input:    "all",
+			Duration: 25 * time.Minute,
+			Offset:   -20 * time.Minute,
+		})
+
+		// Verify stream data lifecycle stages
+		verifyLifecycleStages(sc, streamTestData.VerifyFn, helpers.Args{
+			Input:           "all",
+			Duration:        time.Hour,
+			IgnoreElementID: true,
+		})
+
+		// Verify topN data lifecycle stages
+		verifyLifecycleStages(sc, topNTestData.VerifyFn, helpers.Args{
+			Input:    "aggr_desc",
+			Duration: 25 * time.Minute,
+			Offset:   -20 * time.Minute,
+		})
 	})
 })
 
-func verifySourceDirectoriesBeforeMigration() {
+func verifyLifecycleStages(sc helpers.SharedContext, verifyFn func(gomega.Gomega, helpers.SharedContext, helpers.Args), args helpers.Args) {
+	// Initial verification expecting error before migration
+	verifyFn(gomega.Default, sc, helpers.Args{
+		Input:    args.Input,
+		Duration: args.Duration,
+		Offset:   args.Offset,
+		WantErr:  true,
+		Stages:   args.Stages,
+	})
+
+	// Verify hot+warm stages exist after migration
+	gomega.Eventually(func(innerGm gomega.Gomega) {
+		verifyFn(innerGm, sc, helpers.Args{
+			Input:           args.Input,
+			Duration:        args.Duration,
+			Offset:          args.Offset,
+			Stages:          []string{"hot", "warm"},
+			IgnoreElementID: args.IgnoreElementID,
+		})
+	}, flags.EventuallyTimeout).Should(gomega.Succeed())
+
+	// Verify warm stage only after retention
+	gomega.Eventually(func(innerGm gomega.Gomega) {
+		verifyFn(innerGm, sc, helpers.Args{
+			Input:           args.Input,
+			Duration:        args.Duration,
+			Offset:          args.Offset,
+			Stages:          []string{"warm"},
+			IgnoreElementID: args.IgnoreElementID,
+		})
+	}, flags.EventuallyTimeout).Should(gomega.Succeed())
+
+	// Verify hot stage is empty after retention
+	verifyFn(gomega.Default, sc, helpers.Args{
+		Input:           args.Input,
+		Duration:        args.Duration,
+		Offset:          args.Offset,
+		WantEmpty:       true,
+		Stages:          []string{"hot"},
+		IgnoreElementID: args.IgnoreElementID,
+	})
+}
+
+func verifySourceDirectoriesAfterMigration() {
 	streamSrcPath := filepath.Join(SharedContext.SrcDir, "stream", "data", "default")
 	streamEntries, err := os.ReadDir(streamSrcPath)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Stream source directory should exist")

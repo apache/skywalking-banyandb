@@ -26,11 +26,9 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -67,7 +65,11 @@ var _ = ginkgo.Describe("etcd_register", func() {
 		peers = []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}
 		server, err = embeddedetcd.NewServer(
 			embeddedetcd.ConfigureListener(endpoints, peers),
-			embeddedetcd.RootDir(path))
+			embeddedetcd.RootDir(path),
+			embeddedetcd.AutoCompactionMode("periodic"),
+			embeddedetcd.AutoCompactionRetention("1h"),
+			embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
+		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
 		r, err = schema.NewEtcdSchemaRegistry(
@@ -111,7 +113,11 @@ var _ = ginkgo.Describe("etcd_register", func() {
 
 		server, err = embeddedetcd.NewServer(
 			embeddedetcd.ConfigureListener(endpoints, peers),
-			embeddedetcd.RootDir(path))
+			embeddedetcd.RootDir(path),
+			embeddedetcd.AutoCompactionMode("periodic"),
+			embeddedetcd.AutoCompactionRetention("1h"),
+			embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
+		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
 
@@ -119,28 +125,5 @@ var _ = ginkgo.Describe("etcd_register", func() {
 			_, err := r.GetNode(context.Background(), node)
 			return err
 		}, flags.EventuallyTimeout).ShouldNot(gomega.HaveOccurred())
-	})
-
-	ginkgo.It("should update node's data segments boundary", func() {
-		gomega.Expect(r.Register(context.Background(), md, false)).ShouldNot(gomega.HaveOccurred())
-
-		n, err := r.GetNode(context.Background(), node)
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-
-		newBoundary := &modelv1.TimeRange{
-			Begin: timestamppb.New(time.Unix(1000, 0)),
-			End:   timestamppb.New(time.Unix(2000, 0)),
-		}
-		n.DataSegmentsBoundary = map[string]*modelv1.TimeRange{"default": newBoundary}
-
-		gomega.Expect(r.UpdateNode(context.Background(), n)).ShouldNot(gomega.HaveOccurred())
-
-		updatedNode, err := r.GetNode(context.Background(), node)
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(updatedNode.DataSegmentsBoundary).ShouldNot(gomega.BeNil())
-		gomega.Expect(updatedNode.DataSegmentsBoundary).Should(gomega.HaveLen(1))
-		gomega.Expect(updatedNode.DataSegmentsBoundary["default"]).ShouldNot(gomega.BeNil())
-		gomega.Expect(updatedNode.DataSegmentsBoundary["default"].Begin.Seconds).Should(gomega.Equal(int64(1000)))
-		gomega.Expect(updatedNode.DataSegmentsBoundary["default"].End.Seconds).Should(gomega.Equal(int64(2000)))
 	})
 })

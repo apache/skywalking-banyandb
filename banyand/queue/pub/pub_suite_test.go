@@ -33,7 +33,7 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
@@ -82,14 +82,14 @@ func (s *mockServer) Send(stream clusterv1.Service_SendServer) (err error) {
 
 		f := data.TopicResponseMap[topic]
 
-		var body *anypb.Any
+		var body []byte
+		var errMarshal error
 		if f == nil {
 			body = first.Body
 		} else {
-			var errAny error
-			body, errAny = anypb.New(f())
-			if errAny != nil {
-				panic(errAny)
+			body, errMarshal = proto.Marshal(f())
+			if errMarshal != nil {
+				panic(errMarshal)
 			}
 		}
 		res := &clusterv1.SendResponse{
@@ -237,10 +237,9 @@ func getDataNode(name string, address string) schema.Metadata {
 	}
 }
 
-func getDataNodeWithLabels(name string, address string, labels map[string]string, dataBoundary map[string]*modelv1.TimeRange) schema.Metadata {
+func getDataNodeWithLabels(name string, address string, labels map[string]string) schema.Metadata {
 	node := getDataNode(name, address)
 	nodeInfo := node.Spec.(*databasev1.Node)
 	nodeInfo.Labels = labels
-	nodeInfo.DataSegmentsBoundary = dataBoundary
 	return node
 }

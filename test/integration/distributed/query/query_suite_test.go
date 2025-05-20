@@ -76,7 +76,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
 	server, err := embeddedetcd.NewServer(
 		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(dir))
+		embeddedetcd.RootDir(dir),
+		embeddedetcd.AutoCompactionMode("periodic"),
+		embeddedetcd.AutoCompactionRetention("1h"),
+		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
+	)
 	Expect(err).ShouldNot(HaveOccurred())
 	<-server.ReadyNotify()
 	By("Loading schema")
@@ -131,8 +135,14 @@ var _ = SynchronizedAfterSuite(func() {
 	if connection != nil {
 		Expect(connection.Close()).To(Succeed())
 	}
-}, func() {
-	deferFunc()
-	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+}, func() {})
+
+var _ = ReportAfterSuite("Distributed Query Suite", func(report Report) {
+	if report.SuiteSucceeded {
+		if deferFunc != nil {
+			deferFunc()
+		}
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+	}
 })

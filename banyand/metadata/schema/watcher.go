@@ -19,6 +19,8 @@ package schema
 
 import (
 	"context"
+	"crypto/rand"
+	"math/big"
 	"sync"
 	"time"
 
@@ -65,7 +67,12 @@ type watcher struct {
 
 func newWatcher(cli *clientv3.Client, wc watcherConfig, l *logger.Logger) *watcher {
 	if wc.checkInterval == 0 {
-		wc.checkInterval = 5 * time.Minute
+		nBig, err := rand.Int(rand.Reader, big.NewInt(int64(5*time.Minute)))
+		if err != nil {
+			wc.checkInterval = 30 * time.Minute
+		} else {
+			wc.checkInterval = 30*time.Minute + time.Duration(nBig.Int64())
+		}
 	}
 	w := &watcher{
 		cli:           cli,
@@ -82,9 +89,6 @@ func newWatcher(cli *clientv3.Client, wc watcherConfig, l *logger.Logger) *watch
 
 func (w *watcher) Start() {
 	w.startOnce.Do(func() {
-		if w.revision < 1 {
-			w.periodicSync()
-		}
 		go w.watch(w.revision)
 	})
 }
@@ -123,7 +127,6 @@ OUTER:
 			// Use periodic sync to recover state and get new revision
 			w.periodicSync()
 			revision = w.revision
-			continue
 		}
 
 		wch := cli.Watch(w.closer.Ctx(), w.key,
@@ -149,14 +152,17 @@ OUTER:
 						return
 					default:
 						revision = -1
+						w.l.Debug().Str("key", w.key).Msg("watch channel closed, retrying")
 						continue OUTER
 					}
 				}
 				if err := watchResp.Err(); err != nil {
 					if errors.Is(err, v3rpc.ErrCompacted) {
 						revision = -1
+						w.l.Debug().Str("key", w.key).AnErr("err", err).Msg("watch revision compacted, retrying")
 						continue OUTER
 					}
+					w.l.Error().Str("key", w.key).AnErr("err", err).Msg("watch error")
 					continue
 				}
 				w.revision = watchResp.Header.Revision
@@ -261,7 +267,7 @@ func (w *watcher) periodicSync() {
 		}
 	}
 
-	// Detect additions
+	// Detect additions from delta changes only
 	for key, entry := range currentState {
 		if _, exists := w.cache[key]; !exists {
 			if md, err := w.getFromStore(key); err == nil {
@@ -272,6 +278,9 @@ func (w *watcher) periodicSync() {
 			}
 		}
 	}
+
+	w.revision = resp.Header.Revision
+	w.l.Debug().Int64("new_revision", w.revision).Msg("updated watcher revision after sync")
 }
 
 func (w *watcher) getFromStore(key string) (*Metadata, error) {

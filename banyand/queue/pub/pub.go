@@ -27,10 +27,10 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -41,14 +41,15 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
 	_ run.PreRunner = (*pub)(nil)
 	_ run.Service   = (*pub)(nil)
+	_ run.Config    = (*pub)(nil)
 )
 
 type pub struct {
@@ -60,7 +61,24 @@ type pub struct {
 	active     map[string]*client
 	evictable  map[string]evictNode
 	closer     *run.Closer
+	caCertPath string
 	mu         sync.RWMutex
+	tlsEnabled bool
+}
+
+func (p *pub) FlagSet() *run.FlagSet {
+	fs := run.NewFlagSet("queue-client")
+	fs.BoolVar(&p.tlsEnabled, "internal-tls", false, "enable internal TLS")
+	fs.StringVar(&p.caCertPath, "internal-ca-cert", "", "CA certificate file to verify the internal data server")
+	return fs
+}
+
+func (p *pub) Validate() error {
+	// simple sanity‑check: if TLS is on, a CA bundle must be provided
+	if p.tlsEnabled && p.caCertPath == "" {
+		return fmt.Errorf("TLS is enabled (--internal-tls), but no CA certificate file was provided (--internal-ca-cert is required)")
+	}
+	return nil
 }
 
 func (p *pub) Register(topic bus.Topic, handler schema.EventHandler) {
@@ -87,13 +105,17 @@ func (p *pub) Serve() run.StopNotify {
 	return p.closer.CloseNotify()
 }
 
-func bypassMatches(_ map[string]string) bool { return true }
+var bypassMatches = []MatchFunc{bypassMatch}
+
+func bypassMatch(_ map[string]string) bool { return true }
 
 func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
 	var nodes []*databasev1.Node
 	p.mu.RLock()
 	for k := range p.active {
-		nodes = append(nodes, p.registered[k])
+		if n := p.registered[k]; n != nil {
+			nodes = append(nodes, n)
+		}
 	}
 	p.mu.RUnlock()
 	if len(nodes) == 0 {
@@ -102,27 +124,28 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	names := make(map[string]struct{})
 	if len(messages.NodeSelectors()) == 0 {
 		for _, n := range nodes {
-			names[n.Metadata.Name] = struct{}{}
+			names[n.Metadata.GetName()] = struct{}{}
 		}
 	} else {
-		for g, sel := range messages.NodeSelectors() {
-			var matches func(map[string]string) bool
-			if sel == "" {
+		for _, sel := range messages.NodeSelectors() {
+			var matches []MatchFunc
+			if sel == nil {
 				matches = bypassMatches
 			} else {
-				selector, err := ParseLabelSelector(sel)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse node selector: %w", err)
+				for _, s := range sel {
+					selector, err := ParseLabelSelector(s)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse node selector: %w", err)
+					}
+					matches = append(matches, selector.Matches)
 				}
-				matches = selector.Matches
 			}
 			for _, n := range nodes {
-				tr := metadata.FindSegmentsBoundary(n, g)
-				if tr == nil {
-					continue
-				}
-				if matches(n.Labels) && timestamp.PbHasOverlap(messages.TimeRange(), tr) {
-					names[n.Metadata.Name] = struct{}{}
+				for _, m := range matches {
+					if m(n.Labels) {
+						names[n.Metadata.Name] = struct{}{}
+						break
+					}
 				}
 			}
 		}
@@ -130,6 +153,10 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 
 	if l := p.log.Debug(); l.Enabled() {
 		l.Msgf("broadcasting message to %s nodes", names)
+	}
+
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no nodes match the selector %v", messages.NodeSelectors())
 	}
 
 	futureCh := make(chan publishResult, len(names))
@@ -257,11 +284,11 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 	if !ok {
 		return nil, fmt.Errorf("invalid message type %T", m.Data())
 	}
-	anyMessage, err := anypb.New(message)
+	data, err := proto.Marshal(message)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal message %T: %w", m, err)
 	}
-	r.Body = anyMessage
+	r.Body = data
 	return r, nil
 }
 
@@ -295,7 +322,7 @@ func (l *future) Get() (bus.Message, error) {
 	}
 	if messageSupplier, ok := data.TopicResponseMap[t]; ok {
 		m := messageSupplier()
-		err = resp.Body.UnmarshalTo(m)
+		err = proto.Unmarshal(resp.Body, m)
 		if err != nil {
 			return bus.Message{}, err
 		}
@@ -329,4 +356,12 @@ func isFailoverError(err error) bool {
 		return false
 	}
 	return s.Code() == codes.Unavailable || s.Code() == codes.DeadlineExceeded
+}
+
+func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
+	opts, err := grpchelper.SecureOptions(nil, p.tlsEnabled, false, p.caCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load TLS config: %w", err)
+	}
+	return opts, nil
 }

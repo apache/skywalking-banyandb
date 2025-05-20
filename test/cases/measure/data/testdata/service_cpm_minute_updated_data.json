@@ -1,0 +1,92 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": 1
+            }
+          },
+          {
+            "str": {
+              "value": "extraA"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 100
+        }
+      },
+      {
+        "str": {
+          "value": "fieldA"
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": 2
+            }
+          },
+          {
+            "str": {
+              "value": "extraB"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 200
+        }
+      },
+      {
+        "str": {
+          "value": "fieldB"
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": 3
+            }
+          },
+          {
+            "str": {
+              "value": "extraC"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 300
+        }
+      },
+      {
+        "str": {
+          "value": "fieldC"
+        }
+      }
+    ]
+  }
+]

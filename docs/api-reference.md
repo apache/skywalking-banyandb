@@ -36,6 +36,13 @@
     - [Tag](#banyandb-common-v1-Tag)
     - [Trace](#banyandb-common-v1-Trace)
   
+- [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
+    - [Node](#banyandb-database-v1-Node)
+    - [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry)
+    - [Shard](#banyandb-database-v1-Shard)
+  
+    - [Role](#banyandb-database-v1-Role)
+  
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
     - [FieldValue](#banyandb-model-v1-FieldValue)
     - [Float](#banyandb-model-v1-Float)
@@ -65,14 +72,6 @@
     - [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp)
     - [Sort](#banyandb-model-v1-Sort)
   
-- [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
-    - [Node](#banyandb-database-v1-Node)
-    - [Node.DataSegmentsBoundaryEntry](#banyandb-database-v1-Node-DataSegmentsBoundaryEntry)
-    - [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry)
-    - [Shard](#banyandb-database-v1-Shard)
-  
-    - [Role](#banyandb-database-v1-Role)
-  
 - [banyandb/database/v1/schema.proto](#banyandb_database_v1_schema-proto)
     - [Entity](#banyandb-database-v1-Entity)
     - [FieldSpec](#banyandb-database-v1-FieldSpec)
@@ -80,6 +79,7 @@
     - [IndexRuleBinding](#banyandb-database-v1-IndexRuleBinding)
     - [Measure](#banyandb-database-v1-Measure)
     - [Property](#banyandb-database-v1-Property)
+    - [ShardingKey](#banyandb-database-v1-ShardingKey)
     - [Stream](#banyandb-database-v1-Stream)
     - [Subject](#banyandb-database-v1-Subject)
     - [TagFamilySpec](#banyandb-database-v1-TagFamilySpec)
@@ -213,8 +213,6 @@
     - [WriteRequest](#banyandb-measure-v1-WriteRequest)
     - [WriteResponse](#banyandb-measure-v1-WriteResponse)
   
-    - [DataPointValue.Type](#banyandb-measure-v1-DataPointValue-Type)
-  
 - [banyandb/measure/v1/rpc.proto](#banyandb_measure_v1_rpc-proto)
     - [DeleteExpiredSegmentsRequest](#banyandb-measure-v1-DeleteExpiredSegmentsRequest)
     - [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse)
@@ -342,7 +340,7 @@ Status is the response status for write
 | ----- | ---- | ----- | ----------- |
 | topic | [string](#string) |  |  |
 | message_id | [uint64](#uint64) |  |  |
-| body | [google.protobuf.Any](#google-protobuf-Any) |  |  |
+| body | [bytes](#bytes) |  |  |
 | batch_mod | [bool](#bool) |  |  |
 
 
@@ -360,7 +358,7 @@ Status is the response status for write
 | ----- | ---- | ----- | ----------- |
 | message_id | [uint64](#uint64) |  |  |
 | error | [string](#string) |  |  |
-| body | [google.protobuf.Any](#google-protobuf-Any) |  |  |
+| body | [bytes](#bytes) |  |  |
 | status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
 
 
@@ -480,7 +478,7 @@ Metadata is for multi-tenant, multi-model use
 | segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
 | ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
 | stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
-| default_node_selector | [string](#string) |  | default_node_selector is the default node selector for queries if node_selector is not specified |
+| default_stages | [string](#string) | repeated | default_stages is the name of the default stage |
 
 
 
@@ -653,6 +651,93 @@ Trace is the top level message of a trace.
 
 
  
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_database_v1_database-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/database/v1/database.proto
+
+
+
+<a name="banyandb-database-v1-Node"></a>
+
+### Node
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
+| grpc_address | [string](#string) |  |  |
+| http_address | [string](#string) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
+
+
+
+
+
+
+<a name="banyandb-database-v1-Node-LabelsEntry"></a>
+
+### Node.LabelsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-Shard"></a>
+
+### Shard
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [uint64](#uint64) |  |  |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
+| node | [string](#string) |  |  |
+| total | [uint32](#uint32) |  |  |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-database-v1-Role"></a>
+
+### Role
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ROLE_UNSPECIFIED | 0 |  |
+| ROLE_META | 1 |  |
+| ROLE_DATA | 2 |  |
+| ROLE_LIAISON | 3 |  |
+
 
  
 
@@ -1075,110 +1160,6 @@ Each item in a string array is seen as a token instead of a query expression.
 
 
 
-<a name="banyandb_database_v1_database-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/database/v1/database.proto
-
-
-
-<a name="banyandb-database-v1-Node"></a>
-
-### Node
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
-| grpc_address | [string](#string) |  |  |
-| http_address | [string](#string) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-| labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
-| data_segments_boundary | [Node.DataSegmentsBoundaryEntry](#banyandb-database-v1-Node-DataSegmentsBoundaryEntry) | repeated | data_segments_boundary is the time range of the data segments that the node is responsible for. [start, end) is the time range. |
-
-
-
-
-
-
-<a name="banyandb-database-v1-Node-DataSegmentsBoundaryEntry"></a>
-
-### Node.DataSegmentsBoundaryEntry
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  |  |
-| value | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-Node-LabelsEntry"></a>
-
-### Node.LabelsEntry
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  |  |
-| value | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-Shard"></a>
-
-### Shard
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [uint64](#uint64) |  |  |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
-| node | [string](#string) |  |  |
-| total | [uint32](#uint32) |  |  |
-| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
- 
-
-
-<a name="banyandb-database-v1-Role"></a>
-
-### Role
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| ROLE_UNSPECIFIED | 0 |  |
-| ROLE_META | 1 |  |
-| ROLE_DATA | 2 |  |
-| ROLE_LIAISON | 3 |  |
-
-
- 
-
- 
-
- 
-
-
-
 <a name="banyandb_database_v1_schema-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -1277,6 +1258,7 @@ Measure intends to store data point
 | interval | [string](#string) |  | interval indicates how frequently to send a data point valid time units are &#34;ns&#34;, &#34;us&#34; (or &#34;µs&#34;), &#34;ms&#34;, &#34;s&#34;, &#34;m&#34;, &#34;h&#34;, &#34;d&#34;. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the measure is updated |
 | index_mode | [bool](#bool) |  | index_mode specifies whether the data should be stored exclusively in the index, meaning it will not be stored in the data storage system. |
+| sharding_key | [ShardingKey](#banyandb-database-v1-ShardingKey) |  | sharding_key determines the distribution of TopN-related data. |
 
 
 
@@ -1294,6 +1276,21 @@ Property stores the user defined data
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
 | tags | [TagSpec](#banyandb-database-v1-TagSpec) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
+
+
+
+
+
+
+<a name="banyandb-database-v1-ShardingKey"></a>
+
+### ShardingKey
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tag_names | [string](#string) | repeated |  |
 
 
 
@@ -2944,7 +2941,7 @@ QueryRequest is the request contract for query.
 | limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned. If top is specified, limit processes the dataset based on top&#39;s output |
 | order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| node_selector | [string](#string) |  | node_selector is used to specify the target node for the query |
+| stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
 
 
 
@@ -3095,6 +3092,7 @@ TopNRequest is the request contract for query.
 | conditions | [banyandb.model.v1.Condition](#banyandb-model-v1-Condition) | repeated | criteria select counters. Only equals are acceptable. |
 | field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
+| stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
 
 
 
@@ -3145,7 +3143,6 @@ DataPointValue is the data point for writing. It only contains values.
 | tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the measure schema |
 | fields | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | the order of fields match the measure schema |
 | version | [int64](#int64) |  | the version of the data point |
-| type | [DataPointValue.Type](#banyandb-measure-v1-DataPointValue-Type) |  |  |
 
 
 
@@ -3204,19 +3201,6 @@ WriteResponse is the response contract for write
 
 
  
-
-
-<a name="banyandb-measure-v1-DataPointValue-Type"></a>
-
-### DataPointValue.Type
-the type of the data point cumulative or delta
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| TYPE_UNSPECIFIED | 0 | TYPE_UNSPECIFIED is the default value. |
-| TYPE_CUMULATIVE | 1 | TYPE_CUMULATIVE is the cumulative data |
-| TYPE_DELTA | 2 | TYPE_DELTA is the delta data |
-
 
  
 
@@ -3454,7 +3438,6 @@ QueryRequest is the request contract for query.
 | tag_projection | [string](#string) | repeated | tag_projection can be used to select tags of the data points in the response |
 | limit | [uint32](#uint32) |  |  |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| node_selector | [string](#string) |  | node_selector is used to select the node to query |
 
 
 
@@ -3554,7 +3537,7 @@ QueryRequest is the request contract for query.
 | criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | tag_families are indexed. |
 | projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | projection can be used to select the key names of the element in the response |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| node_selector | [string](#string) |  | node_selector is used to select the node to query |
+| stages | [string](#string) | repeated | stage is used to specify the stage of the query in the lifecycle |
 
 
 

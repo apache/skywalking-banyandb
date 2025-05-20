@@ -87,4 +87,8 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("duplicated index filter", helpers.Args{Input: "duplicated_index_filter", Duration: 1 * time.Hour}),
 	g.Entry("duplicated order by index", helpers.Args{Input: "duplicated_order_by_index", Duration: 1 * time.Hour}),
 	g.Entry("duplicated order by index with the index filter", helpers.Args{Input: "duplicated_order_by_filter", Duration: 1 * time.Hour}),
+	g.Entry("multi-groups: unchanged tags", helpers.Args{Input: "multi_group_unchanged", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	g.Entry("multi-groups: new tags", helpers.Args{Input: "multi_group_new_tag", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	g.Entry("multi-groups: update tag type", helpers.Args{Input: "multi_group_tag_type", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	g.Entry("multi-groups: sort duration", helpers.Args{Input: "multi_group_sort_duration", Duration: 1 * time.Hour, IgnoreElementID: true}),
 )

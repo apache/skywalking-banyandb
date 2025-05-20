@@ -216,7 +216,8 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
+			req := &streamv1.QueryRequest{}
+			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), req))
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(ff).Should(gomega.HaveLen(2))
 			messages, err := ff[0].GetAll()
@@ -310,25 +311,19 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 				"role": "ingest",
 				"zone": "east",
 			}
-			node1Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange,
-			}
 
 			node2Labels := map[string]string{
 				"role": "query",
 				"zone": "west",
 			}
-			node2Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange,
-			}
 
-			node1 := getDataNodeWithLabels("node1", addr1, node1Labels, node1Boundaries)
+			node1 := getDataNodeWithLabels("node1", addr1, node1Labels)
 			p.OnAddOrUpdate(node1)
-			node2 := getDataNodeWithLabels("node2", addr2, node2Labels, node2Boundaries)
+			node2 := getDataNodeWithLabels("node2", addr2, node2Labels)
 			p.OnAddOrUpdate(node2)
 
-			nodeSelectors := map[string]string{
-				group1: "",
+			nodeSelectors := map[string][]string{
+				group1: {""},
 			}
 
 			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,
@@ -367,198 +362,23 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 				"role": "ingest",
 				"zone": "east",
 			}
-			node1Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange,
-			}
 
 			node2Labels := map[string]string{
 				"role": "query",
 				"zone": "west",
 			}
-			node2Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange,
-			}
 
-			node1 := getDataNodeWithLabels("node1", addr1, node1Labels, node1Boundaries)
+			node1 := getDataNodeWithLabels("node1", addr1, node1Labels)
 			p.OnAddOrUpdate(node1)
-			node2 := getDataNodeWithLabels("node2", addr2, node2Labels, node2Boundaries)
+			node2 := getDataNodeWithLabels("node2", addr2, node2Labels)
 			p.OnAddOrUpdate(node2)
 
-			nodeSelectors := map[string]string{
-				group1: "role=ingest",
+			nodeSelectors := map[string][]string{
+				group1: {"role=ingest"},
 			}
 
 			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,
 				bus.NewMessageWithNodeSelectors(bus.MessageID(1), nodeSelectors, timeRange, &streamv1.QueryRequest{}))
-
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			gomega.Expect(ff).Should(gomega.HaveLen(1))
-
-			messages, err := ff[0].GetAll()
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			gomega.Expect(messages).Should(gomega.HaveLen(1))
-		})
-
-		ginkgo.It("should broadcast messages based on time range overlap", func() {
-			addr1 := getAddress()
-			addr2 := getAddress()
-			addr3 := getAddress()
-			closeFn1 := setup(addr1, codes.OK, 200*time.Millisecond)
-			closeFn2 := setup(addr2, codes.OK, 10*time.Millisecond)
-			closeFn3 := setup(addr3, codes.OK, 10*time.Millisecond)
-			p := newPub()
-			defer func() {
-				p.GracefulStop()
-				closeFn1()
-				closeFn2()
-				closeFn3()
-			}()
-
-			group1 := svc
-
-			now := time.Now()
-			timeRange1 := &modelv1.TimeRange{
-				Begin: timestamppb.New(now.Add(-3 * time.Hour)),
-				End:   timestamppb.New(now.Add(-2 * time.Hour)),
-			}
-
-			timeRange2 := &modelv1.TimeRange{
-				Begin: timestamppb.New(now.Add(-2 * time.Hour)),
-				End:   timestamppb.New(now.Add(-1 * time.Hour)),
-			}
-
-			timeRange3 := &modelv1.TimeRange{
-				Begin: timestamppb.New(now.Add(-1 * time.Hour)),
-				End:   timestamppb.New(now),
-			}
-
-			node1Labels := map[string]string{"zone": "east"}
-			node1Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange1,
-			}
-
-			node2Labels := map[string]string{"zone": "east"}
-			node2Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange2,
-			}
-
-			node3Labels := map[string]string{"zone": "east"}
-			node3Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange3,
-			}
-
-			node1 := getDataNodeWithLabels("node1", addr1, node1Labels, node1Boundaries)
-			p.OnAddOrUpdate(node1)
-			node2 := getDataNodeWithLabels("node2", addr2, node2Labels, node2Boundaries)
-			p.OnAddOrUpdate(node2)
-			node3 := getDataNodeWithLabels("node3", addr3, node3Labels, node3Boundaries)
-			p.OnAddOrUpdate(node3)
-
-			queryTimeRange := &modelv1.TimeRange{
-				Begin: timestamppb.New(now.Add(-2 * time.Hour).Add(-30 * time.Minute)),
-				End:   timestamppb.New(now.Add(-1 * time.Hour).Add(-30 * time.Minute)),
-			}
-
-			nodeSelectors := map[string]string{
-				group1: "",
-			}
-
-			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,
-				bus.NewMessageWithNodeSelectors(bus.MessageID(1), nodeSelectors, queryTimeRange, &streamv1.QueryRequest{}))
-
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			gomega.Expect(ff).Should(gomega.HaveLen(2))
-
-			for _, f := range ff {
-				messages, err := f.GetAll()
-				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-				gomega.Expect(messages).Should(gomega.HaveLen(1))
-			}
-		})
-
-		ginkgo.It("should broadcast messages with both label selector and time range filter", func() {
-			addr1 := getAddress()
-			addr2 := getAddress()
-			addr3 := getAddress()
-			addr4 := getAddress()
-			closeFn1 := setup(addr1, codes.OK, 200*time.Millisecond)
-			closeFn2 := setup(addr2, codes.OK, 10*time.Millisecond)
-			closeFn3 := setup(addr3, codes.OK, 10*time.Millisecond)
-			closeFn4 := setup(addr4, codes.OK, 10*time.Millisecond)
-			p := newPub()
-			defer func() {
-				p.GracefulStop()
-				closeFn1()
-				closeFn2()
-				closeFn3()
-				closeFn4()
-			}()
-
-			group1 := svc
-
-			now := time.Now()
-			timeRange1 := &modelv1.TimeRange{
-				Begin: timestamppb.New(now.Add(-2 * time.Hour)),
-				End:   timestamppb.New(now.Add(-1 * time.Hour)),
-			}
-
-			timeRange2 := &modelv1.TimeRange{
-				Begin: timestamppb.New(now.Add(-1 * time.Hour)),
-				End:   timestamppb.New(now),
-			}
-
-			node1Labels := map[string]string{
-				"env":  "prod",
-				"zone": "east",
-			}
-			node1Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange1,
-			}
-
-			node2Labels := map[string]string{
-				"env":  "prod",
-				"zone": "west",
-			}
-			node2Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange1,
-			}
-
-			node3Labels := map[string]string{
-				"env":  "dev",
-				"zone": "east",
-			}
-			node3Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange2,
-			}
-
-			node4Labels := map[string]string{
-				"env":  "prod",
-				"zone": "east",
-			}
-			node4Boundaries := map[string]*modelv1.TimeRange{
-				group1: timeRange2,
-			}
-
-			node1 := getDataNodeWithLabels("node1", addr1, node1Labels, node1Boundaries)
-			p.OnAddOrUpdate(node1)
-			node2 := getDataNodeWithLabels("node2", addr2, node2Labels, node2Boundaries)
-			p.OnAddOrUpdate(node2)
-			node3 := getDataNodeWithLabels("node3", addr3, node3Labels, node3Boundaries)
-			p.OnAddOrUpdate(node3)
-			node4 := getDataNodeWithLabels("node4", addr4, node4Labels, node4Boundaries)
-			p.OnAddOrUpdate(node4)
-
-			queryTimeRange := &modelv1.TimeRange{
-				Begin: timestamppb.New(now.Add(-30 * time.Minute)),
-				End:   timestamppb.New(now.Add(30 * time.Minute)),
-			}
-
-			nodeSelectors := map[string]string{
-				group1: "env=prod",
-			}
-
-			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,
-				bus.NewMessageWithNodeSelectors(bus.MessageID(1), nodeSelectors, queryTimeRange, &streamv1.QueryRequest{}))
 
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(ff).Should(gomega.HaveLen(1))

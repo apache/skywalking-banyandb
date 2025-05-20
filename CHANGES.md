@@ -2,6 +2,19 @@
 
 Release Notes.
 
+## 0.9.0
+
+### Features
+
+- Add sharding_key for TopNAggregation source measure
+- API: Update the data matching rule from the node selector to the stage name.
+- Add dynamical TLS load for the gRPC and HTTP server.
+
+### Bug Fixes
+
+- Fix the deadlock issue when loading a closed segment.
+- Fix the issue that the etcd watcher gets the historical node registration events.
+
 ## 0.8.0
 
 ### Features
@@ -12,7 +25,7 @@ Release Notes.
 - Measure: Introduce "index_mode" to save data exclusively in the series index, ideal for non-timeseries measures.
 - Index: Use numeric index type to support Int and Float
 - TopN: Group top n pre-calculation result by the group key in the new introduced `_top_n_result` measure, which is used to store the pre-calculation result.
-- Index Mode: Index `measure_nam` and `tags` in `entity` to improve the query performance.
+- Index Mode: Index `measure_name` and `tags` in `entity` to improve the query performance.
 - Encoding: Improve the performance of encoding and decoding the variable-length int64.
 - Index: Add a cache to improve the performance of the series index write.
 - Read cpu quota and limit from the cgroup file system to set gomaxprocs.
@@ -37,6 +50,8 @@ Release Notes.
 - UI: Add the `stages` to groups.
 - Add time range return value from stream local index filter.
 - Deduplicate the documents on building the series index.
+- Implement multiple groups query in one request.
+- Replica: Replace Any with []byte Between Liaison and Data Nodes
 
 ### Bug Fixes
 
@@ -59,6 +74,7 @@ Release Notes.
 - UI: Fix the Stream List.
 - Fix the oom issue when loading too many unnecessary parts into memory.
 - bydbctl: Fix the bug that the bydbctl can't parse the absolute time flag.
+- Fix the crash when collecting the metrics from a closed segment.
 
 ### Documentation
 
