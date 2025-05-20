@@ -384,10 +384,14 @@ func (p *server) GracefulStop() {
 	}
 
 	p.grpcMu.Lock()
-	if cancel := p.grpcCancel; cancel != nil {
-		cancel()
+	var cancel context.CancelFunc
+	if p.grpcCancel != nil {
+		cancel = p.grpcCancel
 	}
 	p.grpcMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 
 	if err := p.srv.Close(); err != nil {
 		p.l.Error().Err(err)
