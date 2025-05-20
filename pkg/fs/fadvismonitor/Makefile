@@ -65,25 +65,34 @@ bpf2go-install:
 # Automatically install bpftool and necessary dependencies
 bpftool-install:
 ifeq ($(IS_LINUX),Linux)
-	@echo "Linux detected, ensuring bpftool is installed..."
+	@echo "Linux detected, ensuring bpftool and required dependencies are installed..."
 
 	@which clang >/dev/null || { \
 		echo ">>> clang not found. Installing..."; \
 		sudo apt-get update && sudo apt-get install -y clang llvm; \
 	}
+
 	@which llvm-strip >/dev/null || { \
 		echo ">>> llvm-strip not found. Installing llvm..."; \
 		sudo apt-get update && sudo apt-get install -y llvm; \
 	}
 
+	@dpkg -s libbpf-dev >/dev/null 2>&1 || { \
+		echo ">>> libbpf-dev not found. Installing..."; \
+		sudo apt-get install -y libbpf-dev; \
+	}
+
+	@if [ ! -d /usr/src/linux-headers-$(shell uname -r) ]; then \
+    		echo ">>> Linux headers for kernel $(shell uname -r) not found. Attempting install..."; \
+    		sudo apt-get install -y linux-headers-$(shell uname -r) || \
+    		( echo "WARNING: Failed to install linux-headers for $(shell uname -r). This is expected on WSL or custom kernels."; ); \
+    	else \
+    		echo "Linux headers found: /usr/src/linux-headers-$(shell uname -r)"; \
+    	fi
+
 	@if [ -z "$(BPFTL)" ]; then \
 		echo "bpftool not found, installing..."; \
-		sudo apt-get update && sudo apt-get install -y bpftool clang llvm libelf-dev; \
-		if [ $$? -ne 0 ]; then \
-			echo "WARNING: Failed to install bpftool using apt-get"; \
-			echo "You might need to install bpftool manually"; \
-			exit 1; \
-		fi; \
+		sudo apt-get install -y bpftool; \
 		BPFTL=$$(which bpftool); \
 		echo "bpftool installed at: $$BPFTL"; \
 	else \
