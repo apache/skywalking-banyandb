@@ -1303,6 +1303,7 @@ func TestQueryResult(t *testing.T) {
 					loopCloser:    run.NewCloser(2),
 					introductions: make(chan *introduction),
 					fileSystem:    fs.NewLocalFileSystem(),
+					cache:         newCache(),
 					root:          tmpPath,
 				}
 				tst.gc.init(tst)
