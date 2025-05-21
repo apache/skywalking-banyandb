@@ -525,7 +525,6 @@ func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 	return size, nil
 }
 
-
 // Size is used to get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
 func (file *LocalFile) Size() (int64, error) {
 	fileInfo, err := os.Stat(file.file.Name())
@@ -587,7 +586,7 @@ func (i *seqReader) Read(p []byte) (int, error) {
 		free := uint64(math.MaxInt64) // Default to max value if we can't get free space
 
 		// Try to get free space using a direct system call
-		if freeSpace, err := disk.Usage(dir); err == nil {
+		if freeSpace, usageErr := disk.Usage(dir); usageErr == nil {
 			free = freeSpace.Free
 		}
 

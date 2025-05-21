@@ -23,7 +23,6 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/pkg/fadvis"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/test/integration/distributed/backup"
 )
@@ -58,6 +57,5 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 		gomega.Expect(testVars.Connection.Close()).To(gomega.Succeed())
 	}
 }, func() {
-	fadvis.CleanupForTesting()
 	backup.TeardownSuite(testVars)
 })

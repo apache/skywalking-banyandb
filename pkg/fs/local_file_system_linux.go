@@ -22,9 +22,9 @@ package fs
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"syscall"
-	"math"
 
 	"golang.org/x/sys/unix"
 
@@ -126,17 +126,11 @@ func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 		return err
 	}
 
-	// file := os.NewFile(fd, "")
-	// info, err := file.Stat()
-	// if err != nil {
-	// 	return err
-	// }
-	// size := info.Size()
 	var stat syscall.Stat_t
-    if err := syscall.Fstat(int(fd), &stat); err != nil {
-        return err
-    }
-    size := stat.Size
+	if err := syscall.Fstat(int(fd), &stat); err != nil {
+		return err
+	}
+	size := stat.Size
 
 	if !ShouldApplyFadvis(size, math.MaxInt64) {
 		return nil
