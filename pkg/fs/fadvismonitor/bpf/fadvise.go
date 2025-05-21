@@ -18,7 +18,7 @@
 //go:build linux
 // +build linux
 
-// bpf package provides functions to load and manage eBPF programs.
+// Package bpf provides functions to load and manage eBPF programs for monitoring fadvise operations.
 package bpf
 
 import (
@@ -29,6 +29,7 @@ import (
 	"github.com/cilium/ebpf/link"
 )
 
+// FadviseStats stores statistics about fadvise system calls for a specific process.
 type FadviseStats struct {
 	PID            uint32
 	SuccessCalls   uint64
@@ -44,6 +45,7 @@ type LruShrinkStats struct {
 	CallerPid   uint32
 }
 
+// RunFadvise starts monitoring fadvise system calls and returns a cleanup function.
 func RunFadvise() (func(), error) {
 	objs := BpfObjects{}
 	if err := LoadBpfObjects(&objs, nil); err != nil {
@@ -78,6 +80,7 @@ func RunFadvise() (func(), error) {
 	return cleanup, nil
 }
 
+// GetFadviseStats retrieves the current statistics for all monitored fadvise system calls.
 func GetFadviseStats(objs *BpfObjects) ([]FadviseStats, error) {
 	if objs == nil || objs.FadviseStatsMap == nil {
 		return nil, fmt.Errorf("BPF objects or map not initialized")
@@ -103,12 +106,13 @@ func GetFadviseStats(objs *BpfObjects) ([]FadviseStats, error) {
 	return stats, nil
 }
 
+// GetLruShrinkStats retrieves statistics about memory reclamation from the LRU shrink operation.
 func GetLruShrinkStats(objs *BpfObjects) (*LruShrinkStats, error) {
 	if objs == nil || objs.ShrinkStatsMap == nil {
 		return nil, fmt.Errorf("BPF objects or map not initialized")
 	}
 
-	var key uint32 = 0
+	var key uint32
 	var value BpfLruShrinkInfoT
 
 	if err := objs.ShrinkStatsMap.Lookup(&key, &value); err != nil {
@@ -136,6 +140,8 @@ func int8SliceToString(s []int8) string {
 	return string(b)
 }
 
+// MonitorFadviseWithTimeout starts monitoring fadvise system calls for the specified duration
+// and returns the collected statistics.
 func MonitorFadviseWithTimeout(duration time.Duration) ([]FadviseStats, error) {
 	objs := BpfObjects{}
 	if err := LoadBpfObjects(&objs, nil); err != nil {
@@ -165,6 +171,7 @@ func MonitorFadviseWithTimeout(duration time.Duration) ([]FadviseStats, error) {
 	return GetFadviseStats(&objs)
 }
 
+// DirectReclaimInfo contains information about a direct reclaim event.
 type DirectReclaimInfo struct {
 	Comm string
 	PID  uint32
@@ -178,6 +185,7 @@ func int8SliceToByte(s []int8) []byte {
 	return b
 }
 
+// GetDirectReclaimStats retrieves information about direct memory reclaim events.
 func GetDirectReclaimStats(objs *BpfObjects) (map[uint32]DirectReclaimInfo, error) {
 	if objs == nil || objs.DirectReclaimMap == nil {
 		return nil, fmt.Errorf("BPF objects or map not initialized")

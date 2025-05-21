@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs/fadvismonitor/bpf"
 )
 
+// Monitor represents a monitoring session for fadvise and memory reclaim operations.
 type Monitor struct {
 	objs    *bpf.BpfObjects
 	tpEnter link.Link
@@ -33,6 +34,7 @@ type Monitor struct {
 	tpLru   link.Link
 }
 
+// NewMonitor creates a new monitor instance and attaches the required tracepoints.
 func NewMonitor() (*Monitor, error) {
 	objs := &bpf.BpfObjects{}
 	if err := bpf.LoadBpfObjects(objs, nil); err != nil {
@@ -66,6 +68,7 @@ func NewMonitor() (*Monitor, error) {
 	}, nil
 }
 
+// Close cleans up resources used by the monitor.
 func (m *Monitor) Close() {
 	if m.tpEnter != nil {
 		m.tpEnter.Close()
@@ -81,6 +84,7 @@ func (m *Monitor) Close() {
 	}
 }
 
+// ReadCounts returns a map of process IDs to fadvise call counts.
 func (m *Monitor) ReadCounts() (map[uint32]uint64, error) {
 	out := make(map[uint32]uint64)
 	iter := m.objs.FadviseStatsMap.Iterate()
@@ -92,6 +96,7 @@ func (m *Monitor) ReadCounts() (map[uint32]uint64, error) {
 	return out, iter.Err()
 }
 
+// ReadShrinkStats returns a map of process IDs to LRU shrink statistics.
 func (m *Monitor) ReadShrinkStats() (map[uint32]bpf.BpfLruShrinkInfoT, error) {
 	out := make(map[uint32]bpf.BpfLruShrinkInfoT)
 	iter := m.objs.ShrinkStatsMap.Iterate()
@@ -103,11 +108,13 @@ func (m *Monitor) ReadShrinkStats() (map[uint32]bpf.BpfLruShrinkInfoT, error) {
 	return out, iter.Err()
 }
 
+// ReclaimInfo stores information about memory reclaim events.
 type ReclaimInfo struct {
 	Comm string
 	PID  uint32
 }
 
+// ReadDirectReclaimStats returns information about direct memory reclaim events.
 func (m *Monitor) ReadDirectReclaimStats() (map[uint32]ReclaimInfo, error) {
 	if m.objs == nil || m.objs.DirectReclaimMap == nil {
 		return nil, fmt.Errorf("DirectReclaimMap not initialized")

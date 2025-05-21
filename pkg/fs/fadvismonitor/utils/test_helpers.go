@@ -17,7 +17,7 @@
 //go:build linux
 // +build linux
 
-// utils package provides helper functions for file operations and monitoring.
+// Package utils provides helper functions for file operations and monitoring in benchmarks and tests.
 package utils
 
 import (
@@ -75,7 +75,9 @@ func CreateTestFile(tb testing.TB, filePath string, size int64) error {
 	return nil
 }
 
-func ReadFileWithFadvise(t testing.TB, filePath string) ([]byte, error) {
+// ReadFileWithFadvise opens a file and reads its contents using the fileSystem interface,
+// which applies fadvise hints automatically based on configuration.
+func ReadFileWithFadvise(_ testing.TB, filePath string) ([]byte, error) {
 	f, err := fileSystem.OpenFile(filePath)
 	if err != nil {
 		return nil, err
@@ -95,7 +97,9 @@ func ReadFileWithFadvise(t testing.TB, filePath string) ([]byte, error) {
 	return sharedReadBuffer[:n], nil
 }
 
-func ReadFileStreamingWithFadvise(t testing.TB, filePath string, skipFadvise bool) (int64, error) {
+// ReadFileStreamingWithFadvise reads a file using streaming mode with optional fadvise hints.
+// Returns the total number of bytes read.
+func ReadFileStreamingWithFadvise(_ testing.TB, filePath string, skipFadvise bool) (int64, error) {
 	f, err := fileSystem.OpenFile(filePath)
 	if err != nil {
 		return 0, err
@@ -122,6 +126,7 @@ func ReadFileStreamingWithFadvise(t testing.TB, filePath string, skipFadvise boo
 	return totalBytes, nil
 }
 
+// AppendToFile appends the given data to a file, creating it if it doesn't exist.
 func AppendToFile(filePath string, data []byte) error {
 	_, err := os.Stat(filePath)
 	if err != nil && !os.IsNotExist(err) {
@@ -142,11 +147,13 @@ func AppendToFile(filePath string, data []byte) error {
 	return nil
 }
 
+// SetupTestEnvironment creates a temporary directory for testing and returns a cleanup function.
 func SetupTestEnvironment(t testing.TB) (string, func()) {
 	tempDir := t.TempDir()
 	return tempDir, func() {}
 }
 
+// CreateTestParts creates multiple test files with the specified size and returns their paths.
 func CreateTestParts(t testing.TB, testDir string, numParts int, partSize int64) []string {
 	parts := make([]string, numParts)
 	for i := 0; i < numParts; i++ {
@@ -158,7 +165,9 @@ func CreateTestParts(t testing.TB, testDir string, numParts int, partSize int64)
 	return parts
 }
 
-func SimulateMergeOperation(t testing.TB, parts []string, outputFile string) error {
+// SimulateMergeOperation simulates a merge operation by reading from multiple input files
+// and writing to a single output file, applying fadvise hints along the way.
+func SimulateMergeOperation(_ testing.TB, parts []string, outputFile string) error {
 	outFile, err := fileSystem.CreateFile(outputFile, 0o644)
 	if err != nil {
 		return err
@@ -200,17 +209,21 @@ func SimulateMergeOperation(t testing.TB, parts []string, outputFile string) err
 	return nil
 }
 
+// SetTestThreshold sets a specific threshold value for determining when to apply fadvise.
 func SetTestThreshold(threshold int64) {
 	provider := &testThresholdProvider{threshold: threshold}
 	fs.SetThresholdProvider(provider)
 	fs.SetGlobalThreshold(threshold)
 }
 
+// SetRealisticThreshold calculates and sets a realistic threshold based on system memory.
 func SetRealisticThreshold() {
 	threshold := CalculateRealisticThreshold()
 	SetTestThreshold(threshold)
 }
 
+// CalculateRealisticThreshold calculates a suitable threshold based on the available memory
+// and page cache configuration, defaulting to a safe value if it cannot be determined.
 func CalculateRealisticThreshold() int64 {
 	pageCachePercent := 25
 
@@ -247,6 +260,7 @@ func (p *testThresholdProvider) ShouldApplyFadvis(fileSize int64, maxSize int64)
 	return fileSize >= threshold
 }
 
+// PageCacheStats contains statistics about page cache usage.
 type PageCacheStats struct {
 	Rss         int64
 	Pss         int64
@@ -283,6 +297,7 @@ func parseSmapsRollup(r io.Reader) (PageCacheStats, error) {
 	return stats, nil
 }
 
+// CapturePageCacheStats captures current page cache statistics for the running process.
 func CapturePageCacheStats(b *testing.B, phase string) (PageCacheStats, int64) {
 	f, err := os.Open("/proc/self/smaps_rollup")
 	if err != nil {
@@ -339,18 +354,23 @@ func CapturePageCacheStats(b *testing.B, phase string) (PageCacheStats, int64) {
 	return stats, cachedKB
 }
 
+// CapturePageCacheStatsWithDelay waits for the specified number of seconds before
+// capturing page cache statistics.
 func CapturePageCacheStatsWithDelay(b *testing.B, phase string, delaySeconds int) {
 	b.Logf("[PAGECACHE] Waiting %d seconds before capturing %s...\n", delaySeconds, phase)
 	time.Sleep(time.Duration(delaySeconds) * time.Second)
 	_, _ = CapturePageCacheStats(b, phase)
 }
 
+// MonitorOptions configures the monitoring for benchmark tests.
 type MonitorOptions struct {
 	EnablePageCacheStats bool
 	EnableBPFStats       bool
 	DelayAfterBenchmark  time.Duration
 }
 
+// WithMonitoring runs a benchmark function with monitoring enabled.
+// It captures page cache and eBPF statistics before and after the benchmark.
 func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 	var (
 		beforeStats  PageCacheStats
@@ -417,6 +437,8 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 	_ = AppendBenchmarkSummaryToCSV(b.Name(), "after", afterStats, afterCached, int64(len(fstats)), int64(len(sstats)))
 }
 
+// WithMonitoringLegacy is a convenience function that runs a benchmark with
+// default monitoring options (all monitoring enabled).
 func WithMonitoringLegacy(b *testing.B, f func(b *testing.B)) {
 	WithMonitoring(b, MonitorOptions{
 		EnablePageCacheStats: true,
