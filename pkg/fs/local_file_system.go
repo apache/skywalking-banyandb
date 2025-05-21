@@ -644,7 +644,7 @@ func (w *seqWriter) Write(p []byte) (n int, err error) {
 		free := uint64(math.MaxInt64) // Default to max value if we can't get free space
 
 		// Try to get free space using a direct system call
-		if freeSpace, err := disk.Usage(dir); err == nil {
+		if freeSpace, diskErr := disk.Usage(dir); diskErr == nil {
 			free = freeSpace.Free
 		}
 
