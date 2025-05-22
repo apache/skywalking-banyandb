@@ -70,6 +70,7 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if testVars.Connection != nil {
 		gomega.Expect(testVars.Connection.Close()).To(gomega.Succeed())
 	}
+	dockertesthelper.CloseMinioContainer()
 }, func() {
 	backup.TeardownSuite(testVars)
 })
