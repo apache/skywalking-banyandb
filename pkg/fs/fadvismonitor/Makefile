@@ -42,6 +42,7 @@ include $(ROOTDIR)/scripts/build/version.mk
 	bpf-benchmark docker-bpf-benchmark \
 	all-benchmarks benchmark-write benchmark-seqread \
 	benchmark-multiple-reads benchmark-mixed \
+	docker-build docker-dev docker-runtime
 
 # Automatically install bpf2go tool
 bpf2go-install:
@@ -243,6 +244,23 @@ benchmark-mixed:
 	@echo "Running mixed workload benchmarks (with/without fadvis)..."
 	@ulimit -l unlimited && \
 	go test -v -run=^$$ -bench=BenchmarkMixedWorkload -benchtime=3x -benchmem ./benchmark | tee $(REPORTS_DIR)/mixed_benchmarks.txt
+
+# ========= Docker Support =========
+
+# Build the Docker image
+docker-build:
+	@echo "Building Docker images..."
+	@cd $(ROOTDIR) && docker build -f pkg/fs/fadvismonitor/Dockerfile -t banyandb-bpf:dev .
+
+# Start a development container
+docker-dev:
+	@echo "Starting development container..."
+	@cd $(ROOTDIR) && docker-compose -f pkg/fs/fadvismonitor/docker-compose.yml run --rm bpf-dev
+
+# Start a runtime container
+docker-runtime:
+	@echo "Starting runtime container..."
+	@cd $(ROOTDIR) && docker-compose -f pkg/fs/fadvismonitor/docker-compose.yml run --rm bpf-runtime
 
 # ========= Cleanup =========
 clean:
