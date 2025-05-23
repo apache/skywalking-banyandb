@@ -50,13 +50,14 @@ type database struct {
 	lock          fs.File
 	omr           observability.MetricsRegistry
 	logger        *logger.Logger
+	lfs           fs.FileSystem
 	sLst          atomic.Pointer[[]*shard]
 	location      string
 	flushInterval time.Duration
 	closed        atomic.Bool
 }
 
-func openDB(ctx context.Context, location string, flushInterval time.Duration, omr observability.MetricsRegistry) (*database, error) {
+func openDB(ctx context.Context, location string, flushInterval time.Duration, omr observability.MetricsRegistry, lfs fs.FileSystem) (*database, error) {
 	loc := filepath.Clean(location)
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
@@ -66,6 +67,7 @@ func openDB(ctx context.Context, location string, flushInterval time.Duration, o
 		logger:        l,
 		omr:           omr,
 		flushInterval: flushInterval,
+		lfs:           lfs,
 	}
 	if err := db.load(ctx); err != nil {
 		return nil, err
