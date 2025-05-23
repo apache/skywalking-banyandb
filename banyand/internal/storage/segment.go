@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	banyanfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -52,6 +53,7 @@ type segment[T TSTable, O any] struct {
 	index        *seriesIndex
 	sLst         atomic.Pointer[[]*shard[T]]
 	indexMetrics *inverted.Metrics
+	lfs          banyanfs.FileSystem
 	position     common.Position
 	timestamp.TimeRange
 	suffix        string
@@ -86,6 +88,7 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 		metrics:      sc.metrics,
 		indexMetrics: sc.indexMetrics,
 		tsdbOpts:     options,
+		lfs:          sc.lfs,
 	}
 	s.l = logger.Fetch(ctx, s.String())
 	s.lastAccessed.Store(time.Now().UnixNano())
@@ -218,7 +221,7 @@ func (s *segment[T, O]) performCleanup() {
 	}
 
 	if deletePath != "" {
-		lfs.MustRMAll(deletePath)
+		s.lfs.MustRMAll(deletePath)
 	}
 }
 
@@ -281,6 +284,7 @@ type segmentController[T TSTable, O any] struct {
 	opts         *TSDBOpts[T, O]
 	l            *logger.Logger
 	indexMetrics *inverted.Metrics
+	lfs          banyanfs.FileSystem
 	position     common.Position
 	db           string
 	stage        string
@@ -294,7 +298,7 @@ type segmentController[T TSTable, O any] struct {
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
 	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
-	idleTimeout time.Duration,
+	idleTimeout time.Duration, lfs banyanfs.FileSystem,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	p := common.GetPosition(ctx)
@@ -309,6 +313,7 @@ func newSegmentController[T TSTable, O any](ctx context.Context, location string
 		stage:        p.Stage,
 		db:           p.Database,
 		idleTimeout:  idleTimeout,
+		lfs:          lfs,
 	}
 }
 
@@ -436,7 +441,7 @@ func (sc *segmentController[T, O]) open() error {
 		suffix := sc.format(start)
 		segmentPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix))
 		metadataPath := path.Join(segmentPath, metadataFilename)
-		version, err := lfs.Read(metadataPath)
+		version, err := sc.lfs.Read(metadataPath)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				emptySegments = append(emptySegments, segmentPath)
@@ -457,7 +462,7 @@ func (sc *segmentController[T, O]) open() error {
 	if len(emptySegments) > 0 {
 		sc.l.Warn().Strs("segments", emptySegments).Msg("empty segments found, removing them.")
 		for i := range emptySegments {
-			lfs.MustRMAll(emptySegments[i])
+			sc.lfs.MustRMAll(emptySegments[i])
 		}
 	}
 	return err
@@ -492,10 +497,10 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 		end = stdEnd
 	}
 	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.format(start)))
-	lfs.MkdirPanicIfExist(segPath, DirPerm)
+	sc.lfs.MkdirPanicIfExist(segPath, DirPerm)
 	data := []byte(currentVersion)
 	metadataPath := filepath.Join(segPath, metadataFilename)
-	lf, err := lfs.CreateLockFile(metadataPath, FilePerm)
+	lf, err := sc.lfs.CreateLockFile(metadataPath, FilePerm)
 	if err != nil {
 		logger.Panicf("cannot create lock file %s: %s", metadataPath, err)
 	}
