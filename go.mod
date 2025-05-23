@@ -11,6 +11,7 @@ require (
 	github.com/benbjohnson/clock v1.3.0
 	github.com/blugelabs/bluge v0.2.2
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/cilium/ebpf v0.18.0
 	github.com/emirpasic/gods v1.18.1
 	github.com/envoyproxy/protoc-gen-validate v1.2.1
 	github.com/go-chi/chi/v5 v5.2.1
