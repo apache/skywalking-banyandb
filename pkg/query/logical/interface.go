@@ -58,4 +58,5 @@ type ComparableExpr interface {
 	Compare(LiteralExpr) (int, bool)
 	BelongTo(LiteralExpr) bool
 	Contains(LiteralExpr) bool
+	Match(LiteralExpr) bool
 }

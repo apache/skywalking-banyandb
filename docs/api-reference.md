@@ -1437,6 +1437,7 @@ Type determine the index structure under the hood
 | ---- | ------ | ----------- |
 | TYPE_UNSPECIFIED | 0 |  |
 | TYPE_INVERTED | 1 |  |
+| TYPE_SKIPPING | 2 |  |
 
 
 

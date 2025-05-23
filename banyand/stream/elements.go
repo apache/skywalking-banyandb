@@ -34,6 +34,7 @@ type tagValue struct {
 	tag       string
 	value     []byte
 	valueArr  [][]byte
+	primitive int64
 	valueType pbv1.ValueType
 }
 
@@ -41,6 +42,7 @@ func (t *tagValue) reset() {
 	t.tag = ""
 	t.value = nil
 	t.valueArr = nil
+	t.primitive = 0
 }
 
 func (t *tagValue) size() int {
@@ -150,6 +152,7 @@ type elements struct {
 	timestamps  []int64
 	elementIDs  []uint64
 	tagFamilies [][]tagValues
+	indexedTags []map[string]map[string]struct{}
 }
 
 func (e *elements) reset() {
@@ -162,6 +165,7 @@ func (e *elements) reset() {
 		}
 	}
 	e.tagFamilies = e.tagFamilies[:0]
+	e.indexedTags = e.indexedTags[:0]
 }
 
 func (e *elements) Len() int {
@@ -180,6 +184,7 @@ func (e *elements) Swap(i, j int) {
 	e.timestamps[i], e.timestamps[j] = e.timestamps[j], e.timestamps[i]
 	e.elementIDs[i], e.elementIDs[j] = e.elementIDs[j], e.elementIDs[i]
 	e.tagFamilies[i], e.tagFamilies[j] = e.tagFamilies[j], e.tagFamilies[i]
+	e.indexedTags[i], e.indexedTags[j] = e.indexedTags[j], e.indexedTags[i]
 }
 
 func generateElements() *elements {
