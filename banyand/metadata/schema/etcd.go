@@ -19,8 +19,10 @@ package schema
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
+	"math/big"
 	"path"
 	"sync"
 	"time"
@@ -587,6 +589,10 @@ func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, revision int64, 
 	}
 	for _, opt := range opts {
 		opt(&wc)
+	}
+	nBig, err := rand.Int(rand.Reader, big.NewInt(int64(5*time.Minute)))
+	if err == nil {
+		wc.checkInterval += time.Duration(nBig.Int64())
 	}
 	return newWatcher(e.client, wc, e.l.Named(fmt.Sprintf("watcher-%s[%s]", name, kind.String())))
 }

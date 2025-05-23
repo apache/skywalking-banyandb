@@ -40,6 +40,7 @@ var _ logical.UnresolvedPlan = (*unresolvedTagFilter)(nil)
 type unresolvedTagFilter struct {
 	startTime      time.Time
 	endTime        time.Time
+	ec             executor.StreamExecutionContext
 	metadata       *commonv1.Metadata
 	criteria       *modelv1.Criteria
 	projectionTags [][]*logical.Tag
@@ -80,7 +81,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		}
 	}
 	ctx.projectionTags = projTags
-	plan := uis.selectIndexScanner(ctx)
+	plan := uis.selectIndexScanner(ctx, uis.ec)
 	if uis.criteria != nil {
 		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(ctx.globalConditions) > 1)
 		if errFilter != nil {
@@ -94,7 +95,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	return plan, err
 }
 
-func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) logical.Plan {
+func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext, ec executor.StreamExecutionContext) logical.Plan {
 	return &localIndexScan{
 		timeRange:         timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:            ctx.s,
@@ -105,10 +106,12 @@ func (uis *unresolvedTagFilter) selectIndexScanner(ctx *analyzeContext) logical.
 		skippingFilter:    ctx.skippingFilter,
 		entities:          ctx.entities,
 		l:                 logger.GetLogger("query", "stream", "local-index"),
+		ec:                ec,
 	}
 }
 
-func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criteria *modelv1.Criteria, projection [][]*logical.Tag,
+func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criteria *modelv1.Criteria,
+	projection [][]*logical.Tag, ec executor.StreamExecutionContext,
 ) logical.UnresolvedPlan {
 	return &unresolvedTagFilter{
 		startTime:      startTime,
@@ -116,6 +119,7 @@ func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criter
 		metadata:       metadata,
 		criteria:       criteria,
 		projectionTags: projection,
+		ec:             ec,
 	}
 }
 

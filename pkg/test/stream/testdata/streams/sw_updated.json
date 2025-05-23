@@ -1,0 +1,90 @@
+{
+  "metadata": {
+    "name": "sw",
+    "group": "updated"
+  },
+  "tag_families": [
+    {
+      "name": "data",
+      "tags": [
+        {
+          "name": "data_binary",
+          "type": "TAG_TYPE_DATA_BINARY"
+        }
+      ]
+    },
+    {
+      "name": "searchable",
+      "tags": [
+        {
+          "name": "service_instance_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "trace_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "duration",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "state",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "service_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "endpoint_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "http.method",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "span_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "db.type",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "db.instance",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "mq.topic",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "mq.broker",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "extended_tags",
+          "type": "TAG_TYPE_STRING_ARRAY"
+        },
+        {
+          "name": "new_tag",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "status_code",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "service_id",
+      "service_instance_id",
+      "state"
+    ]
+  },
+  "updated_at": "2024-06-10T12:00:00Z"
+}

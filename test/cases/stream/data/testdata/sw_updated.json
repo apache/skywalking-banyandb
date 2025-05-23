@@ -1,0 +1,59 @@
+[
+  {
+    "tags": [
+      {"str": {"value": "instance_1"}},
+      {"str": {"value": "trace_001"}},
+      {"int": {"value": 1234}},
+      {"int": {"value": 1}},
+      {"str": {"value": "service_1"}},
+      {"str": {"value": "/api/v1"}},
+      {"str": {"value": "GET"}},
+      {"str": {"value": "span_1"}},
+      {"str": {"value": "mysql"}},
+      {"str": {"value": "db1"}},
+      {"str": {"value": "topic1"}},
+      {"str": {"value": "broker1"}},
+      {"str_array": {"value": ["tagA", "tagB"]}},
+      {"str": {"value": "new_value"}},
+      {"str": {"value": "200"}}
+    ]
+  },
+  {
+    "tags": [
+      {"str": {"value": "instance_2"}},
+      {"str": {"value": "trace_002"}},
+      {"int": {"value": 5678}},
+      {"int": {"value": 0}},
+      {"str": {"value": "service_2"}},
+      {"str": {"value": "/api/v2"}},
+      {"str": {"value": "POST"}},
+      {"str": {"value": "span_2"}},
+      {"str": {"value": "postgresql"}},
+      {"str": {"value": "db2"}},
+      {"str": {"value": "topic2"}},
+      {"str": {"value": "broker2"}},
+      {"str_array": {"value": ["tagC"]}},
+      {"str": {"value": "another_value"}},
+      {"str": {"value": "404"}}
+    ]
+  },
+  {
+    "tags": [
+      {"str": {"value": "instance_3"}},
+      {"str": {"value": "trace_003"}},
+      {"int": {"value": 91011}},
+      {"int": {"value": 1}},
+      {"str": {"value": "service_3"}},
+      {"str": {"value": "/api/v3"}},
+      {"str": {"value": "PUT"}},
+      {"str": {"value": "span_3"}},
+      {"str": {"value": "mongodb"}},
+      {"str": {"value": "db3"}},
+      {"str": {"value": "topic3"}},
+      {"str": {"value": "broker3"}},
+      {"str_array": {"value": ["tagD", "tagE", "tagF"]}},
+      {"str": {"value": "test_tag"}},
+      {"str": {"value": "500"}}
+    ]
+  }
+]

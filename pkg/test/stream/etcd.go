@@ -21,6 +21,7 @@ package stream
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"path"
 
@@ -118,19 +119,24 @@ func LoadSchemaWithStages(ctx context.Context, e schema.Registry) error {
 	if e == nil {
 		return nil
 	}
-	g := &commonv1.Group{}
-	if err := protojson.Unmarshal([]byte(groupWithStagesJSON), g); err != nil {
+	var rawGroups []json.RawMessage
+	if err := json.Unmarshal([]byte(groupWithStagesJSON), &rawGroups); err != nil {
 		return err
 	}
-	_, err := e.GetGroup(ctx, g.Metadata.Name)
-	if !errors.Is(err, schema.ErrGRPCResourceNotFound) {
-		logger.Infof("group %s already exists", g.Metadata.Name)
-		return nil
+	for _, raw := range rawGroups {
+		g := &commonv1.Group{}
+		if err := protojson.Unmarshal(raw, g); err != nil {
+			return err
+		}
+		_, err := e.GetGroup(ctx, g.Metadata.Name)
+		if !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+			logger.Infof("group %s already exists", g.Metadata.Name)
+			return nil
+		}
+		if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
+			return innerErr
+		}
 	}
-	if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
-		return innerErr
-	}
-
 	return loadSchemas(ctx, e)
 }
 
@@ -140,17 +146,23 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 	if e == nil {
 		return nil
 	}
-	g := &commonv1.Group{}
-	if err := protojson.Unmarshal([]byte(groupJSON), g); err != nil {
+	var rawGroups []json.RawMessage
+	if err := json.Unmarshal([]byte(groupJSON), &rawGroups); err != nil {
 		return err
 	}
-	_, err := e.GetGroup(ctx, g.Metadata.Name)
-	if !errors.Is(err, schema.ErrGRPCResourceNotFound) {
-		logger.Infof("group %s already exists", g.Metadata.Name)
-		return nil
-	}
-	if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
-		return innerErr
+	for _, raw := range rawGroups {
+		g := &commonv1.Group{}
+		if err := protojson.Unmarshal(raw, g); err != nil {
+			return err
+		}
+		_, err := e.GetGroup(ctx, g.Metadata.Name)
+		if !errors.Is(err, schema.ErrGRPCResourceNotFound) {
+			logger.Infof("group %s already exists", g.Metadata.Name)
+			return nil
+		}
+		if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
+			return innerErr
+		}
 	}
 
 	return loadSchemas(ctx, e)

@@ -78,7 +78,7 @@ type server struct {
 	srv             *http.Server
 	stopCh          chan struct{}
 	gwMux           *runtime.ServeMux
-	grpcClient      *healthcheck.Client
+	grpcClient      atomic.Pointer[healthcheck.Client]
 	grpcCtx         context.Context
 	grpcCancel      context.CancelFunc
 	host            string
@@ -283,7 +283,7 @@ func (p *server) Serve() run.StopNotify {
 // initGRPCClient initializes or reinitializes the gRPC client with current credentials.
 func (p *server) initGRPCClient() error {
 	// Clean up any existing client first
-	if p.grpcClient != nil {
+	if client := p.grpcClient.Load(); client != nil {
 		p.l.Debug().Msg("Cleaning up existing gRPC client")
 	}
 
@@ -321,14 +321,14 @@ func (p *server) initGRPCClient() error {
 	}
 
 	// Create health check client
-	var err error
-	p.grpcClient, err = healthcheck.NewClient(p.grpcCtx, p.l, p.grpcAddr, opts)
+	client, err := healthcheck.NewClient(p.grpcCtx, p.l, p.grpcAddr, opts)
 	if err != nil {
 		return errors.Wrap(err, "failed to create health check client")
 	}
+	p.grpcClient.Store(client)
 
 	// Create gateway mux with health endpoint
-	p.gwMux = runtime.NewServeMux(runtime.WithHealthzEndpoint(p.grpcClient))
+	p.gwMux = runtime.NewServeMux(runtime.WithHealthzEndpoint(p.grpcClient.Load()))
 
 	// Register all service handlers
 	err = multierr.Combine(
