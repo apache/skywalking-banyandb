@@ -18,6 +18,8 @@
 package filter
 
 import (
+	"encoding/binary"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,8 +28,7 @@ import (
 func TestBloomFilter(t *testing.T) {
 	assert := assert.New(t)
 
-	bf, err := NewBloomFilter(3, 0.01)
-	assert.Nil(err)
+	bf := NewBloomFilter(3)
 	assert.NotNil(bf)
 
 	items := [][]byte{
@@ -39,19 +40,97 @@ func TestBloomFilter(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		err = bf.Add(items[i])
-		assert.Nil(err)
+		res := bf.Add(items[i])
+		assert.True(res)
 	}
 
 	for i := 0; i < 3; i++ {
-		mightContain, err := bf.MightContain(items[i])
-		assert.Nil(err)
-		assert.True(mightContain, "Should contain item %d", i)
+		mightContain := bf.MightContain(items[i])
+		assert.True(mightContain)
 	}
 
 	for i := 3; i < 5; i++ {
-		mightContain, err := bf.MightContain(items[i])
-		assert.Nil(err)
-		assert.False(mightContain, "Should probably not contain item %d", i)
+		mightContain := bf.MightContain(items[i])
+		assert.False(mightContain)
 	}
+}
+
+func BenchmarkFilterAdd(b *testing.B) {
+	for _, n := range []int{1e3, 1e4, 1e5, 1e6, 1e7} {
+		data := generateTestData(n)
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			benchmarkFilterAdd(b, n, data)
+		})
+	}
+}
+
+func benchmarkFilterAdd(b *testing.B, n int, data [][]byte) {
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		bf := NewBloomFilter(n)
+		for pb.Next() {
+			for i := 0; i < n; i++ {
+				bf.Add(data[i])
+			}
+		}
+	})
+}
+
+func BenchmarkFilterMightContainHit(b *testing.B) {
+	for _, n := range []int{1e3, 1e4, 1e5, 1e6, 1e7} {
+		data := generateTestData(n)
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			benchmarkFilterMightContainHit(b, n, data)
+		})
+	}
+}
+
+func benchmarkFilterMightContainHit(b *testing.B, n int, data [][]byte) {
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		bf := NewBloomFilter(n)
+		for i := 0; i < n; i++ {
+			bf.Add(data[i])
+		}
+		for pb.Next() {
+			for i := 0; i < n; i++ {
+				if !bf.MightContain(data[i]) {
+					panic(fmt.Errorf("missing item %d", data[i]))
+				}
+			}
+		}
+	})
+}
+
+func BenchmarkFilterMightContainMiss(b *testing.B) {
+	for _, n := range []int{1e3, 1e4, 1e5, 1e6, 1e7} {
+		data := generateTestData(n)
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			benchmarkFilterMightContainMiss(b, n, data)
+		})
+	}
+}
+
+func benchmarkFilterMightContainMiss(b *testing.B, n int, data [][]byte) {
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		bf := NewBloomFilter(n)
+		for pb.Next() {
+			for i := 0; i < n; i++ {
+				if bf.MightContain(data[i]) {
+					panic(fmt.Errorf("unexpected item %d", data[i]))
+				}
+			}
+		}
+	})
+}
+
+func generateTestData(n int) [][]byte {
+	data := make([][]byte, 0)
+	for i := 0; i < n; i++ {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(i))
+		data = append(data, buf)
+	}
+	return data
 }

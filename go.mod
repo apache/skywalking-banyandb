@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.78.2
 	github.com/benbjohnson/clock v1.3.0
 	github.com/blugelabs/bluge v0.2.2
+	github.com/cespare/xxhash v1.1.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/emirpasic/gods v1.18.1
 	github.com/envoyproxy/protoc-gen-validate v1.2.1

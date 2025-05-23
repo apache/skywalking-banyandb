@@ -107,17 +107,10 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int, 
 		if _, ok := indexedTags[t.tag]; !ok {
 			continue
 		}
-		var err error
 		if tags[j].filter == nil {
-			tags[j].filter, err = filter.NewBloomFilter(uint64(elementsLen), filter.FalsePositiveRate)
-			if err != nil {
-				logger.Panicf("cannot create bloom filter: %v", err)
-			}
+			tags[j].filter = filter.NewBloomFilter(elementsLen)
 		}
-		err = tags[j].filter.Add(t.value)
-		if err != nil {
-			logger.Panicf("cannot add value %q to bloom filter: %v", t.value, err)
-		}
+		tags[j].filter.Add(t.value)
 		if t.valueType == pbv1.ValueTypeInt64 {
 			if t.primitive < tags[j].min {
 				tags[j].min = t.primitive

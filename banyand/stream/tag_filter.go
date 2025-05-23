@@ -28,6 +28,42 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
+func encodeBloomFilter(dst []byte, bf *filter.BloomFilter) []byte {
+	dst = encoding.Int64ToBytes(dst, int64(bf.N()))
+	dst = encoding.EncodeUint64Block(dst, bf.Bits())
+	return dst
+}
+
+func decodeBloomFilter(src []byte, bf *filter.BloomFilter) *filter.BloomFilter {
+	n := encoding.BytesToInt64(src)
+	bf.SetN(int(n))
+
+	m := n * filter.B
+	bits := make([]uint64, 0)
+	bits, _, err := encoding.DecodeUint64Block(bits[:0], src[8:], uint64((m+63)/64))
+	if err != nil {
+		logger.Panicf("failed to decode Bloom filter: %v", err)
+	}
+	bf.SetBits(bits)
+
+	return bf
+}
+
+func generateBloomFilter() *filter.BloomFilter {
+	v := bloomFilterPool.Get()
+	if v == nil {
+		return filter.NewBloomFilter(0)
+	}
+	return v
+}
+
+func releaseBloomFilter(bf *filter.BloomFilter) {
+	bf.Reset()
+	bloomFilterPool.Put(bf)
+}
+
+var bloomFilterPool = pool.Register[*filter.BloomFilter]("stream-bloomFilter")
+
 type tagFilter struct {
 	filter *filter.BloomFilter
 	min    int64
@@ -57,10 +93,8 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 		}
 		bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.filterBlock.size))
 		fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
-		bf, err := encoding.BytesToBloomFilter(bb.Buf)
-		if err != nil {
-			logger.Panicf("%s: cannot unmarshal tagFamilyFilter: %v", filterReader.Path(), err)
-		}
+		bf := generateBloomFilter()
+		bf = decodeBloomFilter(bb.Buf, bf)
 		tf := &tagFilter{
 			filter: bf,
 		}
@@ -81,6 +115,9 @@ func generateTagFamilyFilter() *tagFamilyFilter {
 }
 
 func releaseTagFamilyFilter(tff *tagFamilyFilter) {
+	for _, tf := range *tff {
+		releaseBloomFilter(tf.filter)
+	}
 	tff.reset()
 	tagFamilyFilterPool.Put(tff)
 }
@@ -106,11 +143,7 @@ func (tfs *tagFamilyFilters) unmarshal(tagFamilies map[string]*dataBlock, metaRe
 func (tfs *tagFamilyFilters) Eq(tagName string, tagValue string) bool {
 	for _, tff := range tfs.tagFamilyFilters {
 		if tf, ok := (*tff)[tagName]; ok {
-			res, err := tf.filter.MightContain([]byte(tagValue))
-			if err != nil {
-				logger.Panicf("failed to filter tag %s with value %s: %v", tagName, tagValue, err)
-			}
-			return res
+			return tf.filter.MightContain([]byte(tagValue))
 		}
 	}
 	return true

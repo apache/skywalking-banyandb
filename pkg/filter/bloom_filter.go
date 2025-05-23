@@ -19,127 +19,104 @@
 package filter
 
 import (
-	"errors"
-	"hash"
-	"hash/fnv"
-	"math"
+	"sync/atomic"
+	"unsafe"
 
-	"github.com/bits-and-blooms/bitset"
+	"github.com/cespare/xxhash"
 )
 
-// FalsePositiveRate is the default false positive rate for Bloom filter.
-const FalsePositiveRate = 0.01
+const (
+	k = 7
+	// B specifies the number of bits allocated for each item.
+	B = 10
+)
 
 // BloomFilter is a probabilistic data structure designed to test whether an element is a member of a set.
 type BloomFilter struct {
-	hashFunc hash.Hash64
-	bits     *bitset.BitSet
-	m        uint64
-	k        uint
+	bits []uint64
+	n    int
 }
 
 // NewBloomFilter creates a new Bloom filter with the number of items n and false positive rate p.
-func NewBloomFilter(n uint64, p float64) (*BloomFilter, error) {
-	if p <= 0 || p >= 1 {
-		return nil, errors.New("invalid false positive rate")
-	}
-	if n <= 0 {
-		return nil, errors.New("invalid number of items")
-	}
-	m := calculateM(n, p)
-	k := calculateK(n, m)
+func NewBloomFilter(n int) *BloomFilter {
+	m := n * B
+	bits := make([]uint64, (m+63)/64)
 	return &BloomFilter{
-		m:        m,
-		k:        k,
-		bits:     bitset.New(uint(m)),
-		hashFunc: fnv.New64a(),
-	}, nil
+		bits,
+		n,
+	}
 }
 
-func calculateM(n uint64, p float64) uint64 {
-	val := math.Ceil(-(float64(n) * math.Log(p)) / (math.Ln2 * math.Ln2))
-	return uint64(math.Max(float64(val), 1))
-}
-
-func calculateK(n uint64, m uint64) uint {
-	val := math.Ceil((float64(m) / float64(n)) * math.Ln2)
-	return uint(math.Max(float64(val), 1))
+// Reset resets the Bloom filter.
+func (bf *BloomFilter) Reset() {
+	bf.bits = bf.bits[:0]
+	bf.n = 0
 }
 
 // Add adds an item to the Bloom filter.
-func (bf *BloomFilter) Add(item []byte) error {
-	hashes, err := bf.getHashes(item)
-	if err != nil {
-		return err
+func (bf *BloomFilter) Add(item []byte) bool {
+	h := xxhash.Sum64(item)
+	bits := bf.bits
+	maxBits := uint64(len(bits)) * 64
+	bp := (*[8]byte)(unsafe.Pointer(&h))
+	b := bp[:]
+	isNew := false
+	for i := 0; i < k; i++ {
+		hi := xxhash.Sum64(b)
+		h++
+		idx := hi % maxBits
+		i, j := idx/64, idx%64
+		mask := uint64(1) << j
+		w := atomic.LoadUint64(&bits[i])
+		for (w & mask) == 0 {
+			wNew := w | mask
+			if atomic.CompareAndSwapUint64(&bits[i], w, wNew) {
+				isNew = true
+				break
+			}
+			w = atomic.LoadUint64(&bits[i])
+		}
 	}
-	for _, h := range hashes {
-		bf.bits.Set(uint(h % bf.m))
-	}
-	return nil
+	return isNew
 }
 
 // MightContain checks if an item might be in the Bloom filter.
-func (bf *BloomFilter) MightContain(item []byte) (bool, error) {
-	hashes, err := bf.getHashes(item)
-	if err != nil {
-		return false, err
-	}
-	for _, h := range hashes {
-		if !bf.bits.Test(uint(h % bf.m)) {
-			return false, nil
+func (bf *BloomFilter) MightContain(item []byte) bool {
+	h := xxhash.Sum64(item)
+	bits := bf.bits
+	maxBits := uint64(len(bits)) * 64
+	bp := (*[8]byte)(unsafe.Pointer(&h))
+	b := bp[:]
+	for i := 0; i < k; i++ {
+		hi := xxhash.Sum64(b)
+		h++
+		idx := hi % maxBits
+		i, j := idx/64, idx%64
+		mask := uint64(1) << j
+		w := atomic.LoadUint64(&bits[i])
+		if (w & mask) == 0 {
+			return false
 		}
 	}
-	return true, nil
-}
-
-func (bf *BloomFilter) getHashes(item []byte) ([]uint64, error) {
-	bf.hashFunc.Reset()
-	_, err := bf.hashFunc.Write(item)
-	if err != nil {
-		return nil, err
-	}
-	h1 := bf.hashFunc.Sum64()
-
-	h2 := h1 >> 32
-
-	hashes := make([]uint64, bf.k)
-	for i := uint(0); i < bf.k; i++ {
-		hashes[i] = h1 + uint64(i)*h2
-	}
-	return hashes, nil
-}
-
-// M returns the size of the Bloom filter.
-func (bf *BloomFilter) M() uint64 {
-	return bf.m
-}
-
-// K returns the number of hash functions.
-func (bf *BloomFilter) K() uint {
-	return bf.k
+	return true
 }
 
 // Bits returns the underlying bitset.
-func (bf *BloomFilter) Bits() *bitset.BitSet {
+func (bf *BloomFilter) Bits() []uint64 {
 	return bf.bits
 }
 
-// SetM sets the size of the Bloom filter.
-func (bf *BloomFilter) SetM(m uint64) {
-	bf.m = m
-}
-
-// SetK sets the number of hash functions.
-func (bf *BloomFilter) SetK(k uint) {
-	bf.k = k
+// N returns the number of items.
+func (bf *BloomFilter) N() int {
+	return bf.n
 }
 
 // SetBits sets the underlying bitset.
-func (bf *BloomFilter) SetBits(bits *bitset.BitSet) {
+func (bf *BloomFilter) SetBits(bits []uint64) {
 	bf.bits = bits
 }
 
-// SetHashFunc sets the hash function used by the Bloom filter.
-func (bf *BloomFilter) SetHashFunc(hashFunc hash.Hash64) {
-	bf.hashFunc = hashFunc
+// SetN sets the number of items.
+func (bf *BloomFilter) SetN(n int) {
+	bf.n = n
 }

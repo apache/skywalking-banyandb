@@ -15,22 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package encoding_test
+package stream
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 )
 
 func TestEncodeAndDecodeBloomFilter(t *testing.T) {
 	assert := assert.New(t)
 
-	bf, err := filter.NewBloomFilter(3, 0.01)
-	assert.NoError(err)
+	bf := filter.NewBloomFilter(3)
 
 	items := [][]byte{
 		[]byte("skywalking"),
@@ -41,24 +39,21 @@ func TestEncodeAndDecodeBloomFilter(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		err = bf.Add(items[i])
-		assert.Nil(err)
+		bf.Add(items[i])
 	}
 
-	data, err := encoding.BloomFilterToBytes(bf)
-	assert.NoError(err)
-	bf2, err := encoding.BytesToBloomFilter(data)
-	assert.NoError(err)
+	buf := make([]byte, 0)
+	buf = encodeBloomFilter(buf, bf)
+	bf2 := filter.NewBloomFilter(0)
+	bf2 = decodeBloomFilter(buf, bf2)
 
 	for i := 0; i < 3; i++ {
-		mightContain, err := bf2.MightContain(items[i])
-		assert.Nil(err)
-		assert.True(mightContain, "Should contain item %d", i)
+		mightContain := bf2.MightContain(items[i])
+		assert.True(mightContain)
 	}
 
 	for i := 3; i < 5; i++ {
-		mightContain, err := bf2.MightContain(items[i])
-		assert.Nil(err)
-		assert.False(mightContain, "Should probably not contain item %d", i)
+		mightContain := bf2.MightContain(items[i])
+		assert.False(mightContain)
 	}
 }

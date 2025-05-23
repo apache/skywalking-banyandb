@@ -76,11 +76,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 
 	if t.filter != nil {
 		bb.Reset()
-		var err error
-		bb.Buf, err = encoding.BloomFilterToBytes(t.filter)
-		if err != nil {
-			logger.Panicf("cannot marshal filter: %v", err)
-		}
+		bb.Buf = encodeBloomFilter(bb.Buf[:0], t.filter)
 		if tm.valueType == pbv1.ValueTypeInt64 {
 			tm.min = t.min
 			tm.max = t.max
