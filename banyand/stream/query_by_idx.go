@@ -38,7 +38,7 @@ import (
 type idxResult struct {
 	sortingIter      itersort.Iterator[*index.DocumentResult]
 	sm               *stream
-	pm               *protector.Memory
+	pm               protector.MemoryProtector
 	tabs             []*tsTable
 	elementIDsSorted []uint64
 	data             []*blockCursor
@@ -89,6 +89,8 @@ func (qr *idxResult) scanParts(ctx context.Context, qo queryOptions) error {
 	}
 	var hit int
 	var totalBlockBytes uint64
+	var quota int64
+	quota = qr.pm.AvailableBytes()
 	for ti.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {
@@ -103,6 +105,9 @@ func (qr *idxResult) scanParts(ctx context.Context, qo queryOptions) error {
 		bc.init(p.p, p.curBlock, qo)
 		qr.data = append(qr.data, bc)
 		totalBlockBytes += bc.bm.uncompressedSizeBytes
+		if quota >= 0 && totalBlockBytes > uint64(quota) {
+			return fmt.Errorf("parts scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+		}
 	}
 	if ti.Error() != nil {
 		return fmt.Errorf("cannot iterate tstIter: %w", ti.Error())

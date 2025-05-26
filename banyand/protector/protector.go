@@ -37,6 +37,20 @@ import (
 
 var scope = observability.RootScope.SubScope("memory_protector")
 
+type MemoryProtector interface {
+	AvailableBytes() int64
+	GetLimit() uint64
+	AcquireResource(ctx context.Context, size uint64) error
+	Name() string
+	FlagSet() *run.FlagSet
+	Validate() error
+	PreRun(ctx context.Context) error
+	GracefulStop()
+	Serve() run.StopNotify
+}
+
+var _ MemoryProtector = (*Memory)(nil)
+
 // Memory is a protector that stops the query services when the memory usage exceeds the limit.
 type Memory struct {
 	omr            observability.MetricsRegistry
@@ -103,6 +117,18 @@ func (m *Memory) GetLimit() uint64 {
 	return m.limit
 }
 
+// AvailableBytes returns the available memory (limit - usage).
+func (m *Memory) AvailableBytes() int64 {
+	if m.limit == 0 {
+		return -1
+	}
+	usage := atomic.LoadUint64(&m.usage)
+	if usage >= m.limit {
+		return 0
+	}
+	return int64(m.limit - usage)
+}
+
 // Name returns the name of the protector.
 func (m *Memory) Name() string {
 	return "memory-protector"
@@ -112,10 +138,10 @@ func (m *Memory) Name() string {
 func (m *Memory) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet(m.Name())
 	flagS.IntVarP(&m.allowedPercent, "allowed-percent", "", 75,
-		"Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. "+
-			"Setting a large value may evict data from the OS page cache, causing high disk I/O.")
-	flagS.VarP(&m.allowedBytes, "allowed-bytes", "", "Allowed percentage of total memory usage. If usage exceeds this value, the query services will stop. "+
-		"This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache eviction.")
+		"Allowed percentage of total memory usage. If usage exceeds this value, the query services will stop. "+
+			"This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache eviction.")
+	flagS.VarP(&m.allowedBytes, "allowed-bytes", "", "Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. "+
+		"Setting a large value may evict data from the OS page cache, causing high disk I/O.")
 	return flagS
 }
 
