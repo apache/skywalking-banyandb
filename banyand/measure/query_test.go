@@ -1360,9 +1360,8 @@ func TestQueryResult(t *testing.T) {
 }
 
 type fakeMemory struct {
-	availableBytes      uint64
-	limit               uint64
 	acquireErr          error
+	limit               uint64
 	expectQuotaExceeded bool
 }
 

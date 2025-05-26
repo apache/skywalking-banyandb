@@ -374,8 +374,7 @@ func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	}
 	var hit int
 	var totalBlockBytes uint64
-	var quota int64
-	quota = s.pm.AvailableBytes()
+	quota := s.pm.AvailableBytes()
 	for tstIter.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {

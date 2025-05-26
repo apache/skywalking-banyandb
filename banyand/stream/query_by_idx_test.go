@@ -34,9 +34,8 @@ import (
 )
 
 type fakeMemory struct {
-	availableBytes      uint64
-	limit               uint64
 	acquireErr          error
+	limit               uint64
 	expectQuotaExceeded bool
 }
 
@@ -83,7 +82,6 @@ func (f *fakeMemory) Serve() run.StopNotify {
 
 func TestQueryResult_QuotaExceeded(t *testing.T) {
 	type testCtx struct {
-		wantErr             error
 		name                string
 		esList              []*elements
 		sids                []common.SeriesID

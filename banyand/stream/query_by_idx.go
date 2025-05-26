@@ -89,8 +89,7 @@ func (qr *idxResult) scanParts(ctx context.Context, qo queryOptions) error {
 	}
 	var hit int
 	var totalBlockBytes uint64
-	var quota int64
-	quota = qr.pm.AvailableBytes()
+	quota := qr.pm.AvailableBytes()
 	for ti.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {
