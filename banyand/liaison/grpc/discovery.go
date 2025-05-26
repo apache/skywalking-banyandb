@@ -162,6 +162,16 @@ func (s *groupRepo) shardNum(groupName string) (uint32, bool) {
 	return r.ShardNum, true
 }
 
+func (s *groupRepo) copies(groupName string) (uint32, bool) {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	r, ok := s.resourceOpts[groupName]
+	if !ok {
+		return 0, false
+	}
+	return r.Replicas + 1, true
+}
+
 func getID(metadata *commonv1.Metadata) identity {
 	return identity{
 		name:  metadata.GetName(),

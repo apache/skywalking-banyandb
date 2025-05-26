@@ -119,6 +119,7 @@ func TestMigrateStream(t *testing.T) {
 	}
 
 	shardNum := uint32(2)
+	replicas := uint32(0)
 
 	// Create stream result data with expected timestamps
 	timestamp1 := int64(1672531200000000000) // First timestamp in nanoseconds
@@ -167,8 +168,7 @@ func TestMigrateStream(t *testing.T) {
 	mockClient.EXPECT().NewBatchPublisher(gomock.Any()).Return(mockBatchPublisher)
 	mockBatchPublisher.EXPECT().Close().Return(nil, nil)
 
-	mockSelector.EXPECT().Pick(stream.Metadata.Group, stream.Metadata.Name, gomock.Any()).
-		Return("node-1", nil).Times(2)
+	mockSelector.EXPECT().Pick(stream.Metadata.Group, stream.Metadata.Name, gomock.Any(), gomock.Any()).Return("node-1", nil).Times(2)
 
 	// Expected element IDs encoded as base64 strings
 	expectedElementID1 := base64.StdEncoding.EncodeToString(convert.Uint64ToBytes(elementID1))
@@ -218,7 +218,7 @@ func TestMigrateStream(t *testing.T) {
 			return "", nil
 		}).Times(2)
 
-	migrateStream(ctx, stream, queryResult, shardNum, mockSelector, mockClient, l)
+	migrateStream(ctx, stream, queryResult, shardNum, replicas, mockSelector, mockClient, l)
 
 	assert.Equal(t, 1, queryResult.index)
 	assert.Equal(t, 2, callCount, "Expected exactly 2 elements to be processed")
@@ -276,6 +276,7 @@ func TestMigrateMeasure(t *testing.T) {
 	}
 
 	shardNum := uint32(2)
+	replicas := uint32(0)
 
 	// Create measure result data with expected timestamps
 	timestamp1 := int64(1672531200000000000) // First timestamp in nanoseconds
@@ -338,7 +339,7 @@ func TestMigrateMeasure(t *testing.T) {
 	mockClient.EXPECT().NewBatchPublisher(gomock.Any()).Return(mockBatchPublisher)
 	mockBatchPublisher.EXPECT().Close().Return(nil, nil)
 
-	mockSelector.EXPECT().Pick(measure.Metadata.Group, measure.Metadata.Name, gomock.Any()).
+	mockSelector.EXPECT().Pick(measure.Metadata.Group, measure.Metadata.Name, gomock.Any(), gomock.Any()).
 		Return("node-1", nil).Times(2)
 
 	// Use a counter to check the correct element for each call
@@ -390,7 +391,7 @@ func TestMigrateMeasure(t *testing.T) {
 			return "", nil
 		}).Times(2)
 
-	migrateMeasure(ctx, measure, queryResult, shardNum, mockSelector, mockClient, l)
+	migrateMeasure(ctx, measure, queryResult, shardNum, replicas, mockSelector, mockClient, l)
 
 	assert.Equal(t, 1, queryResult.index)
 	assert.Equal(t, 2, callCount, "Expected exactly 2 elements to be processed")
@@ -403,14 +404,15 @@ func TestParseGroup(t *testing.T) {
 	defer ctrl.Finish()
 
 	tests := []struct {
-		group        *commonv1.Group
-		nodeLabels   map[string]string
-		name         string
-		errorMessage string
-		nodes        []*databasev1.Node
-		expectShard  uint32
-		expectError  bool
-		expectResult bool
+		group          *commonv1.Group
+		nodeLabels     map[string]string
+		name           string
+		errorMessage   string
+		nodes          []*databasev1.Node
+		expectShard    uint32
+		expectReplicas uint32
+		expectError    bool
+		expectResult   bool
 	}{
 		{
 			name: "no resource opts",
@@ -591,7 +593,7 @@ func TestParseGroup(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockRepo := metadata.NewMockRepo(ctrl)
 			mockRepo.EXPECT().RegisterHandler("", schema.KindGroup, gomock.Any()).MaxTimes(1)
-			shardNum, selector, client, err := parseGroup(context.Background(), tt.group, tt.nodeLabels, tt.nodes, l, mockRepo)
+			shardNum, replicas, selector, client, err := parseGroup(context.Background(), tt.group, tt.nodeLabels, tt.nodes, l, mockRepo)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -604,6 +606,7 @@ func TestParseGroup(t *testing.T) {
 				require.Nil(t, selector)
 				require.Nil(t, client)
 				require.Equal(t, uint32(0), shardNum)
+				require.Equal(t, uint32(0), replicas)
 				return
 			}
 
@@ -611,6 +614,7 @@ func TestParseGroup(t *testing.T) {
 			require.NotNil(t, selector)
 			require.NotNil(t, client)
 			require.Equal(t, tt.expectShard, shardNum)
+			require.Equal(t, tt.expectReplicas, replicas)
 		})
 	}
 }

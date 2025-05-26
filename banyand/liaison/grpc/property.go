@@ -167,7 +167,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	if err != nil {
 		return nil, err
 	}
-	node, err := ps.nodeRegistry.Locate(g, entity, uint32(id))
+	node, err := ps.nodeRegistry.Locate(g, entity, uint32(id), 0)
 	if err != nil {
 		return nil, err
 	}

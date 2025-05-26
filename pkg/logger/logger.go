@@ -85,13 +85,6 @@ func (l *Logger) Named(name ...string) *Logger {
 	return &Logger{module: module, modules: l.modules, development: l.development, Logger: &subLogger, isDefaultLevel: isDefaultLevel}
 }
 
-// Sampled return a Logger with a sampler that will send every Nth events.
-func (l *Logger) Sampled(n uint32) *Logger {
-	sampled := l.Logger.Sample(&zerolog.BasicSampler{N: n})
-	l.Logger = &sampled
-	return l
-}
-
 // ToZapConfig outputs the zap config is derived from l.
 func (l *Logger) ToZapConfig() zap.Config {
 	level, err := zap.ParseAtomicLevel(l.GetLevel().String())
