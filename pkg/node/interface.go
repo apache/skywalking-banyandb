@@ -45,7 +45,7 @@ type Selector interface {
 	AddNode(node *databasev1.Node)
 	RemoveNode(node *databasev1.Node)
 	SetNodeSelector(selector *pub.LabelSelector)
-	Pick(group, name string, shardID uint32) (string, error)
+	Pick(group, name string, shardID, replicaID uint32) (string, error)
 	run.PreRunner
 	fmt.Stringer
 }
@@ -69,7 +69,7 @@ func (p *pickFirstSelector) SetNodeSelector(_ *pub.LabelSelector) {}
 
 // String implements Selector.
 func (p *pickFirstSelector) String() string {
-	n, err := p.Pick("", "", 0)
+	n, err := p.Pick("", "", 0, 0)
 	if err != nil {
 		return fmt.Sprintf("%v", err)
 	}
@@ -119,7 +119,7 @@ func (p *pickFirstSelector) RemoveNode(node *databasev1.Node) {
 	p.nodeIDs = slices.Delete(p.nodeIDs, idx, idx+1)
 }
 
-func (p *pickFirstSelector) Pick(_, _ string, _ uint32) (string, error) {
+func (p *pickFirstSelector) Pick(_, _ string, _, _ uint32) (string, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if len(p.nodeIDs) == 0 {

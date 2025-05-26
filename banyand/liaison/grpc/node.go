@@ -39,7 +39,7 @@ var (
 // NodeRegistry is for locating data node with group/name of the metadata
 // together with the shardID calculated from the incoming data.
 type NodeRegistry interface {
-	Locate(group, name string, shardID uint32) (string, error)
+	Locate(group, name string, shardID, replicaID uint32) (string, error)
 	fmt.Stringer
 }
 
@@ -66,10 +66,10 @@ func NewClusterNodeRegistry(topic bus.Topic, pipeline queue.Client, selector nod
 	return nr
 }
 
-func (n *clusterNodeService) Locate(group, name string, shardID uint32) (string, error) {
-	nodeID, err := n.sel.Pick(group, name, shardID)
+func (n *clusterNodeService) Locate(group, name string, shardID, replicaID uint32) (string, error) {
+	nodeID, err := n.sel.Pick(group, name, shardID, replicaID)
 	if err != nil {
-		return "", errors.Wrapf(err, "fail to locate %s/%s(%d)", group, name, shardID)
+		return "", errors.Wrapf(err, "fail to locate %s/%s(%d,%d)", group, name, shardID, replicaID)
 	}
 	return nodeID, nil
 }
@@ -114,6 +114,6 @@ func NewLocalNodeRegistry() NodeRegistry {
 }
 
 // Locate of localNodeService always returns local.
-func (localNodeService) Locate(_, _ string, _ uint32) (string, error) {
+func (localNodeService) Locate(_, _ string, _, _ uint32) (string, error) {
 	return "local", nil
 }

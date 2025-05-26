@@ -111,26 +111,26 @@ func (l *lifecycleService) setupQuerySvc(ctx context.Context, streamDir, measure
 
 func parseGroup(ctx context.Context, g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo,
-) (uint32, node.Selector, queue.Client, error) {
+) (uint32, uint32, node.Selector, queue.Client, error) {
 	ro := g.ResourceOpts
 	if ro == nil {
-		return 0, nil, nil, fmt.Errorf("no resource opts in group %s", g.Metadata.Name)
+		return 0, 0, nil, nil, fmt.Errorf("no resource opts in group %s", g.Metadata.Name)
 	}
 	if len(ro.Stages) == 0 {
-		return 0, nil, nil, fmt.Errorf("no stages in group %s", g.Metadata.Name)
+		return 0, 0, nil, nil, fmt.Errorf("no stages in group %s", g.Metadata.Name)
 	}
 	var nst *commonv1.LifecycleStage
 	for i, st := range ro.Stages {
 		selector, err := pub.ParseLabelSelector(st.NodeSelector)
 		if err != nil {
-			return 0, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
+			return 0, 0, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
 		}
 		if !selector.Matches(nodeLabels) {
 			continue
 		}
 		if i+1 >= len(ro.Stages) {
 			l.Info().Msgf("no next stage for group %s at stage %s", g.Metadata.Name, st.Name)
-			return 0, nil, nil, nil
+			return 0, 0, nil, nil, nil
 		}
 		nst = ro.Stages[i+1]
 		l.Info().Msgf("migrating group %s at stage %s to stage %s", g.Metadata.Name, st.Name, nst.Name)
@@ -141,11 +141,11 @@ func parseGroup(ctx context.Context, g *commonv1.Group, nodeLabels map[string]st
 	}
 	nsl, err := pub.ParseLabelSelector(nst.NodeSelector)
 	if err != nil {
-		return 0, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
+		return 0, 0, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
 	}
 	nodeSel := node.NewRoundRobinSelector("", metadata)
 	if err = nodeSel.PreRun(ctx); err != nil {
-		return 0, nil, nil, errors.WithMessage(err, "failed to run node selector")
+		return 0, 0, nil, nil, errors.WithMessage(err, "failed to run node selector")
 	}
 	client := pub.NewWithoutMetadata()
 	if g.Catalog == commonv1.Catalog_CATALOG_STREAM {
@@ -170,18 +170,19 @@ func parseGroup(ctx context.Context, g *commonv1.Group, nodeLabels map[string]st
 		}
 	}
 	if !existed {
-		return 0, nil, nil, errors.New("no nodes matched")
+		return 0, 0, nil, nil, errors.New("no nodes matched")
 	}
-	return nst.ShardNum, nodeSel, client, nil
+	return nst.ShardNum, nst.Replicas, nodeSel, client, nil
 }
 
 func migrateStream(ctx context.Context, s *databasev1.Stream, result model.StreamQueryResult,
-	shardNum uint32, selector node.Selector, client queue.Client, l *logger.Logger,
+	shardNum uint32, replicas uint32, selector node.Selector, client queue.Client, l *logger.Logger,
 ) (sum int) {
 	if result == nil {
 		return 0
 	}
 	defer result.Release()
+	copies := replicas + 1
 
 	entityLocator := partition.NewEntityLocator(s.TagFamilies, s.Entity, 0)
 
@@ -208,22 +209,26 @@ func migrateStream(ctx context.Context, s *databasev1.Stream, result model.Strea
 				l.Error().Err(err).Msg("failed to locate entity")
 				continue
 			}
-			nodeID, err := selector.Pick(s.Metadata.Group, s.Metadata.Name, uint32(shardID))
-			if err != nil {
-				l.Error().Err(err).Msg("failed to pick node")
-				continue
-			}
-			iwr := &streamv1.InternalWriteRequest{
-				Request:      writeEntity,
-				ShardId:      uint32(shardID),
-				SeriesHash:   pbv1.HashEntity(entity),
-				EntityValues: tagValues[1:].Encode(),
-			}
-			message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-			_, err = batch.Publish(ctx, data.TopicStreamWrite, message)
-			if err != nil {
-				l.Error().Err(err).Msg("failed to publish message")
-				continue
+
+			// Write to multiple replicas
+			for replicaID := uint32(0); replicaID < copies; replicaID++ {
+				nodeID, err := selector.Pick(s.Metadata.Group, s.Metadata.Name, uint32(shardID), replicaID)
+				if err != nil {
+					l.Error().Err(err).Msg("failed to pick node")
+					continue
+				}
+				iwr := &streamv1.InternalWriteRequest{
+					Request:      writeEntity,
+					ShardId:      uint32(shardID),
+					SeriesHash:   pbv1.HashEntity(entity),
+					EntityValues: tagValues[1:].Encode(),
+				}
+				message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+				_, err = batch.Publish(ctx, data.TopicStreamWrite, message)
+				if err != nil {
+					l.Error().Err(err).Msg("failed to publish message")
+					continue
+				}
 			}
 			sum++
 		}
@@ -232,12 +237,13 @@ func migrateStream(ctx context.Context, s *databasev1.Stream, result model.Strea
 }
 
 func migrateMeasure(ctx context.Context, m *databasev1.Measure, result model.MeasureQueryResult,
-	shardNum uint32, selector node.Selector, client queue.Client, l *logger.Logger,
+	shardNum uint32, replicas uint32, selector node.Selector, client queue.Client, l *logger.Logger,
 ) (sum int) {
 	if result == nil {
 		return 0
 	}
 	defer result.Release()
+	copies := replicas + 1
 
 	entityLocator := partition.NewEntityLocator(m.TagFamilies, m.Entity, 0)
 
@@ -272,26 +278,28 @@ func migrateMeasure(ctx context.Context, m *databasev1.Measure, result model.Mea
 				continue
 			}
 
-			nodeID, err := selector.Pick(m.Metadata.Group, m.Metadata.Name, uint32(shardID))
-			if err != nil {
-				l.Error().Err(err).Msg("failed to pick node")
-				continue
-			}
+			// Write to multiple replicas
+			for replicaID := uint32(0); replicaID < copies; replicaID++ {
+				nodeID, err := selector.Pick(m.Metadata.Group, m.Metadata.Name, uint32(shardID), replicaID)
+				if err != nil {
+					l.Error().Err(err).Msg("failed to pick node")
+					continue
+				}
 
-			iwr := &measurev1.InternalWriteRequest{
-				Request:      writeRequest,
-				ShardId:      uint32(shardID),
-				SeriesHash:   pbv1.HashEntity(entity),
-				EntityValues: tagValues[1:].Encode(),
-			}
+				iwr := &measurev1.InternalWriteRequest{
+					Request:      writeRequest,
+					ShardId:      uint32(shardID),
+					SeriesHash:   pbv1.HashEntity(entity),
+					EntityValues: tagValues[1:].Encode(),
+				}
 
-			message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-			_, err = batch.Publish(ctx, data.TopicMeasureWrite, message)
-			if err != nil {
-				l.Error().Err(err).Msg("failed to publish message")
-			} else {
-				sum++
+				message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+				_, err = batch.Publish(ctx, data.TopicMeasureWrite, message)
+				if err != nil {
+					l.Error().Err(err).Msg("failed to publish message")
+				}
 			}
+			sum++
 		}
 	}
 	return sum
