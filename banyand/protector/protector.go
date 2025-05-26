@@ -37,6 +37,7 @@ import (
 
 var scope = observability.RootScope.SubScope("memory_protector")
 
+// MemoryProtector is an interface for monitoring and limiting memory usage to prevent OOM
 type MemoryProtector interface {
 	AvailableBytes() int64
 	GetLimit() uint64

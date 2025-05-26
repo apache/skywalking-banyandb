@@ -50,7 +50,7 @@ func (f *fakeMemory) GetLimit() uint64 {
 	return f.limit
 }
 
-func (f *fakeMemory) AcquireResource(ctx context.Context, size uint64) error {
+func (f *fakeMemory) AcquireResource(_ context.Context, _ uint64) error {
 	return f.acquireErr
 }
 
@@ -66,7 +66,7 @@ func (f *fakeMemory) Validate() error {
 	return nil
 }
 
-func (f *fakeMemory) PreRun(ctx context.Context) error {
+func (f *fakeMemory) PreRun(_ context.Context) error {
 	return nil
 }
 
@@ -107,9 +107,8 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "quota exceeded", "expected quota to be exceeded but got: %v", err)
 			return
-		} else {
-			require.NoError(t, err)
 		}
+		require.NoError(t, err)
 		var got []blockMetadata
 		for _, data := range qr.data {
 			got = append(got, data.bm)
