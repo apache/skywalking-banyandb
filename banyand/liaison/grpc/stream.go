@@ -47,13 +47,13 @@ type streamService struct {
 	pipeline           queue.Client
 	broadcaster        queue.Client
 	*discoveryService
-	sampled      *logger.Logger
+	l            *logger.Logger
 	metrics      *metrics
 	writeTimeout time.Duration
 }
 
 func (s *streamService) setLogger(log *logger.Logger) {
-	s.sampled = log.Sampled(10)
+	s.l = log
 }
 
 func (s *streamService) activeIngestionAccessLog(root string) (err error) {
@@ -69,9 +69,11 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		if status != modelv1.Status_STATUS_SUCCEED {
 			s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "stream", "write")
 		}
-		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "stream", "write")
+		s.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "stream", "write")
 		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageId}); errResp != nil {
-			logger.Debug().Err(errResp).Msg("failed to send stream write response")
+			if dl := logger.Debug(); dl.Enabled() {
+				dl.Err(errResp).Msg("failed to send stream write response")
+			}
 			s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "stream", "write")
 		}
 	}
@@ -79,19 +81,26 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
 	start := time.Now()
 	var succeedSent []succeedSentMessage
+	requestCount := 0
 	defer func() {
 		cee, err := publisher.Close()
 		for _, ssm := range succeedSent {
 			code := modelv1.Status_STATUS_SUCCEED
 			if cee != nil {
-				if ce, ok := cee[ssm.node]; ok {
-					code = ce.Status()
+				for _, node := range ssm.nodes {
+					if ce, ok := cee[node]; ok {
+						code = ce.Status()
+						break
+					}
 				}
 			}
-			reply(ssm.metadata, code, ssm.messageID, stream, s.sampled)
+			reply(ssm.metadata, code, ssm.messageID, stream, s.l)
 		}
 		if err != nil {
-			s.sampled.Error().Err(err).Msg("failed to close the publisher")
+			s.l.Error().Err(err).Msg("failed to close the publisher")
+		}
+		if dl := s.l.Debug(); dl.Enabled() {
+			dl.Int("total_requests", requestCount).Msg("completed stream write batch")
 		}
 		s.metrics.totalStreamFinished.Inc(1, "stream", "write")
 		s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "stream", "write")
@@ -109,38 +118,39 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-				s.sampled.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
+				s.l.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
 			}
 			return err
 		}
+		requestCount++
 		s.metrics.totalStreamMsgReceived.Inc(1, writeEntity.Metadata.Group, "stream", "write")
 		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
-			s.sampled.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
-			reply(nil, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream, s.sampled)
+			s.l.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream, s.l)
 			continue
 		}
 		if writeEntity.Metadata.ModRevision > 0 {
 			streamCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
 			if !existed {
-				s.sampled.Error().Err(err).Stringer("written", writeEntity).Msg("failed to stream schema not found")
-				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream, s.sampled)
+				s.l.Error().Err(err).Stringer("written", writeEntity).Msg("failed to stream schema not found")
+				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream, s.l)
 				continue
 			}
 			if writeEntity.Metadata.ModRevision != streamCache.ModRevision {
-				s.sampled.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
-				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream, s.sampled)
+				s.l.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
+				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream, s.l)
 				continue
 			}
 		}
 		entity, tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
-			s.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
+			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.l)
 			continue
 		}
 		if s.ingestionAccessLog != nil {
 			if errAccessLog := s.ingestionAccessLog.Write(writeEntity); errAccessLog != nil {
-				s.sampled.Error().Err(errAccessLog).Msg("failed to write ingestion access log")
+				s.l.Error().Err(errAccessLog).Msg("failed to write ingestion access log")
 			}
 		}
 		iwr := &streamv1.InternalWriteRequest{
@@ -149,28 +159,39 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			SeriesHash:   pbv1.HashEntity(entity),
 			EntityValues: tagValues[1:].Encode(),
 		}
-		nodeID, errPickNode := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID))
-		if errPickNode != nil {
-			s.sampled.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to pick an available node")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
+		copies, ok := s.groupRepo.copies(writeEntity.Metadata.GetGroup())
+		if !ok {
+			s.l.Error().RawJSON("written", logger.Proto(writeEntity)).Msg("failed to get the group copies")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.l)
 			continue
 		}
-		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-		_, errWritePub := publisher.Publish(ctx, data.TopicStreamWrite, message)
-		if errWritePub != nil {
-			var ce *common.Error
-			if errors.As(errWritePub, &ce) {
-				reply(writeEntity.GetMetadata(), ce.Status(), writeEntity.GetMessageId(), stream, s.sampled)
+		nodes := make([]string, 0, copies)
+		for i := range copies {
+			nodeID, errPickNode := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID), i)
+			if errPickNode != nil {
+				s.l.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to pick an available node")
+				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.l)
 				continue
 			}
-			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Str("nodeID", nodeID).Msg("failed to send a message")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
-			continue
+			message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+			_, errWritePub := publisher.Publish(ctx, data.TopicStreamWrite, message)
+			if errWritePub != nil {
+				s.l.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Str("nodeID", nodeID).Msg("failed to send a message")
+				var ce *common.Error
+				if errors.As(errWritePub, &ce) {
+					reply(writeEntity.GetMetadata(), ce.Status(), writeEntity.GetMessageId(), stream, s.l)
+					continue
+				}
+				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.l)
+				continue
+			}
+			nodes = append(nodes, nodeID)
 		}
+
 		succeedSent = append(succeedSent, succeedSentMessage{
 			metadata:  writeEntity.GetMetadata(),
 			messageID: writeEntity.GetMessageId(),
-			node:      nodeID,
+			nodes:     nodes,
 		})
 	}
 }

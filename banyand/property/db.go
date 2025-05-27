@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -55,6 +56,7 @@ type database struct {
 	location      string
 	flushInterval time.Duration
 	closed        atomic.Bool
+	mu            sync.RWMutex
 }
 
 func openDB(ctx context.Context, location string, flushInterval time.Duration, omr observability.MetricsRegistry, lfs fs.FileSystem) (*database, error) {
@@ -142,24 +144,41 @@ func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 }
 
 func (db *database) loadShard(ctx context.Context, id common.ShardID) (*shard, error) {
-	sLst := db.sLst.Load()
-	if sLst != nil {
-		for _, s := range *sLst {
-			if s.id == id {
-				return s, nil
-			}
-		}
+	if db.closed.Load() {
+		return nil, errors.New("database is closed")
+	}
+	if s, ok := db.getShard(id); ok {
+		return s, nil
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if s, ok := db.getShard(id); ok {
+		return s, nil
 	}
 	sd, err := db.newShard(context.WithValue(ctx, logger.ContextKey, db.logger), id, int64(db.flushInterval.Seconds()))
 	if err != nil {
 		return nil, err
 	}
+	sLst := db.sLst.Load()
 	if sLst == nil {
 		sLst = &[]*shard{}
 	}
 	*sLst = append(*sLst, sd)
 	db.sLst.Store(sLst)
 	return sd, nil
+}
+
+func (db *database) getShard(id common.ShardID) (*shard, bool) {
+	sLst := db.sLst.Load()
+	if sLst == nil {
+		return nil, false
+	}
+	for _, s := range *sLst {
+		if s.id == id {
+			return s, true
+		}
+	}
+	return nil, false
 }
 
 func (db *database) close() error {

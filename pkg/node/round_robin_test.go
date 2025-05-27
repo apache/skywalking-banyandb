@@ -30,16 +30,16 @@ import (
 func TestPickEmptySelector(t *testing.T) {
 	selector := NewRoundRobinSelector("test", nil)
 	setupGroup(selector)
-	_, err := selector.Pick("group1", "", 0)
+	_, err := selector.Pick("group1", "", 0, 0)
 	assert.Error(t, err)
 }
 
 func TestPickUnknownGroup(t *testing.T) {
 	selector := NewRoundRobinSelector("test", nil)
-	_, err := selector.Pick("group1", "", 0)
+	_, err := selector.Pick("group1", "", 0, 0)
 	assert.Error(t, err)
 	setupGroup(selector)
-	_, err = selector.Pick("group1", "", 100)
+	_, err = selector.Pick("group1", "", 100, 0)
 	assert.Error(t, err)
 }
 
@@ -47,7 +47,7 @@ func TestPickSingleSelection(t *testing.T) {
 	selector := NewRoundRobinSelector("test", nil)
 	setupGroup(selector)
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
-	node, err := selector.Pick("group1", "", 0)
+	node, err := selector.Pick("group1", "", 0, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, "node1", node)
 }
@@ -58,11 +58,11 @@ func TestPickMultipleSelections(t *testing.T) {
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
 
-	_, err := selector.Pick("group1", "", 1)
+	_, err := selector.Pick("group1", "", 1, 0)
 	assert.NoError(t, err)
-	node1, err := selector.Pick("group1", "", 0)
+	node1, err := selector.Pick("group1", "", 0, 0)
 	assert.NoError(t, err)
-	node2, err := selector.Pick("group1", "", 1)
+	node2, err := selector.Pick("group1", "", 1, 0)
 	assert.NoError(t, err)
 	assert.NotEqual(t, node1, node2, "Different shardIDs in the same group should not result in the same node")
 }
@@ -73,7 +73,7 @@ func TestPickNodeRemoval(t *testing.T) {
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
 	selector.RemoveNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
-	node, err := selector.Pick("group1", "", 0)
+	node, err := selector.Pick("group1", "", 0, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, "node2", node)
 }
@@ -84,15 +84,15 @@ func TestPickConsistentSelectionAfterRemoval(t *testing.T) {
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node3"}})
-	_, err := selector.Pick("group1", "", 0)
+	_, err := selector.Pick("group1", "", 0, 0)
 	assert.NoError(t, err)
-	_, err = selector.Pick("group1", "", 1)
+	_, err = selector.Pick("group1", "", 1, 0)
 	assert.NoError(t, err)
-	node, err := selector.Pick("group1", "", 1)
+	node, err := selector.Pick("group1", "", 1, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, "node2", node)
 	selector.RemoveNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
-	node, err = selector.Pick("group1", "", 1)
+	node, err = selector.Pick("group1", "", 1, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, "node3", node)
 }
@@ -104,10 +104,10 @@ func TestCleanupGroup(t *testing.T) {
 	setupGroup(selector)
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
-	_, err := selector.Pick("group1", "", 0)
+	_, err := selector.Pick("group1", "", 0, 0)
 	assert.NoError(t, err)
 	selector.OnDelete(groupSchema)
-	_, err = selector.Pick("group1", "", 0)
+	_, err = selector.Pick("group1", "", 0, 0)
 	assert.Error(t, err)
 }
 
@@ -139,21 +139,21 @@ func TestChangeShard(t *testing.T) {
 	setupGroup(selector)
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node1"}})
 	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "node2"}})
-	_, err := selector.Pick("group1", "", 0)
+	_, err := selector.Pick("group1", "", 0, 0)
 	assert.NoError(t, err)
-	_, err = selector.Pick("group1", "", 1)
+	_, err = selector.Pick("group1", "", 1, 0)
 	assert.NoError(t, err)
 	// Reduce shard number to 1
 	selector.OnAddOrUpdate(groupSchema1)
-	_, err = selector.Pick("group1", "", 0)
+	_, err = selector.Pick("group1", "", 0, 0)
 	assert.NoError(t, err)
-	_, err = selector.Pick("group1", "", 1)
+	_, err = selector.Pick("group1", "", 1, 0)
 	assert.Error(t, err)
 	// Restore shard number to 2
 	setupGroup(selector)
-	node1, err := selector.Pick("group1", "", 0)
+	node1, err := selector.Pick("group1", "", 0, 0)
 	assert.NoError(t, err)
-	node2, err := selector.Pick("group1", "", 1)
+	node2, err := selector.Pick("group1", "", 1, 0)
 	assert.NoError(t, err)
 	assert.NotEqual(t, node1, node2)
 }
