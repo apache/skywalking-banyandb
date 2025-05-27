@@ -26,9 +26,9 @@ import (
 )
 
 const (
-	k = 7
+	k = 6
 	// B specifies the number of bits allocated for each item.
-	B = 10
+	B = 15
 )
 
 // BloomFilter is a probabilistic data structure designed to test whether an element is a member of a set.

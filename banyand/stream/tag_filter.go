@@ -18,7 +18,9 @@
 package stream
 
 import (
-	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"bytes"
+
+	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -66,8 +68,8 @@ var bloomFilterPool = pool.Register[*filter.BloomFilter]("stream-bloomFilter")
 
 type tagFilter struct {
 	filter *filter.BloomFilter
-	min    int64
-	max    int64
+	min    []byte
+	max    []byte
 }
 
 type tagFamilyFilter map[string]*tagFilter
@@ -78,7 +80,7 @@ func (tff *tagFamilyFilter) reset() {
 
 func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaReader, filterReader fs.Reader) {
 	bb := bigValuePool.Generate()
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
@@ -91,7 +93,7 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 		if tm.filterBlock.size == 0 {
 			continue
 		}
-		bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.filterBlock.size))
+		bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tm.filterBlock.size))
 		fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
 		bf := generateBloomFilter()
 		bf = decodeBloomFilter(bb.Buf, bf)
@@ -157,7 +159,9 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) bo
 				if !ok {
 					logger.Panicf("lower is not a float value: %v", rangeOpts.Lower)
 				}
-				if tf.max < int64(lower.Value) || !rangeOpts.IncludesLower && tf.max == int64(lower.Value) {
+				value := make([]byte, 0)
+				value = encoding.Int64ToBytes(value, int64(lower.Value))
+				if bytes.Compare(tf.max, value) == -1 || !rangeOpts.IncludesLower && bytes.Equal(tf.max, value) {
 					return false
 				}
 			}
@@ -166,7 +170,9 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) bo
 				if !ok {
 					logger.Panicf("upper is not a float value: %v", rangeOpts.Upper)
 				}
-				if tf.min > int64(upper.Value) || !rangeOpts.IncludesUpper && tf.min == int64(upper.Value) {
+				value := make([]byte, 0)
+				value = encoding.Int64ToBytes(value, int64(upper.Value))
+				if bytes.Compare(tf.min, value) == 1 || !rangeOpts.IncludesUpper && bytes.Equal(tf.min, value) {
 					return false
 				}
 			}

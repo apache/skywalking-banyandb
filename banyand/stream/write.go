@@ -241,11 +241,10 @@ func (w *writeCallback) processElements(et *elementsInTable, eg *elementsInGroup
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
 				continue
 			}
-			tv := encodeTagValue(t.Name, t.Type, tagValue)
-			if _, ok := indexedTags[tagFamilySpec.Name][t.Name]; ok {
-				tv.primitive = tagValue.GetInt().GetValue()
-			}
-			tf.values = append(tf.values, tv)
+			tf.values = append(tf.values, encodeTagValue(
+				t.Name,
+				t.Type,
+				tagValue))
 		}
 		if len(tf.values) > 0 {
 			tagFamilies = append(tagFamilies, tf)

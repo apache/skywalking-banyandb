@@ -27,9 +27,12 @@ import (
 
 func Test_tagMetadata_reset(t *testing.T) {
 	tm := &tagMetadata{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		dataBlock: dataBlock{offset: 1, size: 10},
+		name:        "test",
+		valueType:   pbv1.ValueTypeStr,
+		dataBlock:   dataBlock{offset: 1, size: 10},
+		filterBlock: dataBlock{offset: 2, size: 20},
+		min:         []byte{1, 2, 3},
+		max:         []byte{4, 5, 6},
 	}
 
 	tm.reset()
@@ -37,13 +40,19 @@ func Test_tagMetadata_reset(t *testing.T) {
 	assert.Equal(t, "", tm.name)
 	assert.Equal(t, pbv1.ValueType(0), tm.valueType)
 	assert.Equal(t, dataBlock{}, tm.dataBlock)
+	assert.Equal(t, dataBlock{}, tm.filterBlock)
+	assert.Equal(t, []byte{}, tm.min)
+	assert.Equal(t, []byte{}, tm.max)
 }
 
 func Test_tagMetadata_copyFrom(t *testing.T) {
 	src := &tagMetadata{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		dataBlock: dataBlock{offset: 1, size: 10},
+		name:        "test",
+		valueType:   pbv1.ValueTypeStr,
+		dataBlock:   dataBlock{offset: 1, size: 10},
+		filterBlock: dataBlock{offset: 2, size: 20},
+		min:         []byte{1, 2, 3},
+		max:         []byte{4, 5, 6},
 	}
 
 	dest := &tagMetadata{}
@@ -55,9 +64,12 @@ func Test_tagMetadata_copyFrom(t *testing.T) {
 
 func Test_tagMetadata_marshal(t *testing.T) {
 	original := &tagMetadata{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		dataBlock: dataBlock{offset: 1, size: 10},
+		name:        "test",
+		valueType:   pbv1.ValueTypeStr,
+		dataBlock:   dataBlock{offset: 1, size: 10},
+		filterBlock: dataBlock{offset: 2, size: 20},
+		min:         []byte{1, 2, 3},
+		max:         []byte{4, 5, 6},
 	}
 
 	marshaled := original.marshal(nil)
@@ -74,14 +86,20 @@ func Test_tagFamilyMetadata_reset(t *testing.T) {
 	tfm := &tagFamilyMetadata{
 		tagMetadata: []tagMetadata{
 			{
-				name:      "test1",
-				valueType: pbv1.ValueTypeStr,
-				dataBlock: dataBlock{offset: 1, size: 10},
+				name:        "test1",
+				valueType:   pbv1.ValueTypeStr,
+				dataBlock:   dataBlock{offset: 1, size: 10},
+				filterBlock: dataBlock{offset: 2, size: 20},
+				min:         []byte{1, 2, 3},
+				max:         []byte{4, 5, 6},
 			},
 			{
-				name:      "test2",
-				valueType: pbv1.ValueTypeInt64,
-				dataBlock: dataBlock{offset: 2, size: 20},
+				name:        "test2",
+				valueType:   pbv1.ValueTypeInt64,
+				dataBlock:   dataBlock{offset: 3, size: 30},
+				filterBlock: dataBlock{offset: 4, size: 40},
+				min:         []byte{1, 2, 3},
+				max:         []byte{4, 5, 6},
 			},
 		},
 	}
@@ -95,14 +113,20 @@ func Test_tagFamilyMetadata_copyFrom(t *testing.T) {
 	src := &tagFamilyMetadata{
 		tagMetadata: []tagMetadata{
 			{
-				name:      "test1",
-				valueType: pbv1.ValueTypeStr,
-				dataBlock: dataBlock{offset: 1, size: 10},
+				name:        "test1",
+				valueType:   pbv1.ValueTypeStr,
+				dataBlock:   dataBlock{offset: 1, size: 10},
+				filterBlock: dataBlock{offset: 2, size: 20},
+				min:         []byte{1, 2, 3},
+				max:         []byte{4, 5, 6},
 			},
 			{
-				name:      "test2",
-				valueType: pbv1.ValueTypeInt64,
-				dataBlock: dataBlock{offset: 2, size: 20},
+				name:        "test2",
+				valueType:   pbv1.ValueTypeInt64,
+				dataBlock:   dataBlock{offset: 3, size: 30},
+				filterBlock: dataBlock{offset: 4, size: 40},
+				min:         []byte{1, 2, 3},
+				max:         []byte{4, 5, 6},
 			},
 		},
 	}
@@ -141,12 +165,18 @@ func Test_tagFamilyMetadata_marshalUnmarshal(t *testing.T) {
 					{
 						name:      "test1",
 						valueType: pbv1.ValueTypeStr,
-						dataBlock: dataBlock{offset: 1, size: 10},
+						dataBlock:   dataBlock{offset: 1, size: 10},
+						filterBlock: dataBlock{offset: 2, size: 20},
+						min:         []byte{1, 2, 3},
+						max:         []byte{4, 5, 6},
 					},
 					{
-						name:      "test2",
-						valueType: pbv1.ValueTypeInt64,
-						dataBlock: dataBlock{offset: 2, size: 20},
+						name:        "test2",
+						valueType:   pbv1.ValueTypeInt64,
+						dataBlock:   dataBlock{offset: 3, size: 30},
+						filterBlock: dataBlock{offset: 4, size: 40},
+						min:         []byte{1, 2, 3},
+						max:         []byte{4, 5, 6},
 					},
 				},
 			},
