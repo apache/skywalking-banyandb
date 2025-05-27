@@ -70,7 +70,7 @@ type queryOptions struct {
 	maxTimestamp int64
 }
 
-func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
+func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
 	if mqo.TimeRange == nil {
 		return nil, errors.New("invalid query options: timeRange are required")
 	}
@@ -78,13 +78,13 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
 	}
 	var tsdb storage.TSDB[*tsTable, option]
-	db := s.tsdb.Load()
+	db := m.tsdb.Load()
 	if db == nil {
-		tsdb, err = s.schemaRepo.loadTSDB(s.group)
+		tsdb, err = m.schemaRepo.loadTSDB(m.group)
 		if err != nil {
 			return nil, err
 		}
-		s.tsdb.Store(tsdb)
+		m.tsdb.Store(tsdb)
 	} else {
 		tsdb = db.(storage.TSDB[*tsTable, option])
 	}
@@ -97,8 +97,8 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		return nilResult, nil
 	}
 
-	if s.schema.IndexMode {
-		return s.buildIndexQueryResult(ctx, mqo, segments)
+	if m.schema.IndexMode {
+		return m.buildIndexQueryResult(ctx, mqo, segments)
 	}
 
 	if len(mqo.Entities) < 1 {
@@ -113,7 +113,7 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}
 
-	sids, tables, storedIndexValue, newTagProjection, err := s.searchSeriesList(ctx, series, mqo, segments)
+	sids, tables, caches, storedIndexValue, newTagProjection, err := m.searchSeriesList(ctx, series, mqo, segments)
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +136,7 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	}()
 	mqo.TagProjection = newTagProjection
 	var parts []*part
+	var scs []*storage.ShardCache
 	qo := queryOptions{
 		MeasureQueryOptions: mqo,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
@@ -148,6 +149,9 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 			continue
 		}
 		parts, n = s.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
+		for j := 1; j <= n; j++ {
+			scs = append(scs, caches[i])
+		}
 		if n < 1 {
 			s.decRef()
 			continue
@@ -155,7 +159,7 @@ func (s *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		result.snapshots = append(result.snapshots, s)
 	}
 
-	if err = s.searchBlocks(ctx, &result, sids, parts, qo); err != nil {
+	if err = m.searchBlocks(ctx, &result, sids, parts, scs, qo); err != nil {
 		return nil, err
 	}
 
@@ -184,22 +188,22 @@ type tagNameWithType struct {
 	typ       pbv1.ValueType
 }
 
-func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
+func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
 	segments []storage.Segment[*tsTable, option],
-) (sl []common.SeriesID, tables []*tsTable, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+) (sl []common.SeriesID, tables []*tsTable, caches []*storage.ShardCache, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
 	newTagProjection []model.TagProjection, err error,
 ) {
 	var indexProjection []index.FieldKey
 	fieldToValueType := make(map[string]tagNameWithType)
 	var projectedEntityOffsets map[string]int
 	newTagProjection = make([]model.TagProjection, 0)
-	is := s.indexSchema.Load().(indexSchema)
+	is := m.indexSchema.Load().(indexSchema)
 	for _, tp := range mqo.TagProjection {
 		var tagProjection model.TagProjection
 	TAG:
 		for _, n := range tp.Names {
-			for i := range s.schema.GetEntity().GetTagNames() {
-				if n == s.schema.GetEntity().GetTagNames()[i] {
+			for i := range m.schema.GetEntity().GetTagNames() {
+				if n == m.schema.GetEntity().GetTagNames()[i] {
 					if projectedEntityOffsets == nil {
 						projectedEntityOffsets = make(map[string]int)
 					}
@@ -235,10 +239,11 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			Projection:  indexProjection,
 		})
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 		if len(sd.SeriesList) > 0 {
 			tables = append(tables, segments[i].Tables()...)
+			caches = append(caches, segments[i].Caches()...)
 		}
 		for j := range sd.SeriesList {
 			if seriesFilter.Contains(uint64(sd.SeriesList[j].ID)) {
@@ -274,10 +279,10 @@ func (s *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			}
 		}
 	}
-	return sl, tables, storedIndexValue, newTagProjection, nil
+	return sl, tables, caches, storedIndexValue, newTagProjection, nil
 }
 
-func (s *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQueryOptions,
+func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQueryOptions,
 	segments []storage.Segment[*tsTable, option],
 ) (model.MeasureQueryResult, error) {
 	defer func() {
@@ -285,7 +290,7 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 			segments[i].DecRef()
 		}
 	}()
-	is := s.indexSchema.Load().(indexSchema)
+	is := m.indexSchema.Load().(indexSchema)
 	r := &indexSortResult{}
 	var indexProjection []index.FieldKey
 	for _, tp := range mqo.TagProjection {
@@ -297,8 +302,8 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 	TAG:
 		for _, n := range tp.Names {
 			tagFamilyLocation.tagNames = append(tagFamilyLocation.tagNames, n)
-			for i := range s.schema.GetEntity().GetTagNames() {
-				if n == s.schema.GetEntity().GetTagNames()[i] {
+			for i := range m.schema.GetEntity().GetTagNames() {
+				if n == m.schema.GetEntity().GetTagNames()[i] {
 					tagFamilyLocation.projectedEntityOffsets[n] = i
 					continue TAG
 				}
@@ -358,7 +363,7 @@ func (s *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 	return r, nil
 }
 
-func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []*part, qo queryOptions) error {
+func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []*part, scs []*storage.ShardCache, qo queryOptions) error {
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
 	defFn := startBlockScanSpan(ctx, len(sids), parts, result)
@@ -368,7 +373,7 @@ func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	originalSids := make([]common.SeriesID, len(sids))
 	copy(originalSids, sids)
 	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	tstIter.init(bma, parts, scs, sids, qo.minTimestamp, qo.maxTimestamp)
 	if tstIter.Error() != nil {
 		return fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
 	}
@@ -392,7 +397,7 @@ func (s *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	if tstIter.Error() != nil {
 		return fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
-	if err := s.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
+	if err := m.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
 		return err
 	}
 	result.sidToIndex = make(map[common.SeriesID]int)

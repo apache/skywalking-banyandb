@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -115,8 +116,9 @@ func Test_partIter_nextBlock(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			verifyPart := func(p *part) {
 				defer p.close()
+				shardCache := storage.NewShardCache("test-group", 0, 0)
 				pi := partIter{}
-				pi.init(bma, p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
+				pi.init(bma, p, shardCache, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
 
 				var got []blockMetadata
 				for pi.nextBlock() {

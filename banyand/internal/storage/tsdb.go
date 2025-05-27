@@ -74,6 +74,21 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 	return segmentID(unit)<<31 | ((segmentID(suffix) << 1) >> 1)
 }
 
+type groupCache struct {
+	*Cache
+	group string
+}
+
+func (gc *groupCache) get(key EntryKey) []byte {
+	key.group = gc.group
+	return gc.Get(key)
+}
+
+func (gc *groupCache) put(key EntryKey, compressedPrimaryBuf []byte) {
+	key.group = gc.group
+	gc.Put(key, compressedPrimaryBuf)
+}
+
 type database[T TSTable, O any] struct {
 	lock              fs.File
 	logger            *logger.Logger
@@ -110,7 +125,7 @@ func (d *database[T, O]) Close() error {
 
 // OpenTSDB returns a new tsdb runtime. This constructor will create a new database if it's absent,
 // or load an existing one.
-func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[T, O], error) {
+func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache *Cache, group string) (TSDB[T, O], error) {
 	if opts.SegmentInterval.Num == 0 {
 		return nil, errors.Wrap(errOpenDatabase, "segment interval is absent")
 	}
@@ -136,7 +151,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		tsEventCh: make(chan int64),
 		p:         p,
 		segmentController: newSegmentController(ctx, location,
-			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentIdleTimeout, tsdbLfs),
+			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentIdleTimeout, tsdbLfs, cache, group),
 		metrics:          newMetrics(opts.StorageMetricsFactory),
 		disableRetention: opts.DisableRetention,
 		lfs:              tsdbLfs,

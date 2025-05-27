@@ -24,6 +24,7 @@ import (
 	"sort"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -35,6 +36,7 @@ import (
 type partIter struct {
 	err                  error
 	p                    *part
+	sc                   *storage.ShardCache
 	curBlock             *blockMetadata
 	sids                 []common.SeriesID
 	primaryBlockMetadata []primaryBlockMetadata
@@ -49,6 +51,7 @@ type partIter struct {
 func (pi *partIter) reset() {
 	pi.curBlock = nil
 	pi.p = nil
+	pi.sc = nil
 	pi.sids = nil
 	pi.sidIdx = 0
 	pi.primaryBlockMetadata = nil
@@ -58,10 +61,11 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (pi *partIter) init(bma *blockMetadataArray, p *part, sc *storage.ShardCache, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
+	pi.sc = sc
 
 	pi.bms = bma.arr
 	pi.sids = sids
@@ -180,8 +184,18 @@ func searchPBM(pbmIndex []primaryBlockMetadata, sid common.SeriesID) []primaryBl
 }
 
 func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetadata) ([]blockMetadata, error) {
-	pi.compressedPrimaryBuf = bytes.ResizeOver(pi.compressedPrimaryBuf, int(mr.size))
-	fs.MustReadData(pi.p.primary, int64(mr.offset), pi.compressedPrimaryBuf)
+	pi.compressedPrimaryBuf = pi.sc.Get(storage.EntryKey{
+		PartID: pi.p.partMetadata.ID,
+		Offset: mr.offset,
+	})
+	if pi.compressedPrimaryBuf == nil {
+		pi.compressedPrimaryBuf = bytes.ResizeOver(pi.compressedPrimaryBuf, int(mr.size))
+		fs.MustReadData(pi.p.primary, int64(mr.offset), pi.compressedPrimaryBuf)
+		pi.sc.Put(storage.EntryKey{
+			PartID: pi.p.partMetadata.ID,
+			Offset: mr.offset,
+		}, pi.compressedPrimaryBuf)
+	}
 
 	var err error
 	pi.primaryBuf, err = zstd.Decompress(pi.primaryBuf[:0], pi.compressedPrimaryBuf)

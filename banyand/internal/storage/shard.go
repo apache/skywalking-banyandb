@@ -28,8 +28,43 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+// ShardCache is a shard-level cache.
+type ShardCache struct {
+	*segmentCache
+	shardID common.ShardID
+}
+
+// NewShardCache creates a new shard cache.
+func NewShardCache(group string, segmentID segmentID, shardID common.ShardID) *ShardCache {
+	groupCache := &groupCache{
+		Cache: NewCache(),
+		group: group,
+	}
+	segmentCache := &segmentCache{
+		groupCache: groupCache,
+		segmentID:  segmentID,
+	}
+	return &ShardCache{
+		segmentCache: segmentCache,
+		shardID:      shardID,
+	}
+}
+
+// Get gets the compressed primary block from the shard cache.
+func (sc *ShardCache) Get(key EntryKey) []byte {
+	key.shardID = sc.shardID
+	return sc.segmentCache.get(key)
+}
+
+// Put puts the compressed primary block into the shard cache.
+func (sc *ShardCache) Put(key EntryKey, compressedPrimaryBuf []byte) {
+	key.shardID = sc.shardID
+	sc.segmentCache.put(key, compressedPrimaryBuf)
+}
+
 type shard[T TSTable] struct {
-	table     T
+	table T
+	*ShardCache
 	l         *logger.Logger
 	timeRange timestamp.TimeRange
 	location  string
@@ -49,9 +84,13 @@ func (s *segment[T, O]) openShard(ctx context.Context, id common.ShardID) (*shar
 	}
 
 	return &shard[T]{
-		id:        id,
-		l:         l,
-		table:     t,
+		id:    id,
+		l:     l,
+		table: t,
+		ShardCache: &ShardCache{
+			segmentCache: s.segmentCache,
+			shardID:      id,
+		},
 		timeRange: s.TimeRange,
 		location:  location,
 	}, nil

@@ -30,6 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -1243,13 +1244,18 @@ func TestQueryResult(t *testing.T) {
 				require.NotNil(t, s)
 				defer s.decRef()
 				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp)
+				shardCache := storage.NewShardCache("test-group", 0, 0)
+				scs := make([]*storage.ShardCache, 0)
+				for i := 0; i < len(pp); i++ {
+					scs = append(scs, shardCache)
+				}
 				sids := make([]common.SeriesID, len(tt.sids))
 				copy(sids, tt.sids)
 				sort.Slice(sids, func(i, j int) bool {
 					return sids[i] < tt.sids[j]
 				})
 				ti := &tstIter{}
-				ti.init(bma, pp, sids, tt.minTimestamp, tt.maxTimestamp)
+				ti.init(bma, pp, scs, sids, tt.minTimestamp, tt.maxTimestamp)
 
 				var result queryResult
 				result.ctx = context.TODO()

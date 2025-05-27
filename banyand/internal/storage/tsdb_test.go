@@ -34,6 +34,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const group = "test"
+
 // MockGaugeWithValue wraps MockGauge to track the value.
 type MockGaugeWithValue struct {
 	*meter.MockGauge
@@ -107,7 +109,8 @@ func TestOpenTSDB(t *testing.T) {
 		mc.Set(ts)
 		ctx = timestamp.SetClock(ctx, mc)
 
-		tsdb, err := OpenTSDB(ctx, opts)
+		cache := NewCache()
+		tsdb, err := OpenTSDB(ctx, opts, cache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -141,7 +144,8 @@ func TestOpenTSDB(t *testing.T) {
 		ctx = timestamp.SetClock(ctx, mc)
 
 		// Create new TSDB
-		tsdb, err := OpenTSDB(ctx, opts)
+		cache := NewCache()
+		tsdb, err := OpenTSDB(ctx, opts, cache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -158,7 +162,7 @@ func TestOpenTSDB(t *testing.T) {
 		tsdb.Close()
 
 		// Reopen existing TSDB
-		tsdb, err = OpenTSDB(ctx, opts)
+		tsdb, err = OpenTSDB(ctx, opts, cache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -191,7 +195,8 @@ func TestOpenTSDB(t *testing.T) {
 		ctx = timestamp.SetClock(ctx, mc)
 
 		// Create new TSDB
-		tsdb, err := OpenTSDB(ctx, opts)
+		cache := NewCache()
+		tsdb, err := OpenTSDB(ctx, opts, cache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -243,7 +248,8 @@ func TestTakeFileSnapshot(t *testing.T) {
 		mc.Set(ts)
 		ctx = timestamp.SetClock(ctx, mc)
 
-		tsdb, err := OpenTSDB(ctx, opts)
+		cache := NewCache()
+		tsdb, err := OpenTSDB(ctx, opts, cache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -314,7 +320,8 @@ func TestTSDBCollect(t *testing.T) {
 	mc.Set(ts)
 	ctx = timestamp.SetClock(ctx, mc)
 
-	tsdb, err := OpenTSDB(ctx, opts)
+	cache := NewCache()
+	tsdb, err := OpenTSDB(ctx, opts, cache, group)
 	require.NoError(t, err)
 	require.NotNil(t, tsdb)
 
@@ -393,7 +400,8 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	mc.Set(baseDate)
 	ctx = timestamp.SetClock(ctx, mc)
 
-	tsdb, err := OpenTSDB(ctx, opts)
+	cache := NewCache()
+	tsdb, err := OpenTSDB(ctx, opts, cache, group)
 	require.NoError(t, err)
 	require.NotNil(t, tsdb)
 
