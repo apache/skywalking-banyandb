@@ -51,17 +51,63 @@ func (c *column) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
+type columnMetadata struct {
+	name string
+	dataBlock
+	valueType pbv1.ValueType
+	encodeBlock
+}
+type dataBlock struct {
+	offset uint64
+	size   uint64
+}
+type encodeBlock struct {
+	encodeType encoding.EncodeType
+	firstValue int64
+}
+
+// 写入阶段
 func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 	cm.reset()
 
 	cm.name = c.name
 	cm.valueType = c.valueType
-
+	// buffer
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
 	// marshal values
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
+	// select encoding based on data type
+	switch c.valueType {
+	case pbv1.ValueTypeInt:
+		// convert byte array to int64 array
+		intValues := make([]int64, len(c.values))
+		for i, v := range c.values {
+			intValues[i] = encoding.BytesToInt64(v)
+		}
+		// use delta encoding for integer column
+		var encodeType encoding.EncodeType
+		var firstValue int64
+		bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
+		cm.encodeType = encodeType
+		cm.firstValue = firstValue
+	case pbv1.ValueTypeIntFloat:
+		// convert byte array to float64 array
+		floatValues := make([]float64, len(c.values))
+		for i, v := range c.values {
+			floatValues[i] = encoding.BytesToFloat64(v)
+		}
+		// use XOR encoding for float column
+		bb.Buf = bb.Buf[:0]
+		xorEncoder := encoding.NewXOREncoder(encoding.NewWriter(&bb.Buf))
+		// convert float64 to uint64 for encoding
+		for _, v := range floatValues {
+			xorEncoder.Write(encoding.Float64ToUint64(v))
+		}
+	default:
+		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
+	}
+
 	cm.size = uint64(len(bb.Buf))
 	if cm.size > maxValuesBlockSize {
 		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", cm.size, maxValuesBlockSize)
@@ -88,10 +134,39 @@ func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 	}
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	fs.MustReadData(reader, int64(cm.offset), bb.Buf)
-	var err error
-	c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
-	if err != nil {
-		logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+
+	switch c.valueType {
+	case pbv1.ValueTypeInt:
+		// decode integer type
+		intValues := make([]int64, count)
+		var err error
+		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
+		if err != nil {
+			logger.Panicf("%s: cannot decode int values: %v", reader.Path(), err)
+		}
+		// convert int64 array to byte array
+		c.values = make([][]byte, count)
+		for i, v := range intValues {
+			c.values[i] = encoding.Int64ToBytes(nil, v)
+		}
+	case pbv1.ValueTypeIntFloat:
+		// decode float type
+		xorDecoder := encoding.NewXORDecoder(encoding.NewReader(bb.Buf))
+		c.values = make([][]byte, count)
+		for i := uint64(0); i < count; i++ {
+			if !xorDecoder.Next() {
+				logger.Panicf("%s: cannot decode float value at index %d: %v", reader.Path(), i, xorDecoder.Err())
+			}
+			// convert uint64 back to float64
+			floatVal := encoding.Uint64ToFloat64(xorDecoder.Value())
+			c.values[i] = encoding.Float64ToBytes(nil, floatVal)
+		}
+	default:
+		var err error
+		c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
+		if err != nil {
+			logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+		}
 	}
 }
 
