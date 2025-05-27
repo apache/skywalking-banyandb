@@ -9,6 +9,7 @@ Release Notes.
 - Add sharding_key for TopNAggregation source measure
 - API: Update the data matching rule from the node selector to the stage name.
 - Add dynamical TLS load for the gRPC and HTTP server.
+- Implement primary block cache for measure.
 
 ### Bug Fixes
 
