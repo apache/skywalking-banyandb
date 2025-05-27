@@ -169,14 +169,14 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 		}
 
 		if uncompressedBlockSizeBytes >= maxUncompressedBlockSize || sid != sidPrev {
-			bsw.MustWriteElements(sidPrev, es.timestamps[indexPrev:i], es.elementIDs[indexPrev:i], es.tagFamilies[indexPrev:i], es.indexedTags[indexPrev:i])
+			bsw.MustWriteElements(sidPrev, es.timestamps[indexPrev:i], es.elementIDs[indexPrev:i], es.tagFamilies[indexPrev:i])
 			sidPrev = sid
 			indexPrev = i
 			uncompressedBlockSizeBytes = 0
 		}
 		uncompressedBlockSizeBytes += uncompressedElementSizeBytes(i, es)
 	}
-	bsw.MustWriteElements(sidPrev, es.timestamps[indexPrev:], es.elementIDs[indexPrev:], es.tagFamilies[indexPrev:], es.indexedTags[indexPrev:])
+	bsw.MustWriteElements(sidPrev, es.timestamps[indexPrev:], es.elementIDs[indexPrev:], es.tagFamilies[indexPrev:])
 	bsw.Flush(&mp.partMetadata)
 	releaseBlockWriter(bsw)
 }

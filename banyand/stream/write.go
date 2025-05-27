@@ -226,6 +226,7 @@ func (w *writeCallback) processElements(et *elementsInTable, eg *elementsInGroup
 			}
 
 			t := tagFamilySpec.Tags[j]
+			indexed := false
 			if r, ok := tfr[t.Name]; ok && tagValue != pbv1.NullTagValue {
 				if r.GetType() == databasev1.IndexRule_TYPE_INVERTED {
 					fields = appendField(fields, index.FieldKey{
@@ -234,25 +235,22 @@ func (w *writeCallback) processElements(et *elementsInTable, eg *elementsInGroup
 						SeriesID:    series.ID,
 					}, t.Type, tagValue, r.GetNoSort())
 				} else if r.GetType() == databasev1.IndexRule_TYPE_SKIPPING {
-					indexedTags[tagFamilySpec.Name][t.Name] = struct{}{}
+					indexed = true
 				}
 			}
 			_, isEntity := is.indexRuleLocators.EntitySet[t.Name]
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
 				continue
 			}
-			tf.values = append(tf.values, encodeTagValue(
-				t.Name,
-				t.Type,
-				tagValue))
+			tv := encodeTagValue(t.Name, t.Type, tagValue)
+			tv.indexed = indexed
+			tf.values = append(tf.values, tv)
 		}
 		if len(tf.values) > 0 {
 			tagFamilies = append(tagFamilies, tf)
 		}
 	}
-
 	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
-	et.elements.indexedTags = append(et.elements.indexedTags, indexedTags)
 
 	et.docs = append(et.docs, index.Document{
 		DocID:     eID,

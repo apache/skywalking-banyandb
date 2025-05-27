@@ -55,7 +55,7 @@ func (b *block) reset() {
 	b.tagFamilies = tff[:0]
 }
 
-func (b *block) mustInitFromElements(timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues, indexedTags []map[string]map[string]struct{}) {
+func (b *block) mustInitFromElements(timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {
 	b.reset()
 	size := len(timestamps)
 	if size == 0 {
@@ -68,7 +68,7 @@ func (b *block) mustInitFromElements(timestamps []int64, elementIDs []uint64, ta
 	assertTimestampsSorted(timestamps)
 	b.timestamps = append(b.timestamps, timestamps...)
 	b.elementIDs = append(b.elementIDs, elementIDs...)
-	b.mustInitFromTags(tagFamilies, indexedTags)
+	b.mustInitFromTags(tagFamilies)
 }
 
 func assertTimestampsSorted(timestamps []int64) {
@@ -80,32 +80,32 @@ func assertTimestampsSorted(timestamps []int64) {
 	}
 }
 
-func (b *block) mustInitFromTags(tagFamilies [][]tagValues, indexedTags []map[string]map[string]struct{}) {
+func (b *block) mustInitFromTags(tagFamilies [][]tagValues) {
 	elementsLen := len(tagFamilies)
 	if elementsLen == 0 {
 		return
 	}
 	for i, tff := range tagFamilies {
-		b.processTagFamilies(tff, i, elementsLen, indexedTags[i])
+		b.processTagFamilies(tff, i, elementsLen)
 	}
 }
 
-func (b *block) processTagFamilies(tff []tagValues, i int, elementsLen int, indexedTags map[string]map[string]struct{}) {
+func (b *block) processTagFamilies(tff []tagValues, i int, elementsLen int) {
 	tagFamilies := b.resizeTagFamilies(len(tff))
 	for j, tf := range tff {
 		tagFamilies[j].name = tf.tag
-		b.processTags(tf, j, i, elementsLen, indexedTags[tf.tag])
+		b.processTags(tf, j, i, elementsLen)
 	}
 }
 
-func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int, indexedTags map[string]struct{}) {
+func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int) {
 	tags := b.tagFamilies[tagFamilyIdx].resizeTags(len(tf.values))
 	for j, t := range tf.values {
 		tags[j].name = t.tag
 		tags[j].resizeValues(elementsLen)
 		tags[j].valueType = t.valueType
 		tags[j].values[i] = t.marshal()
-		if _, ok := indexedTags[t.tag]; !ok {
+		if !t.indexed {
 			continue
 		}
 		if tags[j].filter == nil {

@@ -163,8 +163,8 @@ func Test_tagFamilyMetadata_marshalUnmarshal(t *testing.T) {
 			original: &tagFamilyMetadata{
 				tagMetadata: []tagMetadata{
 					{
-						name:      "test1",
-						valueType: pbv1.ValueTypeStr,
+						name:        "test1",
+						valueType:   pbv1.ValueTypeStr,
 						dataBlock:   dataBlock{offset: 1, size: 10},
 						filterBlock: dataBlock{offset: 2, size: 20},
 						min:         []byte{1, 2, 3},

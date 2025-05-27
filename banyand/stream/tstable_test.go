@@ -51,7 +51,6 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 					elementIDs:  []uint64{},
 					seriesIDs:   []common.SeriesID{},
 					tagFamilies: make([][]tagValues, 0),
-					indexedTags: make([]map[string]map[string]struct{}, 0),
 				},
 			},
 			want: 0,
@@ -73,7 +72,6 @@ func Test_tsTable_mustAddDataPoints(t *testing.T) {
 							},
 						},
 					},
-					indexedTags: []map[string]map[string]struct{}{{"arrTag": {}}},
 				},
 			},
 			want: 1,
@@ -286,7 +284,6 @@ var esTS1 = &elements{
 		},
 		{}, // empty tagFamilies for seriesID 3
 	},
-	indexedTags: []map[string]map[string]struct{}{{"arrTag": {}, "binaryTag": {}, "singleTag": {}}, {"singleTag": {}}, {}},
 }
 
 var esTS2 = &elements{
@@ -323,7 +320,6 @@ var esTS2 = &elements{
 		},
 		{}, // empty tagFamilies for seriesID 6
 	},
-	indexedTags: []map[string]map[string]struct{}{{"arrTag": {}, "binaryTag": {}, "singleTag": {}}, {"singleTag": {}}, {}},
 }
 
 func generateHugeEs(startTimestamp, endTimestamp, timestamp int64) *elements {
@@ -356,7 +352,6 @@ func generateHugeEs(startTimestamp, endTimestamp, timestamp int64) *elements {
 				},
 			},
 		})
-		hugeEs.indexedTags = append(hugeEs.indexedTags, map[string]map[string]struct{}{"arrTag": {}, "binaryTag": {}, "singleTag": {}})
 	}
 	hugeEs.seriesIDs = append(hugeEs.seriesIDs, []common.SeriesID{2, 3}...)
 	hugeEs.timestamps = append(hugeEs.timestamps, []int64{timestamp, timestamp}...)
@@ -369,6 +364,5 @@ func generateHugeEs(startTimestamp, endTimestamp, timestamp int64) *elements {
 			},
 		},
 	}, {}}...)
-	hugeEs.indexedTags = append(hugeEs.indexedTags, []map[string]map[string]struct{}{{"singleTag": {}}, {}}...)
 	return hugeEs
 }

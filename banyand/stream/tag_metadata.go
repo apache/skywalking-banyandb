@@ -28,11 +28,11 @@ import (
 
 type tagMetadata struct {
 	name string
+	min  []byte
+	max  []byte
 	dataBlock
 	valueType   pbv1.ValueType
 	filterBlock dataBlock
-	min         []byte
-	max         []byte
 }
 
 func (tm *tagMetadata) reset() {

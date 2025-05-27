@@ -125,7 +125,6 @@ func Test_block_mustInitFromElements(t *testing.T) {
 		timestamps  []int64
 		elementIDs  []uint64
 		tagFamilies [][]tagValues
-		indexedTags []map[string]map[string]struct{}
 	}
 	tests := []struct {
 		name string
@@ -177,7 +176,6 @@ func Test_block_mustInitFromElements(t *testing.T) {
 						},
 					},
 				},
-				indexedTags: []map[string]map[string]struct{}{{"arrTag": {}, "binaryTag": {}, "singleTag": {}}, {"arrTag": {}, "binaryTag": {}, "singleTag": {}}},
 			},
 			want: conventionalBlock,
 		},
@@ -185,7 +183,7 @@ func Test_block_mustInitFromElements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{}
-			b.mustInitFromElements(tt.args.timestamps, tt.args.elementIDs, tt.args.tagFamilies, tt.args.indexedTags)
+			b.mustInitFromElements(tt.args.timestamps, tt.args.elementIDs, tt.args.tagFamilies)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromElements() = %+v, want %+v", *b, tt.want)
 			}

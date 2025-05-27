@@ -43,7 +43,6 @@ func TestMustInitFromElements(t *testing.T) {
 				elementIDs:  []uint64{},
 				seriesIDs:   []common.SeriesID{},
 				tagFamilies: make([][]tagValues, 0),
-				indexedTags: make([]map[string]map[string]struct{}, 0),
 			},
 			want: partMetadata{},
 		},
@@ -63,7 +62,6 @@ func TestMustInitFromElements(t *testing.T) {
 						},
 					},
 				},
-				indexedTags: []map[string]map[string]struct{}{{"arrTag": {}}},
 			},
 			want: partMetadata{
 				BlocksCount:  1,
@@ -180,13 +178,5 @@ var es = &elements{
 		},
 		{},
 		{}, // empty tagFamilies for seriesID 3
-	},
-	indexedTags: []map[string]map[string]struct{}{
-		{"arrTag": {}, "binaryTag": {}, "singleTag": {}},
-		{"arrTag": {}, "binaryTag": {}, "singleTag": {}},
-		{"singleTag": {}},
-		{"singleTag": {}},
-		{},
-		{},
 	},
 }

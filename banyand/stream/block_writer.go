@@ -197,16 +197,14 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm))
 }
 
-func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues,
-	indexedTags []map[string]map[string]struct{},
-) {
+func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {
 	if len(timestamps) == 0 {
 		return
 	}
 
 	b := generateBlock()
 	defer releaseBlock(b)
-	b.mustInitFromElements(timestamps, elementIDs, tagFamilies, indexedTags)
+	b.mustInitFromElements(timestamps, elementIDs, tagFamilies)
 	bw.mustWriteBlock(sid, b)
 }
 
