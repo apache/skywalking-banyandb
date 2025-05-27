@@ -47,13 +47,13 @@ type measureService struct {
 	pipeline           queue.Client
 	broadcaster        queue.Client
 	*discoveryService
-	sampled      *logger.Logger
+	l            *logger.Logger
 	metrics      *metrics
 	writeTimeout time.Duration
 }
 
 func (ms *measureService) setLogger(log *logger.Logger) {
-	ms.sampled = log.Sampled(10)
+	ms.l = log
 }
 
 func (ms *measureService) activeIngestionAccessLog(root string) (err error) {
@@ -65,120 +65,189 @@ func (ms *measureService) activeIngestionAccessLog(root string) (err error) {
 }
 
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
-	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, measure measurev1.MeasureService_WriteServer, logger *logger.Logger) {
-		if status != modelv1.Status_STATUS_SUCCEED {
-			ms.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "measure", "write")
-		}
-		ms.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "measure", "write")
-		if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageId}); errResp != nil {
-			logger.Debug().Err(errResp).Msg("failed to send measure write response")
-			ms.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "measure", "write")
-		}
-	}
 	ctx := measure.Context()
 	publisher := ms.pipeline.NewBatchPublisher(ms.writeTimeout)
 	ms.metrics.totalStreamStarted.Inc(1, "measure", "write")
 	start := time.Now()
 	var succeedSent []succeedSentMessage
-	defer func() {
-		cee, err := publisher.Close()
-		for _, s := range succeedSent {
-			code := modelv1.Status_STATUS_SUCCEED
-			if cee != nil {
-				if ce, ok := cee[s.node]; ok {
-					code = ce.Status()
-				}
-			}
-			reply(s.metadata, code, s.messageID, measure, ms.sampled)
-		}
-		if err != nil {
-			ms.sampled.Error().Err(err).Msg("failed to close the publisher")
-		}
-		ms.metrics.totalStreamFinished.Inc(1, "measure", "write")
-		ms.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "measure", "write")
-	}()
+
+	defer ms.handleWriteCleanup(publisher, &succeedSent, measure, start)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
+
 		writeRequest, err := measure.Recv()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-				ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
+				ms.l.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
 			}
 			return err
 		}
+
 		ms.metrics.totalStreamMsgReceived.Inc(1, writeRequest.Metadata.Group, "measure", "write")
-		if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
-			ms.sampled.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
-			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeRequest.GetMessageId(), measure, ms.sampled)
+
+		if status := ms.validateWriteRequest(writeRequest, measure); status != modelv1.Status_STATUS_SUCCEED {
 			continue
 		}
-		if writeRequest.Metadata.ModRevision > 0 {
-			measureCache, existed := ms.entityRepo.getLocator(getID(writeRequest.GetMetadata()))
-			if !existed {
-				ms.sampled.Error().Err(err).Stringer("written", writeRequest).Msg("failed to measure schema not found")
-				reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure, ms.sampled)
-				continue
-			}
-			if writeRequest.Metadata.ModRevision != measureCache.ModRevision {
-				ms.sampled.Error().Stringer("written", writeRequest).Msg("the measure schema is expired")
-				reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure, ms.sampled)
-				continue
-			}
-		}
-		entity, tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
-		if err != nil {
-			ms.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
-			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
+
+		if err := ms.processAndPublishRequest(ctx, writeRequest, publisher, &succeedSent, measure); err != nil {
 			continue
 		}
-		if writeRequest.DataPoint.Version == 0 {
-			if writeRequest.MessageId == 0 {
-				writeRequest.MessageId = uint64(time.Now().UnixNano())
-			}
-			writeRequest.DataPoint.Version = int64(writeRequest.MessageId)
+	}
+}
+
+func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequest, measure measurev1.MeasureService_WriteServer) modelv1.Status {
+	if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
+		ms.l.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
+		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeRequest.GetMessageId(), measure)
+		return modelv1.Status_STATUS_INVALID_TIMESTAMP
+	}
+
+	if writeRequest.Metadata.ModRevision > 0 {
+		measureCache, existed := ms.entityRepo.getLocator(getID(writeRequest.GetMetadata()))
+		if !existed {
+			ms.l.Error().Stringer("written", writeRequest).Msg("failed to measure schema not found")
+			ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure)
+			return modelv1.Status_STATUS_NOT_FOUND
 		}
-		if ms.ingestionAccessLog != nil {
-			if errAccessLog := ms.ingestionAccessLog.Write(writeRequest); errAccessLog != nil {
-				ms.sampled.Error().Err(errAccessLog).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to write access log")
-			}
+		if writeRequest.Metadata.ModRevision != measureCache.ModRevision {
+			ms.l.Error().Stringer("written", writeRequest).Msg("the measure schema is expired")
+			ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure)
+			return modelv1.Status_STATUS_EXPIRED_SCHEMA
 		}
-		iwr := &measurev1.InternalWriteRequest{
-			Request:      writeRequest,
-			ShardId:      uint32(shardID),
-			SeriesHash:   pbv1.HashEntity(entity),
-			EntityValues: tagValues[1:].Encode(),
+	}
+
+	return modelv1.Status_STATUS_SUCCEED
+}
+
+func (ms *measureService) processAndPublishRequest(ctx context.Context, writeRequest *measurev1.WriteRequest,
+	publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage, measure measurev1.MeasureService_WriteServer,
+) error {
+	entity, tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+	if err != nil {
+		ms.l.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
+		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+		return err
+	}
+
+	if writeRequest.DataPoint.Version == 0 {
+		if writeRequest.MessageId == 0 {
+			writeRequest.MessageId = uint64(time.Now().UnixNano())
 		}
-		nodeID, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), uint32(shardID))
+		writeRequest.DataPoint.Version = int64(writeRequest.MessageId)
+	}
+
+	if ms.ingestionAccessLog != nil {
+		if errAccessLog := ms.ingestionAccessLog.Write(writeRequest); errAccessLog != nil {
+			ms.l.Error().Err(errAccessLog).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to write access log")
+		}
+	}
+
+	iwr := &measurev1.InternalWriteRequest{
+		Request:      writeRequest,
+		ShardId:      uint32(shardID),
+		SeriesHash:   pbv1.HashEntity(entity),
+		EntityValues: tagValues[1:].Encode(),
+	}
+
+	nodes, err := ms.publishToNodes(ctx, writeRequest, iwr, publisher, uint32(shardID), measure)
+	if err != nil {
+		return err
+	}
+
+	*succeedSent = append(*succeedSent, succeedSentMessage{
+		metadata:  writeRequest.GetMetadata(),
+		messageID: writeRequest.GetMessageId(),
+		nodes:     nodes,
+	})
+
+	return nil
+}
+
+func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *measurev1.WriteRequest, iwr *measurev1.InternalWriteRequest,
+	publisher queue.BatchPublisher, shardID uint32, measure measurev1.MeasureService_WriteServer,
+) ([]string, error) {
+	copies, ok := ms.groupRepo.copies(writeRequest.Metadata.GetGroup())
+	if !ok {
+		ms.l.Error().RawJSON("written", logger.Proto(writeRequest)).Msg("failed to get the group copies")
+		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+		return nil, errors.New("failed to get group copies")
+	}
+
+	nodes := make([]string, 0, copies)
+	for i := range copies {
+		nodeID, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), shardID, i)
 		if errPickNode != nil {
-			ms.sampled.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to pick an available node")
-			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
-			continue
+			ms.l.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to pick an available node")
+			ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+			return nil, errPickNode
 		}
+
 		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
 		_, errWritePub := publisher.Publish(ctx, data.TopicMeasureWrite, message)
 		if errWritePub != nil {
-			ms.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
+			ms.l.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
 			var ce *common.Error
 			if errors.As(errWritePub, &ce) {
-				reply(writeRequest.GetMetadata(), ce.Status(), writeRequest.GetMessageId(), measure, ms.sampled)
-				continue
+				ms.sendReply(writeRequest.GetMetadata(), ce.Status(), writeRequest.GetMessageId(), measure)
+				return nil, errWritePub
 			}
-			reply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure, ms.sampled)
-			continue
+			ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+			return nil, errWritePub
 		}
-		succeedSent = append(succeedSent, succeedSentMessage{
-			metadata:  writeRequest.GetMetadata(),
-			messageID: writeRequest.GetMessageId(),
-			node:      nodeID,
-		})
+		nodes = append(nodes, nodeID)
 	}
+
+	return nodes, nil
+}
+
+func (ms *measureService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, measure measurev1.MeasureService_WriteServer) {
+	if status != modelv1.Status_STATUS_SUCCEED {
+		ms.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "measure", "write")
+	}
+	ms.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "measure", "write")
+	if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageID}); errResp != nil {
+		if dl := ms.l.Debug(); dl.Enabled() {
+			dl.Err(errResp).Msg("failed to send measure write response")
+		}
+		ms.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "measure", "write")
+	}
+}
+
+func (ms *measureService) handleWriteCleanup(publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage,
+	measure measurev1.MeasureService_WriteServer, start time.Time,
+) {
+	cee, err := publisher.Close()
+	for _, s := range *succeedSent {
+		code := modelv1.Status_STATUS_SUCCEED
+		if cee != nil {
+			for _, node := range s.nodes {
+				if ce, ok := cee[node]; ok {
+					code = ce.Status()
+					if ce.Status() == modelv1.Status_STATUS_SUCCEED {
+						code = modelv1.Status_STATUS_SUCCEED
+						break
+					}
+				}
+			}
+		}
+		ms.sendReply(s.metadata, code, s.messageID, measure)
+	}
+	if err != nil {
+		ms.l.Error().Err(err).Msg("failed to close the publisher")
+	}
+	if dl := ms.l.Debug(); dl.Enabled() {
+		dl.Int("total_requests", len(*succeedSent)).Msg("completed measure write batch")
+	}
+	ms.metrics.totalStreamFinished.Inc(1, "measure", "write")
+	ms.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "measure", "write")
 }
 
 var emptyMeasureQueryResponse = &measurev1.QueryResponse{DataPoints: make([]*measurev1.DataPoint, 0)}
@@ -280,6 +349,6 @@ func (ms *measureService) Close() error {
 
 type succeedSentMessage struct {
 	metadata  *commonv1.Metadata
-	node      string
+	nodes     []string
 	messageID uint64
 }

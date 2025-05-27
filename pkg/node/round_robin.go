@@ -51,13 +51,16 @@ func (r *roundRobinSelector) String() string {
 	defer r.mu.RUnlock()
 	result := make(map[string]string)
 	for _, entry := range r.lookupTable {
-		n, err := r.Pick(entry.group, "", entry.shardID)
-		key := fmt.Sprintf("%s-%d", entry.group, entry.shardID)
-		if err != nil {
-			result[key] = fmt.Sprintf("%v", err)
-			continue
+		copies := entry.replicas + 1
+		for i := range copies {
+			n, err := r.Pick(entry.group, "", entry.shardID, i)
+			key := fmt.Sprintf("%s-%d-%d", entry.group, entry.shardID, i)
+			if err != nil {
+				result[key] = fmt.Sprintf("%v", err)
+				continue
+			}
+			result[key] = n
 		}
-		result[key] = n
 	}
 	if len(result) < 1 {
 		return ""
@@ -105,8 +108,7 @@ func (r *roundRobinSelector) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	defer r.mu.Unlock()
 	r.removeGroup(group.Metadata.Name)
 	for i := uint32(0); i < group.ResourceOpts.ShardNum; i++ {
-		k := key{group: group.Metadata.Name, shardID: i}
-		r.lookupTable = append(r.lookupTable, k)
+		r.lookupTable = append(r.lookupTable, newKey(group.Metadata.Name, i, group.ResourceOpts.Replicas))
 	}
 	r.sortEntries()
 }
@@ -157,8 +159,7 @@ func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {
 			revision = g.Metadata.ModRevision
 		}
 		for i := uint32(0); i < g.ResourceOpts.ShardNum; i++ {
-			k := key{group: g.Metadata.Name, shardID: i}
-			r.lookupTable = append(r.lookupTable, k)
+			r.lookupTable = append(r.lookupTable, newKey(g.Metadata.Name, i, g.ResourceOpts.Replicas))
 		}
 	}
 	r.sortEntries()
@@ -186,7 +187,7 @@ func (r *roundRobinSelector) RemoveNode(node *databasev1.Node) {
 	}
 }
 
-func (r *roundRobinSelector) Pick(group, _ string, shardID uint32) (string, error) {
+func (r *roundRobinSelector) Pick(group, _ string, shardID, replicaID uint32) (string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	k := key{group: group, shardID: shardID}
@@ -199,8 +200,8 @@ func (r *roundRobinSelector) Pick(group, _ string, shardID uint32) (string, erro
 		}
 		return r.lookupTable[i].group > group
 	})
-	if i < len(r.lookupTable) && r.lookupTable[i] == k {
-		return r.selectNode(i), nil
+	if i < len(r.lookupTable) && r.lookupTable[i].equal(k) {
+		return r.selectNode(i, replicaID), nil
 	}
 	return "", fmt.Errorf("%s-%d is a unknown shard", group, shardID)
 }
@@ -215,9 +216,9 @@ func (r *roundRobinSelector) sortEntries() {
 	})
 }
 
-func (r *roundRobinSelector) selectNode(entry any) string {
-	index := entry.(int)
-	return r.nodes[index%len(r.nodes)]
+func (r *roundRobinSelector) selectNode(index int, replicasID uint32) string {
+	adjustedIndex := index + int(replicasID)
+	return r.nodes[adjustedIndex%len(r.nodes)]
 }
 
 func validateGroup(group *commonv1.Group) bool {
@@ -231,6 +232,19 @@ func validateGroup(group *commonv1.Group) bool {
 }
 
 type key struct {
-	group   string
-	shardID uint32
+	group    string
+	shardID  uint32
+	replicas uint32
+}
+
+func (k key) equal(other key) bool {
+	return k.group == other.group && k.shardID == other.shardID
+}
+
+func newKey(group string, shardID, replicas uint32) key {
+	return key{
+		group:    group,
+		shardID:  shardID,
+		replicas: replicas,
+	}
 }
