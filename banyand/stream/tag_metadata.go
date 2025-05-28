@@ -30,12 +30,24 @@ type tagMetadata struct {
 	name string
 	dataBlock
 	valueType pbv1.ValueType
+	encodeBlock
+}
+
+type encodeBlock struct {
+	encodeType encoding.EncodeType
+	firstValue int64
+}
+
+func (eb *encodeBlock) reset() {
+	eb.encodeType = 0
+	eb.firstValue = 0
 }
 
 func (tm *tagMetadata) reset() {
 	tm.name = ""
 	tm.valueType = 0
 	tm.dataBlock.reset()
+	tm.encodeBlock.reset()
 }
 
 func (tm *tagMetadata) copyFrom(src *tagMetadata) {

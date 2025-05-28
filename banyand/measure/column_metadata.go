@@ -30,12 +30,23 @@ type columnMetadata struct {
 	name string
 	dataBlock
 	valueType pbv1.ValueType
+	encodeBlock
+}
+type encodeBlock struct {
+	encodeType encoding.EncodeType
+	firstValue int64
+}
+
+func (eb *encodeBlock) reset() {
+	eb.encodeType = 0
+	eb.firstValue = 0
 }
 
 func (cm *columnMetadata) reset() {
 	cm.name = ""
 	cm.valueType = 0
 	cm.dataBlock.reset()
+	cm.encodeBlock.reset()
 }
 
 func (cm *columnMetadata) copyFrom(src *columnMetadata) {

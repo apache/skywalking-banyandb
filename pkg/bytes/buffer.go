@@ -140,3 +140,55 @@ func Copy(a []byte) []byte {
 	copy(b, a)
 	return b
 }
+
+// new2025.5.28
+// ByteSliceWriter implements encoding.BufferWriter for a byte slice.
+type ByteSliceWriter struct {
+	buf *[]byte
+}
+
+// NewByteSliceWriter creates a new ByteSliceWriter.
+func NewByteSliceWriter(buf *[]byte) *ByteSliceWriter {
+	return &ByteSliceWriter{buf: buf}
+}
+
+// Write implements encoding.BufferWriter.
+func (w *ByteSliceWriter) Write(data []byte) (n int, err error) {
+	*w.buf = append(*w.buf, data...)
+	return len(data), nil
+}
+
+// WriteByte implements encoding.BufferWriter.
+func (w *ByteSliceWriter) WriteByte(b byte) error {
+	*w.buf = append(*w.buf, b)
+	return nil
+}
+
+// Bytes implements encoding.BufferWriter.
+func (w *ByteSliceWriter) Bytes() []byte {
+	return *w.buf
+}
+
+// ByteSliceReader implements io.ByteReader for a byte slice.
+type ByteSliceReader struct {
+	buf []byte
+	pos int
+}
+
+// NewByteSliceReader creates a new ByteSliceReader.
+func NewByteSliceReader(buf []byte) *ByteSliceReader {
+	return &ByteSliceReader{
+		buf: buf,
+		pos: 0,
+	}
+}
+
+// ReadByte implements io.ByteReader.
+func (r *ByteSliceReader) ReadByte() (byte, error) {
+	if r.pos >= len(r.buf) {
+		return 0, io.EOF
+	}
+	b := r.buf[r.pos]
+	r.pos++
+	return b, nil
+}
