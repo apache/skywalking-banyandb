@@ -51,15 +51,15 @@ func NewShardCache(group string, segmentID segmentID, shardID common.ShardID) *S
 }
 
 // Get gets the compressed primary block from the shard cache.
-func (sc *ShardCache) Get(key EntryKey) []byte {
+func (sc *ShardCache) Get(key EntryKey) any {
 	key.shardID = sc.shardID
 	return sc.segmentCache.get(key)
 }
 
 // Put puts the compressed primary block into the shard cache.
-func (sc *ShardCache) Put(key EntryKey, compressedPrimaryBuf []byte) {
+func (sc *ShardCache) Put(key EntryKey, value any) {
 	key.shardID = sc.shardID
-	sc.segmentCache.put(key, compressedPrimaryBuf)
+	sc.segmentCache.put(key, value)
 }
 
 type shard[T TSTable] struct {

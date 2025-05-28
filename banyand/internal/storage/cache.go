@@ -28,8 +28,8 @@ import (
 )
 
 type entry struct {
-	compressedPrimaryBuf []byte
-	lastAccess           uint64
+	value      any
+	lastAccess uint64
 }
 
 // EntryKey is the key of an entry in the cache.
@@ -81,11 +81,11 @@ type Cache struct {
 	entry           map[EntryKey]*entry
 	entryIndex      map[EntryKey]*entryIndex
 	entryIndexHeap  *entryIndexHeap
-	cleanerStopCh   chan struct{}
+	stopCh          chan struct{}
 	requests        uint64
 	misses          uint64
 	mu              sync.RWMutex
-	cleanerWG       sync.WaitGroup
+	wg              sync.WaitGroup
 	maxCacheSize    uint64
 	cleanupInterval time.Duration
 	idleTimeout     time.Duration
@@ -99,20 +99,20 @@ func NewCache() *Cache {
 		entry:           make(map[EntryKey]*entry),
 		entryIndexHeap:  h,
 		entryIndex:      make(map[EntryKey]*entryIndex),
-		cleanerStopCh:   make(chan struct{}),
-		cleanerWG:       sync.WaitGroup{},
+		stopCh:          make(chan struct{}),
+		wg:              sync.WaitGroup{},
 		maxCacheSize:    100 * 1024 * 1024,
 		cleanupInterval: 30 * time.Second,
 		idleTimeout:     2 * time.Minute,
 	}
-	c.cleanerWG.Add(1)
+	c.wg.Add(1)
 	return c
 }
 
 // Clean periodically cleans the cache.
 func (c *Cache) Clean() {
 	go func() {
-		defer c.cleanerWG.Done()
+		defer c.wg.Done()
 		c.clean()
 	}()
 }
@@ -132,7 +132,7 @@ func (c *Cache) clean() {
 				}
 			}
 			c.mu.Unlock()
-		case <-c.cleanerStopCh:
+		case <-c.stopCh:
 			return
 		}
 	}
@@ -140,15 +140,15 @@ func (c *Cache) clean() {
 
 // Close closes the cache.
 func (c *Cache) Close() {
-	close(c.cleanerStopCh)
-	c.cleanerWG.Wait()
+	close(c.stopCh)
+	c.wg.Wait()
 	c.entry = nil
 	c.entryIndex = nil
 	c.entryIndexHeap = nil
 }
 
 // Get gets the compressed primary block from the cache.
-func (c *Cache) Get(key EntryKey) []byte {
+func (c *Cache) Get(key EntryKey) any {
 	atomic.AddUint64(&c.requests, 1)
 
 	c.mu.RLock()
@@ -165,7 +165,7 @@ func (c *Cache) Get(key EntryKey) []byte {
 			}
 			c.mu.Unlock()
 		}
-		return entry.compressedPrimaryBuf
+		return entry.value
 	}
 
 	atomic.AddUint64(&c.misses, 1)
@@ -173,7 +173,7 @@ func (c *Cache) Get(key EntryKey) []byte {
 }
 
 // Put puts the compressed primary block into the cache.
-func (c *Cache) Put(key EntryKey, compressedPrimaryBuf []byte) {
+func (c *Cache) Put(key EntryKey, value any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -185,8 +185,8 @@ func (c *Cache) Put(key EntryKey, compressedPrimaryBuf []byte) {
 
 	now := uint64(time.Now().UnixNano())
 	e := &entry{
-		compressedPrimaryBuf: compressedPrimaryBuf,
-		lastAccess:           now,
+		value:      value,
+		lastAccess: now,
 	}
 	ei := &entryIndex{
 		key:   key,

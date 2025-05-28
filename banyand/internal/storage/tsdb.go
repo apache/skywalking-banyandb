@@ -79,14 +79,14 @@ type groupCache struct {
 	group string
 }
 
-func (gc *groupCache) get(key EntryKey) []byte {
+func (gc *groupCache) get(key EntryKey) any {
 	key.group = gc.group
 	return gc.Get(key)
 }
 
-func (gc *groupCache) put(key EntryKey, compressedPrimaryBuf []byte) {
+func (gc *groupCache) put(key EntryKey, value any) {
 	key.group = gc.group
-	gc.Put(key, compressedPrimaryBuf)
+	gc.Put(key, value)
 }
 
 type database[T TSTable, O any] struct {

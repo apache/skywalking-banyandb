@@ -51,14 +51,14 @@ type segmentCache struct {
 	segmentID segmentID
 }
 
-func (sc *segmentCache) get(key EntryKey) []byte {
+func (sc *segmentCache) get(key EntryKey) any {
 	key.segmentID = sc.segmentID
 	return sc.groupCache.get(key)
 }
 
-func (sc *segmentCache) put(key EntryKey, compressedPrimaryBuf []byte) {
+func (sc *segmentCache) put(key EntryKey, value any) {
 	key.segmentID = sc.segmentID
-	sc.groupCache.put(key, compressedPrimaryBuf)
+	sc.groupCache.put(key, value)
 }
 
 type segment[T TSTable, O any] struct {

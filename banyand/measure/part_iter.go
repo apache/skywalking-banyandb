@@ -184,18 +184,20 @@ func searchPBM(pbmIndex []primaryBlockMetadata, sid common.SeriesID) []primaryBl
 }
 
 func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetadata) ([]blockMetadata, error) {
-	pi.compressedPrimaryBuf = pi.sc.Get(storage.EntryKey{
+	value := pi.sc.Get(storage.EntryKey{
 		PartID: pi.p.partMetadata.ID,
 		Offset: mr.offset,
 	})
-	if pi.compressedPrimaryBuf == nil {
-		pi.compressedPrimaryBuf = bytes.ResizeOver(pi.compressedPrimaryBuf, int(mr.size))
-		fs.MustReadData(pi.p.primary, int64(mr.offset), pi.compressedPrimaryBuf)
-		pi.sc.Put(storage.EntryKey{
-			PartID: pi.p.partMetadata.ID,
-			Offset: mr.offset,
-		}, pi.compressedPrimaryBuf)
+	if value != nil {
+		bmPtrs := value.([]*blockMetadata)
+		for _, bmsPtr := range bmPtrs {
+			bms = append(bms, *bmsPtr)
+		}
+		return bms, nil
 	}
+
+	pi.compressedPrimaryBuf = bytes.ResizeOver(pi.compressedPrimaryBuf, int(mr.size))
+	fs.MustReadData(pi.p.primary, int64(mr.offset), pi.compressedPrimaryBuf)
 
 	var err error
 	pi.primaryBuf, err = zstd.Decompress(pi.primaryBuf[:0], pi.compressedPrimaryBuf)
@@ -206,6 +208,14 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
+	bmPtrs := make([]*blockMetadata, 0)
+	for _, bm := range bms {
+		bmPtrs = append(bmPtrs, &bm)
+	}
+	pi.sc.Put(storage.EntryKey{
+		PartID: pi.p.partMetadata.ID,
+		Offset: mr.offset,
+	}, bmPtrs)
 	return bms, nil
 }
 
