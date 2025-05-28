@@ -226,5 +226,5 @@ func (c *Cache) Size() uint64 {
 }
 
 func (c *Cache) size() uint64 {
-	return uint64(unsafe.Sizeof(c.entry))
+	return uint64(unsafe.Sizeof(*c))
 }

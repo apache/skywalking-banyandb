@@ -49,10 +49,10 @@ type part struct {
 	fileSystem           fs.FileSystem
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
+	shardCache           *storage.ShardCache
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
-	shardCache           *storage.ShardCache
 }
 
 func (p *part) close() {
