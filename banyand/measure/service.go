@@ -68,7 +68,7 @@ type service struct {
 	metricPipeline      queue.Server
 	omr                 observability.MetricsRegistry
 	metadata            metadata.Repo
-	pm                  *protector.Memory
+	pm                  protector.Memory
 	schemaRepo          *schemaRepo
 	l                   *logger.Logger
 	root                string
@@ -192,7 +192,7 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server, omr observability.MetricsRegistry, pm *protector.Memory) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
 	return &service{
 		metadata:       metadata,
 		pipeline:       pipeline,
@@ -203,7 +203,7 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline qu
 }
 
 // NewReadonlyService returns a new readonly service.
-func NewReadonlyService(metadata metadata.Repo, omr observability.MetricsRegistry, pm *protector.Memory) (Service, error) {
+func NewReadonlyService(metadata metadata.Repo, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
 	return &service{
 		metadata: metadata,
 		omr:      omr,

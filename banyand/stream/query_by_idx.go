@@ -38,7 +38,7 @@ import (
 type idxResult struct {
 	sortingIter      itersort.Iterator[*index.DocumentResult]
 	sm               *stream
-	pm               protector.MemoryProtector
+	pm               protector.Memory
 	tabs             []*tsTable
 	elementIDsSorted []uint64
 	data             []*blockCursor

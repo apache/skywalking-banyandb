@@ -105,7 +105,7 @@ func searchSeries(ctx context.Context, qo queryOptions, segment storage.Segment[
 }
 
 func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *option], qo queryOptions,
-	l *logger.Logger, pm *protector.Memory, tr *index.RangeOpts,
+	l *logger.Logger, pm protector.Memory, tr *index.RangeOpts,
 ) (bc *blockScanner, err error) {
 	tabs := segment.Tables()
 	finalizers := make([]scanFinalizer, 0, len(tabs)+1)
@@ -197,13 +197,14 @@ func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, 
 type scanFinalizer func()
 
 type blockScanner struct {
-	filterIndex map[uint64]posting.List
-	l           *logger.Logger
-	pm          *protector.Memory
-	parts       [][]*part
-	finalizers  []scanFinalizer
-	qo          queryOptions
-	asc         bool
+	filterIndex  map[uint64]posting.List
+	l            *logger.Logger
+	pm           protector.Memory
+	parts        [][]*part
+	finalizers   []scanFinalizer
+	newBatchFunc func() *blockScanResultBatch
+	qo           queryOptions
+	asc          bool
 }
 
 func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResultBatch) {
@@ -223,7 +224,10 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 	ti := generateTstIter()
 	defer releaseTstIter(ti)
 	ti.init(bma, parts, bsn.qo.sortedSids, bsn.qo.minTimestamp, bsn.qo.maxTimestamp)
-	batch := generateBlockScanResultBatch()
+	if bsn.newBatchFunc == nil {
+		bsn.newBatchFunc = generateBlockScanResultBatch
+	}
+	batch := bsn.newBatchFunc()
 	if ti.Error() != nil {
 		batch.err = fmt.Errorf("cannot init tstIter: %w", ti.Error())
 		select {
@@ -245,8 +249,20 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		bs.bm.copyFrom(p.curBlock)
 		if len(batch.bss) >= cap(batch.bss) {
 			var totalBlockBytes uint64
+			quota := bsn.pm.AvailableBytes()
 			for i := range batch.bss {
 				totalBlockBytes += batch.bss[i].bm.uncompressedSizeBytes
+				if quota >= 0 && totalBlockBytes > uint64(quota) {
+					err := fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+					batch.err = err
+					select {
+					case blockCh <- batch:
+					case <-ctx.Done():
+						releaseBlockScanResultBatch(batch)
+						bsn.l.Warn().Err(err).Msg("quota exceeded, context canceled")
+					}
+					return
+				}
 			}
 			if err := bsn.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
 				batch.err = fmt.Errorf("cannot acquire resource: %w", err)
@@ -265,7 +281,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 				bsn.l.Warn().Int("batch.len", len(batch.bss)).Msg("context canceled while sending block")
 				return
 			}
-			batch = generateBlockScanResultBatch()
+			batch = bsn.newBatchFunc()
 		}
 	}
 	if ti.Error() != nil {

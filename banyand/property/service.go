@@ -56,7 +56,7 @@ type service struct {
 	close               chan struct{}
 	db                  *database
 	l                   *logger.Logger
-	pm                  *protector.Memory
+	pm                  protector.Memory
 	root                string
 	nodeID              string
 	snapshotDir         string
@@ -134,7 +134,7 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm *protector.Memory) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,
