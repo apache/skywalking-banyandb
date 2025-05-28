@@ -52,6 +52,7 @@ type part struct {
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
+	shardCache           *storage.ShardCache
 }
 
 func (p *part) close() {

@@ -308,7 +308,7 @@ func (ti *tstIter) reset() {
 	ti.nextBlockNoop = false
 }
 
-func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, scs []*storage.ShardCache, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	ti.reset()
 	ti.parts = parts
 
@@ -317,7 +317,7 @@ func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, scs []*storage.S
 	}
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
-		ti.piPool[i].init(bma, p, scs[i], sids, minTimestamp, maxTimestamp)
+		ti.piPool[i].init(bma, p, sids, minTimestamp, maxTimestamp)
 	}
 
 	ti.piHeap = ti.piHeap[:0]

@@ -61,11 +61,11 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(bma *blockMetadataArray, p *part, sc *storage.ShardCache, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
-	pi.sc = sc
+	pi.sc = p.shardCache
 
 	pi.bms = bma.arr
 	pi.sids = sids

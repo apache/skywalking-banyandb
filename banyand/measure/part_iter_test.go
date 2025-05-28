@@ -116,9 +116,8 @@ func Test_partIter_nextBlock(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			verifyPart := func(p *part) {
 				defer p.close()
-				shardCache := storage.NewShardCache("test-group", 0, 0)
 				pi := partIter{}
-				pi.init(bma, p, shardCache, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
+				pi.init(bma, p, tt.sids, tt.opt.minTimestamp, tt.opt.maxTimestamp)
 
 				var got []blockMetadata
 				for pi.nextBlock() {
@@ -149,6 +148,8 @@ func Test_partIter_nextBlock(t *testing.T) {
 			mp.mustInitFromDataPoints(dps)
 
 			p := openMemPart(mp)
+			shardCache := storage.NewShardCache("test-group", 0, 0)
+			p.shardCache = shardCache
 			verifyPart(p)
 			tmpDir, defFn := test.Space(require.New(t))
 			defer defFn()
@@ -157,6 +158,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 			fileSystem := fs.NewLocalFileSystem()
 			mp.mustFlush(fileSystem, partPath)
 			p = mustOpenFilePart(epoch, tmpDir, fileSystem)
+			p.shardCache = shardCache
 			verifyPart(p)
 		})
 	}

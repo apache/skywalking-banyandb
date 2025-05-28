@@ -148,15 +148,11 @@ func Test_tstIter(t *testing.T) {
 			s = new(snapshot)
 		}
 		defer s.decRef()
-		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
-		require.Equal(t, len(s.parts), n)
 		shardCache := storage.NewShardCache("test-group", 0, 0)
-		scs := make([]*storage.ShardCache, 0)
-		for i := 0; i < len(pp); i++ {
-			scs = append(scs, shardCache)
-		}
+		pp, n := s.getParts(nil, shardCache, tt.minTimestamp, tt.maxTimestamp)
+		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
-		ti.init(bma, pp, scs, tt.sids, tt.minTimestamp, tt.maxTimestamp)
+		ti.init(bma, pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)
 		var got []blockMetadata
 		for ti.nextBlock() {
 			if ti.piHeap[0].curBlock.seriesID == 0 {
