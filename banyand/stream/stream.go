@@ -89,7 +89,7 @@ type stream struct {
 	tsdb        atomic.Value
 	l           *logger.Logger
 	schema      *databasev1.Stream
-	pm          *protector.Memory
+	pm          protector.Memory
 	schemaRepo  *schemaRepo
 	name        string
 	group       string
@@ -126,7 +126,7 @@ type streamSpec struct {
 }
 
 func openStream(spec streamSpec,
-	l *logger.Logger, pm *protector.Memory, schemaRepo *schemaRepo,
+	l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo,
 ) *stream {
 	s := &stream{
 		schema:     spec.schema,
