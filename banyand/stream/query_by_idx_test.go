@@ -27,58 +27,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	itest "github.com/apache/skywalking-banyandb/banyand/internal/test"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
-	"github.com/apache/skywalking-banyandb/pkg/watcher"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
-
-type fakeMemory struct {
-	acquireErr          error
-	limit               uint64
-	expectQuotaExceeded bool
-}
-
-func (f *fakeMemory) AvailableBytes() int64 {
-	if f.expectQuotaExceeded {
-		return 10
-	}
-	return 10000
-}
-
-func (f *fakeMemory) GetLimit() uint64 {
-	return f.limit
-}
-
-func (f *fakeMemory) AcquireResource(_ context.Context, _ uint64) error {
-	return f.acquireErr
-}
-
-func (f *fakeMemory) Name() string {
-	return "fake-memory"
-}
-
-func (f *fakeMemory) FlagSet() *run.FlagSet {
-	return run.NewFlagSet("fake-memory")
-}
-
-func (f *fakeMemory) Validate() error {
-	return nil
-}
-
-func (f *fakeMemory) PreRun(_ context.Context) error {
-	return nil
-}
-
-func (f *fakeMemory) GracefulStop() {
-	// no-op for test
-}
-
-func (f *fakeMemory) Serve() run.StopNotify {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
-}
 
 func TestQueryResult_QuotaExceeded(t *testing.T) {
 	type testCtx struct {
@@ -91,90 +45,96 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 		expectQuotaExceeded bool
 	}
 
-	verify := func(t *testing.T, tt testCtx, tst *tsTable) {
-		defer tst.Close()
-		qr := &idxResult{
-			pm:   &fakeMemory{expectQuotaExceeded: tt.expectQuotaExceeded},
-			tabs: []*tsTable{tst},
-		}
-		qo := queryOptions{
-			minTimestamp: tt.minTimestamp,
-			maxTimestamp: tt.maxTimestamp,
-			sortedSids:   tt.sids,
-		}
-		err := qr.scanParts(context.TODO(), qo)
-		if tt.expectQuotaExceeded {
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "quota exceeded", "expected quota to be exceeded but got: %v", err)
-			return
-		}
-		require.NoError(t, err)
-		var got []blockMetadata
-		for _, data := range qr.data {
-			got = append(got, data.bm)
-		}
-		if diff := cmp.Diff(got, tt.want,
-			cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
-			cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
-			cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
-			cmp.AllowUnexported(blockMetadata{}),
-		); diff != "" {
-			t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
-		}
+	tests := []testCtx{
+		{
+			name:                "TestQuotaNotExceeded_ExpectSuccess",
+			esList:              []*elements{esTS1},
+			sids:                []common.SeriesID{1, 2, 3},
+			minTimestamp:        1,
+			maxTimestamp:        1,
+			expectQuotaExceeded: false,
+			want: []blockMetadata{
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
+			},
+		},
+		{
+			name:                "TestQuotaExceeded_ExpectError",
+			esList:              []*elements{esTS1},
+			sids:                []common.SeriesID{1, 2, 3},
+			minTimestamp:        1,
+			maxTimestamp:        1,
+			expectQuotaExceeded: true,
+		},
 	}
 
-	t.Run("memory snapshot", func(t *testing.T) {
-		tests := []testCtx{
-			{
-				name:                "TestQuotaNotExceeded_ExpectSuccess",
-				esList:              []*elements{esTS1},
-				sids:                []common.SeriesID{1, 2, 3},
-				minTimestamp:        1,
-				maxTimestamp:        1,
-				expectQuotaExceeded: false,
-				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
-				},
-			},
-			{
-				name:                "TestQuotaExceeded_ExpectError",
-				esList:              []*elements{esTS1},
-				sids:                []common.SeriesID{1, 2, 3},
-				minTimestamp:        1,
-				maxTimestamp:        1,
-				expectQuotaExceeded: true,
-				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
-					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
-				},
-			},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				tmpPath, defFn := test.Space(require.New(t))
-				index, _ := newElementIndex(context.TODO(), tmpPath, 0, nil)
-				defer defFn()
-				tst := &tsTable{
-					index:         index,
-					loopCloser:    run.NewCloser(2),
-					introductions: make(chan *introduction),
-					fileSystem:    fs.NewLocalFileSystem(),
-					root:          tmpPath,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Initialize a tstIter object.
+			tmpPath, defFn := test.Space(require.New(t))
+			fileSystem := fs.NewLocalFileSystem()
+			defer defFn()
+			tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
+			require.NoError(t, err)
+			for _, es := range tt.esList {
+				tst.mustAddElements(es)
+				time.Sleep(100 * time.Millisecond)
+			}
+			// wait until the introducer is done
+			if len(tt.esList) > 0 {
+				for {
+					snp := tst.currentSnapshot()
+					if snp == nil {
+						time.Sleep(100 * time.Millisecond)
+						continue
+					}
+					if snp.creator == snapshotCreatorMemPart {
+						snp.decRef()
+						time.Sleep(100 * time.Millisecond)
+						continue
+					}
+					snp.decRef()
+					tst.Close()
+					break
 				}
-				tst.gc.init(tst)
-				flushCh := make(chan *flusherIntroduction)
-				mergeCh := make(chan *mergerIntroduction)
-				introducerWatcher := make(watcher.Channel, 1)
-				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
-				for _, es := range tt.esList {
-					tst.mustAddElements(es)
-					time.Sleep(100 * time.Millisecond)
-				}
-				verify(t, tt, tst)
-			})
-		}
-	})
+			}
+
+			// reopen the table
+			tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
+			require.NoError(t, err)
+
+			defer tst.Close()
+			qr := &idxResult{
+				pm:   &itest.MockMemoryProtector{ExpectQuotaExceeded: tt.expectQuotaExceeded},
+				tabs: []*tsTable{tst},
+			}
+			qo := queryOptions{
+				minTimestamp: tt.minTimestamp,
+				maxTimestamp: tt.maxTimestamp,
+				sortedSids:   tt.sids,
+			}
+			err = qr.scanParts(context.TODO(), qo)
+			if tt.expectQuotaExceeded {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "quota exceeded", "expected quota to be exceeded but got: %v", err)
+				return
+			}
+			require.NoError(t, err)
+			var got []blockMetadata
+			for _, data := range qr.data {
+				got = append(got, data.bm)
+			}
+			if diff := cmp.Diff(got, tt.want,
+				cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
+				cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
+				cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+				cmp.AllowUnexported(blockMetadata{}),
+			); diff != "" {
+				t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+			}
+		})
+	}
 }

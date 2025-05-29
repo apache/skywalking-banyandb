@@ -30,6 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	itest "github.com/apache/skywalking-banyandb/banyand/internal/test"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -1359,53 +1360,6 @@ func TestQueryResult(t *testing.T) {
 	}
 }
 
-type fakeMemory struct {
-	acquireErr          error
-	limit               uint64
-	expectQuotaExceeded bool
-}
-
-func (f *fakeMemory) AvailableBytes() int64 {
-	if f.expectQuotaExceeded {
-		return 10
-	}
-	return 10000
-}
-
-func (f *fakeMemory) GetLimit() uint64 {
-	return f.limit
-}
-
-func (f *fakeMemory) AcquireResource(_ context.Context, _ uint64) error {
-	return f.acquireErr
-}
-
-func (f *fakeMemory) Name() string {
-	return "fake-memory"
-}
-
-func (f *fakeMemory) FlagSet() *run.FlagSet {
-	return run.NewFlagSet("fake-memory")
-}
-
-func (f *fakeMemory) Validate() error {
-	return nil
-}
-
-func (f *fakeMemory) PreRun(_ context.Context) error {
-	return nil
-}
-
-func (f *fakeMemory) GracefulStop() {
-	// no-op for test
-}
-
-func (f *fakeMemory) Serve() run.StopNotify {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
-}
-
 func TestQueryResult_QuotaExceeded(t *testing.T) {
 	tests := []struct {
 		wantErr             error
@@ -1460,110 +1414,96 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			minTimestamp:        1,
 			maxTimestamp:        1,
 			expectQuotaExceeded: true,
-			want: []model.MeasureResult{{
-				SID:        1,
-				Timestamps: []int64{1},
-				Versions:   []int64{1},
-				TagFamilies: []model.TagFamily{
-					{Name: "arrTag", Tags: []model.Tag{
-						{Name: "strArrTag", Values: []*modelv1.TagValue{strArrTagValue([]string{"value1", "value2"})}},
-						{Name: "intArrTag", Values: []*modelv1.TagValue{int64ArrTagValue([]int64{25, 30})}},
-					}},
-					{Name: "binaryTag", Tags: []model.Tag{
-						{Name: "binaryTag", Values: []*modelv1.TagValue{binaryDataTagValue(longText)}},
-					}},
-					{Name: "singleTag", Tags: []model.Tag{
-						{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
-						{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
-						{Name: "strTag1", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-						{Name: "strTag2", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
-					}},
-				},
-				Fields: []model.Field{
-					{Name: "strField", Values: []*modelv1.FieldValue{strFieldValue("field1")}},
-					{Name: "intField", Values: []*modelv1.FieldValue{int64FieldValue(1110)}},
-					{Name: "floatField", Values: []*modelv1.FieldValue{float64FieldValue(1.221233343e+06)}},
-					{Name: "binaryField", Values: []*modelv1.FieldValue{binaryDataFieldValue(longText)}},
-				},
-			}},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			verify := func(t *testing.T, tst *tsTable) {
-				m := &measure{
-					pm: &fakeMemory{expectQuotaExceeded: tt.expectQuotaExceeded},
-				}
-				defer tst.Close()
-				queryOpts := queryOptions{
-					minTimestamp: tt.minTimestamp,
-					maxTimestamp: tt.maxTimestamp,
-				}
-				queryOpts.TagProjection = tagProjections[1]
-				queryOpts.FieldProjection = fieldProjections[1]
-				s := tst.currentSnapshot()
-				require.NotNil(t, s)
-				defer s.decRef()
-				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp)
-				var result queryResult
-				result.ctx = context.TODO()
-				// Query all tags
-				result.tagProjection = allTagProjections
-				err := m.searchBlocks(context.TODO(), &result, tt.sids, pp, queryOpts)
-				if tt.expectQuotaExceeded {
-					require.Error(t, err)
-					require.Contains(t, err.Error(), "quota exceeded", "expected quota to be exceeded but got: %v", err)
-					return
-				}
-				require.NoError(t, err)
-				defer result.Release()
-				if tt.orderBySeries {
-					result.sidToIndex = make(map[common.SeriesID]int)
-					for i, si := range tt.sids {
-						result.sidToIndex[si] = i
-					}
-				} else {
-					result.orderByTS = true
-					result.ascTS = tt.ascTS
-				}
-				var got []model.MeasureResult
+			// Initialize a tstIter object.
+			tmpPath, defFn := test.Space(require.New(t))
+			fileSystem := fs.NewLocalFileSystem()
+			defer defFn()
+			tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
+			require.NoError(t, err)
+			for _, dps := range tt.dpsList {
+				tst.mustAddDataPoints(dps)
+				time.Sleep(100 * time.Millisecond)
+			}
+			// wait until the introducer is done
+			if len(tt.dpsList) > 0 {
 				for {
-					r := result.Pull()
-					if r == nil {
-						break
+					snp := tst.currentSnapshot()
+					if snp == nil {
+						time.Sleep(100 * time.Millisecond)
+						continue
 					}
-					sort.Slice(r.TagFamilies, func(i, j int) bool {
-						return r.TagFamilies[i].Name < r.TagFamilies[j].Name
-					})
-					got = append(got, *r)
-				}
-				if diff := cmp.Diff(got, tt.want,
-					protocmp.IgnoreUnknown(), protocmp.Transform()); diff != "" {
-					t.Errorf("Unexpected []pbv1.Result (-got +want):\n%s", diff)
+					if snp.creator == snapshotCreatorMemPart {
+						snp.decRef()
+						time.Sleep(100 * time.Millisecond)
+						continue
+					}
+					snp.decRef()
+					tst.Close()
+					break
 				}
 			}
 
-			t.Run("memory snapshot", func(t *testing.T) {
-				tmpPath, defFn := test.Space(require.New(t))
-				defer defFn()
-				tst := &tsTable{
-					loopCloser:    run.NewCloser(2),
-					introductions: make(chan *introduction),
-					fileSystem:    fs.NewLocalFileSystem(),
-					root:          tmpPath,
+			// reopen the table
+			tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
+			require.NoError(t, err)
+
+			m := &measure{
+				pm: &itest.MockMemoryProtector{ExpectQuotaExceeded: tt.expectQuotaExceeded},
+			}
+			defer tst.Close()
+			queryOpts := queryOptions{
+				minTimestamp: tt.minTimestamp,
+				maxTimestamp: tt.maxTimestamp,
+			}
+			queryOpts.TagProjection = tagProjections[1]
+			queryOpts.FieldProjection = fieldProjections[1]
+			s := tst.currentSnapshot()
+			require.NotNil(t, s)
+			defer s.decRef()
+			pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp)
+			var result queryResult
+			result.ctx = context.TODO()
+			// Query all tags
+			result.tagProjection = allTagProjections
+			err = m.searchBlocks(context.TODO(), &result, tt.sids, pp, queryOpts)
+			if tt.expectQuotaExceeded {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "quota exceeded", "expected quota to be exceeded but got: %v", err)
+				return
+			}
+			require.NoError(t, err)
+			defer result.Release()
+			if tt.orderBySeries {
+				result.sidToIndex = make(map[common.SeriesID]int)
+				for i, si := range tt.sids {
+					result.sidToIndex[si] = i
 				}
-				tst.gc.init(tst)
-				flushCh := make(chan *flusherIntroduction)
-				mergeCh := make(chan *mergerIntroduction)
-				introducerWatcher := make(watcher.Channel, 1)
-				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
-				for _, dps := range tt.dpsList {
-					tst.mustAddDataPoints(dps)
-					time.Sleep(100 * time.Millisecond)
+			} else {
+				result.orderByTS = true
+				result.ascTS = tt.ascTS
+			}
+			var got []model.MeasureResult
+			for {
+				r := result.Pull()
+				if r == nil {
+					break
 				}
-				verify(t, tst)
-			})
+				sort.Slice(r.TagFamilies, func(i, j int) bool {
+					return r.TagFamilies[i].Name < r.TagFamilies[j].Name
+				})
+				got = append(got, *r)
+			}
+			if diff := cmp.Diff(got, tt.want,
+				protocmp.IgnoreUnknown(), protocmp.Transform()); diff != "" {
+				t.Errorf("Unexpected []pbv1.Result (-got +want):\n%s", diff)
+			}
 		})
 	}
 }
