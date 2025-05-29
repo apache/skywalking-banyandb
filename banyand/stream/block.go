@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 
@@ -25,8 +26,9 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -103,6 +105,21 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int) 
 		tags[j].resizeValues(elementsLen)
 		tags[j].valueType = t.valueType
 		tags[j].values[i] = t.marshal()
+		if !t.indexed {
+			continue
+		}
+		if tags[j].filter == nil {
+			tags[j].filter = filter.NewBloomFilter(elementsLen)
+		}
+		tags[j].filter.Add(t.value)
+		if t.valueType == pbv1.ValueTypeInt64 {
+			if bytes.Compare(t.value, tags[j].min) == -1 {
+				tags[j].min = t.value
+			}
+			if bytes.Compare(t.value, tags[j].max) == 1 {
+				tags[j].max = t.value
+			}
+		}
 	}
 }
 
@@ -159,12 +176,12 @@ func (b *block) validate() {
 }
 
 func (b *block) marshalTagFamily(tf tagFamily, bm *blockMetadata, ww *writers) {
-	hw, w := ww.getTagMetadataWriterAndTagWriter(tf.name)
+	hw, w, fw := ww.getWriters(tf.name)
 	cc := tf.tags
 	cfm := generateTagFamilyMetadata()
 	cmm := cfm.resizeTagMetadata(len(cc))
 	for i := range cc {
-		cc[i].mustWriteTo(&cmm[i], w)
+		cc[i].mustWriteTo(&cmm[i], w, fw)
 	}
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
@@ -186,7 +203,7 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 		return
 	}
 	bb := bigValuePool.Generate()
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
@@ -221,7 +238,7 @@ func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDec
 		logger.Panicf("offset %d must be equal to bytesRead %d", columnFamilyMetadataBlock.offset, metaReader.bytesRead)
 	}
 	bb := bigValuePool.Generate()
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
 	metaReader.mustReadFull(bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
@@ -330,7 +347,7 @@ func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, elementID
 func mustReadTimestampsFrom(timestamps []int64, elementIDs []uint64, tm *timestampsMetadata, count int, reader fs.Reader) ([]int64, []uint64) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tm.size))
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
 	return mustDecodeTimestampsWithVersions(timestamps, elementIDs, tm, count, reader.Path(), bb.Buf)
 }
@@ -359,7 +376,7 @@ func mustSeqReadTimestampsFrom(timestamps []int64, elementIDs []uint64, tm *time
 	}
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tm.size))
 	reader.mustReadFull(bb.Buf)
 	return mustDecodeTimestampsWithVersions(timestamps, elementIDs, tm, count, reader.Path(), bb.Buf)
 }

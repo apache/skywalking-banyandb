@@ -12,6 +12,7 @@ Release Notes.
 - Implement multiple groups query in one request.
 - Replica: Replace Any with []byte Between Liaison and Data Nodes
 - Replica: Support configurable replica count on Group.
+- Implement skipping index for stream.
 
 ### Bug Fixes
 
