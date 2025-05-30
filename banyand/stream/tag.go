@@ -51,6 +51,7 @@ func (t *tag) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
+
 func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	tm.reset()
 
@@ -61,7 +62,38 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	defer bigValuePool.Release(bb)
 
 	// marshal values
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
+	switch t.valueType {
+	case pbv1.ValueTypeInt64:
+		// convert byte array to int64 array
+		intValues := make([]int64, len(t.values))
+		for i, v := range t.values {
+			intValues[i] = encoding.BytesToInt64(v)
+		}
+		// use delta encoding for integer column
+		var encodeType encoding.EncodeType
+		var firstValue int64
+		bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
+		tm.encodeType = encodeType
+		tm.firstValue = firstValue
+	case pbv1.ValueTypeFloat64:
+		// convert byte array to float64 array
+		floatValues := make([]float64, len(t.values))
+		for i, v := range t.values {
+			floatValues[i] = encoding.BytesToFloat64(v)
+		}
+		// use XOR encoding for float column
+		bb.Buf = bb.Buf[:0]
+		writer := encoding.NewWriter()
+		writer.Reset(bytes.NewByteSliceWriter(&bb.Buf))
+		xorEncoder := encoding.NewXOREncoder(writer)
+		// convert float64 to uint64 for encoding
+		for _, v := range floatValues {
+			xorEncoder.Write(encoding.Float64ToUint64(v))
+		}
+	default:
+		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
+	}
+
 	tm.size = uint64(len(bb.Buf))
 	if tm.size > maxValuesBlockSize {
 		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", tm.size, maxValuesBlockSize)
@@ -88,10 +120,40 @@ func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Read
 	}
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	fs.MustReadData(reader, int64(cm.offset), bb.Buf)
-	var err error
-	t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
-	if err != nil {
-		logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+
+	switch t.valueType {
+	case pbv1.ValueTypeInt64:
+		// decode integer type
+		intValues := make([]int64, count)
+		var err error
+		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
+		if err != nil {
+			logger.Panicf("%s: cannot decode int values: %v", reader.Path(), err)
+		}
+		// convert int64 array to byte array
+		t.values = make([][]byte, count)
+		for i, v := range intValues {
+			t.values[i] = encoding.Int64ToBytes(nil, v)
+		}
+	case pbv1.ValueTypeFloat64:
+		// decode float type
+		reader := encoding.NewReader(bytes.NewByteSliceReader(bb.Buf))
+		xorDecoder := encoding.NewXORDecoder(reader)
+		t.values = make([][]byte, count)
+		for i := uint64(0); i < count; i++ {
+			if !xorDecoder.Next() {
+				logger.Panicf("cannot decode float value at index %d: %v", i, xorDecoder.Err())
+			}
+			// convert uint64 back to float64
+			floatVal := encoding.Uint64ToFloat64(xorDecoder.Value())
+			t.values[i] = encoding.Float64ToBytes(nil, floatVal)
+		}
+	default:
+		var err error
+		t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
+		if err != nil {
+			logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+		}
 	}
 }
 
