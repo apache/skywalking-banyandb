@@ -23,10 +23,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
@@ -36,16 +34,14 @@ import (
 )
 
 const (
-	defaultIOSize             = 256 * 1024
 	defaultLargeFileThreshold = 10 * 1024 * 1024
 )
 
-// ThresholdProvider is an interface for providing file size thresholds.
+// ThresholdProvider provides file size thresholds for adaptive caching.
 type ThresholdProvider interface {
 	ShouldApplyFadvis(fileSize, maxSize int64) bool
 }
 
-// Global threshold provider that can be set by external packages.
 var defaultThresholdProvider ThresholdProvider
 
 // SetThresholdProvider sets the global threshold provider.
@@ -63,6 +59,7 @@ type localFileSystem struct {
 type LocalFile struct {
 	file   *os.File
 	ioSize int
+	cached bool // Caching decision from upper layer
 }
 
 // NewLocalFileSystem is used to create the Local File system.
@@ -247,9 +244,6 @@ func (fs *localFileSystem) Write(buffer []byte, name string, permission Mode) (i
 			Message: fmt.Sprintf("Flush file return error, file name: %s,error message: %s", name, err),
 		}
 	}
-
-	// Always try to sync and drop cache on write operations
-	_ = SyncAndDropCache(file.Fd(), 0, 0)
 
 	return size, nil
 }
@@ -483,17 +477,15 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 // SequentialWrite supports appending consecutive buffers to the end of the file.
 func (file *LocalFile) SequentialWrite() SeqWriter {
 	writer := generateWriter(file.file, file.ioSize)
-	return &seqWriter{writer: writer, file: file.file, fileName: file.file.Name()}
+	return &seqWriter{writer: writer, file: file.file, fileName: file.file.Name(), skipFadvise: file.cached}
 }
 
 // SequentialRead is used to read the entire file using streaming read.
 // If cached is true, fadvise will not be applied.
 func (file *LocalFile) SequentialRead(cached bool) SeqReader {
-	// Metadata index paths always skip fadvise
+	// Use the cached parameter from upper layer instead of local file's cached field
+	// This allows override when needed (e.g. metadata always cached)
 	skipFadv := cached
-	if isMetadataIndexPath(file.file.Name()) {
-		skipFadv = true
-	}
 
 	reader := generateReader(file.file, file.ioSize)
 	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), length: 0, skipFadvise: skipFadv}
@@ -580,20 +572,8 @@ func (i *seqReader) Read(p []byte) (int, error) {
 	rsize, err := i.reader.Read(p)
 	if rsize > 0 && i.file != nil && !i.skipFadvise {
 		offset := i.length
-
-		// Get directory of the file to check free space
-		dir := filepath.Dir(i.fileName)
-		free := uint64(math.MaxInt64) // Default to max value if we can't get free space
-
-		// Try to get free space using a direct system call
-		if freeSpace, usageErr := disk.Usage(dir); usageErr == nil {
-			free = freeSpace.Free
-		}
-
-		// Check if we should apply fadvise based on file size and available space
-		if ShouldApplyFadvis(i.length, int64(free)) {
-			_ = ApplyFadviseToFD(i.file.Fd(), offset, int64(rsize))
-		}
+		// Apply fadvise directly without threshold checking since decision was made at upper layer
+		_ = ApplyFadviseToFD(i.file.Fd(), offset, int64(rsize))
 		i.length += int64(rsize)
 	} else if rsize > 0 {
 		i.length += int64(rsize)
@@ -638,20 +618,8 @@ func (w *seqWriter) Write(p []byte) (n int, err error) {
 		}
 
 		offset := w.length
-
-		// Get directory of the file to check free space
-		dir := filepath.Dir(w.fileName)
-		free := uint64(math.MaxInt64) // Default to max value if we can't get free space
-
-		// Try to get free space using a direct system call
-		if freeSpace, diskErr := disk.Usage(dir); diskErr == nil {
-			free = freeSpace.Free
-		}
-
-		// Check if we should apply fadvise based on file size and available space
-		if ShouldApplyFadvis(w.length, int64(free)) {
-			_ = ApplyFadviseToFD(w.file.Fd(), offset, int64(n))
-		}
+		// Apply fadvise directly without threshold checking since decision was made at upper layer
+		_ = ApplyFadviseToFD(w.file.Fd(), offset, int64(n))
 		w.length += int64(n)
 	} else if n > 0 {
 		w.length += int64(n)
@@ -719,25 +687,18 @@ func releaseWriter(bw *bufio.Writer) {
 
 var bufWriterPool = pool.Register[*bufio.Writer]("fs-bufWriter")
 
-func isMetadataIndexPath(p string) bool {
-	return strings.Contains(p, "/metadata_index/")
-}
-
 var globalThreshold int64 = defaultLargeFileThreshold
 
-// SetGlobalThreshold sets the global file size threshold for applying fadvis.
-// Files larger than this threshold will have fadvis applied to reduce memory pressure.
+// SetGlobalThreshold sets the global threshold for large file detection.
 func SetGlobalThreshold(v int64) {
 	globalThreshold = v
 }
 
-// ShouldApplyFadvis determines if the fadvis optimization should be applied to a file.
-// It returns true if the file size exceeds the current threshold (either from the provider or global setting).
+// ShouldApplyFadvis determines if fadvis should be applied based on file size.
 func ShouldApplyFadvis(size int64, maxSize int64) bool {
 	if defaultThresholdProvider != nil {
 		return defaultThresholdProvider.ShouldApplyFadvis(size, maxSize)
 	}
-	// If maxSize is provided and smaller than global threshold, use it as the limit
 	threshold := globalThreshold
 	if maxSize < threshold {
 		threshold = maxSize

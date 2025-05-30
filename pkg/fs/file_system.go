@@ -141,12 +141,9 @@ func MustCreateFile(fs FileSystem, path string, permission Mode, cached bool) Fi
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("cannot create file")
 	}
 
-	// If the file should not be cached, sync it and apply FADV_DONTNEED
-	if !cached {
-		localFile, ok := f.(*LocalFile)
-		if ok && localFile.file != nil {
-			_ = SyncAndDropCache(localFile.file.Fd(), 0, 0)
-		}
+	// Pass the cached parameter to the file for use in sequential operations
+	if localFile, ok := f.(*LocalFile); ok {
+		localFile.cached = cached
 	}
 
 	return f

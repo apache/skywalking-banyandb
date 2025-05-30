@@ -22,6 +22,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -178,7 +179,9 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
-	shouldCache := true
+	// Get protector instance to determine caching strategy
+	protectorInstance := protector.GetMemoryProtector()
+	shouldCache := protectorInstance.ShouldCache(path)
 
 	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer) {
 		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
@@ -187,7 +190,7 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache)
 	}
 
-	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
+	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, false))
 	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
 	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm, shouldCache))
 	bw.writers.fieldValuesWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, fieldValuesFilename), storage.FilePerm, shouldCache))

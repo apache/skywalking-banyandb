@@ -22,6 +22,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -173,7 +174,9 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
-	shouldCache := true
+	// Get protector instance to determine caching strategy
+	protectorInstance := protector.GetMemoryProtector()
+	shouldCache := protectorInstance.ShouldCache(path)
 
 	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer) {
 		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
