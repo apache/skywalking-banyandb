@@ -20,7 +20,7 @@ package stream
 import (
 	"errors"
 	"fmt"
-	"os"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -154,23 +154,6 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		}
 	}
 
-	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
-	if newPart.p.partMetadata.CompressedSizeBytes > largeFileThreshold {
-		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
-		file, err := os.OpenFile(filePath, os.O_RDWR, 0o644)
-		if err != nil {
-			tst.l.Warn().Err(err).Msg("failed to open file for applying fadvise on large merged file")
-		} else {
-			defer file.Close()
-			// Apply FADV_DONTNEED to drop the file from page cache
-			if err := fs.SyncAndDropCache(file.Fd(), 0, 0); err != nil {
-				tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
-			} else {
-				tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
-			}
-		}
-	}
-
 	mi := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mi)
 	mi.creator = creator
@@ -259,6 +242,14 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 		return nil, errNoPartToMerge
 	}
 	dstPath := partPath(root, partID)
+
+	var totalSize int64
+	for _, part := range parts {
+		totalSize += int64(part.p.partMetadata.CompressedSizeBytes)
+	}
+
+	shouldCache := !fs.ShouldApplyFadvis(totalSize, math.MaxInt64)
+
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
 		pmi := generatePartMergeIter()
@@ -268,7 +259,7 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
-	bw.mustInitForFilePart(fileSystem, dstPath)
+	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
 	pm, err := mergeBlocks(closeCh, bw, br)
 	releaseBlockWriter(bw)

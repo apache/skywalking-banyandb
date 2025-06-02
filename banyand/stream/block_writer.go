@@ -170,13 +170,11 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.writers.timestampsWriter.init(&mp.timestamps)
 }
 
-func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string) {
+func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
-	// Get protector instance to determine caching strategy
-	protectorInstance := protector.GetMemoryProtector()
-	shouldCache := protectorInstance.ShouldCache(path)
+	shouldCache = shouldCache || protector.GetMemoryProtector().ShouldCache(path)
 
 	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer) {
 		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
