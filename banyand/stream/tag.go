@@ -18,11 +18,26 @@
 package stream
 
 import (
+	"sync"
+
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+)
+
+var (
+	int64SlicePool = sync.Pool{
+		New: func() interface{} {
+			return make([]int64, 0, 1024)
+		},
+	}
+	float64SlicePool = sync.Pool{
+		New: func() interface{} {
+			return make([]float64, 0, 1024)
+		},
+	}
 )
 
 type tag struct {
@@ -65,7 +80,15 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	switch t.valueType {
 	case pbv1.ValueTypeInt64:
 		// convert byte array to int64 array
-		intValues := make([]int64, len(t.values))
+		intValues := int64SlicePool.Get().([]int64)
+		intValues = intValues[:0]
+		if cap(intValues) < len(t.values) {
+			intValues = make([]int64, len(t.values))
+		} else {
+			intValues = intValues[:len(t.values)]
+		}
+		defer int64SlicePool.Put(intValues)
+
 		for i, v := range t.values {
 			if len(v) != 8 {
 				// 如果长度不是8，直接使用原始数据
@@ -90,7 +113,15 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 		}
 	case pbv1.ValueTypeFloat64:
 		// convert byte array to float64 array
-		floatValues := make([]float64, len(t.values))
+		floatValues := float64SlicePool.Get().([]float64)
+		floatValues = floatValues[:0]
+		if cap(floatValues) < len(t.values) {
+			floatValues = make([]float64, len(t.values))
+		} else {
+			floatValues = floatValues[:len(t.values)]
+		}
+		defer float64SlicePool.Put(floatValues)
+
 		for i, v := range t.values {
 			floatValues[i] = encoding.BytesToFloat64(v)
 		}
@@ -138,7 +169,15 @@ func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Read
 	switch t.valueType {
 	case pbv1.ValueTypeInt64:
 		// decode integer type
-		intValues := make([]int64, count)
+		intValues := int64SlicePool.Get().([]int64)
+		intValues = intValues[:0]
+		if cap(intValues) < int(count) {
+			intValues = make([]int64, count)
+		} else {
+			intValues = intValues[:count]
+		}
+		defer int64SlicePool.Put(intValues)
+
 		var err error
 		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
 		if err != nil {
@@ -192,7 +231,15 @@ func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seq
 	switch t.valueType {
 	case pbv1.ValueTypeInt64:
 		// decode integer type
-		intValues := make([]int64, count)
+		intValues := int64SlicePool.Get().([]int64)
+		intValues = intValues[:0]
+		if cap(intValues) < int(count) {
+			intValues = make([]int64, count)
+		} else {
+			intValues = intValues[:count]
+		}
+		defer int64SlicePool.Put(intValues)
+
 		var err error
 		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
 		if err != nil {
