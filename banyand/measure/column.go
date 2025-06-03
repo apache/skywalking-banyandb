@@ -62,7 +62,6 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 
 	// marshal values
 	// select encoding based on data type
-	logger.Infof("c.values: %v", c.values)
 	switch c.valueType {
 	case pbv1.ValueTypeInt64:
 		// convert byte array to int64 array
@@ -166,7 +165,6 @@ func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 		var err error
 		c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
 		if err != nil {
-			logger.Infof("====!!!err: %v", err)
 			logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
 		}
 	}

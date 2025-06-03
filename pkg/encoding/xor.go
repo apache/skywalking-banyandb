@@ -51,7 +51,6 @@ func (e *XOREncoder) Write(val uint64) {
 		e.first = false
 		e.preVal = val
 		e.bw.WriteBits(val, 64)
-		// logger.Infof("writer========16进制val hex: %x", val)
 		return
 	}
 
@@ -64,28 +63,20 @@ func (e *XOREncoder) Write(val uint64) {
 
 	leading := bits.LeadingZeros64(delta)
 	trailing := bits.TrailingZeros64(delta)
-	// logger.Infof("delta: %x, leading: %d, trailing: %d", delta, leading, trailing)
 	if e.leading == 0 && e.trailing == 0 {
 		e.bw.WriteBits(ctrlBitsContainMeaningful, 2)
 		meaningfulLen := 64 - leading - trailing
 		e.bw.WriteBits(uint64(leading), 6)
 		e.bw.WriteBits(uint64(meaningfulLen-1), 6)
 		meaningfulBits := delta >> uint(trailing)
-		// logger.Infof("写入meaningful bits: %b, 长度: %d", meaningfulBits, meaningfulLen)
-		e.bw.WriteBits(meaningfulBits, meaningfulLen) // 确保写入完整的meaningfulLen位
-		// e.bw.Flush()
+		e.bw.WriteBits(meaningfulBits, meaningfulLen) 
 
-		// e.bw.WriteBits(delta>>uint(trailing), meaningfulLen)
-		// logger.Infof("哈哈哈哈哈 %x,meaningfulLen: %d", delta>>uint(trailing), meaningfulLen)
 		e.leading = leading
 		e.trailing = trailing
 	} else if leading >= e.leading && trailing >= e.trailing {
 		// write control '10' to reuse previous block meaningful bits
 		e.bw.WriteBits(ctrlBitsNoContainMeaningful, 2)
 		e.bw.WriteBits(delta>>uint(e.trailing), 64-e.leading-e.trailing)
-		// e.bw.Flush()
-		// logger.Infof("delta>>uint(e.trailing)的二进制表示: %b,e.trailing: %d", delta>>uint(e.trailing), e.trailing)
-		// logger.Infof("哈哈哈哈哈 %x", delta>>uint(e.trailing))
 	} else {
 		// write control '11' to create a new block meaningful bits
 		e.bw.WriteBits(ctrlBitsContainMeaningful, 2)
@@ -94,7 +85,6 @@ func (e *XOREncoder) Write(val uint64) {
 		// meaningfulLen is at least 1, so we can subtract 1 from it and encode it in 6 bits
 		e.bw.WriteBits(uint64(meaningfulLen-1), 6)
 		e.bw.WriteBits(delta>>uint(trailing), meaningfulLen)
-		// e.bw.Flush()
 		e.leading = leading
 		e.trailing = trailing
 	}
@@ -138,12 +128,10 @@ func (d *XORDecoder) Next() bool {
 	if d.first {
 		d.first = false
 		d.val, d.err = d.br.ReadBits(64)
-		// logger.Infof("读取第一个值: %v (hex: %x)", d.val, d.val)
 		return d.err == nil
 	}
 	var b bool
 	b, d.err = d.br.ReadBool()
-	// logger.Infof("读取delta control bit: %v", b)
 	if d.err != nil {
 		return false
 	}
@@ -153,7 +141,6 @@ func (d *XORDecoder) Next() bool {
 
 	ctrlBits := ctrlBitsNoContainMeaningful
 	b, d.err = d.br.ReadBool()
-	// logger.Infof("读取控制位: %v", b)
 	if d.err != nil {
 		return false
 	}
@@ -166,12 +153,10 @@ func (d *XORDecoder) Next() bool {
 		blockSize = 64 - d.leading - d.trailing
 	} else {
 		d.leading, d.err = d.br.ReadBits(6)
-		// logger.Infof("读取leading bits: %v", d.leading)
 		if d.err != nil {
 			return false
 		}
 		blockSize, d.err = d.br.ReadBits(6)
-		// logger.Infof("读取blockSize: %v", blockSize)
 		if d.err != nil {
 			return false
 		}
@@ -180,14 +165,12 @@ func (d *XORDecoder) Next() bool {
 	}
 
 	delta, err := d.br.ReadBits(int(blockSize))
-	// logger.Infof("读取delta值: %v (hex: %x)", delta, delta)
 	if err != nil {
 		d.err = err
 		return false
 	}
 	val := delta << d.trailing
 	d.val ^= val
-	// logger.Infof("XOR后的值: %v (hex: %x)", d.val, d.val)
 	return true
 }
 
