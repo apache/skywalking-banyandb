@@ -51,21 +51,6 @@ func (c *column) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
-// type columnMetadata struct {
-// 	name string
-// 	dataBlock
-// 	valueType pbv1.ValueType
-// 	encodeBlock
-// }
-// type dataBlock struct {
-// 	offset uint64
-// 	size   uint64
-// }
-// type encodeBlock struct {
-// 	encodeType encoding.EncodeType
-// 	firstValue int64
-// }
-
 func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 	cm.reset()
 
@@ -77,12 +62,21 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 
 	// marshal values
 	// select encoding based on data type
+	logger.Infof("c.values: %v", c.values)
 	switch c.valueType {
 	case pbv1.ValueTypeInt64:
 		// convert byte array to int64 array
 		intValues := make([]int64, len(c.values))
 		for i, v := range c.values {
-			intValues[i] = encoding.BytesToInt64(v)
+			if len(v) != 8 {
+				var val int64
+				for j := 0; j < len(v); j++ {
+					val = (val << 8) | int64(v[j])
+				}
+				intValues[i] = val
+			} else {
+				intValues[i] = encoding.BytesToInt64(v)
+			}
 		}
 		// use delta encoding for integer column
 		var encodeType encoding.EncodeType
@@ -90,6 +84,9 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 		bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
 		cm.encodeType = encodeType
 		cm.firstValue = firstValue
+		if cm.encodeType == encoding.EncodeTypeUnknown {
+			logger.Panicf("invalid encode type for int64 values")
+		}
 	case pbv1.ValueTypeFloat64:
 		// convert byte array to float64 array
 		floatValues := make([]float64, len(c.values))
@@ -105,6 +102,7 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 		for _, v := range floatValues {
 			xorEncoder.Write(encoding.Float64ToUint64(v))
 		}
+		xorEncoder.Close()
 	default:
 		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
 	}
@@ -159,14 +157,16 @@ func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 			if !xorDecoder.Next() {
 				logger.Panicf("cannot decode float value at index %d: %v", i, xorDecoder.Err())
 			}
+			val := xorDecoder.Value()
 			// convert uint64 back to float64
-			floatVal := encoding.Uint64ToFloat64(xorDecoder.Value())
+			floatVal := encoding.Uint64ToFloat64(val)
 			c.values[i] = encoding.Float64ToBytes(nil, floatVal)
 		}
 	default:
 		var err error
 		c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
 		if err != nil {
+			logger.Infof("====!!!err: %v", err)
 			logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
 		}
 	}
@@ -188,10 +188,40 @@ func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *
 
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	reader.mustReadFull(bb.Buf)
-	var err error
-	c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
-	if err != nil {
-		logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+
+	switch c.valueType {
+	case pbv1.ValueTypeInt64:
+		// decode integer type
+		intValues := make([]int64, count)
+		var err error
+		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
+		if err != nil {
+			logger.Panicf("%s: mustSeqReadValues cannot decode int values: %v", reader.Path(), err)
+		}
+		// convert int64 array to byte array
+		c.values = make([][]byte, count)
+		for i, v := range intValues {
+			c.values[i] = encoding.Int64ToBytes(nil, v)
+		}
+	case pbv1.ValueTypeFloat64:
+		// decode float type
+		reader := encoding.NewReader(bytes.NewByteSliceReader(bb.Buf))
+		xorDecoder := encoding.NewXORDecoder(reader)
+		c.values = make([][]byte, count)
+		for i := uint64(0); i < count; i++ {
+			if !xorDecoder.Next() {
+				logger.Panicf("mustSeqReadValues cannot decode float value at index %d: %v", i, xorDecoder.Err())
+			}
+			val := xorDecoder.Value()
+			floatVal := encoding.Uint64ToFloat64(val)
+			c.values[i] = encoding.Float64ToBytes(nil, floatVal)
+		}
+	default:
+		var err error
+		c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
+		if err != nil {
+			logger.Panicf("%s: mustSeqReadValues cannot decode values: %v", reader.Path(), err)
+		}
 	}
 }
 

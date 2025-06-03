@@ -51,23 +51,33 @@ func (t *tag) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
-
 func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	tm.reset()
 
 	tm.name = t.name
 	tm.valueType = t.valueType
-
+	// buffer
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
 	// marshal values
+	// select encoding based on data type
 	switch t.valueType {
 	case pbv1.ValueTypeInt64:
 		// convert byte array to int64 array
 		intValues := make([]int64, len(t.values))
 		for i, v := range t.values {
-			intValues[i] = encoding.BytesToInt64(v)
+			if len(v) != 8 {
+				// 如果长度不是8，直接使用原始数据
+				// 将原始数据转换为int64
+				var val int64
+				for j := 0; j < len(v); j++ {
+					val = (val << 8) | int64(v[j])
+				}
+				intValues[i] = val
+			} else {
+				intValues[i] = encoding.BytesToInt64(v)
+			}
 		}
 		// use delta encoding for integer column
 		var encodeType encoding.EncodeType
@@ -75,6 +85,9 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 		bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
 		tm.encodeType = encodeType
 		tm.firstValue = firstValue
+		if tm.encodeType == encoding.EncodeTypeUnknown {
+			logger.Panicf("invalid encode type for int64 values")
+		}
 	case pbv1.ValueTypeFloat64:
 		// convert byte array to float64 array
 		floatValues := make([]float64, len(t.values))
@@ -90,6 +103,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 		for _, v := range floatValues {
 			xorEncoder.Write(encoding.Float64ToUint64(v))
 		}
+		xorEncoder.Close()
 	default:
 		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
 	}
@@ -144,8 +158,9 @@ func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Read
 			if !xorDecoder.Next() {
 				logger.Panicf("cannot decode float value at index %d: %v", i, xorDecoder.Err())
 			}
+			val := xorDecoder.Value()
 			// convert uint64 back to float64
-			floatVal := encoding.Uint64ToFloat64(xorDecoder.Value())
+			floatVal := encoding.Uint64ToFloat64(val)
 			t.values[i] = encoding.Float64ToBytes(nil, floatVal)
 		}
 	default:
@@ -173,10 +188,40 @@ func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seq
 
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	reader.mustReadFull(bb.Buf)
-	var err error
-	t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
-	if err != nil {
-		logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+
+	switch t.valueType {
+	case pbv1.ValueTypeInt64:
+		// decode integer type
+		intValues := make([]int64, count)
+		var err error
+		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
+		if err != nil {
+			logger.Panicf("%s: mustSeqReadValues cannot decode int values: %v", reader.Path(), err)
+		}
+		// convert int64 array to byte array
+		t.values = make([][]byte, count)
+		for i, v := range intValues {
+			t.values[i] = encoding.Int64ToBytes(nil, v)
+		}
+	case pbv1.ValueTypeFloat64:
+		// decode float type
+		reader := encoding.NewReader(bytes.NewByteSliceReader(bb.Buf))
+		xorDecoder := encoding.NewXORDecoder(reader)
+		t.values = make([][]byte, count)
+		for i := uint64(0); i < count; i++ {
+			if !xorDecoder.Next() {
+				logger.Panicf("mustSeqReadValues cannot decode float value at index %d: %v", i, xorDecoder.Err())
+			}
+			val := xorDecoder.Value()
+			floatVal := encoding.Uint64ToFloat64(val)
+			t.values[i] = encoding.Float64ToBytes(nil, floatVal)
+		}
+	default:
+		var err error
+		t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
+		if err != nil {
+			logger.Panicf("%s: mustSeqReadValues cannot decode values: %v", reader.Path(), err)
+		}
 	}
 }
 

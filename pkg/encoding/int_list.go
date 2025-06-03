@@ -61,6 +61,7 @@ func BytesToInt64List(dst []int64, src []byte, mt EncodeType, firstValue int64, 
 	switch mt {
 	case EncodeTypeDelta:
 		dst, err = bytesDeltaToInt64List(dst, src, firstValue, itemsCount)
+		
 		if err != nil {
 			return nil, fmt.Errorf("cannot decode nearest delta data: %w", err)
 		}
