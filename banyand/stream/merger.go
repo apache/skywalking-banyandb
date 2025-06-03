@@ -142,7 +142,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 			}
 		}
 		if totalSize > 10<<20 && minSize*uint64(len(parts)) < maxSize {
-			// it's a unbalanced merge. but it's ok when the size is small.
+			// it's an unbalanced merge. but it's ok when the size is small.
 			tst.l.Info().
 				Str("beforeTotalCount", humanize.Comma(int64(totalCount))).
 				Str("afterTotalCount", humanize.Comma(int64(newPart.p.partMetadata.TotalCount))).
