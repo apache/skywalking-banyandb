@@ -408,14 +408,93 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 	var (
 		fstats map[uint32]uint64
 		sstats map[uint32]bpf.BpfLruShrinkInfoT
+		cstats map[uint32]monitor.CacheStats
 	)
 
 	if opts.EnableBPFStats && m != nil {
+		// Show which monitoring mode we're using
+		b.Logf("[eBPF] Using kprobe fallback: %v", m.IsUsingKprobe())
+		
 		fstats, _ = m.ReadCounts()
 		sstats, _ = m.ReadShrinkStats()
+		cstats, _ = m.ReadCacheStats()
 
 		b.Logf("[eBPF] Fadvise Stats: %+v", fstats)
 		b.Logf("[eBPF] Shrink Stats: %+v", sstats)
+		
+		// Display cache statistics summary if available
+		if len(cstats) > 0 {
+			var (
+				totalHits, totalMisses, totalReads, totalAdds uint64
+				readProcesses, writeProcesses, mixedProcesses int
+				topReaders, topWriters []string
+			)
+			
+			// Categorize processes and collect statistics
+			for pid, stats := range cstats {
+				totalHits += stats.CacheHits
+				totalMisses += stats.CacheMisses
+				totalReads += stats.ReadBatchCalls
+				totalAdds += stats.PageCacheAdds
+				
+				// Categorize process behavior
+				hasReads := stats.ReadBatchCalls > 0
+				hasWrites := stats.PageCacheAdds > 0
+				
+				if hasReads && hasWrites {
+					mixedProcesses++
+					if stats.ReadBatchCalls > 20 || stats.PageCacheAdds > 1000 {
+						topReaders = append(topReaders, fmt.Sprintf("PID %d(R:%d,W:%d,HR:%.1f%%)", 
+							pid, stats.ReadBatchCalls, stats.PageCacheAdds, stats.HitRatio*100))
+					}
+				} else if hasReads {
+					readProcesses++
+					if stats.ReadBatchCalls > 20 {
+						topReaders = append(topReaders, fmt.Sprintf("PID %d(R:%d,HR:%.1f%%)", 
+							pid, stats.ReadBatchCalls, stats.HitRatio*100))
+					}
+				} else if hasWrites {
+					writeProcesses++
+					if stats.PageCacheAdds > 1000 {
+						topWriters = append(topWriters, fmt.Sprintf("PID %d(W:%d)", 
+							pid, stats.PageCacheAdds))
+					}
+				}
+			}
+			
+			// Display summary statistics
+			b.Logf("[eBPF] Process Summary: Total=%d, Read-only=%d, Write-only=%d, Mixed=%d", 
+				len(cstats), readProcesses, writeProcesses, mixedProcesses)
+			
+			if totalReads > 0 {
+				overallHitRatio := float64(totalHits) / float64(totalReads) * 100
+				b.Logf("[eBPF] Overall Cache: Hits=%d, Misses=%d, Reads=%d, Adds=%d, HitRatio=%.2f%%",
+					totalHits, totalMisses, totalReads, totalAdds, overallHitRatio)
+			} else {
+				b.Logf("[eBPF] Overall Cache: Write-only workload, PageAdds=%d", totalAdds)
+			}
+			
+			// Show top active processes (limit output)
+			if len(topReaders) > 0 {
+				limit := 5
+				if len(topReaders) > limit {
+					b.Logf("[eBPF] Top %d Read-Active Processes: %v (and %d more)", 
+						limit, topReaders[:limit], len(topReaders)-limit)
+				} else {
+					b.Logf("[eBPF] Read-Active Processes: %v", topReaders)
+				}
+			}
+			
+			if len(topWriters) > 0 {
+				limit := 3
+				if len(topWriters) > limit {
+					b.Logf("[eBPF] Top %d Write-Active Processes: %v (and %d more)", 
+						limit, topWriters[:limit], len(topWriters)-limit)
+				} else {
+					b.Logf("[eBPF] Write-Active Processes: %v", topWriters)
+				}
+			}
+		}
 		for _, stat := range sstats {
 			if stat.NrReclaimed > 0 {
 				b.Logf("[eBPF] Shrink Detail: pid=%d comm=%s scanned=%d reclaimed=%d",
@@ -445,6 +524,228 @@ func WithMonitoringLegacy(b *testing.B, f func(b *testing.B)) {
 		EnableBPFStats:       true,
 		DelayAfterBenchmark:  3 * time.Second,
 	}, f)
+}
+
+// WithTestMonitoring runs a test function with monitoring enabled.
+// It captures page cache and eBPF statistics before and after the test.
+func WithTestMonitoring(t *testing.T, opts MonitorOptions, f func(t *testing.T)) {
+	var (
+		beforeStats  PageCacheStats
+		beforeCached int64
+		afterStats   PageCacheStats
+		afterCached  int64
+	)
+
+	var m *monitor.Monitor
+	if opts.EnableBPFStats {
+		var err error
+		m, err = monitor.NewMonitor()
+		if err != nil {
+			t.Fatalf("failed to start eBPF monitor: %v", err)
+		}
+		defer m.Close()
+	}
+
+	if opts.EnablePageCacheStats {
+		beforeStats, beforeCached = CapturePageCacheStatsForTest(t, "before")
+	}
+
+	f(t)
+
+	if opts.EnablePageCacheStats {
+		afterStats, afterCached = CapturePageCacheStatsForTest(t, "after")
+	}
+
+	if opts.DelayAfterBenchmark > 0 && opts.EnablePageCacheStats {
+		CapturePageCacheStatsWithDelayForTest(t, "after_delay", int(opts.DelayAfterBenchmark.Seconds()))
+	}
+
+	var (
+		fstats map[uint32]uint64
+		sstats map[uint32]bpf.BpfLruShrinkInfoT
+		cstats map[uint32]monitor.CacheStats
+	)
+
+	if opts.EnableBPFStats && m != nil {
+		// Show which monitoring mode we're using
+		t.Logf("[eBPF] Using kprobe fallback: %v", m.IsUsingKprobe())
+		
+		fstats, _ = m.ReadCounts()
+		sstats, _ = m.ReadShrinkStats()
+		cstats, _ = m.ReadCacheStats()
+
+		if len(fstats) > 0 {
+			t.Logf("[eBPF] Fadvise calls: %+v", fstats)
+		}
+		if len(sstats) > 0 {
+			t.Logf("[eBPF] Shrink stats: %+v", sstats)
+		}
+		if len(cstats) > 0 {
+			t.Logf("[eBPF] Cache stats: %+v", cstats)
+		}
+	}
+
+	// Show delta stats
+	if opts.EnablePageCacheStats {
+		deltaRss := afterStats.Rss - beforeStats.Rss
+		deltaPss := afterStats.Pss - beforeStats.Pss
+		deltaSharedClean := afterStats.SharedClean - beforeStats.SharedClean
+		deltaCached := afterCached - beforeCached
+
+		t.Logf("[DELTA] RSS: %+dKB, PSS: %+dKB, SharedClean: %+dKB, Cached: %+dKB",
+			deltaRss, deltaPss, deltaSharedClean, deltaCached)
+	}
+}
+
+// WithTestMonitoringMode runs a test function with specified monitoring mode.
+func WithTestMonitoringMode(t *testing.T, mode monitor.MonitorMode, f func(t *testing.T)) {
+	var m *monitor.Monitor
+	var err error
+	
+	// Create monitor with specified mode
+	m, err = monitor.NewMonitorWithOptions(monitor.MonitorOptions{Mode: mode})
+	if err != nil {
+		t.Fatalf("failed to start eBPF monitor with mode %v: %v", mode, err)
+	}
+	defer m.Close()
+
+	// Log which mode we're actually using
+	var modeStr string
+	switch mode {
+	case monitor.ModeTracepoint:
+		modeStr = "tracepoint"
+	case monitor.ModeKprobe:
+		modeStr = "kprobe"
+	case monitor.ModeAuto:
+		modeStr = "auto"
+	}
+	
+	t.Logf("[eBPF] Requested mode: %s, using kprobe: %v", modeStr, m.IsUsingKprobe())
+
+	f(t)
+
+	// Read and display stats
+	fstats, _ := m.ReadCounts()
+	sstats, _ := m.ReadShrinkStats()
+	cstats, _ := m.ReadCacheStats()
+
+	if len(fstats) > 0 {
+		t.Logf("[eBPF] Fadvise calls: %+v", fstats)
+	}
+	if len(sstats) > 0 {
+		t.Logf("[eBPF] Shrink stats: %+v", sstats)
+	}
+	if len(cstats) > 0 {
+		t.Logf("[eBPF] Cache stats: %+v", cstats)
+	}
+}
+
+// WithKprobeOnlyMonitoring runs a test function with kprobe-only monitoring.
+func WithKprobeOnlyMonitoring(t *testing.T, f func(t *testing.T)) {
+	var m *monitor.Monitor
+	var err error
+	
+	// Create a kprobe-only monitor
+	m, err = monitor.NewKprobeOnlyMonitor()
+	if err != nil {
+		t.Fatalf("failed to start kprobe-only eBPF monitor: %v", err)
+	}
+	defer m.Close()
+
+	// Verify we're using kprobe
+	if !m.IsUsingKprobe() {
+		t.Fatalf("Expected kprobe-only monitor to use kprobe, but it's using tracepoint")
+	}
+
+	t.Logf("[eBPF] Successfully created kprobe-only monitor")
+
+	f(t)
+
+	// Read and display stats
+	fstats, _ := m.ReadCounts()
+	sstats, _ := m.ReadShrinkStats()
+	cstats, _ := m.ReadCacheStats()
+
+	if len(fstats) > 0 {
+		t.Logf("[eBPF] Fadvise calls: %+v", fstats)
+	}
+	if len(sstats) > 0 {
+		t.Logf("[eBPF] Shrink stats: %+v", sstats)
+	}
+	if len(cstats) > 0 {
+		t.Logf("[eBPF] Cache stats: %+v", cstats)
+	}
+}
+
+// WithTestMonitoringLegacy is a convenience function for tests with default monitoring options.
+func WithTestMonitoringLegacy(t *testing.T, f func(t *testing.T)) {
+	WithTestMonitoring(t, MonitorOptions{
+		EnablePageCacheStats: true,
+		EnableBPFStats:       true,
+		DelayAfterBenchmark:  3 * time.Second,
+	}, f)
+}
+
+// CapturePageCacheStatsForTest captures page cache statistics for testing.T.
+func CapturePageCacheStatsForTest(t *testing.T, phase string) (PageCacheStats, int64) {
+	f, err := os.Open("/proc/self/smaps_rollup")
+	if err != nil {
+		t.Logf("[PAGECACHE] %s: open smaps_rollup failed: %v", phase, err)
+		return PageCacheStats{}, 0
+	}
+	stats, err := parseSmapsRollup(f)
+	f.Close()
+	if err != nil {
+		t.Logf("[PAGECACHE] %s: parse smaps_rollup failed: %v", phase, err)
+		return PageCacheStats{}, 0
+	}
+
+	memf, err := os.Open("/proc/meminfo")
+	if err != nil {
+		t.Logf("[MEMINFO] %s: open meminfo failed: %v", phase, err)
+		return PageCacheStats{}, 0
+	}
+	var cachedKB int64
+	buf := make([]byte, 32*1024)
+	builder := strings.Builder{}
+	for {
+		n, err := memf.Read(buf)
+		if n > 0 {
+			builder.Write(buf[:n])
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Logf("[MEMINFO] %s: read meminfo failed: %v", phase, err)
+			break
+		}
+	}
+	memf.Close()
+
+	for _, line := range strings.Split(builder.String(), "\n") {
+		if strings.HasPrefix(line, "Cached:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if v, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+					cachedKB = v
+				}
+			}
+			break
+		}
+	}
+
+	t.Logf("[PAGECACHE] %s: Rss=%dKB, Pss=%dKB, SharedClean=%dKB, Cached=%dKB",
+		phase, stats.Rss, stats.Pss, stats.SharedClean, cachedKB)
+
+	return stats, cachedKB
+}
+
+// CapturePageCacheStatsWithDelayForTest waits before capturing stats for testing.T.
+func CapturePageCacheStatsWithDelayForTest(t *testing.T, phase string, delaySeconds int) {
+	t.Logf("[PAGECACHE] Waiting %d seconds before capturing %s...\n", delaySeconds, phase)
+	time.Sleep(time.Duration(delaySeconds) * time.Second)
+	_, _ = CapturePageCacheStatsForTest(t, phase)
 }
 
 // AppendBenchmarkSummaryToCSV appends benchmark results to a CSV file.

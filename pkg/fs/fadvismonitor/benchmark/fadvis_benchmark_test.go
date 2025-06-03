@@ -300,3 +300,49 @@ func BenchmarkSequentialRead(b *testing.B) {
 		})
 	}
 }
+
+// TestKprobeFallback tests the kprobe fallback functionality
+func TestKprobeFallback(t *testing.T) {
+	testDir, cleanup := utils.SetupTestEnvironment(t)
+	defer cleanup()
+
+	filePath := filepath.Join(testDir, "kprobe_test.dat")
+	fileSize := int64(10 << 20) // 10MB
+	err := utils.CreateTestFile(t, filePath, fileSize)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Test kprobe-only monitor
+	t.Run("KprobeOnly", func(t *testing.T) {
+		utils.WithKprobeOnlyMonitoring(t, func(t *testing.T) {
+			// Perform some file operations to trigger kprobe events
+			totalBytes, err := utils.ReadFileStreamingWithFadvise(t, filePath, false)
+			if err != nil {
+				t.Fatalf("Failed to read file: %v", err)
+			}
+			
+			if totalBytes != fileSize {
+				t.Errorf("Expected to read %d bytes, got %d", fileSize, totalBytes)
+			}
+		})
+	})
+
+	// Test environment variable method
+	t.Run("EnvironmentVariable", func(t *testing.T) {
+		// Set environment variable to force kprobe
+		t.Setenv("FORCE_KPROBE", "1")
+		
+		utils.WithTestMonitoringLegacy(t, func(t *testing.T) {
+			// Perform some file operations
+			totalBytes, err := utils.ReadFileStreamingWithFadvise(t, filePath, false)
+			if err != nil {
+				t.Fatalf("Failed to read file: %v", err)
+			}
+			
+			if totalBytes != fileSize {
+				t.Errorf("Expected to read %d bytes, got %d", fileSize, totalBytes)
+			}
+		})
+	})
+}

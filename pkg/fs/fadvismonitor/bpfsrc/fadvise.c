@@ -183,3 +183,263 @@ int trace_direct_reclaim_begin(struct trace_event_raw_mm_vmscan_direct_reclaim_b
     bpf_map_update_elem(&direct_reclaim_map, &pid, &info, BPF_ANY);
     return 0;
 }
+
+// ========= Cache Miss Statistics =========
+
+struct cache_event_t {
+    __u32 pid;
+    char comm[16];
+    __u64 page_count;     // for read_batch
+    __u64 timestamp;
+};
+
+struct cache_stats_t {
+    __u64 total_read_attempts;    // Total read operations attempted
+    __u64 cache_misses;          // Direct measurement from add_to_page_cache
+    __u64 read_batch_calls;      // Count of filemap_get_read_batch calls
+    __u64 page_cache_adds;       // Same as cache_misses (for verification)
+};
+
+// PID -> cache statistics
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, __u32); // PID
+    __type(value, struct cache_stats_t);
+} cache_stats_map SEC(".maps");
+
+// Event ring buffer for cache events
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1);
+    __type(key, __u32); // always 0
+    __type(value, struct cache_event_t);
+} cache_event_map SEC(".maps");
+
+// Tracepoint for page cache reads
+// This counts TOTAL read attempts (both hits and misses will trigger this)
+SEC("tracepoint/filemap/filemap_get_read_batch")
+int trace_filemap_get_read_batch(void *ctx) {
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
+    struct cache_stats_t new_stats = {};
+    if (!stats) {
+        stats = &new_stats;
+    }
+
+    // Count total read attempts - this includes both cache hits and misses
+    stats->total_read_attempts++;
+    stats->read_batch_calls++;
+    
+    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
+
+    // Log the event
+    __u32 key = 0;
+    struct cache_event_t event = {};
+    event.pid = pid;
+    event.timestamp = bpf_ktime_get_ns();
+    bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
+
+    return 0;
+}
+
+// Tracepoint for page cache additions
+// This is called when a new page is loaded from disk and added to page cache
+// This is a definitive cache miss event
+SEC("tracepoint/filemap/mm_filemap_add_to_page_cache")
+int trace_mm_filemap_add_to_page_cache(void *ctx) {
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
+    struct cache_stats_t new_stats = {};
+    if (!stats) {
+        stats = &new_stats;
+    }
+
+    // This is a definitive cache miss - page had to be loaded from disk
+    stats->cache_misses++;
+    stats->page_cache_adds++;
+    
+    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
+
+    // Log the event
+    __u32 key = 0;
+    struct cache_event_t event = {};
+    event.pid = pid;
+    event.timestamp = bpf_ktime_get_ns();
+    bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
+
+    return 0;
+}
+
+// ========= Kprobe Fallbacks =========
+
+// Helper functions for different architectures
+static __always_inline long get_arg1(struct pt_regs *ctx) {
+#ifdef __x86_64__
+    return ctx->di;
+#elif defined(__aarch64__)
+    return ctx->regs[0];
+#else
+    return 0;
+#endif
+}
+
+static __always_inline long get_arg2(struct pt_regs *ctx) {
+#ifdef __x86_64__
+    return ctx->si;
+#elif defined(__aarch64__)
+    return ctx->regs[1];
+#else
+    return 0;
+#endif
+}
+
+static __always_inline long get_arg3(struct pt_regs *ctx) {
+#ifdef __x86_64__
+    return ctx->dx;
+#elif defined(__aarch64__)
+    return ctx->regs[2];
+#else
+    return 0;
+#endif
+}
+
+static __always_inline long get_arg4(struct pt_regs *ctx) {
+#ifdef __x86_64__
+    return ctx->cx;
+#elif defined(__aarch64__)
+    return ctx->regs[3];
+#else
+    return 0;
+#endif
+}
+
+static __always_inline long get_return_value(struct pt_regs *ctx) {
+#ifdef __x86_64__
+    return ctx->ax;
+#elif defined(__aarch64__)
+    return ctx->regs[0];
+#else
+    return 0;
+#endif
+}
+
+// Kprobe fallback for fadvise64 entry
+SEC("kprobe/ksys_fadvise64_64")
+int kprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
+    __u64 tid = bpf_get_current_pid_tgid();
+    struct fadvise_args_t args = {};
+
+    // Extract arguments from registers
+    args.fd = (int)get_arg1(ctx);
+    args.offset = (__u64)get_arg2(ctx);
+    args.len = (__u64)get_arg3(ctx);
+    args.advice = (int)get_arg4(ctx);
+
+    bpf_map_update_elem(&fadvise_args_map, &tid, &args, BPF_ANY);
+
+    __u32 pid = tid >> 32;
+    struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
+    struct fadvise_stats_t new_stats = {};
+    if (!stats) {
+        stats = &new_stats;
+    }
+
+    stats->total_calls++;
+
+    switch (args.advice) {
+        case POSIX_FADV_DONTNEED:
+            stats->advice_dontneed++;
+            break;
+        case POSIX_FADV_SEQUENTIAL:
+            stats->advice_sequential++;
+            break;
+        case POSIX_FADV_NORMAL:
+            stats->advice_normal++;
+            break;
+        case POSIX_FADV_RANDOM:
+            stats->advice_random++;
+            break;
+        case POSIX_FADV_WILLNEED:
+            stats->advice_willneed++;
+            break;
+        case POSIX_FADV_NOREUSE:
+            stats->advice_noreuse++;
+            break;
+    }
+
+    bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
+    return 0;
+}
+
+// Kretprobe fallback for fadvise64 exit
+SEC("kretprobe/ksys_fadvise64_64")
+int kretprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
+    __u64 tid = bpf_get_current_pid_tgid();
+    __u32 pid = tid >> 32;
+    long ret = get_return_value(ctx);
+
+    if (ret == 0) {
+        struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
+        if (stats) {
+            stats->success_calls++;
+            bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
+        }
+    }
+
+    bpf_map_delete_elem(&fadvise_args_map, &tid);
+    return 0;
+}
+
+// Kprobe fallback for filemap_get_read_batch
+SEC("kprobe/filemap_get_read_batch")
+int kprobe_filemap_get_read_batch(struct pt_regs *ctx) {
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
+    struct cache_stats_t new_stats = {};
+    if (!stats) {
+        stats = &new_stats;
+    }
+
+    // Count total read attempts
+    stats->total_read_attempts++;
+    stats->read_batch_calls++;
+    
+    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
+
+    __u32 key = 0;
+    struct cache_event_t event = {};
+    event.pid = pid;
+    event.timestamp = bpf_ktime_get_ns();
+    bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
+
+    return 0;
+}
+
+// Kprobe fallback for add_to_page_cache_lru
+SEC("kprobe/add_to_page_cache_lru")
+int kprobe_add_to_page_cache_lru(struct pt_regs *ctx) {
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
+    struct cache_stats_t new_stats = {};
+    if (!stats) {
+        stats = &new_stats;
+    }
+
+    stats->page_cache_adds++;
+    stats->cache_misses++;
+    
+    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
+
+    __u32 key = 0;
+    struct cache_event_t event = {};
+    event.pid = pid;
+    event.timestamp = bpf_ktime_get_ns();
+    bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
+
+    return 0;
+}
