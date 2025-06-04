@@ -172,17 +172,6 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		dpg.metadataDocMap[doc.DocID] = len(dpg.metadataDocs)
 		dpg.metadataDocs = append(dpg.metadataDocs, doc)
 	}
-
-	if p, _ := w.schemaRepo.topNProcessorMap.Load(getKey(stm.schema.GetMetadata())); p != nil {
-		p.(*topNProcessorManager).onMeasureWrite(uint64(series.ID), uint32(shardID), &measurev1.InternalWriteRequest{
-			Request: &measurev1.WriteRequest{
-				Metadata:  stm.GetSchema().Metadata,
-				DataPoint: req.DataPoint,
-				MessageId: uint64(time.Now().UnixNano()),
-			},
-			EntityValues: writeEvent.EntityValues,
-		}, stm)
-	}
 	return dst, nil
 }
 

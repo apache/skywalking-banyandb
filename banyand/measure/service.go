@@ -31,6 +31,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -56,6 +57,7 @@ type Service interface {
 	run.Config
 	run.Service
 	Query
+	TopNService
 }
 
 var _ Service = (*service)(nil)
@@ -186,9 +188,14 @@ func (s *service) Serve() run.StopNotify {
 
 func (s *service) GracefulStop() {
 	s.schemaRepo.Close()
-	if s.localPipeline != nil {
-		s.localPipeline.GracefulStop()
+}
+
+func (s *service) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
+	if s.schemaRepo == nil {
+		s.l.Error().Msg("schema repository is not initialized")
+		return
 	}
+	s.schemaRepo.InFlow(stm, seriesID, shardID, entityValues, dp)
 }
 
 // NewService returns a new service.

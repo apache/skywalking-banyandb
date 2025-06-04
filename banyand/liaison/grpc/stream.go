@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -142,7 +141,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 				continue
 			}
 		}
-		entity, tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+		tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 		if err != nil {
 			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
 			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.l)
@@ -156,7 +155,6 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		iwr := &streamv1.InternalWriteRequest{
 			Request:      writeEntity,
 			ShardId:      uint32(shardID),
-			SeriesHash:   pbv1.HashEntity(entity),
 			EntityValues: tagValues[1:].Encode(),
 		}
 		copies, ok := s.groupRepo.copies(writeEntity.Metadata.GetGroup())
