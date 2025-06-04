@@ -86,16 +86,16 @@ func (l Locator) Find(subject string, value []*modelv1.TagFamilyForWrite) (pbv1.
 }
 
 // Locate a shard and find the entity or sharding key from a tag family, prepend a subject to the entity or sharding key.
-func (l Locator) Locate(subject string, value []*modelv1.TagFamilyForWrite, shardNum uint32) (pbv1.Entity, pbv1.EntityValues, common.ShardID, error) {
+func (l Locator) Locate(subject string, value []*modelv1.TagFamilyForWrite, shardNum uint32) (pbv1.EntityValues, common.ShardID, error) {
 	entity, tagValues, err := l.Find(subject, value)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 	id, err := ShardID(entity.Marshal(), shardNum)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
-	return entity, tagValues, common.ShardID(id), nil
+	return tagValues, common.ShardID(id), nil
 }
 
 // GetTagByOffset gets a tag value based of a tag family offset and a tag offset in this family.

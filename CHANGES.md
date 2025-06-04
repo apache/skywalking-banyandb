@@ -12,6 +12,7 @@ Release Notes.
 - Implement multiple groups query in one request.
 - Replica: Replace Any with []byte Between Liaison and Data Nodes
 - Replica: Support configurable replica count on Group.
+- Replica: Move the TopN pre-calculation flow from the Data Node to the Liaison Node.
 
 ### Bug Fixes
 
