@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -37,6 +38,7 @@ import (
 
 type measureQueryProcessor struct {
 	measureService measure.SchemaService
+	qClient        queue.Client
 	broadcaster    bus.Broadcaster
 	*queryService
 	*bus.UnImplementedHealthyListener

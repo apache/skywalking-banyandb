@@ -52,17 +52,18 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := observability.NewMetricService(metaSvc, pipeline, "liaison", measureNodeRegistry)
 	streamNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
 	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
-	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, grpc.NodeRegistries{
-		MeasureNodeRegistry:  measureNodeRegistry,
-		StreamNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicStreamWrite, pipeline, streamNodeSel),
-		PropertyNodeRegistry: grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, pipeline, propertyNodeSel),
-	}, metricSvc)
-	profSvc := observability.NewProfService()
-	httpServer := http.NewServer()
-	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline, metricSvc)
+	topNPipeline := queue.Local()
+	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline, topNPipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
 	}
+	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, topNPipeline, metaSvc, grpc.NodeRegistries{
+		MeasureNodeRegistry:  measureNodeRegistry,
+		StreamNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicStreamWrite, pipeline, streamNodeSel),
+		PropertyNodeRegistry: grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, pipeline, propertyNodeSel),
+	}, metricSvc, dQuery)
+	profSvc := observability.NewProfService()
+	httpServer := http.NewServer()
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,

@@ -31,6 +31,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -46,6 +47,7 @@ type measureService struct {
 	ingestionAccessLog accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
+	topNService        measure.TopNService
 	*discoveryService
 	l            *logger.Logger
 	metrics      *metrics
@@ -130,7 +132,7 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 func (ms *measureService) processAndPublishRequest(ctx context.Context, writeRequest *measurev1.WriteRequest,
 	publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage, measure measurev1.MeasureService_WriteServer,
 ) error {
-	entity, tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+	tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
 	if err != nil {
 		ms.l.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
 		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
@@ -153,7 +155,6 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 	iwr := &measurev1.InternalWriteRequest{
 		Request:      writeRequest,
 		ShardId:      uint32(shardID),
-		SeriesHash:   pbv1.HashEntity(entity),
 		EntityValues: tagValues[1:].Encode(),
 	}
 
@@ -167,7 +168,22 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 		messageID: writeRequest.GetMessageId(),
 		nodes:     nodes,
 	})
-
+	stm, ok := ms.entityRepo.loadMeasure(writeRequest.GetMetadata())
+	if !ok {
+		ms.l.Error().RawJSON("written", logger.Proto(writeRequest)).Msg("failed to load measure schema")
+		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+		return errors.New("failed to load measure schema")
+	}
+	series := &pbv1.Series{
+		Subject:      writeRequest.Metadata.Name,
+		EntityValues: iwr.EntityValues,
+	}
+	if err := series.Marshal(); err != nil {
+		ms.l.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to marshal series")
+		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+		return err
+	}
+	ms.topNService.InFlow(stm, uint64(series.ID), iwr.ShardId, iwr.EntityValues, iwr.Request.DataPoint)
 	return nil
 }
 
