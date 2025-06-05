@@ -49,9 +49,10 @@ type measureService struct {
 	broadcaster        queue.Client
 	topNService        measure.TopNService
 	*discoveryService
-	l            *logger.Logger
-	metrics      *metrics
-	writeTimeout time.Duration
+	l               *logger.Logger
+	metrics         *metrics
+	writeTimeout    time.Duration
+	maxWaitDuration time.Duration
 }
 
 func (ms *measureService) setLogger(log *logger.Logger) {
@@ -132,7 +133,31 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 func (ms *measureService) processAndPublishRequest(ctx context.Context, writeRequest *measurev1.WriteRequest,
 	publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage, measure measurev1.MeasureService_WriteServer,
 ) error {
-	tagValues, shardID, err := ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+	// Retry with backoff when encountering errNotExist
+	var tagValues pbv1.EntityValues
+	var shardID common.ShardID
+	var err error
+
+	if ms.maxWaitDuration > 0 {
+		retryInterval := 10 * time.Millisecond
+		startTime := time.Now()
+		for {
+			tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > ms.maxWaitDuration {
+				break
+			}
+
+			// Exponential backoff with jitter
+			time.Sleep(retryInterval)
+			retryInterval = time.Duration(float64(retryInterval) * 1.5)
+			if retryInterval > time.Second {
+				retryInterval = time.Second
+			}
+		}
+	} else {
+		tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+	}
+
 	if err != nil {
 		ms.l.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
 		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
