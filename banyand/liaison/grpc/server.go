@@ -244,6 +244,10 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "stream write timeout")
 	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "measure write timeout")
+	fs.DurationVar(&s.measureSVC.maxWaitDuration, "measure-metadata-cache-wait-duration", 0,
+		"the maximum duration to wait for metadata cache to load (for testing purposes)")
+	fs.DurationVar(&s.streamSVC.maxWaitDuration, "stream-metadata-cache-wait-duration", 0,
+		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	return fs
 }
 
