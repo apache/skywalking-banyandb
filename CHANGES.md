@@ -13,6 +13,7 @@ Release Notes.
 - Replica: Replace Any with []byte Between Liaison and Data Nodes
 - Replica: Support configurable replica count on Group.
 - Replica: Move the TopN pre-calculation flow from the Data Node to the Liaison Node.
+- Add a wait and retry to write handlers to avoid the local metadata cache being loaded.
 
 ### Bug Fixes
 
