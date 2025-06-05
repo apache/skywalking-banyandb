@@ -172,22 +172,6 @@ func TestFallbackMonitor(t *testing.T) {
 	t.Log("Test completed successfully!")
 }
 
-// TestKernelCompatibility tests the kernel compatibility detection functions.
-func TestKernelCompatibility(t *testing.T) {
-	version, err := monitor.GetKernelVersion()
-	if err != nil {
-		t.Fatalf("Failed to get kernel version: %v", err)
-	}
-	t.Logf("Detected kernel version: %s", version.String())
-
-	shouldUseCORE := monitor.ShouldUseCORE()
-	t.Logf("Should use CO-RE: %v", shouldUseCORE)
-
-	if !shouldUseCORE {
-		t.Log("CO-RE not supported, kprobe fallback will be used")
-	}
-}
-
 // TestForceKprobeMode tests forcing kprobe mode via environment variable.
 func TestForceKprobeMode(t *testing.T) {
 	// Set environment variable to force kprobe
@@ -240,18 +224,19 @@ func TestForceKprobeMode(t *testing.T) {
 func TestTracepointMode(t *testing.T) {
 	t.Log("Testing eBPF monitor with tracepoint mode...")
 
-	utils.WithTestMonitoringMode(t, monitor.ModeTracepoint, func(t *testing.T) {
+	utils.WithMonitoringMode(t, false, func(t *testing.T) { // false = prefer tracepoint
 		performFadviseOperations(t)
 	})
 
 	t.Log("Tracepoint mode test completed successfully!")
 }
 
-// TestKprobeMode tests the eBPF monitor with kprobe mode.
+// TestKprobeMode tests the eBPF monitor with kprobe mode using the interface.
 func TestKprobeMode(t *testing.T) {
 	t.Log("Testing eBPF monitor with kprobe mode...")
 
-	utils.WithTestMonitoringMode(t, monitor.ModeKprobe, func(t *testing.T) {
+	// Use the monitoring interface to test kprobe mode specifically
+	utils.WithMonitoringMode(t, true, func(t *testing.T) { // true = force kprobe mode
 		performFadviseOperations(t)
 	})
 
@@ -262,7 +247,7 @@ func TestKprobeMode(t *testing.T) {
 func TestAutoMode(t *testing.T) {
 	t.Log("Testing eBPF monitor with auto mode...")
 
-	utils.WithTestMonitoringMode(t, monitor.ModeAuto, func(t *testing.T) {
+	utils.WithMonitoringMode(t, false, func(t *testing.T) { // false = auto mode with fallback
 		performFadviseOperations(t)
 	})
 

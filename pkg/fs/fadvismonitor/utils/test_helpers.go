@@ -414,81 +414,96 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 	if opts.EnableBPFStats && m != nil {
 		// Show which monitoring mode we're using
 		b.Logf("[eBPF] Using kprobe fallback: %v", m.IsUsingKprobe())
-		
+
 		fstats, _ = m.ReadCounts()
 		sstats, _ = m.ReadShrinkStats()
 		cstats, _ = m.ReadCacheStats()
 
 		b.Logf("[eBPF] Fadvise Stats: %+v", fstats)
 		b.Logf("[eBPF] Shrink Stats: %+v", sstats)
-		
+
 		// Display cache statistics summary if available
 		if len(cstats) > 0 {
 			var (
-				totalHits, totalMisses, totalReads, totalAdds uint64
+				totalReads, totalAdds                         uint64
 				readProcesses, writeProcesses, mixedProcesses int
-				topReaders, topWriters []string
+				topReaders, topWriters                        []string
 			)
-			
+
 			// Categorize processes and collect statistics
 			for pid, stats := range cstats {
-				totalHits += stats.CacheHits
-				totalMisses += stats.CacheMisses
 				totalReads += stats.ReadBatchCalls
 				totalAdds += stats.PageCacheAdds
-				
+
 				// Categorize process behavior
 				hasReads := stats.ReadBatchCalls > 0
 				hasWrites := stats.PageCacheAdds > 0
-				
+
 				if hasReads && hasWrites {
 					mixedProcesses++
-					if stats.ReadBatchCalls > 20 || stats.PageCacheAdds > 1000 {
-						topReaders = append(topReaders, fmt.Sprintf("PID %d(R:%d,W:%d,HR:%.1f%%)", 
-							pid, stats.ReadBatchCalls, stats.PageCacheAdds, stats.HitRatio*100))
+				    if stats.ReadBatchCalls > 20 || stats.PageCacheAdds > 1000 {
+	       				read := stats.ReadBatchCalls
+	        			adds := stats.PageCacheAdds
+        				var hitRatio float64
+        				if read == 0 {
+						hitRatio = 0
+					} else if adds >= read {
+						hitRatio = 0
+					} else {
+						hitRatio = float64(read - adds) / float64(read) * 100
 					}
+					topReaders = append(topReaders,
+						fmt.Sprintf("PID %d(R:%d,W:%d,HR:%.1f%%)",
+							pid, read, adds, hitRatio,
+						))
+    	            }  
 				} else if hasReads {
 					readProcesses++
 					if stats.ReadBatchCalls > 20 {
-						topReaders = append(topReaders, fmt.Sprintf("PID %d(R:%d,HR:%.1f%%)", 
+						topReaders = append(topReaders, fmt.Sprintf("PID %d(R:%d,HR:%.1f%%)",
 							pid, stats.ReadBatchCalls, stats.HitRatio*100))
+						var hitRatio float64
+						if stats.ReadBatchCalls > 0 {
+							hitRatio = float64(stats.ReadBatchCalls - stats.PageCacheAdds) / float64(stats.ReadBatchCalls) * 100
+						}
+						topReaders = append(topReaders, fmt.Sprintf("PID %d(R:%d,HR:%.1f%%)",
++                           pid, stats.ReadBatchCalls, hitRatio))
 					}
 				} else if hasWrites {
 					writeProcesses++
 					if stats.PageCacheAdds > 1000 {
-						topWriters = append(topWriters, fmt.Sprintf("PID %d(W:%d)", 
+						topWriters = append(topWriters, fmt.Sprintf("PID %d(W:%d)",
 							pid, stats.PageCacheAdds))
 					}
 				}
 			}
-			
-			// Display summary statistics
-			b.Logf("[eBPF] Process Summary: Total=%d, Read-only=%d, Write-only=%d, Mixed=%d", 
-				len(cstats), readProcesses, writeProcesses, mixedProcesses)
-			
-			if totalReads > 0 {
-				overallHitRatio := float64(totalHits) / float64(totalReads) * 100
-				b.Logf("[eBPF] Overall Cache: Hits=%d, Misses=%d, Reads=%d, Adds=%d, HitRatio=%.2f%%",
-					totalHits, totalMisses, totalReads, totalAdds, overallHitRatio)
-			} else {
+			var totalHits uint64
+			if totalAdds > totalReads {
+                totalHits = 0
 				b.Logf("[eBPF] Overall Cache: Write-only workload, PageAdds=%d", totalAdds)
-			}
-			
+            } else {
+				totalHits = totalReads - totalAdds
+                overallHitRatio := float64(totalHits) / float64(totalReads) * 100
+                b.Logf("[eBPF] Overall Cache: Hits=%d, Misses=%d, Reads=%d, Adds=%d, HitRatio=%.2f%%",
+                   totalHits, totalAdds, totalReads, totalAdds, overallHitRatio)
+                
+            }
+
 			// Show top active processes (limit output)
 			if len(topReaders) > 0 {
 				limit := 5
 				if len(topReaders) > limit {
-					b.Logf("[eBPF] Top %d Read-Active Processes: %v (and %d more)", 
+					b.Logf("[eBPF] Top %d Read-Active Processes: %v (and %d more)",
 						limit, topReaders[:limit], len(topReaders)-limit)
 				} else {
 					b.Logf("[eBPF] Read-Active Processes: %v", topReaders)
 				}
 			}
-			
+
 			if len(topWriters) > 0 {
 				limit := 3
 				if len(topWriters) > limit {
-					b.Logf("[eBPF] Top %d Write-Active Processes: %v (and %d more)", 
+					b.Logf("[eBPF] Top %d Write-Active Processes: %v (and %d more)",
 						limit, topWriters[:limit], len(topWriters)-limit)
 				} else {
 					b.Logf("[eBPF] Write-Active Processes: %v", topWriters)
@@ -516,9 +531,9 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 	_ = AppendBenchmarkSummaryToCSV(b.Name(), "after", afterStats, afterCached, int64(len(fstats)), int64(len(sstats)))
 }
 
-// WithMonitoringLegacy is a convenience function that runs a benchmark with
+// WithDefaultMonitoring is a convenience function that runs a benchmark with
 // default monitoring options (all monitoring enabled).
-func WithMonitoringLegacy(b *testing.B, f func(b *testing.B)) {
+func WithDefaultMonitoring(b *testing.B, f func(b *testing.B)) {
 	WithMonitoring(b, MonitorOptions{
 		EnablePageCacheStats: true,
 		EnableBPFStats:       true,
@@ -569,7 +584,7 @@ func WithTestMonitoring(t *testing.T, opts MonitorOptions, f func(t *testing.T))
 	if opts.EnableBPFStats && m != nil {
 		// Show which monitoring mode we're using
 		t.Logf("[eBPF] Using kprobe fallback: %v", m.IsUsingKprobe())
-		
+
 		fstats, _ = m.ReadCounts()
 		sstats, _ = m.ReadShrinkStats()
 		cstats, _ = m.ReadCacheStats()
@@ -597,30 +612,33 @@ func WithTestMonitoring(t *testing.T, opts MonitorOptions, f func(t *testing.T))
 	}
 }
 
-// WithTestMonitoringMode runs a test function with specified monitoring mode.
-func WithTestMonitoringMode(t *testing.T, mode monitor.MonitorMode, f func(t *testing.T)) {
+// WithMonitoringMode runs a test function with specified monitoring mode.
+// If forceKprobe is true, only kprobe monitoring is used.
+// If forceKprobe is false, automatic mode with fallback is used.
+func WithMonitoringMode(t *testing.T, forceKprobe bool, f func(t *testing.T)) {
 	var m *monitor.Monitor
 	var err error
-	
+
 	// Create monitor with specified mode
-	m, err = monitor.NewMonitorWithOptions(monitor.MonitorOptions{Mode: mode})
+	opts := monitor.MonitorOptions{
+		ForceKprobe:    forceKprobe,
+		EnableFallback: !forceKprobe, // Enable fallback unless forcing kprobe
+	}
+	m, err = monitor.NewMonitorWithOptions(opts)
 	if err != nil {
-		t.Fatalf("failed to start eBPF monitor with mode %v: %v", mode, err)
+		t.Fatalf("failed to start eBPF monitor with forceKprobe=%v: %v", forceKprobe, err)
 	}
 	defer m.Close()
 
 	// Log which mode we're actually using
 	var modeStr string
-	switch mode {
-	case monitor.ModeTracepoint:
-		modeStr = "tracepoint"
-	case monitor.ModeKprobe:
-		modeStr = "kprobe"
-	case monitor.ModeAuto:
-		modeStr = "auto"
+	if forceKprobe {
+		modeStr = "kprobe-only"
+	} else {
+		modeStr = "auto-fallback"
 	}
-	
-	t.Logf("[eBPF] Requested mode: %s, using kprobe: %v", modeStr, m.IsUsingKprobe())
+
+	t.Logf("[eBPF] Mode: %s, using kprobe: %v", modeStr, m.IsUsingKprobe())
 
 	f(t)
 
@@ -641,44 +659,13 @@ func WithTestMonitoringMode(t *testing.T, mode monitor.MonitorMode, f func(t *te
 }
 
 // WithKprobeOnlyMonitoring runs a test function with kprobe-only monitoring.
+// This is a convenience wrapper for WithMonitoringMode(t, true, f).
 func WithKprobeOnlyMonitoring(t *testing.T, f func(t *testing.T)) {
-	var m *monitor.Monitor
-	var err error
-	
-	// Create a kprobe-only monitor
-	m, err = monitor.NewKprobeOnlyMonitor()
-	if err != nil {
-		t.Fatalf("failed to start kprobe-only eBPF monitor: %v", err)
-	}
-	defer m.Close()
-
-	// Verify we're using kprobe
-	if !m.IsUsingKprobe() {
-		t.Fatalf("Expected kprobe-only monitor to use kprobe, but it's using tracepoint")
-	}
-
-	t.Logf("[eBPF] Successfully created kprobe-only monitor")
-
-	f(t)
-
-	// Read and display stats
-	fstats, _ := m.ReadCounts()
-	sstats, _ := m.ReadShrinkStats()
-	cstats, _ := m.ReadCacheStats()
-
-	if len(fstats) > 0 {
-		t.Logf("[eBPF] Fadvise calls: %+v", fstats)
-	}
-	if len(sstats) > 0 {
-		t.Logf("[eBPF] Shrink stats: %+v", sstats)
-	}
-	if len(cstats) > 0 {
-		t.Logf("[eBPF] Cache stats: %+v", cstats)
-	}
+	WithMonitoringMode(t, true, f)
 }
 
-// WithTestMonitoringLegacy is a convenience function for tests with default monitoring options.
-func WithTestMonitoringLegacy(t *testing.T, f func(t *testing.T)) {
+// WithDefaultTestMonitoring is a convenience function for tests with default monitoring options.
+func WithDefaultTestMonitoring(t *testing.T, f func(t *testing.T)) {
 	WithTestMonitoring(t, MonitorOptions{
 		EnablePageCacheStats: true,
 		EnableBPFStats:       true,

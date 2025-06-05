@@ -41,8 +41,9 @@ func (kv KernelVersion) String() string {
 
 // Compare compares two kernel versions. Returns:
 // -1 if kv < other
-//  0 if kv == other
-//  1 if kv > other
+//
+//	0 if kv == other
+//	1 if kv > other
 func (kv KernelVersion) Compare(other KernelVersion) int {
 	if kv.Major != other.Major {
 		if kv.Major < other.Major {
