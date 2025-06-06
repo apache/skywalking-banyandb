@@ -237,7 +237,12 @@ func (pi *partIter) findBlock() bool {
 		if pi.blockFilter != nil && pi.blockFilter != logicalstream.ENode {
 			tfs := generateTagFamilyFilters()
 			tfs.unmarshal(bm.tagFamilies, pi.p.tagFamilyMetadata, pi.p.tagFamilyFilter)
-			if pi.blockFilter.ShouldSkip(tfs) {
+			shouldSkip, err := pi.blockFilter.ShouldSkip(tfs)
+			if err != nil {
+				pi.err = err
+				return false
+			}
+			if shouldSkip {
 				releaseTagFamilyFilters(tfs)
 				if !pi.nextSeriesID() {
 					return false

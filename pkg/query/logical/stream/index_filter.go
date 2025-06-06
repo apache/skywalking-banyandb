@@ -271,13 +271,17 @@ func (an *andNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID,
 	return execute(searcher, seriesID, an.node, an, tr)
 }
 
-func (an *andNode) ShouldSkip(tagFamilyFilters index.FilterOp) bool {
+func (an *andNode) ShouldSkip(tagFamilyFilters index.FilterOp) (bool, error) {
 	for _, sn := range an.node.SubNodes {
-		if sn.ShouldSkip(tagFamilyFilters) {
-			return true
+		shouldSkip, err := sn.ShouldSkip(tagFamilyFilters)
+		if err != nil {
+			return shouldSkip, err
+		}
+		if shouldSkip {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (an *andNode) MarshalJSON() ([]byte, error) {
@@ -325,13 +329,17 @@ func (on *orNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID, 
 	return execute(searcher, seriesID, on.node, on, tr)
 }
 
-func (on *orNode) ShouldSkip(tagFamilyFilters index.FilterOp) bool {
+func (on *orNode) ShouldSkip(tagFamilyFilters index.FilterOp) (bool, error) {
 	for _, sn := range on.node.SubNodes {
-		if !sn.ShouldSkip(tagFamilyFilters) {
-			return false
+		shouldSkip, err := sn.ShouldSkip(tagFamilyFilters)
+		if err != nil {
+			return shouldSkip, err
+		}
+		if !shouldSkip {
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 func (on *orNode) MarshalJSON() ([]byte, error) {
@@ -425,8 +433,8 @@ func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *
 	return s.MatchTerms(eq.Expr.Field(eq.Key.toIndex(seriesID, tr)))
 }
 
-func (eq *eq) ShouldSkip(tagFamilyFilters index.FilterOp) bool {
-	return !tagFamilyFilters.Eq(eq.Key.Tags[0], eq.Expr.String())
+func (eq *eq) ShouldSkip(tagFamilyFilters index.FilterOp) (bool, error) {
+	return !tagFamilyFilters.Eq(eq.Key.Tags[0], eq.Expr.String()), nil
 }
 
 func (eq *eq) MarshalJSON() ([]byte, error) {
@@ -471,8 +479,8 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 	)
 }
 
-func (match *match) ShouldSkip(_ index.FilterOp) bool {
-	return false
+func (match *match) ShouldSkip(_ index.FilterOp) (bool, error) {
+	return false, nil
 }
 
 func (match *match) MarshalJSON() ([]byte, error) {
@@ -507,8 +515,8 @@ func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID, 
 	return s.Range(r.Key.toIndex(seriesID, tr), r.Opts)
 }
 
-func (r *rangeOp) ShouldSkip(tagFamilyFilters index.FilterOp) bool {
-	return !tagFamilyFilters.Range(r.Key.Tags[0], r.Opts)
+func (r *rangeOp) ShouldSkip(tagFamilyFilters index.FilterOp) (bool, error) {
+	return tagFamilyFilters.Range(r.Key.Tags[0], r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
@@ -558,8 +566,8 @@ func (an emptyNode) String() string {
 	return "empty"
 }
 
-func (an emptyNode) ShouldSkip(_ index.FilterOp) bool {
-	return false
+func (an emptyNode) ShouldSkip(_ index.FilterOp) (bool, error) {
+	return false, nil
 }
 
 type bypassList struct{}

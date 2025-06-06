@@ -19,6 +19,7 @@ package stream
 
 import (
 	"bytes"
+	"fmt"
 
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -180,34 +181,34 @@ func (tfs *tagFamilyFilters) Eq(tagName string, tagValue string) bool {
 	return true
 }
 
-func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) bool {
+func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (bool, error) {
 	for _, tff := range tfs.tagFamilyFilters {
 		if tf, ok := (*tff)[tagName]; ok {
 			if rangeOpts.Lower != nil {
 				lower, ok := rangeOpts.Lower.(*index.FloatTermValue)
 				if !ok {
-					logger.Panicf("lower is not a float value: %v", rangeOpts.Lower)
+					return false, fmt.Errorf("lower is not a float value: %v", rangeOpts.Lower)
 				}
 				value := make([]byte, 0)
 				value = encoding.Int64ToBytes(value, int64(lower.Value))
 				if bytes.Compare(tf.max, value) == -1 || !rangeOpts.IncludesLower && bytes.Equal(tf.max, value) {
-					return false
+					return false, nil
 				}
 			}
 			if rangeOpts.Upper != nil {
 				upper, ok := rangeOpts.Upper.(*index.FloatTermValue)
 				if !ok {
-					logger.Panicf("upper is not a float value: %v", rangeOpts.Upper)
+					return false, fmt.Errorf("upper is not a float value: %v", rangeOpts.Upper)
 				}
 				value := make([]byte, 0)
 				value = encoding.Int64ToBytes(value, int64(upper.Value))
 				if bytes.Compare(tf.min, value) == 1 || !rangeOpts.IncludesUpper && bytes.Equal(tf.min, value) {
-					return false
+					return false, nil
 				}
 			}
 		}
 	}
-	return true
+	return true, nil
 }
 
 func generateTagFamilyFilters() *tagFamilyFilters {
