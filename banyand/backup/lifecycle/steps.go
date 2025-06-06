@@ -47,7 +47,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -204,7 +203,7 @@ func migrateStream(ctx context.Context, s *databasev1.Stream, result model.Strea
 				}
 				ev.TagFamilies = append(ev.TagFamilies, tfw)
 			}
-			entity, tagValues, shardID, err := entityLocator.Locate(s.Metadata.Name, ev.TagFamilies, shardNum)
+			tagValues, shardID, err := entityLocator.Locate(s.Metadata.Name, ev.TagFamilies, shardNum)
 			if err != nil {
 				l.Error().Err(err).Msg("failed to locate entity")
 				continue
@@ -220,7 +219,6 @@ func migrateStream(ctx context.Context, s *databasev1.Stream, result model.Strea
 				iwr := &streamv1.InternalWriteRequest{
 					Request:      writeEntity,
 					ShardId:      uint32(shardID),
-					SeriesHash:   pbv1.HashEntity(entity),
 					EntityValues: tagValues[1:].Encode(),
 				}
 				message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
@@ -272,7 +270,7 @@ func migrateMeasure(ctx context.Context, m *databasev1.Measure, result model.Mea
 				writeRequest.DataPoint.Fields = append(writeRequest.DataPoint.Fields, field.Values[i])
 			}
 
-			entity, tagValues, shardID, err := entityLocator.Locate(m.Metadata.Name, writeRequest.DataPoint.TagFamilies, shardNum)
+			tagValues, shardID, err := entityLocator.Locate(m.Metadata.Name, writeRequest.DataPoint.TagFamilies, shardNum)
 			if err != nil {
 				l.Error().Err(err).Msg("failed to locate entity")
 				continue
@@ -289,7 +287,6 @@ func migrateMeasure(ctx context.Context, m *databasev1.Measure, result model.Mea
 				iwr := &measurev1.InternalWriteRequest{
 					Request:      writeRequest,
 					ShardId:      uint32(shardID),
-					SeriesHash:   pbv1.HashEntity(entity),
 					EntityValues: tagValues[1:].Encode(),
 				}
 

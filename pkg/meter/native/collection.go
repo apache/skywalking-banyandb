@@ -121,7 +121,6 @@ func (m *MetricCollection) buildIWR(metricName string, metric metricWithLabelVal
 	return &measurev1.InternalWriteRequest{
 		Request:      writeRequest,
 		ShardId:      uint32(0),
-		SeriesHash:   metric.seriesHash,
 		EntityValues: metric.labelValues,
 	}
 }

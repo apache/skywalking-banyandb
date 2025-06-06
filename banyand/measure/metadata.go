@@ -70,12 +70,13 @@ var (
 // SchemaService allows querying schema information.
 type SchemaService interface {
 	Query
+	TopNService
 	Close()
 }
 type schemaRepo struct {
 	resourceSchema.Repository
 	metadata         metadata.Repo
-	pipeline         queue.Queue
+	pipeline         queue.Client
 	l                *logger.Logger
 	topNProcessorMap sync.Map
 	path             string
@@ -99,10 +100,11 @@ func newSchemaRepo(path string, svc *service, nodeLabels map[string]string) *sch
 }
 
 // NewPortableRepository creates a new portable repository.
-func NewPortableRepository(metadata metadata.Repo, l *logger.Logger, metrics *resourceSchema.Metrics) SchemaService {
+func NewPortableRepository(metadata metadata.Repo, l *logger.Logger, metrics *resourceSchema.Metrics, topNQueue queue.Client) SchemaService {
 	r := &schemaRepo{
 		l:        l,
 		metadata: metadata,
+		pipeline: topNQueue,
 		Repository: resourceSchema.NewPortableRepository(
 			metadata,
 			l,
@@ -208,6 +210,9 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			})
 		}
 	case schema.KindTopNAggregation:
+		if sr.pipeline == nil {
+			return
+		}
 		topNSchema := metadata.Spec.(*databasev1.TopNAggregation)
 		if err := validate.TopNAggregation(topNSchema); err != nil {
 			sr.l.Warn().Err(err).Msg("topNAggregation is ignored")
@@ -259,8 +264,10 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			})
 		}
 	case schema.KindTopNAggregation:
-		topNAggregation := metadata.Spec.(*databasev1.TopNAggregation)
-		sr.stopSteamingManager(topNAggregation.SourceMeasure)
+		if sr.pipeline != nil {
+			topNAggregation := metadata.Spec.(*databasev1.TopNAggregation)
+			sr.stopSteamingManager(topNAggregation.SourceMeasure)
+		}
 	default:
 	}
 }
@@ -337,7 +344,7 @@ type supplier struct {
 	metadata   metadata.Repo
 	omr        observability.MetricsRegistry
 	l          *logger.Logger
-	pm         *protector.Memory
+	pm         protector.Memory
 	schemaRepo *schemaRepo
 	nodeLabels map[string]string
 	path       string

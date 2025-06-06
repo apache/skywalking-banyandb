@@ -3161,7 +3161,6 @@ DataPointValue is the data point for writing. It only contains values.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | shard_id | [uint32](#uint32) |  |  |
-| series_hash | [bytes](#bytes) |  |  |
 | entity_values | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
 | request | [WriteRequest](#banyandb-measure-v1-WriteRequest) |  |  |
 
@@ -3605,7 +3604,6 @@ QueryResponse is the response for a query to the Query module.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | shard_id | [uint32](#uint32) |  |  |
-| series_hash | [bytes](#bytes) |  |  |
 | entity_values | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
 | request | [WriteRequest](#banyandb-stream-v1-WriteRequest) |  |  |
 
