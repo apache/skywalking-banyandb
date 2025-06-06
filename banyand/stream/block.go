@@ -115,10 +115,14 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int) 
 		tags[j].filter.ResizeBits((elementsLen + 63) / 64)
 		tags[j].filter.Add(t.value)
 		if t.valueType == pbv1.ValueTypeInt64 {
-			if bytes.Compare(t.value, tags[j].min) == -1 {
+			if len(tags[j].min) == 0 {
+				tags[j].min = t.value
+			} else if bytes.Compare(t.value, tags[j].min) == -1 {
 				tags[j].min = t.value
 			}
-			if bytes.Compare(t.value, tags[j].max) == 1 {
+			if len(tags[j].max) == 0 {
+				tags[j].max = t.value
+			} else if bytes.Compare(t.value, tags[j].max) == 1 {
 				tags[j].max = t.value
 			}
 		}

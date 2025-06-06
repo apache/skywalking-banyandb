@@ -41,8 +41,8 @@ func Test_tagMetadata_reset(t *testing.T) {
 	assert.Equal(t, pbv1.ValueType(0), tm.valueType)
 	assert.Equal(t, dataBlock{}, tm.dataBlock)
 	assert.Equal(t, dataBlock{}, tm.filterBlock)
-	assert.Equal(t, []byte{}, tm.min)
-	assert.Equal(t, []byte{}, tm.max)
+	assert.Nil(t, tm.min)
+	assert.Nil(t, tm.max)
 }
 
 func Test_tagMetadata_copyFrom(t *testing.T) {
