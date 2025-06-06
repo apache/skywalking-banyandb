@@ -22,12 +22,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blugelabs/bluge/analysis"
 	"github.com/pkg/errors"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
-	"github.com/blugelabs/bluge/analysis"
 )
 
 var errUnsupportedLogicalOperation = errors.New("unsupported logical operation")

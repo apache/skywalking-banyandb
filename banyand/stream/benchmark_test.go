@@ -94,8 +94,8 @@ func (mf mockFilter) Execute(_ index.GetSearcher, seriesID common.SeriesID, _ *i
 	return mf.index[mf.value][seriesID], roaring.DummyPostingList, nil
 }
 
-func (mf mockFilter) ShouldSkip(_ index.FilterOp) bool {
-	return false
+func (mf mockFilter) ShouldSkip(_ index.FilterOp) (bool, error) {
+	return false, nil
 }
 
 type databaseSupplier struct {

@@ -124,8 +124,8 @@ func (bf *BloomFilter) SetN(n int) {
 // ResizeBits resizes the underlying bitset.
 func (bf *BloomFilter) ResizeBits(n int) {
 	bits := bf.bits
-	if n := n - cap(bits); n > 0 {
-		bits = append(bits[:cap(bits)], make([]uint64, n)...)
+	if m := n - cap(bits); m > 0 {
+		bits = append(bits[:cap(bits)], make([]uint64, m)...)
 	}
 	bits = bits[:n]
 	bf.bits = bits

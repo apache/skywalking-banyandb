@@ -77,14 +77,16 @@ func (tf *tagFilter) reset() {
 	if tf.filter != nil {
 		tf.filter.Reset()
 	}
-	tf.min = tf.min[:0]
+	tf.min = bytes.Repeat([]byte{0xFF}, 8)
 	tf.max = tf.max[:0]
 }
 
 func generateTagFilter() *tagFilter {
 	v := tagFilterPool.Get()
 	if v == nil {
-		return &tagFilter{}
+		return &tagFilter{
+			min: bytes.Repeat([]byte{0xFF}, 8),
+		}
 	}
 	return v
 }
