@@ -90,11 +90,6 @@ func (i *int64Literal) BelongTo(other LiteralExpr) bool {
 	return false
 }
 
-func (i *int64Literal) Match(_ LiteralExpr) bool {
-	logger.Panicf("Non-string matching isn't supported")
-	return false
-}
-
 func (i *int64Literal) Bytes() [][]byte {
 	return [][]byte{convert.Int64ToBytes(i.int64)}
 }
@@ -188,11 +183,6 @@ func (i *int64ArrLiteral) BelongTo(other LiteralExpr) bool {
 	return false
 }
 
-func (i *int64ArrLiteral) Match(_ LiteralExpr) bool {
-	logger.Panicf("Non-string matching isn't supported")
-	return false
-}
-
 func (i *int64ArrLiteral) Bytes() [][]byte {
 	b := make([][]byte, 0, len(i.arr))
 	for _, i := range i.arr {
@@ -273,14 +263,6 @@ func (s *strLiteral) BelongTo(other LiteralExpr) bool {
 	if o, ok := other.(*strArrLiteral); ok {
 		return slices.Contains(o.arr, s.string)
 	}
-	return false
-}
-
-func (s *strLiteral) Match(other LiteralExpr) bool {
-	if o, ok := other.(*strLiteral); ok {
-		return strings.Contains(s.string, o.string)
-	}
-	logger.Panicf("Non-string matching isn't supported")
 	return false
 }
 
@@ -381,11 +363,6 @@ func (s *strArrLiteral) BelongTo(other LiteralExpr) bool {
 	return false
 }
 
-func (s *strArrLiteral) Match(_ LiteralExpr) bool {
-	logger.Panicf("Non-string matching isn't supported")
-	return false
-}
-
 func (s *strArrLiteral) Bytes() [][]byte {
 	b := make([][]byte, 0, len(s.arr))
 	for _, str := range s.arr {
@@ -445,10 +422,6 @@ func (s nullLiteral) BelongTo(_ LiteralExpr) bool {
 }
 
 func (s nullLiteral) Contains(_ LiteralExpr) bool {
-	return false
-}
-
-func (s nullLiteral) Match(_ LiteralExpr) bool {
 	return false
 }
 

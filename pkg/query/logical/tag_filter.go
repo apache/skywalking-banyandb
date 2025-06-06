@@ -26,6 +26,8 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
+	"github.com/blugelabs/bluge/analysis"
 )
 
 var errUnsupportedLogicalOperation = errors.New("unsupported logical operation")
@@ -85,14 +87,17 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, index
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
-		expr, err := parseExpr(cond.Value)
+		var expr ComparableExpr
+		var err error
+		_, indexRule := indexChecker.IndexRuleDefined(cond.Name)
+		expr, err = parseExpr(cond.Value, analyzer.Analyzers[indexRule.GetAnalyzer()])
 		if err != nil {
 			return nil, err
 		}
 		if _, ok := entityDict[cond.Name]; ok {
 			return DummyFilter, nil
 		}
-		return parseFilter(cond, expr)
+		return parseFilter(cond, expr, indexChecker)
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
 		left, err := BuildTagFilter(le.Left, entityDict, indexChecker, hasGlobalIndex)
@@ -123,7 +128,7 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, index
 	return nil, ErrInvalidCriteriaType
 }
 
-func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error) {
+func parseFilter(cond *modelv1.Condition, expr ComparableExpr, indexChecker IndexChecker) (TagFilter, error) {
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
 		return newRangeTag(cond.Name, rangeOpts{
@@ -146,7 +151,7 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error
 	case modelv1.Condition_BINARY_OP_EQ:
 		return newEqTag(cond.Name, expr), nil
 	case modelv1.Condition_BINARY_OP_MATCH:
-		return newMatchTag(cond.Name, expr), nil
+		return newMatchTag(cond.Name, expr, indexChecker), nil
 	case modelv1.Condition_BINARY_OP_NE:
 		return newNotTag(newEqTag(cond.Name, expr)), nil
 	case modelv1.Condition_BINARY_OP_HAVING:
@@ -162,7 +167,21 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr) (TagFilter, error
 	}
 }
 
-func parseExpr(value *modelv1.TagValue) (ComparableExpr, error) {
+func parseExpr(value *modelv1.TagValue, analyzer *analysis.Analyzer) (ComparableExpr, error) {
+	if analyzer != nil {
+		if _, ok := value.Value.(*modelv1.TagValue_Str); ok {
+			tokenStream := analyzer.Analyze([]byte(value.GetStr().Value))
+			strArr := make([]string, 0, len(tokenStream))
+			for _, token := range tokenStream {
+				strArr = append(strArr, string(token.Term))
+			}
+			return &strArrLiteral{
+				arr: strArr,
+			}, nil
+		}
+		return nil, errors.WithMessagef(ErrUnsupportedConditionValue, "tag filter parses %v", value)
+	}
+
 	switch v := value.Value.(type) {
 	case *modelv1.TagValue_Str:
 		return &strLiteral{v.Str.GetValue()}, nil
@@ -355,7 +374,7 @@ func newInTag(tagName string, values LiteralExpr) *inTag {
 }
 
 func (h *inTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	expr, err := tagExpr(accessor, registry, h.Name)
+	expr, err := tagExpr(accessor, registry, h.Name, nil)
 	if err != nil {
 		return false, err
 	}
@@ -376,7 +395,7 @@ func newEqTag(tagName string, values LiteralExpr) *eqTag {
 }
 
 func (eq *eqTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	expr, err := tagExpr(accessor, registry, eq.Name)
+	expr, err := tagExpr(accessor, registry, eq.Name, nil)
 	if err != nil {
 		return false, err
 	}
@@ -415,7 +434,7 @@ func newRangeTag(tagName string, opts rangeOpts) *rangeTag {
 }
 
 func (r *rangeTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	expr, err := tagExpr(accessor, registry, r.Name)
+	expr, err := tagExpr(accessor, registry, r.Name, nil)
 	if err != nil {
 		return false, err
 	}
@@ -483,10 +502,10 @@ func (r *rangeTag) String() string {
 	return convert.JSONToString(r)
 }
 
-func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName string) (ComparableExpr, error) {
+func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName string, analyzer *analysis.Analyzer) (ComparableExpr, error) {
 	if tagSpec := registry.FindTagSpecByName(tagName); tagSpec != nil {
 		if tagVal := accessor.GetTagValue(tagSpec.TagFamilyIdx, tagSpec.TagIdx); tagVal != nil {
-			return parseExpr(tagVal)
+			return parseExpr(tagVal, analyzer)
 		}
 	}
 	return nil, errTagNotDefined
@@ -494,23 +513,26 @@ func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName s
 
 type matchTag struct {
 	*tagLeaf
+	indexChecker IndexChecker
 }
 
-func newMatchTag(tagName string, values LiteralExpr) *matchTag {
+func newMatchTag(tagName string, values LiteralExpr, indexChecker IndexChecker) *matchTag {
 	return &matchTag{
 		tagLeaf: &tagLeaf{
 			Name: tagName,
 			Expr: values,
 		},
+		indexChecker: indexChecker,
 	}
 }
 
 func (m *matchTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	expr, err := tagExpr(accessor, registry, m.Name)
+	_, indexRule := m.indexChecker.IndexRuleDefined(m.Name)
+	expr, err := tagExpr(accessor, registry, m.Name, analyzer.Analyzers[indexRule.GetAnalyzer()])
 	if err != nil {
 		return false, err
 	}
-	return expr.Match(m.Expr), nil
+	return expr.Contains(m.Expr), nil
 }
 
 func (m *matchTag) MarshalJSON() ([]byte, error) {
@@ -537,7 +559,7 @@ func newHavingTag(tagName string, values LiteralExpr) *havingTag {
 }
 
 func (h *havingTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	expr, err := tagExpr(accessor, registry, h.Name)
+	expr, err := tagExpr(accessor, registry, h.Name, nil)
 	if err != nil {
 		return false, err
 	}
