@@ -441,7 +441,7 @@ type GetSearcher func(location databasev1.IndexRule_Type) (Searcher, error)
 type Filter interface {
 	fmt.Stringer
 	Execute(getSearcher GetSearcher, seriesID common.SeriesID, timeRange *RangeOpts) (posting.List, posting.List, error)
-	ShouldNotSkip(tagFamilyFilters FilterOp) bool
+	ShouldSkip(tagFamilyFilters FilterOp) bool
 }
 
 // FilterOp is an interface for filtering operations based on skipping index.

@@ -28,7 +28,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -109,8 +108,11 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int) 
 			continue
 		}
 		if tags[j].filter == nil {
-			tags[j].filter = filter.NewBloomFilter(elementsLen)
+			filter := generateBloomFilter()
+			tags[j].filter = filter
 		}
+		tags[j].filter.SetN(elementsLen)
+		tags[j].filter.ResizeBits((elementsLen + 63) / 64)
 		tags[j].filter.Add(t.value)
 		if t.valueType == pbv1.ValueTypeInt64 {
 			if bytes.Compare(t.value, tags[j].min) == -1 {
@@ -390,6 +392,13 @@ func generateBlock() *block {
 }
 
 func releaseBlock(b *block) {
+	for _, tf := range b.tagFamilies {
+		for _, t := range tf.tags {
+			if t.filter != nil {
+				releaseBloomFilter(t.filter)
+			}
+		}
+	}
 	b.reset()
 	blockPool.Put(b)
 }

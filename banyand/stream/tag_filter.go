@@ -72,9 +72,36 @@ type tagFilter struct {
 	max    []byte
 }
 
+func (tf *tagFilter) reset() {
+	if tf.filter != nil {
+		tf.filter.Reset()
+	}
+	tf.min = tf.min[:0]
+	tf.max = tf.max[:0]
+}
+
+func generateTagFilter() *tagFilter {
+	v := tagFilterPool.Get()
+	if v == nil {
+		return &tagFilter{}
+	}
+	return v
+}
+
+func releaseTagFilter(tf *tagFilter) {
+	releaseBloomFilter(tf.filter)
+	tf.reset()
+	tagFilterPool.Put(tf)
+}
+
+var tagFilterPool = pool.Register[*tagFilter]("stream-tagFilter")
+
 type tagFamilyFilter map[string]*tagFilter
 
 func (tff *tagFamilyFilter) reset() {
+	for _, tf := range *tff {
+		tf.reset()
+	}
 	clear(*tff)
 }
 
@@ -97,9 +124,8 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 		fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
 		bf := generateBloomFilter()
 		bf = decodeBloomFilter(bb.Buf, bf)
-		tf := &tagFilter{
-			filter: bf,
-		}
+		tf := generateTagFilter()
+		tf.filter = bf
 		if tm.valueType == pbv1.ValueTypeInt64 {
 			tf.min = tm.min
 			tf.max = tm.max
@@ -118,7 +144,7 @@ func generateTagFamilyFilter() *tagFamilyFilter {
 
 func releaseTagFamilyFilter(tff *tagFamilyFilter) {
 	for _, tf := range *tff {
-		releaseBloomFilter(tf.filter)
+		releaseTagFilter(tf)
 	}
 	tff.reset()
 	tagFamilyFilterPool.Put(tff)
@@ -131,6 +157,9 @@ type tagFamilyFilters struct {
 }
 
 func (tfs *tagFamilyFilters) reset() {
+	for _, tff := range tfs.tagFamilyFilters {
+		tff.reset()
+	}
 	tfs.tagFamilyFilters = tfs.tagFamilyFilters[:0]
 }
 

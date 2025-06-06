@@ -39,8 +39,8 @@ func (tm *tagMetadata) reset() {
 	tm.name = ""
 	tm.valueType = 0
 	tm.dataBlock.reset()
-	tm.min = tm.min[:0]
-	tm.max = tm.max[:0]
+	tm.min = nil
+	tm.max = nil
 	tm.filterBlock.reset()
 }
 

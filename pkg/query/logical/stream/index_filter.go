@@ -120,7 +120,7 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 		if indexRule.Type == databasev1.IndexRule_TYPE_INVERTED {
 			return newMatch(indexRule, expr, cond.MatchOption), [][]*modelv1.TagValue{entity}, nil
 		}
-		return ENode, [][]*modelv1.TagValue{entity}, nil
+		return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index filter parses %v for skipping index", cond)
 	case modelv1.Condition_BINARY_OP_NE:
 		return newNot(indexRule, newEq(indexRule, expr)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_HAVING:
@@ -271,13 +271,13 @@ func (an *andNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID,
 	return execute(searcher, seriesID, an.node, an, tr)
 }
 
-func (an *andNode) ShouldNotSkip(tagFamilyFilters index.FilterOp) bool {
+func (an *andNode) ShouldSkip(tagFamilyFilters index.FilterOp) bool {
 	for _, sn := range an.node.SubNodes {
-		if !sn.ShouldNotSkip(tagFamilyFilters) {
-			return false
+		if sn.ShouldSkip(tagFamilyFilters) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 func (an *andNode) MarshalJSON() ([]byte, error) {
@@ -325,13 +325,13 @@ func (on *orNode) Execute(searcher index.GetSearcher, seriesID common.SeriesID, 
 	return execute(searcher, seriesID, on.node, on, tr)
 }
 
-func (on *orNode) ShouldNotSkip(tagFamilyFilters index.FilterOp) bool {
+func (on *orNode) ShouldSkip(tagFamilyFilters index.FilterOp) bool {
 	for _, sn := range on.node.SubNodes {
-		if sn.ShouldNotSkip(tagFamilyFilters) {
-			return true
+		if !sn.ShouldSkip(tagFamilyFilters) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func (on *orNode) MarshalJSON() ([]byte, error) {
@@ -425,8 +425,8 @@ func (eq *eq) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *
 	return s.MatchTerms(eq.Expr.Field(eq.Key.toIndex(seriesID, tr)))
 }
 
-func (eq *eq) ShouldNotSkip(tagFamilyFilters index.FilterOp) bool {
-	return tagFamilyFilters.Eq(eq.Key.Tags[0], eq.Expr.String())
+func (eq *eq) ShouldSkip(tagFamilyFilters index.FilterOp) bool {
+	return !tagFamilyFilters.Eq(eq.Key.Tags[0], eq.Expr.String())
 }
 
 func (eq *eq) MarshalJSON() ([]byte, error) {
@@ -471,8 +471,8 @@ func (match *match) Execute(searcher index.GetSearcher, seriesID common.SeriesID
 	)
 }
 
-func (match *match) ShouldNotSkip(_ index.FilterOp) bool {
-	return true
+func (match *match) ShouldSkip(_ index.FilterOp) bool {
+	return false
 }
 
 func (match *match) MarshalJSON() ([]byte, error) {
@@ -507,8 +507,8 @@ func (r *rangeOp) Execute(searcher index.GetSearcher, seriesID common.SeriesID, 
 	return s.Range(r.Key.toIndex(seriesID, tr), r.Opts)
 }
 
-func (r *rangeOp) ShouldNotSkip(tagFamilyFilters index.FilterOp) bool {
-	return tagFamilyFilters.Range(r.Key.Tags[0], r.Opts)
+func (r *rangeOp) ShouldSkip(tagFamilyFilters index.FilterOp) bool {
+	return !tagFamilyFilters.Range(r.Key.Tags[0], r.Opts)
 }
 
 func (r *rangeOp) MarshalJSON() ([]byte, error) {
@@ -558,8 +558,8 @@ func (an emptyNode) String() string {
 	return "empty"
 }
 
-func (an emptyNode) ShouldNotSkip(_ index.FilterOp) bool {
-	return true
+func (an emptyNode) ShouldSkip(_ index.FilterOp) bool {
+	return false
 }
 
 type bypassList struct{}

@@ -41,9 +41,7 @@ func (t *tag) reset() {
 	}
 	t.values = values[:0]
 
-	t.filter = nil
-	t.min = t.min[:0]
-	t.max = t.max[:0]
+	t.tagFilter.reset()
 }
 
 func (t *tag) resizeValues(valuesLen int) [][]byte {
