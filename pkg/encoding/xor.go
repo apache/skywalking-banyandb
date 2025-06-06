@@ -19,6 +19,7 @@ package encoding
 
 import (
 	"math/bits"
+	// "github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const (
@@ -62,7 +63,17 @@ func (e *XOREncoder) Write(val uint64) {
 
 	leading := bits.LeadingZeros64(delta)
 	trailing := bits.TrailingZeros64(delta)
-	if leading >= e.leading && trailing >= e.trailing {
+	if e.leading == 0 && e.trailing == 0 {
+		e.bw.WriteBits(ctrlBitsContainMeaningful, 2)
+		meaningfulLen := 64 - leading - trailing
+		e.bw.WriteBits(uint64(leading), 6)
+		e.bw.WriteBits(uint64(meaningfulLen-1), 6)
+		meaningfulBits := delta >> uint(trailing)
+		e.bw.WriteBits(meaningfulBits, meaningfulLen) 
+
+		e.leading = leading
+		e.trailing = trailing
+	} else if leading >= e.leading && trailing >= e.trailing {
 		// write control '10' to reuse previous block meaningful bits
 		e.bw.WriteBits(ctrlBitsNoContainMeaningful, 2)
 		e.bw.WriteBits(delta>>uint(e.trailing), 64-e.leading-e.trailing)
@@ -74,10 +85,14 @@ func (e *XOREncoder) Write(val uint64) {
 		// meaningfulLen is at least 1, so we can subtract 1 from it and encode it in 6 bits
 		e.bw.WriteBits(uint64(meaningfulLen-1), 6)
 		e.bw.WriteBits(delta>>uint(trailing), meaningfulLen)
-
 		e.leading = leading
 		e.trailing = trailing
 	}
+}
+
+// Close flushes any remaining bits in the buffer
+func (e *XOREncoder) Close() {
+	e.bw.Flush()
 }
 
 // XORDecoder decodes buffer to uint64 values using xor compress.
@@ -111,14 +126,11 @@ func (d *XORDecoder) Reset() {
 // data format reference zstdEncoder format.
 func (d *XORDecoder) Next() bool {
 	if d.first {
-		// read first value
 		d.first = false
 		d.val, d.err = d.br.ReadBits(64)
 		return d.err == nil
 	}
-
 	var b bool
-	// read delta control bit
 	b, d.err = d.br.ReadBool()
 	if d.err != nil {
 		return false
@@ -126,8 +138,8 @@ func (d *XORDecoder) Next() bool {
 	if !b {
 		return true
 	}
+
 	ctrlBits := ctrlBitsNoContainMeaningful
-	// read control bit
 	b, d.err = d.br.ReadBool()
 	if d.err != nil {
 		return false
@@ -135,11 +147,11 @@ func (d *XORDecoder) Next() bool {
 	if b {
 		ctrlBits |= 1
 	}
+
 	var blockSize uint64
 	if ctrlBits == ctrlBitsNoContainMeaningful {
 		blockSize = 64 - d.leading - d.trailing
 	} else {
-		// read leading and trailing, because block is diff with previous
 		d.leading, d.err = d.br.ReadBits(6)
 		if d.err != nil {
 			return false
@@ -151,6 +163,7 @@ func (d *XORDecoder) Next() bool {
 		blockSize++
 		d.trailing = 64 - d.leading - blockSize
 	}
+
 	delta, err := d.br.ReadBits(int(blockSize))
 	if err != nil {
 		d.err = err

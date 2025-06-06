@@ -30,23 +30,61 @@ type columnMetadata struct {
 	name string
 	dataBlock
 	valueType pbv1.ValueType
+	encodeBlock
+}
+type encodeBlock struct {
+	encodeType encoding.EncodeType
+	firstValue int64
+}
+
+func (eb *encodeBlock) reset() {
+	eb.encodeType = 0
+	eb.firstValue = 0
+}
+
+func (eb *encodeBlock) copyFrom(src *encodeBlock) {
+	eb.encodeType = src.encodeType
+	eb.firstValue = src.firstValue
+}
+
+func (eb *encodeBlock) marshal(dst []byte) []byte {
+	dst = append(dst, byte(eb.encodeType))
+	dst = encoding.VarInt64ToBytes(dst, eb.firstValue)
+	return dst
+}
+
+func (eb *encodeBlock) unmarshal(src []byte) ([]byte, error) {
+	if len(src) < 1 {
+		return nil, fmt.Errorf("cannot unmarshal encodeBlock.encodeType: src is too short")
+	}
+	eb.encodeType = encoding.EncodeType(src[0])
+	src = src[1:]
+	var err error
+	src, eb.firstValue, err = encoding.BytesToVarInt64(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal encodeBlock.firstValue: %w", err)
+	}
+	return src, nil
 }
 
 func (cm *columnMetadata) reset() {
 	cm.name = ""
 	cm.valueType = 0
 	cm.dataBlock.reset()
+	cm.encodeBlock.reset()
 }
 
 func (cm *columnMetadata) copyFrom(src *columnMetadata) {
 	cm.name = src.name
 	cm.valueType = src.valueType
 	cm.dataBlock.copyFrom(&src.dataBlock)
+	cm.encodeBlock.copyFrom(&src.encodeBlock)
 }
 
 func (cm *columnMetadata) marshal(dst []byte) []byte {
 	dst = encoding.EncodeBytes(dst, convert.StringToBytes(cm.name))
 	dst = append(dst, byte(cm.valueType))
+	dst = cm.encodeBlock.marshal(dst)
 	dst = cm.dataBlock.marshal(dst)
 	return dst
 }
@@ -62,6 +100,12 @@ func (cm *columnMetadata) unmarshal(src []byte) ([]byte, error) {
 	}
 	cm.valueType = pbv1.ValueType(src[0])
 	src = src[1:]
+	// new
+	src, err = cm.encodeBlock.unmarshal(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal columnMetadata.encodeBlock: %w", err)
+	}
+	// new
 	src = cm.dataBlock.unmarshal(src)
 	return src, nil
 }
