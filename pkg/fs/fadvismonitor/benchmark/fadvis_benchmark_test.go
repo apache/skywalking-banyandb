@@ -41,42 +41,42 @@ func BenchmarkWritePerformance(b *testing.B) {
 			utils.SetRealisticThreshold()
 
 			fileSystem := fs.NewLocalFileSystem()
-		// Use default monitoring with automatic mode detection
-		utils.WithDefaultMonitoring(b, func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
+			// Use default monitoring with automatic mode detection
+			utils.WithDefaultMonitoring(b, func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
 
-				file := fs.MustCreateFile(fileSystem, filePath, 0o644, false)
+					file := fs.MustCreateFile(fileSystem, filePath, 0o644, false)
 
-				writer := file.SequentialWrite()
-				buf := make([]byte, 4096)
-				for written := int64(0); written < fileSize; written += int64(len(buf)) {
-					if _, err := writer.Write(buf); err != nil {
-						b.Fatalf("write failed: %v", err)
+					writer := file.SequentialWrite()
+					buf := make([]byte, 4096)
+					for written := int64(0); written < fileSize; written += int64(len(buf)) {
+						if _, err := writer.Write(buf); err != nil {
+							b.Fatalf("write failed: %v", err)
+						}
+					}
+
+					if err := writer.Close(); err != nil {
+						b.Fatalf("writer.Close() failed: %v", err)
+					}
+					if err := file.Close(); err != nil {
+						b.Fatalf("file.Close() failed: %v", err)
 					}
 				}
+			})
 
-				if err := writer.Close(); err != nil {
-					b.Fatalf("writer.Close() failed: %v", err)
-				}
-				if err := file.Close(); err != nil {
-					b.Fatalf("file.Close() failed: %v", err)
-				}
-			}
-		})
-
-		utils.CapturePageCacheStatsWithDelay(b, "after_write_fadvise_enabled_delay", 3)
+			utils.CapturePageCacheStatsWithDelay(b, "after_write_fadvise_enabled_delay", 3)
 		})
 
 		// fadvise disabled
 		b.Run(fmt.Sprintf("Size_%dMB_WithoutFadvise", fileSize>>20), func(b *testing.B) {
 			testDir, cleanup := utils.SetupTestEnvironment(b)
 			defer cleanup()
-		utils.SetTestThreshold(1 << 40) // 1TB
+			utils.SetTestThreshold(1 << 40) // 1TB
 
-		fileSystem := fs.NewLocalFileSystem()
+			fileSystem := fs.NewLocalFileSystem()
 
-		utils.WithDefaultMonitoring(b, func(b *testing.B) {
+			utils.WithDefaultMonitoring(b, func(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					filePath := filepath.Join(testDir, fmt.Sprintf("write_test_%d.dat", i))
@@ -111,19 +111,19 @@ func BenchmarkMultipleReads(b *testing.B) {
 
 	// Test with fadvise enabled
 	b.Run("WithFadvise", func(b *testing.B) {
-	testDir, cleanup := utils.SetupTestEnvironment(b)
-	defer cleanup()
+		testDir, cleanup := utils.SetupTestEnvironment(b)
+		defer cleanup()
 
-	utils.SetRealisticThreshold()
+		utils.SetRealisticThreshold()
 
-	filePath := filepath.Join(testDir, "multiple_read_test.dat")
-	if err := utils.CreateTestFile(b, filePath, fileSize); err != nil {
-		b.Fatalf("Failed to create test file: %v", err)
-	}
+		filePath := filepath.Join(testDir, "multiple_read_test.dat")
+		if err := utils.CreateTestFile(b, filePath, fileSize); err != nil {
+			b.Fatalf("Failed to create test file: %v", err)
+		}
 
-	utils.WithDefaultMonitoring(b, func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		utils.WithDefaultMonitoring(b, func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
 				for j := 0; j < readCount; j++ {
 					totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, false)
 					if err != nil {
@@ -142,18 +142,18 @@ func BenchmarkMultipleReads(b *testing.B) {
 		testDir, cleanup := utils.SetupTestEnvironment(b)
 		defer cleanup()
 
-	utils.SetTestThreshold(1 << 40)
+		utils.SetTestThreshold(1 << 40)
 
-	filePath := filepath.Join(testDir, "multiple_read_test.dat")
-	if err := utils.CreateTestFile(b, filePath, fileSize); err != nil {
-		b.Fatalf("Failed to create test file: %v", err)
-	}
+		filePath := filepath.Join(testDir, "multiple_read_test.dat")
+		if err := utils.CreateTestFile(b, filePath, fileSize); err != nil {
+			b.Fatalf("Failed to create test file: %v", err)
+		}
 
-	utils.WithDefaultMonitoring(b, func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			for j := 0; j < readCount; j++ {
-				totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, true)
+		utils.WithDefaultMonitoring(b, func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for j := 0; j < readCount; j++ {
+					totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, true)
 					if err != nil {
 						b.Fatalf("Failed to read file: %v", err)
 					}
@@ -172,14 +172,14 @@ func BenchmarkMixedWorkload(b *testing.B) {
 
 	// Test with fadvise enabled
 	b.Run("WithFadvise", func(b *testing.B) {
-	testDir, cleanup := utils.SetupTestEnvironment(b)
-	defer cleanup()
+		testDir, cleanup := utils.SetupTestEnvironment(b)
+		defer cleanup()
 
-	utils.SetRealisticThreshold()
+		utils.SetRealisticThreshold()
 
-	utils.WithDefaultMonitoring(b, func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		utils.WithDefaultMonitoring(b, func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
 				writeFilePath := filepath.Join(testDir, fmt.Sprintf("mixed_write_%d.dat", i))
 				if err := utils.CreateTestFile(b, writeFilePath, fileSize); err != nil {
 					b.Fatalf("Failed to create write file: %v", err)
@@ -201,14 +201,14 @@ func BenchmarkMixedWorkload(b *testing.B) {
 
 	// Test with fadvise disabled
 	b.Run("WithoutFadvise", func(b *testing.B) {
-	testDir, cleanup := utils.SetupTestEnvironment(b)
-	defer cleanup()
+		testDir, cleanup := utils.SetupTestEnvironment(b)
+		defer cleanup()
 
-	utils.SetTestThreshold(1 << 40)
+		utils.SetTestThreshold(1 << 40)
 
-	utils.WithDefaultMonitoring(b, func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		utils.WithDefaultMonitoring(b, func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
 				writeFilePath := filepath.Join(testDir, fmt.Sprintf("mixed_write_%d.dat", i))
 				if err := utils.CreateTestFile(b, writeFilePath, fileSize); err != nil {
 					b.Fatalf("Failed to create write file: %v", err)
@@ -241,21 +241,21 @@ func BenchmarkSequentialRead(b *testing.B) {
 	}
 
 	for _, fs := range fileSizes {
-	b.Run(fmt.Sprintf("WithFadvise_%s", fs.name), func(b *testing.B) {
-		testDir, cleanup := utils.SetupTestEnvironment(b)
-		defer cleanup()
+		b.Run(fmt.Sprintf("WithFadvise_%s", fs.name), func(b *testing.B) {
+			testDir, cleanup := utils.SetupTestEnvironment(b)
+			defer cleanup()
 
-		filePath := filepath.Join(testDir, "seqread_test.dat")
-		err := utils.CreateTestFile(b, filePath, fs.size)
-		if err != nil {
-			b.Fatalf("Failed to create test file: %v", err)
-		}
+			filePath := filepath.Join(testDir, "seqread_test.dat")
+			err := utils.CreateTestFile(b, filePath, fs.size)
+			if err != nil {
+				b.Fatalf("Failed to create test file: %v", err)
+			}
 
-		utils.WithDefaultMonitoring(b, func(b *testing.B) {
-			b.ResetTimer()
-			b.SetBytes(fs.size)
+			utils.WithDefaultMonitoring(b, func(b *testing.B) {
+				b.ResetTimer()
+				b.SetBytes(fs.size)
 
-			for i := 0; i < b.N; i++ {
+				for i := 0; i < b.N; i++ {
 					// Use streaming read with fadvise enabled
 					totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, false)
 					if err != nil {
@@ -268,22 +268,22 @@ func BenchmarkSequentialRead(b *testing.B) {
 			})
 		})
 
-	b.Run(fmt.Sprintf("WithoutFadvise_%s", fs.name), func(b *testing.B) {
-		// Create test directory
-		testDir, cleanup := utils.SetupTestEnvironment(b)
-		defer cleanup()
+		b.Run(fmt.Sprintf("WithoutFadvise_%s", fs.name), func(b *testing.B) {
+			// Create test directory
+			testDir, cleanup := utils.SetupTestEnvironment(b)
+			defer cleanup()
 
-		filePath := filepath.Join(testDir, "seqread_test.dat")
-		err := utils.CreateTestFile(b, filePath, fs.size)
-		if err != nil {
-			b.Fatalf("Failed to create test file: %v", err)
-		}
+			filePath := filepath.Join(testDir, "seqread_test.dat")
+			err := utils.CreateTestFile(b, filePath, fs.size)
+			if err != nil {
+				b.Fatalf("Failed to create test file: %v", err)
+			}
 
-		utils.WithDefaultMonitoring(b, func(b *testing.B) {
-			b.ResetTimer()
-			b.SetBytes(fs.size)
+			utils.WithDefaultMonitoring(b, func(b *testing.B) {
+				b.ResetTimer()
+				b.SetBytes(fs.size)
 
-			for i := 0; i < b.N; i++ {
+				for i := 0; i < b.N; i++ {
 					// Use streaming read with fadvise disabled
 					totalBytes, err := utils.ReadFileStreamingWithFadvise(b, filePath, true)
 					if err != nil {

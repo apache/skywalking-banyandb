@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -151,6 +152,23 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				Str("maxSize", humanize.IBytes(maxSize)).
 				Dur("elapsedMS", elapsed).
 				Msg("background merger merges unbalanced parts")
+		}
+	}
+
+	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
+	if newPart.p.partMetadata.CompressedSizeBytes > largeFileThreshold {
+		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
+		file, err := os.OpenFile(filePath, os.O_RDWR, 0o644)
+		if err != nil {
+			tst.l.Warn().Err(err).Msg("failed to open file for applying fadvise on large merged file")
+		} else {
+			defer file.Close()
+			// Apply FADV_DONTNEED to drop the file from page cache
+			if err := fs.SyncAndDropCache(file.Fd(), 0, 0); err != nil {
+				tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
+			} else {
+				tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
+			}
 		}
 	}
 

@@ -441,22 +441,22 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 
 				if hasReads && hasWrites {
 					mixedProcesses++
-				    if stats.ReadBatchCalls > 20 || stats.PageCacheAdds > 1000 {
-	       				read := stats.ReadBatchCalls
-	        			adds := stats.PageCacheAdds
-        				var hitRatio float64
-        				if read == 0 {
-						hitRatio = 0
-					} else if adds >= read {
-						hitRatio = 0
-					} else {
-						hitRatio = float64(read - adds) / float64(read) * 100
+					if stats.ReadBatchCalls > 20 || stats.PageCacheAdds > 1000 {
+						read := stats.ReadBatchCalls
+						adds := stats.PageCacheAdds
+						var hitRatio float64
+						if read == 0 {
+							hitRatio = 0
+						} else if adds >= read {
+							hitRatio = 0
+						} else {
+							hitRatio = float64(read-adds) / float64(read) * 100
+						}
+						topReaders = append(topReaders,
+							fmt.Sprintf("PID %d(R:%d,W:%d,HR:%.1f%%)",
+								pid, read, adds, hitRatio,
+							))
 					}
-					topReaders = append(topReaders,
-						fmt.Sprintf("PID %d(R:%d,W:%d,HR:%.1f%%)",
-							pid, read, adds, hitRatio,
-						))
-    	            }  
 				} else if hasReads {
 					readProcesses++
 					if stats.ReadBatchCalls > 20 {
@@ -464,10 +464,10 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 							pid, stats.ReadBatchCalls, stats.HitRatio*100))
 						var hitRatio float64
 						if stats.ReadBatchCalls > 0 {
-							hitRatio = float64(stats.ReadBatchCalls - stats.PageCacheAdds) / float64(stats.ReadBatchCalls) * 100
+							hitRatio = float64(stats.ReadBatchCalls-stats.PageCacheAdds) / float64(stats.ReadBatchCalls) * 100
 						}
 						topReaders = append(topReaders, fmt.Sprintf("PID %d(R:%d,HR:%.1f%%)",
-+                           pid, stats.ReadBatchCalls, hitRatio))
+							+pid, stats.ReadBatchCalls, hitRatio))
 					}
 				} else if hasWrites {
 					writeProcesses++
@@ -479,15 +479,15 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 			}
 			var totalHits uint64
 			if totalAdds > totalReads {
-                totalHits = 0
+				totalHits = 0
 				b.Logf("[eBPF] Overall Cache: Write-only workload, PageAdds=%d", totalAdds)
-            } else {
+			} else {
 				totalHits = totalReads - totalAdds
-                overallHitRatio := float64(totalHits) / float64(totalReads) * 100
-                b.Logf("[eBPF] Overall Cache: Hits=%d, Misses=%d, Reads=%d, Adds=%d, HitRatio=%.2f%%",
-                   totalHits, totalAdds, totalReads, totalAdds, overallHitRatio)
-                
-            }
+				overallHitRatio := float64(totalHits) / float64(totalReads) * 100
+				b.Logf("[eBPF] Overall Cache: Hits=%d, Misses=%d, Reads=%d, Adds=%d, HitRatio=%.2f%%",
+					totalHits, totalAdds, totalReads, totalAdds, overallHitRatio)
+
+			}
 
 			// Show top active processes (limit output)
 			if len(topReaders) > 0 {
