@@ -162,7 +162,7 @@ func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *opt
 }
 
 func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, tw *tsTable, tr *index.RangeOpts) (pl posting.List, plTS posting.List, err error) {
-	if qo.Filter == nil || qo.Filter == logicalstream.ENode {
+	if qo.InvertedFilter == nil || qo.InvertedFilter == logicalstream.ENode {
 		return nil, nil, nil
 	}
 	tracer := query.GetTracer(ctx)
@@ -184,7 +184,7 @@ func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, 
 	for i := range seriesList {
 		sid[i] = uint64(seriesList[i])
 	}
-	pl, plTS, err = tw.Index().Search(ctx, sid, qo.Filter, tr)
+	pl, plTS, err = tw.Index().Search(ctx, sid, qo.InvertedFilter, tr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -222,7 +222,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 	defer releaseBlockMetadataArray(bma)
 	ti := generateTstIter()
 	defer releaseTstIter(ti)
-	ti.init(bma, parts, bsn.qo.sortedSids, bsn.qo.minTimestamp, bsn.qo.maxTimestamp)
+	ti.init(bma, parts, bsn.qo.sortedSids, bsn.qo.minTimestamp, bsn.qo.maxTimestamp, bsn.qo.SkippingFilter)
 	batch := generateBlockScanResultBatch()
 	if ti.Error() != nil {
 		batch.err = fmt.Errorf("cannot init tstIter: %w", ti.Error())
@@ -285,7 +285,6 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		select {
 		case blockCh <- batch:
 		case <-ctx.Done():
-
 			releaseBlockScanResultBatch(batch)
 		}
 		return

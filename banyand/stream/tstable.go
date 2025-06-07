@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -323,7 +324,7 @@ func (ti *tstIter) reset() {
 	ti.nextBlockNoop = false
 }
 
-func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64, blockFilter index.Filter) {
 	ti.reset()
 	ti.parts = parts
 
@@ -332,7 +333,7 @@ func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, sids []common.Se
 	}
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
-		ti.piPool[i].init(bma, p, sids, minTimestamp, maxTimestamp)
+		ti.piPool[i].init(bma, p, sids, minTimestamp, maxTimestamp, blockFilter)
 	}
 
 	ti.piHeap = ti.piHeap[:0]

@@ -87,7 +87,8 @@ type StreamQueryOptions struct {
 	Name           string
 	TimeRange      *timestamp.TimeRange
 	Entities       [][]*modelv1.TagValue
-	Filter         index.Filter
+	InvertedFilter index.Filter
+	SkippingFilter index.Filter
 	Order          *index.OrderBy
 	TagProjection  []TagProjection
 	MaxElementSize int
@@ -98,7 +99,8 @@ func (s *StreamQueryOptions) Reset() {
 	s.Name = ""
 	s.TimeRange = nil
 	s.Entities = nil
-	s.Filter = nil
+	s.InvertedFilter = nil
+	s.SkippingFilter = nil
 	s.Order = nil
 	s.TagProjection = nil
 	s.MaxElementSize = 0
@@ -117,7 +119,8 @@ func (s *StreamQueryOptions) CopyFrom(other *StreamQueryOptions) {
 		s.Entities = nil
 	}
 
-	s.Filter = other.Filter
+	s.InvertedFilter = other.InvertedFilter
+	s.SkippingFilter = other.SkippingFilter
 	s.Order = other.Order
 
 	// Deep copy if TagProjection is a slice
