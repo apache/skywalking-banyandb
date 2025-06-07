@@ -74,9 +74,6 @@ type tagFilter struct {
 }
 
 func (tf *tagFilter) reset() {
-	if tf.filter != nil {
-		tf.filter.Reset()
-	}
 	tf.min = tf.min[:0]
 	tf.max = tf.max[:0]
 }
@@ -100,9 +97,6 @@ var tagFilterPool = pool.Register[*tagFilter]("stream-tagFilter")
 type tagFamilyFilter map[string]*tagFilter
 
 func (tff *tagFamilyFilter) reset() {
-	for _, tf := range *tff {
-		tf.reset()
-	}
 	clear(*tff)
 }
 
@@ -158,9 +152,6 @@ type tagFamilyFilters struct {
 }
 
 func (tfs *tagFamilyFilters) reset() {
-	for _, tff := range tfs.tagFamilyFilters {
-		tff.reset()
-	}
 	tfs.tagFamilyFilters = tfs.tagFamilyFilters[:0]
 }
 
