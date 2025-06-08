@@ -149,7 +149,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 
 			p := openMemPart(mp)
 			shardCache := storage.NewShardCache("test-group", 0, 0)
-			p.shardCache = shardCache
+			p.cache = shardCache
 			verifyPart(p)
 			tmpDir, defFn := test.Space(require.New(t))
 			defer defFn()
@@ -158,7 +158,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 			fileSystem := fs.NewLocalFileSystem()
 			mp.mustFlush(fileSystem, partPath)
 			p = mustOpenFilePart(epoch, tmpDir, fileSystem)
-			p.shardCache = shardCache
+			p.cache = shardCache
 			verifyPart(p)
 		})
 	}

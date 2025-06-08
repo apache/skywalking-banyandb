@@ -186,7 +186,7 @@ type tagNameWithType struct {
 
 func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
 	segments []storage.Segment[*tsTable, option],
-) (sl []common.SeriesID, tables []*tsTable, caches []*storage.ShardCache, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+) (sl []common.SeriesID, tables []*tsTable, caches []storage.Cache, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
 	newTagProjection []model.TagProjection, err error,
 ) {
 	var indexProjection []index.FieldKey
@@ -238,8 +238,9 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			return nil, nil, nil, nil, nil, err
 		}
 		if len(sd.SeriesList) > 0 {
-			tables = append(tables, segments[i].Tables()...)
-			caches = append(caches, segments[i].Caches()...)
+			tt, cc := segments[i].Tables()
+			tables = append(tables, tt...)
+			caches = append(caches, cc...)
 		}
 		for j := range sd.SeriesList {
 			if seriesFilter.Contains(uint64(sd.SeriesList[j].ID)) {

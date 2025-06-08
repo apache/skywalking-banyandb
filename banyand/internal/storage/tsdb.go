@@ -74,8 +74,10 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 	return segmentID(unit)<<31 | ((segmentID(suffix) << 1) >> 1)
 }
 
+var _ Cache = (*groupCache)(nil)
+
 type groupCache struct {
-	*Cache
+	*serviceCache
 	group string
 }
 
@@ -125,7 +127,7 @@ func (d *database[T, O]) Close() error {
 
 // OpenTSDB returns a new tsdb runtime. This constructor will create a new database if it's absent,
 // or load an existing one.
-func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache *Cache, group string) (TSDB[T, O], error) {
+func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache Cache, group string) (TSDB[T, O], error) {
 	if opts.SegmentInterval.Num == 0 {
 		return nil, errors.Wrap(errOpenDatabase, "segment interval is absent")
 	}
@@ -144,6 +146,10 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	if opts.StorageMetricsFactory != nil {
 		indexMetrics = inverted.NewMetrics(opts.StorageMetricsFactory, common.SegLabelNames()...)
 	}
+	var sc *serviceCache
+	if cache != nil {
+		sc = cache.(*serviceCache)
+	}
 	db := &database[T, O]{
 		location:  location,
 		scheduler: scheduler,
@@ -151,7 +157,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 		tsEventCh: make(chan int64),
 		p:         p,
 		segmentController: newSegmentController(ctx, location,
-			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentIdleTimeout, tsdbLfs, cache, group),
+			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentIdleTimeout, tsdbLfs, sc, group),
 		metrics:          newMetrics(opts.StorageMetricsFactory),
 		disableRetention: opts.DisableRetention,
 		lfs:              tsdbLfs,
@@ -262,7 +268,8 @@ func (d *database[T, O]) collect() {
 		if atomic.LoadInt32(&s.refCount) <= 0 {
 			continue
 		}
-		for _, t := range s.Tables() {
+		tables, _ := s.Tables()
+		for _, t := range tables {
 			t.Collect(d.segmentController.metrics)
 		}
 		s.index.store.CollectMetrics(s.index.p.SegLabelValues()...)

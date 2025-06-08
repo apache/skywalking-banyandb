@@ -70,7 +70,7 @@ func (i *indexSchema) parse(schema *databasev1.Measure) {
 type measure struct {
 	indexSchema atomic.Value
 	tsdb        atomic.Value
-	c           *storage.Cache
+	c           storage.Cache
 	pm          *protector.Memory
 	l           *logger.Logger
 	schema      *databasev1.Measure
@@ -115,7 +115,7 @@ type measureSpec struct {
 }
 
 func openMeasure(spec measureSpec,
-	l *logger.Logger, c *storage.Cache, pm *protector.Memory, schemaRepo *schemaRepo,
+	l *logger.Logger, c storage.Cache, pm *protector.Memory, schemaRepo *schemaRepo,
 ) (*measure, error) {
 	m := &measure{
 		schema:     spec.schema,

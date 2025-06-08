@@ -46,6 +46,8 @@ var ErrExpiredData = errors.New("expired data")
 // ErrSegmentClosed is returned when trying to access a closed segment.
 var ErrSegmentClosed = errors.New("segment closed")
 
+var _ Cache = (*segmentCache)(nil)
+
 type segmentCache struct {
 	*groupCache
 	segmentID segmentID
@@ -131,24 +133,15 @@ func (s *segment[T, O]) GetTimeRange() timestamp.TimeRange {
 	return s.TimeRange
 }
 
-func (s *segment[T, O]) Tables() (tt []T) {
+func (s *segment[T, O]) Tables() (tt []T, cc []Cache) {
 	sLst := s.sLst.Load()
 	if sLst != nil {
 		for _, s := range *sLst {
 			tt = append(tt, s.table)
+			cc = append(cc, s.shardCache)
 		}
 	}
-	return tt
-}
-
-func (s *segment[T, O]) Caches() (scs []*ShardCache) {
-	sLst := s.sLst.Load()
-	if sLst != nil {
-		for _, s := range *sLst {
-			scs = append(scs, s.ShardCache)
-		}
-	}
-	return scs
+	return tt, cc
 }
 
 func (s *segment[T, O]) incRef(ctx context.Context) error {
@@ -326,7 +319,7 @@ type segmentController[T TSTable, O any] struct {
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
 	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
-	idleTimeout time.Duration, lfs banyanfs.FileSystem, cache *Cache, group string,
+	idleTimeout time.Duration, lfs banyanfs.FileSystem, serviceCache *serviceCache, group string,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	p := common.GetPosition(ctx)
@@ -342,7 +335,7 @@ func newSegmentController[T TSTable, O any](ctx context.Context, location string
 		db:           p.Database,
 		idleTimeout:  idleTimeout,
 		lfs:          lfs,
-		groupCache:   &groupCache{cache, group},
+		groupCache:   &groupCache{serviceCache, group},
 	}
 }
 

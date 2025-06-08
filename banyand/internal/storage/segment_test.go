@@ -101,7 +101,7 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 		SeriesIndexCacheMaxBytes:       1024 * 1024,
 	}
 
-	cache := NewCache()
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -111,7 +111,7 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 		nil,           // metrics
 		5*time.Minute, // idleTimeout
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
-		cache,
+		serviceCache,
 		group,
 	)
 
@@ -195,7 +195,7 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 		SeriesIndexCacheMaxBytes:       1024 * 1024,
 	}
 
-	cache := NewCache()
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -205,7 +205,7 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 		nil,         // metrics
 		time.Second, // Set short idle timeout for testing,
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
-		cache,
+		serviceCache,
 		group,
 	)
 
@@ -281,7 +281,7 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 
 	// Create segment controller with a short idle timeout (100ms)
 	idleTimeout := 100 * time.Millisecond
-	cache := NewCache()
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -291,7 +291,7 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 		nil,         // metrics
 		idleTimeout, // short idle timeout,
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
-		cache,
+		serviceCache,
 		group,
 	)
 
@@ -416,7 +416,7 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 		SeriesIndexCacheMaxBytes:       1024 * 1024,
 	}
 
-	cache := NewCache()
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -426,7 +426,7 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 		nil,           // metrics
 		5*time.Minute, // idleTimeout,
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
-		cache,
+		serviceCache,
 		group,
 	)
 
@@ -477,7 +477,7 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 	assert.Contains(t, shardIDs, common.ShardID(1), "Shard 1 should be loaded")
 
 	// Verify tables can be retrieved
-	tables := segment.Tables()
+	tables, _ := segment.Tables()
 	require.Len(t, tables, 2, "Should have 2 tables")
 
 	// Make sure each table has the correct ID
@@ -528,7 +528,7 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 
 	// Create segment controller with a short idle timeout
 	idleTimeout := 100 * time.Millisecond
-	cache := NewCache()
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -538,7 +538,7 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 		nil,         // metrics
 		idleTimeout, // short idle timeout
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
-		cache,
+		serviceCache,
 		group,
 	)
 

@@ -36,7 +36,7 @@ import (
 type partIter struct {
 	err                  error
 	p                    *part
-	sc                   *storage.ShardCache
+	c                    storage.Cache
 	curBlock             *blockMetadata
 	sids                 []common.SeriesID
 	primaryBlockMetadata []primaryBlockMetadata
@@ -51,7 +51,7 @@ type partIter struct {
 func (pi *partIter) reset() {
 	pi.curBlock = nil
 	pi.p = nil
-	pi.sc = nil
+	pi.c = nil
 	pi.sids = nil
 	pi.sidIdx = 0
 	pi.primaryBlockMetadata = nil
@@ -65,7 +65,7 @@ func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesI
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
-	pi.sc = p.shardCache
+	pi.c = p.cache
 
 	pi.bms = bma.arr
 	pi.sids = sids
@@ -184,10 +184,7 @@ func searchPBM(pbmIndex []primaryBlockMetadata, sid common.SeriesID) []primaryBl
 }
 
 func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetadata) ([]blockMetadata, error) {
-	value := pi.sc.Get(storage.EntryKey{
-		PartID: pi.p.partMetadata.ID,
-		Offset: mr.offset,
-	})
+	value := pi.c.Get(storage.NewEntryKey(pi.p.partMetadata.ID, mr.offset))
 	if value != nil {
 		bmPtrs := value.([]*blockMetadata)
 		for _, bmsPtr := range bmPtrs {
@@ -208,14 +205,11 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
-	bmPtrs := make([]*blockMetadata, 0)
+	bmPtrs := make([]*blockMetadata, 0, len(bms))
 	for _, bm := range bms {
 		bmPtrs = append(bmPtrs, &bm)
 	}
-	pi.sc.Put(storage.EntryKey{
-		PartID: pi.p.partMetadata.ID,
-		Offset: mr.offset,
-	}, bmPtrs)
+	pi.c.Put(storage.NewEntryKey(pi.p.partMetadata.ID, mr.offset), bmPtrs)
 	return bms, nil
 }
 

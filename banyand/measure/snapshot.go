@@ -65,14 +65,14 @@ type snapshot struct {
 	ref int32
 }
 
-func (s *snapshot) getParts(dst []*part, shardCache *storage.ShardCache, minTimestamp, maxTimestamp int64) ([]*part, int) {
+func (s *snapshot) getParts(dst []*part, cache storage.Cache, minTimestamp, maxTimestamp int64) ([]*part, int) {
 	var count int
 	for _, p := range s.parts {
 		pm := p.p.partMetadata
 		if maxTimestamp < pm.MinTimestamp || minTimestamp > pm.MaxTimestamp {
 			continue
 		}
-		p.p.shardCache = shardCache
+		p.p.cache = cache
 		dst = append(dst, p.p)
 		count++
 	}

@@ -337,7 +337,7 @@ type supplier struct {
 	metadata   metadata.Repo
 	omr        observability.MetricsRegistry
 	l          *logger.Logger
-	c          *storage.Cache
+	c          storage.Cache
 	pm         *protector.Memory
 	schemaRepo *schemaRepo
 	nodeLabels map[string]string

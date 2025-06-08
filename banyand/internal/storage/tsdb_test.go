@@ -109,8 +109,8 @@ func TestOpenTSDB(t *testing.T) {
 		mc.Set(ts)
 		ctx = timestamp.SetClock(ctx, mc)
 
-		cache := NewCache()
-		tsdb, err := OpenTSDB(ctx, opts, cache, group)
+		serviceCache := NewServiceCache()
+		tsdb, err := OpenTSDB(ctx, opts, serviceCache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -144,8 +144,8 @@ func TestOpenTSDB(t *testing.T) {
 		ctx = timestamp.SetClock(ctx, mc)
 
 		// Create new TSDB
-		cache := NewCache()
-		tsdb, err := OpenTSDB(ctx, opts, cache, group)
+		serviceCache := NewServiceCache()
+		tsdb, err := OpenTSDB(ctx, opts, serviceCache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -162,7 +162,7 @@ func TestOpenTSDB(t *testing.T) {
 		tsdb.Close()
 
 		// Reopen existing TSDB
-		tsdb, err = OpenTSDB(ctx, opts, cache, group)
+		tsdb, err = OpenTSDB(ctx, opts, serviceCache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -195,8 +195,8 @@ func TestOpenTSDB(t *testing.T) {
 		ctx = timestamp.SetClock(ctx, mc)
 
 		// Create new TSDB
-		cache := NewCache()
-		tsdb, err := OpenTSDB(ctx, opts, cache, group)
+		serviceCache := NewServiceCache()
+		tsdb, err := OpenTSDB(ctx, opts, serviceCache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -248,8 +248,8 @@ func TestTakeFileSnapshot(t *testing.T) {
 		mc.Set(ts)
 		ctx = timestamp.SetClock(ctx, mc)
 
-		cache := NewCache()
-		tsdb, err := OpenTSDB(ctx, opts, cache, group)
+		serviceCache := NewServiceCache()
+		tsdb, err := OpenTSDB(ctx, opts, serviceCache, group)
 		require.NoError(t, err)
 		require.NotNil(t, tsdb)
 
@@ -320,8 +320,8 @@ func TestTSDBCollect(t *testing.T) {
 	mc.Set(ts)
 	ctx = timestamp.SetClock(ctx, mc)
 
-	cache := NewCache()
-	tsdb, err := OpenTSDB(ctx, opts, cache, group)
+	serviceCache := NewServiceCache()
+	tsdb, err := OpenTSDB(ctx, opts, serviceCache, group)
 	require.NoError(t, err)
 	require.NotNil(t, tsdb)
 
@@ -400,8 +400,8 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	mc.Set(baseDate)
 	ctx = timestamp.SetClock(ctx, mc)
 
-	cache := NewCache()
-	tsdb, err := OpenTSDB(ctx, opts, cache, group)
+	serviceCache := NewServiceCache()
+	tsdb, err := OpenTSDB(ctx, opts, serviceCache, group)
 	require.NoError(t, err)
 	require.NotNil(t, tsdb)
 

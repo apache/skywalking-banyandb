@@ -131,7 +131,6 @@ func (l *lifecycleService) Serve() run.StopNotify {
 		defer streamSVC.GracefulStop()
 	}
 	if measureSVC != nil {
-		measureSVC.Serve()
 		defer measureSVC.GracefulStop()
 	}
 	nodes, err := l.metadata.NodeRegistry().ListNode(ctx, databasev1.Role_ROLE_DATA)

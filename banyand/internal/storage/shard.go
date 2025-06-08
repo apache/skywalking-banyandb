@@ -28,43 +28,43 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// ShardCache is a shard-level cache.
-type ShardCache struct {
+var _ Cache = (*shardCache)(nil)
+
+type shardCache struct {
 	*segmentCache
 	shardID common.ShardID
 }
 
 // NewShardCache creates a new shard cache.
-func NewShardCache(group string, segmentID segmentID, shardID common.ShardID) *ShardCache {
+func NewShardCache(group string, segmentID segmentID, shardID common.ShardID) Cache {
+	serviceCache := NewServiceCache().(*serviceCache)
 	groupCache := &groupCache{
-		Cache: NewCache(),
-		group: group,
+		serviceCache: serviceCache,
+		group:        group,
 	}
 	segmentCache := &segmentCache{
 		groupCache: groupCache,
 		segmentID:  segmentID,
 	}
-	return &ShardCache{
+	return &shardCache{
 		segmentCache: segmentCache,
 		shardID:      shardID,
 	}
 }
 
-// Get gets the compressed primary block from the shard cache.
-func (sc *ShardCache) Get(key EntryKey) any {
+func (sc *shardCache) Get(key EntryKey) any {
 	key.shardID = sc.shardID
 	return sc.segmentCache.get(key)
 }
 
-// Put puts the compressed primary block into the shard cache.
-func (sc *ShardCache) Put(key EntryKey, value any) {
+func (sc *shardCache) Put(key EntryKey, value any) {
 	key.shardID = sc.shardID
 	sc.segmentCache.put(key, value)
 }
 
 type shard[T TSTable] struct {
 	table T
-	*ShardCache
+	*shardCache
 	l         *logger.Logger
 	timeRange timestamp.TimeRange
 	location  string
@@ -87,7 +87,7 @@ func (s *segment[T, O]) openShard(ctx context.Context, id common.ShardID) (*shar
 		id:    id,
 		l:     l,
 		table: t,
-		ShardCache: &ShardCache{
+		shardCache: &shardCache{
 			segmentCache: s.segmentCache,
 			shardID:      id,
 		},

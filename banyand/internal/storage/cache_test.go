@@ -29,110 +29,110 @@ import (
 )
 
 func TestCachePutAndGet(t *testing.T) {
-	cache := NewCache()
+	serviceCache := NewServiceCache()
 
 	key := EntryKey{
 		group:     "test-group",
-		PartID:    0,
-		Offset:    0,
+		partID:    0,
+		offset:    0,
 		segmentID: segmentID(0),
 		shardID:   common.ShardID(0),
 	}
 	value := "test-value"
 
-	cache.Put(key, value)
-	assert.Equal(t, uint64(1), cache.Len())
-	result := cache.Get(key)
+	serviceCache.Put(key, value)
+	assert.Equal(t, uint64(1), serviceCache.Len())
+	result := serviceCache.Get(key)
 	assert.Equal(t, value, result)
-	assert.Equal(t, uint64(1), cache.Requests())
-	assert.Equal(t, uint64(0), cache.Misses())
+	assert.Equal(t, uint64(1), serviceCache.Requests())
+	assert.Equal(t, uint64(0), serviceCache.Misses())
 
 	nonExistentKey := EntryKey{
 		group:     "test-group",
-		PartID:    1,
-		Offset:    100,
+		partID:    1,
+		offset:    100,
 		segmentID: segmentID(1),
 		shardID:   common.ShardID(1),
 	}
 
-	result = cache.Get(nonExistentKey)
+	result = serviceCache.Get(nonExistentKey)
 	assert.Nil(t, result)
-	assert.Equal(t, uint64(2), cache.Requests())
-	assert.Equal(t, uint64(1), cache.Misses())
+	assert.Equal(t, uint64(2), serviceCache.Requests())
+	assert.Equal(t, uint64(1), serviceCache.Misses())
 }
 
 func TestCacheEvict(t *testing.T) {
-	cache := NewCache()
-	cache.maxCacheSize = 50
+	serviceCache := NewServiceCache().(*serviceCache)
+	serviceCache.maxCacheSize = 50
 
 	var expectedKey EntryKey
 	var expectedValue string
 	for i := 0; i < 10; i++ {
 		key := EntryKey{
 			group:     "test-group",
-			PartID:    uint64(i),
-			Offset:    uint64(i * 100),
+			partID:    uint64(i),
+			offset:    uint64(i * 100),
 			segmentID: segmentID(i),
 			shardID:   common.ShardID(i),
 		}
 		value := "test-value" + strconv.Itoa(i)
-		cache.Put(key, value)
+		serviceCache.Put(key, value)
 		if i == 9 {
 			expectedKey, expectedValue = key, value
 		}
 	}
 
-	assert.Equal(t, uint64(1), cache.Len())
-	result := cache.Get(expectedKey)
+	assert.Equal(t, uint64(1), serviceCache.Len())
+	result := serviceCache.Get(expectedKey)
 	assert.Equal(t, expectedValue, result)
 }
 
 func TestCacheClean(t *testing.T) {
-	cache := NewCache()
-	cache.idleTimeout = 10 * time.Millisecond
-	cache.cleanupInterval = 10 * time.Millisecond
-	go cache.Clean()
-	defer cache.Close()
+	serviceCache := NewServiceCache().(*serviceCache)
+	serviceCache.idleTimeout = 10 * time.Millisecond
+	serviceCache.cleanupInterval = 10 * time.Millisecond
+	go serviceCache.StartCleaner()
+	defer serviceCache.Close()
 
 	key := EntryKey{
 		group:     "test-group",
-		PartID:    0,
-		Offset:    0,
+		partID:    0,
+		offset:    0,
 		segmentID: segmentID(0),
 		shardID:   common.ShardID(0),
 	}
 	value := "test-value"
 
-	cache.Put(key, value)
-	assert.Equal(t, uint64(1), cache.Len())
+	serviceCache.Put(key, value)
+	assert.Equal(t, uint64(1), serviceCache.Len())
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, uint64(0), cache.Len())
-	assert.Nil(t, cache.Get(key))
+	assert.Equal(t, uint64(0), serviceCache.Len())
+	assert.Nil(t, serviceCache.Get(key))
 }
 
 func TestCacheClose(t *testing.T) {
-	cache := NewCache()
-	go cache.Clean()
+	serviceCache := NewServiceCache().(*serviceCache)
+	go serviceCache.StartCleaner()
 
 	key := EntryKey{
 		group:     "test-group",
-		PartID:    0,
-		Offset:    0,
+		partID:    0,
+		offset:    0,
 		segmentID: segmentID(0),
 		shardID:   common.ShardID(0),
 	}
 	value := "test-value"
 
-	cache.Put(key, value)
-	assert.Equal(t, uint64(1), cache.Len())
-	cache.Close()
-	assert.Nil(t, cache.entry)
-	assert.Nil(t, cache.entryIndex)
-	assert.Nil(t, cache.entryIndexHeap)
+	serviceCache.Put(key, value)
+	assert.Equal(t, uint64(1), serviceCache.Len())
+	serviceCache.Close()
+	assert.Nil(t, serviceCache.entry)
+	assert.Nil(t, serviceCache.entryIndex)
+	assert.Nil(t, serviceCache.entryIndexHeap)
 }
 
 func TestCacheConcurrency(t *testing.T) {
-	cache := NewCache()
+	serviceCache := NewServiceCache()
 
 	const numGoroutines = 10
 	const numOperations = 100
@@ -147,8 +147,8 @@ func TestCacheConcurrency(t *testing.T) {
 				num := id*numOperations + j
 				key := EntryKey{
 					group:     "test-group",
-					PartID:    uint64(num),
-					Offset:    uint64(num * 100),
+					partID:    uint64(num),
+					offset:    uint64(num * 100),
 					segmentID: segmentID(num),
 					shardID:   common.ShardID(num),
 				}
@@ -156,7 +156,7 @@ func TestCacheConcurrency(t *testing.T) {
 				if id == 0 && j == 0 {
 					expectedKey, expectedValue = key, value
 				}
-				cache.Put(key, value)
+				serviceCache.Put(key, value)
 			}
 		}(i)
 	}
@@ -167,19 +167,19 @@ func TestCacheConcurrency(t *testing.T) {
 				num := id*numOperations + j
 				key := EntryKey{
 					group:     "test-group",
-					PartID:    uint64(num),
-					Offset:    uint64(num * 100),
+					partID:    uint64(num),
+					offset:    uint64(num * 100),
 					segmentID: segmentID(num),
 					shardID:   common.ShardID(num),
 				}
-				cache.Get(key)
+				serviceCache.Get(key)
 			}
 		}(i)
 	}
 	wg.Wait()
 
-	assert.Equal(t, uint64(numGoroutines*numOperations), cache.Len())
-	assert.Equal(t, uint64(numGoroutines*numOperations), cache.Requests())
-	result := cache.Get(expectedKey)
+	assert.Equal(t, uint64(numGoroutines*numOperations), serviceCache.Len())
+	assert.Equal(t, uint64(numGoroutines*numOperations), serviceCache.Requests())
+	result := serviceCache.Get(expectedKey)
 	assert.Equal(t, expectedValue, result)
 }

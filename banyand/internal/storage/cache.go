@@ -27,6 +27,18 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 )
 
+// Cache encapsulates the cache operations.
+type Cache interface {
+	Get(key EntryKey) any
+	Put(key EntryKey, value any)
+	StartCleaner()
+	Close()
+	Requests() uint64
+	Misses() uint64
+	Len() uint64
+	Size() uint64
+}
+
 type entry struct {
 	value      any
 	lastAccess uint64
@@ -35,10 +47,18 @@ type entry struct {
 // EntryKey is the key of an entry in the cache.
 type EntryKey struct {
 	group     string
-	PartID    uint64
-	Offset    uint64
+	partID    uint64
+	offset    uint64
 	segmentID segmentID
 	shardID   common.ShardID
+}
+
+// NewEntryKey creates an entry key with partID and offset.
+func NewEntryKey(partID uint64, offset uint64) EntryKey {
+	return EntryKey{
+		partID: partID,
+		offset: offset,
+	}
 }
 
 type entryIndex struct {
@@ -76,8 +96,9 @@ func (h *entryIndexHeap) Pop() interface{} {
 	return x
 }
 
-// Cache stores the compressed primary blocks.
-type Cache struct {
+var _ Cache = (*serviceCache)(nil)
+
+type serviceCache struct {
 	entry           map[EntryKey]*entry
 	entryIndex      map[EntryKey]*entryIndex
 	entryIndexHeap  *entryIndexHeap
@@ -91,11 +112,11 @@ type Cache struct {
 	idleTimeout     time.Duration
 }
 
-// NewCache creates a cache.
-func NewCache() *Cache {
+// NewServiceCache creates a cache for service.
+func NewServiceCache() Cache {
 	h := &entryIndexHeap{}
 	heap.Init(h)
-	c := &Cache{
+	sc := &serviceCache{
 		entry:           make(map[EntryKey]*entry),
 		entryIndexHeap:  h,
 		entryIndex:      make(map[EntryKey]*entryIndex),
@@ -105,82 +126,78 @@ func NewCache() *Cache {
 		cleanupInterval: 30 * time.Second,
 		idleTimeout:     2 * time.Minute,
 	}
-	c.wg.Add(1)
-	return c
+	return sc
 }
 
-// Clean periodically cleans the cache.
-func (c *Cache) Clean() {
+func (sc *serviceCache) StartCleaner() {
+	sc.wg.Add(1)
 	go func() {
-		defer c.wg.Done()
-		c.clean()
+		defer sc.wg.Done()
+		sc.clean()
 	}()
 }
 
-func (c *Cache) clean() {
-	ticker := time.NewTicker(c.cleanupInterval)
+func (sc *serviceCache) clean() {
+	ticker := time.NewTicker(sc.cleanupInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			now := uint64(time.Now().UnixNano())
-			c.mu.Lock()
-			for key, entry := range c.entry {
-				if now-atomic.LoadUint64(&entry.lastAccess) > uint64(c.idleTimeout.Nanoseconds()) {
-					delete(c.entry, key)
-					heap.Remove(c.entryIndexHeap, c.entryIndex[key].index)
+			sc.mu.Lock()
+			for key, entry := range sc.entry {
+				if now-atomic.LoadUint64(&entry.lastAccess) > uint64(sc.idleTimeout.Nanoseconds()) {
+					delete(sc.entry, key)
+					heap.Remove(sc.entryIndexHeap, sc.entryIndex[key].index)
 				}
 			}
-			c.mu.Unlock()
-		case <-c.stopCh:
+			sc.mu.Unlock()
+		case <-sc.stopCh:
 			return
 		}
 	}
 }
 
-// Close closes the cache.
-func (c *Cache) Close() {
-	close(c.stopCh)
-	c.wg.Wait()
-	c.entry = nil
-	c.entryIndex = nil
-	c.entryIndexHeap = nil
+func (sc *serviceCache) Close() {
+	close(sc.stopCh)
+	sc.wg.Wait()
+	sc.entry = nil
+	sc.entryIndex = nil
+	sc.entryIndexHeap = nil
 }
 
-// Get gets the compressed primary block from the cache.
-func (c *Cache) Get(key EntryKey) any {
-	atomic.AddUint64(&c.requests, 1)
+func (sc *serviceCache) Get(key EntryKey) any {
+	atomic.AddUint64(&sc.requests, 1)
 
-	c.mu.RLock()
-	entry := c.entry[key]
-	c.mu.RUnlock()
+	sc.mu.RLock()
+	entry := sc.entry[key]
+	sc.mu.RUnlock()
 
 	if entry != nil {
 		now := uint64(time.Now().UnixNano())
 		if atomic.LoadUint64(&entry.lastAccess) != now {
-			c.mu.Lock()
+			sc.mu.Lock()
 			atomic.StoreUint64(&entry.lastAccess, now)
-			if ei := c.entryIndex[key]; ei != nil {
-				heap.Fix(c.entryIndexHeap, ei.index)
+			if ei := sc.entryIndex[key]; ei != nil {
+				heap.Fix(sc.entryIndexHeap, ei.index)
 			}
-			c.mu.Unlock()
+			sc.mu.Unlock()
 		}
 		return entry.value
 	}
 
-	atomic.AddUint64(&c.misses, 1)
+	atomic.AddUint64(&sc.misses, 1)
 	return nil
 }
 
-// Put puts the compressed primary block into the cache.
-func (c *Cache) Put(key EntryKey, value any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (sc *serviceCache) Put(key EntryKey, value any) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 
-	for c.size() > c.maxCacheSize && c.len() > 0 {
-		ei := heap.Pop(c.entryIndexHeap).(*entryIndex)
-		delete(c.entry, ei.key)
-		delete(c.entryIndex, ei.key)
+	for sc.size() > sc.maxCacheSize && sc.len() > 0 {
+		ei := heap.Pop(sc.entryIndexHeap).(*entryIndex)
+		delete(sc.entry, ei.key)
+		delete(sc.entryIndex, ei.key)
 	}
 
 	now := uint64(time.Now().UnixNano())
@@ -192,39 +209,35 @@ func (c *Cache) Put(key EntryKey, value any) {
 		key:   key,
 		entry: e,
 	}
-	c.entry[key] = e
-	c.entryIndex[key] = ei
-	heap.Push(c.entryIndexHeap, ei)
+	sc.entry[key] = e
+	sc.entryIndex[key] = ei
+	heap.Push(sc.entryIndexHeap, ei)
 }
 
-// Requests returns the number of cache requests.
-func (c *Cache) Requests() uint64 {
-	return atomic.LoadUint64(&c.requests)
+func (sc *serviceCache) Requests() uint64 {
+	return atomic.LoadUint64(&sc.requests)
 }
 
-// Misses returns the number of cache misses.
-func (c *Cache) Misses() uint64 {
-	return atomic.LoadUint64(&c.misses)
+func (sc *serviceCache) Misses() uint64 {
+	return atomic.LoadUint64(&sc.misses)
 }
 
-// Len returns the number of entries in the cache.
-func (c *Cache) Len() uint64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.len()
+func (sc *serviceCache) Len() uint64 {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	return sc.len()
 }
 
-func (c *Cache) len() uint64 {
-	return uint64(len(c.entry))
+func (sc *serviceCache) len() uint64 {
+	return uint64(len(sc.entry))
 }
 
-// Size returns the size of the cache.
-func (c *Cache) Size() uint64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.size()
+func (sc *serviceCache) Size() uint64 {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	return sc.size()
 }
 
-func (c *Cache) size() uint64 {
-	return uint64(unsafe.Sizeof(*c))
+func (sc *serviceCache) size() uint64 {
+	return uint64(unsafe.Sizeof(*sc))
 }

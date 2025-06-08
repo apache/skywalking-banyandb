@@ -71,7 +71,7 @@ type service struct {
 	pm                  *protector.Memory
 	schemaRepo          *schemaRepo
 	l                   *logger.Logger
-	c                   *storage.Cache
+	c                   storage.Cache
 	root                string
 	snapshotDir         string
 	dataPath            string
@@ -182,7 +182,7 @@ func (s *service) PreRun(ctx context.Context) error {
 }
 
 func (s *service) Serve() run.StopNotify {
-	s.c.Clean()
+	s.c.StartCleaner()
 	return s.schemaRepo.StopCh()
 }
 
@@ -202,7 +202,7 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline qu
 		metricPipeline: metricPipeline,
 		omr:            omr,
 		pm:             pm,
-		c:              storage.NewCache(),
+		c:              storage.NewServiceCache(),
 	}, nil
 }
 
@@ -212,7 +212,7 @@ func NewReadonlyService(metadata metadata.Repo, omr observability.MetricsRegistr
 		metadata: metadata,
 		omr:      omr,
 		pm:       pm,
-		c:        storage.NewCache(),
+		c:        storage.NewServiceCache(),
 	}, nil
 }
 
