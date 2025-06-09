@@ -252,10 +252,8 @@ func (m *Memory) ShouldCache(_ string) bool {
 	return true
 }
 
-var (
-	// Global memory protector instance used by components that need threshold decisions
-	globalMemoryProtector *Memory
-)
+// Global memory protector instance used by components that need threshold decisions.
+var globalMemoryProtector *Memory
 
 // GetMemoryProtector returns the global memory protector instance.
 // If no instance is set, it creates a default one for threshold decisions.
