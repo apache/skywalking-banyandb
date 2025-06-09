@@ -42,6 +42,8 @@ type Memory interface {
 	AvailableBytes() int64
 	GetLimit() uint64
 	AcquireResource(ctx context.Context, size uint64) error
+	ShouldApplyFadvis(fileSize, maxSize int64) bool
+	ShouldCache(path string) bool
 	run.PreRunner
 	run.Config
 	run.Service
@@ -229,7 +231,7 @@ func (m *memory) Serve() run.StopNotify {
 }
 
 // GetThreshold returns the threshold for large file detection (1% of page cache).
-func (m *Memory) GetThreshold(maxSize int64) int64 {
+func (m *memory) GetThreshold(maxSize int64) int64 {
 	// Try reading cgroup memory limit
 	cgLimit, err := cgroups.MemoryLimit()
 	if err != nil {
@@ -266,25 +268,25 @@ func (m *Memory) GetThreshold(maxSize int64) int64 {
 
 // ShouldApplyFadvis implements the fs.ThresholdProvider interface.
 // It checks if the file size exceeds the threshold for large file detection.
-func (m *Memory) ShouldApplyFadvis(fileSize int64, maxSize int64) bool {
+func (m *memory) ShouldApplyFadvis(fileSize int64, maxSize int64) bool {
 	return fileSize >= m.GetThreshold(maxSize)
 }
 
 // ShouldCache returns whether a file at the given path should be cached.
 // Currently always returns true as the cache decision is made based on file size.
-func (m *Memory) ShouldCache(_ string) bool {
+func (m *memory) ShouldCache(_ string) bool {
 	return true
 }
 
 // Global memory protector instance used by components that need threshold decisions.
-var globalMemoryProtector *Memory
+var globalMemoryProtector Memory
 
 // GetMemoryProtector returns the global memory protector instance.
 // If no instance is set, it creates a default one for threshold decisions.
-func GetMemoryProtector() *Memory {
+func GetMemoryProtector() Memory {
 	if globalMemoryProtector == nil {
 		// Create a default instance for threshold decisions
-		globalMemoryProtector = &Memory{
+		globalMemoryProtector = &memory{
 			allowedPercent: 75, // Default 75% threshold
 		}
 	}
@@ -292,6 +294,6 @@ func GetMemoryProtector() *Memory {
 }
 
 // SetMemoryProtector sets the global memory protector instance.
-func SetMemoryProtector(mp *Memory) {
+func SetMemoryProtector(mp Memory) {
 	globalMemoryProtector = mp
 }
