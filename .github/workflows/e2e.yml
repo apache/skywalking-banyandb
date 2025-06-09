@@ -105,7 +105,7 @@ jobs:
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions
-        if: ${{ matrix.test.name == 'Lifecycle' }}
+        if: ${{ (failure() && matrix.test.name == 'Lifecycle') }}
         run: chmod -R 777 test/e2e-v2/cases/lifecycle/data-generator/tmp
       - if: ${{ failure() }}
         run: |
