@@ -64,12 +64,3 @@ gomock_reflect*
 
 # profile result
 *.prof
-
-# Generated Go files by bpf2go
-pkg/fs/fadvismonitor/bpf/*_bpfel.go
-
-# eBPF compiled object files
-pkg/fs/fadvismonitor/bpf/*.o
-
-# Auto-generated vmlinux.h (from bpftool BTF)
-pkg/fs/fadvismonitor/bpf/vmlinux.h
