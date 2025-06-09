@@ -225,6 +225,9 @@ func (p *Progress) MarkStreamError(group, stream, msg string) {
 		p.StreamErrors[group] = make(map[string]string)
 	}
 	p.StreamErrors[group][stream] = msg
+	if p.CompletedStreams[group] == nil {
+		p.CompletedStreams[group] = make(map[string]bool)
+	}
 	p.CompletedStreams[group][stream] = false
 }
 
@@ -236,6 +239,9 @@ func (p *Progress) MarkMeasureError(group, measure, msg string) {
 		p.MeasureErrors[group] = make(map[string]string)
 	}
 	p.MeasureErrors[group][measure] = msg
+	if p.CompletedMeasures[group] == nil {
+		p.CompletedMeasures[group] = make(map[string]bool)
+	}
 	p.CompletedMeasures[group][measure] = false
 }
 
