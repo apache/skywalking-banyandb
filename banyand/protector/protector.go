@@ -37,8 +37,20 @@ import (
 
 var scope = observability.RootScope.SubScope("memory_protector")
 
+// Memory is an interface for monitoring and limiting memory usage to prevent OOM.
+type Memory interface {
+	AvailableBytes() int64
+	GetLimit() uint64
+	AcquireResource(ctx context.Context, size uint64) error
+	run.PreRunner
+	run.Config
+	run.Service
+}
+
+var _ Memory = (*memory)(nil)
+
 // Memory is a protector that stops the query services when the memory usage exceeds the limit.
-type Memory struct {
+type memory struct {
 	omr            observability.MetricsRegistry
 	limitGauge     meter.Gauge
 	usageGauge     meter.Gauge
@@ -47,16 +59,16 @@ type Memory struct {
 	blockedChan    chan struct{}
 	allowedPercent int
 	allowedBytes   run.Bytes
-	limit          uint64
+	limit          atomic.Uint64
 	usage          uint64
 }
 
 // NewMemory creates a new Memory protector.
-func NewMemory(omr observability.MetricsRegistry) *Memory {
+func NewMemory(omr observability.MetricsRegistry) Memory {
 	queueSize := cgroups.CPUs()
 	factory := omr.With(scope)
 
-	return &Memory{
+	return &memory{
 		omr:         omr,
 		blockedChan: make(chan struct{}, queueSize),
 		closed:      make(chan struct{}),
@@ -67,8 +79,8 @@ func NewMemory(omr observability.MetricsRegistry) *Memory {
 }
 
 // AcquireResource attempts to acquire a `size` amount of memory.
-func (m *Memory) AcquireResource(ctx context.Context, size uint64) error {
-	if m.limit == 0 {
+func (m *memory) AcquireResource(ctx context.Context, size uint64) error {
+	if m.limit.Load() == 0 {
 		return nil
 	}
 	start := time.Now()
@@ -82,7 +94,7 @@ func (m *Memory) AcquireResource(ctx context.Context, size uint64) error {
 
 	for {
 		currentUsage := atomic.LoadUint64(&m.usage)
-		if currentUsage+size <= m.limit {
+		if currentUsage+size <= m.limit.Load() {
 			return nil
 		}
 
@@ -92,35 +104,47 @@ func (m *Memory) AcquireResource(ctx context.Context, size uint64) error {
 		case <-ctx.Done():
 			return fmt.Errorf(
 				"context canceled: memory acquisition failed (currentUsage: %d, limit: %d, size: %d, blockedDuration: %v): %w",
-				currentUsage, m.limit, size, time.Since(start), ctx.Err(),
+				currentUsage, m.limit.Load(), size, time.Since(start), ctx.Err(),
 			)
 		}
 	}
 }
 
 // GetLimit returns the memory limit of the protector.
-func (m *Memory) GetLimit() uint64 {
-	return m.limit
+func (m *memory) GetLimit() uint64 {
+	return m.limit.Load()
+}
+
+// AvailableBytes returns the available memory (limit - usage).
+func (m *memory) AvailableBytes() int64 {
+	if m.limit.Load() == 0 {
+		return -1
+	}
+	usage := atomic.LoadUint64(&m.usage)
+	if usage >= m.limit.Load() {
+		return 0
+	}
+	return int64(m.limit.Load() - usage)
 }
 
 // Name returns the name of the protector.
-func (m *Memory) Name() string {
+func (m *memory) Name() string {
 	return "memory-protector"
 }
 
 // FlagSet returns the flag set for the protector.
-func (m *Memory) FlagSet() *run.FlagSet {
+func (m *memory) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet(m.Name())
 	flagS.IntVarP(&m.allowedPercent, "allowed-percent", "", 75,
-		"Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. "+
-			"Setting a large value may evict data from the OS page cache, causing high disk I/O.")
-	flagS.VarP(&m.allowedBytes, "allowed-bytes", "", "Allowed percentage of total memory usage. If usage exceeds this value, the query services will stop. "+
-		"This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache eviction.")
+		"Allowed percentage of total memory usage. If usage exceeds this value, the query services will stop. "+
+			"This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache eviction.")
+	flagS.VarP(&m.allowedBytes, "allowed-bytes", "", "Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. "+
+		"Setting a large value may evict data from the OS page cache, causing high disk I/O.")
 	return flagS
 }
 
 // Validate validates the protector's flags.
-func (m *Memory) Validate() error {
+func (m *memory) Validate() error {
 	if m.allowedPercent <= 0 || m.allowedPercent > 100 {
 		if m.allowedBytes <= 0 {
 			return errors.New("allowed-bytes must be greater than 0")
@@ -131,12 +155,12 @@ func (m *Memory) Validate() error {
 }
 
 // PreRun initializes the protector.
-func (m *Memory) PreRun(context.Context) error {
+func (m *memory) PreRun(context.Context) error {
 	m.l = logger.GetLogger(m.Name())
 	if m.allowedBytes > 0 {
-		m.limit = uint64(m.allowedBytes)
+		m.limit.Store(uint64(m.allowedBytes))
 		m.l.Info().
-			Str("limit", humanize.Bytes(m.limit)).
+			Str("limit", humanize.Bytes(m.limit.Load())).
 			Msg("memory protector enabled")
 	} else {
 		cgLimit, err := cgroups.MemoryLimit()
@@ -148,25 +172,25 @@ func (m *Memory) PreRun(context.Context) error {
 			m.l.Warn().Int64("cgroup_memory_limit", cgLimit).Msg("cgroup memory limit is invalid, disable memory protector")
 			return nil
 		}
-		m.limit = uint64(cgLimit) * uint64(m.allowedPercent) / 100
+		m.limit.Store(uint64(cgLimit) * uint64(m.allowedPercent) / 100)
 		m.l.Info().
-			Str("limit", humanize.Bytes(m.limit)).
+			Str("limit", humanize.Bytes(m.limit.Load())).
 			Str("cgroup_limit", humanize.Bytes(uint64(cgLimit))).
 			Int("percent", m.allowedPercent).
 			Msg("memory protector enabled")
 	}
-	m.limitGauge.Set(float64(m.limit))
+	m.limitGauge.Set(float64(m.limit.Load()))
 	return nil
 }
 
 // GracefulStop stops the protector.
-func (m *Memory) GracefulStop() {
+func (m *memory) GracefulStop() {
 	close(m.closed)
 }
 
 // Serve starts the protector.
-func (m *Memory) Serve() run.StopNotify {
-	if m.limit == 0 {
+func (m *memory) Serve() run.StopNotify {
+	if m.limit.Load() == 0 {
 		return m.closed
 	}
 	go func() {
@@ -195,8 +219,8 @@ func (m *Memory) Serve() run.StopNotify {
 
 				atomic.StoreUint64(&m.usage, usedBytes)
 
-				if usedBytes > m.limit {
-					m.l.Warn().Str("used", humanize.Bytes(usedBytes)).Str("limit", humanize.Bytes(m.limit)).Msg("memory usage exceeds limit")
+				if usedBytes > m.limit.Load() {
+					m.l.Warn().Str("used", humanize.Bytes(usedBytes)).Str("limit", humanize.Bytes(m.limit.Load())).Msg("memory usage exceeds limit")
 				}
 			}
 		}

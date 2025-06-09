@@ -38,7 +38,7 @@ var _ model.StreamQueryResult = (*tsResult)(nil)
 
 type tsResult struct {
 	sm       *stream
-	pm       *protector.Memory
+	pm       protector.Memory
 	l        *logger.Logger
 	ts       *blockScanner
 	tr       *index.RangeOpts

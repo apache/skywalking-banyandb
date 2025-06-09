@@ -35,7 +35,7 @@ import (
 
 // NodeSelector has Locate method to select a nodeId.
 type NodeSelector interface {
-	Locate(group, name string, shardID uint32) (string, error)
+	Locate(group, name string, shardID, replicaID uint32) (string, error)
 	fmt.Stringer
 }
 
@@ -79,7 +79,7 @@ func (m *MetricCollection) FlushMetrics() {
 			var err error
 			// only liaison node has a non-nil nodeSelector
 			if m.nodeSelector != nil {
-				nodeID, err = m.nodeSelector.Locate(iwr.GetRequest().GetMetadata().GetGroup(), iwr.GetRequest().GetMetadata().GetName(), uint32(0))
+				nodeID, err = m.nodeSelector.Locate(iwr.GetRequest().GetMetadata().GetGroup(), iwr.GetRequest().GetMetadata().GetName(), uint32(0), uint32(0))
 				if err != nil {
 					log.Error().Err(err).Msg("Failed to locate nodeID")
 				}
@@ -121,7 +121,6 @@ func (m *MetricCollection) buildIWR(metricName string, metric metricWithLabelVal
 	return &measurev1.InternalWriteRequest{
 		Request:      writeRequest,
 		ShardId:      uint32(0),
-		SeriesHash:   metric.seriesHash,
 		EntityValues: metric.labelValues,
 	}
 }

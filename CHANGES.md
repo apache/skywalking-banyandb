@@ -9,11 +9,17 @@ Release Notes.
 - Add sharding_key for TopNAggregation source measure
 - API: Update the data matching rule from the node selector to the stage name.
 - Add dynamical TLS load for the gRPC and HTTP server.
+- Implement multiple groups query in one request.
+- Replica: Replace Any with []byte Between Liaison and Data Nodes
+- Replica: Support configurable replica count on Group.
+- Replica: Move the TopN pre-calculation flow from the Data Node to the Liaison Node.
+- Add a wait and retry to write handlers to avoid the local metadata cache being loaded.
 
 ### Bug Fixes
 
 - Fix the deadlock issue when loading a closed segment.
 - Fix the issue that the etcd watcher gets the historical node registration events.
+- Fix the crash when collecting the metrics from a closed segment.
 
 ## 0.8.0
 
@@ -50,8 +56,6 @@ Release Notes.
 - UI: Add the `stages` to groups.
 - Add time range return value from stream local index filter.
 - Deduplicate the documents on building the series index.
-- Implement multiple groups query in one request.
-- Replica: Replace Any with []byte Between Liaison and Data Nodes
 
 ### Bug Fixes
 
@@ -74,7 +78,6 @@ Release Notes.
 - UI: Fix the Stream List.
 - Fix the oom issue when loading too many unnecessary parts into memory.
 - bydbctl: Fix the bug that the bydbctl can't parse the absolute time flag.
-- Fix the crash when collecting the metrics from a closed segment.
 
 ### Documentation
 

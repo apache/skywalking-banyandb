@@ -77,6 +77,7 @@ resource_opts:
 metadata:
   name: name1
   group: group1
+interval: 1m
 tag_families:
   - name: default
     tags:

@@ -35,11 +35,13 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -76,11 +78,11 @@ type NodeRegistries struct {
 
 type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
-	tlsReloader *pkgtls.Reloader
-	omr         observability.MetricsRegistry
-	measureSVC  *measureService
-	ser         *grpclib.Server
-	log         *logger.Logger
+	topNPipeline queue.Server
+	omr          observability.MetricsRegistry
+	*indexRuleBindingRegistryServer
+	metrics *metrics
+	log     *logger.Logger
 	*propertyServer
 	*topNAggregationRegistryServer
 	*groupRegistryServer
@@ -89,14 +91,16 @@ type server struct {
 	*measureRegistryServer
 	streamSVC *streamService
 	*streamRegistryServer
-	*indexRuleBindingRegistryServer
+	measureSVC *measureService
 	*propertyRegistryServer
-	metrics                  *metrics
-	keyFile                  string
-	certFile                 string
+	ser                      *grpclib.Server
+	tlsReloader              *pkgtls.Reloader
+	topNHandler              *topNHandler
 	accessLogRootPath        string
 	addr                     string
 	host                     string
+	certFile                 string
+	keyFile                  string
 	accessLogRecorders       []accessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	port                     uint32
@@ -105,7 +109,9 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry) Server {
+func NewServer(_ context.Context, pipeline, broadcaster queue.Client, topNPipeline queue.Server,
+	schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry, topNService measure.TopNService,
+) Server {
 	streamSVC := &streamService{
 		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nr.StreamNodeRegistry),
 		pipeline:         pipeline,
@@ -115,7 +121,9 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 		discoveryService: newDiscoveryService(schema.KindMeasure, schemaRegistry, nr.MeasureNodeRegistry),
 		pipeline:         pipeline,
 		broadcaster:      broadcaster,
+		topNService:      topNService,
 	}
+
 	s := &server{
 		omr:        omr,
 		streamSVC:  streamSVC,
@@ -146,6 +154,7 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, schemaRegi
 		propertyRegistryServer: &propertyRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
+		topNPipeline: topNPipeline,
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
 	return s
@@ -195,6 +204,18 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}
 
+	if s.topNPipeline != nil {
+		topNHandler := &topNHandler{
+			nodeRegistry: s.measureSVC.nodeRegistry,
+			pipeline:     s.pipeline,
+			l:            s.log.Named("topNHandler"),
+		}
+		if err := s.topNPipeline.Subscribe(data.TopicMeasureWrite, topNHandler); err != nil {
+			s.log.Error().Err(err).Msg("Failed to subscribe to topN pipeline")
+			return err
+		}
+		s.topNHandler = topNHandler
+	}
 	return nil
 }
 
@@ -223,6 +244,10 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "stream write timeout")
 	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "measure write timeout")
+	fs.DurationVar(&s.measureSVC.maxWaitDuration, "measure-metadata-cache-wait-duration", 0,
+		"the maximum duration to wait for metadata cache to load (for testing purposes)")
+	fs.DurationVar(&s.streamSVC.maxWaitDuration, "stream-metadata-cache-wait-duration", 0,
+		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	return fs
 }
 

@@ -441,6 +441,7 @@ IntervalRule is a structured duration
 | ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | Specifies the time-to-live for data in this stage before moving to the next. This is also a required field using the IntervalRule structure. |
 | node_selector | [string](#string) |  | Node selector specifying target nodes for this stage. Optional; if provided, it must be a non-empty string. |
 | close | [bool](#bool) |  | Indicates whether segments that are no longer live should be closed. |
+| replicas | [uint32](#uint32) |  | replicas is the number of replicas for this stage. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
 
 
 
@@ -479,6 +480,7 @@ Metadata is for multi-tenant, multi-model use
 | ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
 | stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
 | default_stages | [string](#string) | repeated | default_stages is the name of the default stage |
+| replicas | [uint32](#uint32) |  | replicas is the number of replicas. This is used to ensure high availability and fault tolerance. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
 
 
 
@@ -3158,7 +3160,6 @@ DataPointValue is the data point for writing. It only contains values.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | shard_id | [uint32](#uint32) |  |  |
-| series_hash | [bytes](#bytes) |  |  |
 | entity_values | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
 | request | [WriteRequest](#banyandb-measure-v1-WriteRequest) |  |  |
 
@@ -3602,7 +3603,6 @@ QueryResponse is the response for a query to the Query module.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | shard_id | [uint32](#uint32) |  |  |
-| series_hash | [bytes](#bytes) |  |  |
 | entity_values | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
 | request | [WriteRequest](#banyandb-stream-v1-WriteRequest) |  |  |
 

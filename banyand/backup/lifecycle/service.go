@@ -195,7 +195,7 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group, streamSVC stream.Service,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, selector, client, err := parseGroup(ctx, g, labels, nodes, l.l, l.metadata)
+	shardNum, replicas, selector, client, err := parseGroup(ctx, g, labels, nodes, l.l, l.metadata)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -210,13 +210,13 @@ func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.G
 
 	tr := streamSVC.GetRemovalSegmentsTimeRange(g.Metadata.Name)
 
-	l.processStreams(ctx, g, ss, streamSVC, tr, shardNum, selector, client, progress)
+	l.processStreams(ctx, g, ss, streamSVC, tr, shardNum, replicas, selector, client, progress)
 
 	l.deleteExpiredStreamSegments(ctx, g, tr, progress)
 }
 
 func (l *lifecycleService) processStreams(ctx context.Context, g *commonv1.Group, streams []*databasev1.Stream,
-	streamSVC stream.Service, tr *timestamp.TimeRange, shardNum uint32, selector node.Selector, client queue.Client, progress *Progress,
+	streamSVC stream.Service, tr *timestamp.TimeRange, shardNum uint32, replicas uint32, selector node.Selector, client queue.Client, progress *Progress,
 ) {
 	for _, s := range streams {
 		if progress.IsStreamCompleted(g.Metadata.Name, s.Metadata.Name) {
@@ -224,7 +224,7 @@ func (l *lifecycleService) processStreams(ctx context.Context, g *commonv1.Group
 			continue
 		}
 
-		if sum, err := l.processSingleStream(ctx, s, streamSVC, tr, shardNum, selector, client); err == nil {
+		if sum, err := l.processSingleStream(ctx, s, streamSVC, tr, shardNum, replicas, selector, client); err == nil {
 			l.l.Info().Msgf("migrated %d elements in stream %s", sum, s.Metadata.Name)
 		}
 
@@ -234,7 +234,7 @@ func (l *lifecycleService) processStreams(ctx context.Context, g *commonv1.Group
 }
 
 func (l *lifecycleService) processSingleStream(ctx context.Context, s *databasev1.Stream,
-	streamSVC stream.Service, tr *timestamp.TimeRange, shardNum uint32, selector node.Selector, client queue.Client,
+	streamSVC stream.Service, tr *timestamp.TimeRange, shardNum uint32, replicas uint32, selector node.Selector, client queue.Client,
 ) (int, error) {
 	q, err := streamSVC.Stream(s.Metadata)
 	if err != nil {
@@ -268,7 +268,7 @@ func (l *lifecycleService) processSingleStream(ctx context.Context, s *databasev
 		l.l.Error().Err(err).Msgf("failed to query stream %s", s.Metadata.Name)
 		return 0, err
 	}
-	return migrateStream(ctx, s, result, shardNum, selector, client, l.l), nil
+	return migrateStream(ctx, s, result, shardNum, replicas, selector, client, l.l), nil
 }
 
 func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *commonv1.Group, tr *timestamp.TimeRange, progress *Progress) {
@@ -300,7 +300,7 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureSVC measure.Service,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, selector, client, err := parseGroup(ctx, g, labels, nodes, l.l, l.metadata)
+	shardNum, replicas, selector, client, err := parseGroup(ctx, g, labels, nodes, l.l, l.metadata)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -315,13 +315,13 @@ func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.
 
 	tr := measureSVC.GetRemovalSegmentsTimeRange(g.Metadata.Name)
 
-	l.processMeasures(ctx, g, mm, measureSVC, tr, shardNum, selector, client, progress)
+	l.processMeasures(ctx, g, mm, measureSVC, tr, shardNum, replicas, selector, client, progress)
 
 	l.deleteExpiredMeasureSegments(ctx, g, tr, progress)
 }
 
 func (l *lifecycleService) processMeasures(ctx context.Context, g *commonv1.Group, measures []*databasev1.Measure,
-	measureSVC measure.Service, tr *timestamp.TimeRange, shardNum uint32, selector node.Selector, client queue.Client, progress *Progress,
+	measureSVC measure.Service, tr *timestamp.TimeRange, shardNum uint32, replicas uint32, selector node.Selector, client queue.Client, progress *Progress,
 ) {
 	for _, m := range measures {
 		if progress.IsMeasureCompleted(g.Metadata.Name, m.Metadata.Name) {
@@ -329,7 +329,7 @@ func (l *lifecycleService) processMeasures(ctx context.Context, g *commonv1.Grou
 			continue
 		}
 
-		if sum, err := l.processSingleMeasure(ctx, m, measureSVC, tr, shardNum, selector, client); err == nil {
+		if sum, err := l.processSingleMeasure(ctx, m, measureSVC, tr, shardNum, replicas, selector, client); err == nil {
 			l.l.Info().Msgf("migrated %d elements in measure %s", sum, m.Metadata.Name)
 		}
 
@@ -339,7 +339,7 @@ func (l *lifecycleService) processMeasures(ctx context.Context, g *commonv1.Grou
 }
 
 func (l *lifecycleService) processSingleMeasure(ctx context.Context, m *databasev1.Measure,
-	measureSVC measure.Service, tr *timestamp.TimeRange, shardNum uint32, selector node.Selector, client queue.Client,
+	measureSVC measure.Service, tr *timestamp.TimeRange, shardNum uint32, replicas uint32, selector node.Selector, client queue.Client,
 ) (int, error) {
 	q, err := measureSVC.Measure(m.Metadata)
 	if err != nil {
@@ -378,7 +378,7 @@ func (l *lifecycleService) processSingleMeasure(ctx context.Context, m *database
 		return 0, err
 	}
 
-	return migrateMeasure(ctx, m, result, shardNum, selector, client, l.l), nil
+	return migrateMeasure(ctx, m, result, shardNum, replicas, selector, client, l.l), nil
 }
 
 func (l *lifecycleService) deleteExpiredMeasureSegments(ctx context.Context, g *commonv1.Group, tr *timestamp.TimeRange, progress *Progress) {

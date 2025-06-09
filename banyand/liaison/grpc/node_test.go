@@ -55,7 +55,7 @@ func TestClusterNodeRegistry(t *testing.T) {
 			},
 		},
 	})
-	nodeID, err := cnr.Locate("metrics", "instance_traffic", 0)
+	nodeID, err := cnr.Locate("metrics", "instance_traffic", 0, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, fakeNodeID, nodeID)
 }
