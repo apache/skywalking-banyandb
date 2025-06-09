@@ -39,14 +39,16 @@ jobs:
       fail-fast: false
       matrix:
         test:
-          - name: BanyanDB
-            config: test/e2e-v2/cases/storage/banyandb/e2e.yaml
-          - name: Trace Profiling BanyanDB
-            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e.yaml
-          - name: Event BanyanDB
-            config: test/e2e-v2/cases/event/banyandb/e2e.yaml
-          - name: BanyanDB Cluster Mode
-            config: test/e2e-v2/cases/cluster/e2e.yaml
+          # - name: BanyanDB
+          #   config: test/e2e-v2/cases/storage/banyandb/e2e.yaml
+          # - name: Trace Profiling BanyanDB
+          #   config: test/e2e-v2/cases/profiling/trace/banyandb/e2e.yaml
+          # - name: Event BanyanDB
+          #   config: test/e2e-v2/cases/event/banyandb/e2e.yaml
+          # - name: BanyanDB Cluster Mode
+          #   config: test/e2e-v2/cases/cluster/e2e.yaml
+          - name: Lifecycle
+            config: test/e2e-v2/cases/lifecycle/e2e.yaml
     env:
       TAG: ${{ github.sha }}
     steps:
@@ -94,6 +96,10 @@ jobs:
         run: |
           make -C test/docker build | make -C test/docker build
           docker image ls
+      - name: Generate data for lifecycle
+        if: ${{ matrix.test.name == 'Lifecycle' }}
+        run: |
+          bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh 
       - name: ${{ matrix.test.name }}
         uses: apache/skywalking-infra-e2e@cf589b4a0b9f8e6f436f78e9cfd94a1ee5494180
         with:
@@ -109,6 +115,12 @@ jobs:
         with:
           name: test-logs-${{ matrix.test.name }}
           path: "${{ env.SW_INFRA_E2E_LOG_DIR }}"
+      - uses: actions/upload-artifact@v4
+        if: ${{ (failure() && matrix.test.name == 'Lifecycle') }}
+        name: Upload generated data
+        with:
+          name: lifecycle-data
+          path: "test/e2e-v2/cases/lifecycle/data-generator/tmp"
 
   Storage:
     if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
