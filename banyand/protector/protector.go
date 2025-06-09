@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/metrics"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -279,21 +280,31 @@ func (m *memory) ShouldCache(_ string) bool {
 }
 
 // Global memory protector instance used by components that need threshold decisions.
-var globalMemoryProtector Memory
+var (
+	globalMemoryProtector atomic.Pointer[Memory]
+	globalMemoryOnce      sync.Once
+)
 
 // GetMemoryProtector returns the global memory protector instance.
 // If no instance is set, it creates a default one for threshold decisions.
 func GetMemoryProtector() Memory {
-	if globalMemoryProtector == nil {
-		// Create a default instance for threshold decisions
-		globalMemoryProtector = &memory{
-			allowedPercent: 75, // Default 75% threshold
-		}
+	// Fast path: atomic load
+	if mp := globalMemoryProtector.Load(); mp != nil {
+		return *mp
 	}
-	return globalMemoryProtector
+
+	// Slow path: initialize once
+	globalMemoryOnce.Do(func() {
+		mp := Memory(&memory{
+			allowedPercent: 75, // Default 75% threshold
+		})
+		globalMemoryProtector.Store(&mp)
+	})
+
+	return *globalMemoryProtector.Load()
 }
 
 // SetMemoryProtector sets the global memory protector instance.
 func SetMemoryProtector(mp Memory) {
-	globalMemoryProtector = mp
+	globalMemoryProtector.Store(&mp)
 }
