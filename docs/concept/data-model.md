@@ -264,7 +264,7 @@ tags:
 type: TYPE_INVERTED
 ```
 
-IndexRule supports selecting two distinct kinds of index structures. The `INVERTED` index is the primary option when users set up an index rule. It's suitable for most tag indexing due to a better memory usage ratio and query performance.
+IndexRule supports two distinct kinds of index structures. The `INVERTED` index is suitable for measure tag indexing due to better query performance. The `SKIPPING` index is optimized for the majority of stream tags, which prioritizes efficient space utilization.
 
 ```yaml
 metadata:
