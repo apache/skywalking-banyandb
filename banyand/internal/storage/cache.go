@@ -25,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // Cache encapsulates the cache operations.
@@ -37,6 +38,22 @@ type Cache interface {
 	Misses() uint64
 	Len() uint64
 	Size() uint64
+}
+
+// CacheConfig holds configuration parameters for the cache.
+type CacheConfig struct {
+	MaxCacheSize    run.Bytes
+	CleanupInterval time.Duration
+	IdleTimeout     time.Duration
+}
+
+// DefaultCacheConfig returns the default cache configuration.
+func DefaultCacheConfig() CacheConfig {
+	return CacheConfig{
+		MaxCacheSize:    run.Bytes(100 * 1024 * 1024),
+		CleanupInterval: 30 * time.Second,
+		IdleTimeout:     2 * time.Minute,
+	}
 }
 
 type entry struct {
@@ -112,8 +129,13 @@ type serviceCache struct {
 	idleTimeout     time.Duration
 }
 
-// NewServiceCache creates a cache for service.
+// NewServiceCache creates a cache for service with default configuration.
 func NewServiceCache() Cache {
+	return NewServiceCacheWithConfig(DefaultCacheConfig())
+}
+
+// NewServiceCacheWithConfig creates a cache for service with custom configuration.
+func NewServiceCacheWithConfig(config CacheConfig) Cache {
 	h := &entryIndexHeap{}
 	heap.Init(h)
 	sc := &serviceCache{
@@ -122,9 +144,9 @@ func NewServiceCache() Cache {
 		entryIndex:      make(map[EntryKey]*entryIndex),
 		stopCh:          make(chan struct{}),
 		wg:              sync.WaitGroup{},
-		maxCacheSize:    100 * 1024 * 1024,
-		cleanupInterval: 30 * time.Second,
-		idleTimeout:     2 * time.Minute,
+		maxCacheSize:    uint64(config.MaxCacheSize),
+		cleanupInterval: config.CleanupInterval,
+		idleTimeout:     config.IdleTimeout,
 	}
 	return sc
 }
