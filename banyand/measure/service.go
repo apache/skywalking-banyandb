@@ -72,6 +72,7 @@ type service struct {
 	schemaRepo          *schemaRepo
 	l                   *logger.Logger
 	c                   storage.Cache
+	cm                  *cacheMetrics
 	root                string
 	snapshotDir         string
 	dataPath            string
@@ -165,6 +166,10 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.c = storage.NewServiceCacheWithConfig(s.cc)
 	node := val.(common.Node)
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
+
+	s.cm = newCacheMetrics(s.omr)
+	observability.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)
+
 	if s.pipeline == nil {
 		return nil
 	}
@@ -202,11 +207,33 @@ func (s *service) Serve() run.StopNotify {
 }
 
 func (s *service) GracefulStop() {
+	observability.MetricsCollector.Unregister("measure_cache")
 	s.schemaRepo.Close()
 	s.c.Close()
 	if s.localPipeline != nil {
 		s.localPipeline.GracefulStop()
 	}
+}
+
+func (s *service) collectCacheMetrics() {
+	if s.cm == nil || s.c == nil {
+		return
+	}
+
+	requests := s.c.Requests()
+	misses := s.c.Misses()
+	length := s.c.Entries()
+	size := s.c.Size()
+	var hitRatio float64
+	if requests > 0 {
+		hitRatio = float64(requests-misses) / float64(requests)
+	}
+
+	s.cm.requests.Set(float64(requests))
+	s.cm.misses.Set(float64(misses))
+	s.cm.hitRatio.Set(hitRatio)
+	s.cm.entries.Set(float64(length))
+	s.cm.size.Set(float64(size))
 }
 
 // NewService returns a new service.

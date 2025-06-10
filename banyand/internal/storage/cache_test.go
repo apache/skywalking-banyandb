@@ -41,7 +41,7 @@ func TestCachePutAndGet(t *testing.T) {
 	value := "test-value"
 
 	serviceCache.Put(key, value)
-	assert.Equal(t, uint64(1), serviceCache.Len())
+	assert.Equal(t, uint64(1), serviceCache.Entries())
 	result := serviceCache.Get(key)
 	assert.Equal(t, value, result)
 	assert.Equal(t, uint64(1), serviceCache.Requests())
@@ -82,7 +82,7 @@ func TestCacheEvict(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, uint64(1), serviceCache.Len())
+	assert.Equal(t, uint64(1), serviceCache.Entries())
 	result := serviceCache.Get(expectedKey)
 	assert.Equal(t, expectedValue, result)
 }
@@ -104,9 +104,9 @@ func TestCacheClean(t *testing.T) {
 	value := "test-value"
 
 	serviceCache.Put(key, value)
-	assert.Equal(t, uint64(1), serviceCache.Len())
+	assert.Equal(t, uint64(1), serviceCache.Entries())
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, uint64(0), serviceCache.Len())
+	assert.Equal(t, uint64(0), serviceCache.Entries())
 	assert.Nil(t, serviceCache.Get(key))
 }
 
@@ -124,7 +124,7 @@ func TestCacheClose(t *testing.T) {
 	value := "test-value"
 
 	serviceCache.Put(key, value)
-	assert.Equal(t, uint64(1), serviceCache.Len())
+	assert.Equal(t, uint64(1), serviceCache.Entries())
 	serviceCache.Close()
 	assert.Nil(t, serviceCache.entry)
 	assert.Nil(t, serviceCache.entryIndex)
@@ -178,7 +178,7 @@ func TestCacheConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 
-	assert.Equal(t, uint64(numGoroutines*numOperations), serviceCache.Len())
+	assert.Equal(t, uint64(numGoroutines*numOperations), serviceCache.Entries())
 	assert.Equal(t, uint64(numGoroutines*numOperations), serviceCache.Requests())
 	result := serviceCache.Get(expectedKey)
 	assert.Equal(t, expectedValue, result)

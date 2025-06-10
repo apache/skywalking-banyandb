@@ -36,7 +36,7 @@ type Cache interface {
 	Close()
 	Requests() uint64
 	Misses() uint64
-	Len() uint64
+	Entries() uint64
 	Size() uint64
 }
 
@@ -244,7 +244,7 @@ func (sc *serviceCache) Misses() uint64 {
 	return atomic.LoadUint64(&sc.misses)
 }
 
-func (sc *serviceCache) Len() uint64 {
+func (sc *serviceCache) Entries() uint64 {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 	return sc.len()
