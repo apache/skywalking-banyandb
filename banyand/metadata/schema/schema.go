@@ -181,6 +181,8 @@ type Measure interface {
 }
 
 // Group allows CRUD groups which is namespaces of resources.
+//
+//go:generate mockgen -destination=group_mock.go -package=schema github.com/apache/skywalking-banyandb/banyand/metadata/schema Group
 type Group interface {
 	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
 	ListGroup(ctx context.Context) ([]*commonv1.Group, error)
