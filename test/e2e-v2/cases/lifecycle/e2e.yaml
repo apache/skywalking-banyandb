@@ -45,6 +45,7 @@ verify:
       expected: ./expected/dependency-instance.yml
     - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql dependency endpoint --service-name=mock_a_service --endpoint-name=/dubbox-case/case/dubbox-rest/404-test --start="-96h" --end="-48h" --cold=true --step=DAY
       expected: ./expected/dependency-endpoint.yml
+    # TODO:// enabled below when file based sync is supported
     # trace segment list
     # - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql trace ls --tags http.method=get --start="-96h" --end="-48h" --cold=true
     #   expected: ./expected/traces-list.yml
