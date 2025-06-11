@@ -31,6 +31,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -56,6 +57,7 @@ type Service interface {
 	run.Config
 	run.Service
 	Query
+	TopNService
 }
 
 var _ Service = (*service)(nil)
@@ -68,7 +70,7 @@ type service struct {
 	metricPipeline      queue.Server
 	omr                 observability.MetricsRegistry
 	metadata            metadata.Repo
-	pm                  *protector.Memory
+	pm                  protector.Memory
 	schemaRepo          *schemaRepo
 	l                   *logger.Logger
 	c                   storage.Cache
@@ -215,6 +217,14 @@ func (s *service) GracefulStop() {
 	}
 }
 
+func (s *service) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
+	if s.schemaRepo == nil {
+		s.l.Error().Msg("schema repository is not initialized")
+		return
+	}
+	s.schemaRepo.InFlow(stm, seriesID, shardID, entityValues, dp)
+}
+
 func (s *service) collectCacheMetrics() {
 	if s.cm == nil || s.c == nil {
 		return
@@ -237,7 +247,7 @@ func (s *service) collectCacheMetrics() {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server, omr observability.MetricsRegistry, pm *protector.Memory) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
 	return &service{
 		metadata:       metadata,
 		pipeline:       pipeline,
@@ -248,7 +258,7 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline qu
 }
 
 // NewReadonlyService returns a new readonly service.
-func NewReadonlyService(metadata metadata.Repo, omr observability.MetricsRegistry, pm *protector.Memory) (Service, error) {
+func NewReadonlyService(metadata metadata.Repo, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
 	return &service{
 		metadata: metadata,
 		omr:      omr,

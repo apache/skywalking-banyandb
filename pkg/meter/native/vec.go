@@ -33,7 +33,6 @@ const (
 
 type metricWithLabelValues struct {
 	labelValues []*modelv1.TagValue
-	seriesHash  []byte
 	metricValue float64
 }
 
@@ -65,7 +64,6 @@ func (n *metricVec) Inc(delta float64, labelValues ...string) {
 	if !exist {
 		v = metricWithLabelValues{
 			labelValues: tagValues,
-			seriesHash:  hash,
 		}
 	}
 	v.metricValue += delta

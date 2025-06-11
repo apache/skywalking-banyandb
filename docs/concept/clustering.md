@@ -111,7 +111,7 @@ A measure named `service_cpm` belonging to `measure-minute` with an entity of `s
 
 Similarly, a stream named `system_log` belonging to `stream-log` with an entity combination of `service_id` "frontend" and `instance_id` "10.0.0.1" will be written to a specific shard based on the hashed value of the sharding key `system_log:frontend|10.0.0.1`.
 
-> Note: If there are ":" or "|" in the entity, they will be prefixed with a backslash "\".
+> Note: If there are ":" or "|" in the entity, they will be prefixed with a backslash "\\".
 
 Liaison Nodes play a crucial role in this process by retrieving the `Group` list from Meta Nodes. This information is essential for efficient data routing, as it allows Liaison Nodes to direct data to the appropriate Data Nodes based on the sharding key.
 

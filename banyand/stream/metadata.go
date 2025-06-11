@@ -249,7 +249,7 @@ type supplier struct {
 	pipeline   queue.Queue
 	omr        observability.MetricsRegistry
 	l          *logger.Logger
-	pm         *protector.Memory
+	pm         protector.Memory
 	schemaRepo *schemaRepo
 	nodeLabels map[string]string
 	path       string

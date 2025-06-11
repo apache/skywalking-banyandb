@@ -43,7 +43,6 @@ func (g *Gauge) Set(value float64, labelValues ...string) {
 	g.metrics[key] = metricWithLabelValues{
 		metricValue: value,
 		labelValues: tagValues,
-		seriesHash:  hash,
 	}
 }
 

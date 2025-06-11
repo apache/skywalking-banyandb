@@ -376,6 +376,7 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	}
 	var hit int
 	var totalBlockBytes uint64
+	quota := m.pm.AvailableBytes()
 	for tstIter.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {
@@ -390,6 +391,9 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		bc.init(p.p, p.curBlock, qo)
 		result.data = append(result.data, bc)
 		totalBlockBytes += bc.bm.uncompressedSizeBytes
+		if quota >= 0 && totalBlockBytes > uint64(quota) {
+			return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+		}
 	}
 	if tstIter.Error() != nil {
 		return fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())

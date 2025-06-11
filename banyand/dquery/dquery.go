@@ -29,6 +29,8 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -54,6 +56,14 @@ var (
 	measureScope                      = distributedQueryScope.SubScope("measure")
 )
 
+// Service is the interface for distributed query service.
+type Service interface {
+	run.Unit
+	measure.TopNService
+}
+
+var _ Service = (*queryService)(nil)
+
 type queryService struct {
 	metaService          metadata.Repo
 	pipeline             queue.Server
@@ -69,8 +79,8 @@ type queryService struct {
 }
 
 // NewService return a new query service.
-func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bus.Broadcaster, omr observability.MetricsRegistry,
-) (run.Unit, error) {
+func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bus.Broadcaster, qClient queue.Client, omr observability.MetricsRegistry,
+) (Service, error) {
 	svc := &queryService{
 		metaService: metaService,
 		closer:      run.NewCloser(1),
@@ -83,6 +93,7 @@ func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bu
 	}
 	svc.mqp = &measureQueryProcessor{
 		queryService: svc,
+		qClient:      qClient,
 		broadcaster:  broadcaster,
 	}
 	svc.tqp = &topNQueryProcessor{
@@ -122,7 +133,7 @@ func (q *queryService) PreRun(ctx context.Context) error {
 	q.sqp.streamService = stream.NewPortableRepository(q.metaService, q.log,
 		schema.NewMetrics(q.omr.With(streamScope)))
 	q.mqp.measureService = measure.NewPortableRepository(q.metaService, q.log,
-		schema.NewMetrics(q.omr.With(measureScope)))
+		schema.NewMetrics(q.omr.With(measureScope)), q.mqp.qClient)
 	q.tqp.measureService = q.mqp.measureService
 	return multierr.Combine(
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
@@ -140,6 +151,14 @@ func (q *queryService) GracefulStop() {
 
 func (q *queryService) Serve() run.StopNotify {
 	return q.closer.CloseNotify()
+}
+
+func (q *queryService) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
+	if q.mqp == nil || q.mqp.measureService == nil {
+		q.log.Error().Msg("measure query processor or measure service is not initialized")
+		return
+	}
+	q.mqp.measureService.InFlow(stm, seriesID, shardID, entityValues, dp)
 }
 
 func (q *queryService) parseNodeSelector(stages []string, resource *commonv1.ResourceOpts) ([]string, bool) {
