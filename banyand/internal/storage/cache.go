@@ -148,11 +148,11 @@ func NewServiceCacheWithConfig(config CacheConfig) Cache {
 		cleanupInterval: config.CleanupInterval,
 		idleTimeout:     config.IdleTimeout,
 	}
+	sc.wg.Add(1)
 	return sc
 }
 
 func (sc *serviceCache) StartCleaner() {
-	sc.wg.Add(1)
 	go func() {
 		defer sc.wg.Done()
 		sc.clean()
