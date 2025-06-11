@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: '2.1'
-
 services:
   etcd:
     extends:
@@ -30,9 +28,7 @@ services:
     hostname: data-hot1
     command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot
     volumes:
-      - /tmp/measure/data-hot1:/tmp/measure
-      - /tmp/stream/data-hot1:/tmp/stream
-      - /tmp/property/data-hot1:/tmp/property
+      - ./data-generator/tmp/metadata:/tmp/measure/data/metadata
     networks:
       - e2e
 
@@ -43,35 +39,9 @@ services:
     hostname: data-hot2  
     command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot
     volumes:
-      - /tmp/measure/data-hot2:/tmp/measure
-      - /tmp/stream/data-hot2:/tmp/stream
-      - /tmp/property/data-hot2:/tmp/property
-    networks:
-      - e2e
-
-  data-warm1:
-    extends:
-      file: ../../script/docker-compose/base-compose.yml
-      service: data
-    hostname: data-warm1
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=warm
-    volumes:
-      - /tmp/measure/data-warm1:/tmp/measure
-      - /tmp/stream/data-warm1:/tmp/stream
-      - /tmp/property/data-warm1:/tmp/property
-    networks:
-      - e2e
-
-  data-warm2:
-    extends:
-      file: ../../script/docker-compose/base-compose.yml
-      service: data
-    hostname: data-warm2
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=warm
-    volumes:
-      - /tmp/measure/data-warm2:/tmp/measure
-      - /tmp/stream/data-warm2:/tmp/stream
-      - /tmp/property/data-warm2:/tmp/property
+      - ./data-generator/tmp/measure-data/measure:/tmp/measure
+      - ./data-generator/tmp/stream-data/stream:/tmp/stream
+      - ./data-generator/tmp/property/data:/tmp/property
     networks:
       - e2e
 
@@ -103,48 +73,44 @@ services:
     environment:
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_TARGETS: "liaison:17912"
-      SW_STORAGE_BANYANDB_GM_MINUTE_ENABLE_WARM_STAGE: true
-      SW_STORAGE_BANYANDB_GM_MINUTE_ENABLE_COLD_STAGE: true
+      SW_STORAGE_BANYANDB_METRICS_MINUTE_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_METRICS_MINUTE_ENABLE_COLD_STAGE: "true"
+      SW_STORAGE_BANYANDB_METRICS_HOUR_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_METRICS_HOUR_ENABLE_COLD_STAGE: "true"
+      SW_STORAGE_BANYANDB_METRICS_DAY_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_METRICS_DAY_ENABLE_COLD_STAGE: "true"
+      SW_STORAGE_BANYANDB_RECORDS_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_RECORDS_ENABLE_COLD_STAGE: "true"
+      SW_STORAGE_BANYANDB_TRACE_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_TRACE_ENABLE_COLD_STAGE: "true"
+      SW_STORAGE_BANYANDB_TRACE_TTL_DAYS: "1"
+      SW_STORAGE_BANYANDB_RECORDS_TTL_DAYS: "1"
+      SW_STORAGE_BANYANDB_METRICS_MINUTE_TTL_DAYS: "1"
+      SW_STORAGE_BANYANDB_METRICS_HOUR_TTL_DAYS: "1"
+      SW_STORAGE_BANYANDB_METRICS_HOUR_SI_DAYS: "1"
+      SW_STORAGE_BANYANDB_METRICS_DAY_TTL_DAYS: "1"
+      SW_STORAGE_BANYANDB_METRICS_DAY_SI_DAYS: "1"
     ports:
       - 12800
+    networks:
+      - e2e
     depends_on:
       liaison:
         condition: service_healthy
 
-  agent:
-    extends:
-      file: ../../script/docker-compose/base-compose.yml
-      service: agent
-    networks:
-      - e2e
-
-  provider:
-    extends:
-      file: ../../script/docker-compose/base-compose.yml
-      service: provider
-    ports:
-      - 9090
-    networks:
-      - e2e
+  data-hot1-lifecycle-agent:
+    image: "apache/skywalking-banyandb:${TAG}-testing"
+    network_mode: service:data-hot2
+    volumes_from:
+      - data-hot2
+    entrypoint: ["/lifecycle", "--node-labels", "type=hot", "--etcd-endpoints=http://etcd:2379"]
+    volumes:
+      - /tmp/lifecycle:/tmp
     depends_on:
+      data-hot2:
+        condition: service_healthy
       oap:
         condition: service_healthy
-      agent:
-        condition: service_completed_successfully
-
-  consumer:
-    extends:
-      file: ../../script/docker-compose/base-compose.yml
-      service: consumer
-    ports:
-      - 9092
-    depends_on:
-      oap:
-        condition: service_healthy
-      provider:
-        condition: service_healthy
-      agent:
-        condition: service_completed_successfully
 
 networks:
   e2e:
