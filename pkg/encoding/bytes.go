@@ -49,7 +49,7 @@ func EncodeBytesBlock(dst []byte, a [][]byte) []byte {
 		aLens = append(aLens, uint64(len(s)))
 	}
 	u64s.L = aLens
-	dst = encodeUint64Block(dst, u64s.L)
+	dst = EncodeUint64Block(dst, u64s.L)
 	ReleaseUint64List(u64s)
 
 	bb := bbPool.Generate()
@@ -82,7 +82,7 @@ func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64
 
 	var tail []byte
 	var err error
-	u64List.L, tail, err = decodeUint64Block(u64List.L[:0], src, itemsCount)
+	u64List.L, tail, err = DecodeUint64Block(u64List.L[:0], src, itemsCount)
 	if err != nil {
 		return dst, fmt.Errorf("cannot decode string lengths: %w", err)
 	}
@@ -114,7 +114,8 @@ func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64
 	return dst, nil
 }
 
-func encodeUint64Block(dst []byte, a []uint64) []byte {
+// EncodeUint64Block encodes a block of uint64 values into dst.
+func EncodeUint64Block(dst []byte, a []uint64) []byte {
 	bb := bbPool.Generate()
 	bb.Buf = encodeUint64List(bb.Buf[:0], a)
 	dst = compressBlock(dst, bb.Buf)
@@ -122,7 +123,8 @@ func encodeUint64Block(dst []byte, a []uint64) []byte {
 	return dst
 }
 
-func decodeUint64Block(dst []uint64, src []byte, itemsCount uint64) ([]uint64, []byte, error) {
+// DecodeUint64Block decodes a block of uint64 values from src.
+func DecodeUint64Block(dst []uint64, src []byte, itemsCount uint64) ([]uint64, []byte, error) {
 	bb := bbPool.Generate()
 	defer bbPool.Release(bb)
 

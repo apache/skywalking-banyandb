@@ -250,13 +250,14 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 }
 
 func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
-	metaBuffer, dataBuffer := &bytes.Buffer{}, &bytes.Buffer{}
+	metaBuffer, dataBuffer, filterBuffer := &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
 	ww := &writers{
-		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer) {
-			return metaBuffer, dataBuffer
+		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer, fs.Writer) {
+			return metaBuffer, dataBuffer, filterBuffer
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
+		tagFamilyFilterWriters:   make(map[string]*writer),
 	}
 	b := &conventionalBlock
 	tagProjection := toTagProjection(*b)
@@ -286,7 +287,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, 1)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
-		cmp.AllowUnexported(tagFamily{}, tag{}),
+		cmp.AllowUnexported(tagFamily{}, tag{}, tagFilter{}),
 	); diff != "" {
 		t.Errorf("block.unmarshalTagFamily() (-got +want):\n%s", diff)
 	}
@@ -306,7 +307,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled2.unmarshalTagFamilyFromSeqReaders(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), metaReader, valueReader)
 
 	if diff := cmp.Diff(unmarshaled2.tagFamilies[0], b.tagFamilies[0],
-		cmp.AllowUnexported(tagFamily{}, tag{}),
+		cmp.AllowUnexported(tagFamily{}, tag{}, tagFilter{}),
 	); diff != "" {
 		t.Errorf("block.unmarshalTagFamilyFromSeqReaders() (-got +want):\n%s", diff)
 	}
@@ -317,11 +318,12 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	timestampWriter := &writer{}
 	timestampWriter.init(timestampBuffer)
 	ww := &writers{
-		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer) {
-			return &bytes.Buffer{}, &bytes.Buffer{}
+		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer, fs.Writer) {
+			return &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
+		tagFamilyFilterWriters:   make(map[string]*writer),
 		timestampsWriter:         *timestampWriter,
 	}
 	p := &part{

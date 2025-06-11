@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package inverted
+package analyzer
 
 import (
 	"testing"
@@ -90,7 +90,7 @@ func TestAlphanumericFilter(t *testing.T) {
 }
 
 func TestNewURLAnalyzer(t *testing.T) {
-	analyzer := newURLAnalyzer()
+	analyzer := NewURLAnalyzer()
 
 	tests := []struct {
 		input    string

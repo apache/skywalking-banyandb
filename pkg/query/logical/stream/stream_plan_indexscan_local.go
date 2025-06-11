@@ -46,7 +46,8 @@ var (
 
 type localIndexScan struct {
 	schema            logical.Schema
-	filter            index.Filter
+	invertedFilter    index.Filter
+	skippingFilter    index.Filter
 	result            model.StreamQueryResult
 	ec                executor.StreamExecutionContext
 	order             *logical.OrderBy
@@ -94,7 +95,8 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 		Name:           i.metadata.GetName(),
 		TimeRange:      &i.timeRange,
 		Entities:       i.entities,
-		Filter:         i.filter,
+		InvertedFilter: i.invertedFilter,
+		SkippingFilter: i.skippingFilter,
 		Order:          orderBy,
 		TagProjection:  i.projectionTags,
 		MaxElementSize: i.maxElementSize,
@@ -110,7 +112,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 func (i *localIndexScan) String() string {
 	return fmt.Sprintf("IndexScan: startTime=%d,endTime=%d,Metadata{group=%s,name=%s},conditions=%s; projection=%s; orderBy=%s; limit=%d",
 		i.timeRange.Start.Unix(), i.timeRange.End.Unix(), i.metadata.GetGroup(), i.metadata.GetName(),
-		i.filter, logical.FormatTagRefs(", ", i.projectionTagRefs...), i.order, i.maxElementSize)
+		i.invertedFilter, logical.FormatTagRefs(", ", i.projectionTagRefs...), i.order, i.maxElementSize)
 }
 
 func (i *localIndexScan) Children() []logical.Plan {
