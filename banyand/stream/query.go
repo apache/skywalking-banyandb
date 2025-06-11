@@ -216,7 +216,8 @@ func (s *stream) processSegmentsAndBuildFilters(
 		}
 
 		var filter, filterTS posting.List
-		if filter, filterTS, err = indexSearch(ctx, sqo, segments[i].Tables(), sl.ToList().ToSlice(), tr); err != nil {
+		tables, _ := segments[i].Tables()
+		if filter, filterTS, err = indexSearch(ctx, sqo, tables, sl.ToList().ToSlice(), tr); err != nil {
 			return result, nil, nil, err
 		}
 
@@ -244,7 +245,8 @@ func (s *stream) processSegmentsAndBuildFilters(
 			result.qo.seriesToEntity[sl[j].ID] = sl[j].EntityValues
 		}
 
-		result.tabs = append(result.tabs, result.segments[i].Tables()...)
+		tables, _ = result.segments[i].Tables()
+		result.tabs = append(result.tabs, tables...)
 	}
 
 	return result, seriesFilter, resultTS, nil

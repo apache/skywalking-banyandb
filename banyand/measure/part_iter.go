@@ -24,6 +24,7 @@ import (
 	"sort"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -35,6 +36,7 @@ import (
 type partIter struct {
 	err                  error
 	p                    *part
+	c                    storage.Cache
 	curBlock             *blockMetadata
 	sids                 []common.SeriesID
 	primaryBlockMetadata []primaryBlockMetadata
@@ -49,6 +51,7 @@ type partIter struct {
 func (pi *partIter) reset() {
 	pi.curBlock = nil
 	pi.p = nil
+	pi.c = nil
 	pi.sids = nil
 	pi.sidIdx = 0
 	pi.primaryBlockMetadata = nil
@@ -62,6 +65,7 @@ func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesI
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
+	pi.c = p.cache
 
 	pi.bms = bma.arr
 	pi.sids = sids
@@ -180,6 +184,15 @@ func searchPBM(pbmIndex []primaryBlockMetadata, sid common.SeriesID) []primaryBl
 }
 
 func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetadata) ([]blockMetadata, error) {
+	value := pi.c.Get(storage.NewEntryKey(pi.p.partMetadata.ID, mr.offset))
+	if value != nil {
+		bmPtrs := value.([]*blockMetadata)
+		for _, bmsPtr := range bmPtrs {
+			bms = append(bms, *bmsPtr)
+		}
+		return bms, nil
+	}
+
 	pi.compressedPrimaryBuf = bytes.ResizeOver(pi.compressedPrimaryBuf, int(mr.size))
 	fs.MustReadData(pi.p.primary, int64(mr.offset), pi.compressedPrimaryBuf)
 
@@ -192,6 +205,11 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
+	bmPtrs := make([]*blockMetadata, 0, len(bms))
+	for _, bm := range bms {
+		bmPtrs = append(bmPtrs, &bm)
+	}
+	pi.c.Put(storage.NewEntryKey(pi.p.partMetadata.ID, mr.offset), bmPtrs)
 	return bms, nil
 }
 

@@ -46,12 +46,30 @@ var ErrExpiredData = errors.New("expired data")
 // ErrSegmentClosed is returned when trying to access a closed segment.
 var ErrSegmentClosed = errors.New("segment closed")
 
+var _ Cache = (*segmentCache)(nil)
+
+type segmentCache struct {
+	*groupCache
+	segmentID segmentID
+}
+
+func (sc *segmentCache) get(key EntryKey) any {
+	key.segmentID = sc.segmentID
+	return sc.groupCache.get(key)
+}
+
+func (sc *segmentCache) put(key EntryKey, value any) {
+	key.segmentID = sc.segmentID
+	sc.groupCache.put(key, value)
+}
+
 type segment[T TSTable, O any] struct {
-	metrics      any
-	tsdbOpts     *TSDBOpts[T, O]
-	l            *logger.Logger
-	index        *seriesIndex
-	sLst         atomic.Pointer[[]*shard[T]]
+	metrics  any
+	tsdbOpts *TSDBOpts[T, O]
+	l        *logger.Logger
+	index    *seriesIndex
+	sLst     atomic.Pointer[[]*shard[T]]
+	*segmentCache
 	indexMetrics *inverted.Metrics
 	lfs          banyanfs.FileSystem
 	position     common.Position
@@ -65,7 +83,7 @@ type segment[T TSTable, O any] struct {
 	id            segmentID
 }
 
-func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string,
+func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string, groupCache *groupCache,
 ) (s *segment[T, O], err error) {
 	suffixInteger, err := strconv.Atoi(suffix)
 	if err != nil {
@@ -89,6 +107,7 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 		indexMetrics: sc.indexMetrics,
 		tsdbOpts:     options,
 		lfs:          sc.lfs,
+		segmentCache: &segmentCache{groupCache: groupCache, segmentID: id},
 	}
 	s.l = logger.Fetch(ctx, s.String())
 	s.lastAccessed.Store(time.Now().UnixNano())
@@ -114,14 +133,15 @@ func (s *segment[T, O]) GetTimeRange() timestamp.TimeRange {
 	return s.TimeRange
 }
 
-func (s *segment[T, O]) Tables() (tt []T) {
+func (s *segment[T, O]) Tables() (tt []T, cc []Cache) {
 	sLst := s.sLst.Load()
 	if sLst != nil {
 		for _, s := range *sLst {
 			tt = append(tt, s.table)
+			cc = append(cc, s.shardCache)
 		}
 	}
-	return tt
+	return tt, cc
 }
 
 func (s *segment[T, O]) incRef(ctx context.Context) error {
@@ -284,21 +304,22 @@ type segmentController[T TSTable, O any] struct {
 	opts         *TSDBOpts[T, O]
 	l            *logger.Logger
 	indexMetrics *inverted.Metrics
-	lfs          banyanfs.FileSystem
-	position     common.Position
-	db           string
-	stage        string
-	location     string
-	lst          []*segment[T, O]
-	deadline     atomic.Int64
-	idleTimeout  time.Duration
-	optsMutex    sync.RWMutex
+	*groupCache
+	lfs         banyanfs.FileSystem
+	position    common.Position
+	db          string
+	stage       string
+	location    string
+	lst         []*segment[T, O]
+	deadline    atomic.Int64
+	idleTimeout time.Duration
+	optsMutex   sync.RWMutex
 	sync.RWMutex
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
 	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
-	idleTimeout time.Duration, lfs banyanfs.FileSystem,
+	idleTimeout time.Duration, lfs banyanfs.FileSystem, serviceCache *serviceCache, group string,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	p := common.GetPosition(ctx)
@@ -314,6 +335,7 @@ func newSegmentController[T TSTable, O any](ctx context.Context, location string
 		db:           p.Database,
 		idleTimeout:  idleTimeout,
 		lfs:          lfs,
+		groupCache:   &groupCache{serviceCache, group},
 	}
 }
 
@@ -526,7 +548,7 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 	ctx := common.SetPosition(context.WithValue(context.Background(), logger.ContextKey, sc.l), func(_ common.Position) common.Position {
 		return sc.position
 	})
-	seg, err = sc.openSegment(ctx, start, end, segPath, suffix)
+	seg, err = sc.openSegment(ctx, start, end, segPath, suffix, sc.groupCache)
 	if err != nil {
 		return nil, err
 	}

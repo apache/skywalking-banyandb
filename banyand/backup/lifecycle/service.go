@@ -188,6 +188,7 @@ func (l *lifecycleService) action() error {
 		defer streamSVC.GracefulStop()
 	}
 	if measureSVC != nil {
+		measureSVC.Serve()
 		defer measureSVC.GracefulStop()
 	}
 	if err != nil {

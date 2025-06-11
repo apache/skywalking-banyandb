@@ -107,7 +107,7 @@ func searchSeries(ctx context.Context, qo queryOptions, segment storage.Segment[
 func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *option], qo queryOptions,
 	l *logger.Logger, pm protector.Memory, tr *index.RangeOpts,
 ) (bc *blockScanner, err error) {
-	tabs := segment.Tables()
+	tabs, _ := segment.Tables()
 	finalizers := make([]scanFinalizer, 0, len(tabs)+1)
 	finalizers = append(finalizers, segment.DecRef)
 	defer func() {

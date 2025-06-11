@@ -30,6 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	itest "github.com/apache/skywalking-banyandb/banyand/internal/test"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -1243,7 +1244,8 @@ func TestQueryResult(t *testing.T) {
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
-				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp)
+				shardCache := storage.NewShardCache("test-group", 0, 0)
+				pp, _ := s.getParts(nil, shardCache, queryOpts.minTimestamp, queryOpts.maxTimestamp)
 				sids := make([]common.SeriesID, len(tt.sids))
 				copy(sids, tt.sids)
 				sort.Slice(sids, func(i, j int) bool {
@@ -1467,7 +1469,8 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			s := tst.currentSnapshot()
 			require.NotNil(t, s)
 			defer s.decRef()
-			pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp)
+			shardCache := storage.NewShardCache("test-group", 0, 0)
+			pp, _ := s.getParts(nil, shardCache, queryOpts.minTimestamp, queryOpts.maxTimestamp)
 			var result queryResult
 			result.ctx = context.TODO()
 			// Query all tags
