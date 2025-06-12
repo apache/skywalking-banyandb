@@ -37,6 +37,15 @@ type SharedContext struct {
 	BaseTime   time.Time
 }
 
+type TestMode int
+
+const (
+	TestModeQuery TestMode = iota
+	TestModeCreate
+	TestModeUpdate
+	TestModeDelete
+)
+
 // Args is a wrapper seals all necessary info for table specs.
 type Args struct {
 	Begin           *timestamppb.Timestamp
@@ -50,6 +59,7 @@ type Args struct {
 	WantErr         bool
 	DisOrder        bool
 	IgnoreElementID bool
+	Mode            TestMode
 }
 
 // UnmarshalYAML decodes YAML raw bytes to proto.Message.

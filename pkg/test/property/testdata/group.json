@@ -1,0 +1,10 @@
+[{
+  "metadata": {
+    "name": "sw_property"
+  },
+  "catalog": "CATALOG_PROPERTY",
+  "resource_opts": {
+    "shard_num": 2
+  },
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}]

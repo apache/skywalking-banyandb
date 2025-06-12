@@ -18,11 +18,27 @@
 // Package property provides the property service interface.
 package property
 
-import "github.com/apache/skywalking-banyandb/pkg/run"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/run"
+
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+)
 
 // Service is the interface for property service.
 type Service interface {
 	run.PreRunner
 	run.Config
 	run.Service
+}
+
+func GetPropertyID(prop *propertyv1.Property) []byte {
+	return convert.StringToBytes(GetEntity(prop) + "/" + strconv.FormatInt(prop.Metadata.ModRevision, 10))
+}
+
+func GetEntity(prop *propertyv1.Property) string {
+	return strings.Join([]string{prop.Metadata.Group, prop.Metadata.Name, prop.Id}, "/")
 }

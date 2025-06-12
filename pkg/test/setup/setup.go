@@ -38,6 +38,7 @@ import (
 	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
@@ -48,6 +49,7 @@ func Standalone(flags ...string) (string, string, func()) {
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "property"},
 	}, "", "", flags...)
 }
 
@@ -56,6 +58,7 @@ func StandaloneWithTLS(certFile, keyFile string, flags ...string) (string, strin
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "property"},
 	}, certFile, keyFile, flags...)
 }
 
@@ -83,6 +86,7 @@ func ClosableStandalone(path string, ports []int, flags ...string) (string, stri
 	return standaloneServer(path, ports, []SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "property"},
 	}, "", "", flags...)
 }
 
@@ -177,6 +181,9 @@ func (p *preloadService) Name() string {
 func (p *preloadService) PreRun(ctx context.Context) error {
 	if p.name == "stream" {
 		return test_stream.PreloadSchema(ctx, p.registry)
+	}
+	if p.name == "property" {
+		return test_property.PreloadSchema(ctx, p.registry)
 	}
 	return test_measure.PreloadSchema(ctx, p.registry)
 }
