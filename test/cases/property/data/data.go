@@ -15,25 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package data provides the data for property tests.
 package data
 
 import (
 	"context"
 	"embed"
 
+	"github.com/google/go-cmp/cmp"
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/testing/protocmp"
+	"sigs.k8s.io/yaml"
+
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-
-	"github.com/google/go-cmp/cmp"
-
-	g "github.com/onsi/ginkgo/v2"
-	gm "github.com/onsi/gomega"
-
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/testing/protocmp"
-
-	"sigs.k8s.io/yaml"
 )
 
 //go:embed input/*.yaml
@@ -82,7 +80,7 @@ func deleteVerifier(input []byte, want []byte, innerGm gm.Gomega, sharedContext 
 		Name:   del.Name,
 		Ids:    []string{del.Id},
 	}
-	verifyQuery(want, ctx, c, queryRequest, args, innerGm)
+	verifyQuery(ctx, want, c, queryRequest, args, innerGm)
 }
 
 func queryVerifier(input, want []byte, innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
@@ -90,7 +88,7 @@ func queryVerifier(input, want []byte, innerGm gm.Gomega, sharedContext helpers.
 	helpers.UnmarshalYAML(input, queryRequest)
 	c := propertyv1.NewPropertyServiceClient(sharedContext.Connection)
 	ctx := context.Background()
-	verifyQuery(want, ctx, c, queryRequest, args, innerGm)
+	verifyQuery(ctx, want, c, queryRequest, args, innerGm)
 }
 
 func updateVerifier(input, want []byte, innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args, create bool) {
@@ -113,7 +111,7 @@ func updateVerifier(input, want []byte, innerGm gm.Gomega, sharedContext helpers
 		Name:   apply.Property.Metadata.Name,
 		Ids:    []string{apply.Property.Id},
 	}
-	if !verifyQuery(want, ctx, c, queryRequest, args, innerGm) {
+	if !verifyQuery(ctx, want, c, queryRequest, args, innerGm) {
 		return
 	}
 	queryRequest.Trace = true
@@ -123,8 +121,14 @@ func updateVerifier(input, want []byte, innerGm gm.Gomega, sharedContext helpers
 	innerGm.Expect(q.Trace.GetSpans()).NotTo(gm.BeEmpty())
 }
 
-func verifyQuery(want []byte, ctx context.Context, client propertyv1.PropertyServiceClient,
-	queryRequest *propertyv1.QueryRequest, args helpers.Args, innerGm gm.Gomega) bool {
+func verifyQuery(
+	ctx context.Context,
+	want []byte,
+	client propertyv1.PropertyServiceClient,
+	queryRequest *propertyv1.QueryRequest,
+	args helpers.Args,
+	innerGm gm.Gomega,
+) bool {
 	query, err := client.Query(ctx, queryRequest)
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	if args.WantEmpty {

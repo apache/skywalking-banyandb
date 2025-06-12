@@ -37,8 +37,11 @@ type SharedContext struct {
 	BaseTime   time.Time
 }
 
+// TestMode defines the mode of the test case.
 type TestMode int
 
+// TestModeQuery, TestModeCreate, TestModeUpdate, and TestModeDelete are the modes of the test case.
+// Default is TestModeQuery.
 const (
 	TestModeQuery TestMode = iota
 	TestModeCreate

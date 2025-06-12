@@ -15,17 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package property_test provides the property test cases.
 package property_test
 
 import (
 	"time"
 
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
+
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	propertyTestData "github.com/apache/skywalking-banyandb/test/cases/property/data"
-
-	g "github.com/onsi/ginkgo/v2"
-	gm "github.com/onsi/gomega"
 )
 
 var (
@@ -72,6 +73,7 @@ var _ = g.Describe("Property Tests", func() {
 	})
 })
 
+// Entry represents a test case entry with description and arguments.
 type Entry struct {
 	Desc string
 	Args helpers.Args

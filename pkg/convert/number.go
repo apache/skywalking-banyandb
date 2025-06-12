@@ -96,6 +96,7 @@ func BytesToFloat64(b []byte) float64 {
 	return math.Float64frombits(binary.BigEndian.Uint64(b))
 }
 
+// BytesToBool converts bytes to bool.
 func BytesToBool(b []byte) bool {
 	if len(b) == 0 {
 		return false

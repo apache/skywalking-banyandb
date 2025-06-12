@@ -24,9 +24,10 @@ import (
 	"strconv"
 	"time"
 
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -34,7 +35,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
@@ -94,7 +94,7 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, flushTimeou
 func (s *shard) update(id []byte, property *propertyv1.Property) error {
 	document, err := s.buildUpdateDocument(id, property)
 	if err != nil {
-		return fmt.Errorf("build update document failure: %v", err)
+		return fmt.Errorf("build update document failure: %w", err)
 	}
 	return s.store.UpdateSeriesBatch(index.Batch{
 		Documents: index.Documents{*document},
@@ -144,23 +144,23 @@ func (s *shard) delete(ctx context.Context, docID [][]byte) error {
 	}
 	iq, err := s.store.BuildQuery(seriesMatchers, nil, nil)
 	if err != nil {
-		return fmt.Errorf("build property query failure: %v", err)
+		return fmt.Errorf("build property query failure: %w", err)
 	}
 	exisingDocList, err := s.search(ctx, iq, len(docID))
 	if err != nil {
-		return fmt.Errorf("search existing documents failure: %v", err)
+		return fmt.Errorf("search existing documents failure: %w", err)
 	}
 	removeDocList := make(index.Documents, 0, len(exisingDocList))
 	for _, property := range exisingDocList {
 		p := &propertyv1.Property{}
 		if err := protojson.Unmarshal(property.source, p); err != nil {
-			return fmt.Errorf("unmarshal property failure: %v", err)
+			return fmt.Errorf("unmarshal property failure: %w", err)
 		}
 		// update the property metadata to mark it as deleted
 		p.Metadata.ModRevision = time.Now().UnixNano()
 		document, err := s.buildUpdateDocument(GetPropertyID(p), p)
 		if err != nil {
-			return fmt.Errorf("build delete document failure: %v", err)
+			return fmt.Errorf("build delete document failure: %w", err)
 		}
 		// mark the document as deleted
 		document.Deleted = true
