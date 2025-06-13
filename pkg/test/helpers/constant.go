@@ -37,18 +37,6 @@ type SharedContext struct {
 	BaseTime   time.Time
 }
 
-// TestMode defines the mode of the test case.
-type TestMode int
-
-// TestModeQuery, TestModeCreate, TestModeUpdate, and TestModeDelete are the modes of the test case.
-// Default is TestModeQuery.
-const (
-	TestModeQuery TestMode = iota
-	TestModeCreate
-	TestModeUpdate
-	TestModeDelete
-)
-
 // Args is a wrapper seals all necessary info for table specs.
 type Args struct {
 	Begin           *timestamppb.Timestamp
@@ -62,7 +50,6 @@ type Args struct {
 	WantErr         bool
 	DisOrder        bool
 	IgnoreElementID bool
-	Mode            TestMode
 }
 
 // UnmarshalYAML decodes YAML raw bytes to proto.Message.
