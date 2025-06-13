@@ -37,7 +37,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
-	casesproperty "github.com/apache/skywalking-banyandb/test/cases/property"
 	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
@@ -80,10 +79,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		BaseTime:   now,
 	}
 	casestopn.SharedContext = helpers.SharedContext{
-		Connection: connection,
-		BaseTime:   now,
-	}
-	casesproperty.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   now,
 	}

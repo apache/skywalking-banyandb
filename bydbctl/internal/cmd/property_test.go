@@ -126,6 +126,20 @@ tags:
 		Expect(out).To(ContainSubstring("tagsNum: 2"))
 	})
 
+	It("update property", func() {
+		rootCmd = &cobra.Command{Use: "root"}
+		cmd.RootCmdFlags(rootCmd)
+		rootCmd.SetArgs([]string{"property", "data", "apply", "-a", addr, "-f", "-"})
+		rootCmd.SetIn(strings.NewReader(p2YAML))
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		GinkgoWriter.Println(out)
+		Expect(out).To(ContainSubstring("created: false"))
+		Expect(out).To(ContainSubstring("tagsNum: 2"))
+	})
+
 	It("query all properties", func() {
 		rootCmd.SetArgs([]string{"property", "data", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
