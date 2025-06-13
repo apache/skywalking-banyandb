@@ -110,7 +110,30 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
 	start := time.Now()
+	var totalSize int64
+	for _, pw := range parts {
+		totalSize += int64(pw.p.partMetadata.CompressedSizeBytes)
+	}
+	shouldDropCache := totalSize > largeFileThreshold
 	newPart, err := mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root)
+
+	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
+	if shouldDropCache {
+		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
+		file, err := os.OpenFile(filePath, os.O_RDWR, 0o644)
+		if err != nil {
+			tst.l.Warn().Err(err).Msg("failed to open file for applying fadvise on large merged file")
+		} else {
+			defer file.Close()
+			// Apply FADV_DONTNEED to drop the file from page cache
+			if err := fs.SyncAndDropCache(file.Fd(), 0, 0); err != nil {
+				tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
+			} else {
+				tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
+			}
+		}
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -151,23 +174,6 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				Str("maxSize", humanize.IBytes(maxSize)).
 				Dur("elapsedMS", elapsed).
 				Msg("background merger merges unbalanced parts")
-		}
-	}
-
-	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
-	if newPart.p.partMetadata.CompressedSizeBytes > largeFileThreshold {
-		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
-		file, err := os.OpenFile(filePath, os.O_RDWR, 0o644)
-		if err != nil {
-			tst.l.Warn().Err(err).Msg("failed to open file for applying fadvise on large merged file")
-		} else {
-			defer file.Close()
-			// Apply FADV_DONTNEED to drop the file from page cache
-			if err := fs.SyncAndDropCache(file.Fd(), 0, 0); err != nil {
-				tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
-			} else {
-				tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
-			}
 		}
 	}
 

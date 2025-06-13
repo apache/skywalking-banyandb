@@ -22,7 +22,6 @@ package fs
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"syscall"
 
@@ -115,8 +114,8 @@ func CompareINode(srcPath, destPath string) error {
 	return nil
 }
 
-// ApplyFadviseToFD applies FADV_DONTNEED to the given file descriptor.
-func ApplyFadviseToFD(fd uintptr, offset int64, length int64) error {
+// applyFadviseToFD applies FADV_DONTNEED to the given file descriptor.
+func applyFadviseToFD(fd uintptr, offset int64, length int64) error {
 	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
 }
 
@@ -132,7 +131,7 @@ func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 	}
 	size := stat.Size
 
-	if !ShouldApplyFadvis(size, math.MaxInt64) {
+	if !ShouldApplyFadvis(size) {
 		return nil
 	}
 

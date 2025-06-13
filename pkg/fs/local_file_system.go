@@ -39,7 +39,7 @@ const (
 
 // ThresholdProvider provides file size thresholds for adaptive caching.
 type ThresholdProvider interface {
-	ShouldApplyFadvis(fileSize, maxSize int64) bool
+	ShouldApplyFadvis(fileSize int64) bool
 }
 
 var defaultThresholdProvider ThresholdProvider
@@ -309,20 +309,12 @@ func (fs *localFileSystem) MustRMAll(path string) {
 	fs.logger.Panic().Str("path", path).Msg("failed to remove all files under path")
 }
 
-func (fs *localFileSystem) GetFreeSpace(path string) (uint64, error) {
-	usage, err := disk.Usage(path)
-	if err != nil {
-		return 0, err
-	}
-	return usage.Free, nil
-}
-
 func (fs *localFileSystem) MustGetFreeSpace(path string) uint64 {
-	freeSpace, err := fs.GetFreeSpace(path)
+	usage, err := disk.Usage(path)
 	if err != nil {
 		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to get disk usage")
 	}
-	return freeSpace
+	return usage.Free
 }
 
 func (fs *localFileSystem) CreateHardLink(srcPath, destPath string, filter func(string) bool) error {
@@ -573,7 +565,7 @@ func (i *seqReader) Read(p []byte) (int, error) {
 	if rsize > 0 && i.file != nil && !i.skipFadvise {
 		offset := i.length
 		// Apply fadvise directly without threshold checking since decision was made at upper layer
-		_ = ApplyFadviseToFD(i.file.Fd(), offset, int64(rsize))
+		_ = applyFadviseToFD(i.file.Fd(), offset, int64(rsize))
 		i.length += int64(rsize)
 	} else if rsize > 0 {
 		i.length += int64(rsize)
@@ -592,7 +584,7 @@ func (i *seqReader) Path() string {
 func (i *seqReader) Close() error {
 	if i.file != nil {
 		if !i.skipFadvise {
-			_ = ApplyFadviseToFD(i.file.Fd(), 0, 0)
+			_ = applyFadviseToFD(i.file.Fd(), 0, 0)
 		}
 	}
 	releaseReader(i.reader)
@@ -619,7 +611,7 @@ func (w *seqWriter) Write(p []byte) (n int, err error) {
 
 		offset := w.length
 		// Apply fadvise directly without threshold checking since decision was made at upper layer
-		_ = ApplyFadviseToFD(w.file.Fd(), offset, int64(n))
+		_ = applyFadviseToFD(w.file.Fd(), offset, int64(n))
 		w.length += int64(n)
 	} else if n > 0 {
 		w.length += int64(n)
@@ -687,21 +679,10 @@ func releaseWriter(bw *bufio.Writer) {
 
 var bufWriterPool = pool.Register[*bufio.Writer]("fs-bufWriter")
 
-var globalThreshold int64 = defaultLargeFileThreshold
-
-// SetGlobalThreshold sets the global threshold for large file detection.
-func SetGlobalThreshold(v int64) {
-	globalThreshold = v
-}
-
 // ShouldApplyFadvis determines if fadvis should be applied based on file size.
-func ShouldApplyFadvis(size int64, maxSize int64) bool {
+func ShouldApplyFadvis(size int64) bool {
 	if defaultThresholdProvider != nil {
-		return defaultThresholdProvider.ShouldApplyFadvis(size, maxSize)
+		return defaultThresholdProvider.ShouldApplyFadvis(size)
 	}
-	threshold := globalThreshold
-	if maxSize < threshold {
-		threshold = maxSize
-	}
-	return size >= threshold
+	return size >= globalthreshold
 }

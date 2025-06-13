@@ -70,8 +70,8 @@ func CompareINode(srcPath, destPath string) error {
 	return nil
 }
 
-// ApplyFadviseToFD is a no-op on non-Linux systems.
-func ApplyFadviseToFD(fd uintptr, offset int64, length int64) error {
+// applyFadviseToFD is a no-op on non-Linux systems.
+func applyFadviseToFD(fd uintptr, offset int64, length int64) error {
 	return nil
 }
 

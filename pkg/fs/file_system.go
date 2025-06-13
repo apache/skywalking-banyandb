@@ -61,7 +61,7 @@ type Reader interface {
 	Read(offset int64, buffer []byte) (int, error)
 	// Read the entire file using sequential read.
 	// If skipFadvise is true, fadvise will not be applied.
-	SequentialRead(cached bool) SeqReader
+	SequentialRead() SeqReader
 	// Returns the absolute path of the file.
 	Path() string
 	// Close File.
