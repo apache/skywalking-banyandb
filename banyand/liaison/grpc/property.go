@@ -37,8 +37,6 @@ package grpc
 import (
 	"context"
 	"math"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -54,6 +52,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	propertypkg "github.com/apache/skywalking-banyandb/banyand/property"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -67,6 +66,7 @@ const defaultQueryTimeout = 10 * time.Second
 
 type propertyServer struct {
 	propertyv1.UnimplementedPropertyServiceServer
+	*discoveryService
 	schemaRegistry metadata.Repo
 	pipeline       queue.Client
 	nodeRegistry   NodeRegistry
@@ -150,38 +150,37 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	var prev *propertyv1.Property
 	if len(qResp.Properties) > 0 {
 		prev = qResp.Properties[0]
-		defer func() {
-			if err == nil {
-				var ids [][]byte
-				for _, p := range qResp.Properties {
-					ids = append(ids, getPropertyID(p))
-				}
-				if err = ps.remove(ids); err != nil {
-					err = multierr.Append(err, errors.New("fail to remove old properties"))
-				}
-			}
-		}()
+		// TODO(mrproliu) find older property by different version, should be remove it
 	}
-	entity := getEntity(property)
+	entity := propertypkg.GetEntity(property)
 	id, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
 	if err != nil {
 		return nil, err
 	}
-	node, err := ps.nodeRegistry.Locate(g, entity, uint32(id), 0)
-	if err != nil {
-		return nil, err
+	copies, ok := ps.groupRepo.copies(property.Metadata.GetGroup())
+	if !ok {
+		return nil, errors.New("failed to get group copies")
+	}
+
+	nodes := make([]string, 0, copies)
+	for i := range copies {
+		nodeID, err := ps.nodeRegistry.Locate(property.GetMetadata().GetGroup(), property.GetMetadata().GetName(), uint32(id), i)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, nodeID)
 	}
 	if req.Strategy == propertyv1.ApplyRequest_STRATEGY_REPLACE {
-		return ps.replaceProperty(ctx, start, uint64(id), node, prev, property)
+		return ps.replaceProperty(ctx, start, uint64(id), nodes, prev, property)
 	}
-	return ps.mergeProperty(ctx, start, uint64(id), node, prev, property)
+	return ps.mergeProperty(ctx, start, uint64(id), nodes, prev, property)
 }
 
-func (ps *propertyServer) mergeProperty(ctx context.Context, now time.Time, shardID uint64, node string,
+func (ps *propertyServer) mergeProperty(ctx context.Context, now time.Time, shardID uint64, nodes []string,
 	prev, cur *propertyv1.Property,
 ) (*propertyv1.ApplyResponse, error) {
 	if prev == nil {
-		return ps.replaceProperty(ctx, now, shardID, node, prev, cur)
+		return ps.replaceProperty(ctx, now, shardID, nodes, prev, cur)
 	}
 	tagCount, err := tagLen(prev)
 	if err != nil {
@@ -202,7 +201,7 @@ func (ps *propertyServer) mergeProperty(ctx context.Context, now time.Time, shar
 		}
 	}
 	cur.Tags = append(cur.Tags, tags...)
-	return ps.replaceProperty(ctx, now, shardID, node, prev, cur)
+	return ps.replaceProperty(ctx, now, shardID, nodes, prev, cur)
 }
 
 func tagLen(property *propertyv1.Property) (uint32, error) {
@@ -214,7 +213,7 @@ func tagLen(property *propertyv1.Property) (uint32, error) {
 	return tagsNum, nil
 }
 
-func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, shardID uint64, node string,
+func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, shardID uint64, nodes []string,
 	prev, cur *propertyv1.Property,
 ) (*propertyv1.ApplyResponse, error) {
 	ns := now.UnixNano()
@@ -225,17 +224,38 @@ func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, sh
 	}
 	cur.Metadata.ModRevision = ns
 	cur.UpdatedAt = timestamppb.New(now)
-	f, err := ps.pipeline.Publish(ctx, data.TopicPropertyUpdate, bus.NewMessageWithNode(bus.MessageID(time.Now().Unix()), node, &propertyv1.InternalUpdateRequest{
+	req := &propertyv1.InternalUpdateRequest{
 		ShardId:  shardID,
-		Id:       getPropertyID(cur),
+		Id:       propertypkg.GetPropertyID(cur),
 		Property: cur,
-	}))
-	if err != nil {
-		return nil, err
 	}
-	if _, err := f.Get(); err != nil {
-		return nil, err
+	futures := make([]bus.Future, 0, len(nodes))
+	for _, node := range nodes {
+		f, err := ps.pipeline.Publish(ctx, data.TopicPropertyUpdate,
+			bus.NewMessageWithNode(bus.MessageID(time.Now().Unix()), node, req))
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to publish property update to node %s", node)
+		}
+		futures = append(futures, f)
 	}
+	// Wait for all futures to complete, and which should last have one success
+	haveSuccess := false
+	var lastestError error
+	for _, f := range futures {
+		_, err := f.Get()
+		if err == nil {
+			haveSuccess = true
+		} else {
+			lastestError = multierr.Append(lastestError, err)
+		}
+	}
+	if !haveSuccess {
+		if lastestError != nil {
+			return nil, lastestError
+		}
+		return nil, errors.New("failed to apply property, no replicas success")
+	}
+
 	return &propertyv1.ApplyResponse{
 		Created: prev == nil,
 		TagsNum: uint32(len(cur.Tags)),
@@ -275,7 +295,7 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 	}
 	var ids [][]byte
 	for _, p := range qResp.Properties {
-		ids = append(ids, getPropertyID(p))
+		ids = append(ids, propertypkg.GetPropertyID(p))
 	}
 	if err := ps.remove(ids); err != nil {
 		return nil, err
@@ -324,7 +344,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	if err != nil {
 		return nil, err
 	}
-	res := make(map[string]*propertyv1.Property)
+	res := make(map[string]*propertyWithMetadata)
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			err = multierr.Append(err, getErr)
@@ -335,24 +355,29 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			}
 			switch v := d.(type) {
 			case *propertyv1.InternalQueryResponse:
-				for _, s := range v.Sources {
+				for i, s := range v.Sources {
 					var p propertyv1.Property
+					var deleted bool
 					err = protojson.Unmarshal(s, &p)
 					if err != nil {
 						return nil, err
 					}
-					entity := getEntity(&p)
+					if i < len(v.Deletes) {
+						deleted = v.Deletes[i]
+					}
+					entity := propertypkg.GetEntity(&p)
 					cur, ok := res[entity]
+					property := &propertyWithMetadata{
+						Property: &p,
+						deleted:  deleted,
+					}
 					if !ok {
-						res[entity] = &p
+						res[entity] = property
 						continue
 					}
 					if cur.Metadata.ModRevision < p.Metadata.ModRevision {
-						res[entity] = &p
-						err = ps.remove([][]byte{getPropertyID(cur)})
-						if err != nil {
-							return nil, err
-						}
+						res[entity] = property
+						// TODO(mrproliu) handle the case where the property detected multiple versions
 					}
 				}
 				if span != nil {
@@ -371,6 +396,10 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	}
 	properties := make([]*propertyv1.Property, 0, len(res))
 	for _, p := range res {
+		// ignore deleted property
+		if p.deleted {
+			continue
+		}
 		if len(req.TagProjection) > 0 {
 			var tags []*modelv1.Tag
 			for _, tag := range p.Tags {
@@ -383,7 +412,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			}
 			p.Tags = tags
 		}
-		properties = append(properties, p)
+		properties = append(properties, p.Property)
 		if len(properties) >= int(req.Limit) {
 			break
 		}
@@ -406,10 +435,7 @@ func (ps *propertyServer) remove(ids [][]byte) error {
 	return nil
 }
 
-func getPropertyID(prop *propertyv1.Property) []byte {
-	return convert.StringToBytes(getEntity(prop) + "/" + strconv.FormatInt(prop.Metadata.ModRevision, 10))
-}
-
-func getEntity(prop *propertyv1.Property) string {
-	return strings.Join([]string{prop.Metadata.Group, prop.Metadata.Name, prop.Id}, "/")
+type propertyWithMetadata struct {
+	*propertyv1.Property
+	deleted bool
 }

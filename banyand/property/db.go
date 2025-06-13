@@ -111,19 +111,19 @@ func (db *database) update(ctx context.Context, shardID common.ShardID, id []byt
 	return nil
 }
 
-func (db *database) delete(docIDs [][]byte) error {
+func (db *database) delete(ctx context.Context, docIDs [][]byte) error {
 	sLst := db.sLst.Load()
 	if sLst == nil {
 		return nil
 	}
 	var err error
 	for _, s := range *sLst {
-		multierr.AppendInto(&err, s.delete(docIDs))
+		multierr.AppendInto(&err, s.delete(ctx, docIDs))
 	}
 	return err
 }
 
-func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([][]byte, error) {
+func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]*queryProperty, error) {
 	iq, err := inverted.BuildPropertyQuery(req, groupField, entityID)
 	if err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	if sLst == nil {
 		return nil, nil
 	}
-	var res [][]byte
+	var res []*queryProperty
 	for _, s := range *sLst {
 		r, err := s.search(ctx, iq, int(req.Limit))
 		if err != nil {
@@ -223,4 +223,9 @@ func walkDir(root, prefix string, wf walkFn) error {
 		}
 	}
 	return nil
+}
+
+type queryProperty struct {
+	source  []byte
+	deleted bool
 }
