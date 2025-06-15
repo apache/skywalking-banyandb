@@ -20,6 +20,7 @@ package stream
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -107,7 +108,30 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
 	start := time.Now()
+	var totalSize int64
+	for _, pw := range parts {
+		totalSize += int64(pw.p.partMetadata.CompressedSizeBytes)
+	}
+	shouldDropCache := fs.ShouldApplyFadvis(totalSize)
 	newPart, err := mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root)
+
+	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
+	if shouldDropCache {
+		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
+		file, fileErr := os.OpenFile(filePath, os.O_RDWR, 0o644)
+		if fileErr != nil {
+			tst.l.Warn().Err(fileErr).Msg("failed to open file for applying fadvise on large merged file")
+		} else {
+			defer file.Close()
+			// Apply FADV_DONTNEED to drop the file from page cache
+			if syncErr := fs.SyncAndDropCache(file.Fd(), 0, 0); syncErr != nil {
+				tst.l.Warn().Err(syncErr).Msg("failed to apply fadvise on large merged file")
+			} else {
+				tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
+			}
+		}
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +163,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 			}
 		}
 		if totalSize > 10<<20 && minSize*uint64(len(parts)) < maxSize {
-			// it's a unbalanced merge. but it's ok when the size is small.
+			// it's an unbalanced merge. but it's ok when the size is small.
 			tst.l.Info().
 				Str("beforeTotalCount", humanize.Comma(int64(totalCount))).
 				Str("afterTotalCount", humanize.Comma(int64(newPart.p.partMetadata.TotalCount))).
@@ -150,6 +174,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				Msg("background merger merges unbalanced parts")
 		}
 	}
+
 	mi := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mi)
 	mi.creator = creator
@@ -223,7 +248,7 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst
 func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
 	var needSize uint64
 	for i := range parts {
-		needSize = +parts[i].p.partMetadata.CompressedSizeBytes
+		needSize += parts[i].p.partMetadata.CompressedSizeBytes
 	}
 	if tst.tryReserveDiskSpace(needSize) {
 		return needSize
@@ -238,6 +263,14 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 		return nil, errNoPartToMerge
 	}
 	dstPath := partPath(root, partID)
+
+	var totalSize int64
+	for _, part := range parts {
+		totalSize += int64(part.p.partMetadata.CompressedSizeBytes)
+	}
+
+	shouldCache := !fs.ShouldApplyFadvis(totalSize)
+
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
 		pmi := generatePartMergeIter()
@@ -247,7 +280,7 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
-	bw.mustInitForFilePart(fileSystem, dstPath)
+	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
 	pm, err := mergeBlocks(closeCh, bw, br)
 	releaseBlockWriter(bw)
@@ -261,6 +294,7 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
 	p := mustOpenFilePart(partID, root, fileSystem)
+
 	return newPartWrapper(nil, p), nil
 }
 

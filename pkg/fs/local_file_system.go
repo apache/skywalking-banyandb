@@ -33,6 +33,22 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
+const (
+	defaultLargeFileThreshold = 10 * 1024 * 1024
+)
+
+// ThresholdProvider provides file size thresholds for adaptive caching.
+type ThresholdProvider interface {
+	ShouldApplyFadvis(fileSize int64) bool
+}
+
+var defaultThresholdProvider ThresholdProvider
+
+// SetThresholdProvider sets the global threshold provider.
+func SetThresholdProvider(provider ThresholdProvider) {
+	defaultThresholdProvider = provider
+}
+
 // localFileSystem implements the File System interface.
 type localFileSystem struct {
 	logger *logger.Logger
@@ -43,6 +59,7 @@ type localFileSystem struct {
 type LocalFile struct {
 	file   *os.File
 	ioSize int
+	cached bool // Caching decision from upper layer
 }
 
 // NewLocalFileSystem is used to create the Local File system.
@@ -452,7 +469,17 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 // SequentialWrite supports appending consecutive buffers to the end of the file.
 func (file *LocalFile) SequentialWrite() SeqWriter {
 	writer := generateWriter(file.file, file.ioSize)
-	return &seqWriter{writer: writer, fileName: file.file.Name()}
+	return &seqWriter{writer: writer, file: file.file, fileName: file.file.Name(), skipFadvise: file.cached}
+}
+
+// SequentialRead is used to read the entire file using streaming read.
+// If cached is true, fadvise will not be applied.
+func (file *LocalFile) SequentialRead() SeqReader {
+	// Use the cached parameter from upper layer instead of local file's cached field
+	// This allows override when needed (e.g. metadata always cached)
+
+	reader := generateReader(file.file, file.ioSize)
+	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), length: 0, skipFadvise: file.cached}
 }
 
 // Read is used to read a specified location of file.
@@ -468,22 +495,17 @@ func (file *LocalFile) Read(offset int64, buffer []byte) (int, error) {
 // Readv is used to read contiguous regions of a file and disperse them into discontinuous buffers.
 func (file *LocalFile) Readv(offset int64, iov *[][]byte) (int, error) {
 	var size int
+	currentOffset := offset
 	for _, buffer := range *iov {
-		rsize, err := file.file.ReadAt(buffer, offset)
+		rsize, err := file.file.ReadAt(buffer, currentOffset)
 		if err != nil {
 			return readErrorHandle("Readv operation", err, file.file.Name(), rsize)
 		}
 		size += rsize
-		offset += int64(rsize)
+		currentOffset += int64(rsize)
 	}
 
 	return size, nil
-}
-
-// SequentialRead is used to read the entire file using streaming read.
-func (file *LocalFile) SequentialRead() SeqReader {
-	reader := generateReader(file.file, file.ioSize)
-	return &seqReader{reader: reader, fileName: file.file.Name()}
 }
 
 // Size is used to get the file written data's size and return an error if the file does not exist. The unit of file size is Byte.
@@ -530,15 +552,27 @@ func (file *LocalFile) Close() error {
 }
 
 type seqReader struct {
-	reader   *bufio.Reader
-	fileName string
+	reader      *bufio.Reader
+	file        *os.File
+	fileName    string
+	length      int64
+	skipFadvise bool
 }
 
 func (i *seqReader) Read(p []byte) (int, error) {
 	rsize, err := i.reader.Read(p)
+	if rsize > 0 && i.file != nil && !i.skipFadvise {
+		offset := i.length
+		// Apply fadvise directly without threshold checking since decision was made at upper layer
+		_ = applyFadviseToFD(i.file.Fd(), offset, int64(rsize))
+		i.length += int64(rsize)
+	} else if rsize > 0 {
+		i.length += int64(rsize)
+	}
 	if err != nil {
 		return readErrorHandle("ReadStream operation", err, i.fileName, rsize)
 	}
+
 	return rsize, nil
 }
 
@@ -547,17 +581,48 @@ func (i *seqReader) Path() string {
 }
 
 func (i *seqReader) Close() error {
+	if i.file != nil {
+		if !i.skipFadvise {
+			_ = applyFadviseToFD(i.file.Fd(), 0, 0)
+		}
+	}
 	releaseReader(i.reader)
 	return nil
 }
 
 type seqWriter struct {
-	writer   *bufio.Writer
-	fileName string
+	writer      *bufio.Writer
+	file        *os.File
+	fileName    string
+	length      int64
+	skipFadvise bool
 }
 
 func (w *seqWriter) Write(p []byte) (n int, err error) {
-	return w.writer.Write(p)
+	n, err = w.writer.Write(p)
+	if n > 0 && w.file != nil && !w.skipFadvise {
+		if flushErr := w.writer.Flush(); flushErr != nil {
+			return n, &FileSystemError{
+				Code:    flushError,
+				Message: fmt.Sprintf("Flush File error, directory: %s, error: %s", w.fileName, flushErr),
+			}
+		}
+
+		offset := w.length
+		// Apply fadvise directly without threshold checking since decision was made at upper layer
+		_ = applyFadviseToFD(w.file.Fd(), offset, int64(n))
+		w.length += int64(n)
+	} else if n > 0 {
+		w.length += int64(n)
+	}
+
+	if err != nil {
+		return n, &FileSystemError{
+			Code:    writeError,
+			Message: fmt.Sprintf("Write File error, directory: %s, error: %s", w.fileName, err),
+		}
+	}
+	return n, nil
 }
 
 func (w *seqWriter) Path() string {
@@ -571,6 +636,10 @@ func (w *seqWriter) Close() error {
 			Code:    closeError,
 			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", w.fileName, err),
 		}
+	}
+
+	if w.file != nil {
+		_ = SyncAndDropCache(w.file.Fd(), 0, 0)
 	}
 	return nil
 }
@@ -608,3 +677,11 @@ func releaseWriter(bw *bufio.Writer) {
 }
 
 var bufWriterPool = pool.Register[*bufio.Writer]("fs-bufWriter")
+
+// ShouldApplyFadvis determines if fadvis should be applied based on file size.
+func ShouldApplyFadvis(size int64) bool {
+	if defaultThresholdProvider != nil {
+		return defaultThresholdProvider.ShouldApplyFadvis(size)
+	}
+	return size >= defaultLargeFileThreshold
+}
