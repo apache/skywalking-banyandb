@@ -19,10 +19,25 @@ package stream
 
 import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"sync"
+)
+
+var (
+	int64SlicePool = sync.Pool{
+		New: func() interface{} {
+			return make([]int64, 0, 1024)
+		},
+	}
+	float64SlicePool = sync.Pool{
+		New: func() interface{} {
+			return make([]float64, 0, 1024)
+		},
+	}
 )
 
 type tag struct {
@@ -60,8 +75,45 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
-	// marshal values
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
+	// select encoding based on data type
+	switch t.valueType {
+	case pbv1.ValueTypeInt64:
+		// convert byte array to int64 array
+		intValues := int64SlicePool.Get().([]int64)
+		intValues = intValues[:0]
+		if cap(intValues) < len(t.values) {
+			intValues = make([]int64, len(t.values))
+		} else {
+			intValues = intValues[:len(t.values)]
+		}
+		defer int64SlicePool.Put(intValues)
+
+		for i, v := range t.values {
+			if len(v) != 8 {
+				// 如果长度不是8，直接使用原始数据
+				// 将原始数据转换为int64
+				var val int64
+				for j := 0; j < len(v); j++ {
+					val = (val << 8) | int64(v[j])
+				}
+				intValues[i] = val
+			} else {
+				intValues[i] = convert.BytesToInt64(v)
+			}
+		}
+		// use delta encoding for integer column
+		var encodeType encoding.EncodeType
+		var firstValue int64
+		bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
+		tm.encodeType = encodeType
+		tm.firstValue = firstValue
+		if tm.encodeType == encoding.EncodeTypeUnknown {
+			logger.Panicf("invalid encode type for int64 values")
+		}
+	default:
+		// marshal values
+		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
+	}
 	tm.size = uint64(len(bb.Buf))
 	if tm.size > maxValuesBlockSize {
 		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", tm.size, maxValuesBlockSize)
@@ -88,10 +140,34 @@ func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Read
 	}
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	fs.MustReadData(reader, int64(cm.offset), bb.Buf)
-	var err error
-	t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
-	if err != nil {
-		logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+	switch t.valueType {
+	case pbv1.ValueTypeInt64:
+		// decode integer type
+		intValues := int64SlicePool.Get().([]int64)
+		intValues = intValues[:0]
+		if cap(intValues) < int(count) {
+			intValues = make([]int64, count)
+		} else {
+			intValues = intValues[:count]
+		}
+		defer int64SlicePool.Put(intValues)
+
+		var err error
+		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
+		if err != nil {
+			logger.Panicf("%s: cannot decode int values: %v", reader.Path(), err)
+		}
+		// convert int64 array to byte array
+		t.values = make([][]byte, count)
+		for i, v := range intValues {
+			t.values[i] = convert.Int64ToBytes(v)
+		}
+	default:
+		var err error
+		t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
+		if err != nil {
+			logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+		}
 	}
 }
 
@@ -111,10 +187,39 @@ func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seq
 
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	reader.mustReadFull(bb.Buf)
-	var err error
+	/*var err error
 	t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
 	if err != nil {
 		logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+	}*/
+	switch t.valueType {
+	case pbv1.ValueTypeInt64:
+		// decode integer type
+		intValues := int64SlicePool.Get().([]int64)
+		intValues = intValues[:0]
+		if cap(intValues) < int(count) {
+			intValues = make([]int64, count)
+		} else {
+			intValues = intValues[:count]
+		}
+		defer int64SlicePool.Put(intValues)
+
+		var err error
+		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
+		if err != nil {
+			logger.Panicf("%s: cannot decode int values: %v", reader.Path(), err)
+		}
+		// convert int64 array to byte array
+		t.values = make([][]byte, count)
+		for i, v := range intValues {
+			t.values[i] = convert.Int64ToBytes(v)
+		}
+	default:
+		var err error
+		t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
+		if err != nil {
+			logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+		}
 	}
 }
 
