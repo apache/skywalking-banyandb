@@ -151,7 +151,7 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 	}
 	cm.size = uint64(len(bb.Buf))
 	if cm.size > maxValuesBlockSize {
-		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", cm.size, maxValuesBlockSize)
+		logger.Panicf("too large valuesSize: %d bytes; mustn't exceed %d bytes", cm.size, maxValuesBlockSize)
 	}
 	cm.offset = columnWriter.bytesWritten
 	columnWriter.MustWrite(bb.Buf)

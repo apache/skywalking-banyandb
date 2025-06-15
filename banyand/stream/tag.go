@@ -151,7 +151,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	}
 	tm.size = uint64(len(bb.Buf))
 	if tm.size > maxValuesBlockSize {
-		logger.Panicf("too valuesSize: %d bytes; mustn't exceed %d bytes", tm.size, maxValuesBlockSize)
+		logger.Panicf("too large valuesSize: %d bytes; mustn't exceed %d bytes", tm.size, maxValuesBlockSize)
 	}
 	tm.offset = tagWriter.bytesWritten
 	tagWriter.MustWrite(bb.Buf)
