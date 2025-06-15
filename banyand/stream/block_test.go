@@ -115,6 +115,7 @@ var conventionalBlock = block{
 			tags: []tag{
 				{name: "strTag", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("value1"), []byte("value2")}},
 				{name: "intTag", valueType: pbv1.ValueTypeInt64, values: [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
+				{name: "floatTag", valueType: pbv1.ValueTypeFloat64, values: [][]byte{convert.Float64ToBytes(0.1), convert.Float64ToBytes(0.2)}},
 			},
 		},
 	},
@@ -153,6 +154,7 @@ func Test_block_mustInitFromElements(t *testing.T) {
 							"singleTag", []*tagValue{
 								{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
 								{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
+								{tag: "floatTag", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(0.1), valueArr: nil},
 							},
 						},
 					},
@@ -172,6 +174,7 @@ func Test_block_mustInitFromElements(t *testing.T) {
 							"singleTag", []*tagValue{
 								{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
 								{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(20), valueArr: nil},
+								{tag: "floatTag", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(0.2), valueArr: nil},
 							},
 						},
 					},

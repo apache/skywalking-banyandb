@@ -24,10 +24,36 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+
+	myBytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 )
 
 func TestXOR(t *testing.T) {
 	var buf bytes.Buffer
+	bitWriter := NewWriter()
+	bitWriter.Reset(&buf)
+	e := NewXOREncoder(bitWriter)
+	e.Write(uint64(76))
+	e.Write(uint64(50))
+	e.Write(uint64(50))
+	e.Write(uint64(999999999))
+	e.Write(uint64(100))
+
+	bitWriter.Flush()
+	data := buf.Bytes()
+
+	reader := NewReader(bytes.NewReader(data))
+	d := NewXORDecoder(reader)
+	a := assert.New(t)
+	verify(d, a, uint64(76))
+	verify(d, a, uint64(50))
+	verify(d, a, uint64(50))
+	verify(d, a, uint64(999999999))
+	verify(d, a, uint64(100))
+}
+
+func TestXOR1(t *testing.T) {
+	var buf myBytes.Buffer
 	bitWriter := NewWriter()
 	bitWriter.Reset(&buf)
 	e := NewXOREncoder(bitWriter)
