@@ -50,7 +50,7 @@ func (sr *seqReader) Path() string {
 
 func (sr *seqReader) init(r fs.Reader) {
 	sr.reset()
-	sr.sr = r.SequentialRead(false)
+	sr.sr = r.SequentialRead()
 	sr.r = r
 }
 

@@ -51,7 +51,7 @@ func (sr *seqReader) Path() string {
 func (sr *seqReader) init(r fs.Reader) {
 	sr.reset()
 	// Use cached=false to avoid OS page cache pollution for block data
-	sr.sr = r.SequentialRead(false)
+	sr.sr = r.SequentialRead()
 	sr.r = r
 }
 

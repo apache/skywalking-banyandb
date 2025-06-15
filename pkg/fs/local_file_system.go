@@ -474,13 +474,12 @@ func (file *LocalFile) SequentialWrite() SeqWriter {
 
 // SequentialRead is used to read the entire file using streaming read.
 // If cached is true, fadvise will not be applied.
-func (file *LocalFile) SequentialRead(cached bool) SeqReader {
+func (file *LocalFile) SequentialRead() SeqReader {
 	// Use the cached parameter from upper layer instead of local file's cached field
 	// This allows override when needed (e.g. metadata always cached)
-	skipFadv := cached
 
 	reader := generateReader(file.file, file.ioSize)
-	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), length: 0, skipFadvise: skipFadv}
+	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), length: 0, skipFadvise: file.cached}
 }
 
 // Read is used to read a specified location of file.
@@ -684,5 +683,5 @@ func ShouldApplyFadvis(size int64) bool {
 	if defaultThresholdProvider != nil {
 		return defaultThresholdProvider.ShouldApplyFadvis(size)
 	}
-	return size >= globalthreshold
+	return size >= defaultLargeFileThreshold
 }

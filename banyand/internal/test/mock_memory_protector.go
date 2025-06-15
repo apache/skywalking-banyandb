@@ -50,7 +50,7 @@ func (f *MockMemoryProtector) AcquireResource(_ context.Context, _ uint64) error
 }
 
 // ShouldApplyFadvis always returns false for testing.
-func (f *MockMemoryProtector) ShouldApplyFadvis(_ int64, _ int64) bool {
+func (f *MockMemoryProtector) ShouldApplyFadvis(_ int64) bool {
 	return false
 }
 

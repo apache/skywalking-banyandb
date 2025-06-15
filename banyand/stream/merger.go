@@ -114,7 +114,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	for _, pw := range parts {
 		totalSize += int64(pw.p.partMetadata.CompressedSizeBytes)
 	}
-	shouldDropCache := totalSize > largeFileThreshold
+	shouldDropCache := fs.ShouldApplyFadvis(totalSize)
 	newPart, err := mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root)
 
 	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold

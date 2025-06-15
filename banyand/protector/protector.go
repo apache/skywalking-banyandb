@@ -31,6 +31,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -43,7 +44,7 @@ type Memory interface {
 	AvailableBytes() int64
 	GetLimit() uint64
 	AcquireResource(ctx context.Context, size uint64) error
-	ShouldApplyFadvis(fileSize, maxSize int64) bool
+	ShouldApplyFadvis(fileSize int64) bool
 	ShouldCache(path string) bool
 	run.PreRunner
 	run.Config
@@ -64,6 +65,7 @@ type memory struct {
 	allowedBytes   run.Bytes
 	limit          atomic.Uint64
 	usage          uint64
+	threshold      int64
 }
 
 // NewMemory creates a new Memory protector.
@@ -231,18 +233,18 @@ func (m *memory) Serve() run.StopNotify {
 	return m.closed
 }
 
+func init() {
+	fs.SetThresholdProvider(GetMemoryProtector())
+}
+
 // GetThreshold returns the threshold for large file detection (1% of page cache).
-func (m *memory) GetThreshold(maxSize int64) int64 {
+func (m *memory) GetThreshold() int64 {
 	// Try reading cgroup memory limit
 	cgLimit, err := cgroups.MemoryLimit()
 	if err != nil {
 		m.l.Warn().Err(err).Msg("failed to get memory limit from cgroups, using default threshold")
 		// Fallback default threshold of 64MB
-		defaultThreshold := int64(64 * 1024 * 1024)
-		if defaultThreshold > maxSize {
-			return maxSize
-		}
-		return defaultThreshold
+		return 64 << 20
 	}
 
 	// Determine effective memory to use based on flags
@@ -254,23 +256,18 @@ func (m *memory) GetThreshold(maxSize int64) int64 {
 	}
 
 	// Compute 1% of that memory as page cache threshold
-	pageCacheSize := totalMemory / 100
+	threshold := totalMemory / 100
 	const minThreshold = 10 << 20 // 10MB
-	if pageCacheSize < minThreshold {
-		pageCacheSize = minThreshold
+	if threshold < minThreshold {
+		threshold = minThreshold
 	}
-
-	// Ensure we don't exceed available disk space
-	if pageCacheSize > maxSize {
-		return maxSize
-	}
-	return pageCacheSize
+	return threshold
 }
 
 // ShouldApplyFadvis implements the fs.ThresholdProvider interface.
 // It checks if the file size exceeds the threshold for large file detection.
-func (m *memory) ShouldApplyFadvis(fileSize int64, maxSize int64) bool {
-	return fileSize >= m.GetThreshold(maxSize)
+func (m *memory) ShouldApplyFadvis(fileSize int64) bool {
+	return fileSize >= m.GetThreshold()
 }
 
 // ShouldCache returns whether a file at the given path should be cached.
