@@ -591,9 +591,14 @@ func TestParseGroup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			mockGroup := schema.NewMockGroup(ctrl)
+			mockGroup.EXPECT().ListGroup(gomock.Any()).Return([]*commonv1.Group{}, nil).AnyTimes()
+
 			mockRepo := metadata.NewMockRepo(ctrl)
 			mockRepo.EXPECT().RegisterHandler("", schema.KindGroup, gomock.Any()).MaxTimes(1)
-			shardNum, replicas, selector, client, err := parseGroup(context.Background(), tt.group, tt.nodeLabels, tt.nodes, l, mockRepo)
+
+			mockRepo.EXPECT().GroupRegistry().Return(mockGroup).AnyTimes()
+			shardNum, replicas, selector, client, err := parseGroup(tt.group, tt.nodeLabels, tt.nodes, l, mockRepo)
 
 			if tt.expectError {
 				require.Error(t, err)

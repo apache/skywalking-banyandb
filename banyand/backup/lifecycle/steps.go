@@ -38,7 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
@@ -50,7 +49,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
-func (l *lifecycleService) getSnapshots(groups []*commonv1.Group) (streamDir string, measureDir string, err error) {
+func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (streamDir string, measureDir string, err error) {
+	// If we already have snapshot dirs in Progress, reuse them
+	if p.SnapshotStreamDir != "" || p.SnapshotMeasureDir != "" {
+		return p.SnapshotStreamDir, p.SnapshotMeasureDir, nil
+	}
+
 	snapshotGroups := make([]*databasev1.SnapshotRequest_Group, 0, len(groups))
 	for _, group := range groups {
 		snapshotGroups = append(snapshotGroups, &databasev1.SnapshotRequest_Group{
@@ -75,14 +79,16 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group) (streamDir str
 			measureDir = snapshotDir
 		}
 	}
+	// Save the new snapshot paths into Progress
+	p.SnapshotStreamDir = streamDir
+	p.SnapshotMeasureDir = measureDir
 	return streamDir, measureDir, nil
 }
 
 func (l *lifecycleService) setupQuerySvc(ctx context.Context, streamDir, measureDir string) (streamSVC stream.Service, measureSVC measure.Service, err error) {
-	pm := protector.NewMemory(l.omr)
 	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{})
 	if streamDir != "" {
-		streamSVC, err = stream.NewReadonlyService(l.metadata, l.omr, pm)
+		streamSVC, err = stream.NewReadonlyService(l.metadata, l.omr, l.pm)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -94,7 +100,7 @@ func (l *lifecycleService) setupQuerySvc(ctx context.Context, streamDir, measure
 		}
 	}
 	if measureDir != "" {
-		measureSVC, err = measure.NewReadonlyService(l.metadata, l.omr, pm)
+		measureSVC, err = measure.NewReadonlyService(l.metadata, l.omr, l.pm)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -108,7 +114,7 @@ func (l *lifecycleService) setupQuerySvc(ctx context.Context, streamDir, measure
 	return streamSVC, measureSVC, nil
 }
 
-func parseGroup(ctx context.Context, g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
+func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo,
 ) (uint32, uint32, node.Selector, queue.Client, error) {
 	ro := g.ResourceOpts
@@ -143,8 +149,8 @@ func parseGroup(ctx context.Context, g *commonv1.Group, nodeLabels map[string]st
 		return 0, 0, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
 	}
 	nodeSel := node.NewRoundRobinSelector("", metadata)
-	if err = nodeSel.PreRun(ctx); err != nil {
-		return 0, 0, nil, nil, errors.WithMessage(err, "failed to run node selector")
+	if ok, _ := nodeSel.OnInit([]schema.Kind{schema.KindGroup}); !ok {
+		return 0, 0, nil, nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
 	}
 	client := pub.NewWithoutMetadata()
 	if g.Catalog == commonv1.Catalog_CATALOG_STREAM {

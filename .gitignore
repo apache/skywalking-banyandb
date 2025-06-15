@@ -25,7 +25,7 @@ bin
 include
 /build
 target
-/tmp
+tmp
 
 # Test binary, build with `go test -c`
 *.test

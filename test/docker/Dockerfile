@@ -24,6 +24,7 @@ ARG TARGETARCH
 
 COPY banyand/build/bin/linux/${TARGETARCH}/banyand-server-static /banyand
 COPY bydbctl/build/bin/linux/${TARGETARCH}/bydbctl-cli-static /bydbctl
+COPY banyand/build/bin/linux/${TARGETARCH}/banyand-lifecycle-static /lifecycle
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 ENV GRPC_GO_LOG_SEVERITY_LEVEL=WARN

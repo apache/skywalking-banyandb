@@ -47,6 +47,8 @@ jobs:
             config: test/e2e-v2/cases/event/banyandb/e2e.yaml
           - name: BanyanDB Cluster Mode
             config: test/e2e-v2/cases/cluster/e2e.yaml
+          - name: Lifecycle
+            config: test/e2e-v2/cases/lifecycle/e2e.yaml
     env:
       TAG: ${{ github.sha }}
     steps:
@@ -54,24 +56,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-tags: true
-      - name: Cache Go Modules
-        uses: actions/cache@v3
-        id: cache-go
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-      - name: Cache Tools
-        uses: actions/cache@v3
-        id: cache-tool
-        with:
-          path: bin
-          key: ${{ runner.os }}-build-tool-${{ hashFiles('**version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-build-tool-
       - uses: actions/setup-node@v3
         with:
           node-version: 20.12
@@ -94,10 +78,17 @@ jobs:
         run: |
           make -C test/docker build | make -C test/docker build
           docker image ls
+      - name: Generate data for lifecycle
+        if: ${{ matrix.test.name == 'Lifecycle' }}
+        run: |
+          bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh 
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@cf589b4a0b9f8e6f436f78e9cfd94a1ee5494180
+        uses: apache/skywalking-infra-e2e@7e4b5b68716fdb7b79b21fa8908f9db497e1b115
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
+      - name: Fix directory permissions
+        if: ${{ (failure() && matrix.test.name == 'Lifecycle') }}
+        run: sudo chmod -R 777 test/e2e-v2/cases/lifecycle/data-generator/tmp
       - if: ${{ failure() }}
         run: |
           df -h
@@ -109,6 +100,12 @@ jobs:
         with:
           name: test-logs-${{ matrix.test.name }}
           path: "${{ env.SW_INFRA_E2E_LOG_DIR }}"
+      - uses: actions/upload-artifact@v4
+        if: ${{ (failure() && matrix.test.name == 'Lifecycle') }}
+        name: Upload generated data
+        with:
+          name: lifecycle-data
+          path: "test/e2e-v2/cases/lifecycle/data-generator/tmp"
 
   Storage:
     if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
