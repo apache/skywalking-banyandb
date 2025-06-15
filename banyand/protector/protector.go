@@ -65,7 +65,6 @@ type memory struct {
 	allowedBytes   run.Bytes
 	limit          atomic.Uint64
 	usage          uint64
-	threshold      int64
 }
 
 // NewMemory creates a new Memory protector.

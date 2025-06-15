@@ -34,8 +34,6 @@ import (
 
 var mergeMaxConcurrencyCh = make(chan struct{}, cgroups.CPUs())
 
-const largeFileThreshold = 1 << 27
-
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
 
@@ -120,14 +118,14 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	// Determine whether the merged file is too large, and call fadvise if it exceeds the threshold
 	if shouldDropCache {
 		filePath := partPath(tst.root, newPart.p.partMetadata.ID)
-		file, err := os.OpenFile(filePath, os.O_RDWR, 0o644)
-		if err != nil {
-			tst.l.Warn().Err(err).Msg("failed to open file for applying fadvise on large merged file")
+		file, fileErr := os.OpenFile(filePath, os.O_RDWR, 0o644)
+		if fileErr != nil {
+			tst.l.Warn().Err(fileErr).Msg("failed to open file for applying fadvise on large merged file")
 		} else {
 			defer file.Close()
 			// Apply FADV_DONTNEED to drop the file from page cache
-			if err := fs.SyncAndDropCache(file.Fd(), 0, 0); err != nil {
-				tst.l.Warn().Err(err).Msg("failed to apply fadvise on large merged file")
+			if syncErr := fs.SyncAndDropCache(file.Fd(), 0, 0); syncErr != nil {
+				tst.l.Warn().Err(syncErr).Msg("failed to apply fadvise on large merged file")
 			} else {
 				tst.l.Info().Msgf("applied fadvise on large merged file: %s", filePath)
 			}
