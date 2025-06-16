@@ -99,15 +99,15 @@ func ReadFileWithFadvise(_ testing.TB, filePath string) ([]byte, error) {
 
 // ReadFileStreamingWithFadvise reads a file using streaming mode with optional fadvise hints.
 // Returns the total number of bytes read.
-func ReadFileStreamingWithFadvise(_ testing.TB, filePath string, skipFadvise bool) (int64, error) {
+func ReadFileStreamingWithFadvise(_ testing.TB, filePath string, _ bool) (int64, error) {
 	f, err := fileSystem.OpenFile(filePath)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
 
-	// Use cached parameter (true to skip fadvise, false to apply it)
-	seqReader := f.SequentialRead(skipFadvise)
+	// SequentialRead no longer accepts skipFadvise parameter; behavior is determined internally.
+	seqReader := f.SequentialRead()
 
 	totalBytes := int64(0)
 	for {
@@ -184,8 +184,8 @@ func SimulateMergeOperation(_ testing.TB, parts []string, outputFile string) err
 			return err
 		}
 
-		// Use explicit cached=false parameter to apply fadvise
-		seqReader := inFile.SequentialRead(false)
+		// SequentialRead no longer accepts skipFadvise parameter; behavior is determined internally.
+		seqReader := inFile.SequentialRead()
 
 		for {
 			n, err := seqReader.Read(buffer)
@@ -213,7 +213,6 @@ func SimulateMergeOperation(_ testing.TB, parts []string, outputFile string) err
 func SetTestThreshold(threshold int64) {
 	provider := &testThresholdProvider{threshold: threshold}
 	fs.SetThresholdProvider(provider)
-	fs.SetGlobalThreshold(threshold)
 }
 
 // SetRealisticThreshold calculates and sets a realistic threshold based on system memory.
@@ -251,13 +250,10 @@ func (p *testThresholdProvider) GetThreshold() int64 {
 	return p.threshold
 }
 
-func (p *testThresholdProvider) ShouldApplyFadvis(fileSize int64, maxSize int64) bool {
-	// Use the smaller of threshold and maxSize
-	threshold := p.threshold
-	if maxSize < threshold {
-		threshold = maxSize
-	}
-	return fileSize >= threshold
+// ShouldApplyFadvis decides whether to apply fadvise based on the configured threshold.
+// It satisfies fs.ThresholdProvider interface (single-arg version).
+func (p *testThresholdProvider) ShouldApplyFadvis(fileSize int64) bool {
+	return fileSize >= p.threshold
 }
 
 // PageCacheStats contains statistics about page cache usage.
