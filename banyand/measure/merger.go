@@ -263,6 +263,13 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 		return nil, errNoPartToMerge
 	}
 	dstPath := partPath(root, partID)
+	// Calculate total size and decide cache strategy
+	var totalSize int64
+	for _, part := range parts {
+		totalSize += int64(part.p.partMetadata.CompressedSizeBytes)
+	}
+	shouldCache := !fs.ShouldApplyFadvis(totalSize)
+
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
 		pmi := generatePartMergeIter()
@@ -272,7 +279,7 @@ func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*part
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
-	bw.mustInitForFilePart(fileSystem, dstPath)
+	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
 	pm, err := mergeBlocks(closeCh, bw, br)
 	releaseBlockWriter(bw)
