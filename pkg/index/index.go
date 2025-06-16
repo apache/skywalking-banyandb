@@ -308,7 +308,8 @@ type Documents []Document
 
 // Batch is a collection of documents.
 type Batch struct {
-	Documents Documents
+	PersistentCallback func(error)
+	Documents          Documents
 }
 
 // Writer allows writing fields and docID in a document to an index.

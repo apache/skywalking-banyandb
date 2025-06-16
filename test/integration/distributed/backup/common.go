@@ -109,7 +109,7 @@ func InitializeTestSuite() (*CommonTestVars, error) {
 	var closeDataNode0 func()
 	vars.DataAddr, vars.Dir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep)
 	ginkgo.By("Starting liaison node")
-	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
+	liaisonAddr, _, closerLiaisonNode := setup.LiaisonNode(ep)
 	ginkgo.By("Initializing test cases")
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))

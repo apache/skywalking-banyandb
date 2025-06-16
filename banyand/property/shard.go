@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"time"
+	"sync"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -69,8 +69,7 @@ func (s *shard) close() error {
 	return nil
 }
 
-func (db *database) newShard(ctx context.Context, id common.ShardID, flushTimeoutSeconds int64,
-) (*shard, error) {
+func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64) (*shard, error) {
 	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
 	sName := "shard" + strconv.Itoa(int(id))
 	si := &shard{
@@ -82,7 +81,7 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, flushTimeou
 		Path:         location,
 		Logger:       si.l,
 		Metrics:      inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
-		BatchWaitSec: flushTimeoutSeconds,
+		BatchWaitSec: 0,
 	}
 	var err error
 	if si.store, err = inverted.NewStore(opts); err != nil {
@@ -96,9 +95,7 @@ func (s *shard) update(id []byte, property *propertyv1.Property) error {
 	if err != nil {
 		return fmt.Errorf("build update document failure: %w", err)
 	}
-	return s.store.UpdateSeriesBatch(index.Batch{
-		Documents: index.Documents{*document},
-	})
+	return s.updateDocuments(index.Documents{*document})
 }
 
 func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property) (*index.Document, error) {
@@ -156,8 +153,7 @@ func (s *shard) delete(ctx context.Context, docID [][]byte) error {
 		if err := protojson.Unmarshal(property.source, p); err != nil {
 			return fmt.Errorf("unmarshal property failure: %w", err)
 		}
-		// update the property metadata to mark it as deleted
-		p.Metadata.ModRevision = time.Now().UnixNano()
+		// update the property to mark it as deleted
 		document, err := s.buildUpdateDocument(GetPropertyID(p), p)
 		if err != nil {
 			return fmt.Errorf("build delete document failure: %w", err)
@@ -166,9 +162,29 @@ func (s *shard) delete(ctx context.Context, docID [][]byte) error {
 		document.Deleted = true
 		removeDocList = append(removeDocList, *document)
 	}
-	return s.store.UpdateSeriesBatch(index.Batch{
-		Documents: removeDocList,
+	return s.updateDocuments(removeDocList)
+}
+
+func (s *shard) updateDocuments(docs index.Documents) error {
+	var updateErr, persistentError error
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	updateErr = s.store.UpdateSeriesBatch(index.Batch{
+		Documents: docs,
+		PersistentCallback: func(err error) {
+			persistentError = err
+			wg.Done()
+		},
 	})
+	if updateErr != nil {
+		return updateErr
+	}
+	wg.Wait()
+	if persistentError != nil {
+		return fmt.Errorf("persistent failure: %w", persistentError)
+	}
+	return nil
 }
 
 func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,

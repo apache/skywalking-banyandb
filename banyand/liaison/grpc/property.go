@@ -139,7 +139,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 			return nil, errors.Errorf("property %s tag %s not found", property.Metadata.Name, tag.Key)
 		}
 	}
-	qResp, err := ps.Query(ctx, &propertyv1.QueryRequest{
+	nodeProperties, _, err := ps.queryProperties(ctx, &propertyv1.QueryRequest{
 		Groups: []string{g},
 		Name:   property.Metadata.Name,
 		Ids:    []string{property.Id},
@@ -147,11 +147,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	if err != nil {
 		return nil, err
 	}
-	var prev *propertyv1.Property
-	if len(qResp.Properties) > 0 {
-		prev = qResp.Properties[0]
-		// TODO(mrproliu) find older property by different version, should be remove it
-	}
+	prevPropertyWithMetadata, olderProperties := ps.findPrevAndOlderProperties(nodeProperties)
 	entity := propertypkg.GetEntity(property)
 	id, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
 	if err != nil {
@@ -163,17 +159,52 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	}
 
 	nodes := make([]string, 0, copies)
+	var nodeID string
 	for i := range copies {
-		nodeID, err := ps.nodeRegistry.Locate(property.GetMetadata().GetGroup(), property.GetMetadata().GetName(), uint32(id), i)
+		nodeID, err = ps.nodeRegistry.Locate(property.GetMetadata().GetGroup(), property.GetMetadata().GetName(), uint32(id), i)
 		if err != nil {
 			return nil, err
 		}
 		nodes = append(nodes, nodeID)
 	}
+	var prev *propertyv1.Property
+	if prevPropertyWithMetadata != nil && !prevPropertyWithMetadata.deleted {
+		prev = prevPropertyWithMetadata.Property
+	}
+	defer func() {
+		// if their no older properties or have error when apply the new property
+		// then ignore cleanup the older properties
+		if len(olderProperties) == 0 || err != nil {
+			return
+		}
+		var ids [][]byte
+		for _, p := range olderProperties {
+			ids = append(ids, propertypkg.GetPropertyID(p.Property))
+		}
+		_ = ps.remove(ids)
+	}()
 	if req.Strategy == propertyv1.ApplyRequest_STRATEGY_REPLACE {
 		return ps.replaceProperty(ctx, start, uint64(id), nodes, prev, property)
 	}
 	return ps.mergeProperty(ctx, start, uint64(id), nodes, prev, property)
+}
+
+func (ps *propertyServer) findPrevAndOlderProperties(nodeProperties [][]*propertyWithMetadata) (*propertyWithMetadata, []*propertyWithMetadata) {
+	var prevPropertyWithMetadata *propertyWithMetadata
+	var olderProperties []*propertyWithMetadata
+	for _, properties := range nodeProperties {
+		for _, p := range properties {
+			// if the property is not deleted, then added to the older properties list to delete after apply success
+			if !p.deleted {
+				olderProperties = append(olderProperties, p)
+			}
+			// update the prov property
+			if prevPropertyWithMetadata == nil || p.Metadata.ModRevision > prevPropertyWithMetadata.Metadata.ModRevision {
+				prevPropertyWithMetadata = p
+			}
+		}
+	}
+	return prevPropertyWithMetadata, olderProperties
 }
 
 func (ps *propertyServer) mergeProperty(ctx context.Context, now time.Time, shardID uint64, nodes []string,
@@ -286,16 +317,22 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 	if len(req.Id) > 0 {
 		qReq.Ids = []string{req.Id}
 	}
-	qResp, err := ps.Query(ctx, qReq)
+	nodeProperties, _, err := ps.queryProperties(ctx, qReq)
 	if err != nil {
 		return nil, err
 	}
-	if len(qResp.Properties) == 0 {
+	if len(nodeProperties) == 0 {
 		return &propertyv1.DeleteResponse{Deleted: false}, nil
 	}
 	var ids [][]byte
-	for _, p := range qResp.Properties {
-		ids = append(ids, propertypkg.GetPropertyID(p))
+	for _, properties := range nodeProperties {
+		for _, p := range properties {
+			// if the property already delete, then ignore execute twice
+			if p.deleted {
+				continue
+			}
+			ids = append(ids, propertypkg.GetPropertyID(p.Property))
+		}
 	}
 	if err := ps.remove(ids); err != nil {
 		return nil, err
@@ -319,80 +356,28 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	if req.Limit == 0 {
 		req.Limit = 100
 	}
-	var span *query.Span
-	if req.Trace {
-		tracer, _ := query.NewTracer(ctx, start.Format(time.RFC3339Nano))
-		span, _ = tracer.StartSpan(ctx, "property-grpc")
-		span.Tag("request", convert.BytesToString(logger.Proto(req)))
-		defer func() {
-			if err != nil {
-				span.Error(err)
-			} else {
-				resp.Trace = tracer.ToProto()
-			}
-			span.Stop()
-		}()
-	}
-	for _, gn := range req.Groups {
-		if g, getGroupErr := ps.schemaRegistry.GroupRegistry().GetGroup(ctx, gn); getGroupErr != nil {
-			return nil, errors.Errorf("group %s not found", gn)
-		} else if g.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
-			return nil, errors.Errorf("group %s is not allowed to have properties", gn)
-		}
-	}
-	ff, err := ps.pipeline.Broadcast(defaultQueryTimeout, data.TopicPropertyQuery, bus.NewMessage(bus.MessageID(start.Unix()), req))
+
+	nodeProperties, trace, err := ps.queryProperties(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	res := make(map[string]*propertyWithMetadata)
-	for _, f := range ff {
-		if m, getErr := f.Get(); getErr != nil {
-			err = multierr.Append(err, getErr)
-		} else {
-			d := m.Data()
-			if d == nil {
+	for _, nodeWithProperties := range nodeProperties {
+		for _, propertyMetadata := range nodeWithProperties {
+			entity := propertypkg.GetEntity(propertyMetadata.Property)
+			cur, ok := res[entity]
+			if !ok {
+				res[entity] = propertyMetadata
 				continue
 			}
-			switch v := d.(type) {
-			case *propertyv1.InternalQueryResponse:
-				for i, s := range v.Sources {
-					var p propertyv1.Property
-					var deleted bool
-					err = protojson.Unmarshal(s, &p)
-					if err != nil {
-						return nil, err
-					}
-					if i < len(v.Deletes) {
-						deleted = v.Deletes[i]
-					}
-					entity := propertypkg.GetEntity(&p)
-					cur, ok := res[entity]
-					property := &propertyWithMetadata{
-						Property: &p,
-						deleted:  deleted,
-					}
-					if !ok {
-						res[entity] = property
-						continue
-					}
-					if cur.Metadata.ModRevision < p.Metadata.ModRevision {
-						res[entity] = property
-						// TODO(mrproliu) handle the case where the property detected multiple versions
-					}
-				}
-				if span != nil {
-					span.AddSubTrace(v.Trace)
-				}
-			case *common.Error:
-				err = multierr.Append(err, errors.New(v.Error()))
+			if cur.Metadata.ModRevision < propertyMetadata.Metadata.ModRevision {
+				res[entity] = propertyMetadata
+				// TODO(mrproliu) handle the case where the property detected multiple versions
 			}
 		}
 	}
-	if err != nil {
-		return nil, err
-	}
 	if len(res) == 0 {
-		return &propertyv1.QueryResponse{Properties: nil}, nil
+		return &propertyv1.QueryResponse{Properties: nil, Trace: trace}, nil
 	}
 	properties := make([]*propertyv1.Property, 0, len(res))
 	for _, p := range res {
@@ -418,6 +403,86 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		}
 	}
 	return &propertyv1.QueryResponse{Properties: properties}, nil
+}
+
+// queryProperties internal properties query, return all properties with related nodes.
+func (ps *propertyServer) queryProperties(
+	ctx context.Context,
+	req *propertyv1.QueryRequest,
+) (nodeProperties [][]*propertyWithMetadata, trace *commonv1.Trace, err error) {
+	start := time.Now()
+	if req.Limit == 0 {
+		req.Limit = 100
+	}
+	var span *query.Span
+	if req.Trace {
+		tracer, _ := query.NewTracer(ctx, start.Format(time.RFC3339Nano))
+		span, _ = tracer.StartSpan(ctx, "property-grpc")
+		span.Tag("request", convert.BytesToString(logger.Proto(req)))
+		defer func() {
+			if err != nil {
+				span.Error(err)
+			} else {
+				trace = tracer.ToProto()
+			}
+			span.Stop()
+		}()
+	}
+	for _, gn := range req.Groups {
+		if g, getGroupErr := ps.schemaRegistry.GroupRegistry().GetGroup(ctx, gn); getGroupErr != nil {
+			return nil, trace, errors.Errorf("group %s not found", gn)
+		} else if g.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
+			return nil, trace, errors.Errorf("group %s is not allowed to have properties", gn)
+		}
+	}
+	ff, err := ps.pipeline.Broadcast(defaultQueryTimeout, data.TopicPropertyQuery, bus.NewMessage(bus.MessageID(start.Unix()), req))
+	if err != nil {
+		return nil, trace, err
+	}
+	res := make([][]*propertyWithMetadata, 0)
+	for _, f := range ff {
+		if m, getErr := f.Get(); getErr != nil {
+			err = multierr.Append(err, getErr)
+		} else {
+			d := m.Data()
+			if d == nil {
+				continue
+			}
+			nodeWithProperties := make([]*propertyWithMetadata, 0)
+			switch v := d.(type) {
+			case *propertyv1.InternalQueryResponse:
+				for i, s := range v.Sources {
+					var p propertyv1.Property
+					var deleted bool
+					err = protojson.Unmarshal(s, &p)
+					if err != nil {
+						return nil, trace, err
+					}
+					if i < len(v.Deletes) {
+						deleted = v.Deletes[i]
+					}
+					property := &propertyWithMetadata{
+						Property: &p,
+						deleted:  deleted,
+					}
+					nodeWithProperties = append(nodeWithProperties, property)
+				}
+				if span != nil {
+					span.AddSubTrace(v.Trace)
+				}
+				res = append(res, nodeWithProperties)
+			case *common.Error:
+				err = multierr.Append(err, errors.New(v.Error()))
+			}
+		}
+	}
+	if err != nil {
+		return nil, trace, err
+	}
+	if len(res) == 0 {
+		return res, trace, nil
+	}
+	return res, trace, nil
 }
 
 func (ps *propertyServer) remove(ids [][]byte) error {

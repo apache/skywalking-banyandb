@@ -47,6 +47,9 @@ func (s *store) InsertSeriesBatch(batch index.Batch) error {
 	}
 	defer s.closer.Done()
 	b := generateBatch()
+	if batch.PersistentCallback != nil {
+		b.SetPersistedCallback(batch.PersistentCallback)
+	}
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
 		doc, ff := toDoc(d, true)
@@ -65,6 +68,9 @@ func (s *store) UpdateSeriesBatch(batch index.Batch) error {
 	defer s.closer.Done()
 	b := generateBatch()
 	defer releaseBatch(b)
+	if batch.PersistentCallback != nil {
+		b.SetPersistedCallback(batch.PersistentCallback)
+	}
 	for _, d := range batch.Documents {
 		doc, _ := toDoc(d, false)
 		b.Update(doc.ID(), doc)
