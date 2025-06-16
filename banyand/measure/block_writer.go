@@ -175,13 +175,12 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.writers.fieldValuesWriter.init(&mp.fieldValues)
 }
 
-func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string) {
+func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
-	// Get protector instance to determine caching strategy
-	protectorInstance := protector.GetMemoryProtector()
-	shouldCache := protectorInstance.ShouldCache(path)
+	// Combine external hint with protector decision
+	shouldCache = shouldCache || protector.GetMemoryProtector().ShouldCache(path)
 
 	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer) {
 		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
@@ -190,7 +189,7 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache)
 	}
 
-	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, false))
+	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
 	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
 	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm, shouldCache))
 	bw.writers.fieldValuesWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, fieldValuesFilename), storage.FilePerm, shouldCache))
