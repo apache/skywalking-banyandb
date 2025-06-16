@@ -166,6 +166,9 @@ func (s *shard) delete(ctx context.Context, docID [][]byte) error {
 }
 
 func (s *shard) updateDocuments(docs index.Documents) error {
+	if len(docs) == 0 {
+		return nil
+	}
 	var updateErr, persistentError error
 	wg := sync.WaitGroup{}
 	wg.Add(1)
