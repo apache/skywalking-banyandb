@@ -402,7 +402,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			break
 		}
 	}
-	return &propertyv1.QueryResponse{Properties: properties}, nil
+	return &propertyv1.QueryResponse{Properties: properties, Trace: trace}, nil
 }
 
 // queryProperties internal properties query, return all properties with related nodes.
