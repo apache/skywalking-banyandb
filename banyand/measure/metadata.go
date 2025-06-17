@@ -353,10 +353,14 @@ type supplier struct {
 
 func newSupplier(path string, svc *service, sr *schemaRepo, nodeLabels map[string]string) *supplier {
 	return &supplier{
-		path:       path,
-		metadata:   svc.metadata,
-		l:          svc.l,
-		option:     svc.option,
+		path:     path,
+		metadata: svc.metadata,
+		l:        svc.l,
+		option: func() option {
+			o := svc.option
+			o.protector = svc.pm
+			return o
+		}(),
 		omr:        svc.omr,
 		pm:         svc.pm,
 		schemaRepo: sr,

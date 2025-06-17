@@ -47,9 +47,14 @@ const (
 
 type option struct {
 	mergePolicy              *mergePolicy
+	protector                Protector
+	seriesCacheMaxSize       run.Bytes
 	flushTimeout             time.Duration
 	elementIndexFlushTimeout time.Duration
-	seriesCacheMaxSize       run.Bytes
+}
+
+type Protector interface {
+	ShouldApplyFadvis(fileSize int64) bool
 }
 
 // Query allow to retrieve elements in a series of streams.

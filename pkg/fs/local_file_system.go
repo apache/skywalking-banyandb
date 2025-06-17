@@ -33,22 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
-const (
-	defaultLargeFileThreshold = 10 * 1024 * 1024
-)
-
-// ThresholdProvider provides file size thresholds for adaptive caching.
-type ThresholdProvider interface {
-	ShouldApplyFadvis(fileSize int64) bool
-}
-
-var defaultThresholdProvider ThresholdProvider
-
-// SetThresholdProvider sets the global threshold provider.
-func SetThresholdProvider(provider ThresholdProvider) {
-	defaultThresholdProvider = provider
-}
-
 // localFileSystem implements the File System interface.
 type localFileSystem struct {
 	logger *logger.Logger
@@ -638,7 +622,7 @@ func (w *seqWriter) Close() error {
 		}
 	}
 
-	if w.file != nil {
+	if w.file != nil && !w.skipFadvise {
 		_ = SyncAndDropCache(w.file.Fd(), 0, 0)
 	}
 	return nil
@@ -677,11 +661,3 @@ func releaseWriter(bw *bufio.Writer) {
 }
 
 var bufWriterPool = pool.Register[*bufio.Writer]("fs-bufWriter")
-
-// ShouldApplyFadvis determines if fadvis should be applied based on file size.
-func ShouldApplyFadvis(size int64) bool {
-	if defaultThresholdProvider != nil {
-		return defaultThresholdProvider.ShouldApplyFadvis(size)
-	}
-	return size >= defaultLargeFileThreshold
-}

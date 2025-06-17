@@ -48,15 +48,16 @@ const (
 
 type tsTable struct {
 	fileSystem    fs.FileSystem
-	loopCloser    *run.Closer
 	l             *logger.Logger
 	snapshot      *snapshot
 	introductions chan *introduction
-	index         *elementIndex
+	loopCloser    *run.Closer
 	metrics       *metrics
+	index         *elementIndex
 	p             common.Position
-	root          string
 	option        option
+	pm            Protector
+	root          string
 	gc            garbageCleaner
 	curPartID     uint64
 	sync.RWMutex
@@ -175,6 +176,7 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		option:     option,
 		l:          l,
 		p:          p,
+		pm:         option.protector,
 	}
 	var indexMetrics *inverted.Metrics
 	if m != nil {

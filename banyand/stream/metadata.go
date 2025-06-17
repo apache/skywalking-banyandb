@@ -258,13 +258,17 @@ type supplier struct {
 
 func newSupplier(path string, svc *service, nodeLabels map[string]string) *supplier {
 	return &supplier{
-		path:       path,
-		metadata:   svc.metadata,
-		l:          svc.l,
-		pipeline:   svc.localPipeline,
-		option:     svc.option,
+		metadata: svc.metadata,
+		l:        svc.l,
+		pipeline: svc.localPipeline,
+		option: func() option {
+			o := svc.option
+			o.protector = svc.pm
+			return o
+		}(),
 		omr:        svc.omr,
 		pm:         svc.pm,
+		path:       path,
 		schemaRepo: &svc.schemaRepo,
 		nodeLabels: nodeLabels,
 	}

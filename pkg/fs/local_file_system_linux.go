@@ -125,16 +125,6 @@ func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 		return err
 	}
 
-	var stat syscall.Stat_t
-	if err := syscall.Fstat(int(fd), &stat); err != nil {
-		return err
-	}
-	size := stat.Size
-
-	if !ShouldApplyFadvis(size) {
-		return nil
-	}
-
 	if err := unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED); err != nil {
 		return err
 	}

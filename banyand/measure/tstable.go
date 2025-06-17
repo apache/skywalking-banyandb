@@ -54,6 +54,7 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		l:          l,
 		p:          p,
 	}
+	tst.pm = option.protector
 	if m != nil {
 		tst.metrics = m.(*metrics)
 	}
@@ -124,6 +125,7 @@ type tsTable struct {
 	*metrics
 	p         common.Position
 	option    option
+	pm        Protector
 	root      string
 	gc        garbageCleaner
 	curPartID uint64
