@@ -416,7 +416,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		By("Starting data node 1")
 		closeDataNode1 := setup.DataNodeFromDataDir(ep, node2Dir)
 		By("Starting liaison node")
-		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNode(ep)
+		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(ep)
 		By("Initializing test cases")
 
 		deferFunc = func() {

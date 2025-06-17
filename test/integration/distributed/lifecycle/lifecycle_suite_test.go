@@ -102,7 +102,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	_, destDir, closeDataNode1 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=warm", "--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s")
 	By("Starting liaison node")
 	var closerLiaisonNode func()
-	liaisonAddr, _, closerLiaisonNode = setup.LiaisonNode(ep, "--data-node-selector", "type=hot")
+	liaisonAddr, closerLiaisonNode = setup.LiaisonNode(ep, "--data-node-selector", "type=hot")
 	By("Initializing test cases with 10 days before")
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))

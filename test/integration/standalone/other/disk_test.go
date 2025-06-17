@@ -105,7 +105,7 @@ var _ = g.Describe("Disk", func() {
 		g.By("Starting data node 1")
 		closeDataNode1 := setup.DataNode(ep)
 		g.By("Starting liaison node")
-		liaisonAddr, _, closerLiaisonNode := setup.LiaisonNode(ep)
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
 		defer func() {
 			closerLiaisonNode()
 			closeDataNode0()
