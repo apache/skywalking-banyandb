@@ -80,11 +80,12 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64) (*
 		location: location,
 	}
 	opts := inverted.StoreOpts{
-		Path:                 location,
-		Logger:               si.l,
-		Metrics:              inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
-		BatchWaitSec:         0,
-		PrepareMergeCallback: si.prepareForMerge,
+		Path:                        location,
+		Logger:                      si.l,
+		Metrics:                     inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
+		BatchWaitSec:                0,
+		PrepareMergeCallback:        si.prepareForMerge,
+		MinSegmentsForInMemoryMerge: 1,
 	}
 	var err error
 	if si.store, err = inverted.NewStore(opts); err != nil {
