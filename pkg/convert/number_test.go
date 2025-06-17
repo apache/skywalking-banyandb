@@ -46,3 +46,22 @@ func TestInt64ToBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestBoolToBytes(t *testing.T) {
+	testCases := []struct {
+		expected []byte
+		input    bool
+	}{
+		{[]byte{1}, true},
+		{[]byte{0}, false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("BoolToBytes(%t)", tc.input), func(t *testing.T) {
+			result := BoolToBytes(tc.input)
+			if !bytes.Equal(result, tc.expected) {
+				t.Errorf("Expected %v, got %v", tc.expected, result)
+			}
+		})
+	}
+}
