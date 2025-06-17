@@ -204,7 +204,7 @@ func CMD(flags ...string) func() {
 	}
 }
 
-func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, string, func()) {
+func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, func()) {
 	ports, err := test.AllocateFreePorts(1)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -233,7 +233,7 @@ func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, strin
 		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
 	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
 
-	return addr, dataDir, closeFn
+	return addr, closeFn
 }
 
 // DataNode runs a data node.
@@ -249,7 +249,7 @@ func DataNode(etcdEndpoint string, flags ...string) func() {
 
 // DataNodeFromDataDir runs a data node with a specific data directory.
 func DataNodeFromDataDir(etcdEndpoint, dataDir string, flags ...string) func() {
-	_, _, closeFn := startDataNode(etcdEndpoint, dataDir, flags...)
+	_, closeFn := startDataNode(etcdEndpoint, dataDir, flags...)
 	return closeFn
 }
 
@@ -257,15 +257,20 @@ func DataNodeFromDataDir(etcdEndpoint, dataDir string, flags ...string) func() {
 func DataNodeWithAddrAndDir(etcdEndpoint string, flags ...string) (string, string, func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	addr, dir, closeFn := startDataNode(etcdEndpoint, path, flags...)
-	return addr, dir, func() {
+	addr, closeFn := startDataNode(etcdEndpoint, path, flags...)
+	return addr, path, func() {
 		closeFn()
 		deferFn()
 	}
 }
 
 // LiaisonNode runs a liaison node.
-func LiaisonNode(etcdEndpoint string, flags ...string) (grpcAddr, httpAddr string, closeFn func()) {
+func LiaisonNode(etcdEndpoint string, flags ...string) (grpcAddr string, closeFn func()) {
+	grpcAddr, _, closeFn = LiaisonNodeWithHTTP(etcdEndpoint, flags...)
+	return
+}
+
+func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (grpcAddr, httpAddr string, closeFn func()) {
 	ports, err := test.AllocateFreePorts(2)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	grpcAddr = fmt.Sprintf("%s:%d", host, ports[0])
