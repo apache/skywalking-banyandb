@@ -270,6 +270,7 @@ func LiaisonNode(etcdEndpoint string, flags ...string) (grpcAddr string, closeFn
 	return
 }
 
+// LiaisonNodeWithHTTP runs a liaison node with HTTP enabled and returns the gRPC and HTTP addresses.
 func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (grpcAddr, httpAddr string, closeFn func()) {
 	ports, err := test.AllocateFreePorts(2)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
