@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/RoaringBitmap/roaring"
+	segment "github.com/blugelabs/bluge_segment_api"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -78,10 +80,11 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64) (*
 		location: location,
 	}
 	opts := inverted.StoreOpts{
-		Path:         location,
-		Logger:       si.l,
-		Metrics:      inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
-		BatchWaitSec: 0,
+		Path:                 location,
+		Logger:               si.l,
+		Metrics:              inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
+		BatchWaitSec:         0,
+		PrepareMergeCallback: si.prepareForMerge,
 	}
 	var err error
 	if si.store, err = inverted.NewStore(opts); err != nil {
@@ -224,4 +227,34 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 		})
 	}
 	return data, nil
+}
+
+func (s *shard) prepareForMerge(segments []segment.Segment, drops []*roaring.Bitmap, _ uint64) error {
+	if len(segments) == 0 || len(drops) == 0 {
+		return nil
+	}
+	for segID, seg := range segments {
+		var docID uint64
+		for ; docID < seg.Count(); docID++ {
+			hasDeleted := false
+			_ = seg.VisitStoredFields(docID, func(field string, value []byte) bool {
+				if field == deleteField {
+					hasDeleted = convert.BytesToBool(value)
+					return false
+				}
+				return true
+			})
+
+			if !hasDeleted {
+				continue
+			}
+
+			if drops[segID] == nil {
+				drops[segID] = roaring.New()
+			}
+
+			drops[segID].Add(uint32(docID))
+		}
+	}
+	return nil
 }
