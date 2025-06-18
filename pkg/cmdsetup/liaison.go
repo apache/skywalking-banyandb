@@ -54,7 +54,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	measureLiaisonNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, tire1Client, measureLiaisonNodeSel)
 	measureDataNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)
 	metricSvc := observability.NewMetricService(metaSvc, tire1Client, "liaison", measureLiaisonNodeRegistry)
-	internalPipeline := sub.NewServer(metricSvc, "liaison-server")
+	internalPipeline := sub.NewServerWithPorts(metricSvc, "liaison-server", 18912, 18913)
 	streamLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
 	streamDataNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
 	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
