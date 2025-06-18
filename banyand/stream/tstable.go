@@ -170,6 +170,9 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
+	if option.protector == nil {
+		return nil, errors.New("option.protector must be non-nil")
+	}
 	tst := tsTable{
 		fileSystem: fileSystem,
 		root:       rootPath,
