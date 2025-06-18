@@ -50,28 +50,9 @@ type option struct {
 	flushTimeout       time.Duration
 }
 
-type Option func(*table)
-
+// Protector provides memory protection and file system optimization hints.
 type Protector interface {
 	ShouldApplyFadvis(fileSize int64) bool
-}
-
-type table struct {
-	pm Protector
-}
-
-func NewTable(name string, opts ...Option) *table {
-	t := &table{}
-	for _, opt := range opts {
-		opt(t)
-	}
-	return t
-}
-
-func WithProtector(p Protector) Option {
-	return func(t *table) {
-		t.pm = p
-	}
 }
 
 type indexSchema struct {

@@ -53,6 +53,7 @@ type option struct {
 	elementIndexFlushTimeout time.Duration
 }
 
+// Protector provides memory protection and file system optimization hints.
 type Protector interface {
 	ShouldApplyFadvis(fileSize int64) bool
 }
