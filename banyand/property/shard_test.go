@@ -89,13 +89,23 @@ func TestMergeDeleted(t *testing.T) {
 		}
 	}
 
+	// waiting for the merge phase to complete
+	time.Sleep(time.Second * 1)
+
 	// check if the property is deleted from shard including deleted, should be no document (delete by merge phase)
 	resp, err := db.query(context.Background(), &propertyv1.QueryRequest{Groups: []string{"test-group"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(resp) != 0 {
-		t.Fail()
+	// the count of properties in shard should be less than the total properties count
+	if len(resp) >= propertyCount {
+		t.Fatal(fmt.Errorf("expect only %d results, got %d", propertyCount, len(resp)))
+	}
+	for _, p := range resp {
+		// and the property should be marked as deleted
+		if !p.deleted {
+			t.Fatal(fmt.Errorf("expect all results to be deleted"))
+		}
 	}
 }

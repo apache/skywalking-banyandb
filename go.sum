@@ -284,10 +284,10 @@ github.com/modern-go/reflect2 v1.0.2 h1:xBagoLtFs94CBntxluKeaWgTMpvLxC4ur3nMaC9G
 github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/montanaflynn/stats v0.7.1 h1:etflOAAHORrCC44V+aR6Ftzort912ZU+YLiSTuV8eaE=
 github.com/montanaflynn/stats v0.7.1/go.mod h1:etXPPgVO6n31NxCd9KQUMvCM+ve0ruNzt6R8Bnaayow=
-github.com/mrproliu/bluge v0.0.0-20250617145527-971cab3f4983 h1:T0vnLMsIwsAAWR+y7TpsEtWymemuBVzeE73FLjnG2Pg=
-github.com/mrproliu/bluge v0.0.0-20250617145527-971cab3f4983/go.mod h1:rriyHHsTidJ4UYFiVDIZyXCFJxQYs5FGpZmIfuvSqPA=
-github.com/mrproliu/ice v0.0.0-20250617134843-17221f751a9a h1:e8NmmThNduLFLIN391aAJgv44A3hfEoYRvwVDye4fUM=
-github.com/mrproliu/ice v0.0.0-20250617134843-17221f751a9a/go.mod h1:DoQeb0Ee86LyruZSL77Ddscfk/THJ38x453CRCnGEPI=
+github.com/mrproliu/bluge v0.0.0-20250618012726-eceefe3ee451 h1:cJ5v5hpFFwocOhYF72aZoZzZPaYMp4qH/m7J0YSKaw4=
+github.com/mrproliu/bluge v0.0.0-20250618012726-eceefe3ee451/go.mod h1:rriyHHsTidJ4UYFiVDIZyXCFJxQYs5FGpZmIfuvSqPA=
+github.com/mrproliu/ice v0.0.0-20250618012425-261bd7e8d8b2 h1:NqZsn2TCn1khH6rgqppsboza7ucj4NrBPqgG7+isVmM=
+github.com/mrproliu/ice v0.0.0-20250618012425-261bd7e8d8b2/go.mod h1:DoQeb0Ee86LyruZSL77Ddscfk/THJ38x453CRCnGEPI=
 github.com/mschoch/smat v0.2.0 h1:8imxQsjDm8yFEAVBe7azKmKSgzSkZXDuKkSq9374khM=
 github.com/mschoch/smat v0.2.0/go.mod h1:kc9mz7DoBKqDyiRL7VZN8KvXQMWeTaVnttLRXOlotKw=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=

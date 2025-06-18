@@ -82,10 +82,9 @@ type StoreOpts struct {
 	Metrics              *Metrics
 	PrepareMergeCallback func(segments []segment.Segment, drops []*roaringpkg.Bitmap, id uint64) error
 
-	Path                        string
-	BatchWaitSec                int64
-	CacheMaxBytes               int
-	MinSegmentsForInMemoryMerge int
+	Path          string
+	BatchWaitSec  int64
+	CacheMaxBytes int
 }
 
 type store struct {
@@ -170,9 +169,6 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	config.DefaultSearchAnalyzer = Analyzers[index.AnalyzerKeyword]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
 	config = config.WithPrepareMergeCallback(opts.PrepareMergeCallback)
-	if opts.MinSegmentsForInMemoryMerge > 0 {
-		config = config.WithMinSegmentsForInMemoryMerge(opts.MinSegmentsForInMemoryMerge)
-	}
 	w, err := bluge.OpenWriter(config)
 	if err != nil {
 		return nil, err
