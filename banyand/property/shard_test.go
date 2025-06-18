@@ -19,6 +19,7 @@ package property
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -56,26 +57,36 @@ func TestMergeDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	property := &propertyv1.Property{
-		Metadata: &commonv1.Metadata{
-			Group:       "test-group",
-			Name:        "test-name",
-			ModRevision: time.Now().Unix(),
-		},
-		Id: "test-id",
-		Tags: []*modelv1.Tag{
-			{Key: "tag1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 1}}}},
-		},
+	propertyCount := 6
+
+	properties := make([]*propertyv1.Property, 0, propertyCount)
+	for i := 0; i < propertyCount; i++ {
+		property := &propertyv1.Property{
+			Metadata: &commonv1.Metadata{
+				Group:       "test-group",
+				Name:        "test-name",
+				ModRevision: time.Now().Unix(),
+			},
+			Id: fmt.Sprintf("test-id%d", i),
+			Tags: []*modelv1.Tag{
+				{Key: "tag1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(i)}}}},
+			},
+		}
+		properties = append(properties, property)
 	}
 
 	// apply the property
-	if err = newShard.update(GetPropertyID(property), property); err != nil {
-		t.Fatal(err)
+	for _, p := range properties {
+		if err = newShard.update(GetPropertyID(p), p); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// delete current property
-	if err = newShard.delete(context.Background(), [][]byte{GetPropertyID(property)}); err != nil {
-		t.Fatal(err)
+	for _, p := range properties {
+		if err = newShard.delete(context.Background(), [][]byte{GetPropertyID(p)}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// check if the property is deleted from shard including deleted, should be no document (delete by merge phase)
