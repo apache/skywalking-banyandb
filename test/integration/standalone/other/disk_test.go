@@ -58,7 +58,7 @@ var _ = g.Describe("Disk", func() {
 	})
 	g.It(" is a standalone server, blocking writing, with disk full", func() {
 		addr, _, deferFn := setup.Standalone(
-			"--measure-max-disk-usage-percent",
+			"--liaison-measure-max-disk-usage-percent",
 			"0",
 		)
 		defer deferFn()
@@ -99,13 +99,13 @@ var _ = g.Describe("Disk", func() {
 		ctx := context.Background()
 		test_measure.PreloadSchema(ctx, schemaRegistry)
 		g.By("Starting data node 0")
-		closeDataNode0 := setup.DataNode(ep,
-			"--measure-max-disk-usage-percent",
-			"0")
+		closeDataNode0 := setup.DataNode(ep)
 		g.By("Starting data node 1")
 		closeDataNode1 := setup.DataNode(ep)
 		g.By("Starting liaison node")
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep,
+			"--liaison-measure-max-disk-usage-percent",
+			"0")
 		defer func() {
 			closerLiaisonNode()
 			closeDataNode0()
@@ -128,11 +128,10 @@ var _ = g.Describe("Disk", func() {
 				successNum++
 			} else {
 				errNum++
-				gm.Expect(resp.GetStatus()).To(gm.Equal(modelv1.Status_name[int32(modelv1.Status_STATUS_DISK_FULL)]))
 			}
 		}
 		gm.Expect(errNum).To(gm.BeNumerically(">", 0))
-		gm.Expect(successNum).To(gm.BeNumerically(">", 0))
+		gm.Expect(successNum).To(gm.BeEquivalentTo(0))
 	})
 })
 

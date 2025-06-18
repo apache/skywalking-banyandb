@@ -46,9 +46,12 @@ type discoveryService struct {
 	kind            schema.Kind
 }
 
-func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
-	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
-	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
+func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry, gr *groupRepo) *discoveryService {
+	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator)}
+	return newDiscoveryServiceWithEntityRepo(kind, metadataRepo, nodeRegistry, gr, er)
+}
+
+func newDiscoveryServiceWithEntityRepo(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry, gr *groupRepo, er *entityRepo) *discoveryService {
 	sr := &shardingKeyRepo{shardingKeysMap: make(map[identity]partition.Locator)}
 	return &discoveryService{
 		groupRepo:       gr,
@@ -61,7 +64,6 @@ func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegis
 }
 
 func (ds *discoveryService) initialize() error {
-	ds.metadataRepo.RegisterHandler("liaison", schema.KindGroup, ds.groupRepo)
 	ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.entityRepo)
 	if ds.kind == schema.KindMeasure {
 		ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.shardingKeyRepo)
