@@ -42,11 +42,12 @@ import (
 var SharedContext helpers.LifecycleSharedContext
 
 var _ = ginkgo.Describe("Lifecycle", func() {
-	ginkgo.It("should migrate data correctly", func() {
+	ginkgo.It("should migrate data once correctly", func() {
 		dir, err := os.MkdirTemp("", "lifecycle-restore-dest")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		defer os.RemoveAll(dir)
 		pf := filepath.Join(dir, "progress.json")
+		rf := filepath.Join(dir, "report")
 		lifecycleCmd := lifecycle.NewCommand()
 		lifecycleCmd.SetArgs([]string{
 			"--grpc-addr", SharedContext.DataAddr,
@@ -54,11 +55,74 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 			"--measure-root-path", SharedContext.SrcDir,
 			"--etcd-endpoints", SharedContext.EtcdAddr,
 			"--progress-file", pf,
+			"--report-dir", rf,
 		})
 		err = lifecycleCmd.Execute()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifySourceDirectoriesAfterMigration()
 		verifyDestinationDirectoriesAfterMigration()
+		// Check report directory has files
+		rEntries, err := os.ReadDir(rf)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Report directory should exist")
+		gomega.Expect(len(rEntries)).To(gomega.BeNumerically(">", 0), "Report directory should contain files")
+		conn, err := grpchelper.Conn(SharedContext.LiaisonAddr, 10*time.Second,
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		defer func() {
+			if conn != nil {
+				_ = conn.Close()
+			}
+		}()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		sc := helpers.SharedContext{
+			Connection: conn,
+			BaseTime:   SharedContext.BaseTime,
+		}
+		// Verify measure data lifecycle stages
+		verifyLifecycleStages(sc, measureTestData.VerifyFn, helpers.Args{
+			Input:    "all",
+			Duration: 25 * time.Minute,
+			Offset:   -20 * time.Minute,
+		})
+
+		// Verify stream data lifecycle stages
+		verifyLifecycleStages(sc, streamTestData.VerifyFn, helpers.Args{
+			Input:           "all",
+			Duration:        time.Hour,
+			IgnoreElementID: true,
+		})
+
+		// Verify topN data lifecycle stages
+		verifyLifecycleStages(sc, topNTestData.VerifyFn, helpers.Args{
+			Input:    "aggr_desc",
+			Duration: 25 * time.Minute,
+			Offset:   -20 * time.Minute,
+		})
+	})
+	ginkgo.It("should migrate data correctly with a scheduler", func() {
+		dir, err := os.MkdirTemp("", "lifecycle-restore-dest")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		defer os.RemoveAll(dir)
+		pf := filepath.Join(dir, "progress.json")
+		rf := filepath.Join(dir, "report")
+		lifecycleCmd := lifecycle.NewCommand()
+		lifecycleCmd.SetArgs([]string{
+			"--grpc-addr", SharedContext.DataAddr,
+			"--stream-root-path", SharedContext.SrcDir,
+			"--measure-root-path", SharedContext.SrcDir,
+			"--etcd-endpoints", SharedContext.EtcdAddr,
+			"--progress-file", pf,
+			"--report-dir", rf,
+			"--schedule", "@every 5s",
+			"--max-execution-times", "2",
+		})
+		err = lifecycleCmd.Execute()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		verifySourceDirectoriesAfterMigration()
+		verifyDestinationDirectoriesAfterMigration()
+		// Check report directory has files
+		rEntries, err := os.ReadDir(rf)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Report directory should exist")
+		gomega.Expect(len(rEntries)).To(gomega.BeNumerically(">", 0), "Report directory should contain files")
 		conn, err := grpchelper.Conn(SharedContext.LiaisonAddr, 10*time.Second,
 			grpc.WithTransportCredentials(insecure.NewCredentials()))
 		defer func() {

@@ -147,9 +147,10 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, topNPipeli
 			schemaRegistry: schemaRegistry,
 		},
 		propertyServer: &propertyServer{
-			schemaRegistry: schemaRegistry,
-			pipeline:       pipeline,
-			nodeRegistry:   nr.PropertyNodeRegistry,
+			schemaRegistry:   schemaRegistry,
+			pipeline:         pipeline,
+			nodeRegistry:     nr.PropertyNodeRegistry,
+			discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.MeasureNodeRegistry),
 		},
 		propertyRegistryServer: &propertyRegistryServer{
 			schemaRegistry: schemaRegistry,
@@ -164,9 +165,11 @@ func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log)
 	s.measureSVC.setLogger(s.log)
+	s.propertyServer.SetLogger(s.log)
 	components := []*discoveryService{
 		s.streamSVC.discoveryService,
 		s.measureSVC.discoveryService,
+		s.propertyServer.discoveryService,
 	}
 	for _, c := range components {
 		c.SetLogger(s.log)
