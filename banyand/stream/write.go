@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -71,18 +72,33 @@ func (w *writeCallback) CheckHealth() *common.Error {
 func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest,
 	docIDBuilder *strings.Builder,
 ) (map[string]*elementsInGroup, error) {
-	req := writeEvent.Request
-	t := req.Element.Timestamp.AsTime().Local()
+	t := writeEvent.Request.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := t.UnixNano()
+	eg, err := w.prepareElementsInGroup(dst, writeEvent, ts)
+	if err != nil {
+		return nil, err
+	}
+	et, err := w.prepareElementsInTable(eg, writeEvent, ts)
+	if err != nil {
+		return nil, err
+	}
+	err = w.processElements(et, eg, writeEvent, docIDBuilder, ts)
+	if err != nil {
+		return nil, err
+	}
+	return dst, nil
+}
 
-	gn := req.Metadata.Group
+func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest, ts int64) (*elementsInGroup, error) {
+	gn := writeEvent.Request.Metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
 	}
+
 	eg, ok := dst[gn]
 	if !ok {
 		eg = &elementsInGroup{
@@ -96,7 +112,10 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	if eg.latestTS < ts {
 		eg.latestTS = ts
 	}
+	return eg, nil
+}
 
+func (w *writeCallback) prepareElementsInTable(eg *elementsInGroup, writeEvent *streamv1.InternalWriteRequest, ts int64) (*elementsInTable, error) {
 	var et *elementsInTable
 	for i := range eg.tables {
 		if eg.tables[i].timeRange.Contains(ts) {
@@ -104,25 +123,30 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			break
 		}
 	}
-	shardID := common.ShardID(writeEvent.ShardId)
+
 	if et == nil {
 		var segment storage.Segment[*tsTable, option]
 		for _, seg := range eg.segments {
 			if seg.GetTimeRange().Contains(ts) {
 				segment = seg
+				break
 			}
 		}
 		if segment == nil {
-			segment, err = tsdb.CreateSegmentIfNotExist(t)
+			var err error
+			segment, err = eg.tsdb.CreateSegmentIfNotExist(time.Unix(0, ts))
 			if err != nil {
 				return nil, fmt.Errorf("cannot create segment: %w", err)
 			}
 			eg.segments = append(eg.segments, segment)
 		}
+
+		shardID := common.ShardID(writeEvent.ShardId)
 		tstb, err := segment.CreateTSTableIfNotExist(shardID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
+
 		et = &elementsInTable{
 			timeRange: segment.GetTimeRange(),
 			tsTable:   tstb,
@@ -131,6 +155,14 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		et.elements.reset()
 		eg.tables = append(eg.tables, et)
 	}
+	return et, nil
+}
+
+func (w *writeCallback) processElements(et *elementsInTable, eg *elementsInGroup, writeEvent *streamv1.InternalWriteRequest,
+	docIDBuilder *strings.Builder, ts int64,
+) error {
+	req := writeEvent.Request
+
 	et.elements.timestamps = append(et.elements.timestamps, ts)
 	docIDBuilder.Reset()
 	docIDBuilder.WriteString(req.Metadata.Name)
@@ -138,34 +170,39 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	docIDBuilder.WriteString(req.Element.ElementId)
 	eID := convert.HashStr(docIDBuilder.String())
 	et.elements.elementIDs = append(et.elements.elementIDs, eID)
+
 	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
-		return nil, fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
+		return fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
 	}
+
 	fLen := len(req.Element.GetTagFamilies())
 	if fLen < 1 {
-		return nil, fmt.Errorf("%s has no tag family", req)
+		return fmt.Errorf("%s has no tag family", req)
 	}
 	if fLen > len(stm.schema.GetTagFamilies()) {
-		return nil, fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
+		return fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
 	}
+
 	series := &pbv1.Series{
 		Subject:      req.Metadata.Name,
 		EntityValues: writeEvent.EntityValues,
 	}
 	if err := series.Marshal(); err != nil {
-		return nil, fmt.Errorf("cannot marshal series: %w", err)
+		return fmt.Errorf("cannot marshal series: %w", err)
 	}
 	et.elements.seriesIDs = append(et.elements.seriesIDs, series.ID)
 
 	is := stm.indexSchema.Load().(indexSchema)
-
 	tagFamilies := make([]tagValues, 0, len(stm.schema.TagFamilies))
+	indexedTags := make(map[string]map[string]struct{})
+	var fields []index.Field
+
 	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
-		logger.Panicf("metadata crashed, tag family rule length %d, tag family length %d",
+		return fmt.Errorf("metadata crashed, tag family rule length %d, tag family length %d",
 			len(is.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
 	}
-	var fields []index.Field
+
 	for i := range stm.GetSchema().GetTagFamilies() {
 		var tagFamily *modelv1.TagFamilyForWrite
 		if len(req.Element.TagFamilies) <= i {
@@ -178,6 +215,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		tf := tagValues{
 			tag: tagFamilySpec.Name,
 		}
+		indexedTags[tagFamilySpec.Name] = make(map[string]struct{})
 
 		for j := range tagFamilySpec.Tags {
 			var tagValue *modelv1.TagValue
@@ -188,21 +226,25 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 			}
 
 			t := tagFamilySpec.Tags[j]
+			indexed := false
 			if r, ok := tfr[t.Name]; ok && tagValue != pbv1.NullTagValue {
-				fields = appendField(fields, index.FieldKey{
-					IndexRuleID: r.GetMetadata().GetId(),
-					Analyzer:    r.Analyzer,
-					SeriesID:    series.ID,
-				}, t.Type, tagValue, r.GetNoSort())
+				if r.GetType() == databasev1.IndexRule_TYPE_INVERTED {
+					fields = appendField(fields, index.FieldKey{
+						IndexRuleID: r.GetMetadata().GetId(),
+						Analyzer:    r.Analyzer,
+						SeriesID:    series.ID,
+					}, t.Type, tagValue, r.GetNoSort())
+				} else if r.GetType() == databasev1.IndexRule_TYPE_SKIPPING {
+					indexed = true
+				}
 			}
 			_, isEntity := is.indexRuleLocators.EntitySet[t.Name]
 			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
 				continue
 			}
-			tf.values = append(tf.values, encodeTagValue(
-				t.Name,
-				t.Type,
-				tagValue))
+			tv := encodeTagValue(t.Name, t.Type, tagValue)
+			tv.indexed = indexed
+			tf.values = append(tf.values, tv)
 		}
 		if len(tf.values) > 0 {
 			tagFamilies = append(tagFamilies, tf)
@@ -225,7 +267,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 		eg.docIDsAdded[docID] = struct{}{}
 	}
 
-	return dst, nil
+	return nil
 }
 
 func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {

@@ -33,6 +33,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -109,7 +110,7 @@ func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string)
 				tf.Sortable()
 			}
 			if f.Key.Analyzer != index.AnalyzerUnspecified {
-				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
+				tf = tf.WithAnalyzer(analyzer.Analyzers[f.Key.Analyzer])
 			}
 		} else {
 			tf = bluge.NewStoredOnlyField(k, f.GetBytes())
