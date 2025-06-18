@@ -171,9 +171,10 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 			schemaRegistry: schemaRegistry,
 		},
 		propertyServer: &propertyServer{
-			schemaRegistry: schemaRegistry,
-			pipeline:       tir2Client,
-			nodeRegistry:   nr.PropertyNodeRegistry,
+			schemaRegistry:   schemaRegistry,
+			pipeline:         tir2Client,
+			nodeRegistry:     nr.PropertyNodeRegistry,
+			discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.PropertyNodeRegistry, gr),
 		},
 		propertyRegistryServer: &propertyRegistryServer{
 			schemaRegistry: schemaRegistry,
@@ -191,10 +192,12 @@ func (s *server) PreRun(_ context.Context) error {
 	s.streamSVC.setLogger(s.log.Named("stream-t1"))
 	s.streamCallback.l = s.log.Named("stream-t2")
 	s.measureSVC.setLogger(s.log)
+	s.propertyServer.SetLogger(s.log)
 	s.measureCallback.l = s.log.Named("measure-t2")
 	components := []*discoveryService{
 		s.streamSVC.discoveryService,
 		s.measureSVC.discoveryService,
+		s.propertyServer.discoveryService,
 	}
 	s.schemaRepo.RegisterHandler("liaison", schema.KindGroup, s.groupRepo)
 	for _, c := range components {

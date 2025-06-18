@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"sync"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -42,14 +43,16 @@ const (
 	groupField    = "_group"
 	nameField     = index.IndexModeName
 	entityID      = "_entity_id"
+	deleteField   = "_deleted"
 )
 
 var (
-	sourceFieldKey = index.FieldKey{TagName: sourceField}
-	entityFieldKey = index.FieldKey{TagName: entityID}
-	groupFieldKey  = index.FieldKey{TagName: groupField}
-	nameFieldKey   = index.FieldKey{TagName: nameField}
-	projection     = []index.FieldKey{sourceFieldKey}
+	sourceFieldKey  = index.FieldKey{TagName: sourceField}
+	entityFieldKey  = index.FieldKey{TagName: entityID}
+	groupFieldKey   = index.FieldKey{TagName: groupField}
+	nameFieldKey    = index.FieldKey{TagName: nameField}
+	deletedFieldKey = index.FieldKey{TagName: deleteField}
+	projection      = []index.FieldKey{sourceFieldKey, deletedFieldKey}
 )
 
 type shard struct {
@@ -66,8 +69,7 @@ func (s *shard) close() error {
 	return nil
 }
 
-func (db *database) newShard(ctx context.Context, id common.ShardID, flushTimeoutSeconds int64,
-) (*shard, error) {
+func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64) (*shard, error) {
 	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
 	sName := "shard" + strconv.Itoa(int(id))
 	si := &shard{
@@ -79,7 +81,7 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, flushTimeou
 		Path:         location,
 		Logger:       si.l,
 		Metrics:      inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
-		BatchWaitSec: flushTimeoutSeconds,
+		BatchWaitSec: 0,
 	}
 	var err error
 	if si.store, err = inverted.NewStore(opts); err != nil {
@@ -89,9 +91,17 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, flushTimeou
 }
 
 func (s *shard) update(id []byte, property *propertyv1.Property) error {
+	document, err := s.buildUpdateDocument(id, property)
+	if err != nil {
+		return fmt.Errorf("build update document failure: %w", err)
+	}
+	return s.updateDocuments(index.Documents{*document})
+}
+
+func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property) (*index.Document, error) {
 	pj, err := protojson.Marshal(property)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sourceField := index.NewBytesField(sourceFieldKey, pj)
 	sourceField.NoSort = true
@@ -110,24 +120,78 @@ func (s *shard) update(id []byte, property *propertyv1.Property) error {
 	for _, t := range property.Tags {
 		tv, err := pbv1.MarshalTagValue(t.Value)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		tagField := index.NewBytesField(index.FieldKey{IndexRuleID: uint32(convert.HashStr(t.Key))}, tv)
 		tagField.Index = true
 		tagField.NoSort = true
 		doc.Fields = append(doc.Fields, tagField)
 	}
-	return s.store.UpdateSeriesBatch(index.Batch{
-		Documents: index.Documents{doc},
-	})
+	return &doc, nil
 }
 
-func (s *shard) delete(docID [][]byte) error {
-	return s.store.Delete(docID)
+func (s *shard) delete(ctx context.Context, docID [][]byte) error {
+	// search the original documents by docID
+	seriesMatchers := make([]index.SeriesMatcher, 0, len(docID))
+	for _, id := range docID {
+		seriesMatchers = append(seriesMatchers, index.SeriesMatcher{
+			Match: id,
+			Type:  index.SeriesMatcherTypeExact,
+		})
+	}
+	iq, err := s.store.BuildQuery(seriesMatchers, nil, nil)
+	if err != nil {
+		return fmt.Errorf("build property query failure: %w", err)
+	}
+	exisingDocList, err := s.search(ctx, iq, len(docID))
+	if err != nil {
+		return fmt.Errorf("search existing documents failure: %w", err)
+	}
+	removeDocList := make(index.Documents, 0, len(exisingDocList))
+	for _, property := range exisingDocList {
+		p := &propertyv1.Property{}
+		if err := protojson.Unmarshal(property.source, p); err != nil {
+			return fmt.Errorf("unmarshal property failure: %w", err)
+		}
+		// update the property to mark it as deleted
+		document, err := s.buildUpdateDocument(GetPropertyID(p), p)
+		if err != nil {
+			return fmt.Errorf("build delete document failure: %w", err)
+		}
+		// mark the document as deleted
+		document.Deleted = true
+		removeDocList = append(removeDocList, *document)
+	}
+	return s.updateDocuments(removeDocList)
+}
+
+func (s *shard) updateDocuments(docs index.Documents) error {
+	if len(docs) == 0 {
+		return nil
+	}
+	var updateErr, persistentError error
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	updateErr = s.store.UpdateSeriesBatch(index.Batch{
+		Documents: docs,
+		PersistentCallback: func(err error) {
+			persistentError = err
+			wg.Done()
+		},
+	})
+	if updateErr != nil {
+		return updateErr
+	}
+	wg.Wait()
+	if persistentError != nil {
+		return fmt.Errorf("persistent failure: %w", persistentError)
+	}
+	return nil
 }
 
 func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
-) (data [][]byte, err error) {
+) (data []*queryProperty, err error) {
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		span, _ := tracer.StartSpan(ctx, "property.search")
@@ -150,9 +214,14 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 	if len(ss) == 0 {
 		return nil, nil
 	}
-	data = make([][]byte, 0, len(ss))
+	data = make([]*queryProperty, 0, len(ss))
 	for _, s := range ss {
-		data = append(data, s.Fields[sourceField])
+		bytes := s.Fields[sourceField]
+		deleted := convert.BytesToBool(s.Fields[deleteField])
+		data = append(data, &queryProperty{
+			source:  bytes,
+			deleted: deleted,
+		})
 	}
 	return data, nil
 }
