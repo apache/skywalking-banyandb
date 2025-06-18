@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -314,4 +315,81 @@ func (s *streamService) Close() error {
 		return s.ingestionAccessLog.Close()
 	}
 	return nil
+}
+
+type streamRedirectWriteCallback struct {
+	*bus.UnImplementedHealthyListener
+	l            *logger.Logger
+	pipeline     queue.Client
+	groupRepo    *groupRepo
+	nodeRegistry NodeRegistry
+	writeTimeout time.Duration
+}
+
+func (r *streamRedirectWriteCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+	events, ok := message.Data().([]any)
+	if !ok {
+		r.l.Warn().Msg("invalid event data type")
+		return
+	}
+	if len(events) < 1 {
+		r.l.Warn().Msg("empty event")
+		return
+	}
+
+	publisher := r.pipeline.NewBatchPublisher(r.writeTimeout)
+	defer func() {
+		_, err := publisher.Close()
+		if err != nil {
+			r.l.Error().Err(err).Msg("failed to close publisher")
+		}
+	}()
+
+	for i := range events {
+		var writeEvent *streamv1.InternalWriteRequest
+		switch e := events[i].(type) {
+		case *streamv1.InternalWriteRequest:
+			writeEvent = e
+		case []byte:
+			writeEvent = &streamv1.InternalWriteRequest{}
+			if err := proto.Unmarshal(e, writeEvent); err != nil {
+				r.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				continue
+			}
+		default:
+			r.l.Warn().Msg("invalid event data type")
+			continue
+		}
+
+		metadata := writeEvent.Request.GetMetadata()
+		if metadata == nil {
+			r.l.Warn().Msg("metadata is nil in InternalWriteRequest")
+			continue
+		}
+
+		group := metadata.GetGroup()
+		streamName := metadata.GetName()
+		shardID := writeEvent.GetShardId()
+
+		copies, ok := r.groupRepo.copies(group)
+		if !ok {
+			r.l.Error().Str("group", group).Msg("failed to get group copies")
+			continue
+		}
+
+		for copyIdx := range copies {
+			nodeID, err := r.nodeRegistry.Locate(group, streamName, shardID, copyIdx)
+			if err != nil {
+				r.l.Error().Err(err).Str("group", group).Str("stream", streamName).Uint32("shard", shardID).Uint32("copy", copyIdx).Msg("failed to locate node")
+				continue
+			}
+
+			msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, writeEvent)
+			if _, err := publisher.Publish(ctx, data.TopicStreamWrite, msg); err != nil {
+				r.l.Error().Err(err).Str("node", nodeID).Msg("failed to publish message")
+			}
+		}
+	}
+
+	return
 }
