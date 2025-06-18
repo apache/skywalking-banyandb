@@ -80,7 +80,12 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
+	encodeDefault := func() {
+		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
+	}
+
 	// select encoding based on data type
+encodeSwitch:
 	switch t.valueType {
 	case pbv1.ValueTypeInt64:
 		// convert byte array to int64 array
@@ -99,6 +104,12 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 
 		for i, v := range t.values {
 			if len(v) != 8 {
+				if v == nil || string(v) == "null" {
+					t.valueType = pbv1.ValueTypeStr
+					tm.valueType = pbv1.ValueTypeStr
+					encodeDefault()
+					break encodeSwitch // skip to final part
+				}
 				var val int64
 				for j := 0; j < len(v); j++ {
 					val = (val << 8) | int64(v[j])
@@ -146,8 +157,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 		}
 		writer.Flush()
 	default:
-		// marshal values
-		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
+		encodeDefault()
 	}
 	tm.size = uint64(len(bb.Buf))
 	if tm.size > maxValuesBlockSize {
