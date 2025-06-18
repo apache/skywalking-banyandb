@@ -80,7 +80,12 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
+	encodeDefault := func() {
+		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
+	}
+
 	// select encoding based on data type
+encodeSwitch:
 	switch c.valueType {
 	case pbv1.ValueTypeInt64:
 		// convert byte array to int64 array
@@ -99,6 +104,12 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 
 		for i, v := range c.values {
 			if len(v) != 8 {
+				if v == nil || string(v) == "null" {
+					c.valueType = pbv1.ValueTypeStr
+					cm.valueType = pbv1.ValueTypeStr
+					encodeDefault()
+					break encodeSwitch // skip to final part
+				}
 				var val int64
 				for j := 0; j < len(v); j++ {
 					val = (val << 8) | int64(v[j])
@@ -146,8 +157,7 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 		}
 		writer.Flush()
 	default:
-		// marshal values
-		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
+		encodeDefault()
 	}
 	cm.size = uint64(len(bb.Buf))
 	if cm.size > maxValuesBlockSize {

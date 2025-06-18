@@ -57,8 +57,8 @@ func TestTag_resizeValues(t *testing.T) {
 
 func TestTag_mustWriteTo_mustReadValues(t *testing.T) {
 	tests := []struct {
-		name string
 		tag  *tag
+		name string
 	}{
 		{
 			name: "string with nils",
