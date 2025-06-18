@@ -32,6 +32,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -48,7 +49,7 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	if option.protector == nil {
-		return nil, errors.New("option.protector must be non-nil")
+		option.protector = protector.GetMemoryProtector()
 	}
 	tst := tsTable{
 		fileSystem: fileSystem,
