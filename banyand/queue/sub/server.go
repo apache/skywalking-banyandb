@@ -96,6 +96,7 @@ func NewServer(omr observability.MetricsRegistry) queue.Server {
 	return NewServerWithPorts(omr, "", 17912, 17913)
 }
 
+// NewServerWithPorts returns a new gRPC server with specified ports.
 func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string, port, httpPort uint32) queue.Server {
 	return &server{
 		listeners:      make(map[bus.Topic][]bus.MessageListener),
