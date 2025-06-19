@@ -229,7 +229,7 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 	return data, nil
 }
 
-func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segment, id uint64) (dest []*roaring.Bitmap, err error) {
+func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segment, _ uint64) (dest []*roaring.Bitmap, err error) {
 	if len(segments) == 0 || len(src) == 0 || len(segments) != len(src) {
 		return src, nil
 	}
