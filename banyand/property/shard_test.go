@@ -63,7 +63,6 @@ func TestMergeDeleted(t *testing.T) {
 	unix := time.Now().Unix()
 	unix -= 10
 	for i := 0; i < propertyCount; i++ {
-
 		property := &propertyv1.Property{
 			Metadata: &commonv1.Metadata{
 				Group:       "test-group",

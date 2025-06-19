@@ -60,8 +60,14 @@ type database struct {
 	mu            sync.RWMutex
 }
 
-func openDB(ctx context.Context, location string, flushInterval time.Duration, expireToDeleteDuration time.Duration,
-	omr observability.MetricsRegistry, lfs fs.FileSystem) (*database, error) {
+func openDB(
+	ctx context.Context,
+	location string,
+	flushInterval time.Duration,
+	expireToDeleteDuration time.Duration,
+	omr observability.MetricsRegistry,
+	lfs fs.FileSystem,
+) (*database, error) {
 	loc := filepath.Clean(location)
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
