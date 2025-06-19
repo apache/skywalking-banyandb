@@ -242,7 +242,7 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 		for ; docID < seg.Count(); docID++ {
 			hasDeleted := false
 			var sourceData []byte
-			_ = seg.VisitStoredFields(docID, func(field string, value []byte) bool {
+			err = seg.VisitStoredFields(docID, func(field string, value []byte) bool {
 				if field == deleteField {
 					hasDeleted = convert.BytesToBool(value)
 				} else if field == sourceField {
@@ -250,6 +250,9 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 				}
 				return true
 			})
+			if err != nil {
+				return src, fmt.Errorf("visit stored field failure: %w", err)
+			}
 
 			if !hasDeleted || sourceData == nil {
 				continue
