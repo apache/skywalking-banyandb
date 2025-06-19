@@ -178,8 +178,8 @@
 Apache-2.0 licenses
 ========================================================================
 
-    github.com/SkyAPM/bluge v0.0.0-20241225104157-e54f64be56e8 Apache-2.0
-    github.com/SkyAPM/ice v0.0.0-20241108011032-c3d8eea75118 Apache-2.0
+    github.com/SkyAPM/bluge v0.0.0-20250619030236-3750bbbf63b9 Apache-2.0
+    github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3 Apache-2.0
     github.com/apache/skywalking-cli v0.0.0-20240227151024-ee371a210afe Apache-2.0
     github.com/aws/aws-sdk-go-v2 v1.36.3 Apache-2.0
     github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.10 Apache-2.0
@@ -477,8 +477,7 @@ MIT licenses
     @floating-ui/utils 0.2.9 MIT
     @jridgewell/sourcemap-codec 1.5.0 MIT
     @parcel/watcher 2.5.1 MIT
-    @parcel/watcher-linux-x64-glibc 2.5.1 MIT
-    @parcel/watcher-linux-x64-musl 2.5.1 MIT
+    @parcel/watcher-darwin-arm64 2.5.1 MIT
     @popperjs/core 2.11.7 MIT
     @types/lodash 4.17.16 MIT
     @types/lodash-es 4.17.12 MIT
