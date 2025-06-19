@@ -229,9 +229,9 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 	return data, nil
 }
 
-func (s *shard) prepareForMerge(segments []segment.Segment, drops []*roaring.Bitmap, _ uint64) error {
-	if len(segments) == 0 || len(drops) == 0 {
-		return nil
+func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segment, id uint64) (dest []*roaring.Bitmap, err error) {
+	if len(segments) == 0 || len(src) == 0 || len(segments) != len(src) {
+		return src, nil
 	}
 	for segID, seg := range segments {
 		var docID uint64
@@ -249,12 +249,12 @@ func (s *shard) prepareForMerge(segments []segment.Segment, drops []*roaring.Bit
 				continue
 			}
 
-			if drops[segID] == nil {
-				drops[segID] = roaring.New()
+			if src[segID] == nil {
+				src[segID] = roaring.New()
 			}
 
-			drops[segID].Add(uint32(docID))
+			src[segID].Add(uint32(docID))
 		}
 	}
-	return nil
+	return src, nil
 }

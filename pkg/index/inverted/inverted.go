@@ -80,7 +80,7 @@ var _ index.Store = (*store)(nil)
 type StoreOpts struct {
 	Logger               *logger.Logger
 	Metrics              *Metrics
-	PrepareMergeCallback func(segments []segment.Segment, drops []*roaringpkg.Bitmap, id uint64) error
+	PrepareMergeCallback func(src []*roaringpkg.Bitmap, segments []segment.Segment, id uint64) (dest []*roaringpkg.Bitmap, err error)
 
 	Path          string
 	BatchWaitSec  int64
