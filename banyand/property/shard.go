@@ -23,6 +23,7 @@ import (
 	"path"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/RoaringBitmap/roaring"
 	segment "github.com/blugelabs/bluge_segment_api"
@@ -62,6 +63,8 @@ type shard struct {
 	l        *logger.Logger
 	location string
 	id       common.ShardID
+
+	expireToDeleteSec int64
 }
 
 func (s *shard) close() error {
@@ -71,13 +74,14 @@ func (s *shard) close() error {
 	return nil
 }
 
-func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64) (*shard, error) {
+func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64, deleteExpireSec int64) (*shard, error) {
 	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
 	sName := "shard" + strconv.Itoa(int(id))
 	si := &shard{
-		id:       id,
-		l:        logger.Fetch(ctx, sName),
-		location: location,
+		id:                id,
+		l:                 logger.Fetch(ctx, sName),
+		location:          location,
+		expireToDeleteSec: deleteExpireSec,
 	}
 	opts := inverted.StoreOpts{
 		Path:                 location,
@@ -237,15 +241,27 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 		var docID uint64
 		for ; docID < seg.Count(); docID++ {
 			hasDeleted := false
+			var sourceData []byte
 			_ = seg.VisitStoredFields(docID, func(field string, value []byte) bool {
 				if field == deleteField {
 					hasDeleted = convert.BytesToBool(value)
-					return false
+				} else if field == sourceField {
+					sourceData = value
 				}
 				return true
 			})
 
-			if !hasDeleted {
+			if !hasDeleted || sourceData == nil {
+				continue
+			}
+
+			// parsing the property data to check the data is expired or not
+			var p propertyv1.Property
+			if err := protojson.Unmarshal(sourceData, &p); err != nil {
+				s.l.Warn().Msgf("unmarshal property failure when merging segments %d: %v", segID, err)
+				continue
+			}
+			if time.Now().Unix()-p.Metadata.ModRevision < s.expireToDeleteSec {
 				continue
 			}
 

@@ -44,7 +44,7 @@ func TestMergeDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	defers = append(defers, deferFunc)
-	db, err := openDB(context.Background(), dir, 3*time.Second, observability.BypassRegistry, fs.NewLocalFileSystem())
+	db, err := openDB(context.Background(), dir, 3*time.Second, time.Second, observability.BypassRegistry, fs.NewLocalFileSystem())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,12 +60,15 @@ func TestMergeDeleted(t *testing.T) {
 	propertyCount := 6
 
 	properties := make([]*propertyv1.Property, 0, propertyCount)
+	unix := time.Now().Unix()
+	unix -= 10
 	for i := 0; i < propertyCount; i++ {
+
 		property := &propertyv1.Property{
 			Metadata: &commonv1.Metadata{
 				Group:       "test-group",
 				Name:        "test-name",
-				ModRevision: time.Now().Unix(),
+				ModRevision: unix,
 			},
 			Id: fmt.Sprintf("test-id%d", i),
 			Tags: []*modelv1.Tag{
