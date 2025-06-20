@@ -31,6 +31,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
+// nopProtector is a dummy Protector implementation for tests.
+type nopProtector struct{}
+
+func (nopProtector) ShouldApplyFadvis(int64) bool { return false }
+
 func Test_mergeTwoBlocks(t *testing.T) {
 	tests := []struct {
 		left  *blockPointer
@@ -291,7 +296,8 @@ func Test_mergeParts(t *testing.T) {
 			verify := func(t *testing.T, pp []*partWrapper, fileSystem fs.FileSystem, root string, partID uint64) {
 				closeCh := make(chan struct{})
 				defer close(closeCh)
-				p, err := mergeParts(fileSystem, closeCh, pp, partID, root)
+				tst := &tsTable{pm: nopProtector{}}
+				p, err := tst.mergeParts(fileSystem, closeCh, pp, partID, root)
 				if tt.wantErr != nil {
 					if !errors.Is(err, tt.wantErr) {
 						t.Fatalf("Unexpected error: got %v, want %v", err, tt.wantErr)

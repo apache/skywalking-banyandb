@@ -352,11 +352,23 @@ type supplier struct {
 }
 
 func newSupplier(path string, svc *service, sr *schemaRepo, nodeLabels map[string]string) *supplier {
+	if svc.pm == nil {
+		svc.l.Error().Msg("CRITICAL: svc.pm is nil in newSupplier")
+	}
+	opt := svc.option
+	opt.protector = svc.pm
+
+	if opt.protector == nil {
+		svc.l.Error().Msg("CRITICAL: opt.protector is still nil after assignment")
+	} else {
+		svc.l.Info().Msg("opt.protector successfully set in newSupplier")
+	}
+
 	return &supplier{
 		path:       path,
 		metadata:   svc.metadata,
 		l:          svc.l,
-		option:     svc.option,
+		option:     opt,
 		omr:        svc.omr,
 		pm:         svc.pm,
 		schemaRepo: sr,
