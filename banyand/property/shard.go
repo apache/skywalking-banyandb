@@ -258,7 +258,7 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 				return src, fmt.Errorf("visit stored field failure: %w", err)
 			}
 
-			if deleteTime <= 0 || int64(time.Now().Sub(time.Unix(deleteTime, 0)).Seconds()) < s.expireToDeleteSec {
+			if deleteTime <= 0 || int64(time.Since(time.Unix(deleteTime, 0)).Seconds()) < s.expireToDeleteSec {
 				continue
 			}
 

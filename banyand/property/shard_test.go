@@ -34,10 +34,10 @@ import (
 func TestMergeDeleted(t *testing.T) {
 	propertyCount := 6
 	tests := []struct {
+		verify             func(t *testing.T, queriedProperties []*queryProperty)
 		name               string
 		expireDeletionTime time.Duration
 		deleteTime         int64
-		verify             func(t *testing.T, queriedProperties []*queryProperty)
 	}{
 		{
 			name:               "delete expired properties from db",
