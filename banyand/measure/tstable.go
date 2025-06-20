@@ -49,7 +49,13 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	if option.protector == nil {
+		logger.GetLogger("measure").Warn().
+			Msg("protector is nil in newTSTable, using default protector")
 		option.protector = protector.GetMemoryProtector()
+		if option.protector == nil {
+			logger.GetLogger("measure").Warn().
+				Msg("default protector is also nil, creating new one")
+		}
 	}
 	tst := tsTable{
 		fileSystem: fileSystem,
