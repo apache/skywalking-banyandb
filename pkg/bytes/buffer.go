@@ -36,6 +36,17 @@ type Buffer struct {
 	Buf []byte
 }
 
+// WriteByte implements encoding.BufferWriter.
+func (b *Buffer) WriteByte(b2 byte) error {
+	b.Buf = append(b.Buf, b2)
+	return nil
+}
+
+// Bytes implements encoding.BufferWriter.
+func (b *Buffer) Bytes() []byte {
+	return b.Buf
+}
+
 // Close implements fs.Writer.
 func (*Buffer) Close() error {
 	return nil
