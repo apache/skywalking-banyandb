@@ -110,7 +110,7 @@ type deleteListener struct {
 	s *service
 }
 
-func (h *deleteListener) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
+func (h *deleteListener) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	n := time.Now()
 	now := n.UnixNano()
 	var protoReq proto.Message
@@ -130,7 +130,7 @@ func (h *deleteListener) Rev(_ context.Context, message bus.Message) (resp bus.M
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("id is empty"))
 		return
 	}
-	err := h.s.db.delete(d.Ids)
+	err := h.s.db.delete(ctx, d.Ids)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to delete property: %v", err))
 		return
@@ -180,7 +180,7 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 			span.Stop()
 		}()
 	}
-	sources, err := h.s.db.query(ctx, d)
+	properties, err := h.s.db.query(ctx, d)
 	if err != nil {
 		if tracer != nil {
 			span.Error(err)
@@ -192,8 +192,10 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to query property: %v", err))
 		return
 	}
-	qResp := &propertyv1.InternalQueryResponse{
-		Sources: sources,
+	qResp := &propertyv1.InternalQueryResponse{}
+	for _, p := range properties {
+		qResp.Sources = append(qResp.Sources, p.source)
+		qResp.Deletes = append(qResp.Deletes, p.deleteTime)
 	}
 	if tracer != nil {
 		qResp.Trace = tracer.ToProto()

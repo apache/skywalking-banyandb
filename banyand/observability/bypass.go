@@ -15,31 +15,38 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package property provides the property service interface.
-package property
+package observability
 
 import (
-	"strconv"
-	"strings"
-
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// Service is the interface for property service.
-type Service interface {
-	run.PreRunner
-	run.Config
-	run.Service
+// BypassRegistry is a MetricsRegistry that does not collect any metrics.
+var BypassRegistry = NewBypassRegistry()
+
+type bypassRegistry struct{}
+
+// NewBypassRegistry creates a new instance of bypassMetricsRegistry.
+func NewBypassRegistry() MetricsRegistry {
+	return &bypassRegistry{}
 }
 
-// GetPropertyID returns the property ID based on the property metadata and revision.
-func GetPropertyID(prop *propertyv1.Property) []byte {
-	return convert.StringToBytes(GetEntity(prop) + "/" + strconv.FormatInt(prop.Metadata.ModRevision, 10))
+func (b *bypassRegistry) Name() string {
+	return "bypass-metrics-registry"
 }
 
-// GetEntity returns the entity string for the property.
-func GetEntity(prop *propertyv1.Property) string {
-	return strings.Join([]string{prop.Metadata.Group, prop.Metadata.Name, prop.Id}, "/")
+func (b *bypassRegistry) Serve() run.StopNotify {
+	return nil
+}
+
+func (b *bypassRegistry) GracefulStop() {
+}
+
+func (b *bypassRegistry) With(_ meter.Scope) *Factory {
+	return &Factory{}
+}
+
+func (b *bypassRegistry) NativeEnabled() bool {
+	return false
 }

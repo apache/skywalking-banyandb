@@ -55,11 +55,19 @@ type database struct {
 	sLst          atomic.Pointer[[]*shard]
 	location      string
 	flushInterval time.Duration
+	expireDelete  time.Duration
 	closed        atomic.Bool
 	mu            sync.RWMutex
 }
 
-func openDB(ctx context.Context, location string, flushInterval time.Duration, omr observability.MetricsRegistry, lfs fs.FileSystem) (*database, error) {
+func openDB(
+	ctx context.Context,
+	location string,
+	flushInterval time.Duration,
+	expireToDeleteDuration time.Duration,
+	omr observability.MetricsRegistry,
+	lfs fs.FileSystem,
+) (*database, error) {
 	loc := filepath.Clean(location)
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
@@ -69,6 +77,7 @@ func openDB(ctx context.Context, location string, flushInterval time.Duration, o
 		logger:        l,
 		omr:           omr,
 		flushInterval: flushInterval,
+		expireDelete:  expireToDeleteDuration,
 		lfs:           lfs,
 	}
 	if err := db.load(ctx); err != nil {
@@ -111,19 +120,19 @@ func (db *database) update(ctx context.Context, shardID common.ShardID, id []byt
 	return nil
 }
 
-func (db *database) delete(docIDs [][]byte) error {
+func (db *database) delete(ctx context.Context, docIDs [][]byte) error {
 	sLst := db.sLst.Load()
 	if sLst == nil {
 		return nil
 	}
 	var err error
 	for _, s := range *sLst {
-		multierr.AppendInto(&err, s.delete(docIDs))
+		multierr.AppendInto(&err, s.delete(ctx, docIDs))
 	}
 	return err
 }
 
-func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([][]byte, error) {
+func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]*queryProperty, error) {
 	iq, err := inverted.BuildPropertyQuery(req, groupField, entityID)
 	if err != nil {
 		return nil, err
@@ -132,7 +141,7 @@ func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	if sLst == nil {
 		return nil, nil
 	}
-	var res [][]byte
+	var res []*queryProperty
 	for _, s := range *sLst {
 		r, err := s.search(ctx, iq, int(req.Limit))
 		if err != nil {
@@ -155,7 +164,8 @@ func (db *database) loadShard(ctx context.Context, id common.ShardID) (*shard, e
 	if s, ok := db.getShard(id); ok {
 		return s, nil
 	}
-	sd, err := db.newShard(context.WithValue(ctx, logger.ContextKey, db.logger), id, int64(db.flushInterval.Seconds()))
+	sd, err := db.newShard(context.WithValue(ctx, logger.ContextKey, db.logger), id, int64(db.flushInterval.Seconds()),
+		int64(db.expireDelete.Seconds()))
 	if err != nil {
 		return nil, err
 	}
@@ -223,4 +233,9 @@ func walkDir(root, prefix string, wf walkFn) error {
 		}
 	}
 	return nil
+}
+
+type queryProperty struct {
+	source     []byte
+	deleteTime int64
 }
