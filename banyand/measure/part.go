@@ -40,7 +40,6 @@ const (
 	fieldValuesFilename            = "fields.bin"
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
-	indexDirName                   = "index"
 )
 
 type part struct {
