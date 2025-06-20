@@ -300,6 +300,7 @@ type Document struct {
 	Timestamp    int64
 	DocID        uint64
 	Version      int64
+	DeletedTime  int64 // for logical deletion
 }
 
 // Documents is a collection of documents.
@@ -307,7 +308,8 @@ type Documents []Document
 
 // Batch is a collection of documents.
 type Batch struct {
-	Documents Documents
+	PersistentCallback func(error)
+	Documents          Documents
 }
 
 // Writer allows writing fields and docID in a document to an index.

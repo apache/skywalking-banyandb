@@ -29,6 +29,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -145,6 +146,23 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		gomega.Eventually(func(g gomega.Gomega) {
 			verifyClientsWithGomega(g, p, data.TopicStreamWrite, 1, 0, 2, 1)
 		}, flags.EventuallyTimeout).Should(gomega.Succeed())
+	})
+
+	ginkgo.It("should register and unregister liaison nodes", func() {
+		addr := getAddress()
+		closeFn := setup(addr, codes.OK, 200*time.Millisecond)
+		defer func() {
+			closeFn()
+		}()
+
+		p := newPub(databasev1.Role_ROLE_LIAISON)
+		defer p.GracefulStop()
+		node := getDataNode("liaison-node", addr)
+		n := node.Spec.(*databasev1.Node)
+		n.Roles = []databasev1.Role{databasev1.Role_ROLE_LIAISON}
+
+		p.OnAddOrUpdate(node)
+		verifyClients(p, 1, 0, 1, 0)
 	})
 })
 

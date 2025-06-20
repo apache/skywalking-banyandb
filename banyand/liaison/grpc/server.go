@@ -47,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
@@ -71,36 +72,43 @@ type Server interface {
 
 // NodeRegistries contains the node registries.
 type NodeRegistries struct {
-	StreamNodeRegistry   NodeRegistry
-	MeasureNodeRegistry  NodeRegistry
-	PropertyNodeRegistry NodeRegistry
+	StreamLiaisonNodeRegistry  NodeRegistry
+	StreamDataNodeRegistry     NodeRegistry
+	MeasureLiaisonNodeRegistry NodeRegistry
+	MeasureDataNodeRegistry    NodeRegistry
+	PropertyNodeRegistry       NodeRegistry
 }
 
 type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
-	topNPipeline queue.Server
-	omr          observability.MetricsRegistry
-	*indexRuleBindingRegistryServer
-	metrics *metrics
-	log     *logger.Logger
-	*propertyServer
+	topNPipeline    queue.Server
+	omr             observability.MetricsRegistry
+	tire2Server     queue.Server
+	schemaRepo      metadata.Repo
+	measureCallback *measureRedirectWriteCallback
+	topNHandler     *topNHandler
 	*topNAggregationRegistryServer
 	*groupRegistryServer
 	stopCh chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
-	streamSVC *streamService
+	streamSVC      *streamService
+	streamCallback *streamRedirectWriteCallback
 	*streamRegistryServer
 	measureSVC *measureService
+	log        *logger.Logger
 	*propertyRegistryServer
-	ser                      *grpclib.Server
-	tlsReloader              *pkgtls.Reloader
-	topNHandler              *topNHandler
-	accessLogRootPath        string
-	addr                     string
-	host                     string
+	ser         *grpclib.Server
+	tlsReloader *pkgtls.Reloader
+	*propertyServer
+	*indexRuleBindingRegistryServer
+	groupRepo                *groupRepo
+	metrics                  *metrics
 	certFile                 string
 	keyFile                  string
+	host                     string
+	addr                     string
+	accessLogRootPath        string
 	accessLogRecorders       []accessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	port                     uint32
@@ -109,25 +117,41 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(_ context.Context, pipeline, broadcaster queue.Client, topNPipeline queue.Server,
+func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Client, topNPipeline queue.Server,
 	schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry, topNService measure.TopNService,
+	tire2Server queue.Server,
 ) Server {
+	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
+	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
 	streamSVC := &streamService{
-		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nr.StreamNodeRegistry),
-		pipeline:         pipeline,
+		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nr.StreamLiaisonNodeRegistry, gr),
+		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 	}
 	measureSVC := &measureService{
-		discoveryService: newDiscoveryService(schema.KindMeasure, schemaRegistry, nr.MeasureNodeRegistry),
-		pipeline:         pipeline,
+		discoveryService: newDiscoveryServiceWithEntityRepo(schema.KindMeasure, schemaRegistry, nr.MeasureLiaisonNodeRegistry, gr, er),
+		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
-		topNService:      topNService,
 	}
 
 	s := &server{
-		omr:        omr,
-		streamSVC:  streamSVC,
-		measureSVC: measureSVC,
+		omr:         omr,
+		streamSVC:   streamSVC,
+		measureSVC:  measureSVC,
+		groupRepo:   gr,
+		tire2Server: tire2Server,
+		streamCallback: &streamRedirectWriteCallback{
+			pipeline:     tir2Client,
+			groupRepo:    gr,
+			nodeRegistry: nr.StreamDataNodeRegistry,
+		},
+		measureCallback: &measureRedirectWriteCallback{
+			pipeline:     tir2Client,
+			groupRepo:    gr,
+			entityRepo:   er,
+			nodeRegistry: nr.MeasureDataNodeRegistry,
+			topNService:  topNService,
+		},
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
@@ -147,32 +171,46 @@ func NewServer(_ context.Context, pipeline, broadcaster queue.Client, topNPipeli
 			schemaRegistry: schemaRegistry,
 		},
 		propertyServer: &propertyServer{
-			schemaRegistry: schemaRegistry,
-			pipeline:       pipeline,
-			nodeRegistry:   nr.PropertyNodeRegistry,
+			schemaRegistry:   schemaRegistry,
+			pipeline:         tir2Client,
+			nodeRegistry:     nr.PropertyNodeRegistry,
+			discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.PropertyNodeRegistry, gr),
 		},
 		propertyRegistryServer: &propertyRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
 		topNPipeline: topNPipeline,
+		schemaRepo:   schemaRegistry,
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
+
 	return s
 }
 
 func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
-	s.streamSVC.setLogger(s.log)
+	s.streamSVC.setLogger(s.log.Named("stream-t1"))
+	s.streamCallback.l = s.log.Named("stream-t2")
 	s.measureSVC.setLogger(s.log)
+	s.propertyServer.SetLogger(s.log)
+	s.measureCallback.l = s.log.Named("measure-t2")
 	components := []*discoveryService{
 		s.streamSVC.discoveryService,
 		s.measureSVC.discoveryService,
+		s.propertyServer.discoveryService,
 	}
+	s.schemaRepo.RegisterHandler("liaison", schema.KindGroup, s.groupRepo)
 	for _, c := range components {
 		c.SetLogger(s.log)
 		if err := c.initialize(); err != nil {
 			return err
 		}
+	}
+	if err := s.tire2Server.Subscribe(data.TopicStreamWrite, s.streamCallback); err != nil {
+		return err
+	}
+	if err := s.tire2Server.Subscribe(data.TopicMeasureWrite, s.measureCallback); err != nil {
+		return err
 	}
 
 	if s.enableIngestionAccessLog {
@@ -206,8 +244,8 @@ func (s *server) PreRun(_ context.Context) error {
 
 	if s.topNPipeline != nil {
 		topNHandler := &topNHandler{
-			nodeRegistry: s.measureSVC.nodeRegistry,
-			pipeline:     s.pipeline,
+			nodeRegistry: s.measureCallback.nodeRegistry,
+			pipeline:     s.measureCallback.pipeline,
 			l:            s.log.Named("topNHandler"),
 		}
 		if err := s.topNPipeline.Subscribe(data.TopicMeasureWrite, topNHandler); err != nil {
@@ -242,12 +280,15 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
-	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "stream write timeout")
-	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "measure write timeout")
+	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "timeout for writing stream among liaison nodes")
+	fs.DurationVar(&s.streamCallback.writeTimeout, "stream-write-data-timeout", 15*time.Second, "timeout for writing stream data to the data nodes")
+	fs.DurationVar(&s.measureCallback.writeTimeout, "measure-write-data-timeout", 15*time.Second, "timeout for writing measure data to the data nodes")
+	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "timeout for writing measure among liaison nodes")
 	fs.DurationVar(&s.measureSVC.maxWaitDuration, "measure-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.DurationVar(&s.streamSVC.maxWaitDuration, "stream-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
+	fs.IntVar(&s.measureCallback.maxDiskUsagePercent, "liaison-measure-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	return fs
 }
 

@@ -40,14 +40,21 @@ import (
 
 // NewRestoreCommand creates a new restore command.
 func NewRestoreCommand() *cobra.Command {
+	logging := logger.Logging{}
 	rootCmd := &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		Short:             "Restore BanyanDB data from remote storage",
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			return config.Load("logging", cmd.Flags())
+			if err := config.Load("logging", cmd.Flags()); err != nil {
+				return err
+			}
+
+			return logger.Init(logging)
 		},
 	}
+	rootCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging environment")
+	rootCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
 	rootCmd.AddCommand(newRunCommand())
 	rootCmd.AddCommand(NewTimeDirCommand())
 	return rootCmd
