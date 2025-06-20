@@ -55,11 +55,19 @@ type database struct {
 	sLst          atomic.Pointer[[]*shard]
 	location      string
 	flushInterval time.Duration
+	expireDelete  time.Duration
 	closed        atomic.Bool
 	mu            sync.RWMutex
 }
 
-func openDB(ctx context.Context, location string, flushInterval time.Duration, omr observability.MetricsRegistry, lfs fs.FileSystem) (*database, error) {
+func openDB(
+	ctx context.Context,
+	location string,
+	flushInterval time.Duration,
+	expireToDeleteDuration time.Duration,
+	omr observability.MetricsRegistry,
+	lfs fs.FileSystem,
+) (*database, error) {
 	loc := filepath.Clean(location)
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
@@ -69,6 +77,7 @@ func openDB(ctx context.Context, location string, flushInterval time.Duration, o
 		logger:        l,
 		omr:           omr,
 		flushInterval: flushInterval,
+		expireDelete:  expireToDeleteDuration,
 		lfs:           lfs,
 	}
 	if err := db.load(ctx); err != nil {
@@ -155,7 +164,8 @@ func (db *database) loadShard(ctx context.Context, id common.ShardID) (*shard, e
 	if s, ok := db.getShard(id); ok {
 		return s, nil
 	}
-	sd, err := db.newShard(context.WithValue(ctx, logger.ContextKey, db.logger), id, int64(db.flushInterval.Seconds()))
+	sd, err := db.newShard(context.WithValue(ctx, logger.ContextKey, db.logger), id, int64(db.flushInterval.Seconds()),
+		int64(db.expireDelete.Seconds()))
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +236,6 @@ func walkDir(root, prefix string, wf walkFn) error {
 }
 
 type queryProperty struct {
-	source  []byte
-	deleted bool
+	source     []byte
+	deleteTime int64
 }

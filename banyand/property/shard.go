@@ -23,7 +23,10 @@ import (
 	"path"
 	"strconv"
 	"sync"
+	"time"
 
+	"github.com/RoaringBitmap/roaring"
+	segment "github.com/blugelabs/bluge_segment_api"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -60,6 +63,8 @@ type shard struct {
 	l        *logger.Logger
 	location string
 	id       common.ShardID
+
+	expireToDeleteSec int64
 }
 
 func (s *shard) close() error {
@@ -69,19 +74,21 @@ func (s *shard) close() error {
 	return nil
 }
 
-func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64) (*shard, error) {
+func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64, deleteExpireSec int64) (*shard, error) {
 	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
 	sName := "shard" + strconv.Itoa(int(id))
 	si := &shard{
-		id:       id,
-		l:        logger.Fetch(ctx, sName),
-		location: location,
+		id:                id,
+		l:                 logger.Fetch(ctx, sName),
+		location:          location,
+		expireToDeleteSec: deleteExpireSec,
 	}
 	opts := inverted.StoreOpts{
-		Path:         location,
-		Logger:       si.l,
-		Metrics:      inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
-		BatchWaitSec: 0,
+		Path:                 location,
+		Logger:               si.l,
+		Metrics:              inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
+		BatchWaitSec:         0,
+		PrepareMergeCallback: si.prepareForMerge,
 	}
 	var err error
 	if si.store, err = inverted.NewStore(opts); err != nil {
@@ -131,6 +138,10 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property) (*
 }
 
 func (s *shard) delete(ctx context.Context, docID [][]byte) error {
+	return s.deleteFromTime(ctx, docID, time.Now().Unix())
+}
+
+func (s *shard) deleteFromTime(ctx context.Context, docID [][]byte, deleteTime int64) error {
 	// search the original documents by docID
 	seriesMatchers := make([]index.SeriesMatcher, 0, len(docID))
 	for _, id := range docID {
@@ -153,13 +164,13 @@ func (s *shard) delete(ctx context.Context, docID [][]byte) error {
 		if err := protojson.Unmarshal(property.source, p); err != nil {
 			return fmt.Errorf("unmarshal property failure: %w", err)
 		}
-		// update the property to mark it as deleted
+		// update the property to mark it as delete
 		document, err := s.buildUpdateDocument(GetPropertyID(p), p)
 		if err != nil {
 			return fmt.Errorf("build delete document failure: %w", err)
 		}
 		// mark the document as deleted
-		document.Deleted = true
+		document.DeletedTime = deleteTime
 		removeDocList = append(removeDocList, *document)
 	}
 	return s.updateDocuments(removeDocList)
@@ -217,11 +228,46 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 	data = make([]*queryProperty, 0, len(ss))
 	for _, s := range ss {
 		bytes := s.Fields[sourceField]
-		deleted := convert.BytesToBool(s.Fields[deleteField])
+		var deleteTime int64
+		if s.Fields[deleteField] != nil {
+			deleteTime = convert.BytesToInt64(s.Fields[deleteField])
+		}
 		data = append(data, &queryProperty{
-			source:  bytes,
-			deleted: deleted,
+			source:     bytes,
+			deleteTime: deleteTime,
 		})
 	}
 	return data, nil
+}
+
+func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segment, _ uint64) (dest []*roaring.Bitmap, err error) {
+	if len(segments) == 0 || len(src) == 0 || len(segments) != len(src) {
+		return src, nil
+	}
+	for segID, seg := range segments {
+		var docID uint64
+		for ; docID < seg.Count(); docID++ {
+			var deleteTime int64
+			err = seg.VisitStoredFields(docID, func(field string, value []byte) bool {
+				if field == deleteField {
+					deleteTime = convert.BytesToInt64(value)
+				}
+				return true
+			})
+			if err != nil {
+				return src, fmt.Errorf("visit stored field failure: %w", err)
+			}
+
+			if deleteTime <= 0 || int64(time.Since(time.Unix(deleteTime, 0)).Seconds()) < s.expireToDeleteSec {
+				continue
+			}
+
+			if src[segID] == nil {
+				src[segID] = roaring.New()
+			}
+
+			src[segID].Add(uint32(docID))
+		}
+	}
+	return src, nil
 }

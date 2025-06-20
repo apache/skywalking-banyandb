@@ -127,8 +127,8 @@ func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string)
 		vf := bluge.NewStoredOnlyField(versionField, convert.Int64ToBytes(d.Version))
 		doc.AddField(vf)
 	}
-	if d.Deleted {
-		doc.AddField(bluge.NewStoredOnlyField(deletedField, convert.BoolToBytes(d.Deleted)).StoreValue())
+	if d.DeletedTime > 0 {
+		doc.AddField(bluge.NewStoredOnlyField(deletedField, convert.Int64ToBytes(d.DeletedTime)).StoreValue())
 	}
 	return doc, fieldNames
 }
