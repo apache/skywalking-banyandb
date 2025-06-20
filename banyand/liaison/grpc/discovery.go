@@ -146,7 +146,7 @@ func (s *groupRepo) OnDelete(schemaMetadata schema.Metadata) {
 		return
 	}
 	if le := s.log.Debug(); le.Enabled() {
-		le.Stringer("id", group.Metadata).Msg("shard deleted")
+		le.Stringer("id", group.Metadata).Msg("shard deletedTime")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
@@ -263,7 +263,7 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 			Str("action", "delete").
 			Stringer("subject", id).
 			Str("kind", kind).
-			Msg("entity deleted")
+			Msg("entity deletedTime")
 	}
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
@@ -339,7 +339,7 @@ func (s *shardingKeyRepo) OnDelete(schemaMetadata schema.Metadata) {
 			Str("action", "delete").
 			Stringer("subject", id).
 			Str("kind", "measure").
-			Msg("sharding key deleted")
+			Msg("sharding key deletedTime")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()

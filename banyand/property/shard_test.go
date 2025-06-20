@@ -32,82 +32,122 @@ import (
 )
 
 func TestMergeDeleted(t *testing.T) {
-	var defers []func()
-	defer func() {
-		for _, f := range defers {
-			f()
-		}
-	}()
-
-	dir, deferFunc, err := test.NewSpace()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defers = append(defers, deferFunc)
-	db, err := openDB(context.Background(), dir, 3*time.Second, time.Second, observability.BypassRegistry, fs.NewLocalFileSystem())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defers = append(defers, func() {
-		_ = db.close()
-	})
-
-	newShard, err := db.loadShard(context.Background(), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	propertyCount := 6
-
-	properties := make([]*propertyv1.Property, 0, propertyCount)
-	unix := time.Now().Unix()
-	unix -= 10
-	for i := 0; i < propertyCount; i++ {
-		property := &propertyv1.Property{
-			Metadata: &commonv1.Metadata{
-				Group:       "test-group",
-				Name:        "test-name",
-				ModRevision: unix,
+	tests := []struct {
+		name               string
+		expireDeletionTime time.Duration
+		deleteTime         int64
+		verify             func(t *testing.T, queriedProperties []*queryProperty)
+	}{
+		{
+			name:               "delete expired properties from db",
+			expireDeletionTime: 1 * time.Second,
+			deleteTime:         time.Now().Add(-3 * time.Second).Unix(),
+			verify: func(t *testing.T, queriedProperties []*queryProperty) {
+				// the count of properties in shard should be less than the total properties count
+				if len(queriedProperties) >= propertyCount {
+					t.Fatal(fmt.Errorf("expect only %d results, got %d", propertyCount, len(queriedProperties)))
+				}
+				for _, p := range queriedProperties {
+					// and the property should be marked as deleteTime
+					if p.deleteTime <= 0 {
+						t.Fatal(fmt.Errorf("expect all results to be deleted"))
+					}
+				}
 			},
-			Id: fmt.Sprintf("test-id%d", i),
-			Tags: []*modelv1.Tag{
-				{Key: "tag1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(i)}}}},
+		},
+		{
+			name:               "deleted properties still exist in db",
+			expireDeletionTime: time.Hour,
+			deleteTime:         time.Now().Unix(),
+			verify: func(t *testing.T, queriedProperties []*queryProperty) {
+				if len(queriedProperties) != propertyCount {
+					t.Fatal(fmt.Errorf("expect %d results, got %d", propertyCount, len(queriedProperties)))
+				}
+				for _, p := range queriedProperties {
+					// and the property should be marked as deleteTime
+					if p.deleteTime <= 0 {
+						t.Fatal(fmt.Errorf("expect all results to be deleted"))
+					}
+				}
 			},
-		}
-		properties = append(properties, property)
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var defers []func()
+			defer func() {
+				for _, f := range defers {
+					f()
+				}
+			}()
 
-	// apply the property
-	for _, p := range properties {
-		if err = newShard.update(GetPropertyID(p), p); err != nil {
-			t.Fatal(err)
-		}
-	}
+			dir, deferFunc, err := test.NewSpace()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defers = append(defers, deferFunc)
+			db, err := openDB(context.Background(), dir, 3*time.Second, tt.expireDeletionTime, observability.BypassRegistry, fs.NewLocalFileSystem())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defers = append(defers, func() {
+				_ = db.close()
+			})
 
-	// delete current property
-	for _, p := range properties {
-		if err = newShard.delete(context.Background(), [][]byte{GetPropertyID(p)}); err != nil {
-			t.Fatal(err)
-		}
-	}
+			newShard, err := db.loadShard(context.Background(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	// waiting for the merge phase to complete
-	time.Sleep(time.Second * 1)
+			properties := make([]*propertyv1.Property, 0, propertyCount)
+			unix := time.Now().Unix()
+			unix -= 10
+			for i := 0; i < propertyCount; i++ {
+				property := &propertyv1.Property{
+					Metadata: &commonv1.Metadata{
+						Group:       "test-group",
+						Name:        "test-name",
+						ModRevision: unix,
+					},
+					Id: fmt.Sprintf("test-id%d", i),
+					Tags: []*modelv1.Tag{
+						{Key: "tag1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(i)}}}},
+					},
+				}
+				properties = append(properties, property)
+			}
+			// apply the property
+			for _, p := range properties {
+				if err = newShard.update(GetPropertyID(p), p); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	// check if the property is deleted from shard including deleted, should be no document (delete by merge phase)
-	resp, err := db.query(context.Background(), &propertyv1.QueryRequest{Groups: []string{"test-group"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+			resp, err := db.query(context.Background(), &propertyv1.QueryRequest{Groups: []string{"test-group"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(resp) != propertyCount {
+				t.Fatal(fmt.Errorf("expect %d results before delete, got %d", propertyCount, len(resp)))
+			}
 
-	// the count of properties in shard should be less than the total properties count
-	if len(resp) >= propertyCount {
-		t.Fatal(fmt.Errorf("expect only %d results, got %d", propertyCount, len(resp)))
-	}
-	for _, p := range resp {
-		// and the property should be marked as deleted
-		if !p.deleted {
-			t.Fatal(fmt.Errorf("expect all results to be deleted"))
-		}
+			// delete current property
+			for _, p := range properties {
+				if err = newShard.deleteFromTime(context.Background(), [][]byte{GetPropertyID(p)}, tt.deleteTime); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// waiting for the merge phase to complete
+			time.Sleep(time.Second * 1)
+
+			// check if the property is deleteTime from shard including deleteTime, should be no document (delete by merge phase)
+			resp, err = db.query(context.Background(), &propertyv1.QueryRequest{Groups: []string{"test-group"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.verify(t, resp)
+		})
 	}
 }

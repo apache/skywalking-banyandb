@@ -195,7 +195,7 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 	qResp := &propertyv1.InternalQueryResponse{}
 	for _, p := range properties {
 		qResp.Sources = append(qResp.Sources, p.source)
-		qResp.Deletes = append(qResp.Deletes, p.deleted)
+		qResp.Deletes = append(qResp.Deletes, p.deleteTime)
 	}
 	if tracer != nil {
 		qResp.Trace = tracer.ToProto()

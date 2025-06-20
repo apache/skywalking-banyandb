@@ -146,8 +146,8 @@ func (s *store) Batch(batch index.Batch) error {
 		if d.Timestamp > 0 {
 			doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
 		}
-		if d.Deleted {
-			doc.AddField(bluge.NewStoredOnlyField(deletedField, convert.BoolToBytes(true)).StoreValue())
+		if d.DeletedTime > 0 {
+			doc.AddField(bluge.NewStoredOnlyField(deletedField, convert.Int64ToBytes(d.DeletedTime)).StoreValue())
 		}
 		b.Insert(doc)
 	}

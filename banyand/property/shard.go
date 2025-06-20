@@ -138,6 +138,10 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property) (*
 }
 
 func (s *shard) delete(ctx context.Context, docID [][]byte) error {
+	return s.deleteFromTime(ctx, docID, time.Now().Unix())
+}
+
+func (s *shard) deleteFromTime(ctx context.Context, docID [][]byte, deleteTime int64) error {
 	// search the original documents by docID
 	seriesMatchers := make([]index.SeriesMatcher, 0, len(docID))
 	for _, id := range docID {
@@ -160,13 +164,13 @@ func (s *shard) delete(ctx context.Context, docID [][]byte) error {
 		if err := protojson.Unmarshal(property.source, p); err != nil {
 			return fmt.Errorf("unmarshal property failure: %w", err)
 		}
-		// update the property to mark it as deleted
+		// update the property to mark it as delete
 		document, err := s.buildUpdateDocument(GetPropertyID(p), p)
 		if err != nil {
 			return fmt.Errorf("build delete document failure: %w", err)
 		}
 		// mark the document as deleted
-		document.Deleted = true
+		document.DeletedTime = deleteTime
 		removeDocList = append(removeDocList, *document)
 	}
 	return s.updateDocuments(removeDocList)
@@ -224,10 +228,13 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 	data = make([]*queryProperty, 0, len(ss))
 	for _, s := range ss {
 		bytes := s.Fields[sourceField]
-		deleted := convert.BytesToBool(s.Fields[deleteField])
+		var deleteTime int64
+		if s.Fields[deleteField] != nil {
+			deleteTime = convert.BytesToInt64(s.Fields[deleteField])
+		}
 		data = append(data, &queryProperty{
-			source:  bytes,
-			deleted: deleted,
+			source:     bytes,
+			deleteTime: deleteTime,
 		})
 	}
 	return data, nil
@@ -240,13 +247,10 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 	for segID, seg := range segments {
 		var docID uint64
 		for ; docID < seg.Count(); docID++ {
-			hasDeleted := false
-			var sourceData []byte
+			var deleteTime int64
 			err = seg.VisitStoredFields(docID, func(field string, value []byte) bool {
 				if field == deleteField {
-					hasDeleted = convert.BytesToBool(value)
-				} else if field == sourceField {
-					sourceData = value
+					deleteTime = convert.BytesToInt64(value)
 				}
 				return true
 			})
@@ -254,17 +258,7 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 				return src, fmt.Errorf("visit stored field failure: %w", err)
 			}
 
-			if !hasDeleted || sourceData == nil {
-				continue
-			}
-
-			// parsing the property data to check the data is expired or not
-			var p propertyv1.Property
-			if err := protojson.Unmarshal(sourceData, &p); err != nil {
-				s.l.Warn().Msgf("unmarshal property failure when merging segments %d: %v", segID, err)
-				continue
-			}
-			if time.Now().Unix()-p.Metadata.ModRevision < s.expireToDeleteSec {
+			if deleteTime <= 0 || int64(time.Now().Sub(time.Unix(deleteTime, 0)).Seconds()) < s.expireToDeleteSec {
 				continue
 			}
 
