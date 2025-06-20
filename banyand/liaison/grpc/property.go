@@ -362,6 +362,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		return nil, err
 	}
 	res := make(map[string]*propertyWithMetadata)
+	shouldDeleteOlderProperties := make([][]byte, 0)
 	for _, nodeWithProperties := range nodeProperties {
 		for _, propertyMetadata := range nodeWithProperties {
 			entity := propertypkg.GetEntity(propertyMetadata.Property)
@@ -372,8 +373,15 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			}
 			if cur.Metadata.ModRevision < propertyMetadata.Metadata.ModRevision {
 				res[entity] = propertyMetadata
-				// TODO(mrproliu) handle the case where the property detected multiple versions
+				shouldDeleteOlderProperties = append(shouldDeleteOlderProperties, propertypkg.GetPropertyID(cur.Property))
+			} else {
+				shouldDeleteOlderProperties = append(shouldDeleteOlderProperties, propertypkg.GetPropertyID(propertyMetadata.Property))
 			}
+		}
+	}
+	if len(shouldDeleteOlderProperties) > 0 {
+		if err := ps.remove(shouldDeleteOlderProperties); err != nil {
+			ps.log.Warn().Msgf("failed to delete old properties when query: %v", err)
 		}
 	}
 	if len(res) == 0 {
