@@ -31,7 +31,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -230,10 +229,6 @@ func (m *memory) Serve() run.StopNotify {
 		}
 	}()
 	return m.closed
-}
-
-func init() {
-	fs.SetThresholdProvider(GetMemoryProtector())
 }
 
 // GetThreshold returns the threshold for large file detection (1% of page cache).

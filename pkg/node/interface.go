@@ -27,6 +27,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -42,6 +43,7 @@ var (
 //
 //go:generate mockgen -destination=mock/node_selector_mock.go -package=mock github.com/apache/skywalking-banyandb/pkg/node Selector
 type Selector interface {
+	OnInit(kinds []schema.Kind) (bool, []int64)
 	AddNode(node *databasev1.Node)
 	RemoveNode(node *databasev1.Node)
 	SetNodeSelector(selector *pub.LabelSelector)
@@ -62,6 +64,11 @@ type pickFirstSelector struct {
 	nodeIDMap map[string]struct{}
 	nodeIDs   []string
 	mu        sync.RWMutex
+}
+
+// OnInit implements Selector.
+func (p *pickFirstSelector) OnInit(_ []schema.Kind) (bool, []int64) {
+	return true, []int64{0}
 }
 
 // SetNodeSelector implements Selector.

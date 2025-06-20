@@ -83,7 +83,6 @@ func (ph *primaryBlockMetadata) unmarshal(src []byte) ([]byte, error) {
 }
 
 func mustReadPrimaryBlockMetadata(dst []primaryBlockMetadata, r fs.Reader) []primaryBlockMetadata {
-	// Use cached=false for metadata reads to avoid caching in OS page cache
 	sr := r.SequentialRead()
 	data, err := io.ReadAll(sr)
 	if err != nil {
