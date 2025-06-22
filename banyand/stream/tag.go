@@ -49,7 +49,6 @@ type tag struct {
 	name      string
 	values    [][]byte
 	valueType pbv1.ValueType
-	mu        sync.Mutex
 }
 
 func (t *tag) reset() {
@@ -106,9 +105,7 @@ encodeSwitch:
 		for i, v := range t.values {
 			if len(v) != 8 {
 				if v == nil || string(v) == "null" {
-					t.mu.Lock()
-					t.valueType = pbv1.ValueTypeStr
-					t.mu.Unlock()
+					// t.valueType = pbv1.ValueTypeStr
 					tm.valueType = pbv1.ValueTypeStr
 					encodeDefault()
 					break encodeSwitch // skip to final part
