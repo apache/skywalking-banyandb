@@ -105,7 +105,7 @@ encodeSwitch:
 		for i, v := range t.values {
 			if len(v) != 8 {
 				if v == nil || string(v) == "null" {
-					// t.valueType = pbv1.ValueTypeStr
+					// TODO t.valueType = pbv1.ValueTypeStr
 					tm.valueType = pbv1.ValueTypeStr
 					encodeDefault()
 					break encodeSwitch // skip to final part
