@@ -21,7 +21,6 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
