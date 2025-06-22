@@ -49,6 +49,7 @@ type column struct {
 	name      string
 	values    [][]byte
 	valueType pbv1.ValueType
+	mu        sync.Mutex
 }
 
 func (c *column) reset() {
@@ -105,7 +106,9 @@ encodeSwitch:
 		for i, v := range c.values {
 			if len(v) != 8 {
 				if v == nil || string(v) == "null" {
+					c.mu.Lock()
 					c.valueType = pbv1.ValueTypeStr
+					c.mu.Unlock()
 					cm.valueType = pbv1.ValueTypeStr
 					encodeDefault()
 					break encodeSwitch // skip to final part
