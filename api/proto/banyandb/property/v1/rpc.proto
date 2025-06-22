@@ -122,7 +122,8 @@ message InternalDeleteRequest {
 message InternalQueryResponse {
   repeated bytes sources = 1;
   common.v1.Trace trace = 2;
-  // deletes indicates the property is deleted or not
+  // deletes indicates the property is deleted timestamps,
   // it's mapping to the sources in the same order
-  repeated bool deletes = 3;
+  // if the value is 0, it means the property is not deleted
+  repeated int64 deletes = 3;
 }
