@@ -1324,7 +1324,7 @@ func TestQueryResult(t *testing.T) {
 				fileSystem := fs.NewLocalFileSystem()
 				defer defFn()
 				tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: nopProtector{}}, nil)
 				require.NoError(t, err)
 				for _, dps := range tt.dpsList {
 					tst.mustAddDataPoints(dps)

@@ -76,7 +76,7 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			fileSystem := fs.NewLocalFileSystem()
 			defer defFn()
 			tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: nopProtector{}}, nil)
 			require.NoError(t, err)
 			for _, es := range tt.esList {
 				tst.mustAddElements(es)
@@ -103,7 +103,7 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 
 			// reopen the table
 			tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
-				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting()}, nil)
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(), protector: nopProtector{}}, nil)
 			require.NoError(t, err)
 
 			defer tst.Close()
