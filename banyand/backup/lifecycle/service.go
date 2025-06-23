@@ -170,6 +170,8 @@ func (l *lifecycleService) action() error {
 		return err
 	}
 
+	l.l.Info().Msgf("starting migration for %d groups: %v", len(groups), getGroupNames(groups))
+
 	if len(groups) == 0 {
 		l.l.Info().Msg("no groups to process, all groups already completed")
 		progress.Remove(l.progressFilePath, l.l)
@@ -182,6 +184,10 @@ func (l *lifecycleService) action() error {
 		l.l.Error().Err(err).Msg("failed to get snapshots")
 		return err
 	}
+	l.l.Info().
+		Str("stream_snapshot", streamDir).
+		Str("measure_snapshot", measureDir).
+		Msg("created snapshots")
 	progress.Save(l.progressFilePath, l.l)
 	streamSVC, measureSVC, err := l.setupQuerySvc(ctx, streamDir, measureDir)
 	if streamSVC != nil {
@@ -209,6 +215,7 @@ func (l *lifecycleService) action() error {
 		case commonv1.Catalog_CATALOG_STREAM:
 			if streamSVC == nil {
 				l.l.Error().Msgf("stream service is not available, skipping group: %s", g.Metadata.Name)
+				progress.MarkStreamError(g.Metadata.Name, "", fmt.Sprintf("stream service unavailable for group %s", g.Metadata.Name))
 				allGroupsCompleted = false
 				continue
 			}
@@ -216,6 +223,7 @@ func (l *lifecycleService) action() error {
 		case commonv1.Catalog_CATALOG_MEASURE:
 			if measureSVC == nil {
 				l.l.Error().Msgf("measure service is not available, skipping group: %s", g.Metadata.Name)
+				progress.MarkMeasureError(g.Metadata.Name, "", fmt.Sprintf("measure service unavailable for group %s", g.Metadata.Name))
 				allGroupsCompleted = false
 				continue
 			}
@@ -327,6 +335,14 @@ func (l *lifecycleService) generateReport(p *Progress) {
 	l.l.Info().Msg("rotated old migration reports")
 }
 
+func getGroupNames(groups []*commonv1.Group) []string {
+	names := make([]string, 0, len(groups))
+	for _, g := range groups {
+		names = append(names, g.Metadata.Name)
+	}
+	return names
+}
+
 func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Progress) ([]*commonv1.Group, error) {
 	gg, err := l.metadata.GroupRegistry().ListGroup(ctx)
 	if err != nil {
@@ -382,10 +398,10 @@ func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.G
 	for _, s := range ss {
 		if !progress.IsStreamCompleted(g.Metadata.Name, s.Metadata.Name) {
 			allStreamsDone = false
-			break
 		}
 	}
 	if allStreamsDone {
+		l.l.Info().Msgf("deleting expired stream segments for group: %s", g.Metadata.Name)
 		l.deleteExpiredStreamSegments(ctx, g, tr, progress)
 		progress.MarkGroupCompleted(g.Metadata.Name)
 		progress.Save(l.progressFilePath, l.l)
@@ -524,6 +540,7 @@ func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.
 		}
 	}
 	if allMeasuresDone {
+		l.l.Info().Msgf("deleting expired measure segments for group: %s", g.Metadata.Name)
 		l.deleteExpiredMeasureSegments(ctx, g, tr, progress)
 		progress.MarkGroupCompleted(g.Metadata.Name)
 		progress.Save(l.progressFilePath, l.l)

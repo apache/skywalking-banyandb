@@ -51,6 +51,14 @@ func Uint32ToBytes(u uint32) []byte {
 	return bs
 }
 
+// BoolToBytes converts bool to bytes.
+func BoolToBytes(b bool) []byte {
+	if b {
+		return []byte{1}
+	}
+	return []byte{0}
+}
+
 // BytesToInt64 converts bytes to int64.
 func BytesToInt64(b []byte) int64 {
 	u := binary.BigEndian.Uint64(b)
@@ -86,4 +94,12 @@ func Float64ToBytes(f float64) []byte {
 // BytesToFloat64 converts bytes to float64.
 func BytesToFloat64(b []byte) float64 {
 	return math.Float64frombits(binary.BigEndian.Uint64(b))
+}
+
+// BytesToBool converts bytes to bool.
+func BytesToBool(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	return b[0] != 0
 }
