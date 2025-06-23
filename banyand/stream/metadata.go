@@ -55,7 +55,6 @@ type schemaRepo struct {
 	l        *logger.Logger
 	metadata metadata.Repo
 	path     string
-	pm       protector.Memory
 }
 
 func newSchemaRepo(path string, svc *service, nodeLabels map[string]string) schemaRepo {

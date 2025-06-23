@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -28,13 +29,27 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 // nopProtector is a dummy Protector implementation for tests.
 type nopProtector struct{}
 
-func (nopProtector) ShouldApplyFadvis(int64) bool { return false }
+func (nopProtector) ShouldApplyFadvis(int64) bool                      { return false }
+func (nopProtector) AvailableBytes() int64                             { return -1 }
+func (nopProtector) GetLimit() uint64                                  { return 0 }
+func (nopProtector) AcquireResource(_ context.Context, _ uint64) error { return nil }
+func (nopProtector) Name() string                                      { return "nop-protector" }
+func (nopProtector) FlagSet() *run.FlagSet                             { return run.NewFlagSet("nop") }
+func (nopProtector) Validate() error                                   { return nil }
+func (nopProtector) PreRun(context.Context) error                      { return nil }
+func (nopProtector) Serve() run.StopNotify {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+func (nopProtector) GracefulStop() {}
 
 func Test_mergeTwoBlocks(t *testing.T) {
 	tests := []struct {
