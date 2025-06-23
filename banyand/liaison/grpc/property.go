@@ -139,7 +139,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 			return nil, errors.Errorf("property %s tag %s not found", property.Metadata.Name, tag.Key)
 		}
 	}
-	nodeProperties, _, err := ps.queryProperties(ctx, &propertyv1.QueryRequest{
+	nodeProperties, _, _, err := ps.queryProperties(ctx, &propertyv1.QueryRequest{
 		Groups: []string{g},
 		Name:   property.Metadata.Name,
 		Ids:    []string{property.Id},
@@ -189,7 +189,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	return ps.mergeProperty(ctx, start, uint64(id), nodes, prev, property)
 }
 
-func (ps *propertyServer) findPrevAndOlderProperties(nodeProperties [][]*propertyWithMetadata) (*propertyWithMetadata, []*propertyWithMetadata) {
+func (ps *propertyServer) findPrevAndOlderProperties(nodeProperties map[string][]*propertyWithMetadata) (*propertyWithMetadata, []*propertyWithMetadata) {
 	var prevPropertyWithMetadata *propertyWithMetadata
 	var olderProperties []*propertyWithMetadata
 	for _, properties := range nodeProperties {
@@ -317,7 +317,7 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 	if len(req.Id) > 0 {
 		qReq.Ids = []string{req.Id}
 	}
-	nodeProperties, _, err := ps.queryProperties(ctx, qReq)
+	nodeProperties, _, _, err := ps.queryProperties(ctx, qReq)
 	if err != nil {
 		return nil, err
 	}
@@ -357,24 +357,27 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		req.Limit = 100
 	}
 
-	nodeProperties, trace, err := ps.queryProperties(ctx, req)
+	nodeProperties, groups, trace, err := ps.queryProperties(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	res := make(map[string]*propertyWithMetadata)
+	res := make(map[string]*propertyWithCount)
 	shouldDeleteOlderProperties := make([][]byte, 0)
-	for _, nodeWithProperties := range nodeProperties {
+	for n, nodeWithProperties := range nodeProperties {
 		for _, propertyMetadata := range nodeWithProperties {
 			entity := propertypkg.GetEntity(propertyMetadata.Property)
 			cur, ok := res[entity]
 			if !ok {
-				res[entity] = propertyMetadata
+				res[entity] = newPropertyWithCounts(propertyMetadata, n)
 				continue
 			}
-			if cur.Metadata.ModRevision < propertyMetadata.Metadata.ModRevision {
-				res[entity] = propertyMetadata
+			switch {
+			case cur.Metadata.ModRevision < propertyMetadata.Metadata.ModRevision: // newer revision
+				res[entity] = newPropertyWithCounts(propertyMetadata, n)
 				shouldDeleteOlderProperties = append(shouldDeleteOlderProperties, propertypkg.GetPropertyID(cur.Property))
-			} else {
+			case cur.Metadata.ModRevision == propertyMetadata.Metadata.ModRevision: // same revision
+				cur.AddExistNode(n)
+			default: // cur.Metadata.ModRevision > propertyMetadata.Metadata.ModRevision
 				shouldDeleteOlderProperties = append(shouldDeleteOlderProperties, propertypkg.GetPropertyID(propertyMetadata.Property))
 			}
 		}
@@ -388,10 +391,41 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		return &propertyv1.QueryResponse{Properties: nil, Trace: trace}, nil
 	}
 	properties := make([]*propertyv1.Property, 0, len(res))
-	for _, p := range res {
+	for entity, p := range res {
 		// ignore deletedTime property
 		if p.deletedTime > 0 {
 			continue
+		}
+
+		// make sure have the enough replicas
+		group := groups[p.Metadata.Group]
+		if group == nil {
+			return nil, errors.Errorf("group %s not found", p.Metadata.Group)
+		}
+		copies, ok := ps.groupRepo.copies(p.Metadata.GetGroup())
+		if !ok {
+			return nil, errors.New("failed to get group copies")
+		}
+		if copies != uint32(len(p.existNodes)) {
+			id, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
+			if err != nil {
+				return nil, err
+			}
+			nodes := make([]string, 0, copies)
+			for i := range copies {
+				nodeID, err := ps.nodeRegistry.Locate(p.GetMetadata().GetGroup(), p.GetMetadata().GetName(), uint32(id), i)
+				if err != nil {
+					return nil, err
+				}
+				if _, ok := p.existNodes[nodeID]; !ok {
+					nodes = append(nodes, nodeID)
+				}
+			}
+			if len(nodes) > 0 {
+				if _, err := ps.replaceProperty(ctx, time.Now(), uint64(id), nodes, p.Property, p.Property); err != nil {
+					ps.log.Warn().Msgf("failed to insert missing properties when query: %v", err)
+				}
+			}
 		}
 		if len(req.TagProjection) > 0 {
 			var tags []*modelv1.Tag
@@ -417,7 +451,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 func (ps *propertyServer) queryProperties(
 	ctx context.Context,
 	req *propertyv1.QueryRequest,
-) (nodeProperties [][]*propertyWithMetadata, trace *commonv1.Trace, err error) {
+) (nodeProperties map[string][]*propertyWithMetadata, groups map[string]*commonv1.Group, trace *commonv1.Trace, err error) {
 	start := time.Now()
 	if req.Limit == 0 {
 		req.Limit = 100
@@ -436,18 +470,21 @@ func (ps *propertyServer) queryProperties(
 			span.Stop()
 		}()
 	}
+	groups = make(map[string]*commonv1.Group, len(req.Groups))
 	for _, gn := range req.Groups {
-		if g, getGroupErr := ps.schemaRegistry.GroupRegistry().GetGroup(ctx, gn); getGroupErr != nil {
-			return nil, trace, errors.Errorf("group %s not found", gn)
+		g, getGroupErr := ps.schemaRegistry.GroupRegistry().GetGroup(ctx, gn)
+		if getGroupErr != nil {
+			return nil, nil, trace, errors.Errorf("group %s not found", gn)
 		} else if g.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
-			return nil, trace, errors.Errorf("group %s is not allowed to have properties", gn)
+			return nil, nil, trace, errors.Errorf("group %s is not allowed to have properties", gn)
 		}
+		groups[gn] = g
 	}
 	ff, err := ps.pipeline.Broadcast(defaultQueryTimeout, data.TopicPropertyQuery, bus.NewMessage(bus.MessageID(start.Unix()), req))
 	if err != nil {
-		return nil, trace, err
+		return nil, nil, trace, err
 	}
-	res := make([][]*propertyWithMetadata, 0)
+	res := make(map[string][]*propertyWithMetadata, len(ff))
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			err = multierr.Append(err, getErr)
@@ -464,7 +501,7 @@ func (ps *propertyServer) queryProperties(
 					var deleteTime int64
 					err = protojson.Unmarshal(s, &p)
 					if err != nil {
-						return nil, trace, err
+						return nil, groups, trace, err
 					}
 					if i < len(v.Deletes) {
 						deleteTime = v.Deletes[i]
@@ -478,19 +515,19 @@ func (ps *propertyServer) queryProperties(
 				if span != nil {
 					span.AddSubTrace(v.Trace)
 				}
-				res = append(res, nodeWithProperties)
+				res[m.Node()] = nodeWithProperties
 			case *common.Error:
 				err = multierr.Append(err, errors.New(v.Error()))
 			}
 		}
 	}
 	if err != nil {
-		return nil, trace, err
+		return nil, groups, trace, err
 	}
 	if len(res) == 0 {
-		return res, trace, nil
+		return res, groups, trace, nil
 	}
-	return res, trace, nil
+	return res, groups, trace, nil
 }
 
 func (ps *propertyServer) remove(ids [][]byte) error {
@@ -511,4 +548,24 @@ func (ps *propertyServer) remove(ids [][]byte) error {
 type propertyWithMetadata struct {
 	*propertyv1.Property
 	deletedTime int64
+}
+
+type propertyWithCount struct {
+	*propertyWithMetadata
+	existNodes map[string]bool
+}
+
+func newPropertyWithCounts(p *propertyWithMetadata, existNode string) *propertyWithCount {
+	res := &propertyWithCount{
+		propertyWithMetadata: p,
+	}
+	res.AddExistNode(existNode)
+	return res
+}
+
+func (p *propertyWithCount) AddExistNode(node string) {
+	if p.existNodes == nil {
+		p.existNodes = make(map[string]bool)
+	}
+	p.existNodes[node] = true
 }

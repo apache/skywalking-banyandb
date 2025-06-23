@@ -97,7 +97,7 @@ var _ = Describe("Property Operation", func() {
 		// extracting the operation of creating property schema
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
-		defUITemplateWithSchema(rootCmd, addr, 2)
+		defUITemplateWithSchema(rootCmd, addr, 2, 0)
 		applyData(rootCmd, addr, p1YAML, true, propertyTagCount)
 	})
 
@@ -389,7 +389,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, node1Addr, node1Defer := setup.ClosableStandalone(node1Dir, ports)
 		node1Addr = httpSchema + node1Addr
-		defUITemplateWithSchema(rootCmd, node1Addr, 1)
+		defUITemplateWithSchema(rootCmd, node1Addr, 1, 0)
 		applyData(rootCmd, node1Addr, p1YAML, true, propertyTagCount)
 		queryData(rootCmd, node1Addr, propertyGroup, 1, func(data string, resp *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo111"))
@@ -403,7 +403,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, node2Addr, node2Defer := setup.ClosableStandalone(node2Dir, ports)
 		node2Addr = httpSchema + node2Addr
-		defUITemplateWithSchema(rootCmd, node2Addr, 1)
+		defUITemplateWithSchema(rootCmd, node2Addr, 1, 0)
 		applyData(rootCmd, node2Addr, p2YAML, true, propertyTagCount)
 		queryData(rootCmd, node2Addr, propertyGroup, 1, func(data string, resp *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo333"))
@@ -443,7 +443,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		}
 		addr = httpSchema + liaisonHTTPAddr
 		// creating schema
-		defUITemplateWithSchema(rootCmd, addr, 1)
+		defUITemplateWithSchema(rootCmd, addr, 1, 1)
 	})
 
 	AfterEach(func() {
@@ -474,7 +474,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		totalProperties := append(node1Search, node2Search...)
-		Expect(len(totalProperties)).Should(Equal(2))
+		Expect(len(totalProperties)).Should(Equal(3)) // 1(deleted) + 2(applied replicas)
 		deletedCount := 0
 		for _, p := range totalProperties {
 			if convert.BytesToBool(p.Fields[deletedFieldKey.TagName]) {
@@ -501,7 +501,7 @@ var _ = Describe("Property Cluster Operation", func() {
 	})
 })
 
-func defUITemplateWithSchema(rootCmd *cobra.Command, addr string, shardCount int) {
+func defUITemplateWithSchema(rootCmd *cobra.Command, addr string, shardCount int, replicas int) {
 	rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
 	createGroup := func() string {
 		rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
@@ -510,7 +510,8 @@ metadata:
 catalog: CATALOG_PROPERTY
 resource_opts:
   shard_num: %d
-`, shardCount)))
+  replicas: %d
+`, shardCount, replicas)))
 		return capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			if err != nil {
