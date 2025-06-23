@@ -1351,7 +1351,10 @@ func TestQueryResult(t *testing.T) {
 
 				// reopen the table
 				tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
-					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(), protector: nopProtector{}}, nil)
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{
+						flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(),
+						protector: nopProtector{},
+					}, nil)
 				require.NoError(t, err)
 
 				verify(t, tst)
@@ -1451,7 +1454,10 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 
 			// reopen the table
 			tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
-				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(), protector: nopProtector{}}, nil)
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{
+					flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(),
+					protector: nopProtector{},
+				}, nil)
 			require.NoError(t, err)
 
 			m := &measure{

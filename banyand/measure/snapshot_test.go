@@ -450,6 +450,7 @@ func TestSnapshotFunctionality(t *testing.T) {
 		option{
 			flushTimeout: 0,
 			mergePolicy:  newDefaultMergePolicyForTesting(),
+			protector:    nopProtector{},
 		},
 		nil,
 	)
