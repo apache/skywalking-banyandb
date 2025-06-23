@@ -24,6 +24,9 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"io"
 	"os"
 	"path/filepath"
@@ -55,6 +58,33 @@ func init() {
 }
 
 var sharedReadBuffer = make([]byte, 32*1024)
+
+// NewTestFileSystemWithProtector creates a new file system with a memory protector.
+func NewTestFileSystemWithProtector(threshold int64) (fs.FileSystem, protector.Memory) {
+	// 1) 初始化 Protector 并设置测试阈值
+	mp := protector.NewMemory()
+	mp.SetLimit(uint64(threshold))
+	protector.SetMemoryProtector(mp)
+
+	fsys := fs.NewLocalFileSystemWithLogger(logger.GetLogger("test"))
+
+	return fsys, mp
+}
+
+// SetupTestTSTable creates a new TSTable with a file system and a memory protector.
+func SetupTestTSTable(t *testing.T, rootDir string, threshold int64, tr timestamp.TimeRange) *measure.TSTable {
+	fsys, _ := NewTestFileSystemWithProtector(threshold)
+
+	opt := measure.Option{
+		Protector: protector.GetMemoryProtector(),
+	}
+	tbl, err := measure.NewTsTable(fsys, rootDir /* position */, nil,
+		logger.GetLogger("test"), tr, opt /* metrics */, nil)
+	if err != nil {
+		t.Fatalf("failed to init tsTable: %v", err)
+	}
+	return tbl
+}
 
 // CreateTestFile creates a test file with the given size.
 func CreateTestFile(tb testing.TB, filePath string, size int64) error {
@@ -99,14 +129,21 @@ func ReadFileWithFadvise(_ testing.TB, filePath string) ([]byte, error) {
 
 // ReadFileStreamingWithFadvise reads a file using streaming mode with optional fadvise hints.
 // Returns the total number of bytes read.
-func ReadFileStreamingWithFadvise(_ testing.TB, filePath string, _ bool) (int64, error) {
+func ReadFileStreamingWithFadvise(_ testing.TB, filePath string, skipFadvise bool) (int64, error) {
 	f, err := fileSystem.OpenFile(filePath)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
 
-	// SequentialRead no longer accepts skipFadvise parameter; behavior is determined internally.
+	// When skipFadvise is requested, mark the underlying LocalFile as cached so that
+	// sequential operations will not invoke FADV_DONTNEED inside the fs layer.
+	if skipFadvise {
+		if lf, ok := f.(*fs.LocalFile); ok {
+			lf.cached = true
+		}
+	}
+
 	seqReader := f.SequentialRead()
 
 	totalBytes := int64(0)
@@ -207,53 +244,6 @@ func SimulateMergeOperation(_ testing.TB, parts []string, outputFile string) err
 	}
 
 	return nil
-}
-
-// SetTestThreshold sets a specific threshold value for determining when to apply fadvise.
-func SetTestThreshold(threshold int64) {
-	provider := &testThresholdProvider{threshold: threshold}
-	fs.SetThresholdProvider(provider)
-}
-
-// SetRealisticThreshold calculates and sets a realistic threshold based on system memory.
-func SetRealisticThreshold() {
-	threshold := CalculateRealisticThreshold()
-	SetTestThreshold(threshold)
-}
-
-// CalculateRealisticThreshold calculates a suitable threshold based on the available memory
-// and page cache configuration, defaulting to a safe value if it cannot be determined.
-func CalculateRealisticThreshold() int64 {
-	pageCachePercent := 25
-
-	totalMemory, err := cgroups.MemoryLimit()
-	if err != nil {
-		return 64 * 1024 * 1024
-	}
-
-	pageCacheSize := totalMemory * int64(pageCachePercent) / 100
-
-	threshold := pageCacheSize / 100
-
-	if threshold < 1024*1024 {
-		threshold = 1024 * 1024
-	}
-
-	return threshold
-}
-
-type testThresholdProvider struct {
-	threshold int64
-}
-
-func (p *testThresholdProvider) GetThreshold() int64 {
-	return p.threshold
-}
-
-// ShouldApplyFadvis decides whether to apply fadvise based on the configured threshold.
-// It satisfies fs.ThresholdProvider interface (single-arg version).
-func (p *testThresholdProvider) ShouldApplyFadvis(fileSize int64) bool {
-	return fileSize >= p.threshold
 }
 
 // PageCacheStats contains statistics about page cache usage.
@@ -437,22 +427,22 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 
 				if hasReads && hasWrites {
 					mixedProcesses++
-				    if stats.ReadBatchCalls > 20 || stats.PageCacheAdds > 1000 {
-	       				read := stats.ReadBatchCalls
-	        			adds := stats.PageCacheAdds
-        				var hitRatio float64
-        				if read == 0 {
-						hitRatio = 0
-					} else if adds >= read {
-						hitRatio = 0
-					} else {
-						hitRatio = float64(read - adds) / float64(read) * 100
+					if stats.ReadBatchCalls > 20 || stats.PageCacheAdds > 1000 {
+						read := stats.ReadBatchCalls
+						adds := stats.PageCacheAdds
+						var hitRatio float64
+						if read == 0 {
+							hitRatio = 0
+						} else if adds >= read {
+							hitRatio = 0
+						} else {
+							hitRatio = float64(read-adds) / float64(read) * 100
+						}
+						topReaders = append(topReaders,
+							fmt.Sprintf("PID %d(R:%d,W:%d,HR:%.1f%%)",
+								pid, read, adds, hitRatio,
+							))
 					}
-					topReaders = append(topReaders,
-						fmt.Sprintf("PID %d(R:%d,W:%d,HR:%.1f%%)",
-							pid, read, adds, hitRatio,
-						))
-    	            }  
 				} else if hasReads {
 					readProcesses++
 					if stats.ReadBatchCalls > 20 {
@@ -460,10 +450,10 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 							pid, stats.ReadBatchCalls, stats.HitRatio*100))
 						var hitRatio float64
 						if stats.ReadBatchCalls > 0 {
-							hitRatio = float64(stats.ReadBatchCalls - stats.PageCacheAdds) / float64(stats.ReadBatchCalls) * 100
+							hitRatio = float64(stats.ReadBatchCalls-stats.PageCacheAdds) / float64(stats.ReadBatchCalls) * 100
 						}
 						topReaders = append(topReaders, fmt.Sprintf("PID %d(R:%d,HR:%.1f%%)",
-+                           pid, stats.ReadBatchCalls, hitRatio))
+							+pid, stats.ReadBatchCalls, hitRatio))
 					}
 				} else if hasWrites {
 					writeProcesses++
@@ -475,15 +465,15 @@ func WithMonitoring(b *testing.B, opts MonitorOptions, f func(b *testing.B)) {
 			}
 			var totalHits uint64
 			if totalAdds > totalReads {
-                totalHits = 0
+				totalHits = 0
 				b.Logf("[eBPF] Overall Cache: Write-only workload, PageAdds=%d", totalAdds)
-            } else {
+			} else {
 				totalHits = totalReads - totalAdds
-                overallHitRatio := float64(totalHits) / float64(totalReads) * 100
-                b.Logf("[eBPF] Overall Cache: Hits=%d, Misses=%d, Reads=%d, Adds=%d, HitRatio=%.2f%%",
-                   totalHits, totalAdds, totalReads, totalAdds, overallHitRatio)
-                
-            }
+				overallHitRatio := float64(totalHits) / float64(totalReads) * 100
+				b.Logf("[eBPF] Overall Cache: Hits=%d, Misses=%d, Reads=%d, Adds=%d, HitRatio=%.2f%%",
+					totalHits, totalAdds, totalReads, totalAdds, overallHitRatio)
+
+			}
 
 			// Show top active processes (limit output)
 			if len(topReaders) > 0 {
