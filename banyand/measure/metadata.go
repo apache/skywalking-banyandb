@@ -80,6 +80,7 @@ type schemaRepo struct {
 	l                *logger.Logger
 	topNProcessorMap sync.Map
 	path             string
+	pm               protector.Memory
 }
 
 func newSchemaRepo(path string, svc *service, nodeLabels map[string]string) *schemaRepo {

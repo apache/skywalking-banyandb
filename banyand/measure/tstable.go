@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"io"
 	"path/filepath"
 	"sort"
@@ -32,7 +33,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -49,13 +49,9 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	if option.protector == nil {
-		logger.GetLogger("measure").Warn().
+		logger.GetLogger("measure").
+			Panic().
 			Msg("protector is nil in newTSTable, using default protector")
-		option.protector = protector.GetMemoryProtector()
-		if option.protector == nil {
-			logger.GetLogger("measure").Warn().
-				Msg("default protector is also nil, creating new one")
-		}
 	}
 	tst := tsTable{
 		fileSystem: fileSystem,
@@ -135,7 +131,7 @@ type tsTable struct {
 	*metrics
 	p         common.Position
 	option    option
-	pm        Protector
+	pm        protector.Memory
 	root      string
 	gc        garbageCleaner
 	curPartID uint64
