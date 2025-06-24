@@ -14,6 +14,7 @@ Release Notes.
 - Replica: Support configurable replica count on Group.
 - Replica: Move the TopN pre-calculation flow from the Data Node to the Liaison Node.
 - Add a wait and retry to write handlers to avoid the local metadata cache being loaded.
+- Implement primary block cache for measure.
 - Implement versioning properties and replace physical deletion with the tombstone mechanism for the property database.
 - Add Load Balancer Feature to Liaison. 
 
