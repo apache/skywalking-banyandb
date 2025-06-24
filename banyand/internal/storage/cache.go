@@ -32,7 +32,6 @@ import (
 type Cache interface {
 	Get(key EntryKey) any
 	Put(key EntryKey, value any)
-	StartCleaner()
 	Close()
 	Requests() uint64
 	Misses() uint64
