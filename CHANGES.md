@@ -16,6 +16,7 @@ Release Notes.
 - Add a wait and retry to write handlers to avoid the local metadata cache being loaded.
 - Implement versioning properties and replace physical deletion with the tombstone mechanism for the property database.
 - Add Load Balancer Feature to Liaison. 
+- Implement fadvise for large files to prevent page cache pollution.
 
 ### Bug Fixes
 
