@@ -149,6 +149,7 @@ func NewServiceCacheWithConfig(config CacheConfig) Cache {
 		idleTimeout:     config.IdleTimeout,
 	}
 	sc.wg.Add(1)
+	sc.StartCleaner()
 	return sc
 }
 

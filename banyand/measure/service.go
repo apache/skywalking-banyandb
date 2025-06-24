@@ -204,7 +204,6 @@ func (s *service) PreRun(ctx context.Context) error {
 }
 
 func (s *service) Serve() run.StopNotify {
-	s.c.StartCleaner()
 	return s.schemaRepo.StopCh()
 }
 
