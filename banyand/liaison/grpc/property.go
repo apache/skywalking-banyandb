@@ -447,6 +447,7 @@ func (ps *propertyServer) repairPropertyIfNeed(ctx context.Context, entity strin
 		}
 	}
 	futures := make([]bus.Future, 0, copies)
+	var result error
 	for i := range copies {
 		nodeID, err := ps.nodeRegistry.Locate(p.GetMetadata().GetGroup(), p.GetMetadata().GetName(), uint32(id), i)
 		if err != nil {
@@ -456,14 +457,14 @@ func (ps *propertyServer) repairPropertyIfNeed(ctx context.Context, entity strin
 			f, err := ps.pipeline.Publish(ctx, data.TopicPropertyRepair, bus.NewMessageWithNode(
 				bus.MessageID(time.Now().Unix()), nodeID, repairReq))
 			if err != nil {
-				ps.log.Warn().Msgf("failed to repair properties when query: %v", err)
+				result = multierr.Append(result, errors.Errorf("failed to repair properties when query: %v", err))
+				continue
 			}
 			futures = append(futures, f)
 		}
 	}
 
 	// Wait for all futures to complete
-	var result error
 	for _, f := range futures {
 		if _, err := f.Get(); err != nil {
 			result = multierr.Append(result, err)
