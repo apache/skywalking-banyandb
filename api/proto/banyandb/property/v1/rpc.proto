@@ -153,5 +153,4 @@ message InternalRepairRequest {
   }
 }
 
-message InternalRepairResponse {
-}
+message InternalRepairResponse {}
