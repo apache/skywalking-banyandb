@@ -47,6 +47,9 @@ func (s *store) InsertSeriesBatch(batch index.Batch) error {
 	}
 	defer s.closer.Done()
 	b := generateBatch()
+	if batch.PersistentCallback != nil {
+		b.SetPersistedCallback(batch.PersistentCallback)
+	}
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
 		doc, ff := toDoc(d, true)
@@ -65,6 +68,9 @@ func (s *store) UpdateSeriesBatch(batch index.Batch) error {
 	defer s.closer.Done()
 	b := generateBatch()
 	defer releaseBatch(b)
+	if batch.PersistentCallback != nil {
+		b.SetPersistedCallback(batch.PersistentCallback)
+	}
 	for _, d := range batch.Documents {
 		doc, _ := toDoc(d, false)
 		b.Update(doc.ID(), doc)
@@ -120,6 +126,9 @@ func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string)
 	if d.Version > 0 {
 		vf := bluge.NewStoredOnlyField(versionField, convert.Int64ToBytes(d.Version))
 		doc.AddField(vf)
+	}
+	if d.DeletedTime > 0 {
+		doc.AddField(bluge.NewStoredOnlyField(deletedField, convert.Int64ToBytes(d.DeletedTime)).StoreValue())
 	}
 	return doc, fieldNames
 }
