@@ -46,8 +46,9 @@ const (
 
 type option struct {
 	mergePolicy        *mergePolicy
-	flushTimeout       time.Duration
+	protector          protector.Memory
 	seriesCacheMaxSize run.Bytes
+	flushTimeout       time.Duration
 }
 
 type indexSchema struct {

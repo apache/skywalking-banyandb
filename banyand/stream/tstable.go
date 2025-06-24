@@ -33,6 +33,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -48,15 +49,16 @@ const (
 
 type tsTable struct {
 	fileSystem    fs.FileSystem
-	loopCloser    *run.Closer
 	l             *logger.Logger
 	snapshot      *snapshot
 	introductions chan *introduction
-	index         *elementIndex
+	loopCloser    *run.Closer
 	metrics       *metrics
+	index         *elementIndex
 	p             common.Position
-	root          string
 	option        option
+	pm            protector.Memory
+	root          string
 	gc            garbageCleaner
 	curPartID     uint64
 	sync.RWMutex
@@ -169,12 +171,18 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
+	if option.protector == nil {
+		logger.GetLogger("stream").
+			Panic().
+			Msg("protector can not be nil")
+	}
 	tst := tsTable{
 		fileSystem: fileSystem,
 		root:       rootPath,
 		option:     option,
 		l:          l,
 		p:          p,
+		pm:         option.protector,
 	}
 	var indexMetrics *inverted.Metrics
 	if m != nil {

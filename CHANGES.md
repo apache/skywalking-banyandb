@@ -17,6 +17,7 @@ Release Notes.
 - Implement primary block cache for measure.
 - Implement versioning properties and replace physical deletion with the tombstone mechanism for the property database.
 - Add Load Balancer Feature to Liaison. 
+- Implement fadvise for large files to prevent page cache pollution.
 
 ### Bug Fixes
 
