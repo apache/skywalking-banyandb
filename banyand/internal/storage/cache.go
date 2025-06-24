@@ -32,7 +32,6 @@ import (
 type Cache interface {
 	Get(key EntryKey) any
 	Put(key EntryKey, value any)
-	StartCleaner()
 	Close()
 	Requests() uint64
 	Misses() uint64
@@ -149,11 +148,11 @@ func NewServiceCacheWithConfig(config CacheConfig) Cache {
 		idleTimeout:     config.IdleTimeout,
 	}
 	sc.wg.Add(1)
-	sc.StartCleaner()
+	sc.startCleaner()
 	return sc
 }
 
-func (sc *serviceCache) StartCleaner() {
+func (sc *serviceCache) startCleaner() {
 	go func() {
 		defer sc.wg.Done()
 		sc.clean()
