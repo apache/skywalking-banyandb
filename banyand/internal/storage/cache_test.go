@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 func TestCachePutAndGet(t *testing.T) {
@@ -88,9 +89,12 @@ func TestCacheEvict(t *testing.T) {
 }
 
 func TestCacheClean(t *testing.T) {
-	serviceCache := NewServiceCache().(*serviceCache)
-	serviceCache.idleTimeout = 10 * time.Millisecond
-	serviceCache.cleanupInterval = 10 * time.Millisecond
+	config := CacheConfig{
+		MaxCacheSize:    run.Bytes(100 * 1024 * 1024),
+		CleanupInterval: 10 * time.Millisecond,
+		IdleTimeout:     10 * time.Millisecond,
+	}
+	serviceCache := NewServiceCacheWithConfig(config).(*serviceCache)
 	defer serviceCache.Close()
 
 	key := EntryKey{
