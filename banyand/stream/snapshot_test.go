@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -449,7 +450,7 @@ func TestSnapshotFunctionality(t *testing.T) {
 		option{
 			flushTimeout: 0,
 			mergePolicy:  newDefaultMergePolicy(),
-			protector:    nopProtector{},
+			protector:    protector.Nop{},
 		},
 		nil,
 	)

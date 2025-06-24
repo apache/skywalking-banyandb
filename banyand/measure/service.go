@@ -134,10 +134,6 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	if s.pm == nil {
-		s.l.Error().Msg("CRITICAL: memory protector is nil in PreRun")
-		return errors.New("memory protector is required but was nil")
-	}
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	path := path.Join(s.root, s.Name())

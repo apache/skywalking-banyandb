@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	itest "github.com/apache/skywalking-banyandb/banyand/internal/test"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -76,7 +77,7 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			fileSystem := fs.NewLocalFileSystem()
 			defer defFn()
 			tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: nopProtector{}}, nil)
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}}, nil)
 			require.NoError(t, err)
 			for _, es := range tt.esList {
 				tst.mustAddElements(es)
@@ -105,7 +106,7 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
 				logger.GetLogger("test"), timestamp.TimeRange{}, option{
 					flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(),
-					protector: nopProtector{},
+					protector: protector.Nop{},
 				}, nil)
 			require.NoError(t, err)
 

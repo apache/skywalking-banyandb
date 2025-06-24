@@ -18,7 +18,6 @@
 package measure
 
 import (
-	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -27,29 +26,11 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
-
-// nopProtector is a dummy Protector implementation for tests.
-type nopProtector struct{}
-
-func (nopProtector) ShouldApplyFadvis(int64) bool                      { return false }
-func (nopProtector) AvailableBytes() int64                             { return -1 }
-func (nopProtector) GetLimit() uint64                                  { return 0 }
-func (nopProtector) AcquireResource(_ context.Context, _ uint64) error { return nil }
-func (nopProtector) Name() string                                      { return "nop-protector" }
-func (nopProtector) FlagSet() *run.FlagSet                             { return run.NewFlagSet("nop") }
-func (nopProtector) Validate() error                                   { return nil }
-func (nopProtector) PreRun(context.Context) error                      { return nil }
-func (nopProtector) Serve() run.StopNotify {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
-}
-func (nopProtector) GracefulStop() {}
 
 func Test_mergeTwoBlocks(t *testing.T) {
 	tests := []struct {
@@ -335,7 +316,7 @@ func Test_mergeParts(t *testing.T) {
 			verify := func(t *testing.T, pp []*partWrapper, fileSystem fs.FileSystem, root string, partID uint64) {
 				closeCh := make(chan struct{})
 				defer close(closeCh)
-				tst := &tsTable{pm: nopProtector{}}
+				tst := &tsTable{pm: protector.Nop{}}
 				p, err := tst.mergeParts(fileSystem, closeCh, pp, partID, root)
 				if tt.wantErr != nil {
 					if !errors.Is(err, tt.wantErr) {

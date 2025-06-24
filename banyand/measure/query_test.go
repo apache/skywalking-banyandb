@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	itest "github.com/apache/skywalking-banyandb/banyand/internal/test"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -1324,7 +1325,7 @@ func TestQueryResult(t *testing.T) {
 				fileSystem := fs.NewLocalFileSystem()
 				defer defFn()
 				tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: nopProtector{}}, nil)
+					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}}, nil)
 				require.NoError(t, err)
 				for _, dps := range tt.dpsList {
 					tst.mustAddDataPoints(dps)
@@ -1353,7 +1354,7 @@ func TestQueryResult(t *testing.T) {
 				tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
 					logger.GetLogger("test"), timestamp.TimeRange{}, option{
 						flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(),
-						protector: nopProtector{},
+						protector: protector.Nop{},
 					}, nil)
 				require.NoError(t, err)
 
@@ -1427,7 +1428,7 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			fileSystem := fs.NewLocalFileSystem()
 			defer defFn()
 			tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: nopProtector{}}, nil)
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}}, nil)
 			require.NoError(t, err)
 			for _, dps := range tt.dpsList {
 				tst.mustAddDataPoints(dps)
@@ -1456,7 +1457,7 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
 				logger.GetLogger("test"), timestamp.TimeRange{}, option{
 					flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(),
-					protector: nopProtector{},
+					protector: protector.Nop{},
 				}, nil)
 			require.NoError(t, err)
 

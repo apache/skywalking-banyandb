@@ -49,14 +49,9 @@ func (f *MockMemoryProtector) AcquireResource(_ context.Context, _ uint64) error
 	return f.acquireErr
 }
 
-// ShouldApplyFadvis always returns false for testing.
-func (f *MockMemoryProtector) ShouldApplyFadvis(_ int64) bool {
+// ShouldCache always returns false for testing.
+func (f *MockMemoryProtector) ShouldCache(_ int64) bool {
 	return false
-}
-
-// ShouldCache always returns true for testing.
-func (f *MockMemoryProtector) ShouldCache(_ string) bool {
-	return true
 }
 
 // Name returns the name of the mock memory protector.

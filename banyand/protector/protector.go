@@ -42,7 +42,7 @@ type Memory interface {
 	AvailableBytes() int64
 	GetLimit() uint64
 	AcquireResource(ctx context.Context, size uint64) error
-	ShouldApplyFadvis(fileSize int64) bool
+	ShouldCache(fileSize int64) bool
 	run.PreRunner
 	run.Config
 	run.Service
@@ -258,6 +258,6 @@ func (m *memory) GetThreshold() int64 {
 
 // ShouldApplyFadvis implements the fs.ThresholdProvider interface.
 // It checks if the file size exceeds the threshold for large file detection.
-func (m *memory) ShouldApplyFadvis(fileSize int64) bool {
+func (m *memory) ShouldCache(fileSize int64) bool {
 	return fileSize >= m.GetThreshold()
 }
