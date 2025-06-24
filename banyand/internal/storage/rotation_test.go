@@ -174,7 +174,8 @@ func setUpDB(t *testing.T, ttlDays ...int) (*database[*MockTSTable, any], timest
 	mc.Set(ts)
 	ctx = timestamp.SetClock(ctx, mc)
 
-	tsdb, err := OpenTSDB(ctx, TSDBOpts)
+	sc := NewServiceCache()
+	tsdb, err := OpenTSDB(ctx, TSDBOpts, sc, group)
 	require.NoError(t, err)
 	seg, err := tsdb.CreateSegmentIfNotExist(ts)
 	require.NoError(t, err)

@@ -123,7 +123,7 @@ func TestSnapshotGetParts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, count := tt.snapshot.getParts(tt.dst, tt.opts.minTimestamp, tt.opts.maxTimestamp)
+			result, count := tt.snapshot.getParts(tt.dst, nil, tt.opts.minTimestamp, tt.opts.maxTimestamp)
 			assert.Equal(t, tt.expected, result)
 			assert.Equal(t, tt.count, count)
 		})

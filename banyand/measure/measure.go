@@ -25,6 +25,7 @@ import (
 	"time"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
@@ -70,6 +71,7 @@ func (i *indexSchema) parse(schema *databasev1.Measure) {
 type measure struct {
 	indexSchema atomic.Value
 	tsdb        atomic.Value
+	c           storage.Cache
 	pm          protector.Memory
 	l           *logger.Logger
 	schema      *databasev1.Measure
@@ -79,33 +81,33 @@ type measure struct {
 	interval    time.Duration
 }
 
-func (s *measure) GetSchema() *databasev1.Measure {
-	return s.schema
+func (m *measure) GetSchema() *databasev1.Measure {
+	return m.schema
 }
 
-func (s *measure) GetIndexRules() []*databasev1.IndexRule {
-	is := s.indexSchema.Load()
+func (m *measure) GetIndexRules() []*databasev1.IndexRule {
+	is := m.indexSchema.Load()
 	if is == nil {
 		return nil
 	}
 	return is.(indexSchema).indexRules
 }
 
-func (s *measure) OnIndexUpdate(index []*databasev1.IndexRule) {
+func (m *measure) OnIndexUpdate(index []*databasev1.IndexRule) {
 	var is indexSchema
 	is.indexRules = index
-	is.parse(s.schema)
-	s.indexSchema.Store(is)
+	is.parse(m.schema)
+	m.indexSchema.Store(is)
 }
 
-func (s *measure) parseSpec() (err error) {
-	s.name, s.group = s.schema.GetMetadata().GetName(), s.schema.GetMetadata().GetGroup()
-	if s.schema.Interval != "" {
-		s.interval, err = timestamp.ParseDuration(s.schema.Interval)
+func (m *measure) parseSpec() (err error) {
+	m.name, m.group = m.schema.GetMetadata().GetName(), m.schema.GetMetadata().GetGroup()
+	if m.schema.Interval != "" {
+		m.interval, err = timestamp.ParseDuration(m.schema.Interval)
 	}
 	var is indexSchema
-	is.parse(s.schema)
-	s.indexSchema.Store(is)
+	is.parse(m.schema)
+	m.indexSchema.Store(is)
 	return err
 }
 
@@ -114,11 +116,12 @@ type measureSpec struct {
 }
 
 func openMeasure(spec measureSpec,
-	l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo,
+	l *logger.Logger, c storage.Cache, pm protector.Memory, schemaRepo *schemaRepo,
 ) (*measure, error) {
 	m := &measure{
 		schema:     spec.schema,
 		l:          l,
+		c:          c,
 		pm:         pm,
 		schemaRepo: schemaRepo,
 	}
