@@ -320,9 +320,10 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			break
 		}
 	}
+	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:                       shardNum,
-		Location:                       path.Join(s.path, groupSchema.Metadata.Name),
+		Location:                       path.Join(s.path, group),
 		TSTableCreator:                 newTSTable,
 		TableMetrics:                   s.newMetrics(p),
 		SegmentInterval:                storage.MustToIntervalRule(segInterval),
@@ -338,7 +339,8 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
 			return p
 		}),
-		opts)
+		opts, nil, group,
+	)
 }
 
 type portableSupplier struct {

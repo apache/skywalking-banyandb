@@ -384,3 +384,26 @@ func (s *service) createNativeObservabilityGroup(ctx context.Context) error {
 	}
 	return nil
 }
+
+type cacheMetrics struct {
+	requests meter.Gauge
+	misses   meter.Gauge
+	hitRatio meter.Gauge
+	entries  meter.Gauge
+	size     meter.Gauge
+}
+
+func newCacheMetrics(omr observability.MetricsRegistry) *cacheMetrics {
+	if omr == nil {
+		return nil
+	}
+
+	factory := omr.With(measureScope.SubScope("cache"))
+	return &cacheMetrics{
+		requests: factory.NewGauge("requests_total"),
+		misses:   factory.NewGauge("misses_total"),
+		hitRatio: factory.NewGauge("hit_ratio"),
+		entries:  factory.NewGauge("entries_count"),
+		size:     factory.NewGauge("size_bytes"),
+	}
+}

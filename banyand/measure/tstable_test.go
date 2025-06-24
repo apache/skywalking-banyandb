@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -147,7 +148,8 @@ func Test_tstIter(t *testing.T) {
 			s = new(snapshot)
 		}
 		defer s.decRef()
-		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
+		shardCache := storage.NewShardCache("test-group", 0, 0)
+		pp, n := s.getParts(nil, shardCache, tt.minTimestamp, tt.maxTimestamp)
 		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
 		ti.init(bma, pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)

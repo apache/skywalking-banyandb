@@ -344,6 +344,7 @@ type supplier struct {
 	metadata   metadata.Repo
 	omr        observability.MetricsRegistry
 	l          *logger.Logger
+	c          storage.Cache
 	pm         protector.Memory
 	schemaRepo *schemaRepo
 	nodeLabels map[string]string
@@ -356,6 +357,7 @@ func newSupplier(path string, svc *service, sr *schemaRepo, nodeLabels map[strin
 		path:       path,
 		metadata:   svc.metadata,
 		l:          svc.l,
+		c:          svc.c,
 		option:     svc.option,
 		omr:        svc.omr,
 		pm:         svc.pm,
@@ -368,7 +370,7 @@ func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.In
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, s.pm, s.schemaRepo)
+	}, s.l, s.c, s.pm, s.schemaRepo)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -415,9 +417,10 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			break
 		}
 	}
+	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:                       shardNum,
-		Location:                       path.Join(s.path, groupSchema.Metadata.Name),
+		Location:                       path.Join(s.path, group),
 		TSTableCreator:                 newTSTable,
 		TableMetrics:                   metrics,
 		SegmentInterval:                storage.MustToIntervalRule(segInterval),
@@ -433,7 +436,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
 			return p
 		}),
-		opts)
+		opts, s.c, group)
 }
 
 type portableSupplier struct {
@@ -462,7 +465,7 @@ func (s *portableSupplier) OpenResource(spec resourceSchema.Resource) (resourceS
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, nil, nil)
+	}, s.l, nil, nil, nil)
 }
 
 // GetTopNSchema returns the schema of the topN result measure.
