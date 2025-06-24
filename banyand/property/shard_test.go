@@ -42,7 +42,7 @@ func TestMergeDeleted(t *testing.T) {
 		{
 			name:               "delete expired properties from db",
 			expireDeletionTime: 1 * time.Second,
-			deleteTime:         time.Now().Add(-3 * time.Second).Unix(),
+			deleteTime:         time.Now().Add(-3 * time.Second).UnixNano(),
 			verify: func(t *testing.T, queriedProperties []*queryProperty) {
 				// the count of properties in shard should be less than the total properties count
 				if len(queriedProperties) >= propertyCount {
@@ -59,7 +59,7 @@ func TestMergeDeleted(t *testing.T) {
 		{
 			name:               "deleted properties still exist in db",
 			expireDeletionTime: time.Hour,
-			deleteTime:         time.Now().Unix(),
+			deleteTime:         time.Now().UnixNano(),
 			verify: func(t *testing.T, queriedProperties []*queryProperty) {
 				if len(queriedProperties) != propertyCount {
 					t.Fatal(fmt.Errorf("expect %d results, got %d", propertyCount, len(queriedProperties)))

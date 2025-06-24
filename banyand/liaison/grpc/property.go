@@ -362,7 +362,6 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		return nil, err
 	}
 	res := make(map[string]*propertyWithCount)
-	shouldDeleteOlderProperties := make([][]byte, 0)
 	for n, nodeWithProperties := range nodeProperties {
 		for _, propertyMetadata := range nodeWithProperties {
 			entity := propertypkg.GetEntity(propertyMetadata.Property)
@@ -374,17 +373,9 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			switch {
 			case cur.Metadata.ModRevision < propertyMetadata.Metadata.ModRevision: // newer revision
 				res[entity] = newPropertyWithCounts(propertyMetadata, n)
-				shouldDeleteOlderProperties = append(shouldDeleteOlderProperties, propertypkg.GetPropertyID(cur.Property))
 			case cur.Metadata.ModRevision == propertyMetadata.Metadata.ModRevision: // same revision
 				cur.AddExistNode(n)
-			default: // cur.Metadata.ModRevision > propertyMetadata.Metadata.ModRevision
-				shouldDeleteOlderProperties = append(shouldDeleteOlderProperties, propertypkg.GetPropertyID(propertyMetadata.Property))
 			}
-		}
-	}
-	if len(shouldDeleteOlderProperties) > 0 {
-		if err := ps.remove(shouldDeleteOlderProperties); err != nil {
-			ps.log.Warn().Msgf("failed to delete old properties when query: %v", err)
 		}
 	}
 	if len(res) == 0 {
@@ -392,40 +383,13 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	}
 	properties := make([]*propertyv1.Property, 0, len(res))
 	for entity, p := range res {
-		// ignore deletedTime property
-		if p.deletedTime > 0 {
-			continue
+		if err := ps.repairPropertyIfNeed(ctx, entity, p, groups); err != nil {
+			ps.log.Warn().Msgf("failed to repair properties when query: %v", err)
 		}
 
-		// make sure have the enough replicas
-		group := groups[p.Metadata.Group]
-		if group == nil {
-			return nil, errors.Errorf("group %s not found", p.Metadata.Group)
-		}
-		copies, ok := ps.groupRepo.copies(p.Metadata.GetGroup())
-		if !ok {
-			return nil, errors.New("failed to get group copies")
-		}
-		if copies != uint32(len(p.existNodes)) {
-			id, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
-			if err != nil {
-				return nil, err
-			}
-			nodes := make([]string, 0, copies)
-			for i := range copies {
-				nodeID, err := ps.nodeRegistry.Locate(p.GetMetadata().GetGroup(), p.GetMetadata().GetName(), uint32(id), i)
-				if err != nil {
-					return nil, err
-				}
-				if _, ok := p.existNodes[nodeID]; !ok {
-					nodes = append(nodes, nodeID)
-				}
-			}
-			if len(nodes) > 0 {
-				if _, err := ps.replaceProperty(ctx, time.Now(), uint64(id), nodes, p.Property, p.Property); err != nil {
-					ps.log.Warn().Msgf("failed to insert missing properties when query: %v", err)
-				}
-			}
+		// ignore deleted property in the query
+		if p.deletedTime > 0 {
+			continue
 		}
 		if len(req.TagProjection) > 0 {
 			var tags []*modelv1.Tag
@@ -445,6 +409,67 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		}
 	}
 	return &propertyv1.QueryResponse{Properties: properties, Trace: trace}, nil
+}
+
+func (ps *propertyServer) repairPropertyIfNeed(ctx context.Context, entity string, p *propertyWithCount, groups map[string]*commonv1.Group) error {
+	// make sure have the enough replicas
+	group := groups[p.Metadata.Group]
+	if group == nil {
+		return errors.Errorf("group %s not found", p.Metadata.Group)
+	}
+	copies, ok := ps.groupRepo.copies(p.Metadata.GetGroup())
+	if !ok {
+		return errors.New("failed to get group copies")
+	}
+	if copies == uint32(len(p.existNodes)) {
+		return nil
+	}
+	id, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
+	if err != nil {
+		return err
+	}
+	// building the repair data
+	repairReq := &propertyv1.InternalRepairRequest{ShardId: uint64(id)}
+	if p.deletedTime > 0 { // building the delete request
+		repairReq.Operation = &propertyv1.InternalRepairRequest_Delete{
+			Delete: &propertyv1.InternalDeletePropertyMetadata{
+				Group: p.Metadata.Group,
+				Name:  p.Metadata.Name,
+				Id:    p.Id,
+			},
+		}
+	} else { // building the applied request
+		repairReq.Operation = &propertyv1.InternalRepairRequest_Apply{
+			Apply: &propertyv1.InternalApplyProperty{
+				Id:       propertypkg.GetPropertyID(p.Property),
+				Property: p.Property,
+			},
+		}
+	}
+	futures := make([]bus.Future, 0, copies)
+	for i := range copies {
+		nodeID, err := ps.nodeRegistry.Locate(p.GetMetadata().GetGroup(), p.GetMetadata().GetName(), uint32(id), i)
+		if err != nil {
+			return err
+		}
+		if _, ok := p.existNodes[nodeID]; !ok {
+			f, err := ps.pipeline.Publish(ctx, data.TopicPropertyRepair, bus.NewMessageWithNode(
+				bus.MessageID(time.Now().Unix()), nodeID, repairReq))
+			if err != nil {
+				ps.log.Warn().Msgf("failed to repair properties when query: %v", err)
+			}
+			futures = append(futures, f)
+		}
+	}
+
+	// Wait for all futures to complete
+	var result error
+	for _, f := range futures {
+		if _, err := f.Get(); err != nil {
+			result = multierr.Append(result, err)
+		}
+	}
+	return result
 }
 
 // queryProperties internal properties query, return all properties with related nodes.

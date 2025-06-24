@@ -127,3 +127,31 @@ message InternalQueryResponse {
   // if the value is 0, it means the property is not deleted
   repeated int64 deletes = 3;
 }
+
+message InternalDeletePropertyMetadata {
+  // group is the group of the property
+  string group = 1 [(validate.rules).string.min_len = 1];
+  // name is the name of the property
+  string name = 2 [(validate.rules).string.min_len = 1];
+  // id is the identity of the property
+  string id = 3 [(validate.rules).string.min_len = 1];
+}
+
+message InternalApplyProperty {
+  bytes id = 1;
+  banyandb.property.v1.Property property = 2;
+}
+
+message InternalRepairRequest {
+  uint64 shard_id = 1;
+
+  oneof operation {
+    // apply the property to the storage.
+    InternalApplyProperty apply = 2;
+    // delete the property from the storage.
+    InternalDeletePropertyMetadata delete = 3;
+  }
+}
+
+message InternalRepairResponse {
+}

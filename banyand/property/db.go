@@ -19,6 +19,7 @@ package property
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -219,6 +221,77 @@ func (db *database) collect() {
 	}
 }
 
+func (db *database) repairFromApplyProperty(ctx context.Context, id uint64, property *propertyv1.InternalApplyProperty) error {
+	s, err := db.loadShard(ctx, common.ShardID(id))
+	if err != nil {
+		return errors.WithMessagef(err, "failed to load shard %d", id)
+	}
+	olderProperties, err := db.query(ctx, &propertyv1.QueryRequest{
+		Groups: []string{property.Property.Metadata.Group},
+		Name:   property.Property.Metadata.Name,
+		Ids:    []string{property.Property.Id},
+	})
+	if err != nil {
+		return fmt.Errorf("query older properties failed: %w", err)
+	}
+	docIDList := make([][]byte, 0, len(olderProperties))
+	for _, p := range olderProperties {
+		if p.deleteTime > 0 {
+			// If the property is already deleted, ignore it.
+			continue
+		}
+		docIDList = append(docIDList, p.id)
+	}
+	deletedDocuments, err := s.buildDeleteFromTimeDocuments(ctx, docIDList, time.Now().UnixNano())
+	if err != nil {
+		return fmt.Errorf("build delete documents failed: %w", err)
+	}
+	updateDocument, err := s.buildUpdateDocument(property.Id, property.Property)
+	if err != nil {
+		return fmt.Errorf("build update document failed: %w", err)
+	}
+	result := make([]index.Document, 0, len(deletedDocuments)+1)
+	result = append(result, deletedDocuments...)
+	result = append(result, *updateDocument)
+	err = s.updateDocuments(result)
+	if err != nil {
+		return fmt.Errorf("update documents failed: %w", err)
+	}
+	return nil
+}
+
+func (db *database) repairFromDelete(ctx context.Context, id uint64, property *propertyv1.InternalDeletePropertyMetadata) error {
+	s, err := db.loadShard(ctx, common.ShardID(id))
+	if err != nil {
+		return fmt.Errorf("load shard %d failed: %w", id, err)
+	}
+	docIDList, err := db.buildNotDeletedDocIDList(ctx, property.Group, property.Name, property.Id)
+	if err != nil {
+		return fmt.Errorf("build not deleted doc id list failed: %w", err)
+	}
+	return s.delete(ctx, docIDList)
+}
+
+func (db *database) buildNotDeletedDocIDList(ctx context.Context, group, name, id string) ([][]byte, error) {
+	olderProperties, err := db.query(ctx, &propertyv1.QueryRequest{
+		Groups: []string{group},
+		Name:   name,
+		Ids:    []string{id},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query older properties failed: %w", err)
+	}
+	docIDList := make([][]byte, 0, len(olderProperties))
+	for _, p := range olderProperties {
+		if p.deleteTime > 0 {
+			// If the property is already deleted, ignore it.
+			continue
+		}
+		docIDList = append(docIDList, p.id)
+	}
+	return docIDList, nil
+}
+
 type walkFn func(suffix string) error
 
 func walkDir(root, prefix string, wf walkFn) error {
@@ -236,6 +309,7 @@ func walkDir(root, prefix string, wf walkFn) error {
 }
 
 type queryProperty struct {
+	id         []byte
 	source     []byte
 	deleteTime int64
 }
