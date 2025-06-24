@@ -91,7 +91,6 @@ func TestCacheClean(t *testing.T) {
 	serviceCache := NewServiceCache().(*serviceCache)
 	serviceCache.idleTimeout = 10 * time.Millisecond
 	serviceCache.cleanupInterval = 10 * time.Millisecond
-	serviceCache.StartCleaner()
 	defer serviceCache.Close()
 
 	key := EntryKey{
@@ -112,7 +111,6 @@ func TestCacheClean(t *testing.T) {
 
 func TestCacheClose(t *testing.T) {
 	serviceCache := NewServiceCache().(*serviceCache)
-	serviceCache.StartCleaner()
 
 	key := EntryKey{
 		group:     "test-group",
