@@ -20,7 +20,6 @@ package stream
 import (
 	stdbytes "bytes"
 	"math"
-	"sync"
 
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -28,21 +27,65 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
+func generateInt64Slice(length int) *[]int64 {
+	v := int64SlicePool.Get()
+	if v == nil {
+		s := make([]int64, length)
+		return &s
+	}
+	if cap(*v) < length {
+		*v = make([]int64, length)
+	} else {
+		*v = (*v)[:length]
+	}
+	return v
+}
+
+func releaseInt64Slice(int64Slice *[]int64) {
+	*int64Slice = (*int64Slice)[:0]
+	int64SlicePool.Put(int64Slice)
+}
+
+func generateFloat64Slice(length int) *[]float64 {
+	v := float64SlicePool.Get()
+	if v == nil {
+		s := make([]float64, length)
+		return &s
+	}
+	if cap(*v) < length {
+		*v = make([]float64, length)
+	} else {
+		*v = (*v)[:length]
+	}
+	return v
+}
+
+func releaseFloat64Slice(float64Slice *[]float64) {
+	*float64Slice = (*float64Slice)[:0]
+	float64SlicePool.Put(float64Slice)
+}
+
+func generateEncodingWriter(buffer encoding.BufferWriter) *encoding.Writer {
+	v := encodingWriterPool.Get()
+	if v == nil {
+		v = encoding.NewWriter()
+	}
+	v.Reset(buffer)
+	return v
+}
+
+func releaseEncodingWriter(writer *encoding.Writer) {
+	writer.Flush()
+	encodingWriterPool.Put(writer)
+}
+
 var (
-	int64SlicePool = sync.Pool{
-		New: func() interface{} {
-			s := make([]int64, 0, 1024)
-			return &s
-		},
-	}
-	float64SlicePool = sync.Pool{
-		New: func() interface{} {
-			s := make([]float64, 0, 1024)
-			return &s
-		},
-	}
+	int64SlicePool     = pool.Register[*[]int64]("stream-int64Slice")
+	float64SlicePool   = pool.Register[*[]float64]("stream-float64Slice")
+	encodingWriterPool = pool.Register[*encoding.Writer]("stream-encodingWriter")
 )
 
 type tag struct {
@@ -80,36 +123,37 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
+	t.encodeTagValues(tm, bb)
+	tm.size = uint64(len(bb.Buf))
+	if tm.size > maxValuesBlockSize {
+		logger.Panicf("too large valuesSize: %d bytes; mustn't exceed %d bytes", tm.size, maxValuesBlockSize)
+	}
+	tm.offset = tagWriter.bytesWritten
+	tagWriter.MustWrite(bb.Buf)
+}
+
+func (t *tag) encodeTagValues(tm *tagMetadata, bb *bytes.Buffer) {
 	encodeDefault := func() {
 		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
 	}
-
 	// select encoding based on data type
-encodeSwitch:
 	switch t.valueType {
 	case pbv1.ValueTypeInt64:
 		// convert byte array to int64 array
-		intValuesPtr := int64SlicePool.Get().(*[]int64)
+		intValuesPtr := generateInt64Slice(len(t.values))
 		intValues := *intValuesPtr
-		intValues = intValues[:0]
-		if cap(intValues) < len(t.values) {
-			intValues = make([]int64, len(t.values))
-		} else {
-			intValues = intValues[:len(t.values)]
-		}
 		defer func() {
-			*intValuesPtr = intValues[:0]
-			int64SlicePool.Put(intValuesPtr)
+			releaseInt64Slice(intValuesPtr)
 		}()
 
 		for i, v := range t.values {
+			if v == nil || string(v) == "null" {
+				// TODO t.valueType = pbv1.ValueTypeStr
+				tm.valueType = pbv1.ValueTypeStr
+				encodeDefault()
+				return
+			}
 			if len(v) != 8 {
-				if v == nil || string(v) == "null" {
-					// TODO t.valueType = pbv1.ValueTypeStr
-					tm.valueType = pbv1.ValueTypeStr
-					encodeDefault()
-					break encodeSwitch // skip to final part
-				}
 				var val int64
 				for j := 0; j < len(v); j++ {
 					val = (val << 8) | int64(v[j])
@@ -123,24 +167,21 @@ encodeSwitch:
 		var encodeType encoding.EncodeType
 		var firstValue int64
 		bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
-		tm.encodeType = encodeType
-		tm.firstValue = firstValue
-		if tm.encodeType == encoding.EncodeTypeUnknown {
+		if encodeType == encoding.EncodeTypeUnknown {
 			logger.Panicf("invalid encode type for int64 values")
 		}
+		firstValueBytes := convert.Int64ToBytes(firstValue)
+		// Prepend encodeType (1 byte) and firstValue (8 bytes) to the beginning
+		bb.Buf = append(
+			append([]byte{byte(encodeType)}, firstValueBytes...),
+			bb.Buf...,
+		)
 	case pbv1.ValueTypeFloat64:
 		// convert byte array to float64 array
-		floatValuesPtr := float64SlicePool.Get().(*[]float64)
+		floatValuesPtr := generateFloat64Slice(len(t.values))
 		floatValues := *floatValuesPtr
-		floatValues = floatValues[:0]
-		if cap(floatValues) < len(t.values) {
-			floatValues = make([]float64, len(t.values))
-		} else {
-			floatValues = floatValues[:len(t.values)]
-		}
 		defer func() {
-			*floatValuesPtr = floatValues[:0]
-			float64SlicePool.Put(floatValuesPtr)
+			releaseFloat64Slice(floatValuesPtr)
 		}()
 
 		for i, v := range t.values {
@@ -148,23 +189,16 @@ encodeSwitch:
 		}
 		// use XOR encoding for float column
 		bb.Buf = bb.Buf[:0]
-		writer := encoding.NewWriter()
-		writer.Reset(bb)
+		writer := generateEncodingWriter(bb)
 		xorEncoder := encoding.NewXOREncoder(writer)
 		// convert float64 to uint64 for encoding
 		for _, v := range floatValues {
 			xorEncoder.Write(math.Float64bits(v))
 		}
-		writer.Flush()
+		releaseEncodingWriter(writer)
 	default:
 		encodeDefault()
 	}
-	tm.size = uint64(len(bb.Buf))
-	if tm.size > maxValuesBlockSize {
-		logger.Panicf("too large valuesSize: %d bytes; mustn't exceed %d bytes", tm.size, maxValuesBlockSize)
-	}
-	tm.offset = tagWriter.bytesWritten
-	tagWriter.MustWrite(bb.Buf)
 }
 
 func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm tagMetadata, count uint64) {
@@ -185,53 +219,7 @@ func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Read
 	}
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	fs.MustReadData(reader, int64(cm.offset), bb.Buf)
-	switch t.valueType {
-	case pbv1.ValueTypeInt64:
-		// decode integer type
-		intValuesPtr := int64SlicePool.Get().(*[]int64)
-		intValues := *intValuesPtr
-		intValues = intValues[:0]
-		if cap(intValues) < int(count) {
-			intValues = make([]int64, count)
-		} else {
-			intValues = intValues[:count]
-		}
-		defer func() {
-			*intValuesPtr = intValues[:0]
-			int64SlicePool.Put(intValuesPtr)
-		}()
-
-		var err error
-		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
-		if err != nil {
-			logger.Panicf("%s: cannot decode int values: %v", reader.Path(), err)
-		}
-		// convert int64 array to byte array
-		t.values = make([][]byte, count)
-		for i, v := range intValues {
-			t.values[i] = convert.Int64ToBytes(v)
-		}
-	case pbv1.ValueTypeFloat64:
-		// decode float type
-		reader := encoding.NewReader(stdbytes.NewReader(bb.Buf))
-		xorDecoder := encoding.NewXORDecoder(reader)
-		t.values = make([][]byte, count)
-		for i := uint64(0); i < count; i++ {
-			if !xorDecoder.Next() {
-				logger.Panicf("cannot decode float value at index %d: %v", i, xorDecoder.Err())
-			}
-			val := xorDecoder.Value()
-			// convert uint64 back to float64
-			floatVal := math.Float64frombits(val)
-			t.values[i] = convert.Float64ToBytes(floatVal)
-		}
-	default:
-		var err error
-		t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
-		if err != nil {
-			logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
-		}
-	}
+	t.decodeTagValues(decoder, reader.Path(), count, bb)
 }
 
 func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seqReader, cm tagMetadata, count uint64) {
@@ -250,26 +238,30 @@ func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seq
 
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	reader.mustReadFull(bb.Buf)
+	t.decodeTagValues(decoder, reader.Path(), count, bb)
+}
+
+func (t *tag) decodeTagValues(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
 	switch t.valueType {
 	case pbv1.ValueTypeInt64:
 		// decode integer type
-		intValuesPtr := int64SlicePool.Get().(*[]int64)
+		intValuesPtr := generateInt64Slice(int(count))
 		intValues := *intValuesPtr
-		intValues = intValues[:0]
-		if cap(intValues) < int(count) {
-			intValues = make([]int64, count)
-		} else {
-			intValues = intValues[:count]
-		}
 		defer func() {
-			*intValuesPtr = intValues[:0]
-			int64SlicePool.Put(intValuesPtr)
+			releaseInt64Slice(intValuesPtr)
 		}()
 
+		const expectedLen = 9
+		if len(bb.Buf) < expectedLen {
+			logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", expectedLen, len(bb.Buf))
+		}
+		encodeType := encoding.EncodeType(bb.Buf[0])
+		firstValue := convert.BytesToInt64(bb.Buf[1:9])
+		bb.Buf = bb.Buf[9:]
 		var err error
-		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, cm.encodeType, cm.firstValue, int(count))
+		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
 		if err != nil {
-			logger.Panicf("%s: cannot decode int values: %v", reader.Path(), err)
+			logger.Panicf("%s: cannot decode int values: %v", path, err)
 		}
 		// convert int64 array to byte array
 		t.values = make([][]byte, count)
@@ -294,7 +286,7 @@ func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seq
 		var err error
 		t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
 		if err != nil {
-			logger.Panicf("%s: cannot decode values: %v", reader.Path(), err)
+			logger.Panicf("%s: cannot decode values: %v", path, err)
 		}
 	}
 }
