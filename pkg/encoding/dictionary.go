@@ -23,9 +23,10 @@ import (
 	"math/bits"
 )
 
+const maxUniqueValues = 256
+
 // Dictionary is used for dictionary encoding.
 type Dictionary struct {
-	m       map[string]uint32
 	values  [][]byte
 	indices []uint32
 }
@@ -33,7 +34,6 @@ type Dictionary struct {
 // NewDictionary creates a dictionary.
 func NewDictionary() *Dictionary {
 	return &Dictionary{
-		m:       make(map[string]uint32),
 		values:  make([][]byte, 0),
 		indices: make([]uint32, 0),
 	}
@@ -41,36 +41,39 @@ func NewDictionary() *Dictionary {
 
 // Reset resets the dictionary.
 func (d *Dictionary) Reset() {
-	clear(d.m)
 	d.values = d.values[:0]
 	d.indices = d.indices[:0]
 }
 
 // Add adds a value to the dictionary.
-func (d *Dictionary) Add(value []byte) {
-	if index, ok := d.m[string(value)]; ok {
-		d.indices = append(d.indices, index)
-		return
+func (d *Dictionary) Add(value []byte) bool {
+	for i, v := range d.values {
+		if bytes.Equal(v, value) {
+			d.indices = append(d.indices, uint32(i))
+			return true
+		}
+	}
+	if len(d.values) == maxUniqueValues {
+		return false
 	}
 	d.values = append(d.values, value)
 	index := uint32(len(d.values) - 1)
-	d.m[string(value)] = index
 	d.indices = append(d.indices, index)
+	return true
 }
 
 // Encode encodes the dictionary.
-func (d *Dictionary) Encode(dst []byte) []byte {
+func (d *Dictionary) Encode(dst []byte, tmp []uint32) []byte {
 	dst = VarUint64ToBytes(dst, uint64(len(d.values)))
 	dst = EncodeBytesBlock(dst, d.values)
-	re := make([]uint32, 0)
-	re = encodeRLE(re, d.indices)
+	re := encodeRLE(tmp, d.indices)
 	be := encodeBitPacking(re)
 	dst = append(dst, be...)
 	return dst
 }
 
 // Decode decodes the dictionary.
-func (d *Dictionary) Decode(src []byte) error {
+func (d *Dictionary) Decode(src []byte, tmp []uint32) error {
 	src, count := BytesToVarUint64(src)
 	if count == 0 {
 		return nil
@@ -81,17 +84,12 @@ func (d *Dictionary) Decode(src []byte) error {
 		return err
 	}
 	d.values = values
-	d.m = make(map[string]uint32, len(d.values))
-	for i, value := range d.values {
-		d.m[string(value)] = uint32(i)
-	}
 
-	bd := make([]uint32, 0)
-	bd, err = decodeBitPacking(bd, src)
+	tmp, err = decodeBitPacking(tmp, src)
 	if err != nil {
 		return err
 	}
-	d.indices = decodeRLE(d.indices[:0], bd)
+	d.indices = decodeRLE(d.indices[:0], tmp)
 	return nil
 }
 

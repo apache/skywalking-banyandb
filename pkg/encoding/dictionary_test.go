@@ -56,72 +56,71 @@ func TestEncodeAndDecodeDictionary(t *testing.T) {
 		dict.Add(value)
 	}
 
-	encoded := dict.Encode(nil)
+	tmp := make([]uint32, 0)
+	encoded := dict.Encode(nil, tmp)
 	decoded := NewDictionary()
-	err := decoded.Decode(encoded)
+	err := decoded.Decode(encoded, tmp[:0])
 	require.NoError(t, err)
 
 	expectedValues := [][]byte{[]byte("skywalking"), []byte("banyandb"), []byte("hello"), []byte("world")}
 	require.Equal(t, expectedValues, decoded.values)
 	expectedIndices := []uint32{0, 1, 2, 3, 2}
 	require.Equal(t, expectedIndices, decoded.indices)
-	expectedMap := map[string]uint32{
-		"skywalking": 0,
-		"banyandb":   1,
-		"hello":      2,
-		"world":      3,
-	}
-	for value, index := range decoded.m {
-		require.Equal(t, expectedMap[value], index)
-	}
 }
 
 type parameter struct {
-	size        int
+	count       int
 	cardinality int
 }
 
 var pList = [3]parameter{
-	{size: 1000, cardinality: 10},
-	{size: 10000, cardinality: 100},
-	{size: 100000, cardinality: 1000},
+	{count: 1000, cardinality: 100},
+	{count: 10000, cardinality: 100},
+	{count: 100000, cardinality: 100},
 }
 
 func BenchmarkEncodeDictionary(b *testing.B) {
 	b.ReportAllocs()
 	for _, p := range pList {
-		b.Run(fmt.Sprintf("size=%d_cardinality=%d", p.size, p.cardinality), func(b *testing.B) {
-			values := generateData(p.size, p.cardinality)
+		b.Run(fmt.Sprintf("size=%d_cardinality=%d", p.count, p.cardinality), func(b *testing.B) {
+			values, rawSize := generateData(p.count, p.cardinality)
 			dict := NewDictionary()
 			for _, value := range values {
 				dict.Add(value)
 			}
 
+			encoded := make([]byte, 0)
+			tmp := make([]uint32, 0)
+			encoded = dict.Encode(encoded, tmp)
+			compressedSize := len(encoded)
+			compressRatio := float64(rawSize) / float64(compressedSize)
+
 			b.ResetTimer()
+			b.ReportMetric(compressRatio, "compress_ratio")
 			for i := 0; i < b.N; i++ {
-				encoded := make([]byte, 0)
-				dict.Encode(encoded)
+				dict.Encode(encoded[:0], tmp[:0])
 			}
 		})
 	}
 }
 
-func BenchmarkDncodeDictionary(b *testing.B) {
+func BenchmarkDecodeDictionary(b *testing.B) {
 	b.ReportAllocs()
 	for _, p := range pList {
-		b.Run(fmt.Sprintf("size=%d_cardinality=%d", p.size, p.cardinality), func(b *testing.B) {
-			values := generateData(p.size, p.cardinality)
+		b.Run(fmt.Sprintf("size=%d_cardinality=%d", p.count, p.cardinality), func(b *testing.B) {
+			values, _ := generateData(p.count, p.cardinality)
 			dict := NewDictionary()
 			for _, value := range values {
 				dict.Add(value)
 			}
 			encoded := make([]byte, 0)
-			encoded = dict.Encode(encoded)
+			tmp := make([]uint32, 0)
+			encoded = dict.Encode(encoded, tmp)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				decoded := NewDictionary()
-				err := decoded.Decode(encoded)
+				err := decoded.Decode(encoded, tmp[:0])
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -130,10 +129,12 @@ func BenchmarkDncodeDictionary(b *testing.B) {
 	}
 }
 
-func generateData(size int, cardinality int) [][]byte {
+func generateData(count int, cardinality int) ([][]byte, int) {
 	values := make([][]byte, 0)
-	for i := 0; i < size; i++ {
+	size := 0
+	for i := 0; i < count; i++ {
 		values = append(values, []byte(fmt.Sprintf("value_%d", i%cardinality)))
+		size += len(values[i])
 	}
-	return values
+	return values, size
 }
