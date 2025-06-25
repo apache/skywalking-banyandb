@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime/metrics"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,8 +42,8 @@ type Memory interface {
 	AvailableBytes() int64
 	GetLimit() uint64
 	AcquireResource(ctx context.Context, size uint64) error
-	ShouldApplyFadvis(fileSize int64) bool
-	ShouldCache(path string) bool
+	// ShouldCache returns true if the file size is smaller than the threshold.
+	ShouldCache(fileSize int64) bool
 	run.PreRunner
 	run.Config
 	run.Service
@@ -258,44 +257,7 @@ func (m *memory) GetThreshold() int64 {
 	return threshold
 }
 
-// ShouldApplyFadvis implements the fs.ThresholdProvider interface.
-// It checks if the file size exceeds the threshold for large file detection.
-func (m *memory) ShouldApplyFadvis(fileSize int64) bool {
-	return fileSize >= m.GetThreshold()
-}
-
-// ShouldCache returns whether a file at the given path should be cached.
-// Currently always returns true as the cache decision is made based on file size.
-func (m *memory) ShouldCache(_ string) bool {
-	return true
-}
-
-// Global memory protector instance used by components that need threshold decisions.
-var (
-	globalMemoryProtector atomic.Pointer[Memory]
-	globalMemoryOnce      sync.Once
-)
-
-// GetMemoryProtector returns the global memory protector instance.
-// If no instance is set, it creates a default one for threshold decisions.
-func GetMemoryProtector() Memory {
-	// Fast path: atomic load
-	if mp := globalMemoryProtector.Load(); mp != nil {
-		return *mp
-	}
-
-	// Slow path: initialize once
-	globalMemoryOnce.Do(func() {
-		mp := Memory(&memory{
-			allowedPercent: 75, // Default 75% threshold
-		})
-		globalMemoryProtector.Store(&mp)
-	})
-
-	return *globalMemoryProtector.Load()
-}
-
-// SetMemoryProtector sets the global memory protector instance.
-func SetMemoryProtector(mp Memory) {
-	globalMemoryProtector.Store(&mp)
+// ShouldCache returns true if the file size is smaller than the threshold.
+func (m *memory) ShouldCache(fileSize int64) bool {
+	return fileSize < m.GetThreshold()
 }

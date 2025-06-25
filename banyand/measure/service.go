@@ -73,10 +73,13 @@ type service struct {
 	pm                  protector.Memory
 	schemaRepo          *schemaRepo
 	l                   *logger.Logger
+	c                   storage.Cache
+	cm                  *cacheMetrics
 	root                string
 	snapshotDir         string
 	dataPath            string
 	option              option
+	cc                  storage.CacheConfig
 	maxDiskUsagePercent int
 	maxFileSnapshotNum  int
 }
@@ -108,6 +111,10 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.VarP(&s.option.seriesCacheMaxSize, "measure-series-cache-max-size", "", "the max size of series cache in each group")
 	flagS.IntVar(&s.maxDiskUsagePercent, "measure-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	flagS.IntVar(&s.maxFileSnapshotNum, "measure-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
+	s.cc.MaxCacheSize = run.Bytes(100 * 1024 * 1024)
+	flagS.VarP(&s.cc.MaxCacheSize, "service-cache-max-size", "", "maximum service cache size (e.g., 100M)")
+	flagS.DurationVar(&s.cc.CleanupInterval, "service-cache-cleanup-interval", 30*time.Second, "service cache cleanup interval")
+	flagS.DurationVar(&s.cc.IdleTimeout, "service-cache-idle-timeout", 2*time.Minute, "service cache entry idle timeout")
 	return flagS
 }
 
@@ -120,6 +127,15 @@ func (s *service) Validate() error {
 	}
 	if s.maxDiskUsagePercent > 100 {
 		return errors.New("measure-max-disk-usage-percen must be less than or equal to 100")
+	}
+	if s.cc.MaxCacheSize < 0 {
+		return errors.New("service-cache-max-size must be greater than or equal to 0")
+	}
+	if s.cc.CleanupInterval <= 0 {
+		return errors.New("service-cache-cleanup-interval must be greater than 0")
+	}
+	if s.cc.IdleTimeout <= 0 {
+		return errors.New("service-cache-idle-timeout must be greater than 0")
 	}
 	return nil
 }
@@ -134,10 +150,6 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	if s.pm == nil {
-		s.l.Error().Msg("CRITICAL: memory protector is nil in PreRun")
-		return errors.New("memory protector is required but was nil")
-	}
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	path := path.Join(s.root, s.Name())
@@ -154,8 +166,13 @@ func (s *service) PreRun(ctx context.Context) error {
 	if val == nil {
 		return errors.New("node id is empty")
 	}
+	s.c = storage.NewServiceCacheWithConfig(s.cc)
 	node := val.(common.Node)
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
+
+	s.cm = newCacheMetrics(s.omr)
+	observability.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)
+
 	if s.pipeline == nil {
 		return nil
 	}
@@ -192,7 +209,12 @@ func (s *service) Serve() run.StopNotify {
 }
 
 func (s *service) GracefulStop() {
+	observability.MetricsCollector.Unregister("measure_cache")
 	s.schemaRepo.Close()
+	s.c.Close()
+	if s.localPipeline != nil {
+		s.localPipeline.GracefulStop()
+	}
 }
 
 func (s *service) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
@@ -201,6 +223,27 @@ func (s *service) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint3
 		return
 	}
 	s.schemaRepo.InFlow(stm, seriesID, shardID, entityValues, dp)
+}
+
+func (s *service) collectCacheMetrics() {
+	if s.cm == nil || s.c == nil {
+		return
+	}
+
+	requests := s.c.Requests()
+	misses := s.c.Misses()
+	length := s.c.Entries()
+	size := s.c.Size()
+	var hitRatio float64
+	if requests > 0 {
+		hitRatio = float64(requests-misses) / float64(requests)
+	}
+
+	s.cm.requests.Set(float64(requests))
+	s.cm.misses.Set(float64(misses))
+	s.cm.hitRatio.Set(hitRatio)
+	s.cm.entries.Set(float64(length))
+	s.cm.size.Set(float64(size))
 }
 
 // NewService returns a new service.

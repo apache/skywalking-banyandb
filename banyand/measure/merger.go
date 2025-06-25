@@ -247,7 +247,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 		pii = append(pii, pmi)
 		totalSize += int64(parts[i].p.partMetadata.CompressedSizeBytes)
 	}
-	shouldCache := !tst.pm.ShouldApplyFadvis(totalSize)
+	shouldCache := tst.pm.ShouldCache(totalSize)
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
