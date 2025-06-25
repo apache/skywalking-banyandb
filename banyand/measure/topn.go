@@ -353,6 +353,7 @@ func (manager *topNProcessorManager) init(m *databasev1.Measure) {
 	manager.m = m
 	tagMapSpec := logical.TagSpecMap{}
 	tagMapSpec.RegisterTagFamilies(m.GetTagFamilies())
+	manager.s = tagMapSpec
 	for i := range manager.registeredTasks {
 		if err := manager.start(manager.registeredTasks[i]); err != nil {
 			manager.l.Err(err).Msg("fail to start processor")
@@ -369,6 +370,8 @@ func (manager *topNProcessorManager) Close() error {
 	}
 	manager.processorList = nil
 	manager.registeredTasks = nil
+	manager.s = nil
+	manager.m = nil
 	return err
 }
 
