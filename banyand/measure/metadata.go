@@ -344,7 +344,7 @@ func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
 	var keysToDelete []string
 	groupPrefix := groupName + "/"
 
-	sr.topNProcessorMap.Range(func(key, val any) bool {
+	sr.topNProcessorMap.Range(func(key, _ any) bool {
 		keyStr := key.(string)
 		if strings.HasPrefix(keyStr, groupPrefix) {
 			keysToDelete = append(keysToDelete, keyStr)
