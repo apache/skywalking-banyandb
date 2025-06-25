@@ -592,9 +592,18 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 
 	// Set the "lastAccessed" time for some segments to make them idle
 	// Make the first, third, and fifth segments idle (0, 2, 4)
-	segments[0].lastAccessed.Store(time.Now().Add(-time.Second).UnixNano()) // day1 - expired
-	segments[2].lastAccessed.Store(time.Now().Add(-time.Second).UnixNano()) // day3 - expired
-	segments[4].lastAccessed.Store(time.Now().Add(-time.Second).UnixNano()) // day5 - not expired
+	// Use a time that's definitely older than the idle timeout
+	idleTime := time.Now().Add(-2 * idleTimeout).UnixNano()
+	segments[0].lastAccessed.Store(idleTime) // day1 - expired
+	segments[2].lastAccessed.Store(idleTime) // day3 - expired
+	segments[4].lastAccessed.Store(idleTime) // day5 - not expired
+
+	// Keep segments 1, 3, and 5 active by setting their lastAccessed to current time
+	// Use a time that's definitely newer than the idle timeout threshold
+	activeTime := time.Now().UnixNano()
+	segments[1].lastAccessed.Store(activeTime) // day2 - expired but should stay open
+	segments[3].lastAccessed.Store(activeTime) // day4 - not expired
+	segments[5].lastAccessed.Store(activeTime) // day6 - not expired
 
 	// Close idle segments
 	closedCount := sc.closeIdleSegments()
