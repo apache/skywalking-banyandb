@@ -290,7 +290,8 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 		// but the delete time is different, then we need to update the latest property
 		if olderProperties[len(olderProperties)-1].timestamp == property.Metadata.ModRevision &&
 			olderProperties[len(olderProperties)-1].deleteTime != deleteTime {
-			updateSelfDoc, err := s.buildUpdateDocument(id, property)
+			var updateSelfDoc *index.Document
+			updateSelfDoc, err = s.buildUpdateDocument(id, property)
 			if err != nil {
 				return fmt.Errorf("build update self document failed: %w", err)
 			}
