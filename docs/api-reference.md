@@ -3401,6 +3401,7 @@ Property stores the user defined data
 | ----- | ---- | ----- | ----------- |
 | sources | [bytes](#bytes) | repeated |  |
 | trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  |  |
+| deletes | [bool](#bool) | repeated | deletes indicates the property is deleted or not it&#39;s mapping to the sources in the same order |
 
 
 
