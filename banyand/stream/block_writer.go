@@ -184,17 +184,21 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.writers.timestampsWriter.init(&mp.timestamps)
 }
 
-func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string) {
+func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer, fs.Writer) {
-		return fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesMetadataFilenameExt), storage.FilePerm),
-			fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesFilenameExt), storage.FilePerm),
-			fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesFilterFilenameExt), storage.FilePerm)
+		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
+		dataPath := filepath.Join(path, name+tagFamiliesFilenameExt)
+		fitlerPath := filepath.Join(path, name+tagFamiliesFilterFilenameExt)
+		return fs.MustCreateFile(fileSystem, metaPath, storage.FilePerm, shouldCache),
+			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache),
+			fs.MustCreateFile(fileSystem, fitlerPath, storage.FilePerm, shouldCache)
 	}
-	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm))
-	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm))
-	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm))
+
+	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
+	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
+	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm, shouldCache))
 }
 
 func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {

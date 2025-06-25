@@ -28,8 +28,43 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+var _ Cache = (*shardCache)(nil)
+
+type shardCache struct {
+	*segmentCache
+	shardID common.ShardID
+}
+
+// NewShardCache creates a new shard cache.
+func NewShardCache(group string, segmentID segmentID, shardID common.ShardID) Cache {
+	serviceCache := NewServiceCache().(*serviceCache)
+	groupCache := &groupCache{
+		serviceCache: serviceCache,
+		group:        group,
+	}
+	segmentCache := &segmentCache{
+		groupCache: groupCache,
+		segmentID:  segmentID,
+	}
+	return &shardCache{
+		segmentCache: segmentCache,
+		shardID:      shardID,
+	}
+}
+
+func (sc *shardCache) Get(key EntryKey) any {
+	key.shardID = sc.shardID
+	return sc.segmentCache.get(key)
+}
+
+func (sc *shardCache) Put(key EntryKey, value any) {
+	key.shardID = sc.shardID
+	sc.segmentCache.put(key, value)
+}
+
 type shard[T TSTable] struct {
-	table     T
+	table T
+	*shardCache
 	l         *logger.Logger
 	timeRange timestamp.TimeRange
 	location  string
@@ -49,9 +84,13 @@ func (s *segment[T, O]) openShard(ctx context.Context, id common.ShardID) (*shar
 	}
 
 	return &shard[T]{
-		id:        id,
-		l:         l,
-		table:     t,
+		id:    id,
+		l:     l,
+		table: t,
+		shardCache: &shardCache{
+			segmentCache: s.segmentCache,
+			shardID:      id,
+		},
 		timeRange: s.TimeRange,
 		location:  location,
 	}, nil

@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd
-// +build darwin dragonfly freebsd linux netbsd openbsd
+//go:build darwin
+// +build darwin
 
 package fs
 
@@ -26,6 +26,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // localFileSystem is the implementation of FileSystem interface.
@@ -109,5 +111,22 @@ func CompareINode(srcPath, destPath string) error {
 	if srcStat.Ino != destStat.Ino {
 		return fmt.Errorf("src file inode: %d, dest file inode: %d", srcStat.Ino, destStat.Ino)
 	}
+	return nil
+}
+
+// applyFadviseToFD is a no-op on non-Linux systems.
+func applyFadviseToFD(_ uintptr, _ int64, _ int64) error {
+	return nil
+}
+
+// SyncAndDropCache syncs the file data to disk but doesn't drop it from the page cache on macOS.
+func SyncAndDropCache(fd uintptr, _ int64, _ int64) error {
+	if err := unix.FcntlFlock(fd, unix.F_FULLFSYNC, &unix.Flock_t{}); err != nil {
+		return err
+	}
+
+	logger.GetLogger(moduleName).
+		Debug().
+		Msg("SyncAndDropCache: fullfsync succeeded, page-cache drop unsupported on darwin")
 	return nil
 }

@@ -181,13 +181,16 @@ func openDatabase(b *testing.B, path string) storage.TSDB[*tsTable, option] {
 		SegmentInterval: ir,
 		TTL:             ir,
 	}
+
+	group := "test"
 	db, err := storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(p common.Position) common.Position {
 			p.Module = "stream"
 			p.Database = "benchmark"
 			return p
 		}),
-		opts)
+		opts, nil, group,
+	)
 	require.NoError(b, err)
 	return db
 }

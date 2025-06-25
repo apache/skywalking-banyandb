@@ -25,11 +25,13 @@ import (
 	"strconv"
 	"time"
 
+	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/analysis"
 	blugeIndex "github.com/blugelabs/bluge/index"
 	"github.com/blugelabs/bluge/numeric"
 	"github.com/blugelabs/bluge/search"
+	segment "github.com/blugelabs/bluge_segment_api"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -64,8 +66,10 @@ var _ index.Store = (*store)(nil)
 
 // StoreOpts wraps options to create an inverted index repository.
 type StoreOpts struct {
-	Logger        *logger.Logger
-	Metrics       *Metrics
+	Logger               *logger.Logger
+	Metrics              *Metrics
+	PrepareMergeCallback func(src []*roaringpkg.Bitmap, segments []segment.Segment, id uint64) (dest []*roaringpkg.Bitmap, err error)
+
 	Path          string
 	BatchWaitSec  int64
 	CacheMaxBytes int
@@ -130,8 +134,8 @@ func (s *store) Batch(batch index.Batch) error {
 		if d.Timestamp > 0 {
 			doc.AddField(bluge.NewDateTimeField(timestampField, time.Unix(0, d.Timestamp)).StoreValue())
 		}
-		if d.Deleted {
-			doc.AddField(bluge.NewStoredOnlyField(deletedField, convert.BoolToBytes(true)).StoreValue())
+		if d.DeletedTime > 0 {
+			doc.AddField(bluge.NewStoredOnlyField(deletedField, convert.Int64ToBytes(d.DeletedTime)).StoreValue())
 		}
 		b.Insert(doc)
 	}
@@ -152,6 +156,7 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	config := bluge.DefaultConfigWithIndexConfig(indexConfig)
 	config.DefaultSearchAnalyzer = analyzer.Analyzers[index.AnalyzerKeyword]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
+	config = config.WithPrepareMergeCallback(opts.PrepareMergeCallback)
 	w, err := bluge.OpenWriter(config)
 	if err != nil {
 		return nil, err

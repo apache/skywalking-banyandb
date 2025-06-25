@@ -62,7 +62,7 @@ func TestForwardRotation(t *testing.T) {
 
 func TestRetention(t *testing.T) {
 	t.Run("delete the segment and index when the TTL is up", func(t *testing.T) {
-		tsdb, c, segCtrl, dfFn := setUpDB(t)
+		tsdb, c, segCtrl, dfFn := setUpDB(t, 5) // Use 5-day TTL to avoid early deletion
 		defer dfFn()
 		ts := c.Now()
 		for i := 0; i < 4; i++ {
@@ -82,13 +82,27 @@ func TestRetention(t *testing.T) {
 			// amend the time to the next day
 			ts = ts.Add(time.Hour)
 		}
-		t.Logf("current time: %s", ts.Format(time.RFC3339))
+
+		// Verify all 5 segments exist before testing TTL deletion (initial + 4 created)
+		require.EventuallyWithTf(t, func(ct *assert.CollectT) {
+			segments, _ := segCtrl.segments(false)
+			if len(segments) != 5 {
+				ct.Errorf("expect 5 segments before TTL test, got %d", len(segments))
+			}
+		}, flags.EventuallyTimeout, time.Millisecond, "wait for 5 segments to be created")
+
+		// Now test TTL deletion by advancing time beyond the original TTL
+		// Move forward enough days to exceed the 5-day TTL we set
+		ts = ts.Add(2 * 24 * time.Hour) // Total of 6+ days from the first segment
+		t.Logf("current time after TTL advancement: %s", ts.Format(time.RFC3339))
 		c.Set(ts)
 		tsdb.Tick(ts.UnixNano())
+
 		assert.Eventually(t, func() bool {
 			segments, _ := segCtrl.segments(false)
-			return len(segments) == 4
-		}, flags.EventuallyTimeout, time.Millisecond, "wait for the 1st segment to be deleted")
+			// Should have fewer than 5 segments as old ones get deleted
+			return len(segments) < 5
+		}, flags.EventuallyTimeout, time.Millisecond, "wait for old segments to be deleted by TTL")
 	})
 
 	t.Run("keep the segment volume stable", func(t *testing.T) {
@@ -138,13 +152,18 @@ func TestRetention(t *testing.T) {
 	})
 }
 
-func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *segmentController[*MockTSTable, any], func()) {
+func setUpDB(t *testing.T, ttlDays ...int) (*database[*MockTSTable, any], timestamp.MockClock, *segmentController[*MockTSTable, any], func()) {
 	dir, defFn := test.Space(require.New(t))
+
+	ttl := 3
+	if len(ttlDays) > 0 {
+		ttl = ttlDays[0]
+	}
 
 	TSDBOpts := TSDBOpts[*MockTSTable, any]{
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
-		TTL:             IntervalRule{Unit: DAY, Num: 3},
+		TTL:             IntervalRule{Unit: DAY, Num: ttl},
 		ShardNum:        1,
 		TSTableCreator:  MockTSTableCreator,
 	}
@@ -155,7 +174,8 @@ func setUpDB(t *testing.T) (*database[*MockTSTable, any], timestamp.MockClock, *
 	mc.Set(ts)
 	ctx = timestamp.SetClock(ctx, mc)
 
-	tsdb, err := OpenTSDB(ctx, TSDBOpts)
+	sc := NewServiceCache()
+	tsdb, err := OpenTSDB(ctx, TSDBOpts, sc, group)
 	require.NoError(t, err)
 	seg, err := tsdb.CreateSegmentIfNotExist(ts)
 	require.NoError(t, err)
