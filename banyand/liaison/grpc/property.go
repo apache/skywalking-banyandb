@@ -149,7 +149,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	}
 	prevPropertyWithMetadata, olderProperties := ps.findPrevAndOlderProperties(nodeProperties)
 	entity := propertypkg.GetEntity(property)
-	id, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
+	shardID, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	nodes := make([]string, 0, copies)
 	var nodeID string
 	for i := range copies {
-		nodeID, err = ps.nodeRegistry.Locate(property.GetMetadata().GetGroup(), property.GetMetadata().GetName(), uint32(id), i)
+		nodeID, err = ps.nodeRegistry.Locate(property.GetMetadata().GetGroup(), property.GetMetadata().GetName(), uint32(shardID), i)
 		if err != nil {
 			return nil, err
 		}
@@ -184,9 +184,9 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 		_ = ps.remove(ids)
 	}()
 	if req.Strategy == propertyv1.ApplyRequest_STRATEGY_REPLACE {
-		return ps.replaceProperty(ctx, start, uint64(id), nodes, prev, property)
+		return ps.replaceProperty(ctx, start, uint64(shardID), nodes, prev, property)
 	}
-	return ps.mergeProperty(ctx, start, uint64(id), nodes, prev, property)
+	return ps.mergeProperty(ctx, start, uint64(shardID), nodes, prev, property)
 }
 
 func (ps *propertyServer) findPrevAndOlderProperties(nodeProperties map[string][]*propertyWithMetadata) (*propertyWithMetadata, []*propertyWithMetadata) {
@@ -424,32 +424,21 @@ func (ps *propertyServer) repairPropertyIfNeed(ctx context.Context, entity strin
 	if copies == uint32(len(p.existNodes)) {
 		return nil
 	}
-	id, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
+	shardID, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
 	if err != nil {
 		return err
 	}
 	// building the repair data
-	repairReq := &propertyv1.InternalRepairRequest{ShardId: uint64(id)}
-	if p.deletedTime > 0 { // building the delete request
-		repairReq.Operation = &propertyv1.InternalRepairRequest_Delete{
-			Delete: &propertyv1.InternalDeletePropertyMetadata{
-				Group: p.Metadata.Group,
-				Name:  p.Metadata.Name,
-				Id:    p.Id,
-			},
-		}
-	} else { // building the applied request
-		repairReq.Operation = &propertyv1.InternalRepairRequest_Apply{
-			Apply: &propertyv1.InternalApplyProperty{
-				Id:       propertypkg.GetPropertyID(p.Property),
-				Property: p.Property,
-			},
-		}
+	repairReq := &propertyv1.InternalRepairRequest{
+		ShardId:    uint64(shardID),
+		Id:         propertypkg.GetPropertyID(p.Property),
+		Property:   p.Property,
+		DeleteTime: p.deletedTime,
 	}
 	futures := make([]bus.Future, 0, copies)
 	var result error
 	for i := range copies {
-		nodeID, err := ps.nodeRegistry.Locate(p.GetMetadata().GetGroup(), p.GetMetadata().GetName(), uint32(id), i)
+		nodeID, err := ps.nodeRegistry.Locate(p.GetMetadata().GetGroup(), p.GetMetadata().GetName(), uint32(shardID), i)
 		if err != nil {
 			return err
 		}

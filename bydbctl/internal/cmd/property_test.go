@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -487,7 +488,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		})
 		// property 2 should have one older version in node1, and same version in node2, then deleted in node2
 		// after querying and repairing, it should contain three documents,
-		// one deleted in node1, one deleted in node2
+		// one older deleted in node1, new deleted in node1, one deleted in node2
 		queryData(rootCmd, addr, propertyGroup, property2ID, 0, nil)
 		closeNode1()
 		closeNode2()
@@ -538,9 +539,13 @@ var _ = Describe("Property Cluster Operation", func() {
 		p2DeletedOnNode2 := filterProperties(node2Search, func(property *propertyv1.Property, deleted bool) bool {
 			return deleted && property.Id == property2ID
 		})
-		Expect(len(p2Total)).To(Equal(2))
-		Expect(len(p2DeletedOnNode1)).To(Equal(1))
+		sort.Sort(propertySlice(p2DeletedOnNode1))
+		sort.Sort(propertySlice(p2DeletedOnNode2))
+		Expect(len(p2Total)).To(Equal(3))
+		Expect(len(p2DeletedOnNode1)).To(Equal(2))
 		Expect(len(p2DeletedOnNode2)).To(Equal(1))
+		Expect(p2DeletedOnNode1[1].Metadata.ModRevision == p2DeletedOnNode2[0].Metadata.ModRevision).
+			To(BeTrue(), "the mod revision of not deleted property should be the same")
 	})
 
 	It("delete property", func() {
@@ -689,4 +694,18 @@ func generateInvertedStore(rootPath string) (index.SeriesStore, error) {
 			})
 	}
 	return nil, fmt.Errorf("no shard found in %s", rootPath)
+}
+
+type propertySlice []*propertyv1.Property
+
+func (p propertySlice) Len() int {
+	return len(p)
+}
+
+func (p propertySlice) Less(i, j int) bool {
+	return p[i].Metadata.ModRevision < p[j].Metadata.ModRevision
+}
+
+func (p propertySlice) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
 }

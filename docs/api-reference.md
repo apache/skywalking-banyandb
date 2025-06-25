@@ -227,8 +227,6 @@
     - [ApplyResponse](#banyandb-property-v1-ApplyResponse)
     - [DeleteRequest](#banyandb-property-v1-DeleteRequest)
     - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
-    - [InternalApplyProperty](#banyandb-property-v1-InternalApplyProperty)
-    - [InternalDeletePropertyMetadata](#banyandb-property-v1-InternalDeletePropertyMetadata)
     - [InternalDeleteRequest](#banyandb-property-v1-InternalDeleteRequest)
     - [InternalQueryResponse](#banyandb-property-v1-InternalQueryResponse)
     - [InternalRepairRequest](#banyandb-property-v1-InternalRepairRequest)
@@ -3380,39 +3378,6 @@ Property stores the user defined data
 
 
 
-<a name="banyandb-property-v1-InternalApplyProperty"></a>
-
-### InternalApplyProperty
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [bytes](#bytes) |  |  |
-| property | [Property](#banyandb-property-v1-Property) |  |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-InternalDeletePropertyMetadata"></a>
-
-### InternalDeletePropertyMetadata
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  | group is the group of the property |
-| name | [string](#string) |  | name is the name of the property |
-| id | [string](#string) |  | id is the identity of the property |
-
-
-
-
-
-
 <a name="banyandb-property-v1-InternalDeleteRequest"></a>
 
 ### InternalDeleteRequest
@@ -3454,8 +3419,9 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | shard_id | [uint64](#uint64) |  |  |
-| apply | [InternalApplyProperty](#banyandb-property-v1-InternalApplyProperty) |  | apply the property to the storage. |
-| delete | [InternalDeletePropertyMetadata](#banyandb-property-v1-InternalDeletePropertyMetadata) |  | delete the property from the storage. |
+| id | [bytes](#bytes) |  |  |
+| property | [Property](#banyandb-property-v1-Property) |  |  |
+| delete_time | [int64](#int64) |  |  |
 
 
 

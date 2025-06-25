@@ -288,28 +288,17 @@ func (r *repairListener) Rev(ctx context.Context, message bus.Message) (resp bus
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("request is nil"))
 		return
 	}
+	if d.Id == nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("id is nil"))
+		return
+	}
+	if d.Property == nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("property is nil"))
+		return
+	}
 	protoReq = d
-	switch op := d.Operation.(type) {
-	case *propertyv1.InternalRepairRequest_Apply:
-		if op.Apply == nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("apply property is nil"))
-			return
-		}
-		if err := r.s.db.repairFromApplyProperty(ctx, d.ShardId, op.Apply); err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to apply property: %v", err))
-			return
-		}
-	case *propertyv1.InternalRepairRequest_Delete:
-		if op.Delete == nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("delete property is nil"))
-			return
-		}
-		if err := r.s.db.repairFromDelete(ctx, d.ShardId, op.Delete); err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to delete property: %v", err))
-			return
-		}
-	default:
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("unknown operation: %T", d.Operation))
+	if err := r.s.db.repair(ctx, d.Id, d.ShardId, d.Property, d.DeleteTime); err != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to delete property: %v", err))
 		return
 	}
 	resp = bus.NewMessage(bus.MessageID(now), &propertyv1.InternalRepairResponse{})
