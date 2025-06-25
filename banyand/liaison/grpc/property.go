@@ -374,7 +374,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			case cur.Metadata.ModRevision < propertyMetadata.Metadata.ModRevision: // newer revision
 				res[entity] = newPropertyWithCounts(propertyMetadata, n)
 			case cur.Metadata.ModRevision == propertyMetadata.Metadata.ModRevision: // same revision
-				cur.AddExistNode(n)
+				cur.addExistNode(n)
 			}
 		}
 	}
@@ -574,11 +574,11 @@ func newPropertyWithCounts(p *propertyWithMetadata, existNode string) *propertyW
 	res := &propertyWithCount{
 		propertyWithMetadata: p,
 	}
-	res.AddExistNode(existNode)
+	res.addExistNode(existNode)
 	return res
 }
 
-func (p *propertyWithCount) AddExistNode(node string) {
+func (p *propertyWithCount) addExistNode(node string) {
 	if p.existNodes == nil {
 		p.existNodes = make(map[string]bool)
 	}
