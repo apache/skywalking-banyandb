@@ -285,6 +285,18 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	// then the repaired process should be stopped.
 	// only deleted the older properties(exclude lastest one).
 	if olderProperties[len(olderProperties)-1].timestamp >= property.Metadata.ModRevision {
+		var documents []index.Document
+		// if the latest property mod time is equals to the repaired property mod time,
+		// but the delete time is different, then we need to update the latest property
+		if olderProperties[len(olderProperties)-1].timestamp == property.Metadata.ModRevision &&
+			olderProperties[len(olderProperties)-1].deleteTime != deleteTime {
+			updateSelfDoc, err := s.buildUpdateDocument(id, property)
+			if err != nil {
+				return fmt.Errorf("build update self document failed: %w", err)
+			}
+			updateSelfDoc.DeletedTime = deleteTime
+			documents = append(documents, *updateSelfDoc)
+		}
 		if len(olderProperties) > 1 {
 			docIDList := s.buildNotDeletedDocIDList(olderProperties[0 : len(olderProperties)-1])
 			var deletedDocuments []index.Document
@@ -292,9 +304,9 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 			if err != nil {
 				return fmt.Errorf("build delete documents failed: %w", err)
 			}
-			return s.updateDocuments(deletedDocuments)
+			documents = append(documents, deletedDocuments...)
 		}
-		return nil
+		return s.updateDocuments(documents)
 	}
 
 	docIDList := s.buildNotDeletedDocIDList(olderProperties)

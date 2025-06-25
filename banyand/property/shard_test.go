@@ -260,6 +260,28 @@ func TestRepair(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			name: "repair deleted version property with same data",
+			beforeApply: func() (res []*propertyv1.Property) {
+				return []*propertyv1.Property{
+					generateProperty("test-id", now.UnixNano(), 0),
+				}
+			},
+			repair: func(ctx context.Context, s *shard) error {
+				// Create a property with the same data but marked as deleted
+				property := generateProperty("test-id", now.UnixNano(), 0)
+				return s.repair(ctx, GetPropertyID(property), property, now.UnixNano())
+			},
+			verify: func(t *testing.T, ctx context.Context, s *shard) error {
+				resp := queryShard(ctx, t, s, "test-id")
+				if len(resp) != 1 {
+					t.Fatal(fmt.Errorf("expect 2 properties, got %d", len(resp)))
+				}
+				sort.Sort(queryPropertySlice(resp))
+				verifyDeleteTime(t, resp[0], true)
+				return nil
+			},
+		},
 	}
 
 	for _, tt := range tests {
