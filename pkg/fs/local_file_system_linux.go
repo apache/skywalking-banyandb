@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd
-// +build darwin dragonfly freebsd linux netbsd openbsd
+//go:build linux
+// +build linux
 
 package fs
 
@@ -110,4 +110,18 @@ func CompareINode(srcPath, destPath string) error {
 		return fmt.Errorf("src file inode: %d, dest file inode: %d", srcStat.Ino, destStat.Ino)
 	}
 	return nil
+}
+
+// applyFadviseToFD applies FADV_DONTNEED to the given file descriptor.
+func applyFadviseToFD(fd uintptr, offset int64, length int64) error {
+	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
+}
+
+// SyncAndDropCache syncs the file data to disk and then drops it from the page cache.
+func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
+	if err := unix.Fdatasync(int(fd)); err != nil {
+		return err
+	}
+
+	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
 }

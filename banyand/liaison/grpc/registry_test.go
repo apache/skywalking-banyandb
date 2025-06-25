@@ -182,11 +182,11 @@ func setupForRegistry() func() {
 	metricSvc := observability.NewMetricService(metaSvc, pipeline, "standalone", nil)
 
 	nr := grpc.NewLocalNodeRegistry()
-	tcp := grpc.NewServer(context.TODO(), pipeline, pipeline, nil, metaSvc, grpc.NodeRegistries{
-		MeasureNodeRegistry:  nr,
-		StreamNodeRegistry:   nr,
-		PropertyNodeRegistry: nr,
-	}, metricSvc, nil)
+	tcp := grpc.NewServer(context.TODO(), pipeline, pipeline, pipeline, nil, metaSvc, grpc.NodeRegistries{
+		MeasureLiaisonNodeRegistry: nr,
+		StreamDataNodeRegistry:     nr,
+		PropertyNodeRegistry:       nr,
+	}, metricSvc, nil, pipeline)
 	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()

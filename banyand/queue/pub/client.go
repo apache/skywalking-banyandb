@@ -75,14 +75,19 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 		p.log.Warn().Msg("failed to cast node spec")
 		return
 	}
-	var hasDataRole bool
+	var okRole bool
 	for _, r := range node.Roles {
-		if r == databasev1.Role_ROLE_DATA {
-			hasDataRole = true
+		for _, allowed := range p.allowedRoles {
+			if r == allowed {
+				okRole = true
+				break
+			}
+		}
+		if okRole {
 			break
 		}
 	}
-	if !hasDataRole {
+	if !okRole {
 		return
 	}
 

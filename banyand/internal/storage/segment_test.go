@@ -101,6 +101,7 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 		SeriesIndexCacheMaxBytes:       1024 * 1024,
 	}
 
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -110,6 +111,8 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 		nil,           // metrics
 		5*time.Minute, // idleTimeout
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
 	)
 
 	now := time.Now().UTC()
@@ -128,7 +131,7 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 
 	// Open segment
 	suffix := startTime.Format(dayFormat)
-	segment, err := sc.openSegment(ctx, startTime, endTime, segmentPath, suffix)
+	segment, err := sc.openSegment(ctx, startTime, endTime, segmentPath, suffix, sc.groupCache)
 	require.NoError(t, err)
 	require.NotNil(t, segment)
 
@@ -192,6 +195,7 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 		SeriesIndexCacheMaxBytes:       1024 * 1024,
 	}
 
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -201,6 +205,8 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 		nil,         // metrics
 		time.Second, // Set short idle timeout for testing,
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
 	)
 
 	// Test time parameters
@@ -220,7 +226,7 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 
 	// Open segment
 	suffix := startTime.Format(dayFormat)
-	segment, err := sc.openSegment(ctx, startTime, endTime, segmentPath, suffix)
+	segment, err := sc.openSegment(ctx, startTime, endTime, segmentPath, suffix, sc.groupCache)
 	require.NoError(t, err)
 
 	// Force last access time to be in the past
@@ -275,6 +281,7 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 
 	// Create segment controller with a short idle timeout (100ms)
 	idleTimeout := 100 * time.Millisecond
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -284,6 +291,8 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 		nil,         // metrics
 		idleTimeout, // short idle timeout,
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
 	)
 
 	// Test time parameters
@@ -305,7 +314,7 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 
 		// Open segment
 		suffix := startTime.Format(dayFormat)
-		segment, err := sc.openSegment(ctx, startTime, startTime.Add(24*time.Hour), segmentPath, suffix)
+		segment, err := sc.openSegment(ctx, startTime, startTime.Add(24*time.Hour), segmentPath, suffix, sc.groupCache)
 		require.NoError(t, err)
 
 		// Add segment to controller's list
@@ -407,6 +416,7 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 		SeriesIndexCacheMaxBytes:       1024 * 1024,
 	}
 
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -416,6 +426,8 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 		nil,           // metrics
 		5*time.Minute, // idleTimeout,
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
 	)
 
 	// Test time parameters
@@ -447,7 +459,7 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 	}
 
 	// Open the segment
-	segment, err := sc.openSegment(ctx, startTime, endTime, segmentPath, suffix)
+	segment, err := sc.openSegment(ctx, startTime, endTime, segmentPath, suffix, sc.groupCache)
 	require.NoError(t, err)
 	require.NotNil(t, segment)
 
@@ -465,7 +477,7 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 	assert.Contains(t, shardIDs, common.ShardID(1), "Shard 1 should be loaded")
 
 	// Verify tables can be retrieved
-	tables := segment.Tables()
+	tables, _ := segment.Tables()
 	require.Len(t, tables, 2, "Should have 2 tables")
 
 	// Make sure each table has the correct ID
@@ -516,6 +528,7 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 
 	// Create segment controller with a short idle timeout
 	idleTimeout := 100 * time.Millisecond
+	serviceCache := NewServiceCache().(*serviceCache)
 	sc := newSegmentController[mockTSTable, mockTSTableOpener](
 		ctx,
 		tempDir,
@@ -525,6 +538,8 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 		nil,         // metrics
 		idleTimeout, // short idle timeout
 		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
 	)
 
 	// Create segments spanning 6 days - some will be expired, some won't
@@ -558,7 +573,7 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 
 		// Open segment
 		suffix := date.Format(dayFormat)
-		segment, err := sc.openSegment(ctx, date, date.Add(24*time.Hour), segmentPath, suffix)
+		segment, err := sc.openSegment(ctx, date, date.Add(24*time.Hour), segmentPath, suffix, sc.groupCache)
 		require.NoError(t, err)
 
 		// Add segment to controller
@@ -577,9 +592,18 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 
 	// Set the "lastAccessed" time for some segments to make them idle
 	// Make the first, third, and fifth segments idle (0, 2, 4)
-	segments[0].lastAccessed.Store(time.Now().Add(-time.Second).UnixNano()) // day1 - expired
-	segments[2].lastAccessed.Store(time.Now().Add(-time.Second).UnixNano()) // day3 - expired
-	segments[4].lastAccessed.Store(time.Now().Add(-time.Second).UnixNano()) // day5 - not expired
+	// Use a time that's definitely older than the idle timeout
+	idleTime := time.Now().Add(-2 * idleTimeout).UnixNano()
+	segments[0].lastAccessed.Store(idleTime) // day1 - expired
+	segments[2].lastAccessed.Store(idleTime) // day3 - expired
+	segments[4].lastAccessed.Store(idleTime) // day5 - not expired
+
+	// Keep segments 1, 3, and 5 active by setting their lastAccessed to current time
+	// Use a time that's definitely newer than the idle timeout threshold
+	activeTime := time.Now().UnixNano()
+	segments[1].lastAccessed.Store(activeTime) // day2 - expired but should stay open
+	segments[3].lastAccessed.Store(activeTime) // day4 - not expired
+	segments[5].lastAccessed.Store(activeTime) // day6 - not expired
 
 	// Close idle segments
 	closedCount := sc.closeIdleSegments()

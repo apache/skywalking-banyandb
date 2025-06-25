@@ -168,7 +168,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 		nodes = append(nodes, nodeID)
 	}
 	var prev *propertyv1.Property
-	if prevPropertyWithMetadata != nil && !prevPropertyWithMetadata.deleted {
+	if prevPropertyWithMetadata != nil && prevPropertyWithMetadata.deletedTime <= 0 {
 		prev = prevPropertyWithMetadata.Property
 	}
 	defer func() {
@@ -195,7 +195,7 @@ func (ps *propertyServer) findPrevAndOlderProperties(nodeProperties [][]*propert
 	for _, properties := range nodeProperties {
 		for _, p := range properties {
 			// if the property is not deleted, then added to the older properties list to delete after apply success
-			if !p.deleted {
+			if p.deletedTime <= 0 {
 				olderProperties = append(olderProperties, p)
 			}
 			// update the prov property
@@ -328,7 +328,7 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 	for _, properties := range nodeProperties {
 		for _, p := range properties {
 			// if the property already delete, then ignore execute twice
-			if p.deleted {
+			if p.deletedTime > 0 {
 				continue
 			}
 			ids = append(ids, propertypkg.GetPropertyID(p.Property))
@@ -381,8 +381,8 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	}
 	properties := make([]*propertyv1.Property, 0, len(res))
 	for _, p := range res {
-		// ignore deleted property
-		if p.deleted {
+		// ignore deletedTime property
+		if p.deletedTime > 0 {
 			continue
 		}
 		if len(req.TagProjection) > 0 {
@@ -453,17 +453,17 @@ func (ps *propertyServer) queryProperties(
 			case *propertyv1.InternalQueryResponse:
 				for i, s := range v.Sources {
 					var p propertyv1.Property
-					var deleted bool
+					var deleteTime int64
 					err = protojson.Unmarshal(s, &p)
 					if err != nil {
 						return nil, trace, err
 					}
 					if i < len(v.Deletes) {
-						deleted = v.Deletes[i]
+						deleteTime = v.Deletes[i]
 					}
 					property := &propertyWithMetadata{
-						Property: &p,
-						deleted:  deleted,
+						Property:    &p,
+						deletedTime: deleteTime,
 					}
 					nodeWithProperties = append(nodeWithProperties, property)
 				}
@@ -502,5 +502,5 @@ func (ps *propertyServer) remove(ids [][]byte) error {
 
 type propertyWithMetadata struct {
 	*propertyv1.Property
-	deleted bool
+	deletedTime int64
 }
