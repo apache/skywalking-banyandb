@@ -103,14 +103,14 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64, de
 }
 
 func (s *shard) update(id []byte, property *propertyv1.Property) error {
-	document, err := s.buildUpdateDocument(id, property)
+	document, err := s.buildUpdateDocument(id, property, 0)
 	if err != nil {
 		return fmt.Errorf("build update document failure: %w", err)
 	}
 	return s.updateDocuments(index.Documents{*document})
 }
 
-func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property) (*index.Document, error) {
+func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, deleteTime int64) (*index.Document, error) {
 	pj, err := protojson.Marshal(property)
 	if err != nil {
 		return nil, err
@@ -139,6 +139,13 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property) (*
 		tagField.Index = true
 		tagField.NoSort = true
 		doc.Fields = append(doc.Fields, tagField)
+	}
+
+	if deleteTime > 0 {
+		deleteField := index.NewBytesField(deletedFieldKey, convert.Int64ToBytes(deleteTime))
+		deleteField.Store = true
+		deleteField.NoSort = true
+		doc.Fields = append(doc.Fields, deleteField)
 	}
 	return &doc, nil
 }
@@ -179,12 +186,10 @@ func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte
 			return nil, fmt.Errorf("unmarshal property failure: %w", err)
 		}
 		// update the property to mark it as delete
-		document, err := s.buildUpdateDocument(GetPropertyID(p), p)
+		document, err := s.buildUpdateDocument(GetPropertyID(p), p, deleteTime)
 		if err != nil {
 			return nil, fmt.Errorf("build delete document failure: %w", err)
 		}
-		// mark the document as deleted
-		document.DeletedTime = deleteTime
 		removeDocList = append(removeDocList, *document)
 	}
 	return removeDocList, nil
@@ -273,41 +278,17 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	// if there no older properties, we can insert the latest document.
 	if len(olderProperties) == 0 {
 		var doc *index.Document
-		doc, err = s.buildUpdateDocument(id, property)
+		doc, err = s.buildUpdateDocument(id, property, deleteTime)
 		if err != nil {
 			return fmt.Errorf("build update document failed: %w", err)
 		}
-		doc.DeletedTime = deleteTime
 		return s.updateDocuments(index.Documents{*doc})
 	}
 
-	// if the lastest property in shard is bigger(or equals) than the repaired property,
+	// if the lastest property in shard is bigger than the repaired property,
 	// then the repaired process should be stopped.
-	// only deleted the older properties(exclude lastest one).
-	if olderProperties[len(olderProperties)-1].timestamp >= property.Metadata.ModRevision {
-		var documents []index.Document
-		// if the latest property mod time is equals to the repaired property mod time,
-		// but the delete time is different, then we need to update the latest property
-		if olderProperties[len(olderProperties)-1].timestamp == property.Metadata.ModRevision &&
-			olderProperties[len(olderProperties)-1].deleteTime != deleteTime {
-			var updateSelfDoc *index.Document
-			updateSelfDoc, err = s.buildUpdateDocument(id, property)
-			if err != nil {
-				return fmt.Errorf("build update self document failed: %w", err)
-			}
-			updateSelfDoc.DeletedTime = deleteTime
-			documents = append(documents, *updateSelfDoc)
-		}
-		if len(olderProperties) > 1 {
-			docIDList := s.buildNotDeletedDocIDList(olderProperties[0 : len(olderProperties)-1])
-			var deletedDocuments []index.Document
-			deletedDocuments, err = s.buildDeleteFromTimeDocuments(ctx, docIDList, time.Now().UnixNano())
-			if err != nil {
-				return fmt.Errorf("build delete documents failed: %w", err)
-			}
-			documents = append(documents, deletedDocuments...)
-		}
-		return s.updateDocuments(documents)
+	if olderProperties[len(olderProperties)-1].timestamp > property.Metadata.ModRevision {
+		return nil
 	}
 
 	docIDList := s.buildNotDeletedDocIDList(olderProperties)
@@ -316,12 +297,10 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 		return fmt.Errorf("build delete older documents failed: %w", err)
 	}
 	// update the property to mark it as delete
-	updateDoc, err := s.buildUpdateDocument(id, property)
+	updateDoc, err := s.buildUpdateDocument(id, property, deleteTime)
 	if err != nil {
 		return fmt.Errorf("build repair document failure: %w", err)
 	}
-	// set the delete time(could be zero) to the latest delete time
-	updateDoc.DeletedTime = deleteTime
 	result := make([]index.Document, 0, len(deletedDocuments)+1)
 	result = append(result, deletedDocuments...)
 	result = append(result, *updateDoc)

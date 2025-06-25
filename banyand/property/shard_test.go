@@ -253,9 +253,9 @@ func TestRepair(t *testing.T) {
 					t.Fatal(fmt.Errorf("expect 3 properties, got %d", len(resp)))
 				}
 				sort.Sort(queryPropertySlice(resp))
-				// only the latest version not deleted
-				for i := 0; i < 2; i++ {
-					verifyDeleteTime(t, resp[i], true)
+				// all properties should be kept
+				for i := 0; i < 3; i++ {
+					verifyDeleteTime(t, resp[i], false)
 				}
 				return nil
 			},
@@ -274,11 +274,12 @@ func TestRepair(t *testing.T) {
 			},
 			verify: func(t *testing.T, ctx context.Context, s *shard) error {
 				resp := queryShard(ctx, t, s, "test-id")
-				if len(resp) != 1 {
+				if len(resp) != 2 {
 					t.Fatal(fmt.Errorf("expect 2 properties, got %d", len(resp)))
 				}
 				sort.Sort(queryPropertySlice(resp))
 				verifyDeleteTime(t, resp[0], true)
+				verifyDeleteTime(t, resp[1], true)
 				return nil
 			},
 		},
