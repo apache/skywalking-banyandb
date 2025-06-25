@@ -341,12 +341,16 @@ type topNProcessorManager struct {
 	s               logical.TagSpecRegistry
 	registeredTasks []*databasev1.TopNAggregation
 	processorList   []*topNStreamingProcessor
+	closed          bool
 	sync.RWMutex
 }
 
 func (manager *topNProcessorManager) init(m *databasev1.Measure) {
 	manager.Lock()
 	defer manager.Unlock()
+	if manager.closed {
+		return
+	}
 	if manager.m != nil {
 		return
 	}
@@ -364,6 +368,10 @@ func (manager *topNProcessorManager) init(m *databasev1.Measure) {
 func (manager *topNProcessorManager) Close() error {
 	manager.Lock()
 	defer manager.Unlock()
+	if manager.closed {
+		return nil
+	}
+	manager.closed = true
 	var err error
 	for _, processor := range manager.processorList {
 		err = multierr.Append(err, processor.Close())
@@ -379,6 +387,9 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uin
 	go func() {
 		manager.RLock()
 		defer manager.RUnlock()
+		if manager.closed {
+			return
+		}
 		if manager.m == nil {
 			manager.RUnlock()
 			manager.init(measure)
@@ -398,6 +409,9 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uin
 func (manager *topNProcessorManager) register(topNSchema *databasev1.TopNAggregation) {
 	manager.Lock()
 	defer manager.Unlock()
+	if manager.closed {
+		return
+	}
 	exist := false
 	for i := range manager.registeredTasks {
 		if manager.registeredTasks[i].GetMetadata().GetName() == topNSchema.GetMetadata().GetName() {
