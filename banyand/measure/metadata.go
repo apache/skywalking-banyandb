@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"strings"
 	"sync"
 	"time"
 
@@ -237,7 +236,6 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
-		sr.stopAllProcessorsWithGroupPrefix(g.Metadata.Name)
 	case schema.KindMeasure:
 		m := metadata.Spec.(*databasev1.Measure)
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -337,33 +335,6 @@ func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchema
 	err := backoff.Retry(operation, backoffStrategy)
 	if err != nil {
 		logger.Panicf("fail to create topN measure %s: %v", md, err)
-	}
-}
-
-func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
-	var keysToDelete []string
-	groupPrefix := groupName + "/"
-
-	sr.topNProcessorMap.Range(func(key, _ any) bool {
-		keyStr := key.(string)
-		if strings.HasPrefix(keyStr, groupPrefix) {
-			keysToDelete = append(keysToDelete, keyStr)
-		}
-		return true
-	})
-
-	for _, key := range keysToDelete {
-		if v, ok := sr.topNProcessorMap.Load(key); ok {
-			manager := v.(*topNProcessorManager)
-			if err := manager.Close(); err != nil {
-				sr.l.Error().Err(err).Str("key", key).Msg("failed to close topN processor manager")
-			}
-			sr.topNProcessorMap.Delete(key)
-		}
-	}
-
-	if len(keysToDelete) > 0 {
-		sr.l.Info().Str("groupName", groupName).Int("count", len(keysToDelete)).Msg("stopped topN processors for group")
 	}
 }
 

@@ -26,8 +26,6 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
-
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // localFileSystem is the implementation of FileSystem interface.
@@ -125,12 +123,5 @@ func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 		return err
 	}
 
-	if err := unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED); err != nil {
-		return err
-	}
-
-	logger.GetLogger(moduleName).
-		Debug().
-		Msg("SyncAndDropCache: fdatasync and FADV_DONTNEED succeeded on linux")
-	return nil
+	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
 }
