@@ -15,13 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//go:build darwin
+// +build darwin
+
 package fs
 
 import (
 	"fmt"
 	"os"
+	"syscall"
 
-	"golang.org/x/sys/windows"
+	"golang.org/x/sys/unix"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -31,9 +35,7 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	switch {
 	case err == nil:
-		lockFlags := uint32(windows.LOCKFILE_FAIL_IMMEDIATELY)
-		lockFlags |= uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
-		if err = windows.LockFileEx(windows.Handle(file.Fd()), lockFlags, 0, 1, 0, &windows.Overlapped{}); err != nil {
+		if err = unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 			return nil, &FileSystemError{
 				Code:    lockError,
 				Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),
@@ -60,13 +62,55 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 	}
 }
 
-func (fs *localFileSystem) SyncPath(_ string) {}
+func (fs *localFileSystem) SyncPath(name string) {
+	file, err := os.Open(name)
+	if err != nil {
+		fs.logger.Panic().Str("name", name).Err(err).Msg("failed to open file")
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		fs.logger.Panic().Str("name", name).Err(err).Msg("failed to sync file")
+	}
+	if err := file.Close(); err != nil {
+		fs.logger.Panic().Str("name", name).Err(err).Msg("failed to close file")
+	}
+}
 
-func syncFile(_ *os.File) error {
+func syncFile(file *os.File) error {
+	if err := file.Sync(); err != nil {
+		return &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", file.Name(), err),
+		}
+	}
 	return nil
 }
 
+func mustGetFileStat(path string) (*syscall.Stat_t, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert fileinfo.Sys() to *syscall.Stat_t for %s", path)
+	}
+	return stat, nil
+}
+
+// CompareINode compares the inode of two files.
 func CompareINode(srcPath, destPath string) error {
+	srcStat, err := mustGetFileStat(srcPath)
+	if err != nil {
+		return err
+	}
+	destStat, err := mustGetFileStat(destPath)
+	if err != nil {
+		return err
+	}
+	if srcStat.Ino != destStat.Ino {
+		return fmt.Errorf("src file inode: %d, dest file inode: %d", srcStat.Ino, destStat.Ino)
+	}
 	return nil
 }
 
@@ -75,16 +119,14 @@ func applyFadviseToFD(fd uintptr, offset int64, length int64) error {
 	return nil
 }
 
-// SyncAndDropCache syncs the file data to disk using FlushFileBuffers on Windows.
+// SyncAndDropCache syncs the file data to disk but doesn't drop it from the page cache on macOS.
 func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
-	// On Windows, we can flush file buffers but don't have a direct equivalent to FADV_DONTNEED
-	// Convert the file descriptor to a Windows handle
-	handle := windows.Handle(fd)
-	if err := windows.FlushFileBuffers(handle); err != nil {
+	if err := unix.FcntlFlock(fd, unix.F_FULLFSYNC, &unix.Flock_t{}); err != nil {
 		return err
 	}
+
 	logger.GetLogger(moduleName).
 		Debug().
-		Msg("SyncAndDropCache: flush succeeded, page-cache drop unsupported on windows")
+		Msg("SyncAndDropCache: fullfsync succeeded, page-cache drop unsupported on darwin")
 	return nil
 }

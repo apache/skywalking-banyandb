@@ -47,9 +47,10 @@ const (
 
 type option struct {
 	mergePolicy              *mergePolicy
+	protector                protector.Memory
+	seriesCacheMaxSize       run.Bytes
 	flushTimeout             time.Duration
 	elementIndexFlushTimeout time.Duration
-	seriesCacheMaxSize       run.Bytes
 }
 
 // Query allow to retrieve elements in a series of streams.

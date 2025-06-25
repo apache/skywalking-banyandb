@@ -49,6 +49,7 @@ type part struct {
 	fileSystem           fs.FileSystem
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
+	cache                storage.Cache
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
