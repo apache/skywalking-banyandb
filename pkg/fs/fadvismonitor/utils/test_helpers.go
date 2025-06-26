@@ -61,7 +61,6 @@ var sharedReadBuffer = make([]byte, 32*1024)
 
 // NewTestFileSystemWithProtector creates a new file system with a memory protector.
 func NewTestFileSystemWithProtector(threshold int64) (fs.FileSystem, protector.Memory) {
-	// 1) 初始化 Protector 并设置测试阈值
 	mp := protector.NewMemory()
 	mp.SetLimit(uint64(threshold))
 	protector.SetMemoryProtector(mp)
