@@ -21,17 +21,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path"
-	"sort"
-	"strings"
-	"time"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
 	"google.golang.org/protobuf/encoding/protojson"
+	"os"
+	"path"
+	"sort"
+	"strings"
+	"time"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
@@ -491,11 +490,12 @@ var _ = Describe("Property Cluster Operation", func() {
 		// after querying and repairing, it should contain three documents,
 		// one older deleted in node1, new deleted in node1, one deleted in node2
 		queryData(rootCmd, addr, propertyGroup, property2ID, 0, nil)
-		closeNode1()
-		closeNode2()
 
 		// wait for the repair to finish
 		time.Sleep(1 * time.Second)
+
+		closeNode1()
+		closeNode2()
 
 		// check there should have two real properties in the dest database
 		// and one of them should be deleted (marked in the query phase)
