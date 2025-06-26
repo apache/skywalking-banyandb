@@ -25,6 +25,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -492,6 +493,9 @@ var _ = Describe("Property Cluster Operation", func() {
 		queryData(rootCmd, addr, propertyGroup, property2ID, 0, nil)
 		closeNode1()
 		closeNode2()
+
+		// wait for the repair to finish
+		time.Sleep(1 * time.Second)
 
 		// check there should have two real properties in the dest database
 		// and one of them should be deleted (marked in the query phase)
