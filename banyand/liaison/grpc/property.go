@@ -431,7 +431,21 @@ func (ps *propertyServer) repairPropertyIfNeed(entity string, p *propertyWithCou
 	if err != nil {
 		return err
 	}
-	ps.repairQueue.addProperty(entity, shardID, p)
+	nodes := make([]string, 0, copies)
+	for i := range copies {
+		nodeID, err := ps.nodeRegistry.Locate(p.GetMetadata().GetGroup(),
+			p.GetMetadata().GetName(), uint32(shardID), i)
+		if err != nil {
+			return err
+		}
+		if _, ok := p.existNodes[nodeID]; !ok {
+			nodes = append(nodes, nodeID)
+		}
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+	ps.repairQueue.addProperty(entity, shardID, p, nodes)
 	return nil
 }
 
@@ -578,7 +592,7 @@ func newRepairQueue(ps *propertyServer, size int) *repairQueue {
 	}
 }
 
-func (rq *repairQueue) addProperty(entity string, shardID uint, p *propertyWithCount) bool {
+func (rq *repairQueue) addProperty(entity string, shardID uint, p *propertyWithCount, nodes []string) bool {
 	rq.processLocker.Lock()
 	defer rq.processLocker.Unlock()
 	key := repairInProcessKey{
@@ -588,15 +602,17 @@ func (rq *repairQueue) addProperty(entity string, shardID uint, p *propertyWithC
 	if _, ok := rq.inProcess[key]; ok {
 		return false
 	}
-	rq.inProcess[key] = struct{}{}
 	task := &repairTask{
 		shardID:  shardID,
 		entity:   entity,
 		property: p,
+		nodes:    nodes,
+		key:      key,
 	}
 	// adding the task to the queue, if the queue is full, then ignore it
 	select {
 	case rq.queue <- task:
+		rq.inProcess[key] = struct{}{}
 	default:
 		return false
 	}
@@ -604,18 +620,13 @@ func (rq *repairQueue) addProperty(entity string, shardID uint, p *propertyWithC
 }
 
 func (rq *repairQueue) Start(stop chan struct{}) {
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-stop
-		cancel()
-	}()
 	go func() {
 		for {
 			select {
-			case <-ctx.Done():
+			case <-stop:
 				return
 			case task := <-rq.queue:
-				if err := rq.processTask(ctx, task); err != nil {
+				if err := rq.processTask(context.Background(), task); err != nil {
 					rq.ps.log.Warn().Msgf("failed to repair property %s: %v", task.property.Metadata.Name, err)
 				}
 			}
@@ -623,21 +634,20 @@ func (rq *repairQueue) Start(stop chan struct{}) {
 	}()
 }
 
-func (rq *repairQueue) processTask(ctx context.Context, t *repairTask) error {
+func (rq *repairQueue) processTask(ctx context.Context, t *repairTask) (err error) {
+	rq.ps.metrics.totalStarted.Inc(1, t.property.Metadata.Group, "property", "repair")
+	start := time.Now()
 	defer func() {
+		rq.ps.metrics.totalFinished.Inc(1, t.property.Metadata.Group, "property", "repair")
+		rq.ps.metrics.totalLatency.Inc(time.Since(start).Seconds(), t.property.Metadata.Group, "property", "repair")
+		if err != nil {
+			rq.ps.metrics.totalErr.Inc(1, t.property.Metadata.Group, "property", "repair")
+		}
 		rq.processLocker.Lock()
 		defer rq.processLocker.Unlock()
-		key := repairInProcessKey{
-			entity:  t.entity,
-			modTime: t.property.Metadata.ModRevision,
-		}
-		delete(rq.inProcess, key)
+		delete(rq.inProcess, t.key)
 	}()
-	copies, ok := rq.ps.groupRepo.copies(t.property.Metadata.GetGroup())
-	if !ok {
-		return errors.New("failed to get group copies")
-	}
-	futures := make([]bus.Future, 0, copies)
+	futures := make([]bus.Future, 0, len(t.nodes))
 	var result error
 	// building the repair data
 	repairReq := &propertyv1.InternalRepairRequest{
@@ -646,21 +656,14 @@ func (rq *repairQueue) processTask(ctx context.Context, t *repairTask) error {
 		Property:   t.property.Property,
 		DeleteTime: t.property.deletedTime,
 	}
-	for i := range copies {
-		nodeID, err := rq.ps.nodeRegistry.Locate(t.property.GetMetadata().GetGroup(),
-			t.property.GetMetadata().GetName(), uint32(t.shardID), i)
+	for _, nodeID := range t.nodes {
+		f, err := rq.ps.pipeline.Publish(ctx, data.TopicPropertyRepair, bus.NewMessageWithNode(
+			bus.MessageID(time.Now().Unix()), nodeID, repairReq))
 		if err != nil {
-			return err
+			result = multierr.Append(result, errors.Errorf("failed to repair properties when query: %v", err))
+			continue
 		}
-		if _, ok := t.property.existNodes[nodeID]; !ok {
-			f, err := rq.ps.pipeline.Publish(ctx, data.TopicPropertyRepair, bus.NewMessageWithNode(
-				bus.MessageID(time.Now().Unix()), nodeID, repairReq))
-			if err != nil {
-				result = multierr.Append(result, errors.Errorf("failed to repair properties when query: %v", err))
-				continue
-			}
-			futures = append(futures, f)
-		}
+		futures = append(futures, f)
 	}
 
 	// Wait for all futures to complete
@@ -675,6 +678,8 @@ func (rq *repairQueue) processTask(ctx context.Context, t *repairTask) error {
 type repairTask struct {
 	property *propertyWithCount
 	entity   string
+	nodes    []string
+	key      repairInProcessKey
 	shardID  uint
 }
 
