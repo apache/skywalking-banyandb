@@ -229,6 +229,8 @@
     - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
     - [InternalDeleteRequest](#banyandb-property-v1-InternalDeleteRequest)
     - [InternalQueryResponse](#banyandb-property-v1-InternalQueryResponse)
+    - [InternalRepairRequest](#banyandb-property-v1-InternalRepairRequest)
+    - [InternalRepairResponse](#banyandb-property-v1-InternalRepairResponse)
     - [InternalUpdateRequest](#banyandb-property-v1-InternalUpdateRequest)
     - [QueryRequest](#banyandb-property-v1-QueryRequest)
     - [QueryResponse](#banyandb-property-v1-QueryResponse)
@@ -3402,6 +3404,34 @@ Property stores the user defined data
 | sources | [bytes](#bytes) | repeated |  |
 | trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  |  |
 | deletes | [int64](#int64) | repeated | deletes indicates the property is deleted timestamps, it&#39;s mapping to the sources in the same order if the value is 0, it means the property is not deleted |
+
+
+
+
+
+
+<a name="banyandb-property-v1-InternalRepairRequest"></a>
+
+### InternalRepairRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint64](#uint64) |  |  |
+| id | [bytes](#bytes) |  |  |
+| property | [Property](#banyandb-property-v1-Property) |  |  |
+| delete_time | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-InternalRepairResponse"></a>
+
+### InternalRepairResponse
+
 
 
 
