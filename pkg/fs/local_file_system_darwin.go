@@ -26,8 +26,6 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
-
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // localFileSystem is the implementation of FileSystem interface.
@@ -121,12 +119,5 @@ func applyFadviseToFD(_ uintptr, _ int64, _ int64) error {
 
 // SyncAndDropCache syncs the file data to disk but doesn't drop it from the page cache on macOS.
 func SyncAndDropCache(fd uintptr, _ int64, _ int64) error {
-	if err := unix.FcntlFlock(fd, unix.F_FULLFSYNC, &unix.Flock_t{}); err != nil {
-		return err
-	}
-
-	logger.GetLogger(moduleName).
-		Debug().
-		Msg("SyncAndDropCache: fullfsync succeeded, page-cache drop unsupported on darwin")
-	return nil
+	return unix.FcntlFlock(fd, unix.F_FULLFSYNC, &unix.Flock_t{})
 }
