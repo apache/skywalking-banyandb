@@ -201,7 +201,7 @@ func generateDataInt64(name string, n int) []int64 {
 	}
 }
 
-func BenchmarkFloat64XOREncoding(b *testing.B) {
+func BenchmarkFloat64Encoding(b *testing.B) {
 	benchmarkColumnEncoding[float64](
 		b,
 		"float64",

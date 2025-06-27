@@ -51,6 +51,21 @@ func Uint32ToBytes(u uint32) []byte {
 	return bs
 }
 
+// Int32ToBytes converts int32 to bytes.
+func Int32ToBytes(i int32) []byte {
+	abs := i
+	if i < 0 {
+		abs = -abs
+	}
+	u := uint32(abs)
+	if i >= 0 {
+		u |= 1 << 31
+	} else {
+		u = (1 << 31) - u
+	}
+	return Uint32ToBytes(u)
+}
+
 // BoolToBytes converts bool to bytes.
 func BoolToBytes(b bool) []byte {
 	if b {
@@ -72,6 +87,16 @@ func BytesToInt64(b []byte) int64 {
 		abs = -abs
 	}
 	return abs
+}
+
+// BytesToInt32 converts bytes to int32 based on the encoding used in Int32ToBytes.
+func BytesToInt32(b []byte) int32 {
+	u := binary.BigEndian.Uint32(b)
+	if (u >> 31) == 1 {
+		// Positive number
+		return int32(u &^ (1 << 31)) // clear the sign bit
+	}
+	return -int32((1 << 31) - u)
 }
 
 // BytesToUint64 converts bytes to uint64.

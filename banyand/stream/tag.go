@@ -18,9 +18,6 @@
 package stream
 
 import (
-	stdbytes "bytes"
-	"math"
-
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -68,24 +65,9 @@ func releaseFloat64Slice(float64Slice *[]float64) {
 	float64SlicePool.Put(float64Slice)
 }
 
-func generateEncodingWriter(buffer encoding.BufferWriter) *encoding.Writer {
-	v := encodingWriterPool.Get()
-	if v == nil {
-		v = encoding.NewWriter()
-	}
-	v.Reset(buffer)
-	return v
-}
-
-func releaseEncodingWriter(writer *encoding.Writer) {
-	writer.Flush()
-	encodingWriterPool.Put(writer)
-}
-
 var (
-	int64SlicePool     = pool.Register[*[]int64]("stream-int64Slice")
-	float64SlicePool   = pool.Register[*[]float64]("stream-float64Slice")
-	encodingWriterPool = pool.Register[*encoding.Writer]("stream-encodingWriter")
+	int64SlicePool   = pool.Register[*[]int64]("stream-int64Slice")
+	float64SlicePool = pool.Register[*[]float64]("stream-float64Slice")
 )
 
 type tag struct {
@@ -178,6 +160,11 @@ func (t *tag) encodeTagValues(tm *tagMetadata, bb *bytes.Buffer) {
 		)
 	case pbv1.ValueTypeFloat64:
 		// convert byte array to float64 array
+		intValuesPtr := generateInt64Slice(len(t.values))
+		intValues := *intValuesPtr
+		defer func() {
+			releaseInt64Slice(intValuesPtr)
+		}()
 		floatValuesPtr := generateFloat64Slice(len(t.values))
 		floatValues := *floatValuesPtr
 		defer func() {
@@ -187,15 +174,29 @@ func (t *tag) encodeTagValues(tm *tagMetadata, bb *bytes.Buffer) {
 		for i, v := range t.values {
 			floatValues[i] = convert.BytesToFloat64(v)
 		}
-		// use XOR encoding for float column
-		bb.Buf = bb.Buf[:0]
-		writer := generateEncodingWriter(bb)
-		xorEncoder := encoding.NewXOREncoder(writer)
-		// convert float64 to uint64 for encoding
-		for _, v := range floatValues {
-			xorEncoder.Write(math.Float64bits(v))
+		intValues, exp, err := encoding.Float64ListToDecimalIntList(intValues[:0], floatValues)
+		if err != nil {
+			if exp == -1 {
+				// TODO c.valueType = pbv1.ValueTypeStr
+				tm.valueType = pbv1.ValueTypeStr
+				encodeDefault()
+				return
+			}
+			logger.Panicf("cannot convert Float64List to DecimalIntList : %v", err)
 		}
-		releaseEncodingWriter(writer)
+		var encodeType encoding.EncodeType
+		var firstValue int64
+		bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
+		if encodeType == encoding.EncodeTypeUnknown {
+			logger.Panicf("invalid encode type for int64 values")
+		}
+		firstValueBytes := convert.Int64ToBytes(firstValue)
+		expBytes := convert.Int32ToBytes(exp)
+		// Prepend encodeType (1 byte), exp (4 bytes) and firstValue (8 bytes) to the beginning
+		bb.Buf = append(
+			append(append([]byte{byte(encodeType)}, expBytes...), firstValueBytes...),
+			bb.Buf...,
+		)
 	default:
 		encodeDefault()
 	}
@@ -270,17 +271,41 @@ func (t *tag) decodeTagValues(decoder *encoding.BytesBlockDecoder, path string, 
 		}
 	case pbv1.ValueTypeFloat64:
 		// decode float type
-		reader := encoding.NewReader(stdbytes.NewReader(bb.Buf))
-		xorDecoder := encoding.NewXORDecoder(reader)
+		intValuesPtr := generateInt64Slice(int(count))
+		intValues := *intValuesPtr
+		defer func() {
+			releaseInt64Slice(intValuesPtr)
+		}()
+		floatValuesPtr := generateFloat64Slice(int(count))
+		floatValues := *floatValuesPtr
+		defer func() {
+			releaseFloat64Slice(floatValuesPtr)
+		}()
+
+		const expectedLen = 13
+		if len(bb.Buf) < expectedLen {
+			logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", expectedLen, len(bb.Buf))
+		}
+		encodeType := encoding.EncodeType(bb.Buf[0])
+		exp := convert.BytesToInt32(bb.Buf[1:5])
+		firstValue := convert.BytesToInt64(bb.Buf[5:13])
+		bb.Buf = bb.Buf[13:]
+		var err error
+		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
+		if err != nil {
+			logger.Panicf("%s: cannot decode int values: %v", path, err)
+		}
+		floatValues, err = encoding.DecimalIntListToFloat64List(floatValues[:0], intValues, exp, int(count))
+		if err != nil {
+			logger.Panicf("cannot convert DecimalIntList to Float64List: %v", err)
+		}
+		if uint64(len(floatValues)) != count {
+			logger.Panicf("unexpected floatValues length: got %d, expected %d", len(floatValues), count)
+		}
+		// convert float64 array to byte array
 		t.values = make([][]byte, count)
-		for i := uint64(0); i < count; i++ {
-			if !xorDecoder.Next() {
-				logger.Panicf("cannot decode float value at index %d: %v", i, xorDecoder.Err())
-			}
-			val := xorDecoder.Value()
-			// convert uint64 back to float64
-			floatVal := math.Float64frombits(val)
-			t.values[i] = convert.Float64ToBytes(floatVal)
+		for i, v := range floatValues {
+			t.values[i] = convert.Float64ToBytes(v)
 		}
 	default:
 		var err error
