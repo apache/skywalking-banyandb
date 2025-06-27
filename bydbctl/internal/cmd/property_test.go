@@ -18,19 +18,28 @@
 package cmd_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path"
+	"sort"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -41,11 +50,14 @@ import (
 var (
 	propertyGroup    = "ui-template"
 	propertyTagCount = 2
-	p1YAML           = fmt.Sprintf(`
+	property1ID      = "kubernetes"
+	property2ID      = "mesh"
+
+	p1YAML = fmt.Sprintf(`
 metadata:
   group: %s
   name: service
-id: kubernetes
+id: %s
 tags:
   - key: content
     value:
@@ -55,13 +67,13 @@ tags:
     value:
       int:
         value: 1
-`, propertyGroup)
+`, propertyGroup, property1ID)
 
 	p2YAML = fmt.Sprintf(`
 metadata:
   group: %s
   name: service
-id: kubernetes
+id: %s
 tags:
   - key: content
     value:
@@ -71,7 +83,26 @@ tags:
     value:
       int:
         value: 3
-`, propertyGroup)
+`, propertyGroup, property1ID)
+
+	p3YAML = fmt.Sprintf(`
+metadata:
+  group: %s
+  name: service
+id: %s
+tags:
+  - key: content
+    value:
+      str:
+        value: foo-mesh
+  - key: state
+    value:
+      int:
+        value: 22
+`, propertyGroup, property2ID)
+
+	deletedFieldKey = index.FieldKey{TagName: "_deleted"}
+	sourceFieldKey  = index.FieldKey{TagName: "_source"}
 )
 
 var _ = Describe("Property Operation", func() {
@@ -89,7 +120,7 @@ var _ = Describe("Property Operation", func() {
 		// extracting the operation of creating property schema
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
-		defUITemplateWithSchema(rootCmd, addr, 2)
+		defUITemplateWithSchema(rootCmd, addr, 2, 0)
 		applyData(rootCmd, addr, p1YAML, true, propertyTagCount)
 	})
 
@@ -98,7 +129,7 @@ var _ = Describe("Property Operation", func() {
 		applyData(rootCmd, addr, p2YAML, false, propertyTagCount)
 
 		// check the property
-		queryData(rootCmd, addr, propertyGroup, 1, func(data string, resp *propertyv1.QueryResponse) {
+		queryData(rootCmd, addr, propertyGroup, "", 1, func(data string, resp *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo333"))
 		})
 	})
@@ -117,7 +148,7 @@ var _ = Describe("Property Operation", func() {
 	})
 
 	It("query all properties", func() {
-		queryData(rootCmd, addr, propertyGroup, 1, nil)
+		queryData(rootCmd, addr, propertyGroup, "", 1, nil)
 	})
 
 	It("delete property", func() {
@@ -129,7 +160,7 @@ var _ = Describe("Property Operation", func() {
 		})
 		Expect(out).To(ContainSubstring("deleted: true"))
 
-		queryData(rootCmd, addr, propertyGroup, 0, nil)
+		queryData(rootCmd, addr, propertyGroup, "", 0, nil)
 	})
 
 	AfterEach(func() {
@@ -364,36 +395,46 @@ var _ = Describe("Property Cluster Operation", func() {
 	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
+	var node1Dir, node2Dir string
+	var closeNode1, closeNode2 func()
 	BeforeEach(func() {
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 		var ports []int
+		var err error
+		var spaceDef1, spaceDef2 func()
 
 		// first creating
 		By("Starting node1 with data")
-		node1Dir, spaceDef1, err := test.NewSpace()
+		node1Dir, spaceDef1, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
 		ports, err = test.AllocateFreePorts(4)
 		Expect(err).NotTo(HaveOccurred())
 		_, node1Addr, node1Defer := setup.ClosableStandalone(node1Dir, ports)
 		node1Addr = httpSchema + node1Addr
-		defUITemplateWithSchema(rootCmd, node1Addr, 1)
+		defUITemplateWithSchema(rootCmd, node1Addr, 1, 0)
 		applyData(rootCmd, node1Addr, p1YAML, true, propertyTagCount)
-		queryData(rootCmd, node1Addr, propertyGroup, 1, func(data string, resp *propertyv1.QueryResponse) {
+		applyData(rootCmd, node1Addr, p3YAML, true, propertyTagCount)
+		queryData(rootCmd, node1Addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo111"))
+		})
+		queryData(rootCmd, node1Addr, propertyGroup, property2ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+			Expect(data).To(ContainSubstring("foo-mesh"))
 		})
 		node1Defer()
 
 		By("Starting node2 with data")
-		node2Dir, spaceDef2, err := test.NewSpace()
+		node2Dir, spaceDef2, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
 		ports, err = test.AllocateFreePorts(4)
 		Expect(err).NotTo(HaveOccurred())
 		_, node2Addr, node2Defer := setup.ClosableStandalone(node2Dir, ports)
 		node2Addr = httpSchema + node2Addr
-		defUITemplateWithSchema(rootCmd, node2Addr, 1)
+		defUITemplateWithSchema(rootCmd, node2Addr, 1, 0)
 		applyData(rootCmd, node2Addr, p2YAML, true, propertyTagCount)
-		queryData(rootCmd, node2Addr, propertyGroup, 1, func(data string, resp *propertyv1.QueryResponse) {
+		applyData(rootCmd, node2Addr, p3YAML, true, propertyTagCount)
+		deleteData(rootCmd, node2Addr, propertyGroup, "service", property2ID, true)
+		queryData(rootCmd, node2Addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo333"))
 		})
 		node2Defer()
@@ -412,17 +453,17 @@ var _ = Describe("Property Cluster Operation", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 		<-server.ReadyNotify()
 		By("Starting data node 0")
-		closeDataNode0 := setup.DataNodeFromDataDir(ep, node1Dir)
+		closeNode1 = setup.DataNodeFromDataDir(ep, node1Dir)
 		By("Starting data node 1")
-		closeDataNode1 := setup.DataNodeFromDataDir(ep, node2Dir)
+		closeNode2 = setup.DataNodeFromDataDir(ep, node2Dir)
 		By("Starting liaison node")
 		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(ep)
 		By("Initializing test cases")
 
 		deferFunc = func() {
 			closerLiaisonNode()
-			closeDataNode0()
-			closeDataNode1()
+			closeNode1()
+			closeNode2()
 			_ = server.Close()
 			<-server.StopNotify()
 			spaceDef()
@@ -431,7 +472,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		}
 		addr = httpSchema + liaisonHTTPAddr
 		// creating schema
-		defUITemplateWithSchema(rootCmd, addr, 1)
+		defUITemplateWithSchema(rootCmd, addr, 1, 1)
 	})
 
 	AfterEach(func() {
@@ -439,29 +480,107 @@ var _ = Describe("Property Cluster Operation", func() {
 	})
 
 	It("query from difference version", func() {
-		queryData(rootCmd, addr, propertyGroup, 1, func(data string, resp *propertyv1.QueryResponse) {
+		// property 1 should have one older version in node1, and newer version in node2
+		// after querying and repairing, it should contain three documents,
+		// one deleted in node1, one in node1, and one in node2,
+		// and not deleted documents(property) should have the same mod revision
+		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
 			Expect(data).Should(ContainSubstring("foo333"))
 		})
+		// property 2 should have one older version in node1, and same version in node2, then deleted in node2
+		// after querying and repairing, it should contain three documents,
+		// one older deleted in node1, new deleted in node1, one deleted in node2
+		queryData(rootCmd, addr, propertyGroup, property2ID, 0, nil)
+
+		// wait for the repair to finish
+		time.Sleep(1 * time.Second)
+
+		closeNode1()
+		closeNode2()
+
+		// check there should have two real properties in the dest database
+		// and one of them should be deleted (marked in the query phase)
+		store1, err := generateInvertedStore(node1Dir)
+		Expect(err).NotTo(HaveOccurred())
+		store2, err := generateInvertedStore(node2Dir)
+		Expect(err).NotTo(HaveOccurred())
+
+		query, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
+			Groups: []string{propertyGroup},
+		}, "_group", "_entity_id")
+		Expect(err).NotTo(HaveOccurred())
+		node1Search, err := store1.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query, 10)
+		Expect(err).NotTo(HaveOccurred())
+		node2Search, err := store2.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query, 10)
+		Expect(err).NotTo(HaveOccurred())
+
+		totalProperties := append(node1Search, node2Search...)
+		p1DeletedOnNode1 := filterProperties(node1Search, func(property *propertyv1.Property, deleted bool) bool {
+			return deleted && property.Id == property1ID
+		})
+		p1NotDeletedOnNode1 := filterProperties(node1Search, func(property *propertyv1.Property, deleted bool) bool {
+			return !deleted && property.Id == property1ID
+		})
+		p1NotDeletedInNode2 := filterProperties(node2Search, func(property *propertyv1.Property, deleted bool) bool {
+			return !deleted && property.Id == property1ID
+		})
+		p1Total := filterProperties(totalProperties, func(property *propertyv1.Property, deleted bool) bool {
+			return property.Id == property1ID
+		})
+		Expect(len(p1Total)).To(Equal(3))
+		Expect(len(p1DeletedOnNode1)).To(Equal(1))
+		Expect(len(p1NotDeletedOnNode1)).To(Equal(1))
+		Expect(len(p1NotDeletedInNode2)).To(Equal(1))
+		// mod time should be the same
+		Expect(p1NotDeletedOnNode1[0].Metadata.ModRevision == p1NotDeletedInNode2[0].Metadata.ModRevision).
+			To(BeTrue(), "the mod revision of not deleted property should be the same")
+
+		p2Total := filterProperties(totalProperties, func(property *propertyv1.Property, deleted bool) bool {
+			return property.Id == property2ID
+		})
+		p2DeletedOnNode1 := filterProperties(node1Search, func(property *propertyv1.Property, deleted bool) bool {
+			return deleted && property.Id == property2ID
+		})
+		p2DeletedOnNode2 := filterProperties(node2Search, func(property *propertyv1.Property, deleted bool) bool {
+			return deleted && property.Id == property2ID
+		})
+		sort.Sort(propertySlice(p2DeletedOnNode1))
+		sort.Sort(propertySlice(p2DeletedOnNode2))
+		Expect(len(p2Total)).To(Equal(3))
+		Expect(len(p2DeletedOnNode1)).To(Equal(2))
+		Expect(len(p2DeletedOnNode2)).To(Equal(1))
+		Expect(p2DeletedOnNode1[1].Metadata.ModRevision == p2DeletedOnNode2[0].Metadata.ModRevision).
+			To(BeTrue(), "the mod revision of not deleted property should be the same")
 	})
 
 	It("delete property", func() {
 		// delete properties
-		rootCmd.SetArgs([]string{"property", "data", "delete", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("deleted: true"))
+		deleteData(rootCmd, addr, propertyGroup, "service", property1ID, true)
 
 		// should no properties after deletion
-		queryData(rootCmd, addr, propertyGroup, 0, nil)
+		queryData(rootCmd, addr, propertyGroup, "", 0, nil)
 
 		// created again, the created should be true
 		applyData(rootCmd, addr, p1YAML, true, propertyTagCount)
 	})
 })
 
-func defUITemplateWithSchema(rootCmd *cobra.Command, addr string, shardCount int) {
+func filterProperties(doc []index.SeriesDocument, filter func(property *propertyv1.Property, deleted bool) bool) (res []*propertyv1.Property) {
+	for _, p := range doc {
+		deleted := convert.BytesToBool(p.Fields[deletedFieldKey.TagName])
+		source := p.Fields[sourceFieldKey.TagName]
+		Expect(source).NotTo(BeNil())
+		var pt propertyv1.Property
+		err := protojson.Unmarshal(source, &pt)
+		Expect(err).NotTo(HaveOccurred())
+		if filter(&pt, deleted) {
+			res = append(res, &pt)
+		}
+	}
+	return
+}
+
+func defUITemplateWithSchema(rootCmd *cobra.Command, addr string, shardCount int, replicas int) {
 	rootCmd.SetArgs([]string{"group", "create", "-a", addr, "-f", "-"})
 	createGroup := func() string {
 		rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
@@ -470,7 +589,8 @@ metadata:
 catalog: CATALOG_PROPERTY
 resource_opts:
   shard_num: %d
-`, shardCount)))
+  replicas: %d
+`, shardCount, replicas)))
 		return capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			if err != nil {
@@ -514,10 +634,14 @@ func applyData(rootCmd *cobra.Command, addr, data string, created bool, tagsNum 
 	Expect(out).To(ContainSubstring(fmt.Sprintf("tagsNum: %d", tagsNum)))
 }
 
-func queryData(rootCmd *cobra.Command, addr, group string, dataCount int, verify func(data string, resp *propertyv1.QueryResponse)) {
+func queryData(rootCmd *cobra.Command, addr, group, id string, dataCount int, verify func(data string, resp *propertyv1.QueryResponse)) {
 	rootCmd.SetArgs([]string{"property", "data", "query", "-a", addr, "-f", "-"})
 	issue := func() string {
-		rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`groups: ["%s"]`, group)))
+		query := fmt.Sprintf(`groups: ["%s"]`, group)
+		if id != "" {
+			query += fmt.Sprintf("\nids: [\"%s\"]", id)
+		}
+		rootCmd.SetIn(strings.NewReader(query))
 		return capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -541,4 +665,52 @@ func queryData(rootCmd *cobra.Command, addr, group string, dataCount int, verify
 		}
 		return nil
 	}, flags.EventuallyTimeout).Should(Succeed())
+}
+
+func deleteData(rootCmd *cobra.Command, addr, group, name, id string, success bool) {
+	rootCmd.SetArgs([]string{"property", "data", "delete", "-a", addr, "-g", group, "-n", name, "-i", id})
+	out := capturer.CaptureStdout(func() {
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+	})
+	Expect(out).To(ContainSubstring("deleted: %t", success))
+}
+
+func generateInvertedStore(rootPath string) (index.SeriesStore, error) {
+	shardParent := path.Join(rootPath, "property", "data")
+	list, err := os.ReadDir(shardParent)
+	if err != nil {
+		return nil, fmt.Errorf("read dir %s error: %w", shardParent, err)
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("no shard found in %s", shardParent)
+	}
+	for _, e := range list {
+		if !e.Type().IsDir() {
+			continue
+		}
+		_, found := strings.CutPrefix(e.Name(), "shard-")
+		if !found {
+			continue
+		}
+		return inverted.NewStore(
+			inverted.StoreOpts{
+				Path: path.Join(shardParent, e.Name()),
+			})
+	}
+	return nil, fmt.Errorf("no shard found in %s", rootPath)
+}
+
+type propertySlice []*propertyv1.Property
+
+func (p propertySlice) Len() int {
+	return len(p)
+}
+
+func (p propertySlice) Less(i, j int) bool {
+	return p[i].Metadata.ModRevision < p[j].Metadata.ModRevision
+}
+
+func (p propertySlice) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
 }

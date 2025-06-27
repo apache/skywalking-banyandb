@@ -239,6 +239,7 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 		}
 		f.clients = append(f.clients, stream)
 		f.topics = append(f.topics, topic)
+		f.nodes = append(f.nodes, node)
 		return err
 	}
 	for _, m := range messages {
@@ -324,6 +325,7 @@ type future struct {
 	clients  []clusterv1.Service_SendClient
 	cancelFn []func()
 	topics   []bus.Topic
+	nodes    []string
 }
 
 func (l *future) Get() (bus.Message, error) {
@@ -332,11 +334,13 @@ func (l *future) Get() (bus.Message, error) {
 	}
 	c := l.clients[0]
 	t := l.topics[0]
+	n := l.nodes[0]
 	defer func() {
 		l.clients = l.clients[1:]
 		l.topics = l.topics[1:]
 		l.cancelFn[0]()
 		l.cancelFn = l.cancelFn[1:]
+		l.nodes = l.nodes[1:]
 	}()
 	resp, err := c.Recv()
 	if err != nil {
@@ -346,7 +350,7 @@ func (l *future) Get() (bus.Message, error) {
 		return bus.Message{}, errors.New(resp.Error)
 	}
 	if resp.Body == nil {
-		return bus.NewMessage(bus.MessageID(resp.MessageId), nil), nil
+		return bus.NewMessageWithNode(bus.MessageID(resp.MessageId), n, nil), nil
 	}
 	if messageSupplier, ok := data.TopicResponseMap[t]; ok {
 		m := messageSupplier()
@@ -354,8 +358,9 @@ func (l *future) Get() (bus.Message, error) {
 		if err != nil {
 			return bus.Message{}, err
 		}
-		return bus.NewMessage(
+		return bus.NewMessageWithNode(
 			bus.MessageID(resp.MessageId),
+			n,
 			m,
 		), nil
 	}

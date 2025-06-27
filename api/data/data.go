@@ -38,6 +38,7 @@ var (
 		TopicPropertyDelete.String(): TopicPropertyDelete,
 		TopicPropertyQuery.String():  TopicPropertyQuery,
 		TopicPropertyUpdate.String(): TopicPropertyUpdate,
+		TopicPropertyRepair.String(): TopicPropertyRepair,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -67,6 +68,9 @@ var (
 		TopicPropertyDelete: func() proto.Message {
 			return &propertyv1.InternalDeleteRequest{}
 		},
+		TopicPropertyRepair: func() proto.Message {
+			return &propertyv1.InternalRepairRequest{}
+		},
 	}
 
 	// TopicResponseMap is the map of topic name to response message.
@@ -89,6 +93,9 @@ var (
 		},
 		TopicPropertyUpdate: func() proto.Message {
 			return &propertyv1.ApplyResponse{}
+		},
+		TopicPropertyRepair: func() proto.Message {
+			return &propertyv1.InternalRepairResponse{}
 		},
 	}
 

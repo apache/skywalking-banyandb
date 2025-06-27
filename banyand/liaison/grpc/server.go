@@ -289,6 +289,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.DurationVar(&s.streamSVC.maxWaitDuration, "stream-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.IntVar(&s.measureCallback.maxDiskUsagePercent, "liaison-measure-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
+	fs.IntVar(&s.propertyServer.repairQueueCount, "property-repair-queue-count", 128, "the number of queues for property repair")
 	return fs
 }
 
@@ -361,6 +362,7 @@ func (s *server) Serve() run.StopNotify {
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})
+	s.propertyServer.startRepairQueue(s.stopCh)
 	s.log.Info().Str("addr", s.addr).Msg("Starting gRPC server")
 	go func() {
 		lis, err := net.Listen("tcp", s.addr)
