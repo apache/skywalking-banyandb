@@ -28,7 +28,6 @@ import (
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/analysis"
-	"github.com/blugelabs/bluge/analysis/analyzer"
 	blugeIndex "github.com/blugelabs/bluge/index"
 	"github.com/blugelabs/bluge/numeric"
 	"github.com/blugelabs/bluge/search"
@@ -40,6 +39,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -61,18 +61,6 @@ var (
 	defaultRangePreloadSize = 1000
 	defaultProjection       = []string{docIDField, timestampField}
 )
-
-// Analyzers is a map that associates each IndexRule_Analyzer type with a corresponding Analyzer.
-var Analyzers map[string]*analysis.Analyzer
-
-func init() {
-	Analyzers = map[string]*analysis.Analyzer{
-		index.AnalyzerKeyword:  analyzer.NewKeywordAnalyzer(),
-		index.AnalyzerSimple:   analyzer.NewSimpleAnalyzer(),
-		index.AnalyzerStandard: analyzer.NewStandardAnalyzer(),
-		index.AnalyzerURL:      newURLAnalyzer(),
-	}
-}
 
 var _ index.Store = (*store)(nil)
 
@@ -135,7 +123,7 @@ func (s *store) Batch(batch index.Batch) error {
 				tf.StoreValue()
 			}
 			if f.Key.Analyzer != index.AnalyzerUnspecified {
-				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
+				tf = tf.WithAnalyzer(analyzer.Analyzers[f.Key.Analyzer])
 			}
 			doc.AddField(tf)
 			if i == 0 {
@@ -163,7 +151,7 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	}
 	indexConfig.CacheMaxBytes = opts.CacheMaxBytes
 	config := bluge.DefaultConfigWithIndexConfig(indexConfig)
-	config.DefaultSearchAnalyzer = Analyzers[index.AnalyzerKeyword]
+	config.DefaultSearchAnalyzer = analyzer.Analyzers[index.AnalyzerKeyword]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
 	config = config.WithPrepareMergeCallback(opts.PrepareMergeCallback)
 	w, err := bluge.OpenWriter(config)
@@ -371,11 +359,11 @@ func (s *store) Match(fieldKey index.FieldKey, matches []string, opts *modelv1.C
 }
 
 func getMatchOptions(analyzerOnIndexRule string, opts *modelv1.Condition_MatchOption) (*analysis.Analyzer, bluge.MatchQueryOperator) {
-	analyzer := Analyzers[analyzerOnIndexRule]
+	a := analyzer.Analyzers[analyzerOnIndexRule]
 	operator := bluge.MatchQueryOperatorOr
 	if opts != nil {
 		if opts.Analyzer != index.AnalyzerUnspecified {
-			analyzer = Analyzers[opts.Analyzer]
+			a = analyzer.Analyzers[opts.Analyzer]
 		}
 		if opts.Operator != modelv1.Condition_MatchOption_OPERATOR_UNSPECIFIED {
 			if opts.Operator == modelv1.Condition_MatchOption_OPERATOR_AND {
@@ -383,7 +371,7 @@ func getMatchOptions(analyzerOnIndexRule string, opts *modelv1.Condition_MatchOp
 			}
 		}
 	}
-	return analyzer, bluge.MatchQueryOperator(operator)
+	return a, bluge.MatchQueryOperator(operator)
 }
 
 func (s *store) Range(fieldKey index.FieldKey, opts index.RangeOpts) (list posting.List, timestamps posting.List, err error) {

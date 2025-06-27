@@ -99,7 +99,7 @@ func (d *Dictionary) decodeBytesBlockWithTail(src []byte, itemsCount uint64) ([]
 
 	var tail []byte
 	var err error
-	u64List.L, tail, err = decodeUint64Block(u64List.L[:0], src, itemsCount)
+	u64List.L, tail, err = DecodeUint64Block(u64List.L[:0], src, itemsCount)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot decode string lengths: %w", err)
 	}
