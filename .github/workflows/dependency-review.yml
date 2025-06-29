@@ -26,6 +26,7 @@ permissions:
 
 jobs:
   dependency-review:
+    if: github.repository == 'apache/skywalking-banyandb'
     runs-on: ubuntu-latest
     steps:
       - name: 'Checkout Repository'
