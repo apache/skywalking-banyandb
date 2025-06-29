@@ -172,7 +172,7 @@ var dps = &dataPoints{
 			{
 				name: "singleTag", values: []*nameValue{
 					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
-					{name: "strTag", valueType: pbv1.ValueTypeInt64, value: []byte("tag2"), valueArr: nil},
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag2"), valueArr: nil},
 				},
 			},
 		},
@@ -180,7 +180,7 @@ var dps = &dataPoints{
 			{
 				name: "singleTag", values: []*nameValue{
 					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag11"), valueArr: nil},
-					{name: "strTag", valueType: pbv1.ValueTypeInt64, value: []byte("tag22"), valueArr: nil},
+					{name: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag22"), valueArr: nil},
 				},
 			},
 		},

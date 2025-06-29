@@ -156,7 +156,7 @@ var es = &elements{
 			{
 				tag: "singleTag", values: []*tagValue{
 					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
-					{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(20), valueArr: nil},
+					{tag: "intTag", valueType: pbv1.ValueTypeStr, value: convert.Int64ToBytes(20), valueArr: nil},
 				},
 			},
 		},
@@ -164,7 +164,7 @@ var es = &elements{
 			{
 				tag: "singleTag", values: []*tagValue{
 					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag1"), valueArr: nil},
-					{tag: "strTag", valueType: pbv1.ValueTypeInt64, value: []byte("tag2"), valueArr: nil},
+					{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("tag2"), valueArr: nil},
 				},
 			},
 		},

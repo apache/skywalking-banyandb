@@ -136,14 +136,9 @@ func (t *tag) encodeTagValues(tm *tagMetadata, bb *bytes.Buffer) {
 				return
 			}
 			if len(v) != 8 {
-				var val int64
-				for j := 0; j < len(v); j++ {
-					val = (val << 8) | int64(v[j])
-				}
-				intValues[i] = val
-			} else {
-				intValues[i] = convert.BytesToInt64(v)
+				logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
 			}
+			intValues[i] = convert.BytesToInt64(v)
 		}
 		// use delta encoding for integer column
 		var encodeType encoding.EncodeType
