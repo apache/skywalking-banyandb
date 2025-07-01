@@ -1,0 +1,72 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+package banyandb.trace.v1;
+
+import "banyandb/common/v1/trace.proto";
+import "banyandb/model/v1/query.proto";
+import "google/protobuf/timestamp.proto";
+import "validate/validate.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1";
+option java_package = "org.apache.skywalking.banyandb.trace.v1";
+
+// Span is a single operation within a trace.
+message Span {
+  // tags are the indexed tags of the span.
+  repeated model.v1.Tag tags = 1;
+  // span is the raw span data.
+  bytes span = 2;
+  // timestamp is the timestamp of the span.
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// QueryResponse is the response of a query.
+message QueryResponse {
+  // spans is a list of spans that match the query.
+  repeated Span spans = 1;
+  // trace_query_result contains the trace of the query execution if tracing is enabled.
+  common.v1.Trace trace_query_result = 2;
+}
+
+// QueryRequest is the request contract for query.
+message QueryRequest {
+  // groups indicate the physical data location.
+  repeated string groups = 1 [(validate.rules).repeated.min_items = 1];
+  // name is the identity of a trace.
+  string name = 2 [(validate.rules).string.min_len = 1];
+  // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
+  // In the context of trace, it represents the range of the `startTime` for spans/segments,
+  // it is always recommended to specify time range for performance reason
+  model.v1.TimeRange time_range = 3;
+  // offset is used to support pagination, together with the following limit
+  uint32 offset = 4;
+  // limit is used to impose a boundary on the number of spans being returned
+  uint32 limit = 5;
+  // order_by is given to specify the sort for a tag. So far, only fields in the type of Integer are supported
+  model.v1.QueryOrder order_by = 6;
+  // criteria is the filter criteria.
+  model.v1.Criteria criteria = 7;
+  // projection can be used to select the names of the tags in the response
+  repeated string tag_projection = 8;
+  // trace is used to enable trace for the query
+  bool trace = 9;
+  // stage is used to specify the stage of the query in the lifecycle
+  repeated string stages = 10;
+}

@@ -163,6 +163,8 @@ message IndexRule {
   enum Type {
     TYPE_UNSPECIFIED = 0;
     TYPE_INVERTED = 1;
+    // TYPE_TREE is a tree index, which is used for storing hierarchical data.
+    TYPE_TREE = 3;
   }
   // type is the IndexType of this IndexObject.
   Type type = 3 [(validate.rules).enum.defined_only = true];
@@ -218,4 +220,27 @@ message Property {
   repeated TagSpec tags = 2 [(validate.rules).repeated.min_items = 1];
   // updated_at indicates when the property is updated
   google.protobuf.Timestamp updated_at = 6;
+}
+
+// TraceTagSpec defines the specification of a tag in a trace.
+message TraceTagSpec {
+  // name is the name of the tag.
+  string name = 1 [(validate.rules).string.min_len = 1];
+  // type is the type of the tag.
+  TagType type = 2 [(validate.rules).enum.defined_only = true];
+}
+
+// Trace defines a tracing-specific storage resource.
+// It is suitable for storing traces and spans.
+// The name of a Trace is a logical namespace within a group,
+// while the group of a Trace corresponds to a physical directory.
+message Trace {
+  // metadata is the identity of the trace resource.
+  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  // tags are the specification of tags.
+  repeated TraceTagSpec tags = 2 [(validate.rules).repeated.min_items = 1];
+  // trace_id_tag_name is the name of the tag that stores the trace ID.
+  string trace_id_tag_name = 3 [(validate.rules).string.min_len = 1];
+  // updated_at indicates when the trace resource is updated.
+  google.protobuf.Timestamp updated_at = 4;
 }

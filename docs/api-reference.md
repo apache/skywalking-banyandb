@@ -85,6 +85,8 @@
     - [TagFamilySpec](#banyandb-database-v1-TagFamilySpec)
     - [TagSpec](#banyandb-database-v1-TagSpec)
     - [TopNAggregation](#banyandb-database-v1-TopNAggregation)
+    - [Trace](#banyandb-database-v1-Trace)
+    - [TraceTagSpec](#banyandb-database-v1-TraceTagSpec)
   
     - [CompressionMethod](#banyandb-database-v1-CompressionMethod)
     - [EncodingMethod](#banyandb-database-v1-EncodingMethod)
@@ -255,6 +257,18 @@
     - [DeleteExpiredSegmentsResponse](#banyandb-stream-v1-DeleteExpiredSegmentsResponse)
   
     - [StreamService](#banyandb-stream-v1-StreamService)
+  
+- [banyandb/trace/v1/query.proto](#banyandb_trace_v1_query-proto)
+    - [QueryRequest](#banyandb-trace-v1-QueryRequest)
+    - [QueryResponse](#banyandb-trace-v1-QueryResponse)
+    - [Span](#banyandb-trace-v1-Span)
+  
+- [banyandb/trace/v1/write.proto](#banyandb_trace_v1_write-proto)
+    - [WriteRequest](#banyandb-trace-v1-WriteRequest)
+    - [WriteResponse](#banyandb-trace-v1-WriteResponse)
+  
+- [banyandb/trace/v1/rpc.proto](#banyandb_trace_v1_rpc-proto)
+    - [TraceService](#banyandb-trace-v1-TraceService)
   
 - [Scalar Value Types](#scalar-value-types)
 
@@ -502,6 +516,7 @@ Metadata is for multi-tenant, multi-model use
 | CATALOG_STREAM | 1 |  |
 | CATALOG_MEASURE | 2 |  |
 | CATALOG_PROPERTY | 3 |  |
+| CATALOG_TRACE | 4 |  |
 
 
 
@@ -1390,6 +1405,43 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 
 
 
+
+<a name="banyandb-database-v1-Trace"></a>
+
+### Trace
+Trace defines a tracing-specific storage resource.
+It is suitable for storing traces and spans.
+The name of a Trace is a logical namespace within a group,
+while the group of a Trace corresponds to a physical directory.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of the trace resource. |
+| tags | [TraceTagSpec](#banyandb-database-v1-TraceTagSpec) | repeated | tags are the specification of tags. |
+| trace_id_tag_name | [string](#string) |  | trace_id_tag_name is the name of the tag that stores the trace ID. |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the trace resource is updated. |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceTagSpec"></a>
+
+### TraceTagSpec
+TraceTagSpec defines the specification of a tag in a trace.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | name is the name of the tag. |
+| type | [TagType](#banyandb-database-v1-TagType) |  | type is the type of the tag. |
+
+
+
+
+
  
 
 
@@ -1441,6 +1493,7 @@ Type determine the index structure under the hood
 | ---- | ------ | ----------- |
 | TYPE_UNSPECIFIED | 0 |  |
 | TYPE_INVERTED | 1 |  |
+| TYPE_TREE | 3 | TYPE_TREE is a tree index, which is used for storing hierarchical data. |
 
 
 
@@ -3739,6 +3792,158 @@ QueryResponse is the response for a query to the Query module.
 | Query | [QueryRequest](#banyandb-stream-v1-QueryRequest) | [QueryResponse](#banyandb-stream-v1-QueryResponse) |  |
 | Write | [WriteRequest](#banyandb-stream-v1-WriteRequest) stream | [WriteResponse](#banyandb-stream-v1-WriteResponse) stream |  |
 | DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-stream-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-stream-v1-DeleteExpiredSegmentsResponse) |  |
+
+ 
+
+
+
+<a name="banyandb_trace_v1_query-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/trace/v1/query.proto
+
+
+
+<a name="banyandb-trace-v1-QueryRequest"></a>
+
+### QueryRequest
+QueryRequest is the request contract for query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| groups | [string](#string) | repeated | groups indicate the physical data location. |
+| name | [string](#string) |  | name is the identity of a trace. |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. In the context of trace, it represents the range of the `startTime` for spans/segments, it is always recommended to specify time range for performance reason |
+| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
+| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of spans being returned |
+| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. So far, only fields in the type of Integer are supported |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is the filter criteria. |
+| tag_projection | [string](#string) | repeated | projection can be used to select the names of the tags in the response |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
+| stages | [string](#string) | repeated | stage is used to specify the stage of the query in the lifecycle |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-QueryResponse"></a>
+
+### QueryResponse
+QueryResponse is the response of a query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans is a list of spans that match the query. |
+| trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-Span"></a>
+
+### Span
+Span is a single operation within a trace.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tags are the indexed tags of the span. |
+| span | [bytes](#bytes) |  | span is the raw span data. |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is the timestamp of the span. |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_trace_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/trace/v1/write.proto
+
+
+
+<a name="banyandb-trace-v1-WriteRequest"></a>
+
+### WriteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| tags | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
+| span | [bytes](#bytes) |  |  |
+| version | [uint64](#uint64) |  |  |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-WriteResponse"></a>
+
+### WriteResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| version | [uint64](#uint64) |  |  |
+| status | [string](#string) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_trace_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/trace/v1/rpc.proto
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-trace-v1-TraceService"></a>
+
+### TraceService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Query | [QueryRequest](#banyandb-trace-v1-QueryRequest) | [QueryResponse](#banyandb-trace-v1-QueryResponse) |  |
+| Write | [WriteRequest](#banyandb-trace-v1-WriteRequest) stream | [WriteResponse](#banyandb-trace-v1-WriteResponse) stream |  |
 
  
 
