@@ -3812,12 +3812,12 @@ QueryRequest is the request contract for query.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| groups | [string](#string) | repeated | groups indicate the physical data location. |
+| groups | [string](#string) | repeated | groups indicates the physical data location. |
 | name | [string](#string) |  | name is the identity of a trace. |
 | time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. In the context of trace, it represents the range of the `startTime` for spans/segments, it is always recommended to specify time range for performance reason |
 | offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
 | limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of spans being returned |
-| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. So far, only fields in the type of Integer are supported |
+| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. So far, only tags in the type of Integer are supported |
 | criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is the filter criteria. |
 | tag_projection | [string](#string) | repeated | projection can be used to select the names of the tags in the response |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |

@@ -47,7 +47,7 @@ message QueryResponse {
 
 // QueryRequest is the request contract for query.
 message QueryRequest {
-  // groups indicate the physical data location.
+  // groups indicates the physical data location.
   repeated string groups = 1 [(validate.rules).repeated.min_items = 1];
   // name is the identity of a trace.
   string name = 2 [(validate.rules).string.min_len = 1];
@@ -59,7 +59,7 @@ message QueryRequest {
   uint32 offset = 4;
   // limit is used to impose a boundary on the number of spans being returned
   uint32 limit = 5;
-  // order_by is given to specify the sort for a tag. So far, only fields in the type of Integer are supported
+  // order_by is given to specify the sort for a tag. So far, only tags in the type of Integer are supported
   model.v1.QueryOrder order_by = 6;
   // criteria is the filter criteria.
   model.v1.Criteria criteria = 7;
