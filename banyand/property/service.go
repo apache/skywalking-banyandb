@@ -62,6 +62,7 @@ type service struct {
 	snapshotDir         string
 	flushTimeout        time.Duration
 	expireTimeout       time.Duration
+	repairTreeSlotCount int
 	maxDiskUsagePercent int
 	maxFileSnapshotNum  int
 }
@@ -73,6 +74,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.IntVar(&s.maxDiskUsagePercent, "property-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	flagS.IntVar(&s.maxFileSnapshotNum, "property-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
 	flagS.DurationVar(&s.expireTimeout, "property-expire-delete-timeout", time.Hour*24*7, "the duration of the expired data needs to be deleted")
+	flagS.IntVar(&s.repairTreeSlotCount, "property-repair-tree-slot-count", 32, "the slot count of the repair tree")
 	return flagS
 }
 
@@ -111,7 +113,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.nodeID = node.NodeID
 
 	var err error
-	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.omr, s.lfs)
+	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs)
 	if err != nil {
 		return err
 	}

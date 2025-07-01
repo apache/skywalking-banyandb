@@ -28,6 +28,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.21.1
 	github.com/rs/zerolog v1.34.0
+	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
 	github.com/spf13/viper v1.20.1
