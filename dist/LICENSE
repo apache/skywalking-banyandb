@@ -477,7 +477,8 @@ MIT licenses
     @floating-ui/utils 0.2.9 MIT
     @jridgewell/sourcemap-codec 1.5.0 MIT
     @parcel/watcher 2.5.1 MIT
-    @parcel/watcher-darwin-arm64 2.5.1 MIT
+    @parcel/watcher-linux-x64-glibc 2.5.1 MIT
+    @parcel/watcher-linux-x64-musl 2.5.1 MIT
     @popperjs/core 2.11.7 MIT
     @types/lodash 4.17.16 MIT
     @types/lodash-es 4.17.12 MIT
