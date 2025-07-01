@@ -74,6 +74,7 @@ type tagFilter struct {
 }
 
 func (tf *tagFilter) reset() {
+	tf.filter = nil
 	tf.min = tf.min[:0]
 	tf.max = tf.max[:0]
 }

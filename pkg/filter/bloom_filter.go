@@ -49,7 +49,7 @@ func NewBloomFilter(n int) *BloomFilter {
 
 // Reset resets the Bloom filter.
 func (bf *BloomFilter) Reset() {
-	bf.bits = nil
+	bf.bits = bf.bits[:0]
 	bf.n = 0
 }
 
