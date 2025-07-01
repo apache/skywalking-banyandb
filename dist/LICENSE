@@ -319,6 +319,7 @@ BSD-3-Clause licenses
     github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 BSD-3-Clause
     github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 BSD-3-Clause
     github.com/shirou/gopsutil/v3 v3.24.5 BSD-3-Clause
+    github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72 BSD-3-Clause
     github.com/spf13/pflag v1.0.6 BSD-3-Clause
     github.com/tklauser/go-sysconf v0.3.15 BSD-3-Clause
     github.com/xhit/go-str2duration/v2 v2.1.0 BSD-3-Clause

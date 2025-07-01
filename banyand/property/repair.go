@@ -230,6 +230,9 @@ func newRepairTreeBuilder(slotCount int) *repairTreeBuilder {
 }
 
 func (r *repairTreeBuilder) append(id, shaVal string, modVersion int64) {
+	if len(id) == 0 || len(shaVal) == 0 {
+		return
+	}
 	slotIndex := int(murmur3.Sum32([]byte(id))) % len(r.slots)
 	slot := r.slots[slotIndex]
 	if slot == nil {
