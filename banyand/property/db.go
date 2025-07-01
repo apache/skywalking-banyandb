@@ -219,6 +219,14 @@ func (db *database) collect() {
 	}
 }
 
+func (db *database) repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error {
+	s, err := db.loadShard(ctx, common.ShardID(shardID))
+	if err != nil {
+		return errors.WithMessagef(err, "failed to load shard %d", id)
+	}
+	return s.repair(ctx, id, property, deleteTime)
+}
+
 type walkFn func(suffix string) error
 
 func walkDir(root, prefix string, wf walkFn) error {
@@ -236,6 +244,8 @@ func walkDir(root, prefix string, wf walkFn) error {
 }
 
 type queryProperty struct {
+	id         []byte
 	source     []byte
+	timestamp  int64
 	deleteTime int64
 }

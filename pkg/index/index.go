@@ -300,7 +300,6 @@ type Document struct {
 	Timestamp    int64
 	DocID        uint64
 	Version      int64
-	DeletedTime  int64 // for logical deletion
 }
 
 // Documents is a collection of documents.

@@ -19,6 +19,7 @@ Release Notes.
 - Implement skipping index for stream.
 - Add Load Balancer Feature to Liaison. 
 - Implement fadvise for large files to prevent page cache pollution.
+- Data Model: Introduce the `Trace` data model to store the trace/span data.
 
 ### Bug Fixes
 
