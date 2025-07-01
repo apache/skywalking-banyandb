@@ -1495,6 +1495,7 @@ Type determine the index structure under the hood
 | ---- | ------ | ----------- |
 | TYPE_UNSPECIFIED | 0 |  |
 | TYPE_INVERTED | 1 |  |
+| TYPE_SKIPPING | 2 |  |
 | TYPE_TREE | 3 | TYPE_TREE is a tree index, which is used for storing hierarchical data. |
 
 
