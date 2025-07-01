@@ -264,7 +264,7 @@ tags:
 type: TYPE_INVERTED
 ```
 
-IndexRule supports two distinct kinds of index structures. The `INVERTED` index is suitable for measure tag indexing due to better query performance. The `SKIPPING` index is optimized for the majority of stream tags, which prioritizes efficient space utilization.
+IndexRule supports several kinds of index structures. The `INVERTED` index is suitable for measure tag indexing due to better query performance. The `SKIPPING` index is optimized for the majority of stream tags, which prioritizes efficient space utilization. The `TREE` index is designed for storing hierarchical data.
 
 ```yaml
 metadata:
