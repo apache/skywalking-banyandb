@@ -35,6 +35,7 @@ enum TagType {
   TAG_TYPE_STRING_ARRAY = 3;
   TAG_TYPE_INT_ARRAY = 4;
   TAG_TYPE_DATA_BINARY = 5;
+  TAG_TYPE_TIMESTAMP = 6;
 }
 
 message TagFamilySpec {
@@ -241,6 +242,8 @@ message Trace {
   repeated TraceTagSpec tags = 2 [(validate.rules).repeated.min_items = 1];
   // trace_id_tag_name is the name of the tag that stores the trace ID.
   string trace_id_tag_name = 3 [(validate.rules).string.min_len = 1];
+  // timestamp_tag_name is the name of the tag that stores the timestamp.
+  string timestamp_tag_name = 4 [(validate.rules).string.min_len = 1];
   // updated_at indicates when the trace resource is updated.
-  google.protobuf.Timestamp updated_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
 }

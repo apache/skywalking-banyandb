@@ -896,6 +896,7 @@ Trace is the top level message of a trace.
 | int | [Int](#banyandb-model-v1-Int) |  |  |
 | int_array | [IntArray](#banyandb-model-v1-IntArray) |  |  |
 | binary_data | [bytes](#bytes) |  |  |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
 
@@ -1420,6 +1421,7 @@ while the group of a Trace corresponds to a physical directory.
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of the trace resource. |
 | tags | [TraceTagSpec](#banyandb-database-v1-TraceTagSpec) | repeated | tags are the specification of tags. |
 | trace_id_tag_name | [string](#string) |  | trace_id_tag_name is the name of the tag that stores the trace ID. |
+| timestamp_tag_name | [string](#string) |  | timestamp_tag_name is the name of the tag that stores the timestamp. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the trace resource is updated. |
 
 
@@ -1510,6 +1512,7 @@ Type determine the index structure under the hood
 | TAG_TYPE_STRING_ARRAY | 3 |  |
 | TAG_TYPE_INT_ARRAY | 4 |  |
 | TAG_TYPE_DATA_BINARY | 5 |  |
+| TAG_TYPE_TIMESTAMP | 6 |  |
 
 
  
@@ -3854,7 +3857,6 @@ Span is a single operation within a trace.
 | ----- | ---- | ----- | ----------- |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tags are the indexed tags of the span. |
 | span | [bytes](#bytes) |  | span is the raw span data. |
-| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is the timestamp of the span. |
 
 
 
@@ -3889,7 +3891,6 @@ Span is a single operation within a trace.
 | tags | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
 | span | [bytes](#bytes) |  |  |
 | version | [uint64](#uint64) |  |  |
-| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
 

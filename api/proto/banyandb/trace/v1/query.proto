@@ -21,7 +21,6 @@ package banyandb.trace.v1;
 
 import "banyandb/common/v1/trace.proto";
 import "banyandb/model/v1/query.proto";
-import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1";
@@ -33,8 +32,6 @@ message Span {
   repeated model.v1.Tag tags = 1;
   // span is the raw span data.
   bytes span = 2;
-  // timestamp is the timestamp of the span.
-  google.protobuf.Timestamp timestamp = 3;
 }
 
 // QueryResponse is the response of a query.
