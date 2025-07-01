@@ -282,13 +282,13 @@ func (qo *queryOptions) copyFrom(other *queryOptions) {
 func indexSearch(ctx context.Context, sqo model.StreamQueryOptions,
 	tabs []*tsTable, seriesList []uint64, tr *index.RangeOpts,
 ) (posting.List, posting.List, error) {
-	if sqo.Filter == nil || sqo.Filter == logicalstream.ENode {
+	if sqo.InvertedFilter == nil || sqo.InvertedFilter == logicalstream.ENode {
 		return nil, nil, nil
 	}
 	result, resultTS := roaring.NewPostingList(), roaring.NewPostingList()
 	for _, tw := range tabs {
 		index := tw.Index()
-		pl, plTS, err := index.Search(ctx, seriesList, sqo.Filter, tr)
+		pl, plTS, err := index.Search(ctx, seriesList, sqo.InvertedFilter, tr)
 		if err != nil {
 			return nil, nil, err
 		}
