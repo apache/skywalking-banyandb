@@ -28,7 +28,7 @@ import (
 
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/index"
-	"github.com/spaolacci/murmur3"
+	"github.com/cespare/xxhash/v2"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
@@ -233,7 +233,8 @@ func (r *repairTreeBuilder) append(id, shaVal string, modVersion int64) {
 	if len(id) == 0 || len(shaVal) == 0 {
 		return
 	}
-	slotIndex := int(murmur3.Sum32([]byte(id))) % len(r.slots)
+	val := xxhash.Sum64([]byte(id))
+	slotIndex := val % uint64(len(r.slots))
 	slot := r.slots[slotIndex]
 	if slot == nil {
 		slot = make(map[string]*repairTreeBuilderNode)
