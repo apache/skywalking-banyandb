@@ -44,6 +44,7 @@ var (
 	_ bus.MessageListener = (*updateListener)(nil)
 	_ bus.MessageListener = (*deleteListener)(nil)
 	_ bus.MessageListener = (*queryListener)(nil)
+	_ bus.MessageListener = (*repairListener)(nil)
 )
 
 type updateListener struct {
@@ -110,7 +111,7 @@ type deleteListener struct {
 	s *service
 }
 
-func (h *deleteListener) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
+func (h *deleteListener) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	n := time.Now()
 	now := n.UnixNano()
 	var protoReq proto.Message
@@ -130,7 +131,7 @@ func (h *deleteListener) Rev(_ context.Context, message bus.Message) (resp bus.M
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("id is empty"))
 		return
 	}
-	err := h.s.db.delete(d.Ids)
+	err := h.s.db.delete(ctx, d.Ids)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to delete property: %v", err))
 		return
@@ -180,7 +181,7 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 			span.Stop()
 		}()
 	}
-	sources, err := h.s.db.query(ctx, d)
+	properties, err := h.s.db.query(ctx, d)
 	if err != nil {
 		if tracer != nil {
 			span.Error(err)
@@ -192,8 +193,10 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to query property: %v", err))
 		return
 	}
-	qResp := &propertyv1.InternalQueryResponse{
-		Sources: sources,
+	qResp := &propertyv1.InternalQueryResponse{}
+	for _, p := range properties {
+		qResp.Sources = append(qResp.Sources, p.source)
+		qResp.Deletes = append(qResp.Deletes, p.deleteTime)
 	}
 	if tracer != nil {
 		qResp.Trace = tracer.ToProto()
@@ -263,4 +266,41 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 func (s *snapshotListener) snapshotName() string {
 	s.snapshotSeq++
 	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), s.snapshotSeq)
+}
+
+type repairListener struct {
+	*bus.UnImplementedHealthyListener
+	s *service
+}
+
+func (r *repairListener) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+	n := time.Now()
+	now := n.UnixNano()
+	var protoReq proto.Message
+	defer func() {
+		if err := recover(); err != nil {
+			r.s.l.Error().Interface("err", err).RawJSON("req", logger.Proto(protoReq)).Str("stack", string(debug.Stack())).Msg("panic")
+			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic: %v", err))
+		}
+	}()
+	d := message.Data().(*propertyv1.InternalRepairRequest)
+	if d == nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("request is nil"))
+		return
+	}
+	if d.Id == nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("id is nil"))
+		return
+	}
+	if d.Property == nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("property is nil"))
+		return
+	}
+	protoReq = d
+	if err := r.s.db.repair(ctx, d.Id, d.ShardId, d.Property, d.DeleteTime); err != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to delete property: %v", err))
+		return
+	}
+	resp = bus.NewMessage(bus.MessageID(now), &propertyv1.InternalRepairResponse{})
+	return
 }

@@ -60,6 +60,7 @@ type Reader interface {
 	// Read the entire file at a specified offset.
 	Read(offset int64, buffer []byte) (int, error)
 	// Read the entire file using sequential read.
+	// If skipFadvise is true, fadvise will not be applied.
 	SequentialRead() SeqReader
 	// Returns the absolute path of the file.
 	Path() string
@@ -133,11 +134,18 @@ type DirEntry interface {
 }
 
 // MustCreateFile creates a new file with the specified name and permission.
-func MustCreateFile(fs FileSystem, path string, permission Mode) File {
+// If cached is false, it will sync the file data to disk and then apply FADV_DONTNEED to tell the OS not to cache it.
+func MustCreateFile(fs FileSystem, path string, permission Mode, cached bool) File {
 	f, err := fs.CreateFile(path, permission)
 	if err != nil {
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("cannot create file")
 	}
+
+	// Pass the cached parameter to the file for use in sequential operations
+	if localFile, ok := f.(*LocalFile); ok {
+		localFile.cached = cached
+	}
+
 	return f
 }
 

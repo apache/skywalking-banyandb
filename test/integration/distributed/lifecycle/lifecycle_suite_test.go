@@ -137,9 +137,13 @@ var _ = SynchronizedAfterSuite(func() {
 	if connection != nil {
 		Expect(connection.Close()).To(Succeed())
 	}
-}, func() {
-	if deferFunc != nil {
-		deferFunc()
+}, func() {})
+
+var _ = ReportAfterSuite("Distributed Lifecycle Suite", func(report Report) {
+	if report.SuiteSucceeded {
+		if deferFunc != nil {
+			deferFunc()
+		}
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	}
-	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 })

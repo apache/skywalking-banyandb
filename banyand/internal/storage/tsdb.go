@@ -63,6 +63,7 @@ type TSDBOpts[T TSTable, O any] struct {
 	ShardNum                       uint32
 	DisableRetention               bool
 	SegmentIdleTimeout             time.Duration
+	MemoryLimit                    uint64
 }
 
 type (
@@ -73,6 +74,23 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 	return segmentID(unit)<<31 | ((segmentID(suffix) << 1) >> 1)
 }
 
+var _ Cache = (*groupCache)(nil)
+
+type groupCache struct {
+	*serviceCache
+	group string
+}
+
+func (gc *groupCache) get(key EntryKey) any {
+	key.group = gc.group
+	return gc.Get(key)
+}
+
+func (gc *groupCache) put(key EntryKey, value any) {
+	key.group = gc.group
+	gc.Put(key, value)
+}
+
 type database[T TSTable, O any] struct {
 	lock              fs.File
 	logger            *logger.Logger
@@ -80,6 +98,7 @@ type database[T TSTable, O any] struct {
 	tsEventCh         chan int64
 	segmentController *segmentController[T, O]
 	*metrics
+	lfs            fs.FileSystem
 	p              common.Position
 	location       string
 	latestTickTime atomic.Int64
@@ -100,7 +119,7 @@ func (d *database[T, O]) Close() error {
 	close(d.tsEventCh)
 	d.segmentController.close()
 	d.lock.Close()
-	if err := lfs.DeleteFile(d.lock.Path()); err != nil {
+	if err := d.lfs.DeleteFile(d.lock.Path()); err != nil {
 		logger.Panicf("cannot delete lock file %s: %s", d.lock.Path(), err)
 	}
 	return nil
@@ -108,7 +127,7 @@ func (d *database[T, O]) Close() error {
 
 // OpenTSDB returns a new tsdb runtime. This constructor will create a new database if it's absent,
 // or load an existing one.
-func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[T, O], error) {
+func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache Cache, group string) (TSDB[T, O], error) {
 	if opts.SegmentInterval.Num == 0 {
 		return nil, errors.Wrap(errOpenDatabase, "segment interval is absent")
 	}
@@ -117,7 +136,8 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	}
 	p := common.GetPosition(ctx)
 	location := filepath.Clean(opts.Location)
-	lfs.MkdirIfNotExist(location, DirPerm)
+	tsdbLfs := fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit)
+	tsdbLfs.MkdirIfNotExist(location, DirPerm)
 	l := logger.Fetch(ctx, p.Database)
 	clock, _ := timestamp.GetClock(ctx)
 	scheduler := timestamp.NewScheduler(l, clock)
@@ -126,6 +146,10 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 	if opts.StorageMetricsFactory != nil {
 		indexMetrics = inverted.NewMetrics(opts.StorageMetricsFactory, common.SegLabelNames()...)
 	}
+	var sc *serviceCache
+	if cache != nil {
+		sc = cache.(*serviceCache)
+	}
 	db := &database[T, O]{
 		location:  location,
 		scheduler: scheduler,
@@ -133,13 +157,14 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O]) (TSDB[
 		tsEventCh: make(chan int64),
 		p:         p,
 		segmentController: newSegmentController(ctx, location,
-			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentIdleTimeout),
+			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentIdleTimeout, tsdbLfs, sc, group),
 		metrics:          newMetrics(opts.StorageMetricsFactory),
 		disableRetention: opts.DisableRetention,
+		lfs:              tsdbLfs,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	lockPath := filepath.Join(opts.Location, lockFilename)
-	lock, err := lfs.CreateLockFile(lockPath, FilePerm)
+	lock, err := tsdbLfs.CreateLockFile(lockPath, FilePerm)
 	if err != nil {
 		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
 	}
@@ -190,16 +215,16 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 	for _, seg := range segments {
 		segDir := filepath.Base(seg.location)
 		segPath := filepath.Join(dst, segDir)
-		lfs.MkdirIfNotExist(segPath, DirPerm)
+		d.lfs.MkdirIfNotExist(segPath, DirPerm)
 
 		metadataSrc := filepath.Join(seg.location, metadataFilename)
 		metadataDest := filepath.Join(segPath, metadataFilename)
-		if err := lfs.CreateHardLink(metadataSrc, metadataDest, nil); err != nil {
+		if err := d.lfs.CreateHardLink(metadataSrc, metadataDest, nil); err != nil {
 			return errors.Wrapf(err, "failed to snapshot metadata for segment %s", segDir)
 		}
 
 		indexPath := filepath.Join(segPath, seriesIndexDirName)
-		lfs.MkdirIfNotExist(indexPath, DirPerm)
+		d.lfs.MkdirIfNotExist(indexPath, DirPerm)
 		if err := seg.index.store.TakeFileSnapshot(indexPath); err != nil {
 			return errors.Wrapf(err, "failed to snapshot index for segment %s", segDir)
 		}
@@ -211,7 +236,7 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 		for _, shard := range *sLst {
 			shardDir := filepath.Base(shard.location)
 			shardPath := filepath.Join(segPath, shardDir)
-			lfs.MkdirIfNotExist(shardPath, DirPerm)
+			d.lfs.MkdirIfNotExist(shardPath, DirPerm)
 			if err := shard.table.TakeFileSnapshot(shardPath); err != nil {
 				return errors.Wrapf(err, "failed to snapshot shard %s in segment %s", shardDir, segDir)
 			}
@@ -240,7 +265,11 @@ func (d *database[T, O]) collect() {
 	refCount := int32(0)
 	ss, _ := d.segmentController.segments(false)
 	for _, s := range ss {
-		for _, t := range s.Tables() {
+		if atomic.LoadInt32(&s.refCount) <= 0 {
+			continue
+		}
+		tables, _ := s.Tables()
+		for _, t := range tables {
 			t.Collect(d.segmentController.metrics)
 		}
 		s.index.store.CollectMetrics(s.index.p.SegLabelValues()...)
@@ -248,6 +277,9 @@ func (d *database[T, O]) collect() {
 		refCount += atomic.LoadInt32(&s.refCount)
 	}
 	d.totalSegRefs.Set(float64(refCount))
+	if d.metrics.schedulerMetrics == nil {
+		return
+	}
 	metrics := d.scheduler.Metrics()
 	for job, m := range metrics {
 		d.metrics.schedulerMetrics.Collect(job, m)

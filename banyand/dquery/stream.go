@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 )
 
@@ -51,28 +52,29 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	if p.log.Debug().Enabled() {
 		p.log.Debug().RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a query request")
 	}
-	if len(queryCriteria.Groups) > 1 {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("only support one group in the query request"))
-		return
-	}
-	meta := &commonv1.Metadata{
-		Name:  queryCriteria.Name,
-		Group: queryCriteria.Groups[0],
-	}
-	ec, err := p.streamService.Stream(meta)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
-		return
-	}
-	s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
-		return
+
+	var schemas []logical.Schema
+	for _, group := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{
+			Name:  queryCriteria.Name,
+			Group: group,
+		}
+		ec, err := p.streamService.Stream(meta)
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
+			return
+		}
+		s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
+			return
+		}
+		schemas = append(schemas, s)
 	}
 
-	plan, err := logical_stream.DistributedAnalyze(queryCriteria, s)
+	plan, err := logical_stream.DistributedAnalyze(queryCriteria, schemas)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", queryCriteria.Name, err))
 		return
 	}
 
@@ -130,7 +132,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	}))
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", meta.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", queryCriteria.Name, err))
 		return
 	}
 

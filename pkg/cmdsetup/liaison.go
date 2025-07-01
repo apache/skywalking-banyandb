@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/dquery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
@@ -32,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
+	"github.com/apache/skywalking-banyandb/banyand/queue/sub"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -45,34 +47,45 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	pipeline := pub.New(metaSvc)
+	tire1Client := pub.New(metaSvc, databasev1.Role_ROLE_LIAISON)
+	tire2Client := pub.New(metaSvc, databasev1.Role_ROLE_DATA)
 	localPipeline := queue.Local()
-	measureNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)
-	measureNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, pipeline, measureNodeSel)
-	metricSvc := observability.NewMetricService(metaSvc, pipeline, "liaison", measureNodeRegistry)
-	streamNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
+	measureLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)
+	measureLiaisonNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, tire1Client, measureLiaisonNodeSel)
+	measureDataNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)
+	metricSvc := observability.NewMetricService(metaSvc, tire1Client, "liaison", measureLiaisonNodeRegistry)
+	internalPipeline := sub.NewServerWithPorts(metricSvc, "liaison-server", 18912, 18913)
+	streamLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
+	streamDataNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
 	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
-	grpcServer := grpc.NewServer(ctx, pipeline, localPipeline, metaSvc, grpc.NodeRegistries{
-		MeasureNodeRegistry:  measureNodeRegistry,
-		StreamNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicStreamWrite, pipeline, streamNodeSel),
-		PropertyNodeRegistry: grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, pipeline, propertyNodeSel),
-	}, metricSvc)
-	profSvc := observability.NewProfService()
-	httpServer := http.NewServer()
-	dQuery, err := dquery.NewService(metaSvc, localPipeline, pipeline, metricSvc)
+	topNPipeline := queue.Local()
+	dQuery, err := dquery.NewService(metaSvc, localPipeline, tire2Client, topNPipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
 	}
+	grpcServer := grpc.NewServer(ctx, tire1Client, tire2Client, localPipeline, topNPipeline, metaSvc, grpc.NodeRegistries{
+		MeasureLiaisonNodeRegistry: measureLiaisonNodeRegistry,
+		MeasureDataNodeRegistry:    grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, tire2Client, measureDataNodeSel),
+		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
+		StreamDataNodeRegistry:     grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire2Client, streamDataNodeSel),
+		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
+	}, metricSvc, dQuery, internalPipeline)
+	profSvc := observability.NewProfService()
+	httpServer := http.NewServer()
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,
 		metaSvc,
-		localPipeline,
-		pipeline,
-		measureNodeSel,
-		streamNodeSel,
-		propertyNodeSel,
 		metricSvc,
+		localPipeline,
+		internalPipeline,
+		tire1Client,
+		tire2Client,
+		measureLiaisonNodeSel,
+		measureDataNodeSel,
+		streamLiaisonNodeSel,
+		streamDataNodeSel,
+		propertyNodeSel,
 		dQuery,
 		grpcServer,
 		httpServer,
@@ -94,11 +107,11 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				for _, sel := range []node.Selector{measureNodeSel, streamNodeSel, propertyNodeSel} {
+				for _, sel := range []node.Selector{measureDataNodeSel, streamDataNodeSel, propertyNodeSel} {
 					sel.SetNodeSelector(ls)
 				}
 			}
-			node, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort())
+			node, err := common.GenerateNode(internalPipeline.GetPort(), httpServer.GetPort())
 			if err != nil {
 				return err
 			}

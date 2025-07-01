@@ -66,23 +66,24 @@ var (
 )
 
 type server struct {
-	databasev1.UnimplementedSnapshotServiceServer
-	streamv1.UnimplementedStreamServiceServer
-	creds     credentials.TransportCredentials
-	omr       observability.MetricsRegistry
-	httpSrv   *http.Server
-	log       *logger.Logger
-	ser       *grpclib.Server
-	listeners map[bus.Topic][]bus.MessageListener
-	topicMap  map[string]bus.Topic
 	clusterv1.UnimplementedServiceServer
+	streamv1.UnimplementedStreamServiceServer
+	databasev1.UnimplementedSnapshotServiceServer
+	creds          credentials.TransportCredentials
+	omr            observability.MetricsRegistry
 	metrics        *metrics
+	ser            *grpclib.Server
+	listeners      map[bus.Topic][]bus.MessageListener
+	topicMap       map[string]bus.Topic
+	log            *logger.Logger
+	httpSrv        *http.Server
 	clientCloser   context.CancelFunc
-	host           string
-	addr           string
 	httpAddr       string
+	addr           string
+	host           string
 	certFile       string
 	keyFile        string
+	flagNamePrefix string
 	maxRecvMsgSize run.Bytes
 	listenersLock  sync.RWMutex
 	port           uint32
@@ -92,10 +93,19 @@ type server struct {
 
 // NewServer returns a new gRPC server.
 func NewServer(omr observability.MetricsRegistry) queue.Server {
+	return NewServerWithPorts(omr, "", 17912, 17913)
+}
+
+// NewServerWithPorts returns a new gRPC server with specified ports.
+func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string, port, httpPort uint32) queue.Server {
 	return &server{
-		listeners: make(map[bus.Topic][]bus.MessageListener),
-		topicMap:  make(map[string]bus.Topic),
-		omr:       omr,
+		listeners:      make(map[bus.Topic][]bus.MessageListener),
+		topicMap:       make(map[string]bus.Topic),
+		omr:            omr,
+		maxRecvMsgSize: defaultRecvSize,
+		flagNamePrefix: flagNamePrefix,
+		port:           port,
+		httpPort:       httpPort,
 	}
 }
 
@@ -110,7 +120,7 @@ func (s *server) Name() string {
 }
 
 func (s *server) Role() databasev1.Role {
-	return databasev1.Role_ROLE_DATA
+	return databasev1.Role_ROLE_UNSPECIFIED
 }
 
 func (s *server) GetPort() *uint32 {
@@ -119,18 +129,29 @@ func (s *server) GetPort() *uint32 {
 
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
-	s.maxRecvMsgSize = defaultRecvSize
-	fs.VarP(&s.maxRecvMsgSize, "max-recv-msg-size", "", "the size of max receiving message")
-	fs.BoolVar(&s.tls, "tls", false, "connection uses TLS if true, else plain TCP")
-	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
-	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
-	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
-	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
-	fs.Uint32Var(&s.httpPort, "http-port", 17913, "the port of banyand http api listens")
+	prefixFlag := func(name string) string {
+		if s.flagNamePrefix == "" {
+			return name
+		}
+		return s.flagNamePrefix + "-" + name
+	}
+	fs.VarP(&s.maxRecvMsgSize, prefixFlag("max-recv-msg-size"), "", "the size of max receiving message")
+	fs.BoolVar(&s.tls, prefixFlag("tls"), false, "connection uses TLS if true, else plain TCP")
+	fs.StringVar(&s.certFile, prefixFlag("cert-file"), "", "the TLS cert file")
+	fs.StringVar(&s.keyFile, prefixFlag("key-file"), "", "the TLS key file")
+	fs.StringVar(&s.host, prefixFlag("grpc-host"), "", "the host of banyand listens")
+	fs.Uint32Var(&s.port, prefixFlag("grpc-port"), s.port, "the port of banyand listens")
+	fs.Uint32Var(&s.httpPort, prefixFlag("http-port"), s.httpPort, "the port of banyand http api listens")
 	return fs
 }
 
 func (s *server) Validate() error {
+	if s.port == 0 {
+		s.port = 17912
+	}
+	if s.httpPort == 0 {
+		s.httpPort = 17913
+	}
 	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
 	if s.addr == ":" {
 		return errNoAddr

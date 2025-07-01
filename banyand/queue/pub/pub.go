@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,7 +32,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -55,22 +55,30 @@ var (
 
 type pub struct {
 	schema.UnimplementedOnInitHandler
-	metadata   metadata.Repo
-	handlers   map[bus.Topic]schema.EventHandler
-	log        *logger.Logger
-	registered map[string]*databasev1.Node
-	active     map[string]*client
-	evictable  map[string]evictNode
-	closer     *run.Closer
-	caCertPath string
-	mu         sync.RWMutex
-	tlsEnabled bool
+	metadata     metadata.Repo
+	evictable    map[string]evictNode
+	log          *logger.Logger
+	registered   map[string]*databasev1.Node
+	active       map[string]*client
+	handlers     map[bus.Topic]schema.EventHandler
+	closer       *run.Closer
+	caCertPath   string
+	prefix       string
+	allowedRoles []databasev1.Role
+	mu           sync.RWMutex
+	tlsEnabled   bool
 }
 
 func (p *pub) FlagSet() *run.FlagSet {
+	prefixFlag := func(name string) string {
+		if p.prefix == "" {
+			return name
+		}
+		return p.prefix + "-" + name
+	}
 	fs := run.NewFlagSet("queue-client")
-	fs.BoolVar(&p.tlsEnabled, "internal-tls", false, "enable internal TLS")
-	fs.StringVar(&p.caCertPath, "internal-ca-cert", "", "CA certificate file to verify the internal data server")
+	fs.BoolVar(&p.tlsEnabled, prefixFlag("client-tls"), false, fmt.Sprintf("enable client TLS for %s", p.prefix))
+	fs.StringVar(&p.caCertPath, prefixFlag("client-ca-cert"), "", fmt.Sprintf("CA certificate file to verify the %s server", p.prefix))
 	return fs
 }
 
@@ -231,6 +239,7 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 		}
 		f.clients = append(f.clients, stream)
 		f.topics = append(f.topics, topic)
+		f.nodes = append(f.nodes, node)
 		return err
 	}
 	for _, m := range messages {
@@ -244,34 +253,53 @@ func (p *pub) Publish(_ context.Context, topic bus.Topic, messages ...bus.Messag
 	return p.publish(15*time.Second, topic, messages...)
 }
 
-// New returns a new queue client.
-func New(metadata metadata.Repo) queue.Client {
-	return &pub{
-		metadata:   metadata,
-		active:     make(map[string]*client),
-		evictable:  make(map[string]evictNode),
-		registered: make(map[string]*databasev1.Node),
-		handlers:   make(map[bus.Topic]schema.EventHandler),
-		closer:     run.NewCloser(1),
+// New returns a new queue client targeting the given node roles.
+// If no roles are passed, it defaults to databasev1.Role_ROLE_DATA.
+func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
+	if len(roles) == 0 {
+		roles = []databasev1.Role{databasev1.Role_ROLE_DATA}
 	}
+	var strBuilder strings.Builder
+	for _, role := range roles {
+		switch role {
+		case databasev1.Role_ROLE_DATA:
+			strBuilder.WriteString("data")
+		case databasev1.Role_ROLE_LIAISON:
+			strBuilder.WriteString("liaison")
+		default:
+			logger.Panicf("unknown role %s", role)
+		}
+	}
+	p := &pub{
+		metadata:     metadata,
+		active:       make(map[string]*client),
+		evictable:    make(map[string]evictNode),
+		registered:   make(map[string]*databasev1.Node),
+		handlers:     make(map[bus.Topic]schema.EventHandler),
+		closer:       run.NewCloser(1),
+		allowedRoles: roles,
+		prefix:       strBuilder.String(),
+	}
+	return p
 }
 
-// NewWithoutMetadata returns a new queue client without metadata.
+// NewWithoutMetadata returns a new queue client without metadata, defaulting to data nodes.
 func NewWithoutMetadata() queue.Client {
-	p := New(nil)
+	p := New(nil, databasev1.Role_ROLE_DATA)
 	p.(*pub).log = logger.GetLogger("queue-client")
 	return p
 }
 
-func (*pub) Name() string {
-	return "queue-client"
+func (p *pub) Name() string {
+	return "queue-client-" + p.prefix
 }
 
 func (p *pub) PreRun(context.Context) error {
 	if p.metadata != nil {
 		p.metadata.RegisterHandler("queue-client", schema.KindNode, p)
 	}
-	p.log = logger.GetLogger("server-queue-pub")
+
+	p.log = logger.GetLogger("server-queue-pub-" + p.prefix)
 	return nil
 }
 
@@ -285,11 +313,11 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 	if !ok {
 		return nil, fmt.Errorf("invalid message type %T", m.Data())
 	}
-	anyMessage, err := anypb.New(message)
+	data, err := proto.Marshal(message)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal message %T: %w", m, err)
 	}
-	r.Body = anyMessage
+	r.Body = data
 	return r, nil
 }
 
@@ -297,6 +325,7 @@ type future struct {
 	clients  []clusterv1.Service_SendClient
 	cancelFn []func()
 	topics   []bus.Topic
+	nodes    []string
 }
 
 func (l *future) Get() (bus.Message, error) {
@@ -305,11 +334,13 @@ func (l *future) Get() (bus.Message, error) {
 	}
 	c := l.clients[0]
 	t := l.topics[0]
+	n := l.nodes[0]
 	defer func() {
 		l.clients = l.clients[1:]
 		l.topics = l.topics[1:]
 		l.cancelFn[0]()
 		l.cancelFn = l.cancelFn[1:]
+		l.nodes = l.nodes[1:]
 	}()
 	resp, err := c.Recv()
 	if err != nil {
@@ -319,16 +350,17 @@ func (l *future) Get() (bus.Message, error) {
 		return bus.Message{}, errors.New(resp.Error)
 	}
 	if resp.Body == nil {
-		return bus.NewMessage(bus.MessageID(resp.MessageId), nil), nil
+		return bus.NewMessageWithNode(bus.MessageID(resp.MessageId), n, nil), nil
 	}
 	if messageSupplier, ok := data.TopicResponseMap[t]; ok {
 		m := messageSupplier()
-		err = resp.Body.UnmarshalTo(m)
+		err = proto.Unmarshal(resp.Body, m)
 		if err != nil {
 			return bus.Message{}, err
 		}
-		return bus.NewMessage(
+		return bus.NewMessageWithNode(
 			bus.MessageID(resp.MessageId),
+			n,
 			m,
 		), nil
 	}

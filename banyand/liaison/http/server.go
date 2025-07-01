@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -71,22 +72,23 @@ type Server interface {
 
 type server struct {
 	creds           credentials.TransportCredentials
-	tlsReloader     *pkgtls.Reloader
-	grpcTLSReloader *pkgtls.Reloader
-	l               *logger.Logger
-	handlerWrapper  *atomicHandler
+	grpcCtx         context.Context
 	srv             *http.Server
+	grpcCancel      context.CancelFunc
+	handlerWrapper  *atomicHandler
+	grpcTLSReloader *pkgtls.Reloader
 	stopCh          chan struct{}
 	gwMux           *runtime.ServeMux
-	grpcClient      *healthcheck.Client
-	grpcCtx         context.Context
-	grpcCancel      context.CancelFunc
+	grpcClient      atomic.Pointer[healthcheck.Client]
+	l               *logger.Logger
+	tlsReloader     *pkgtls.Reloader
 	host            string
 	listenAddr      string
 	grpcAddr        string
 	keyFile         string
 	certFile        string
 	grpcCert        string
+	grpcMu          sync.Mutex
 	port            uint32
 	tls             bool
 }
@@ -190,17 +192,19 @@ func (p *server) PreRun(_ context.Context) error {
 					func() {
 						p.l.Info().Msg("Processing certificate update after debounce")
 
-						// Cancel existing gRPC connections
+						// Safely handle the context and cancel function
+						p.grpcMu.Lock()
 						prevGRPCCancel := p.grpcCancel
-						if prevGRPCCancel != nil {
-							defer func() {
-								p.l.Info().Msg("Canceling existing gRPC connections")
-								prevGRPCCancel()
-							}()
-						}
 
 						// Create a new context for the new connections
 						p.grpcCtx, p.grpcCancel = context.WithCancel(context.Background())
+						p.grpcMu.Unlock()
+
+						// Cancel existing gRPC connections
+						if prevGRPCCancel != nil {
+							p.l.Info().Msg("Canceling existing gRPC connections")
+							prevGRPCCancel()
+						}
 
 						// Force a short delay to ensure all resources are properly cleaned up
 						time.Sleep(200 * time.Millisecond)
@@ -244,7 +248,9 @@ func (p *server) PreRun(_ context.Context) error {
 }
 
 func (p *server) Serve() run.StopNotify {
+	p.grpcMu.Lock()
 	p.grpcCtx, p.grpcCancel = context.WithCancel(context.Background())
+	p.grpcMu.Unlock()
 
 	// Start TLS reloader for HTTP server
 	if p.tls && p.tlsReloader != nil {
@@ -283,7 +289,7 @@ func (p *server) Serve() run.StopNotify {
 // initGRPCClient initializes or reinitializes the gRPC client with current credentials.
 func (p *server) initGRPCClient() error {
 	// Clean up any existing client first
-	if p.grpcClient != nil {
+	if client := p.grpcClient.Load(); client != nil {
 		p.l.Debug().Msg("Cleaning up existing gRPC client")
 	}
 
@@ -321,14 +327,18 @@ func (p *server) initGRPCClient() error {
 	}
 
 	// Create health check client
-	var err error
-	p.grpcClient, err = healthcheck.NewClient(p.grpcCtx, p.l, p.grpcAddr, opts)
+	p.grpcMu.Lock()
+	ctx := p.grpcCtx
+	p.grpcMu.Unlock()
+
+	client, err := healthcheck.NewClient(ctx, p.l, p.grpcAddr, opts)
 	if err != nil {
 		return errors.Wrap(err, "failed to create health check client")
 	}
+	p.grpcClient.Store(client)
 
 	// Create gateway mux with health endpoint
-	p.gwMux = runtime.NewServeMux(runtime.WithHealthzEndpoint(p.grpcClient))
+	p.gwMux = runtime.NewServeMux(runtime.WithHealthzEndpoint(p.grpcClient.Load()))
 
 	// Register all service handlers
 	err = multierr.Combine(
@@ -372,9 +382,17 @@ func (p *server) GracefulStop() {
 	if p.grpcTLSReloader != nil {
 		p.grpcTLSReloader.Stop()
 	}
+
+	p.grpcMu.Lock()
+	var cancel context.CancelFunc
 	if p.grpcCancel != nil {
-		p.grpcCancel()
+		cancel = p.grpcCancel
 	}
+	p.grpcMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+
 	if err := p.srv.Close(); err != nil {
 		p.l.Error().Err(err)
 	}

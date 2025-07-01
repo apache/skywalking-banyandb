@@ -216,6 +216,44 @@ top:
 EOF
 ```
 
+### Query from Multiple Groups
+
+When specifying multiple groups, use an array of group names and ensure that:
+
+* Entity tag names must be identical across groups.
+* Tags with the same name across different groups must share the same type.
+* The orderBy tag and indexRuleName must be identical across groups.
+* Any tags used in filter criteria must exist in all groups with the same name and type.
+* All tags used in groupBy have identical names and types.
+* All fields referenced in the aggregation function have identical names and types.
+* All fields specified in top have identical names and types.
+
+```shell
+bydbctl measure query -f - <<EOF
+name: "service_cpm_minute"
+groups: ["measure-minute", "another-group"]
+tagProjection:
+  tagFamilies:
+    - name: "storage-only"
+      tags: ["entity_id"]
+fieldProjection:
+  names: ["total", "value"]
+groupBy:
+  tagProjection:
+    tagFamilies:
+      - name: "storage-only"
+        tags: ["entity_id"]
+  fieldName: "value"
+agg:
+  function: "AGGREGATION_FUNCTION_MAX"
+  fieldName: "value"
+top:
+  number: 3
+  fieldName: "value"
+  fieldValueSort: "SORT_DESC"
+EOF
+```
+
 ### More examples can be found in [here](https://github.com/apache/skywalking-banyandb/tree/main/test/cases/measure/data/input).
 
 ## API Reference

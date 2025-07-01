@@ -47,9 +47,29 @@ func BuildSchema(sm *databasev1.Stream, indexRules []*databasev1.IndexRule) (log
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
-func Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commonv1.Metadata, s logical.Schema) (logical.Plan, error) {
+func Analyze(criteria *streamv1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema, ecc []executor.StreamExecutionContext) (logical.Plan, error) {
 	// parse fields
-	plan := parseTags(criteria, metadata)
+	if len(metadata) != len(ss) {
+		return nil, fmt.Errorf("number of schemas %d not equal to number of metadata %d", len(ss), len(metadata))
+	}
+	var plan logical.UnresolvedPlan
+	var s logical.Schema
+	tagProjection := logical.ToTags(criteria.GetProjection())
+	if len(metadata) == 1 {
+		plan = parseTags(criteria, metadata[0], ecc[0], tagProjection)
+		s = ss[0]
+	} else {
+		var err error
+		if s, err = mergeSchema(ss); err != nil {
+			return nil, err
+		}
+		plan = &unresolvedMerger{
+			criteria:      criteria,
+			metadata:      metadata,
+			ecc:           ecc,
+			tagProjection: tagProjection,
+		}
+	}
 
 	// parse limit
 	limitParameter := criteria.GetLimit()
@@ -73,8 +93,17 @@ func Analyze(_ context.Context, criteria *streamv1.QueryRequest, metadata *commo
 }
 
 // DistributedAnalyze converts logical expressions to executable operation tree represented by Plan.
-func DistributedAnalyze(criteria *streamv1.QueryRequest, s logical.Schema) (logical.Plan, error) {
+func DistributedAnalyze(criteria *streamv1.QueryRequest, ss []logical.Schema) (logical.Plan, error) {
 	// parse fields
+	var s logical.Schema
+	if len(ss) == 1 {
+		s = ss[0]
+	} else {
+		var err error
+		if s, err = mergeSchema(ss); err != nil {
+			return nil, err
+		}
+	}
 	plan := newUnresolvedDistributed(criteria)
 
 	// parse limit
@@ -173,15 +202,10 @@ func newLimit(input logical.UnresolvedPlan, offset, num uint32) logical.Unresolv
 	}
 }
 
-// parseTags parses the query request to decide which kind of plan should be generated
-// Basically,
-// 1 - If no criteria is given, we can only scan all shards
-// 2 - If criteria is given, but all of those fields exist in the "entity" definition,
-//
-//	i.e. they are top-level sharding keys. For example, for the current skywalking's streamSchema,
-//	we use service_id + service_instance_id + state as the compound sharding keys.
-func parseTags(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata) logical.UnresolvedPlan {
+func parseTags(criteria *streamv1.QueryRequest, metadata *commonv1.Metadata,
+	ec executor.StreamExecutionContext, tagProjection [][]*logical.Tag,
+) logical.UnresolvedPlan {
 	timeRange := criteria.GetTimeRange()
 	return tagFilter(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		criteria.Criteria, logical.ToTags(criteria.GetProjection()))
+		criteria.Criteria, tagProjection, ec)
 }

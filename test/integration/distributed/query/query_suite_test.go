@@ -135,8 +135,14 @@ var _ = SynchronizedAfterSuite(func() {
 	if connection != nil {
 		Expect(connection.Close()).To(Succeed())
 	}
-}, func() {
-	deferFunc()
-	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+}, func() {})
+
+var _ = ReportAfterSuite("Distributed Query Suite", func(report Report) {
+	if report.SuiteSucceeded {
+		if deferFunc != nil {
+			deferFunc()
+		}
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+	}
 })

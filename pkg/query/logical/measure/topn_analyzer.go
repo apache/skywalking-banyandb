@@ -20,27 +20,88 @@ package measure
 
 import (
 	"errors"
+	"strconv"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 // TopNAnalyze converts logical expressions to executable operation tree represented by Plan.
-func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchema *databasev1.Measure, topNAggSchema *databasev1.TopNAggregation,
+func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*databasev1.Measure, topNAggSchemaList []*databasev1.TopNAggregation,
+	ecc []executor.MeasureExecutionContext,
 ) (logical.Plan, error) {
-	// parse fields
+	// Ensure input slices have identical lengths
+	if len(sourceMeasureSchemaList) != len(topNAggSchemaList) || len(sourceMeasureSchemaList) != len(ecc) {
+		return nil, errors.New("sourceMeasureSchemaList, topNAggSchemaList, and ecc must have identical lengths")
+	}
+	if len(sourceMeasureSchemaList) == 0 {
+		return nil, errors.New("sourceMeasureSchemaList is empty")
+	}
+
 	timeRange := criteria.GetTimeRange()
 	var plan logical.UnresolvedPlan
-	plan = &unresolvedLocalScan{
-		name:        criteria.Name,
-		startTime:   timeRange.GetBegin().AsTime(),
-		endTime:     timeRange.GetEnd().AsTime(),
-		conditions:  criteria.Conditions,
-		sort:        criteria.FieldValueSort,
-		groupByTags: topNAggSchema.GroupByTagNames,
+	var sourceMeasureSchema *databasev1.Measure
+	var topNAggSchema *databasev1.TopNAggregation
+	var ec executor.MeasureExecutionContext
+	if len(sourceMeasureSchemaList) == 1 {
+		sourceMeasureSchema = sourceMeasureSchemaList[0]
+		topNAggSchema = topNAggSchemaList[0]
+		ec = ecc[0]
+		// parse fields
+		plan = &unresolvedLocalScan{
+			name:        criteria.Name,
+			startTime:   timeRange.GetBegin().AsTime(),
+			endTime:     timeRange.GetEnd().AsTime(),
+			conditions:  criteria.Conditions,
+			sort:        criteria.FieldValueSort,
+			groupByTags: topNAggSchema.GetGroupByTagNames(),
+			ec:          ec,
+		}
+	} else {
+		subPlans := make([]*unresolvedLocalScan, 0, len(sourceMeasureSchemaList))
+		for i := range sourceMeasureSchemaList {
+			subPlans = append(subPlans, &unresolvedLocalScan{
+				name:        criteria.Name,
+				startTime:   timeRange.GetBegin().AsTime(),
+				endTime:     timeRange.GetEnd().AsTime(),
+				conditions:  criteria.Conditions,
+				sort:        criteria.FieldValueSort,
+				groupByTags: topNAggSchemaList[i].GetGroupByTagNames(),
+				ec:          ecc[i],
+			})
+		}
+		plan = &unresolvedTopNMerger{
+			subPlans: subPlans,
+		}
+		baseEntity := sourceMeasureSchemaList[0].GetEntity()
+		baseTagNames := baseEntity.GetTagNames()
+		for i, m := range sourceMeasureSchemaList[1:] {
+			entity := m.GetEntity()
+			tagNames := entity.GetTagNames()
+			if len(tagNames) != len(baseTagNames) {
+				return nil, errors.New("all source measures must have the same entity: tag name count mismatch at index " + strconv.Itoa(i+1))
+			}
+			for j := range tagNames {
+				if tagNames[j] != baseTagNames[j] {
+					return nil, errors.New("all source measures must have the same entity: tag name mismatch at index " + strconv.Itoa(i+1))
+				}
+			}
+		}
+
+		topNAggSchema = topNAggSchemaList[0]
+		baseFieldName := topNAggSchema.FieldName
+		for i, agg := range topNAggSchemaList[1:] {
+			if agg.GetFieldName() != baseFieldName {
+				return nil, errors.New("all TopNAggregation must have the same FieldName: mismatch at index " + strconv.Itoa(i+1))
+			}
+		}
+
+		sourceMeasureSchema = sourceMeasureSchemaList[0]
 	}
+
 	s, err := buildVirtualSchema(sourceMeasureSchema, topNAggSchema.FieldName)
 	if err != nil {
 		return nil, err

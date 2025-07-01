@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -55,10 +56,12 @@ type service struct {
 	close               chan struct{}
 	db                  *database
 	l                   *logger.Logger
+	pm                  protector.Memory
 	root                string
 	nodeID              string
 	snapshotDir         string
 	flushTimeout        time.Duration
+	expireTimeout       time.Duration
 	maxDiskUsagePercent int
 	maxFileSnapshotNum  int
 }
@@ -69,6 +72,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&s.flushTimeout, "property-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
 	flagS.IntVar(&s.maxDiskUsagePercent, "property-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	flagS.IntVar(&s.maxFileSnapshotNum, "property-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
+	flagS.DurationVar(&s.expireTimeout, "property-expire-delete-timeout", time.Hour*24*7, "the duration of the expired data needs to be deleted")
 	return flagS
 }
 
@@ -95,7 +99,7 @@ func (s *service) Role() databasev1.Role {
 
 func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	s.lfs = fs.NewLocalFileSystemWithLogger(s.l)
+	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
 	observability.UpdatePath(path)
@@ -107,7 +111,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.nodeID = node.NodeID
 
 	var err error
-	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.omr)
+	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.omr, s.lfs)
 	if err != nil {
 		return err
 	}
@@ -116,6 +120,7 @@ func (s *service) PreRun(ctx context.Context) error {
 		s.pipeline.Subscribe(data.TopicPropertyDelete, &deleteListener{s: s}),
 		s.pipeline.Subscribe(data.TopicPropertyQuery, &queryListener{s: s}),
 		s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}),
+		s.pipeline.Subscribe(data.TopicPropertyRepair, &repairListener{s: s}),
 	)
 }
 
@@ -132,12 +137,13 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,
 		omr:      omr,
 		db:       &database{},
+		pm:       pm,
 		close:    make(chan struct{}),
 	}, nil
 }

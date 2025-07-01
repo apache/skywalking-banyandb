@@ -28,8 +28,43 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+var _ Cache = (*shardCache)(nil)
+
+type shardCache struct {
+	*segmentCache
+	shardID common.ShardID
+}
+
+// NewShardCache creates a new shard cache.
+func NewShardCache(group string, segmentID segmentID, shardID common.ShardID) Cache {
+	serviceCache := NewServiceCache().(*serviceCache)
+	groupCache := &groupCache{
+		serviceCache: serviceCache,
+		group:        group,
+	}
+	segmentCache := &segmentCache{
+		groupCache: groupCache,
+		segmentID:  segmentID,
+	}
+	return &shardCache{
+		segmentCache: segmentCache,
+		shardID:      shardID,
+	}
+}
+
+func (sc *shardCache) Get(key EntryKey) any {
+	key.shardID = sc.shardID
+	return sc.segmentCache.get(key)
+}
+
+func (sc *shardCache) Put(key EntryKey, value any) {
+	key.shardID = sc.shardID
+	sc.segmentCache.put(key, value)
+}
+
 type shard[T TSTable] struct {
-	table     T
+	table T
+	*shardCache
 	l         *logger.Logger
 	timeRange timestamp.TimeRange
 	location  string
@@ -38,20 +73,24 @@ type shard[T TSTable] struct {
 
 func (s *segment[T, O]) openShard(ctx context.Context, id common.ShardID) (*shard[T], error) {
 	location := path.Join(s.location, fmt.Sprintf(shardTemplate, int(id)))
-	lfs.MkdirIfNotExist(location, DirPerm)
+	s.lfs.MkdirIfNotExist(location, DirPerm)
 	l := logger.Fetch(ctx, "shard"+strconv.Itoa(int(id)))
 	l.Info().Int("shard_id", int(id)).Str("path", location).Msg("loading a shard")
 	p := common.GetPosition(ctx)
 	p.Shard = strconv.Itoa(int(id))
-	t, err := s.tsdbOpts.TSTableCreator(lfs, location, p, l, s.TimeRange, s.tsdbOpts.Option, s.metrics)
+	t, err := s.tsdbOpts.TSTableCreator(s.lfs, location, p, l, s.TimeRange, s.tsdbOpts.Option, s.metrics)
 	if err != nil {
 		return nil, err
 	}
 
 	return &shard[T]{
-		id:        id,
-		l:         l,
-		table:     t,
+		id:    id,
+		l:     l,
+		table: t,
+		shardCache: &shardCache{
+			segmentCache: s.segmentCache,
+			shardID:      id,
+		},
 		timeRange: s.TimeRange,
 		location:  location,
 	}, nil

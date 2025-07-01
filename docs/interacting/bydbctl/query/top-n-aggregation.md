@@ -117,6 +117,30 @@ Note: Only tags defined in `groupByTagNames` and used with the `EQ` operation ar
 
 More filter operations can be found in [here](filter-operation.md).
 
+### Query from Multiple Groups
+
+When specifying multiple groups, use an array of group names and ensure that:
+
+- The tag names used in filtering or projection are identical across groups.
+- Any tag used in the query exists with the same type in all groups.
+- "groupByTagNames" in the top-n-aggregation schema must be identical across groups.
+- "fieldName" in the top-n-aggregation schema must be identical across groups.
+- "fieldValueSort" in the top-n-aggregation schema must be identical across groups.
+
+```shell
+bydbctl topn query -f - <<EOF
+name: "service_instance_cpm_minute_top_bottom_100"
+groups: ["sw_metric", "another-group"]
+tagProjection:
+  tagFamilies:
+    - name: "default"
+      tags: ["service_id"]
+topN: 3
+agg: "AGGREGATION_FUNCTION_MAX"
+fieldValueSort: "SORT_DESC"
+EOF
+```
+
 ### More examples can be found in [here](https://github.com/apache/skywalking-banyandb/tree/main/test/cases/topn/data/input).
 
 ## API Reference

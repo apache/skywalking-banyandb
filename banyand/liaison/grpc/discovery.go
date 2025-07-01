@@ -46,9 +46,12 @@ type discoveryService struct {
 	kind            schema.Kind
 }
 
-func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
-	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
+func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry, gr *groupRepo) *discoveryService {
 	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator)}
+	return newDiscoveryServiceWithEntityRepo(kind, metadataRepo, nodeRegistry, gr, er)
+}
+
+func newDiscoveryServiceWithEntityRepo(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry, gr *groupRepo, er *entityRepo) *discoveryService {
 	sr := &shardingKeyRepo{shardingKeysMap: make(map[identity]partition.Locator)}
 	return &discoveryService{
 		groupRepo:       gr,
@@ -61,7 +64,6 @@ func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegis
 }
 
 func (ds *discoveryService) initialize() error {
-	ds.metadataRepo.RegisterHandler("liaison", schema.KindGroup, ds.groupRepo)
 	ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.entityRepo)
 	if ds.kind == schema.KindMeasure {
 		ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.shardingKeyRepo)
@@ -76,30 +78,29 @@ func (ds *discoveryService) SetLogger(log *logger.Logger) {
 	ds.shardingKeyRepo.log = log
 }
 
-func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (pbv1.Entity, pbv1.EntityValues, common.ShardID, error) {
+func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (pbv1.EntityValues, common.ShardID, error) {
 	shardNum, existed := ds.groupRepo.shardNum(metadata.Group)
 	if !existed {
-		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
+		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
 	}
 	id := getID(metadata)
 	entityLocator, existed := ds.entityRepo.getLocator(id)
 	if !existed {
-		return nil, nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
+		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
 	}
-	entity, entityValues, shardID, err := entityLocator.Locate(metadata.Name, tagFamilies, shardNum)
+	entityValues, shardID, err := entityLocator.Locate(metadata.Name, tagFamilies, shardNum)
 	if err != nil {
-		return nil, nil, common.ShardID(0), err
+		return nil, common.ShardID(0), err
 	}
-
 	shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(id)
 	if !existed {
-		return entity, entityValues, shardID, nil
+		return entityValues, shardID, nil
 	}
-	_, _, shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
+	_, shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
 	if err != nil {
-		return nil, nil, common.ShardID(0), err
+		return nil, common.ShardID(0), err
 	}
-	return entity, entityValues, shardID, nil
+	return entityValues, shardID, nil
 }
 
 type identity struct {
@@ -145,7 +146,7 @@ func (s *groupRepo) OnDelete(schemaMetadata schema.Metadata) {
 		return
 	}
 	if le := s.log.Debug(); le.Enabled() {
-		le.Stringer("id", group.Metadata).Msg("shard deleted")
+		le.Stringer("id", group.Metadata).Msg("shard deletedTime")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
@@ -162,6 +163,16 @@ func (s *groupRepo) shardNum(groupName string) (uint32, bool) {
 	return r.ShardNum, true
 }
 
+func (s *groupRepo) copies(groupName string) (uint32, bool) {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	r, ok := s.resourceOpts[groupName]
+	if !ok {
+		return 0, false
+	}
+	return r.Replicas + 1, true
+}
+
 func getID(metadata *commonv1.Metadata) identity {
 	return identity{
 		name:  metadata.GetName(),
@@ -175,6 +186,7 @@ type entityRepo struct {
 	schema.UnimplementedOnInitHandler
 	log         *logger.Logger
 	entitiesMap map[identity]partition.Locator
+	measureMap  map[identity]*databasev1.Measure
 	sync.RWMutex
 }
 
@@ -216,6 +228,12 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
 	e.entitiesMap[id] = partition.Locator{TagLocators: l.TagLocators, ModRevision: modRevision}
+	if schemaMetadata.Kind == schema.KindMeasure {
+		measure := schemaMetadata.Spec.(*databasev1.Measure)
+		e.measureMap[id] = measure
+	} else {
+		delete(e.measureMap, id) // Ensure measure is not stored for streams
+	}
 }
 
 // OnDelete implements schema.EventHandler.
@@ -245,11 +263,12 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 			Str("action", "delete").
 			Stringer("subject", id).
 			Str("kind", kind).
-			Msg("entity deleted")
+			Msg("entity deletedTime")
 	}
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
 	delete(e.entitiesMap, id)
+	delete(e.measureMap, id) // Ensure measure is not stored for streams
 }
 
 func (e *entityRepo) getLocator(id identity) (partition.Locator, bool) {
@@ -260,6 +279,15 @@ func (e *entityRepo) getLocator(id identity) (partition.Locator, bool) {
 		return partition.Locator{}, false
 	}
 	return el, true
+}
+
+// loadMeasure retrieves the measure from the entityRepo by its metadata.
+func (e *entityRepo) loadMeasure(metadata *commonv1.Metadata) (*databasev1.Measure, bool) {
+	id := getID(metadata)
+	e.RWMutex.RLock()
+	defer e.RWMutex.RUnlock()
+	measure, ok := e.measureMap[id]
+	return measure, ok
 }
 
 var _ schema.EventHandler = (*shardingKeyRepo)(nil)
@@ -311,7 +339,7 @@ func (s *shardingKeyRepo) OnDelete(schemaMetadata schema.Metadata) {
 			Str("action", "delete").
 			Stringer("subject", id).
 			Str("kind", "measure").
-			Msg("sharding key deleted")
+			Msg("sharding key deletedTime")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()

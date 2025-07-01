@@ -30,6 +30,7 @@ enum Catalog {
   CATALOG_STREAM = 1;
   CATALOG_MEASURE = 2;
   CATALOG_PROPERTY = 3;
+  CATALOG_TRACE = 4;
 }
 
 // Metadata is for multi-tenant, multi-model use
@@ -82,6 +83,12 @@ message LifecycleStage {
 
   // Indicates whether segments that are no longer live should be closed.
   bool close = 6;
+
+  // replicas is the number of replicas for this stage.
+  // This is an optional field and defaults to 0.
+  // A value of 0 means no replicas, while a value of 1 means one primary shard and one replica.
+  // Higher values indicate more replicas.
+  uint32 replicas = 7;
 }
 
 message ResourceOpts {
@@ -95,6 +102,11 @@ message ResourceOpts {
   repeated LifecycleStage stages = 4;
   // default_stages is the name of the default stage
   repeated string default_stages = 5;
+  // replicas is the number of replicas. This is used to ensure high availability and fault tolerance.
+  // This is an optional field and defaults to 0.
+  // A value of 0 means no replicas, while a value of 1 means one primary shard and one replica.
+  // Higher values indicate more replicas.
+  uint32 replicas = 6;
 }
 
 // Group is an internal object for Group management

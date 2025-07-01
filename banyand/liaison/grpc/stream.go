@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -47,13 +48,14 @@ type streamService struct {
 	pipeline           queue.Client
 	broadcaster        queue.Client
 	*discoveryService
-	sampled      *logger.Logger
-	metrics      *metrics
-	writeTimeout time.Duration
+	l               *logger.Logger
+	metrics         *metrics
+	writeTimeout    time.Duration
+	maxWaitDuration time.Duration
 }
 
 func (s *streamService) setLogger(log *logger.Logger) {
-	s.sampled = log.Sampled(10)
+	s.l = log
 }
 
 func (s *streamService) activeIngestionAccessLog(root string) (err error) {
@@ -64,38 +66,123 @@ func (s *streamService) activeIngestionAccessLog(root string) (err error) {
 	return nil
 }
 
+func (s *streamService) validateTimestamp(writeEntity *streamv1.WriteRequest) error {
+	if err := timestamp.CheckPb(writeEntity.GetElement().Timestamp); err != nil {
+		s.l.Error().Stringer("written", writeEntity).Err(err).Msg("the element time is invalid")
+		return err
+	}
+	return nil
+}
+
+func (s *streamService) validateMetadata(writeEntity *streamv1.WriteRequest) error {
+	if writeEntity.Metadata.ModRevision > 0 {
+		streamCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
+		if !existed {
+			return errors.New("stream schema not found")
+		}
+		if writeEntity.Metadata.ModRevision != streamCache.ModRevision {
+			return errors.New("expired stream schema")
+		}
+	}
+	return nil
+}
+
+func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest) (tagValues pbv1.EntityValues, shardID common.ShardID, err error) {
+	if s.maxWaitDuration > 0 {
+		retryInterval := 10 * time.Millisecond
+		startTime := time.Now()
+		for {
+			tagValues, shardID, err = s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > s.maxWaitDuration {
+				return
+			}
+			time.Sleep(retryInterval)
+			retryInterval = time.Duration(float64(retryInterval) * 1.5)
+			if retryInterval > time.Second {
+				retryInterval = time.Second
+			}
+		}
+	}
+	return s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+}
+
+func (s *streamService) publishMessages(
+	ctx context.Context,
+	publisher queue.BatchPublisher,
+	writeEntity *streamv1.WriteRequest,
+	shardID common.ShardID,
+	tagValues pbv1.EntityValues,
+) ([]string, error) {
+	iwr := &streamv1.InternalWriteRequest{
+		Request:      writeEntity,
+		ShardId:      uint32(shardID),
+		EntityValues: tagValues[1:].Encode(),
+	}
+
+	copies, ok := s.groupRepo.copies(writeEntity.Metadata.GetGroup())
+	if !ok {
+		return nil, errors.New("failed to get group copies")
+	}
+
+	nodes := make([]string, 0, copies)
+	for i := range copies {
+		nodeID, err := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID), i)
+		if err != nil {
+			return nil, err
+		}
+
+		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+		if _, err := publisher.Publish(ctx, data.TopicStreamWrite, message); err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, nodeID)
+	}
+	return nodes, nil
+}
+
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
 		if status != modelv1.Status_STATUS_SUCCEED {
 			s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "stream", "write")
 		}
-		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "stream", "write")
+		s.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "stream", "write")
 		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageId}); errResp != nil {
-			logger.Debug().Err(errResp).Msg("failed to send stream write response")
+			if dl := logger.Debug(); dl.Enabled() {
+				dl.Err(errResp).Msg("failed to send stream write response")
+			}
 			s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "stream", "write")
 		}
 	}
+
 	s.metrics.totalStreamStarted.Inc(1, "stream", "write")
 	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
 	start := time.Now()
 	var succeedSent []succeedSentMessage
+	requestCount := 0
 	defer func() {
 		cee, err := publisher.Close()
 		for _, ssm := range succeedSent {
 			code := modelv1.Status_STATUS_SUCCEED
 			if cee != nil {
-				if ce, ok := cee[ssm.node]; ok {
-					code = ce.Status()
+				for _, node := range ssm.nodes {
+					if ce, ok := cee[node]; ok {
+						code = ce.Status()
+						break
+					}
 				}
 			}
-			reply(ssm.metadata, code, ssm.messageID, stream, s.sampled)
+			reply(ssm.metadata, code, ssm.messageID, stream, s.l)
 		}
 		if err != nil {
-			s.sampled.Error().Err(err).Msg("failed to close the publisher")
+			s.l.Error().Err(err).Msg("failed to close the publisher")
+		}
+		if dl := s.l.Debug(); dl.Enabled() {
+			dl.Int("total_requests", requestCount).Msg("completed stream write batch")
 		}
 		s.metrics.totalStreamFinished.Inc(1, "stream", "write")
 		s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "stream", "write")
 	}()
+
 	ctx := stream.Context()
 	for {
 		select {
@@ -103,74 +190,62 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			return ctx.Err()
 		default:
 		}
+
 		writeEntity, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-				s.sampled.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
+				s.l.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
 			}
 			return err
 		}
+
+		requestCount++
 		s.metrics.totalStreamMsgReceived.Inc(1, writeEntity.Metadata.Group, "stream", "write")
-		if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
-			s.sampled.Error().Stringer("written", writeEntity).Err(errTime).Msg("the element time is invalid")
-			reply(nil, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream, s.sampled)
+
+		if err = s.validateTimestamp(writeEntity); err != nil {
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream, s.l)
 			continue
 		}
-		if writeEntity.Metadata.ModRevision > 0 {
-			streamCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
-			if !existed {
-				s.sampled.Error().Err(err).Stringer("written", writeEntity).Msg("failed to stream schema not found")
-				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream, s.sampled)
-				continue
+
+		if err = s.validateMetadata(writeEntity); err != nil {
+			status := modelv1.Status_STATUS_INTERNAL_ERROR
+			if errors.Is(err, errors.New("stream schema not found")) {
+				status = modelv1.Status_STATUS_NOT_FOUND
+			} else if errors.Is(err, errors.New("expired stream schema")) {
+				status = modelv1.Status_STATUS_EXPIRED_SCHEMA
 			}
-			if writeEntity.Metadata.ModRevision != streamCache.ModRevision {
-				s.sampled.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
-				reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream, s.sampled)
-				continue
-			}
+			s.l.Error().Err(err).Stringer("written", writeEntity).Msg("metadata validation failed")
+			reply(writeEntity.GetMetadata(), status, writeEntity.GetMessageId(), stream, s.l)
+			continue
 		}
-		entity, tagValues, shardID, err := s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+
+		tagValues, shardID, err := s.navigateWithRetry(writeEntity)
 		if err != nil {
-			s.sampled.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to navigate to the write target")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
+			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("navigation failed")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.l)
 			continue
 		}
+
 		if s.ingestionAccessLog != nil {
-			if errAccessLog := s.ingestionAccessLog.Write(writeEntity); errAccessLog != nil {
-				s.sampled.Error().Err(errAccessLog).Msg("failed to write ingestion access log")
+			if errAL := s.ingestionAccessLog.Write(writeEntity); errAL != nil {
+				s.l.Error().Err(errAL).Msg("failed to write ingestion access log")
 			}
 		}
-		iwr := &streamv1.InternalWriteRequest{
-			Request:      writeEntity,
-			ShardId:      uint32(shardID),
-			SeriesHash:   pbv1.HashEntity(entity),
-			EntityValues: tagValues[1:].Encode(),
-		}
-		nodeID, errPickNode := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID))
-		if errPickNode != nil {
-			s.sampled.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeEntity)).Msg("failed to pick an available node")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
+
+		nodes, err := s.publishMessages(ctx, publisher, writeEntity, shardID, tagValues)
+		if err != nil {
+			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
+			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.l)
 			continue
 		}
-		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-		_, errWritePub := publisher.Publish(ctx, data.TopicStreamWrite, message)
-		if errWritePub != nil {
-			var ce *common.Error
-			if errors.As(errWritePub, &ce) {
-				reply(writeEntity.GetMetadata(), ce.Status(), writeEntity.GetMessageId(), stream, s.sampled)
-				continue
-			}
-			s.sampled.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeEntity)).Str("nodeID", nodeID).Msg("failed to send a message")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.sampled)
-			continue
-		}
+
 		succeedSent = append(succeedSent, succeedSentMessage{
 			metadata:  writeEntity.GetMetadata(),
 			messageID: writeEntity.GetMessageId(),
-			node:      nodeID,
+			nodes:     nodes,
 		})
 	}
 }
@@ -236,5 +311,85 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 }
 
 func (s *streamService) Close() error {
-	return s.ingestionAccessLog.Close()
+	if s.ingestionAccessLog != nil {
+		return s.ingestionAccessLog.Close()
+	}
+	return nil
+}
+
+type streamRedirectWriteCallback struct {
+	*bus.UnImplementedHealthyListener
+	l            *logger.Logger
+	pipeline     queue.Client
+	groupRepo    *groupRepo
+	nodeRegistry NodeRegistry
+	writeTimeout time.Duration
+}
+
+func (r *streamRedirectWriteCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+	events, ok := message.Data().([]any)
+	if !ok {
+		r.l.Warn().Msg("invalid event data type")
+		return
+	}
+	if len(events) < 1 {
+		r.l.Warn().Msg("empty event")
+		return
+	}
+
+	publisher := r.pipeline.NewBatchPublisher(r.writeTimeout)
+	defer func() {
+		_, err := publisher.Close()
+		if err != nil {
+			r.l.Error().Err(err).Msg("failed to close publisher")
+		}
+	}()
+
+	for i := range events {
+		var writeEvent *streamv1.InternalWriteRequest
+		switch e := events[i].(type) {
+		case *streamv1.InternalWriteRequest:
+			writeEvent = e
+		case []byte:
+			writeEvent = &streamv1.InternalWriteRequest{}
+			if err := proto.Unmarshal(e, writeEvent); err != nil {
+				r.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				continue
+			}
+		default:
+			r.l.Warn().Msg("invalid event data type")
+			continue
+		}
+
+		metadata := writeEvent.Request.GetMetadata()
+		if metadata == nil {
+			r.l.Warn().Msg("metadata is nil in InternalWriteRequest")
+			continue
+		}
+
+		group := metadata.GetGroup()
+		streamName := metadata.GetName()
+		shardID := writeEvent.GetShardId()
+
+		copies, ok := r.groupRepo.copies(group)
+		if !ok {
+			r.l.Error().Str("group", group).Msg("failed to get group copies")
+			continue
+		}
+
+		for copyIdx := range copies {
+			nodeID, err := r.nodeRegistry.Locate(group, streamName, shardID, copyIdx)
+			if err != nil {
+				r.l.Error().Err(err).Str("group", group).Str("stream", streamName).Uint32("shard", shardID).Uint32("copy", copyIdx).Msg("failed to locate node")
+				continue
+			}
+
+			msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, writeEvent)
+			if _, err := publisher.Publish(ctx, data.TopicStreamWrite, msg); err != nil {
+				r.l.Error().Err(err).Str("node", nodeID).Msg("failed to publish message")
+			}
+		}
+	}
+
+	return
 }

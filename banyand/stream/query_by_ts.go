@@ -38,7 +38,7 @@ var _ model.StreamQueryResult = (*tsResult)(nil)
 
 type tsResult struct {
 	sm       *stream
-	pm       *protector.Memory
+	pm       protector.Memory
 	l        *logger.Logger
 	ts       *blockScanner
 	tr       *index.RangeOpts
@@ -172,6 +172,9 @@ func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, sm *stre
 	for _, tagFamilyProj := range bc.tagProjection {
 		for j, tagProj := range tagFamilyProj.Names {
 			tagSpec := is.tagMap[tagProj]
+			if tagSpec == nil {
+				continue
+			}
 			if tagSpec.IndexedOnly {
 				continue
 			}

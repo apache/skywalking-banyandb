@@ -47,9 +47,10 @@ const (
 
 type option struct {
 	mergePolicy              *mergePolicy
+	protector                protector.Memory
+	seriesCacheMaxSize       run.Bytes
 	flushTimeout             time.Duration
 	elementIndexFlushTimeout time.Duration
-	seriesCacheMaxSize       run.Bytes
 }
 
 // Query allow to retrieve elements in a series of streams.
@@ -89,7 +90,7 @@ type stream struct {
 	tsdb        atomic.Value
 	l           *logger.Logger
 	schema      *databasev1.Stream
-	pm          *protector.Memory
+	pm          protector.Memory
 	schemaRepo  *schemaRepo
 	name        string
 	group       string
@@ -126,7 +127,7 @@ type streamSpec struct {
 }
 
 func openStream(spec streamSpec,
-	l *logger.Logger, pm *protector.Memory, schemaRepo *schemaRepo,
+	l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo,
 ) *stream {
 	s := &stream{
 		schema:     spec.schema,

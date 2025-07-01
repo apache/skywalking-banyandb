@@ -27,6 +27,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -42,10 +43,11 @@ var (
 //
 //go:generate mockgen -destination=mock/node_selector_mock.go -package=mock github.com/apache/skywalking-banyandb/pkg/node Selector
 type Selector interface {
+	OnInit(kinds []schema.Kind) (bool, []int64)
 	AddNode(node *databasev1.Node)
 	RemoveNode(node *databasev1.Node)
 	SetNodeSelector(selector *pub.LabelSelector)
-	Pick(group, name string, shardID uint32) (string, error)
+	Pick(group, name string, shardID, replicaID uint32) (string, error)
 	run.PreRunner
 	fmt.Stringer
 }
@@ -64,12 +66,17 @@ type pickFirstSelector struct {
 	mu        sync.RWMutex
 }
 
+// OnInit implements Selector.
+func (p *pickFirstSelector) OnInit(_ []schema.Kind) (bool, []int64) {
+	return true, []int64{0}
+}
+
 // SetNodeSelector implements Selector.
 func (p *pickFirstSelector) SetNodeSelector(_ *pub.LabelSelector) {}
 
 // String implements Selector.
 func (p *pickFirstSelector) String() string {
-	n, err := p.Pick("", "", 0)
+	n, err := p.Pick("", "", 0, 0)
 	if err != nil {
 		return fmt.Sprintf("%v", err)
 	}
@@ -119,7 +126,7 @@ func (p *pickFirstSelector) RemoveNode(node *databasev1.Node) {
 	p.nodeIDs = slices.Delete(p.nodeIDs, idx, idx+1)
 }
 
-func (p *pickFirstSelector) Pick(_, _ string, _ uint32) (string, error) {
+func (p *pickFirstSelector) Pick(_, _ string, _, _ uint32) (string, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if len(p.nodeIDs) == 0 {

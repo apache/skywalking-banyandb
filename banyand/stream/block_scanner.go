@@ -105,9 +105,9 @@ func searchSeries(ctx context.Context, qo queryOptions, segment storage.Segment[
 }
 
 func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *option], qo queryOptions,
-	l *logger.Logger, pm *protector.Memory, tr *index.RangeOpts,
+	l *logger.Logger, pm protector.Memory, tr *index.RangeOpts,
 ) (bc *blockScanner, err error) {
-	tabs := segment.Tables()
+	tabs, _ := segment.Tables()
 	finalizers := make([]scanFinalizer, 0, len(tabs)+1)
 	finalizers = append(finalizers, segment.DecRef)
 	defer func() {
@@ -162,7 +162,7 @@ func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *opt
 }
 
 func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, tw *tsTable, tr *index.RangeOpts) (pl posting.List, plTS posting.List, err error) {
-	if qo.Filter == nil || qo.Filter == logicalstream.ENode {
+	if qo.InvertedFilter == nil || qo.InvertedFilter == logicalstream.ENode {
 		return nil, nil, nil
 	}
 	tracer := query.GetTracer(ctx)
@@ -184,7 +184,7 @@ func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, 
 	for i := range seriesList {
 		sid[i] = uint64(seriesList[i])
 	}
-	pl, plTS, err = tw.Index().Search(ctx, sid, qo.Filter, tr)
+	pl, plTS, err = tw.Index().Search(ctx, sid, qo.InvertedFilter, tr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -199,7 +199,7 @@ type scanFinalizer func()
 type blockScanner struct {
 	filterIndex map[uint64]posting.List
 	l           *logger.Logger
-	pm          *protector.Memory
+	pm          protector.Memory
 	parts       [][]*part
 	finalizers  []scanFinalizer
 	qo          queryOptions
@@ -222,7 +222,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 	defer releaseBlockMetadataArray(bma)
 	ti := generateTstIter()
 	defer releaseTstIter(ti)
-	ti.init(bma, parts, bsn.qo.sortedSids, bsn.qo.minTimestamp, bsn.qo.maxTimestamp)
+	ti.init(bma, parts, bsn.qo.sortedSids, bsn.qo.minTimestamp, bsn.qo.maxTimestamp, bsn.qo.SkippingFilter)
 	batch := generateBlockScanResultBatch()
 	if ti.Error() != nil {
 		batch.err = fmt.Errorf("cannot init tstIter: %w", ti.Error())
@@ -234,6 +234,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		}
 		return
 	}
+	var totalBlockBytes uint64
 	for ti.nextBlock() {
 		p := ti.piHeap[0]
 		batch.bss = append(batch.bss, blockScanResult{
@@ -243,11 +244,22 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		bs.qo.copyFrom(&bsn.qo)
 		bs.qo.elementFilter = bsn.filterIndex[p.p.partMetadata.ID]
 		bs.bm.copyFrom(p.curBlock)
-		if len(batch.bss) >= cap(batch.bss) {
-			var totalBlockBytes uint64
-			for i := range batch.bss {
-				totalBlockBytes += batch.bss[i].bm.uncompressedSizeBytes
+		quota := bsn.pm.AvailableBytes()
+		for i := range batch.bss {
+			totalBlockBytes += batch.bss[i].bm.uncompressedSizeBytes
+			if quota >= 0 && totalBlockBytes > uint64(quota) {
+				err := fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+				batch.err = err
+				select {
+				case blockCh <- batch:
+				case <-ctx.Done():
+					releaseBlockScanResultBatch(batch)
+					bsn.l.Warn().Err(err).Msg("quota exceeded, context canceled")
+				}
+				return
 			}
+		}
+		if len(batch.bss) >= cap(batch.bss) {
 			if err := bsn.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
 				batch.err = fmt.Errorf("cannot acquire resource: %w", err)
 				select {
@@ -273,7 +285,6 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		select {
 		case blockCh <- batch:
 		case <-ctx.Done():
-
 			releaseBlockScanResultBatch(batch)
 		}
 		return

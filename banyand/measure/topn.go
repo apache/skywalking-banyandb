@@ -51,6 +51,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -65,7 +66,26 @@ var (
 	_ flow.Sink = (*topNStreamingProcessor)(nil)
 )
 
-func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline queue.Queue) (manager *topNProcessorManager) {
+// TopNService is the interface for top N service to write measures to the top N flow.
+type TopNService interface {
+	// InFlow is called when a measure is written to the top N flow.
+	InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue)
+}
+
+func (sr *schemaRepo) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
+	if p, _ := sr.topNProcessorMap.Load(getKey(stm.GetMetadata())); p != nil {
+		p.(*topNProcessorManager).onMeasureWrite(seriesID, shardID, &measurev1.InternalWriteRequest{
+			Request: &measurev1.WriteRequest{
+				Metadata:  stm.GetMetadata(),
+				DataPoint: dp,
+				MessageId: uint64(time.Now().UnixNano()),
+			},
+			EntityValues: entityValues,
+		}, stm)
+	}
+}
+
+func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline queue.Client) (manager *topNProcessorManager) {
 	key := getKey(source)
 	sourceMeasure, ok := sr.loadMeasure(source)
 	if !ok {
@@ -79,8 +99,8 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 
 	if v, ok := sr.topNProcessorMap.Load(key); ok {
 		pre := v.(*topNProcessorManager)
-		pre.init(sourceMeasure)
-		if pre.m.schema.GetMetadata().GetModRevision() < sourceMeasure.schema.GetMetadata().GetModRevision() {
+		pre.init(sourceMeasure.GetSchema())
+		if pre.m.GetMetadata().GetModRevision() < sourceMeasure.schema.GetMetadata().GetModRevision() {
 			defer pre.Close()
 			manager = &topNProcessorManager{
 				l:        sr.l,
@@ -97,7 +117,7 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 			pipeline: pipeline,
 		}
 	}
-	manager.init(sourceMeasure)
+	manager.init(sourceMeasure.GetSchema())
 	sr.topNProcessorMap.Store(key, manager)
 	return manager
 }
@@ -118,13 +138,13 @@ type dataPointWithEntityValues struct {
 }
 
 type topNStreamingProcessor struct {
-	pipeline      queue.Queue
+	pipeline      queue.Client
 	streamingFlow flow.Flow
 	in            chan flow.StreamRecord
 	l             *logger.Logger
 	topNSchema    *databasev1.TopNAggregation
 	src           chan interface{}
-	m             *measure
+	m             *databasev1.Measure
 	errCh         <-chan error
 	stopCh        chan struct{}
 	flow.ComponentState
@@ -204,7 +224,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 			}
 		}
 		topNValue.Reset()
-		topNValue.setMetadata(t.topNSchema.GetFieldName(), t.m.schema.Entity.TagNames)
+		topNValue.setMetadata(t.topNSchema.GetFieldName(), t.m.Entity.TagNames)
 		var shardID uint32
 		for _, tuple := range tuples {
 			data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
@@ -316,23 +336,28 @@ func (t *topNStreamingProcessor) handleError() {
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
 	l               *logger.Logger
-	pipeline        queue.Queue
-	m               *measure
+	pipeline        queue.Client
+	m               *databasev1.Measure
 	s               logical.TagSpecRegistry
 	registeredTasks []*databasev1.TopNAggregation
 	processorList   []*topNStreamingProcessor
+	closed          bool
 	sync.RWMutex
 }
 
-func (manager *topNProcessorManager) init(m *measure) {
+func (manager *topNProcessorManager) init(m *databasev1.Measure) {
 	manager.Lock()
 	defer manager.Unlock()
+	if manager.closed {
+		return
+	}
 	if manager.m != nil {
 		return
 	}
 	manager.m = m
 	tagMapSpec := logical.TagSpecMap{}
-	tagMapSpec.RegisterTagFamilies(m.schema.GetTagFamilies())
+	tagMapSpec.RegisterTagFamilies(m.GetTagFamilies())
+	manager.s = tagMapSpec
 	for i := range manager.registeredTasks {
 		if err := manager.start(manager.registeredTasks[i]); err != nil {
 			manager.l.Err(err).Msg("fail to start processor")
@@ -343,19 +368,28 @@ func (manager *topNProcessorManager) init(m *measure) {
 func (manager *topNProcessorManager) Close() error {
 	manager.Lock()
 	defer manager.Unlock()
+	if manager.closed {
+		return nil
+	}
+	manager.closed = true
 	var err error
 	for _, processor := range manager.processorList {
 		err = multierr.Append(err, processor.Close())
 	}
 	manager.processorList = nil
 	manager.registeredTasks = nil
+	manager.s = nil
+	manager.m = nil
 	return err
 }
 
-func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uint32, request *measurev1.InternalWriteRequest, measure *measure) {
+func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uint32, request *measurev1.InternalWriteRequest, measure *databasev1.Measure) {
 	go func() {
 		manager.RLock()
 		defer manager.RUnlock()
+		if manager.closed {
+			return
+		}
 		if manager.m == nil {
 			manager.RUnlock()
 			manager.init(measure)
@@ -375,6 +409,9 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uin
 func (manager *topNProcessorManager) register(topNSchema *databasev1.TopNAggregation) {
 	manager.Lock()
 	defer manager.Unlock()
+	if manager.closed {
+		return
+	}
 	exist := false
 	for i := range manager.registeredTasks {
 		if manager.registeredTasks[i].GetMetadata().GetName() == topNSchema.GetMetadata().GetName() {
@@ -408,7 +445,10 @@ func (manager *topNProcessorManager) start(topNSchema *databasev1.TopNAggregatio
 	if manager.m == nil {
 		return nil
 	}
-	interval := manager.m.interval
+	interval, err := timestamp.ParseDuration(manager.m.Interval)
+	if err != nil {
+		return errors.Wrapf(err, "invalid interval %s for measure %s", manager.m.Interval, manager.m.GetMetadata().GetName())
+	}
 	sortDirections := make([]modelv1.Sort, 0, 2)
 	if topNSchema.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
 		sortDirections = append(sortDirections, modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC)
@@ -491,11 +531,11 @@ func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (fl
 }
 
 func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames ...string) (flow.UnaryFunc[any], error) {
-	fieldIdx := slices.IndexFunc(manager.m.GetSchema().GetFields(), func(spec *databasev1.FieldSpec) bool {
+	fieldIdx := slices.IndexFunc(manager.m.GetFields(), func(spec *databasev1.FieldSpec) bool {
 		return spec.GetName() == fieldName
 	})
 	if fieldIdx == -1 {
-		return nil, fmt.Errorf("field %s is not found in %s schema", fieldName, manager.m.GetSchema().GetMetadata().GetName())
+		return nil, fmt.Errorf("field %s is not found in %s schema", fieldName, manager.m.Metadata.GetName())
 	}
 	if len(groupByNames) == 0 {
 		return func(_ context.Context, request any) any {
@@ -521,7 +561,7 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			}
 		}, nil
 	}
-	groupLocator, err := newGroupLocator(manager.m.GetSchema(), groupByNames)
+	groupLocator, err := newGroupLocator(manager.m, groupByNames)
 	if err != nil {
 		return nil, err
 	}

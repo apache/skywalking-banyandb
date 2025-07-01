@@ -118,7 +118,7 @@ type Segment[T TSTable, O any] interface {
 	DecRef()
 	GetTimeRange() timestamp.TimeRange
 	CreateTSTableIfNotExist(shardID common.ShardID) (T, error)
-	Tables() []T
+	Tables() ([]T, []Cache)
 	Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error)
 	IndexDB() IndexDB
 }

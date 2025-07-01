@@ -177,7 +177,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		}
 
 		// Start the watcher
-		watcher := registry.NewWatcher("test", schema.KindMeasure, 0)
+		watcher := registry.NewWatcher("test", schema.KindMeasure, -1)
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {
@@ -196,7 +196,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		}, flags.EventuallyTimeout).Should(gomega.BeTrue())
 	})
 	ginkgo.It("should handle watch events", func() {
-		watcher := registry.NewWatcher("test", schema.KindStream, 0)
+		watcher := registry.NewWatcher("test", schema.KindStream, -1)
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {
@@ -321,7 +321,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		watcher := registry.NewWatcher("test", schema.KindMeasure, 0, schema.CheckInterval(1*time.Second))
+		watcher := registry.NewWatcher("test", schema.KindMeasure, -1, schema.CheckInterval(1*time.Second))
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {
@@ -336,7 +336,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 	})
 
 	ginkgo.It("should detect deletions", func() {
-		watcher := registry.NewWatcher("test", schema.KindMeasure, 0, schema.CheckInterval(1*time.Second))
+		watcher := registry.NewWatcher("test", schema.KindMeasure, -1, schema.CheckInterval(1*time.Second))
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {
@@ -405,7 +405,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 	})
 
 	ginkgo.It("should recover state after compaction", func() {
-		watcher := registry.NewWatcher("test", schema.KindMeasure, 0, schema.CheckInterval(1*time.Hour))
+		watcher := registry.NewWatcher("test", schema.KindMeasure, -1, schema.CheckInterval(1*time.Hour))
 		watcher.AddHandler(mockedObj)
 		watcher.Start()
 		ginkgo.DeferCleanup(func() {

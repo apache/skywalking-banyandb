@@ -70,12 +70,13 @@ var (
 // SchemaService allows querying schema information.
 type SchemaService interface {
 	Query
+	TopNService
 	Close()
 }
 type schemaRepo struct {
 	resourceSchema.Repository
 	metadata         metadata.Repo
-	pipeline         queue.Queue
+	pipeline         queue.Client
 	l                *logger.Logger
 	topNProcessorMap sync.Map
 	path             string
@@ -99,10 +100,11 @@ func newSchemaRepo(path string, svc *service, nodeLabels map[string]string) *sch
 }
 
 // NewPortableRepository creates a new portable repository.
-func NewPortableRepository(metadata metadata.Repo, l *logger.Logger, metrics *resourceSchema.Metrics) SchemaService {
+func NewPortableRepository(metadata metadata.Repo, l *logger.Logger, metrics *resourceSchema.Metrics, topNQueue queue.Client) SchemaService {
 	r := &schemaRepo{
 		l:        l,
 		metadata: metadata,
+		pipeline: topNQueue,
 		Repository: resourceSchema.NewPortableRepository(
 			metadata,
 			l,
@@ -208,6 +210,9 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			})
 		}
 	case schema.KindTopNAggregation:
+		if sr.pipeline == nil {
+			return
+		}
 		topNSchema := metadata.Spec.(*databasev1.TopNAggregation)
 		if err := validate.TopNAggregation(topNSchema); err != nil {
 			sr.l.Warn().Err(err).Msg("topNAggregation is ignored")
@@ -259,8 +264,10 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			})
 		}
 	case schema.KindTopNAggregation:
-		topNAggregation := metadata.Spec.(*databasev1.TopNAggregation)
-		sr.stopSteamingManager(topNAggregation.SourceMeasure)
+		if sr.pipeline != nil {
+			topNAggregation := metadata.Spec.(*databasev1.TopNAggregation)
+			sr.stopSteamingManager(topNAggregation.SourceMeasure)
+		}
 	default:
 	}
 }
@@ -337,7 +344,8 @@ type supplier struct {
 	metadata   metadata.Repo
 	omr        observability.MetricsRegistry
 	l          *logger.Logger
-	pm         *protector.Memory
+	c          storage.Cache
+	pm         protector.Memory
 	schemaRepo *schemaRepo
 	nodeLabels map[string]string
 	path       string
@@ -345,11 +353,22 @@ type supplier struct {
 }
 
 func newSupplier(path string, svc *service, sr *schemaRepo, nodeLabels map[string]string) *supplier {
+	if svc.pm == nil {
+		svc.l.Panic().Msg("CRITICAL: svc.pm is nil in newSupplier")
+	}
+	opt := svc.option
+	opt.protector = svc.pm
+
+	if opt.protector == nil {
+		svc.l.Panic().Msg("CRITICAL: opt.protector is still nil after assignment")
+	}
+
 	return &supplier{
 		path:       path,
 		metadata:   svc.metadata,
 		l:          svc.l,
-		option:     svc.option,
+		c:          svc.c,
+		option:     opt,
 		omr:        svc.omr,
 		pm:         svc.pm,
 		schemaRepo: sr,
@@ -361,7 +380,7 @@ func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.In
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, s.pm, s.schemaRepo)
+	}, s.l, s.c, s.pm, s.schemaRepo)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -408,9 +427,10 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			break
 		}
 	}
+	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:                       shardNum,
-		Location:                       path.Join(s.path, groupSchema.Metadata.Name),
+		Location:                       path.Join(s.path, group),
 		TSTableCreator:                 newTSTable,
 		TableMetrics:                   metrics,
 		SegmentInterval:                storage.MustToIntervalRule(segInterval),
@@ -420,12 +440,13 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          factory,
 		SegmentIdleTimeout:             segmentIdleTimeout,
+		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
 			return p
 		}),
-		opts)
+		opts, s.c, group)
 }
 
 type portableSupplier struct {
@@ -454,7 +475,7 @@ func (s *portableSupplier) OpenResource(spec resourceSchema.Resource) (resourceS
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, nil, nil)
+	}, s.l, nil, nil, nil)
 }
 
 // GetTopNSchema returns the schema of the topN result measure.
