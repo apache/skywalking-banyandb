@@ -199,8 +199,8 @@ func (t *tag) encodeFloat64Tag(bb *bytes.Buffer) {
 		logger.Panicf("invalid encode type for int64 values")
 	}
 	firstValueBytes := convert.Int64ToBytes(firstValue)
-	expBytes := convert.Int32ToBytes(exp)
-	// Prepend encodeType (1 byte), exp (4 bytes) and firstValue (8 bytes) to the beginning
+	expBytes := convert.Int16ToBytes(exp)
+	// Prepend encodeType (1 byte), exp (2 bytes) and firstValue (8 bytes) to the beginning
 	bb.Buf = append(
 		append(append([]byte{byte(encodeType)}, expBytes...), firstValueBytes...),
 		bb.Buf...,
@@ -315,13 +315,13 @@ func (t *tag) decodeFloat64Tag(decoder *encoding.BytesBlockDecoder, path string,
 		return
 	}
 
-	const expectedLen = 13
+	const expectedLen = 11
 	if len(bb.Buf) < expectedLen {
 		logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", expectedLen, len(bb.Buf))
 	}
-	exp := convert.BytesToInt32(bb.Buf[1:5])
-	firstValue := convert.BytesToInt64(bb.Buf[5:13])
-	bb.Buf = bb.Buf[13:]
+	exp := convert.BytesToInt16(bb.Buf[1:3])
+	firstValue := convert.BytesToInt64(bb.Buf[3:11])
+	bb.Buf = bb.Buf[11:]
 	var err error
 	intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
 	if err != nil {

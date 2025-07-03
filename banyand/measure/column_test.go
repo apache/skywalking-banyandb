@@ -101,14 +101,14 @@ func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
 			assert.Equal(t, uint64(len(buf.Buf)), cm.size)
 			assert.Equal(t, uint64(0), cm.offset)
 			assert.Equal(t, original.name, cm.name)
-			// TODO assert.Equal(t, original.valueType, cm.valueType)
+			assert.Equal(t, original.valueType, cm.valueType)
 
 			decoder := &encoding.BytesBlockDecoder{}
 			unmarshaled := &column{}
 			unmarshaled.mustReadValues(decoder, buf, *cm, uint64(len(original.values)))
 
 			assert.Equal(t, original.name, unmarshaled.name)
-			// TODO assert.Equal(t, original.valueType, unmarshaled.valueType)
+			assert.Equal(t, original.valueType, unmarshaled.valueType)
 			assert.Equal(t, original.values, unmarshaled.values)
 		})
 	}

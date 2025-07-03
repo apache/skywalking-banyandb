@@ -66,6 +66,21 @@ func Int32ToBytes(i int32) []byte {
 	return Uint32ToBytes(u)
 }
 
+// Int16ToBytes converts int16 to bytes using BigEndian.
+func Int16ToBytes(i int16) []byte {
+	bs := make([]byte, 2)
+	binary.BigEndian.PutUint16(bs, uint16(i))
+	return bs
+}
+
+// BytesToInt16 converts a 2-byte slice to int16 using BigEndian.
+func BytesToInt16(b []byte) int16 {
+	if len(b) < 2 {
+		panic("BytesToInt16: byte slice too short")
+	}
+	return int16(binary.BigEndian.Uint16(b))
+}
+
 // BoolToBytes converts bool to bytes.
 func BoolToBytes(b bool) []byte {
 	if b {

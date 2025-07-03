@@ -25,14 +25,14 @@ import (
 )
 
 // Float64ListToDecimalIntList converts float64 values to int64s with a common decimal scale factor.
-func Float64ListToDecimalIntList(dst []int64, nums []float64) ([]int64, int32, error) {
+func Float64ListToDecimalIntList(dst []int64, nums []float64) ([]int64, int16, error) {
 	if len(nums) == 0 {
 		logger.Panicf("a must contain at least one item")
 	}
 
 	// Maximum allowed decimal places for float64 safety
 	const maxDecimalPlaces = 15
-	var maxPlaces int32
+	var maxPlaces int16
 
 	// Determine the maximum number of decimal places needed
 	for _, f := range nums {
@@ -60,7 +60,7 @@ func Float64ListToDecimalIntList(dst []int64, nums []float64) ([]int64, int32, e
 }
 
 // DecimalIntListToFloat64List restores float64 values from scaled int64s using a decimal exponent.
-func DecimalIntListToFloat64List(dst []float64, values []int64, exponent int32, itemsCount int) ([]float64, error) {
+func DecimalIntListToFloat64List(dst []float64, values []int64, exponent int16, itemsCount int) ([]float64, error) {
 	dst = ExtendListCapacity(dst, itemsCount)
 
 	if len(values) == 0 {
@@ -77,14 +77,14 @@ func DecimalIntListToFloat64List(dst []float64, values []int64, exponent int32, 
 // If you enter 3.1, it may be less than 1e-9 in the computer, so it will be discarded.
 // finally, rounded = 31，exp = -1.
 // However, if the input is really 3.10000000000000009, this may result in loss of accuracy.
-func countDecimalPlaces(f float64, maxPlace int) int32 {
+func countDecimalPlaces(f float64, maxPlace int) int16 {
 	for i := 0; i < maxPlace; i++ {
 		modf, frac := math.Modf(f)
 		fmt.Println(modf, frac)
 		if math.Abs(f-math.Round(f)) < 1e-9 {
-			return int32(i)
+			return int16(i)
 		}
 		f *= 10
 	}
-	return int32(maxPlace)
+	return int16(maxPlace)
 }
