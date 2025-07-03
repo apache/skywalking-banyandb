@@ -30,7 +30,7 @@ func TestFloat64ListToDecimalIntList1(t *testing.T) {
 		name     string
 		input    []float64
 		wantInts []int64
-		wantExp  int32
+		wantExp  int16
 		wantErr  bool
 	}{
 		{
