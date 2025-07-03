@@ -70,7 +70,7 @@ In measure's timestamp file, there are version fields to record the version of t
 
 ![measure-block](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/measure-block.png)
 
-Unlike the measure, there are element ids in the stream's timestamp file. The element id is used to identify the data of the same series. The data with the same timestamp but different element id will both be stored in the TSDB.
+Unlike the measure, there are element ids in the stream's timestamp file. The element id is used to identify the data of the same series. The data with the same timestamp but different element id will both be stored in the TSDB. This introduces a series of new files, named "*.tff", which contain bloom filters for each tag, enabling efficient skipping of irrelevant data. Additionally, min/max fields are added to the "*.tfm" file to further aid in skipping blocks.```
 ![stream-block](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/stream-block.png)
 
 ## Write Path
