@@ -28,8 +28,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 )
 
 type partIter struct {
@@ -37,6 +39,7 @@ type partIter struct {
 	p                    *part
 	curBlock             *blockMetadata
 	sids                 []common.SeriesID
+	blockFilter          index.Filter
 	primaryBlockMetadata []primaryBlockMetadata
 	bms                  []blockMetadata
 	compressedPrimaryBuf []byte
@@ -50,6 +53,7 @@ func (pi *partIter) reset() {
 	pi.curBlock = nil
 	pi.p = nil
 	pi.sids = nil
+	pi.blockFilter = nil
 	pi.sidIdx = 0
 	pi.primaryBlockMetadata = nil
 	pi.bms = nil
@@ -58,13 +62,14 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64, blockFilter index.Filter) {
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
 
 	pi.bms = bma.arr
 	pi.sids = sids
+	pi.blockFilter = blockFilter
 	pi.minTimestamp = minTimestamp
 	pi.maxTimestamp = maxTimestamp
 
@@ -221,11 +226,31 @@ func (pi *partIter) findBlock() bool {
 			bhs = bhs[1:]
 			continue
 		}
+
 		if bm.timestamps.min > pi.maxTimestamp {
 			if !pi.nextSeriesID() {
 				return false
 			}
 			continue
+		}
+
+		if pi.blockFilter != nil && pi.blockFilter != logicalstream.ENode {
+			shouldSkip, err := func() (bool, error) {
+				tfs := generateTagFamilyFilters()
+				defer releaseTagFamilyFilters(tfs)
+				tfs.unmarshal(bm.tagFamilies, pi.p.tagFamilyMetadata, pi.p.tagFamilyFilter)
+				return pi.blockFilter.ShouldSkip(tfs)
+			}()
+			if err != nil {
+				pi.err = err
+				return false
+			}
+			if shouldSkip {
+				if !pi.nextSeriesID() {
+					return false
+				}
+				continue
+			}
 		}
 
 		pi.curBlock = bm
