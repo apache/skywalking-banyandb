@@ -82,7 +82,6 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if limit == 0 {
 		limit = defaultLimit
 	}
-	
 	fieldProjection := ud.originalQuery.FieldProjection
 	if ud.originalQuery.Agg != nil {
 		aggFieldName := ud.originalQuery.Agg.GetFieldName()
