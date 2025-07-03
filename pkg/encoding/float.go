@@ -74,12 +74,17 @@ func DecimalIntListToFloat64List(dst []float64, values []int64, exponent int32, 
 }
 
 // countDecimalPlaces estimates the number of decimal places in a float64 up to a given maximum.
+// If you enter 3.1, it may be less than 1e-9 in the computer, so it will be discarded.
+// finally, rounded = 31，exp = -1.
+// However, if the input is really 3.10000000000000009, this may result in loss of accuracy.
 func countDecimalPlaces(f float64, maxPlace int) int32 {
 	for i := 0; i < maxPlace; i++ {
-		f *= 10
+		modf, frac := math.Modf(f)
+		fmt.Println(modf, frac)
 		if math.Abs(f-math.Round(f)) < 1e-9 {
-			return int32(i + 1)
+			return int32(i)
 		}
+		f *= 10
 	}
 	return int32(maxPlace)
 }

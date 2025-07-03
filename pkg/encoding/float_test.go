@@ -19,71 +19,91 @@ package encoding
 
 import (
 	"math"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestFloat64ListToDecimalIntListAndBack(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     []float64
-		expectErr bool
+func TestFloat64ListToDecimalIntList1(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    []float64
+		wantInts []int64
+		wantExp  int32
+		wantErr  bool
 	}{
 		{
-			name:      "Normal values",
-			input:     []float64{1.23, 4.56, 7.89},
-			expectErr: false,
+			name:     "Int values",
+			input:    []float64{1.0, 2.0, 3.0},
+			wantInts: []int64{1, 2, 3},
+			wantExp:  0,
 		},
 		{
-			name:      "Values with many decimal places",
-			input:     []float64{1.123456789012345, 0.000000000123456789},
-			expectErr: false,
+			name:     "Normal float values 1",
+			input:    []float64{1.23, 4.56, 7.89},
+			wantInts: []int64{123, 456, 789},
+			wantExp:  -2,
 		},
 		{
-			name:      "Zero values",
-			input:     []float64{0, 0, 0},
-			expectErr: false,
+			name:     "Normal float values 2",
+			input:    []float64{1.4999, 1.5001},
+			wantInts: []int64{14999, 15001},
+			wantExp:  -4,
 		},
 		{
-			name:      "Very small values",
-			input:     []float64{1e-10, 2e-10},
-			expectErr: false,
+			name:     "Mixed decimal precision",
+			input:    []float64{0.1, 0.12, 0.123},
+			wantInts: []int64{100, 120, 123},
+			wantExp:  -3,
 		},
 		{
-			name:      "Large values",
-			input:     []float64{math.MaxFloat64 / 1e290, math.MaxFloat64 / 1e290},
-			expectErr: true,
+			name: "Function countDecimalPlaces() logic test",
+			// 0.00_000_000_000_002 < 1-e9, it will be discarded.
+			input:    []float64{1.000_000_000_000_001, 2.100_000_000_000_002, 3.1},
+			wantInts: []int64{10, 21, 31},
+			wantExp:  -1,
 		},
 		{
-			name:      "Mixed large and small",
-			input:     []float64{1.2345e+10, 1.2345e-10},
-			expectErr: true,
+			name:    "Contains NaN",
+			input:   []float64{math.NaN(), 1.23},
+			wantErr: true,
 		},
 		{
-			name:      "NaN and Inf",
-			input:     []float64{math.NaN(), math.Inf(1)},
-			expectErr: true,
+			name:    "Contains Inf",
+			input:   []float64{math.Inf(1), 1.23},
+			wantErr: true,
+		},
+		{
+			name:    "Multiply by scale overflow",
+			input:   []float64{math.MaxFloat64},
+			wantErr: true,
+			wantExp: -1,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ints, exp, err := Float64ListToDecimalIntList(nil, tt.input)
-			if tt.expectErr {
-				assert.Error(t, err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotInts, gotExp, err := Float64ListToDecimalIntList(nil, c.input)
+
+			if c.wantErr {
+				if err == nil {
+					t.Errorf("Expected error, but no error returned.")
+				}
 				return
 			}
-			assert.NoError(t, err)
 
-			floats, err := DecimalIntListToFloat64List(nil, ints, exp, len(ints))
-			if err != nil && !tt.expectErr {
+			if err != nil {
 				t.Errorf("unexpected error in DecimalIntListToFloat64List: %v", err)
 				return
 			}
 
-			for i := range tt.input {
-				assert.InDelta(t, tt.input[i], floats[i], 1e-12, "mismatch at index %d", i)
+			if !reflect.DeepEqual(gotInts, c.wantInts) {
+				t.Errorf("Conversion result error, got: %v, want: %v", gotInts, c.wantInts)
+			}
+
+			if gotExp != c.wantExp {
+				t.Errorf("Exp conversion error, got: %v, want: %v", gotExp, c.wantExp)
 			}
 		})
 	}

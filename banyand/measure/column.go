@@ -105,7 +105,15 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
-	c.encodeColumnValues(cm, bb)
+	// select encoding based on data type
+	switch c.valueType {
+	case pbv1.ValueTypeInt64:
+		c.encodeInt64Column(bb)
+	case pbv1.ValueTypeFloat64:
+		c.encodeFloat64Column(bb)
+	default:
+		c.encodeDefault(bb)
+	}
 	cm.size = uint64(len(bb.Buf))
 	if cm.size > maxValuesBlockSize {
 		logger.Panicf("too large valuesSize: %d bytes; mustn't exceed %d bytes", cm.size, maxValuesBlockSize)
@@ -114,87 +122,93 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 	columnWriter.MustWrite(bb.Buf)
 }
 
-func (c *column) encodeColumnValues(cm *columnMetadata, bb *bytes.Buffer) {
-	encodeDefault := func() {
-		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
-	}
-	// select encoding based on data type
-	switch c.valueType {
-	case pbv1.ValueTypeInt64:
-		// convert byte array to int64 array
-		intValuesPtr := generateInt64Slice(len(c.values))
-		intValues := *intValuesPtr
-		defer func() {
-			releaseInt64Slice(intValuesPtr)
-		}()
+func (c *column) encodeInt64Column(bb *bytes.Buffer) {
+	// convert byte array to int64 array
+	intValuesPtr := generateInt64Slice(len(c.values))
+	intValues := *intValuesPtr
+	defer releaseInt64Slice(intValuesPtr)
+	var encodeType encoding.EncodeType
 
-		for i, v := range c.values {
-			if v == nil || string(v) == "null" {
-				// TODO c.valueType = pbv1.ValueTypeStr
-				cm.valueType = pbv1.ValueTypeStr
-				encodeDefault()
-				return
-			}
-			if len(v) != 8 {
-				logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
-			}
-			intValues[i] = convert.BytesToInt64(v)
+	for i, v := range c.values {
+		if v == nil || string(v) == "null" {
+			c.encodeDefault(bb)
+			encodeType = encoding.EncodeTypePlain
+			// Prepend encodeType (1 byte) to the beginning
+			bb.Buf = append([]byte{byte(encodeType)}, bb.Buf...)
+			return
 		}
-		// use delta encoding for integer column
-		var encodeType encoding.EncodeType
-		var firstValue int64
-		bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
-		if encodeType == encoding.EncodeTypeUnknown {
-			logger.Panicf("invalid encode type for int64 values")
+		if len(v) != 8 {
+			logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
 		}
-		firstValueBytes := convert.Int64ToBytes(firstValue)
-		// Prepend encodeType (1 byte) and firstValue (8 bytes) to the beginning
-		bb.Buf = append(
-			append([]byte{byte(encodeType)}, firstValueBytes...),
-			bb.Buf...,
-		)
-	case pbv1.ValueTypeFloat64:
-		// convert byte array to float64 array
-		intValuesPtr := generateInt64Slice(len(c.values))
-		intValues := *intValuesPtr
-		defer func() {
-			releaseInt64Slice(intValuesPtr)
-		}()
-		floatValuesPtr := generateFloat64Slice(len(c.values))
-		floatValues := *floatValuesPtr
-		defer func() {
-			releaseFloat64Slice(floatValuesPtr)
-		}()
-
-		for i, v := range c.values {
-			floatValues[i] = convert.BytesToFloat64(v)
-		}
-		intValues, exp, err := encoding.Float64ListToDecimalIntList(intValues[:0], floatValues)
-		if err != nil {
-			if exp == -1 {
-				// TODO c.valueType = pbv1.ValueTypeStr
-				cm.valueType = pbv1.ValueTypeStr
-				encodeDefault()
-				return
-			}
-			logger.Panicf("cannot convert Float64List to DecimalIntList : %v", err)
-		}
-		var encodeType encoding.EncodeType
-		var firstValue int64
-		bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
-		if encodeType == encoding.EncodeTypeUnknown {
-			logger.Panicf("invalid encode type for int64 values")
-		}
-		firstValueBytes := convert.Int64ToBytes(firstValue)
-		expBytes := convert.Int32ToBytes(exp)
-		// Prepend encodeType (1 byte), exp (4 bytes) and firstValue (8 bytes) to the beginning
-		bb.Buf = append(
-			append(append([]byte{byte(encodeType)}, expBytes...), firstValueBytes...),
-			bb.Buf...,
-		)
-	default:
-		encodeDefault()
+		intValues[i] = convert.BytesToInt64(v)
 	}
+	// use delta encoding for integer column
+	var firstValue int64
+	bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
+	if encodeType == encoding.EncodeTypeUnknown {
+		logger.Panicf("invalid encode type for int64 values")
+	}
+	firstValueBytes := convert.Int64ToBytes(firstValue)
+	// Prepend encodeType (1 byte) and firstValue (8 bytes) to the beginning
+	bb.Buf = append(
+		append([]byte{byte(encodeType)}, firstValueBytes...),
+		bb.Buf...,
+	)
+}
+
+func (c *column) encodeFloat64Column(bb *bytes.Buffer) {
+	// convert byte array to float64 array
+	intValuesPtr := generateInt64Slice(len(c.values))
+	intValues := *intValuesPtr
+	defer releaseInt64Slice(intValuesPtr)
+
+	floatValuesPtr := generateFloat64Slice(len(c.values))
+	floatValues := *floatValuesPtr
+	defer releaseFloat64Slice(floatValuesPtr)
+
+	var encodeType encoding.EncodeType
+
+	doEncodeDefault := func() {
+		c.encodeDefault(bb)
+		encodeType = encoding.EncodeTypePlain
+		// Prepend encodeType (1 byte) to the beginning
+		bb.Buf = append([]byte{byte(encodeType)}, bb.Buf...)
+	}
+
+	for i, v := range c.values {
+		if v == nil || string(v) == "null" {
+			doEncodeDefault()
+			return
+		}
+		if len(v) != 8 {
+			logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
+		}
+		floatValues[i] = convert.BytesToFloat64(v)
+	}
+	intValues, exp, err := encoding.Float64ListToDecimalIntList(intValues[:0], floatValues)
+	if err != nil {
+		if exp == -1 {
+			doEncodeDefault()
+			return
+		}
+		logger.Panicf("cannot convert Float64List to DecimalIntList : %v", err)
+	}
+	var firstValue int64
+	bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
+	if encodeType == encoding.EncodeTypeUnknown {
+		logger.Panicf("invalid encode type for int64 values")
+	}
+	firstValueBytes := convert.Int64ToBytes(firstValue)
+	expBytes := convert.Int32ToBytes(exp)
+	// Prepend encodeType (1 byte), exp (4 bytes) and firstValue (8 bytes) to the beginning
+	bb.Buf = append(
+		append(append([]byte{byte(encodeType)}, expBytes...), firstValueBytes...),
+		bb.Buf...,
+	)
+}
+
+func (c *column) encodeDefault(bb *bytes.Buffer) {
+	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
 }
 
 func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm columnMetadata, count uint64) {
@@ -240,74 +254,98 @@ func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *
 func (c *column) decodeColumnValues(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
 	switch c.valueType {
 	case pbv1.ValueTypeInt64:
-		// decode integer type
-		intValuesPtr := generateInt64Slice(int(count))
-		intValues := *intValuesPtr
-		defer func() {
-			releaseInt64Slice(intValuesPtr)
-		}()
-
-		const expectedLen = 9
-		if len(bb.Buf) < expectedLen {
-			logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", expectedLen, len(bb.Buf))
-		}
-		encodeType := encoding.EncodeType(bb.Buf[0])
-		firstValue := convert.BytesToInt64(bb.Buf[1:9])
-		bb.Buf = bb.Buf[9:]
-		var err error
-		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
-		if err != nil {
-			logger.Panicf("%s: cannot decode int values: %v", path, err)
-		}
-		// convert int64 array to byte array
-		c.values = make([][]byte, count)
-		for i, v := range intValues {
-			c.values[i] = convert.Int64ToBytes(v)
-		}
+		c.decodeInt64Column(decoder, path, count, bb)
 	case pbv1.ValueTypeFloat64:
-		// decode float type
-		intValuesPtr := generateInt64Slice(int(count))
-		intValues := *intValuesPtr
-		defer func() {
-			releaseInt64Slice(intValuesPtr)
-		}()
-		floatValuesPtr := generateFloat64Slice(int(count))
-		floatValues := *floatValuesPtr
-		defer func() {
-			releaseFloat64Slice(floatValuesPtr)
-		}()
-
-		const expectedLen = 13
-		if len(bb.Buf) < expectedLen {
-			logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", expectedLen, len(bb.Buf))
-		}
-		encodeType := encoding.EncodeType(bb.Buf[0])
-		exp := convert.BytesToInt32(bb.Buf[1:5])
-		firstValue := convert.BytesToInt64(bb.Buf[5:13])
-		bb.Buf = bb.Buf[13:]
-		var err error
-		intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
-		if err != nil {
-			logger.Panicf("%s: cannot decode int values: %v", path, err)
-		}
-		floatValues, err = encoding.DecimalIntListToFloat64List(floatValues[:0], intValues, exp, int(count))
-		if err != nil {
-			logger.Panicf("cannot convert DecimalIntList to Float64List: %v", err)
-		}
-		if uint64(len(floatValues)) != count {
-			logger.Panicf("unexpected floatValues length: got %d, expected %d", len(floatValues), count)
-		}
-		// convert float64 array to byte array
-		c.values = make([][]byte, count)
-		for i, v := range floatValues {
-			c.values[i] = convert.Float64ToBytes(v)
-		}
+		c.decodeFloat64Column(decoder, path, count, bb)
 	default:
-		var err error
-		c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
-		if err != nil {
-			logger.Panicf("%s: cannot decode values: %v", path, err)
-		}
+		c.decodeDefault(decoder, bb, count, path)
+	}
+}
+
+func (c *column) decodeInt64Column(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
+	// decode integer type
+	intValuesPtr := generateInt64Slice(int(count))
+	intValues := *intValuesPtr
+	defer releaseInt64Slice(intValuesPtr)
+
+	if len(bb.Buf) < 1 {
+		logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", 1, len(bb.Buf))
+	}
+	encodeType := encoding.EncodeType(bb.Buf[0])
+	if encodeType == encoding.EncodeTypePlain {
+		bb.Buf = bb.Buf[1:]
+		c.decodeDefault(decoder, bb, count, path)
+		return
+	}
+
+	const expectedLen = 9
+	if len(bb.Buf) < expectedLen {
+		logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", expectedLen, len(bb.Buf))
+	}
+	firstValue := convert.BytesToInt64(bb.Buf[1:9])
+	bb.Buf = bb.Buf[9:]
+	var err error
+	intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
+	if err != nil {
+		logger.Panicf("%s: cannot decode int values: %v", path, err)
+	}
+	// convert int64 array to byte array
+	c.values = make([][]byte, count)
+	for i, v := range intValues {
+		c.values[i] = convert.Int64ToBytes(v)
+	}
+}
+
+func (c *column) decodeFloat64Column(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
+	// decode float type
+	intValuesPtr := generateInt64Slice(int(count))
+	intValues := *intValuesPtr
+	defer releaseInt64Slice(intValuesPtr)
+	floatValuesPtr := generateFloat64Slice(int(count))
+	floatValues := *floatValuesPtr
+	defer releaseFloat64Slice(floatValuesPtr)
+
+	if len(bb.Buf) < 1 {
+		logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", 1, len(bb.Buf))
+	}
+	encodeType := encoding.EncodeType(bb.Buf[0])
+	if encodeType == encoding.EncodeTypePlain {
+		bb.Buf = bb.Buf[1:]
+		c.decodeDefault(decoder, bb, count, path)
+		return
+	}
+
+	const expectedLen = 13
+	if len(bb.Buf) < expectedLen {
+		logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", expectedLen, len(bb.Buf))
+	}
+	exp := convert.BytesToInt32(bb.Buf[1:5])
+	firstValue := convert.BytesToInt64(bb.Buf[5:13])
+	bb.Buf = bb.Buf[13:]
+	var err error
+	intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
+	if err != nil {
+		logger.Panicf("%s: cannot decode int values: %v", path, err)
+	}
+	floatValues, err = encoding.DecimalIntListToFloat64List(floatValues[:0], intValues, exp, int(count))
+	if err != nil {
+		logger.Panicf("cannot convert DecimalIntList to Float64List: %v", err)
+	}
+	if uint64(len(floatValues)) != count {
+		logger.Panicf("unexpected floatValues length: got %d, expected %d", len(floatValues), count)
+	}
+	// convert float64 array to byte array
+	c.values = make([][]byte, count)
+	for i, v := range floatValues {
+		c.values[i] = convert.Float64ToBytes(v)
+	}
+}
+
+func (c *column) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64, path string) {
+	var err error
+	c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
+	if err != nil {
+		logger.Panicf("%s: cannot decode values: %v", path, err)
 	}
 }
 
