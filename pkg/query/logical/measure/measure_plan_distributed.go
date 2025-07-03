@@ -82,9 +82,33 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if limit == 0 {
 		limit = defaultLimit
 	}
+	
+	fieldProjection := ud.originalQuery.FieldProjection
+	if ud.originalQuery.Agg != nil {
+		aggFieldName := ud.originalQuery.Agg.GetFieldName()
+		hasAggField := false
+		if fieldProjection != nil {
+			for _, projectedField := range fieldProjection.GetNames() {
+				if projectedField == aggFieldName {
+					hasAggField = true
+					break
+				}
+			}
+		}
+		if !hasAggField {
+			var fieldNames []string
+			if fieldProjection != nil {
+				fieldNames = append(fieldNames, fieldProjection.GetNames()...)
+			}
+			fieldNames = append(fieldNames, aggFieldName)
+			fieldProjection = &measurev1.QueryRequest_FieldProjection{
+				Names: fieldNames,
+			}
+		}
+	}
 	temp := &measurev1.QueryRequest{
 		TagProjection:   ud.originalQuery.TagProjection,
-		FieldProjection: ud.originalQuery.FieldProjection,
+		FieldProjection: fieldProjection,
 		Name:            ud.originalQuery.Name,
 		Groups:          ud.originalQuery.Groups,
 		Criteria:        ud.originalQuery.Criteria,
