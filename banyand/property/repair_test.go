@@ -51,7 +51,9 @@ func TestBuildTree(t *testing.T) {
 		{
 			name: "empty shard",
 			statusVerify: func(t *testing.T, _ *shard, status *repairStatus) {
-				basicStatusVerify(t, status)
+				if status != nil {
+					t.Fatal("expected nil status")
+				}
 			},
 		},
 		{
@@ -81,19 +83,21 @@ func TestBuildTree(t *testing.T) {
 			},
 		},
 		{
-			name: "multiple properties",
+			name: "multiple properties with versions",
 			existingDoc: func(s *shard) ([]index.Document, error) {
 				return buildPropertyDocuments(s,
-					propertyBuilder{group: "test1", id: "test1"},
-					propertyBuilder{group: "test2", id: "test2"},
-					propertyBuilder{group: "test3", id: "test3"},
+					propertyBuilder{id: "test1", version: 3, value: 1},
+					propertyBuilder{id: "test1", version: 4, value: 2},
+					propertyBuilder{id: "test2", version: 1, value: 1},
+					propertyBuilder{id: "test2", version: 2, value: 2},
+					propertyBuilder{id: "test3"},
 				)
 			},
 			statusVerify: func(t *testing.T, s *shard, status *repairStatus) {
-				basicStatusVerify(t, status, "test1", 1, "test2", 1, "test3", 1)
-				verifyContainsProperty(t, s, status, "test1", propertyBuilder{group: "test1", id: "test1"})
-				verifyContainsProperty(t, s, status, "test2", propertyBuilder{group: "test2", id: "test2"})
-				verifyContainsProperty(t, s, status, "test3", propertyBuilder{group: "test3", id: "test3"})
+				basicStatusVerify(t, status, defaultGroupName, 3)
+				verifyContainsProperty(t, s, status, defaultGroupName, propertyBuilder{id: "test1", version: 4, value: 2})
+				verifyContainsProperty(t, s, status, defaultGroupName, propertyBuilder{id: "test2", version: 2, value: 2})
+				verifyContainsProperty(t, s, status, defaultGroupName, propertyBuilder{id: "test3"})
 			},
 		},
 		{
@@ -368,7 +372,7 @@ func generateShaValue(t *testing.T, s *shard, builder propertyBuilder) string {
 	if err != nil {
 		t.Fatalf("failed to marshal property: %v", err)
 	}
-	shaValue, err := s.repairState.buildingShaValue(marshal, builder.deleteTime)
+	shaValue, err := s.repairState.buildShaValue(marshal, builder.deleteTime)
 	if err != nil {
 		t.Fatalf("failed to build sha value: %v", err)
 	}

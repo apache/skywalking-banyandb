@@ -90,7 +90,7 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64, de
 		l:                 logger.Fetch(ctx, sName),
 		location:          location,
 		expireToDeleteSec: deleteExpireSec,
-		repairState:       newRepair(location, repairTreeSlotCount),
+		repairState:       newRepair(location, repairBatchSearchSize, repairTreeSlotCount),
 	}
 	opts := inverted.StoreOpts{
 		Path:                 location,
@@ -153,7 +153,7 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, de
 		doc.Fields = append(doc.Fields, deleteField)
 	}
 
-	shaVal, err := s.repairState.buildingShaValue(pj, deleteTime)
+	shaVal, err := s.repairState.buildShaValue(pj, deleteTime)
 	if err != nil {
 		return nil, fmt.Errorf("building sha value failure: %w", err)
 	}
