@@ -42,6 +42,8 @@ type Memory interface {
 	AvailableBytes() int64
 	GetLimit() uint64
 	AcquireResource(ctx context.Context, size uint64) error
+	// ShouldCache returns true if the file size is smaller than the threshold.
+	ShouldCache(fileSize int64) bool
 	run.PreRunner
 	run.Config
 	run.Service
@@ -226,4 +228,36 @@ func (m *memory) Serve() run.StopNotify {
 		}
 	}()
 	return m.closed
+}
+
+// GetThreshold returns the threshold for large file detection (1% of page cache).
+func (m *memory) GetThreshold() int64 {
+	// Try reading cgroup memory limit
+	cgLimit, err := cgroups.MemoryLimit()
+	if err != nil {
+		m.l.Warn().Err(err).Msg("failed to get memory limit from cgroups, using default threshold")
+		// Fallback default threshold of 64MB
+		return 64 << 20
+	}
+
+	// Determine effective memory to use based on flags
+	var totalMemory int64
+	if m.allowedBytes > 0 {
+		totalMemory = cgLimit - int64(m.allowedBytes)
+	} else {
+		totalMemory = cgLimit * int64(m.allowedPercent) / 100
+	}
+
+	// Compute 1% of that memory as page cache threshold
+	threshold := totalMemory / 100
+	const minThreshold = 10 << 20 // 10MB
+	if threshold < minThreshold {
+		threshold = minThreshold
+	}
+	return threshold
+}
+
+// ShouldCache returns true if the file size is smaller than the threshold.
+func (m *memory) ShouldCache(fileSize int64) bool {
+	return fileSize < m.GetThreshold()
 }

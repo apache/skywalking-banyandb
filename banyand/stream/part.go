@@ -40,6 +40,7 @@ const (
 	elementIndexFilename           = "idx"
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
+	tagFamiliesFilterFilenameExt   = ".tff"
 )
 
 type part struct {
@@ -48,6 +49,7 @@ type part struct {
 	fileSystem           fs.FileSystem
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
+	tagFamilyFilter      map[string]fs.Reader
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
@@ -61,6 +63,9 @@ func (p *part) close() {
 	}
 	for _, tfh := range p.tagFamilyMetadata {
 		fs.MustClose(tfh)
+	}
+	for _, tff := range p.tagFamilyFilter {
+		fs.MustClose(tff)
 	}
 }
 
@@ -80,9 +85,11 @@ func openMemPart(mp *memPart) *part {
 	if mp.tagFamilies != nil {
 		p.tagFamilies = make(map[string]fs.Reader)
 		p.tagFamilyMetadata = make(map[string]fs.Reader)
+		p.tagFamilyFilter = make(map[string]fs.Reader)
 		for name, tf := range mp.tagFamilies {
 			p.tagFamilies[name] = tf
 			p.tagFamilyMetadata[name] = mp.tagFamilyMetadata[name]
+			p.tagFamilyFilter[name] = mp.tagFamilyFilter[name]
 		}
 	}
 	return &p
@@ -91,27 +98,32 @@ func openMemPart(mp *memPart) *part {
 type memPart struct {
 	tagFamilyMetadata map[string]*bytes.Buffer
 	tagFamilies       map[string]*bytes.Buffer
+	tagFamilyFilter   map[string]*bytes.Buffer
 	meta              bytes.Buffer
 	primary           bytes.Buffer
 	timestamps        bytes.Buffer
 	partMetadata      partMetadata
 }
 
-func (mp *memPart) mustCreateMemTagFamilyWriters(name string) (fs.Writer, fs.Writer) {
+func (mp *memPart) mustCreateMemTagFamilyWriters(name string) (fs.Writer, fs.Writer, fs.Writer) {
 	if mp.tagFamilies == nil {
 		mp.tagFamilies = make(map[string]*bytes.Buffer)
 		mp.tagFamilyMetadata = make(map[string]*bytes.Buffer)
+		mp.tagFamilyFilter = make(map[string]*bytes.Buffer)
 	}
 	tf, ok := mp.tagFamilies[name]
 	tfh := mp.tagFamilyMetadata[name]
+	tff := mp.tagFamilyFilter[name]
 	if ok {
 		tf.Reset()
 		tfh.Reset()
-		return tfh, tf
+		tff.Reset()
+		return tfh, tf, tff
 	}
 	mp.tagFamilies[name] = &bytes.Buffer{}
 	mp.tagFamilyMetadata[name] = &bytes.Buffer{}
-	return mp.tagFamilyMetadata[name], mp.tagFamilies[name]
+	mp.tagFamilyFilter[name] = &bytes.Buffer{}
+	return mp.tagFamilyMetadata[name], mp.tagFamilies[name], mp.tagFamilyFilter[name]
 }
 
 func (mp *memPart) reset() {
@@ -127,6 +139,11 @@ func (mp *memPart) reset() {
 	if mp.tagFamilyMetadata != nil {
 		for _, tfh := range mp.tagFamilyMetadata {
 			tfh.Reset()
+		}
+	}
+	if mp.tagFamilyFilter != nil {
+		for _, tff := range mp.tagFamilyFilter {
+			tff.Reset()
 		}
 	}
 }
@@ -175,6 +192,9 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	}
 	for name, tfh := range mp.tagFamilyMetadata {
 		fs.MustFlush(fileSystem, tfh.Buf, filepath.Join(path, name+tagFamiliesMetadataFilenameExt), storage.FilePerm)
+	}
+	for name, tfh := range mp.tagFamilyFilter {
+		fs.MustFlush(fileSystem, tfh.Buf, filepath.Join(path, name+tagFamiliesFilterFilenameExt), storage.FilePerm)
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
@@ -286,6 +306,12 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 				p.tagFamilies = make(map[string]fs.Reader)
 			}
 			p.tagFamilies[removeExt(e.Name(), tagFamiliesFilenameExt)] = mustOpenReader(path.Join(partPath, e.Name()), fileSystem)
+		}
+		if filepath.Ext(e.Name()) == tagFamiliesFilterFilenameExt {
+			if p.tagFamilyFilter == nil {
+				p.tagFamilyFilter = make(map[string]fs.Reader)
+			}
+			p.tagFamilyFilter[removeExt(e.Name(), tagFamiliesFilterFilenameExt)] = mustOpenReader(path.Join(partPath, e.Name()), fileSystem)
 		}
 	}
 	return &p

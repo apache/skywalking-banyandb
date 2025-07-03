@@ -75,6 +75,14 @@
       label: 'TYPE_INVERTED',
       value: 'TYPE_INVERTED',
     },
+    {
+      label: 'TYPE_SKIPPING',
+      value: 'TYPE_SKIPPING',
+    },
+    {
+      label: 'TYPE_TREE',
+      value: 'TYPE_TREE',
+    },
   ];
   const analyzerList = [
     {

@@ -19,8 +19,16 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"math"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
 
+	"github.com/benbjohnson/clock"
+	"github.com/robfig/cron/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -35,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -53,24 +62,31 @@ type service interface {
 var _ service = (*lifecycleService)(nil)
 
 type lifecycleService struct {
-	metadata         metadata.Repo
-	omr              observability.MetricsRegistry
-	l                *logger.Logger
-	gRPCAddr         string
-	cert             string
-	streamRoot       string
-	measureRoot      string
-	progressFilePath string
-	enableTLS        bool
-	insecure         bool
+	metadata          metadata.Repo
+	omr               observability.MetricsRegistry
+	pm                protector.Memory
+	l                 *logger.Logger
+	sch               *timestamp.Scheduler
+	measureRoot       string
+	streamRoot        string
+	progressFilePath  string
+	reportDir         string
+	schedule          string
+	cert              string
+	gRPCAddr          string
+	maxExecutionTimes int
+	enableTLS         bool
+	insecure          bool
 }
 
 // NewService creates a new lifecycle service.
-func NewService(meta metadata.Repo, omr observability.MetricsRegistry) run.Unit {
-	return &lifecycleService{
+func NewService(meta metadata.Repo) run.Unit {
+	ls := &lifecycleService{
 		metadata: meta,
-		omr:      omr,
+		omr:      observability.BypassRegistry,
 	}
+	ls.pm = protector.NewMemory(ls.omr)
+	return ls
 }
 
 func (l *lifecycleService) FlagSet() *run.FlagSet {
@@ -83,6 +99,14 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 	flagS.StringVar(&l.streamRoot, "stream-root-path", "/tmp", "Root directory for stream catalog")
 	flagS.StringVar(&l.measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
 	flagS.StringVar(&l.progressFilePath, "progress-file", "/tmp/lifecycle-progress.json", "Path to store progress for crash recovery")
+	flagS.StringVar(&l.reportDir, "report-dir", "/tmp/lifecycle-reports", "Directory to store migration reports")
+	flagS.StringVar(
+		&l.schedule,
+		"schedule",
+		"",
+		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
+	)
+	flagS.IntVar(&l.maxExecutionTimes, "max-execution-times", 0, "Maximum number of times to execute the lifecycle migration. 0 means no limit.")
 	return flagS
 }
 
@@ -91,6 +115,9 @@ func (l *lifecycleService) Validate() error {
 }
 
 func (l *lifecycleService) GracefulStop() {
+	if l.sch != nil {
+		l.sch.Close()
+	}
 }
 
 func (l *lifecycleService) Name() string {
@@ -99,72 +126,220 @@ func (l *lifecycleService) Name() string {
 
 func (l *lifecycleService) Serve() run.StopNotify {
 	l.l = logger.GetLogger("lifecycle")
-	ctx := context.Background()
 	done := make(chan struct{})
-	close(done)
+	if l.schedule == "" {
+		defer close(done)
+		l.l.Info().Msg("starting lifecycle migration without schedule")
+		if err := l.action(); err != nil {
+			logger.Panicf("failed to run lifecycle migration: %v", err)
+		}
+		return done
+	}
+	l.l.Info().Msgf("lifecycle migration will run with schedule: %s", l.schedule)
+	clockInstance := clock.New()
+	l.sch = timestamp.NewScheduler(l.l, clockInstance)
+	var executionCount int
+	err := l.sch.Register("lifecycle", cron.Descriptor, l.schedule, func(triggerTime time.Time, _ *logger.Logger) bool {
+		l.l.Info().Msgf("lifecycle migration triggered at %s", triggerTime)
+		if err := l.action(); err != nil {
+			l.l.Error().Err(err).Msg("failed to run lifecycle migration action")
+		}
+		executionCount++
+		if l.maxExecutionTimes > 0 && executionCount >= l.maxExecutionTimes {
+			l.l.Info().Msgf("lifecycle migration reached max execution times: %d, stopping scheduler", l.maxExecutionTimes)
+			close(done)
+			return false
+		}
+		return true
+	})
+	if err != nil {
+		l.l.Error().Err(err).Msg("failed to register lifecycle migration schedule")
+		return done
+	}
+	return done
+}
 
+func (l *lifecycleService) action() error {
+	ctx := context.Background()
 	progress := LoadProgress(l.progressFilePath, l.l)
+	progress.ClearErrors()
 
 	groups, err := l.getGroupsToProcess(ctx, progress)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to get groups to process")
-		return done
+		return err
 	}
+
+	l.l.Info().Msgf("starting migration for %d groups: %v", len(groups), getGroupNames(groups))
 
 	if len(groups) == 0 {
 		l.l.Info().Msg("no groups to process, all groups already completed")
 		progress.Remove(l.progressFilePath, l.l)
-		return done
+		return err
 	}
 
-	streamDir, measureDir, err := l.getSnapshots(groups)
+	// Pass progress to getSnapshots
+	streamDir, measureDir, err := l.getSnapshots(groups, progress)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to get snapshots")
-		return done
+		return err
 	}
+	l.l.Info().
+		Str("stream_snapshot", streamDir).
+		Str("measure_snapshot", measureDir).
+		Msg("created snapshots")
+	progress.Save(l.progressFilePath, l.l)
 	streamSVC, measureSVC, err := l.setupQuerySvc(ctx, streamDir, measureDir)
-	if err != nil {
-		l.l.Error().Err(err).Msg("failed to setup query service")
-		return done
-	}
 	if streamSVC != nil {
 		defer streamSVC.GracefulStop()
 	}
 	if measureSVC != nil {
 		defer measureSVC.GracefulStop()
 	}
+	if err != nil {
+		l.l.Error().Err(err).Msg("failed to setup query service")
+		return err
+	}
+
 	nodes, err := l.metadata.NodeRegistry().ListNode(ctx, databasev1.Role_ROLE_DATA)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to list data nodes")
-		return done
+		return err
 	}
 	labels := common.ParseNodeFlags()
 
+	allGroupsCompleted := true
 	for _, g := range groups {
 		switch g.Catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
 			if streamSVC == nil {
 				l.l.Error().Msgf("stream service is not available, skipping group: %s", g.Metadata.Name)
+				progress.MarkStreamError(g.Metadata.Name, "", fmt.Sprintf("stream service unavailable for group %s", g.Metadata.Name))
+				allGroupsCompleted = false
 				continue
 			}
 			l.processStreamGroup(ctx, g, streamSVC, nodes, labels, progress)
 		case commonv1.Catalog_CATALOG_MEASURE:
 			if measureSVC == nil {
 				l.l.Error().Msgf("measure service is not available, skipping group: %s", g.Metadata.Name)
+				progress.MarkMeasureError(g.Metadata.Name, "", fmt.Sprintf("measure service unavailable for group %s", g.Metadata.Name))
+				allGroupsCompleted = false
 				continue
 			}
 			l.processMeasureGroup(ctx, g, measureSVC, nodes, labels, progress)
 		default:
 			l.l.Info().Msgf("group catalog: %s doesn't support lifecycle management", g.Catalog)
 		}
-
-		progress.MarkGroupCompleted(g.Metadata.Name)
 		progress.Save(l.progressFilePath, l.l)
 	}
 
-	progress.Remove(l.progressFilePath, l.l)
-	l.l.Info().Msg("lifecycle migration completed successfully")
-	return done
+	// Only remove progress file if ALL groups are fully completed
+	if allGroupsCompleted && progress.AllGroupsFullyCompleted(groups) {
+		progress.Remove(l.progressFilePath, l.l)
+		l.l.Info().Msg("lifecycle migration completed successfully")
+		l.generateReport(progress)
+		return nil
+	}
+	l.l.Info().Msg("lifecycle migration partially completed, progress file retained")
+	return fmt.Errorf("lifecycle migration partially completed, progress file retained; %d groups not fully completed", len(groups)-len(progress.CompletedGroups))
+}
+
+// generateReport gathers counts & errors from Progress, writes one JSON file per run, and keeps only 5 latest.
+func (l *lifecycleService) generateReport(p *Progress) {
+	type grp struct {
+		StreamCounts  map[string]int    `json:"stream_counts"`
+		MeasureCounts map[string]int    `json:"measure_counts"`
+		StreamErrors  map[string]string `json:"stream_errors"`
+		MeasureErrors map[string]string `json:"measure_errors"`
+		Name          string            `json:"name"`
+	}
+	reportDir := l.reportDir
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		l.l.Error().Err(err).Msgf("failed to create report dir %s", reportDir)
+		return
+	}
+
+	// build report
+	var groups []grp
+	for name := range p.CompletedStreams {
+		groups = append(groups, grp{
+			Name:          name,
+			StreamCounts:  p.StreamCounts[name],
+			MeasureCounts: p.MeasureCounts[name],
+			StreamErrors:  p.StreamErrors[name],
+			MeasureErrors: p.MeasureErrors[name],
+		})
+	}
+	// also include groups that had only measures
+	for name := range p.CompletedMeasures {
+		if _, seen := p.CompletedStreams[name]; seen {
+			continue
+		}
+		groups = append(groups, grp{
+			Name:          name,
+			StreamCounts:  p.StreamCounts[name],
+			MeasureCounts: p.MeasureCounts[name],
+			StreamErrors:  p.StreamErrors[name],
+			MeasureErrors: p.MeasureErrors[name],
+		})
+	}
+	payload := struct {
+		GeneratedAt time.Time `json:"generated_at"`
+		Groups      []grp     `json:"groups"`
+	}{
+		GeneratedAt: time.Now(),
+		Groups:      groups,
+	}
+
+	// write file
+	fname := time.Now().Format("20060102_150405") + ".json"
+	fpath := filepath.Join(reportDir, fname)
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		l.l.Error().Err(err).Msg("failed to marshal migration report")
+		return
+	}
+	if err = os.WriteFile(fpath, data, 0o600); err != nil {
+		l.l.Error().Err(err).Msgf("failed to write report file %s", fpath)
+		return
+	}
+	l.l.Info().Msgf("wrote migration report %s", fpath)
+
+	// rotate: keep only 5 latest
+	entries, err := os.ReadDir(reportDir)
+	if err != nil {
+		return
+	}
+	type fi struct {
+		t    time.Time
+		name string
+	}
+	var list []fi
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		list = append(list, fi{name: e.Name(), t: info.ModTime()})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].t.After(list[j].t)
+	})
+	for i := 5; i < len(list); i++ {
+		_ = os.Remove(filepath.Join(reportDir, list[i].name))
+	}
+	l.l.Info().Msg("rotated old migration reports")
+}
+
+func getGroupNames(groups []*commonv1.Group) []string {
+	names := make([]string, 0, len(groups))
+	for _, g := range groups {
+		names = append(names, g.Metadata.Name)
+	}
+	return names
 }
 
 func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Progress) ([]*commonv1.Group, error) {
@@ -183,7 +358,7 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 			continue
 		}
 		if progress.IsGroupCompleted(g.Metadata.Name) {
-			l.l.Info().Msgf("skipping already completed group: %s", g.Metadata.Name)
+			l.l.Debug().Msgf("skipping already completed group: %s", g.Metadata.Name)
 			continue
 		}
 		groups = append(groups, g)
@@ -195,7 +370,7 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group, streamSVC stream.Service,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, replicas, selector, client, err := parseGroup(ctx, g, labels, nodes, l.l, l.metadata)
+	shardNum, replicas, selector, client, err := parseGroup(g, labels, nodes, l.l, l.metadata)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -209,26 +384,59 @@ func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.G
 	}
 
 	tr := streamSVC.GetRemovalSegmentsTimeRange(g.Metadata.Name)
+	if tr.Start.IsZero() && tr.End.IsZero() {
+		l.l.Info().Msgf("no removal segments time range for group %s, skipping stream migration", g.Metadata.Name)
+		progress.MarkGroupCompleted(g.Metadata.Name)
+		progress.Save(l.progressFilePath, l.l)
+		return
+	}
 
 	l.processStreams(ctx, g, ss, streamSVC, tr, shardNum, replicas, selector, client, progress)
 
-	l.deleteExpiredStreamSegments(ctx, g, tr, progress)
+	allStreamsDone := true
+	for _, s := range ss {
+		if !progress.IsStreamCompleted(g.Metadata.Name, s.Metadata.Name) {
+			allStreamsDone = false
+		}
+	}
+	if allStreamsDone {
+		l.l.Info().Msgf("deleting expired stream segments for group: %s", g.Metadata.Name)
+		l.deleteExpiredStreamSegments(ctx, g, tr, progress)
+		progress.MarkGroupCompleted(g.Metadata.Name)
+		progress.Save(l.progressFilePath, l.l)
+	} else {
+		l.l.Info().Msgf("skipping delete expired stream segments for group %s: some streams not fully migrated", g.Metadata.Name)
+	}
 }
 
-func (l *lifecycleService) processStreams(ctx context.Context, g *commonv1.Group, streams []*databasev1.Stream,
-	streamSVC stream.Service, tr *timestamp.TimeRange, shardNum uint32, replicas uint32, selector node.Selector, client queue.Client, progress *Progress,
+func (l *lifecycleService) processStreams(
+	ctx context.Context,
+	g *commonv1.Group,
+	streams []*databasev1.Stream,
+	streamSVC stream.Service,
+	tr *timestamp.TimeRange,
+	shardNum uint32,
+	replicas uint32,
+	selector node.Selector,
+	client queue.Client,
+	progress *Progress,
 ) {
 	for _, s := range streams {
 		if progress.IsStreamCompleted(g.Metadata.Name, s.Metadata.Name) {
-			l.l.Info().Msgf("skipping already completed stream: %s/%s", g.Metadata.Name, s.Metadata.Name)
+			l.l.Debug().Msgf("skipping already completed stream: %s/%s", g.Metadata.Name, s.Metadata.Name)
 			continue
 		}
-
-		if sum, err := l.processSingleStream(ctx, s, streamSVC, tr, shardNum, replicas, selector, client); err == nil {
-			l.l.Info().Msgf("migrated %d elements in stream %s", sum, s.Metadata.Name)
+		sum, err := l.processSingleStream(ctx, s, streamSVC, tr, shardNum, replicas, selector, client)
+		if err != nil {
+			progress.MarkStreamError(g.Metadata.Name, s.Metadata.Name, err.Error())
+		} else {
+			if sum < 1 {
+				l.l.Debug().Msgf("no elements migrated for stream %s", s.Metadata.Name)
+			} else {
+				l.l.Info().Msgf("migrated %d elements in stream %s", sum, s.Metadata.Name)
+			}
+			progress.MarkStreamCompleted(g.Metadata.Name, s.Metadata.Name, sum)
 		}
-
-		progress.MarkStreamCompleted(g.Metadata.Name, s.Metadata.Name)
 		progress.Save(l.progressFilePath, l.l)
 	}
 }
@@ -300,7 +508,7 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureSVC measure.Service,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, replicas, selector, client, err := parseGroup(ctx, g, labels, nodes, l.l, l.metadata)
+	shardNum, replicas, selector, client, err := parseGroup(g, labels, nodes, l.l, l.metadata)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -314,26 +522,60 @@ func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.
 	}
 
 	tr := measureSVC.GetRemovalSegmentsTimeRange(g.Metadata.Name)
+	if tr.Start.IsZero() && tr.End.IsZero() {
+		l.l.Info().Msgf("no removal segments time range for group %s, skipping measure migration", g.Metadata.Name)
+		progress.MarkGroupCompleted(g.Metadata.Name)
+		progress.Save(l.progressFilePath, l.l)
+		return
+	}
 
 	l.processMeasures(ctx, g, mm, measureSVC, tr, shardNum, replicas, selector, client, progress)
 
-	l.deleteExpiredMeasureSegments(ctx, g, tr, progress)
+	allMeasuresDone := true
+	for _, m := range mm {
+		if !progress.IsMeasureCompleted(g.Metadata.Name, m.Metadata.Name) {
+			allMeasuresDone = false
+			break
+		}
+	}
+	if allMeasuresDone {
+		l.l.Info().Msgf("deleting expired measure segments for group: %s", g.Metadata.Name)
+		l.deleteExpiredMeasureSegments(ctx, g, tr, progress)
+		progress.MarkGroupCompleted(g.Metadata.Name)
+		progress.Save(l.progressFilePath, l.l)
+	} else {
+		l.l.Info().Msgf("skipping delete expired measure segments for group %s: some measures not fully migrated", g.Metadata.Name)
+	}
 }
 
-func (l *lifecycleService) processMeasures(ctx context.Context, g *commonv1.Group, measures []*databasev1.Measure,
-	measureSVC measure.Service, tr *timestamp.TimeRange, shardNum uint32, replicas uint32, selector node.Selector, client queue.Client, progress *Progress,
+func (l *lifecycleService) processMeasures(
+	ctx context.Context,
+	g *commonv1.Group,
+	measures []*databasev1.Measure,
+	measureSVC measure.Service,
+	tr *timestamp.TimeRange,
+	shardNum uint32,
+	replicas uint32,
+	selector node.Selector,
+	client queue.Client,
+	progress *Progress,
 ) {
 	for _, m := range measures {
 		if progress.IsMeasureCompleted(g.Metadata.Name, m.Metadata.Name) {
-			l.l.Info().Msgf("skipping already completed measure: %s/%s", g.Metadata.Name, m.Metadata.Name)
+			l.l.Debug().Msgf("skipping already completed measure: %s/%s", g.Metadata.Name, m.Metadata.Name)
 			continue
 		}
-
-		if sum, err := l.processSingleMeasure(ctx, m, measureSVC, tr, shardNum, replicas, selector, client); err == nil {
-			l.l.Info().Msgf("migrated %d elements in measure %s", sum, m.Metadata.Name)
+		sum, err := l.processSingleMeasure(ctx, m, measureSVC, tr, shardNum, replicas, selector, client)
+		if err != nil {
+			progress.MarkMeasureError(g.Metadata.Name, m.Metadata.Name, err.Error())
+		} else {
+			if sum < 1 {
+				l.l.Debug().Msgf("no elements migrated for measure %s", m.Metadata.Name)
+			} else {
+				l.l.Info().Msgf("migrated %d elements in measure %s", sum, m.Metadata.Name)
+			}
+			progress.MarkMeasureCompleted(g.Metadata.Name, m.Metadata.Name, sum)
 		}
-
-		progress.MarkMeasureCompleted(g.Metadata.Name, m.Metadata.Name)
 		progress.Save(l.progressFilePath, l.l)
 	}
 }

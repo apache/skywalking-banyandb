@@ -33,6 +33,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -47,6 +48,9 @@ func (s *store) InsertSeriesBatch(batch index.Batch) error {
 	}
 	defer s.closer.Done()
 	b := generateBatch()
+	if batch.PersistentCallback != nil {
+		b.SetPersistedCallback(batch.PersistentCallback)
+	}
 	defer releaseBatch(b)
 	for _, d := range batch.Documents {
 		doc, ff := toDoc(d, true)
@@ -65,6 +69,9 @@ func (s *store) UpdateSeriesBatch(batch index.Batch) error {
 	defer s.closer.Done()
 	b := generateBatch()
 	defer releaseBatch(b)
+	if batch.PersistentCallback != nil {
+		b.SetPersistedCallback(batch.PersistentCallback)
+	}
 	for _, d := range batch.Documents {
 		doc, _ := toDoc(d, false)
 		b.Update(doc.ID(), doc)
@@ -103,7 +110,7 @@ func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string)
 				tf.Sortable()
 			}
 			if f.Key.Analyzer != index.AnalyzerUnspecified {
-				tf = tf.WithAnalyzer(Analyzers[f.Key.Analyzer])
+				tf = tf.WithAnalyzer(analyzer.Analyzers[f.Key.Analyzer])
 			}
 		} else {
 			tf = bluge.NewStoredOnlyField(k, f.GetBytes())

@@ -20,6 +20,7 @@ syntax = "proto3";
 package banyandb.model.v1;
 
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1";
 option java_package = "org.apache.skywalking.banyandb.model.v1";
@@ -52,6 +53,7 @@ message TagValue {
     Int int = 4;
     IntArray int_array = 5;
     bytes binary_data = 6;
+    google.protobuf.Timestamp timestamp = 7;
   }
 }
 

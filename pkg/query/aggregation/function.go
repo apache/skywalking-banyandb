@@ -17,18 +17,21 @@
 
 package aggregation
 
-type meanFunc[N Number] struct {
+// MeanFunc implements mean aggregation functionality.
+type MeanFunc[N Number] struct {
 	sum   N
 	count N
 	zero  N
 }
 
-func (m *meanFunc[N]) In(val N) {
+// In adds a value to the mean calculation.
+func (m *MeanFunc[N]) In(val N) {
 	m.sum += val
 	m.count++
 }
 
-func (m meanFunc[N]) Val() N {
+// Val returns the calculated mean value.
+func (m MeanFunc[N]) Val() N {
 	if m.count == m.zero {
 		return m.zero
 	}
@@ -39,9 +42,15 @@ func (m meanFunc[N]) Val() N {
 	return v
 }
 
-func (m *meanFunc[N]) Reset() {
+// Reset resets the mean calculation state.
+func (m *MeanFunc[N]) Reset() {
 	m.sum = m.zero
 	m.count = m.zero
+}
+
+// GetCount returns the count of values added to the mean calculation.
+func (m *MeanFunc[N]) GetCount() N {
+	return m.count
 }
 
 type countFunc[N Number] struct {

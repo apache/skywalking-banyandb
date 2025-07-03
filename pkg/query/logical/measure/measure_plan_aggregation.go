@@ -128,20 +128,22 @@ func (g *aggregationPlan[N]) Execute(ec context.Context) (executor.MIterator, er
 		return nil, err
 	}
 	if g.isGroup {
-		return newAggGroupMIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
+		return newAggGroupMIterator(ec, iter, g.aggregationFieldRef, g.aggrFunc), nil
 	}
-	return newAggAllIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
+	return newAggAllIterator(ec, iter, g.aggregationFieldRef, g.aggrFunc), nil
 }
 
 type aggGroupIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
 	aggrFunc            aggregation.Func[N]
+	ctx                 context.Context
 
 	err error
 }
 
 func newAggGroupMIterator[N aggregation.Number](
+	ctx context.Context,
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Func[N],
@@ -150,6 +152,7 @@ func newAggGroupMIterator[N aggregation.Number](
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
 		aggrFunc:            aggrFunc,
+		ctx:                 ctx,
 	}
 }
 
@@ -191,12 +194,7 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.DataPoint {
 		ami.err = err
 		return nil
 	}
-	resultDp.Fields = []*measurev1.DataPoint_Field{
-		{
-			Name:  ami.aggregationFieldRef.Field.Name,
-			Value: val,
-		},
-	}
+	resultDp.Fields = BuildAggregationFields(ami.ctx, ami.aggrFunc, ami.aggregationFieldRef.Field.Name, val)
 	return []*measurev1.DataPoint{resultDp}
 }
 
@@ -208,12 +206,14 @@ type aggAllIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
 	aggrFunc            aggregation.Func[N]
+	ctx                 context.Context
 
 	result *measurev1.DataPoint
 	err    error
 }
 
 func newAggAllIterator[N aggregation.Number](
+	ctx context.Context,
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Func[N],
@@ -222,6 +222,7 @@ func newAggAllIterator[N aggregation.Number](
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
 		aggrFunc:            aggrFunc,
+		ctx:                 ctx,
 	}
 }
 
@@ -257,12 +258,7 @@ func (ami *aggAllIterator[N]) Next() bool {
 		ami.err = err
 		return false
 	}
-	resultDp.Fields = []*measurev1.DataPoint_Field{
-		{
-			Name:  ami.aggregationFieldRef.Field.Name,
-			Value: val,
-		},
-	}
+	resultDp.Fields = BuildAggregationFields(ami.ctx, ami.aggrFunc, ami.aggregationFieldRef.Field.Name, val)
 	ami.result = resultDp
 	return true
 }
@@ -276,4 +272,44 @@ func (ami *aggAllIterator[N]) Current() []*measurev1.DataPoint {
 
 func (ami *aggAllIterator[N]) Close() error {
 	return ami.prev.Close()
+}
+
+// BuildAggregationFields creates the appropriate fields for aggregation results.
+// For mean aggregation in distributed mode, it returns both the mean value and count.
+// For other cases, it returns only the aggregation value.
+func BuildAggregationFields[N aggregation.Number](
+	ctx context.Context,
+	aggrFunc aggregation.Func[N],
+	fieldName string,
+	aggregatedValue *modelv1.FieldValue,
+) []*measurev1.DataPoint_Field {
+	if meanFunc, ok := aggrFunc.(*aggregation.MeanFunc[N]); ok {
+		if val := ctx.Value(executor.DistributedExecutionContextKey{}); val != nil {
+			if dctx, ok := val.(executor.DistributedExecutionContext); ok && dctx != nil {
+				count := meanFunc.GetCount()
+				// Count should always be int64 regardless of the aggregation type
+				countVal := &modelv1.FieldValue{
+					Value: &modelv1.FieldValue_Int{
+						Int: &modelv1.Int{Value: int64(count)},
+					},
+				}
+				return []*measurev1.DataPoint_Field{
+					{
+						Name:  fieldName,
+						Value: aggregatedValue,
+					},
+					{
+						Name:  "count",
+						Value: countVal,
+					},
+				}
+			}
+		}
+	}
+	return []*measurev1.DataPoint_Field{
+		{
+			Name:  fieldName,
+			Value: aggregatedValue,
+		},
+	}
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -122,7 +123,7 @@ func TestSnapshotGetParts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, count := tt.snapshot.getParts(tt.dst, tt.opts.minTimestamp, tt.opts.maxTimestamp)
+			result, count := tt.snapshot.getParts(tt.dst, nil, tt.opts.minTimestamp, tt.opts.maxTimestamp)
 			assert.Equal(t, tt.expected, result)
 			assert.Equal(t, tt.count, count)
 		})
@@ -450,6 +451,7 @@ func TestSnapshotFunctionality(t *testing.T) {
 		option{
 			flushTimeout: 0,
 			mergePolicy:  newDefaultMergePolicyForTesting(),
+			protector:    protector.Nop{},
 		},
 		nil,
 	)

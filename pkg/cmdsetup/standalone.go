@@ -43,45 +43,49 @@ import (
 func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	pipeline := queue.Local()
+	liaisonPipeline := queue.Local()
+	dataPipeline := queue.Local()
 	metaSvc, err := embeddedserver.NewService(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	metricSvc := observability.NewMetricService(metaSvc, pipeline, "standalone", nil)
+	metricSvc := observability.NewMetricService(metaSvc, liaisonPipeline, "standalone", nil)
 	pm := protector.NewMemory(metricSvc)
-	propertySvc, err := property.NewService(metaSvc, pipeline, metricSvc, pm)
+	propertySvc, err := property.NewService(metaSvc, dataPipeline, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
 	}
-	streamSvc, err := stream.NewService(metaSvc, pipeline, metricSvc, pm)
+	streamSvc, err := stream.NewService(metaSvc, dataPipeline, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
 	var srvMetrics *grpcprom.ServerMetrics
 	srvMetrics.UnaryServerInterceptor()
 	srvMetrics.UnaryServerInterceptor()
-	measureSvc, err := measure.NewService(metaSvc, pipeline, nil, metricSvc, pm)
+	measureSvc, err := measure.NewService(metaSvc, dataPipeline, nil, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
-	q, err := query.NewService(ctx, streamSvc, measureSvc, metaSvc, pipeline)
+	q, err := query.NewService(ctx, streamSvc, measureSvc, metaSvc, dataPipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
 	nr := grpc.NewLocalNodeRegistry()
-	grpcServer := grpc.NewServer(ctx, pipeline, pipeline, nil, metaSvc, grpc.NodeRegistries{
-		MeasureNodeRegistry:  nr,
-		StreamNodeRegistry:   nr,
-		PropertyNodeRegistry: nr,
-	}, metricSvc, measureSvc)
+	grpcServer := grpc.NewServer(ctx, liaisonPipeline, dataPipeline, dataPipeline, nil, metaSvc, grpc.NodeRegistries{
+		MeasureLiaisonNodeRegistry: nr,
+		MeasureDataNodeRegistry:    nr,
+		StreamDataNodeRegistry:     nr,
+		StreamLiaisonNodeRegistry:  nr,
+		PropertyNodeRegistry:       nr,
+	}, metricSvc, measureSvc, liaisonPipeline)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer()
 
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,
-		pipeline,
+		liaisonPipeline,
+		dataPipeline,
 		metaSvc,
 		metricSvc,
 		pm,

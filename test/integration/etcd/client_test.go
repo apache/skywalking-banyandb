@@ -48,7 +48,7 @@ const host = "127.0.0.1"
 
 const namespace = "liaison-test"
 
-const nodeHost = "liaison-1"
+const nodeHost = "127.0.0.1"
 
 var _ = Describe("Client Test", func() {
 	var (
@@ -108,7 +108,7 @@ var _ = Describe("Client Test", func() {
 		adminClient.UserGrantRole(context.Background(), username, "root")
 		adminClient.AuthEnable(context.Background())
 
-		ports, err := test.AllocateFreePorts(2)
+		ports, err := test.AllocateFreePorts(3)
 		Expect(err).NotTo(HaveOccurred())
 		addr := fmt.Sprintf("%s:%d", host, ports[0])
 		httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
@@ -119,6 +119,8 @@ var _ = Describe("Client Test", func() {
 			"--http-host="+host,
 			fmt.Sprintf("--http-port=%d", ports[1]),
 			"--http-grpc-addr="+addr,
+			"--liaison-server-grpc-host="+host,
+			fmt.Sprintf("--liaison-server-grpc-port=%d", ports[2]),
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost,
 			"--etcd-endpoints", etcdEndpoint,
@@ -128,7 +130,7 @@ var _ = Describe("Client Test", func() {
 
 		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
-			return listKeys(etcdEndpoint, username, password, clientConfig, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
+			return listKeys(etcdEndpoint, username, password, clientConfig, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[2]))
 		}, flags.EventuallyTimeout).Should(HaveLen(1))
 	})
 
@@ -150,7 +152,7 @@ var _ = Describe("Client Test", func() {
 		etcdEndpoint := etcdServer.Config().ListenClientUrls[0].String()
 		defer etcdServer.Close()
 
-		ports, err := test.AllocateFreePorts(2)
+		ports, err := test.AllocateFreePorts(3)
 		Expect(err).NotTo(HaveOccurred())
 		addr := fmt.Sprintf("%s:%d", host, ports[0])
 		httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
@@ -161,6 +163,8 @@ var _ = Describe("Client Test", func() {
 			"--http-host="+host,
 			fmt.Sprintf("--http-port=%d", ports[1]),
 			"--http-grpc-addr="+addr,
+			"--liaison-server-grpc-host="+host,
+			fmt.Sprintf("--liaison-server-grpc-port=%d", ports[2]),
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost,
 			"--etcd-endpoints", etcdEndpoint,
@@ -169,7 +173,7 @@ var _ = Describe("Client Test", func() {
 
 		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
-			return listKeys(etcdEndpoint, "", "", clientConfig, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
+			return listKeys(etcdEndpoint, "", "", clientConfig, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[2]))
 		}, flags.EventuallyTimeout).Should(HaveLen(1))
 	})
 
@@ -195,7 +199,7 @@ var _ = Describe("Client Test", func() {
 		etcdEndpoint := etcdServer.Config().ListenClientUrls[0].String()
 		defer etcdServer.Close()
 
-		ports, err := test.AllocateFreePorts(2)
+		ports, err := test.AllocateFreePorts(3)
 		Expect(err).NotTo(HaveOccurred())
 		addr := fmt.Sprintf("%s:%d", host, ports[0])
 		httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
@@ -206,6 +210,8 @@ var _ = Describe("Client Test", func() {
 			"--http-host="+host,
 			fmt.Sprintf("--http-port=%d", ports[1]),
 			"--http-grpc-addr="+addr,
+			"--liaison-server-grpc-host="+host,
+			fmt.Sprintf("--liaison-server-grpc-port=%d", ports[2]),
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost,
 			"--etcd-endpoints", etcdEndpoint,
@@ -216,7 +222,7 @@ var _ = Describe("Client Test", func() {
 
 		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
-			return listKeys(etcdEndpoint, "", "", clientConfig, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
+			return listKeys(etcdEndpoint, "", "", clientConfig, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[2]))
 		}, flags.EventuallyTimeout).Should(HaveLen(1))
 	})
 })

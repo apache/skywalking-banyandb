@@ -22,17 +22,37 @@ import (
 	"os"
 	"sync"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // Progress tracks the lifecycle migration progress to support resume after crash.
 type Progress struct {
-	CompletedGroups      map[string]bool            `json:"completed_groups"`
-	CompletedStreams     map[string]map[string]bool `json:"completed_streams"`
-	CompletedMeasures    map[string]map[string]bool `json:"completed_measures"`
-	DeletedStreamGroups  map[string]bool            `json:"deleted_stream_groups"`
-	DeletedMeasureGroups map[string]bool            `json:"deleted_measure_groups"`
-	mu                   sync.Mutex                 `json:"-"`
+	CompletedGroups      map[string]bool              `json:"completed_groups"`
+	CompletedStreams     map[string]map[string]bool   `json:"completed_streams"`
+	CompletedMeasures    map[string]map[string]bool   `json:"completed_measures"`
+	DeletedStreamGroups  map[string]bool              `json:"deleted_stream_groups"`
+	DeletedMeasureGroups map[string]bool              `json:"deleted_measure_groups"`
+	StreamErrors         map[string]map[string]string `json:"stream_errors"`
+	MeasureErrors        map[string]map[string]string `json:"measure_errors"`
+	StreamCounts         map[string]map[string]int    `json:"stream_counts"`
+	MeasureCounts        map[string]map[string]int    `json:"measure_counts"`
+	SnapshotStreamDir    string                       `json:"snapshot_stream_dir"`
+	SnapshotMeasureDir   string                       `json:"snapshot_measure_dir"`
+	mu                   sync.Mutex                   `json:"-"`
+}
+
+// AllGroupsFullyCompleted checks if all groups are fully completed.
+func (p *Progress) AllGroupsFullyCompleted(groups []*commonv1.Group) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, group := range groups {
+		if !p.CompletedGroups[group.Metadata.Name] {
+			return false
+		}
+	}
+	return true
 }
 
 // NewProgress creates a new Progress tracker.
@@ -43,6 +63,10 @@ func NewProgress() *Progress {
 		CompletedMeasures:    make(map[string]map[string]bool),
 		DeletedStreamGroups:  make(map[string]bool),
 		DeletedMeasureGroups: make(map[string]bool),
+		StreamErrors:         make(map[string]map[string]string),
+		MeasureErrors:        make(map[string]map[string]string),
+		StreamCounts:         make(map[string]map[string]int),
+		MeasureCounts:        make(map[string]map[string]int),
 	}
 }
 
@@ -110,13 +134,17 @@ func (p *Progress) IsGroupCompleted(group string) bool {
 }
 
 // MarkStreamCompleted marks a stream as completed.
-func (p *Progress) MarkStreamCompleted(group, stream string) {
+func (p *Progress) MarkStreamCompleted(group, stream string, count int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.CompletedStreams[group] == nil {
 		p.CompletedStreams[group] = make(map[string]bool)
 	}
 	p.CompletedStreams[group][stream] = true
+	if p.StreamCounts[group] == nil {
+		p.StreamCounts[group] = make(map[string]int)
+	}
+	p.StreamCounts[group][stream] = count
 }
 
 // IsStreamCompleted checks if a stream has been completed.
@@ -130,13 +158,17 @@ func (p *Progress) IsStreamCompleted(group, stream string) bool {
 }
 
 // MarkMeasureCompleted marks a measure as completed.
-func (p *Progress) MarkMeasureCompleted(group, measure string) {
+func (p *Progress) MarkMeasureCompleted(group, measure string, count int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.CompletedMeasures[group] == nil {
 		p.CompletedMeasures[group] = make(map[string]bool)
 	}
 	p.CompletedMeasures[group][measure] = true
+	if p.MeasureCounts[group] == nil {
+		p.MeasureCounts[group] = make(map[string]int)
+	}
+	p.MeasureCounts[group][measure] = count
 }
 
 // IsMeasureCompleted checks if a measure has been completed.
@@ -175,6 +207,42 @@ func (p *Progress) IsMeasureGroupDeleted(group string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.DeletedMeasureGroups[group]
+}
+
+// ClearErrors resets all prior stream/measure error records.
+func (p *Progress) ClearErrors() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.StreamErrors = make(map[string]map[string]string)
+	p.MeasureErrors = make(map[string]map[string]string)
+}
+
+// MarkStreamError records an error message for a specific stream.
+func (p *Progress) MarkStreamError(group, stream, msg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.StreamErrors[group] == nil {
+		p.StreamErrors[group] = make(map[string]string)
+	}
+	p.StreamErrors[group][stream] = msg
+	if p.CompletedStreams[group] == nil {
+		p.CompletedStreams[group] = make(map[string]bool)
+	}
+	p.CompletedStreams[group][stream] = false
+}
+
+// MarkMeasureError records an error message for a specific measure.
+func (p *Progress) MarkMeasureError(group, measure, msg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.MeasureErrors[group] == nil {
+		p.MeasureErrors[group] = make(map[string]string)
+	}
+	p.MeasureErrors[group][measure] = msg
+	if p.CompletedMeasures[group] == nil {
+		p.CompletedMeasures[group] = make(map[string]bool)
+	}
+	p.CompletedMeasures[group][measure] = false
 }
 
 // Remove deletes the progress file.

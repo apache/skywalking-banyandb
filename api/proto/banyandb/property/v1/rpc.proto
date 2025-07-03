@@ -122,4 +122,17 @@ message InternalDeleteRequest {
 message InternalQueryResponse {
   repeated bytes sources = 1;
   common.v1.Trace trace = 2;
+  // deletes indicates the property is deleted timestamps,
+  // it's mapping to the sources in the same order
+  // if the value is 0, it means the property is not deleted
+  repeated int64 deletes = 3;
 }
+
+message InternalRepairRequest {
+  uint64 shard_id = 1;
+  bytes id = 2;
+  banyandb.property.v1.Property property = 3;
+  int64 delete_time = 4;
+}
+
+message InternalRepairResponse {}

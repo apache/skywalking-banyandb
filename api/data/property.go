@@ -48,3 +48,12 @@ var PropertyQueryKindVersion = common.KindVersion{
 
 // TopicPropertyQuery is the property query topic.
 var TopicPropertyQuery = bus.BiTopic(PropertyQueryKindVersion.String())
+
+// PropertyRepairKindVersion is the version tag of property repair kind.
+var PropertyRepairKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "property-repair",
+}
+
+// TopicPropertyRepair is the property repair topic.
+var TopicPropertyRepair = bus.BiTopic(PropertyRepairKindVersion.String())

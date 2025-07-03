@@ -46,9 +46,12 @@ type discoveryService struct {
 	kind            schema.Kind
 }
 
-func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry) *discoveryService {
-	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
-	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
+func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry, gr *groupRepo) *discoveryService {
+	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator)}
+	return newDiscoveryServiceWithEntityRepo(kind, metadataRepo, nodeRegistry, gr, er)
+}
+
+func newDiscoveryServiceWithEntityRepo(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry, gr *groupRepo, er *entityRepo) *discoveryService {
 	sr := &shardingKeyRepo{shardingKeysMap: make(map[identity]partition.Locator)}
 	return &discoveryService{
 		groupRepo:       gr,
@@ -61,7 +64,6 @@ func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegis
 }
 
 func (ds *discoveryService) initialize() error {
-	ds.metadataRepo.RegisterHandler("liaison", schema.KindGroup, ds.groupRepo)
 	ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.entityRepo)
 	if ds.kind == schema.KindMeasure {
 		ds.metadataRepo.RegisterHandler("liaison", ds.kind, ds.shardingKeyRepo)
@@ -144,7 +146,7 @@ func (s *groupRepo) OnDelete(schemaMetadata schema.Metadata) {
 		return
 	}
 	if le := s.log.Debug(); le.Enabled() {
-		le.Stringer("id", group.Metadata).Msg("shard deleted")
+		le.Stringer("id", group.Metadata).Msg("shard deletedTime")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
@@ -261,7 +263,7 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 			Str("action", "delete").
 			Stringer("subject", id).
 			Str("kind", kind).
-			Msg("entity deleted")
+			Msg("entity deletedTime")
 	}
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
@@ -337,7 +339,7 @@ func (s *shardingKeyRepo) OnDelete(schemaMetadata schema.Metadata) {
 			Str("action", "delete").
 			Stringer("subject", id).
 			Str("kind", "measure").
-			Msg("sharding key deleted")
+			Msg("sharding key deletedTime")
 	}
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()

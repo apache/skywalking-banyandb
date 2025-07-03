@@ -48,7 +48,7 @@ func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
 	var result Func[N]
 	switch af {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
-		result = &meanFunc[N]{zero: zero[N]()}
+		result = &MeanFunc[N]{zero: zero[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
 		result = &countFunc[N]{zero: zero[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:

@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -147,6 +148,8 @@ func Test_partIter_nextBlock(t *testing.T) {
 			mp.mustInitFromDataPoints(dps)
 
 			p := openMemPart(mp)
+			shardCache := storage.NewShardCache("test-group", 0, 0)
+			p.cache = shardCache
 			verifyPart(p)
 			tmpDir, defFn := test.Space(require.New(t))
 			defer defFn()
@@ -155,6 +158,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 			fileSystem := fs.NewLocalFileSystem()
 			mp.mustFlush(fileSystem, partPath)
 			p = mustOpenFilePart(epoch, tmpDir, fileSystem)
+			p.cache = shardCache
 			verifyPart(p)
 		})
 	}

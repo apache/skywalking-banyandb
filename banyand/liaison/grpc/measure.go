@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -47,7 +48,6 @@ type measureService struct {
 	ingestionAccessLog accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
-	topNService        measure.TopNService
 	*discoveryService
 	l               *logger.Logger
 	metrics         *metrics
@@ -193,22 +193,6 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 		messageID: writeRequest.GetMessageId(),
 		nodes:     nodes,
 	})
-	stm, ok := ms.entityRepo.loadMeasure(writeRequest.GetMetadata())
-	if !ok {
-		ms.l.Error().RawJSON("written", logger.Proto(writeRequest)).Msg("failed to load measure schema")
-		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
-		return errors.New("failed to load measure schema")
-	}
-	series := &pbv1.Series{
-		Subject:      writeRequest.Metadata.Name,
-		EntityValues: iwr.EntityValues,
-	}
-	if err := series.Marshal(); err != nil {
-		ms.l.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to marshal series")
-		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
-		return err
-	}
-	ms.topNService.InFlow(stm, uint64(series.ID), iwr.ShardId, iwr.EntityValues, iwr.Request.DataPoint)
 	return nil
 }
 
@@ -392,4 +376,104 @@ type succeedSentMessage struct {
 	metadata  *commonv1.Metadata
 	nodes     []string
 	messageID uint64
+}
+
+type measureRedirectWriteCallback struct {
+	pipeline            queue.Client
+	nodeRegistry        NodeRegistry
+	topNService         measure.TopNService
+	l                   *logger.Logger
+	groupRepo           *groupRepo
+	entityRepo          *entityRepo
+	writeTimeout        time.Duration
+	maxDiskUsagePercent int
+}
+
+func (r *measureRedirectWriteCallback) CheckHealth() *common.Error {
+	if r.maxDiskUsagePercent < 1 {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "measure is readonly because \"measure-max-disk-usage-percent\" is 0")
+	}
+	return nil
+}
+
+func (r *measureRedirectWriteCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+	events, ok := message.Data().([]any)
+	if !ok {
+		r.l.Warn().Msg("invalid event data type")
+		return
+	}
+	if len(events) < 1 {
+		r.l.Warn().Msg("empty event")
+		return
+	}
+
+	publisher := r.pipeline.NewBatchPublisher(r.writeTimeout)
+	defer func() {
+		_, err := publisher.Close()
+		if err != nil {
+			r.l.Error().Err(err).Msg("failed to close publisher")
+		}
+	}()
+
+	for i := range events {
+		var writeEvent *measurev1.InternalWriteRequest
+		switch e := events[i].(type) {
+		case *measurev1.InternalWriteRequest:
+			writeEvent = e
+		case []byte:
+			writeEvent = &measurev1.InternalWriteRequest{}
+			if err := proto.Unmarshal(e, writeEvent); err != nil {
+				r.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				continue
+			}
+		default:
+			r.l.Warn().Msg("invalid event data type")
+			continue
+		}
+
+		metadata := writeEvent.Request.GetMetadata()
+		if metadata == nil {
+			r.l.Warn().Msg("metadata is nil in InternalWriteRequest")
+			continue
+		}
+
+		group := metadata.GetGroup()
+		measureName := metadata.GetName()
+		shardID := writeEvent.GetShardId()
+
+		copies, ok := r.groupRepo.copies(group)
+		if !ok {
+			r.l.Error().Str("group", group).Msg("failed to get group copies")
+			continue
+		}
+
+		for copyIdx := range copies {
+			nodeID, err := r.nodeRegistry.Locate(group, measureName, shardID, copyIdx)
+			if err != nil {
+				r.l.Error().Err(err).Str("group", group).Str("measure", measureName).Uint32("shard", shardID).Uint32("copy", copyIdx).Msg("failed to locate node")
+				continue
+			}
+
+			msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, writeEvent)
+			if _, err := publisher.Publish(ctx, data.TopicMeasureWrite, msg); err != nil {
+				r.l.Error().Err(err).Str("node", nodeID).Msg("failed to publish message")
+			}
+		}
+		stm, ok := r.entityRepo.loadMeasure(metadata)
+		if !ok {
+			r.l.Error().RawJSON("written", logger.Proto(writeEvent)).Msg("failed to load measure schema")
+			continue
+		}
+		series := &pbv1.Series{
+			Subject:      metadata.Name,
+			EntityValues: writeEvent.EntityValues,
+		}
+		if err := series.Marshal(); err != nil {
+			r.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("failed to marshal series")
+			continue
+		}
+		r.topNService.InFlow(stm, uint64(series.ID), writeEvent.ShardId, writeEvent.EntityValues, writeEvent.Request.DataPoint)
+	}
+
+	return
 }

@@ -214,11 +214,12 @@ func (m *mockHandler) OnDelete(_ schema.Metadata) {
 	m.deleteCount++
 }
 
-func newPub() *pub {
-	p := NewWithoutMetadata().(*pub)
+func newPub(roles ...databasev1.Role) *pub {
+	p := New(nil, roles...)
+	p.(*pub).log = logger.GetLogger("queue-client")
 	p.Register(data.TopicStreamWrite, &mockHandler{})
 	p.Register(data.TopicMeasureWrite, &mockHandler{})
-	return p
+	return p.(*pub)
 }
 
 func getDataNode(name string, address string) schema.Metadata {

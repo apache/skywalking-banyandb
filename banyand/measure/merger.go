@@ -107,7 +107,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
 	start := time.Now()
-	newPart, err := mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root)
+	newPart, err := tst.mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +150,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				Msg("background merger merges unbalanced parts")
 		}
 	}
+
 	mi := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mi)
 	mi.creator = creator
@@ -223,7 +224,7 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst
 func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
 	var needSize uint64
 	for i := range parts {
-		needSize = +parts[i].p.partMetadata.CompressedSizeBytes
+		needSize += parts[i].p.partMetadata.CompressedSizeBytes
 	}
 	if tst.tryReserveDiskSpace(needSize) {
 		return needSize
@@ -233,21 +234,24 @@ func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
 
 var errNoPartToMerge = fmt.Errorf("no part to merge")
 
-func mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {
+func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {
 	if len(parts) == 0 {
 		return nil, errNoPartToMerge
 	}
 	dstPath := partPath(root, partID)
+	var totalSize int64
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
 		pmi := generatePartMergeIter()
 		pmi.mustInitFromPart(parts[i].p)
 		pii = append(pii, pmi)
+		totalSize += int64(parts[i].p.partMetadata.CompressedSizeBytes)
 	}
+	shouldCache := tst.pm.ShouldCache(totalSize)
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
-	bw.mustInitForFilePart(fileSystem, dstPath)
+	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
 	pm, err := mergeBlocks(closeCh, bw, br)
 	releaseBlockWriter(bw)

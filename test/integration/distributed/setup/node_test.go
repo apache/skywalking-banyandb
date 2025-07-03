@@ -38,8 +38,8 @@ const host = "127.0.0.1"
 var _ = Describe("Node registration", func() {
 	It("should register/unregister a liaison node successfully", func() {
 		namespace := "liaison-test"
-		nodeHost := "liaison-1"
-		ports, err := test.AllocateFreePorts(2)
+		nodeHost := "localhost"
+		ports, err := test.AllocateFreePorts(3)
 		Expect(err).NotTo(HaveOccurred())
 		addr := fmt.Sprintf("%s:%d", host, ports[0])
 		httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
@@ -50,16 +50,18 @@ var _ = Describe("Node registration", func() {
 			"--http-host="+host,
 			fmt.Sprintf("--http-port=%d", ports[1]),
 			"--http-grpc-addr="+addr,
+			"--liaison-server-grpc-host="+host,
+			"--liaison-server-grpc-port="+fmt.Sprintf("%d", ports[2]),
 			"--etcd-endpoints", etcdEndpoint,
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost)
 		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
-			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
+			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[2]))
 		}, flags.EventuallyTimeout).Should(HaveLen(1))
 		closeFn()
 		Eventually(func() (map[string]*databasev1.Node, error) {
-			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[0]))
+			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[2]))
 		}, flags.EventuallyTimeout).Should(BeNil())
 	})
 	It("should register/unregister a data node successfully", func() {

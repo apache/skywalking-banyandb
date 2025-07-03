@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "name": "in_svc2_svc4",
+    "group": "sw_metric"
+  },
+  "source_measure": {
+    "name": "service_instance_endpoint_cpm_minute",
+    "group": "sw_metric"
+  },
+  "field_name": "total",
+  "field_value_sort": 0,
+  "group_by_tag_names": [
+    "http.uri"
+  ],
+  "criteria": {
+    "condition":{
+      "name": "service_id",
+      "op": "BINARY_OP_IN",
+      "value": {
+        "str_array": {
+            "value": ["svc_2", "svc_4"]
+        }
+      }
+    }
+  },
+  "counters_number": 1000,
+  "lru_size": 10
+}

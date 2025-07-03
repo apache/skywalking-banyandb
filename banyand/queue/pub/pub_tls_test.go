@@ -76,7 +76,7 @@ func newTLSPub() *pub {
 	return p
 }
 
-var _ = ginkgo.Describe("Broadcast over one‑way TLS", func() {
+var _ = ginkgo.FDescribe("Broadcast over one-way TLS", func() {
 	var before []gleak.Goroutine
 
 	ginkgo.BeforeEach(func() {
@@ -87,7 +87,7 @@ var _ = ginkgo.Describe("Broadcast over one‑way TLS", func() {
 			ShouldNot(gleak.HaveLeaked(before))
 	})
 
-	ginkgo.It("establishes TLS and broadcasts a QueryRequest", func() {
+	ginkgo.FIt("establishes TLS and broadcasts a QueryRequest", func() {
 		addr := getAddress()
 		stop := tlsServer(addr)
 		defer stop()

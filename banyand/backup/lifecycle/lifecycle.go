@@ -21,83 +21,53 @@ package lifecycle
 import (
 	"context"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
-	"github.com/benbjohnson/clock"
-	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/signal"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
 // NewCommand creates a new lifecycle command.
 func NewCommand() *cobra.Command {
-	var schedule string
-
-	l := logger.GetLogger("bootstrap")
-
+	logging := logger.Logging{}
 	metaSvc, err := metadata.NewClient(false, false)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate metadata service")
+		logger.GetLogger().Err(err).Msg("failed to initiate metadata service")
 	}
-	metricSvc := observability.NewMetricService(metaSvc, nil, "lifecycle", nil)
-	svc := NewService(metaSvc, metricSvc)
+	svc := NewService(metaSvc)
 	group := run.NewGroup("lifecycle")
-	group.Register(metaSvc, metricSvc, svc)
-
+	group.Register(new(signal.Handler), metaSvc, svc)
 	cmd := &cobra.Command{
 		Short:             "Run lifecycle migration",
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := config.Load("logging", cmd.Flags()); err != nil {
+			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
-			if schedule == "" {
-				return group.Run(context.Background())
+			if err = logger.Init(logging); err != nil {
+				return err
 			}
-			schedLogger := logger.GetLogger().Named("lifecycle-scheduler")
-			schedLogger.Info().Msgf("lifecycle migration will run with schedule: %s", schedule)
-			clockInstance := clock.New()
-			sch := timestamp.NewScheduler(schedLogger, clockInstance)
-			err := sch.Register("lifecycle", cron.Descriptor, schedule, func(_ time.Time, l *logger.Logger) bool {
-				err := group.Run(context.Background())
-				if err != nil {
-					l.Error().Err(err).Msg("lifecycle migration failed")
-				} else {
-					l.Info().Msg("lifecycle migration succeeded")
+			defer func() {
+				if err := recover(); err != nil {
+					logger.GetLogger().Error().Msgf("panic occurred: %v", err)
+					os.Exit(-1)
 				}
-				return true
-			})
-			if err != nil {
-				return err
+			}()
+			if err := group.Run(context.Background()); err != nil {
+				logger.GetLogger().Error().Err(err).Stack().Str("name", group.Name()).Msg("Exit")
+				os.Exit(-1)
 			}
-
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-			schedLogger.Info().Msg("backup scheduler started, press Ctrl+C to exit")
-			<-sigChan
-			schedLogger.Info().Msg("shutting down lifecycle migration scheduler...")
-			sch.Close()
 			return nil
 		},
 	}
 	cmd.Flags().AddFlagSet(group.RegisterFlags().FlagSet)
-
-	cmd.Flags().StringVar(
-		&schedule,
-		"schedule",
-		"",
-		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
-	)
-
+	cmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
+	cmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
 	return cmd
 }
