@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
@@ -55,34 +56,66 @@ func TestTag_resizeValues(t *testing.T) {
 }
 
 func TestTag_mustWriteTo_mustReadValues(t *testing.T) {
-	original := &tag{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		values:    [][]byte{[]byte("value1"), nil, []byte("value2"), nil},
+	tests := []struct {
+		tag  *tag
+		name string
+	}{
+		{
+			name: "string with nils",
+			tag: &tag{
+				name:      "test",
+				valueType: pbv1.ValueTypeStr,
+				values:    [][]byte{[]byte("value1"), nil, []byte("value2"), nil},
+			},
+		},
+		{
+			name: "int64 with null",
+			tag: &tag{
+				name:      "test",
+				valueType: pbv1.ValueTypeInt64,
+				values:    [][]byte{[]byte("null"), nil, []byte("null"), nil},
+			},
+		},
+		{
+			name: "valid int64 values",
+			tag: &tag{
+				name:      "test",
+				valueType: pbv1.ValueTypeInt64,
+				values: [][]byte{
+					convert.Int64ToBytes(1),
+					convert.Int64ToBytes(2),
+					convert.Int64ToBytes(4),
+					convert.Int64ToBytes(5),
+				},
+			},
+		},
 	}
 
-	tm := &tagMetadata{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := &tagMetadata{}
 
-	buf, filterBuf := &bytes.Buffer{}, &bytes.Buffer{}
-	w, fw := &writer{}, &writer{}
-	w.init(buf)
-	fw.init(filterBuf)
-	original.mustWriteTo(tm, w, fw)
-	assert.Equal(t, w.bytesWritten, tm.size)
-	assert.Equal(t, uint64(len(buf.Buf)), tm.size)
-	assert.Equal(t, uint64(0), tm.offset)
-	assert.Equal(t, original.name, tm.name)
-	assert.Equal(t, original.valueType, tm.valueType)
+			buf, filterBuf := &bytes.Buffer{}, &bytes.Buffer{}
+			w, fw := &writer{}, &writer{}
+			w.init(buf)
+			fw.init(filterBuf)
 
-	decoder := &encoding.BytesBlockDecoder{}
+			tt.tag.mustWriteTo(tm, w, fw)
+			assert.Equal(t, w.bytesWritten, tm.size)
+			assert.Equal(t, uint64(len(buf.Buf)), tm.size)
+			assert.Equal(t, uint64(0), tm.offset)
+			assert.Equal(t, tt.tag.name, tm.name)
+			assert.Equal(t, tt.tag.valueType, tm.valueType)
 
-	unmarshaled := &tag{}
-	unmarshaled.mustReadValues(decoder, buf, *tm, uint64(len(original.values)))
+			decoder := &encoding.BytesBlockDecoder{}
+			unmarshaled := &tag{}
+			unmarshaled.mustReadValues(decoder, buf, *tm, uint64(len(tt.tag.values)))
 
-	// Check that the original and new instances are equal
-	assert.Equal(t, original.name, unmarshaled.name)
-	assert.Equal(t, original.valueType, unmarshaled.valueType)
-	assert.Equal(t, original.values, unmarshaled.values)
+			assert.Equal(t, tt.tag.name, unmarshaled.name)
+			assert.Equal(t, tt.tag.valueType, unmarshaled.valueType)
+			assert.Equal(t, tt.tag.values, unmarshaled.values)
+		})
+	}
 }
 
 func TestTagFamily_reset(t *testing.T) {
