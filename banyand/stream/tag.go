@@ -202,9 +202,9 @@ func (t *tag) encodeFloat64Tag(bb *bytes.Buffer) {
 	}
 	intValues, exp, err := encoding.Float64ListToDecimalIntList(intValues[:0], floatValues)
 	if err != nil {
-		logger.Errorf("cannot convert Float64List to DecimalIntList: %w", err)
-                doEncodeDefault()
-                return
+		logger.Errorf("cannot convert Float64List to DecimalIntList : %v", err)
+		doEncodeDefault()
+		return
 	}
 	var firstValue int64
 	bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], intValues)
