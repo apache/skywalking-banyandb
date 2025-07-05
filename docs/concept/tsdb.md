@@ -1,4 +1,4 @@
-# TimeSeries Database(TSDB) v1.2.0
+# TimeSeries Database(TSDB) v1.3.0
 
 TSDB is a time-series storage engine designed to store and query large volumes of time-series data. One of the key features of TSDB is its ability to automatically manage data storage over time, optimize performance and ensure that the system can scale to handle large workloads. TSDB empowers `Measure` and `Stream` relevant data.
 
