@@ -301,7 +301,7 @@ func TestRepair(t *testing.T) {
 			}
 			defers = append(defers, deferFunc)
 			db, err := openDB(context.Background(), dir, 3*time.Second, 1*time.Hour, 32, observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
-				"* * * * * *", time.Second*10)
+				"* * * * *", time.Second*10)
 			if err != nil {
 				t.Fatal(err)
 			}
