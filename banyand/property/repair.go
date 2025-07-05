@@ -388,6 +388,7 @@ func (r *repair) readTree(group string) (*repairTree, error) {
 
 func (r *repair) close() {
 	r.cancel()
+	r.repairTreeCron.Stop()
 }
 
 type repairStatus struct {
