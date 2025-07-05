@@ -21,6 +21,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"io"
 	"path"
 	"strings"
@@ -43,7 +44,7 @@ type s3FS struct {
 }
 
 // NewFS creates a new instance of the file system for accessing S3 storage.
-func NewFS(path string, userConfig *remote.FsConfig) (remote.FS, error) {
+func NewFS(path string, userConfig *config2.FsConfig) (remote.FS, error) {
 	bucket, basePath := extractBucketAndBase(path)
 	if bucket == "" {
 		return nil, fmt.Errorf("bucket name not provided")
@@ -76,7 +77,7 @@ func NewFS(path string, userConfig *remote.FsConfig) (remote.FS, error) {
 	return fs, nil
 }
 
-func buildAWSCfgOptions(userConfig *remote.FsConfig) []func(*config.LoadOptions) error {
+func buildAWSCfgOptions(userConfig *config2.FsConfig) []func(*config.LoadOptions) error {
 	opts := []func(*config.LoadOptions) error{
 		config.WithClientLogMode(aws.LogRetries),
 	}

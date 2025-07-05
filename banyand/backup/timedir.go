@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,7 +30,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
 // NewTimeDirCommand creates a new time-dir command.
@@ -51,7 +51,7 @@ func NewTimeDirCommand() *cobra.Command {
 func newListCmd() *cobra.Command {
 	var (
 		dest     string
-		fsConfig remote.FsConfig
+		fsConfig config.FsConfig
 		prefix   string
 	)
 	cmd := &cobra.Command{
@@ -103,6 +103,11 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fsConfig.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
 	cmd.Flags().StringVar(&fsConfig.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
 	cmd.Flags().StringVar(&fsConfig.S3ProfileName, "s3-profile", "", "S3 profile name")
+	// Azure flags
+	cmd.Flags().StringVar(&fsConfig.AzureAccountName, "azure-account-name", "", "Azure storage account name")
+	cmd.Flags().StringVar(&fsConfig.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
+	cmd.Flags().StringVar(&fsConfig.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
+	cmd.Flags().StringVar(&fsConfig.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint (override)")
 	return cmd
 }
 

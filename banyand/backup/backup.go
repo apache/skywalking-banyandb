@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"net/url"
 	"os"
 	"os/signal"
@@ -39,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/azure"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -46,7 +48,7 @@ import (
 )
 
 type backupOptions struct {
-	fsConfig     remote.FsConfig
+	fsConfig     config2.FsConfig
 	gRPCAddr     string
 	cert         string
 	timeStyle    string
@@ -126,6 +128,11 @@ func NewBackupCommand() *cobra.Command {
 	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ProfileName, "s3-profile", "", "S3 profile name")
 	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ChecksumAlgorithm, "s3-checksum-algorithm", "", "S3 checksum algorithm")
 	cmd.Flags().StringVar(&backupOpts.fsConfig.S3StorageClass, "s3-storage-class", "", "S3 upload storage class")
+	// Azure flags
+	cmd.Flags().StringVar(&backupOpts.fsConfig.AzureAccountName, "azure-account-name", "", "Azure storage account name")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint")
 	return cmd
 }
 
@@ -158,7 +165,7 @@ func backupAction(options backupOptions) error {
 	return err
 }
 
-func newFS(dest string, config *remote.FsConfig) (remote.FS, error) {
+func newFS(dest string, config *config2.FsConfig) (remote.FS, error) {
 	u, err := url.Parse(dest)
 	if err != nil {
 		return nil, fmt.Errorf("invalid dest URL: %w", err)
@@ -169,6 +176,8 @@ func newFS(dest string, config *remote.FsConfig) (remote.FS, error) {
 		return local.NewFS(u.Path)
 	case "s3":
 		return aws.NewFS(u.Path, config)
+	case "azure":
+		return azure.NewFS(u.Host+u.Path, config)
 	default:
 		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}

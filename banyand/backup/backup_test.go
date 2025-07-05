@@ -19,6 +19,7 @@ package backup
 
 import (
 	"context"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"io"
 	"os"
 	"path"
@@ -30,7 +31,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
 func TestNewFS(t *testing.T) {
@@ -44,7 +44,7 @@ func TestNewFS(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := new(remote.FsConfig)
+			cfg := new(config.FsConfig)
 			_, err := newFS(tt.dest, cfg)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("newFS() error = %v, wantErr %v", err, tt.wantErr)
