@@ -73,24 +73,30 @@ func (d *Dictionary) Encode(dst []byte, tmp []uint32) []byte {
 }
 
 // Decode decodes the dictionary.
-func (d *Dictionary) Decode(src []byte, tmp []uint32) error {
+func (d *Dictionary) Decode(dst [][]byte, src []byte, tmp []uint32, itemsCount uint64) ([][]byte, error) {
 	src, count := BytesToVarUint64(src)
 	if count == 0 {
-		return nil
+		return nil, nil
 	}
 
 	values, src, err := d.decodeBytesBlockWithTail(src, count)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	d.values = values
 
 	tmp, err = decodeBitPacking(tmp, src)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	d.indices = decodeRLE(d.indices[:0], tmp)
-	return nil
+	if uint64(len(d.indices)) != itemsCount {
+		return nil, fmt.Errorf("unexpected item counts; got %d; want %d", len(d.indices), itemsCount)
+	}
+	for _, index := range d.indices {
+		dst = append(dst, d.values[index])
+	}
+	return dst, nil
 }
 
 func (d *Dictionary) decodeBytesBlockWithTail(src []byte, itemsCount uint64) ([][]byte, []byte, error) {

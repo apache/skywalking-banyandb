@@ -104,15 +104,16 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
+	tmp := make([]uint32, 0)
 
 	// select encoding based on data type
 	switch c.valueType {
 	case pbv1.ValueTypeInt64:
-		c.encodeInt64Column(bb)
+		c.encodeInt64Column(bb, tmp)
 	case pbv1.ValueTypeFloat64:
-		c.encodeFloat64Column(bb)
+		c.encodeFloat64Column(bb, tmp)
 	default:
-		c.encodeDefault(bb)
+		c.encodeDefault(bb, tmp)
 	}
 	cm.size = uint64(len(bb.Buf))
 	if cm.size > maxValuesBlockSize {
@@ -122,7 +123,7 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 	columnWriter.MustWrite(bb.Buf)
 }
 
-func (c *column) encodeInt64Column(bb *bytes.Buffer) {
+func (c *column) encodeInt64Column(bb *bytes.Buffer, tmp []uint32) {
 	// convert byte array to int64 array
 	intValuesPtr := generateInt64Slice(len(c.values))
 	intValues := *intValuesPtr
@@ -131,7 +132,7 @@ func (c *column) encodeInt64Column(bb *bytes.Buffer) {
 
 	for i, v := range c.values {
 		if v == nil || string(v) == "null" {
-			c.encodeDefault(bb)
+			c.encodeDefault(bb, tmp)
 			encodeType = encoding.EncodeTypePlain
 			// Prepend encodeType (1 byte) to the beginning
 			bb.Buf = append([]byte{byte(encodeType)}, bb.Buf...)
@@ -156,7 +157,7 @@ func (c *column) encodeInt64Column(bb *bytes.Buffer) {
 	)
 }
 
-func (c *column) encodeFloat64Column(bb *bytes.Buffer) {
+func (c *column) encodeFloat64Column(bb *bytes.Buffer, tmp []uint32) {
 	// convert byte array to float64 array
 	intValuesPtr := generateInt64Slice(len(c.values))
 	intValues := *intValuesPtr
@@ -169,7 +170,7 @@ func (c *column) encodeFloat64Column(bb *bytes.Buffer) {
 	var encodeType encoding.EncodeType
 
 	doEncodeDefault := func() {
-		c.encodeDefault(bb)
+		c.encodeDefault(bb, tmp)
 		encodeType = encoding.EncodeTypePlain
 		// Prepend encodeType (1 byte) to the beginning
 		bb.Buf = append([]byte{byte(encodeType)}, bb.Buf...)
@@ -205,8 +206,17 @@ func (c *column) encodeFloat64Column(bb *bytes.Buffer) {
 	)
 }
 
-func (c *column) encodeDefault(bb *bytes.Buffer) {
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
+func (c *column) encodeDefault(bb *bytes.Buffer, tmp []uint32) {
+	dict := encoding.NewDictionary()
+	for _, v := range c.values {
+		if !dict.Add(v) {
+			bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
+			bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
+			return
+		}
+	}
+	bb.Buf = dict.Encode(bb.Buf[:0], tmp)
+	bb.Buf = append([]byte{byte(encoding.EncodeTypeDictionary)}, bb.Buf...)
 }
 
 func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm columnMetadata, count uint64) {
@@ -250,17 +260,18 @@ func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *
 }
 
 func (c *column) decodeColumnValues(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
+	tmp := make([]uint32, 0)
 	switch c.valueType {
 	case pbv1.ValueTypeInt64:
-		c.decodeInt64Column(decoder, path, count, bb)
+		c.decodeInt64Column(decoder, path, count, bb, tmp)
 	case pbv1.ValueTypeFloat64:
-		c.decodeFloat64Column(decoder, path, count, bb)
+		c.decodeFloat64Column(decoder, path, count, bb, tmp)
 	default:
-		c.decodeDefault(decoder, bb, count, path)
+		c.decodeDefault(decoder, bb, count, path, tmp)
 	}
 }
 
-func (c *column) decodeInt64Column(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
+func (c *column) decodeInt64Column(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer, tmp []uint32) {
 	// decode integer type
 	intValuesPtr := generateInt64Slice(int(count))
 	intValues := *intValuesPtr
@@ -272,7 +283,7 @@ func (c *column) decodeInt64Column(decoder *encoding.BytesBlockDecoder, path str
 	encodeType := encoding.EncodeType(bb.Buf[0])
 	if encodeType == encoding.EncodeTypePlain {
 		bb.Buf = bb.Buf[1:]
-		c.decodeDefault(decoder, bb, count, path)
+		c.decodeDefault(decoder, bb, count, path, tmp)
 		return
 	}
 
@@ -294,7 +305,7 @@ func (c *column) decodeInt64Column(decoder *encoding.BytesBlockDecoder, path str
 	}
 }
 
-func (c *column) decodeFloat64Column(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
+func (c *column) decodeFloat64Column(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer, tmp []uint32) {
 	// decode float type
 	intValuesPtr := generateInt64Slice(int(count))
 	intValues := *intValuesPtr
@@ -309,7 +320,7 @@ func (c *column) decodeFloat64Column(decoder *encoding.BytesBlockDecoder, path s
 	encodeType := encoding.EncodeType(bb.Buf[0])
 	if encodeType == encoding.EncodeTypePlain {
 		bb.Buf = bb.Buf[1:]
-		c.decodeDefault(decoder, bb, count, path)
+		c.decodeDefault(decoder, bb, count, path, tmp)
 		return
 	}
 
@@ -339,9 +350,15 @@ func (c *column) decodeFloat64Column(decoder *encoding.BytesBlockDecoder, path s
 	}
 }
 
-func (c *column) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64, path string) {
+func (c *column) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64, path string, tmp []uint32) {
+	encodeType := encoding.EncodeType(bb.Buf[0])
 	var err error
-	c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
+	if encodeType == encoding.EncodeTypeDictionary {
+		dict := encoding.NewDictionary()
+		c.values, err = dict.Decode(c.values[:0], bb.Buf[1:], tmp, count)
+	} else {
+		c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
+	}
 	if err != nil {
 		logger.Panicf("%s: cannot decode values: %v", path, err)
 	}
