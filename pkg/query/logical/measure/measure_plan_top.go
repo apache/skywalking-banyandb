@@ -28,6 +28,8 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var (
@@ -110,7 +112,78 @@ func (g *topOp) Execute(ec context.Context) (mit executor.MIterator, err error) 
 			g.topNStream.Insert(NewTopElement(dp, value))
 		}
 	}
+	needsTwoPhase := g.checkIfNeedsTwoPhaseProcessing()
+	if needsTwoPhase {
+		return g.queryTopNRawData(ec, g.topNStream.Elements())
+	}
 	return newTopIterator(g.topNStream.Elements()), nil
+}
+
+func (g *topOp) checkIfNeedsTwoPhaseProcessing() bool {
+	switch g.Input.(type) {
+	case *aggregationPlan[int64], *aggregationPlan[float64]:
+		return true
+	default:
+		return false
+	}
+}
+
+func (g *topOp) queryTopNRawData(ec context.Context, topElements []TopElement) (executor.MIterator, error) {
+	entities := make([][]*modelv1.TagValue, 0)
+	for _, element := range topElements {
+		entityValues := make([]*modelv1.TagValue, 0)
+		for _, tagFamily := range element.dp.GetTagFamilies() {
+			for _, tag := range tagFamily.GetTags() {
+				if tag.GetValue().GetStr() != nil {
+					entityValues = append(entityValues, &modelv1.TagValue{
+						Value: &modelv1.TagValue_Str{
+							Str: &modelv1.Str{
+								Value: tag.GetValue().GetStr().GetValue(),
+							},
+						},
+					})
+				}
+			}
+		}
+		if len(entityValues) > 0 {
+			entities = append(entities, entityValues)
+		}
+	}
+	if len(entities) == 0 {
+		return newTopIterator([]TopElement{}), nil
+	}
+
+	var ecMeasure executor.MeasureExecutionContext
+	var timeRange *timestamp.TimeRange
+	var measureName string
+	var tagProjection []model.TagProjection
+	var fieldProjection []string
+	var aggInput logical.Plan
+	switch aggPlan := g.Input.(type) {
+	case *aggregationPlan[int64]:
+		aggInput = aggPlan.Input
+	case *aggregationPlan[float64]:
+		aggInput = aggPlan.Input
+	}
+	if localIndexScan, ok := aggInput.(*localIndexScan); ok {
+		ecMeasure = localIndexScan.ec
+		timeRange = &localIndexScan.timeRange
+		measureName = localIndexScan.metadata.GetName()
+		tagProjection = localIndexScan.projectionTags
+		fieldProjection = localIndexScan.projectionFields
+	}
+	rawDataScan := &localScan{
+		s:  g.Schema(),
+		ec: ecMeasure,
+		options: model.MeasureQueryOptions{
+			Name:            measureName,
+			TimeRange:       timeRange,
+			Entities:        entities,
+			TagProjection:   tagProjection,
+			FieldProjection: fieldProjection,
+		},
+	}
+	return rawDataScan.Execute(ec)
 }
 
 type topIterator struct {
