@@ -52,6 +52,9 @@ func NewFS(path string, userConfig *config2.FsConfig) (remote.FS, error) {
 	if userConfig == nil {
 		return nil, fmt.Errorf("userConfig is nil")
 	}
+	if userConfig.S3 == nil {
+		return nil, fmt.Errorf("S3 config is nil")
+	}
 
 	opts := buildAWSCfgOptions(userConfig)
 
@@ -68,28 +71,29 @@ func NewFS(path string, userConfig *config2.FsConfig) (remote.FS, error) {
 		basePath: basePath,
 	}
 
-	if userConfig.S3ChecksumAlgorithm != "" {
-		fs.checksumAlgorithm = types.ChecksumAlgorithm(userConfig.S3ChecksumAlgorithm)
+	if userConfig.S3.S3ChecksumAlgorithm != "" {
+		fs.checksumAlgorithm = types.ChecksumAlgorithm(userConfig.S3.S3ChecksumAlgorithm)
 	}
-	if userConfig.S3StorageClass != "" {
-		fs.storageClass = types.StorageClass(userConfig.S3StorageClass)
+	if userConfig.S3.S3StorageClass != "" {
+		fs.storageClass = types.StorageClass(userConfig.S3.S3StorageClass)
 	}
 	return fs, nil
 }
 
 func buildAWSCfgOptions(userConfig *config2.FsConfig) []func(*config.LoadOptions) error {
+	s3Config := userConfig.S3
 	opts := []func(*config.LoadOptions) error{
 		config.WithClientLogMode(aws.LogRetries),
 	}
 
-	if userConfig.S3ProfileName != "" {
-		opts = append(opts, config.WithSharedConfigProfile(userConfig.S3ProfileName))
+	if s3Config.S3ProfileName != "" {
+		opts = append(opts, config.WithSharedConfigProfile(s3Config.S3ProfileName))
 	}
-	if userConfig.S3ConfigFilePath != "" {
-		opts = append(opts, config.WithSharedConfigFiles([]string{userConfig.S3ConfigFilePath}))
+	if s3Config.S3ConfigFilePath != "" {
+		opts = append(opts, config.WithSharedConfigFiles([]string{s3Config.S3ConfigFilePath}))
 	}
-	if userConfig.S3CredentialFilePath != "" {
-		opts = append(opts, config.WithSharedCredentialsFiles([]string{userConfig.S3CredentialFilePath}))
+	if s3Config.S3CredentialFilePath != "" {
+		opts = append(opts, config.WithSharedCredentialsFiles([]string{s3Config.S3CredentialFilePath}))
 	}
 
 	return opts

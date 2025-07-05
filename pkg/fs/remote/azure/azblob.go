@@ -19,17 +19,15 @@
 package azure
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"io"
 	"path"
 	"strings"
-
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/checksum"
@@ -47,12 +45,15 @@ type blobFS struct {
 // NewFS creates a new Azure Blob Storage backed FS.
 // The input path must be in the form <container>/<optional-basePath> (without leading slash).
 func NewFS(p string, cfg *config.FsConfig) (remote.FS, error) {
-	containerName, basePath := extractContainerAndBase(p)
-	if containerName == "" {
-		return nil, fmt.Errorf("container name not provided")
+	basePath := strings.Trim(p, "/")
+
+	if cfg == nil || cfg.Azure == nil {
+		return nil, fmt.Errorf("Azure config is required")
 	}
-	if cfg == nil {
-		return nil, fmt.Errorf("config is nil")
+
+	containerName := cfg.Azure.Container
+	if containerName == "" {
+		return nil, fmt.Errorf("container name must be specified in config")
 	}
 
 	client, err := buildClient(cfg)
@@ -79,18 +80,19 @@ func NewFS(p string, cfg *config.FsConfig) (remote.FS, error) {
 }
 
 func buildClient(cfg *config.FsConfig) (*azblob.Client, error) {
-	endpoint := cfg.AzureEndpoint
+	azureCfg := cfg.Azure
+	endpoint := azureCfg.AzureEndpoint
 	if endpoint == "" {
-		if cfg.AzureAccountName == "" {
+		if azureCfg.AzureAccountName == "" {
 			return nil, fmt.Errorf("AzureAccountName is required when AzureEndpoint is empty")
 		}
-		endpoint = fmt.Sprintf("https://%s.blob.core.windows.net/", cfg.AzureAccountName)
+		endpoint = fmt.Sprintf("https://%s.blob.core.windows.net/", azureCfg.AzureAccountName)
 	}
 
 	// Prefer SAS token if supplied
-	if cfg.AzureSASToken != "" {
+	if azureCfg.AzureSASToken != "" {
 		// Ensure the token starts without leading "?"
-		sas := strings.TrimPrefix(cfg.AzureSASToken, "?")
+		sas := strings.TrimPrefix(azureCfg.AzureSASToken, "?")
 		var serviceURL string
 		if strings.Contains(endpoint, "?") {
 			serviceURL = endpoint + "&" + sas
@@ -100,13 +102,16 @@ func buildClient(cfg *config.FsConfig) (*azblob.Client, error) {
 		return azblob.NewClientWithNoCredential(serviceURL, nil)
 	}
 
-	if cfg.AzureAccountName == "" || cfg.AzureAccountKey == "" {
-		return nil, fmt.Errorf("either SAS token or account name/key must be provided")
+	if azureCfg.AzureAccountName == "" || azureCfg.AzureAccountKey == "" {
+		return nil, fmt.Errorf("AzureAccountName and AzureAccountKey are required when AzureSASToken is not provided")
 	}
 
-	cred, err := azblob.NewSharedKeyCredential(cfg.AzureAccountName, cfg.AzureAccountKey)
+	cred, err := azblob.NewSharedKeyCredential(
+		azureCfg.AzureAccountName,
+		azureCfg.AzureAccountKey,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("create shared key credential: %w", err)
+		return nil, err
 	}
 	return azblob.NewClientWithSharedKeyCredential(endpoint, cred, nil)
 }
@@ -125,20 +130,6 @@ func ensureContainer(ctx context.Context, client *azblob.Client, containerName s
 	return fmt.Errorf("failed to ensure container %s exists: %w", containerName, err)
 }
 
-func extractContainerAndBase(p string) (string, string) {
-	trimmed := strings.Trim(p, "/")
-	if trimmed == "" {
-		return "", ""
-	}
-	parts := strings.SplitN(trimmed, "/", 2)
-	container := parts[0]
-	var base string
-	if len(parts) > 1 {
-		base = parts[1]
-	}
-	return container, base
-}
-
 func (b *blobFS) getFullPath(p string) string {
 	if b.basePath == "" {
 		return p
@@ -152,25 +143,25 @@ func (b *blobFS) Upload(ctx context.Context, p string, data io.Reader) error {
 	}
 
 	blobName := b.getFullPath(p)
-
-	// Use a channel to get the hash from the callback
 	hashCh := make(chan string, 1)
-	errCh := make(chan error, 1)
 
 	// Create a streaming reader that computes the hash while uploading
 	streamReader, err := b.verifier.ComputeStreaming(data, func(hash string) error {
-		hashCh <- hash
-		return nil
+		select {
+		case hashCh <- hash:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	})
-
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create streaming reader: %w", err)
 	}
 
 	// Upload the data with streaming
 	_, err = b.client.UploadStream(ctx, b.container, blobName, streamReader, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to upload blob: %w", err)
 	}
 
 	// Get the computed hash
@@ -178,18 +169,23 @@ func (b *blobFS) Upload(ctx context.Context, p string, data io.Reader) error {
 	select {
 	case hash = <-hashCh:
 		// Got the hash
-	case err = <-errCh:
-		return fmt.Errorf("error computing hash: %w", err)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 
-	// Set the metadata with the hash
-	_, err = b.client.SetBlobMetadata(ctx, b.container, blobName, map[string]*string{
-		"sha256": ptr(hash),
-	}, nil)
+	// Create a blob client to set metadata
+	blobClient := b.client.ServiceClient().NewContainerClient(b.container).NewBlobClient(blobName)
 
-	return err
+	// Set the metadata with the hash
+	metadata := map[string]*string{
+		"checksum-sha256": ptr(hash),
+	}
+	_, err = blobClient.SetMetadata(ctx, metadata, nil)
+	if err != nil {
+		return fmt.Errorf("failed to set metadata: %w", err)
+	}
+
+	return nil
 }
 
 func (b *blobFS) Download(ctx context.Context, p string) (io.ReadCloser, error) {
@@ -204,12 +200,17 @@ func (b *blobFS) Download(ctx context.Context, p string) (io.ReadCloser, error) 
 	}
 
 	expected := ""
-	if resp.Metadata != nil && resp.Metadata["sha256"] != nil {
-		expected = *resp.Metadata["sha256"]
+	if resp.Metadata != nil && resp.Metadata["checksum-sha256"] != nil {
+		expected = *resp.Metadata["checksum-sha256"]
 	}
 	if expected == "" {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("sha256 metadata missing for blob: %s", blobName)
+		availableKeys := make([]string, 0, len(resp.Metadata))
+		for k := range resp.Metadata {
+			availableKeys = append(availableKeys, k)
+		}
+		return nil, fmt.Errorf("sha256 metadata missing for blob %s, available metadata: %v",
+			blobName, availableKeys)
 	}
 
 	// Use verifier to wrap the response body with streaming verification
