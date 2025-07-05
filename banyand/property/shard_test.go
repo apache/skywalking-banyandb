@@ -96,7 +96,8 @@ func TestMergeDeleted(t *testing.T) {
 				t.Fatal(err)
 			}
 			defers = append(defers, deferFunc)
-			db, err := openDB(context.Background(), dir, 3*time.Second, tt.expireDeletionTime, observability.BypassRegistry, fs.NewLocalFileSystem())
+			db, err := openDB(context.Background(), dir, 3*time.Second, tt.expireDeletionTime, 32, observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
+				"* * * * *", time.Second*10)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,6 +109,9 @@ func TestMergeDeleted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defers = append(defers, func() {
+				_ = newShard.close()
+			})
 
 			properties := make([]*propertyv1.Property, 0, propertyCount)
 			unix := time.Now().Unix()
@@ -299,7 +303,8 @@ func TestRepair(t *testing.T) {
 				t.Fatal(err)
 			}
 			defers = append(defers, deferFunc)
-			db, err := openDB(context.Background(), dir, 3*time.Second, 1*time.Hour, observability.BypassRegistry, fs.NewLocalFileSystem())
+			db, err := openDB(context.Background(), dir, 3*time.Second, 1*time.Hour, 32, observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
+				"* * * * *", time.Second*10)
 			if err != nil {
 				t.Fatal(err)
 			}

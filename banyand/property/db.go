@@ -48,16 +48,20 @@ var (
 )
 
 type database struct {
-	lock          fs.File
-	omr           observability.MetricsRegistry
-	logger        *logger.Logger
-	lfs           fs.FileSystem
-	sLst          atomic.Pointer[[]*shard]
-	location      string
-	flushInterval time.Duration
-	expireDelete  time.Duration
-	closed        atomic.Bool
-	mu            sync.RWMutex
+	lock                     fs.File
+	omr                      observability.MetricsRegistry
+	logger                   *logger.Logger
+	lfs                      fs.FileSystem
+	sLst                     atomic.Pointer[[]*shard]
+	location                 string
+	repairBuildTreeCron      string
+	flushInterval            time.Duration
+	expireDelete             time.Duration
+	repairQuickBuildTreeTime time.Duration
+	repairTreeSlot           int
+	maxFileSnapshotNum       int
+	closed                   atomic.Bool
+	mu                       sync.RWMutex
 }
 
 func openDB(
@@ -65,20 +69,28 @@ func openDB(
 	location string,
 	flushInterval time.Duration,
 	expireToDeleteDuration time.Duration,
+	repairSlotCount int,
 	omr observability.MetricsRegistry,
 	lfs fs.FileSystem,
+	maxFileSnapshotNum int,
+	repairBuildTreeCron string,
+	repairQuickBuildTreeTime time.Duration,
 ) (*database, error) {
 	loc := filepath.Clean(location)
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
 
 	db := &database{
-		location:      loc,
-		logger:        l,
-		omr:           omr,
-		flushInterval: flushInterval,
-		expireDelete:  expireToDeleteDuration,
-		lfs:           lfs,
+		location:                 loc,
+		logger:                   l,
+		omr:                      omr,
+		flushInterval:            flushInterval,
+		expireDelete:             expireToDeleteDuration,
+		repairTreeSlot:           repairSlotCount,
+		lfs:                      lfs,
+		maxFileSnapshotNum:       maxFileSnapshotNum,
+		repairBuildTreeCron:      repairBuildTreeCron,
+		repairQuickBuildTreeTime: repairQuickBuildTreeTime,
 	}
 	if err := db.load(ctx); err != nil {
 		return nil, err
@@ -165,7 +177,8 @@ func (db *database) loadShard(ctx context.Context, id common.ShardID) (*shard, e
 		return s, nil
 	}
 	sd, err := db.newShard(context.WithValue(ctx, logger.ContextKey, db.logger), id, int64(db.flushInterval.Seconds()),
-		int64(db.expireDelete.Seconds()))
+		int64(db.expireDelete.Seconds()), db.repairTreeSlot, db.maxFileSnapshotNum, db.lfs, db.repairBuildTreeCron,
+		db.repairQuickBuildTreeTime)
 	if err != nil {
 		return nil, err
 	}
