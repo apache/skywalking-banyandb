@@ -24,45 +24,64 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"sync"
 )
 
 type sha256Verifier struct{}
 
-// ComputeStreaming implements Verifier.ComputeStreaming by returning a reader that
-// computes SHA-256 while streaming. When the reader is fully consumed, the callback
-// is called with the computed hash.
-func (v *sha256Verifier) ComputeStreaming(r io.Reader, callback func(string) error) (io.Reader, error) {
-	hasher := sha256.New()
-	teeReader := io.TeeReader(r, hasher)
-	
-	// Return a reader that will call the callback when it's done
-	return &callbackReader{
-		Reader: teeReader,
-		onEOF: func() error {
-			hash := hex.EncodeToString(hasher.Sum(nil))
-			return callback(hash)
-		},
-	}, nil
+type hashingReader struct {
+	reader io.Reader
+	hash   hash.Hash
+	done   bool
+	err    error
+	mu     sync.RWMutex
 }
 
-func (v *sha256Verifier) Verify(r io.Reader, expected string) error {
-	hasher := sha256.New()
-	_, err := io.Copy(hasher, r)
+func (hr *hashingReader) Read(p []byte) (n int, err error) {
+	n, err = hr.reader.Read(p)
+	if n > 0 {
+		hr.hash.Write(p[:n])
+	}
+
 	if err != nil {
-		return err
+		hr.mu.Lock()
+		if err == io.EOF {
+			hr.done = true
+		} else {
+			hr.err = err
+		}
+		hr.mu.Unlock()
 	}
-	actual := hex.EncodeToString(hasher.Sum(nil))
-	if actual != expected {
-		return fmt.Errorf("sha256 mismatch: expected %s, got %s", expected, actual)
-	}
-	return nil
+
+	return n, err
 }
 
-// Wrap implements Verifier.Wrap by returning a ReadCloser that computes SHA-256
-// while streaming and verifies it on Close().
+func (hr *hashingReader) getHash() (string, error) {
+	hr.mu.RLock()
+	defer hr.mu.RUnlock()
+
+	if hr.err != nil {
+		return "", fmt.Errorf("read error: %w", hr.err)
+	}
+
+	if !hr.done {
+		return "", fmt.Errorf("stream not fully read")
+	}
+
+	return hex.EncodeToString(hr.hash.Sum(nil)), nil
+}
+
+func (v *sha256Verifier) ComputeAndWrap(r io.Reader) (io.Reader, func() (string, error)) {
+	hr := &hashingReader{
+		reader: r,
+		hash:   sha256.New(),
+	}
+	return hr, hr.getHash
+}
+
 func (v *sha256Verifier) Wrap(rc io.ReadCloser, expected string) io.ReadCloser {
 	h := sha256.New()
-	return &sha256ReadCloser{
+	return &verifyingReadCloser{
 		Reader:   io.TeeReader(rc, h),
 		closer:   rc,
 		hasher:   h,
@@ -70,63 +89,24 @@ func (v *sha256Verifier) Wrap(rc io.ReadCloser, expected string) io.ReadCloser {
 	}
 }
 
-// DefaultSHA256Verifier returns a reusable SHA256 verifier
-func DefaultSHA256Verifier() (Verifier, error) {
-	return &sha256Verifier{}, nil
-}
-
-// --- Streaming helpers ---
-
-// sha256ReadCloser wraps an io.ReadCloser and verifies the SHA-256 checksum
-// after the stream is fully consumed and Close() is invoked.
-type sha256ReadCloser struct {
+type verifyingReadCloser struct {
 	io.Reader
 	closer   io.Closer
 	hasher   hash.Hash
 	expected string
 }
 
-func (s *sha256ReadCloser) Read(p []byte) (int, error) {
-	return s.Reader.Read(p)
-}
-
-func (s *sha256ReadCloser) Close() error {
-	if err := s.closer.Close(); err != nil {
+func (v *verifyingReadCloser) Close() error {
+	if err := v.closer.Close(); err != nil {
 		return err
 	}
-	actual := hex.EncodeToString(s.hasher.Sum(nil))
-	if actual != s.expected {
-		return fmt.Errorf("sha256 mismatch: expected %s, got %s", s.expected, actual)
+	actual := hex.EncodeToString(v.hasher.Sum(nil))
+	if actual != v.expected {
+		return fmt.Errorf("sha256 mismatch: expected %s, got %s", v.expected, actual)
 	}
 	return nil
 }
 
-// SHA256VerifyingReadCloser returns a ReadCloser that transparently computes
-// SHA-256 while the caller reads from rc. When the caller closes the returned
-// reader, the computed hash is compared with expected. If they differ, Close()
-// returns an error.
-//
-// Deprecated: Use DefaultSHA256Verifier().Wrap() instead.
-func SHA256VerifyingReadCloser(rc io.ReadCloser, expected string) io.ReadCloser {
-	v := &sha256Verifier{}
-	return v.Wrap(rc, expected)
-}
-
-// callbackReader is a reader that calls a function when it reaches EOF
-type callbackReader struct {
-	io.Reader
-	onEOF    func() error
-	eofCalled bool
-}
-
-func (r *callbackReader) Read(p []byte) (n int, err error) {
-	n, err = r.Reader.Read(p)
-	if err == io.EOF && !r.eofCalled {
-		r.eofCalled = true
-		callbackErr := r.onEOF()
-		if callbackErr != nil {
-			return n, callbackErr
-		}
-	}
-	return n, err
+func DefaultSHA256Verifier() (Verifier, error) {
+	return &sha256Verifier{}, nil
 }

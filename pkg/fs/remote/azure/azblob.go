@@ -143,40 +143,23 @@ func (b *blobFS) Upload(ctx context.Context, p string, data io.Reader) error {
 	}
 
 	blobName := b.getFullPath(p)
-	hashCh := make(chan string, 1)
 
-	// Create a streaming reader that computes the hash while uploading
-	streamReader, err := b.verifier.ComputeStreaming(data, func(hash string) error {
-		select {
-		case hashCh <- hash:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create streaming reader: %w", err)
-	}
+	wrappedReader, getHash := b.verifier.ComputeAndWrap(data)
 
-	// Upload the data with streaming
-	_, err = b.client.UploadStream(ctx, b.container, blobName, streamReader, nil)
+	// upload
+	_, err := b.client.UploadStream(ctx, b.container, blobName, wrappedReader, nil)
 	if err != nil {
 		return fmt.Errorf("failed to upload blob: %w", err)
 	}
 
-	// Get the computed hash
-	var hash string
-	select {
-	case hash = <-hashCh:
-		// Got the hash
-	case <-ctx.Done():
-		return ctx.Err()
+	// get hash
+	hash, err := getHash()
+	if err != nil {
+		return fmt.Errorf("failed to compute hash: %w", err)
 	}
 
-	// Create a blob client to set metadata
+	// set metadata
 	blobClient := b.client.ServiceClient().NewContainerClient(b.container).NewBlobClient(blobName)
-
-	// Set the metadata with the hash
 	metadata := map[string]*string{
 		"checksum-sha256": ptr(hash),
 	}

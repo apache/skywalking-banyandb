@@ -21,18 +21,11 @@ import "io"
 
 // Verifier defines the interface for computing and verifying checksums
 type Verifier interface {
-	// ComputeStreaming returns a reader that computes the checksum while reading.
-	// When the returned reader is fully consumed, the callback function is called
-	// with the computed checksum. This allows for streaming operations without
-	// buffering the entire content in memory.
-	ComputeStreaming(io.Reader, func(string) error) (io.Reader, error)
-
-	// Verify checks if the data from the reader matches the expected checksum.
-	// Returns an error if verification fails or reading fails.
-	Verify(io.Reader, string) error
-	
 	// Wrap returns an io.ReadCloser that transparently verifies the checksum
 	// when the returned reader is closed. This enables streaming verification
 	// without buffering the entire content in memory.
 	Wrap(io.ReadCloser, string) io.ReadCloser
+
+	// ComputeAndWrap returns a reader that computes the checksum while reading
+	ComputeAndWrap(r io.Reader) (wrappedReader io.Reader, getHash func() (string, error))
 }
