@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -49,22 +50,24 @@ var (
 )
 
 type service struct {
-	metadata            metadata.Repo
-	pipeline            queue.Server
-	omr                 observability.MetricsRegistry
-	lfs                 fs.FileSystem
-	close               chan struct{}
-	db                  *database
-	l                   *logger.Logger
-	pm                  protector.Memory
-	root                string
-	nodeID              string
-	snapshotDir         string
-	flushTimeout        time.Duration
-	expireTimeout       time.Duration
-	repairTreeSlotCount int
-	maxDiskUsagePercent int
-	maxFileSnapshotNum  int
+	metadata                 metadata.Repo
+	pipeline                 queue.Server
+	omr                      observability.MetricsRegistry
+	lfs                      fs.FileSystem
+	close                    chan struct{}
+	db                       *database
+	l                        *logger.Logger
+	pm                       protector.Memory
+	root                     string
+	nodeID                   string
+	snapshotDir              string
+	repairBuildTreeCron      string
+	flushTimeout             time.Duration
+	expireTimeout            time.Duration
+	repairQuickBuildTreeTime time.Duration
+	repairTreeSlotCount      int
+	maxDiskUsagePercent      int
+	maxFileSnapshotNum       int
 }
 
 func (s *service) FlagSet() *run.FlagSet {
@@ -75,6 +78,9 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.IntVar(&s.maxFileSnapshotNum, "property-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
 	flagS.DurationVar(&s.expireTimeout, "property-expire-delete-timeout", time.Hour*24*7, "the duration of the expired data needs to be deleted")
 	flagS.IntVar(&s.repairTreeSlotCount, "property-repair-tree-slot-count", 32, "the slot count of the repair tree")
+	flagS.StringVar(&s.repairBuildTreeCron, "property-repair-build-tree-cron", "0 1 * * *", "the cron expression for repairing the build tree")
+	flagS.DurationVar(&s.repairQuickBuildTreeTime, "property-repair-quick-build-tree-time", time.Minute*10,
+		"the duration of the quick build tree after operate the property")
 	return flagS
 }
 
@@ -87,6 +93,10 @@ func (s *service) Validate() error {
 	}
 	if s.maxDiskUsagePercent > 100 {
 		return errors.New("property-max-disk-usage-percent must be less than or equal to 100")
+	}
+	_, err := cron.ParseStandard(s.repairBuildTreeCron)
+	if err != nil {
+		return errors.New("property-repair-build-tree-cron is not a valid cron expression")
 	}
 	return nil
 }
@@ -113,7 +123,8 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.nodeID = node.NodeID
 
 	var err error
-	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs)
+	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs, s.maxFileSnapshotNum,
+		s.repairBuildTreeCron, s.repairQuickBuildTreeTime)
 	if err != nil {
 		return err
 	}

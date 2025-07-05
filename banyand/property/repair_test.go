@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onsi/gomega"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -32,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 var (
@@ -43,15 +45,15 @@ var (
 func TestBuildTree(t *testing.T) {
 	tests := []struct {
 		existingDoc      func(s *shard) ([]index.Document, error)
-		statusVerify     func(t *testing.T, s *shard, tree *repairStatus)
+		statusVerify     func(t *testing.T, s *shard, data *repairData)
 		afterFirstBuild  func(s *shard) ([]index.Document, error)
-		nextStatusVerify func(t *testing.T, s *shard, before, after *repairStatus)
+		nextStatusVerify func(t *testing.T, s *shard, before, after *repairData)
 		name             string
 	}{
 		{
 			name: "empty shard",
-			statusVerify: func(t *testing.T, _ *shard, status *repairStatus) {
-				if status != nil {
+			statusVerify: func(t *testing.T, _ *shard, data *repairData) {
+				if data.repairStatus != nil {
 					t.Fatal("expected nil status")
 				}
 			},
@@ -63,9 +65,9 @@ func TestBuildTree(t *testing.T) {
 					propertyBuilder{id: "test1"},
 				)
 			},
-			statusVerify: func(t *testing.T, s *shard, status *repairStatus) {
-				basicStatusVerify(t, status, defaultGroupName, 1)
-				verifyContainsProperty(t, s, status, defaultGroupName, propertyBuilder{id: "test1"})
+			statusVerify: func(t *testing.T, s *shard, data *repairData) {
+				basicStatusVerify(t, data, defaultGroupName, 1)
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1"})
 			},
 		},
 		{
@@ -76,9 +78,9 @@ func TestBuildTree(t *testing.T) {
 					propertyBuilder{id: "test1", version: 2, deleteTime: 2000},
 				)
 			},
-			statusVerify: func(t *testing.T, s *shard, status *repairStatus) {
-				basicStatusVerify(t, status, defaultGroupName, 1)
-				verifyContainsProperty(t, s, status, defaultGroupName,
+			statusVerify: func(t *testing.T, s *shard, data *repairData) {
+				basicStatusVerify(t, data, defaultGroupName, 1)
+				verifyContainsProperty(t, s, data, defaultGroupName,
 					propertyBuilder{id: "test1", version: 2, deleteTime: 2000})
 			},
 		},
@@ -93,11 +95,11 @@ func TestBuildTree(t *testing.T) {
 					propertyBuilder{id: "test3"},
 				)
 			},
-			statusVerify: func(t *testing.T, s *shard, status *repairStatus) {
-				basicStatusVerify(t, status, defaultGroupName, 3)
-				verifyContainsProperty(t, s, status, defaultGroupName, propertyBuilder{id: "test1", version: 4, value: 2})
-				verifyContainsProperty(t, s, status, defaultGroupName, propertyBuilder{id: "test2", version: 2, value: 2})
-				verifyContainsProperty(t, s, status, defaultGroupName, propertyBuilder{id: "test3"})
+			statusVerify: func(t *testing.T, s *shard, data *repairData) {
+				basicStatusVerify(t, data, defaultGroupName, 3)
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1", version: 4, value: 2})
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test2", version: 2, value: 2})
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test3"})
 			},
 		},
 		{
@@ -109,11 +111,11 @@ func TestBuildTree(t *testing.T) {
 					propertyBuilder{group: "group3", id: "test3"},
 				)
 			},
-			statusVerify: func(t *testing.T, s *shard, status *repairStatus) {
-				basicStatusVerify(t, status, "group1", 1, "group2", 1, "group3", 1)
-				verifyContainsProperty(t, s, status, "group1", propertyBuilder{group: "group1", id: "test1"})
-				verifyContainsProperty(t, s, status, "group2", propertyBuilder{group: "group2", id: "test2"})
-				verifyContainsProperty(t, s, status, "group3", propertyBuilder{group: "group3", id: "test3"})
+			statusVerify: func(t *testing.T, s *shard, data *repairData) {
+				basicStatusVerify(t, data, "group1", 1, "group2", 1, "group3", 1)
+				verifyContainsProperty(t, s, data, "group1", propertyBuilder{group: "group1", id: "test1"})
+				verifyContainsProperty(t, s, data, "group2", propertyBuilder{group: "group2", id: "test2"})
+				verifyContainsProperty(t, s, data, "group3", propertyBuilder{group: "group3", id: "test3"})
 			},
 		},
 		{
@@ -123,20 +125,20 @@ func TestBuildTree(t *testing.T) {
 					propertyBuilder{id: "test1"},
 				)
 			},
-			statusVerify: func(t *testing.T, s *shard, status *repairStatus) {
-				basicStatusVerify(t, status, defaultGroupName, 1)
-				verifyContainsProperty(t, s, status, defaultGroupName, propertyBuilder{id: "test1"})
+			statusVerify: func(t *testing.T, s *shard, data *repairData) {
+				basicStatusVerify(t, data, defaultGroupName, 1)
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1"})
 			},
-			nextStatusVerify: func(t *testing.T, _ *shard, before, after *repairStatus) {
+			nextStatusVerify: func(t *testing.T, _ *shard, before, after *repairData) {
 				basicStatusVerify(t, before, defaultGroupName, 1)
 				basicStatusVerify(t, after, defaultGroupName, 1)
-				if before.LastSnapshotID != after.LastSnapshotID {
+				if before.LastSnpID != after.LastSnpID {
 					t.Fatalf("expected last snapshot ID to be the same, got before: %d, after: %d",
-						before.LastSnapshotID, after.LastSnapshotID)
+						before.LastSnpID, after.LastSnpID)
 				}
-				if before.Trees[defaultGroupName].Root.ShaValue != after.Trees[defaultGroupName].Root.ShaValue {
+				if before.readTree(t, defaultGroupName).Root.ShaValue != after.readTree(t, defaultGroupName).Root.ShaValue {
 					t.Fatalf("expected Root sha value to be the same, got before: %s, after: %s",
-						before.Trees[defaultGroupName].Root.ShaValue, after.Trees[defaultGroupName].Root.ShaValue)
+						before.readTree(t, defaultGroupName).Root.ShaValue, after.readTree(t, defaultGroupName).Root.ShaValue)
 				}
 			},
 		},
@@ -147,24 +149,24 @@ func TestBuildTree(t *testing.T) {
 					propertyBuilder{id: "test1"},
 				)
 			},
-			statusVerify: func(t *testing.T, s *shard, status *repairStatus) {
-				basicStatusVerify(t, status, defaultGroupName, 1)
-				verifyContainsProperty(t, s, status, defaultGroupName, propertyBuilder{id: "test1"})
+			statusVerify: func(t *testing.T, s *shard, data *repairData) {
+				basicStatusVerify(t, data, defaultGroupName, 1)
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1"})
 			},
 			afterFirstBuild: func(s *shard) ([]index.Document, error) {
 				return buildPropertyDocuments(s,
 					propertyBuilder{id: "test2"},
 				)
 			},
-			nextStatusVerify: func(t *testing.T, s *shard, before, after *repairStatus) {
+			nextStatusVerify: func(t *testing.T, s *shard, before, after *repairData) {
 				basicStatusVerify(t, after, defaultGroupName, 2)
 				verifyContainsProperty(t, s, after, defaultGroupName,
 					propertyBuilder{id: "test1"},
 					propertyBuilder{id: "test2"},
 				)
-				if before.LastSnapshotID == after.LastSnapshotID {
+				if before.LastSnpID == after.LastSnpID {
 					t.Fatalf("expected last snapshot ID to be incremented by 1, got before: %d, after: %d",
-						before.LastSnapshotID, after.LastSnapshotID)
+						before.LastSnpID, after.LastSnpID)
 				}
 			},
 		},
@@ -184,7 +186,9 @@ func TestBuildTree(t *testing.T) {
 				t.Fatal(err)
 			}
 			defers = append(defers, deferFunc)
-			db, err := openDB(context.Background(), dir, 3*time.Second, time.Hour, 32, observability.BypassRegistry, fs.NewLocalFileSystem())
+			db, err := openDB(context.Background(), dir, 3*time.Second, time.Hour, 32,
+				observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
+				"* * * * *", time.Second*10)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -212,7 +216,9 @@ func TestBuildTree(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to build status: %v", err)
 			}
-			tt.statusVerify(t, newShard, status)
+			data := newRepairData(newShard.repairState, status)
+			tt.statusVerify(t, newShard, data)
+			olderData := data.clone()
 
 			if tt.afterFirstBuild != nil {
 				docs, err := tt.afterFirstBuild(newShard)
@@ -229,25 +235,63 @@ func TestBuildTree(t *testing.T) {
 				if err != nil {
 					t.Fatalf("failed to build status after update: %v", err)
 				}
-				tt.nextStatusVerify(t, newShard, status, statusAfter)
-			} else {
-				statusAfter, err := newShard.repairState.buildStatus()
-				if err != nil {
-					t.Fatalf("failed to build status after update: %v", err)
-				}
-				tt.statusVerify(t, newShard, statusAfter)
+				tt.nextStatusVerify(t, newShard, olderData, newRepairData(newShard.repairState, statusAfter))
 			}
 		})
 	}
 }
 
-func basicStatusVerify(t *testing.T, status *repairStatus, groupWithSlots ...interface{}) {
-	if status == nil {
+func TestDocumentUpdatesNotify(t *testing.T) {
+	gomega.RegisterTestingT(t)
+
+	var defers []func()
+	defer func() {
+		for _, f := range defers {
+			f()
+		}
+	}()
+
+	dir, deferFunc, err := test.NewSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defers = append(defers, deferFunc)
+
+	db, err := openDB(context.Background(), dir, 3*time.Second, time.Hour, 32,
+		observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
+		"0 0 * * *", time.Millisecond*50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defers = append(defers, func() {
+		_ = db.close()
+	})
+
+	newShard, err := db.loadShard(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p1 := buildProperties(propertyBuilder{id: "1"})
+	err = newShard.update(GetPropertyID(p1), p1)
+	if err != nil {
+		t.Fatalf("failed to update property: %v", err)
+	}
+
+	// wait for the repair tree to be built
+	gomega.Eventually(func() bool {
+		tree, _ := newShard.repairState.readTree(defaultGroupName)
+		return tree != nil
+	}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
+}
+
+func basicStatusVerify(t *testing.T, data *repairData, groupWithSlots ...interface{}) {
+	if data == nil {
 		t.Fatal("status is nil")
 	}
-	trees := status.Trees
-	if trees == nil {
-		t.Fatal("trees is nil")
+	trees := make(map[string]*repairTree)
+	for i := 0; i < len(groupWithSlots); i += 2 {
+		trees[groupWithSlots[i].(string)] = data.readTree(t, groupWithSlots[i].(string))
 	}
 	if len(groupWithSlots)/2 != len(trees) {
 		t.Fatalf("expected %d groups in Trees, but got %d", len(groupWithSlots)/2, len(trees))
@@ -379,14 +423,14 @@ func generateShaValue(t *testing.T, s *shard, builder propertyBuilder) string {
 	return shaValue
 }
 
-func verifyContainsProperty(t *testing.T, s *shard, state *repairStatus, group string, properties ...propertyBuilder) {
+func verifyContainsProperty(t *testing.T, s *shard, data *repairData, group string, properties ...propertyBuilder) {
 	if len(properties) == 0 {
 		return
 	}
 	for _, builder := range properties {
 		entity := generatePropertyEntity(builder.group, builder.name, builder.id)
 		found := false
-		for _, child := range state.Trees[group].Root.Children {
+		for _, child := range data.readTree(t, group).Root.Children {
 			for _, grandChild := range child.Children {
 				if grandChild.ID == entity {
 					found = true
@@ -400,5 +444,46 @@ func verifyContainsProperty(t *testing.T, s *shard, state *repairStatus, group s
 		if !found {
 			t.Fatalf("property %s not found in the Trees", entity)
 		}
+	}
+}
+
+type repairData struct {
+	*repairStatus
+
+	repair *repair
+
+	cache         map[string]*repairTree
+	readCacheOnly bool
+}
+
+func newRepairData(repair *repair, status *repairStatus) *repairData {
+	return &repairData{
+		repairStatus: status,
+		repair:       repair,
+		cache:        make(map[string]*repairTree),
+	}
+}
+
+func (r *repairData) readTree(t *testing.T, group string) *repairTree {
+	if tree, exist := r.cache[group]; exist {
+		return tree
+	}
+	if r.readCacheOnly {
+		t.Fatal("readCacheOnly is set, but no tree found in cache")
+	}
+	tree, err := r.repair.readTree(group)
+	if err != nil {
+		t.Fatalf("failed to read tree for group %s: %v", group, err)
+	}
+	r.cache[group] = tree
+	return tree
+}
+
+func (r *repairData) clone() *repairData {
+	return &repairData{
+		repair:        r.repair,
+		repairStatus:  r.repairStatus,
+		cache:         r.cache,
+		readCacheOnly: true,
 	}
 }

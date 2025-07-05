@@ -18,6 +18,7 @@
 package property
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha512"
 	"encoding/binary"
@@ -26,48 +27,140 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
+	"sync/atomic"
+	"time"
 
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/index"
 	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
+	"github.com/robfig/cron/v3"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
 const repairBatchSearchSize = 100
 
 type repair struct {
-	shardPath       string
-	statePath       string
-	tmpFilePath     string
-	treeSlotCount   int
-	batchSearchSize int
+	takeSnapshot             func(string) error
+	ctx                      context.Context
+	cancel                   context.CancelFunc
+	repairTreeCron           *cron.Cron
+	quickRepairNotified      *int32
+	metrics                  *repairMetrics
+	l                        *logger.Logger
+	shardPath                string
+	repairBasePath           string
+	snapshotDir              string
+	statePath                string
+	composeAppendFilePath    string
+	composeTreeFilePathFmt   string
+	repairBuildTreeCron      string
+	repairQuickBuildTreeTime time.Duration
+	treeSlotCount            int
+	batchSearchSize          int
+	repairTreeCronTask       cron.EntryID
 }
 
-func newRepair(shardPath string, batchSearchSize, treeSlotCount int) *repair {
-	return &repair{
-		shardPath:       shardPath,
-		statePath:       path.Join(shardPath, "state.json"),
-		tmpFilePath:     path.Join(shardPath, "state.tmp"),
-		treeSlotCount:   treeSlotCount,
-		batchSearchSize: batchSearchSize,
+func newRepair(
+	shardPath string,
+	l *logger.Logger,
+	metricsFactory *observability.Factory,
+	batchSearchSize,
+	treeSlotCount int,
+	repairBuildTreeCron string,
+	repairQuickBuildTreeTime time.Duration,
+	takeSnapshot func(string) error,
+) (r *repair, err error) {
+	repairBase := path.Join(shardPath, "repair")
+	c := cron.New()
+	var quickRepairNotified int32
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	r = &repair{
+		shardPath:                shardPath,
+		l:                        l,
+		repairBasePath:           repairBase,
+		snapshotDir:              path.Join(repairBase, "snapshot"),
+		statePath:                path.Join(repairBase, "state.json"),
+		composeAppendFilePath:    path.Join(repairBase, "state-append.tmp"),
+		composeTreeFilePathFmt:   path.Join(repairBase, "state-tree-%s.json"),
+		treeSlotCount:            treeSlotCount,
+		batchSearchSize:          batchSearchSize,
+		takeSnapshot:             takeSnapshot,
+		repairBuildTreeCron:      repairBuildTreeCron,
+		repairQuickBuildTreeTime: repairQuickBuildTreeTime,
+		repairTreeCron:           c,
+		quickRepairNotified:      &quickRepairNotified,
+		metrics:                  newRepairMetrics(metricsFactory),
+		ctx:                      ctx,
+		cancel:                   cancelFunc,
+	}
+	r.repairTreeCronTask, err = c.AddJob(repairBuildTreeCron, c)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add repair build tree cron task: %w", err)
+	}
+	c.Start()
+	return r, nil
+}
+
+func (r *repair) documentUpdatesNotify() {
+	if !atomic.CompareAndSwapInt32(r.quickRepairNotified, 0, 1) {
+		return
+	}
+
+	// stop the normal cron job
+	r.repairTreeCron.Remove(r.repairTreeCronTask)
+
+	go func() {
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-time.After(r.repairQuickBuildTreeTime):
+			r.Run()
+			var err error
+			// after the quick repair, we can start the normal cron job again
+			r.repairTreeCronTask, err = r.repairTreeCron.AddJob(r.repairBuildTreeCron, r)
+			if err != nil {
+				r.l.Err(fmt.Errorf("repair build tree cron task err: %w", err))
+			}
+			atomic.StoreInt32(r.quickRepairNotified, 0)
+		}
+	}()
+}
+
+func (r *repair) Run() {
+	_, err := r.buildStatus()
+	if err != nil {
+		r.l.Err(fmt.Errorf("repair build status failure: %w", err))
+		return
 	}
 }
 
-func (r *repair) buildStatus() (*repairStatus, error) {
-	state, err := r.readState()
+func (r *repair) buildStatus() (state *repairStatus, err error) {
+	startTime := time.Now()
+	defer func() {
+		r.metrics.totalBuildTreeFinished.Inc(1)
+		if err != nil {
+			r.metrics.totalBuildTreeFailures.Inc(1)
+		}
+		r.metrics.totalBuildTreeDuration.Inc(time.Since(startTime).Seconds())
+	}()
+	// reading the state file to check they have any updates
+	state, err = r.readState()
 	if err != nil {
 		return nil, fmt.Errorf("reading state failure: %w", err)
 	}
 	indexConfig := index.DefaultConfig(r.shardPath)
-	blugeConf := bluge.DefaultConfig(r.shardPath)
 	items, err := indexConfig.DirectoryFunc().List(index.ItemKindSegment)
 	if err != nil {
 		return nil, fmt.Errorf("reading item kind segment failure: %w", err)
@@ -75,17 +168,23 @@ func (r *repair) buildStatus() (*repairStatus, error) {
 	sort.Sort(snapshotIDList(items))
 	// check the snapshot ID have any updated
 	// if no updates, the building Trees should be skipped
-	if state != nil && len(items) != 0 && items[len(items)-1] == state.LastSnapshotID {
+	if state != nil && len(items) != 0 && items[len(items)-1] == state.LastSnpID {
 		return state, nil
 	}
 	if len(items) == 0 {
 		return nil, nil
 	}
 
-	// otherwise, we need to build the Trees
-	tree, err := r.buildTree(blugeConf)
+	// otherwise, we need to building the trees
+	// take a new snapshot first
+	err = r.takeSnapshot(r.snapshotDir)
 	if err != nil {
-		return nil, fmt.Errorf("building Trees failure: %w", err)
+		return nil, fmt.Errorf("taking snapshot failure: %w", err)
+	}
+	blugeConf := bluge.DefaultConfig(r.snapshotDir)
+	err = r.buildTree(blugeConf)
+	if err != nil {
+		return nil, fmt.Errorf("building trees failure: %w", err)
 	}
 
 	var latestSnapshotID uint64
@@ -94,8 +193,8 @@ func (r *repair) buildStatus() (*repairStatus, error) {
 	}
 	// save the Trees to the state
 	state = &repairStatus{
-		LastSnapshotID: latestSnapshotID,
-		Trees:          tree,
+		LastSnpID:    latestSnapshotID,
+		LastSyncTime: time.Now(),
 	}
 	stateVal, err := json.Marshal(state)
 	if err != nil {
@@ -108,10 +207,10 @@ func (r *repair) buildStatus() (*repairStatus, error) {
 	return state, nil
 }
 
-func (r *repair) buildTree(conf bluge.Config) (map[string]*repairTree, error) {
+func (r *repair) buildTree(conf bluge.Config) error {
 	reader, err := bluge.OpenReader(conf)
 	if err != nil {
-		return nil, fmt.Errorf("opening index reader failure: %w", err)
+		return fmt.Errorf("opening index reader failure: %w", err)
 	}
 	defer func() {
 		_ = reader.Close()
@@ -125,9 +224,9 @@ func (r *repair) buildTree(conf bluge.Config) (map[string]*repairTree, error) {
 	})
 
 	var latestProperty *searchingProperty
-	treeComposer, err := newRepairTreeComposer(r.tmpFilePath, r.treeSlotCount)
+	treeComposer, err := newRepairTreeComposer(r.composeAppendFilePath, r.composeTreeFilePathFmt, r.treeSlotCount)
 	if err != nil {
-		return nil, fmt.Errorf("creating repair tree composer failure: %w", err)
+		return fmt.Errorf("creating repair tree composer failure: %w", err)
 	}
 	defer func() {
 		_ = treeComposer.closeAndRemove()
@@ -151,42 +250,49 @@ func (r *repair) buildTree(conf bluge.Config) (map[string]*repairTree, error) {
 		}
 
 		s := newSearchingProperty(&property, shaValue, entity)
-		if latestProperty != nil && latestProperty.entityID != entity {
-			// the entity is changed, need to save the property
-			if err = treeComposer.append(latestProperty.group, latestProperty.entityID, latestProperty.shaValue); err != nil {
-				return fmt.Errorf("appending property to tree composer failure: %w", err)
+		if latestProperty != nil {
+			if latestProperty.group != property.Metadata.Group {
+				// if the group have changed, we need to append the latest property to the tree composer, and compose builder
+				// the entity is changed, need to save the property
+				if err = treeComposer.append(latestProperty.group, latestProperty.entityID, latestProperty.shaValue); err != nil {
+					return fmt.Errorf("appending property to tree composer failure: %w", err)
+				}
+				err = treeComposer.composeNextGroupAndSave()
+				if err != nil {
+					return fmt.Errorf("composing group failure: %w", err)
+				}
+			} else if latestProperty.entityID != entity {
+				// the entity is changed, need to save the property
+				if err = treeComposer.append(latestProperty.group, latestProperty.entityID, latestProperty.shaValue); err != nil {
+					return fmt.Errorf("appending property to tree composer failure: %w", err)
+				}
 			}
 		}
 		latestProperty = s
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// if the latestProperty is not nil, it means the latest property need to be saved
 	if latestProperty != nil {
 		if err = treeComposer.append(latestProperty.group, latestProperty.entityID, latestProperty.shaValue); err != nil {
-			return nil, fmt.Errorf("appending latest property to tree composer failure: %w", err)
+			return fmt.Errorf("appending latest property to tree composer failure: %w", err)
+		}
+		err = treeComposer.composeNextGroupAndSave()
+		if err != nil {
+			return fmt.Errorf("composing last group failure: %w", err)
 		}
 	}
 
-	result := make(map[string]*repairTree)
-	trees, err := treeComposer.compose()
-	for group, treeBuilder := range trees {
-		tree, err := treeBuilder.build()
-		if err != nil {
-			return nil, fmt.Errorf("building tree for group %s failure: %w", group, err)
-		}
-		result[group] = tree
-	}
-	return result, nil
+	return nil
 }
 
 func (r *repair) pageSearch(reader *bluge.Reader, searcher *bluge.TopNSearch, each func(source []byte, shaValue string, deleteTime int64) error) error {
 	var latestDocValues [][]byte
 	for {
 		searcher.After(latestDocValues)
-		result, err := reader.Search(context.Background(), searcher)
+		result, err := reader.Search(r.ctx, searcher)
 		if err != nil {
 			return fmt.Errorf("searching index failure: %w", err)
 		}
@@ -260,9 +366,33 @@ func (r *repair) readState() (*repairStatus, error) {
 	return &status, nil
 }
 
+func (r *repair) readTree(group string) (*repairTree, error) {
+	if group == "" {
+		return nil, fmt.Errorf("group cannot be empty when reading repair tree")
+	}
+	treeFile := fmt.Sprintf(r.composeTreeFilePathFmt, group)
+	treeFileContent, err := os.ReadFile(treeFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // no tree file found for the group
+		}
+		return nil, fmt.Errorf("reading repair tree file %s failure: %w", treeFile, err)
+	}
+	var tree repairTree
+	err = json.Unmarshal(treeFileContent, &tree)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshalling repair tree file %s failure: %w", treeFile, err)
+	}
+	return &tree, nil
+}
+
+func (r *repair) close() {
+	r.cancel()
+}
+
 type repairStatus struct {
-	Trees          map[string]*repairTree `json:"trees"`
-	LastSnapshotID uint64                 `json:"last_snapshot_id"`
+	LastSyncTime time.Time `json:"last_sync_time"`
+	LastSnpID    uint64    `json:"last_snp_id"`
 }
 
 type repairTree struct {
@@ -282,58 +412,65 @@ func (s snapshotIDList) Less(i, j int) bool { return s[i] < s[j] }
 func (s snapshotIDList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 type repairTreeComposer struct {
-	file      *os.File
-	path      string
-	slotCount int
+	file        *os.File
+	fileWriter  *bufio.Writer
+	fileReader  *bufio.Reader
+	appendFile  string
+	treeFileFmt string
+	slotCount   int
+
+	lastComposeOffset int64
 }
 
-func newRepairTreeComposer(path string, slotCount int) (r *repairTreeComposer, err error) {
-	if path == "" {
+func newRepairTreeComposer(appendFilePath, treeFilePathFmt string, slotCount int) (r *repairTreeComposer, err error) {
+	if appendFilePath == "" {
 		return nil, fmt.Errorf("repair tree file path cannot be empty")
 	}
 	r = &repairTreeComposer{
-		path:      path,
-		slotCount: slotCount,
+		appendFile:  appendFilePath,
+		treeFileFmt: treeFilePathFmt,
+		slotCount:   slotCount,
 	}
-	r.file, err = os.OpenFile(r.path, os.O_CREATE|os.O_RDWR, storage.FilePerm)
+	r.file, err = os.OpenFile(r.appendFile, os.O_CREATE|os.O_RDWR, storage.FilePerm)
 	if err != nil {
-		return nil, fmt.Errorf("opening repair tree file %s failure: %w", r.path, err)
+		return nil, fmt.Errorf("opening repair tree file %s failure: %w", r.appendFile, err)
 	}
+	r.fileWriter = bufio.NewWriter(r.file)
+	r.fileReader = bufio.NewReader(r.file)
 	return
 }
 
 func (r *repairTreeComposer) append(group, id, shaVal string) (err error) {
 	if err = r.writeString(group); err != nil {
-		return fmt.Errorf("writing group %s to repair tree file %s failure: %w", group, r.path, err)
+		return fmt.Errorf("writing group %s to repair tree file %s failure: %w", group, r.appendFile, err)
 	}
 	if err = r.writeString(id); err != nil {
-		return fmt.Errorf("writing id %s to repair tree file %s failure: %w", id, r.path, err)
+		return fmt.Errorf("writing id %s to repair tree file %s failure: %w", id, r.appendFile, err)
 	}
 	if err = r.writeString(shaVal); err != nil {
-		return fmt.Errorf("writing sha value %s to repair tree file %s failure: %w", shaVal, r.path, err)
+		return fmt.Errorf("writing sha value %s to repair tree file %s failure: %w", shaVal, r.appendFile, err)
 	}
 	return nil
 }
 
 func (r *repairTreeComposer) writeString(val string) error {
 	bytes := []byte(val)
-	if err := binary.Write(r.file, binary.LittleEndian, int32(len(bytes))); err != nil {
-		return fmt.Errorf("writing string %s to repair tree file %s failure: %w", val, r.path, err)
+	if err := binary.Write(r.fileWriter, binary.LittleEndian, int32(len(bytes))); err != nil {
+		return fmt.Errorf("writing string %s to repair tree file %s failure: %w", val, r.appendFile, err)
 	}
-	_, err := r.file.Write(bytes)
+	_, err := r.fileWriter.Write(bytes)
 	return err
 }
 
-func (r *repairTreeComposer) readString() (v string, err error) {
-	var length int32
-	if err = binary.Read(r.file, binary.LittleEndian, &length); err != nil {
-		return "", err
+func (r *repairTreeComposer) readString() (v string, length int32, err error) {
+	if err = binary.Read(r.fileReader, binary.LittleEndian, &length); err != nil {
+		return "", 0, err
 	}
 	bytes := make([]byte, length)
-	if _, err = io.ReadFull(r.file, bytes); err != nil {
-		return "", fmt.Errorf("reading string from repair tree file %s failure: %w", r.path, err)
+	if _, err = io.ReadFull(r.fileReader, bytes); err != nil {
+		return "", 0, fmt.Errorf("reading string from repair tree file %s failure: %w", r.appendFile, err)
 	}
-	return string(bytes), nil
+	return string(bytes), length + 4, nil
 }
 
 func (r *repairTreeComposer) closeAndRemove() (err error) {
@@ -341,45 +478,80 @@ func (r *repairTreeComposer) closeAndRemove() (err error) {
 	if err != nil {
 		return err
 	}
-	if err = os.Remove(r.path); err != nil {
+	if err = os.Remove(r.appendFile); err != nil {
 		return err
 	}
 	return err
 }
 
-func (r *repairTreeComposer) compose() (map[string]*repairTreeBuilder, error) {
-	if err := r.file.Sync(); err != nil {
-		return nil, fmt.Errorf("syncing repair tree file %s failure: %w", r.path, err)
+func (r *repairTreeComposer) composeNextGroupAndSave() error {
+	if err := r.fileWriter.Flush(); err != nil {
+		return fmt.Errorf("syncing repair tree file %s failure: %w", r.appendFile, err)
 	}
-	if _, err := r.file.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("seeking to start of repair tree file %s failure: %w", r.path, err)
+	if _, err := r.file.Seek(r.lastComposeOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("seeking to start of repair tree file %s failure: %w", r.appendFile, err)
 	}
+	r.fileReader.Reset(r.file)
 
-	treeBuilders := make(map[string]*repairTreeBuilder)
+	builder := newRepairTreeBuilder(r.slotCount)
 	var readErr error
+	var group string
+	defer func() {
+		// update the last compose offset to the current position in the file
+		r.lastComposeOffset, _ = r.file.Seek(0, io.SeekCurrent)
+	}()
 	for readErr == nil || errors.Is(readErr, io.EOF) {
-		var groupID, id, shaVal string
-		if groupID, readErr = r.readString(); readErr != nil {
+		var currGroup, id, shaVal string
+		var strLen int32
+		if currGroup, strLen, readErr = r.readString(); readErr != nil {
 			if errors.Is(readErr, io.EOF) {
 				break // end of file reached
 			}
-			return nil, fmt.Errorf("reading group from repair tree file %s failure: %w", r.path, readErr)
+			return fmt.Errorf("reading group from repair tree file %s failure: %w", r.appendFile, readErr)
 		}
-		if id, readErr = r.readString(); readErr != nil {
-			return nil, fmt.Errorf("reading id from repair tree file %s failure: %w", r.path, readErr)
+		if group == "" {
+			group = currGroup
+		} else if group != currGroup {
+			// if the group have changed, we need to return the current group and builder
+			_, err := r.file.Seek(-int64(strLen), io.SeekCurrent) // move back to the start of the next group
+			if err != nil {
+				return fmt.Errorf("seeking to start of next group in repair tree file %s failure: %w", r.appendFile, err)
+			}
+			break
 		}
-		if shaVal, readErr = r.readString(); readErr != nil {
-			return nil, fmt.Errorf("reading sha value from repair tree file %s failure: %w", r.path, readErr)
+		if id, _, readErr = r.readString(); readErr != nil {
+			return fmt.Errorf("reading id from repair tree file %s failure: %w", r.appendFile, readErr)
+		}
+		if shaVal, _, readErr = r.readString(); readErr != nil {
+			return fmt.Errorf("reading sha value from repair tree file %s failure: %w", r.appendFile, readErr)
 		}
 
-		builder := treeBuilders[groupID]
-		if builder == nil {
-			builder = newRepairTreeBuilder(r.slotCount)
-			treeBuilders[groupID] = builder
-		}
 		builder.append(id, shaVal)
 	}
-	return treeBuilders, nil
+	_, saveErr := r.saveTree(group, builder)
+	if saveErr != nil {
+		return fmt.Errorf("saving repair tree for group %s failure: %w", group, saveErr)
+	}
+	return nil
+}
+
+func (r *repairTreeComposer) saveTree(group string, builder *repairTreeBuilder) (*repairTree, error) {
+	if group == "" {
+		return nil, fmt.Errorf("group cannot be empty when saving repair tree")
+	}
+	treeFile := fmt.Sprintf(r.treeFileFmt, group)
+	if err := os.MkdirAll(filepath.Dir(treeFile), storage.FilePerm); err != nil {
+		return nil, fmt.Errorf("creating directory for repair tree file %s failure: %w", treeFile, err)
+	}
+	tree, err := builder.build()
+	if err != nil {
+		return nil, fmt.Errorf("building repair tree for group %s failure: %w", group, err)
+	}
+	treeJSON, err := json.Marshal(tree)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling repair tree for group %s failure: %w", group, err)
+	}
+	return tree, os.WriteFile(treeFile, treeJSON, storage.FilePerm)
 }
 
 type repairTreeBuilder struct {
@@ -463,5 +635,19 @@ func newSearchingProperty(property *propertyv1.Property, shaValue, entity string
 		group:    property.Metadata.Group,
 		shaValue: shaValue,
 		entityID: entity,
+	}
+}
+
+type repairMetrics struct {
+	totalBuildTreeFinished meter.Counter
+	totalBuildTreeFailures meter.Counter
+	totalBuildTreeDuration meter.Counter
+}
+
+func newRepairMetrics(fac *observability.Factory) *repairMetrics {
+	return &repairMetrics{
+		totalBuildTreeFinished: fac.NewCounter("property_repair_build_tree_finished"),
+		totalBuildTreeFailures: fac.NewCounter("property_repair_build_tree_failures"),
+		totalBuildTreeDuration: fac.NewCounter("property_repair_build_tree_duration"),
 	}
 }
