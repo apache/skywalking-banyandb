@@ -58,14 +58,17 @@ func TestEncodeAndDecodeDictionary(t *testing.T) {
 
 	tmp := make([]uint32, 0)
 	encoded := dict.Encode(nil, tmp)
-	decoded := NewDictionary()
-	err := decoded.Decode(encoded, tmp[:0])
+	decoded := make([][]byte, 0)
+	dict.values = dict.values[:0]
+	dict.indices = dict.indices[:0]
+	decoded, err := dict.Decode(decoded, encoded, tmp[:0], 5)
 	require.NoError(t, err)
 
 	expectedValues := [][]byte{[]byte("skywalking"), []byte("banyandb"), []byte("hello"), []byte("world")}
-	require.Equal(t, expectedValues, decoded.values)
+	require.Equal(t, expectedValues, dict.values)
 	expectedIndices := []uint32{0, 1, 2, 3, 2}
-	require.Equal(t, expectedIndices, decoded.indices)
+	require.Equal(t, expectedIndices, dict.indices)
+	require.Equal(t, values, decoded)
 }
 
 type parameter struct {
@@ -120,7 +123,7 @@ func BenchmarkDecodeDictionary(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				decoded := NewDictionary()
-				err := decoded.Decode(encoded, tmp[:0])
+				_, err := decoded.Decode(values[:0], encoded, tmp[:0], uint64(p.count))
 				if err != nil {
 					b.Fatal(err)
 				}
