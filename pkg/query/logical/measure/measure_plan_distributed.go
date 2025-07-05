@@ -89,6 +89,9 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		Criteria:        ud.originalQuery.Criteria,
 		Limit:           limit + ud.originalQuery.Offset,
 		OrderBy:         ud.originalQuery.OrderBy,
+		GroupBy:         ud.originalQuery.GroupBy,
+		Agg:             ud.originalQuery.Agg,
+		Top:             ud.originalQuery.Top,
 	}
 	if ud.groupByEntity {
 		e := s.EntityList()[0]
