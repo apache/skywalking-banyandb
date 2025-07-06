@@ -109,9 +109,6 @@ func TestMergeDeleted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defers = append(defers, func() {
-				_ = newShard.close()
-			})
 
 			properties := make([]*propertyv1.Property, 0, propertyCount)
 			unix := time.Now().Unix()

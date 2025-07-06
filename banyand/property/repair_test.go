@@ -200,9 +200,6 @@ func TestBuildTree(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defers = append(defers, func() {
-				_ = newShard.close()
-			})
 
 			var docs []index.Document
 			if tt.existingDoc != nil {
