@@ -153,6 +153,7 @@ func newMeasureCmd() *cobra.Command {
 	bindTimeRangeFlag(queryCmd)
 
 	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
+	bindUsernameAndPasswordFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	measureCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	return measureCmd
 }

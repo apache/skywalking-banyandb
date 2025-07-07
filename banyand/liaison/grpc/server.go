@@ -41,6 +41,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -106,6 +107,7 @@ type server struct {
 	metrics                  *metrics
 	certFile                 string
 	keyFile                  string
+	authConfigFile           string
 	host                     string
 	addr                     string
 	accessLogRootPath        string
@@ -206,6 +208,11 @@ func (s *server) PreRun(_ context.Context) error {
 			return err
 		}
 	}
+	if s.authConfigFile != "" {
+		if err := auth.LoadConfig(s.authConfigFile); err != nil {
+			return err
+		}
+	}
 	if err := s.tire2Server.Subscribe(data.TopicStreamWrite, s.streamCallback); err != nil {
 		return err
 	}
@@ -276,6 +283,8 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.tls, "tls", false, "connection uses TLS if true, else plain TCP")
 	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
+	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "Path to the authentication config file (YAML format)")
+	fs.BoolVar(&auth.Cfg.HealthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
@@ -339,6 +348,10 @@ func (s *server) Serve() run.StopNotify {
 	unaryChain := []grpclib.UnaryServerInterceptor{
 		grpc_validator.UnaryServerInterceptor(),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+	}
+	if s.authConfigFile != "" {
+		streamChain = append(streamChain, authStreamInterceptor())
+		unaryChain = append(unaryChain, authInterceptor())
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
