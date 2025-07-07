@@ -56,6 +56,10 @@ func TestBuildTree(t *testing.T) {
 				if data.repairStatus != nil {
 					t.Fatal("expected nil status")
 				}
+				tree := data.readTree(t, defaultGroupName)
+				if tree != nil {
+					t.Fatalf("expected no tree for group %s, but got one", defaultGroupName)
+				}
 			},
 		},
 		{
@@ -136,9 +140,9 @@ func TestBuildTree(t *testing.T) {
 					t.Fatalf("expected last snapshot ID to be the same, got before: %d, after: %d",
 						before.LastSnpID, after.LastSnpID)
 				}
-				if before.readTree(t, defaultGroupName).Root.ShaValue != after.readTree(t, defaultGroupName).Root.ShaValue {
+				if before.readTree(t, defaultGroupName).root.shaValue != after.readTree(t, defaultGroupName).root.shaValue {
 					t.Fatalf("expected Root sha value to be the same, got before: %s, after: %s",
-						before.readTree(t, defaultGroupName).Root.ShaValue, after.readTree(t, defaultGroupName).Root.ShaValue)
+						before.readTree(t, defaultGroupName).root.shaValue, after.readTree(t, defaultGroupName).root.shaValue)
 				}
 			},
 		},
@@ -188,7 +192,7 @@ func TestBuildTree(t *testing.T) {
 			defers = append(defers, deferFunc)
 			db, err := openDB(context.Background(), dir, 3*time.Second, time.Hour, 32,
 				observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
-				"* * * * *", time.Second*10)
+				"@every 10m", time.Second*10)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -212,9 +216,13 @@ func TestBuildTree(t *testing.T) {
 				}
 			}
 
-			status, err := newShard.repairState.buildStatus()
+			err = newShard.repairState.buildStatus()
 			if err != nil {
 				t.Fatalf("failed to build status: %v", err)
+			}
+			status, err := newShard.repairState.readState()
+			if err != nil {
+				t.Fatalf("failed to read state: %v", err)
 			}
 			data := newRepairData(newShard.repairState, status)
 			tt.statusVerify(t, newShard, data)
@@ -231,9 +239,13 @@ func TestBuildTree(t *testing.T) {
 			}
 
 			if tt.nextStatusVerify != nil {
-				statusAfter, err := newShard.repairState.buildStatus()
+				err := newShard.repairState.buildStatus()
 				if err != nil {
 					t.Fatalf("failed to build status after update: %v", err)
+				}
+				statusAfter, err := newShard.repairState.readState()
+				if err != nil {
+					t.Fatalf("failed to read state after update: %v", err)
 				}
 				tt.nextStatusVerify(t, newShard, olderData, newRepairData(newShard.repairState, statusAfter))
 			}
@@ -259,7 +271,7 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 
 	db, err := openDB(context.Background(), dir, 3*time.Second, time.Hour, 32,
 		observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
-		"0 0 * * *", time.Millisecond*50)
+		"@every 10m", time.Millisecond*50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +292,7 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 
 	// wait for the repair tree to be built
 	gomega.Eventually(func() bool {
-		tree, _ := newShard.repairState.readTree(defaultGroupName)
+		tree, _ := newShard.repairState.treeReader(defaultGroupName)
 		return tree != nil
 	}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
 }
@@ -289,7 +301,7 @@ func basicStatusVerify(t *testing.T, data *repairData, groupWithSlots ...interfa
 	if data == nil {
 		t.Fatal("status is nil")
 	}
-	trees := make(map[string]*repairTree)
+	trees := make(map[string]*repairTestTree)
 	for i := 0; i < len(groupWithSlots); i += 2 {
 		trees[groupWithSlots[i].(string)] = data.readTree(t, groupWithSlots[i].(string))
 	}
@@ -307,35 +319,35 @@ func basicStatusVerify(t *testing.T, data *repairData, groupWithSlots ...interfa
 		if tree == nil {
 			t.Fatalf("expected group %s to be present in Trees, but it is not", group)
 		}
-		if tree.Root == nil {
+		if tree.root == nil {
 			t.Fatalf("expected group %s to have a Root, but it is nil", group)
 		}
-		if len(tree.Root.Children) != slotCount {
-			t.Fatalf("expected group %s to have %d slots, but it has %d", group, slotCount, len(tree.Root.Children))
+		if len(tree.root.children) != slotCount {
+			t.Fatalf("expected group %s to have %d slots, but it has %d", group, slotCount, len(tree.root.children))
 		}
 		if slotCount == 0 {
 			continue
 		}
 
-		if tree.Root.ShaValue == "" {
+		if tree.root.shaValue == "" {
 			t.Fatalf("expected group %s Root to have a sha value, but it is empty", group)
 		}
 
-		for _, child := range tree.Root.Children {
+		for _, child := range tree.root.children {
 			if child == nil {
 				t.Fatalf("expected group %s Root child to be non-nil, but it is nil", group)
 			}
-			if child.ShaValue == "" {
+			if child.shaValue == "" {
 				t.Fatalf("expected group %s Root child to have a sha value, but it is empty", group)
 			}
-			if len(child.Children) == 0 {
+			if len(child.children) == 0 {
 				t.Fatalf("expected group %s Root child to have Children, but it has none", group)
 			}
-			for _, grandChild := range child.Children {
+			for _, grandChild := range child.children {
 				if grandChild == nil {
 					t.Fatalf("expected group %s Root child grandchild to be non-nil, but it is nil", group)
 				}
-				if grandChild.ShaValue == "" {
+				if grandChild.shaValue == "" {
 					t.Fatalf("expected group %s Root child grandchild to have a sha value, but it is empty", group)
 				}
 			}
@@ -430,12 +442,12 @@ func verifyContainsProperty(t *testing.T, s *shard, data *repairData, group stri
 	for _, builder := range properties {
 		entity := generatePropertyEntity(builder.group, builder.name, builder.id)
 		found := false
-		for _, child := range data.readTree(t, group).Root.Children {
-			for _, grandChild := range child.Children {
-				if grandChild.ID == entity {
+		for _, child := range data.readTree(t, group).root.children {
+			for _, grandChild := range child.children {
+				if grandChild.id == entity {
 					found = true
-					if grandChild.ShaValue != generateShaValue(t, s, builder) {
-						t.Fatalf("expected sha value '%s', got '%s'", child.ShaValue, generateShaValue(t, s, builder))
+					if grandChild.shaValue != generateShaValue(t, s, builder) {
+						t.Fatalf("expected sha value '%s', got '%s'", child.shaValue, generateShaValue(t, s, builder))
 					}
 					break
 				}
@@ -452,7 +464,7 @@ type repairData struct {
 
 	repair *repair
 
-	cache         map[string]*repairTree
+	cache         map[string]*repairTestTree
 	readCacheOnly bool
 }
 
@@ -460,21 +472,67 @@ func newRepairData(repair *repair, status *repairStatus) *repairData {
 	return &repairData{
 		repairStatus: status,
 		repair:       repair,
-		cache:        make(map[string]*repairTree),
+		cache:        make(map[string]*repairTestTree),
 	}
 }
 
-func (r *repairData) readTree(t *testing.T, group string) *repairTree {
+func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 	if tree, exist := r.cache[group]; exist {
 		return tree
 	}
 	if r.readCacheOnly {
-		t.Fatal("readCacheOnly is set, but no tree found in cache")
+		t.Fatalf("readTree called for group %s, but cache only mode is enabled", group)
 	}
-	tree, err := r.repair.readTree(group)
+	reader, err := r.repair.treeReader(group)
+	if err != nil {
+		t.Fatalf("failed to get tree reader for group %s: %v", group, err)
+	}
+	if reader == nil {
+		return nil
+	}
+
+	roots, err := reader.read(nil)
 	if err != nil {
 		t.Fatalf("failed to read tree for group %s: %v", group, err)
 	}
+	if len(roots) == 0 {
+		t.Fatalf("expected at least one root for group %s, but got none", group)
+	}
+	tree := &repairTestTree{
+		root: &repairTestTreeNode{
+			id:       "root",
+			shaValue: roots[0].shaValue,
+		},
+	}
+	slots, err := reader.read(roots[0])
+	if err != nil {
+		t.Fatalf("failed to read slots for group %s: %v", group, err)
+	}
+	if len(slots) == 0 {
+		t.Fatalf("expected at least one slot for group %s, but got none", group)
+	}
+	for _, slot := range slots {
+		slotNode := &repairTestTreeNode{
+			id:       slot.id,
+			shaValue: slot.shaValue,
+		}
+		tree.root.children = append(tree.root.children, slotNode)
+		children, err := reader.read(slot)
+		if err != nil {
+			t.Fatalf("failed to read children for slot %s in group %s: %v", slot.id, group, err)
+		}
+		if len(children) == 0 {
+			t.Fatalf("expected at least one child for slot %s in group %s, but got none", slot.id, group)
+		}
+		for _, child := range children {
+			childNode := &repairTestTreeNode{
+				id:       child.id,
+				shaValue: child.shaValue,
+			}
+			slotNode.children = append(slotNode.children, childNode)
+		}
+	}
+
 	r.cache[group] = tree
 	return tree
 }
@@ -486,4 +544,14 @@ func (r *repairData) clone() *repairData {
 		cache:         r.cache,
 		readCacheOnly: true,
 	}
+}
+
+type repairTestTree struct {
+	root *repairTestTreeNode
+}
+
+type repairTestTreeNode struct {
+	id       string
+	shaValue string
+	children []*repairTestTreeNode
 }
