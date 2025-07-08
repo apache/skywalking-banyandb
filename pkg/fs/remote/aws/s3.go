@@ -21,7 +21,6 @@ package aws
 import (
 	"context"
 	"fmt"
-	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"io"
 	"path"
 	"strings"
@@ -32,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 )
 
 // todo: Maybe we can bring in minio, oss

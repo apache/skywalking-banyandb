@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package config provides the configuration for the file system.
 package config
 
 // FsConfig represents the configuration for the file system.
-
 type FsConfig struct {
-	Provider string       `json:"provider"` // "azure" or "s3"
 	Azure    *AzureConfig `json:"azure,omitempty"`
 	S3       *S3Config    `json:"s3,omitempty"`
+	Provider string       `json:"provider"` // "azure" or "s3"
 }
 
 // S3Config represents the configuration for S3.

@@ -22,24 +22,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"io"
 	"path"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/checksum"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 )
 
 var _ remote.FS = (*blobFS)(nil)
 
 type blobFS struct {
 	client    *azblob.Client
+	verifier  checksum.Verifier
 	container string
 	basePath  string
-	verifier  checksum.Verifier
 }
 
 // NewFS creates a new Azure Blob Storage backed FS.
@@ -48,7 +49,7 @@ func NewFS(p string, cfg *config.FsConfig) (remote.FS, error) {
 	basePath := strings.Trim(p, "/")
 
 	if cfg == nil || cfg.Azure == nil {
-		return nil, fmt.Errorf("Azure config is required")
+		return nil, fmt.Errorf("azure config is required")
 	}
 
 	containerName := cfg.Azure.Container
@@ -236,7 +237,7 @@ func (b *blobFS) Close() error {
 	return nil
 }
 
-// helper function for pointer to string
+// helper function for pointer to string.
 func ptr(s string) *string {
 	return &s
 }

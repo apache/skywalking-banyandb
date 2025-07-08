@@ -15,17 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package checksum provides functions for computing checksums algorithms and verifying.
 package checksum
 
 import "io"
 
-// Verifier defines the interface for computing and verifying checksums
+// Verifier defines the interface for computing and verifying checksums.
 type Verifier interface {
 	// Wrap returns an io.ReadCloser that transparently verifies the checksum
 	// when the returned reader is closed. This enables streaming verification
 	// without buffering the entire content in memory.
 	Wrap(io.ReadCloser, string) io.ReadCloser
 
-	// ComputeAndWrap returns a reader that computes the checksum while reading
+	// ComputeAndWrap returns a reader that computes the checksum while reading.
 	ComputeAndWrap(r io.Reader) (wrappedReader io.Reader, getHash func() (string, error))
 }

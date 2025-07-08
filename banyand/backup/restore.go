@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"io"
 	"os"
 	"path/filepath"
@@ -35,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -134,14 +134,14 @@ func newRunCommand() *cobra.Command {
 	cmd.Flags().StringVar(&streamRoot, "stream-root-path", "/tmp", "Root directory for stream catalog")
 	cmd.Flags().StringVar(&measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
 	cmd.Flags().StringVar(&propertyRoot, "property-root-path", "/tmp", "Root directory for property catalog")
-	cmd.Flags().StringVar(&fsConfig.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
-	cmd.Flags().StringVar(&fsConfig.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
-	cmd.Flags().StringVar(&fsConfig.S3ProfileName, "s3-profile", "", "S3 profile name")
+	cmd.Flags().StringVar(&fsConfig.S3.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
+	cmd.Flags().StringVar(&fsConfig.S3.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
+	cmd.Flags().StringVar(&fsConfig.S3.S3ProfileName, "s3-profile", "", "S3 profile name")
 	// Azure flags
-	cmd.Flags().StringVar(&fsConfig.AzureAccountName, "azure-account-name", "", "Azure storage account name")
-	cmd.Flags().StringVar(&fsConfig.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
-	cmd.Flags().StringVar(&fsConfig.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
-	cmd.Flags().StringVar(&fsConfig.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint (override)")
+	cmd.Flags().StringVar(&fsConfig.Azure.AzureAccountName, "azure-account-name", "", "Azure storage account name")
+	cmd.Flags().StringVar(&fsConfig.Azure.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
+	cmd.Flags().StringVar(&fsConfig.Azure.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
+	cmd.Flags().StringVar(&fsConfig.Azure.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint (override)")
 
 	return cmd
 }

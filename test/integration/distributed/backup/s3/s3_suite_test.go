@@ -18,7 +18,6 @@
 package s3
 
 import (
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"path/filepath"
 	"testing"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"github.com/apache/skywalking-banyandb/test/integration/distributed/backup"
 	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
@@ -46,8 +46,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	fs, err := aws.NewFS(filepath.Join(dockertesthelper.BucketName, testVars.DestDir), &config.FsConfig{
-		S3ConfigFilePath:     dockertesthelper.S3ConfigPath,
-		S3CredentialFilePath: dockertesthelper.S3CredentialsPath,
+		S3: &config.S3Config{
+			S3ConfigFilePath:     dockertesthelper.S3ConfigPath,
+			S3CredentialFilePath: dockertesthelper.S3CredentialsPath,
+		},
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	testVars.FS = fs

@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,6 +29,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 )
 
 // NewTimeDirCommand creates a new time-dir command.
@@ -100,14 +100,14 @@ func newListCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&dest, "dest", "", "Destination URL of the remote file system (e.g., file:///backups)")
 	cmd.Flags().StringVar(&prefix, "prefix", "", "Prefix in the remote file system to list")
-	cmd.Flags().StringVar(&fsConfig.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
-	cmd.Flags().StringVar(&fsConfig.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
-	cmd.Flags().StringVar(&fsConfig.S3ProfileName, "s3-profile", "", "S3 profile name")
+	cmd.Flags().StringVar(&fsConfig.S3.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
+	cmd.Flags().StringVar(&fsConfig.S3.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
+	cmd.Flags().StringVar(&fsConfig.S3.S3ProfileName, "s3-profile", "", "S3 profile name")
 	// Azure flags
-	cmd.Flags().StringVar(&fsConfig.AzureAccountName, "azure-account-name", "", "Azure storage account name")
-	cmd.Flags().StringVar(&fsConfig.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
-	cmd.Flags().StringVar(&fsConfig.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
-	cmd.Flags().StringVar(&fsConfig.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint (override)")
+	cmd.Flags().StringVar(&fsConfig.Azure.AzureAccountName, "azure-account-name", "", "Azure storage account name")
+	cmd.Flags().StringVar(&fsConfig.Azure.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
+	cmd.Flags().StringVar(&fsConfig.Azure.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
+	cmd.Flags().StringVar(&fsConfig.Azure.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint (override)")
 	return cmd
 }
 

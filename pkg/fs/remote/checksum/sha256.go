@@ -32,9 +32,9 @@ type sha256Verifier struct{}
 type hashingReader struct {
 	reader io.Reader
 	hash   hash.Hash
-	done   bool
 	err    error
 	mu     sync.RWMutex
+	done   bool
 }
 
 func (hr *hashingReader) Read(p []byte) (n int, err error) {
@@ -107,6 +107,7 @@ func (v *verifyingReadCloser) Close() error {
 	return nil
 }
 
+// DefaultSHA256Verifier returns a default SHA256 Verifier.
 func DefaultSHA256Verifier() (Verifier, error) {
 	return &sha256Verifier{}, nil
 }

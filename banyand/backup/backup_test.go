@@ -19,7 +19,6 @@ package backup
 
 import (
 	"context"
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"io"
 	"os"
 	"path"
@@ -31,6 +30,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 )
 
 func TestNewFS(t *testing.T) {

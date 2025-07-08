@@ -22,7 +22,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"net/url"
 	"os"
 	"os/signal"
@@ -41,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/azure"
+	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -123,16 +123,16 @@ func NewBackupCommand() *cobra.Command {
 		"",
 		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
 	)
-	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
-	cmd.Flags().StringVar(&backupOpts.fsConfig.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
-	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ProfileName, "s3-profile", "", "S3 profile name")
-	cmd.Flags().StringVar(&backupOpts.fsConfig.S3ChecksumAlgorithm, "s3-checksum-algorithm", "", "S3 checksum algorithm")
-	cmd.Flags().StringVar(&backupOpts.fsConfig.S3StorageClass, "s3-storage-class", "", "S3 upload storage class")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3.S3ProfileName, "s3-profile", "", "S3 profile name")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3.S3ChecksumAlgorithm, "s3-checksum-algorithm", "", "S3 checksum algorithm")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.S3.S3StorageClass, "s3-storage-class", "", "S3 upload storage class")
 	// Azure flags
-	cmd.Flags().StringVar(&backupOpts.fsConfig.AzureAccountName, "azure-account-name", "", "Azure storage account name")
-	cmd.Flags().StringVar(&backupOpts.fsConfig.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
-	cmd.Flags().StringVar(&backupOpts.fsConfig.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
-	cmd.Flags().StringVar(&backupOpts.fsConfig.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.Azure.AzureAccountName, "azure-account-name", "", "Azure storage account name")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.Azure.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.Azure.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
+	cmd.Flags().StringVar(&backupOpts.fsConfig.Azure.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint")
 	return cmd
 }
 
