@@ -21,6 +21,7 @@ package data
 import (
 	"google.golang.org/protobuf/proto"
 
+	gossipv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/gossip/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -30,15 +31,17 @@ import (
 var (
 	// TopicMap is the map of topic name to topic.
 	TopicMap = map[string]bus.Topic{
-		TopicStreamWrite.String():    TopicStreamWrite,
-		TopicStreamQuery.String():    TopicStreamQuery,
-		TopicMeasureWrite.String():   TopicMeasureWrite,
-		TopicMeasureQuery.String():   TopicMeasureQuery,
-		TopicTopNQuery.String():      TopicTopNQuery,
-		TopicPropertyDelete.String(): TopicPropertyDelete,
-		TopicPropertyQuery.String():  TopicPropertyQuery,
-		TopicPropertyUpdate.String(): TopicPropertyUpdate,
-		TopicPropertyRepair.String(): TopicPropertyRepair,
+		TopicStreamWrite.String():          TopicStreamWrite,
+		TopicStreamQuery.String():          TopicStreamQuery,
+		TopicMeasureWrite.String():         TopicMeasureWrite,
+		TopicMeasureQuery.String():         TopicMeasureQuery,
+		TopicTopNQuery.String():            TopicTopNQuery,
+		TopicPropertyDelete.String():       TopicPropertyDelete,
+		TopicPropertyQuery.String():        TopicPropertyQuery,
+		TopicPropertyUpdate.String():       TopicPropertyUpdate,
+		TopicPropertyRepair.String():       TopicPropertyRepair,
+		TopicGossipPropagation.String():    TopicGossipPropagation,
+		TopicGossipFutureCallback.String(): TopicGossipFutureCallback,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -71,6 +74,12 @@ var (
 		TopicPropertyRepair: func() proto.Message {
 			return &propertyv1.InternalRepairRequest{}
 		},
+		TopicGossipPropagation: func() proto.Message {
+			return &gossipv1.PropagationMessageRequest{}
+		},
+		TopicGossipFutureCallback: func() proto.Message {
+			return &gossipv1.FutureCallbackMessageRequest{}
+		},
 	}
 
 	// TopicResponseMap is the map of topic name to response message.
@@ -96,6 +105,12 @@ var (
 		},
 		TopicPropertyRepair: func() proto.Message {
 			return &propertyv1.InternalRepairResponse{}
+		},
+		TopicGossipPropagation: func() proto.Message {
+			return &gossipv1.PropagationMessageResponse{}
+		},
+		TopicGossipFutureCallback: func() proto.Message {
+			return &gossipv1.FutureCallbackMessageResponse{}
 		},
 	}
 
