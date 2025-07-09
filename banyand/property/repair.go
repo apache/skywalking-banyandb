@@ -182,23 +182,13 @@ func (r *repair) buildTree(ctx context.Context, conf bluge.Config) error {
 	if err != nil {
 		return fmt.Errorf("creating repair tree composer failure: %w", err)
 	}
-	err = r.pageSearch(ctx, reader, topNSearch, func(sortValue [][]byte, source []byte, shaValue string, deleteTime int64) error {
-		// building the entity
-		if len(source) == 0 {
-			return nil
-		}
+	err = r.pageSearch(ctx, reader, topNSearch, func(sortValue [][]byte, shaValue string) error {
 		if len(sortValue) != 4 {
 			return fmt.Errorf("unexpected sort value length: %d", len(sortValue))
 		}
 		group := convert.BytesToString(sortValue[0])
 		name := convert.BytesToString(sortValue[1])
 		entity := fmt.Sprintf("%s/%s/%s", group, name, convert.BytesToString(sortValue[2]))
-		if shaValue == "" {
-			shaValue, err = r.buildShaValue(source, deleteTime)
-			if err != nil {
-				return fmt.Errorf("building sha value failure: %w", err)
-			}
-		}
 
 		s := newSearchingProperty(group, shaValue, entity)
 		if latestProperty != nil {
@@ -243,7 +233,7 @@ func (r *repair) pageSearch(
 	ctx context.Context,
 	reader *bluge.Reader,
 	searcher *bluge.TopNSearch,
-	each func(sortValue [][]byte, source []byte, shaValue string, deleteTime int64) error,
+	each func(sortValue [][]byte, shaValue string) error,
 ) error {
 	var latestDocValues [][]byte
 	for {
@@ -263,26 +253,20 @@ func (r *repair) pageSearch(
 			return nil
 		}
 		var shaValue string
-		var source []byte
-		var deleteTime int64
 		for err == nil && next != nil {
 			hitNumber = next.HitNumber
 			var errTime error
 			err = next.VisitStoredFields(func(field string, value []byte) bool {
-				switch field {
-				case shaValueField:
+				if field == shaValueField {
 					shaValue = convert.BytesToString(value)
-				case sourceField:
-					source = value
-				case deleteField:
-					deleteTime = convert.BytesToInt64(value)
+					return false
 				}
 				return true
 			})
 			if err = multierr.Combine(err, errTime); err != nil {
 				return errors.WithMessagef(err, "visit stored fields, hit: %d", hitNumber)
 			}
-			err = each(next.SortValue, source, shaValue, deleteTime)
+			err = each(next.SortValue, shaValue)
 			if err != nil {
 				return errors.WithMessagef(err, "processing source failure, hit: %d", hitNumber)
 			}
