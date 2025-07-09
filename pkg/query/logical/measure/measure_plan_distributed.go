@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -81,14 +82,38 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if limit == 0 {
 		limit = defaultLimit
 	}
+	fieldProjection := ud.originalQuery.FieldProjection
+	if ud.originalQuery.Agg != nil {
+		aggFieldName := ud.originalQuery.Agg.GetFieldName()
+		hasAggField := false
+		if fieldProjection != nil {
+			for _, projectedField := range fieldProjection.GetNames() {
+				if projectedField == aggFieldName {
+					hasAggField = true
+					break
+				}
+			}
+		}
+		if !hasAggField {
+			var fieldNames []string
+			if fieldProjection != nil {
+				fieldNames = append(fieldNames, fieldProjection.GetNames()...)
+			}
+			fieldNames = append(fieldNames, aggFieldName)
+			fieldProjection = &measurev1.QueryRequest_FieldProjection{
+				Names: fieldNames,
+			}
+		}
+	}
 	temp := &measurev1.QueryRequest{
 		TagProjection:   ud.originalQuery.TagProjection,
-		FieldProjection: ud.originalQuery.FieldProjection,
+		FieldProjection: fieldProjection,
 		Name:            ud.originalQuery.Name,
 		Groups:          ud.originalQuery.Groups,
 		Criteria:        ud.originalQuery.Criteria,
 		Limit:           limit + ud.originalQuery.Offset,
 		OrderBy:         ud.originalQuery.OrderBy,
+		Agg:             ud.originalQuery.Agg,
 	}
 	if ud.groupByEntity {
 		e := s.EntityList()[0]
@@ -185,7 +210,24 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 	if err != nil {
 		return nil, err
 	}
+
+	if t.queryTemplate.Agg != nil {
+		merger, err := aggregation.NewResultCombiner(t.queryTemplate.Agg.GetFunction(), t.queryTemplate.Agg.GetFieldName())
+		if err != nil {
+			return nil, err
+		}
+		dataPoint, err := merger.Combine(ff, span)
+		if err != nil {
+			return nil, err
+		}
+		return aggregation.NewAggregationResultIterator(dataPoint), nil
+	}
+	return t.mergeSortedResults(ff, span)
+}
+
+func (t *distributedPlan) mergeSortedResults(ff []bus.Future, span *query.Span) (executor.MIterator, error) {
 	var see []sort.Iterator[*comparableDataPoint]
+	var err error
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			err = multierr.Append(err, getErr)
@@ -203,6 +245,11 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 					t.sortByTime, t.sortTagSpec))
 		}
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
 	smi := &sortedMIterator{
 		Iterator: sort.NewItemIter(see, t.desc),
 	}
