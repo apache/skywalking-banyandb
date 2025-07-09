@@ -16,14 +16,17 @@ Release Notes.
 - Add a wait and retry to write handlers to avoid the local metadata cache being loaded.
 - Implement primary block cache for measure.
 - Implement versioning properties and replace physical deletion with the tombstone mechanism for the property database.
+- Implement skipping index for stream.
 - Add Load Balancer Feature to Liaison. 
 - Implement fadvise for large files to prevent page cache pollution.
+- Data Model: Introduce the `Trace` data model to store the trace/span data.
 
 ### Bug Fixes
 
 - Fix the deadlock issue when loading a closed segment.
 - Fix the issue that the etcd watcher gets the historical node registration events.
 - Fix the crash when collecting the metrics from a closed segment.
+- Fix topN parsing panic when the criteria is set.
 
 ## 0.8.0
 

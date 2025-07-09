@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -41,21 +42,25 @@ import (
 )
 
 const (
-	shardTemplate = "shard-%d"
-	sourceField   = "_source"
-	groupField    = "_group"
-	nameField     = index.IndexModeName
-	entityID      = "_entity_id"
-	deleteField   = "_deleted"
+	shardTemplate  = "shard-%d"
+	sourceField    = "_source"
+	groupField     = "_group"
+	nameField      = index.IndexModeName
+	entityID       = "_entity_id"
+	deleteField    = "_deleted"
+	idField        = "_id"
+	timestampField = "_timestamp"
 )
 
 var (
-	sourceFieldKey  = index.FieldKey{TagName: sourceField}
-	entityFieldKey  = index.FieldKey{TagName: entityID}
-	groupFieldKey   = index.FieldKey{TagName: groupField}
-	nameFieldKey    = index.FieldKey{TagName: nameField}
-	deletedFieldKey = index.FieldKey{TagName: deleteField}
-	projection      = []index.FieldKey{sourceFieldKey, deletedFieldKey}
+	sourceFieldKey    = index.FieldKey{TagName: sourceField}
+	entityFieldKey    = index.FieldKey{TagName: entityID}
+	groupFieldKey     = index.FieldKey{TagName: groupField}
+	nameFieldKey      = index.FieldKey{TagName: nameField}
+	deletedFieldKey   = index.FieldKey{TagName: deleteField}
+	idFieldKey        = index.FieldKey{TagName: idField}
+	timestampFieldKey = index.FieldKey{TagName: timestampField}
+	projection        = []index.FieldKey{idFieldKey, timestampFieldKey, sourceFieldKey, deletedFieldKey}
 )
 
 type shard struct {
@@ -98,14 +103,14 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64, de
 }
 
 func (s *shard) update(id []byte, property *propertyv1.Property) error {
-	document, err := s.buildUpdateDocument(id, property)
+	document, err := s.buildUpdateDocument(id, property, 0)
 	if err != nil {
 		return fmt.Errorf("build update document failure: %w", err)
 	}
 	return s.updateDocuments(index.Documents{*document})
 }
 
-func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property) (*index.Document, error) {
+func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, deleteTime int64) (*index.Document, error) {
 	pj, err := protojson.Marshal(property)
 	if err != nil {
 		return nil, err
@@ -123,6 +128,7 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property) (*
 	doc := index.Document{
 		EntityValues: id,
 		Fields:       []index.Field{entityField, groupField, nameField, sourceField},
+		Timestamp:    property.Metadata.ModRevision,
 	}
 	for _, t := range property.Tags {
 		tv, err := pbv1.MarshalTagValue(t.Value)
@@ -134,14 +140,29 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property) (*
 		tagField.NoSort = true
 		doc.Fields = append(doc.Fields, tagField)
 	}
+
+	if deleteTime > 0 {
+		deleteField := index.NewBytesField(deletedFieldKey, convert.Int64ToBytes(deleteTime))
+		deleteField.Store = true
+		deleteField.NoSort = true
+		doc.Fields = append(doc.Fields, deleteField)
+	}
 	return &doc, nil
 }
 
 func (s *shard) delete(ctx context.Context, docID [][]byte) error {
-	return s.deleteFromTime(ctx, docID, time.Now().Unix())
+	return s.deleteFromTime(ctx, docID, time.Now().UnixNano())
 }
 
 func (s *shard) deleteFromTime(ctx context.Context, docID [][]byte, deleteTime int64) error {
+	removeDocList, err := s.buildDeleteFromTimeDocuments(ctx, docID, deleteTime)
+	if err != nil {
+		return err
+	}
+	return s.updateDocuments(removeDocList)
+}
+
+func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte, deleteTime int64) ([]index.Document, error) {
 	// search the original documents by docID
 	seriesMatchers := make([]index.SeriesMatcher, 0, len(docID))
 	for _, id := range docID {
@@ -152,28 +173,26 @@ func (s *shard) deleteFromTime(ctx context.Context, docID [][]byte, deleteTime i
 	}
 	iq, err := s.store.BuildQuery(seriesMatchers, nil, nil)
 	if err != nil {
-		return fmt.Errorf("build property query failure: %w", err)
+		return nil, fmt.Errorf("build property query failure: %w", err)
 	}
 	exisingDocList, err := s.search(ctx, iq, len(docID))
 	if err != nil {
-		return fmt.Errorf("search existing documents failure: %w", err)
+		return nil, fmt.Errorf("search existing documents failure: %w", err)
 	}
-	removeDocList := make(index.Documents, 0, len(exisingDocList))
+	removeDocList := make([]index.Document, 0, len(exisingDocList))
 	for _, property := range exisingDocList {
 		p := &propertyv1.Property{}
 		if err := protojson.Unmarshal(property.source, p); err != nil {
-			return fmt.Errorf("unmarshal property failure: %w", err)
+			return nil, fmt.Errorf("unmarshal property failure: %w", err)
 		}
 		// update the property to mark it as delete
-		document, err := s.buildUpdateDocument(GetPropertyID(p), p)
+		document, err := s.buildUpdateDocument(GetPropertyID(p), p, deleteTime)
 		if err != nil {
-			return fmt.Errorf("build delete document failure: %w", err)
+			return nil, fmt.Errorf("build delete document failure: %w", err)
 		}
-		// mark the document as deleted
-		document.DeletedTime = deleteTime
 		removeDocList = append(removeDocList, *document)
 	}
-	return s.updateDocuments(removeDocList)
+	return removeDocList, nil
 }
 
 func (s *shard) updateDocuments(docs index.Documents) error {
@@ -233,11 +252,75 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 			deleteTime = convert.BytesToInt64(s.Fields[deleteField])
 		}
 		data = append(data, &queryProperty{
+			id:         s.Key.EntityValues,
+			timestamp:  s.Timestamp,
 			source:     bytes,
 			deleteTime: deleteTime,
 		})
 	}
 	return data, nil
+}
+
+func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Property, deleteTime int64) error {
+	iq, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
+		Groups: []string{property.Metadata.Group},
+		Name:   property.Metadata.Name,
+		Ids:    []string{property.Id},
+	}, groupField, entityID)
+	if err != nil {
+		return fmt.Errorf("build property query failure: %w", err)
+	}
+	olderProperties, err := s.search(ctx, iq, 100)
+	if err != nil {
+		return fmt.Errorf("query older properties failed: %w", err)
+	}
+	sort.Sort(queryPropertySlice(olderProperties))
+	// if there no older properties, we can insert the latest document.
+	if len(olderProperties) == 0 {
+		var doc *index.Document
+		doc, err = s.buildUpdateDocument(id, property, deleteTime)
+		if err != nil {
+			return fmt.Errorf("build update document failed: %w", err)
+		}
+		return s.updateDocuments(index.Documents{*doc})
+	}
+
+	// if the lastest property in shard is bigger than the repaired property,
+	// then the repaired process should be stopped.
+	if olderProperties[len(olderProperties)-1].timestamp > property.Metadata.ModRevision {
+		return nil
+	}
+
+	docIDList := s.buildNotDeletedDocIDList(olderProperties)
+	deletedDocuments, err := s.buildDeleteFromTimeDocuments(ctx, docIDList, time.Now().UnixNano())
+	if err != nil {
+		return fmt.Errorf("build delete older documents failed: %w", err)
+	}
+	// update the property to mark it as delete
+	updateDoc, err := s.buildUpdateDocument(id, property, deleteTime)
+	if err != nil {
+		return fmt.Errorf("build repair document failure: %w", err)
+	}
+	result := make([]index.Document, 0, len(deletedDocuments)+1)
+	result = append(result, deletedDocuments...)
+	result = append(result, *updateDoc)
+	err = s.updateDocuments(result)
+	if err != nil {
+		return fmt.Errorf("update documents failed: %w", err)
+	}
+	return nil
+}
+
+func (s *shard) buildNotDeletedDocIDList(properties []*queryProperty) [][]byte {
+	docIDList := make([][]byte, 0, len(properties))
+	for _, p := range properties {
+		if p.deleteTime > 0 {
+			// If the property is already deleted, ignore it.
+			continue
+		}
+		docIDList = append(docIDList, p.id)
+	}
+	return docIDList
 }
 
 func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segment, _ uint64) (dest []*roaring.Bitmap, err error) {
@@ -258,7 +341,7 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 				return src, fmt.Errorf("visit stored field failure: %w", err)
 			}
 
-			if deleteTime <= 0 || int64(time.Since(time.Unix(deleteTime, 0)).Seconds()) < s.expireToDeleteSec {
+			if deleteTime <= 0 || int64(time.Since(time.Unix(0, deleteTime)).Seconds()) < s.expireToDeleteSec {
 				continue
 			}
 
@@ -270,4 +353,18 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 		}
 	}
 	return src, nil
+}
+
+type queryPropertySlice []*queryProperty
+
+func (q queryPropertySlice) Len() int {
+	return len(q)
+}
+
+func (q queryPropertySlice) Less(i, j int) bool {
+	return q[i].timestamp < q[j].timestamp
+}
+
+func (q queryPropertySlice) Swap(i, j int) {
+	q[i], q[j] = q[j], q[i]
 }

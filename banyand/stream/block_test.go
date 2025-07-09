@@ -115,6 +115,7 @@ var conventionalBlock = block{
 			tags: []tag{
 				{name: "strTag", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("value1"), []byte("value2")}},
 				{name: "intTag", valueType: pbv1.ValueTypeInt64, values: [][]byte{convert.Int64ToBytes(10), convert.Int64ToBytes(20)}},
+				{name: "floatTag", valueType: pbv1.ValueTypeFloat64, values: [][]byte{convert.Float64ToBytes(0.1), convert.Float64ToBytes(0.2)}},
 			},
 		},
 	},
@@ -153,6 +154,7 @@ func Test_block_mustInitFromElements(t *testing.T) {
 							"singleTag", []*tagValue{
 								{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value1"), valueArr: nil},
 								{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(10), valueArr: nil},
+								{tag: "floatTag", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(0.1), valueArr: nil},
 							},
 						},
 					},
@@ -172,6 +174,7 @@ func Test_block_mustInitFromElements(t *testing.T) {
 							"singleTag", []*tagValue{
 								{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value2"), valueArr: nil},
 								{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(20), valueArr: nil},
+								{tag: "floatTag", valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(0.2), valueArr: nil},
 							},
 						},
 					},
@@ -250,13 +253,14 @@ func Test_mustWriteAndReadTimestamps(t *testing.T) {
 }
 
 func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
-	metaBuffer, dataBuffer := &bytes.Buffer{}, &bytes.Buffer{}
+	metaBuffer, dataBuffer, filterBuffer := &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
 	ww := &writers{
-		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer) {
-			return metaBuffer, dataBuffer
+		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer, fs.Writer) {
+			return metaBuffer, dataBuffer, filterBuffer
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
+		tagFamilyFilterWriters:   make(map[string]*writer),
 	}
 	b := &conventionalBlock
 	tagProjection := toTagProjection(*b)
@@ -286,7 +290,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, 1)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
-		cmp.AllowUnexported(tagFamily{}, tag{}),
+		cmp.AllowUnexported(tagFamily{}, tag{}, tagFilter{}),
 	); diff != "" {
 		t.Errorf("block.unmarshalTagFamily() (-got +want):\n%s", diff)
 	}
@@ -306,7 +310,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled2.unmarshalTagFamilyFromSeqReaders(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), metaReader, valueReader)
 
 	if diff := cmp.Diff(unmarshaled2.tagFamilies[0], b.tagFamilies[0],
-		cmp.AllowUnexported(tagFamily{}, tag{}),
+		cmp.AllowUnexported(tagFamily{}, tag{}, tagFilter{}),
 	); diff != "" {
 		t.Errorf("block.unmarshalTagFamilyFromSeqReaders() (-got +want):\n%s", diff)
 	}
@@ -317,11 +321,12 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	timestampWriter := &writer{}
 	timestampWriter.init(timestampBuffer)
 	ww := &writers{
-		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer) {
-			return &bytes.Buffer{}, &bytes.Buffer{}
+		mustCreateTagFamilyWriters: func(_ string) (fs.Writer, fs.Writer, fs.Writer) {
+			return &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
 		},
 		tagFamilyMetadataWriters: make(map[string]*writer),
 		tagFamilyWriters:         make(map[string]*writer),
+		tagFamilyFilterWriters:   make(map[string]*writer),
 		timestampsWriter:         *timestampWriter,
 	}
 	p := &part{

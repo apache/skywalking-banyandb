@@ -139,7 +139,7 @@ catalog:
         path: "/operation/lifecycle"
   - name: "File Format"
     catalog:
-      - name: "v1.2.0"
+      - name: "v1.3.0"
         path: "/concept/tsdb"
   - name: "Concepts"
     catalog:

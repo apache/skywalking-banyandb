@@ -15,17 +15,34 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package inverted
+// Package analyzer provides analyzers for indexing and searching.
+package analyzer
 
 import (
 	"bytes"
 	"unicode"
 
 	"github.com/blugelabs/bluge/analysis"
+	"github.com/blugelabs/bluge/analysis/analyzer"
 	"github.com/blugelabs/bluge/analysis/tokenizer"
+
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
-func newURLAnalyzer() *analysis.Analyzer {
+// Analyzers is a map that associates each IndexRule_Analyzer type with a corresponding Analyzer.
+var Analyzers map[string]*analysis.Analyzer
+
+func init() {
+	Analyzers = map[string]*analysis.Analyzer{
+		index.AnalyzerKeyword:  analyzer.NewKeywordAnalyzer(),
+		index.AnalyzerSimple:   analyzer.NewSimpleAnalyzer(),
+		index.AnalyzerStandard: analyzer.NewStandardAnalyzer(),
+		index.AnalyzerURL:      NewURLAnalyzer(),
+	}
+}
+
+// NewURLAnalyzer creates a new URL analyzer.
+func NewURLAnalyzer() *analysis.Analyzer {
 	return &analysis.Analyzer{
 		Tokenizer: tokenizer.NewCharacterTokenizer(func(r rune) bool {
 			return unicode.IsLetter(r) || unicode.IsNumber(r)
