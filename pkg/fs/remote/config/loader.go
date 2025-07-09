@@ -56,5 +56,10 @@ func LoadFSConfig(path string) (*FsConfig, error) {
 		cfg.Azure.Container == "" {
 		return nil, fmt.Errorf("missing required azure fields")
 	}
+
+	if cfg.Azure.AzureAccountKey == "" && cfg.Azure.AzureSASToken == "" {
+		return nil, fmt.Errorf("missing azure credentials: either account_key or sas_token must be provided")
+	}
+
 	return cfg, nil
 }
