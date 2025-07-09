@@ -19,6 +19,7 @@ package property
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/json"
@@ -27,7 +28,9 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,9 +42,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/multierr"
-	"google.golang.org/protobuf/encoding/protojson"
 
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -52,17 +54,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-const repairBatchSearchSize = 100
+const (
+	repairBatchSearchSize = 100
+	repairFileNewLine     = '\n'
+)
 
 type repair struct {
-	latestBuildTreeSchedule   time.Time
-	buildTreeClock            clock.Clock
-	closer                    *run.Closer
-	repairTreeScheduler       *timestamp.Scheduler
 	metrics                   *repairMetrics
 	l                         *logger.Logger
-	quickRepairNotified       *int32
-	takeSnapshot              func(string) error
+	scheduler                 *repairScheduler
 	shardPath                 string
 	repairBasePath            string
 	snapshotDir               string
@@ -71,24 +71,18 @@ type repair struct {
 	composeTreeFilePathFmt    string
 	treeSlotCount             int
 	batchSearchSize           int
-	buildTreeScheduleInterval time.Duration
-	repairQuickBuildTreeTime  time.Duration
-	buildTreeLocker           sync.Mutex
 }
 
 func newRepair(
 	shardPath string,
 	l *logger.Logger,
 	metricsFactory *observability.Factory,
-	batchSearchSize,
+	batchSearchSize int,
 	treeSlotCount int,
-	repairBuildTreeCron string,
-	repairQuickBuildTreeTime time.Duration,
-	takeSnapshot func(string) error,
-) (r *repair, err error) {
+	scheduler *repairScheduler,
+) *repair {
 	repairBase := path.Join(shardPath, "repair")
-	var quickRepairNotified int32
-	r = &repair{
+	return &repair{
 		shardPath:                 shardPath,
 		l:                         l,
 		repairBasePath:            repairBase,
@@ -96,79 +90,36 @@ func newRepair(
 		statePath:                 path.Join(repairBase, "state.json"),
 		composeSlotAppendFilePath: path.Join(repairBase, "state-append-%d.tmp"),
 		composeTreeFilePathFmt:    path.Join(repairBase, "state-tree-%s.data"),
-		treeSlotCount:             treeSlotCount,
 		batchSearchSize:           batchSearchSize,
-		takeSnapshot:              takeSnapshot,
-		repairQuickBuildTreeTime:  repairQuickBuildTreeTime,
-		quickRepairNotified:       &quickRepairNotified,
 		metrics:                   newRepairMetrics(metricsFactory),
-		closer:                    run.NewCloser(1),
+		scheduler:                 scheduler,
+		treeSlotCount:             treeSlotCount,
 	}
-	if err = r.initScheduler(repairBuildTreeCron); err != nil {
-		return nil, fmt.Errorf("init scheduler: %w", err)
-	}
-	return r, nil
 }
 
-func (r *repair) initScheduler(exp string) error {
-	r.buildTreeClock = clock.New()
-	c := timestamp.NewScheduler(r.l, r.buildTreeClock)
-	r.repairTreeScheduler = c
-	err := c.Register("repair", cron.Descriptor, exp, func(t time.Time, _ *logger.Logger) bool {
-		r.doRepairScheduler(t, true)
-		return true
-	})
+func (r *repair) checkHasUpdates() (bool, error) {
+	state, err := r.readState()
 	if err != nil {
-		return fmt.Errorf("failed to add repair build tree cron task: %w", err)
+		return false, fmt.Errorf("reading state failure: %w", err)
 	}
-	interval, nextTime, exist := c.Interval("repair")
-	if !exist {
-		return fmt.Errorf("failed to get repair build tree cron task interval")
-	}
-	r.buildTreeScheduleInterval = interval
-	r.latestBuildTreeSchedule = nextTime.Add(-interval)
-	return nil
-}
-
-func (r *repair) documentUpdatesNotify() {
-	if !atomic.CompareAndSwapInt32(r.quickRepairNotified, 0, 1) {
-		return
-	}
-
-	go func() {
-		select {
-		case <-r.closer.CloseNotify():
-			return
-		case <-time.After(r.repairQuickBuildTreeTime):
-			r.doRepairScheduler(r.buildTreeClock.Now(), false)
-			// reset the notified flag to allow the next notification
-			atomic.StoreInt32(r.quickRepairNotified, 0)
-		}
-	}()
-}
-
-func (r *repair) doRepairScheduler(t time.Time, triggerByCron bool) {
-	if !triggerByCron {
-		// if not triggered by cron, we need to check if the time is after the (last scheduled time + half of the interval)
-		if r.buildTreeClock.Now().After(r.latestBuildTreeSchedule.Add(r.buildTreeScheduleInterval / 2)) {
-			return
-		}
-	} else {
-		r.latestBuildTreeSchedule = t
-	}
-
-	// if already building the tree, skip this run
-	if !r.buildTreeLocker.TryLock() {
-		return
-	}
-	defer r.buildTreeLocker.Unlock()
-	err := r.buildStatus()
+	indexConfig := index.DefaultConfig(r.shardPath)
+	items, err := indexConfig.DirectoryFunc().List(index.ItemKindSnapshot)
 	if err != nil {
-		r.l.Err(fmt.Errorf("repair build status failure: %w", err))
+		return false, fmt.Errorf("reading item kind snapshot failure: %w", err)
 	}
+	sort.Sort(snapshotIDList(items))
+	// check the snapshot ID have any updated
+	// if no updates, the building Trees should be skipped
+	if state != nil && len(items) != 0 && items[len(items)-1] == state.LastSnpID {
+		return false, nil
+	}
+	if len(items) == 0 {
+		return false, nil
+	}
+	return true, nil
 }
 
-func (r *repair) buildStatus() (err error) {
+func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err error) {
 	startTime := time.Now()
 	defer func() {
 		r.metrics.totalBuildTreeFinished.Inc(1)
@@ -177,35 +128,15 @@ func (r *repair) buildStatus() (err error) {
 		}
 		r.metrics.totalBuildTreeDuration.Inc(time.Since(startTime).Seconds())
 	}()
-	var state *repairStatus
-	// reading the state file to check they have any updates
-	state, err = r.readState()
-	if err != nil {
-		return fmt.Errorf("reading state failure: %w", err)
-	}
-	indexConfig := index.DefaultConfig(r.shardPath)
-	items, err := indexConfig.DirectoryFunc().List(index.ItemKindSegment)
+	indexConfig := index.DefaultConfig(snapshotPath)
+	items, err := indexConfig.DirectoryFunc().List(index.ItemKindSnapshot)
 	if err != nil {
 		return fmt.Errorf("reading item kind segment failure: %w", err)
 	}
 	sort.Sort(snapshotIDList(items))
-	// check the snapshot ID have any updated
-	// if no updates, the building Trees should be skipped
-	if state != nil && len(items) != 0 && items[len(items)-1] == state.LastSnpID {
-		return nil
-	}
-	if len(items) == 0 {
-		return nil
-	}
 
-	// otherwise, we need to building the trees
-	// take a new snapshot first
-	err = r.takeSnapshot(r.snapshotDir)
-	if err != nil {
-		return fmt.Errorf("taking snapshot failure: %w", err)
-	}
-	blugeConf := bluge.DefaultConfig(r.snapshotDir)
-	err = r.buildTree(blugeConf)
+	blugeConf := bluge.DefaultConfig(snapshotPath)
+	err = r.buildTree(ctx, blugeConf)
 	if err != nil {
 		return fmt.Errorf("building trees failure: %w", err)
 	}
@@ -215,7 +146,7 @@ func (r *repair) buildStatus() (err error) {
 		latestSnapshotID = items[len(items)-1]
 	}
 	// save the Trees to the state
-	state = &repairStatus{
+	state := &repairStatus{
 		LastSnpID:    latestSnapshotID,
 		LastSyncTime: time.Now(),
 	}
@@ -230,7 +161,7 @@ func (r *repair) buildStatus() (err error) {
 	return nil
 }
 
-func (r *repair) buildTree(conf bluge.Config) error {
+func (r *repair) buildTree(ctx context.Context, conf bluge.Config) error {
 	reader, err := bluge.OpenReader(conf)
 	if err != nil {
 		return fmt.Errorf("opening index reader failure: %w", err)
@@ -251,17 +182,17 @@ func (r *repair) buildTree(conf bluge.Config) error {
 	if err != nil {
 		return fmt.Errorf("creating repair tree composer failure: %w", err)
 	}
-	err = r.pageSearch(reader, topNSearch, func(source []byte, shaValue string, deleteTime int64) error {
+	err = r.pageSearch(ctx, reader, topNSearch, func(sortValue [][]byte, source []byte, shaValue string, deleteTime int64) error {
 		// building the entity
 		if len(source) == 0 {
 			return nil
 		}
-		var property propertyv1.Property
-		err = protojson.Unmarshal(source, &property)
-		if err != nil {
-			return err
+		if len(sortValue) != 4 {
+			return fmt.Errorf("unexpected sort value length: %d", len(sortValue))
 		}
-		entity := GetEntity(&property)
+		group := convert.BytesToString(sortValue[0])
+		name := convert.BytesToString(sortValue[1])
+		entity := fmt.Sprintf("%s/%s/%s", group, name, convert.BytesToString(sortValue[2]))
 		if shaValue == "" {
 			shaValue, err = r.buildShaValue(source, deleteTime)
 			if err != nil {
@@ -269,9 +200,9 @@ func (r *repair) buildTree(conf bluge.Config) error {
 			}
 		}
 
-		s := newSearchingProperty(&property, shaValue, entity)
+		s := newSearchingProperty(group, shaValue, entity)
 		if latestProperty != nil {
-			if latestProperty.group != property.Metadata.Group {
+			if latestProperty.group != group {
 				// if the group have changed, we need to append the latest property to the tree composer, and compose builder
 				// the entity is changed, need to save the property
 				if err = treeComposer.append(latestProperty.entityID, latestProperty.shaValue); err != nil {
@@ -308,12 +239,16 @@ func (r *repair) buildTree(conf bluge.Config) error {
 	return nil
 }
 
-//nolint:contextcheck
-func (r *repair) pageSearch(reader *bluge.Reader, searcher *bluge.TopNSearch, each func(source []byte, shaValue string, deleteTime int64) error) error {
+func (r *repair) pageSearch(
+	ctx context.Context,
+	reader *bluge.Reader,
+	searcher *bluge.TopNSearch,
+	each func(sortValue [][]byte, source []byte, shaValue string, deleteTime int64) error,
+) error {
 	var latestDocValues [][]byte
 	for {
 		searcher.After(latestDocValues)
-		result, err := reader.Search(r.closer.Ctx(), searcher)
+		result, err := reader.Search(ctx, searcher)
 		if err != nil {
 			return fmt.Errorf("searching index failure: %w", err)
 		}
@@ -347,7 +282,7 @@ func (r *repair) pageSearch(reader *bluge.Reader, searcher *bluge.TopNSearch, ea
 			if err = multierr.Combine(err, errTime); err != nil {
 				return errors.WithMessagef(err, "visit stored fields, hit: %d", hitNumber)
 			}
-			err = each(source, shaValue, deleteTime)
+			err = each(next.SortValue, source, shaValue, deleteTime)
 			if err != nil {
 				return errors.WithMessagef(err, "processing source failure, hit: %d", hitNumber)
 			}
@@ -387,12 +322,6 @@ func (r *repair) readState() (*repairStatus, error) {
 	return &status, nil
 }
 
-func (r *repair) close() {
-	r.closer.Done()
-	r.closer.CloseThenWait()
-	r.repairTreeScheduler.Close()
-}
-
 type repairStatus struct {
 	LastSyncTime time.Time `json:"last_sync_time"`
 	LastSnpID    uint64    `json:"last_snp_id"`
@@ -411,7 +340,7 @@ type repairTreeNode struct {
 	id        string
 	tp        repairTreeNodeType
 	leafStart int64
-	leafLen   int64
+	leafCount int64
 }
 type repairTreeReader struct {
 	file   *os.File
@@ -468,7 +397,7 @@ func (r *repairTreeReader) readFoot() error {
 	}
 	r.footer = &repairTreeFooter{
 		leafNodeFinishedOffset: footerData[0],
-		slotNodeLen:            footerData[1],
+		slotNodeCount:          footerData[1],
 		slotNodeFinishedOffset: footerData[2],
 		rootNodeLen:            footerData[3],
 	}
@@ -501,7 +430,7 @@ func (r *repairTreeReader) read(parent *repairTreeNode) ([]*repairTreeNode, erro
 		}
 		return []*repairTreeNode{
 			{
-				shaValue: fmt.Sprintf("%x", shaValue),
+				shaValue: string(shaValue),
 				tp:       repairTreeNodeTypeRoot,
 			},
 		}, nil
@@ -514,15 +443,13 @@ func (r *repairTreeReader) read(parent *repairTreeNode) ([]*repairTreeNode, erro
 		if err = r.seekPosition(r.footer.leafNodeFinishedOffset, io.SeekStart); err != nil {
 			return nil, fmt.Errorf("seeking to slot node offset %d in file %s failure: %w", r.footer.leafNodeFinishedOffset, r.file.Name(), err)
 		}
-		slotDataBytes := make([]byte, r.footer.slotNodeLen)
-		if _, err = io.ReadFull(r.reader, slotDataBytes); err != nil {
-			return nil, fmt.Errorf("reading slot node data from file %s failure: %w", r.file.Name(), err)
-		}
-		reduceBytesLen := int64(len(slotDataBytes))
-
-		var slotNodeIndex, leafStartOff, leafLen int64
-		var slotShaVal []byte
-		for reduceBytesLen > 0 {
+		var slotNodeIndex, leafStartOff, leafCount int64
+		var slotShaVal, slotDataBytes []byte
+		for i := int64(0); i < r.footer.slotNodeCount; i++ {
+			slotDataBytes, err = r.reader.ReadBytes(repairFileNewLine)
+			if err != nil {
+				return nil, fmt.Errorf("reading slot node data from file %s failure: %w", r.file.Name(), err)
+			}
 			slotDataBytes, slotNodeIndex, err = encoding.BytesToVarInt64(slotDataBytes)
 			if err != nil {
 				return nil, fmt.Errorf("decoding slot node index from file %s failure: %w", r.file.Name(), err)
@@ -535,19 +462,19 @@ func (r *repairTreeReader) read(parent *repairTreeNode) ([]*repairTreeNode, erro
 			if err != nil {
 				return nil, fmt.Errorf("decoding slot node leaf start offset from file %s failure: %w", r.file.Name(), err)
 			}
-			slotDataBytes, leafLen, err = encoding.BytesToVarInt64(slotDataBytes)
+			_, leafCount, err = encoding.BytesToVarInt64(slotDataBytes)
 			if err != nil {
 				return nil, fmt.Errorf("decoding slot node leaf length from file %s failure: %w", r.file.Name(), err)
 			}
-			reduceBytesLen = int64(len(slotDataBytes))
 			nodes = append(nodes, &repairTreeNode{
-				shaValue:  fmt.Sprintf("%x", slotShaVal),
+				shaValue:  string(slotShaVal),
 				id:        fmt.Sprintf("%d", slotNodeIndex),
 				tp:        repairTreeNodeTypeSlot,
 				leafStart: leafStartOff,
-				leafLen:   leafLen,
+				leafCount: leafCount,
 			})
 		}
+
 		return nodes, nil
 	} else if parent.tp == repairTreeNodeTypeLeaf {
 		return nil, nil
@@ -558,22 +485,20 @@ func (r *repairTreeReader) read(parent *repairTreeNode) ([]*repairTreeNode, erro
 	if err != nil {
 		return nil, fmt.Errorf("seeking to leaf node offset %d in file %s failure: %w", r.footer.leafNodeFinishedOffset, r.file.Name(), err)
 	}
-	leafDataBytes := make([]byte, parent.leafLen)
-	if _, err = io.ReadFull(r.reader, leafDataBytes); err != nil {
-		return nil, fmt.Errorf("reading leaf node data from file %s failure: %w", r.file.Name(), err)
-	}
-	reduceBytesLen := int64(len(leafDataBytes))
-	for reduceBytesLen > 0 {
-		var entity, shaVal []byte
+	var entity, shaVal []byte
+	for i := int64(0); i < parent.leafCount; i++ {
+		leafDataBytes, err := r.reader.ReadBytes(repairFileNewLine)
+		if err != nil {
+			return nil, fmt.Errorf("reading leaf node data from file %s failure: %w", r.file.Name(), err)
+		}
 		leafDataBytes, entity, err = encoding.DecodeBytes(leafDataBytes)
 		if err != nil {
 			return nil, fmt.Errorf("decoding leaf node entity from file %s failure: %w", r.file.Name(), err)
 		}
-		leafDataBytes, shaVal, err = encoding.DecodeBytes(leafDataBytes)
+		_, shaVal, err = encoding.DecodeBytes(leafDataBytes)
 		if err != nil {
 			return nil, fmt.Errorf("decoding leaf node sha value from file %s failure: %w", r.file.Name(), err)
 		}
-		reduceBytesLen = int64(len(leafDataBytes))
 		nodes = append(nodes, &repairTreeNode{
 			shaValue: string(shaVal),
 			id:       string(entity),
@@ -585,7 +510,7 @@ func (r *repairTreeReader) read(parent *repairTreeNode) ([]*repairTreeNode, erro
 
 type repairTreeFooter struct {
 	leafNodeFinishedOffset int64
-	slotNodeLen            int64
+	slotNodeCount          int64
 	slotNodeFinishedOffset int64
 	rootNodeLen            int64
 }
@@ -633,9 +558,9 @@ func (r *repairTreeComposer) append(id, shaVal string) (err error) {
 // composeNextGroupAndSave composes the current group of slot files into a repair tree file.
 // tree file format: [leaf nodes]+[slot nodes]+[root node]+[metadata]
 // leaf nodes: each node contains: [entity]+[sha value]
-// slot nodes: each node contains: [slot index]+[sha value]+[leaf nodes start offset]+[leaf nodes data length(binary encoded)]
+// slot nodes: each node contains: [slot index]+[sha value]+[leaf nodes start offset]+[leaf nodes count]
 // root node: contains [sha value]
-// metadata: contains footer([slot nodes start offset]+[slot nodes length(data binary)]+[root node start offset]+[root node length])+[footer length(data binary)]
+// metadata: contains footer([slot nodes start offset]+[slot nodes count]+[root node start offset]+[root node length])+[footer length(data binary)]
 func (r *repairTreeComposer) composeNextGroupAndSave(group string) (err error) {
 	treeFilePath := fmt.Sprintf(r.treeFileFmt, group)
 	treeBuilder, err := newRepairTreeBuilder(treeFilePath)
@@ -656,7 +581,9 @@ func (r *repairTreeComposer) composeNextGroupAndSave(group string) (err error) {
 		}
 	}
 	// reset the slot files for the next group
-	r.slotFiles = make([]*repairSlotFile, r.slotCount)
+	for i := range r.slotFiles {
+		r.slotFiles[i] = nil
+	}
 	return treeBuilder.build()
 }
 
@@ -667,13 +594,17 @@ type repairSlotFile struct {
 	l      *logger.Logger
 	path   string
 	slot   int
+	count  int64
 }
 
 func newRepairSlotFile(slot int, pathFmt string, l *logger.Logger) (*repairSlotFile, error) {
 	filePath := fmt.Sprintf(pathFmt, slot)
+	if err := os.MkdirAll(filepath.Dir(filePath), storage.DirPerm); err != nil {
+		return nil, fmt.Errorf("creating directory for repair slot file %s failure: %w", filePath, err)
+	}
 	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, storage.FilePerm)
 	if err != nil {
-		return nil, fmt.Errorf("opening repair slot file %s failure: %w", pathFmt, err)
+		return nil, fmt.Errorf("opening repair slot file %s failure: %w", filePath, err)
 	}
 	return &repairSlotFile{
 		path:   filePath,
@@ -682,6 +613,7 @@ func newRepairSlotFile(slot int, pathFmt string, l *logger.Logger) (*repairSlotF
 		sha:    sha512.New(),
 		writer: bufio.NewWriter(file),
 		l:      l,
+		count:  0,
 	}, nil
 }
 
@@ -693,14 +625,16 @@ func (r *repairSlotFile) append(entity, shaValue []byte) error {
 	result := make([]byte, 0)
 	result = encoding.EncodeBytes(result, entity)
 	result = encoding.EncodeBytes(result, shaValue)
+	result = append(result, repairFileNewLine)
 	_, err = r.writer.Write(result)
 	if err != nil {
 		return fmt.Errorf("writing entity and sha value to repair slot file %s failure: %w", r.path, err)
 	}
+	r.count++
 	return nil
 }
 
-func (r *repairSlotFile) writeToAndDeleteSlotFile(f io.Writer) (int64, error) {
+func (r *repairSlotFile) writeToAndDeleteSlotFile(f io.Writer) (int64, int64, error) {
 	defer func() {
 		if closeErr := r.file.Close(); closeErr != nil {
 			r.l.Warn().Str("file", r.path).Err(closeErr).Msg("closing repair slot file failure")
@@ -711,12 +645,16 @@ func (r *repairSlotFile) writeToAndDeleteSlotFile(f io.Writer) (int64, error) {
 	}()
 	var err error
 	if err = r.writer.Flush(); err != nil {
-		return 0, fmt.Errorf("flushing repair slot file %s failure: %w", r.path, err)
+		return 0, 0, fmt.Errorf("flushing repair slot file %s failure: %w", r.path, err)
 	}
 	if _, err = r.file.Seek(0, io.SeekStart); err != nil {
-		return 0, fmt.Errorf("seeking to start of repair slot file %s failure: %w", r.path, err)
+		return 0, 0, fmt.Errorf("seeking to start of repair slot file %s failure: %w", r.path, err)
 	}
-	return io.Copy(f, r.file)
+	writeBytes, err := io.Copy(f, r.file)
+	if err != nil {
+		return 0, 0, fmt.Errorf("copying repair slot file %s to writer failure: %w", r.path, err)
+	}
+	return writeBytes, r.count, nil
 }
 
 type repairTreeBuilder struct {
@@ -728,6 +666,9 @@ type repairTreeBuilder struct {
 }
 
 func newRepairTreeBuilder(groupFilePath string) (*repairTreeBuilder, error) {
+	if err := os.MkdirAll(filepath.Dir(groupFilePath), storage.DirPerm); err != nil {
+		return nil, fmt.Errorf("creating directory for repair tree file %s failure: %w", groupFilePath, err)
+	}
 	groupFile, err := os.OpenFile(groupFilePath, os.O_WRONLY|os.O_CREATE, storage.FilePerm)
 	if err != nil {
 		return nil, fmt.Errorf("opening repair tree file %s failure: %w", groupFilePath, err)
@@ -742,21 +683,23 @@ func newRepairTreeBuilder(groupFilePath string) (*repairTreeBuilder, error) {
 
 func (r *repairTreeBuilder) appendSlot(slot *repairSlotFile) (err error) {
 	slotSha := slot.sha.Sum(nil)
-	_, err = r.rootHash.Write(slotSha)
+	shaValBytes := []byte(fmt.Sprintf("%x", slotSha))
+	_, err = r.rootHash.Write(shaValBytes)
 	if err != nil {
 		return fmt.Errorf("hashing root sha value failure: %w", err)
 	}
-	writeLen, err := slot.writeToAndDeleteSlotFile(r.writer)
+	bytesSize, leafCount, err := slot.writeToAndDeleteSlotFile(r.writer)
 	if err != nil {
 		return fmt.Errorf("writing slot file %s to repair tree file failure: %w", slot.path, err)
 	}
 	r.Slots = append(r.Slots, &repairTreeBuilderSlot{
-		shaVal:         slotSha,
+		shaVal:         shaValBytes,
 		repairSlotFile: slot,
 		startOff:       r.currentOff,
-		len:            writeLen,
+		leafCount:      leafCount,
+		writeLen:       bytesSize,
 	})
-	r.currentOff += writeLen
+	r.currentOff += bytesSize
 	return nil
 }
 
@@ -771,7 +714,8 @@ func (r *repairTreeBuilder) build() (err error) {
 		data = encoding.VarInt64ToBytes(data, int64(slot.slot))
 		data = encoding.EncodeBytes(data, slot.shaVal)
 		data = encoding.VarInt64ToBytes(data, slot.startOff)
-		data = encoding.VarInt64ToBytes(data, slot.len)
+		data = encoding.VarInt64ToBytes(data, slot.leafCount)
+		data = append(data, repairFileNewLine)
 		writedLen, err = r.writer.Write(data)
 		if err != nil {
 			return fmt.Errorf("writing slot node to repair tree file failure: %w", err)
@@ -783,7 +727,7 @@ func (r *repairTreeBuilder) build() (err error) {
 	// write the root node
 	data := make([]byte, 0)
 	rootShaVal := r.rootHash.Sum(nil)
-	data = encoding.EncodeBytes(data, rootShaVal)
+	data = encoding.EncodeBytes(data, []byte(fmt.Sprintf("%x", rootShaVal)))
 	writedLen, err = r.writer.Write(data)
 	if err != nil {
 		return fmt.Errorf("writing root node to repair tree file failure: %w", err)
@@ -792,7 +736,7 @@ func (r *repairTreeBuilder) build() (err error) {
 	// write footer
 	data = make([]byte, 0)
 	data = encoding.VarInt64ToBytes(data, leafNodesFinishedOffset) // end offset of the slot nodes
-	data = encoding.VarInt64ToBytes(data, slotNodesLen)            // length of the slot nodes
+	data = encoding.VarInt64ToBytes(data, int64(len(r.Slots)))     // count of the slot nodes
 	data = encoding.VarInt64ToBytes(data, slotNodesFinishedOffset) // end offset of the root node
 	data = encoding.VarInt64ToBytes(data, int64(writedLen))        // length of the root node
 	footerLen := uint8(len(data))
@@ -809,9 +753,10 @@ func (r *repairTreeBuilder) build() (err error) {
 
 type repairTreeBuilderSlot struct {
 	*repairSlotFile
-	shaVal   []byte
-	startOff int64
-	len      int64
+	shaVal    []byte
+	startOff  int64
+	leafCount int64
+	writeLen  int64
 }
 
 func (r *repairTreeBuilder) close() (err error) {
@@ -830,9 +775,9 @@ type searchingProperty struct {
 	entityID string
 }
 
-func newSearchingProperty(property *propertyv1.Property, shaValue, entity string) *searchingProperty {
+func newSearchingProperty(group, shaValue, entity string) *searchingProperty {
 	return &searchingProperty{
-		group:    property.Metadata.Group,
+		group:    group,
 		shaValue: shaValue,
 		entityID: entity,
 	}
@@ -849,5 +794,169 @@ func newRepairMetrics(fac *observability.Factory) *repairMetrics {
 		totalBuildTreeFinished: fac.NewCounter("property_repair_build_tree_finished"),
 		totalBuildTreeFailures: fac.NewCounter("property_repair_build_tree_failures"),
 		totalBuildTreeDuration: fac.NewCounter("property_repair_build_tree_duration"),
+	}
+}
+
+type repairScheduler struct {
+	latestBuildTreeSchedule   time.Time
+	buildTreeClock            clock.Clock
+	l                         *logger.Logger
+	closer                    *run.Closer
+	buildSnapshotFunc         func(context.Context) (string, error)
+	repairTreeScheduler       *timestamp.Scheduler
+	quickRepairNotified       *int32
+	db                        *database
+	metrics                   *repairSchedulerMetrics
+	buildTreeScheduleInterval time.Duration
+	quickBuildTreeTime        time.Duration
+	buildTreeLocker           sync.Mutex
+}
+
+func newRepairScheduler(
+	l *logger.Logger,
+	omr observability.MetricsRegistry,
+	cronExp string,
+	quickBuildTreeTime time.Duration,
+	db *database,
+	buildSnapshotFunc func(context.Context) (string, error),
+) (*repairScheduler, error) {
+	var quickRepairNotified int32
+	s := &repairScheduler{
+		l:                   l,
+		buildTreeClock:      clock.New(),
+		db:                  db,
+		buildSnapshotFunc:   buildSnapshotFunc,
+		quickRepairNotified: &quickRepairNotified,
+		closer:              run.NewCloser(1),
+		quickBuildTreeTime:  quickBuildTreeTime,
+		metrics:             newRepairSchedulerMetrics(omr.With(propertyScope.SubScope("scheduler"))),
+	}
+	c := timestamp.NewScheduler(l, s.buildTreeClock)
+	s.repairTreeScheduler = c
+	err := c.Register("repair", cron.Descriptor, cronExp, func(t time.Time, _ *logger.Logger) bool {
+		s.doRepairScheduler(t, true)
+		return true
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to add repair build tree cron task: %w", err)
+	}
+	interval, nextTime, exist := c.Interval("repair")
+	if !exist {
+		return nil, fmt.Errorf("failed to get repair build tree cron task interval")
+	}
+	s.buildTreeScheduleInterval = interval
+	s.latestBuildTreeSchedule = nextTime.Add(-interval)
+	return s, nil
+}
+
+func (r *repairScheduler) doRepairScheduler(t time.Time, triggerByCron bool) {
+	if !triggerByCron {
+		// if not triggered by cron, we need to check if the time is after the (last scheduled time + half of the interval)
+		if r.buildTreeClock.Now().After(r.latestBuildTreeSchedule.Add(r.buildTreeScheduleInterval / 2)) {
+			return
+		}
+	} else {
+		r.latestBuildTreeSchedule = t
+	}
+
+	err := r.doRepair()
+	if err != nil {
+		r.l.Err(fmt.Errorf("repair build status failure: %w", err))
+	}
+}
+
+//nolint:contextcheck
+func (r *repairScheduler) doRepair() (err error) {
+	now := time.Now()
+	r.metrics.totalRepairBuildTreeStarted.Inc(1)
+	defer func() {
+		r.metrics.totalRepairBuildTreeFinished.Inc(1)
+		r.metrics.totalRepairBuildTreeLatency.Inc(time.Since(now).Seconds())
+		if err != nil {
+			r.metrics.totalRepairBuildTreeFailures.Inc(1)
+		}
+	}()
+	if !r.buildTreeLocker.TryLock() {
+		return nil
+	}
+	defer r.buildTreeLocker.Unlock()
+	// check each shard have any updates
+	sLst := r.db.sLst.Load()
+	if sLst == nil {
+		return nil
+	}
+	hasUpdates := false
+	for _, s := range *sLst {
+		hasUpdates, err = s.repairState.checkHasUpdates()
+		if err != nil {
+			return err
+		}
+		if hasUpdates {
+			break
+		}
+	}
+	// if no updates, skip the repair
+	if !hasUpdates {
+		return nil
+	}
+
+	// otherwise, we need to build the trees
+	// take a new snapshot first
+	snapshotPath, err := r.buildSnapshotFunc(r.closer.Ctx())
+	if err != nil {
+		return fmt.Errorf("taking snapshot failure: %w", err)
+	}
+	return walkDir(snapshotPath, "shard-", func(suffix string) error {
+		id, err := strconv.Atoi(suffix)
+		if err != nil {
+			return err
+		}
+		s, err := r.db.loadShard(r.closer.Ctx(), common.ShardID(id))
+		if err != nil {
+			return fmt.Errorf("loading shard %d failure: %w", id, err)
+		}
+		err = s.repairState.buildStatus(r.closer.Ctx(), path.Join(snapshotPath, fmt.Sprintf("shard-%s", suffix)))
+		if err != nil {
+			return fmt.Errorf("building status for shard %d failure: %w", id, err)
+		}
+		return nil
+	})
+}
+
+func (r *repairScheduler) documentUpdatesNotify() {
+	if !atomic.CompareAndSwapInt32(r.quickRepairNotified, 0, 1) {
+		return
+	}
+
+	go func() {
+		select {
+		case <-r.closer.CloseNotify():
+			return
+		case <-time.After(r.quickBuildTreeTime):
+			r.doRepairScheduler(r.buildTreeClock.Now(), false)
+			// reset the notified flag to allow the next notification
+			atomic.StoreInt32(r.quickRepairNotified, 0)
+		}
+	}()
+}
+
+func (r *repairScheduler) close() {
+	r.closer.Done()
+	r.closer.CloseThenWait()
+}
+
+type repairSchedulerMetrics struct {
+	totalRepairBuildTreeStarted  meter.Counter
+	totalRepairBuildTreeFinished meter.Counter
+	totalRepairBuildTreeFailures meter.Counter
+	totalRepairBuildTreeLatency  meter.Counter
+}
+
+func newRepairSchedulerMetrics(omr *observability.Factory) *repairSchedulerMetrics {
+	return &repairSchedulerMetrics{
+		totalRepairBuildTreeStarted:  omr.NewCounter("repair_build_tree_started"),
+		totalRepairBuildTreeFinished: omr.NewCounter("repair_build_tree_finished"),
+		totalRepairBuildTreeFailures: omr.NewCounter("repair_build_tree_failures"),
+		totalRepairBuildTreeLatency:  omr.NewCounter("repair_build_tree_latency"),
 	}
 }

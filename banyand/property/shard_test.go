@@ -96,8 +96,8 @@ func TestMergeDeleted(t *testing.T) {
 				t.Fatal(err)
 			}
 			defers = append(defers, deferFunc)
-			db, err := openDB(context.Background(), dir, 3*time.Second, tt.expireDeletionTime, 32, observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
-				"@every 10m", time.Second*10)
+			db, err := openDB(context.Background(), dir, 3*time.Second, tt.expireDeletionTime, 32, observability.BypassRegistry, fs.NewLocalFileSystem(),
+				"@every 10m", time.Second*10, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -300,8 +300,8 @@ func TestRepair(t *testing.T) {
 				t.Fatal(err)
 			}
 			defers = append(defers, deferFunc)
-			db, err := openDB(context.Background(), dir, 3*time.Second, 1*time.Hour, 32, observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
-				"@every 10m", time.Second*10)
+			db, err := openDB(context.Background(), dir, 3*time.Second, 1*time.Hour, 32, observability.BypassRegistry, fs.NewLocalFileSystem(),
+				"@every 10m", time.Second*10, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -32,9 +32,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -78,7 +76,6 @@ type shard struct {
 }
 
 func (s *shard) close() error {
-	s.repairState.close()
 	if s.store != nil {
 		return s.store.Close()
 	}
@@ -91,10 +88,6 @@ func (db *database) newShard(
 	_ int64,
 	deleteExpireSec int64,
 	repairTreeSlotCount int,
-	maxFileSnapshotNum int,
-	fs fs.FileSystem,
-	repairBuildTreeCron string,
-	repairQuickBuildTreeTime time.Duration,
 ) (*shard, error) {
 	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
 	sName := "shard" + strconv.Itoa(int(id))
@@ -116,16 +109,8 @@ func (db *database) newShard(
 	if si.store, err = inverted.NewStore(opts); err != nil {
 		return nil, err
 	}
-	si.repairState, err = newRepair(location, logger.Fetch(ctx, fmt.Sprintf("repair%d", id)),
-		metricsFactory, repairBatchSearchSize, repairTreeSlotCount, repairBuildTreeCron, repairQuickBuildTreeTime, func(dst string) error {
-			storage.DeleteStaleSnapshots(dst, maxFileSnapshotNum, fs)
-			fs.MkdirIfNotExist(dst, storage.DirPerm)
-			return si.store.TakeFileSnapshot(dst)
-		})
-	if err != nil {
-		_ = si.store.Close()
-		return nil, fmt.Errorf("create repair state failure: %w", err)
-	}
+	si.repairState = newRepair(location, logger.Fetch(ctx, fmt.Sprintf("repair%d", id)),
+		metricsFactory, repairBatchSearchSize, repairTreeSlotCount, db.repairScheduler)
 	return si, nil
 }
 
@@ -254,7 +239,7 @@ func (s *shard) updateDocuments(docs index.Documents) error {
 	if persistentError != nil {
 		return fmt.Errorf("persistent failure: %w", persistentError)
 	}
-	s.repairState.documentUpdatesNotify()
+	s.repairState.scheduler.documentUpdatesNotify()
 	return nil
 }
 

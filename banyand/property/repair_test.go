@@ -20,6 +20,9 @@ package property
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -191,8 +194,15 @@ func TestBuildTree(t *testing.T) {
 			}
 			defers = append(defers, deferFunc)
 			db, err := openDB(context.Background(), dir, 3*time.Second, time.Hour, 32,
-				observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
-				"@every 10m", time.Second*10)
+				observability.BypassRegistry, fs.NewLocalFileSystem(),
+				"@every 10m", time.Second*10, func(context.Context) (string, error) {
+					snapshotDir, defFunc, newSpaceErr := test.NewSpace()
+					if newSpaceErr != nil {
+						return "", newSpaceErr
+					}
+					defers = append(defers, defFunc)
+					return snapshotDir, copyDirRecursive(dir, snapshotDir)
+				})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -216,7 +226,7 @@ func TestBuildTree(t *testing.T) {
 				}
 			}
 
-			err = newShard.repairState.buildStatus()
+			err = newShard.repairState.scheduler.doRepair()
 			if err != nil {
 				t.Fatalf("failed to build status: %v", err)
 			}
@@ -239,7 +249,7 @@ func TestBuildTree(t *testing.T) {
 			}
 
 			if tt.nextStatusVerify != nil {
-				err := newShard.repairState.buildStatus()
+				err := newShard.repairState.scheduler.doRepair()
 				if err != nil {
 					t.Fatalf("failed to build status after update: %v", err)
 				}
@@ -270,8 +280,15 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 	defers = append(defers, deferFunc)
 
 	db, err := openDB(context.Background(), dir, 3*time.Second, time.Hour, 32,
-		observability.BypassRegistry, fs.NewLocalFileSystem(), 2,
-		"@every 10m", time.Millisecond*50)
+		observability.BypassRegistry, fs.NewLocalFileSystem(),
+		"@every 10m", time.Millisecond*50, func(context.Context) (string, error) {
+			snapshotDir, defFunc, newSpaceErr := test.NewSpace()
+			if newSpaceErr != nil {
+				return "", newSpaceErr
+			}
+			defers = append(defers, defFunc)
+			return snapshotDir, copyDirRecursive(dir, snapshotDir)
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,4 +571,52 @@ type repairTestTreeNode struct {
 	id       string
 	shaValue string
 	children []*repairTestTreeNode
+}
+
+func copyFile(srcFile, dstFile string) error {
+	src, err := os.Open(srcFile)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.Create(dstFile)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, src)
+	if err != nil {
+		return err
+	}
+
+	info, err := src.Stat()
+	if err != nil {
+		return err
+	}
+	return os.Chmod(dstFile, info.Mode())
+}
+
+func copyDirRecursive(srcDir, dstDir string) error {
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+
+		relPath, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		dstPath := filepath.Join(dstDir, relPath)
+
+		if info.IsDir() {
+			return os.MkdirAll(dstPath, info.Mode())
+		}
+
+		return copyFile(path, dstPath)
+	})
 }

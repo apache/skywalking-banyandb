@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -123,8 +124,17 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.nodeID = node.NodeID
 
 	var err error
-	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs, s.maxFileSnapshotNum,
-		s.repairBuildTreeCron, s.repairQuickBuildTreeTime)
+	snapshotLis := &snapshotListener{s: s}
+	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs,
+		s.repairBuildTreeCron, s.repairQuickBuildTreeTime, func(ctx context.Context) (string, error) {
+			res := snapshotLis.Rev(ctx,
+				bus.NewMessage(bus.MessageID(time.Now().UnixNano()), []*databasev1.SnapshotRequest_Group{}))
+			snpMsg := res.Data().(*databasev1.Snapshot)
+			if snpMsg.Error != "" {
+				return "", errors.New(snpMsg.Error)
+			}
+			return snpMsg.Name, nil
+		})
 	if err != nil {
 		return err
 	}
@@ -132,7 +142,7 @@ func (s *service) PreRun(ctx context.Context) error {
 		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
 		s.pipeline.Subscribe(data.TopicPropertyDelete, &deleteListener{s: s}),
 		s.pipeline.Subscribe(data.TopicPropertyQuery, &queryListener{s: s}),
-		s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}),
+		s.pipeline.Subscribe(data.TopicSnapshot, snapshotLis),
 		s.pipeline.Subscribe(data.TopicPropertyRepair, &repairListener{s: s}),
 	)
 }

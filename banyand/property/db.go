@@ -48,20 +48,18 @@ var (
 )
 
 type database struct {
-	lock                     fs.File
-	omr                      observability.MetricsRegistry
-	logger                   *logger.Logger
-	lfs                      fs.FileSystem
-	sLst                     atomic.Pointer[[]*shard]
-	location                 string
-	repairBuildTreeCron      string
-	flushInterval            time.Duration
-	expireDelete             time.Duration
-	repairQuickBuildTreeTime time.Duration
-	repairTreeSlot           int
-	maxFileSnapshotNum       int
-	closed                   atomic.Bool
-	mu                       sync.RWMutex
+	lock                fs.File
+	omr                 observability.MetricsRegistry
+	logger              *logger.Logger
+	repairScheduler     *repairScheduler
+	lfs                 fs.FileSystem
+	sLst                atomic.Pointer[[]*shard]
+	location            string
+	flushInterval       time.Duration
+	expireDelete        time.Duration
+	repairTreeSlotCount int
+	closed              atomic.Bool
+	mu                  sync.RWMutex
 }
 
 func openDB(
@@ -72,27 +70,30 @@ func openDB(
 	repairSlotCount int,
 	omr observability.MetricsRegistry,
 	lfs fs.FileSystem,
-	maxFileSnapshotNum int,
 	repairBuildTreeCron string,
 	repairQuickBuildTreeTime time.Duration,
+	buildSnapshotFunc func(context.Context) (string, error),
 ) (*database, error) {
 	loc := filepath.Clean(location)
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
 
 	db := &database{
-		location:                 loc,
-		logger:                   l,
-		omr:                      omr,
-		flushInterval:            flushInterval,
-		expireDelete:             expireToDeleteDuration,
-		repairTreeSlot:           repairSlotCount,
-		lfs:                      lfs,
-		maxFileSnapshotNum:       maxFileSnapshotNum,
-		repairBuildTreeCron:      repairBuildTreeCron,
-		repairQuickBuildTreeTime: repairQuickBuildTreeTime,
+		location:            loc,
+		logger:              l,
+		omr:                 omr,
+		flushInterval:       flushInterval,
+		expireDelete:        expireToDeleteDuration,
+		repairTreeSlotCount: repairSlotCount,
+		lfs:                 lfs,
 	}
-	if err := db.load(ctx); err != nil {
+	// init repair scheduler
+	scheduler, err := newRepairScheduler(l, omr, repairBuildTreeCron, repairQuickBuildTreeTime, db, buildSnapshotFunc)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to create repair scheduler for %s", loc)
+	}
+	db.repairScheduler = scheduler
+	if err = db.load(ctx); err != nil {
 		return nil, err
 	}
 	db.logger.Info().Str("path", loc).Msg("initialized")
@@ -177,8 +178,7 @@ func (db *database) loadShard(ctx context.Context, id common.ShardID) (*shard, e
 		return s, nil
 	}
 	sd, err := db.newShard(context.WithValue(ctx, logger.ContextKey, db.logger), id, int64(db.flushInterval.Seconds()),
-		int64(db.expireDelete.Seconds()), db.repairTreeSlot, db.maxFileSnapshotNum, db.lfs, db.repairBuildTreeCron,
-		db.repairQuickBuildTreeTime)
+		int64(db.expireDelete.Seconds()), db.repairTreeSlotCount)
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +208,7 @@ func (db *database) close() error {
 	if db.closed.Swap(true) {
 		return nil
 	}
+	db.repairScheduler.close()
 	sLst := db.sLst.Load()
 	var err error
 	if sLst != nil {
