@@ -941,6 +941,7 @@ func (r *repairScheduler) documentUpdatesNotify() {
 }
 
 func (r *repairScheduler) close() {
+	r.repairTreeScheduler.Close()
 	r.closer.Done()
 	r.closer.CloseThenWait()
 }
