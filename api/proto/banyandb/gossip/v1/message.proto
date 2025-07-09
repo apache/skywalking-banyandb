@@ -47,5 +47,4 @@ message FutureCallbackMessageRequest {
   PropagationMessageResponse response = 3;
 }
 
-message FutureCallbackMessageResponse {
-}
+message FutureCallbackMessageResponse {}
