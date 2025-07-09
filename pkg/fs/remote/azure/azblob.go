@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"strings"
 
@@ -83,11 +84,8 @@ func NewFS(p string, cfg *config.FsConfig) (remote.FS, error) {
 func buildClient(cfg *config.FsConfig) (*azblob.Client, error) {
 	azureCfg := cfg.Azure
 	endpoint := azureCfg.AzureEndpoint
-	if endpoint == "" {
-		if azureCfg.AzureAccountName == "" {
-			return nil, fmt.Errorf("AzureAccountName is required when AzureEndpoint is empty")
-		}
-		endpoint = fmt.Sprintf("https://%s.blob.core.windows.net/", azureCfg.AzureAccountName)
+	if connStr := os.Getenv("AZURE_STORAGE_CONNECTION_STRING"); connStr != "" {
+		return azblob.NewClientFromConnectionString(connStr, nil)
 	}
 
 	// Prefer SAS token if supplied
@@ -103,18 +101,22 @@ func buildClient(cfg *config.FsConfig) (*azblob.Client, error) {
 		return azblob.NewClientWithNoCredential(serviceURL, nil)
 	}
 
-	if azureCfg.AzureAccountName == "" || azureCfg.AzureAccountKey == "" {
-		return nil, fmt.Errorf("AzureAccountName and AzureAccountKey are required when AzureSASToken is not provided")
+	if azureCfg.AzureAccountName != "" && azureCfg.AzureAccountKey != "" {
+		endpoint := azureCfg.AzureEndpoint
+		if endpoint == "" {
+			endpoint = fmt.Sprintf("https://%s.blob.core.windows.net/", azureCfg.AzureAccountName)
+		}
+		cred, err := azblob.NewSharedKeyCredential(
+			azureCfg.AzureAccountName,
+			azureCfg.AzureAccountKey,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("invalid shared key credential: %w", err)
+		}
+		return azblob.NewClientWithSharedKeyCredential(endpoint, cred, nil)
 	}
 
-	cred, err := azblob.NewSharedKeyCredential(
-		azureCfg.AzureAccountName,
-		azureCfg.AzureAccountKey,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return azblob.NewClientWithSharedKeyCredential(endpoint, cred, nil)
+	return nil, errors.New("no Azure credentials found: set AZURE_STORAGE_CONNECTION_STRING, sas_token, or account_name+account_key")
 }
 
 func ensureContainer(ctx context.Context, client *azblob.Client, containerName string) error {
