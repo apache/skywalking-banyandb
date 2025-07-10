@@ -79,7 +79,7 @@ func (d *Dictionary) Encode(dst []byte) []byte {
 func (d *Dictionary) Decode(dst [][]byte, src []byte, itemsCount uint64) ([][]byte, error) {
 	src, count := BytesToVarUint64(src)
 	if count == 0 {
-		return nil, nil
+		return dst, nil
 	}
 
 	values, src, err := d.decodeBytesBlockWithTail(src, count)
