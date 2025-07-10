@@ -30,9 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
 
-var (
-	testVars *backup.CommonTestVars
-)
+var testVars *backup.CommonTestVars
 
 func TestBackup(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)

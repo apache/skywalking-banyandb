@@ -51,10 +51,11 @@ func InitAzuriteContainer() error {
 	}
 
 	for _, container := range containers {
-		if err := azuritePool.Client.RemoveContainer(docker.RemoveContainerOptions{
+		err = azuritePool.Client.RemoveContainer(docker.RemoveContainerOptions{
 			ID:    container.ID,
 			Force: true,
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("cannot remove old container %s: %w", container.ID, err)
 		}
 	}
@@ -68,7 +69,7 @@ func InitAzuriteContainer() error {
 		config.AutoRemove = true
 		config.RestartPolicy = docker.RestartPolicy{Name: "no"}
 		config.PortBindings = map[docker.Port][]docker.PortBinding{
-			docker.Port(AzuritePort + "/tcp"): {{HostIP: "0.0.0.0", HostPort: AzuritePort}},
+			AzuritePort + "/tcp": {{HostIP: "0.0.0.0", HostPort: AzuritePort}},
 		}
 	})
 	if err != nil {
