@@ -53,7 +53,7 @@ const (
 	DirPerm = 0o700
 	// SnapshotsDir is the directory for snapshots.
 	SnapshotsDir = "snapshots"
-	// RepairsDir is the directory for repairs.
+	// RepairDir is the directory for repairs.
 	RepairDir = "repairs"
 	// DataDir is the directory for data.
 	DataDir = "data"

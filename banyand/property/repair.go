@@ -364,7 +364,7 @@ func (r *repairTreeReader) readFoot() error {
 	if err = binary.Read(r.file, binary.LittleEndian, &footLen); err != nil {
 		return fmt.Errorf("reading footer length from file %s failure: %w", r.file.Name(), err)
 	}
-	_, err = r.file.Seek(-(int64(footLen) + 8), io.SeekCurrent)
+	_, err = r.file.Seek(-(footLen + 8), io.SeekCurrent)
 	if err != nil {
 		return fmt.Errorf("seeking to start of footer in file %s failure: %w", r.file.Name(), err)
 	}
