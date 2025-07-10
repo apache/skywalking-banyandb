@@ -24,9 +24,12 @@ import (
 	"runtime/debug"
 	"time"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
@@ -160,6 +163,62 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
+	if queryCriteria.RewriteAggTopNResult {
+		queryCriteria.Top.Number *= 2
+	}
+	resp = p.executeQuery(ctx, queryCriteria)
+
+	if queryCriteria.RewriteAggTopNResult {
+		result, handleErr := handleResponse(resp)
+		if handleErr != nil {
+			return
+		}
+		if len(result) == 0 {
+			return
+		}
+		groupByTags := make([]string, 0)
+		if queryCriteria.GetGroupBy() != nil {
+			for _, tagFamily := range queryCriteria.GetGroupBy().GetTagProjection().GetTagFamilies() {
+				groupByTags = append(groupByTags, tagFamily.GetTags()...)
+			}
+		}
+		tagValueMap := make(map[string][]*modelv1.TagValue)
+		for _, dp := range result {
+			for _, tagFamily := range dp.GetTagFamilies() {
+				for _, tag := range tagFamily.GetTags() {
+					tagName := tag.GetKey()
+					if len(groupByTags) == 0 || slices.Contains(groupByTags, tagName) {
+						tagValueMap[tagName] = append(tagValueMap[tagName], tag.GetValue())
+					}
+				}
+			}
+		}
+		rewriteCriteria, err := rewriteCriteria(tagValueMap)
+		if err != nil {
+			p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to rewrite the query criteria")
+			return
+		}
+		rewriteQueryCriteria := &measurev1.QueryRequest{
+			Groups:          queryCriteria.Groups,
+			Name:            queryCriteria.Name,
+			TimeRange:       queryCriteria.TimeRange,
+			Criteria:        rewriteCriteria,
+			TagProjection:   queryCriteria.TagProjection,
+			FieldProjection: queryCriteria.FieldProjection,
+		}
+		resp = p.executeQuery(ctx, rewriteQueryCriteria)
+		dataPoints, handleErr := handleResponse(resp)
+		if handleErr != nil {
+			return
+		}
+		resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{DataPoints: dataPoints})
+	}
+	return
+}
+
+func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria *measurev1.QueryRequest) (resp bus.Message) {
+	n := time.Now()
+	now := n.UnixNano()
 	defer func() {
 		if err := recover(); err != nil {
 			p.log.Error().Interface("err", err).RawJSON("req", logger.Proto(queryCriteria)).Str("stack", string(debug.Stack())).Msg("panic")
@@ -269,4 +328,95 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		}
 	}
 	return
+}
+
+func handleResponse(resp bus.Message) ([]*measurev1.DataPoint, *common.Error) {
+	data := resp.Data()
+	switch d := data.(type) {
+	case *common.Error:
+		return nil, d
+	case *measurev1.QueryResponse:
+		return d.DataPoints, nil
+	default:
+		return nil, common.NewError("unexpected response data type: %T", d)
+	}
+}
+
+func rewriteCriteria(tagValueMap map[string][]*modelv1.TagValue) (*modelv1.Criteria, error) {
+	var tagConditions []*modelv1.Condition
+	for tagName, tagValues := range tagValueMap {
+		if len(tagValues) == 0 {
+			continue
+		}
+		switch tagValues[0].GetValue().(type) {
+		case *modelv1.TagValue_Str:
+			valueSet := make(map[string]bool)
+			for _, value := range tagValues {
+				if strVal, ok := value.GetValue().(*modelv1.TagValue_Str); ok {
+					valueSet[strVal.Str.GetValue()] = true
+				}
+			}
+			values := make([]string, 0, len(valueSet))
+			for value := range valueSet {
+				values = append(values, value)
+			}
+			condition := &modelv1.Condition{
+				Name: tagName,
+				Op:   modelv1.Condition_BINARY_OP_IN,
+				Value: &modelv1.TagValue{
+					Value: &modelv1.TagValue_StrArray{
+						StrArray: &modelv1.StrArray{
+							Value: values,
+						},
+					},
+				},
+			}
+			tagConditions = append(tagConditions, condition)
+		case *modelv1.TagValue_Int:
+			valueSet := make(map[int64]bool)
+			for _, value := range tagValues {
+				if intVal, ok := value.GetValue().(*modelv1.TagValue_Int); ok {
+					valueSet[intVal.Int.GetValue()] = true
+				}
+			}
+			values := make([]int64, 0, len(valueSet))
+			for value := range valueSet {
+				values = append(values, value)
+			}
+			condition := &modelv1.Condition{
+				Name: tagName,
+				Op:   modelv1.Condition_BINARY_OP_IN,
+				Value: &modelv1.TagValue{
+					Value: &modelv1.TagValue_IntArray{
+						IntArray: &modelv1.IntArray{
+							Value: values,
+						},
+					},
+				},
+			}
+			tagConditions = append(tagConditions, condition)
+		default:
+			return nil, fmt.Errorf("unsupported tag value type: %T", tagValues[0].GetValue())
+		}
+	}
+	return buildCriteriaTree(tagConditions), nil
+}
+
+func buildCriteriaTree(conditions []*modelv1.Condition) *modelv1.Criteria {
+	if len(conditions) == 0 {
+		return nil
+	}
+	return &modelv1.Criteria{
+		Exp: &modelv1.Criteria_Le{
+			Le: &modelv1.LogicalExpression{
+				Op: modelv1.LogicalExpression_LOGICAL_OP_AND,
+				Left: &modelv1.Criteria{
+					Exp: &modelv1.Criteria_Condition{
+						Condition: conditions[0],
+					},
+				},
+				Right: buildCriteriaTree(conditions[1:]),
+			},
+		},
+	}
 }
