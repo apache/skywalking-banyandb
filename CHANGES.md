@@ -21,6 +21,7 @@ Release Notes.
 - Implement fadvise for large files to prevent page cache pollution.
 - Data Model: Introduce the `Trace` data model to store the trace/span data.
 - Support dictionary encoding for low cardinality columns.
+- Push down aggregation for topN query.
 
 ### Bug Fixes
 
