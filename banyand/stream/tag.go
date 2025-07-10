@@ -65,9 +65,23 @@ func releaseFloat64Slice(float64Slice *[]float64) {
 	float64SlicePool.Put(float64Slice)
 }
 
+func generateDictionary() *encoding.Dictionary {
+	v := dictionaryPool.Get()
+	if v == nil {
+		return &encoding.Dictionary{}
+	}
+	return v
+}
+
+func releaseDictionary(d *encoding.Dictionary) {
+	d.Reset()
+	dictionaryPool.Put(d)
+}
+
 var (
 	int64SlicePool   = pool.Register[*[]int64]("stream-int64Slice")
 	float64SlicePool = pool.Register[*[]float64]("stream-float64Slice")
+	dictionaryPool   = pool.Register[*encoding.Dictionary]("stream-dictionary")
 )
 
 type tag struct {
@@ -107,16 +121,15 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
-	tmp := make([]uint32, 0)
 
 	// select encoding based on data type
 	switch t.valueType {
 	case pbv1.ValueTypeInt64:
-		t.encodeInt64Tag(bb, tmp)
+		t.encodeInt64Tag(bb)
 	case pbv1.ValueTypeFloat64:
-		t.encodeFloat64Tag(bb, tmp)
+		t.encodeFloat64Tag(bb)
 	default:
-		t.encodeDefault(bb, tmp)
+		t.encodeDefault(bb)
 	}
 	tm.size = uint64(len(bb.Buf))
 	if tm.size > maxValuesBlockSize {
@@ -138,7 +151,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 	}
 }
 
-func (t *tag) encodeInt64Tag(bb *bytes.Buffer, tmp []uint32) {
+func (t *tag) encodeInt64Tag(bb *bytes.Buffer) {
 	// convert byte array to int64 array
 	intValuesPtr := generateInt64Slice(len(t.values))
 	intValues := *intValuesPtr
@@ -147,7 +160,7 @@ func (t *tag) encodeInt64Tag(bb *bytes.Buffer, tmp []uint32) {
 
 	for i, v := range t.values {
 		if v == nil || string(v) == "null" {
-			t.encodeDefault(bb, tmp)
+			t.encodeDefault(bb)
 			encodeType = encoding.EncodeTypePlain
 			// Prepend encodeType (1 byte) to the beginning
 			bb.Buf = append([]byte{byte(encodeType)}, bb.Buf...)
@@ -172,7 +185,7 @@ func (t *tag) encodeInt64Tag(bb *bytes.Buffer, tmp []uint32) {
 	)
 }
 
-func (t *tag) encodeFloat64Tag(bb *bytes.Buffer, tmp []uint32) {
+func (t *tag) encodeFloat64Tag(bb *bytes.Buffer) {
 	// convert byte array to float64 array
 	intValuesPtr := generateInt64Slice(len(t.values))
 	intValues := *intValuesPtr
@@ -185,7 +198,7 @@ func (t *tag) encodeFloat64Tag(bb *bytes.Buffer, tmp []uint32) {
 	var encodeType encoding.EncodeType
 
 	doEncodeDefault := func() {
-		t.encodeDefault(bb, tmp)
+		t.encodeDefault(bb)
 		encodeType = encoding.EncodeTypePlain
 		// Prepend encodeType (1 byte) to the beginning
 		bb.Buf = append([]byte{byte(encodeType)}, bb.Buf...)
@@ -221,8 +234,9 @@ func (t *tag) encodeFloat64Tag(bb *bytes.Buffer, tmp []uint32) {
 	)
 }
 
-func (t *tag) encodeDefault(bb *bytes.Buffer, tmp []uint32) {
-	dict := encoding.NewDictionary()
+func (t *tag) encodeDefault(bb *bytes.Buffer) {
+	dict := generateDictionary()
+	defer releaseDictionary(dict)
 	for _, v := range t.values {
 		if !dict.Add(v) {
 			bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
@@ -230,7 +244,7 @@ func (t *tag) encodeDefault(bb *bytes.Buffer, tmp []uint32) {
 			return
 		}
 	}
-	bb.Buf = dict.Encode(bb.Buf[:0], tmp)
+	bb.Buf = dict.Encode(bb.Buf[:0])
 	bb.Buf = append([]byte{byte(encoding.EncodeTypeDictionary)}, bb.Buf...)
 }
 
@@ -275,18 +289,17 @@ func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seq
 }
 
 func (t *tag) decodeTagValues(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
-	tmp := make([]uint32, 0)
 	switch t.valueType {
 	case pbv1.ValueTypeInt64:
-		t.decodeInt64Tag(decoder, path, count, bb, tmp)
+		t.decodeInt64Tag(decoder, path, count, bb)
 	case pbv1.ValueTypeFloat64:
-		t.decodeFloat64Tag(decoder, path, count, bb, tmp)
+		t.decodeFloat64Tag(decoder, path, count, bb)
 	default:
-		t.decodeDefault(decoder, bb, count, path, tmp)
+		t.decodeDefault(decoder, bb, count, path)
 	}
 }
 
-func (t *tag) decodeInt64Tag(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer, tmp []uint32) {
+func (t *tag) decodeInt64Tag(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
 	// decode integer type
 	intValuesPtr := generateInt64Slice(int(count))
 	intValues := *intValuesPtr
@@ -298,7 +311,7 @@ func (t *tag) decodeInt64Tag(decoder *encoding.BytesBlockDecoder, path string, c
 	encodeType := encoding.EncodeType(bb.Buf[0])
 	if encodeType == encoding.EncodeTypePlain {
 		bb.Buf = bb.Buf[1:]
-		t.decodeDefault(decoder, bb, count, path, tmp)
+		t.decodeDefault(decoder, bb, count, path)
 		return
 	}
 
@@ -320,7 +333,7 @@ func (t *tag) decodeInt64Tag(decoder *encoding.BytesBlockDecoder, path string, c
 	}
 }
 
-func (t *tag) decodeFloat64Tag(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer, tmp []uint32) {
+func (t *tag) decodeFloat64Tag(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer) {
 	// decode float type
 	intValuesPtr := generateInt64Slice(int(count))
 	intValues := *intValuesPtr
@@ -335,7 +348,7 @@ func (t *tag) decodeFloat64Tag(decoder *encoding.BytesBlockDecoder, path string,
 	encodeType := encoding.EncodeType(bb.Buf[0])
 	if encodeType == encoding.EncodeTypePlain {
 		bb.Buf = bb.Buf[1:]
-		t.decodeDefault(decoder, bb, count, path, tmp)
+		t.decodeDefault(decoder, bb, count, path)
 		return
 	}
 
@@ -365,12 +378,13 @@ func (t *tag) decodeFloat64Tag(decoder *encoding.BytesBlockDecoder, path string,
 	}
 }
 
-func (t *tag) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64, path string, tmp []uint32) {
+func (t *tag) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64, path string) {
 	encodeType := encoding.EncodeType(bb.Buf[0])
 	var err error
 	if encodeType == encoding.EncodeTypeDictionary {
-		dict := encoding.NewDictionary()
-		t.values, err = dict.Decode(t.values[:0], bb.Buf[1:], tmp, count)
+		dict := generateDictionary()
+		defer releaseDictionary(dict)
+		t.values, err = dict.Decode(t.values[:0], bb.Buf[1:], count)
 	} else {
 		t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
 	}

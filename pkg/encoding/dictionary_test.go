@@ -56,12 +56,10 @@ func TestEncodeAndDecodeDictionary(t *testing.T) {
 		dict.Add(value)
 	}
 
-	tmp := make([]uint32, 0)
-	encoded := dict.Encode(nil, tmp)
+	encoded := dict.Encode(nil)
 	decoded := make([][]byte, 0)
-	dict.values = dict.values[:0]
-	dict.indices = dict.indices[:0]
-	decoded, err := dict.Decode(decoded, encoded, tmp[:0], 5)
+	dict.Reset()
+	decoded, err := dict.Decode(decoded, encoded, 5)
 	require.NoError(t, err)
 
 	expectedValues := [][]byte{[]byte("skywalking"), []byte("banyandb"), []byte("hello"), []byte("world")}
@@ -93,15 +91,14 @@ func BenchmarkEncodeDictionary(b *testing.B) {
 			}
 
 			encoded := make([]byte, 0)
-			tmp := make([]uint32, 0)
-			encoded = dict.Encode(encoded, tmp)
+			encoded = dict.Encode(encoded)
 			compressedSize := len(encoded)
 			compressRatio := float64(rawSize) / float64(compressedSize)
 
 			b.ResetTimer()
 			b.ReportMetric(compressRatio, "compress_ratio")
 			for i := 0; i < b.N; i++ {
-				dict.Encode(encoded[:0], tmp[:0])
+				dict.Encode(encoded[:0])
 			}
 		})
 	}
@@ -117,13 +114,12 @@ func BenchmarkDecodeDictionary(b *testing.B) {
 				dict.Add(value)
 			}
 			encoded := make([]byte, 0)
-			tmp := make([]uint32, 0)
-			encoded = dict.Encode(encoded, tmp)
+			encoded = dict.Encode(encoded)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				decoded := NewDictionary()
-				_, err := decoded.Decode(values[:0], encoded, tmp[:0], uint64(p.count))
+				_, err := decoded.Decode(values[:0], encoded, uint64(p.count))
 				if err != nil {
 					b.Fatal(err)
 				}
