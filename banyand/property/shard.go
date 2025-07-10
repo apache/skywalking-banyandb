@@ -87,6 +87,7 @@ func (db *database) newShard(
 	id common.ShardID,
 	_ int64,
 	deleteExpireSec int64,
+	repairBaseDir string,
 	repairTreeSlotCount int,
 ) (*shard, error) {
 	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
@@ -109,7 +110,8 @@ func (db *database) newShard(
 	if si.store, err = inverted.NewStore(opts); err != nil {
 		return nil, err
 	}
-	si.repairState = newRepair(location, logger.Fetch(ctx, fmt.Sprintf("repair%d", id)),
+	repairBaseDir = path.Join(repairBaseDir, sName)
+	si.repairState = newRepair(location, repairBaseDir, logger.Fetch(ctx, fmt.Sprintf("repair%d", id)),
 		metricsFactory, repairBatchSearchSize, repairTreeSlotCount, db.repairScheduler)
 	return si, nil
 }

@@ -188,20 +188,25 @@ func TestBuildTree(t *testing.T) {
 				}
 			}()
 
-			dir, deferFunc, err := test.NewSpace()
+			dataDir, dataDeferFunc, err := test.NewSpace()
 			if err != nil {
 				t.Fatal(err)
 			}
-			defers = append(defers, deferFunc)
-			db, err := openDB(context.Background(), dir, 3*time.Second, time.Hour, 32,
-				observability.BypassRegistry, fs.NewLocalFileSystem(),
+			defers = append(defers, dataDeferFunc)
+			snapshotDir, snapshotDeferFunc, err := test.NewSpace()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defers = append(defers, snapshotDeferFunc)
+			db, err := openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32,
+				observability.BypassRegistry, fs.NewLocalFileSystem(), snapshotDir,
 				"@every 10m", time.Second*10, func(context.Context) (string, error) {
 					snapshotDir, defFunc, newSpaceErr := test.NewSpace()
 					if newSpaceErr != nil {
 						return "", newSpaceErr
 					}
 					defers = append(defers, defFunc)
-					return snapshotDir, copyDirRecursive(dir, snapshotDir)
+					return snapshotDir, copyDirRecursive(dataDir, snapshotDir)
 				})
 			if err != nil {
 				t.Fatal(err)
@@ -273,21 +278,25 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 		}
 	}()
 
-	dir, deferFunc, err := test.NewSpace()
+	dataDir, dataDeferFunc, err := test.NewSpace()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defers = append(defers, deferFunc)
-
-	db, err := openDB(context.Background(), dir, 3*time.Second, time.Hour, 32,
-		observability.BypassRegistry, fs.NewLocalFileSystem(),
+	defers = append(defers, dataDeferFunc)
+	snapshotDir, snapshotDeferFunc, err := test.NewSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defers = append(defers, snapshotDeferFunc)
+	db, err := openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32,
+		observability.BypassRegistry, fs.NewLocalFileSystem(), snapshotDir,
 		"@every 10m", time.Millisecond*50, func(context.Context) (string, error) {
-			snapshotDir, defFunc, newSpaceErr := test.NewSpace()
+			tmpDir, defFunc, newSpaceErr := test.NewSpace()
 			if newSpaceErr != nil {
 				return "", newSpaceErr
 			}
 			defers = append(defers, defFunc)
-			return snapshotDir, copyDirRecursive(dir, snapshotDir)
+			return tmpDir, copyDirRecursive(dataDir, tmpDir)
 		})
 	if err != nil {
 		t.Fatal(err)
@@ -310,6 +319,9 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 	// wait for the repair tree to be built
 	gomega.Eventually(func() bool {
 		tree, _ := newShard.repairState.treeReader(defaultGroupName)
+		if tree != nil {
+			_ = tree.close()
+		}
 		return tree != nil
 	}).WithTimeout(flags.EventuallyTimeout).Should(gomega.BeTrue())
 }
@@ -507,8 +519,11 @@ func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 	if reader == nil {
 		return nil
 	}
+	defer func() {
+		_ = reader.close()
+	}()
 
-	roots, err := reader.read(nil)
+	roots, err := reader.read(nil, 10)
 	if err != nil {
 		t.Fatalf("failed to read tree for group %s: %v", group, err)
 	}
@@ -521,7 +536,7 @@ func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 			shaValue: roots[0].shaValue,
 		},
 	}
-	slots, err := reader.read(roots[0])
+	slots, err := reader.read(roots[0], 10)
 	if err != nil {
 		t.Fatalf("failed to read slots for group %s: %v", group, err)
 	}
@@ -534,7 +549,7 @@ func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 			shaValue: slot.shaValue,
 		}
 		tree.root.children = append(tree.root.children, slotNode)
-		children, err := reader.read(slot)
+		children, err := reader.read(slot, 10)
 		if err != nil {
 			t.Fatalf("failed to read children for slot %s in group %s: %v", slot.id, group, err)
 		}

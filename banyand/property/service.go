@@ -62,6 +62,7 @@ type service struct {
 	root                     string
 	nodeID                   string
 	snapshotDir              string
+	repairDir                string
 	repairBuildTreeCron      string
 	flushTimeout             time.Duration
 	expireTimeout            time.Duration
@@ -115,6 +116,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
+	s.repairDir = filepath.Join(path, storage.RepairDir)
 	observability.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
@@ -126,7 +128,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	var err error
 	snapshotLis := &snapshotListener{s: s}
 	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs,
-		s.repairBuildTreeCron, s.repairQuickBuildTreeTime, func(ctx context.Context) (string, error) {
+		s.repairDir, s.repairBuildTreeCron, s.repairQuickBuildTreeTime, func(ctx context.Context) (string, error) {
 			res := snapshotLis.Rev(ctx,
 				bus.NewMessage(bus.MessageID(time.Now().UnixNano()), []*databasev1.SnapshotRequest_Group{}))
 			snpMsg := res.Data().(*databasev1.Snapshot)

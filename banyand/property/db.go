@@ -55,6 +55,7 @@ type database struct {
 	lfs                 fs.FileSystem
 	sLst                atomic.Pointer[[]*shard]
 	location            string
+	repairBaseDir       string
 	flushInterval       time.Duration
 	expireDelete        time.Duration
 	repairTreeSlotCount int
@@ -70,6 +71,7 @@ func openDB(
 	repairSlotCount int,
 	omr observability.MetricsRegistry,
 	lfs fs.FileSystem,
+	repairBaseDir string,
 	repairBuildTreeCron string,
 	repairQuickBuildTreeTime time.Duration,
 	buildSnapshotFunc func(context.Context) (string, error),
@@ -85,6 +87,7 @@ func openDB(
 		flushInterval:       flushInterval,
 		expireDelete:        expireToDeleteDuration,
 		repairTreeSlotCount: repairSlotCount,
+		repairBaseDir:       repairBaseDir,
 		lfs:                 lfs,
 	}
 	// init repair scheduler
@@ -178,7 +181,7 @@ func (db *database) loadShard(ctx context.Context, id common.ShardID) (*shard, e
 		return s, nil
 	}
 	sd, err := db.newShard(context.WithValue(ctx, logger.ContextKey, db.logger), id, int64(db.flushInterval.Seconds()),
-		int64(db.expireDelete.Seconds()), db.repairTreeSlotCount)
+		int64(db.expireDelete.Seconds()), db.repairBaseDir, db.repairTreeSlotCount)
 	if err != nil {
 		return nil, err
 	}

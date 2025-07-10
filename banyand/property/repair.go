@@ -75,21 +75,21 @@ type repair struct {
 
 func newRepair(
 	shardPath string,
+	repairPath string,
 	l *logger.Logger,
 	metricsFactory *observability.Factory,
 	batchSearchSize int,
 	treeSlotCount int,
 	scheduler *repairScheduler,
 ) *repair {
-	repairBase := path.Join(shardPath, "repair")
 	return &repair{
 		shardPath:                 shardPath,
 		l:                         l,
-		repairBasePath:            repairBase,
-		snapshotDir:               path.Join(repairBase, "snapshot"),
-		statePath:                 path.Join(repairBase, "state.json"),
-		composeSlotAppendFilePath: path.Join(repairBase, "state-append-%d.tmp"),
-		composeTreeFilePathFmt:    path.Join(repairBase, "state-tree-%s.data"),
+		repairBasePath:            repairPath,
+		snapshotDir:               path.Join(repairPath, "snapshot"),
+		statePath:                 path.Join(repairPath, "state.json"),
+		composeSlotAppendFilePath: path.Join(repairPath, "state-append-%d.tmp"),
+		composeTreeFilePathFmt:    path.Join(repairPath, "state-tree-%s.data"),
 		batchSearchSize:           batchSearchSize,
 		metrics:                   newRepairMetrics(metricsFactory),
 		scheduler:                 scheduler,
@@ -179,9 +179,6 @@ func (r *repair) buildTree(ctx context.Context, conf bluge.Config) error {
 
 	var latestProperty *searchingProperty
 	treeComposer := newRepairTreeComposer(r.composeSlotAppendFilePath, r.composeTreeFilePathFmt, r.treeSlotCount, r.l)
-	if err != nil {
-		return fmt.Errorf("creating repair tree composer failure: %w", err)
-	}
 	err = r.pageSearch(ctx, reader, topNSearch, func(sortValue [][]byte, shaValue string) error {
 		if len(sortValue) != 4 {
 			return fmt.Errorf("unexpected sort value length: %d", len(sortValue))
@@ -330,6 +327,7 @@ type repairTreeReader struct {
 	file   *os.File
 	reader *bufio.Reader
 	footer *repairTreeFooter
+	paging *repairTreeReaderPage
 }
 
 func (r *repair) treeReader(group string) (*repairTreeReader, error) {
@@ -358,15 +356,15 @@ func (r *repairTreeReader) readFoot() error {
 	if err != nil {
 		return fmt.Errorf("getting file stat for %s failure: %w", r.file.Name(), err)
 	}
-	footerOffset := stat.Size() - 1
+	footerOffset := stat.Size() - 8
 	if _, err = r.file.Seek(footerOffset, io.SeekStart); err != nil {
 		return fmt.Errorf("seeking to footer offset %d in file %s failure: %w", footerOffset, r.file.Name(), err)
 	}
-	var footLen uint8
+	var footLen int64
 	if err = binary.Read(r.file, binary.LittleEndian, &footLen); err != nil {
 		return fmt.Errorf("reading footer length from file %s failure: %w", r.file.Name(), err)
 	}
-	_, err = r.file.Seek(-(int64(footLen) + 1), io.SeekCurrent)
+	_, err = r.file.Seek(-(int64(footLen) + 8), io.SeekCurrent)
 	if err != nil {
 		return fmt.Errorf("seeking to start of footer in file %s failure: %w", r.file.Name(), err)
 	}
@@ -397,7 +395,7 @@ func (r *repairTreeReader) seekPosition(offset int64, whence int) error {
 	return nil
 }
 
-func (r *repairTreeReader) read(parent *repairTreeNode) ([]*repairTreeNode, error) {
+func (r *repairTreeReader) read(parent *repairTreeNode, pagingSize int64) ([]*repairTreeNode, error) {
 	if parent == nil {
 		// reading the root node
 		err := r.seekPosition(r.footer.slotNodeFinishedOffset, io.SeekStart)
@@ -421,15 +419,23 @@ func (r *repairTreeReader) read(parent *repairTreeNode) ([]*repairTreeNode, erro
 	}
 
 	var err error
-	nodes := make([]*repairTreeNode, 0)
 	if parent.tp == repairTreeNodeTypeRoot {
-		// reading the slot nodes
-		if err = r.seekPosition(r.footer.leafNodeFinishedOffset, io.SeekStart); err != nil {
-			return nil, fmt.Errorf("seeking to slot node offset %d in file %s failure: %w", r.footer.leafNodeFinishedOffset, r.file.Name(), err)
+		needSeek := false
+		if r.paging == nil || r.paging.lastNode != parent {
+			needSeek = true
+			r.paging = newRepairTreeReaderPage(parent, r.footer.slotNodeCount)
+		}
+		if needSeek {
+			// reading the slot nodes
+			if err = r.seekPosition(r.footer.leafNodeFinishedOffset, io.SeekStart); err != nil {
+				return nil, fmt.Errorf("seeking to slot node offset %d in file %s failure: %w", r.footer.leafNodeFinishedOffset, r.file.Name(), err)
+			}
 		}
 		var slotNodeIndex, leafStartOff, leafCount int64
 		var slotShaVal, slotDataBytes []byte
-		for i := int64(0); i < r.footer.slotNodeCount; i++ {
+		count := r.paging.nextPage(pagingSize)
+		nodes := make([]*repairTreeNode, 0, count)
+		for i := int64(0); i < count; i++ {
 			slotDataBytes, err = r.reader.ReadBytes(repairFileNewLine)
 			if err != nil {
 				return nil, fmt.Errorf("reading slot node data from file %s failure: %w", r.file.Name(), err)
@@ -465,12 +471,21 @@ func (r *repairTreeReader) read(parent *repairTreeNode) ([]*repairTreeNode, erro
 	}
 
 	// otherwise, reading the leaf nodes
-	err = r.seekPosition(parent.leafStart, io.SeekStart)
-	if err != nil {
-		return nil, fmt.Errorf("seeking to leaf node offset %d in file %s failure: %w", r.footer.leafNodeFinishedOffset, r.file.Name(), err)
+	needSeek := false
+	if r.paging == nil || r.paging.lastNode != parent {
+		needSeek = true
+		r.paging = newRepairTreeReaderPage(parent, r.footer.slotNodeCount)
+	}
+	if needSeek {
+		err = r.seekPosition(parent.leafStart, io.SeekStart)
+		if err != nil {
+			return nil, fmt.Errorf("seeking to leaf node offset %d in file %s failure: %w", r.footer.leafNodeFinishedOffset, r.file.Name(), err)
+		}
 	}
 	var entity, shaVal []byte
-	for i := int64(0); i < parent.leafCount; i++ {
+	count := r.paging.nextPage(pagingSize)
+	nodes := make([]*repairTreeNode, 0, count)
+	for i := int64(0); i < count; i++ {
 		leafDataBytes, err := r.reader.ReadBytes(repairFileNewLine)
 		if err != nil {
 			return nil, fmt.Errorf("reading leaf node data from file %s failure: %w", r.file.Name(), err)
@@ -490,6 +505,34 @@ func (r *repairTreeReader) read(parent *repairTreeNode) ([]*repairTreeNode, erro
 		})
 	}
 	return nodes, nil
+}
+
+func (r *repairTreeReader) close() error {
+	return r.file.Close()
+}
+
+type repairTreeReaderPage struct {
+	lastNode    *repairTreeNode
+	reduceCount int64
+}
+
+func newRepairTreeReaderPage(parent *repairTreeNode, totalChildCount int64) *repairTreeReaderPage {
+	return &repairTreeReaderPage{
+		lastNode:    parent,
+		reduceCount: totalChildCount,
+	}
+}
+
+func (r *repairTreeReaderPage) nextPage(count int64) int64 {
+	if r.reduceCount == 0 {
+		return 0
+	}
+	readCount := r.reduceCount - count
+	if readCount < 0 {
+		readCount = r.reduceCount
+	}
+	r.reduceCount -= readCount
+	return readCount
 }
 
 type repairTreeFooter struct {
@@ -556,16 +599,13 @@ func (r *repairTreeComposer) composeNextGroupAndSave(group string) (err error) {
 			err = multierr.Append(err, fmt.Errorf("closing repair tree builder for group %s failure: %w", group, closeErr))
 		}
 	}()
-	for _, f := range r.slotFiles {
+	for i, f := range r.slotFiles {
 		if f == nil {
 			continue
 		}
 		if err = treeBuilder.appendSlot(f); err != nil {
 			return fmt.Errorf("appending slot file %s to repair tree builder for group %s failure: %w", f.path, group, err)
 		}
-	}
-	// reset the slot files for the next group
-	for i := range r.slotFiles {
 		r.slotFiles[i] = nil
 	}
 	return treeBuilder.build()
@@ -723,7 +763,7 @@ func (r *repairTreeBuilder) build() (err error) {
 	data = encoding.VarInt64ToBytes(data, int64(len(r.Slots)))     // count of the slot nodes
 	data = encoding.VarInt64ToBytes(data, slotNodesFinishedOffset) // end offset of the root node
 	data = encoding.VarInt64ToBytes(data, int64(writedLen))        // length of the root node
-	footerLen := uint8(len(data))
+	footerLen := int64(len(data))
 
 	_, err = r.writer.Write(data)
 	if err != nil {
@@ -793,6 +833,7 @@ type repairScheduler struct {
 	metrics                   *repairSchedulerMetrics
 	buildTreeScheduleInterval time.Duration
 	quickBuildTreeTime        time.Duration
+	lastBuildTimeLocker       sync.Mutex
 	buildTreeLocker           sync.Mutex
 }
 
@@ -834,19 +875,28 @@ func newRepairScheduler(
 }
 
 func (r *repairScheduler) doRepairScheduler(t time.Time, triggerByCron bool) {
-	if !triggerByCron {
-		// if not triggered by cron, we need to check if the time is after the (last scheduled time + half of the interval)
-		if r.buildTreeClock.Now().After(r.latestBuildTreeSchedule.Add(r.buildTreeScheduleInterval / 2)) {
-			return
-		}
-	} else {
-		r.latestBuildTreeSchedule = t
+	if !r.verifyShouldExecute(t, triggerByCron) {
+		return
 	}
 
 	err := r.doRepair()
 	if err != nil {
 		r.l.Err(fmt.Errorf("repair build status failure: %w", err))
 	}
+}
+
+func (r *repairScheduler) verifyShouldExecute(t time.Time, triggerByCron bool) bool {
+	r.lastBuildTimeLocker.Lock()
+	defer r.lastBuildTimeLocker.Unlock()
+	if !triggerByCron {
+		// if not triggered by cron, we need to check if the time is after the (last scheduled time + half of the interval)
+		if r.buildTreeClock.Now().After(r.latestBuildTreeSchedule.Add(r.buildTreeScheduleInterval / 2)) {
+			return false
+		}
+	} else {
+		r.latestBuildTreeSchedule = t
+	}
+	return true
 }
 
 //nolint:contextcheck
