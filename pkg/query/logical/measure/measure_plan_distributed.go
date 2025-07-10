@@ -90,6 +90,13 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		Limit:           limit + ud.originalQuery.Offset,
 		OrderBy:         ud.originalQuery.OrderBy,
 	}
+	// push down groupBy, agg and top to data node and rewrite agg result to raw data
+	if ud.originalQuery.Agg != nil && ud.originalQuery.Top != nil {
+		temp.RewriteAggTopNResult = true
+		temp.Agg = ud.originalQuery.Agg
+		temp.Top = ud.originalQuery.Top
+		temp.GroupBy = ud.originalQuery.GroupBy
+	}
 	if ud.groupByEntity {
 		e := s.EntityList()[0]
 		sortTagSpec := s.FindTagSpecByName(e)

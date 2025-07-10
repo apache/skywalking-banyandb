@@ -20,6 +20,7 @@ Release Notes.
 - Add Load Balancer Feature to Liaison. 
 - Implement fadvise for large files to prevent page cache pollution.
 - Data Model: Introduce the `Trace` data model to store the trace/span data.
+- Push down aggregation for topN query.
 
 ### Bug Fixes
 
