@@ -64,3 +64,5 @@ gomock_reflect*
 
 # profile result
 *.prof
+
+azureite_data/

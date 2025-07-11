@@ -46,4 +46,23 @@ endpoint_url = http://127.0.0.1:9481`
 
 	// MinioRootPassword is the root password for MinIO.
 	MinioRootPassword = "minioadmin"
+
+	// Azurite constants
+	// AzuriteContainerName is the name of the Azurite container.
+	AzuriteContainerName = "banyandb-azurite-test"
+
+	// AzuritePort is the blob service port of Azurite.
+	AzuritePort = "10000"
+
+	// AzuriteEndpoint is the host endpoint of Azurite blob service.
+	AzuriteEndpoint = "127.0.0.1:" + AzuritePort
+
+	// AzuriteConnStr is the Azure SDK connection string pointing to the local Azurite instance.
+	// This is the well-known connection string for Azurite with default credentials.
+	AzuriteConnStr = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;" +
+		"AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;" +
+		"BlobEndpoint=http://127.0.0.1:" + AzuritePort + "/devstoreaccount1;"
+
+	// AzuriteContainer is the default container (bucket) used in tests.
+	AzuriteContainer = "test-container"
 )
