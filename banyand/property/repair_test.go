@@ -622,6 +622,9 @@ func copyFile(srcFile, dstFile string) (err error) {
 func copyDirRecursive(srcDir, dstDir string) error {
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 
