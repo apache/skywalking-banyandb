@@ -865,12 +865,10 @@ func newRepairScheduler(
 	if err != nil {
 		return nil, fmt.Errorf("failed to add repair build tree cron task: %w", err)
 	}
-	interval, nextTime, exist := c.Interval("repair")
-	if !exist {
-		return nil, fmt.Errorf("failed to get repair build tree cron task interval")
+	err = s.initializeInterval()
+	if err != nil {
+		return nil, err
 	}
-	s.buildTreeScheduleInterval = interval
-	s.latestBuildTreeSchedule = nextTime.Add(-interval)
 	return s, nil
 }
 
@@ -897,6 +895,18 @@ func (r *repairScheduler) verifyShouldExecute(t time.Time, triggerByCron bool) b
 		r.latestBuildTreeSchedule = t
 	}
 	return true
+}
+
+func (r *repairScheduler) initializeInterval() error {
+	r.lastBuildTimeLocker.Lock()
+	defer r.lastBuildTimeLocker.Unlock()
+	interval, nextTime, exist := r.repairTreeScheduler.Interval("repair")
+	if !exist {
+		return fmt.Errorf("failed to get repair build tree cron task interval")
+	}
+	r.buildTreeScheduleInterval = interval
+	r.latestBuildTreeSchedule = nextTime.Add(-interval)
+	return nil
 }
 
 //nolint:contextcheck
