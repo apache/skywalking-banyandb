@@ -193,6 +193,13 @@
     - [StreamRegistryService](#banyandb-database-v1-StreamRegistryService)
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
   
+- [banyandb/gossip/v1/message.proto](#banyandb_gossip_v1_message-proto)
+    - [FutureCallbackMessageRequest](#banyandb-gossip-v1-FutureCallbackMessageRequest)
+    - [FutureCallbackMessageResponse](#banyandb-gossip-v1-FutureCallbackMessageResponse)
+    - [PropagationContext](#banyandb-gossip-v1-PropagationContext)
+    - [PropagationMessageRequest](#banyandb-gossip-v1-PropagationMessageRequest)
+    - [PropagationMessageResponse](#banyandb-gossip-v1-PropagationMessageResponse)
+  
 - [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
     - [DataPoint](#banyandb-measure-v1-DataPoint)
     - [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field)
@@ -2934,6 +2941,101 @@ Type determine the index structure under the hood
 | Get | [TopNAggregationRegistryServiceGetRequest](#banyandb-database-v1-TopNAggregationRegistryServiceGetRequest) | [TopNAggregationRegistryServiceGetResponse](#banyandb-database-v1-TopNAggregationRegistryServiceGetResponse) |  |
 | List | [TopNAggregationRegistryServiceListRequest](#banyandb-database-v1-TopNAggregationRegistryServiceListRequest) | [TopNAggregationRegistryServiceListResponse](#banyandb-database-v1-TopNAggregationRegistryServiceListResponse) |  |
 | Exist | [TopNAggregationRegistryServiceExistRequest](#banyandb-database-v1-TopNAggregationRegistryServiceExistRequest) | [TopNAggregationRegistryServiceExistResponse](#banyandb-database-v1-TopNAggregationRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+
+ 
+
+
+
+<a name="banyandb_gossip_v1_message-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/gossip/v1/message.proto
+
+
+
+<a name="banyandb-gossip-v1-FutureCallbackMessageRequest"></a>
+
+### FutureCallbackMessageRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| topic | [string](#string) |  |  |
+| message_id | [uint64](#uint64) |  |  |
+| response | [PropagationMessageResponse](#banyandb-gossip-v1-PropagationMessageResponse) |  |  |
+
+
+
+
+
+
+<a name="banyandb-gossip-v1-FutureCallbackMessageResponse"></a>
+
+### FutureCallbackMessageResponse
+
+
+
+
+
+
+
+<a name="banyandb-gossip-v1-PropagationContext"></a>
+
+### PropagationContext
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [string](#string) | repeated |  |
+| max_propagation_count | [int32](#int32) |  |  |
+| origin_node | [string](#string) |  |  |
+| origin_message_id | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-gossip-v1-PropagationMessageRequest"></a>
+
+### PropagationMessageRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| topic | [string](#string) |  |  |
+| message_id | [uint64](#uint64) |  |  |
+| context | [PropagationContext](#banyandb-gossip-v1-PropagationContext) |  |  |
+| body | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+<a name="banyandb-gossip-v1-PropagationMessageResponse"></a>
+
+### PropagationMessageResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| error | [string](#string) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
 
  
 

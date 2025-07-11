@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/gossip"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -51,6 +52,7 @@ var (
 type service struct {
 	metadata            metadata.Repo
 	pipeline            queue.Server
+	gossipMessenger     gossip.Messenger
 	omr                 observability.MetricsRegistry
 	lfs                 fs.FileSystem
 	close               chan struct{}
@@ -137,7 +139,7 @@ func (s *service) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory, messenger gossip.Messenger) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,
@@ -145,5 +147,7 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability
 		db:       &database{},
 		pm:       pm,
 		close:    make(chan struct{}),
+
+		gossipMessenger: messenger,
 	}, nil
 }
