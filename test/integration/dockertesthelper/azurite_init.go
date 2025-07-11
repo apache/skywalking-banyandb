@@ -40,7 +40,7 @@ func InitAzuriteContainer() error {
 	var err error
 	azuritePool, err = dockertest.NewPool("")
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDockerUnavailable, err)
+		return errors.Join(ErrDockerUnavailable, err)
 	}
 
 	// Ensure any existing container is removed first.
