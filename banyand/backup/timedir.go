@@ -29,7 +29,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
+	remoteconfig "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 )
 
 // NewTimeDirCommand creates a new time-dir command.
@@ -51,9 +51,13 @@ func NewTimeDirCommand() *cobra.Command {
 func newListCmd() *cobra.Command {
 	var (
 		dest     string
-		fsConfig config.FsConfig
+		fsConfig remoteconfig.FsConfig
 		prefix   string
 	)
+	// Initialize nested structs to avoid nil pointer when binding flags
+	fsConfig.S3 = &remoteconfig.S3Config{}
+	fsConfig.Azure = &remoteconfig.AzureConfig{}
+
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List remote time directories in the remote file system",

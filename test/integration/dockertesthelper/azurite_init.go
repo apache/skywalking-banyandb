@@ -18,6 +18,7 @@
 package dockertesthelper
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -31,12 +32,15 @@ var (
 	azuriteRes  *dockertest.Resource
 )
 
+// ErrDockerUnavailable is returned when the Docker daemon cannot be reached.
+var ErrDockerUnavailable = errors.New("docker unavailable")
+
 // InitAzuriteContainer starts a fresh Azurite container for integration tests.
 func InitAzuriteContainer() error {
 	var err error
 	azuritePool, err = dockertest.NewPool("")
 	if err != nil {
-		return fmt.Errorf("cannot connect to Docker: %w", err)
+		return fmt.Errorf("%w: %v", ErrDockerUnavailable, err)
 	}
 
 	// Ensure any existing container is removed first.

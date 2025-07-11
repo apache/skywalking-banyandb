@@ -34,7 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
-	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
+	remoteconfig "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -67,8 +67,12 @@ func newRunCommand() *cobra.Command {
 		streamRoot   string
 		measureRoot  string
 		propertyRoot string
-		fsConfig     config2.FsConfig
+		fsConfig     remoteconfig.FsConfig
 	)
+	// Initialize nested structs to avoid nil pointer during flag binding
+	fsConfig.S3 = &remoteconfig.S3Config{}
+	fsConfig.Azure = &remoteconfig.AzureConfig{}
+
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Restore BanyanDB data from remote storage",
