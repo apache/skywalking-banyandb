@@ -588,7 +588,13 @@ type repairTestTreeNode struct {
 	children []*repairTestTreeNode
 }
 
-func copyFile(srcFile, dstFile string) error {
+func copyFile(srcFile, dstFile string) (err error) {
+	defer func() {
+		// in the file not found, means the db is cleaning
+		if err != nil && os.IsNotExist(err) {
+			err = nil
+		}
+	}()
 	src, err := os.Open(srcFile)
 	if err != nil {
 		return err
@@ -616,14 +622,14 @@ func copyFile(srcFile, dstFile string) error {
 func copyDirRecursive(srcDir, dstDir string) error {
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
 			return err
 		}
 
 		relPath, err := filepath.Rel(srcDir, path)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		dstPath := filepath.Join(dstDir, relPath)
