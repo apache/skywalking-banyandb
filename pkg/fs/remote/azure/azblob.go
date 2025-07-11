@@ -47,16 +47,46 @@ type blobFS struct {
 // NewFS creates a new Azure Blob Storage backed FS.
 // The input path must be in the form <container>/<optional-basePath> (without leading slash).
 func NewFS(p string, cfg *config.FsConfig) (remote.FS, error) {
-	basePath := strings.Trim(p, "/")
-
-	if cfg == nil || cfg.Azure == nil {
-		return nil, fmt.Errorf("azure config is required")
+	// Ensure cfg and its Azure section are non-nil so that callers are not
+	// forced to always prepare them in advance. This makes the function more
+	// ergonomic when the destination URL already contains enough information
+	// (which is the case for the backup CLI & tests).
+	if cfg == nil {
+		cfg = &config.FsConfig{}
 	}
+	if cfg.Azure == nil {
+		cfg.Azure = &config.AzureConfig{}
+	}
+
+	// Normalise the supplied path and try to infer the container name if it
+	// hasn't been provided via cfg.Azure.Container.
+	rawPath := strings.Trim(p, "/")
 
 	containerName := cfg.Azure.Container
 	if containerName == "" {
-		return nil, fmt.Errorf("container name must be specified in config")
+		// Extract the first segment of the path as the container name.
+		parts := strings.SplitN(rawPath, "/", 2)
+		if len(parts) == 0 || parts[0] == "" {
+			return nil, fmt.Errorf("container name must be specified either in config or path")
+		}
+		containerName = parts[0]
+		cfg.Azure.Container = containerName
+		if len(parts) == 2 {
+			rawPath = parts[1]
+		} else {
+			rawPath = ""
+		}
+	} else {
+		// Remove duplicated container prefix if caller already passed it via the path.
+		prefix := containerName + "/"
+		if strings.HasPrefix(rawPath, prefix) {
+			rawPath = strings.TrimPrefix(rawPath, prefix)
+		}
 	}
+
+	// Ensure basePath does not start with a leading slash to avoid blobs having
+	// an extra leading segment and to make listing logic consistent.
+	basePath := strings.TrimPrefix(rawPath, "/")
 
 	client, err := buildClient(cfg)
 	if err != nil {
@@ -164,7 +194,7 @@ func (b *blobFS) Upload(ctx context.Context, p string, data io.Reader) error {
 	// set metadata
 	blobClient := b.client.ServiceClient().NewContainerClient(b.container).NewBlobClient(blobName)
 	metadata := map[string]*string{
-		"checksum-sha256": ptr(hash),
+		"checksum_sha256": ptr(hash),
 	}
 	_, err = blobClient.SetMetadata(ctx, metadata, nil)
 	if err != nil {
@@ -185,9 +215,15 @@ func (b *blobFS) Download(ctx context.Context, p string) (io.ReadCloser, error) 
 		return nil, err
 	}
 
+	const checksumKey = "checksum_sha256"
 	expected := ""
-	if resp.Metadata != nil && resp.Metadata["checksum-sha256"] != nil {
-		expected = *resp.Metadata["checksum-sha256"]
+	if resp.Metadata != nil {
+		for k, v := range resp.Metadata {
+			if strings.EqualFold(k, checksumKey) && v != nil {
+				expected = *v
+				break
+			}
+		}
 	}
 	if expected == "" {
 		_ = resp.Body.Close()

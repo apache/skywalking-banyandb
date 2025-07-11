@@ -36,11 +36,11 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
-	"github.com/apache/skywalking-banyandb/pkg/config"
+	cfg "github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/azure"
-	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
+	remoteconfig "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -48,7 +48,7 @@ import (
 )
 
 type backupOptions struct {
-	fsConfig     config2.FsConfig
+	fsConfig     remoteconfig.FsConfig
 	gRPCAddr     string
 	cert         string
 	timeStyle    string
@@ -64,13 +64,18 @@ type backupOptions struct {
 // NewBackupCommand creates a new backup command.
 func NewBackupCommand() *cobra.Command {
 	var backupOpts backupOptions
+	// Initialize nested config structs to avoid nil dereference when
+	// binding cobra flags below. This fixes a panic observed in tests when
+	// accessing fields of FsConfig.S3/Azure before they were allocated.
+	backupOpts.fsConfig.S3 = &remoteconfig.S3Config{}
+	backupOpts.fsConfig.Azure = &remoteconfig.AzureConfig{}
 	logging := logger.Logging{}
 	cmd := &cobra.Command{
 		Short:             "Backup BanyanDB snapshots to remote storage",
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := config.Load("logging", cmd.Flags()); err != nil {
+			if err := cfg.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
 			if err := logger.Init(logging); err != nil {
@@ -165,7 +170,7 @@ func backupAction(options backupOptions) error {
 	return err
 }
 
-func newFS(dest string, config *config2.FsConfig) (remote.FS, error) {
+func newFS(dest string, config *remoteconfig.FsConfig) (remote.FS, error) {
 	u, err := url.Parse(dest)
 	if err != nil {
 		return nil, fmt.Errorf("invalid dest URL: %w", err)
