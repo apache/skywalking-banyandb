@@ -53,6 +53,8 @@ const (
 	DirPerm = 0o700
 	// SnapshotsDir is the directory for snapshots.
 	SnapshotsDir = "snapshots"
+	// RepairDir is the directory for repairs.
+	RepairDir = "repairs"
 	// DataDir is the directory for data.
 	DataDir = "data"
 	// FilePerm is the permission of the file.

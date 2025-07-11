@@ -79,8 +79,6 @@ func DecimalIntListToFloat64List(dst []float64, values []int64, exponent int16, 
 // However, if the input is really 3.10000000000000009, this may result in loss of accuracy.
 func countDecimalPlaces(f float64, maxPlace int) int16 {
 	for i := 0; i < maxPlace; i++ {
-		modf, frac := math.Modf(f)
-		fmt.Println(modf, frac)
 		if math.Abs(f-math.Round(f)) < 1e-9 {
 			return int16(i)
 		}
