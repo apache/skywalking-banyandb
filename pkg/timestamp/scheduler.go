@@ -124,6 +124,22 @@ func (s *Scheduler) Trigger(name string) bool {
 	return true
 }
 
+// Interval returns the duration between two consecutive executions of the task.
+// If the task is not registered, it returns false.
+func (s *Scheduler) Interval(name string) (interval time.Duration, next time.Time, exist bool) {
+	var t *task
+	var ok bool
+	s.RLock()
+	t, ok = s.tasks[name]
+	s.RUnlock()
+	if !ok {
+		return
+	}
+	t1 := t.schedule.Next(t.clock.Now())
+	t2 := t.schedule.Next(t1)
+	return t2.Sub(t1), t1, true
+}
+
 // Closed returns whether the Scheduler is closed.
 func (s *Scheduler) Closed() bool {
 	s.RLock()
