@@ -91,12 +91,18 @@ func TestMergeDeleted(t *testing.T) {
 				}
 			}()
 
-			dir, deferFunc, err := test.NewSpace()
+			dataDir, dataDeferFunc, err := test.NewSpace()
 			if err != nil {
 				t.Fatal(err)
 			}
-			defers = append(defers, deferFunc)
-			db, err := openDB(context.Background(), dir, 3*time.Second, tt.expireDeletionTime, observability.BypassRegistry, fs.NewLocalFileSystem())
+			defers = append(defers, dataDeferFunc)
+			snapshotDir, snapshotDeferFunc, err := test.NewSpace()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defers = append(defers, snapshotDeferFunc)
+			db, err := openDB(context.Background(), dataDir, 3*time.Second, tt.expireDeletionTime, 32, observability.BypassRegistry, fs.NewLocalFileSystem(),
+				snapshotDir, "@every 10m", time.Second*10, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -294,12 +300,18 @@ func TestRepair(t *testing.T) {
 				}
 			}()
 
-			dir, deferFunc, err := test.NewSpace()
+			dataDir, dataDeferFunc, err := test.NewSpace()
 			if err != nil {
 				t.Fatal(err)
 			}
-			defers = append(defers, deferFunc)
-			db, err := openDB(context.Background(), dir, 3*time.Second, 1*time.Hour, observability.BypassRegistry, fs.NewLocalFileSystem())
+			defers = append(defers, dataDeferFunc)
+			snapshotDir, snapshotDeferFunc, err := test.NewSpace()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defers = append(defers, snapshotDeferFunc)
+			db, err := openDB(context.Background(), dataDir, 3*time.Second, 1*time.Hour, 32, observability.BypassRegistry, fs.NewLocalFileSystem(),
+				snapshotDir, "@every 10m", time.Second*10, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

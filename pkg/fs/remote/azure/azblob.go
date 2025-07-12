@@ -79,9 +79,9 @@ func NewFS(p string, cfg *config.FsConfig) (remote.FS, error) {
 	} else {
 		// Remove duplicated container prefix if caller already passed it via the path.
 		prefix := containerName + "/"
-		if strings.HasPrefix(rawPath, prefix) {
-			rawPath = strings.TrimPrefix(rawPath, prefix)
-		}
+		// Always attempt to trim the container prefix; TrimPrefix is safe even if
+		// rawPath does not start with the prefix.
+		rawPath = strings.TrimPrefix(rawPath, prefix)
 	}
 
 	// Ensure basePath does not start with a leading slash to avoid blobs having
