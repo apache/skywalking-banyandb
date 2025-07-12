@@ -149,3 +149,5 @@ catalog:
         path: "/concept/tsdb"
       - name: "Data Rotation"
         path: "/concept/rotation"
+      - name: "Property Background Repair"
+        paht: "/concept/property-repair"
