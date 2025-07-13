@@ -95,6 +95,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		temp.GroupBy = ud.originalQuery.GroupBy
 		temp.Agg = ud.originalQuery.Agg
 	}
+	// push down groupBy, agg and top to data node and rewrite agg result to raw data
 	if ud.originalQuery.Agg != nil && ud.originalQuery.Top != nil {
 		temp.RewriteAggTopNResult = true
 		temp.Agg = ud.originalQuery.Agg
