@@ -114,7 +114,8 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
 		plan = newUnresolvedAggregation(plan,
 			&logical.Field{Name: topNAggSchema.FieldName},
 			criteria.GetAgg(),
-			true)
+			true,
+			false)
 	}
 
 	plan = top(plan, &measurev1.QueryRequest_Top{

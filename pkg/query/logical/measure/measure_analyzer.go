@@ -24,6 +24,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -109,6 +110,7 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
+			false,
 		)
 		pushedLimit = math.MaxInt
 	}
@@ -153,6 +155,10 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	}
 	pushedLimit := int(limitParameter + criteria.GetOffset())
 
+	needCompletePushDownAgg := criteria.GetAgg() != nil &&
+		criteria.GetAgg().GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN &&
+		criteria.GetTop() == nil
+
 	if criteria.GetGroupBy() != nil {
 		plan = newUnresolvedGroupBy(plan, groupByTags, false)
 		pushedLimit = math.MaxInt
@@ -163,6 +169,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
+			needCompletePushDownAgg,
 		)
 		pushedLimit = math.MaxInt
 	}
