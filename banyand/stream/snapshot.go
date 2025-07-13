@@ -56,6 +56,7 @@ const (
 	snapshotCreatorFlusher
 	snapshotCreatorMerger
 	snapshotCreatorMergedFlusher
+	snapshotCreatorSyncer
 )
 
 type snapshot struct {
@@ -247,7 +248,7 @@ func (tst *tsTable) createMetadata(dst string, snapshot *snapshot) {
 	}
 }
 
-func (s *service) takeGroupSnapshot(dstDir string, groupName string) error {
+func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) error {
 	group, ok := s.schemaRepo.LoadGroup(groupName)
 	if !ok {
 		return errors.Errorf("group %s not found", groupName)
@@ -265,7 +266,7 @@ func (s *service) takeGroupSnapshot(dstDir string, groupName string) error {
 
 type snapshotListener struct {
 	*bus.UnImplementedHealthyListener
-	s           *service
+	s           *standalone
 	snapshotSeq uint64
 	snapshotMux sync.Mutex
 }

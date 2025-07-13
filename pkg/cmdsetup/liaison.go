@@ -31,9 +31,11 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/banyand/queue/sub"
+	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -50,13 +52,19 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	tire1Client := pub.New(metaSvc, databasev1.Role_ROLE_LIAISON)
 	tire2Client := pub.New(metaSvc, databasev1.Role_ROLE_DATA)
 	localPipeline := queue.Local()
+
 	measureLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)
 	measureLiaisonNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, tire1Client, measureLiaisonNodeSel)
 	measureDataNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)
 	metricSvc := observability.NewMetricService(metaSvc, tire1Client, "liaison", measureLiaisonNodeRegistry)
+	pm := protector.NewMemory(metricSvc)
 	internalPipeline := sub.NewServerWithPorts(metricSvc, "liaison-server", 18912, 18913)
+	streamDataNodeSel := node.NewRoundRobinSelector(data.TopicStreamPartSync.String(), metaSvc)
+	streamSVC, err := stream.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, streamDataNodeSel, tire2Client)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate stream liaison service")
+	}
 	streamLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
-	streamDataNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
 	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
 	topNPipeline := queue.Local()
 	dQuery, err := dquery.NewService(metaSvc, localPipeline, tire2Client, topNPipeline, metricSvc)
@@ -67,7 +75,6 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		MeasureLiaisonNodeRegistry: measureLiaisonNodeRegistry,
 		MeasureDataNodeRegistry:    grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, tire2Client, measureDataNodeSel),
 		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
-		StreamDataNodeRegistry:     grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire2Client, streamDataNodeSel),
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
 	}, metricSvc, dQuery, internalPipeline)
 	profSvc := observability.NewProfService()
@@ -86,6 +93,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		streamLiaisonNodeSel,
 		streamDataNodeSel,
 		propertyNodeSel,
+		streamSVC,
 		dQuery,
 		grpcServer,
 		httpServer,

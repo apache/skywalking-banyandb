@@ -84,18 +84,18 @@ func (tst *tsTable) incTotalBatchIntroLatency(delta float64) {
 	tst.metrics.totalBatchIntroLatency.Inc(delta)
 }
 
-func (tst *tsTable) incTotalIntroduceLoopStarted(delta int, phase string) {
+func (tst *tsTable) incTotalIntroduceLoopStarted(phase string) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
-	tst.metrics.totalIntroduceLoopStarted.Inc(float64(delta), phase)
+	tst.metrics.totalIntroduceLoopStarted.Inc(1, phase)
 }
 
-func (tst *tsTable) incTotalIntroduceLoopFinished(delta int, phase string) {
+func (tst *tsTable) incTotalIntroduceLoopFinished(phase string) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
-	tst.metrics.totalIntroduceLoopFinished.Inc(float64(delta), phase)
+	tst.metrics.totalIntroduceLoopFinished.Inc(1, phase)
 }
 
 func (tst *tsTable) incTotalFlushLoopStarted(delta int) {

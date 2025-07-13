@@ -74,7 +74,6 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	grpcServer := grpc.NewServer(ctx, liaisonPipeline, dataPipeline, dataPipeline, nil, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: nr,
 		MeasureDataNodeRegistry:    nr,
-		StreamDataNodeRegistry:     nr,
 		StreamLiaisonNodeRegistry:  nr,
 		PropertyNodeRegistry:       nr,
 	}, metricSvc, measureSvc, liaisonPipeline)

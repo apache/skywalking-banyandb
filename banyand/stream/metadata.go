@@ -31,11 +31,12 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
@@ -57,7 +58,7 @@ type schemaRepo struct {
 	path     string
 }
 
-func newSchemaRepo(path string, svc *service, nodeLabels map[string]string) schemaRepo {
+func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string) schemaRepo {
 	sr := schemaRepo{
 		l:        svc.l,
 		path:     path,
@@ -66,6 +67,22 @@ func newSchemaRepo(path string, svc *service, nodeLabels map[string]string) sche
 			svc.metadata,
 			svc.l,
 			newSupplier(path, svc, nodeLabels),
+			resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
+		),
+	}
+	sr.start()
+	return sr
+}
+
+func newLiaisonSchemaRepo(path string, svc *liaison, streamDataNodeRegistry grpc.NodeRegistry) schemaRepo {
+	sr := schemaRepo{
+		l:        svc.l,
+		path:     path,
+		metadata: svc.metadata,
+		Repository: resourceSchema.NewRepository(
+			svc.metadata,
+			svc.l,
+			newQueueSupplier(path, svc, streamDataNodeRegistry),
 			resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 		),
 	}
@@ -242,21 +259,32 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
+func (sr *schemaRepo) loadQueue(groupName string) (*wqueue.Queue[*tsTable, option], error) {
+	g, ok := sr.LoadGroup(groupName)
+	if !ok {
+		return nil, fmt.Errorf("group %s not found", groupName)
+	}
+	db := g.SupplyTSDB()
+	if db == nil {
+		return nil, fmt.Errorf("queue for group %s not found", groupName)
+	}
+	return db.(*wqueue.Queue[*tsTable, option]), nil
+}
+
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
 	metadata   metadata.Repo
-	pipeline   queue.Queue
 	omr        observability.MetricsRegistry
-	l          *logger.Logger
 	pm         protector.Memory
+	l          *logger.Logger
 	schemaRepo *schemaRepo
 	nodeLabels map[string]string
 	path       string
 	option     option
 }
 
-func newSupplier(path string, svc *service, nodeLabels map[string]string) *supplier {
+func newSupplier(path string, svc *standalone, nodeLabels map[string]string) *supplier {
 	if svc.pm == nil {
 		svc.l.Panic().Msg("CRITICAL: svc.pm is nil in newSupplier")
 	}
@@ -270,7 +298,6 @@ func newSupplier(path string, svc *service, nodeLabels map[string]string) *suppl
 	return &supplier{
 		metadata:   svc.metadata,
 		l:          svc.l,
-		pipeline:   svc.localPipeline,
 		option:     opt,
 		omr:        svc.omr,
 		pm:         svc.pm,
@@ -380,4 +407,94 @@ func (s *portableSupplier) OpenResource(spec resourceSchema.Resource) (resourceS
 	return openStream(streamSpec{
 		schema: streamSchema,
 	}, s.l, nil, nil), nil
+}
+
+var _ resourceSchema.ResourceSupplier = (*queueSupplier)(nil)
+
+type queueSupplier struct {
+	metadata               metadata.Repo
+	omr                    observability.MetricsRegistry
+	pm                     protector.Memory
+	streamDataNodeRegistry grpc.NodeRegistry
+	l                      *logger.Logger
+	schemaRepo             *schemaRepo
+	path                   string
+	option                 option
+}
+
+func newQueueSupplier(path string, svc *liaison, streamDataNodeRegistry grpc.NodeRegistry) *queueSupplier {
+	if svc.pm == nil {
+		svc.l.Panic().Msg("CRITICAL: svc.pm is nil in newSupplier")
+	}
+	opt := svc.option
+	opt.protector = svc.pm
+
+	if opt.protector == nil {
+		svc.l.Panic().Msg("CRITICAL: opt.protector is still nil after assignment")
+	}
+
+	return &queueSupplier{
+		metadata:               svc.metadata,
+		l:                      svc.l,
+		option:                 opt,
+		omr:                    svc.omr,
+		pm:                     svc.pm,
+		path:                   path,
+		schemaRepo:             &svc.schemaRepo,
+		streamDataNodeRegistry: streamDataNodeRegistry,
+	}
+}
+
+func (s *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
+	streamSchema := spec.Schema().(*databasev1.Stream)
+	return openStream(streamSpec{
+		schema: streamSchema,
+	}, s.l, s.pm, s.schemaRepo), nil
+}
+
+func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.metadata.StreamRegistry().GetStream(ctx, md)
+}
+
+func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {
+	name := groupSchema.Metadata.Name
+	p := common.Position{
+		Module:   "stream",
+		Database: name,
+	}
+	ro := groupSchema.ResourceOpts
+	if ro == nil {
+		return nil, fmt.Errorf("no resource opts in group %s", name)
+	}
+	shardNum := ro.ShardNum
+	group := groupSchema.Metadata.Name
+	opts := wqueue.Opts[*tsTable, option]{
+		Group:           group,
+		ShardNum:        shardNum,
+		Location:        path.Join(s.path, group),
+		Option:          s.option,
+		Metrics:         s.newMetrics(p),
+		SubQueueCreator: newWriteQueue,
+		GetNodes: func(shardID common.ShardID) []string {
+			copies := ro.Replicas + 1
+			nodes := make([]string, 0, copies)
+			for i := uint32(0); i < copies; i++ {
+				nodeID, err := s.streamDataNodeRegistry.Locate(group, "", uint32(shardID), i)
+				if err != nil {
+					s.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Uint32("copy", i).Msg("failed to locate node")
+					return nil
+				}
+				nodes = append(nodes, nodeID)
+			}
+			return nodes
+		},
+	}
+	return wqueue.Open(
+		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
+			return p
+		}),
+		opts, group,
+	)
 }

@@ -49,6 +49,10 @@ type metrics struct {
 	totalMergeLoopFinished meter.Counter
 	totalMergeLoopErr      meter.Counter
 
+	totalSyncLoopStarted  meter.Counter
+	totalSyncLoopFinished meter.Counter
+	totalSyncLoopErr      meter.Counter
+
 	totalFlushLoopProgress   meter.Counter
 	totalFlushed             meter.Counter
 	totalFlushedMemParts     meter.Counter
@@ -83,18 +87,18 @@ func (tst *tsTable) incTotalBatchIntroLatency(delta float64) {
 	tst.metrics.totalBatchIntroLatency.Inc(delta)
 }
 
-func (tst *tsTable) incTotalIntroduceLoopStarted(delta int, phase string) {
+func (tst *tsTable) incTotalIntroduceLoopStarted(phase string) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
-	tst.metrics.totalIntroduceLoopStarted.Inc(float64(delta), phase)
+	tst.metrics.totalIntroduceLoopStarted.Inc(1, phase)
 }
 
-func (tst *tsTable) incTotalIntroduceLoopFinished(delta int, phase string) {
+func (tst *tsTable) incTotalIntroduceLoopFinished(phase string) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
-	tst.metrics.totalIntroduceLoopFinished.Inc(float64(delta), phase)
+	tst.metrics.totalIntroduceLoopFinished.Inc(1, phase)
 }
 
 func (tst *tsTable) incTotalFlushLoopStarted(delta int) {
@@ -137,6 +141,27 @@ func (tst *tsTable) incTotalMergeLoopErr(delta int) {
 		return
 	}
 	tst.metrics.totalMergeLoopErr.Inc(float64(delta))
+}
+
+func (tst *tsTable) incTotalSyncLoopStarted(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalSyncLoopStarted.Inc(float64(delta))
+}
+
+func (tst *tsTable) incTotalSyncLoopFinished(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalSyncLoopFinished.Inc(float64(delta))
+}
+
+func (tst *tsTable) incTotalSyncLoopErr(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalSyncLoopErr.Inc(float64(delta))
 }
 
 func (tst *tsTable) incTotalFlushLoopProgress(delta int) {
@@ -232,6 +257,10 @@ func (m *metrics) DeleteAll() {
 	m.totalMergeLoopFinished.Delete()
 	m.totalMergeLoopErr.Delete()
 
+	m.totalSyncLoopStarted.Delete()
+	m.totalSyncLoopFinished.Delete()
+	m.totalSyncLoopErr.Delete()
+
 	m.totalFlushLoopProgress.Delete()
 	m.totalFlushed.Delete()
 	m.totalFlushedMemParts.Delete()
@@ -261,6 +290,52 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		totalMergeLoopStarted:      factory.NewCounter("total_merge_loop_started"),
 		totalMergeLoopFinished:     factory.NewCounter("total_merge_loop_finished"),
 		totalMergeLoopErr:          factory.NewCounter("total_merge_loop_err"),
+		totalSyncLoopStarted:       factory.NewCounter("total_sync_loop_started"),
+		totalSyncLoopFinished:      factory.NewCounter("total_sync_loop_finished"),
+		totalSyncLoopErr:           factory.NewCounter("total_sync_loop_err"),
+		totalFlushLoopProgress:     factory.NewCounter("total_flush_loop_progress"),
+		totalFlushed:               factory.NewCounter("total_flushed"),
+		totalFlushedMemParts:       factory.NewCounter("total_flushed_mem_parts"),
+		totalFlushPauseCompleted:   factory.NewCounter("total_flush_pause_completed"),
+		totalFlushPauseBreak:       factory.NewCounter("total_flush_pause_break"),
+		totalFlushIntroLatency:     factory.NewCounter("total_flush_intro_latency"),
+		totalFlushLatency:          factory.NewCounter("total_flush_latency"),
+		totalMergedParts:           factory.NewCounter("total_merged_parts", "type"),
+		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type"),
+		totalMerged:                factory.NewCounter("total_merged", "type"),
+		tbMetrics: tbMetrics{
+			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
+			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
+			totalMemBlocks:                 factory.NewGauge("total_mem_blocks", common.ShardLabelNames()...),
+			totalMemPartBytes:              factory.NewGauge("total_mem_part_bytes", common.ShardLabelNames()...),
+			totalMemPartUncompressedBytes:  factory.NewGauge("total_mem_part_uncompressed_bytes", common.ShardLabelNames()...),
+			totalFileParts:                 factory.NewGauge("total_file_parts", common.ShardLabelNames()...),
+			totalFileElements:              factory.NewGauge("total_file_elements", common.ShardLabelNames()...),
+			totalFileBlocks:                factory.NewGauge("total_file_blocks", common.ShardLabelNames()...),
+			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
+			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
+		},
+		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
+	}
+}
+
+func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
+	factory := s.omr.With(tbScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
+	return &metrics{
+		totalWritten:               factory.NewCounter("total_written"),
+		totalBatch:                 factory.NewCounter("total_batch"),
+		totalBatchIntroLatency:     factory.NewCounter("total_batch_intro_time"),
+		totalIntroduceLoopStarted:  factory.NewCounter("total_introduce_loop_started", "phase"),
+		totalIntroduceLoopFinished: factory.NewCounter("total_introduce_loop_finished", "phase"),
+		totalFlushLoopStarted:      factory.NewCounter("total_flush_loop_started"),
+		totalFlushLoopFinished:     factory.NewCounter("total_flush_loop_finished"),
+		totalFlushLoopErr:          factory.NewCounter("total_flush_loop_err"),
+		totalMergeLoopStarted:      factory.NewCounter("total_merge_loop_started"),
+		totalMergeLoopFinished:     factory.NewCounter("total_merge_loop_finished"),
+		totalMergeLoopErr:          factory.NewCounter("total_merge_loop_err"),
+		totalSyncLoopStarted:       factory.NewCounter("total_sync_loop_started"),
+		totalSyncLoopFinished:      factory.NewCounter("total_sync_loop_finished"),
+		totalSyncLoopErr:           factory.NewCounter("total_sync_loop_err"),
 		totalFlushLoopProgress:     factory.NewCounter("total_flush_loop_progress"),
 		totalFlushed:               factory.NewCounter("total_flushed"),
 		totalFlushedMemParts:       factory.NewCounter("total_flushed_mem_parts"),

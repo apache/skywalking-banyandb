@@ -49,20 +49,23 @@ const (
 )
 
 type tsTable struct {
-	fileSystem    fs.FileSystem
 	l             *logger.Logger
-	snapshot      *snapshot
-	introductions chan *introduction
-	loopCloser    *run.Closer
+	fileSystem    fs.FileSystem
+	pm            protector.Memory
 	metrics       *metrics
 	index         *elementIndex
-	p             common.Position
+	snapshot      *snapshot
+	loopCloser    *run.Closer
+	getNodes      func() []string
 	option        option
-	pm            protector.Memory
+	introductions chan *introduction
+	p             common.Position
 	root          string
+	group         string
 	gc            garbageCleaner
 	curPartID     uint64
 	sync.RWMutex
+	shardID common.ShardID
 }
 
 func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
@@ -121,6 +124,18 @@ func (tst *tsTable) startLoop(cur uint64) {
 	go tst.mergeLoop(mergeCh, flusherWatcher)
 }
 
+func (tst *tsTable) startLoopNoMerge(cur uint64) {
+	tst.loopCloser = run.NewCloser(1 + 3)
+	tst.introductions = make(chan *introduction)
+	flushCh := make(chan *flusherIntroduction)
+	syncCh := make(chan *syncIntroduction)
+	introducerWatcher := make(watcher.Channel, 1)
+	flusherWatcher := make(watcher.Channel, 1)
+	go tst.introducerLoopWithSync(flushCh, syncCh, introducerWatcher, cur+1)
+	go tst.flusherLoopNoMerger(flushCh, introducerWatcher, flusherWatcher, cur)
+	go tst.syncLoop(syncCh, flusherWatcher)
+}
+
 func parseEpoch(epochStr string) (uint64, error) {
 	p, err := strconv.ParseUint(epochStr, 16, 64)
 	if err != nil {
@@ -169,9 +184,10 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 	return result
 }
 
-func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
-) (*tsTable, error) {
+// initTSTable initializes a tsTable and loads parts/snapshots, but does not start any background loops.
+func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
+	l *logger.Logger, option option, m any,
+) (*tsTable, uint64, error) {
 	if option.protector == nil {
 		logger.GetLogger("stream").
 			Panic().
@@ -192,15 +208,13 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	}
 	index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	tst.index = index
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
-		t := &tst
-		t.startLoop(uint64(time.Now().UnixNano()))
-		return t, nil
+		return &tst, uint64(time.Now().UnixNano()), nil
 	}
 	var loadedParts []uint64
 	var loadedSnapshots []uint64
@@ -241,16 +255,23 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
-		t := &tst
-		t.startLoop(uint64(time.Now().UnixNano()))
-		return t, nil
+		return &tst, uint64(time.Now().UnixNano()), nil
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
 		return loadedSnapshots[i] > loadedSnapshots[j]
 	})
 	epoch := loadedSnapshots[0]
-	t := &tst
-	t.loadSnapshot(epoch, loadedParts)
+	tst.loadSnapshot(epoch, loadedParts)
+	return &tst, epoch, nil
+}
+
+func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
+	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
+) (*tsTable, error) {
+	t, epoch, err := initTSTable(fileSystem, rootPath, p, l, option, m)
+	if err != nil {
+		return nil, err
+	}
 	t.startLoop(epoch)
 	return t, nil
 }
@@ -275,13 +296,7 @@ func (tst *tsTable) Close() error {
 	return tst.index.Close()
 }
 
-func (tst *tsTable) mustAddElements(es *elements) {
-	if len(es.seriesIDs) == 0 {
-		return
-	}
-
-	mp := generateMemPart()
-	mp.mustInitFromElements(es)
+func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	p := openMemPart(mp)
 
 	ind := generateIntroduction()
@@ -299,9 +314,19 @@ func (tst *tsTable) mustAddElements(es *elements) {
 	case <-ind.applied:
 	case <-tst.loopCloser.CloseNotify():
 	}
-	tst.incTotalWritten(len(es.timestamps))
+	tst.incTotalWritten(int(mp.partMetadata.TotalCount))
 	tst.incTotalBatch(1)
 	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
+}
+
+func (tst *tsTable) mustAddElements(es *elements) {
+	if len(es.seriesIDs) == 0 {
+		return
+	}
+
+	mp := generateMemPart()
+	mp.mustInitFromElements(es)
+	tst.mustAddMemPart(mp)
 }
 
 type tstIter struct {

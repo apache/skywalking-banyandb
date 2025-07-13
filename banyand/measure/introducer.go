@@ -118,20 +118,20 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case next := <-tst.introductions:
-			tst.incTotalIntroduceLoopStarted(1, "mem")
+			tst.incTotalIntroduceLoopStarted("mem")
 			tst.introduceMemPart(next, epoch)
-			tst.incTotalIntroduceLoopFinished(1, "mem")
+			tst.incTotalIntroduceLoopFinished("mem")
 			epoch++
 		case next := <-flushCh:
-			tst.incTotalIntroduceLoopStarted(1, "flush")
+			tst.incTotalIntroduceLoopStarted("flush")
 			tst.introduceFlushed(next, epoch)
-			tst.incTotalIntroduceLoopFinished(1, "flush")
+			tst.incTotalIntroduceLoopFinished("flush")
 			tst.gc.clean()
 			epoch++
 		case next := <-mergeCh:
-			tst.incTotalIntroduceLoopStarted(1, "merge")
+			tst.incTotalIntroduceLoopStarted("merge")
 			tst.introduceMerged(next, epoch)
-			tst.incTotalIntroduceLoopFinished(1, "merge")
+			tst.incTotalIntroduceLoopFinished("merge")
 			tst.gc.clean()
 			epoch++
 		case epochWatcher := <-watcherCh:

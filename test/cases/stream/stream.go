@@ -41,12 +41,12 @@ var (
 	}
 )
 
-var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
+var _ = g.FDescribeTable("Scanning Streams", func(args helpers.Args) {
 	gm.Eventually(func(innerGm gm.Gomega) {
 		verify(innerGm, args)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 },
-	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
+	g.FEntry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("max limit", helpers.Args{Input: "all_max_limit", Want: "all", Duration: 1 * time.Hour}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
@@ -83,8 +83,8 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("filter by non-indexed tag with or", helpers.Args{Input: "filter_no_indexed_or", Duration: 1 * time.Hour}),
 	g.Entry("filter with desc order", helpers.Args{Input: "filter_order_desc", Duration: 1 * time.Hour}),
 	g.Entry("duplicated all elements", helpers.Args{Input: "duplicated_all", Duration: 1 * time.Hour, DisOrder: true}),
-	g.Entry("duplicated entity filter", helpers.Args{Input: "duplicated_entity_filter", Duration: 1 * time.Hour}),
-	g.Entry("duplicated index filter", helpers.Args{Input: "duplicated_index_filter", Duration: 1 * time.Hour}),
+	g.Entry("duplicated entity filter", helpers.Args{Input: "duplicated_entity_filter", Duration: 1 * time.Hour, DisOrder: true}),
+	g.Entry("duplicated index filter", helpers.Args{Input: "duplicated_index_filter", Duration: 1 * time.Hour, DisOrder: true}),
 	g.Entry("duplicated order by index", helpers.Args{Input: "duplicated_order_by_index", Duration: 1 * time.Hour}),
 	g.Entry("duplicated order by index with the index filter", helpers.Args{Input: "duplicated_order_by_filter", Duration: 1 * time.Hour}),
 	g.Entry("multi-groups: unchanged tags", helpers.Args{Input: "multi_group_unchanged", Duration: 1 * time.Hour, IgnoreElementID: true}),

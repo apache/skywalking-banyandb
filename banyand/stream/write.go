@@ -85,7 +85,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	if err != nil {
 		return nil, err
 	}
-	err = w.processElements(et, eg, writeEvent, docIDBuilder, ts)
+	err = processElements(w.schemaRepo, et.elements, writeEvent, docIDBuilder, ts, &et.docs, &et.seriesDocs)
 	if err != nil {
 		return nil, err
 	}
@@ -102,10 +102,9 @@ func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, 
 	eg, ok := dst[gn]
 	if !ok {
 		eg = &elementsInGroup{
-			tsdb:        tsdb,
-			tables:      make([]*elementsInTable, 0),
-			segments:    make([]storage.Segment[*tsTable, option], 0),
-			docIDsAdded: make(map[uint64]struct{}), // Initialize the map
+			tsdb:     tsdb,
+			tables:   make([]*elementsInTable, 0),
+			segments: make([]storage.Segment[*tsTable, option], 0),
 		}
 		dst[gn] = eg
 	}
@@ -151,6 +150,11 @@ func (w *writeCallback) prepareElementsInTable(eg *elementsInGroup, writeEvent *
 			timeRange: segment.GetTimeRange(),
 			tsTable:   tstb,
 			elements:  generateElements(),
+			segment:   segment,
+			seriesDocs: seriesDoc{
+				docs:        make(index.Documents, 0),
+				docIDsAdded: make(map[uint64]struct{}),
+			},
 		}
 		et.elements.reset()
 		eg.tables = append(eg.tables, et)
@@ -158,20 +162,20 @@ func (w *writeCallback) prepareElementsInTable(eg *elementsInGroup, writeEvent *
 	return et, nil
 }
 
-func (w *writeCallback) processElements(et *elementsInTable, eg *elementsInGroup, writeEvent *streamv1.InternalWriteRequest,
-	docIDBuilder *strings.Builder, ts int64,
+func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *streamv1.InternalWriteRequest,
+	docIDBuilder *strings.Builder, ts int64, tableDocs *index.Documents, seriesDocs *seriesDoc,
 ) error {
 	req := writeEvent.Request
 
-	et.elements.timestamps = append(et.elements.timestamps, ts)
+	elements.timestamps = append(elements.timestamps, ts)
 	docIDBuilder.Reset()
 	docIDBuilder.WriteString(req.Metadata.Name)
 	docIDBuilder.WriteByte('|')
 	docIDBuilder.WriteString(req.Element.ElementId)
 	eID := convert.HashStr(docIDBuilder.String())
-	et.elements.elementIDs = append(et.elements.elementIDs, eID)
+	elements.elementIDs = append(elements.elementIDs, eID)
 
-	stm, ok := w.schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
+	stm, ok := schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
 	if !ok {
 		return fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
 	}
@@ -191,7 +195,7 @@ func (w *writeCallback) processElements(et *elementsInTable, eg *elementsInGroup
 	if err := series.Marshal(); err != nil {
 		return fmt.Errorf("cannot marshal series: %w", err)
 	}
-	et.elements.seriesIDs = append(et.elements.seriesIDs, series.ID)
+	elements.seriesIDs = append(elements.seriesIDs, series.ID)
 
 	is := stm.indexSchema.Load().(indexSchema)
 	tagFamilies := make([]tagValues, 0, len(stm.schema.TagFamilies))
@@ -250,21 +254,21 @@ func (w *writeCallback) processElements(et *elementsInTable, eg *elementsInGroup
 			tagFamilies = append(tagFamilies, tf)
 		}
 	}
-	et.elements.tagFamilies = append(et.elements.tagFamilies, tagFamilies)
+	elements.tagFamilies = append(elements.tagFamilies, tagFamilies)
 
-	et.docs = append(et.docs, index.Document{
+	*tableDocs = append(*tableDocs, index.Document{
 		DocID:     eID,
 		Fields:    fields,
 		Timestamp: ts,
 	})
 
 	docID := uint64(series.ID)
-	if _, exists := eg.docIDsAdded[docID]; !exists {
-		eg.docs = append(eg.docs, index.Document{
+	if _, existed := seriesDocs.docIDsAdded[docID]; !existed {
+		seriesDocs.docs = append(seriesDocs.docs, index.Document{
 			DocID:        docID,
 			EntityValues: series.Buffer,
 		})
-		eg.docIDsAdded[docID] = struct{}{}
+		seriesDocs.docIDsAdded[docID] = struct{}{}
 	}
 
 	return nil
@@ -316,12 +320,14 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 					w.l.Error().Err(err).Msg("cannot write element index")
 				}
 			}
-		}
-		if len(g.docs) > 0 {
-			for _, segment := range g.segments {
-				if err := segment.IndexDB().Insert(g.docs); err != nil {
-					w.l.Error().Err(err).Msg("cannot write index")
+			if len(es.seriesDocs.docs) > 0 {
+				if err := es.segment.IndexDB().Insert(es.seriesDocs.docs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write series index")
 				}
+			}
+		}
+		if len(g.segments) > 0 {
+			for _, segment := range g.segments {
 				segment.DecRef()
 			}
 		}

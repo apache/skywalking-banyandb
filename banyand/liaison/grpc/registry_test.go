@@ -184,7 +184,6 @@ func setupForRegistry() func() {
 	nr := grpc.NewLocalNodeRegistry()
 	tcp := grpc.NewServer(context.TODO(), pipeline, pipeline, pipeline, nil, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: nr,
-		StreamDataNodeRegistry:     nr,
 		PropertyNodeRegistry:       nr,
 	}, metricSvc, nil, pipeline)
 	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}

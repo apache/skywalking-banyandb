@@ -73,7 +73,6 @@ type Server interface {
 // NodeRegistries contains the node registries.
 type NodeRegistries struct {
 	StreamLiaisonNodeRegistry  NodeRegistry
-	StreamDataNodeRegistry     NodeRegistry
 	MeasureLiaisonNodeRegistry NodeRegistry
 	MeasureDataNodeRegistry    NodeRegistry
 	PropertyNodeRegistry       NodeRegistry
@@ -92,8 +91,7 @@ type server struct {
 	stopCh chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
-	streamSVC      *streamService
-	streamCallback *streamRedirectWriteCallback
+	streamSVC *streamService
 	*streamRegistryServer
 	measureSVC *measureService
 	log        *logger.Logger
@@ -140,11 +138,6 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		measureSVC:  measureSVC,
 		groupRepo:   gr,
 		tire2Server: tire2Server,
-		streamCallback: &streamRedirectWriteCallback{
-			pipeline:     tir2Client,
-			groupRepo:    gr,
-			nodeRegistry: nr.StreamDataNodeRegistry,
-		},
 		measureCallback: &measureRedirectWriteCallback{
 			pipeline:     tir2Client,
 			groupRepo:    gr,
@@ -190,7 +183,6 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log.Named("stream-t1"))
-	s.streamCallback.l = s.log.Named("stream-t2")
 	s.measureSVC.setLogger(s.log)
 	s.propertyServer.SetLogger(s.log)
 	s.measureCallback.l = s.log.Named("measure-t2")
@@ -205,9 +197,6 @@ func (s *server) PreRun(_ context.Context) error {
 		if err := c.initialize(); err != nil {
 			return err
 		}
-	}
-	if err := s.tire2Server.Subscribe(data.TopicStreamWrite, s.streamCallback); err != nil {
-		return err
 	}
 	if err := s.tire2Server.Subscribe(data.TopicMeasureWrite, s.measureCallback); err != nil {
 		return err
@@ -281,7 +270,6 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "timeout for writing stream among liaison nodes")
-	fs.DurationVar(&s.streamCallback.writeTimeout, "stream-write-data-timeout", 15*time.Second, "timeout for writing stream data to the data nodes")
 	fs.DurationVar(&s.measureCallback.writeTimeout, "measure-write-data-timeout", 15*time.Second, "timeout for writing measure data to the data nodes")
 	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "timeout for writing measure among liaison nodes")
 	fs.DurationVar(&s.measureSVC.maxWaitDuration, "measure-metadata-cache-wait-duration", 0,
