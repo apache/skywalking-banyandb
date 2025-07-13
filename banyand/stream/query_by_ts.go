@@ -175,9 +175,6 @@ func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, sm *stre
 			if tagSpec == nil {
 				continue
 			}
-			if tagSpec.IndexedOnly {
-				continue
-			}
 			entityPos := is.indexRuleLocators.EntitySet[tagProj]
 			if entityPos == 0 {
 				continue

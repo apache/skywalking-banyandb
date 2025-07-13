@@ -239,7 +239,7 @@ func (w *writeCallback) processElements(et *elementsInTable, eg *elementsInGroup
 				}
 			}
 			_, isEntity := is.indexRuleLocators.EntitySet[t.Name]
-			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
+			if isEntity {
 				continue
 			}
 			tv := encodeTagValue(t.Name, t.Type, tagValue)

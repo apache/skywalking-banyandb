@@ -79,7 +79,6 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("having non indexed", helpers.Args{Input: "having_non_indexed", Duration: 1 * time.Hour}),
 	g.Entry("having non indexed array", helpers.Args{Input: "having_non_indexed_arr", Duration: 1 * time.Hour}),
 	g.Entry("full text searching", helpers.Args{Input: "search", Duration: 1 * time.Hour}),
-	g.Entry("indexed only tags", helpers.Args{Input: "indexed_only", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag with or", helpers.Args{Input: "filter_no_indexed_or", Duration: 1 * time.Hour}),
 	g.Entry("filter with desc order", helpers.Args{Input: "filter_order_desc", Duration: 1 * time.Hour}),
 	g.Entry("duplicated all elements", helpers.Args{Input: "duplicated_all", Duration: 1 * time.Hour, DisOrder: true}),
@@ -91,4 +90,5 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("multi-groups: new tags", helpers.Args{Input: "multi_group_new_tag", Duration: 1 * time.Hour, IgnoreElementID: true}),
 	g.Entry("multi-groups: update tag type", helpers.Args{Input: "multi_group_tag_type", Duration: 1 * time.Hour, IgnoreElementID: true}),
 	g.Entry("multi-groups: sort duration", helpers.Args{Input: "multi_group_sort_duration", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	g.Entry("hybrid index", helpers.Args{Input: "hybrid_index", Duration: 1 * time.Hour, IgnoreElementID: true}),
 )

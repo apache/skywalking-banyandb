@@ -297,7 +297,7 @@ func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest, lo
 				continue
 			}
 			_, isEntity := locator.EntitySet[t.Name]
-			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
+			if isEntity {
 				releaseNameValue(encodeTagValue)
 				continue
 			}
