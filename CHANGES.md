@@ -28,6 +28,7 @@ Release Notes.
 - Fix the issue that the etcd watcher gets the historical node registration events.
 - Fix the crash when collecting the metrics from a closed segment.
 - Fix topN parsing panic when the criteria is set.
+- Deprecate the indexed_only field in TagSpec.
 
 ## 0.8.0
 
