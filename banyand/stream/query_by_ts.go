@@ -180,12 +180,6 @@ func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, sm *stre
 				continue
 			}
 			tagFamilyPos := tagFamilyMap[tagFamilyProj.Family]
-			if tagFamilyPos == 0 {
-				bc.tagFamilies[tagFamilyPos-1] = tagFamily{
-					name: tagFamilyProj.Family,
-					tags: make([]tag, 0),
-				}
-			}
 			valueType := pbv1.MustTagValueToValueType(entityValues[entityPos-1])
 			bc.tagFamilies[tagFamilyPos-1].tags[j] = tag{
 				name:      tagProj,
