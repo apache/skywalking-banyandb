@@ -50,6 +50,7 @@ const (
 	deleteField    = "_deleted"
 	idField        = "_id"
 	timestampField = "_timestamp"
+	shaValueField  = "_sha_value"
 )
 
 var (
@@ -60,14 +61,16 @@ var (
 	deletedFieldKey   = index.FieldKey{TagName: deleteField}
 	idFieldKey        = index.FieldKey{TagName: idField}
 	timestampFieldKey = index.FieldKey{TagName: timestampField}
+	shaValueFieldKey  = index.FieldKey{TagName: shaValueField}
 	projection        = []index.FieldKey{idFieldKey, timestampFieldKey, sourceFieldKey, deletedFieldKey}
 )
 
 type shard struct {
-	store    index.SeriesStore
-	l        *logger.Logger
-	location string
-	id       common.ShardID
+	store       index.SeriesStore
+	l           *logger.Logger
+	repairState *repair
+	location    string
+	id          common.ShardID
 
 	expireToDeleteSec int64
 }
@@ -79,7 +82,14 @@ func (s *shard) close() error {
 	return nil
 }
 
-func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64, deleteExpireSec int64) (*shard, error) {
+func (db *database) newShard(
+	ctx context.Context,
+	id common.ShardID,
+	_ int64,
+	deleteExpireSec int64,
+	repairBaseDir string,
+	repairTreeSlotCount int,
+) (*shard, error) {
 	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
 	sName := "shard" + strconv.Itoa(int(id))
 	si := &shard{
@@ -88,10 +98,11 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64, de
 		location:          location,
 		expireToDeleteSec: deleteExpireSec,
 	}
+	metricsFactory := db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))
 	opts := inverted.StoreOpts{
 		Path:                 location,
 		Logger:               si.l,
-		Metrics:              inverted.NewMetrics(db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))),
+		Metrics:              inverted.NewMetrics(metricsFactory),
 		BatchWaitSec:         0,
 		PrepareMergeCallback: si.prepareForMerge,
 	}
@@ -99,6 +110,9 @@ func (db *database) newShard(ctx context.Context, id common.ShardID, _ int64, de
 	if si.store, err = inverted.NewStore(opts); err != nil {
 		return nil, err
 	}
+	repairBaseDir = path.Join(repairBaseDir, sName)
+	si.repairState = newRepair(location, repairBaseDir, logger.Fetch(ctx, fmt.Sprintf("repair%d", id)),
+		metricsFactory, repairBatchSearchSize, repairTreeSlotCount, db.repairScheduler)
 	return si, nil
 }
 
@@ -130,8 +144,9 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, de
 		Fields:       []index.Field{entityField, groupField, nameField, sourceField},
 		Timestamp:    property.Metadata.ModRevision,
 	}
+	var tv []byte
 	for _, t := range property.Tags {
-		tv, err := pbv1.MarshalTagValue(t.Value)
+		tv, err = pbv1.MarshalTagValue(t.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -147,6 +162,15 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, de
 		deleteField.NoSort = true
 		doc.Fields = append(doc.Fields, deleteField)
 	}
+
+	shaVal, err := s.repairState.buildShaValue(pj, deleteTime)
+	if err != nil {
+		return nil, fmt.Errorf("building sha value failure: %w", err)
+	}
+	shaValueField := index.NewBytesField(shaValueFieldKey, convert.StringToBytes(shaVal))
+	shaValueField.Store = true
+	shaValueField.NoSort = true
+	doc.Fields = append(doc.Fields, shaValueField)
 	return &doc, nil
 }
 
@@ -217,6 +241,7 @@ func (s *shard) updateDocuments(docs index.Documents) error {
 	if persistentError != nil {
 		return fmt.Errorf("persistent failure: %w", persistentError)
 	}
+	s.repairState.scheduler.documentUpdatesNotify()
 	return nil
 }
 
