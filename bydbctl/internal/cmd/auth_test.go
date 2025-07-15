@@ -44,7 +44,7 @@ import (
 var testUser serverAuth.User
 
 // TODO check.
-var _ = g.XDescribe("bydbctl test with authentication", func() {
+var _ = g.Describe("bydbctl test with authentication", func() {
 	var deferFn func()
 	var goods []gleak.Goroutine
 	var httpAddr string
