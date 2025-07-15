@@ -1,8 +1,10 @@
 # Property Background Repair Strategy
 
-This document introduces how `property` type data is handled in a cluster deployment, 
-how the system automatically verifies cross-machine multi-replica data consistency in the background and 
-performs data recovery operations.
+In Property, the `replicas` configuration allows Property data to be stored across multiple data nodes, providing high availability. 
+However, during data updates, some nodes may become temporarily unavailable, which can lead to version inconsistencies of the same data across different machines.
+
+This documentation introduces it how the system automatically synchronizes Property data across all data nodes in the background, 
+ensuring that all replicas eventually converge to the same version.
 
 The process can be roughly divided into the following two steps:
 1. **Build Merkel Tree**: Automatically build anti-entropy Merkle Trees in the background for efficient comparison in subsequent operations.
@@ -18,8 +20,8 @@ In the context of property data, each shard within a group builds its own Merkle
 The tree consists of the following three types of nodes:
 1. **Leaf Node**: Store the summary information of each Property data:
    1. **Entity**: The identifier of the Property data, composed of `group_name` + `property_name` + `id`.
-   2. **SHA Value**: The SHA512 hash value of the Property source data, used for fast equality comparison to check the consistency of the same entity data.
-2. **Slot Node**: Each tree contains a fixed number of slot nodes. When the Property data is added into the tree, it is placed in a slot node based on its hash value of Entity. 
+   2. **SHA Value**: The SHA512 hash value of the Property source data(`sha512(source_json_bytes+property_is_deleted)`), used for fast equality comparison to check the consistency of the same entity data
+2. **Slot Node**: Each tree contains a fixed number(such as `32`) of slot nodes. When the Property data is added into the tree, it is placed in a slot node based on its hash value of Entity(`hash(entity) % slot_count`). 
    The slot node contains the SHA value of the Property data and the number of Property data in that slot.
 3. **Root Node**: The root node of the Merkle Tree, which contains the SHA value of the entire tree and the number of slot nodes.
 
@@ -48,7 +50,7 @@ However, in the context of Property data repair, involving liaison nodes would i
 Therefore, the system adopts the gossip protocol, allowing data nodes to communicate directly with each other to perform data repair in a more efficient and decentralized manner.
 
 Unlike typical gossip-based message dissemination, where messages are spread randomly, the number of **data nodes** in BanyanDB is fixed and relatively small.
-To ensure greater stability, the random peer selection is replaced with a deterministic strategy, where each node communicates only with its next node in the sequence.
+To ensure greater stability, the random peer selection is replaced with a deterministic strategy, where each node communicates only with its next node in the sequence, and the node list is ordered. 
 Additionally, to minimize network traffic, only one peer node is involved in each round of communication.
 
 BanyanDB already has a built-in [cluster discovery and data transmission](./clustering.md) mechanism. Therefore, the implementation of gossip protocol can be built as an extension on top of the existing cluster protocol.
@@ -59,7 +61,7 @@ Since each node already exposes a gRPC port, there is no need to introduce any a
 When initiating gossip message propagation, the sender node must include both the list of participating nodes and the message content. 
 The gossip protocol then proceeds through the following steps:
 
-1: **Build the Context**: A context object is attached to each message and includes the following parameters:
+1: **Build the Context**: The sender node builds a context object is attached to each message and includes the following parameters:
    1. **Node List**: A list of participating nodes used to determine the next node in the sequence.
    2. **Maximum Count**: The maximum number of message transmissions, calculated as `(node_count) * 2 - 3`. The rationale behind this formula will be explained in an upcoming example.
    3. **Origin Node ID**: The ID of the node that initiated the gossip message propagation, used to return the final result. 
@@ -99,8 +101,8 @@ After each synchronization cycle, the receiving node will send its trace data ba
 
 ## Property Repair
 
-Once all the above preparations are complete, the system can proceed with the Property Repair process.
-This process is scheduled to run on each data node daily at 1:00 AM, and follows these steps:
+Based on the Merkel tree and Gossip concept, the system can proceed with the Property Repair process.
+This process is scheduled to run on each data node daily at 1:00 AM(it's configurable as `property-background-repair-cron` flag), and follows these steps:
 1. **Select a Group**: The node retrieves a list of Property groups where the number of **replicas is greater than or equal to 2**, and randomly selects one group for repair.
 2. **Query Node List**: Then determines the list of nodes that hold replicas for the selected group and send the gossip propagation message to those nodes for synchronize the Property data for that group.
 3. **Wait for the Result**: The initiating node waits for the final result of the synchronization process before proceeding.
@@ -136,7 +138,19 @@ During the synchronization process, the system will terminate or skip processing
 1. **Merkle Tree Not Built**: If either node A or node B has not yet built the Merkle Tree for the target group, the gossip protocol is immediately terminated.
 2. **Duplicate Sync Request**: If a new gossip sync request for the same group is received by either node while an existing synchronization is in progress, the new request is terminated to avoid conflicts.
 3. **Target Node Request Failure**: If node B fails to send or respond to requests during the sync process, the gossip protocol is terminated.
-4. **Property Repair Failure**: If an error occurs while applying Property data updates (e.g., write or query failure), the affected entity is added to a `repair failure list`. 
-This list is included in subsequent gossip message propagation to indicate that the entity should be skipped for future repair attempts.
+4. **Property Repair Failure**: If an error occurs while applying Property data updates (e.g., write or query failure). Then, record the error info into the trace and ignore current property sync between these two nodes and keep sync continue.
 5. **Unhandled Exceptions**: For any other unexpected exceptions or failures, the gossip protocol is immediately terminated to maintain system consistency and avoid cascading errors.
 
+## Background Repair vs. Query Repair
+
+When querying Property data, the liason node will still query the latest available data from existing data nodes, 
+and if discrepancies are detected, it will repair the outdated Property data on the corresponding nodes.
+
+When using background repair, there are several key differences compared to on-demand repair during queries:
+1. **Query Efficiency**: On-demand repair during queries can significantly increase latency and CPU load, especially under high query volume. 
+Each request may trigger comparison and data repair logic, which impacts performance. In contrast, background repair minimizes this overhead, 
+ensuring query paths remain lightweight and responsive.
+2. **Improved Availability**: During a query, if the node holding the latest version happens to be unavailable, 
+the liaison node may fall back to returning data from other nodes, potentially missing the most recent update.
+Background repair helps mitigate this by proactively synchronizing all nodes to the latest version, 
+ensuring consistent data availability even if some nodes are temporarily offline.
