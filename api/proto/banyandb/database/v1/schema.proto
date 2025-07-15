@@ -47,10 +47,6 @@ message TagFamilySpec {
 message TagSpec {
   string name = 1 [(validate.rules).string.min_len = 1];
   TagType type = 2 [(validate.rules).enum.defined_only = true];
-  // indexed_only indicates whether the tag is stored
-  // True: It's indexed only, but not stored
-  // False: it's stored and indexed
-  bool indexed_only = 3 [deprecated = true];
 }
 
 // Stream intends to store streaming data, for example, traces or logs
