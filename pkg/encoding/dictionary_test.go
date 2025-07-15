@@ -117,8 +117,9 @@ func BenchmarkDecodeDictionary(b *testing.B) {
 			encoded = dict.Encode(encoded)
 
 			b.ResetTimer()
+			decoded := NewDictionary()
 			for i := 0; i < b.N; i++ {
-				decoded := NewDictionary()
+				decoded.Reset()
 				_, err := decoded.Decode(values[:0], encoded, uint64(p.count))
 				if err != nil {
 					b.Fatal(err)
