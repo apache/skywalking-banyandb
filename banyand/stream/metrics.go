@@ -401,7 +401,9 @@ func (tst *tsTable) Collect(m storage.Metrics) {
 	metrics.totalFileBlocks.Set(float64(totalFileBlocks), tst.p.ShardLabelValues()...)
 	metrics.totalFilePartBytes.Set(float64(totalFilePartBytes), tst.p.ShardLabelValues()...)
 	metrics.totalFilePartUncompressedBytes.Set(float64(totalFilePartUncompressedBytes), tst.p.ShardLabelValues()...)
-	tst.index.collectMetrics(tst.p.SegLabelValues()...)
+	if tst.index != nil {
+		tst.index.collectMetrics(tst.p.SegLabelValues()...)
+	}
 }
 
 func (tst *tsTable) deleteMetrics() {

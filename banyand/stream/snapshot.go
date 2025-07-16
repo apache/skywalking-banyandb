@@ -194,6 +194,9 @@ func parseSnapshot(name string) (uint64, error) {
 }
 
 func (tst *tsTable) TakeFileSnapshot(dst string) error {
+	if tst.index == nil {
+		return fmt.Errorf("cannot take file snapshot: index is not initialized for this tsTable")
+	}
 	indexDir := filepath.Join(dst, filepath.Base(tst.index.location))
 	tst.fileSystem.MkdirPanicIfExist(indexDir, storage.DirPerm)
 	if err := tst.index.store.TakeFileSnapshot(indexDir); err != nil {

@@ -357,7 +357,7 @@ type tbMetrics struct {
 	totalFilePartUncompressedBytes meter.Gauge
 }
 
-func (s *service) createNativeObservabilityGroup(ctx context.Context) error {
+func (s *standalone) createNativeObservabilityGroup(ctx context.Context) error {
 	if !s.omr.NativeEnabled() {
 		return nil
 	}

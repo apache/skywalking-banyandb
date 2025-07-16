@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/dquery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
@@ -64,19 +65,21 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream liaison service")
 	}
+	measureSVC, err := measure.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, measureDataNodeSel, tire2Client)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate measure liaison service")
+	}
 	streamLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
 	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
-	topNPipeline := queue.Local()
-	dQuery, err := dquery.NewService(metaSvc, localPipeline, tire2Client, topNPipeline, metricSvc)
+	dQuery, err := dquery.NewService(metaSvc, localPipeline, tire2Client, metricSvc, streamSVC, measureSVC)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
 	}
-	grpcServer := grpc.NewServer(ctx, tire1Client, tire2Client, localPipeline, topNPipeline, metaSvc, grpc.NodeRegistries{
+	grpcServer := grpc.NewServer(ctx, tire1Client, tire2Client, localPipeline, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: measureLiaisonNodeRegistry,
-		MeasureDataNodeRegistry:    grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, tire2Client, measureDataNodeSel),
 		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
-	}, metricSvc, dQuery, internalPipeline)
+	}, metricSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer()
 	var units []run.Unit
@@ -94,6 +97,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		streamDataNodeSel,
 		propertyNodeSel,
 		streamSVC,
+		measureSVC,
 		dQuery,
 		grpcServer,
 		httpServer,

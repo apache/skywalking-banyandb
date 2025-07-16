@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure
 
 import (
 	"context"
@@ -26,8 +26,39 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
+
+type syncIntroduction struct {
+	synced  map[uint64]struct{}
+	applied chan struct{}
+}
+
+func (i *syncIntroduction) reset() {
+	for k := range i.synced {
+		delete(i.synced, k)
+	}
+	i.applied = nil
+}
+
+var syncIntroductionPool = pool.Register[*syncIntroduction]("measure-sync-introduction")
+
+func generateSyncIntroduction() *syncIntroduction {
+	v := syncIntroductionPool.Get()
+	if v == nil {
+		return &syncIntroduction{
+			synced: make(map[uint64]struct{}),
+		}
+	}
+	i := v
+	i.reset()
+	return i
+}
+
+func releaseSyncIntroduction(i *syncIntroduction) {
+	syncIntroductionPool.Put(i)
+}
 
 func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
@@ -51,15 +82,16 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 				}
 				defer curSnapshot.decRef()
 				if curSnapshot.epoch != epoch {
-					tst.incTotalSyncLoopStarted(1)
-					defer tst.incTotalSyncLoopFinished(1)
+					// Use existing metric methods for measure
+					tst.incTotalFlushLoopStarted(1)
+					defer tst.incTotalFlushLoopFinished(1)
 					var err error
 					if err = tst.syncSnapshot(curSnapshot, syncCh); err != nil {
 						if tst.loopCloser.Closed() {
 							return true
 						}
-						tst.l.Logger.Warn().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
-						tst.incTotalSyncLoopErr(1)
+						tst.l.Error().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
+						tst.incTotalFlushLoopErr(1)
 						return false
 					}
 					epoch = curSnapshot.epoch
@@ -77,7 +109,6 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 }
 
 func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntroduction) error {
-	// Get all parts from the current snapshot
 	var partsToSync []*part
 	for _, pw := range curSnapshot.parts {
 		if pw.mp == nil && pw.p.partMetadata.TotalCount > 0 {
@@ -88,13 +119,8 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	if len(partsToSync) == 0 {
 		return nil
 	}
-	nodes := tst.getNodes()
-	if len(nodes) == 0 {
-		return fmt.Errorf("no nodes to sync parts")
-	}
 
 	// Sort parts from old to new (by part ID)
-	// Parts with lower IDs are older
 	for i := 0; i < len(partsToSync); i++ {
 		for j := i + 1; j < len(partsToSync); j++ {
 			if partsToSync[i].partMetadata.ID > partsToSync[j].partMetadata.ID {
@@ -103,49 +129,51 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 		}
 	}
 
-	// Send parts through pipeline
+	nodes := tst.getNodes
+	if nodes == nil {
+		nodes = func() []string { return nil }
+	}
+	allNodes := nodes()
+	if len(allNodes) == 0 {
+		return fmt.Errorf("no nodes to sync parts")
+	}
+
 	ctx := context.Background()
 
-	for _, node := range nodes {
+	for _, node := range allNodes {
 		for _, part := range partsToSync {
-			// Convert part to memPart
 			memPart := generateMemPart()
 			memPart.mustInitFromPart(part)
 
-			// Marshal memPart to []byte
 			partData, err := memPart.Marshal()
 			releaseMemPart(memPart)
 			if err != nil {
 				return fmt.Errorf("failed to marshal part %d: %w", part.partMetadata.ID, err)
 			}
 
-			// Encode group, shardID and prepend to partData
 			combinedData := make([]byte, 0, len(partData)+len(tst.group)+4)
 			combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(tst.group))
 			combinedData = encoding.Uint32ToBytes(combinedData, uint32(tst.shardID))
 			combinedData = append(combinedData, partData...)
 
-			// Create message with combined data (group + shardID + partData)
 			message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-			f, err := tst.option.tire2Client.Publish(ctx, data.TopicStreamPartSync, message)
-			if err != nil {
-				return fmt.Errorf("failed to publish part %d to pipeline: %w", part.partMetadata.ID, err)
+			f, publishErr := tst.option.tire2Client.Publish(ctx, data.TopicMeasurePartSync, message)
+			if publishErr != nil {
+				return fmt.Errorf("failed to publish part %d: %w", part.partMetadata.ID, publishErr)
 			}
 			if f != nil {
-				_, err = f.GetAll()
-				if err != nil {
-					tst.l.Warn().Err(err).Msgf("failed to get all sync results: %v", err)
+				_, publishErr = f.GetAll()
+				if publishErr != nil {
+					tst.l.Warn().Err(publishErr).Msgf("failed to get all sync results: %v", publishErr)
 				}
 			}
 		}
 	}
 
-	// Construct syncIntroduction to remove synced parts from snapshot
 	si := generateSyncIntroduction()
 	defer releaseSyncIntroduction(si)
 	si.applied = make(chan struct{})
 
-	// Mark all synced parts for removal
 	for _, part := range partsToSync {
 		si.synced[part.partMetadata.ID] = struct{}{}
 	}

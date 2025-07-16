@@ -186,7 +186,7 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 
 // initTSTable initializes a tsTable and loads parts/snapshots, but does not start any background loops.
 func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, option option, m any,
+	l *logger.Logger, option option, m any, initIndex bool,
 ) (*tsTable, uint64, error) {
 	if option.protector == nil {
 		logger.GetLogger("stream").
@@ -206,11 +206,13 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		tst.metrics = m.(*metrics)
 		indexMetrics = tst.metrics.indexMetrics
 	}
-	index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics)
-	if err != nil {
-		return nil, 0, err
+	if initIndex {
+		index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics)
+		if err != nil {
+			return nil, 0, err
+		}
+		tst.index = index
 	}
-	tst.index = index
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
@@ -268,7 +270,7 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
-	t, epoch, err := initTSTable(fileSystem, rootPath, p, l, option, m)
+	t, epoch, err := initTSTable(fileSystem, rootPath, p, l, option, m, true)
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +279,9 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 }
 
 func (tst *tsTable) Index() *elementIndex {
+	if tst.index == nil {
+		logger.Panicf("index is not initialized for this tsTable")
+	}
 	return tst.index
 }
 
@@ -289,11 +294,17 @@ func (tst *tsTable) Close() error {
 	defer tst.Unlock()
 	tst.deleteMetrics()
 	if tst.snapshot == nil {
-		return tst.index.Close()
+		if tst.index != nil {
+			return tst.index.Close()
+		}
+		return nil
 	}
 	tst.snapshot.decRef()
 	tst.snapshot = nil
-	return tst.index.Close()
+	if tst.index != nil {
+		return tst.index.Close()
+	}
+	return nil
 }
 
 func (tst *tsTable) mustAddMemPart(mp *memPart) {
@@ -305,6 +316,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	ind.memPart = newPartWrapper(mp, p)
 	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
 	startTime := time.Now()
+	totalCount := mp.partMetadata.TotalCount
 	select {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
@@ -314,7 +326,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	case <-ind.applied:
 	case <-tst.loopCloser.CloseNotify():
 	}
-	tst.incTotalWritten(int(mp.partMetadata.TotalCount))
+	tst.incTotalWritten(int(totalCount))
 	tst.incTotalBatch(1)
 	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
 }

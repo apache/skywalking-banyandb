@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure
 
 import (
 	"fmt"
@@ -35,10 +35,7 @@ type NodeSelector interface {
 func newWriteQueue(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, option option, m any, group string, shardID common.ShardID, getNodes func() []string,
 ) (*tsTable, error) {
-	t, epoch, err := initTSTable(fileSystem, rootPath, p, l, option, m, false)
-	if err != nil {
-		return nil, err
-	}
+	t, epoch := initTSTable(fileSystem, rootPath, p, l, option, m)
 	t.getNodes = getNodes
 	t.group = group
 	t.shardID = shardID

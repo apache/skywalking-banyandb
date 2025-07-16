@@ -142,6 +142,38 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 	}
 }
 
+func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, syncCh chan *syncIntroduction, watcherCh watcher.Channel, epoch uint64) {
+	var introducerWatchers watcher.Epochs
+	defer tst.loopCloser.Done()
+	for {
+		select {
+		case <-tst.loopCloser.CloseNotify():
+			return
+		case next := <-tst.introductions:
+			tst.incTotalIntroduceLoopStarted("mem")
+			tst.introduceMemPart(next, epoch)
+			tst.incTotalIntroduceLoopFinished("mem")
+			epoch++
+		case next := <-flushCh:
+			tst.incTotalIntroduceLoopStarted("flush")
+			tst.introduceFlushed(next, epoch)
+			tst.incTotalIntroduceLoopFinished("flush")
+			tst.gc.clean()
+			epoch++
+		case next := <-syncCh:
+			tst.incTotalIntroduceLoopStarted("sync")
+			tst.introduceSync(next, epoch)
+			tst.incTotalIntroduceLoopFinished("sync")
+			tst.gc.clean()
+			epoch++
+		case epochWatcher := <-watcherCh:
+			introducerWatchers.Add(epochWatcher)
+		}
+		curEpoch := tst.currentEpoch()
+		introducerWatchers.Notify(curEpoch)
+	}
+}
+
 func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint64) {
 	cur := tst.currentSnapshot()
 	if cur != nil {
@@ -184,6 +216,21 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 	nextSnp := cur.remove(epoch, nextIntroduction.merged)
 	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
 	nextSnp.creator = nextIntroduction.creator
+	tst.replaceSnapshot(&nextSnp, true)
+	if nextIntroduction.applied != nil {
+		close(nextIntroduction.applied)
+	}
+}
+
+func (tst *tsTable) introduceSync(nextIntroduction *syncIntroduction, epoch uint64) {
+	cur := tst.currentSnapshot()
+	if cur == nil {
+		tst.l.Panic().Msg("current snapshot is nil")
+		return
+	}
+	defer cur.decRef()
+	nextSnp := cur.remove(epoch, nextIntroduction.synced)
+	nextSnp.creator = snapshotCreatorSyncer
 	tst.replaceSnapshot(&nextSnp, true)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)

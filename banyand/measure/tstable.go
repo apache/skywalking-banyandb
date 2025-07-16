@@ -45,9 +45,10 @@ const (
 	snapshotSuffix = ".snp"
 )
 
-func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
-) (*tsTable, error) {
+// initTSTable initializes a tsTable and loads parts/snapshots, but does not start any background loops.
+func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
+	l *logger.Logger, option option, m any,
+) (*tsTable, uint64) {
 	if option.protector == nil {
 		logger.GetLogger("measure").
 			Panic().
@@ -59,17 +60,15 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		option:     option,
 		l:          l,
 		p:          p,
+		pm:         option.protector,
 	}
-	tst.pm = option.protector
 	if m != nil {
 		tst.metrics = m.(*metrics)
 	}
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
-		t := &tst
-		t.startLoop(uint64(time.Now().UnixNano()))
-		return t, nil
+		return &tst, uint64(time.Now().UnixNano())
 	}
 	var loadedParts []uint64
 	var loadedSnapshots []uint64
@@ -88,7 +87,6 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 				needToDelete = append(needToDelete, ee[i].Name())
 				continue
 			}
-
 			loadedParts = append(loadedParts, p)
 			continue
 		}
@@ -108,18 +106,36 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
-		t := &tst
-		t.startLoop(uint64(time.Now().UnixNano()))
-		return t, nil
+		return &tst, uint64(time.Now().UnixNano())
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
 		return loadedSnapshots[i] > loadedSnapshots[j]
 	})
 	epoch := loadedSnapshots[0]
-	t := &tst
-	t.loadSnapshot(epoch, loadedParts)
+	tst.loadSnapshot(epoch, loadedParts)
+	return &tst, epoch
+}
+
+// newTSTable creates a new tsTable and starts the background loop.
+func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
+	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
+) (*tsTable, error) {
+	t, epoch := initTSTable(fileSystem, rootPath, p, l, option, m)
 	t.startLoop(epoch)
 	return t, nil
+}
+
+// startLoopNoMerge starts the background loops without the merge loop.
+func (tst *tsTable) startLoopNoMerge(cur uint64) {
+	tst.loopCloser = run.NewCloser(1 + 3)
+	tst.introductions = make(chan *introduction)
+	flushCh := make(chan *flusherIntroduction)
+	syncCh := make(chan *syncIntroduction)
+	introducerWatcher := make(watcher.Channel, 1)
+	flusherWatcher := make(watcher.Channel, 1)
+	go tst.introducerLoopWithSync(flushCh, syncCh, introducerWatcher, cur+1)
+	go tst.flusherLoopNoMerger(flushCh, introducerWatcher, flusherWatcher, cur)
+	go tst.syncLoop(syncCh, flusherWatcher)
 }
 
 type tsTable struct {
@@ -133,9 +149,12 @@ type tsTable struct {
 	option    option
 	pm        protector.Memory
 	root      string
+	getNodes  func() []string
+	group     string
 	gc        garbageCleaner
 	curPartID uint64
 	sync.RWMutex
+	shardID common.ShardID
 }
 
 func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
@@ -265,6 +284,10 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 
 	mp := generateMemPart()
 	mp.mustInitFromDataPoints(dps)
+	tst.mustAddMemPart(mp)
+}
+
+func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	p := openMemPart(mp)
 
 	ind := generateIntroduction()
@@ -272,8 +295,8 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	ind.applied = make(chan struct{})
 	ind.memPart = newPartWrapper(mp, p)
 	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
-
 	startTime := time.Now()
+	totalCount := mp.partMetadata.TotalCount
 	select {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
@@ -283,7 +306,7 @@ func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
 	case <-ind.applied:
 	case <-tst.loopCloser.CloseNotify():
 	}
-	tst.incTotalWritten(len(dps.timestamps))
+	tst.incTotalWritten(int(totalCount))
 	tst.incTotalBatch(1)
 	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
 }

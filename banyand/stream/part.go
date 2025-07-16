@@ -136,18 +136,21 @@ func (mp *memPart) reset() {
 	mp.primary.Reset()
 	mp.timestamps.Reset()
 	if mp.tagFamilies != nil {
-		for _, tf := range mp.tagFamilies {
+		for k, tf := range mp.tagFamilies {
 			tf.Reset()
+			delete(mp.tagFamilies, k)
 		}
 	}
 	if mp.tagFamilyMetadata != nil {
-		for _, tfh := range mp.tagFamilyMetadata {
+		for k, tfh := range mp.tagFamilyMetadata {
 			tfh.Reset()
+			delete(mp.tagFamilyMetadata, k)
 		}
 	}
 	if mp.tagFamilyFilter != nil {
-		for _, tff := range mp.tagFamilyFilter {
+		for k, tff := range mp.tagFamilyFilter {
 			tff.Reset()
+			delete(mp.tagFamilyFilter, k)
 		}
 	}
 }

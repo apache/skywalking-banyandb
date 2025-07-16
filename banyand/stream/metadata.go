@@ -20,7 +20,6 @@ package stream
 import (
 	"context"
 	"fmt"
-	"io"
 	"path"
 	"time"
 
@@ -88,22 +87,6 @@ func newLiaisonSchemaRepo(path string, svc *liaison, streamDataNodeRegistry grpc
 	}
 	sr.start()
 	return sr
-}
-
-// NewPortableRepository creates a new portable repository.
-func NewPortableRepository(metadata metadata.Repo, l *logger.Logger, metrics *resourceSchema.Metrics) SchemaService {
-	r := &schemaRepo{
-		l:        l,
-		metadata: metadata,
-		Repository: resourceSchema.NewPortableRepository(
-			metadata,
-			l,
-			newPortableSupplier(metadata, l),
-			metrics,
-		),
-	}
-	r.start()
-	return r
 }
 
 func (sr *schemaRepo) start() {
@@ -380,35 +363,6 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	)
 }
 
-type portableSupplier struct {
-	metadata metadata.Repo
-	l        *logger.Logger
-}
-
-func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupplier {
-	return &portableSupplier{
-		metadata: metadata,
-		l:        l,
-	}
-}
-
-func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return s.metadata.StreamRegistry().GetStream(ctx, md)
-}
-
-func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
-	panic("do not support open db")
-}
-
-func (s *portableSupplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
-	streamSchema := spec.Schema().(*databasev1.Stream)
-	return openStream(streamSpec{
-		schema: streamSchema,
-	}, s.l, nil, nil), nil
-}
-
 var _ resourceSchema.ResourceSupplier = (*queueSupplier)(nil)
 
 type queueSupplier struct {
@@ -473,6 +427,7 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 	opts := wqueue.Opts[*tsTable, option]{
 		Group:           group,
 		ShardNum:        shardNum,
+		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
 		Location:        path.Join(s.path, group),
 		Option:          s.option,
 		Metrics:         s.newMetrics(p),

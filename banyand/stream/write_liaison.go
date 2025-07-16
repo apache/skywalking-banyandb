@@ -20,7 +20,6 @@ package stream
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -70,9 +69,7 @@ func (w *writeQueueCallback) CheckHealth() *common.Error {
 	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
-func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent *streamv1.InternalWriteRequest,
-	docIDBuilder *strings.Builder,
-) (map[string]*elementsInQueue, error) {
+func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent *streamv1.InternalWriteRequest) (map[string]*elementsInQueue, error) {
 	t := writeEvent.Request.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
@@ -86,7 +83,7 @@ func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent 
 	if err != nil {
 		return nil, err
 	}
-	err = processElements(w.schemaRepo, et.elements, writeEvent, docIDBuilder, ts, &et.docs, &et.seriesDocs)
+	err = processElements(w.schemaRepo, et.elements, writeEvent, ts, &et.docs, &et.seriesDocs)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +155,6 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	groups := make(map[string]*elementsInQueue)
-	var builder strings.Builder
 	for i := range events {
 		var writeEvent *streamv1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -175,7 +171,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			continue
 		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent, &builder); err != nil {
+		if groups, err = w.handle(groups, writeEvent); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*elementsInQueue)
 			continue
