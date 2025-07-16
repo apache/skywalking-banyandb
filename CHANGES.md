@@ -20,6 +20,7 @@ Release Notes.
 - Add Load Balancer Feature to Liaison. 
 - Implement fadvise for large files to prevent page cache pollution.
 - Data Model: Introduce the `Trace` data model to store the trace/span data.
+- Support dictionary encoding for low cardinality columns.
 - Push down aggregation for topN query.
 - Introduce write queue mechanism in liaison nodes to efficiently synchronize stream and measure partition folders, improving write throughput and consistency
 

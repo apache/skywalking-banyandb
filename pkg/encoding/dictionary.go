@@ -29,6 +29,7 @@ const maxUniqueValues = 256
 type Dictionary struct {
 	values  [][]byte
 	indices []uint32
+	tmp     []uint32
 }
 
 // NewDictionary creates a dictionary.
@@ -36,6 +37,7 @@ func NewDictionary() *Dictionary {
 	return &Dictionary{
 		values:  make([][]byte, 0),
 		indices: make([]uint32, 0),
+		tmp:     make([]uint32, 0),
 	}
 }
 
@@ -43,6 +45,7 @@ func NewDictionary() *Dictionary {
 func (d *Dictionary) Reset() {
 	d.values = d.values[:0]
 	d.indices = d.indices[:0]
+	d.tmp = d.tmp[:0]
 }
 
 // Add adds a value to the dictionary.
@@ -63,34 +66,40 @@ func (d *Dictionary) Add(value []byte) bool {
 }
 
 // Encode encodes the dictionary.
-func (d *Dictionary) Encode(dst []byte, tmp []uint32) []byte {
+func (d *Dictionary) Encode(dst []byte) []byte {
 	dst = VarUint64ToBytes(dst, uint64(len(d.values)))
 	dst = EncodeBytesBlock(dst, d.values)
-	re := encodeRLE(tmp, d.indices)
+	re := encodeRLE(d.tmp, d.indices)
 	be := encodeBitPacking(re)
 	dst = append(dst, be...)
 	return dst
 }
 
 // Decode decodes the dictionary.
-func (d *Dictionary) Decode(src []byte, tmp []uint32) error {
+func (d *Dictionary) Decode(dst [][]byte, src []byte, itemsCount uint64) ([][]byte, error) {
 	src, count := BytesToVarUint64(src)
 	if count == 0 {
-		return nil
+		return dst, nil
 	}
 
 	values, src, err := d.decodeBytesBlockWithTail(src, count)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	d.values = values
 
-	tmp, err = decodeBitPacking(tmp, src)
+	d.tmp, err = decodeBitPacking(d.tmp, src)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	d.indices = decodeRLE(d.indices[:0], tmp)
-	return nil
+	d.indices = decodeRLE(d.indices, d.tmp)
+	if uint64(len(d.indices)) != itemsCount {
+		return nil, fmt.Errorf("unexpected item counts; got %d; want %d", len(d.indices), itemsCount)
+	}
+	for _, index := range d.indices {
+		dst = append(dst, d.values[index])
+	}
+	return dst, nil
 }
 
 func (d *Dictionary) decodeBytesBlockWithTail(src []byte, itemsCount uint64) ([][]byte, []byte, error) {
