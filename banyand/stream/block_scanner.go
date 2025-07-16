@@ -130,6 +130,9 @@ func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *opt
 		}
 		minTimestamp, maxTimestamp := updateTimeRange(filterTS, qo.minTimestamp, qo.maxTimestamp)
 		snp := tabs[i].currentSnapshot()
+		if snp == nil {
+			continue
+		}
 		parts, size = snp.getParts(parts, minTimestamp, maxTimestamp)
 		if size < 1 {
 			snp.decRef()

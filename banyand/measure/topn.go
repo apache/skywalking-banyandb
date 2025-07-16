@@ -66,13 +66,7 @@ var (
 	_ flow.Sink = (*topNStreamingProcessor)(nil)
 )
 
-// TopNService is the interface for top N service to write measures to the top N flow.
-type TopNService interface {
-	// InFlow is called when a measure is written to the top N flow.
-	InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue)
-}
-
-func (sr *schemaRepo) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
+func (sr *schemaRepo) inFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
 	if p, _ := sr.topNProcessorMap.Load(getKey(stm.GetMetadata())); p != nil {
 		p.(*topNProcessorManager).onMeasureWrite(seriesID, shardID, &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{

@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -71,6 +70,54 @@ func (w *writeCallback) CheckHealth() *common.Error {
 	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
+func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, writeEvent *measurev1.InternalWriteRequest,
+	stm *measure, is indexSchema, ts int64,
+) (uint64, error) {
+	series := &pbv1.Series{
+		Subject:      req.Metadata.Name,
+		EntityValues: writeEvent.EntityValues,
+	}
+	if err := series.Marshal(); err != nil {
+		return 0, fmt.Errorf("cannot marshal series: %w", err)
+	}
+
+	if stm.schema.IndexMode {
+		fields := handleIndexMode(stm.schema, req, is.indexRuleLocators)
+		fields = appendEntityTagsToIndexFields(fields, stm, series)
+		doc := index.Document{
+			DocID:        uint64(series.ID),
+			EntityValues: series.Buffer,
+			Fields:       fields,
+			Version:      req.DataPoint.Version,
+			Timestamp:    ts,
+		}
+
+		if pos, exists := dpt.indexModeDocMap[doc.DocID]; exists {
+			dpt.indexModeDocs[pos] = doc
+		} else {
+			dpt.indexModeDocMap[doc.DocID] = len(dpt.indexModeDocs)
+			dpt.indexModeDocs = append(dpt.indexModeDocs, doc)
+		}
+		return uint64(series.ID), nil
+	}
+
+	fields := appendDataPoints(dpt, ts, series.ID, stm.GetSchema(), req, is.indexRuleLocators)
+
+	doc := index.Document{
+		DocID:        uint64(series.ID),
+		EntityValues: series.Buffer,
+		Fields:       fields,
+	}
+
+	if pos, exists := dpt.metadataDocMap[doc.DocID]; exists {
+		dpt.metadataDocs[pos] = doc
+	} else {
+		dpt.metadataDocMap[doc.DocID] = len(dpt.metadataDocs)
+		dpt.metadataDocs = append(dpt.metadataDocs, doc)
+	}
+	return uint64(series.ID), nil
+}
+
 func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
@@ -87,11 +134,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	dpg, ok := dst[gn]
 	if !ok {
 		dpg = &dataPointsInGroup{
-			tsdb:            tsdb,
-			tables:          make([]*dataPointsInTable, 0),
-			segments:        make([]storage.Segment[*tsTable, option], 0),
-			metadataDocMap:  make(map[uint64]int),
-			indexModeDocMap: make(map[uint64]int),
+			tsdb:     tsdb,
+			tables:   make([]*dataPointsInTable, 0),
+			segments: make([]storage.Segment[*tsTable, option], 0),
 		}
 		dst[gn] = dpg
 	}
@@ -125,53 +170,33 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 
 	shardID := common.ShardID(writeEvent.ShardId)
 	if dpt == nil {
-		if dpt, err = w.newDpt(tsdb, dpg, t, ts, shardID, stm.schema.IndexMode); err != nil {
-			return nil, fmt.Errorf("cannot create data points in table: %w", err)
+		var segment storage.Segment[*tsTable, option]
+		for _, seg := range dpg.segments {
+			if seg.GetTimeRange().Contains(ts) {
+				segment = seg
+			}
 		}
-	}
-
-	series := &pbv1.Series{
-		Subject:      req.Metadata.Name,
-		EntityValues: writeEvent.EntityValues,
-	}
-	if err := series.Marshal(); err != nil {
-		return nil, fmt.Errorf("cannot marshal series: %w", err)
-	}
-
-	if stm.schema.IndexMode {
-		fields := handleIndexMode(stm.schema, req, is.indexRuleLocators)
-		fields = w.appendEntityTagsToIndexFields(fields, stm, series)
-		doc := index.Document{
-			DocID:        uint64(series.ID),
-			EntityValues: series.Buffer,
-			Fields:       fields,
-			Version:      req.DataPoint.Version,
-			Timestamp:    ts,
+		if segment == nil {
+			segment, err = tsdb.CreateSegmentIfNotExist(t)
+			if err != nil {
+				return nil, fmt.Errorf("cannot create segment: %w", err)
+			}
+			dpg.segments = append(dpg.segments, segment)
 		}
-
-		if pos, exists := dpg.indexModeDocMap[doc.DocID]; exists {
-			dpg.indexModeDocs[pos] = doc
-		} else {
-			dpg.indexModeDocMap[doc.DocID] = len(dpg.indexModeDocs)
-			dpg.indexModeDocs = append(dpg.indexModeDocs, doc)
+		var tstb *tsTable
+		tstb, err = segment.CreateTSTableIfNotExist(shardID)
+		if err != nil {
+			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
-		return dst, nil
+		dpt = newDpt(segment, segment.GetTimeRange(), stm.schema.IndexMode, tstb)
+		dpg.tables = append(dpg.tables, dpt)
 	}
 
-	fields := appendDataPoints(dpt, ts, series.ID, stm.GetSchema(), req, is.indexRuleLocators)
-
-	doc := index.Document{
-		DocID:        uint64(series.ID),
-		EntityValues: series.Buffer,
-		Fields:       fields,
+	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts)
+	if err != nil {
+		return nil, err
 	}
-
-	if pos, exists := dpg.metadataDocMap[doc.DocID]; exists {
-		dpg.metadataDocs[pos] = doc
-	} else {
-		dpg.metadataDocMap[doc.DocID] = len(dpg.metadataDocs)
-		dpg.metadataDocs = append(dpg.metadataDocs, doc)
-	}
+	w.schemaRepo.inFlow(stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint)
 	return dst, nil
 }
 
@@ -209,39 +234,20 @@ func appendDataPoints(dest *dataPointsInTable, ts int64, sid common.SeriesID, sc
 	return fields
 }
 
-func (w *writeCallback) newDpt(tsdb storage.TSDB[*tsTable, option], dpg *dataPointsInGroup,
-	t time.Time, ts int64, shardID common.ShardID, indexMode bool,
-) (*dataPointsInTable, error) {
-	var segment storage.Segment[*tsTable, option]
-	for _, seg := range dpg.segments {
-		if seg.GetTimeRange().Contains(ts) {
-			segment = seg
-		}
-	}
-	if segment == nil {
-		var err error
-		segment, err = tsdb.CreateSegmentIfNotExist(t)
-		if err != nil {
-			return nil, fmt.Errorf("cannot create segment: %w", err)
-		}
-		dpg.segments = append(dpg.segments, segment)
+func newDpt(segment storage.Segment[*tsTable, option], timeRange timestamp.TimeRange,
+	indexMode bool, tstb *tsTable,
+) *dataPointsInTable {
+	dpt := &dataPointsInTable{
+		timeRange:      timeRange,
+		tsTable:        tstb,
+		metadataDocMap: make(map[uint64]int),
+		segment:        segment,
 	}
 	if indexMode {
-		return &dataPointsInTable{
-			timeRange: segment.GetTimeRange(),
-		}, nil
+		dpt.indexModeDocMap = make(map[uint64]int)
 	}
 
-	tstb, err := segment.CreateTSTableIfNotExist(shardID)
-	if err != nil {
-		return nil, fmt.Errorf("cannot create ts table: %w", err)
-	}
-	dpt := &dataPointsInTable{
-		timeRange: segment.GetTimeRange(),
-		tsTable:   tstb,
-	}
-	dpg.tables = append(dpg.tables, dpt)
-	return dpt, nil
+	return dpt
 }
 
 func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest, locator partition.IndexRuleLocator) ([]nameValues, []index.Field) {
@@ -363,7 +369,7 @@ func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest, lo
 	return fields
 }
 
-func (w *writeCallback) appendEntityTagsToIndexFields(fields []index.Field, stm *measure, series *pbv1.Series) []index.Field {
+func appendEntityTagsToIndexFields(fields []index.Field, stm *measure, series *pbv1.Series) []index.Field {
 	f := index.NewStringField(subjectField, series.Subject)
 	f.Index = true
 	f.NoSort = true
@@ -435,24 +441,24 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		g := groups[i]
 		for j := range g.tables {
 			dps := g.tables[j]
-			if dps.tsTable != nil {
+			if dps.tsTable != nil && dps.dataPoints != nil {
 				dps.tsTable.mustAddDataPoints(dps.dataPoints)
 			}
 			if dps.dataPoints != nil {
 				releaseDataPoints(dps.dataPoints)
 			}
-		}
-		for _, segment := range g.segments {
-			if len(g.metadataDocs) > 0 {
-				if err := segment.IndexDB().Insert(g.metadataDocs); err != nil {
+			if len(dps.metadataDocs) > 0 {
+				if err := dps.segment.IndexDB().Insert(dps.metadataDocs); err != nil {
 					w.l.Error().Err(err).Msg("cannot write metadata")
 				}
 			}
-			if len(g.indexModeDocs) > 0 {
-				if err := segment.IndexDB().Update(g.indexModeDocs); err != nil {
+			if len(dps.indexModeDocs) > 0 {
+				if err := dps.segment.IndexDB().Update(dps.indexModeDocs); err != nil {
 					w.l.Error().Err(err).Msg("cannot write index")
 				}
 			}
+		}
+		for _, segment := range g.segments {
 			segment.DecRef()
 		}
 		g.tsdb.Tick(g.latestTS)
