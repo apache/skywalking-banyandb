@@ -99,9 +99,9 @@ func (s *syncCallback) Rev(_ context.Context, message bus.Message) (resp bus.Mes
 		return
 	}
 
+	tsdb.Tick(memPart.partMetadata.MaxTimestamp)
 	// Use tsTable.mustAddMemPart to introduce memPart to tsTable
 	tsTable.mustAddMemPart(memPart)
-	tsdb.Tick(memPart.partMetadata.MaxTimestamp)
 
 	if e := s.l.Debug(); e.Enabled() {
 		e.
