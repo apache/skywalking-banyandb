@@ -65,9 +65,23 @@ func releaseFloat64Slice(float64Slice *[]float64) {
 	float64SlicePool.Put(float64Slice)
 }
 
+func generateDictionary() *encoding.Dictionary {
+	v := dictionaryPool.Get()
+	if v == nil {
+		return &encoding.Dictionary{}
+	}
+	return v
+}
+
+func releaseDictionary(d *encoding.Dictionary) {
+	d.Reset()
+	dictionaryPool.Put(d)
+}
+
 var (
 	int64SlicePool   = pool.Register[*[]int64]("measure-int64Slice")
 	float64SlicePool = pool.Register[*[]float64]("measure-float64Slice")
+	dictionaryPool   = pool.Register[*encoding.Dictionary]("measure-dictionary")
 )
 
 type column struct {
@@ -206,7 +220,17 @@ func (c *column) encodeFloat64Column(bb *bytes.Buffer) {
 }
 
 func (c *column) encodeDefault(bb *bytes.Buffer) {
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
+	dict := generateDictionary()
+	defer releaseDictionary(dict)
+	for _, v := range c.values {
+		if !dict.Add(v) {
+			bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], c.values)
+			bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
+			return
+		}
+	}
+	bb.Buf = dict.Encode(bb.Buf[:0])
+	bb.Buf = append([]byte{byte(encoding.EncodeTypeDictionary)}, bb.Buf...)
 }
 
 func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm columnMetadata, count uint64) {
@@ -340,8 +364,15 @@ func (c *column) decodeFloat64Column(decoder *encoding.BytesBlockDecoder, path s
 }
 
 func (c *column) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64, path string) {
+	encodeType := encoding.EncodeType(bb.Buf[0])
 	var err error
-	c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
+	if encodeType == encoding.EncodeTypeDictionary {
+		dict := generateDictionary()
+		defer releaseDictionary(dict)
+		c.values, err = dict.Decode(c.values[:0], bb.Buf[1:], count)
+	} else {
+		c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
+	}
 	if err != nil {
 		logger.Panicf("%s: cannot decode values: %v", path, err)
 	}
