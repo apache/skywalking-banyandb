@@ -281,15 +281,6 @@ func (e *entityRepo) getLocator(id identity) (partition.Locator, bool) {
 	return el, true
 }
 
-// loadMeasure retrieves the measure from the entityRepo by its metadata.
-func (e *entityRepo) loadMeasure(metadata *commonv1.Metadata) (*databasev1.Measure, bool) {
-	id := getID(metadata)
-	e.RWMutex.RLock()
-	defer e.RWMutex.RUnlock()
-	measure, ok := e.measureMap[id]
-	return measure, ok
-}
-
 var _ schema.EventHandler = (*shardingKeyRepo)(nil)
 
 type shardingKeyRepo struct {

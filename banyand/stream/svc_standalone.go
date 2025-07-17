@@ -58,27 +58,26 @@ type Service interface {
 	Query
 }
 
-var _ Service = (*service)(nil)
+var _ Service = (*standalone)(nil)
 
-type service struct {
-	writeListener       bus.MessageListener
-	metadata            metadata.Repo
+type standalone struct {
+	pm                  protector.Memory
 	pipeline            queue.Server
 	localPipeline       queue.Queue
 	omr                 observability.MetricsRegistry
 	lfs                 fs.FileSystem
-	pm                  protector.Memory
+	metadata            metadata.Repo
 	l                   *logger.Logger
 	schemaRepo          schemaRepo
-	root                string
 	snapshotDir         string
+	root                string
 	dataPath            string
 	option              option
 	maxDiskUsagePercent int
 	maxFileSnapshotNum  int
 }
 
-func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
+func (s *standalone) Stream(metadata *commonv1.Metadata) (Stream, error) {
 	sm, ok := s.schemaRepo.loadStream(metadata)
 	if !ok {
 		return nil, errors.WithStack(ErrStreamNotExist)
@@ -86,15 +85,15 @@ func (s *service) Stream(metadata *commonv1.Metadata) (Stream, error) {
 	return sm, nil
 }
 
-func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
+func (s *standalone) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }
 
-func (s *service) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
+func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
-func (s *service) FlagSet() *run.FlagSet {
+func (s *standalone) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of stream")
 	flagS.StringVar(&s.dataPath, "stream-data-path", "", "the data directory path of stream. If not set, <stream-root-path>/stream/data will be used")
@@ -109,7 +108,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	return flagS
 }
 
-func (s *service) Validate() error {
+func (s *standalone) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
 	}
@@ -122,15 +121,15 @@ func (s *service) Validate() error {
 	return nil
 }
 
-func (s *service) Name() string {
+func (s *standalone) Name() string {
 	return "stream"
 }
 
-func (s *service) Role() databasev1.Role {
+func (s *standalone) Role() databasev1.Role {
 	return databasev1.Role_ROLE_DATA
 }
 
-func (s *service) PreRun(ctx context.Context) error {
+func (s *standalone) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
@@ -160,19 +159,31 @@ func (s *service) PreRun(ctx context.Context) error {
 	if err := s.pipeline.Subscribe(data.TopicDeleteExpiredStreamSegments, &deleteStreamSegmentsListener{s: s}); err != nil {
 		return err
 	}
-	s.writeListener = setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
-	err := s.pipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
+	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
+	err := s.pipeline.Subscribe(data.TopicStreamWrite, writeListener)
 	if err != nil {
 		return err
 	}
-	return s.localPipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
+	err = s.pipeline.Subscribe(data.TopicStreamPartSync, setUpSyncCallback(s.l, &s.schemaRepo))
+	if err != nil {
+		return err
+	}
+	err = s.pipeline.Subscribe(data.TopicStreamSeriesIndexWrite, setUpSeriesIndexCallback(s.l, &s.schemaRepo))
+	if err != nil {
+		return err
+	}
+	err = s.pipeline.Subscribe(data.TopicStreamLocalIndexWrite, setUpLocalIndexCallback(s.l, &s.schemaRepo))
+	if err != nil {
+		return err
+	}
+	return s.localPipeline.Subscribe(data.TopicStreamWrite, writeListener)
 }
 
-func (s *service) Serve() run.StopNotify {
+func (s *standalone) Serve() run.StopNotify {
 	return s.schemaRepo.StopCh()
 }
 
-func (s *service) GracefulStop() {
+func (s *standalone) GracefulStop() {
 	s.schemaRepo.Close()
 	if s.localPipeline != nil {
 		s.localPipeline.GracefulStop()
@@ -181,7 +192,7 @@ func (s *service) GracefulStop() {
 
 // NewService returns a new service.
 func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
-	return &service{
+	return &standalone{
 		metadata: metadata,
 		pipeline: pipeline,
 		omr:      omr,
@@ -191,7 +202,7 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability
 
 // NewReadonlyService returns a new readonly service.
 func NewReadonlyService(metadata metadata.Repo, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
-	return &service{
+	return &standalone{
 		metadata: metadata,
 		omr:      omr,
 		pm:       pm,
@@ -200,7 +211,7 @@ func NewReadonlyService(metadata metadata.Repo, omr observability.MetricsRegistr
 
 type deleteStreamSegmentsListener struct {
 	*bus.UnImplementedHealthyListener
-	s *service
+	s *standalone
 }
 
 func (d *deleteStreamSegmentsListener) Rev(_ context.Context, message bus.Message) bus.Message {

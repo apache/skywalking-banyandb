@@ -35,7 +35,7 @@ import (
 )
 
 type streamQueryProcessor struct {
-	streamService stream.SchemaService
+	streamService stream.Service
 	broadcaster   bus.Broadcaster
 	*queryService
 	*bus.UnImplementedHealthyListener

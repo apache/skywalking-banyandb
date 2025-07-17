@@ -19,72 +19,63 @@ package measure
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var (
-	errEmptyRootPath = errors.New("root path is empty")
-	// ErrMeasureNotExist denotes a measure doesn't exist in the metadata repo.
-	ErrMeasureNotExist = errors.New("measure doesn't exist")
+const (
+	serviceName = "measure"
 )
 
-// Service allows inspecting the measure data points.
-type Service interface {
-	run.PreRunner
-	run.Config
-	run.Service
-	Query
-	TopNService
-}
+var _ Service = (*dataSVC)(nil)
 
-var _ Service = (*service)(nil)
-
-type service struct {
-	writeListener       bus.MessageListener
+type dataSVC struct {
 	lfs                 fs.FileSystem
+	c                   storage.Cache
 	pipeline            queue.Server
-	localPipeline       queue.Queue
-	metricPipeline      queue.Server
 	omr                 observability.MetricsRegistry
 	metadata            metadata.Repo
 	pm                  protector.Memory
+	metricPipeline      queue.Server
 	schemaRepo          *schemaRepo
 	l                   *logger.Logger
-	c                   storage.Cache
 	cm                  *cacheMetrics
 	root                string
-	snapshotDir         string
 	dataPath            string
+	snapshotDir         string
 	option              option
 	cc                  storage.CacheConfig
 	maxDiskUsagePercent int
 	maxFileSnapshotNum  int
 }
 
-func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
+func (s *dataSVC) Measure(metadata *commonv1.Metadata) (Measure, error) {
 	sm, ok := s.schemaRepo.loadMeasure(metadata)
 	if !ok {
 		return nil, errors.WithStack(ErrMeasureNotExist)
@@ -92,15 +83,15 @@ func (s *service) Measure(metadata *commonv1.Metadata) (Measure, error) {
 	return sm, nil
 }
 
-func (s *service) LoadGroup(name string) (resourceSchema.Group, bool) {
+func (s *dataSVC) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }
 
-func (s *service) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
+func (s *dataSVC) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
-func (s *service) FlagSet() *run.FlagSet {
+func (s *dataSVC) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of measure")
 	flagS.StringVar(&s.dataPath, "measure-data-path", "", "the data directory path of measure. If not set, <measure-root-path>/measure/data will be used")
@@ -118,15 +109,15 @@ func (s *service) FlagSet() *run.FlagSet {
 	return flagS
 }
 
-func (s *service) Validate() error {
+func (s *dataSVC) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
 	}
 	if s.maxDiskUsagePercent < 0 {
-		return errors.New("measure-max-disk-usage-percen must be greater than or equal to 0")
+		return errors.New("measure-max-disk-usage-percent must be greater than or equal to 0")
 	}
 	if s.maxDiskUsagePercent > 100 {
-		return errors.New("measure-max-disk-usage-percen must be less than or equal to 100")
+		return errors.New("measure-max-disk-usage-percent must be less than or equal to 100")
 	}
 	if s.cc.MaxCacheSize < 0 {
 		return errors.New("service-cache-max-size must be greater than or equal to 0")
@@ -140,15 +131,15 @@ func (s *service) Validate() error {
 	return nil
 }
 
-func (s *service) Name() string {
-	return "measure"
+func (s *dataSVC) Name() string {
+	return serviceName
 }
 
-func (s *service) Role() databasev1.Role {
+func (s *dataSVC) Role() databasev1.Role {
 	return databasev1.Role_ROLE_DATA
 }
 
-func (s *service) PreRun(ctx context.Context) error {
+func (s *dataSVC) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
@@ -161,14 +152,13 @@ func (s *service) PreRun(ctx context.Context) error {
 	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
 		observability.UpdatePath(s.dataPath)
 	}
-	s.localPipeline = queue.Local()
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
 		return errors.New("node id is empty")
 	}
 	s.c = storage.NewServiceCacheWithConfig(s.cc)
 	node := val.(common.Node)
-	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
+	s.schemaRepo = newDataSchemaRepo(s.dataPath, s, node.Labels)
 
 	s.cm = newCacheMetrics(s.omr)
 	observability.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)
@@ -177,55 +167,57 @@ func (s *service) PreRun(ctx context.Context) error {
 		return nil
 	}
 
-	if err := s.createNativeObservabilityGroup(ctx); err != nil {
+	if err := s.createDataNativeObservabilityGroup(ctx); err != nil {
 		return err
 	}
 
-	if err := s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {
+	if err := s.pipeline.Subscribe(data.TopicSnapshot, &dataSnapshotListener{s: s}); err != nil {
 		return err
 	}
 
-	if err := s.pipeline.Subscribe(data.TopicMeasureDeleteExpiredSegments, &deleteStreamSegmentsListener{s: s}); err != nil {
+	if err := s.pipeline.Subscribe(data.TopicMeasureDeleteExpiredSegments, &dataDeleteStreamSegmentsListener{s: s}); err != nil {
 		return err
 	}
 
-	s.writeListener = setUpWriteCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent)
+	err := s.pipeline.Subscribe(data.TopicMeasurePartSync, setUpSyncCallback(s.l, s.schemaRepo))
+	if err != nil {
+		return err
+	}
+	err = s.pipeline.Subscribe(data.TopicMeasureSeriesIndexInsert, setUpIndexCallback(s.l, s.schemaRepo, data.TopicMeasureSeriesIndexInsert))
+	if err != nil {
+		return err
+	}
+	err = s.pipeline.Subscribe(data.TopicMeasureSeriesIndexUpdate, setUpIndexCallback(s.l, s.schemaRepo, data.TopicMeasureSeriesIndexUpdate))
+	if err != nil {
+		return err
+	}
+
+	writeListener := setUpWriteCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent)
+	err = s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener)
+	if err != nil {
+		return err
+	}
 	// only subscribe metricPipeline for data node
 	if s.metricPipeline != nil {
-		err := s.metricPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
+		err = s.metricPipeline.Subscribe(data.TopicMeasureWrite, writeListener)
 		if err != nil {
 			return err
 		}
 	}
-	err := s.pipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
-	if err != nil {
-		return err
-	}
-	return s.localPipeline.Subscribe(data.TopicMeasureWrite, s.writeListener)
+	return nil
 }
 
-func (s *service) Serve() run.StopNotify {
+func (s *dataSVC) Serve() run.StopNotify {
 	return s.schemaRepo.StopCh()
 }
 
-func (s *service) GracefulStop() {
+func (s *dataSVC) GracefulStop() {
 	observability.MetricsCollector.Unregister("measure_cache")
 	s.schemaRepo.Close()
 	s.c.Close()
-	if s.localPipeline != nil {
-		s.localPipeline.GracefulStop()
-	}
 }
 
-func (s *service) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
-	if s.schemaRepo == nil {
-		s.l.Error().Msg("schema repository is not initialized")
-		return
-	}
-	s.schemaRepo.InFlow(stm, seriesID, shardID, entityValues, dp)
-}
-
-func (s *service) collectCacheMetrics() {
+func (s *dataSVC) collectCacheMetrics() {
 	if s.cm == nil || s.c == nil {
 		return
 	}
@@ -246,9 +238,53 @@ func (s *service) collectCacheMetrics() {
 	s.cm.size.Set(float64(size))
 }
 
-// NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
-	return &service{
+func (s *dataSVC) createDataNativeObservabilityGroup(ctx context.Context) error {
+	if !s.omr.NativeEnabled() {
+		return nil
+	}
+	g := &commonv1.Group{
+		Metadata: &commonv1.Metadata{
+			Name: native.ObservabilityGroupName,
+		},
+		Catalog: commonv1.Catalog_CATALOG_MEASURE,
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 1,
+			SegmentInterval: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+			Ttl: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+		},
+	}
+	if err := s.metadata.GroupRegistry().CreateGroup(ctx, g); err != nil &&
+		!errors.Is(err, schema.ErrGRPCAlreadyExists) {
+		return errors.WithMessage(err, "failed to create native observability group")
+	}
+	return nil
+}
+
+func (s *dataSVC) takeGroupSnapshot(dstDir string, groupName string) error {
+	group, ok := s.schemaRepo.LoadGroup(groupName)
+	if !ok {
+		return errors.Errorf("group %s not found", groupName)
+	}
+	db := group.SupplyTSDB()
+	if db == nil {
+		return errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
+	}
+	tsdb := db.(storage.TSDB[*tsTable, option])
+	if err := tsdb.TakeFileSnapshot(dstDir); err != nil {
+		return errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
+	}
+	return nil
+}
+
+// NewDataSVC returns a new data service.
+func NewDataSVC(metadata metadata.Repo, pipeline queue.Server, metricPipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
+	return &dataSVC{
 		metadata:       metadata,
 		pipeline:       pipeline,
 		metricPipeline: metricPipeline,
@@ -257,21 +293,119 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, metricPipeline qu
 	}, nil
 }
 
-// NewReadonlyService returns a new readonly service.
-func NewReadonlyService(metadata metadata.Repo, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
-	return &service{
+// NewReadonlyDataSVC returns a new readonly data service.
+func NewReadonlyDataSVC(metadata metadata.Repo, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
+	return &dataSVC{
 		metadata: metadata,
 		omr:      omr,
 		pm:       pm,
 	}, nil
 }
 
-type deleteStreamSegmentsListener struct {
-	*bus.UnImplementedHealthyListener
-	s *service
+func newDataSchemaRepo(path string, svc *dataSVC, nodeLabels map[string]string) *schemaRepo {
+	sr := &schemaRepo{
+		path:     path,
+		l:        svc.l,
+		metadata: svc.metadata,
+	}
+	sr.Repository = resourceSchema.NewRepository(
+		svc.metadata,
+		svc.l,
+		newDataSupplier(path, svc, sr, nodeLabels),
+		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
+	)
+	sr.start()
+	return sr
 }
 
-func (d *deleteStreamSegmentsListener) Rev(_ context.Context, message bus.Message) bus.Message {
+func newDataSupplier(path string, svc *dataSVC, sr *schemaRepo, nodeLabels map[string]string) *supplier {
+	if svc.pm == nil {
+		svc.l.Panic().Msg("CRITICAL: svc.pm is nil in newSupplier")
+	}
+	opt := svc.option
+	opt.protector = svc.pm
+
+	if opt.protector == nil {
+		svc.l.Panic().Msg("CRITICAL: opt.protector is still nil after assignment")
+	}
+	return &supplier{
+		path:       path,
+		metadata:   svc.metadata,
+		l:          svc.l,
+		c:          svc.c,
+		option:     opt,
+		omr:        svc.omr,
+		pm:         svc.pm,
+		schemaRepo: sr,
+		nodeLabels: nodeLabels,
+	}
+}
+
+type dataSnapshotListener struct {
+	*bus.UnImplementedHealthyListener
+	s           *dataSVC
+	snapshotSeq uint64
+	snapshotMux sync.Mutex
+}
+
+func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	groups := message.Data().([]*databasev1.SnapshotRequest_Group)
+	var gg []resourceSchema.Group
+	if len(groups) == 0 {
+		gg = d.s.schemaRepo.LoadAllGroups()
+	} else {
+		for _, g := range groups {
+			if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
+				continue
+			}
+			group, ok := d.s.schemaRepo.LoadGroup(g.Group)
+			if !ok {
+				continue
+			}
+			gg = append(gg, group)
+		}
+	}
+	if len(gg) == 0 {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+	}
+	d.snapshotMux.Lock()
+	defer d.snapshotMux.Unlock()
+	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.lfs)
+	sn := d.snapshotName()
+	var err error
+	for _, g := range gg {
+		select {
+		case <-ctx.Done():
+			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+		default:
+		}
+		if errGroup := d.s.takeGroupSnapshot(filepath.Join(d.s.snapshotDir, sn, g.GetSchema().Metadata.Name), g.GetSchema().Metadata.Name); err != nil {
+			d.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
+			err = multierr.Append(err, errGroup)
+			continue
+		}
+	}
+	snp := &databasev1.Snapshot{
+		Name:    sn,
+		Catalog: commonv1.Catalog_CATALOG_MEASURE,
+	}
+	if err != nil {
+		snp.Error = err.Error()
+	}
+	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), snp)
+}
+
+func (d *dataSnapshotListener) snapshotName() string {
+	d.snapshotSeq++
+	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), d.snapshotSeq)
+}
+
+type dataDeleteStreamSegmentsListener struct {
+	*bus.UnImplementedHealthyListener
+	s *dataSVC
+}
+
+func (d *dataDeleteStreamSegmentsListener) Rev(_ context.Context, message bus.Message) bus.Message {
 	req := message.Data().(*measurev1.DeleteExpiredSegmentsRequest)
 	if req == nil {
 		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), int64(0))

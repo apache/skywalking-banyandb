@@ -65,9 +65,23 @@ func releaseFloat64Slice(float64Slice *[]float64) {
 	float64SlicePool.Put(float64Slice)
 }
 
+func generateDictionary() *encoding.Dictionary {
+	v := dictionaryPool.Get()
+	if v == nil {
+		return &encoding.Dictionary{}
+	}
+	return v
+}
+
+func releaseDictionary(d *encoding.Dictionary) {
+	d.Reset()
+	dictionaryPool.Put(d)
+}
+
 var (
 	int64SlicePool   = pool.Register[*[]int64]("stream-int64Slice")
 	float64SlicePool = pool.Register[*[]float64]("stream-float64Slice")
+	dictionaryPool   = pool.Register[*encoding.Dictionary]("stream-dictionary")
 )
 
 type tag struct {
@@ -221,7 +235,17 @@ func (t *tag) encodeFloat64Tag(bb *bytes.Buffer) {
 }
 
 func (t *tag) encodeDefault(bb *bytes.Buffer) {
-	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
+	dict := generateDictionary()
+	defer releaseDictionary(dict)
+	for _, v := range t.values {
+		if !dict.Add(v) {
+			bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], t.values)
+			bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
+			return
+		}
+	}
+	bb.Buf = dict.Encode(bb.Buf[:0])
+	bb.Buf = append([]byte{byte(encoding.EncodeTypeDictionary)}, bb.Buf...)
 }
 
 func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm tagMetadata, count uint64) {
@@ -355,8 +379,15 @@ func (t *tag) decodeFloat64Tag(decoder *encoding.BytesBlockDecoder, path string,
 }
 
 func (t *tag) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64, path string) {
+	encodeType := encoding.EncodeType(bb.Buf[0])
 	var err error
-	t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
+	if encodeType == encoding.EncodeTypeDictionary {
+		dict := generateDictionary()
+		defer releaseDictionary(dict)
+		t.values, err = dict.Decode(t.values[:0], bb.Buf[1:], count)
+	} else {
+		t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
+	}
 	if err != nil {
 		logger.Panicf("%s: cannot decode values: %v", path, err)
 	}

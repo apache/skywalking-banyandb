@@ -24,6 +24,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -220,18 +221,26 @@ func releaseDataPoints(v *dataPoints) {
 var dataPointsPool = pool.Register[*dataPoints]("measure-dataPoints")
 
 type dataPointsInTable struct {
-	tsTable    *tsTable
-	dataPoints *dataPoints
-	timeRange  timestamp.TimeRange
+	segment         storage.Segment[*tsTable, option]
+	tsTable         *tsTable
+	dataPoints      *dataPoints
+	metadataDocMap  map[uint64]int
+	indexModeDocMap map[uint64]int
+	timeRange       timestamp.TimeRange
+	metadataDocs    index.Documents
+	indexModeDocs   index.Documents
+	shardID         common.ShardID
 }
 
 type dataPointsInGroup struct {
-	tsdb            storage.TSDB[*tsTable, option]
-	metadataDocs    index.Documents
-	indexModeDocs   index.Documents
-	metadataDocMap  map[uint64]int
-	indexModeDocMap map[uint64]int
-	tables          []*dataPointsInTable
-	segments        []storage.Segment[*tsTable, option]
-	latestTS        int64
+	tsdb     storage.TSDB[*tsTable, option]
+	tables   []*dataPointsInTable
+	segments []storage.Segment[*tsTable, option]
+	latestTS int64
+}
+
+type dataPointsInQueue struct {
+	name   string
+	queue  *wqueue.Queue[*tsTable, option]
+	tables []*dataPointsInTable
 }
