@@ -18,7 +18,7 @@ version: '2.1'
 services:
   oap:
     extends:
-      file: ./base-compose.yml
+      file: base-compose.yml
       service: oap
     environment:
       SW_STORAGE: banyandb
@@ -27,14 +27,14 @@ services:
 
   agent:
     extends:
-      file: ./base-compose.yml
+      file: base-compose.yml
       service: agent
     networks:
       - e2e
 
   provider:
     extends:
-      file: ./base-compose.yml
+      file: base-compose.yml
       service: provider
     ports:
       - 9090
@@ -48,7 +48,7 @@ services:
 
   consumer:
     extends:
-      file: ./base-compose.yml
+      file: base-compose.yml
       service: consumer
     ports:
       - 9092

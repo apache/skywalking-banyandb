@@ -80,10 +80,5 @@ services:
       timeout: 60s
       retries: 120
 
-  traffic_loader:
-    image: grafana/k6:latest
-    ports:
-      - "6565:6565"
-
 volumes:
   sw_agent:
