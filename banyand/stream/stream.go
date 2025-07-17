@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -48,6 +49,7 @@ const (
 type option struct {
 	mergePolicy              *mergePolicy
 	protector                protector.Memory
+	tire2Client              queue.Client
 	seriesCacheMaxSize       run.Bytes
 	flushTimeout             time.Duration
 	elementIndexFlushTimeout time.Duration
@@ -86,11 +88,11 @@ func (i *indexSchema) parse(schema *databasev1.Stream) {
 var _ Stream = (*stream)(nil)
 
 type stream struct {
+	pm          protector.Memory
 	indexSchema atomic.Value
 	tsdb        atomic.Value
 	l           *logger.Logger
 	schema      *databasev1.Stream
-	pm          protector.Memory
 	schemaRepo  *schemaRepo
 	name        string
 	group       string

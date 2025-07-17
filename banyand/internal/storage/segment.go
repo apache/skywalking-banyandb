@@ -501,7 +501,7 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 		}
 	}
 	options := sc.getOptions()
-	start = options.SegmentInterval.Unit.standard(start)
+	start = options.SegmentInterval.Unit.Standard(start)
 	var next *segment[T, O]
 	for _, s := range sc.lst {
 		if s.Contains(start.UnixNano()) {
@@ -511,7 +511,7 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 			next = s
 		}
 	}
-	stdEnd := options.SegmentInterval.nextTime(start)
+	stdEnd := options.SegmentInterval.NextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
 		end = next.Start
@@ -657,7 +657,7 @@ func loadSegments[T TSTable, O any](root, prefix string, parser *segmentControll
 		if i < len(startTimeLst)-1 {
 			end = startTimeLst[i+1]
 		} else {
-			end = intervalRule.nextTime(start)
+			end = intervalRule.NextTime(start)
 		}
 		if err := loadFn(start, end); err != nil {
 			return err

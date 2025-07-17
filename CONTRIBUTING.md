@@ -93,6 +93,17 @@ make lint
 
 If you found some errors in the output of the above command, try to `make format` to fix some obvious style issues. As for the complicated errors, please correct them manually.
 
+## AI-Assisted Development
+
+If you're using AI assistants (like Claude, Cursor, GitHub Copilot, etc.) to help with code generation, please refer to our [AI Coding Guidelines](AI_CODING_GUIDELINES.md) to ensure the generated code follows our project's coding standards and linting rules.
+
+The guidelines cover:
+- Variable shadowing prevention
+- Import organization and aliases
+- Error handling patterns
+- Code style and documentation standards
+- Common patterns to avoid and preferred alternatives
+
 ## Update licenses
 
 If you import new dependencies or upgrade an existing one, trigger the licenses generator
