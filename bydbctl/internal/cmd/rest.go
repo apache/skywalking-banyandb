@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	"google.golang.org/grpc/status"
 	"sigs.k8s.io/yaml"
 
+	"github.com/apache/skywalking-banyandb/bydbctl/pkg/auth"
 	"github.com/apache/skywalking-banyandb/bydbctl/pkg/file"
 )
 
@@ -337,6 +339,14 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 			client.SetTLSClientConfig(&config)
 		}
 		req := client.R()
+		// Add req headers.
+		authHeader, err := getAuthHeader()
+		if err != nil {
+			return err
+		}
+		if authHeader != "" {
+			req.Header.Set("Authorization", authHeader)
+		}
 		resp, err := fn(request{
 			reqBody: r,
 			req:     req,
@@ -351,6 +361,9 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 			s := status.FromProto(st)
 			return s.Err()
 		}
+		if resp.StatusCode() != http.StatusOK {
+			return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode())
+		}
 		err = printer(i, r, bd)
 		if err != nil {
 			return err
@@ -358,4 +371,26 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 	}
 
 	return nil
+}
+
+func getAuthHeader() (string, error) {
+	// if username not blank and usePassword
+	if username != "" && usePassword {
+		password, err := auth.PromptForPassword()
+		if err != nil {
+			return "", err
+		}
+		return auth.GenerateBasicAuthHeader(username, password), nil
+	}
+	// If the user does not ask for a password.
+	if username != "" {
+		return auth.GenerateBasicAuthHeader(username, ""), nil
+	}
+	// If the command line username is not available, then look for it in the configuration file.
+	user := viper.GetString("username")
+	password := viper.GetString("password")
+	if user == "" && password == "" {
+		return "", nil
+	}
+	return auth.GenerateBasicAuthHeader(user, password), nil
 }

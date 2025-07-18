@@ -23,8 +23,10 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 
+	"github.com/apache/skywalking-banyandb/bydbctl/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -50,7 +52,7 @@ func newHealthCheckCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			err = helpers.HealthCheck(grpcAddr, 10*time.Second, 10*time.Second, opts...)()
+			err = healthCheck(grpcAddr, 10*time.Second, 10*time.Second, username, usePassword, opts...)
 			if err == nil {
 				fmt.Println("connected")
 			}
@@ -59,5 +61,24 @@ func newHealthCheckCmd() *cobra.Command {
 	}
 	healthCheckCmd.Flags().StringVarP(&grpcAddr, "grpc-addr", "", "", "Grpc server's address, the format is Domain:Port")
 	bindTLSRelatedFlag(healthCheckCmd)
+	bindUsernameAndPasswordFlag(healthCheckCmd)
 	return healthCheckCmd
+}
+
+func healthCheck(grpcAddr string, connTimeout, rpcTimeout time.Duration, username string, usePassword bool, opts ...grpc.DialOption) error {
+	var password string
+	var err error
+
+	switch {
+	case username != "" && usePassword:
+		password, err = auth.PromptForPassword()
+		if err != nil {
+			return err
+		}
+	case username == "":
+		username = viper.GetString("username")
+		password = viper.GetString("password")
+	}
+	// if username != "" && !usePassword, the value of password is ""
+	return helpers.HealthCheckWithAuth(grpcAddr, connTimeout, rpcTimeout, username, password, opts...)()
 }
