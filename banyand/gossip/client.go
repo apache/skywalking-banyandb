@@ -47,7 +47,7 @@ func (s *service) Propagation(nodes []string, topic string, message bus.Message)
 		// two rounds of all nodes except the lasted node
 		// such when there have three nodes A, B, C,
 		// the propagation will be A -> B, B -> C, C -> A, A -> B
-		ctx.MaxPropagationCount = int32(len(nodes)*2 - 2)
+		ctx.MaxPropagationCount = int32(len(nodes)*2 - 3)
 	}
 
 	// building propagation message request
