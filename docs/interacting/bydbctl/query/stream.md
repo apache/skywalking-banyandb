@@ -48,37 +48,27 @@ stream:
   tagFamilies:
   - name: storage-only
     tags:
-    - indexedOnly: false
-      name: service_id
+    - name: service_id
       type: TAG_TYPE_STRING
-    - indexedOnly: false
-      name: service_instance_id
+    - name: service_instance_id
       type: TAG_TYPE_STRING
-    - indexedOnly: false
-      name: start_time
+    - name: start_time
       type: TAG_TYPE_INT
-    - indexedOnly: false
-      name: is_error
+    - name: is_error
       type: TAG_TYPE_INT
-    - indexedOnly: false
-      name: data_binary
+    - name: data_binary
       type: TAG_TYPE_DATA_BINARY
   - name: searchable
     tags:
-    - indexedOnly: false
-      name: segment_id
+    - name: segment_id
       type: TAG_TYPE_STRING
-    - indexedOnly: false
-      name: trace_id
+    - name: trace_id
       type: TAG_TYPE_STRING
-    - indexedOnly: false
-      name: endpoint_id
+    - name: endpoint_id
       type: TAG_TYPE_STRING
-    - indexedOnly: false
-      name: latency
+    - name: latency
       type: TAG_TYPE_INT
-    - indexedOnly: true
-      name: tags
+    - name: tags
       type: TAG_TYPE_STRING_ARRAY
   updatedAt: null
 ```

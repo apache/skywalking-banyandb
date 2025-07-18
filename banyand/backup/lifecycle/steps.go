@@ -100,7 +100,7 @@ func (l *lifecycleService) setupQuerySvc(ctx context.Context, streamDir, measure
 		}
 	}
 	if measureDir != "" {
-		measureSVC, err = measure.NewReadonlyService(l.metadata, l.omr, l.pm)
+		measureSVC, err = measure.NewReadonlyDataSVC(l.metadata, l.omr, l.pm)
 		if err != nil {
 			return nil, nil, err
 		}

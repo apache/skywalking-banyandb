@@ -108,6 +108,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	now := time.Unix(0, ns-ns%int64(time.Minute))
 	tenDaysBeforeNow = now.Add(-10 * 24 * time.Hour)
 	test_cases.Initialize(liaisonAddr, tenDaysBeforeNow)
+	time.Sleep(flags.ConsistentlyTimeout)
 	deferFunc = func() {
 		closerLiaisonNode()
 		closeDataNode0()
