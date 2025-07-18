@@ -36,15 +36,16 @@ const (
 	KindGroup Kind = 1 << iota
 	KindStream
 	KindMeasure
+	KindTrace
 	KindIndexRuleBinding
 	KindIndexRule
 	KindTopNAggregation
 	KindNode
 	KindProperty
-	KindMask = KindGroup | KindStream | KindMeasure |
+	KindMask = KindGroup | KindStream | KindMeasure | KindTrace |
 		KindIndexRuleBinding | KindIndexRule |
 		KindTopNAggregation | KindNode | KindProperty
-	KindSize = 8
+	KindSize = 9
 )
 
 func (k Kind) key() string {
@@ -55,6 +56,8 @@ func (k Kind) key() string {
 		return streamKeyPrefix
 	case KindMeasure:
 		return measureKeyPrefix
+	case KindTrace:
+		return traceKeyPrefix
 	case KindIndexRuleBinding:
 		return indexRuleBindingKeyPrefix
 	case KindIndexRule:
@@ -63,6 +66,8 @@ func (k Kind) key() string {
 		return topNAggregationKeyPrefix
 	case KindNode:
 		return nodeKeyPrefix
+	case KindProperty:
+		return propertyKeyPrefix
 	default:
 		return "unknown"
 	}
@@ -81,6 +86,8 @@ func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
 		m = &databasev1.Stream{}
 	case KindMeasure:
 		m = &databasev1.Measure{}
+	case KindTrace:
+		m = &databasev1.Trace{}
 	case KindIndexRuleBinding:
 		m = &databasev1.IndexRuleBinding{}
 	case KindIndexRule:
@@ -125,6 +132,8 @@ func (k Kind) String() string {
 		return "stream"
 	case KindMeasure:
 		return "measure"
+	case KindTrace:
+		return "trace"
 	case KindIndexRuleBinding:
 		return "indexRuleBinding"
 	case KindIndexRule:
@@ -133,6 +142,8 @@ func (k Kind) String() string {
 		return "topNAggregation"
 	case KindNode:
 		return "node"
+	case KindProperty:
+		return "property"
 	default:
 		return "unknown"
 	}
