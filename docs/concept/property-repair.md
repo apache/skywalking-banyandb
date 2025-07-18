@@ -177,7 +177,7 @@ This allows B to quickly identify which slots may contain differences.
 6. **(B)Validate Actual Data**: Node B handles the data as follows: 
    * For missing entities, B returns the latest version of the data.
    * For entities present on A, but not on B, B updates its local copy with the data from A.
-   * For SHA mismatches, B uses "last-write-win" strategy. It compares the version numbers. If B’s version is newer, it returns the Property data to A. If A’s version is newer, B updates its local copy and does not return any data. If the versions are the same, it selects the data from the smaller index of the node list; in this case, it would be from A.****
+   * For SHA mismatches, B uses the "last-write-win" strategy. It compares the version numbers. If B’s version is newer, it returns the Property data to A. If A’s version is newer, B updates its local copy and does not return any data. If the versions are the same, it selects the data from the smaller index of the node list; in this case, it would be from A.
 7. **(A)Update Local Data**: Node A receives updated Property data from B and applies the changes to its local store.
 
 This concludes the A-to-B synchronization cycle for a given group in the Property repair process.
