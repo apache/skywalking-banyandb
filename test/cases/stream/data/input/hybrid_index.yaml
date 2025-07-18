@@ -15,37 +15,28 @@
 # specific language governing permissions and limitations
 # under the License.
 
-elements:
-  - elementId: "0"
-    tagFamilies:
-    - name: searchable
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: "1"
-      - key: service_instance_id
-        value:
-          "null": null
-  - elementId: "2"
-    tagFamilies:
-    - name: searchable
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: "3"
-      - key: service_instance_id
-        value:
-          "null": null
-  - elementId: "4"
-    tagFamilies:
-    - name: searchable
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: "5"
-      - key: service_instance_id
-        value:
-          "null": null
+name: "sw"
+groups: ["default"]
+projection:
+  tagFamilies:
+  - name: "searchable"
+    tags: ["trace_id", "extended_tags"]
+  - name: "data"
+    tags: ["data_binary"]
+criteria:
+    le:
+      op: "LOGICAL_OP_AND"
+      left:
+        condition:
+          name: "extended_tags"
+          op: "BINARY_OP_HAVING"
+          value:
+            strArray:
+              value: ["c", "b"]
+      right:
+        condition:
+          name: "trace_id"
+          op: "BINARY_OP_EQ"
+          value:
+            str:
+              value: "5"

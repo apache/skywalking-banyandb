@@ -318,15 +318,20 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 		MessageId: uint64(m.ID()),
 		BatchMod:  m.BatchModeEnabled(),
 	}
-	message, ok := m.Data().(proto.Message)
-	if !ok {
+
+	switch data := m.Data().(type) {
+	case proto.Message:
+		messageData, err := proto.Marshal(data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal message %T: %w", m, err)
+		}
+		r.Body = messageData
+	case []byte:
+		r.Body = data
+	default:
 		return nil, fmt.Errorf("invalid message type %T", m.Data())
 	}
-	data, err := proto.Marshal(message)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal message %T: %w", m, err)
-	}
-	r.Body = data
+
 	return r, nil
 }
 

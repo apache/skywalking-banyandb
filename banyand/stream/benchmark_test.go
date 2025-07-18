@@ -248,14 +248,12 @@ func generateStream(db storage.TSDB[*tsTable, option]) *stream {
 		Name: "benchmark-family",
 		Tags: []*databasev1.TagSpec{
 			{
-				Name:        "entity-tag",
-				Type:        databasev1.TagType_TAG_TYPE_STRING,
-				IndexedOnly: false,
+				Name: "entity-tag",
+				Type: databasev1.TagType_TAG_TYPE_STRING,
 			},
 			{
-				Name:        "filter-tag",
-				Type:        databasev1.TagType_TAG_TYPE_STRING,
-				IndexedOnly: false,
+				Name: "filter-tag",
+				Type: databasev1.TagType_TAG_TYPE_STRING,
 			},
 		},
 	}

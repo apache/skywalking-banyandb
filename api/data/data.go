@@ -31,17 +31,23 @@ import (
 var (
 	// TopicMap is the map of topic name to topic.
 	TopicMap = map[string]bus.Topic{
-		TopicStreamWrite.String():          TopicStreamWrite,
-		TopicStreamQuery.String():          TopicStreamQuery,
-		TopicMeasureWrite.String():         TopicMeasureWrite,
-		TopicMeasureQuery.String():         TopicMeasureQuery,
-		TopicTopNQuery.String():            TopicTopNQuery,
-		TopicPropertyDelete.String():       TopicPropertyDelete,
-		TopicPropertyQuery.String():        TopicPropertyQuery,
-		TopicPropertyUpdate.String():       TopicPropertyUpdate,
-		TopicPropertyRepair.String():       TopicPropertyRepair,
-		TopicGossipPropagation.String():    TopicGossipPropagation,
-		TopicGossipFutureCallback.String(): TopicGossipFutureCallback,
+		TopicStreamWrite.String():              TopicStreamWrite,
+		TopicStreamQuery.String():              TopicStreamQuery,
+		TopicMeasureWrite.String():             TopicMeasureWrite,
+		TopicMeasureQuery.String():             TopicMeasureQuery,
+		TopicTopNQuery.String():                TopicTopNQuery,
+		TopicPropertyDelete.String():           TopicPropertyDelete,
+		TopicPropertyQuery.String():            TopicPropertyQuery,
+		TopicPropertyUpdate.String():           TopicPropertyUpdate,
+		TopicStreamPartSync.String():           TopicStreamPartSync,
+		TopicMeasurePartSync.String():          TopicMeasurePartSync,
+		TopicMeasureSeriesIndexInsert.String(): TopicMeasureSeriesIndexInsert,
+		TopicMeasureSeriesIndexUpdate.String(): TopicMeasureSeriesIndexUpdate,
+		TopicPropertyRepair.String():           TopicPropertyRepair,
+		TopicStreamSeriesIndexWrite.String():   TopicStreamSeriesIndexWrite,
+		TopicStreamLocalIndexWrite.String():    TopicStreamLocalIndexWrite,
+		TopicGossipPropagation.String():        TopicGossipPropagation,
+		TopicGossipFutureCallback.String():     TopicGossipFutureCallback,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -71,6 +77,18 @@ var (
 		TopicPropertyDelete: func() proto.Message {
 			return &propertyv1.InternalDeleteRequest{}
 		},
+		TopicStreamPartSync: func() proto.Message {
+			return nil
+		},
+		TopicMeasurePartSync: func() proto.Message {
+			return nil
+		},
+		TopicMeasureSeriesIndexInsert: func() proto.Message {
+			return nil
+		},
+		TopicMeasureSeriesIndexUpdate: func() proto.Message {
+			return nil
+		},
 		TopicPropertyRepair: func() proto.Message {
 			return &propertyv1.InternalRepairRequest{}
 		},
@@ -79,6 +97,11 @@ var (
 		},
 		TopicGossipFutureCallback: func() proto.Message {
 			return &gossipv1.FutureCallbackMessageRequest{}
+		TopicStreamSeriesIndexWrite: func() proto.Message {
+			return nil
+		},
+		TopicStreamLocalIndexWrite: func() proto.Message {
+			return nil
 		},
 	}
 

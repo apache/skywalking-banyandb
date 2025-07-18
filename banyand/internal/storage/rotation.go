@@ -105,7 +105,7 @@ func (d *database[T, O]) startRotationTask() error {
 						}
 						d.incTotalRotationStarted(1)
 						defer d.incTotalRotationFinished(1)
-						start := options.SegmentInterval.nextTime(t)
+						start := options.SegmentInterval.NextTime(t)
 						d.logger.Info().Time("segment_start", start).Time("event_time", t).Msg("create new segment")
 						_, err = d.segmentController.create(start)
 						if err != nil {

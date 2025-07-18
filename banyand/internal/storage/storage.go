@@ -53,6 +53,8 @@ const (
 	DirPerm = 0o700
 	// SnapshotsDir is the directory for snapshots.
 	SnapshotsDir = "snapshots"
+	// RepairDir is the directory for repairs.
+	RepairDir = "repairs"
 	// DataDir is the directory for data.
 	DataDir = "data"
 	// FilePerm is the permission of the file.
@@ -159,7 +161,8 @@ func (iu IntervalUnit) String() string {
 	panic("invalid interval unit")
 }
 
-func (iu IntervalUnit) standard(t time.Time) time.Time {
+// Standard returns a standardized time based on the interval unit.
+func (iu IntervalUnit) Standard(t time.Time) time.Time {
 	switch iu {
 	case HOUR:
 		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
@@ -175,7 +178,8 @@ type IntervalRule struct {
 	Num  int
 }
 
-func (ir IntervalRule) nextTime(current time.Time) time.Time {
+// NextTime returns the next time point based on the current time and interval rule.
+func (ir IntervalRule) NextTime(current time.Time) time.Time {
 	switch ir.Unit {
 	case HOUR:
 		return current.Add(time.Hour * time.Duration(ir.Num))

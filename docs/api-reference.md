@@ -1384,7 +1384,6 @@ Subject defines which stream or measure would generate indices
 | ----- | ---- | ----- | ----------- |
 | name | [string](#string) |  |  |
 | type | [TagType](#banyandb-database-v1-TagType) |  |  |
-| indexed_only | [bool](#bool) |  | indexed_only indicates whether the tag is stored True: It&#39;s indexed only, but not stored False: it&#39;s stored and indexed |
 
 
 
@@ -3105,6 +3104,7 @@ QueryRequest is the request contract for query.
 | order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
 | stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
+| rewrite_agg_top_n_result | [bool](#bool) |  | rewriteAggTopNResult will rewrite agg result to raw data |
 
 
 
