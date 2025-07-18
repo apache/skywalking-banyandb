@@ -54,7 +54,7 @@ var (
 type service struct {
 	metadata                 metadata.Repo
 	pipeline                 queue.Server
-  gossipMessenger          gossip.Messenger
+	gossipMessenger          gossip.Messenger
 	omr                      observability.MetricsRegistry
 	lfs                      fs.FileSystem
 	close                    chan struct{}

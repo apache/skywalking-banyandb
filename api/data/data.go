@@ -92,16 +92,17 @@ var (
 		TopicPropertyRepair: func() proto.Message {
 			return &propertyv1.InternalRepairRequest{}
 		},
-		TopicGossipPropagation: func() proto.Message {
-			return &gossipv1.PropagationMessageRequest{}
-		},
-		TopicGossipFutureCallback: func() proto.Message {
-			return &gossipv1.FutureCallbackMessageRequest{}
 		TopicStreamSeriesIndexWrite: func() proto.Message {
 			return nil
 		},
 		TopicStreamLocalIndexWrite: func() proto.Message {
 			return nil
+		},
+		TopicGossipPropagation: func() proto.Message {
+			return &gossipv1.PropagationMessageRequest{}
+		},
+		TopicGossipFutureCallback: func() proto.Message {
+			return &gossipv1.FutureCallbackMessageRequest{}
 		},
 	}
 
