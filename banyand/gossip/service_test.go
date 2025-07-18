@@ -113,8 +113,8 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockTopic, bus.NewMessage(1, &commonv1.Group{}))
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifyFuture(f, true)
-		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID, node2.nodeID}))
-		gomega.Expect(node1.listener.messages).To(gomega.HaveLen(2))
+		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID}))
+		gomega.Expect(node1.listener.messages).To(gomega.HaveLen(1))
 
 		gomega.Expect(node2.listener.targets).To(gomega.Equal([]string{node3.nodeID}))
 		gomega.Expect(node2.listener.messages).To(gomega.HaveLen(1))
