@@ -110,6 +110,36 @@ func releaseMergerIntroduction(i *mergerIntroduction) {
 	mergerIntroductionPool.Put(i)
 }
 
+type syncIntroduction struct {
+	synced  map[uint64]struct{}
+	applied chan struct{}
+}
+
+func (i *syncIntroduction) reset() {
+	for k := range i.synced {
+		delete(i.synced, k)
+	}
+	i.applied = nil
+}
+
+var syncIntroductionPool = pool.Register[*syncIntroduction]("stream-sync-introduction")
+
+func generateSyncIntroduction() *syncIntroduction {
+	v := syncIntroductionPool.Get()
+	if v == nil {
+		return &syncIntroduction{
+			synced: make(map[uint64]struct{}),
+		}
+	}
+	si := v
+	si.reset()
+	return si
+}
+
+func releaseSyncIntroduction(i *syncIntroduction) {
+	syncIntroductionPool.Put(i)
+}
+
 func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh chan *mergerIntroduction, watcherCh watcher.Channel, epoch uint64) {
 	var introducerWatchers watcher.Epochs
 	defer tst.loopCloser.Done()
@@ -118,20 +148,52 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case next := <-tst.introductions:
-			tst.incTotalIntroduceLoopStarted(1, "mem")
+			tst.incTotalIntroduceLoopStarted("mem")
 			tst.introduceMemPart(next, epoch)
-			tst.incTotalIntroduceLoopFinished(1, "mem")
+			tst.incTotalIntroduceLoopFinished("mem")
 			epoch++
 		case next := <-flushCh:
-			tst.incTotalIntroduceLoopStarted(1, "flush")
+			tst.incTotalIntroduceLoopStarted("flush")
 			tst.introduceFlushed(next, epoch)
-			tst.incTotalIntroduceLoopFinished(1, "flush")
+			tst.incTotalIntroduceLoopFinished("flush")
 			tst.gc.clean()
 			epoch++
 		case next := <-mergeCh:
-			tst.incTotalIntroduceLoopStarted(1, "merge")
+			tst.incTotalIntroduceLoopStarted("merge")
 			tst.introduceMerged(next, epoch)
-			tst.incTotalIntroduceLoopFinished(1, "merge")
+			tst.incTotalIntroduceLoopFinished("merge")
+			tst.gc.clean()
+			epoch++
+		case epochWatcher := <-watcherCh:
+			introducerWatchers.Add(epochWatcher)
+		}
+		curEpoch := tst.currentEpoch()
+		introducerWatchers.Notify(curEpoch)
+	}
+}
+
+func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, syncCh chan *syncIntroduction, watcherCh watcher.Channel, epoch uint64) {
+	var introducerWatchers watcher.Epochs
+	defer tst.loopCloser.Done()
+	for {
+		select {
+		case <-tst.loopCloser.CloseNotify():
+			return
+		case next := <-tst.introductions:
+			tst.incTotalIntroduceLoopStarted("mem")
+			tst.introduceMemPart(next, epoch)
+			tst.incTotalIntroduceLoopFinished("mem")
+			epoch++
+		case next := <-flushCh:
+			tst.incTotalIntroduceLoopStarted("flush")
+			tst.introduceFlushed(next, epoch)
+			tst.incTotalIntroduceLoopFinished("flush")
+			tst.gc.clean()
+			epoch++
+		case next := <-syncCh:
+			tst.incTotalIntroduceLoopStarted("sync")
+			tst.introduceSync(next, epoch)
+			tst.incTotalIntroduceLoopFinished("sync")
 			tst.gc.clean()
 			epoch++
 		case epochWatcher := <-watcherCh:
@@ -185,6 +247,22 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 	nextSnp := cur.remove(epoch, nextIntroduction.merged)
 	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
 	nextSnp.creator = nextIntroduction.creator
+	tst.replaceSnapshot(&nextSnp)
+	tst.persistSnapshot(&nextSnp)
+	if nextIntroduction.applied != nil {
+		close(nextIntroduction.applied)
+	}
+}
+
+func (tst *tsTable) introduceSync(nextIntroduction *syncIntroduction, epoch uint64) {
+	cur := tst.currentSnapshot()
+	if cur == nil {
+		tst.l.Panic().Msg("current snapshot is nil")
+		return
+	}
+	defer cur.decRef()
+	nextSnp := cur.remove(epoch, nextIntroduction.synced)
+	nextSnp.creator = snapshotCreatorSyncer
 	tst.replaceSnapshot(&nextSnp)
 	tst.persistSnapshot(&nextSnp)
 	if nextIntroduction.applied != nil {

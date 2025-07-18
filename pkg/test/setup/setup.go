@@ -21,6 +21,8 @@ package setup
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -263,6 +265,15 @@ func DataNode(etcdEndpoint string, flags ...string) func() {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	closeFn := DataNodeFromDataDir(etcdEndpoint, path, flags...)
 	return func() {
+		fmt.Printf("Data tsdb path: %s\n", path)
+		_ = filepath.Walk(path, func(path string, _ os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			fmt.Println(path)
+			return nil
+		})
+		fmt.Println("done")
 		closeFn()
 		deferFn()
 	}
@@ -292,12 +303,14 @@ func LiaisonNode(etcdEndpoint string, flags ...string) (grpcAddr string, closeFn
 }
 
 // LiaisonNodeWithHTTP runs a liaison node with HTTP enabled and returns the gRPC and HTTP addresses.
-func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (grpcAddr, httpAddr string, closeFn func()) {
+func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, func()) {
 	ports, err := test.AllocateFreePorts(3)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	grpcAddr = fmt.Sprintf("%s:%d", host, ports[0])
-	httpAddr = fmt.Sprintf("%s:%d", host, ports[1])
+	grpcAddr := fmt.Sprintf("%s:%d", host, ports[0])
+	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	nodeHost := "127.0.0.1"
+	path, deferFn, err := test.NewSpace()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "liaison",
 		"--grpc-host="+host,
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
@@ -309,11 +322,25 @@ func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (grpcAddr, httpAd
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost,
+		"--stream-root-path="+path,
+		"--measure-root-path="+path,
 	)
-	closeFn = CMD(flags...)
+	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
 		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[2]))
 	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
-	return
+	return grpcAddr, httpAddr, func() {
+		fmt.Printf("Liaison %d write queue path: %s\n", ports[0], path)
+		_ = filepath.Walk(path, func(path string, _ os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			fmt.Println(path)
+			return nil
+		})
+		fmt.Println("done")
+		closeFn()
+		deferFn()
+	}
 }

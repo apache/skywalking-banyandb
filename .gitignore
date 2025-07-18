@@ -64,3 +64,12 @@ gomock_reflect*
 
 # profile result
 *.prof
+
+# cursor
+.cursorrules
+.cursor/
+
+# Claude
+Claude.md
+.claude/
+
