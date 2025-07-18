@@ -12,12 +12,13 @@ This allows for fast and accurate diagnosis in the event of issues or inconsiste
 
 All trace data is written to the `_property_repair_spans` stream group and can be queried for inspection and analysis.
 
-| Field Name        | Type     | Description                                                                          |
+| Tag Name          | Type     | Description                                                                          |
 |-------------------|----------|--------------------------------------------------------------------------------------|
 | `tracing_id`      | `string` | Unique trace ID for the entire repair task, typically `sender_node_id + start_time`. |
 | `span_id`         | `int`    | Unique span ID within the trace.                                                     |
 | `parent_span_id`  | `int`    | ID of the parent span (0 if root span).                                              |
-| `current_node`    | `string` | ID of the node where the span was executed.                                          |
+| `sender_node_id`  | `string` | ID of the sender node where the repair was executed.                                 |
+| `current_node_id` | `string` | ID of the node where the span was executed.                                          |
 | `start_time`      | `int64`  | Unix timestamp of span start (in milliseconds).                                      |
 | `end_time`        | `int64`  | Unix timestamp of span end (in milliseconds).                                        |
 | `duration`        | `int64`  | Total duration of the span, in milliseconds.                                         |
@@ -30,7 +31,7 @@ All trace data is written to the `_property_repair_spans` stream group and can b
 All Property-related metadata is encapsulated within the `tags_json` field of each trace span. 
 This allows for flexible and structured logging of contextual information. The following are **key fields** commonly included in `tags_json`:
 
-| Field Name     | Description                                                                                                |
+| Tag Name       | Description                                                                                                |
 |----------------|------------------------------------------------------------------------------------------------------------|
 | `target_node`  | The ID of the target node involved in the current operation.                                               |
 | `group_name`   | The name of the Property group being synchronized.                                                         |
@@ -51,10 +52,13 @@ the [Observability documentation](./observability.md).
 
 In the context of Property background repair, the following key metrics are exposed:
 
-| Metric Name                             | Type                | Description                                                                                                           |
-|-----------------------------------------|---------------------|-----------------------------------------------------------------------------------------------------------------------|
-| `property_repair_success_count`         | Counter             | Total number of Properties successfully repaired across all nodes.                                                    |
-| `property_repair_failure_count`         | Counter             | Total number of Properties that failed to repair due to validation, write errors, or version conflicts.               |
-| `property_repair_gossip_abort_count`    | Counter             | Total number of gossip repair sessions that were forcefully aborted due to unrecoverable errors or unavailable peers. |
-| `property_repair_trigger_count`         | Counter             | Total Number of times the repair process was triggered (either scheduled or event-based).                             |
+| Metric Name                              | Type    | Description                                                                                                           |
+|------------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------|
+| `property_repair_success_count`          | Counter | Total number of Properties successfully repaired across all nodes.                                                    |
+| `property_repair_failure_count`          | Counter | Total number of Properties that failed to repair due to validation, write errors, or version conflicts.               |
+| `property_repair_gossip_abort_count`     | Counter | Total number of gossip repair sessions that were forcefully aborted due to unrecoverable errors or unavailable peers. |
+| `property_repair_finished_count`         | Counter | Total count of the repair process was triggered (either scheduled or event-based).                                    |
+| `property_repair_finished_latency`       | Counter | Total latency of the whole property repair process.                                                                   |
+| `property_repair_per_node_sync_finished` | Counter | The number of completed synchronization operations executed by each node during Property repair.                      |
+| `property_repair_per_node_sync_latency`  | Counter | The latency seconds of completed synchronization operations executed by each node during Property repair.             |
 
