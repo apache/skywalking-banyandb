@@ -584,25 +584,28 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		bc.elementIDs = append(bc.elementIDs, tmpBlock.elementIDs[s:e+1]...)
 	}
 
-	for i, projection := range bc.bm.tagProjection {
+	for _, cf := range tmpBlock.tagFamilies {
 		tf := tagFamily{
-			name: projection.Family,
+			name: cf.name,
 		}
-		for j, name := range projection.Names {
+		for i := range cf.tags {
 			t := tag{
-				name: name,
+				name:      cf.tags[i].name,
+				valueType: cf.tags[i].valueType,
 			}
-			t.valueType = tmpBlock.tagFamilies[i].tags[j].valueType
-			if len(tmpBlock.tagFamilies[i].tags[j].values) != len(tmpBlock.timestamps) {
+			if len(cf.tags[i].values) == 0 {
+				continue
+			}
+			if len(cf.tags[i].values) != len(tmpBlock.timestamps) {
 				logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
-					tmpBlock.tagFamilies[i].tags[j].name, len(tmpBlock.tagFamilies[i].tags[j].values), len(tmpBlock.timestamps))
+					cf.tags[i].name, len(cf.tags[i].values), len(tmpBlock.timestamps))
 			}
 			if len(idxList) > 0 {
 				for _, idx := range idxList {
-					t.values = append(t.values, tmpBlock.tagFamilies[i].tags[j].values[idx])
+					t.values = append(t.values, cf.tags[i].values[idx])
 				}
 			} else {
-				t.values = append(t.values, tmpBlock.tagFamilies[i].tags[j].values[start:end+1]...)
+				t.values = append(t.values, cf.tags[i].values[start:end+1]...)
 			}
 			tf.tags = append(tf.tags, t)
 		}

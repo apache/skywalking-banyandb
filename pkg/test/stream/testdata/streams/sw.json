@@ -30,8 +30,7 @@
         },
         {
           "name": "service_instance_id",
-          "type": "TAG_TYPE_STRING",
-          "indexed_only": true
+          "type": "TAG_TYPE_STRING"
         },
         {
           "name": "endpoint_id",

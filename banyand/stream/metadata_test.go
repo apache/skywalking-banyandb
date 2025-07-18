@@ -291,8 +291,12 @@ func writeData(svcs *services, expectedSize int, newTag []string, independentFam
 				Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: newTag[i]}},
 			})
 		}
+		entityValues := make([]*modelv1.TagValue, 0)
+		for j := 0; j < 3; j++ {
+			entityValues = append(entityValues, &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity" + iStr + strconv.Itoa(j)}}})
+		}
 		bp.Publish(context.TODO(), data.TopicStreamWrite, bus.NewMessage(bus.MessageID(i), &streamv1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity" + iStr}}}},
+			EntityValues: entityValues,
 			Request:      req,
 		}))
 	}

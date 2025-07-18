@@ -15,16 +15,24 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "sw"
-groups: ["default"]
-projection:
-  tagFamilies:
-  - name: "searchable"
-    tags: ["trace_id", "service_instance_id"]
-criteria:
-  condition:
-    name: "service_instance_id"
-    op: "BINARY_OP_EQ"
-    value:
-      str:
-        value: "10.0.0.1_id"
+elements:
+  - elementId: "4"
+    tagFamilies:
+    - name: searchable
+      tags:
+      - key: trace_id
+        value:
+          str:
+            value: "5"
+      - key: extended_tags
+        value:
+          strArray:
+            value:
+            - a
+            - b
+            - c
+    - name: data
+      tags:
+      - key: data_binary
+        value:
+          binaryData: YWJjMTIzIT8kKiYoKSctPUB+
