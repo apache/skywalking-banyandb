@@ -237,7 +237,7 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 				}
 			}
 			_, isEntity := is.indexRuleLocators.EntitySet[t.Name]
-			if tagFamilySpec.Tags[j].IndexedOnly || isEntity {
+			if isEntity {
 				continue
 			}
 			tv := encodeTagValue(t.Name, t.Type, tagValue)
