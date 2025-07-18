@@ -30,7 +30,8 @@ elements:
           value: webapp_id
     - key: service_instance_id
       value:
-        "null": null
+        str:
+          value: 10.0.0.1_id
 - elementId: a1126fa17892e2bd
   tagFamilies:
   - name: searchable
@@ -45,7 +46,8 @@ elements:
           value: webapp_id
     - key: service_instance_id
       value:
-        "null": null
+        str:
+          value: 10.0.0.3_id
 - elementId: cfb608ee34cb7413
   tagFamilies:
   - name: searchable
@@ -60,7 +62,8 @@ elements:
           value: webapp_id
     - key: service_instance_id
       value:
-        "null": null
+        str:
+          value: 10.0.0.1_id
 - elementId: 7d589b1fdae3557a
   tagFamilies:
   - name: searchable
@@ -75,7 +78,8 @@ elements:
           value: webapp_id
     - key: service_instance_id
       value:
-        "null": null
+        str:
+          value: 10.0.0.5_id
 - elementId: 2dcb300ca20b88c3
   tagFamilies:
   - name: searchable
@@ -90,7 +94,8 @@ elements:
           value: webapp_id
     - key: service_instance_id
       value:
-        "null": null
+        str:
+          value: 10.0.0.1_id
 - elementId: 47318c4050f63c95
   tagFamilies:
   - name: searchable
