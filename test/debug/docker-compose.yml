@@ -22,7 +22,7 @@ services:
       service: oap
     environment:
       SW_STORAGE: banyandb
-      SW_STORAGE_BANYANDB_TARGETS: 172.17.0.1:17912
+      SW_STORAGE_BANYANDB_TARGETS: host.docker.internal:17912
     ports:
       - 12800
     volumes:
