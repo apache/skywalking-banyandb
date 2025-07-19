@@ -18,26 +18,24 @@ version: '2.1'
 services:
   oap:
     extends:
-      file: ../docker/base-compose.yml
+      file: ../e2e-v2/script/docker-compose/base-compose.yml
       service: oap
     environment:
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_TARGETS: host.docker.internal:17912
     ports:
       - 12800
-    volumes:
-      - ../e2e-v2/script/prepare/setup-oap/log4j2.xml:/skywalking/config/log4j2.xml
 
   agent:
     extends:
-      file: ../docker/base-compose.yml
+      file: ../e2e-v2/script/docker-compose/base-compose.yml
       service: agent
     networks:
       - e2e
 
   provider:
     extends:
-      file: ../docker/base-compose.yml
+      file: ../e2e-v2/script/docker-compose/base-compose.yml
       service: provider
     ports:
       - 9090
@@ -51,7 +49,7 @@ services:
 
   consumer:
     extends:
-      file: ../docker/base-compose.yml
+      file: ../e2e-v2/script/docker-compose/base-compose.yml
       service: consumer
     ports:
       - 9092

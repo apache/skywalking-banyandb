@@ -37,3 +37,6 @@ trigger:
   body: '{"id":"123","name":"skywalking"}'
   headers:
     "Content-Type": "application/json"
+
+cleanup:
+  on: never
