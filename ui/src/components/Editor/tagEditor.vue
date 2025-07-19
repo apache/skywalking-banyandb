@@ -31,7 +31,6 @@
       tagFamily: '',
       tag: '',
       type: 'TAG_TYPE_INT',
-      indexedOnly: false,
       entity: false,
       shardingKey: false,
     },
@@ -118,7 +117,6 @@
     tagFamily: string;
     tag: string;
     type: string;
-    indexedOnly: Boolean;
   }
   interface SpanMethodProps {
     row: User;
@@ -169,7 +167,6 @@
       tagFamily: '',
       tag: '',
       type: 'TAG_TYPE_INT',
-      indexedOnly: false,
       entity: false,
       shardingKey: false,
     };
@@ -227,7 +224,6 @@
     <el-table-column label="Tag Family" prop="tagFamily"></el-table-column>
     <el-table-column label="Tag" prop="tag"></el-table-column>
     <el-table-column label="Type" prop="type"></el-table-column>
-    <el-table-column label="IndexedOnly" prop="indexedOnly"></el-table-column>
     <el-table-column label="Entity" prop="entity"></el-table-column>
     <el-table-column label="ShardingKey" prop="shardingKey"></el-table-column>
     <el-table-column label="Operator">
@@ -277,9 +273,6 @@
         <el-select style="width: 100%" v-model="data.form.type" class="m-2" placeholder="Select" size="small">
           <el-option v-for="item in typeOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
-      </el-form-item>
-      <el-form-item label="IndexedOnly" prop="indexedOnly">
-        <el-switch v-model="data.form.indexedOnly" />
       </el-form-item>
       <el-form-item label="Entity" prop="entity">
         <el-switch v-model="data.form.entity" />
