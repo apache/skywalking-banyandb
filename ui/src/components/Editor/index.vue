@@ -123,7 +123,6 @@
             let obj = {
               name: item.tag,
               type: item.type,
-              indexedOnly: item.indexedOnly,
             };
             return tagFamilies[index].tags.push(obj);
           }
@@ -133,7 +132,6 @@
               {
                 name: item.tag,
                 type: item.type,
-                indexedOnly: item.indexedOnly,
               },
             ],
           };
@@ -247,7 +245,6 @@
                   tagFamily: item.name,
                   tag: tag.name,
                   type: tag.type,
-                  indexedOnly: tag.indexedOnly,
                   entity: entityIndex >= 0 ? true : false,
                   shardingKey: shardingKeyIndex >= 0 ? true : false,
                 };
