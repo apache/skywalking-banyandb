@@ -171,6 +171,10 @@ func (b *blobFS) getFullPath(p string) string {
 }
 
 func (b *blobFS) Upload(ctx context.Context, p string, data io.Reader) error {
+	if data == nil {
+		return fmt.Errorf("upload data cannot be nil")
+	}
+
 	if b.verifier == nil {
 		return fmt.Errorf("verifier not initialized")
 	}
