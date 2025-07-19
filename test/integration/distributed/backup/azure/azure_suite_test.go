@@ -15,40 +15,47 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package s3
+package azure
 
 import (
-	"path/filepath"
+	"os"
 	"testing"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
+	remoteazure "github.com/apache/skywalking-banyandb/pkg/fs/remote/azure"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"github.com/apache/skywalking-banyandb/test/integration/distributed/backup"
 	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
+
+var testVars *backup.CommonTestVars
 
 func TestBackup(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "Distributed Backup Suite")
 }
 
-var testVars *backup.CommonTestVars
-
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	var err error
 	testVars, err = backup.InitializeTestSuite()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	err = dockertesthelper.InitMinIOContainer()
+	// Start Azurite container via helper
+	ginkgo.By("Starting Azurite container")
+	err = dockertesthelper.InitAzuriteContainer()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	fs, err := aws.NewFS(filepath.Join(dockertesthelper.BucketName, testVars.DestDir), &config.FsConfig{
-		S3: &config.S3Config{
-			S3ConfigFilePath:     dockertesthelper.S3ConfigPath,
-			S3CredentialFilePath: dockertesthelper.S3CredentialsPath,
+	// Set connection string env var for azure SDK
+	err = os.Setenv("AZURE_STORAGE_CONNECTION_STRING", dockertesthelper.AzuriteConnStr)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Create FS with proper path format (no leading slash)
+	// The path should be just the subdirectory within the container
+	fs, err := remoteazure.NewFS(testVars.DestDir, &config.FsConfig{
+		Azure: &config.AzureConfig{
+			Container: dockertesthelper.AzuriteContainer,
 		},
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -60,19 +67,17 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	testVars.Connection, err = backup.SetupClientConnection(string(address))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+	// Azure URL format: azure:///<container>/<path>
 	backup.SetupSharedContext(testVars,
-		"s3:///"+dockertesthelper.BucketName+testVars.DestDir,
-		[]string{
-			"--s3-credential-file", dockertesthelper.S3CredentialsPath,
-			"--s3-config-file", dockertesthelper.S3ConfigPath,
-		})
+		"azure:///"+dockertesthelper.AzuriteContainer+"/"+testVars.DestDir,
+		nil)
 })
 
 var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if testVars.Connection != nil {
 		gomega.Expect(testVars.Connection.Close()).To(gomega.Succeed())
 	}
-	dockertesthelper.CloseMinioContainer()
+	gomega.Expect(dockertesthelper.CloseAzuriteContainer()).To(gomega.Succeed())
 }, func() {
 	backup.TeardownSuite(testVars)
 })
