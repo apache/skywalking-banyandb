@@ -152,4 +152,8 @@ catalog:
       - name: "Data Rotation"
         path: "/concept/rotation"
       - name: "Property Background Repair"
-        paht: "/concept/property-repair"
+        path: "/concept/property-repair"
+  - name: "Contribute"
+    catalog:
+      - name: "Debugging"
+        path: "/contribute/debugging"
