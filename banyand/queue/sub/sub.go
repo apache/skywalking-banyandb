@@ -75,11 +75,15 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 
 		if reqSupplier, ok := data.TopicRequestMap[*topic]; ok {
 			req := reqSupplier()
-			if errUnmarshal := proto.Unmarshal(writeEntity.Body, req); errUnmarshal != nil {
-				s.reply(stream, writeEntity, errUnmarshal, "failed to unmarshal message")
-				continue
+			if req == nil {
+				m = bus.NewMessage(bus.MessageID(writeEntity.MessageId), writeEntity.Body)
+			} else {
+				if errUnmarshal := proto.Unmarshal(writeEntity.Body, req); errUnmarshal != nil {
+					s.reply(stream, writeEntity, errUnmarshal, "failed to unmarshal message")
+					continue
+				}
+				m = bus.NewMessage(bus.MessageID(writeEntity.MessageId), req)
 			}
-			m = bus.NewMessage(bus.MessageID(writeEntity.MessageId), req)
 		} else {
 			s.reply(stream, writeEntity, err, "unknown topic")
 			continue

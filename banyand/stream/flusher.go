@@ -89,6 +89,49 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 	}
 }
 
+func (tst *tsTable) flusherLoopNoMerger(flushCh chan *flusherIntroduction, introducerWatcher, flusherWatcher watcher.Channel, epoch uint64) {
+	defer tst.loopCloser.Done()
+	epochWatcher := introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
+	if epochWatcher == nil {
+		return
+	}
+	var flusherWatchers watcher.Epochs
+
+	for {
+		select {
+		case <-tst.loopCloser.CloseNotify():
+			return
+		case e := <-flusherWatcher:
+			flusherWatchers.Add(e)
+		case <-epochWatcher.Watch():
+			if func() bool {
+				tst.incTotalFlushLoopStarted(1)
+				start := time.Now()
+				defer func() {
+					tst.incTotalFlushLoopFinished(1)
+					tst.incTotalFlushLatency(time.Since(start).Seconds())
+				}()
+				curSnapshot := tst.currentSnapshot()
+				if curSnapshot != nil {
+					defer curSnapshot.decRef()
+					tst.flush(curSnapshot, flushCh)
+					epoch = curSnapshot.epoch
+					flusherWatchers.Notify(epoch)
+					flusherWatchers = nil
+					if tst.currentEpoch() != epoch {
+						tst.incTotalFlushLoopProgress(1)
+						return false
+					}
+				}
+				epochWatcher = introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
+				return epochWatcher == nil
+			}() {
+				return
+			}
+		}
+	}
+}
+
 // pauseFlusherToPileupMemParts takes a pause to wait for in-memory parts to pile up.
 // If there is no in-memory part, we can skip the pause.
 // When a merging is finished, we can skip the pause.

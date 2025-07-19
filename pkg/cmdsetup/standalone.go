@@ -43,13 +43,12 @@ import (
 func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	liaisonPipeline := queue.Local()
 	dataPipeline := queue.Local()
 	metaSvc, err := embeddedserver.NewService(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	metricSvc := observability.NewMetricService(metaSvc, liaisonPipeline, "standalone", nil)
+	metricSvc := observability.NewMetricService(metaSvc, dataPipeline, "standalone", nil)
 	pm := protector.NewMemory(metricSvc)
 	propertySvc, err := property.NewService(metaSvc, dataPipeline, metricSvc, pm)
 	if err != nil {
@@ -62,7 +61,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	var srvMetrics *grpcprom.ServerMetrics
 	srvMetrics.UnaryServerInterceptor()
 	srvMetrics.UnaryServerInterceptor()
-	measureSvc, err := measure.NewService(metaSvc, dataPipeline, nil, metricSvc, pm)
+	measureSvc, err := measure.NewStandalone(metaSvc, dataPipeline, nil, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
@@ -71,20 +70,17 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
 	nr := grpc.NewLocalNodeRegistry()
-	grpcServer := grpc.NewServer(ctx, liaisonPipeline, dataPipeline, dataPipeline, nil, metaSvc, grpc.NodeRegistries{
+	grpcServer := grpc.NewServer(ctx, dataPipeline, dataPipeline, dataPipeline, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: nr,
-		MeasureDataNodeRegistry:    nr,
-		StreamDataNodeRegistry:     nr,
 		StreamLiaisonNodeRegistry:  nr,
 		PropertyNodeRegistry:       nr,
-	}, metricSvc, measureSvc, liaisonPipeline)
+	}, metricSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer()
 
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,
-		liaisonPipeline,
 		dataPipeline,
 		metaSvc,
 		metricSvc,

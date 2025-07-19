@@ -48,3 +48,30 @@ var StreamDeleteExpiredSegmentsKindVersion = common.KindVersion{
 
 // TopicDeleteExpiredStreamSegments is the delete stream segments topic.
 var TopicDeleteExpiredStreamSegments = bus.BiTopic(StreamDeleteExpiredSegmentsKindVersion.String())
+
+// StreamPartSyncKindVersion is the version tag of part sync kind.
+var StreamPartSyncKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "part-sync",
+}
+
+// TopicStreamPartSync is the part sync topic.
+var TopicStreamPartSync = bus.BiTopic(StreamPartSyncKindVersion.String())
+
+// StreamSeriesIndexWriteKindVersion is the version tag of stream series index write kind.
+var StreamSeriesIndexWriteKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "stream-series-index-write",
+}
+
+// TopicStreamSeriesIndexWrite is the stream series index write topic.
+var TopicStreamSeriesIndexWrite = bus.BiTopic(StreamSeriesIndexWriteKindVersion.String())
+
+// StreamLocalIndexWriteKindVersion is the version tag of stream local index write kind.
+var StreamLocalIndexWriteKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "stream-local-index-write",
+}
+
+// TopicStreamLocalIndexWrite is the stream local index write topic.
+var TopicStreamLocalIndexWrite = bus.BiTopic(StreamLocalIndexWriteKindVersion.String())

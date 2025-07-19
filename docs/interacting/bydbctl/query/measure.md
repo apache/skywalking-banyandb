@@ -55,8 +55,7 @@ measure:
   tagFamilies:
   - name: storage-only
     tags:
-    - indexedOnly: false
-      name: entity_id
+    - name: entity_id
       type: TAG_TYPE_STRING
   updatedAt: null
 ```

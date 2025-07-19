@@ -39,7 +39,7 @@ The segment file `xxxxxxxx.seg` contains the inverted index data. It includes fo
 - **Tags**: The mapping from the tag name to the dictionary location.
 - **Dictionary**: It's a FST(Finite State Transducer) dictionary to map tag value to the posting list.
 - **Posting List**: The mapping from the tag value to the series id or timestamp. It also contains a location info to the stored tag value.
-- **Stored Tag Value**: The stored tag value. If you set tag spec `indexed_only=true`, the tag value will not be stored here.
+- **Stored Tag Value**: The stored tag value.
 
 ![inverted-index](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/inverted-index.png)
 
