@@ -20,8 +20,12 @@ package schema
 import (
 	"context"
 
+	"github.com/pkg/errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/api/validate"
 )
 
 var traceKeyPrefix = "/traces/"
@@ -47,6 +51,20 @@ func (e *etcdSchemaRegistry) ListTrace(ctx context.Context, opt ListOpt) ([]*dat
 }
 
 func (e *etcdSchemaRegistry) CreateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error) {
+	if trace.UpdatedAt != nil {
+		trace.UpdatedAt = timestamppb.Now()
+	}
+	if err := validate.Trace(trace); err != nil {
+		return 0, err
+	}
+	group := trace.Metadata.GetGroup()
+	g, err := e.GetGroup(ctx, group)
+	if err != nil {
+		return 0, err
+	}
+	if err := validate.GroupForStreamOrMeasure(g); err != nil {
+		return 0, err
+	}
 	return e.create(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:  KindTrace,
@@ -58,11 +76,33 @@ func (e *etcdSchemaRegistry) CreateTrace(ctx context.Context, trace *databasev1.
 }
 
 func (e *etcdSchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error) {
+	if trace.UpdatedAt != nil {
+		trace.UpdatedAt = timestamppb.Now()
+	}
+	if err := validate.Trace(trace); err != nil {
+		return 0, err
+	}
+	group := trace.Metadata.GetGroup()
+	g, err := e.GetGroup(ctx, group)
+	if err != nil {
+		return 0, err
+	}
+	if err = validate.GroupForStreamOrMeasure(g); err != nil {
+		return 0, err
+	}
+	prev, err := e.GetTrace(ctx, trace.GetMetadata())
+	if err != nil {
+		return 0, err
+	}
+	if prev == nil {
+		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "trace %s not found", trace.GetMetadata().GetName())
+	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
-			Kind:  KindTrace,
-			Group: trace.GetMetadata().GetGroup(),
-			Name:  trace.GetMetadata().GetName(),
+			Kind:        KindTrace,
+			Group:       trace.GetMetadata().GetGroup(),
+			Name:        trace.GetMetadata().GetName(),
+			ModRevision: trace.GetMetadata().GetModRevision(),
 		},
 		Spec: trace,
 	})

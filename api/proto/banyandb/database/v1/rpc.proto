@@ -593,3 +593,83 @@ service PropertyRegistryService {
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(PropertyRegistryServiceExistRequest) returns (PropertyRegistryServiceExistResponse);
 }
+
+message TraceRegistryServiceCreateRequest {
+  banyandb.database.v1.Trace trace = 1;
+}
+
+message TraceRegistryServiceCreateResponse {
+  int64 mod_revision = 1;
+}
+
+message TraceRegistryServiceUpdateRequest {
+  banyandb.database.v1.Trace trace = 1;
+}
+
+message TraceRegistryServiceUpdateResponse {
+  int64 mod_revision = 1;
+}
+
+message TraceRegistryServiceDeleteRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message TraceRegistryServiceDeleteResponse {
+  bool deleted = 1;
+}
+
+message TraceRegistryServiceGetRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message TraceRegistryServiceGetResponse {
+  banyandb.database.v1.Trace trace = 1;
+}
+
+message TraceRegistryServiceExistRequest {
+  banyandb.common.v1.Metadata metadata = 1;
+}
+
+message TraceRegistryServiceExistResponse {
+  bool has_group = 1;
+  bool has_trace = 2;
+}
+
+message TraceRegistryServiceListRequest {
+  string group = 1;
+}
+
+message TraceRegistryServiceListResponse {
+  repeated banyandb.database.v1.Trace trace = 1;
+}
+
+service TraceRegistryService {
+  rpc Create(TraceRegistryServiceCreateRequest) returns (TraceRegistryServiceCreateResponse) {
+    option (google.api.http) = {
+      post: "/v1/trace/schema"
+      body: "*"
+    };
+  }
+
+  rpc Update(TraceRegistryServiceUpdateRequest) returns (TraceRegistryServiceUpdateResponse) {
+    option (google.api.http) = {
+      put: "/v1/trace/schema/{trace.metadata.group}/{trace.metadata.name}"
+      body: "*"
+    };
+  }
+
+  rpc Delete(TraceRegistryServiceDeleteRequest) returns (TraceRegistryServiceDeleteResponse) {
+    option (google.api.http) = {delete: "/v1/trace/schema/{metadata.group}/{metadata.name}"};
+  }
+
+  rpc Get(TraceRegistryServiceGetRequest) returns (TraceRegistryServiceGetResponse) {
+    option (google.api.http) = {get: "/v1/trace/schema/{metadata.group}/{metadata.name}"};
+  }
+
+  rpc List(TraceRegistryServiceListRequest) returns (TraceRegistryServiceListResponse) {
+    option (google.api.http) = {get: "/v1/trace/schema/lists/{group}"};
+  }
+
+  // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
+  rpc Exist(TraceRegistryServiceExistRequest) returns (TraceRegistryServiceExistResponse);
+}
