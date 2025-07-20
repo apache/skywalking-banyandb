@@ -183,6 +183,18 @@
     - [TopNAggregationRegistryServiceListResponse](#banyandb-database-v1-TopNAggregationRegistryServiceListResponse)
     - [TopNAggregationRegistryServiceUpdateRequest](#banyandb-database-v1-TopNAggregationRegistryServiceUpdateRequest)
     - [TopNAggregationRegistryServiceUpdateResponse](#banyandb-database-v1-TopNAggregationRegistryServiceUpdateResponse)
+    - [TraceRegistryServiceCreateRequest](#banyandb-database-v1-TraceRegistryServiceCreateRequest)
+    - [TraceRegistryServiceCreateResponse](#banyandb-database-v1-TraceRegistryServiceCreateResponse)
+    - [TraceRegistryServiceDeleteRequest](#banyandb-database-v1-TraceRegistryServiceDeleteRequest)
+    - [TraceRegistryServiceDeleteResponse](#banyandb-database-v1-TraceRegistryServiceDeleteResponse)
+    - [TraceRegistryServiceExistRequest](#banyandb-database-v1-TraceRegistryServiceExistRequest)
+    - [TraceRegistryServiceExistResponse](#banyandb-database-v1-TraceRegistryServiceExistResponse)
+    - [TraceRegistryServiceGetRequest](#banyandb-database-v1-TraceRegistryServiceGetRequest)
+    - [TraceRegistryServiceGetResponse](#banyandb-database-v1-TraceRegistryServiceGetResponse)
+    - [TraceRegistryServiceListRequest](#banyandb-database-v1-TraceRegistryServiceListRequest)
+    - [TraceRegistryServiceListResponse](#banyandb-database-v1-TraceRegistryServiceListResponse)
+    - [TraceRegistryServiceUpdateRequest](#banyandb-database-v1-TraceRegistryServiceUpdateRequest)
+    - [TraceRegistryServiceUpdateResponse](#banyandb-database-v1-TraceRegistryServiceUpdateResponse)
   
     - [GroupRegistryService](#banyandb-database-v1-GroupRegistryService)
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
@@ -192,6 +204,7 @@
     - [SnapshotService](#banyandb-database-v1-SnapshotService)
     - [StreamRegistryService](#banyandb-database-v1-StreamRegistryService)
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
+    - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
 - [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
     - [DataPoint](#banyandb-measure-v1-DataPoint)
@@ -2813,6 +2826,187 @@ Type determine the index structure under the hood
 
 
 
+
+<a name="banyandb-database-v1-TraceRegistryServiceCreateRequest"></a>
+
+### TraceRegistryServiceCreateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace | [Trace](#banyandb-database-v1-Trace) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceCreateResponse"></a>
+
+### TraceRegistryServiceCreateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceDeleteRequest"></a>
+
+### TraceRegistryServiceDeleteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceDeleteResponse"></a>
+
+### TraceRegistryServiceDeleteResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceExistRequest"></a>
+
+### TraceRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceExistResponse"></a>
+
+### TraceRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_trace | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceGetRequest"></a>
+
+### TraceRegistryServiceGetRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceGetResponse"></a>
+
+### TraceRegistryServiceGetResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace | [Trace](#banyandb-database-v1-Trace) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceListRequest"></a>
+
+### TraceRegistryServiceListRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceListResponse"></a>
+
+### TraceRegistryServiceListResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace | [Trace](#banyandb-database-v1-Trace) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceUpdateRequest"></a>
+
+### TraceRegistryServiceUpdateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace | [Trace](#banyandb-database-v1-Trace) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceUpdateResponse"></a>
+
+### TraceRegistryServiceUpdateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
  
 
  
@@ -2933,6 +3127,21 @@ Type determine the index structure under the hood
 | Get | [TopNAggregationRegistryServiceGetRequest](#banyandb-database-v1-TopNAggregationRegistryServiceGetRequest) | [TopNAggregationRegistryServiceGetResponse](#banyandb-database-v1-TopNAggregationRegistryServiceGetResponse) |  |
 | List | [TopNAggregationRegistryServiceListRequest](#banyandb-database-v1-TopNAggregationRegistryServiceListRequest) | [TopNAggregationRegistryServiceListResponse](#banyandb-database-v1-TopNAggregationRegistryServiceListResponse) |  |
 | Exist | [TopNAggregationRegistryServiceExistRequest](#banyandb-database-v1-TopNAggregationRegistryServiceExistRequest) | [TopNAggregationRegistryServiceExistResponse](#banyandb-database-v1-TopNAggregationRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+
+
+<a name="banyandb-database-v1-TraceRegistryService"></a>
+
+### TraceRegistryService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Create | [TraceRegistryServiceCreateRequest](#banyandb-database-v1-TraceRegistryServiceCreateRequest) | [TraceRegistryServiceCreateResponse](#banyandb-database-v1-TraceRegistryServiceCreateResponse) |  |
+| Update | [TraceRegistryServiceUpdateRequest](#banyandb-database-v1-TraceRegistryServiceUpdateRequest) | [TraceRegistryServiceUpdateResponse](#banyandb-database-v1-TraceRegistryServiceUpdateResponse) |  |
+| Delete | [TraceRegistryServiceDeleteRequest](#banyandb-database-v1-TraceRegistryServiceDeleteRequest) | [TraceRegistryServiceDeleteResponse](#banyandb-database-v1-TraceRegistryServiceDeleteResponse) |  |
+| Get | [TraceRegistryServiceGetRequest](#banyandb-database-v1-TraceRegistryServiceGetRequest) | [TraceRegistryServiceGetResponse](#banyandb-database-v1-TraceRegistryServiceGetResponse) |  |
+| List | [TraceRegistryServiceListRequest](#banyandb-database-v1-TraceRegistryServiceListRequest) | [TraceRegistryServiceListResponse](#banyandb-database-v1-TraceRegistryServiceListResponse) |  |
+| Exist | [TraceRegistryServiceExistRequest](#banyandb-database-v1-TraceRegistryServiceExistRequest) | [TraceRegistryServiceExistResponse](#banyandb-database-v1-TraceRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 
  
 

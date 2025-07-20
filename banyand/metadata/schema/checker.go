@@ -62,6 +62,13 @@ var CheckerMap = map[Kind]EqualityChecker{
 			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
 			protocmp.Transform())
 	},
+	KindTrace: func(a, b proto.Message) bool {
+		return cmp.Equal(a, b,
+			protocmp.IgnoreUnknown(),
+			protocmp.IgnoreFields(&databasev1.Trace{}, "updated_at"),
+			protocmp.IgnoreFields(&commonv1.Metadata{}, "id", "create_revision", "mod_revision"),
+			protocmp.Transform())
+	},
 	KindGroup: func(a, b proto.Message) bool {
 		return cmp.Equal(a, b,
 			protocmp.IgnoreUnknown(),
