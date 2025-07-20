@@ -243,6 +243,10 @@ func (s *clientService) MeasureRegistry() schema.Measure {
 	return s.schemaRegistry
 }
 
+func (s *clientService) TraceRegistry() schema.Trace {
+	return s.schemaRegistry
+}
+
 func (s *clientService) GroupRegistry() schema.Group {
 	return s.schemaRegistry
 }

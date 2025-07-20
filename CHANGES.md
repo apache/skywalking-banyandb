@@ -23,6 +23,7 @@ Release Notes.
 - Support dictionary encoding for low cardinality columns.
 - Push down aggregation for topN query.
 - Introduce write queue mechanism in liaison nodes to efficiently synchronize stream and measure partition folders, improving write throughput and consistency
+- Add trace module metadata management.
 
 ### Bug Fixes
 
