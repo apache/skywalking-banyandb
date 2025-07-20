@@ -56,7 +56,7 @@ type liaison struct {
 var _ Service = (*liaison)(nil)
 
 // LiaisonService returns a new liaison service.
-func LiaisonService(ctx context.Context) (Service, error) {
+func LiaisonService(_ context.Context) (Service, error) {
 	return &liaison{}, nil
 }
 
@@ -85,7 +85,7 @@ func (l *liaison) Role() databasev1.Role {
 	return databasev1.Role_ROLE_LIAISON
 }
 
-func (l *liaison) PreRun(ctx context.Context) error {
+func (l *liaison) PreRun(_ context.Context) error {
 	l.l = logger.GetLogger("trace")
 
 	// Initialize metadata
@@ -159,32 +159,32 @@ func (l *liaison) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange
 	return l.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
-// SetMetadata sets the metadata repository
+// SetMetadata sets the metadata repository.
 func (l *liaison) SetMetadata(metadata metadata.Repo) {
 	l.metadata = metadata
 }
 
-// SetObservabilityRegistry sets the observability metrics registry
+// SetObservabilityRegistry sets the observability metrics registry.
 func (l *liaison) SetObservabilityRegistry(omr observability.MetricsRegistry) {
 	l.omr = omr
 }
 
-// SetProtector sets the memory protector
+// SetProtector sets the memory protector.
 func (l *liaison) SetProtector(pm protector.Memory) {
 	l.pm = pm
 }
 
-// SetPipeline sets the pipeline server
+// SetPipeline sets the pipeline server.
 func (l *liaison) SetPipeline(pipeline queue.Server) {
 	l.pipeline = pipeline
 }
 
-// SetFileSystem sets the file system
+// SetFileSystem sets the file system.
 func (l *liaison) SetFileSystem(lfs fs.FileSystem) {
 	l.lfs = lfs
 }
 
-// SetDataNodeSelector sets the data node selector
+// SetDataNodeSelector sets the data node selector.
 func (l *liaison) SetDataNodeSelector(selector node.Selector) {
 	l.dataNodeSelector = selector
 }

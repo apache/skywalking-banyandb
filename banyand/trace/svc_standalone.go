@@ -63,7 +63,7 @@ type standalone struct {
 }
 
 // StandaloneService returns a new standalone service.
-func StandaloneService(ctx context.Context) (Service, error) {
+func StandaloneService(_ context.Context) (Service, error) {
 	return &standalone{}, nil
 }
 
@@ -93,7 +93,7 @@ func (s *standalone) Role() databasev1.Role {
 	return databasev1.Role_ROLE_DATA
 }
 
-func (s *standalone) PreRun(ctx context.Context) error {
+func (s *standalone) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger("trace")
 
 	// Initialize metadata
@@ -169,32 +169,32 @@ func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRa
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
-// SetMetadata sets the metadata repository
+// SetMetadata sets the metadata repository.
 func (s *standalone) SetMetadata(metadata metadata.Repo) {
 	s.metadata = metadata
 }
 
-// SetObservabilityRegistry sets the observability metrics registry
+// SetObservabilityRegistry sets the observability metrics registry.
 func (s *standalone) SetObservabilityRegistry(omr observability.MetricsRegistry) {
 	s.omr = omr
 }
 
-// SetProtector sets the memory protector
+// SetProtector sets the memory protector.
 func (s *standalone) SetProtector(pm protector.Memory) {
 	s.pm = pm
 }
 
-// SetPipeline sets the pipeline server
+// SetPipeline sets the pipeline server.
 func (s *standalone) SetPipeline(pipeline queue.Server) {
 	s.pipeline = pipeline
 }
 
-// SetLocalPipeline sets the local pipeline queue
+// SetLocalPipeline sets the local pipeline queue.
 func (s *standalone) SetLocalPipeline(localPipeline queue.Queue) {
 	s.localPipeline = localPipeline
 }
 
-// SetFileSystem sets the file system
+// SetFileSystem sets the file system.
 func (s *standalone) SetFileSystem(lfs fs.FileSystem) {
 	s.lfs = lfs
 }

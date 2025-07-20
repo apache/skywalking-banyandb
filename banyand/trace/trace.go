@@ -17,6 +17,8 @@
 
 // Package trace implements a trace-based storage which consists of trace data.
 // Traces are composed of spans and support querying by trace ID and various tags.
+// TODO: Remove this once trace partitioning is implemented
+// nolint:unused
 package trace
 
 import (

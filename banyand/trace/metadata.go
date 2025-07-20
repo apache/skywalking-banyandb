@@ -35,7 +35,8 @@ import (
 )
 
 var (
-	metadataScope    = traceScope.SubScope("metadata")
+	metadataScope = traceScope.SubScope("metadata")
+	// ErrTraceNotFound is returned when a trace is not found.
 	ErrTraceNotFound = errors.New("trace not found")
 )
 
@@ -101,11 +102,11 @@ func (sr *schemaRepo) Trace(metadata *commonv1.Metadata) (*trace, bool) {
 	return t, ok
 }
 
-func (sr *schemaRepo) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
+func (sr *schemaRepo) GetRemovalSegmentsTimeRange(_ string) *timestamp.TimeRange {
 	panic("not implemented")
 }
 
-// supplier is the supplier for standalone service
+// supplier is the supplier for standalone service.
 type supplier struct {
 	metadata   metadata.Repo
 	omr        observability.MetricsRegistry
@@ -140,11 +141,11 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 	return s.metadata.TraceRegistry().GetTrace(ctx, md)
 }
 
-func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {
+func (s *supplier) OpenDB(_ *commonv1.Group) (resourceSchema.DB, error) {
 	panic("not implemented")
 }
 
-// queueSupplier is the supplier for liaison service
+// queueSupplier is the supplier for liaison service.
 type queueSupplier struct {
 	metadata              metadata.Repo
 	omr                   observability.MetricsRegistry
@@ -179,6 +180,6 @@ func (qs *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.R
 	return qs.metadata.TraceRegistry().GetTrace(ctx, md)
 }
 
-func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {
+func (qs *queueSupplier) OpenDB(_ *commonv1.Group) (resourceSchema.DB, error) {
 	panic("not implemented")
 }
