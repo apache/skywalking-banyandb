@@ -53,6 +53,7 @@ type unaryOperator struct {
 }
 
 func (u *unaryOperator) Setup(ctx context.Context) error {
+	u.Add(1)
 	// run a background job as a consumer
 	go u.run(ctx)
 	return nil
@@ -87,6 +88,7 @@ func (u *unaryOperator) Out() <-chan flow.StreamRecord {
 }
 
 func (u *unaryOperator) run(ctx context.Context) {
+	defer u.Done()
 	semaphore := make(chan struct{}, u.parallelism)
 	for elem := range u.in {
 		semaphore <- struct{}{}
