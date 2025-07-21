@@ -949,3 +949,132 @@ func (ps *propertyRegistryServer) Exist(ctx context.Context, req *databasev1.Pro
 	}
 	return &databasev1.PropertyRegistryServiceExistResponse{HasGroup: exist, HasProperty: false}, nil
 }
+
+type traceRegistryServer struct {
+	databasev1.UnimplementedTraceRegistryServiceServer
+	schemaRegistry metadata.Repo
+	metrics        *metrics
+}
+
+func (rs *traceRegistryServer) Create(ctx context.Context,
+	req *databasev1.TraceRegistryServiceCreateRequest,
+) (*databasev1.TraceRegistryServiceCreateResponse, error) {
+	g := req.Trace.Metadata.Group
+	rs.metrics.totalRegistryStarted.Inc(1, g, "trace", "create")
+	start := time.Now()
+	defer func() {
+		rs.metrics.totalRegistryFinished.Inc(1, g, "trace", "create")
+		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "trace", "create")
+	}()
+	modRevision, err := rs.schemaRegistry.TraceRegistry().CreateTrace(ctx, req.GetTrace())
+	if err != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "create")
+		return nil, err
+	}
+	return &databasev1.TraceRegistryServiceCreateResponse{
+		ModRevision: modRevision,
+	}, nil
+}
+
+func (rs *traceRegistryServer) Update(ctx context.Context,
+	req *databasev1.TraceRegistryServiceUpdateRequest,
+) (*databasev1.TraceRegistryServiceUpdateResponse, error) {
+	g := req.Trace.Metadata.Group
+	rs.metrics.totalRegistryStarted.Inc(1, g, "trace", "update")
+	start := time.Now()
+	defer func() {
+		rs.metrics.totalRegistryFinished.Inc(1, g, "trace", "update")
+		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "trace", "update")
+	}()
+	modRevision, err := rs.schemaRegistry.TraceRegistry().UpdateTrace(ctx, req.GetTrace())
+	if err != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "update")
+		return nil, err
+	}
+	return &databasev1.TraceRegistryServiceUpdateResponse{
+		ModRevision: modRevision,
+	}, nil
+}
+
+func (rs *traceRegistryServer) Delete(ctx context.Context,
+	req *databasev1.TraceRegistryServiceDeleteRequest,
+) (*databasev1.TraceRegistryServiceDeleteResponse, error) {
+	g := req.Metadata.Group
+	rs.metrics.totalRegistryStarted.Inc(1, g, "trace", "delete")
+	start := time.Now()
+	defer func() {
+		rs.metrics.totalRegistryFinished.Inc(1, g, "trace", "delete")
+		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "trace", "delete")
+	}()
+	ok, err := rs.schemaRegistry.TraceRegistry().DeleteTrace(ctx, req.GetMetadata())
+	if err != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "delete")
+		return nil, err
+	}
+	return &databasev1.TraceRegistryServiceDeleteResponse{
+		Deleted: ok,
+	}, nil
+}
+
+func (rs *traceRegistryServer) Get(ctx context.Context,
+	req *databasev1.TraceRegistryServiceGetRequest,
+) (*databasev1.TraceRegistryServiceGetResponse, error) {
+	g := req.Metadata.Group
+	rs.metrics.totalRegistryStarted.Inc(1, g, "trace", "get")
+	start := time.Now()
+	defer func() {
+		rs.metrics.totalRegistryFinished.Inc(1, g, "trace", "get")
+		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "trace", "get")
+	}()
+	entity, err := rs.schemaRegistry.TraceRegistry().GetTrace(ctx, req.GetMetadata())
+	if err != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "get")
+		return nil, err
+	}
+	return &databasev1.TraceRegistryServiceGetResponse{
+		Trace: entity,
+	}, nil
+}
+
+func (rs *traceRegistryServer) List(ctx context.Context,
+	req *databasev1.TraceRegistryServiceListRequest,
+) (*databasev1.TraceRegistryServiceListResponse, error) {
+	g := req.Group
+	rs.metrics.totalRegistryStarted.Inc(1, g, "trace", "list")
+	start := time.Now()
+	defer func() {
+		rs.metrics.totalRegistryFinished.Inc(1, g, "trace", "list")
+		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "trace", "list")
+	}()
+	entities, err := rs.schemaRegistry.TraceRegistry().ListTrace(ctx, schema.ListOpt{Group: req.GetGroup()})
+	if err != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "list")
+		return nil, err
+	}
+	return &databasev1.TraceRegistryServiceListResponse{
+		Trace: entities,
+	}, nil
+}
+
+func (rs *traceRegistryServer) Exist(ctx context.Context, req *databasev1.TraceRegistryServiceExistRequest) (*databasev1.TraceRegistryServiceExistResponse, error) {
+	g := req.Metadata.Group
+	rs.metrics.totalRegistryStarted.Inc(1, g, "trace", "exist")
+	start := time.Now()
+	defer func() {
+		rs.metrics.totalRegistryFinished.Inc(1, g, "trace", "exist")
+		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "trace", "exist")
+	}()
+	_, err := rs.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{Metadata: req.Metadata})
+	if err == nil {
+		return &databasev1.TraceRegistryServiceExistResponse{
+			HasGroup: true,
+			HasTrace: true,
+		}, nil
+	}
+	exist, errGroup := groupExist(ctx, err, req.Metadata, rs.schemaRegistry.GroupRegistry())
+	if errGroup != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "exist")
+		return nil, errGroup
+	}
+	return &databasev1.TraceRegistryServiceExistResponse{HasGroup: exist, HasTrace: false}, nil
+}

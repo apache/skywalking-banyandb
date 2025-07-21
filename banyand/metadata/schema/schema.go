@@ -61,6 +61,7 @@ type Registry interface {
 	IndexRule
 	IndexRuleBinding
 	Measure
+	Trace
 	Group
 	TopNAggregation
 	Node
@@ -100,6 +101,11 @@ func (m Metadata) key() (string, error) {
 		}), nil
 	case KindStream:
 		return formatStreamKey(&commonv1.Metadata{
+			Group: m.Group,
+			Name:  m.Name,
+		}), nil
+	case KindTrace:
+		return formatTraceKey(&commonv1.Metadata{
 			Group: m.Group,
 			Name:  m.Name,
 		}), nil
@@ -178,6 +184,15 @@ type Measure interface {
 	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error)
 	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 	TopNAggregations(ctx context.Context, metadata *commonv1.Metadata) ([]*databasev1.TopNAggregation, error)
+}
+
+// Trace allows CRUD trace schemas in a group.
+type Trace interface {
+	GetTrace(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Trace, error)
+	ListTrace(ctx context.Context, opt ListOpt) ([]*databasev1.Trace, error)
+	CreateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error)
+	UpdateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error)
+	DeleteTrace(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
 }
 
 // Group allows CRUD groups which is namespaces of resources.

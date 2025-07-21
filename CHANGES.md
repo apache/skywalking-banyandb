@@ -23,6 +23,7 @@ Release Notes.
 - Support dictionary encoding for low cardinality columns.
 - Push down aggregation for topN query.
 - Introduce write queue mechanism in liaison nodes to efficiently synchronize stream and measure partition folders, improving write throughput and consistency
+- Add trace module metadata management.
 
 ### Bug Fixes
 
@@ -30,7 +31,7 @@ Release Notes.
 - Fix the issue that the etcd watcher gets the historical node registration events.
 - Fix the crash when collecting the metrics from a closed segment.
 - Fix topN parsing panic when the criteria is set.
-- Deprecate the indexed_only field in TagSpec.
+- Remove the indexed_only field in TagSpec.
 
 ### Document
 
