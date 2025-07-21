@@ -167,6 +167,41 @@ func Measure(measure *databasev1.Measure) error {
 	return tagFamily(measure.TagFamilies)
 }
 
+// Trace validates the provided Trace object.
+// It checks for nil values, empty strings, and unspecified enum values.
+func Trace(trace *databasev1.Trace) error {
+	if trace == nil {
+		return errors.New("trace is nil")
+	}
+	if trace.Metadata == nil {
+		return errors.New("trace metadata is nil")
+	}
+	if trace.Metadata.Name == "" {
+		return errors.New("trace name is empty")
+	}
+	if trace.Metadata.Group == "" {
+		return errors.New("trace group is empty")
+	}
+	if len(trace.Tags) == 0 {
+		return errors.New("trace tags is empty")
+	}
+	if trace.TraceIdTagName == "" {
+		return errors.New("trace_id_tag_name is empty")
+	}
+	if trace.TimestampTagName == "" {
+		return errors.New("timestamp_tag_name is empty")
+	}
+	for i := range trace.Tags {
+		if trace.Tags[i].Name == "" {
+			return errors.New("trace tag name is empty")
+		}
+		if trace.Tags[i].Type == databasev1.TagType_TAG_TYPE_UNSPECIFIED {
+			return errors.New("trace tag type is unspecified")
+		}
+	}
+	return nil
+}
+
 func tagFamily(tagFamilies []*databasev1.TagFamilySpec) error {
 	for i := range tagFamilies {
 		if tagFamilies[i].Name == "" {
