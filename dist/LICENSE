@@ -322,12 +322,12 @@ BSD-3-Clause licenses
     github.com/spf13/pflag v1.0.6 BSD-3-Clause
     github.com/tklauser/go-sysconf v0.3.15 BSD-3-Clause
     github.com/xhit/go-str2duration/v2 v2.1.0 BSD-3-Clause
-    golang.org/x/crypto v0.36.0 BSD-3-Clause
+    golang.org/x/crypto v0.37.0 BSD-3-Clause
     golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 BSD-3-Clause
     golang.org/x/mod v0.24.0 BSD-3-Clause
-    golang.org/x/net v0.38.0 BSD-3-Clause
-    golang.org/x/sys v0.31.0 BSD-3-Clause
-    golang.org/x/text v0.23.0 BSD-3-Clause
+    golang.org/x/net v0.39.0 BSD-3-Clause
+    golang.org/x/sys v0.32.0 BSD-3-Clause
+    golang.org/x/text v0.24.0 BSD-3-Clause
     golang.org/x/time v0.11.0 BSD-3-Clause
     golang.org/x/tools v0.31.0 BSD-3-Clause
     google.golang.org/protobuf v1.36.6 BSD-3-Clause
@@ -348,6 +348,9 @@ ISC licenses
 MIT licenses
 ========================================================================
 
+    github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.0 MIT
+    github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 MIT
+    github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.1 MIT
     github.com/Azure/go-ansiterm v0.0.0-20230124172434-306776ec8161 MIT
     github.com/Microsoft/go-winio v0.6.2 MIT
     github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97 MIT
