@@ -228,10 +228,10 @@
       getStreamOrMeasure(data.type, data.form.group, data.form.name)
         .then((res) => {
           if (res.status === 200) {
-            data.form.indexMode = res.data[String(data.type)].indexMode || false;
-            const tagFamilies = res.data[String(data.type)].tagFamilies || [];
-            const entity = res.data[String(data.type)].entity.tagNames || [];
-            const shardingKey = res.data[String(data.type)].shardingKey?.tagNames || [];
+            data.form.indexMode = res.data[String(data.type)]?.indexMode || false;
+            const tagFamilies = res.data[String(data.type)]?.tagFamilies || [];
+            const entity = res.data[String(data.type)]?.entity?.tagNames || [];
+            const shardingKey = res.data[String(data.type)]?.shardingKey?.tagNames || [];
             const arr = [];
             tagFamilies.forEach((item) => {
               item.tags.forEach((tag) => {
