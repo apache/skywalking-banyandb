@@ -45,8 +45,9 @@ const defaultQueryTimeout = 15 * time.Second
 var _ logical.UnresolvedPlan = (*unresolvedDistributed)(nil)
 
 type unresolvedDistributed struct {
-	originalQuery *measurev1.QueryRequest
-	groupByEntity bool
+	originalQuery           *measurev1.QueryRequest
+	groupByEntity           bool
+	needCompletePushDownAgg bool
 }
 
 func newUnresolvedDistributed(query *measurev1.QueryRequest) logical.UnresolvedPlan {
@@ -89,6 +90,10 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		Criteria:        ud.originalQuery.Criteria,
 		Limit:           limit + ud.originalQuery.Offset,
 		OrderBy:         ud.originalQuery.OrderBy,
+	}
+	if ud.needCompletePushDownAgg {
+		temp.GroupBy = ud.originalQuery.GroupBy
+		temp.Agg = ud.originalQuery.Agg
 	}
 	// push down groupBy, agg and top to data node and rewrite agg result to raw data
 	if ud.originalQuery.Agg != nil && ud.originalQuery.Top != nil {
