@@ -307,17 +307,6 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			es := g.tables[j]
 			es.tsTable.mustAddElements(es.elements)
 			releaseElements(es.elements)
-			if len(es.docs) > 0 {
-				index := es.tsTable.Index()
-				if err := index.Write(es.docs); err != nil {
-					w.l.Error().Err(err).Msg("cannot write element index")
-				}
-			}
-			if len(es.seriesDocs.docs) > 0 {
-				if err := es.segment.IndexDB().Insert(es.seriesDocs.docs); err != nil {
-					w.l.Error().Err(err).Msg("cannot write series index")
-				}
-			}
 		}
 		if len(g.segments) > 0 {
 			for _, segment := range g.segments {

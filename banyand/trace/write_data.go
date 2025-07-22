@@ -263,23 +263,10 @@ func (l *localIndexCallback) Rev(_ context.Context, message bus.Message) (resp b
 	defer segment.DecRef()
 
 	// Get the tsTable using shardID
-	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(shardID))
+	_, err = segment.CreateTSTableIfNotExist(common.ShardID(shardID))
 	if err != nil {
 		l.l.Error().Err(err).Str("group", group).Uint32("shardID", shardID).Msg("failed to create ts table")
 		return
 	}
-
-	// Insert documents into tsTable.index
-	if err := tsTable.Index().Write(documents); err != nil {
-		l.l.Error().Err(err).Str("group", group).Uint32("shardID", shardID).Int("documentCount", len(documents)).Msg("failed to insert documents to tsTable index")
-		return
-	}
-
-	l.l.Info().
-		Str("group", group).
-		Uint32("shardID", shardID).
-		Int("documentCount", len(documents)).
-		Msg("successfully inserted documents to tsTable index")
-
 	return
 }

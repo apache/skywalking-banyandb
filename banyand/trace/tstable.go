@@ -19,7 +19,6 @@ package trace
 
 import (
 	"container/heap"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,7 +35,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -53,7 +51,6 @@ type tsTable struct {
 	fileSystem    fs.FileSystem
 	pm            protector.Memory
 	metrics       *metrics
-	index         *elementIndex
 	snapshot      *snapshot
 	loopCloser    *run.Closer
 	getNodes      func() []string
@@ -201,17 +198,8 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		p:          p,
 		pm:         option.protector,
 	}
-	var indexMetrics *inverted.Metrics
 	if m != nil {
 		tst.metrics = m.(*metrics)
-		indexMetrics = tst.metrics.indexMetrics
-	}
-	if initIndex {
-		index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics)
-		if err != nil {
-			return nil, 0, err
-		}
-		tst.index = index
 	}
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
@@ -278,13 +266,6 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	return t, nil
 }
 
-func (tst *tsTable) Index() *elementIndex {
-	if tst.index == nil {
-		logger.Panicf("index is not initialized for this tsTable")
-	}
-	return tst.index
-}
-
 func (tst *tsTable) Close() error {
 	if tst.loopCloser != nil {
 		tst.loopCloser.Done()
@@ -294,16 +275,10 @@ func (tst *tsTable) Close() error {
 	defer tst.Unlock()
 	tst.deleteMetrics()
 	if tst.snapshot == nil {
-		if tst.index != nil {
-			return tst.index.Close()
-		}
 		return nil
 	}
 	tst.snapshot.decRef()
 	tst.snapshot = nil
-	if tst.index != nil {
-		return tst.index.Close()
-	}
 	return nil
 }
 
