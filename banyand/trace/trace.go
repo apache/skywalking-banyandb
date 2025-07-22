@@ -37,13 +37,19 @@ import (
 )
 
 const (
+	maxValuesBlockSize              = 8 * 1024 * 1024
+	maxElementIDsBlockSize          = 8 * 1024 * 1024
+	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
+	maxUncompressedBlockSize        = 2 * 1024 * 1024
+	maxUncompressedPrimaryBlockSize = 128 * 1024
+
 	defaultFlushTimeout             = time.Second
-	defaultElementIndexFlushTimeout = time.Second
 )
 
 var traceScope = observability.RootScope.SubScope("trace")
 
 type option struct {
+	mergePolicy              *mergePolicy
 	protector                protector.Memory
 	tire2Client              queue.Client
 	seriesCacheMaxSize       run.Bytes
