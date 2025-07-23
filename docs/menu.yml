@@ -137,6 +137,8 @@ catalog:
         path: "/operation/restore"
       - name: "Lifecycle Management"
         path: "/operation/lifecycle"
+      - name: "Property Background Repair"
+        path: "/concept/property-repair"
   - name: "File Format"
     catalog:
       - name: "v1.3.0"
@@ -149,3 +151,9 @@ catalog:
         path: "/concept/tsdb"
       - name: "Data Rotation"
         path: "/concept/rotation"
+      - name: "Property Background Repair"
+        path: "/concept/property-repair"
+  - name: "Contribute"
+    catalog:
+      - name: "Debugging"
+        path: "/contribute/debugging"

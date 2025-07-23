@@ -355,6 +355,7 @@ func (p *server) initGRPCClient() error {
 		streamv1.RegisterStreamServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		measurev1.RegisterMeasureServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		propertyv1.RegisterPropertyServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
+		databasev1.RegisterTraceRegistryServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to register endpoints")

@@ -89,7 +89,7 @@
               group: formData.group,
               name: formData.name,
             },
-            tags: formData.tags.map((d) => ({ name: d.key, type: d.value, indexedOnly: d.indexedOnly })),
+            tags: formData.tags.map((d) => ({ name: d.key, type: d.value })),
           },
         };
         if (operator === 'create') {
