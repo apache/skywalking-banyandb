@@ -340,10 +340,7 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 		}
 		req := client.R()
 		// Add req headers.
-		authHeader, err := getAuthHeader()
-		if err != nil {
-			return err
-		}
+		authHeader := getAuthHeader()
 		if authHeader != "" {
 			req.Header.Set("Authorization", authHeader)
 		}
@@ -373,15 +370,15 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 	return nil
 }
 
-func getAuthHeader() (string, error) {
+func getAuthHeader() string {
 	if username != "" {
-		return auth.GenerateBasicAuthHeader(username, password), nil
+		return auth.GenerateBasicAuthHeader(username, password)
 	}
 	// If the command line username is not available, then look for it in the configuration file.
 	user := viper.GetString("username")
-	password := viper.GetString("password")
-	if user == "" && password == "" {
-		return "", nil
+	pwd := viper.GetString("password")
+	if user == "" && pwd == "" {
+		return ""
 	}
-	return auth.GenerateBasicAuthHeader(user, password), nil
+	return auth.GenerateBasicAuthHeader(user, pwd)
 }
