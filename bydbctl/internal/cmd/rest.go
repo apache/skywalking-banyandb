@@ -374,17 +374,8 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 }
 
 func getAuthHeader() (string, error) {
-	// if username not blank and usePassword
-	if username != "" && usePassword {
-		password, err := auth.PromptForPassword()
-		if err != nil {
-			return "", err
-		}
-		return auth.GenerateBasicAuthHeader(username, password), nil
-	}
-	// If the user does not ask for a password.
 	if username != "" {
-		return auth.GenerateBasicAuthHeader(username, ""), nil
+		return auth.GenerateBasicAuthHeader(username, password), nil
 	}
 	// If the command line username is not available, then look for it in the configuration file.
 	user := viper.GetString("username")

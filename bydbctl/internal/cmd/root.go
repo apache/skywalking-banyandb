@@ -32,17 +32,17 @@ import (
 const pathTemp = "/{group}/{name}"
 
 var (
-	filePath    string
-	name        string
-	start       string
-	end         string
-	cfgFile     string
-	enableTLS   bool
-	insecure    bool
-	cert        string
-	username    string
-	usePassword bool
-	rootCmd     = &cobra.Command{
+	filePath  string
+	name      string
+	start     string
+	end       string
+	cfgFile   string
+	enableTLS bool
+	insecure  bool
+	cert      string
+	username  string
+	password  string
+	rootCmd   = &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		Short:             "bydbctl is the command line tool of BanyanDB",
@@ -167,6 +167,6 @@ func bindTLSRelatedFlag(commands ...*cobra.Command) {
 func bindUsernameAndPasswordFlag(commands ...*cobra.Command) {
 	for _, c := range commands {
 		c.Flags().StringVarP(&username, "username", "u", "", "Username for authentication")
-		c.Flags().BoolVarP(&usePassword, "password", "p", false, "If need password for authentication")
+		c.Flags().StringVarP(&password, "password", "p", "", "Password for authentication")
 	}
 }

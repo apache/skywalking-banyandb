@@ -86,22 +86,22 @@ var _ = g.Describe("bydbctl test with authentication", func() {
 		auth.PromptForPassword = func() (string, error) {
 			return testUser.Password, nil
 		}
-		rootCmd.SetArgs([]string{"group", "list", "-a", httpAddr, "-u", testUser.Username, "-p", "true"})
+		rootCmd.SetArgs([]string{"group", "list", "-a", httpAddr, "-u", testUser.Username, "-p", testUser.Password})
 		err := rootCmd.Execute()
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 
-		rootCmd.SetArgs([]string{"health", "-a", httpAddr, "-u", testUser.Username, "-p", "true"})
+		rootCmd.SetArgs([]string{"health", "-a", httpAddr, "-u", testUser.Username, "-p", testUser.Password})
 		err = rootCmd.Execute()
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 	})
 
 	g.It("list groups and health check with wrong username and password", func() {
 		// it will send http request with username = "admin" and password = ""
-		rootCmd.SetArgs([]string{"group", "list", "-a", httpAddr, "-u", "admin", "-p", "false"})
+		rootCmd.SetArgs([]string{"group", "list", "-a", httpAddr, "-u", "admin", "-p", testUser.Password + "wrong"})
 		err := rootCmd.Execute()
 		gm.Expect(err).To(gm.HaveOccurred())
 
-		rootCmd.SetArgs([]string{"health", "-a", httpAddr, "-u", "admin", "-p", "false"})
+		rootCmd.SetArgs([]string{"health", "-a", httpAddr, "-u", "admin", "-p", testUser.Password + "wrong"})
 		err = rootCmd.Execute()
 		gm.Expect(err).To(gm.HaveOccurred())
 	})
