@@ -35,7 +35,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	serverAuth "github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
-	"github.com/apache/skywalking-banyandb/bydbctl/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -80,12 +79,6 @@ var _ = g.Describe("bydbctl test with authentication", func() {
 	})
 
 	g.It("list groups and health check with correct username and password from command line", func() {
-		originalPrompt := auth.PromptForPassword
-		defer func() { auth.PromptForPassword = originalPrompt }() // Restore after the test
-		// Mock the PromptForPassword function to return a predefined password without user input
-		auth.PromptForPassword = func() (string, error) {
-			return testUser.Password, nil
-		}
 		rootCmd.SetArgs([]string{"group", "list", "-a", httpAddr, "-u", testUser.Username, "-p", testUser.Password})
 		err := rootCmd.Execute()
 		gm.Expect(err).NotTo(gm.HaveOccurred())

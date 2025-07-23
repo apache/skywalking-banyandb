@@ -21,10 +21,6 @@ package auth
 import (
 	"encoding/base64"
 	"fmt"
-	"os"
-	"strings"
-
-	"golang.org/x/term"
 )
 
 // GenerateBasicAuthHeader creates a Basic Auth header from username and password.
@@ -32,18 +28,4 @@ func GenerateBasicAuthHeader(username, password string) string {
 	credentials := fmt.Sprintf("%s:%s", username, password)
 	encoded := base64.StdEncoding.EncodeToString([]byte(credentials))
 	return "Basic " + encoded
-}
-
-// PromptForPassword is set to PromptForPasswordFunc by default.
-// It can be replaced (mocked) in tests.
-var PromptForPassword = PromptForPasswordFunc
-
-// PromptForPasswordFunc reads password input silently from the terminal.
-func PromptForPasswordFunc() (string, error) {
-	fmt.Print("Enter password: ")
-	bytePassword, err := term.ReadPassword(int(os.Stdin.Fd())) // Read password without showing it
-	if err != nil {
-		return "", fmt.Errorf("failed to read password: %w", err)
-	}
-	return strings.TrimSpace(string(bytePassword)), nil
 }

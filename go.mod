@@ -43,7 +43,6 @@ require (
 	go.uber.org/multierr v1.11.0
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
 	golang.org/x/mod v0.24.0
-	golang.org/x/term v0.30.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20250324211829-b45e905df463
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250324211829-b45e905df463
 	google.golang.org/grpc v1.71.0
