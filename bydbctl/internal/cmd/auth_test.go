@@ -40,7 +40,7 @@ import (
 
 var testUser serverAuth.User
 
-// TODO check.
+// TODO check it.
 var _ = g.Describe("bydbctl test with authentication", func() {
 	var deferFn func()
 	var httpAddr string
