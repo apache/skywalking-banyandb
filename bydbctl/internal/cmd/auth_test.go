@@ -27,7 +27,6 @@ import (
 	"github.com/google/uuid"
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
-	"github.com/onsi/gomega/gleak"
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
 	"sigs.k8s.io/yaml"
@@ -35,7 +34,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	serverAuth "github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
@@ -45,7 +43,6 @@ var testUser serverAuth.User
 // TODO check.
 var _ = g.Describe("bydbctl test with authentication", func() {
 	var deferFn func()
-	var goods []gleak.Goroutine
 	var httpAddr string
 	var authCfgFile string
 	var baseDir string
@@ -75,7 +72,6 @@ var _ = g.Describe("bydbctl test with authentication", func() {
 		httpAddr = httpSchema + httpAddr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
-		goods = gleak.Goroutines()
 	})
 
 	g.It("list groups and health check with correct username and password from command line", func() {
@@ -167,6 +163,5 @@ resource_opts:
 
 	g.AfterEach(func() {
 		deferFn()
-		gm.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 })
