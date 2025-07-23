@@ -40,6 +40,8 @@ var (
 	enableTLS bool
 	insecure  bool
 	cert      string
+	username  string
+	password  string
 	rootCmd   = &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
@@ -96,14 +98,23 @@ func initConfig() {
 		viper.SetConfigName(".bydbctl")
 	}
 
+	viper.SetEnvPrefix("BYDBCTL")
 	viper.AutomaticEnv()
 
 	readCfg := func() error {
 		if err := viper.ReadInConfig(); err != nil {
 			return err
 		}
+		configFile := viper.ConfigFileUsed()
+		_, err := os.Stat(configFile)
+		if err != nil {
+			return fmt.Errorf("unable to stat config file: %w", err)
+		}
+		// TODO if info.Mode().Perm() != 0o600 {
+		// TODO fmt.Printf("config file %s has unsafe permissions: %o (expected 0600)", configFile, info.Mode().Perm())
+		// TODO }
 		// Dump this to stderr in case of mixing up response yaml
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		fmt.Fprintln(os.Stderr, "Using config file:", configFile)
 		return nil
 	}
 
@@ -150,5 +161,12 @@ func bindTLSRelatedFlag(commands ...*cobra.Command) {
 		c.Flags().BoolVarP(&enableTLS, "enable-tls", "", false, "Used to enable tls")
 		c.Flags().BoolVarP(&insecure, "insecure", "", false, "Used to skip server's cert")
 		c.Flags().StringVarP(&cert, "cert", "", "", "Certificate for tls")
+	}
+}
+
+func bindUsernameAndPasswordFlag(commands ...*cobra.Command) {
+	for _, c := range commands {
+		c.Flags().StringVarP(&username, "username", "u", "", "Username for authentication")
+		c.Flags().StringVarP(&password, "password", "p", "", "Password for authentication")
 	}
 }

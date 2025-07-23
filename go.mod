@@ -18,6 +18,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/go-resty/resty/v2 v2.16.5
 	github.com/google/go-cmp v0.7.0
+	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.1
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.3
 	github.com/hashicorp/golang-lru v1.0.2
@@ -86,7 +87,6 @@ require (
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/kamstrup/intmap v0.5.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/machinebox/graphql v0.2.2 // indirect

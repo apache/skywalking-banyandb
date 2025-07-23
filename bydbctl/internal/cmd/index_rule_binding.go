@@ -140,6 +140,7 @@ func newIndexRuleBindingCmd() *cobra.Command {
 	bindFileFlag(createCmd, updateCmd)
 
 	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
+	bindUsernameAndPasswordFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
 	indexRuleBindingCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
 	return indexRuleBindingCmd
 }

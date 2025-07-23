@@ -29,6 +29,7 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -47,8 +48,7 @@ var inputFS embed.FS
 //go:embed want/*.yaml
 var wantFS embed.FS
 
-// VerifyFn verify whether the query response matches the wanted result.
-var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
+func verifyWithContext(ctx context.Context, innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
 	i, err := inputFS.ReadFile("input/" + args.Input + ".yaml")
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	query := &measurev1.QueryRequest{}
@@ -56,7 +56,6 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
 	query.Stages = args.Stages
 	c := measurev1.NewMeasureServiceClient(sharedContext.Connection)
-	ctx := context.Background()
 	resp, err := c.Query(ctx, query)
 	if args.WantErr {
 		if err == nil {
@@ -111,6 +110,21 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(resp.Trace.GetSpans()).NotTo(gm.BeEmpty())
 }
 
+// VerifyFn verify whether the query response matches the wanted result.
+var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
+	ctx := context.Background()
+	verifyWithContext(ctx, innerGm, sharedContext, args)
+}
+
+// VerifyFnWithAuth verify whether the query response matches the wanted result with Auth.
+var VerifyFnWithAuth = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args, username, password string) {
+	ctx := metadata.AppendToOutgoingContext(context.Background(),
+		"username", username,
+		"password", password,
+	)
+	verifyWithContext(ctx, innerGm, sharedContext, args)
+}
+
 //go:embed testdata/*.json
 var dataFS embed.FS
 
@@ -134,18 +148,27 @@ func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClien
 func Write(conn *grpclib.ClientConn, name, group, dataFile string,
 	baseTime time.Time, interval time.Duration,
 ) {
+	WriteWithAuth(conn, name, group, dataFile, baseTime, interval, "", "")
+}
+
+// WriteWithAuth data into the server with Auth.
+func WriteWithAuth(conn *grpclib.ClientConn, name, group, dataFile string,
+	baseTime time.Time, interval time.Duration, username, password string,
+) {
+	ctx := context.Background()
+	md := metadata.Pairs("username", username, "password", password)
+	ctx = metadata.NewOutgoingContext(ctx, md)
 	metadata := &commonv1.Metadata{
 		Name:  name,
 		Group: group,
 	}
 
 	schema := databasev1.NewMeasureRegistryServiceClient(conn)
-	resp, err := schema.Get(context.Background(), &databasev1.MeasureRegistryServiceGetRequest{Metadata: metadata})
+	resp, err := schema.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: metadata})
 	gm.Expect(err).NotTo(gm.HaveOccurred())
 	metadata = resp.GetMeasure().GetMetadata()
 
 	c := measurev1.NewMeasureServiceClient(conn)
-	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
 	loadData(metadata, writeClient, dataFile, baseTime, interval)
