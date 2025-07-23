@@ -94,6 +94,7 @@ type server struct {
 	tlsReloader *pkgtls.Reloader
 	*propertyServer
 	*indexRuleBindingRegistryServer
+	*traceRegistryServer
 	groupRepo                *groupRepo
 	metrics                  *metrics
 	certFile                 string
@@ -158,6 +159,9 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		propertyRegistryServer: &propertyRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
+		traceRegistryServer: &traceRegistryServer{
+			schemaRegistry: schemaRegistry,
+		},
 		schemaRepo: schemaRegistry,
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
@@ -207,6 +211,7 @@ func (s *server) PreRun(_ context.Context) error {
 	s.groupRegistryServer.metrics = metrics
 	s.topNAggregationRegistryServer.metrics = metrics
 	s.propertyRegistryServer.metrics = metrics
+	s.traceRegistryServer.metrics = metrics
 
 	if s.tls {
 		var err error
@@ -324,6 +329,7 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterTopNAggregationRegistryServiceServer(s.ser, s.topNAggregationRegistryServer)
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
 	databasev1.RegisterPropertyRegistryServiceServer(s.ser, s.propertyRegistryServer)
+	databasev1.RegisterTraceRegistryServiceServer(s.ser, s.traceRegistryServer)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})
