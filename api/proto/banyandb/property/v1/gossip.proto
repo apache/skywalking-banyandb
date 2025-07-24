@@ -49,9 +49,7 @@ message FutureCallbackResponse {}
 
 service GossipService {
   // Propagation is used to propagate messages across nodes in the cluster.
-  rpc Propagation(PropagationRequest) returns (PropagationResponse) {
-  }
+  rpc Propagation(PropagationRequest) returns (PropagationResponse) {}
   // FutureCallback is used to handle future callbacks for messages.
-  rpc FutureCallback(FutureCallbackRequest) returns (FutureCallbackResponse) {
-  }
+  rpc FutureCallback(FutureCallbackRequest) returns (FutureCallbackResponse) {}
 }
