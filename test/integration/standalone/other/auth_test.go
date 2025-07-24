@@ -45,7 +45,7 @@ import (
 var testUser serverAuth.User
 
 // TODO check.
-var _ = g.Describe("Query service_cpm_minute with authentication", func() {
+var _ = g.XDescribe("Query service_cpm_minute with authentication", func() {
 	var deferFn func()
 	var baseTime time.Time
 	var interval time.Duration

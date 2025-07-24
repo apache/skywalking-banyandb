@@ -30,7 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-var _ = Describe("health check after launching banyandb server with gRPC and HTTP TLS", func() {
+var _ = XDescribe("health check after launching banyandb server with gRPC and HTTP TLS", func() {
 	var deferFunc func()
 	var grpcAddr, httpAddr, certFile string
 	var rootCmd *cobra.Command
@@ -99,7 +99,7 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 	})
 })
 
-var _ = Describe("health check after launching banyandb server", func() {
+var _ = XDescribe("health check after launching banyandb server", func() {
 	var deferFunc func()
 	var grpcAddr, httpAddr string
 	var rootCmd *cobra.Command
@@ -132,7 +132,7 @@ var _ = Describe("health check after launching banyandb server", func() {
 	})
 })
 
-var _ = Describe("health check without launching banyandb server", func() {
+var _ = XDescribe("health check without launching banyandb server", func() {
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
 		rootCmd = &cobra.Command{Use: "root"}

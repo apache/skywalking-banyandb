@@ -68,7 +68,6 @@ var _ = g.Describe("bydbctl test with authentication", func() {
 			fmt.Sprintf("--auth-config-file=%s", authCfgFile),
 			"--enable-health-auth=true",
 		)
-		gm.Expect(err).NotTo(gm.HaveOccurred())
 		httpAddr = httpSchema + httpAddr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)

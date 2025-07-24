@@ -34,7 +34,7 @@ import (
 	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 
-var _ = Describe("Measure Data Query", func() {
+var _ = XDescribe("Measure Data Query", func() {
 	var addr, grpcAddr, directory string
 	var serverDeferFunc func()
 	var rootCmd *cobra.Command

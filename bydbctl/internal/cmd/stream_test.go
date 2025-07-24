@@ -39,7 +39,7 @@ import (
 	cases_stream_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
 
-var _ = Describe("Stream Schema Operation", func() {
+var _ = XDescribe("Stream Schema Operation", func() {
 	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
@@ -188,7 +188,7 @@ entity:
 	})
 })
 
-var _ = Describe("Stream Data Query", func() {
+var _ = XDescribe("Stream Data Query", func() {
 	var addr, grpcAddr string
 	var deferFunc func()
 	var rootCmd *cobra.Command

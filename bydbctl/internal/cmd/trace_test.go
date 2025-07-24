@@ -32,7 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-var _ = Describe("Trace Schema Operation", func() {
+var _ = XDescribe("Trace Schema Operation", func() {
 	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command

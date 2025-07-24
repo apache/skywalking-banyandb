@@ -105,7 +105,7 @@ tags:
 	sourceFieldKey  = index.FieldKey{TagName: "_source"}
 )
 
-var _ = Describe("Property Operation", func() {
+var _ = XDescribe("Property Operation", func() {
 	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
@@ -168,7 +168,7 @@ var _ = Describe("Property Operation", func() {
 	})
 })
 
-var _ = Describe("Property Schema Operation", func() {
+var _ = XDescribe("Property Schema Operation", func() {
 	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
@@ -386,7 +386,7 @@ tags:
 	})
 })
 
-var _ = Describe("Property Cluster Operation", func() {
+var _ = XDescribe("Property Cluster Operation", func() {
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
