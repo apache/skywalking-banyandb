@@ -303,15 +303,6 @@ func (p *pub) PreRun(context.Context) error {
 	return nil
 }
 
-func (p *pub) ClusterNode(nodeID string) (queue.Node, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if c, ok := p.active[nodeID]; ok {
-		return c, true
-	}
-	return nil, false
-}
-
 func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, error) {
 	r := &clusterv1.SendRequest{
 		Topic:     topic.String(),

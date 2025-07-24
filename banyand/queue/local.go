@@ -99,10 +99,6 @@ func (*local) GetPort() *uint32 {
 func (*local) Register(bus.Topic, schema.EventHandler) {
 }
 
-func (*local) ClusterNode(_ string) (Node, bool) {
-	return nil, false
-}
-
 type localBatchPublisher struct {
 	ctx      context.Context
 	local    *bus.Bus

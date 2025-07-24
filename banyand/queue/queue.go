@@ -42,23 +42,10 @@ type Client interface {
 	run.Unit
 	bus.Publisher
 	bus.Broadcaster
-	ClusterAware
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	Register(bus.Topic, schema.EventHandler)
 	OnAddOrUpdate(md schema.Metadata)
 	GracefulStop()
-}
-
-// ClusterAware is the interface for clients that are aware of the cluster topology.
-type ClusterAware interface {
-	// ClusterNode returns a Node that can be used to activate a client for a specific node.
-	ClusterNode(nodeID string) (Node, bool)
-}
-
-// Node is the interface for a node in the cluster.
-type Node interface {
-	// Original returns the original connection of the node, generally should be *grpc.ClientConn.
-	Original() any
 }
 
 // Server is the interface for receiving data from the queue.

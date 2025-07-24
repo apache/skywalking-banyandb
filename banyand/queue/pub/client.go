@@ -66,10 +66,6 @@ type client struct {
 	md     schema.Metadata
 }
 
-func (c *client) Original() any {
-	return c.conn
-}
-
 func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	if md.Kind != schema.KindNode {
 		return
