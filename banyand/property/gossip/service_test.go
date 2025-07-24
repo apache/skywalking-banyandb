@@ -21,32 +21,26 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	gossipv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/gossip/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
-	"github.com/apache/skywalking-banyandb/banyand/queue/sub"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-const mockTopic = "mock-topic"
+const mockGroup = "mock-group"
 
 func TestGossip(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
@@ -60,11 +54,6 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 	})).To(gomega.Succeed())
 
 	var nodes []*nodeContext
-	ginkgo.BeforeEach(func() {
-		TopicMessageRequestMap[mockTopic] = func() proto.Message {
-			return &commonv1.Group{}
-		}
-	})
 	ginkgo.AfterEach(func() {
 		for _, node := range nodes {
 			if node != nil {
@@ -78,7 +67,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(1)
 		node := nodes[0]
 
-		_, err := node.messenger.Propagation([]string{node.nodeID}, mockTopic, bus.NewMessage(1, &commonv1.Group{}))
+		_, err := node.messenger.Propagation([]string{node.nodeID}, "test")
 		gomega.Expect(err).To(gomega.HaveOccurred())
 	})
 
@@ -86,7 +75,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(2)
 		node1, node2 := nodes[0], nodes[1]
 
-		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockTopic, bus.NewMessage(1, &commonv1.Group{}))
+		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifyFuture(f, true)
 		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID}))
@@ -97,7 +86,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(2)
 		node1, node2 := nodes[0], nodes[1]
 
-		f, err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockTopic, bus.NewMessage(1, &commonv1.Group{}))
+		f, err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifyFuture(f, true)
 		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID}))
@@ -106,11 +95,25 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		gomega.Expect(node2.listener.targets).To(gomega.HaveLen(0))
 	})
 
+	ginkgo.It("two nodes with not existing node", func() {
+		nodes = startNodes(2)
+		node1, node2 := nodes[0], nodes[1]
+
+		f, err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID, "no-existing"}, mockGroup)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		verifyFuture(f, true)
+		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID, node2.nodeID}))
+		gomega.Expect(node1.listener.messages).To(gomega.HaveLen(2))
+
+		gomega.Expect(node2.listener.targets).To(gomega.Equal([]string{node1.nodeID}))
+		gomega.Expect(node2.listener.messages).To(gomega.HaveLen(1))
+	})
+
 	ginkgo.It("multiple nodes with propagation", func() {
 		nodes = startNodes(3)
 		node1, node2, node3 := nodes[0], nodes[1], nodes[2]
 
-		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockTopic, bus.NewMessage(1, &commonv1.Group{}))
+		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifyFuture(f, true)
 		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID}))
@@ -128,7 +131,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		node1, node2, node3 := nodes[0], nodes[1], nodes[2]
 		node3.listener.mockErr = fmt.Errorf("mock error")
 
-		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockTopic, bus.NewMessage(1, &commonv1.Group{}))
+		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifyFuture(f, false)
 		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID}))
@@ -150,23 +153,36 @@ type nodeContext struct {
 }
 
 func startNodes(count int) []*nodeContext {
-	p := pub.NewWithoutMetadata()
 	result := make([]*nodeContext, count)
+	messengers := make([]Messenger, count)
 	for i := 0; i < count; i++ {
 		listener := &mockListener{}
 
 		// starting grpc server node
-		addr, server := startNode()
-		gomega.Expect(server).NotTo(gomega.BeNil())
+		ports, err := test.AllocateFreePorts(1)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// starting gossip messenger
-		messenger := NewMessenger(observability.NewBypassRegistry(), p, server)
+		messenger := NewMessengerWithoutMetadata(observability.NewBypassRegistry())
 		gomega.Expect(messenger).NotTo(gomega.BeNil())
+		messenger.(*service).port = uint32(ports[0])
+		addr := fmt.Sprintf("127.0.0.1:%d", ports[0])
 		messenger.(run.PreRunner).PreRun(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{
 			NodeID: addr,
 		}))
-		messenger.Subscribe(mockTopic, listener)
+		messenger.Subscribe(listener)
+		err = messenger.(*service).Validate()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		_ = messenger.Serve()
+		messengers[i] = messenger
+
+		gomega.Eventually(func() error {
+			conn, err := net.DialTimeout("tcp", addr, time.Second*2)
+			if err == nil {
+				_ = conn.Close()
+			}
+			return err
+		}, flags.EventuallyTimeout).Should(gomega.Succeed())
 
 		// adding node context
 		result[i] = &nodeContext{
@@ -175,57 +191,31 @@ func startNodes(count int) []*nodeContext {
 			messenger: messenger,
 			stop: func() {
 				messenger.GracefulStop()
-				server.(run.Service).GracefulStop()
 			},
 		}
-
-		// registering the node in the gossip system
-		p.OnAddOrUpdate(schema.Metadata{
-			TypeMeta: schema.TypeMeta{
-				Name: addr,
-				Kind: schema.KindNode,
-			},
-			Spec: &databasev1.Node{
-				Metadata: &commonv1.Metadata{
-					Name: addr,
-				},
-				Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
-				GrpcAddress: addr,
-			},
-		})
 	}
 
-	// make sure all nodes are activated
-	gomega.Eventually(func() error {
-		for _, node := range result {
-			_, exist := p.ClusterNode(node.nodeID)
-			if !exist {
-				return fmt.Errorf("node %s is not registered in gossip", node.nodeID)
-			}
-		}
-		return nil
-	}, flags.EventuallyTimeout).Should(gomega.Succeed())
-	return result
-}
+	// registering the node in the gossip system
+	for _, m := range messengers {
+		for _, n := range result {
+			m.(*service).OnAddOrUpdate(schema.Metadata{
+				TypeMeta: schema.TypeMeta{
+					Name: n.nodeID,
+					Kind: schema.KindNode,
+				},
+				Spec: &databasev1.Node{
+					Metadata: &commonv1.Metadata{
+						Name: n.nodeID,
+					},
+					Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
+					GrpcAddress: n.nodeID,
 
-func startNode() (string, queue.Server) {
-	ports, err := test.AllocateFreePorts(2)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	server := sub.NewServerWithPorts(observability.NewBypassRegistry(), "",
-		uint32(ports[0]), uint32(ports[1]))
-	server.(run.PreRunner).PreRun(context.Background())
-	err = server.(run.Config).Validate()
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	_ = server.(run.Service).Serve()
-	addr := net.JoinHostPort("localhost", strconv.Itoa(ports[0]))
-	gomega.Eventually(func() error {
-		conn, err := net.DialTimeout("tcp", addr, time.Second*2)
-		if err == nil {
-			_ = conn.Close()
+					PropertyRepairGossipGrpcAddress: n.nodeID,
+				},
+			})
 		}
-		return err
-	}, flags.EventuallyTimeout).Should(gomega.Succeed())
-	return addr, server
+	}
+	return result
 }
 
 func verifyFuture(f Future, success bool) {
@@ -233,27 +223,24 @@ func verifyFuture(f Future, success bool) {
 	resp, err := f.Get()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(resp).NotTo(gomega.BeNil())
-	gomega.Expect(resp.Data()).NotTo(gomega.BeNil())
-	data, ok := resp.Data().(*gossipv1.PropagationMessageResponse)
-	gomega.Expect(ok).To(gomega.BeTrue())
 	if success {
-		gomega.Expect(data.Success).To(gomega.BeTrue(), "Propagation should be successful")
+		gomega.Expect(resp.Success).To(gomega.BeTrue(), "Propagation should be successful")
 	} else {
-		gomega.Expect(data.Success).To(gomega.BeFalse(), "Propagation should not be successful")
+		gomega.Expect(resp.Success).To(gomega.BeFalse(), "Propagation should not be successful")
 	}
 }
 
 type mockListener struct {
 	mockErr  error
 	targets  []string
-	messages []bus.Message
+	messages []*propertyv1.PropagationRequest
 }
 
-func (m *mockListener) Rev(_ context.Context, nextNode *grpc.ClientConn, message bus.Message) error {
+func (m *mockListener) Rev(_ context.Context, nextNode *grpc.ClientConn, req *propertyv1.PropagationRequest) error {
 	if m.mockErr != nil {
 		return m.mockErr
 	}
 	m.targets = append(m.targets, nextNode.Target())
-	m.messages = append(m.messages, message)
+	m.messages = append(m.messages, req)
 	return nil
 }

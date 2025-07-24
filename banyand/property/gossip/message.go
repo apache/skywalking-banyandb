@@ -22,13 +22,13 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/apache/skywalking-banyandb/pkg/bus"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // MessageListener is an interface that defines a method to handle the incoming propagation message.
 type MessageListener interface {
-	Rev(ctx context.Context, nextNode *grpc.ClientConn, message bus.Message) error
+	Rev(ctx context.Context, nextNode *grpc.ClientConn, request *propertyv1.PropagationRequest) error
 }
 
 // Messenger is an interface that defines methods for message propagation and subscription in a gossip protocol.
@@ -41,19 +41,21 @@ type Messenger interface {
 // Future is an interface that defines a method to get the result of a message propagation operation.
 type Future interface {
 	// Get waits for the message to be propagated finished and returns the message or an error if the operation fails.
-	Get() (bus.Message, error)
+	Get() (*propertyv1.PropagationResponse, error)
 }
 
 // MessageClient is an interface that defines methods for propagating messages to other nodes in a gossip protocol.
 type MessageClient interface {
 	run.Unit
 	// Propagation using anti-entropy gossip protocol to propagate messages to the specified nodes.
-	Propagation(nodes []string, topic string, message bus.Message) (Future, error)
+	Propagation(nodes []string, topic string) (Future, error)
 }
 
 // MessageServer is an interface that defines methods for subscribing to topics and receiving messages in a gossip protocol.
 type MessageServer interface {
 	run.Unit
 	// Subscribe allows subscribing to a topic to receive messages.
-	Subscribe(topic string, listener MessageListener) error
+	Subscribe(listener MessageListener) error
+	// GetServerPort returns the port number of the server.
+	GetServerPort() *uint32
 }

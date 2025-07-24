@@ -21,7 +21,6 @@ package data
 import (
 	"google.golang.org/protobuf/proto"
 
-	gossipv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/gossip/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -46,8 +45,6 @@ var (
 		TopicPropertyRepair.String():           TopicPropertyRepair,
 		TopicStreamSeriesIndexWrite.String():   TopicStreamSeriesIndexWrite,
 		TopicStreamLocalIndexWrite.String():    TopicStreamLocalIndexWrite,
-		TopicGossipPropagation.String():        TopicGossipPropagation,
-		TopicGossipFutureCallback.String():     TopicGossipFutureCallback,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -98,12 +95,6 @@ var (
 		TopicStreamLocalIndexWrite: func() proto.Message {
 			return nil
 		},
-		TopicGossipPropagation: func() proto.Message {
-			return &gossipv1.PropagationMessageRequest{}
-		},
-		TopicGossipFutureCallback: func() proto.Message {
-			return &gossipv1.FutureCallbackMessageRequest{}
-		},
 	}
 
 	// TopicResponseMap is the map of topic name to response message.
@@ -129,12 +120,6 @@ var (
 		},
 		TopicPropertyRepair: func() proto.Message {
 			return &propertyv1.InternalRepairResponse{}
-		},
-		TopicGossipPropagation: func() proto.Message {
-			return &gossipv1.PropagationMessageResponse{}
-		},
-		TopicGossipFutureCallback: func() proto.Message {
-			return &gossipv1.FutureCallbackMessageResponse{}
 		},
 	}
 

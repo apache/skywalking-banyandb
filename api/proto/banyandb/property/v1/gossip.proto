@@ -17,10 +17,10 @@
 
 syntax = "proto3";
 
-package banyandb.gossip.v1;
+package banyandb.property.v1;
 
-option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/gossip/v1";
-option java_package = "org.apache.skywalking.banyandb.gossip.v1";
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1";
+option java_package = "org.apache.skywalking.banyandb.property.v1";
 
 message PropagationContext {
   repeated string nodes = 1;
@@ -29,22 +29,29 @@ message PropagationContext {
   uint64 origin_message_id = 4;
 }
 
-message PropagationMessageRequest {
-  string topic = 1;
-  uint64 message_id = 2;
-  PropagationContext context = 3;
-  bytes body = 4;
+message PropagationRequest {
+  PropagationContext context = 2;
+  string group = 3;
 }
 
-message PropagationMessageResponse {
+message PropagationResponse {
   bool success = 1;
   string error = 2;
 }
 
-message FutureCallbackMessageRequest {
-  string topic = 1;
-  uint64 message_id = 2;
-  PropagationMessageResponse response = 3;
+message FutureCallbackRequest {
+  uint64 message_id = 1;
+  PropagationResponse response = 2;
+  string group = 3;
 }
 
-message FutureCallbackMessageResponse {}
+message FutureCallbackResponse {}
+
+service GossipService {
+  // Propagation is used to propagate messages across nodes in the cluster.
+  rpc Propagation(PropagationRequest) returns (PropagationResponse) {
+  }
+  // FutureCallback is used to handle future callbacks for messages.
+  rpc FutureCallback(FutureCallbackRequest) returns (FutureCallbackResponse) {
+  }
+}

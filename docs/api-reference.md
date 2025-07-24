@@ -206,13 +206,6 @@
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
     - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
-- [banyandb/gossip/v1/message.proto](#banyandb_gossip_v1_message-proto)
-    - [FutureCallbackMessageRequest](#banyandb-gossip-v1-FutureCallbackMessageRequest)
-    - [FutureCallbackMessageResponse](#banyandb-gossip-v1-FutureCallbackMessageResponse)
-    - [PropagationContext](#banyandb-gossip-v1-PropagationContext)
-    - [PropagationMessageRequest](#banyandb-gossip-v1-PropagationMessageRequest)
-    - [PropagationMessageResponse](#banyandb-gossip-v1-PropagationMessageResponse)
-  
 - [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
     - [DataPoint](#banyandb-measure-v1-DataPoint)
     - [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field)
@@ -240,6 +233,15 @@
     - [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse)
   
     - [MeasureService](#banyandb-measure-v1-MeasureService)
+  
+- [banyandb/property/v1/gossip.proto](#banyandb_property_v1_gossip-proto)
+    - [FutureCallbackRequest](#banyandb-property-v1-FutureCallbackRequest)
+    - [FutureCallbackResponse](#banyandb-property-v1-FutureCallbackResponse)
+    - [PropagationContext](#banyandb-property-v1-PropagationContext)
+    - [PropagationRequest](#banyandb-property-v1-PropagationRequest)
+    - [PropagationResponse](#banyandb-property-v1-PropagationResponse)
+  
+    - [GossipService](#banyandb-property-v1-GossipService)
   
 - [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
     - [Property](#banyandb-property-v1-Property)
@@ -720,6 +722,7 @@ Trace is the top level message of a trace.
 | http_address | [string](#string) |  |  |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
+| property_repair_gossip_grpc_address | [string](#string) |  |  |
 
 
 
@@ -3154,101 +3157,6 @@ Type determine the index structure under the hood
 
 
 
-<a name="banyandb_gossip_v1_message-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/gossip/v1/message.proto
-
-
-
-<a name="banyandb-gossip-v1-FutureCallbackMessageRequest"></a>
-
-### FutureCallbackMessageRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| topic | [string](#string) |  |  |
-| message_id | [uint64](#uint64) |  |  |
-| response | [PropagationMessageResponse](#banyandb-gossip-v1-PropagationMessageResponse) |  |  |
-
-
-
-
-
-
-<a name="banyandb-gossip-v1-FutureCallbackMessageResponse"></a>
-
-### FutureCallbackMessageResponse
-
-
-
-
-
-
-
-<a name="banyandb-gossip-v1-PropagationContext"></a>
-
-### PropagationContext
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| nodes | [string](#string) | repeated |  |
-| max_propagation_count | [int32](#int32) |  |  |
-| origin_node | [string](#string) |  |  |
-| origin_message_id | [uint64](#uint64) |  |  |
-
-
-
-
-
-
-<a name="banyandb-gossip-v1-PropagationMessageRequest"></a>
-
-### PropagationMessageRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| topic | [string](#string) |  |  |
-| message_id | [uint64](#uint64) |  |  |
-| context | [PropagationContext](#banyandb-gossip-v1-PropagationContext) |  |  |
-| body | [bytes](#bytes) |  |  |
-
-
-
-
-
-
-<a name="banyandb-gossip-v1-PropagationMessageResponse"></a>
-
-### PropagationMessageResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  |  |
-| error | [string](#string) |  |  |
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
 <a name="banyandb_measure_v1_query-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -3636,6 +3544,110 @@ WriteResponse is the response contract for write
 | Write | [WriteRequest](#banyandb-measure-v1-WriteRequest) stream | [WriteResponse](#banyandb-measure-v1-WriteResponse) stream |  |
 | TopN | [TopNRequest](#banyandb-measure-v1-TopNRequest) | [TopNResponse](#banyandb-measure-v1-TopNResponse) |  |
 | DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-measure-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse) |  |
+
+ 
+
+
+
+<a name="banyandb_property_v1_gossip-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/property/v1/gossip.proto
+
+
+
+<a name="banyandb-property-v1-FutureCallbackRequest"></a>
+
+### FutureCallbackRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| message_id | [uint64](#uint64) |  |  |
+| response | [PropagationResponse](#banyandb-property-v1-PropagationResponse) |  |  |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-FutureCallbackResponse"></a>
+
+### FutureCallbackResponse
+
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropagationContext"></a>
+
+### PropagationContext
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [string](#string) | repeated |  |
+| max_propagation_count | [int32](#int32) |  |  |
+| origin_node | [string](#string) |  |  |
+| origin_message_id | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropagationRequest"></a>
+
+### PropagationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| context | [PropagationContext](#banyandb-property-v1-PropagationContext) |  |  |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropagationResponse"></a>
+
+### PropagationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| error | [string](#string) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-property-v1-GossipService"></a>
+
+### GossipService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Propagation | [PropagationRequest](#banyandb-property-v1-PropagationRequest) | [PropagationResponse](#banyandb-property-v1-PropagationResponse) | Propagation is used to propagate messages across nodes in the cluster. |
+| FutureCallback | [FutureCallbackRequest](#banyandb-property-v1-FutureCallbackRequest) | [FutureCallbackResponse](#banyandb-property-v1-FutureCallbackResponse) | FutureCallback is used to handle future callbacks for messages. |
 
  
 
