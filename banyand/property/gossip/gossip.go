@@ -15,5 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package gossip implements the gossip protocol for BanyanDB, it's dependent on the queue package.
+// Package gossip implements the gossip protocol for BanyanDB property repair.
 package gossip
