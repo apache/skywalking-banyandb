@@ -20,11 +20,13 @@ package property
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"path/filepath"
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -33,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -53,6 +56,7 @@ var (
 type service struct {
 	metadata                 metadata.Repo
 	pipeline                 queue.Server
+	gossipMessenger          gossip.Messenger
 	omr                      observability.MetricsRegistry
 	lfs                      fs.FileSystem
 	close                    chan struct{}
@@ -83,6 +87,9 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.repairBuildTreeCron, "property-repair-build-tree-cron", "@every 1h", "the cron expression for repairing the build tree")
 	flagS.DurationVar(&s.repairQuickBuildTreeTime, "property-repair-quick-build-tree-time", time.Minute*10,
 		"the duration of the quick build tree after operate the property")
+	s.gossipMessenger.FlagSet().VisitAll(func(f *pflag.Flag) {
+		flagS.AddFlag(f)
+	})
 	return flagS
 }
 
@@ -99,6 +106,9 @@ func (s *service) Validate() error {
 	_, err := cron.ParseStandard(s.repairBuildTreeCron)
 	if err != nil {
 		return errors.New("property-repair-build-tree-cron is not a valid cron expression")
+	}
+	if err = s.gossipMessenger.Validate(); err != nil {
+		return fmt.Errorf("gossip vilidate failure: %w", err)
 	}
 	return nil
 }
@@ -124,6 +134,10 @@ func (s *service) PreRun(ctx context.Context) error {
 	}
 	node := val.(common.Node)
 	s.nodeID = node.NodeID
+	// if the gossip address is empty, it means that the gossip is not enabled.
+	if node.PropertyGossipGrpcAddress == "" {
+		s.gossipMessenger = nil
+	}
 
 	var err error
 	snapshotLis := &snapshotListener{s: s}
@@ -140,6 +154,12 @@ func (s *service) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	if s.gossipMessenger != nil {
+		if err = s.gossipMessenger.PreRun(ctx); err != nil {
+			return err
+		}
+	}
 	return multierr.Combine(
 		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
 		s.pipeline.Subscribe(data.TopicPropertyDelete, &deleteListener{s: s}),
@@ -150,15 +170,25 @@ func (s *service) PreRun(ctx context.Context) error {
 }
 
 func (s *service) Serve() run.StopNotify {
+	if s.gossipMessenger != nil {
+		s.gossipMessenger.Serve(s.close)
+	}
 	return s.close
 }
 
 func (s *service) GracefulStop() {
+	if s.gossipMessenger != nil {
+		s.gossipMessenger.GracefulStop()
+	}
 	close(s.close)
 	err := s.db.close()
 	if err != nil {
 		s.l.Err(err).Msg("Fail to close the property module")
 	}
+}
+
+func (s *service) GetGossIPGrpcPort() *uint32 {
+	return s.gossipMessenger.GetServerPort()
 }
 
 // NewService returns a new service.
@@ -170,5 +200,7 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability
 		db:       &database{},
 		pm:       pm,
 		close:    make(chan struct{}),
+
+		gossipMessenger: gossip.NewMessenger(omr, metadata),
 	}, nil
 }

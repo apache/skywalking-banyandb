@@ -152,6 +152,8 @@ type Node struct {
 	NodeID      string
 	GrpcAddress string
 	HTTPAddress string
+
+	PropertyGossipGrpcAddress string
 }
 
 var (
@@ -193,7 +195,7 @@ func ParseNodeHostProvider(s string) (NodeHostProvider, error) {
 }
 
 // GenerateNode generates a node id.
-func GenerateNode(grpcPort, httpPort *uint32) (node Node, err error) {
+func GenerateNode(grpcPort, httpPort, propertyGrpcPort *uint32) (node Node, err error) {
 	port := grpcPort
 	if port == nil {
 		port = httpPort
@@ -226,6 +228,9 @@ func GenerateNode(grpcPort, httpPort *uint32) (node Node, err error) {
 	}
 	if httpPort != nil {
 		node.HTTPAddress = net.JoinHostPort(nodeHost, strconv.FormatUint(uint64(*httpPort), 10))
+	}
+	if propertyGrpcPort != nil {
+		node.PropertyGossipGrpcAddress = net.JoinHostPort(nodeHost, strconv.FormatUint(uint64(*propertyGrpcPort), 10))
 	}
 	node.Labels = ParseNodeFlags()
 	return node, nil

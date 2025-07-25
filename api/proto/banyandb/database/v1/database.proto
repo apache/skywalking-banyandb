@@ -40,6 +40,7 @@ message Node {
   google.protobuf.Timestamp created_at = 5;
   // labels is a set of key-value pairs to describe the node.
   map<string, string> labels = 6;
+  string property_repair_gossip_grpc_address = 7;
 }
 
 message Shard {
