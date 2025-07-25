@@ -193,7 +193,8 @@ func startNodes(count int) []*nodeContext {
 		messenger.Subscribe(listener)
 		err = messenger.(*service).Validate()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		_ = messenger.Serve()
+		stopper := make(chan struct{}, 1)
+		messenger.Serve(stopper)
 		messengers[i] = messenger
 
 		gomega.Eventually(func() error {
@@ -211,6 +212,7 @@ func startNodes(count int) []*nodeContext {
 			messenger: messenger,
 			stop: func() {
 				messenger.GracefulStop()
+				close(stopper)
 			},
 		}
 	}

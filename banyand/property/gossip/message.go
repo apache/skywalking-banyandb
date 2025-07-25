@@ -37,7 +37,11 @@ type Messenger interface {
 	MessageServer
 	run.PreRunner
 	run.Config
-	run.Service
+
+	// Serve starts the service from parent stop channel.
+	Serve(stopCh chan struct{})
+	// GracefulStop shuts down and cleans up the service.
+	GracefulStop()
 }
 
 // MessageClient is an interface that defines methods for propagating messages to other nodes in a gossip protocol.

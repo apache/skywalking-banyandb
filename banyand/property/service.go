@@ -164,12 +164,7 @@ func (s *service) PreRun(ctx context.Context) error {
 }
 
 func (s *service) Serve() run.StopNotify {
-	messengerStopper := s.gossipMessenger.Serve()
-	// notify the service stoped when messenger stoped
-	go func() {
-		<-messengerStopper
-		s.close <- struct{}{}
-	}()
+	s.gossipMessenger.Serve(s.close)
 	return s.close
 }
 

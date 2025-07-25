@@ -183,7 +183,7 @@ func (s *service) Validate() error {
 	return nil
 }
 
-func (s *service) Serve() run.StopNotify {
+func (s *service) Serve(stopCh chan struct{}) {
 	var opts []grpclib.ServerOption
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
@@ -209,7 +209,6 @@ func (s *service) Serve() run.StopNotify {
 	propertyv1.RegisterGossipServiceServer(s.ser, s.protocolHandler)
 	var wg sync.WaitGroup
 	wg.Add(1)
-	stopCh := make(chan struct{})
 	go func() {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
@@ -227,9 +226,7 @@ func (s *service) Serve() run.StopNotify {
 	go func() {
 		wg.Wait()
 		s.log.Info().Msg("GRPC server is stopped")
-		close(stopCh)
 	}()
-	return stopCh
 }
 
 func (s *service) GracefulStop() {
