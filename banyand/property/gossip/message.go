@@ -35,20 +35,16 @@ type MessageListener interface {
 type Messenger interface {
 	MessageClient
 	MessageServer
+	run.PreRunner
+	run.Config
 	run.Service
-}
-
-// Future is an interface that defines a method to get the result of a message propagation operation.
-type Future interface {
-	// Get waits for the message to be propagated finished and returns the message or an error if the operation fails.
-	Get() (*propertyv1.PropagationResponse, error)
 }
 
 // MessageClient is an interface that defines methods for propagating messages to other nodes in a gossip protocol.
 type MessageClient interface {
 	run.Unit
 	// Propagation using anti-entropy gossip protocol to propagate messages to the specified nodes.
-	Propagation(nodes []string, topic string) (Future, error)
+	Propagation(nodes []string, topic string) error
 }
 
 // MessageServer is an interface that defines methods for subscribing to topics and receiving messages in a gossip protocol.

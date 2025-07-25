@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -66,30 +67,96 @@ func (s *service) getListener() MessageListener {
 	return s.listeners[0]
 }
 
-type protocolHandler struct {
-	propertyv1.UnimplementedGossipServiceServer
-	s *service
+type groupPropagation struct {
+	latestTime     time.Time
+	channel        chan *propertyv1.PropagationRequest
+	originalNodeID string
 }
 
-func (q *protocolHandler) Propagation(ctx context.Context, request *propertyv1.PropagationRequest) (resp *propertyv1.PropagationResponse, err error) {
+type protocolHandler struct {
+	propertyv1.UnimplementedGossipServiceServer
+	s           *service
+	groups      map[string]*groupPropagation
+	groupNotify chan struct{}
+	mu          sync.RWMutex
+}
+
+func newProtocolHandler(s *service) *protocolHandler {
+	return &protocolHandler{
+		s:           s,
+		groups:      make(map[string]*groupPropagation),
+		groupNotify: make(chan struct{}, 10),
+	}
+}
+
+func (q *protocolHandler) processPropagation(ctx context.Context) {
+	for {
+		select {
+		case <-q.groupNotify:
+			request := q.findUnProcessRequest()
+			if request == nil {
+				continue
+			}
+			err := q.handle(ctx, request)
+			if err != nil {
+				q.s.log.Warn().Err(err).Stringer("request", request).
+					Msgf("handle propagation request failure")
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (q *protocolHandler) findUnProcessRequest() *propertyv1.PropagationRequest {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, g := range q.groups {
+		select {
+		case d := <-g.channel:
+			return d
+		default:
+			continue
+		}
+	}
+	return nil
+}
+
+func (q *protocolHandler) Propagation(_ context.Context, request *propertyv1.PropagationRequest) (resp *propertyv1.PropagationResponse, err error) {
+	q.s.log.Debug().Stringer("request", request).Msg("received property repair gossip message for propagation")
+	if q.addToProcess(request) {
+		q.s.log.Debug().Msgf("add the propagation request to the process")
+	} else {
+		q.s.log.Debug().Msgf("propagation request discarded")
+	}
+	return &propertyv1.PropagationResponse{}, nil
+}
+
+func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.PropagationRequest) (err error) {
 	n := time.Now()
 	now := n.UnixNano()
 	nodes := request.Context.Nodes
 	q.s.serverMetrics.totalStarted.Inc(1, request.Group)
-	q.s.log.Debug().Stringer("request", request).Msg("received property repair gossip message for propagation")
+	var needsKeepPropagation bool
 	defer func() {
-		if !resp.Success {
+		if err != nil {
 			q.s.serverMetrics.totalPropagationErr.Inc(1, request.Group)
 		}
 		q.s.serverMetrics.totalFinished.Inc(1, request.Group)
 		q.s.serverMetrics.totalLatency.Inc(n.Sub(time.Unix(0, now)).Seconds(), request.Group)
+		if !needsKeepPropagation {
+			q.s.serverMetrics.totalPropagationCount.Inc(float64(request.Context.CurrentPropagationCount),
+				request.Group, request.Context.OriginNode)
+			q.s.serverMetrics.totalPropagationPercent.Observe(
+				float64(request.Context.CurrentPropagationCount)/float64(request.Context.MaxPropagationCount), request.Group)
+		}
 	}()
 	if len(nodes) == 0 {
-		return &propertyv1.PropagationResponse{Success: false, Error: "no nodes needs to propagation"}, nil
+		return nil
 	}
 	listener := q.s.getListener()
 	if listener == nil {
-		return &propertyv1.PropagationResponse{Success: false, Error: "no listener found for gossip message propagation"}, nil
+		return fmt.Errorf("no listener")
 	}
 	var nextNodeID string
 	var nextNodeConn *grpc.ClientConn
@@ -116,76 +183,84 @@ func (q *protocolHandler) Propagation(ctx context.Context, request *propertyv1.P
 	// if no node is available or sync error for gossip message propagation, then it should be notified finished
 	if !executeSuccess {
 		_ = nextNodeConn.Close()
-		return q.replyResultWithOriginalNode(request, &propertyv1.PropagationResponse{
-			Success: false,
-			Error:   "failed to execute gossip message for propagation in all nodes",
-		}), nil
+		return fmt.Errorf("failed to execute gossip message for propagation in all nodes")
 	}
 
 	// if the propagation context has no more propagation count, we should not send the future callback
-	request.Context.MaxPropagationCount--
-	if request.Context.MaxPropagationCount <= 0 {
+	request.Context.CurrentPropagationCount++
+	if request.Context.CurrentPropagationCount >= request.Context.MaxPropagationCount {
 		_ = nextNodeConn.Close()
-		return q.replyResultWithOriginalNode(request, &propertyv1.PropagationResponse{Success: true}), nil
+		return nil
 	}
 
 	// propagate the message to the next node
-	go func() {
-		// using the new context to avoid blocking the original context
-		ctx = context.Background()
-		q.s.serverMetrics.totalPropagationStarted.Inc(1, request.Group)
-		propagationStart := time.Now()
-		q.s.log.Debug().Stringer("request", request).Str("nextNodeID", nextNodeID).
-			Msg("propagating gossip message to next node")
-		propagation, err := propertyv1.NewGossipServiceClient(nextNodeConn).Propagation(ctx, request)
-		_ = nextNodeConn.Close()
-		q.s.serverMetrics.totalPropagationFinished.Inc(1, request.Group)
-		q.s.serverMetrics.totalPropagationLatency.Inc(time.Since(propagationStart).Seconds(), request.Group)
-		if err != nil {
-			q.s.serverMetrics.totalPropagationErr.Inc(1, request.Group)
-			return
-		}
-		if !propagation.Success {
-			q.s.serverMetrics.totalPropagationErr.Inc(1, request.Group)
-			q.s.log.Error().
-				Stringer("request", request).
-				Str("nodeID", nextNodeID).
-				Msgf("gossip propagation message failed: %s", propagation.Error)
-			return
-		}
-	}()
-
-	return &propertyv1.PropagationResponse{Success: true}, nil
-}
-
-// nolint: contextcheck
-func (q *protocolHandler) replyResultWithOriginalNode(
-	req *propertyv1.PropagationRequest,
-	resp *propertyv1.PropagationResponse,
-) *propertyv1.PropagationResponse {
-	// async to notify the original node that the propagation is finished
-	go q.sendFutureCallback(context.Background(), req, resp)
-	return resp
-}
-
-func (q *protocolHandler) FutureCallback(_ context.Context, req *propertyv1.FutureCallbackRequest) (*propertyv1.FutureCallbackResponse, error) {
-	t := time.Now()
-	now := t.UnixNano()
-	q.s.serverMetrics.totalFutureCallbackRevStarted.Inc(1, req.Group)
-	q.s.log.Debug().Stringer("request", req).Msg("received gossip message future callback")
-	defer func() {
-		q.s.serverMetrics.totalFutureCallbackRevLatency.Inc(t.Sub(time.Unix(0, now)).Seconds(), req.Group)
-		q.s.serverMetrics.totalFutureCallbackRevFinished.Inc(1, req.Group)
-	}()
-	wait := q.s.getFromWait(req.MessageId)
-	if wait == nil {
-		q.s.log.Error().Stringer("request", req).Msg("no future found for gossip message callback")
-		q.s.serverMetrics.totalFutureCallbackRevErr.Inc(1, req.Group)
-		return &propertyv1.FutureCallbackResponse{}, nil
+	needsKeepPropagation = true
+	q.s.serverMetrics.totalPropagationStarted.Inc(1, request.Group)
+	propagationStart := time.Now()
+	q.s.log.Debug().Stringer("request", request).Str("nextNodeID", nextNodeID).
+		Msg("propagating gossip message to next node")
+	_, err = propertyv1.NewGossipServiceClient(nextNodeConn).Propagation(ctx, request)
+	_ = nextNodeConn.Close()
+	q.s.serverMetrics.totalPropagationFinished.Inc(1, request.Group)
+	q.s.serverMetrics.totalPropagationLatency.Inc(time.Since(propagationStart).Seconds(), request.Group)
+	if err != nil {
+		q.s.serverMetrics.totalPropagationErr.Inc(1, request.Group)
+		return fmt.Errorf("failed to propagate gossip message to next node: %w", err)
 	}
-	wait.saveRemoteResponse(req.Response)
-	q.s.removeFromWait(wait)
-	return &propertyv1.FutureCallbackResponse{}, nil
+
+	return nil
+}
+
+func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	group, exist := q.groups[request.Group]
+	if !exist {
+		group = &groupPropagation{
+			channel:        make(chan *propertyv1.PropagationRequest, 1),
+			originalNodeID: request.Context.OriginNode,
+			latestTime:     time.Now(),
+		}
+		group.channel <- request
+		q.groups[request.Group] = group
+		q.notifyNewRequest()
+		return true
+	}
+
+	// if the latest round is out of ttl, then needs to change to current node to executing
+	if time.Since(group.latestTime) > q.s.scheduleInterval/2 {
+		group.originalNodeID = request.Context.OriginNode
+		select {
+		case group.channel <- request:
+			q.notifyNewRequest()
+		default:
+			q.s.log.Error().Msgf("ready to added propagation into group %s in a new round, but it's full", request.Group)
+		}
+		return true
+	}
+
+	// if the original node ID are a same node, means which from the same round
+	if group.originalNodeID == request.Context.OriginNode {
+		select {
+		case group.channel <- request:
+			q.notifyNewRequest()
+		default:
+			q.s.log.Error().Msgf("ready to added propagation into group %s in a same round, but it's full", request.Group)
+		}
+		return true
+	}
+
+	// otherwise, it should ignore
+	return false
+}
+
+func (q *protocolHandler) notifyNewRequest() {
+	select {
+	case q.groupNotify <- struct{}{}:
+	default:
+		q.s.log.Warn().Msgf("notify a new request to gossip failure, the queue is full")
+	}
 }
 
 func (q *protocolHandler) nextNodeConnection(nodes []string, offset int) (string, *grpc.ClientConn, error) {
@@ -233,50 +308,11 @@ func (s *service) getClientTransportCredentials() ([]grpc.DialOption, error) {
 
 func (q *protocolHandler) nextExistNode(nodes []string, curIndex, offset int) (string, *databasev1.Node, bool) {
 	curIndex = (curIndex + offset) % len(nodes)
-	node, exist := q.s.registered[nodes[curIndex]]
+	node, exist := q.s.getRegisteredNode(nodes[curIndex])
 	if exist {
 		return nodes[curIndex], node, true
 	}
 	return "", nil, false
-}
-
-func (q *protocolHandler) sendFutureCallback(ctx context.Context, req *propertyv1.PropagationRequest, resp *propertyv1.PropagationResponse) {
-	now := time.Now()
-	q.s.serverMetrics.totalFutureCallbackSendStarted.Inc(1, req.Group)
-	var err error
-	var conn *grpc.ClientConn
-	defer func() {
-		q.s.serverMetrics.totalFutureCallbackSendLatency.Inc(time.Since(now).Seconds(), req.Group)
-		q.s.serverMetrics.totalFutureCallbackSendFinished.Inc(1, req.Group)
-		if err != nil {
-			q.s.serverMetrics.totalFutureCallbackSendErr.Inc(1, req.Group)
-		}
-		if conn != nil {
-			_ = conn.Close()
-		}
-	}()
-	node := req.Context.OriginNode
-	callbackReq := &propertyv1.FutureCallbackRequest{
-		MessageId: req.Context.OriginMessageId,
-		Response:  resp,
-	}
-	originNode, exist := q.s.registered[node]
-	if !exist {
-		err = errors.New("origin node not found in gossip registered nodes")
-		q.s.log.Error().Err(err).Stringer("request", callbackReq).Msg("failed to send future callback for gossip message propagation")
-		return
-	}
-	conn, err = q.s.newConnectionFromNode(originNode)
-	if err != nil {
-		q.s.log.Error().Err(err).Stringer("request", callbackReq).Msg("failed to create gRPC client connection for gossip message propagation")
-		return
-	}
-	client := propertyv1.NewGossipServiceClient(conn)
-	_, err = client.FutureCallback(ctx, callbackReq)
-	if err != nil {
-		q.s.log.Error().Err(err).Stringer("request", callbackReq).Msg("failed to send future callback for gossip message propagation")
-		return
-	}
 }
 
 type serverMetrics struct {
@@ -284,6 +320,9 @@ type serverMetrics struct {
 	totalFinished meter.Counter
 	totalErr      meter.Counter
 	totalLatency  meter.Counter
+
+	totalPropagationCount   meter.Counter
+	totalPropagationPercent meter.Histogram
 
 	totalPropagationStarted  meter.Counter
 	totalPropagationFinished meter.Counter
@@ -307,6 +346,10 @@ func newServerMetrics(factory *observability.Factory) *serverMetrics {
 		totalFinished: factory.NewCounter("total_finished", "group"),
 		totalErr:      factory.NewCounter("total_err", "group"),
 		totalLatency:  factory.NewCounter("total_latency", "group"),
+
+		totalPropagationCount: factory.NewCounter("total_propagation_count", "group", "original_node"),
+		totalPropagationPercent: factory.NewHistogram("total_propagation_percent",
+			meter.Buckets{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1}, "group"),
 
 		totalPropagationStarted:  factory.NewCounter("total_msg_received", "group"),
 		totalPropagationFinished: factory.NewCounter("total_msg_received_err", "group"),

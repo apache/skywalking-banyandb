@@ -67,7 +67,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(1)
 		node := nodes[0]
 
-		_, err := node.messenger.Propagation([]string{node.nodeID}, "test")
+		err := node.messenger.Propagation([]string{node.nodeID}, "test")
 		gomega.Expect(err).To(gomega.HaveOccurred())
 	})
 
@@ -75,55 +75,40 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(2)
 		node1, node2 := nodes[0], nodes[1]
 
-		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup)
+		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		verifyFuture(f, true)
-		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID}))
-		gomega.Expect(node1.listener.messages).To(gomega.HaveLen(1))
+		nodeVerify(node1, []string{node2.nodeID}, 1)
 	})
 
 	ginkgo.It("two nodes and send from other node", func() {
 		nodes = startNodes(2)
 		node1, node2 := nodes[0], nodes[1]
 
-		f, err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup)
+		err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		verifyFuture(f, true)
-		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID}))
-		gomega.Expect(node1.listener.messages).To(gomega.HaveLen(1))
-
-		gomega.Expect(node2.listener.targets).To(gomega.HaveLen(0))
+		nodeVerify(node1, []string{node2.nodeID}, 1)
+		nodeVerify(node2, []string{}, 0)
 	})
 
 	ginkgo.It("two nodes with not existing node", func() {
 		nodes = startNodes(2)
 		node1, node2 := nodes[0], nodes[1]
 
-		f, err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID, "no-existing"}, mockGroup)
+		err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID, "no-existing"}, mockGroup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		verifyFuture(f, true)
-		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID, node2.nodeID}))
-		gomega.Expect(node1.listener.messages).To(gomega.HaveLen(2))
-
-		gomega.Expect(node2.listener.targets).To(gomega.Equal([]string{node1.nodeID}))
-		gomega.Expect(node2.listener.messages).To(gomega.HaveLen(1))
+		nodeVerify(node1, []string{node2.nodeID, node2.nodeID}, 2)
+		nodeVerify(node2, []string{node1.nodeID}, 1)
 	})
 
 	ginkgo.It("multiple nodes with propagation", func() {
 		nodes = startNodes(3)
 		node1, node2, node3 := nodes[0], nodes[1], nodes[2]
 
-		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
+		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		verifyFuture(f, true)
-		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID}))
-		gomega.Expect(node1.listener.messages).To(gomega.HaveLen(1))
-
-		gomega.Expect(node2.listener.targets).To(gomega.Equal([]string{node3.nodeID}))
-		gomega.Expect(node2.listener.messages).To(gomega.HaveLen(1))
-
-		gomega.Expect(node3.listener.targets).To(gomega.Equal([]string{node1.nodeID}))
-		gomega.Expect(node3.listener.messages).To(gomega.HaveLen(1))
+		nodeVerify(node1, []string{node2.nodeID}, 1)
+		nodeVerify(node2, []string{node3.nodeID}, 1)
+		nodeVerify(node3, []string{node1.nodeID}, 1)
 	})
 
 	ginkgo.It("multiple nodes with propagation with error", func() {
@@ -131,19 +116,47 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		node1, node2, node3 := nodes[0], nodes[1], nodes[2]
 		node3.listener.mockErr = fmt.Errorf("mock error")
 
-		f, err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
+		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		verifyFuture(f, false)
-		gomega.Expect(node1.listener.targets).To(gomega.Equal([]string{node2.nodeID}))
-		gomega.Expect(node1.listener.messages).To(gomega.HaveLen(1))
+		nodeVerify(node1, []string{node2.nodeID}, 1)
+		nodeVerify(node2, []string{node3.nodeID}, 1)
+		nodeVerify(node3, []string{}, 0)
+	})
 
-		gomega.Expect(node2.listener.targets).To(gomega.Equal([]string{node3.nodeID}))
-		gomega.Expect(node2.listener.messages).To(gomega.HaveLen(1))
+	ginkgo.It("multiple propagation with same group", func() {
+		nodes = startNodes(3)
+		node1, node2, node3 := nodes[0], nodes[1], nodes[2]
+		node1.listener.delay = time.Second
 
-		gomega.Expect(node3.listener.targets).To(gomega.HaveLen(0))
-		gomega.Expect(node3.listener.messages).To(gomega.HaveLen(0))
+		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		err = node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// should only the first propagation execute, the second one is ignored
+		nodeVerify(node1, []string{node2.nodeID}, 1)
+		nodeVerify(node2, []string{node3.nodeID}, 1)
+		nodeVerify(node3, []string{node1.nodeID}, 1)
+		nodeListenFromVerify(node1, []string{node1.nodeID})
+		nodeListenFromVerify(node2, []string{node1.nodeID})
+		nodeListenFromVerify(node3, []string{node1.nodeID})
 	})
 })
+
+func nodeVerify(n *nodeContext, targets []string, messagesCount int) {
+	gomega.Eventually(func() []string {
+		return n.listener.targets
+	}, flags.EventuallyTimeout).Should(gomega.Equal(targets))
+	gomega.Eventually(func() int {
+		return len(n.listener.messages)
+	}, flags.EventuallyTimeout).Should(gomega.Equal(messagesCount))
+}
+
+func nodeListenFromVerify(n *nodeContext, fromNode []string) {
+	gomega.Eventually(func() []string {
+		return n.listener.fromNodes
+	}, flags.EventuallyTimeout).Should(gomega.Equal(fromNode))
+}
 
 type nodeContext struct {
 	messenger Messenger
@@ -156,7 +169,7 @@ func startNodes(count int) []*nodeContext {
 	result := make([]*nodeContext, count)
 	messengers := make([]Messenger, count)
 	for i := 0; i < count; i++ {
-		listener := &mockListener{}
+		listener := newMockListener()
 
 		// starting grpc server node
 		ports, err := test.AllocateFreePorts(1)
@@ -218,29 +231,31 @@ func startNodes(count int) []*nodeContext {
 	return result
 }
 
-func verifyFuture(f Future, success bool) {
-	gomega.Expect(f).NotTo(gomega.BeNil())
-	resp, err := f.Get()
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	gomega.Expect(resp).NotTo(gomega.BeNil())
-	if success {
-		gomega.Expect(resp.Success).To(gomega.BeTrue(), "Propagation should be successful")
-	} else {
-		gomega.Expect(resp.Success).To(gomega.BeFalse(), "Propagation should not be successful")
-	}
+type mockListener struct {
+	mockErr   error
+	targets   []string
+	messages  []*propertyv1.PropagationRequest
+	fromNodes []string
+	delay     time.Duration
 }
 
-type mockListener struct {
-	mockErr  error
-	targets  []string
-	messages []*propertyv1.PropagationRequest
+func newMockListener() *mockListener {
+	return &mockListener{
+		targets:   make([]string, 0),
+		messages:  make([]*propertyv1.PropagationRequest, 0),
+		fromNodes: make([]string, 0),
+	}
 }
 
 func (m *mockListener) Rev(_ context.Context, nextNode *grpc.ClientConn, req *propertyv1.PropagationRequest) error {
 	if m.mockErr != nil {
 		return m.mockErr
 	}
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
 	m.targets = append(m.targets, nextNode.Target())
 	m.messages = append(m.messages, req)
+	m.fromNodes = append(m.fromNodes, req.Context.OriginNode)
 	return nil
 }

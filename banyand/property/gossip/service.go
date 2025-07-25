@@ -60,44 +60,45 @@ const (
 
 type service struct {
 	schema.UnimplementedOnInitHandler
-	metadata       metadata.Repo
-	creds          credentials.TransportCredentials
-	omr            observability.MetricsRegistry
-	registered     map[string]*databasev1.Node
-	ser            *grpclib.Server
-	serverMetrics  *serverMetrics
-	log            *logger.Logger
-	closer         *run.Closer
-	futures        map[uint64]*future
-	keyFile        string
-	addr           string
-	certFile       string
-	host           string
-	nodeID         string
-	caCertPath     string
-	listeners      []MessageListener
-	maxRecvMsgSize run.Bytes
-	listenersLock  sync.RWMutex
-	mu             sync.RWMutex
-	futuresLock    sync.Mutex
-	port           uint32
-	tls            bool
+	metadata        metadata.Repo
+	creds           credentials.TransportCredentials
+	omr             observability.MetricsRegistry
+	registered      map[string]*databasev1.Node
+	ser             *grpclib.Server
+	serverMetrics   *serverMetrics
+	log             *logger.Logger
+	closer          *run.Closer
+	protocolHandler *protocolHandler
+	keyFile         string
+	addr            string
+	certFile        string
+	host            string
+	nodeID          string
+	caCertPath      string
+	listeners       []MessageListener
+	maxRecvMsgSize  run.Bytes
+	listenersLock   sync.RWMutex
+	mu              sync.RWMutex
+	port            uint32
+	tls             bool
 
 	totalTimeout time.Duration
+	// TODO: should pass by property repair configuration
+	scheduleInterval time.Duration
 }
 
 // NewMessenger creates a new instance of Messenger for gossip propagation communication between nodes.
 func NewMessenger(omr observability.MetricsRegistry, metadata metadata.Repo) Messenger {
 	return &service{
-		metadata:       metadata,
-		omr:            omr,
-		closer:         run.NewCloser(1),
-		serverMetrics:  newServerMetrics(omr.With(serverScope)),
-		maxRecvMsgSize: defaultRecvSize,
-		totalTimeout:   defaultTotalTimeout,
-		listeners:      make([]MessageListener, 0),
-		futures:        make(map[uint64]*future),
-		registered:     make(map[string]*databasev1.Node),
+		metadata:         metadata,
+		omr:              omr,
+		closer:           run.NewCloser(1),
+		serverMetrics:    newServerMetrics(omr.With(serverScope)),
+		maxRecvMsgSize:   defaultRecvSize,
+		totalTimeout:     defaultTotalTimeout,
+		listeners:        make([]MessageListener, 0),
+		registered:       make(map[string]*databasev1.Node),
+		scheduleInterval: time.Hour * 2,
 	}
 }
 
@@ -119,6 +120,8 @@ func (s *service) PreRun(ctx context.Context) error {
 	if s.metadata != nil {
 		s.metadata.RegisterHandler("property-repair-gossip", schema.KindNode, s)
 	}
+	s.protocolHandler = newProtocolHandler(s)
+	go s.protocolHandler.processPropagation(ctx)
 	return nil
 }
 
@@ -203,7 +206,7 @@ func (s *service) Serve() run.StopNotify {
 	)
 	s.ser = grpclib.NewServer(opts...)
 
-	propertyv1.RegisterGossipServiceServer(s.ser, &protocolHandler{s: s})
+	propertyv1.RegisterGossipServiceServer(s.ser, s.protocolHandler)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	stopCh := make(chan struct{})
@@ -247,22 +250,4 @@ func (s *service) GracefulStop() {
 		t.Stop()
 		s.log.Info().Msg("stopped gracefully")
 	}
-}
-
-func (s *service) removeFromWait(f *future) {
-	s.futuresLock.Lock()
-	defer s.futuresLock.Unlock()
-	delete(s.futures, f.messageID)
-}
-
-func (s *service) addToWait(f *future) {
-	s.futuresLock.Lock()
-	defer s.futuresLock.Unlock()
-	s.futures[f.messageID] = f
-}
-
-func (s *service) getFromWait(msgID uint64) *future {
-	s.futuresLock.Lock()
-	defer s.futuresLock.Unlock()
-	return s.futures[msgID]
 }

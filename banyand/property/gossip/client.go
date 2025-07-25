@@ -20,23 +20,20 @@ package gossip
 import (
 	"context"
 	"fmt"
-	"time"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
-func (s *service) Propagation(nodes []string, group string) (Future, error) {
+func (s *service) Propagation(nodes []string, group string) error {
 	if len(nodes) < 2 {
-		return nil, fmt.Errorf("must provide at least 2 node")
+		return fmt.Errorf("must provide at least 2 node")
 	}
-	messageID := time.Now().UnixNano()
 	// building propagation context
 	ctx := &propertyv1.PropagationContext{
-		Nodes:           nodes,
-		OriginNode:      s.nodeID,
-		OriginMessageId: uint64(messageID),
+		Nodes:      nodes,
+		OriginNode: s.nodeID,
 	}
 
 	// two rounds of all nodes except the lasted node
@@ -55,11 +52,11 @@ func (s *service) Propagation(nodes []string, group string) (Future, error) {
 	// send it to the current node if it is the first node
 	if nodes[0] == s.nodeID {
 		sendTo = func(ctx context.Context, req *propertyv1.PropagationRequest) (*propertyv1.PropagationResponse, error) {
-			return (&protocolHandler{s: s}).Propagation(ctx, req)
+			return s.protocolHandler.Propagation(ctx, req)
 		}
 	} else {
 		sendTo = func(ctx context.Context, request *propertyv1.PropagationRequest) (*propertyv1.PropagationResponse, error) {
-			node, exist := s.registered[nodes[0]]
+			node, exist := s.getRegisteredNode(nodes[0])
 			if !exist {
 				return nil, fmt.Errorf("node %s not found", nodes[0])
 			}
@@ -74,23 +71,24 @@ func (s *service) Propagation(nodes []string, group string) (Future, error) {
 		}
 	}
 
-	f := newFuture(s, request, s.totalTimeout)
-	s.addToWait(f)
 	go func() {
 		cancelCtx, cancelFunc := context.WithTimeout(context.Background(), s.totalTimeout)
 		defer cancelFunc()
-		result, err := sendTo(cancelCtx, request)
+		_, err := sendTo(cancelCtx, request)
 		if err != nil {
-			f.saveRemoteResponse(&propertyv1.PropagationResponse{Success: false, Error: err.Error()})
-			return
-		}
-		if !result.Success {
-			f.saveRemoteResponse(&propertyv1.PropagationResponse{Success: false, Error: result.Error})
+			s.log.Warn().Err(err).Msg("propagation failed")
 			return
 		}
 	}()
 
-	return f, nil
+	return nil
+}
+
+func (s *service) getRegisteredNode(id string) (*databasev1.Node, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	node, exist := s.registered[id]
+	return node, exist
 }
 
 func (s *service) OnAddOrUpdate(md schema.Metadata) {

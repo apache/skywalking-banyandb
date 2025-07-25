@@ -25,8 +25,8 @@ option java_package = "org.apache.skywalking.banyandb.property.v1";
 message PropagationContext {
   repeated string nodes = 1;
   int32 max_propagation_count = 2;
-  string origin_node = 3;
-  uint64 origin_message_id = 4;
+  int32 current_propagation_count = 3;
+  string origin_node = 4;
 }
 
 message PropagationRequest {
@@ -35,21 +35,9 @@ message PropagationRequest {
 }
 
 message PropagationResponse {
-  bool success = 1;
-  string error = 2;
 }
-
-message FutureCallbackRequest {
-  uint64 message_id = 1;
-  PropagationResponse response = 2;
-  string group = 3;
-}
-
-message FutureCallbackResponse {}
 
 service GossipService {
   // Propagation is used to propagate messages across nodes in the cluster.
   rpc Propagation(PropagationRequest) returns (PropagationResponse) {}
-  // FutureCallback is used to handle future callbacks for messages.
-  rpc FutureCallback(FutureCallbackRequest) returns (FutureCallbackResponse) {}
 }

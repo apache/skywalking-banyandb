@@ -235,8 +235,6 @@
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
 - [banyandb/property/v1/gossip.proto](#banyandb_property_v1_gossip-proto)
-    - [FutureCallbackRequest](#banyandb-property-v1-FutureCallbackRequest)
-    - [FutureCallbackResponse](#banyandb-property-v1-FutureCallbackResponse)
     - [PropagationContext](#banyandb-property-v1-PropagationContext)
     - [PropagationRequest](#banyandb-property-v1-PropagationRequest)
     - [PropagationResponse](#banyandb-property-v1-PropagationResponse)
@@ -3556,33 +3554,6 @@ WriteResponse is the response contract for write
 
 
 
-<a name="banyandb-property-v1-FutureCallbackRequest"></a>
-
-### FutureCallbackRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| message_id | [uint64](#uint64) |  |  |
-| response | [PropagationResponse](#banyandb-property-v1-PropagationResponse) |  |  |
-| group | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-FutureCallbackResponse"></a>
-
-### FutureCallbackResponse
-
-
-
-
-
-
-
 <a name="banyandb-property-v1-PropagationContext"></a>
 
 ### PropagationContext
@@ -3593,8 +3564,8 @@ WriteResponse is the response contract for write
 | ----- | ---- | ----- | ----------- |
 | nodes | [string](#string) | repeated |  |
 | max_propagation_count | [int32](#int32) |  |  |
+| current_propagation_count | [int32](#int32) |  |  |
 | origin_node | [string](#string) |  |  |
-| origin_message_id | [uint64](#uint64) |  |  |
 
 
 
@@ -3623,12 +3594,6 @@ WriteResponse is the response contract for write
 
 
 
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  |  |
-| error | [string](#string) |  |  |
-
-
 
 
 
@@ -3647,7 +3612,6 @@ WriteResponse is the response contract for write
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Propagation | [PropagationRequest](#banyandb-property-v1-PropagationRequest) | [PropagationResponse](#banyandb-property-v1-PropagationResponse) | Propagation is used to propagate messages across nodes in the cluster. |
-| FutureCallback | [FutureCallbackRequest](#banyandb-property-v1-FutureCallbackRequest) | [FutureCallbackResponse](#banyandb-property-v1-FutureCallbackResponse) | FutureCallback is used to handle future callbacks for messages. |
 
  
 

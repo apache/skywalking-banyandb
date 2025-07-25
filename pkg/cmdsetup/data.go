@@ -28,7 +28,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property"
-	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -50,8 +49,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := observability.NewMetricService(metaSvc, metricsPipeline, "data", nil)
 	pm := protector.NewMemory(metricSvc)
 	pipeline := sub.NewServer(metricSvc)
-	messenger := gossip.NewMessenger(metricSvc, metaSvc)
-	propertySvc, err := property.NewService(metaSvc, pipeline, metricSvc, pm, messenger)
+	propertySvc, err := property.NewService(metaSvc, pipeline, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
 	}
@@ -77,7 +75,6 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		metricSvc,
 		pm,
 		pipeline,
-		messenger,
 		propertySvc,
 		measureSvc,
 		streamSvc,
@@ -91,7 +88,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the data server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			node, err := common.GenerateNode(pipeline.GetPort(), nil, messenger.GetServerPort())
+			node, err := common.GenerateNode(pipeline.GetPort(), nil, propertySvc.GetGossIPGrpcPort())
 			if err != nil {
 				return err
 			}
