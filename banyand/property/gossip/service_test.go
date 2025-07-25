@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -145,15 +146,21 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 
 func nodeVerify(n *nodeContext, targets []string, messagesCount int) {
 	gomega.Eventually(func() []string {
+		n.listener.mu.RLock()
+		defer n.listener.mu.RUnlock()
 		return n.listener.targets
 	}, flags.EventuallyTimeout).Should(gomega.Equal(targets))
 	gomega.Eventually(func() int {
+		n.listener.mu.RLock()
+		defer n.listener.mu.RUnlock()
 		return len(n.listener.messages)
 	}, flags.EventuallyTimeout).Should(gomega.Equal(messagesCount))
 }
 
 func nodeListenFromVerify(n *nodeContext, fromNode []string) {
 	gomega.Eventually(func() []string {
+		n.listener.mu.RLock()
+		defer n.listener.mu.RUnlock()
 		return n.listener.fromNodes
 	}, flags.EventuallyTimeout).Should(gomega.Equal(fromNode))
 }
@@ -237,6 +244,7 @@ type mockListener struct {
 	messages  []*propertyv1.PropagationRequest
 	fromNodes []string
 	delay     time.Duration
+	mu        sync.RWMutex
 }
 
 func newMockListener() *mockListener {
@@ -254,6 +262,8 @@ func (m *mockListener) Rev(_ context.Context, nextNode *grpc.ClientConn, req *pr
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.targets = append(m.targets, nextNode.Target())
 	m.messages = append(m.messages, req)
 	m.fromNodes = append(m.fromNodes, req.Context.OriginNode)

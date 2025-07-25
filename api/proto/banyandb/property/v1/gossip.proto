@@ -34,8 +34,7 @@ message PropagationRequest {
   string group = 3;
 }
 
-message PropagationResponse {
-}
+message PropagationResponse {}
 
 service GossipService {
   // Propagation is used to propagate messages across nodes in the cluster.
