@@ -89,7 +89,8 @@ func newProtocolHandler(s *service) *protocolHandler {
 	}
 }
 
-func (q *protocolHandler) processPropagation(ctx context.Context) {
+// nolint: contextcheck
+func (q *protocolHandler) processPropagation() {
 	for {
 		select {
 		case <-q.groupNotify:
@@ -97,12 +98,12 @@ func (q *protocolHandler) processPropagation(ctx context.Context) {
 			if request == nil {
 				continue
 			}
-			err := q.handle(ctx, request)
+			err := q.handle(q.s.closer.Ctx(), request)
 			if err != nil {
 				q.s.log.Warn().Err(err).Stringer("request", request).
 					Msgf("handle propagation request failure")
 			}
-		case <-ctx.Done():
+		case <-q.s.closer.CloseNotify():
 			return
 		}
 	}

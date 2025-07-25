@@ -121,7 +121,7 @@ func (s *service) PreRun(ctx context.Context) error {
 		s.metadata.RegisterHandler("property-repair-gossip", schema.KindNode, s)
 	}
 	s.protocolHandler = newProtocolHandler(s)
-	go s.protocolHandler.processPropagation(ctx)
+	go s.protocolHandler.processPropagation()
 	return nil
 }
 
