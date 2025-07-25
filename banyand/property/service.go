@@ -134,6 +134,10 @@ func (s *service) PreRun(ctx context.Context) error {
 	}
 	node := val.(common.Node)
 	s.nodeID = node.NodeID
+	// if the gossip address is empty, it means that the gossip is not enabled.
+	if node.PropertyGossipGrpcAddress == "" {
+		s.gossipMessenger = nil
+	}
 
 	var err error
 	snapshotLis := &snapshotListener{s: s}
@@ -151,8 +155,10 @@ func (s *service) PreRun(ctx context.Context) error {
 		return err
 	}
 
-	if err = s.gossipMessenger.PreRun(ctx); err != nil {
-		return err
+	if s.gossipMessenger != nil {
+		if err = s.gossipMessenger.PreRun(ctx); err != nil {
+			return err
+		}
 	}
 	return multierr.Combine(
 		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
@@ -164,12 +170,16 @@ func (s *service) PreRun(ctx context.Context) error {
 }
 
 func (s *service) Serve() run.StopNotify {
-	s.gossipMessenger.Serve(s.close)
+	if s.gossipMessenger != nil {
+		s.gossipMessenger.Serve(s.close)
+	}
 	return s.close
 }
 
 func (s *service) GracefulStop() {
-	s.gossipMessenger.GracefulStop()
+	if s.gossipMessenger != nil {
+		s.gossipMessenger.GracefulStop()
+	}
 	close(s.close)
 	err := s.db.close()
 	if err != nil {
