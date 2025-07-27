@@ -20,6 +20,7 @@ package gcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -36,11 +37,13 @@ import (
 
 var _ remote.FS = (*gcsFS)(nil)
 
+// gcsFS implements remote.FS backed by Google Cloud Storage.
+// Field order is optimized to reduce struct padding.
 type gcsFS struct {
 	client   *storage.Client
+	verifier checksum.Verifier
 	bucket   string
 	basePath string
-	verifier checksum.Verifier
 }
 
 // NewFS creates a new GCS-backed FS. The input path must be in the form
@@ -185,7 +188,7 @@ func (g *gcsFS) List(ctx context.Context, prefix string) ([]string, error) {
 	}
 	for {
 		attrs, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {

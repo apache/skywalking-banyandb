@@ -73,6 +73,7 @@ endpoint_url = http://127.0.0.1:9481`
 	FakeGCSPort = "4444"
 	// FakeGCSEndpoint is the host endpoint for fake-gcs-server.
 	FakeGCSEndpoint = "127.0.0.1:" + FakeGCSPort
-    // GCSBucketName is the bucket used in integration tests.
-    GCSBucketName = "test-bucket"
+
+	// GCSBucketName is the bucket used in integration tests.
+	GCSBucketName = "test-bucket"
 )

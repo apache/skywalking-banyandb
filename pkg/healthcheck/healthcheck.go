@@ -81,5 +81,5 @@ func (g *Client) Watch(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, 
 
 // List lists the services. Not implemented currently.
 func (g *Client) List(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
-    return nil, status.Error(codes.Unimplemented, "unimplemented")
+	return nil, status.Error(codes.Unimplemented, "unimplemented")
 }
