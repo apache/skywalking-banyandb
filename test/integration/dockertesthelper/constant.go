@@ -65,4 +65,14 @@ endpoint_url = http://127.0.0.1:9481`
 
 	// AzuriteContainer is the default container (bucket) used in tests.
 	AzuriteContainer = "test-container"
+
+	// Fake GCS server constants
+	// FakeGCSContainerName is the name of the fake-gcs-server container.
+	FakeGCSContainerName = "banyandb-fake-gcs-test"
+	// FakeGCSPort is the HTTP port exposed by fake-gcs-server (using --scheme http).
+	FakeGCSPort = "4444"
+	// FakeGCSEndpoint is the host endpoint for fake-gcs-server.
+	FakeGCSEndpoint = "127.0.0.1:" + FakeGCSPort
+    // GCSBucketName is the bucket used in integration tests.
+    GCSBucketName = "test-bucket"
 )

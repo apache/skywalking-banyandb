@@ -324,7 +324,8 @@ func (t *topNStreamingProcessor) handleError() {
 		t.l.Err(err).Str("topN", t.topNSchema.GetMetadata().GetName()).
 			Msg("error occurred during flow setup or process")
 	}
-	t.stopCh <- struct{}{}
+	// signal Close() that flow exited
+	close(t.stopCh)
 }
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
