@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -43,9 +44,18 @@ func Test_newWriteQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockTire2Client := queue.NewMockClient(ctrl)
+
+	// Mock Publish method
 	mockTire2Client.EXPECT().
 		Publish(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(bus.Future(nil), nil).
+		AnyTimes()
+
+	// Mock NewChunkedSyncClient method
+	mockChunkedSyncClient := &mockChunkedSyncClient{}
+	mockTire2Client.EXPECT().
+		NewChunkedSyncClient(gomock.Any(), gomock.Any()).
+		Return(mockChunkedSyncClient, nil).
 		AnyTimes()
 
 	// Create tsTable using newWriteQueue
@@ -87,4 +97,22 @@ func Test_newWriteQueue(t *testing.T) {
 
 	// Verify that the tire2Client was properly set
 	assert.Equal(t, mockTire2Client, tst.option.tire2Client)
+}
+
+// mockChunkedSyncClient implements queue.ChunkedSyncClient for testing
+type mockChunkedSyncClient struct{}
+
+func (m *mockChunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queue.StreamingPartData) (*queue.SyncResult, error) {
+	return &queue.SyncResult{
+		Success:     true,
+		SessionID:   "mock-session",
+		TotalBytes:  0,
+		DurationMs:  0,
+		ChunksCount: 0,
+		PartsCount:  uint32(len(parts)),
+	}, nil
+}
+
+func (m *mockChunkedSyncClient) Close() error {
+	return nil
 }

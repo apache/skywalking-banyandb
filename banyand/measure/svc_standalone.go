@@ -192,6 +192,8 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Register chunked sync handler for measure data.
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasurePartSync, setUpChunkedSyncCallback(s.l, s.schemaRepo))
 	return s.localPipeline.Subscribe(data.TopicMeasureWrite, writeListener)
 }
 
