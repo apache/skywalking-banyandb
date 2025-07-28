@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"strings"
 
@@ -87,7 +88,11 @@ func NewFS(p string, cfg *config2.FsConfig) (remote.FS, error) {
 	if cfg.GCP.GCPServiceAccountFile != "" {
 		client, err = storage.NewClient(ctx, option.WithCredentialsFile(cfg.GCP.GCPServiceAccountFile))
 	} else {
-		client, err = storage.NewClient(ctx)
+		if os.Getenv("STORAGE_EMULATOR_HOST") != "" {
+			client, err = storage.NewClient(ctx, option.WithoutAuthentication())
+		} else {
+			client, err = storage.NewClient(ctx)
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS client: %w", err)

@@ -44,8 +44,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Launch fake GCS server
-	err = dockertesthelper.InitFakeGCSServer()
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	if err = dockertesthelper.InitFakeGCSServer(); err != nil {
+		ginkgo.By("Skipping GCS backup tests: unable to start fake-gcs-server: " + err.Error())
+		ginkgo.Skip("fake-gcs-server unavailable")
+	}
 
 	// Create remote FS instance pointing to the emulator
 	fs, err := remotegcs.NewFS(filepath.Join(dockertesthelper.GCSBucketName, testVars.DestDir), &config.FsConfig{
