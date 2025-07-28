@@ -207,7 +207,7 @@ func CMD(flags ...string) func() {
 }
 
 func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, func()) {
-	ports, err := test.AllocateFreePorts(1)
+	ports, err := test.AllocateFreePorts(2)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
@@ -217,6 +217,7 @@ func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, func(
 		"data",
 		"--grpc-host="+host,
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
+		fmt.Sprintf("--property-repair-gossip-grpc-port=%d", ports[1]),
 		"--stream-root-path="+dataDir,
 		"--measure-root-path="+dataDir,
 		"--property-root-path="+dataDir,

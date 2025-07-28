@@ -245,6 +245,13 @@
   
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
+- [banyandb/property/v1/gossip.proto](#banyandb_property_v1_gossip-proto)
+    - [PropagationContext](#banyandb-property-v1-PropagationContext)
+    - [PropagationRequest](#banyandb-property-v1-PropagationRequest)
+    - [PropagationResponse](#banyandb-property-v1-PropagationResponse)
+  
+    - [GossipService](#banyandb-property-v1-GossipService)
+  
 - [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
     - [Property](#banyandb-property-v1-Property)
   
@@ -902,6 +909,7 @@ Trace is the top level message of a trace.
 | http_address | [string](#string) |  |  |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
+| property_repair_gossip_grpc_address | [string](#string) |  |  |
 
 
 
@@ -3723,6 +3731,76 @@ WriteResponse is the response contract for write
 | Write | [WriteRequest](#banyandb-measure-v1-WriteRequest) stream | [WriteResponse](#banyandb-measure-v1-WriteResponse) stream |  |
 | TopN | [TopNRequest](#banyandb-measure-v1-TopNRequest) | [TopNResponse](#banyandb-measure-v1-TopNResponse) |  |
 | DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-measure-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse) |  |
+
+ 
+
+
+
+<a name="banyandb_property_v1_gossip-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/property/v1/gossip.proto
+
+
+
+<a name="banyandb-property-v1-PropagationContext"></a>
+
+### PropagationContext
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [string](#string) | repeated |  |
+| max_propagation_count | [int32](#int32) |  |  |
+| current_propagation_count | [int32](#int32) |  |  |
+| origin_node | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropagationRequest"></a>
+
+### PropagationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| context | [PropagationContext](#banyandb-property-v1-PropagationContext) |  |  |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropagationResponse"></a>
+
+### PropagationResponse
+
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-property-v1-GossipService"></a>
+
+### GossipService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Propagation | [PropagationRequest](#banyandb-property-v1-PropagationRequest) | [PropagationResponse](#banyandb-property-v1-PropagationResponse) | Propagation is used to propagate messages across nodes in the cluster. |
 
  
 

@@ -52,13 +52,15 @@ the [Observability documentation](./observability.md).
 
 In the context of Property background repair, the following key metrics are exposed:
 
-| Metric Name                              | Type    | Description                                                                                                           |
-|------------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------|
-| `property_repair_success_count`          | Counter | Total number of Properties successfully repaired across all nodes.                                                    |
-| `property_repair_failure_count`          | Counter | Total number of Properties that failed to repair due to validation, write errors, or version conflicts.               |
-| `property_repair_gossip_abort_count`     | Counter | Total number of gossip repair sessions that were forcefully aborted due to unrecoverable errors or unavailable peers. |
-| `property_repair_finished_count`         | Counter | Total count of the repair process was triggered (either scheduled or event-based).                                    |
-| `property_repair_finished_latency`       | Counter | Total latency of the whole property repair process.                                                                   |
-| `property_repair_per_node_sync_finished` | Counter | The number of completed synchronization operations executed by each node during Property repair.                      |
-| `property_repair_per_node_sync_latency`  | Counter | The latency seconds of completed synchronization operations executed by each node during Property repair.             |
+| Metric Name                                 | Type      | Description                                                                                                           |
+|---------------------------------------------|-----------|-----------------------------------------------------------------------------------------------------------------------|
+| `property_repair_success_count`             | Counter   | Total number of Properties successfully repaired across all nodes.                                                    |
+| `property_repair_failure_count`             | Counter   | Total number of Properties that failed to repair due to validation, write errors, or version conflicts.               |
+| `property_repair_gossip_abort_count`        | Counter   | Total number of gossip repair sessions that were forcefully aborted due to unrecoverable errors or unavailable peers. |
+| `property_repair_finished_count`            | Counter   | Total count of the repair process was triggered (either scheduled or event-based).                                    |
+| `property_repair_finished_latency`          | Counter   | Total latency of the whole property repair process.                                                                   |
+| `property_repair_per_node_sync_finished`    | Counter   | The number of completed synchronization operations executed by each node during Property repair.                      |
+| `property_repair_per_node_sync_latency`     | Counter   | The latency seconds of completed synchronization operations executed by each node during Property repair.             |
+| `property_repair_total_propagation_count`   | Counter   | Total success propagation count across all nodes.                                                                     |
+| `property_repair_total_propagation_percent` | Histogram | Total percent have propagation in each round. `total_propagation_count` / `max_propagation_count`.                    |
 
