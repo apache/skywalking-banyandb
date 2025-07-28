@@ -67,28 +67,35 @@ var (
 
 type server struct {
 	clusterv1.UnimplementedServiceServer
+	clusterv1.UnimplementedChunkedSyncServiceServer
 	streamv1.UnimplementedStreamServiceServer
 	databasev1.UnimplementedSnapshotServiceServer
-	creds          credentials.TransportCredentials
-	omr            observability.MetricsRegistry
-	metrics        *metrics
-	ser            *grpclib.Server
-	listeners      map[bus.Topic][]bus.MessageListener
-	topicMap       map[string]bus.Topic
-	log            *logger.Logger
-	httpSrv        *http.Server
-	clientCloser   context.CancelFunc
-	httpAddr       string
-	addr           string
-	host           string
-	certFile       string
-	keyFile        string
-	flagNamePrefix string
-	maxRecvMsgSize run.Bytes
-	listenersLock  sync.RWMutex
-	port           uint32
-	httpPort       uint32
-	tls            bool
+	creds               credentials.TransportCredentials
+	omr                 observability.MetricsRegistry
+	metrics             *metrics
+	ser                 *grpclib.Server
+	listeners           map[bus.Topic][]bus.MessageListener
+	topicMap            map[string]bus.Topic
+	chunkedSyncHandlers map[bus.Topic]queue.ChunkedSyncHandler
+	log                 *logger.Logger
+	httpSrv             *http.Server
+	clientCloser        context.CancelFunc
+	httpAddr            string
+	addr                string
+	host                string
+	certFile            string
+	keyFile             string
+	flagNamePrefix      string
+	maxRecvMsgSize      run.Bytes
+	listenersLock       sync.RWMutex
+	port                uint32
+	httpPort            uint32
+	tls                 bool
+	// Chunk ordering configuration
+	enableChunkReordering bool
+	maxChunkBufferSize    uint32
+	chunkBufferTimeout    time.Duration
+	maxChunkGapSize       uint32
 }
 
 // NewServer returns a new gRPC server.
@@ -99,13 +106,19 @@ func NewServer(omr observability.MetricsRegistry) queue.Server {
 // NewServerWithPorts returns a new gRPC server with specified ports.
 func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string, port, httpPort uint32) queue.Server {
 	return &server{
-		listeners:      make(map[bus.Topic][]bus.MessageListener),
-		topicMap:       make(map[string]bus.Topic),
-		omr:            omr,
-		maxRecvMsgSize: defaultRecvSize,
-		flagNamePrefix: flagNamePrefix,
-		port:           port,
-		httpPort:       httpPort,
+		listeners:           make(map[bus.Topic][]bus.MessageListener),
+		topicMap:            make(map[string]bus.Topic),
+		chunkedSyncHandlers: make(map[bus.Topic]queue.ChunkedSyncHandler),
+		omr:                 omr,
+		maxRecvMsgSize:      defaultRecvSize,
+		flagNamePrefix:      flagNamePrefix,
+		port:                port,
+		httpPort:            httpPort,
+		// Default chunk ordering configuration
+		enableChunkReordering: true,
+		maxChunkBufferSize:    10,
+		chunkBufferTimeout:    5 * time.Second,
+		maxChunkGapSize:       5,
 	}
 }
 
@@ -142,6 +155,11 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.host, prefixFlag("grpc-host"), "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, prefixFlag("grpc-port"), s.port, "the port of banyand listens")
 	fs.Uint32Var(&s.httpPort, prefixFlag("http-port"), s.httpPort, "the port of banyand http api listens")
+	// Chunk ordering configuration flags
+	fs.BoolVar(&s.enableChunkReordering, prefixFlag("enable-chunk-reordering"), s.enableChunkReordering, "enable out-of-order chunk handling")
+	fs.Uint32Var(&s.maxChunkBufferSize, prefixFlag("max-chunk-buffer-size"), s.maxChunkBufferSize, "maximum chunks to buffer for reordering")
+	fs.DurationVar(&s.chunkBufferTimeout, prefixFlag("chunk-buffer-timeout"), s.chunkBufferTimeout, "maximum time to wait for missing chunks")
+	fs.Uint32Var(&s.maxChunkGapSize, prefixFlag("max-chunk-gap-size"), s.maxChunkGapSize, "maximum gap in chunk sequence")
 	return fs
 }
 
@@ -202,6 +220,7 @@ func (s *server) Serve() run.StopNotify {
 	)
 	s.ser = grpclib.NewServer(opts...)
 	clusterv1.RegisterServiceServer(s.ser, s)
+	clusterv1.RegisterChunkedSyncServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
 	streamv1.RegisterStreamServiceServer(s.ser, &streamService{ser: s})
@@ -290,6 +309,11 @@ func (s *server) GracefulStop() {
 	}
 }
 
+// RegisterChunkedSyncHandler implements queue.Server.
+func (s *server) RegisterChunkedSyncHandler(topic bus.Topic, handler queue.ChunkedSyncHandler) {
+	s.chunkedSyncHandlers[topic] = handler
+}
+
 type metrics struct {
 	totalStarted  meter.Counter
 	totalFinished meter.Counter
@@ -300,6 +324,13 @@ type metrics struct {
 	totalMsgReceivedErr meter.Counter
 	totalMsgSent        meter.Counter
 	totalMsgSentErr     meter.Counter
+
+	// Chunk ordering metrics
+	outOfOrderChunksReceived meter.Counter
+	chunksBuffered           meter.Counter
+	bufferTimeouts           meter.Counter
+	largeGapsRejected        meter.Counter
+	bufferCapacityExceeded   meter.Counter
 }
 
 func newMetrics(factory *observability.Factory) *metrics {
@@ -312,5 +343,31 @@ func newMetrics(factory *observability.Factory) *metrics {
 		totalMsgReceivedErr: factory.NewCounter("total_msg_received_err", "topic"),
 		totalMsgSent:        factory.NewCounter("total_msg_sent", "topic"),
 		totalMsgSentErr:     factory.NewCounter("total_msg_sent_err", "topic"),
+
+		// Chunk ordering metrics
+		outOfOrderChunksReceived: factory.NewCounter("out_of_order_chunks_received", "session_id"),
+		chunksBuffered:           factory.NewCounter("chunks_buffered", "session_id"),
+		bufferTimeouts:           factory.NewCounter("buffer_timeouts", "session_id"),
+		largeGapsRejected:        factory.NewCounter("large_gaps_rejected", "session_id"),
+		bufferCapacityExceeded:   factory.NewCounter("buffer_capacity_exceeded", "session_id"),
+	}
+}
+
+// updateChunkOrderMetrics updates chunk ordering metrics.
+func (s *server) updateChunkOrderMetrics(event string, sessionID string) {
+	if s.metrics == nil {
+		return // Skip metrics if not initialized (e.g., during tests)
+	}
+	switch event {
+	case "out_of_order_received":
+		s.metrics.outOfOrderChunksReceived.Inc(1, sessionID)
+	case "chunk_buffered":
+		s.metrics.chunksBuffered.Inc(1, sessionID)
+	case "buffer_timeout":
+		s.metrics.bufferTimeouts.Inc(1, sessionID)
+	case "gap_too_large":
+		s.metrics.largeGapsRejected.Inc(1, sessionID)
+	case "buffer_full":
+		s.metrics.bufferCapacityExceeded.Inc(1, sessionID)
 	}
 }
