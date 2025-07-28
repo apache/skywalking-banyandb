@@ -41,7 +41,7 @@ func authInterceptor(cfg *auth.Config) grpc.UnaryServerInterceptor {
 		if info.FullMethod == "/grpc.health.v1.Health/Check" && !cfg.HealthAuthEnabled {
 			return handler(ctx, req)
 		}
-		if err := validateUser(cfg, ctx); err != nil {
+		if err := validateUser(ctx, cfg); err != nil {
 			return nil, err
 		}
 		return handler(ctx, req)
@@ -61,14 +61,14 @@ func authStreamInterceptor(cfg *auth.Config) grpc.StreamServerInterceptor {
 		if info.FullMethod == "/grpc.health.v1.Health/Check" && !cfg.HealthAuthEnabled {
 			return handler(srv, stream)
 		}
-		if err := validateUser(cfg, stream.Context()); err != nil {
+		if err := validateUser(stream.Context(), cfg); err != nil {
 			return err
 		}
 		return handler(srv, stream)
 	}
 }
 
-func validateUser(cfg *auth.Config, ctx context.Context) error {
+func validateUser(ctx context.Context, cfg *auth.Config) error {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return status.Errorf(codes.Unauthenticated, "metadata is not provided")

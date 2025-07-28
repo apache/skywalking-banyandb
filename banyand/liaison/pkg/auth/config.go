@@ -38,6 +38,7 @@ type User struct {
 	Password string `yaml:"password"`
 }
 
+// InitCfg returns Config with default values.
 func InitCfg() *Config {
 	return &Config{
 		Enabled:           false,

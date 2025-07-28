@@ -165,6 +165,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 			schemaRegistry: schemaRegistry,
 		},
 		schemaRepo: schemaRegistry,
+		cfg:        auth.InitCfg(),
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
 
@@ -188,7 +189,6 @@ func (s *server) PreRun(_ context.Context) error {
 			return err
 		}
 	}
-	s.cfg = auth.InitCfg()
 	if s.authConfigFile != "" {
 		if err := auth.LoadConfig(s.cfg, s.authConfigFile); err != nil {
 			return err
