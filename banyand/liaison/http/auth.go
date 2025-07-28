@@ -29,62 +29,64 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
-func authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isStaticPath(r.URL.Path) {
+func authMiddleware(cfg *auth.Config) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isStaticPath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !cfg.Enabled {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if r.URL.Path == "/api/healthz" && !cfg.HealthAuthEnabled {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+				http.Error(w, "Authorization header is missing", http.StatusUnauthorized)
+				return
+			}
+
+			if !strings.HasPrefix(authHeader, "Basic ") {
+				http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
+				return
+			}
+
+			encodedCredentials := strings.TrimPrefix(authHeader, "Basic ")
+
+			decodedBytes, err := base64.StdEncoding.DecodeString(encodedCredentials)
+			if err != nil {
+				http.Error(w, "Failed to decode authorization header", http.StatusBadRequest)
+				return
+			}
+
+			decodedCredentials := string(decodedBytes)
+
+			parts := strings.SplitN(decodedCredentials, ":", 2)
+			if len(parts) != 2 {
+				http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
+				return
+			}
+
+			username := parts[0]
+			password := parts[1]
+			if !auth.CheckUsernameAndPassword(cfg, username, password) {
+				http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
+				return
+			}
+
+			r.Header.Set("Grpc-Metadata-Username", username)
+			r.Header.Set("Grpc-Metadata-Password", password)
 			next.ServeHTTP(w, r)
-			return
-		}
-
-		if !auth.Cfg.Enabled {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		if r.URL.Path == "/api/healthz" && !auth.Cfg.HealthAuthEnabled {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
-			http.Error(w, "Authorization header is missing", http.StatusUnauthorized)
-			return
-		}
-
-		if !strings.HasPrefix(authHeader, "Basic ") {
-			http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
-			return
-		}
-
-		encodedCredentials := strings.TrimPrefix(authHeader, "Basic ")
-
-		decodedBytes, err := base64.StdEncoding.DecodeString(encodedCredentials)
-		if err != nil {
-			http.Error(w, "Failed to decode authorization header", http.StatusBadRequest)
-			return
-		}
-
-		decodedCredentials := string(decodedBytes)
-
-		parts := strings.SplitN(decodedCredentials, ":", 2)
-		if len(parts) != 2 {
-			http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
-			return
-		}
-
-		username := parts[0]
-		password := parts[1]
-		if !auth.CheckUsernameAndPassword(username, password) {
-			http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
-			return
-		}
-
-		r.Header.Set("Grpc-Metadata-Username", username)
-		r.Header.Set("Grpc-Metadata-Password", password)
-		next.ServeHTTP(w, r)
-	})
+		})
+	}
 }
 
 var staticPaths = []string{
@@ -103,10 +105,10 @@ func isStaticPath(path string) bool {
 	return false
 }
 
-func buildGRPCContextForHealthCheck(r *http.Request) (context.Context, error) {
+func buildGRPCContextForHealthCheck(cfg *auth.Config, r *http.Request) (context.Context, error) {
 	ctx := r.Context()
 
-	if auth.Cfg.HealthAuthEnabled {
+	if cfg.HealthAuthEnabled {
 		username := r.Header.Get("Grpc-Metadata-Username")
 		password := r.Header.Get("Grpc-Metadata-Password")
 

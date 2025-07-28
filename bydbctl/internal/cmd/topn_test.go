@@ -39,7 +39,7 @@ import (
 	cases_measure_data "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 
-var _ = XDescribe("Topn Schema Operation", func() {
+var _ = Describe("Topn Schema Operation", func() {
 	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
@@ -226,7 +226,7 @@ lru_size: 10`))
 	})
 })
 
-var _ = XDescribe("Topn Data Query", func() {
+var _ = Describe("Topn Data Query", func() {
 	var addr, grpcAddr string
 	var deferFunc func()
 	var rootCmd *cobra.Command

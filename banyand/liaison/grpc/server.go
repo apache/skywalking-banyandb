@@ -66,6 +66,7 @@ var (
 // Server defines the gRPC server.
 type Server interface {
 	run.Unit
+	GetAuthCfg() *auth.Config
 	GetPort() *uint32
 }
 
@@ -100,6 +101,7 @@ type server struct {
 	certFile                 string
 	keyFile                  string
 	authConfigFile           string
+	cfg                      *auth.Config
 	host                     string
 	addr                     string
 	accessLogRootPath        string
@@ -186,8 +188,9 @@ func (s *server) PreRun(_ context.Context) error {
 			return err
 		}
 	}
+	s.cfg = auth.InitCfg()
 	if s.authConfigFile != "" {
-		if err := auth.LoadConfig(s.authConfigFile); err != nil {
+		if err := auth.LoadConfig(s.cfg, s.authConfigFile); err != nil {
 			return err
 		}
 	}
@@ -236,6 +239,11 @@ func (s *server) GetPort() *uint32 {
 	return &s.port
 }
 
+// GetAuthCfg returns auth cfg (for httpserver).
+func (s *server) GetAuthCfg() *auth.Config {
+	return s.cfg
+}
+
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("grpc")
 	s.maxRecvMsgSize = defaultRecvSize
@@ -244,7 +252,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
 	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "Path to the authentication config file (YAML format)")
-	fs.BoolVar(&auth.Cfg.HealthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
+	fs.BoolVar(&s.cfg.HealthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
@@ -307,8 +315,8 @@ func (s *server) Serve() run.StopNotify {
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
 	if s.authConfigFile != "" {
-		streamChain = append(streamChain, authStreamInterceptor())
-		unaryChain = append(unaryChain, authInterceptor())
+		streamChain = append(streamChain, authStreamInterceptor(s.cfg))
+		unaryChain = append(unaryChain, authInterceptor(s.cfg))
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),

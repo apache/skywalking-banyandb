@@ -43,6 +43,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -59,9 +60,10 @@ var (
 )
 
 // NewServer return a http service.
-func NewServer() Server {
+func NewServer(cfg *auth.Config) Server {
 	return &server{
 		stopCh: make(chan struct{}),
+		cfg:    cfg,
 	}
 }
 
@@ -88,6 +90,7 @@ type server struct {
 	grpcAddr        string
 	keyFile         string
 	certFile        string
+	cfg             *auth.Config
 	grpcCert        string
 	grpcMu          sync.Mutex
 	port            uint32
@@ -365,9 +368,9 @@ func (p *server) initGRPCClient() error {
 	// This avoids the conflict when remounting to /api path
 	newMux := chi.NewRouter()
 
-	newMux.Use(authMiddleware)
+	newMux.Use(authMiddleware(p.cfg))
 	newMux.Handle("/api/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, err := buildGRPCContextForHealthCheck(r)
+		ctx, err := buildGRPCContextForHealthCheck(p.cfg, r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return

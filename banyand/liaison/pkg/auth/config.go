@@ -25,9 +25,6 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// Cfg auth config.
-var Cfg *Config
-
 // Config AuthConfig.
 type Config struct {
 	Users             []User `yaml:"users"`
@@ -41,21 +38,22 @@ type User struct {
 	Password string `yaml:"password"`
 }
 
-func init() {
-	Cfg = new(Config)
-	Cfg.Enabled = false
-	Cfg.HealthAuthEnabled = false
-	Cfg.Users = []User{}
+func InitCfg() *Config {
+	return &Config{
+		Enabled:           false,
+		HealthAuthEnabled: false,
+		Users:             []User{},
+	}
 }
 
 // LoadConfig implements the reading of the authentication configuration.
-func LoadConfig(filePath string) error {
-	Cfg.Enabled = true
+func LoadConfig(cfg *Config, filePath string) error {
+	cfg.Enabled = true
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return err
 	}
-	err = yaml.Unmarshal(data, Cfg)
+	err = yaml.Unmarshal(data, cfg)
 	if err != nil {
 		return err
 	}
@@ -63,8 +61,8 @@ func LoadConfig(filePath string) error {
 }
 
 // CheckUsernameAndPassword returns true if the provided username and password match any configured user.
-func CheckUsernameAndPassword(username, password string) bool {
-	for _, user := range Cfg.Users {
+func CheckUsernameAndPassword(cfg *Config, username, password string) bool {
+	for _, user := range cfg.Users {
 		if strings.TrimSpace(username) == strings.TrimSpace(user.Username) &&
 			strings.TrimSpace(password) == strings.TrimSpace(user.Password) {
 			return true

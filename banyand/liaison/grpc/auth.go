@@ -28,47 +28,47 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
-func authInterceptor() grpc.UnaryServerInterceptor {
+func authInterceptor(cfg *auth.Config) grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
 		req interface{},
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
-		if !auth.Cfg.Enabled {
+		if !cfg.Enabled {
 			return handler(ctx, req)
 		}
-		if info.FullMethod == "/grpc.health.v1.Health/Check" && !auth.Cfg.HealthAuthEnabled {
+		if info.FullMethod == "/grpc.health.v1.Health/Check" && !cfg.HealthAuthEnabled {
 			return handler(ctx, req)
 		}
-		if err := validateUser(ctx); err != nil {
+		if err := validateUser(cfg, ctx); err != nil {
 			return nil, err
 		}
 		return handler(ctx, req)
 	}
 }
 
-func authStreamInterceptor() grpc.StreamServerInterceptor {
+func authStreamInterceptor(cfg *auth.Config) grpc.StreamServerInterceptor {
 	return func(
 		srv interface{},
 		stream grpc.ServerStream,
 		info *grpc.StreamServerInfo,
 		handler grpc.StreamHandler,
 	) error {
-		if !auth.Cfg.Enabled {
+		if !cfg.Enabled {
 			return handler(srv, stream)
 		}
-		if info.FullMethod == "/grpc.health.v1.Health/Check" && !auth.Cfg.HealthAuthEnabled {
+		if info.FullMethod == "/grpc.health.v1.Health/Check" && !cfg.HealthAuthEnabled {
 			return handler(srv, stream)
 		}
-		if err := validateUser(stream.Context()); err != nil {
+		if err := validateUser(cfg, stream.Context()); err != nil {
 			return err
 		}
 		return handler(srv, stream)
 	}
 }
 
-func validateUser(ctx context.Context) error {
+func validateUser(cfg *auth.Config, ctx context.Context) error {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return status.Errorf(codes.Unauthenticated, "metadata is not provided")
@@ -87,7 +87,7 @@ func validateUser(ctx context.Context) error {
 	username := usernames[0]
 	password := passwords[0]
 
-	if !auth.CheckUsernameAndPassword(username, password) {
+	if !auth.CheckUsernameAndPassword(cfg, username, password) {
 		return status.Errorf(codes.Unauthenticated, "invalid username or password")
 	}
 

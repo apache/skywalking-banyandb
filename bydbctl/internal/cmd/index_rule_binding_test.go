@@ -32,7 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-var _ = XDescribe("IndexRuleBindingSchema Operation", func() {
+var _ = Describe("IndexRuleBindingSchema Operation", func() {
 	var addr string
 	var deferFunc func()
 	var rootCmd *cobra.Command
