@@ -44,9 +44,9 @@ type chunkedSyncClient struct {
 	client    clusterv1.ServiceClient
 	conn      *grpc.ClientConn
 	log       *logger.Logger
+	config    *ChunkedSyncClientConfig
 	node      string
 	chunkSize uint32
-	config    *ChunkedSyncClientConfig
 }
 
 // SyncStreamingParts implements queue.ChunkedSyncClient with streaming support.

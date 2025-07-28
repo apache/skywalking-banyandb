@@ -45,12 +45,12 @@ func TestChunkedSyncOutOfOrderHandling(t *testing.T) {
 
 	tests := []struct {
 		name                  string
-		enableChunkReordering bool
-		maxChunkBufferSize    uint32
-		maxChunkGapSize       uint32
 		chunkSequence         []uint32
 		expectedStatus        []clusterv1.SyncStatus
 		expectedBuffered      int
+		maxChunkBufferSize    uint32
+		maxChunkGapSize       uint32
+		enableChunkReordering bool
 	}{
 		{
 			name:                  "strict_sequential_mode_rejects_out_of_order",
@@ -65,8 +65,13 @@ func TestChunkedSyncOutOfOrderHandling(t *testing.T) {
 			maxChunkBufferSize:    10,
 			maxChunkGapSize:       5,
 			chunkSequence:         []uint32{0, 2, 1}, // Chunk 2 arrives before 1
-			expectedStatus:        []clusterv1.SyncStatus{clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED},
-			expectedBuffered:      1, // Chunk 2 gets buffered initially
+			expectedStatus: []clusterv1.SyncStatus{
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+			},
+			expectedBuffered: 1, // Chunk 2 gets buffered initially
 		},
 		{
 			name:                  "large_gap_rejected",
@@ -83,8 +88,13 @@ func TestChunkedSyncOutOfOrderHandling(t *testing.T) {
 			maxChunkBufferSize:    2,
 			maxChunkGapSize:       10,
 			chunkSequence:         []uint32{0, 3, 4, 5}, // Fill buffer with chunks 3,4 then try to add 5
-			expectedStatus:        []clusterv1.SyncStatus{clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_OUT_OF_ORDER},
-			expectedBuffered:      2, // Chunks 3,4 get buffered, 5 rejected
+			expectedStatus: []clusterv1.SyncStatus{
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_OUT_OF_ORDER,
+			},
+			expectedBuffered: 2, // Chunks 3,4 get buffered, 5 rejected
 		},
 		{
 			name:                  "duplicate_chunk_ignored",
@@ -92,8 +102,12 @@ func TestChunkedSyncOutOfOrderHandling(t *testing.T) {
 			maxChunkBufferSize:    10,
 			maxChunkGapSize:       5,
 			chunkSequence:         []uint32{0, 1, 0}, // Duplicate chunk 0
-			expectedStatus:        []clusterv1.SyncStatus{clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED},
-			expectedBuffered:      0,
+			expectedStatus: []clusterv1.SyncStatus{
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+				clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+			},
+			expectedBuffered: 0,
 		},
 	}
 
@@ -175,18 +189,18 @@ func TestChunkedSyncOutOfOrderHandling(t *testing.T) {
 	}
 }
 
-// MockChunkedSyncHandler implements queue.ChunkedSyncHandler for testing
+// MockChunkedSyncHandler implements queue.ChunkedSyncHandler for testing.
 type MockChunkedSyncHandler struct{}
 
-func (m *MockChunkedSyncHandler) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+func (m *MockChunkedSyncHandler) CreatePartHandler(_ *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
 	return &MockChunkedSyncPartHandler{}, nil
 }
 
-func (m *MockChunkedSyncHandler) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+func (m *MockChunkedSyncHandler) HandleFileChunk(_ *queue.ChunkedSyncPartContext, _ []byte) error {
 	return nil
 }
 
-// MockChunkedSyncPartHandler implements queue.PartHandler for testing
+// MockChunkedSyncPartHandler implements queue.PartHandler for testing.
 type MockChunkedSyncPartHandler struct{}
 
 func (m *MockChunkedSyncPartHandler) FinishSync() error {
@@ -197,10 +211,10 @@ func (m *MockChunkedSyncPartHandler) Close() error {
 	return nil
 }
 
-// MockSyncPartStream implements clusterv1.ChunkedSyncService_SyncPartServer for testing
+// MockSyncPartStream implements clusterv1.ChunkedSyncService_SyncPartServer for testing.
 type MockSyncPartStream struct {
-	sentResponses []*clusterv1.SyncPartResponse
 	ctx           context.Context
+	sentResponses []*clusterv1.SyncPartResponse
 }
 
 func (m *MockSyncPartStream) Send(resp *clusterv1.SyncPartResponse) error {
@@ -220,11 +234,11 @@ func (m *MockSyncPartStream) Context() context.Context {
 	return m.ctx
 }
 
-func (m *MockSyncPartStream) SendMsg(msg interface{}) error { return nil }
-func (m *MockSyncPartStream) RecvMsg(msg interface{}) error { return nil }
-func (m *MockSyncPartStream) SetHeader(metadata.MD) error   { return nil }
-func (m *MockSyncPartStream) SendHeader(metadata.MD) error  { return nil }
-func (m *MockSyncPartStream) SetTrailer(metadata.MD)        {}
+func (m *MockSyncPartStream) SendMsg(_ interface{}) error  { return nil }
+func (m *MockSyncPartStream) RecvMsg(_ interface{}) error  { return nil }
+func (m *MockSyncPartStream) SetHeader(metadata.MD) error  { return nil }
+func (m *MockSyncPartStream) SendHeader(metadata.MD) error { return nil }
+func (m *MockSyncPartStream) SetTrailer(metadata.MD)       {}
 
 func TestChunkedSyncBufferTimeout(t *testing.T) {
 	// Initialize logger for tests

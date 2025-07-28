@@ -99,10 +99,10 @@ func Test_newWriteQueue(t *testing.T) {
 	assert.Equal(t, mockTire2Client, tst.option.tire2Client)
 }
 
-// mockChunkedSyncClient implements queue.ChunkedSyncClient for testing
+// mockChunkedSyncClient implements queue.ChunkedSyncClient for testing.
 type mockChunkedSyncClient struct{}
 
-func (m *mockChunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queue.StreamingPartData) (*queue.SyncResult, error) {
+func (m *mockChunkedSyncClient) SyncStreamingParts(_ context.Context, parts []queue.StreamingPartData) (*queue.SyncResult, error) {
 	return &queue.SyncResult{
 		Success:     true,
 		SessionID:   "mock-session",

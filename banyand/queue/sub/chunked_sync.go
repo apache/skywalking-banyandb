@@ -32,10 +32,10 @@ import (
 
 type chunkBuffer struct {
 	chunks        map[uint32]*clusterv1.SyncPartRequest
+	lastActivity  time.Time
+	bufferTimeout time.Duration
 	expectedIndex uint32
 	maxBufferSize uint32
-	bufferTimeout time.Duration
-	lastActivity  time.Time
 }
 
 type syncSession struct {
@@ -43,12 +43,12 @@ type syncSession struct {
 	metadata       *clusterv1.SyncMetadata
 	partsProgress  map[int]*partProgress
 	partCtx        *queue.ChunkedSyncPartContext
+	chunkBuffer    *chunkBuffer
 	sessionID      string
 	errorMsg       string
 	totalReceived  uint64
 	chunksReceived uint32
 	completed      bool
-	chunkBuffer    *chunkBuffer
 }
 
 type partProgress struct {
