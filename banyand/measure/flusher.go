@@ -211,7 +211,10 @@ func (tst *tsTable) flusherLoopNoMerger(flushCh chan *flusherIntroduction, intro
 				}()
 				curSnapshot := tst.currentSnapshot()
 				if curSnapshot != nil {
-					defer curSnapshot.decRef()
+					defer func() {
+						curSnapshot.decRef()
+						curSnapshot = nil
+					}()
 					tst.flush(curSnapshot, flushCh)
 					epoch = curSnapshot.epoch
 					if tst.currentEpoch() != epoch {

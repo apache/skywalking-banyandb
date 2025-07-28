@@ -47,6 +47,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+// ChunkedSyncClientConfig configures chunked sync client behavior.
+type ChunkedSyncClientConfig struct {
+	ChunkSize        uint32        // Size of each chunk in bytes
+	EnableRetryOnOOO bool          // Enable retry on out-of-order errors
+	MaxOOORetries    int           // Maximum retries for out-of-order chunks
+	OOORetryDelay    time.Duration // Delay between retries
+}
+
 var (
 	_ run.PreRunner = (*pub)(nil)
 	_ run.Service   = (*pub)(nil)
@@ -402,4 +410,37 @@ func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
 		return nil, fmt.Errorf("failed to load TLS config: %w", err)
 	}
 	return opts, nil
+}
+
+// NewChunkedSyncClient implements queue.Client.
+func (p *pub) NewChunkedSyncClient(node string, chunkSize uint32) (queue.ChunkedSyncClient, error) {
+	return p.NewChunkedSyncClientWithConfig(node, &ChunkedSyncClientConfig{
+		ChunkSize:        chunkSize,
+		EnableRetryOnOOO: true,
+		MaxOOORetries:    3,
+		OOORetryDelay:    100 * time.Millisecond,
+	})
+}
+
+// NewChunkedSyncClientWithConfig creates a chunked sync client with advanced configuration.
+func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncClientConfig) (queue.ChunkedSyncClient, error) {
+	p.mu.RLock()
+	client, ok := p.active[node]
+	p.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("no active client for node %s", node)
+	}
+
+	if config.ChunkSize == 0 {
+		config.ChunkSize = defaultChunkSize
+	}
+
+	return &chunkedSyncClient{
+		client:    client.client,
+		conn:      client.conn,
+		node:      node,
+		log:       p.log,
+		chunkSize: config.ChunkSize,
+		config:    config,
+	}, nil
 }

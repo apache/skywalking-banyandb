@@ -37,10 +37,18 @@ import (
 )
 
 const (
+	// Streaming file names (without extensions).
+	streamPrimaryName       = "primary"
+	streamMetaName          = "meta"
+	streamTimestampsName    = "timestamps"
+	streamTagFamiliesPrefix = "tf:"
+	streamTagMetadataPrefix = "tfm:"
+	streamTagFilterPrefix   = "tff:"
+
 	metadataFilename               = "metadata.json"
-	primaryFilename                = "primary.bin"
-	metaFilename                   = "meta.bin"
-	timestampsFilename             = "timestamps.bin"
+	primaryFilename                = streamPrimaryName + ".bin"
+	metaFilename                   = streamMetaName + ".bin"
+	timestampsFilename             = streamTimestampsName + ".bin"
 	elementIndexFilename           = "idx"
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"

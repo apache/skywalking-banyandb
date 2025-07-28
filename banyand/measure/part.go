@@ -37,11 +37,19 @@ import (
 )
 
 const (
+	// Streaming file names for measure data parts (without extensions).
+	measurePrimaryName       = "primary"
+	measureMetaName          = "meta"
+	measureTimestampsName    = "timestamps"
+	measureFieldValuesName   = "fv"
+	measureTagFamiliesPrefix = "tf:"
+	measureTagMetadataPrefix = "tfm:"
+
 	metadataFilename               = "metadata.json"
-	primaryFilename                = "primary.bin"
-	metaFilename                   = "meta.bin"
-	timestampsFilename             = "timestamps.bin"
-	fieldValuesFilename            = "fields.bin"
+	primaryFilename                = measurePrimaryName + ".bin"
+	metaFilename                   = measureMetaName + ".bin"
+	timestampsFilename             = measureTimestampsName + ".bin"
+	fieldValuesFilename            = measureFieldValuesName + ".bin"
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
 )
@@ -322,6 +330,7 @@ func (mp *memPart) Unmarshal(data []byte) error {
 	return nil
 }
 
+//nolint:unused // This function is used in test files
 func (mp *memPart) mustInitFromPart(p *part) {
 	mp.reset()
 

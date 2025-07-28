@@ -174,6 +174,8 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		Roles:       nodeRoles,
 		Labels:      node.Labels,
 		CreatedAt:   timestamppb.Now(),
+
+		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
 	}
 	for {
 		ctxCancelable, cancel := context.WithTimeout(ctx, time.Second*10)
