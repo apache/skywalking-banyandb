@@ -42,9 +42,6 @@ import (
 	casesMeasureData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 
-var testUser serverAuth.User
-
-// TODO check.
 var _ = g.Describe("Query service_cpm_minute with authentication", func() {
 	var deferFn func()
 	var baseTime time.Time
@@ -53,6 +50,7 @@ var _ = g.Describe("Query service_cpm_minute with authentication", func() {
 	var goods []gleak.Goroutine
 	var grpcAddr, httpAddr string
 	var authCfgFile string
+	var testUser serverAuth.User
 
 	g.BeforeEach(func() {
 		_, currentFile, _, _ := runtime.Caller(0)

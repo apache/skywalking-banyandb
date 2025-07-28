@@ -38,9 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-var testUser serverAuth.User
-
-// TODO check it.
 var _ = g.Describe("bydbctl test with authentication", func() {
 	var deferFn func()
 	var httpAddr string
@@ -48,6 +45,7 @@ var _ = g.Describe("bydbctl test with authentication", func() {
 	var baseDir string
 	var bydbctlCfgFile string
 	var rootCmd *cobra.Command
+	var testUser serverAuth.User
 
 	g.BeforeEach(func() {
 		_, currentFile, _, _ := runtime.Caller(0)
