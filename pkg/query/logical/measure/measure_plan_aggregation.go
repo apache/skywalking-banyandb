@@ -39,18 +39,26 @@ var (
 )
 
 type unresolvedAggregation struct {
-	unresolvedInput  logical.UnresolvedPlan
-	aggregationField *logical.Field
-	aggrFunc         modelv1.AggregationFunction
-	isGroup          bool
+	unresolvedInput         logical.UnresolvedPlan
+	aggregationField        *logical.Field
+	aggrFunc                modelv1.AggregationFunction
+	isGroup                 bool
+	needCompletePushDownAgg bool
 }
 
-func newUnresolvedAggregation(input logical.UnresolvedPlan, aggrField *logical.Field, aggrFunc modelv1.AggregationFunction, isGroup bool) logical.UnresolvedPlan {
+func newUnresolvedAggregation(
+	input logical.UnresolvedPlan,
+	aggrField *logical.Field,
+	aggrFunc modelv1.AggregationFunction,
+	isGroup bool,
+	needCompletePushDownAgg bool,
+) logical.UnresolvedPlan {
 	return &unresolvedAggregation{
-		unresolvedInput:  input,
-		aggrFunc:         aggrFunc,
-		aggregationField: aggrField,
-		isGroup:          isGroup,
+		unresolvedInput:         input,
+		aggrFunc:                aggrFunc,
+		aggregationField:        aggrField,
+		isGroup:                 isGroup,
+		needCompletePushDownAgg: needCompletePushDownAgg,
 	}
 }
 
@@ -81,11 +89,12 @@ func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical
 
 type aggregationPlan[N aggregation.Number] struct {
 	*logical.Parent
-	schema              logical.Schema
-	aggregationFieldRef *logical.FieldRef
-	aggrFunc            aggregation.Func[N]
-	aggrType            modelv1.AggregationFunction
-	isGroup             bool
+	schema                  logical.Schema
+	aggregationFieldRef     *logical.FieldRef
+	aggrFunc                aggregation.Func[N]
+	aggrType                modelv1.AggregationFunction
+	isGroup                 bool
+	needCompletePushDownAgg bool
 }
 
 func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPlan logical.Plan,
@@ -100,10 +109,12 @@ func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPl
 			UnresolvedInput: gba.unresolvedInput,
 			Input:           prevPlan,
 		},
-		schema:              measureSchema,
-		aggrFunc:            aggrFunc,
-		aggregationFieldRef: fieldRef,
-		isGroup:             gba.isGroup,
+		schema:                  measureSchema,
+		aggrFunc:                aggrFunc,
+		aggrType:                gba.aggrFunc,
+		aggregationFieldRef:     fieldRef,
+		isGroup:                 gba.isGroup,
+		needCompletePushDownAgg: gba.needCompletePushDownAgg,
 	}, nil
 }
 
@@ -128,28 +139,30 @@ func (g *aggregationPlan[N]) Execute(ec context.Context) (executor.MIterator, er
 		return nil, err
 	}
 	if g.isGroup {
-		return newAggGroupMIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
+		return newAggGroupMIterator(iter, g.aggregationFieldRef, g.aggrFunc, g.needCompletePushDownAgg), nil
 	}
-	return newAggAllIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
+	return newAggAllIterator(iter, g.aggregationFieldRef, g.aggrFunc, g.needCompletePushDownAgg), nil
 }
 
 type aggGroupIterator[N aggregation.Number] struct {
-	prev                executor.MIterator
-	aggregationFieldRef *logical.FieldRef
-	aggrFunc            aggregation.Func[N]
-
-	err error
+	prev                    executor.MIterator
+	aggrFunc                aggregation.Func[N]
+	err                     error
+	aggregationFieldRef     *logical.FieldRef
+	needCompletePushDownAgg bool
 }
 
 func newAggGroupMIterator[N aggregation.Number](
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Func[N],
+	needCompletePushDownAgg bool,
 ) executor.MIterator {
 	return &aggGroupIterator[N]{
-		prev:                prev,
-		aggregationFieldRef: aggregationFieldRef,
-		aggrFunc:            aggrFunc,
+		prev:                    prev,
+		aggrFunc:                aggrFunc,
+		aggregationFieldRef:     aggregationFieldRef,
+		needCompletePushDownAgg: needCompletePushDownAgg,
 	}
 }
 
@@ -175,7 +188,11 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.DataPoint {
 			ami.err = err
 			return nil
 		}
-		ami.aggrFunc.In(v)
+		if ami.needCompletePushDownAgg {
+			aggregation.InValue(ami.aggrFunc, v)
+		} else {
+			ami.aggrFunc.In(v)
+		}
 		if resultDp != nil {
 			continue
 		}
@@ -205,23 +222,25 @@ func (ami *aggGroupIterator[N]) Close() error {
 }
 
 type aggAllIterator[N aggregation.Number] struct {
-	prev                executor.MIterator
-	aggregationFieldRef *logical.FieldRef
-	aggrFunc            aggregation.Func[N]
-
-	result *measurev1.DataPoint
-	err    error
+	prev                    executor.MIterator
+	aggrFunc                aggregation.Func[N]
+	err                     error
+	aggregationFieldRef     *logical.FieldRef
+	result                  *measurev1.DataPoint
+	needCompletePushDownAgg bool
 }
 
 func newAggAllIterator[N aggregation.Number](
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Func[N],
+	needCompletePushDownAgg bool,
 ) executor.MIterator {
 	return &aggAllIterator[N]{
-		prev:                prev,
-		aggregationFieldRef: aggregationFieldRef,
-		aggrFunc:            aggrFunc,
+		prev:                    prev,
+		aggrFunc:                aggrFunc,
+		aggregationFieldRef:     aggregationFieldRef,
+		needCompletePushDownAgg: needCompletePushDownAgg,
 	}
 }
 
@@ -240,7 +259,11 @@ func (ami *aggAllIterator[N]) Next() bool {
 				ami.err = err
 				return false
 			}
-			ami.aggrFunc.In(v)
+			if ami.needCompletePushDownAgg {
+				aggregation.InValue(ami.aggrFunc, v)
+			} else {
+				ami.aggrFunc.In(v)
+			}
 			if resultDp != nil {
 				continue
 			}
