@@ -124,10 +124,13 @@ func (q *protocolHandler) findUnProcessRequest() *propertyv1.PropagationRequest 
 }
 
 func (q *protocolHandler) Propagation(_ context.Context, request *propertyv1.PropagationRequest) (resp *propertyv1.PropagationResponse, err error) {
+	q.s.serverMetrics.totalReceived.Inc(1, request.Group)
 	q.s.log.Debug().Stringer("request", request).Msg("received property repair gossip message for propagation")
 	if q.addToProcess(request) {
+		q.s.serverMetrics.totalAddProcessed.Inc(1, request.Group)
 		q.s.log.Debug().Msgf("add the propagation request to the process")
 	} else {
+		q.s.serverMetrics.totalSkipProcess.Inc(1, request.Group)
 		q.s.log.Debug().Msgf("propagation request discarded")
 	}
 	return &propertyv1.PropagationResponse{}, nil
@@ -141,7 +144,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	var needsKeepPropagation bool
 	defer func() {
 		if err != nil {
-			q.s.serverMetrics.totalPropagationErr.Inc(1, request.Group)
+			q.s.serverMetrics.totalSendToNextErr.Inc(1, request.Group)
 		}
 		q.s.serverMetrics.totalFinished.Inc(1, request.Group)
 		q.s.serverMetrics.totalLatency.Inc(n.Sub(time.Unix(0, now)).Seconds(), request.Group)
@@ -183,7 +186,9 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 
 	// if no node is available or sync error for gossip message propagation, then it should be notified finished
 	if !executeSuccess {
-		_ = nextNodeConn.Close()
+		if nextNodeConn != nil {
+			_ = nextNodeConn.Close()
+		}
 		return fmt.Errorf("failed to execute gossip message for propagation in all nodes")
 	}
 
@@ -196,16 +201,16 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 
 	// propagate the message to the next node
 	needsKeepPropagation = true
-	q.s.serverMetrics.totalPropagationStarted.Inc(1, request.Group)
+	q.s.serverMetrics.totalSendToNextStarted.Inc(1, request.Group)
 	propagationStart := time.Now()
 	q.s.log.Debug().Stringer("request", request).Str("nextNodeID", nextNodeID).
 		Msg("propagating gossip message to next node")
 	_, err = propertyv1.NewGossipServiceClient(nextNodeConn).Propagation(ctx, request)
 	_ = nextNodeConn.Close()
-	q.s.serverMetrics.totalPropagationFinished.Inc(1, request.Group)
-	q.s.serverMetrics.totalPropagationLatency.Inc(time.Since(propagationStart).Seconds(), request.Group)
+	q.s.serverMetrics.totalSendToNextFinished.Inc(1, request.Group)
+	q.s.serverMetrics.totalSendToNextLatency.Inc(time.Since(propagationStart).Seconds(), request.Group)
 	if err != nil {
-		q.s.serverMetrics.totalPropagationErr.Inc(1, request.Group)
+		q.s.serverMetrics.totalSendToNextErr.Inc(1, request.Group)
 		return fmt.Errorf("failed to propagate gossip message to next node: %w", err)
 	}
 
@@ -317,6 +322,10 @@ func (q *protocolHandler) nextExistNode(nodes []string, curIndex, offset int) (s
 }
 
 type serverMetrics struct {
+	totalReceived     meter.Counter
+	totalAddProcessed meter.Counter
+	totalSkipProcess  meter.Counter
+
 	totalStarted  meter.Counter
 	totalFinished meter.Counter
 	totalErr      meter.Counter
@@ -325,24 +334,18 @@ type serverMetrics struct {
 	totalPropagationCount   meter.Counter
 	totalPropagationPercent meter.Histogram
 
-	totalPropagationStarted  meter.Counter
-	totalPropagationFinished meter.Counter
-	totalPropagationErr      meter.Counter
-	totalPropagationLatency  meter.Counter
-
-	totalFutureCallbackRevStarted  meter.Counter
-	totalFutureCallbackRevFinished meter.Counter
-	totalFutureCallbackRevErr      meter.Counter
-	totalFutureCallbackRevLatency  meter.Counter
-
-	totalFutureCallbackSendStarted  meter.Counter
-	totalFutureCallbackSendFinished meter.Counter
-	totalFutureCallbackSendErr      meter.Counter
-	totalFutureCallbackSendLatency  meter.Counter
+	totalSendToNextStarted  meter.Counter
+	totalSendToNextFinished meter.Counter
+	totalSendToNextErr      meter.Counter
+	totalSendToNextLatency  meter.Counter
 }
 
 func newServerMetrics(factory *observability.Factory) *serverMetrics {
 	return &serverMetrics{
+		totalReceived:     factory.NewCounter("total_received", "group"),
+		totalAddProcessed: factory.NewCounter("total_add_processed", "group"),
+		totalSkipProcess:  factory.NewCounter("total_skip_process", "group"),
+
 		totalStarted:  factory.NewCounter("total_started", "group"),
 		totalFinished: factory.NewCounter("total_finished", "group"),
 		totalErr:      factory.NewCounter("total_err", "group"),
@@ -352,19 +355,9 @@ func newServerMetrics(factory *observability.Factory) *serverMetrics {
 		totalPropagationPercent: factory.NewHistogram("total_propagation_percent",
 			meter.Buckets{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1}, "group"),
 
-		totalPropagationStarted:  factory.NewCounter("total_msg_received", "group"),
-		totalPropagationFinished: factory.NewCounter("total_msg_received_err", "group"),
-		totalPropagationErr:      factory.NewCounter("total_msg_sent", "group"),
-		totalPropagationLatency:  factory.NewCounter("total_msg_sent_err", "group"),
-
-		totalFutureCallbackRevStarted:  factory.NewCounter("total_future_callback_rev_started", "group"),
-		totalFutureCallbackRevFinished: factory.NewCounter("total_future_callback_rev_finished", "group"),
-		totalFutureCallbackRevErr:      factory.NewCounter("total_future_callback_rev_err", "group"),
-		totalFutureCallbackRevLatency:  factory.NewCounter("total_future_callback_rev_latency", "group"),
-
-		totalFutureCallbackSendStarted:  factory.NewCounter("total_future_callback_send_started", "group"),
-		totalFutureCallbackSendFinished: factory.NewCounter("total_future_callback_send_finished", "group"),
-		totalFutureCallbackSendErr:      factory.NewCounter("total_future_callback_send_err", "group"),
-		totalFutureCallbackSendLatency:  factory.NewCounter("total_future_callback_send_latency", "group"),
+		totalSendToNextStarted:  factory.NewCounter("total_send_next_started", "group"),
+		totalSendToNextFinished: factory.NewCounter("total_send_next_finished", "group"),
+		totalSendToNextErr:      factory.NewCounter("total_send_next_err", "group"),
+		totalSendToNextLatency:  factory.NewCounter("total_send_next_latency", "group"),
 	}
 }
