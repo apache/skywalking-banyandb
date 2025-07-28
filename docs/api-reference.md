@@ -341,14 +341,14 @@ Status is the response status for write
 <a name="banyandb-cluster-v1-FileInfo"></a>
 
 ### FileInfo
-Information about an individual file within a part
+Information about an individual file within a part.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  | File identifier (e.g., &#34;primary&#34;, &#34;timestamps&#34;, &#34;tagFamilies:seriesId&#34;) |
-| offset | [uint32](#uint32) |  | Byte offset within the part where this file starts |
-| size | [uint32](#uint32) |  | Size of this file in bytes |
+| name | [string](#string) |  | File identifier (e.g., &#34;primary&#34;, &#34;timestamps&#34;, &#34;tagFamilies:seriesId&#34;). |
+| offset | [uint32](#uint32) |  | Byte offset within the part where this file starts. |
+| size | [uint32](#uint32) |  | Size of this file in bytes. |
 
 
 
@@ -390,19 +390,19 @@ Information about an individual file within a part
 <a name="banyandb-cluster-v1-PartInfo"></a>
 
 ### PartInfo
-Information about a part contained within a chunk
+Information about a part contained within a chunk.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| id | [uint64](#uint64) |  | Unique identifier for this part |
-| files | [FileInfo](#banyandb-cluster-v1-FileInfo) | repeated | Information about individual files within this part |
-| compressed_size_bytes | [uint64](#uint64) |  | Compressed size in bytes from partMetadata |
-| uncompressed_size_bytes | [uint64](#uint64) |  | Uncompressed size in bytes from partMetadata |
-| total_count | [uint64](#uint64) |  | Total count from partMetadata |
-| blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata |
-| min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata |
-| max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata |
+| id | [uint64](#uint64) |  | Unique identifier for this part. |
+| files | [FileInfo](#banyandb-cluster-v1-FileInfo) | repeated | Information about individual files within this part. |
+| compressed_size_bytes | [uint64](#uint64) |  | Compressed size in bytes from partMetadata. |
+| uncompressed_size_bytes | [uint64](#uint64) |  | Uncompressed size in bytes from partMetadata. |
+| total_count | [uint64](#uint64) |  | Total count from partMetadata. |
+| blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
+| min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
+| max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
 
 
 
@@ -412,14 +412,14 @@ Information about a part contained within a chunk
 <a name="banyandb-cluster-v1-PartResult"></a>
 
 ### PartResult
-Result for individual parts
+PartResult contains the result for individual parts.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  | Whether this part was processed successfully |
-| error | [string](#string) |  | Error message if processing failed |
-| bytes_processed | [uint32](#uint32) |  | Number of bytes processed for this part |
+| success | [bool](#bool) |  | Whether this part was processed successfully. |
+| error | [string](#string) |  | Error message if processing failed. |
+| bytes_processed | [uint32](#uint32) |  | Number of bytes processed for this part. |
 
 
 
@@ -465,14 +465,14 @@ Result for individual parts
 <a name="banyandb-cluster-v1-SyncCompletion"></a>
 
 ### SyncCompletion
-
+SyncCompletion contains completion information for the sync operation.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| total_bytes_sent | [uint64](#uint64) |  | Total bytes sent for validation |
-| total_parts_sent | [uint32](#uint32) |  | Total number of parts sent |
-| total_chunks | [uint32](#uint32) |  | Total number of chunks in this sync |
+| total_bytes_sent | [uint64](#uint64) |  | Total bytes sent for validation. |
+| total_parts_sent | [uint32](#uint32) |  | Total number of parts sent. |
+| total_chunks | [uint32](#uint32) |  | Total number of chunks in this sync. |
 
 
 
@@ -482,16 +482,16 @@ Result for individual parts
 <a name="banyandb-cluster-v1-SyncMetadata"></a>
 
 ### SyncMetadata
-
+SyncMetadata contains metadata for the sync operation.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  | Group name (stream/measure) |
-| shard_id | [uint32](#uint32) |  | Shard identifier |
-| topic | [string](#string) |  | Sync topic (stream-part-sync or measure-part-sync) |
-| timestamp | [int64](#int64) |  | Timestamp when sync started |
-| total_parts | [uint32](#uint32) |  | Total number of parts being synced |
+| group | [string](#string) |  | Group name (stream/measure). |
+| shard_id | [uint32](#uint32) |  | Shard identifier. |
+| topic | [string](#string) |  | Sync topic (stream-part-sync or measure-part-sync). |
+| timestamp | [int64](#int64) |  | Timestamp when sync started. |
+| total_parts | [uint32](#uint32) |  | Total number of parts being synced. |
 
 
 
@@ -501,18 +501,18 @@ Result for individual parts
 <a name="banyandb-cluster-v1-SyncPartRequest"></a>
 
 ### SyncPartRequest
-Chunked Sync Service Messages
+Chunked Sync Service Messages.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| session_id | [string](#string) |  | Unique session identifier for this sync operation |
-| chunk_index | [uint32](#uint32) |  | Current chunk index (0-based) |
-| chunk_data | [bytes](#bytes) |  | Actual chunk data |
-| chunk_checksum | [string](#string) |  | CRC32 checksum for this chunk |
-| parts_info | [PartInfo](#banyandb-cluster-v1-PartInfo) | repeated | Information about parts contained in this chunk |
-| metadata | [SyncMetadata](#banyandb-cluster-v1-SyncMetadata) |  | Sent with first chunk (chunk_index = 0) |
-| completion | [SyncCompletion](#banyandb-cluster-v1-SyncCompletion) |  | Sent with last chunk to finalize |
+| session_id | [string](#string) |  | Unique session identifier for this sync operation. |
+| chunk_index | [uint32](#uint32) |  | Current chunk index (0-based). |
+| chunk_data | [bytes](#bytes) |  | Actual chunk data. |
+| chunk_checksum | [string](#string) |  | CRC32 checksum for this chunk. |
+| parts_info | [PartInfo](#banyandb-cluster-v1-PartInfo) | repeated | Information about parts contained in this chunk. |
+| metadata | [SyncMetadata](#banyandb-cluster-v1-SyncMetadata) |  | Sent with first chunk (chunk_index = 0). |
+| completion | [SyncCompletion](#banyandb-cluster-v1-SyncCompletion) |  | Sent with last chunk to finalize. |
 
 
 
@@ -522,7 +522,7 @@ Chunked Sync Service Messages
 <a name="banyandb-cluster-v1-SyncPartResponse"></a>
 
 ### SyncPartResponse
-
+SyncPartResponse contains the response for a sync part request.
 
 
 | Field | Type | Label | Description |
@@ -531,7 +531,7 @@ Chunked Sync Service Messages
 | chunk_index | [uint32](#uint32) |  |  |
 | status | [SyncStatus](#banyandb-cluster-v1-SyncStatus) |  |  |
 | error | [string](#string) |  |  |
-| sync_result | [SyncResult](#banyandb-cluster-v1-SyncResult) |  | Final result when sync completes |
+| sync_result | [SyncResult](#banyandb-cluster-v1-SyncResult) |  | Final result when sync completes. |
 
 
 
@@ -541,17 +541,17 @@ Chunked Sync Service Messages
 <a name="banyandb-cluster-v1-SyncResult"></a>
 
 ### SyncResult
-
+SyncResult contains the result of a sync operation.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  | Whether entire sync was successful |
-| total_bytes_received | [uint64](#uint64) |  | Total bytes received |
-| duration_ms | [int64](#int64) |  | Time taken for sync in milliseconds |
-| chunks_received | [uint32](#uint32) |  | Number of chunks successfully received |
-| parts_received | [uint32](#uint32) |  | Number of parts successfully received |
-| parts_results | [PartResult](#banyandb-cluster-v1-PartResult) | repeated | Results for each part |
+| success | [bool](#bool) |  | Whether entire sync was successful. |
+| total_bytes_received | [uint64](#uint64) |  | Total bytes received. |
+| duration_ms | [int64](#int64) |  | Time taken for sync in milliseconds. |
+| chunks_received | [uint32](#uint32) |  | Number of chunks successfully received. |
+| parts_received | [uint32](#uint32) |  | Number of parts successfully received. |
+| parts_results | [PartResult](#banyandb-cluster-v1-PartResult) | repeated | Results for each part. |
 
 
 
@@ -563,16 +563,16 @@ Chunked Sync Service Messages
 <a name="banyandb-cluster-v1-SyncStatus"></a>
 
 ### SyncStatus
-
+SyncStatus represents the status of a sync operation.
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
-| SYNC_STATUS_UNSPECIFIED | 0 | Unspecified status |
-| SYNC_STATUS_CHUNK_RECEIVED | 1 | Chunk received and validated successfully |
-| SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH | 2 | Chunk checksum validation failed |
-| SYNC_STATUS_CHUNK_OUT_OF_ORDER | 3 | Chunk received out of expected order |
-| SYNC_STATUS_SESSION_NOT_FOUND | 4 | Session ID not recognized |
-| SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully |
+| SYNC_STATUS_UNSPECIFIED | 0 | Unspecified status. |
+| SYNC_STATUS_CHUNK_RECEIVED | 1 | Chunk received and validated successfully. |
+| SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH | 2 | Chunk checksum validation failed. |
+| SYNC_STATUS_CHUNK_OUT_OF_ORDER | 3 | Chunk received out of expected order. |
+| SYNC_STATUS_SESSION_NOT_FOUND | 4 | Session ID not recognized. |
+| SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully. |
 
 
  
@@ -583,11 +583,11 @@ Chunked Sync Service Messages
 <a name="banyandb-cluster-v1-ChunkedSyncService"></a>
 
 ### ChunkedSyncService
-New streaming sync service for chunked data transfer
+ChunkedSyncService provides streaming sync capabilities for chunked data transfer.
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
-| SyncPart | [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest) stream | [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse) stream | Synchronize part data using chunked transfer |
+| SyncPart | [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest) stream | [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse) stream | SyncPart synchronizes part data using chunked transfer. |
 
 
 <a name="banyandb-cluster-v1-Service"></a>
