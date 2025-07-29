@@ -989,9 +989,6 @@ func (r *repairScheduler) doBuildTree() (err error) {
 			r.metrics.totalRepairBuildTreeFailures.Inc(1)
 		}
 	}()
-	if !r.buildTreeLocker.TryLock() {
-		return nil
-	}
 	sLst := r.db.sLst.Load()
 	if sLst == nil {
 		return nil
