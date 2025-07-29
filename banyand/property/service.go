@@ -68,6 +68,7 @@ type service struct {
 	snapshotDir              string
 	repairDir                string
 	repairBuildTreeCron      string
+	repairTriggerCron        string
 	flushTimeout             time.Duration
 	expireTimeout            time.Duration
 	repairQuickBuildTreeTime time.Duration
@@ -87,6 +88,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.repairBuildTreeCron, "property-repair-build-tree-cron", "@every 1h", "the cron expression for repairing the build tree")
 	flagS.DurationVar(&s.repairQuickBuildTreeTime, "property-repair-quick-build-tree-time", time.Minute*10,
 		"the duration of the quick build tree after operate the property")
+	flagS.StringVar(&s.repairTriggerCron, "property-repair-trigger-cron", "* 2 * * *", "the cron expression for background repairing the property data")
 	s.gossipMessenger.FlagSet().VisitAll(func(f *pflag.Flag) {
 		flagS.AddFlag(f)
 	})
@@ -142,7 +144,8 @@ func (s *service) PreRun(ctx context.Context) error {
 	var err error
 	snapshotLis := &snapshotListener{s: s}
 	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs,
-		s.repairDir, s.repairBuildTreeCron, s.repairQuickBuildTreeTime, func(ctx context.Context) (string, error) {
+		s.repairDir, s.repairBuildTreeCron, s.repairQuickBuildTreeTime, s.repairTriggerCron, s.gossipMessenger, s.metadata,
+		func(ctx context.Context) (string, error) {
 			res := snapshotLis.Rev(ctx,
 				bus.NewMessage(bus.MessageID(time.Now().UnixNano()), []*databasev1.SnapshotRequest_Group{}))
 			snpMsg := res.Data().(*databasev1.Snapshot)
@@ -159,6 +162,8 @@ func (s *service) PreRun(ctx context.Context) error {
 		if err = s.gossipMessenger.PreRun(ctx); err != nil {
 			return err
 		}
+		s.gossipMessenger.RegisterServices(s.db.repairScheduler.registerServerToGossip())
+		s.db.repairScheduler.registerClientToGossip(s.gossipMessenger)
 	}
 	return multierr.Combine(
 		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),

@@ -32,7 +32,9 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -48,19 +50,20 @@ var (
 )
 
 type database struct {
-	lock                fs.File
+	metadata            metadata.Repo
 	omr                 observability.MetricsRegistry
+	lfs                 fs.FileSystem
+	lock                fs.File
 	logger              *logger.Logger
 	repairScheduler     *repairScheduler
-	lfs                 fs.FileSystem
 	sLst                atomic.Pointer[[]*shard]
 	location            string
 	repairBaseDir       string
 	flushInterval       time.Duration
 	expireDelete        time.Duration
 	repairTreeSlotCount int
-	closed              atomic.Bool
 	mu                  sync.RWMutex
+	closed              atomic.Bool
 }
 
 func openDB(
@@ -74,6 +77,9 @@ func openDB(
 	repairBaseDir string,
 	repairBuildTreeCron string,
 	repairQuickBuildTreeTime time.Duration,
+	repairTriggerCron string,
+	gossipMessenger gossip.Messenger,
+	metadata metadata.Repo,
 	buildSnapshotFunc func(context.Context) (string, error),
 ) (*database, error) {
 	loc := filepath.Clean(location)
@@ -89,9 +95,10 @@ func openDB(
 		repairTreeSlotCount: repairSlotCount,
 		repairBaseDir:       repairBaseDir,
 		lfs:                 lfs,
+		metadata:            metadata,
 	}
 	// init repair scheduler
-	scheduler, err := newRepairScheduler(l, omr, repairBuildTreeCron, repairQuickBuildTreeTime, db, buildSnapshotFunc)
+	scheduler, err := newRepairScheduler(l, omr, repairBuildTreeCron, repairQuickBuildTreeTime, repairTriggerCron, gossipMessenger, db, buildSnapshotFunc)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create repair scheduler for %s", loc)
 	}
@@ -241,7 +248,8 @@ func (db *database) repair(ctx context.Context, id []byte, shardID uint64, prope
 	if err != nil {
 		return errors.WithMessagef(err, "failed to load shard %d", id)
 	}
-	return s.repair(ctx, id, property, deleteTime)
+	_, _, err = s.repair(ctx, id, property, deleteTime)
+	return err
 }
 
 type walkFn func(suffix string) error
