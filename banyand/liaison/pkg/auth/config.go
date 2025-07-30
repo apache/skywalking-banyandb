@@ -52,7 +52,6 @@ func InitCfg() *Config {
 // LoadConfig implements the reading of the authentication configuration.
 func LoadConfig(cfg *Config, filePath string) error {
 	cfg.Enabled = true
-
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return err
