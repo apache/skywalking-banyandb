@@ -276,11 +276,126 @@ func (mv *MigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardID comm
 }
 
 // VisitElementIndex implements stream.Visitor.
-func (mv *MigrationVisitor) VisitElementIndex(_ *timestamp.TimeRange, _ common.ShardID, indexPath string) error {
-	// TODO: Implement element index migration if needed
-	mv.logger.Debug().
+func (mv *MigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRange, sourceShardID common.ShardID, indexPath string) error {
+	mv.logger.Info().
 		Str("path", indexPath).
-		Msg("skipping element index migration (not implemented)")
+		Uint32("shard_id", uint32(sourceShardID)).
+		Int64("min_timestamp", segmentTR.Start.UnixNano()).
+		Int64("max_timestamp", segmentTR.End.UnixNano()).
+		Str("stream", mv.streamName).
+		Str("group", mv.group).
+		Msg("migrating element index")
+
+	// Find all .seg files in the element index directory
+	lfs := fs.NewLocalFileSystem()
+	entries := lfs.ReadDir(indexPath)
+
+	var segmentFiles []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".seg") {
+			segmentFiles = append(segmentFiles, entry.Name())
+		}
+	}
+
+	if len(segmentFiles) == 0 {
+		mv.logger.Debug().
+			Str("path", indexPath).
+			Msg("no .seg files found in element index directory")
+		return nil
+	}
+
+	// Set the total number of element index segment files for progress tracking
+	mv.SetStreamElementIndexCount(len(segmentFiles))
+
+	// Calculate target shard ID (using a simple approach for element index)
+	targetShardID := mv.calculateTargetShardID(uint32(sourceShardID))
+	mv.logger.Info().
+		Int("segment_count", len(segmentFiles)).
+		Str("path", indexPath).
+		Uint32("source_shard", uint32(sourceShardID)).
+		Uint32("target_shard", targetShardID).
+		Msg("found element index segment files for migration")
+
+	// Process each segment file
+	for _, segmentFileName := range segmentFiles {
+		// Extract segment ID from filename (remove .seg extension)
+		segmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+
+		// Parse hex segment ID
+		segmentID, err := strconv.ParseUint(segmentIDStr, 16, 64)
+		if err != nil {
+			mv.logger.Error().
+				Str("filename", segmentFileName).
+				Str("id_str", segmentIDStr).
+				Err(err).
+				Msg("failed to parse segment ID from filename")
+			continue
+		}
+
+		// Check if this segment has already been completed
+		if mv.progress.IsStreamElementIndexCompleted(mv.group, mv.streamName, segmentID) {
+			mv.logger.Debug().
+				Uint64("segment_id", segmentID).
+				Str("filename", segmentFileName).
+				Str("stream", mv.streamName).
+				Str("group", mv.group).
+				Msg("element index segment already completed, skipping")
+			continue
+		}
+
+		mv.logger.Info().
+			Uint64("segment_id", segmentID).
+			Str("filename", segmentFileName).
+			Str("stream", mv.streamName).
+			Str("group", mv.group).
+			Msg("migrating element index segment file")
+
+		// Create file reader for the segment file
+		segmentFilePath := filepath.Join(indexPath, segmentFileName)
+		segmentFile, err := lfs.OpenFile(segmentFilePath)
+		if err != nil {
+			errorMsg := fmt.Sprintf("failed to open element index segment file %s: %v", segmentFilePath, err)
+			mv.progress.MarkStreamElementIndexError(mv.group, mv.streamName, segmentID, errorMsg)
+			mv.logger.Error().
+				Str("path", segmentFilePath).
+				Err(err).
+				Msg("failed to open element index segment file")
+			return fmt.Errorf("failed to open element index segment file %s: %w", segmentFilePath, err)
+		}
+
+		// Create FileInfo for this segment file
+		files := []queue.FileInfo{
+			{
+				Name:   segmentFileName,
+				Reader: segmentFile.SequentialRead(),
+			},
+		}
+
+		// Stream segment file to target shard replicas
+		if err := mv.streamElementIndexToTargetShard(targetShardID, files, segmentTR, segmentID, segmentFileName); err != nil {
+			errorMsg := fmt.Sprintf("failed to stream element index to target shard: %v", err)
+			mv.progress.MarkStreamElementIndexError(mv.group, mv.streamName, segmentID, errorMsg)
+			// Close the file reader
+			segmentFile.Close()
+			return fmt.Errorf("failed to stream element index to target shard: %w", err)
+		}
+
+		// Close the file reader
+		segmentFile.Close()
+
+		// Mark segment as completed
+		mv.progress.MarkStreamElementIndexCompleted(mv.group, mv.streamName, segmentID)
+
+		mv.logger.Info().
+			Uint64("segment_id", segmentID).
+			Str("filename", segmentFileName).
+			Str("stream", mv.streamName).
+			Str("group", mv.group).
+			Int("completed_segments", mv.progress.GetStreamElementIndexProgress(mv.group, mv.streamName)).
+			Int("total_segments", mv.progress.GetStreamElementIndexCount(mv.group, mv.streamName)).
+			Msg("element index segment migration completed successfully")
+	}
+
 	return nil
 }
 
@@ -632,4 +747,116 @@ func (mv *MigrationVisitor) SetStreamSeriesCount(totalSegments int) {
 			Int("total_segments", totalSegments).
 			Msg("set stream series count for progress tracking")
 	}
+}
+
+// SetStreamElementIndexCount sets the total number of element index segment files for the current stream.
+func (mv *MigrationVisitor) SetStreamElementIndexCount(totalSegmentFiles int) {
+	if mv.progress != nil {
+		mv.progress.SetStreamElementIndexCount(mv.group, mv.streamName, totalSegmentFiles)
+		mv.logger.Info().
+			Str("stream", mv.streamName).
+			Str("group", mv.group).
+			Int("total_segment_files", totalSegmentFiles).
+			Msg("set stream element index segment count for progress tracking")
+	}
+}
+
+// streamElementIndexToTargetShard sends element index data to all replicas of the target shard.
+func (mv *MigrationVisitor) streamElementIndexToTargetShard(
+	targetShardID uint32,
+	files []queue.FileInfo,
+	segmentTR *timestamp.TimeRange,
+	segmentID uint64,
+	segmentFileName string,
+) error {
+	copies := mv.replicas + 1
+
+	// Send to all replicas using the exact pattern from steps.go:219-236
+	for replicaID := uint32(0); replicaID < copies; replicaID++ {
+		// Use selector.Pick exactly like steps.go:220
+		nodeID, err := mv.selector.Pick(mv.group, "", targetShardID, replicaID)
+		if err != nil {
+			return fmt.Errorf("failed to pick node for shard %d replica %d: %w", targetShardID, replicaID, err)
+		}
+
+		// Stream element index data to target node using chunked sync
+		if err := mv.streamElementIndexToNode(nodeID, targetShardID, files, segmentTR, segmentID, segmentFileName); err != nil {
+			return fmt.Errorf("failed to stream element index to node %s: %w", nodeID, err)
+		}
+	}
+
+	return nil
+}
+
+// streamElementIndexToNode streams element index data to a specific target node.
+func (mv *MigrationVisitor) streamElementIndexToNode(
+	nodeID string,
+	targetShardID uint32,
+	files []queue.FileInfo,
+	segmentTR *timestamp.TimeRange,
+	segmentID uint64,
+	segmentFileName string,
+) error {
+	// Get or create chunked client for this node (cache hit optimization)
+	chunkedClient, exists := mv.chunkedClients[nodeID]
+	if !exists {
+		var err error
+		// Create new chunked sync client via queue.Client
+		chunkedClient, err = mv.client.NewChunkedSyncClient(nodeID, uint32(mv.chunkSize))
+		if err != nil {
+			return fmt.Errorf("failed to create chunked sync client for node %s: %w", nodeID, err)
+		}
+		mv.chunkedClients[nodeID] = chunkedClient // Cache for reuse
+	}
+
+	// Create streaming part data from the element index files
+	streamingParts := mv.createStreamingElementIndexFromFiles(targetShardID, files, segmentTR, segmentID)
+
+	// Stream using chunked transfer
+	ctx := context.Background()
+	result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
+	if err != nil {
+		return fmt.Errorf("failed to sync streaming element index to node %s: %w", nodeID, err)
+	}
+
+	if !result.Success {
+		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
+	}
+
+	// Log success metrics
+	mv.logger.Info().
+		Str("node", nodeID).
+		Str("session", result.SessionID).
+		Uint64("bytes", result.TotalBytes).
+		Int64("duration_ms", result.DurationMs).
+		Uint32("chunks", result.ChunksCount).
+		Uint32("parts", result.PartsCount).
+		Uint32("target_shard", targetShardID).
+		Uint64("segment_id", segmentID).
+		Str("segment_filename", segmentFileName).
+		Str("stream", mv.streamName).
+		Str("group", mv.group).
+		Msg("file-based migration element index segment completed successfully")
+
+	return nil
+}
+
+// createStreamingElementIndexFromFiles creates StreamingPartData from element index files.
+func (mv *MigrationVisitor) createStreamingElementIndexFromFiles(
+	targetShardID uint32,
+	files []queue.FileInfo,
+	segmentTR *timestamp.TimeRange,
+	segmentID uint64,
+) []queue.StreamingPartData {
+	elementIndexData := queue.StreamingPartData{
+		ID:           segmentID,
+		Group:        mv.group,
+		ShardID:      targetShardID,
+		Topic:        data.TopicStreamLocalIndexWrite.String(), // Use local index write topic for element indices
+		Files:        files,
+		MinTimestamp: segmentTR.Start.UnixNano(),
+		MaxTimestamp: segmentTR.End.UnixNano(),
+	}
+
+	return []queue.StreamingPartData{elementIndexData}
 }
