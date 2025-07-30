@@ -158,7 +158,6 @@ func newStreamCmd() *cobra.Command {
 	bindTimeRangeFlag(queryCmd)
 
 	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
-	bindUsernameAndPasswordFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	streamCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	return streamCmd
 }

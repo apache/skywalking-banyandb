@@ -134,7 +134,6 @@ func newGroupCmd() *cobra.Command {
 	}
 
 	bindTLSRelatedFlag(createCmd, updateCmd, listCmd, getCmd, deleteCmd)
-	bindUsernameAndPasswordFlag(createCmd, updateCmd, listCmd, getCmd, deleteCmd)
 	groupCmd.AddCommand(createCmd, updateCmd, listCmd, getCmd, deleteCmd)
 	return groupCmd
 }

@@ -27,7 +27,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
-	"github.com/apache/skywalking-banyandb/bydbctl/pkg/auth"
+	"github.com/apache/skywalking-banyandb/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 

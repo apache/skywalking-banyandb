@@ -18,13 +18,14 @@
 package integration_other_test
 
 import (
+	"embed"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"time"
 
+	"github.com/google/uuid"
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
@@ -33,7 +34,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	serverAuth "github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-	"github.com/apache/skywalking-banyandb/bydbctl/pkg/auth"
+	"github.com/apache/skywalking-banyandb/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -42,6 +43,9 @@ import (
 	casesMeasureData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 
+//go:embed testdata/config.yaml
+var serverConfigFS embed.FS
+
 var _ = g.Describe("Query service_cpm_minute with authentication", func() {
 	var deferFn func()
 	var baseTime time.Time
@@ -49,16 +53,19 @@ var _ = g.Describe("Query service_cpm_minute with authentication", func() {
 	var conn *grpclib.ClientConn
 	var goods []gleak.Goroutine
 	var grpcAddr, httpAddr string
-	var authCfgFile string
 	var testUser serverAuth.User
 
 	g.BeforeEach(func() {
-		_, currentFile, _, _ := runtime.Caller(0)
-		basePath := filepath.Dir(currentFile)
-		authCfgFile = filepath.Join(basePath, "testdata/config.yaml")
-		// load config.yaml
-		cfgBytes, err := os.ReadFile(authCfgFile)
+		// load server config.yaml
+		cfgBytes, err := serverConfigFS.ReadFile("testdata/config.yaml")
 		gm.Expect(err).NotTo(gm.HaveOccurred())
+		tempServerCfg := filepath.Join(os.TempDir(), fmt.Sprintf(".bydb-%s.yaml", uuid.New().String()))
+		err = os.WriteFile(tempServerCfg, cfgBytes, 0o600)
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		authCfgFile := tempServerCfg
+		info, _ := os.Stat(authCfgFile)
+		gm.Expect(info.Mode().Perm()).To(gm.Equal(os.FileMode(0o600)))
+
 		var cfg serverAuth.Config
 		err = yaml.Unmarshal(cfgBytes, &cfg)
 		gm.Expect(err).NotTo(gm.HaveOccurred())

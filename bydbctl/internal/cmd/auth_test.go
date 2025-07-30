@@ -18,10 +18,10 @@
 package cmd_test
 
 import (
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/google/uuid"
@@ -38,22 +38,26 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
+//go:embed testdata/*.yaml
+var configFS embed.FS
+
 var _ = g.Describe("bydbctl test with authentication", func() {
 	var deferFn func()
 	var httpAddr string
-	var authCfgFile string
-	var baseDir string
-	var bydbctlCfgFile string
 	var rootCmd *cobra.Command
 	var testUser serverAuth.User
 
 	g.BeforeEach(func() {
-		_, currentFile, _, _ := runtime.Caller(0)
-		baseDir = filepath.Dir(currentFile)
-		authCfgFile = filepath.Join(baseDir, "../../../test/integration/standalone/other/testdata/config.yaml")
 		// load server config.yaml
-		cfgBytes, err := os.ReadFile(authCfgFile)
+		cfgBytes, err := configFS.ReadFile("testdata/config.yaml")
 		gm.Expect(err).NotTo(gm.HaveOccurred())
+		tempServerCfg := filepath.Join(os.TempDir(), fmt.Sprintf(".bydb-%s.yaml", uuid.New().String()))
+		err = os.WriteFile(tempServerCfg, cfgBytes, 0o600)
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		authCfgFile := tempServerCfg
+		info, _ := os.Stat(authCfgFile)
+		gm.Expect(info.Mode().Perm()).To(gm.Equal(os.FileMode(0o600)))
+
 		var cfg serverAuth.Config
 		err = yaml.Unmarshal(cfgBytes, &cfg)
 		gm.Expect(err).NotTo(gm.HaveOccurred())
@@ -93,14 +97,12 @@ var _ = g.Describe("bydbctl test with authentication", func() {
 	})
 
 	g.It("create and get a group and health check with correct username and password in bydbctlCfgFile", func() {
-		bydbctlCfgFile = filepath.Join(baseDir, "../../../test/integration/standalone/other/testdata/.bydbctl.yaml")
-		// Copy .bydbctl.yaml to /tmp directory to avoid permission modification failure under WSL
+		clientCfgBytes, err := configFS.ReadFile("testdata/.bydbctl.yaml")
+		gm.Expect(err).NotTo(gm.HaveOccurred())
 		tempBydbctl := filepath.Join(os.TempDir(), fmt.Sprintf(".bydbctl-%s.yaml", uuid.New().String()))
-		input, err := os.ReadFile(bydbctlCfgFile)
+		err = os.WriteFile(tempBydbctl, clientCfgBytes, 0o600)
 		gm.Expect(err).NotTo(gm.HaveOccurred())
-		err = os.WriteFile(tempBydbctl, input, 0o600)
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-		bydbctlCfgFile = tempBydbctl
+		bydbctlCfgFile := tempBydbctl
 		info, _ := os.Stat(bydbctlCfgFile)
 		gm.Expect(info.Mode().Perm()).To(gm.Equal(os.FileMode(0o600)))
 
@@ -138,14 +140,12 @@ resource_opts:
 	})
 
 	g.It("list groups and health check with wrong username and password in bydbctlCfgFile", func() {
-		bydbctlCfgFile = filepath.Join(baseDir, "../../../test/integration/standalone/other/testdata/.bydbctl1.yaml")
-		// Copy .bydbctl.yaml to /tmp directory to avoid permission modification failure under WSL
+		clientCfgBytes, err := configFS.ReadFile("testdata/.bydbctl1.yaml")
+		gm.Expect(err).NotTo(gm.HaveOccurred())
 		tempBydbctl := filepath.Join(os.TempDir(), fmt.Sprintf(".bydbctl-%s.yaml", uuid.New().String()))
-		input, err := os.ReadFile(bydbctlCfgFile)
+		err = os.WriteFile(tempBydbctl, clientCfgBytes, 0o600)
 		gm.Expect(err).NotTo(gm.HaveOccurred())
-		err = os.WriteFile(tempBydbctl, input, 0o600)
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-		bydbctlCfgFile = tempBydbctl
+		bydbctlCfgFile := tempBydbctl
 		info, _ := os.Stat(bydbctlCfgFile)
 		gm.Expect(info.Mode().Perm()).To(gm.Equal(os.FileMode(0o600)))
 

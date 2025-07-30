@@ -60,7 +60,6 @@ func newHealthCheckCmd() *cobra.Command {
 	}
 	healthCheckCmd.Flags().StringVarP(&grpcAddr, "grpc-addr", "", "", "Grpc server's address, the format is Domain:Port")
 	bindTLSRelatedFlag(healthCheckCmd)
-	bindUsernameAndPasswordFlag(healthCheckCmd)
 	return healthCheckCmd
 }
 

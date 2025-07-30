@@ -77,18 +77,15 @@ func validateUser(ctx context.Context, cfg *auth.Config) error {
 	usernames := md.Get("username")
 	passwords := md.Get("password")
 
-	if len(usernames) == 0 {
-		return status.Errorf(codes.Unauthenticated, "username is missing")
-	}
-	if len(passwords) == 0 {
-		return status.Errorf(codes.Unauthenticated, "password is missing")
+	if len(usernames) == 0 || len(passwords) == 0 {
+		return status.Errorf(codes.Unauthenticated, "Invalid credentials")
 	}
 
 	username := usernames[0]
 	password := passwords[0]
 
 	if !auth.CheckUsernameAndPassword(cfg, username, password) {
-		return status.Errorf(codes.Unauthenticated, "invalid username or password")
+		return status.Errorf(codes.Unauthenticated, "Invalid credentials")
 	}
 
 	return nil

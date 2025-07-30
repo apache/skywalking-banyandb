@@ -158,7 +158,6 @@ func newTopnCmd() *cobra.Command {
 	bindTimeRangeFlag(queryCmd)
 
 	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
-	bindUsernameAndPasswordFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	topnCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	return topnCmd
 }

@@ -37,8 +37,8 @@ import (
 	"google.golang.org/grpc/status"
 	"sigs.k8s.io/yaml"
 
-	"github.com/apache/skywalking-banyandb/bydbctl/pkg/auth"
 	"github.com/apache/skywalking-banyandb/bydbctl/pkg/file"
+	"github.com/apache/skywalking-banyandb/pkg/auth"
 )
 
 const (

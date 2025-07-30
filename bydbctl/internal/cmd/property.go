@@ -218,8 +218,6 @@ func newPropertyCmd() *cobra.Command {
 	// Bind flags and add commands
 	bindTLSRelatedFlag(createSchemaCmd, updateSchemaCmd, getSchemaCmd, deleteSchemaCmd, listSchemaCmd)
 	bindTLSRelatedFlag(applyDataCmd, deleteDataCmd, queryDataCmd)
-	bindUsernameAndPasswordFlag(createSchemaCmd, updateSchemaCmd, getSchemaCmd, deleteSchemaCmd, listSchemaCmd)
-	bindUsernameAndPasswordFlag(applyDataCmd, deleteDataCmd, queryDataCmd)
 
 	// Add schema commands to schema subcommand
 	schemaCmd.AddCommand(createSchemaCmd, updateSchemaCmd, getSchemaCmd, deleteSchemaCmd, listSchemaCmd)
