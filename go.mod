@@ -200,7 +200,7 @@ require (
 
 replace (
 	github.com/benbjohnson/clock v1.3.0 => github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97
-	github.com/blugelabs/bluge => github.com/SkyAPM/bluge v0.0.0-20250619030236-3750bbbf63b9
+	github.com/blugelabs/bluge => github.com/SkyAPM/bluge v0.0.0-20250729101336-af60771881c0
 	github.com/blugelabs/bluge_segment_api => github.com/zinclabs/bluge_segment_api v1.0.0
 	github.com/blugelabs/ice => github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3
 )
