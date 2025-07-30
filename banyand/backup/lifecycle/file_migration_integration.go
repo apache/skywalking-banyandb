@@ -28,56 +28,37 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// MigrateStreamWithFileBased performs file-based stream migration using the visitor pattern.
-func MigrateStreamWithFileBased(
+// migrateStreamWithFileBasedAndProgress performs file-based stream migration with progress tracking.
+func migrateStreamWithFileBasedAndProgress(
 	tsdbRootPath string,
 	timeRange timestamp.TimeRange,
 	group *commonv1.Group,
 	nodeLabels map[string]string,
 	nodes []*databasev1.Node,
 	metadata metadata.Repo,
-	intervalRule storage.IntervalRule,
 	logger *logger.Logger,
+	progress *Progress,
 	chunkSize int,
 ) error {
-	// Create file-based migration visitor
-	visitor, err := NewMigrationVisitor(group, nodeLabels, nodes, metadata, logger, nil, "", chunkSize)
+	// Use parseGroup function to get sharding parameters and TTL
+	shardNum, replicas, ttl, selector, client, err := parseGroup(group, nodeLabels, nodes, logger, metadata)
 	if err != nil {
 		return err
 	}
-	defer visitor.Close()
 
-	// Use the existing VisitStreamsInTimeRange function with our file-based visitor
-	return stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, visitor, intervalRule)
-}
+	// Convert TTL to IntervalRule using storage.MustToIntervalRule
+	intervalRule := storage.MustToIntervalRule(ttl)
 
-// MigrateStreamWithFileBasedAndProgress performs file-based stream migration with progress tracking.
-func MigrateStreamWithFileBasedAndProgress(
-	tsdbRootPath string,
-	timeRange timestamp.TimeRange,
-	group *commonv1.Group,
-	nodeLabels map[string]string,
-	nodes []*databasev1.Node,
-	metadata metadata.Repo,
-	intervalRule storage.IntervalRule,
-	logger *logger.Logger,
-	progress *Progress,
-	streamName string,
-	chunkSize int,
-) error {
-	// Count total parts for this stream before starting migration
-	totalParts, err := countStreamParts(tsdbRootPath, timeRange, streamName, intervalRule)
+	// Count total parts before starting migration
+	totalParts, err := countStreamParts(tsdbRootPath, timeRange, intervalRule)
 	if err != nil {
-		logger.Warn().Err(err).Str("stream", streamName).Msg("failed to count stream parts, proceeding without part count")
+		logger.Warn().Err(err).Msg("failed to count stream parts, proceeding without part count")
 	} else {
-		logger.Info().Str("stream", streamName).Int("total_parts", totalParts).Msg("counted stream parts for progress tracking")
+		logger.Info().Int("total_parts", totalParts).Msg("counted stream parts for progress tracking")
 	}
 
 	// Create file-based migration visitor with progress tracking
-	visitor, err := NewMigrationVisitor(group, nodeLabels, nodes, metadata, logger, progress, streamName, chunkSize)
-	if err != nil {
-		return err
-	}
+	visitor := newStreamMigrationVisitor(group, shardNum, replicas, selector, client, logger, progress, chunkSize)
 	defer visitor.Close()
 
 	// Set the total part count for progress tracking
@@ -89,10 +70,10 @@ func MigrateStreamWithFileBasedAndProgress(
 	return stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, visitor, intervalRule)
 }
 
-// countStreamParts counts the total number of parts for a specific stream in the given time range.
-func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, streamName string, intervalRule storage.IntervalRule) (int, error) {
+// countStreamParts counts the total number of parts in the given time range.
+func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, intervalRule storage.IntervalRule) (int, error) {
 	// Create a simple visitor to count parts
-	partCounter := &partCountVisitor{streamName: streamName}
+	partCounter := &partCountVisitor{}
 
 	// Use the existing VisitStreamsInTimeRange function to count parts
 	err := stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, partCounter, intervalRule)
@@ -103,10 +84,9 @@ func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, stream
 	return partCounter.partCount, nil
 }
 
-// partCountVisitor is a simple visitor that counts parts for a specific stream.
+// partCountVisitor is a simple visitor that counts parts.
 type partCountVisitor struct {
-	streamName string
-	partCount  int
+	partCount int
 }
 
 // VisitSeries implements stream.Visitor.

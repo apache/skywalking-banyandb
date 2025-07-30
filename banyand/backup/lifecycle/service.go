@@ -191,10 +191,7 @@ func (l *lifecycleService) action() error {
 		Str("measure_snapshot", measureDir).
 		Msg("created snapshots")
 	progress.Save(l.progressFilePath, l.l)
-	streamSVC, measureSVC, err := l.setupQuerySvc(ctx, streamDir, measureDir)
-	if streamSVC != nil {
-		defer streamSVC.GracefulStop()
-	}
+	measureSVC, err := l.setupQuerySvc(ctx, measureDir)
 	if measureSVC != nil {
 		defer measureSVC.GracefulStop()
 	}
@@ -360,16 +357,13 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
 	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	// Calculate removal segments time range based on group TTL configuration
 	tr := l.getRemovalSegmentsTimeRange(g)
 	if tr.Start.IsZero() && tr.End.IsZero() {
 		l.l.Info().Msgf("no removal segments time range for group %s, skipping stream migration", g.Metadata.Name)
 		progress.MarkGroupCompleted(g.Metadata.Name)
-		progress.Save(l.progressFilePath, l.l)
 		return
 	}
 
-	// Use file-based migration instead of element-based
 	err := l.processStreamGroupFileBased(ctx, g, streamDir, tr, nodes, labels, progress)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to migrate stream group %s using file-based approach", g.Metadata.Name)
@@ -379,7 +373,6 @@ func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.G
 	l.l.Info().Msgf("deleting expired stream segments for group: %s", g.Metadata.Name)
 	l.deleteExpiredStreamSegments(ctx, g, tr, progress)
 	progress.MarkGroupCompleted(g.Metadata.Name)
-	progress.Save(l.progressFilePath, l.l)
 }
 
 // processStreamGroupFileBased uses file-based migration instead of element-based queries.
@@ -394,15 +387,15 @@ func (l *lifecycleService) processStreamGroupFileBased(_ context.Context, g *com
 	l.l.Info().Msgf("starting file-based stream migration for group: %s", g.Metadata.Name)
 
 	// Use the file-based migration with existing visitor pattern
-	err := MigrateStreamWithFileBased(
-		streamDir,  // Use snapshot directory as source
-		*tr,        // Time range for segments to migrate
-		g,          // Group configuration
-		labels,     // Node labels
-		nodes,      // Target nodes
-		l.metadata, // Metadata repository
-		storage.IntervalRule{Unit: storage.DAY, Num: 1}, // Use daily segments as default
+	err := migrateStreamWithFileBasedAndProgress(
+		streamDir,        // Use snapshot directory as source
+		*tr,              // Time range for segments to migrate
+		g,                // Group configuration
+		labels,           // Node labels
+		nodes,            // Target nodes
+		l.metadata,       // Metadata repository
 		l.l,              // Logger
+		progress,         // Progress tracking
 		int(l.chunkSize), // Chunk size for streaming
 	)
 	if err != nil {
@@ -487,7 +480,7 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureSVC measure.Service,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, replicas, selector, client, err := parseGroup(g, labels, nodes, l.l, l.metadata)
+	shardNum, replicas, _, selector, client, err := parseGroup(g, labels, nodes, l.l, l.metadata)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return

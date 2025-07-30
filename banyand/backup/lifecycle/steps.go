@@ -40,7 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -85,57 +84,45 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 	return streamDir, measureDir, nil
 }
 
-func (l *lifecycleService) setupQuerySvc(ctx context.Context, streamDir, measureDir string) (streamSVC stream.Service, measureSVC measure.Service, err error) {
+func (l *lifecycleService) setupQuerySvc(ctx context.Context, measureDir string) (measureSVC measure.Service, err error) {
 	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{})
-	if streamDir != "" {
-		streamSVC, err = stream.NewReadonlyService(l.metadata, l.omr, l.pm)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err = streamSVC.FlagSet().Parse([]string{"--stream-data-path", streamDir}); err != nil {
-			return nil, nil, err
-		}
-		if err = streamSVC.PreRun(ctx); err != nil {
-			return nil, nil, err
-		}
-	}
 	if measureDir != "" {
 		measureSVC, err = measure.NewReadonlyDataSVC(l.metadata, l.omr, l.pm)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if err = measureSVC.FlagSet().Parse([]string{"--measure-data-path", measureDir}); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if err = measureSVC.PreRun(ctx); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	return streamSVC, measureSVC, nil
+	return measureSVC, nil
 }
 
 func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo,
-) (uint32, uint32, node.Selector, queue.Client, error) {
+) (uint32, uint32, *commonv1.IntervalRule, node.Selector, queue.Client, error) {
 	ro := g.ResourceOpts
 	if ro == nil {
-		return 0, 0, nil, nil, fmt.Errorf("no resource opts in group %s", g.Metadata.Name)
+		return 0, 0, nil, nil, nil, fmt.Errorf("no resource opts in group %s", g.Metadata.Name)
 	}
 	if len(ro.Stages) == 0 {
-		return 0, 0, nil, nil, fmt.Errorf("no stages in group %s", g.Metadata.Name)
+		return 0, 0, nil, nil, nil, fmt.Errorf("no stages in group %s", g.Metadata.Name)
 	}
 	var nst *commonv1.LifecycleStage
 	for i, st := range ro.Stages {
 		selector, err := pub.ParseLabelSelector(st.NodeSelector)
 		if err != nil {
-			return 0, 0, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
+			return 0, 0, nil, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
 		}
 		if !selector.Matches(nodeLabels) {
 			continue
 		}
 		if i+1 >= len(ro.Stages) {
 			l.Info().Msgf("no next stage for group %s at stage %s", g.Metadata.Name, st.Name)
-			return 0, 0, nil, nil, nil
+			return 0, 0, nil, nil, nil, nil
 		}
 		nst = ro.Stages[i+1]
 		l.Info().Msgf("migrating group %s at stage %s to stage %s", g.Metadata.Name, st.Name, nst.Name)
@@ -146,11 +133,11 @@ func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databa
 	}
 	nsl, err := pub.ParseLabelSelector(nst.NodeSelector)
 	if err != nil {
-		return 0, 0, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
+		return 0, 0, nil, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
 	}
 	nodeSel := node.NewRoundRobinSelector("", metadata)
 	if ok, _ := nodeSel.OnInit([]schema.Kind{schema.KindGroup}); !ok {
-		return 0, 0, nil, nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
+		return 0, 0, nil, nil, nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
 	}
 	client := pub.NewWithoutMetadata()
 	if g.Catalog == commonv1.Catalog_CATALOG_STREAM {
@@ -175,9 +162,9 @@ func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databa
 		}
 	}
 	if !existed {
-		return 0, 0, nil, nil, errors.New("no nodes matched")
+		return 0, 0, nil, nil, nil, errors.New("no nodes matched")
 	}
-	return nst.ShardNum, nst.Replicas, nodeSel, client, nil
+	return nst.ShardNum, nst.Replicas, nst.Ttl, nodeSel, client, nil
 }
 
 func migrateStream(ctx context.Context, s *databasev1.Stream, result model.StreamQueryResult,

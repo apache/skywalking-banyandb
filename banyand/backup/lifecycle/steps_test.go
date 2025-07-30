@@ -598,7 +598,7 @@ func TestParseGroup(t *testing.T) {
 			mockRepo.EXPECT().RegisterHandler("", schema.KindGroup, gomock.Any()).MaxTimes(1)
 
 			mockRepo.EXPECT().GroupRegistry().Return(mockGroup).AnyTimes()
-			shardNum, replicas, selector, client, err := parseGroup(tt.group, tt.nodeLabels, tt.nodes, l, mockRepo)
+			shardNum, replicas, _, selector, client, err := parseGroup(tt.group, tt.nodeLabels, tt.nodes, l, mockRepo)
 
 			if tt.expectError {
 				require.Error(t, err)

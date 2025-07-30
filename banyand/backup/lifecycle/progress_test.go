@@ -37,7 +37,7 @@ func TestProgress(t *testing.T) {
 	l := logger.GetLogger("test")
 
 	t.Run("NewProgress", func(t *testing.T) {
-		progress := NewProgress()
+		progress := NewProgress(progressPath, l)
 		assert.NotNil(t, progress)
 		assert.Empty(t, progress.CompletedGroups)
 		assert.Empty(t, progress.CompletedMeasures)
@@ -46,7 +46,7 @@ func TestProgress(t *testing.T) {
 	})
 
 	t.Run("MarkAndCheckItems", func(t *testing.T) {
-		progress := NewProgress()
+		progress := NewProgress(progressPath, l)
 
 		progress.MarkGroupCompleted("group1")
 		assert.True(t, progress.IsGroupCompleted("group1"))
@@ -67,7 +67,7 @@ func TestProgress(t *testing.T) {
 	})
 
 	t.Run("SaveAndLoad", func(t *testing.T) {
-		progress := NewProgress()
+		progress := NewProgress(progressPath, l)
 		progress.MarkGroupCompleted("group1")
 		progress.MarkMeasureCompleted("group1", "measure1", 1)
 		progress.MarkStreamGroupDeleted("group2")
@@ -96,7 +96,7 @@ func TestProgress(t *testing.T) {
 	})
 
 	t.Run("RemoveProgressFile", func(t *testing.T) {
-		progress := NewProgress()
+		progress := NewProgress(progressPath, l)
 		progress.MarkGroupCompleted("group1")
 		progress.Save(progressPath, l)
 
@@ -110,36 +110,36 @@ func TestProgress(t *testing.T) {
 	})
 
 	t.Run("StreamSeriesProgress", func(t *testing.T) {
-		progress := NewProgress()
+		progress := NewProgress(progressPath, l)
 
 		// Test series progress tracking
-		progress.SetStreamSeriesCount("group1", "stream1", 5)
-		assert.Equal(t, 5, progress.GetStreamSeriesCount("group1", "stream1"))
-		assert.Equal(t, 0, progress.GetStreamSeriesProgress("group1", "stream1"))
+		progress.SetStreamSeriesCount("group1", 5)
+		assert.Equal(t, 5, progress.GetStreamSeriesCount("group1"))
+		assert.Equal(t, 0, progress.GetStreamSeriesProgress("group1"))
 
 		// Mark some series segments as completed
-		progress.MarkStreamSeriesCompleted("group1", "stream1", 1)
-		progress.MarkStreamSeriesCompleted("group1", "stream1", 2)
-		assert.Equal(t, 2, progress.GetStreamSeriesProgress("group1", "stream1"))
-		assert.True(t, progress.IsStreamSeriesCompleted("group1", "stream1", 1))
-		assert.True(t, progress.IsStreamSeriesCompleted("group1", "stream1", 2))
-		assert.False(t, progress.IsStreamSeriesCompleted("group1", "stream1", 3))
+		progress.MarkStreamSeriesCompleted("group1", 1)
+		progress.MarkStreamSeriesCompleted("group1", 2)
+		assert.Equal(t, 2, progress.GetStreamSeriesProgress("group1"))
+		assert.True(t, progress.IsStreamSeriesCompleted("group1", 1))
+		assert.True(t, progress.IsStreamSeriesCompleted("group1", 2))
+		assert.False(t, progress.IsStreamSeriesCompleted("group1", 3))
 
 		// Test error tracking
-		progress.MarkStreamSeriesError("group1", "stream1", 3, "test error")
-		errors := progress.GetStreamSeriesErrors("group1", "stream1")
+		progress.MarkStreamSeriesError("group1", 3, "test error")
+		errors := progress.GetStreamSeriesErrors("group1")
 		assert.Equal(t, "test error", errors[3])
 
 		// Test completion check
-		assert.False(t, progress.IsStreamSeriesFullyCompleted("group1", "stream1"))
-		progress.MarkStreamSeriesCompleted("group1", "stream1", 3)
-		progress.MarkStreamSeriesCompleted("group1", "stream1", 4)
-		progress.MarkStreamSeriesCompleted("group1", "stream1", 5)
-		assert.True(t, progress.IsStreamSeriesFullyCompleted("group1", "stream1"))
+		assert.False(t, progress.IsStreamSeriesFullyCompleted("group1"))
+		progress.MarkStreamSeriesCompleted("group1", 3)
+		progress.MarkStreamSeriesCompleted("group1", 4)
+		progress.MarkStreamSeriesCompleted("group1", 5)
+		assert.True(t, progress.IsStreamSeriesFullyCompleted("group1"))
 
 		// Test error clearing
-		progress.ClearStreamSeriesErrors("group1", "stream1")
-		errors = progress.GetStreamSeriesErrors("group1", "stream1")
+		progress.ClearStreamSeriesErrors("group1")
+		errors = progress.GetStreamSeriesErrors("group1")
 		assert.Nil(t, errors)
 	})
 }

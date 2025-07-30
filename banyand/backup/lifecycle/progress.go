@@ -22,36 +22,36 @@ import (
 	"os"
 	"sync"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // Progress tracks the lifecycle migration progress to support resume after crash.
 type Progress struct {
-	CompletedGroups      map[string]bool              `json:"completed_groups"`
-	CompletedMeasures    map[string]map[string]bool   `json:"completed_measures"`
-	DeletedStreamGroups  map[string]bool              `json:"deleted_stream_groups"`
-	DeletedMeasureGroups map[string]bool              `json:"deleted_measure_groups"`
-	MeasureErrors        map[string]map[string]string `json:"measure_errors"`
-	MeasureCounts        map[string]map[string]int    `json:"measure_counts"`
-	// Part-level tracking for stream migration
-	CompletedStreamParts map[string]map[string]map[uint64]bool   `json:"completed_stream_parts"` // group -> stream -> partID -> completed
-	StreamPartErrors     map[string]map[string]map[uint64]string `json:"stream_part_errors"`     // group -> stream -> partID -> error
-	StreamPartCounts     map[string]map[string]int               `json:"stream_part_counts"`     // group -> stream -> total parts
-	StreamPartProgress   map[string]map[string]int               `json:"stream_part_progress"`   // group -> stream -> completed parts count
-	// Series-level tracking for stream migration
-	CompletedStreamSeries map[string]map[string]map[uint64]bool   `json:"completed_stream_series"` // group -> stream -> segmentID -> completed
-	StreamSeriesErrors    map[string]map[string]map[uint64]string `json:"stream_series_errors"`    // group -> stream -> segmentID -> error
-	StreamSeriesCounts    map[string]map[string]int               `json:"stream_series_counts"`    // group -> stream -> total series segments
-	StreamSeriesProgress  map[string]map[string]int               `json:"stream_series_progress"`  // group -> stream -> completed series segments count
-	// Element index-level tracking for stream migration
-	CompletedStreamElementIndex map[string]map[string]map[uint64]bool   `json:"completed_stream_element_index"` // group -> stream -> indexFileID -> completed
-	StreamElementIndexErrors    map[string]map[string]map[uint64]string `json:"stream_element_index_errors"`    // group -> stream -> indexFileID -> error
-	StreamElementIndexCounts    map[string]map[string]int               `json:"stream_element_index_counts"`    // group -> stream -> total index files
-	StreamElementIndexProgress  map[string]map[string]int               `json:"stream_element_index_progress"`  // group -> stream -> completed index files count
-	SnapshotStreamDir           string                                  `json:"snapshot_stream_dir"`
-	SnapshotMeasureDir          string                                  `json:"snapshot_measure_dir"`
-	mu                          sync.Mutex                              `json:"-"`
+	logger                      *logger.Logger                       `json:"-"`
+	CompletedGroups             map[string]bool                      `json:"completed_groups"`
+	CompletedMeasures           map[string]map[string]bool           `json:"completed_measures"`
+	DeletedStreamGroups         map[string]bool                      `json:"deleted_stream_groups"`
+	DeletedMeasureGroups        map[string]bool                      `json:"deleted_measure_groups"`
+	MeasureErrors               map[string]map[string]string         `json:"measure_errors"`
+	MeasureCounts               map[string]map[string]int            `json:"measure_counts"`
+	CompletedStreamParts        map[string]map[uint64]bool           `json:"completed_stream_parts"`
+	StreamPartErrors            map[string]map[uint64]string         `json:"stream_part_errors"`
+	CompletedStreamSeries       map[string]map[common.ShardID]bool   `json:"completed_stream_series"`
+	StreamSeriesErrors          map[string]map[common.ShardID]string `json:"stream_series_errors"`
+	CompletedStreamElementIndex map[string]bool                      `json:"completed_stream_element_index"`
+	StreamElementIndexErrors    map[string]string                    `json:"stream_element_index_errors"`
+	StreamPartCounts            map[string]int                       `json:"stream_part_counts"`
+	StreamPartProgress          map[string]int                       `json:"stream_part_progress"`
+	StreamSeriesCounts          map[string]int                       `json:"stream_series_counts"`
+	StreamSeriesProgress        map[string]int                       `json:"stream_series_progress"`
+	StreamElementIndexCounts    map[string]int                       `json:"stream_element_index_counts"`
+	StreamElementIndexProgress  map[string]int                       `json:"stream_element_index_progress"`
+	progressFilePath            string                               `json:"-"`
+	SnapshotStreamDir           string                               `json:"snapshot_stream_dir"`
+	SnapshotMeasureDir          string                               `json:"snapshot_measure_dir"`
+	mu                          sync.Mutex                           `json:"-"`
 }
 
 // AllGroupsFullyCompleted checks if all groups are fully completed.
@@ -68,7 +68,7 @@ func (p *Progress) AllGroupsFullyCompleted(groups []*commonv1.Group) bool {
 }
 
 // NewProgress creates a new Progress tracker.
-func NewProgress() *Progress {
+func NewProgress(path string, l *logger.Logger) *Progress {
 	return &Progress{
 		CompletedGroups:             make(map[string]bool),
 		CompletedMeasures:           make(map[string]map[string]bool),
@@ -76,25 +76,27 @@ func NewProgress() *Progress {
 		DeletedMeasureGroups:        make(map[string]bool),
 		MeasureErrors:               make(map[string]map[string]string),
 		MeasureCounts:               make(map[string]map[string]int),
-		CompletedStreamParts:        make(map[string]map[string]map[uint64]bool),
-		StreamPartErrors:            make(map[string]map[string]map[uint64]string),
-		StreamPartCounts:            make(map[string]map[string]int),
-		StreamPartProgress:          make(map[string]map[string]int),
-		CompletedStreamSeries:       make(map[string]map[string]map[uint64]bool),
-		StreamSeriesErrors:          make(map[string]map[string]map[uint64]string),
-		StreamSeriesCounts:          make(map[string]map[string]int),
-		StreamSeriesProgress:        make(map[string]map[string]int),
-		CompletedStreamElementIndex: make(map[string]map[string]map[uint64]bool),
-		StreamElementIndexErrors:    make(map[string]map[string]map[uint64]string),
-		StreamElementIndexCounts:    make(map[string]map[string]int),
-		StreamElementIndexProgress:  make(map[string]map[string]int),
+		CompletedStreamParts:        make(map[string]map[uint64]bool),
+		StreamPartErrors:            make(map[string]map[uint64]string),
+		StreamPartCounts:            make(map[string]int),
+		StreamPartProgress:          make(map[string]int),
+		CompletedStreamSeries:       make(map[string]map[common.ShardID]bool),
+		StreamSeriesErrors:          make(map[string]map[common.ShardID]string),
+		StreamSeriesCounts:          make(map[string]int),
+		StreamSeriesProgress:        make(map[string]int),
+		CompletedStreamElementIndex: make(map[string]bool),
+		StreamElementIndexErrors:    make(map[string]string),
+		StreamElementIndexCounts:    make(map[string]int),
+		StreamElementIndexProgress:  make(map[string]int),
+		progressFilePath:            path,
+		logger:                      l,
 	}
 }
 
 // LoadProgress loads progress from a file if it exists.
 func LoadProgress(path string, l *logger.Logger) *Progress {
 	if path == "" {
-		return NewProgress()
+		return NewProgress(path, l)
 	}
 
 	data, err := os.ReadFile(path)
@@ -104,13 +106,13 @@ func LoadProgress(path string, l *logger.Logger) *Progress {
 		} else {
 			l.Warn().Err(err).Msgf("Failed to read progress file at %s, starting fresh", path)
 		}
-		return NewProgress()
+		return NewProgress(path, l)
 	}
 
-	progress := NewProgress()
+	progress := NewProgress(path, l)
 	if err := json.Unmarshal(data, progress); err != nil {
 		l.Warn().Err(err).Msgf("Failed to parse progress file at %s, starting fresh", path)
-		return NewProgress()
+		return NewProgress(path, l)
 	}
 
 	l.Info().Msgf("Loaded existing progress from %s", path)
@@ -119,7 +121,15 @@ func LoadProgress(path string, l *logger.Logger) *Progress {
 
 // Save writes the progress to the specified file.
 func (p *Progress) Save(path string, l *logger.Logger) {
+	// Use stored values if parameters are empty
 	if path == "" {
+		path = p.progressFilePath
+	}
+	if l == nil {
+		l = p.logger
+	}
+
+	if path == "" || l == nil {
 		return
 	}
 
@@ -140,8 +150,14 @@ func (p *Progress) Save(path string, l *logger.Logger) {
 	l.Debug().Msg("Progress saved successfully")
 }
 
+// saveProgress is a convenience method that uses stored path and logger.
+func (p *Progress) saveProgress() {
+	p.Save("", nil)
+}
+
 // MarkGroupCompleted marks a group as completed.
 func (p *Progress) MarkGroupCompleted(group string) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.CompletedGroups[group] = true
@@ -156,6 +172,7 @@ func (p *Progress) IsGroupCompleted(group string) bool {
 
 // MarkMeasureCompleted marks a measure as completed.
 func (p *Progress) MarkMeasureCompleted(group, measure string, count int) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.CompletedMeasures[group] == nil {
@@ -180,6 +197,7 @@ func (p *Progress) IsMeasureCompleted(group, measure string) bool {
 
 // MarkStreamGroupDeleted marks a stream group segments as deleted.
 func (p *Progress) MarkStreamGroupDeleted(group string) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.DeletedStreamGroups[group] = true
@@ -194,6 +212,7 @@ func (p *Progress) IsStreamGroupDeleted(group string) bool {
 
 // MarkMeasureGroupDeleted marks a measure group segments as deleted.
 func (p *Progress) MarkMeasureGroupDeleted(group string) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.DeletedMeasureGroups[group] = true
@@ -215,6 +234,7 @@ func (p *Progress) ClearErrors() {
 
 // MarkMeasureError records an error message for a specific measure.
 func (p *Progress) MarkMeasureError(group, measure, msg string) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.MeasureErrors[group] == nil {
@@ -243,400 +263,349 @@ func (p *Progress) Remove(path string, l *logger.Logger) {
 }
 
 // MarkStreamPartCompleted marks a specific part of a stream as completed.
-func (p *Progress) MarkStreamPartCompleted(group, stream string, partID uint64) {
+func (p *Progress) MarkStreamPartCompleted(group string, partID uint64) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Initialize nested maps if they don't exist
 	if p.CompletedStreamParts[group] == nil {
-		p.CompletedStreamParts[group] = make(map[string]map[uint64]bool)
-	}
-	if p.CompletedStreamParts[group][stream] == nil {
-		p.CompletedStreamParts[group][stream] = make(map[uint64]bool)
+		p.CompletedStreamParts[group] = make(map[uint64]bool)
 	}
 
 	// Mark part as completed
-	p.CompletedStreamParts[group][stream][partID] = true
+	p.CompletedStreamParts[group][partID] = true
 
 	// Update progress count
-	if p.StreamPartProgress[group] == nil {
-		p.StreamPartProgress[group] = make(map[string]int)
+	if p.StreamPartProgress[group] == 0 {
+		p.StreamPartProgress[group] = 0
 	}
-	p.StreamPartProgress[group][stream]++
+	p.StreamPartProgress[group]++
 }
 
 // IsStreamPartCompleted checks if a specific part of a stream has been completed.
-func (p *Progress) IsStreamPartCompleted(group, stream string, partID uint64) bool {
+func (p *Progress) IsStreamPartCompleted(group string, partID uint64) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if streams, ok := p.CompletedStreamParts[group]; ok {
-		if parts, ok := streams[stream]; ok {
-			return parts[partID]
-		}
+	if parts, ok := p.CompletedStreamParts[group]; ok {
+		return parts[partID]
 	}
 	return false
 }
 
 // MarkStreamPartError records an error for a specific part of a stream.
-func (p *Progress) MarkStreamPartError(group, stream string, partID uint64, errorMsg string) {
+func (p *Progress) MarkStreamPartError(group string, partID uint64, errorMsg string) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Initialize nested maps if they don't exist
 	if p.StreamPartErrors[group] == nil {
-		p.StreamPartErrors[group] = make(map[string]map[uint64]string)
-	}
-	if p.StreamPartErrors[group][stream] == nil {
-		p.StreamPartErrors[group][stream] = make(map[uint64]string)
+		p.StreamPartErrors[group] = make(map[uint64]string)
 	}
 
 	// Record the error
-	p.StreamPartErrors[group][stream][partID] = errorMsg
+	p.StreamPartErrors[group][partID] = errorMsg
 }
 
 // SetStreamPartCount sets the total number of parts for a stream.
-func (p *Progress) SetStreamPartCount(group, stream string, totalParts int) {
+func (p *Progress) SetStreamPartCount(group string, totalParts int) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.StreamPartCounts[group] == nil {
-		p.StreamPartCounts[group] = make(map[string]int)
+	if p.StreamPartCounts[group] == 0 {
+		p.StreamPartCounts[group] = 0
 	}
-	p.StreamPartCounts[group][stream] = totalParts
+	p.StreamPartCounts[group] = totalParts
 
 	// Initialize progress tracking
-	if p.StreamPartProgress[group] == nil {
-		p.StreamPartProgress[group] = make(map[string]int)
-	}
-	if p.StreamPartProgress[group][stream] == 0 {
-		p.StreamPartProgress[group][stream] = 0
+	if p.StreamPartProgress[group] == 0 {
+		p.StreamPartProgress[group] = 0
 	}
 }
 
 // GetStreamPartCount returns the total number of parts for a stream.
-func (p *Progress) GetStreamPartCount(group, stream string) int {
+func (p *Progress) GetStreamPartCount(group string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if counts, ok := p.StreamPartCounts[group]; ok {
-		return counts[stream]
+		return counts
 	}
 	return 0
 }
 
 // GetStreamPartProgress returns the number of completed parts for a stream.
-func (p *Progress) GetStreamPartProgress(group, stream string) int {
+func (p *Progress) GetStreamPartProgress(group string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if progress, ok := p.StreamPartProgress[group]; ok {
-		return progress[stream]
+		return progress
 	}
 	return 0
 }
 
 // IsStreamFullyCompleted checks if all parts of a stream have been completed.
-func (p *Progress) IsStreamFullyCompleted(group, stream string) bool {
+func (p *Progress) IsStreamFullyCompleted(group string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	totalParts := p.StreamPartCounts[group][stream]
-	completedParts := p.StreamPartProgress[group][stream]
+	totalParts := p.StreamPartCounts[group]
+	completedParts := p.StreamPartProgress[group]
 
 	return totalParts > 0 && completedParts >= totalParts
 }
 
 // GetStreamPartErrors returns all errors for a specific stream.
-func (p *Progress) GetStreamPartErrors(group, stream string) map[uint64]string {
+func (p *Progress) GetStreamPartErrors(group string) map[uint64]string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if errors, ok := p.StreamPartErrors[group]; ok {
-		if streamErrors, ok := errors[stream]; ok {
-			// Return a copy to avoid concurrent access issues
-			result := make(map[uint64]string)
-			for k, v := range streamErrors {
-				result[k] = v
-			}
-			return result
+		// Return a copy to avoid concurrent access issues
+		result := make(map[uint64]string)
+		for k, v := range errors {
+			result[k] = v
 		}
+		return result
 	}
 	return nil
 }
 
 // ClearStreamPartErrors clears all errors for a specific stream.
-func (p *Progress) ClearStreamPartErrors(group, stream string) {
+func (p *Progress) ClearStreamPartErrors(group string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if errors, ok := p.StreamPartErrors[group]; ok {
-		delete(errors, stream)
-	}
+	delete(p.StreamPartErrors, group)
 }
 
 // MarkStreamSeriesCompleted marks a specific series segment of a stream as completed.
-func (p *Progress) MarkStreamSeriesCompleted(group, stream string, segmentID uint64) {
+func (p *Progress) MarkStreamSeriesCompleted(group string, shardID common.ShardID) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Initialize nested maps if they don't exist
 	if p.CompletedStreamSeries[group] == nil {
-		p.CompletedStreamSeries[group] = make(map[string]map[uint64]bool)
-	}
-	if p.CompletedStreamSeries[group][stream] == nil {
-		p.CompletedStreamSeries[group][stream] = make(map[uint64]bool)
+		p.CompletedStreamSeries[group] = make(map[common.ShardID]bool)
 	}
 
 	// Mark series segment as completed
-	p.CompletedStreamSeries[group][stream][segmentID] = true
+	p.CompletedStreamSeries[group][shardID] = true
 
 	// Update progress count
-	if p.StreamSeriesProgress[group] == nil {
-		p.StreamSeriesProgress[group] = make(map[string]int)
+	if p.StreamSeriesProgress[group] == 0 {
+		p.StreamSeriesProgress[group] = 0
 	}
-	p.StreamSeriesProgress[group][stream]++
+	p.StreamSeriesProgress[group]++
 }
 
 // IsStreamSeriesCompleted checks if a specific series segment of a stream has been completed.
-func (p *Progress) IsStreamSeriesCompleted(group, stream string, segmentID uint64) bool {
+func (p *Progress) IsStreamSeriesCompleted(group string, shardID common.ShardID) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if streams, ok := p.CompletedStreamSeries[group]; ok {
-		if segments, ok := streams[stream]; ok {
-			return segments[segmentID]
-		}
+	if segments, ok := p.CompletedStreamSeries[group]; ok {
+		return segments[shardID]
 	}
 	return false
 }
 
 // MarkStreamSeriesError records an error for a specific series segment of a stream.
-func (p *Progress) MarkStreamSeriesError(group, stream string, segmentID uint64, errorMsg string) {
+func (p *Progress) MarkStreamSeriesError(group string, shardID common.ShardID, errorMsg string) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Initialize nested maps if they don't exist
 	if p.StreamSeriesErrors[group] == nil {
-		p.StreamSeriesErrors[group] = make(map[string]map[uint64]string)
-	}
-	if p.StreamSeriesErrors[group][stream] == nil {
-		p.StreamSeriesErrors[group][stream] = make(map[uint64]string)
+		p.StreamSeriesErrors[group] = make(map[common.ShardID]string)
 	}
 
 	// Record the error
-	p.StreamSeriesErrors[group][stream][segmentID] = errorMsg
+	p.StreamSeriesErrors[group][shardID] = errorMsg
 }
 
 // SetStreamSeriesCount sets the total number of series segments for a stream.
-func (p *Progress) SetStreamSeriesCount(group, stream string, totalSegments int) {
+func (p *Progress) SetStreamSeriesCount(group string, totalSegments int) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.StreamSeriesCounts[group] == nil {
-		p.StreamSeriesCounts[group] = make(map[string]int)
+	if p.StreamSeriesCounts[group] == 0 {
+		p.StreamSeriesCounts[group] = 0
 	}
-	p.StreamSeriesCounts[group][stream] = totalSegments
+	p.StreamSeriesCounts[group] = totalSegments
 
 	// Initialize progress tracking
-	if p.StreamSeriesProgress[group] == nil {
-		p.StreamSeriesProgress[group] = make(map[string]int)
-	}
-	if p.StreamSeriesProgress[group][stream] == 0 {
-		p.StreamSeriesProgress[group][stream] = 0
+	if p.StreamSeriesProgress[group] == 0 {
+		p.StreamSeriesProgress[group] = 0
 	}
 }
 
 // GetStreamSeriesCount returns the total number of series segments for a stream.
-func (p *Progress) GetStreamSeriesCount(group, stream string) int {
+func (p *Progress) GetStreamSeriesCount(group string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if counts, ok := p.StreamSeriesCounts[group]; ok {
-		return counts[stream]
+		return counts
 	}
 	return 0
 }
 
 // GetStreamSeriesProgress returns the number of completed series segments for a stream.
-func (p *Progress) GetStreamSeriesProgress(group, stream string) int {
+func (p *Progress) GetStreamSeriesProgress(group string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if progress, ok := p.StreamSeriesProgress[group]; ok {
-		return progress[stream]
+		return progress
 	}
 	return 0
 }
 
 // IsStreamSeriesFullyCompleted checks if all series segments of a stream have been completed.
-func (p *Progress) IsStreamSeriesFullyCompleted(group, stream string) bool {
+func (p *Progress) IsStreamSeriesFullyCompleted(group string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	totalSegments := p.StreamSeriesCounts[group][stream]
-	completedSegments := p.StreamSeriesProgress[group][stream]
+	totalSegments := p.StreamSeriesCounts[group]
+	completedSegments := p.StreamSeriesProgress[group]
 
 	return totalSegments > 0 && completedSegments >= totalSegments
 }
 
 // GetStreamSeriesErrors returns all errors for a specific stream series.
-func (p *Progress) GetStreamSeriesErrors(group, stream string) map[uint64]string {
+func (p *Progress) GetStreamSeriesErrors(group string) map[common.ShardID]string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if errors, ok := p.StreamSeriesErrors[group]; ok {
-		if streamErrors, ok := errors[stream]; ok {
-			// Return a copy to avoid concurrent access issues
-			result := make(map[uint64]string)
-			for k, v := range streamErrors {
-				result[k] = v
-			}
-			return result
+		// Return a copy to avoid concurrent access issues
+		result := make(map[common.ShardID]string)
+		for k, v := range errors {
+			result[k] = v
 		}
+		return result
 	}
 	return nil
 }
 
 // ClearStreamSeriesErrors clears all errors for a specific stream series.
-func (p *Progress) ClearStreamSeriesErrors(group, stream string) {
+func (p *Progress) ClearStreamSeriesErrors(group string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if errors, ok := p.StreamSeriesErrors[group]; ok {
-		delete(errors, stream)
-	}
+	delete(p.StreamSeriesErrors, group)
 }
 
 // MarkStreamElementIndexCompleted marks a specific element index file of a stream as completed.
-func (p *Progress) MarkStreamElementIndexCompleted(group, stream string, indexFileID uint64) {
+func (p *Progress) MarkStreamElementIndexCompleted(group string) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Initialize nested maps if they don't exist
-	if p.CompletedStreamElementIndex[group] == nil {
-		p.CompletedStreamElementIndex[group] = make(map[string]map[uint64]bool)
-	}
-	if p.CompletedStreamElementIndex[group][stream] == nil {
-		p.CompletedStreamElementIndex[group][stream] = make(map[uint64]bool)
-	}
-
-	// Mark element index file as completed
-	p.CompletedStreamElementIndex[group][stream][indexFileID] = true
+	// Mark group as completed
+	p.CompletedStreamElementIndex[group] = true
 
 	// Update progress count
-	if p.StreamElementIndexProgress[group] == nil {
-		p.StreamElementIndexProgress[group] = make(map[string]int)
+	if p.StreamElementIndexProgress[group] == 0 {
+		p.StreamElementIndexProgress[group] = 0
 	}
-	p.StreamElementIndexProgress[group][stream]++
+	p.StreamElementIndexProgress[group]++
 }
 
 // IsStreamElementIndexCompleted checks if a specific element index file of a stream has been completed.
-func (p *Progress) IsStreamElementIndexCompleted(group, stream string, indexFileID uint64) bool {
+func (p *Progress) IsStreamElementIndexCompleted(group string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if streams, ok := p.CompletedStreamElementIndex[group]; ok {
-		if indexFiles, ok := streams[stream]; ok {
-			return indexFiles[indexFileID]
-		}
-	}
-	return false
+	return p.CompletedStreamElementIndex[group]
 }
 
 // MarkStreamElementIndexError records an error for a specific element index file of a stream.
-func (p *Progress) MarkStreamElementIndexError(group, stream string, indexFileID uint64, errorMsg string) {
+func (p *Progress) MarkStreamElementIndexError(group string, errorMsg string) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Initialize nested maps if they don't exist
-	if p.StreamElementIndexErrors[group] == nil {
-		p.StreamElementIndexErrors[group] = make(map[string]map[uint64]string)
-	}
-	if p.StreamElementIndexErrors[group][stream] == nil {
-		p.StreamElementIndexErrors[group][stream] = make(map[uint64]string)
-	}
-
 	// Record the error
-	p.StreamElementIndexErrors[group][stream][indexFileID] = errorMsg
+	p.StreamElementIndexErrors[group] = errorMsg
 }
 
 // SetStreamElementIndexCount sets the total number of element index files for a stream.
-func (p *Progress) SetStreamElementIndexCount(group, stream string, totalIndexFiles int) {
+func (p *Progress) SetStreamElementIndexCount(group string, totalIndexFiles int) {
+	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.StreamElementIndexCounts[group] == nil {
-		p.StreamElementIndexCounts[group] = make(map[string]int)
+	if p.StreamElementIndexCounts[group] == 0 {
+		p.StreamElementIndexCounts[group] = 0
 	}
-	p.StreamElementIndexCounts[group][stream] = totalIndexFiles
+	p.StreamElementIndexCounts[group] = totalIndexFiles
 
 	// Initialize progress tracking
-	if p.StreamElementIndexProgress[group] == nil {
-		p.StreamElementIndexProgress[group] = make(map[string]int)
-	}
-	if p.StreamElementIndexProgress[group][stream] == 0 {
-		p.StreamElementIndexProgress[group][stream] = 0
+	if p.StreamElementIndexProgress[group] == 0 {
+		p.StreamElementIndexProgress[group] = 0
 	}
 }
 
 // GetStreamElementIndexCount returns the total number of element index files for a stream.
-func (p *Progress) GetStreamElementIndexCount(group, stream string) int {
+func (p *Progress) GetStreamElementIndexCount(group string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if counts, ok := p.StreamElementIndexCounts[group]; ok {
-		return counts[stream]
+		return counts
 	}
 	return 0
 }
 
 // GetStreamElementIndexProgress returns the number of completed element index files for a stream.
-func (p *Progress) GetStreamElementIndexProgress(group, stream string) int {
+func (p *Progress) GetStreamElementIndexProgress(group string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if progress, ok := p.StreamElementIndexProgress[group]; ok {
-		return progress[stream]
+		return progress
 	}
 	return 0
 }
 
 // IsStreamElementIndexFullyCompleted checks if all element index files of a stream have been completed.
-func (p *Progress) IsStreamElementIndexFullyCompleted(group, stream string) bool {
+func (p *Progress) IsStreamElementIndexFullyCompleted(group string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	totalIndexFiles := p.StreamElementIndexCounts[group][stream]
-	completedIndexFiles := p.StreamElementIndexProgress[group][stream]
+	totalIndexFiles := p.StreamElementIndexCounts[group]
+	completedIndexFiles := p.StreamElementIndexProgress[group]
 
 	return totalIndexFiles > 0 && completedIndexFiles >= totalIndexFiles
 }
 
 // GetStreamElementIndexErrors returns all errors for a specific stream element index.
-func (p *Progress) GetStreamElementIndexErrors(group, stream string) map[uint64]string {
+func (p *Progress) GetStreamElementIndexErrors(group string) map[uint64]string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if errors, ok := p.StreamElementIndexErrors[group]; ok {
-		if streamErrors, ok := errors[stream]; ok {
-			// Return a copy to avoid concurrent access issues
-			result := make(map[uint64]string)
-			for k, v := range streamErrors {
-				result[k] = v
-			}
-			return result
-		}
+	if errorMsg, ok := p.StreamElementIndexErrors[group]; ok && errorMsg != "" {
+		// Return a map with a single entry since we now store errors at group level
+		result := make(map[uint64]string)
+		result[0] = errorMsg // Use 0 as a placeholder since we no longer track individual indexFileIDs
+		return result
 	}
 	return nil
 }
 
 // ClearStreamElementIndexErrors clears all errors for a specific stream element index.
-func (p *Progress) ClearStreamElementIndexErrors(group, stream string) {
+func (p *Progress) ClearStreamElementIndexErrors(group string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if errors, ok := p.StreamElementIndexErrors[group]; ok {
-		delete(errors, stream)
-	}
+	delete(p.StreamElementIndexErrors, group)
 }
