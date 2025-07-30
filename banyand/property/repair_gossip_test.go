@@ -48,7 +48,6 @@ import (
 
 const (
 	testGroup1 = "test-group1"
-	testGroup2 = "test-group2"
 )
 
 func TestPropertyRepairGossip(t *testing.T) {
@@ -71,8 +70,8 @@ var _ = ginkgo.Describe("Property repair gossip", func() {
 
 	ginkgo.AfterEach(func() {
 		for _, node := range nodes {
-			for _, s := range node.stop {
-				s()
+			if node != nil {
+				node.stopAll()
 			}
 		}
 		nodes = nil
@@ -323,10 +322,10 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 	result := &nodeContext{node: node}
 	dbLocation, dbLocationDefer, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	result.stop = append(result.stop, dbLocationDefer)
+	result.appendStop(dbLocationDefer)
 	repairLocation, repairLocationDefer, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	result.stop = append(result.stop, repairLocationDefer)
+	result.appendStop(repairLocationDefer)
 	mockGroup := schema.NewMockGroup(ctrl)
 	groupDefines := make([]*commonv1.Group, 0, len(groups))
 	for _, g := range groups {
@@ -367,7 +366,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 			if newSpaceErr != nil {
 				return "", newSpaceErr
 			}
-			result.stop = append(result.stop, defFunc)
+			result.appendStop(defFunc)
 			return snapshotDir, copyDirRecursive(dbLocation, snapshotDir)
 		})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -392,7 +391,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 		return connectErr
 	}, flags.EventuallyTimeout).Should(gomega.Succeed())
 
-	result.stop = append(result.stop, messenger.GracefulStop)
+	result.appendStop(messenger.GracefulStop)
 
 	// initialize shard in to db
 	for i := int32(0); i < node.shardCount; i++ {
@@ -504,7 +503,26 @@ type nodeContext struct {
 	clientWrapper *repairGossipClientWrapper
 	nodeID        string
 	stop          []func()
+	stopMutex     sync.RWMutex
 	node
+}
+
+func (n *nodeContext) appendStop(f func()) {
+	n.stopMutex.Lock()
+	defer n.stopMutex.Unlock()
+	n.stop = append(n.stop, f)
+}
+
+func (n *nodeContext) stopAll() {
+	n.stopMutex.RLock()
+	result := make([]func(), 0, len(n.stop))
+	for _, f := range n.stop {
+		result = append(result, f)
+	}
+	n.stopMutex.RUnlock()
+	for _, f := range result {
+		f()
+	}
 }
 
 func nodeContextToParentSlice(ncs []*nodeContext) []node {
