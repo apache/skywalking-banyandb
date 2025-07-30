@@ -75,3 +75,12 @@ var StreamLocalIndexWriteKindVersion = common.KindVersion{
 
 // TopicStreamLocalIndexWrite is the stream local index write topic.
 var TopicStreamLocalIndexWrite = bus.BiTopic(StreamLocalIndexWriteKindVersion.String())
+
+// StreamSeriesSyncKindVersion is the version tag of series sync kind.
+var StreamSeriesSyncKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "series-sync",
+}
+
+// TopicStreamSeriesSync is the series sync topic.
+var TopicStreamSeriesSync = bus.BiTopic(StreamSeriesSyncKindVersion.String())

@@ -39,9 +39,14 @@ type Progress struct {
 	StreamPartErrors     map[string]map[string]map[uint64]string `json:"stream_part_errors"`     // group -> stream -> partID -> error
 	StreamPartCounts     map[string]map[string]int               `json:"stream_part_counts"`     // group -> stream -> total parts
 	StreamPartProgress   map[string]map[string]int               `json:"stream_part_progress"`   // group -> stream -> completed parts count
-	SnapshotStreamDir    string                                  `json:"snapshot_stream_dir"`
-	SnapshotMeasureDir   string                                  `json:"snapshot_measure_dir"`
-	mu                   sync.Mutex                              `json:"-"`
+	// Series-level tracking for stream migration
+	CompletedStreamSeries map[string]map[string]map[uint64]bool   `json:"completed_stream_series"` // group -> stream -> segmentID -> completed
+	StreamSeriesErrors    map[string]map[string]map[uint64]string `json:"stream_series_errors"`    // group -> stream -> segmentID -> error
+	StreamSeriesCounts    map[string]map[string]int               `json:"stream_series_counts"`    // group -> stream -> total series segments
+	StreamSeriesProgress  map[string]map[string]int               `json:"stream_series_progress"`  // group -> stream -> completed series segments count
+	SnapshotStreamDir     string                                  `json:"snapshot_stream_dir"`
+	SnapshotMeasureDir    string                                  `json:"snapshot_measure_dir"`
+	mu                    sync.Mutex                              `json:"-"`
 }
 
 // AllGroupsFullyCompleted checks if all groups are fully completed.
@@ -60,16 +65,20 @@ func (p *Progress) AllGroupsFullyCompleted(groups []*commonv1.Group) bool {
 // NewProgress creates a new Progress tracker.
 func NewProgress() *Progress {
 	return &Progress{
-		CompletedGroups:      make(map[string]bool),
-		CompletedMeasures:    make(map[string]map[string]bool),
-		DeletedStreamGroups:  make(map[string]bool),
-		DeletedMeasureGroups: make(map[string]bool),
-		MeasureErrors:        make(map[string]map[string]string),
-		MeasureCounts:        make(map[string]map[string]int),
-		CompletedStreamParts: make(map[string]map[string]map[uint64]bool),
-		StreamPartErrors:     make(map[string]map[string]map[uint64]string),
-		StreamPartCounts:     make(map[string]map[string]int),
-		StreamPartProgress:   make(map[string]map[string]int),
+		CompletedGroups:       make(map[string]bool),
+		CompletedMeasures:     make(map[string]map[string]bool),
+		DeletedStreamGroups:   make(map[string]bool),
+		DeletedMeasureGroups:  make(map[string]bool),
+		MeasureErrors:         make(map[string]map[string]string),
+		MeasureCounts:         make(map[string]map[string]int),
+		CompletedStreamParts:  make(map[string]map[string]map[uint64]bool),
+		StreamPartErrors:      make(map[string]map[string]map[uint64]string),
+		StreamPartCounts:      make(map[string]map[string]int),
+		StreamPartProgress:    make(map[string]map[string]int),
+		CompletedStreamSeries: make(map[string]map[string]map[uint64]bool),
+		StreamSeriesErrors:    make(map[string]map[string]map[uint64]string),
+		StreamSeriesCounts:    make(map[string]map[string]int),
+		StreamSeriesProgress:  make(map[string]map[string]int),
 	}
 }
 
@@ -334,12 +343,12 @@ func (p *Progress) GetStreamPartErrors(group, stream string) map[uint64]string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if streams, ok := p.StreamPartErrors[group]; ok {
-		if parts, ok := streams[stream]; ok {
-			// Return a copy to avoid race conditions
+	if errors, ok := p.StreamPartErrors[group]; ok {
+		if streamErrors, ok := errors[stream]; ok {
+			// Return a copy to avoid concurrent access issues
 			result := make(map[uint64]string)
-			for partID, errorMsg := range parts {
-				result[partID] = errorMsg
+			for k, v := range streamErrors {
+				result[k] = v
 			}
 			return result
 		}
@@ -347,12 +356,145 @@ func (p *Progress) GetStreamPartErrors(group, stream string) map[uint64]string {
 	return nil
 }
 
-// ClearStreamPartErrors clears all part errors for a specific stream.
+// ClearStreamPartErrors clears all errors for a specific stream.
 func (p *Progress) ClearStreamPartErrors(group, stream string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if streams, ok := p.StreamPartErrors[group]; ok {
-		delete(streams, stream)
+	if errors, ok := p.StreamPartErrors[group]; ok {
+		delete(errors, stream)
+	}
+}
+
+// MarkStreamSeriesCompleted marks a specific series segment of a stream as completed.
+func (p *Progress) MarkStreamSeriesCompleted(group, stream string, segmentID uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Initialize nested maps if they don't exist
+	if p.CompletedStreamSeries[group] == nil {
+		p.CompletedStreamSeries[group] = make(map[string]map[uint64]bool)
+	}
+	if p.CompletedStreamSeries[group][stream] == nil {
+		p.CompletedStreamSeries[group][stream] = make(map[uint64]bool)
+	}
+
+	// Mark series segment as completed
+	p.CompletedStreamSeries[group][stream][segmentID] = true
+
+	// Update progress count
+	if p.StreamSeriesProgress[group] == nil {
+		p.StreamSeriesProgress[group] = make(map[string]int)
+	}
+	p.StreamSeriesProgress[group][stream]++
+}
+
+// IsStreamSeriesCompleted checks if a specific series segment of a stream has been completed.
+func (p *Progress) IsStreamSeriesCompleted(group, stream string, segmentID uint64) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if streams, ok := p.CompletedStreamSeries[group]; ok {
+		if segments, ok := streams[stream]; ok {
+			return segments[segmentID]
+		}
+	}
+	return false
+}
+
+// MarkStreamSeriesError records an error for a specific series segment of a stream.
+func (p *Progress) MarkStreamSeriesError(group, stream string, segmentID uint64, errorMsg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Initialize nested maps if they don't exist
+	if p.StreamSeriesErrors[group] == nil {
+		p.StreamSeriesErrors[group] = make(map[string]map[uint64]string)
+	}
+	if p.StreamSeriesErrors[group][stream] == nil {
+		p.StreamSeriesErrors[group][stream] = make(map[uint64]string)
+	}
+
+	// Record the error
+	p.StreamSeriesErrors[group][stream][segmentID] = errorMsg
+}
+
+// SetStreamSeriesCount sets the total number of series segments for a stream.
+func (p *Progress) SetStreamSeriesCount(group, stream string, totalSegments int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.StreamSeriesCounts[group] == nil {
+		p.StreamSeriesCounts[group] = make(map[string]int)
+	}
+	p.StreamSeriesCounts[group][stream] = totalSegments
+
+	// Initialize progress tracking
+	if p.StreamSeriesProgress[group] == nil {
+		p.StreamSeriesProgress[group] = make(map[string]int)
+	}
+	if p.StreamSeriesProgress[group][stream] == 0 {
+		p.StreamSeriesProgress[group][stream] = 0
+	}
+}
+
+// GetStreamSeriesCount returns the total number of series segments for a stream.
+func (p *Progress) GetStreamSeriesCount(group, stream string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if counts, ok := p.StreamSeriesCounts[group]; ok {
+		return counts[stream]
+	}
+	return 0
+}
+
+// GetStreamSeriesProgress returns the number of completed series segments for a stream.
+func (p *Progress) GetStreamSeriesProgress(group, stream string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if progress, ok := p.StreamSeriesProgress[group]; ok {
+		return progress[stream]
+	}
+	return 0
+}
+
+// IsStreamSeriesFullyCompleted checks if all series segments of a stream have been completed.
+func (p *Progress) IsStreamSeriesFullyCompleted(group, stream string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	totalSegments := p.StreamSeriesCounts[group][stream]
+	completedSegments := p.StreamSeriesProgress[group][stream]
+
+	return totalSegments > 0 && completedSegments >= totalSegments
+}
+
+// GetStreamSeriesErrors returns all errors for a specific stream series.
+func (p *Progress) GetStreamSeriesErrors(group, stream string) map[uint64]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if errors, ok := p.StreamSeriesErrors[group]; ok {
+		if streamErrors, ok := errors[stream]; ok {
+			// Return a copy to avoid concurrent access issues
+			result := make(map[uint64]string)
+			for k, v := range streamErrors {
+				result[k] = v
+			}
+			return result
+		}
+	}
+	return nil
+}
+
+// ClearStreamSeriesErrors clears all errors for a specific stream series.
+func (p *Progress) ClearStreamSeriesErrors(group, stream string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if errors, ok := p.StreamSeriesErrors[group]; ok {
+		delete(errors, stream)
 	}
 }

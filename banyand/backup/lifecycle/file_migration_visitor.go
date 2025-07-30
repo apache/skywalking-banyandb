@@ -97,11 +97,124 @@ func NewMigrationVisitor(group *commonv1.Group, nodeLabels map[string]string,
 }
 
 // VisitSeries implements stream.Visitor.
-func (mv *MigrationVisitor) VisitSeries(_ *timestamp.TimeRange, seriesIndexPath string) error {
-	// TODO: Implement series index migration if needed
-	mv.logger.Debug().
+func (mv *MigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string) error {
+	mv.logger.Info().
 		Str("path", seriesIndexPath).
-		Msg("skipping series index migration (not implemented)")
+		Int64("min_timestamp", segmentTR.Start.UnixNano()).
+		Int64("max_timestamp", segmentTR.End.UnixNano()).
+		Str("stream", mv.streamName).
+		Str("group", mv.group).
+		Msg("migrating series index")
+
+	// Find all *.seg segment files in the seriesIndexPath
+	lfs := fs.NewLocalFileSystem()
+	entries := lfs.ReadDir(seriesIndexPath)
+
+	var segmentFiles []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".seg") {
+			segmentFiles = append(segmentFiles, entry.Name())
+		}
+	}
+
+	if len(segmentFiles) == 0 {
+		mv.logger.Debug().
+			Str("path", seriesIndexPath).
+			Msg("no .seg files found in series index path")
+		return nil
+	}
+
+	mv.logger.Info().
+		Int("segment_count", len(segmentFiles)).
+		Str("path", seriesIndexPath).
+		Msg("found segment files for migration")
+
+	// Set the total number of series segments for progress tracking
+	mv.SetStreamSeriesCount(len(segmentFiles))
+
+	// Process each segment file
+	for _, segmentFileName := range segmentFiles {
+		// Extract segment ID from filename (remove .seg extension)
+		segmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+
+		// Parse hex segment ID
+		segmentID, err := strconv.ParseUint(segmentIDStr, 16, 64)
+		if err != nil {
+			mv.logger.Error().
+				Str("filename", segmentFileName).
+				Str("id_str", segmentIDStr).
+				Err(err).
+				Msg("failed to parse segment ID from filename")
+			continue
+		}
+
+		// Check if this segment has already been completed
+		if mv.progress.IsStreamSeriesCompleted(mv.group, mv.streamName, segmentID) {
+			mv.logger.Debug().
+				Uint64("segment_id", segmentID).
+				Str("filename", segmentFileName).
+				Str("stream", mv.streamName).
+				Str("group", mv.group).
+				Msg("segment already completed, skipping")
+			continue
+		}
+
+		mv.logger.Info().
+			Uint64("segment_id", segmentID).
+			Str("filename", segmentFileName).
+			Str("stream", mv.streamName).
+			Str("group", mv.group).
+			Msg("migrating segment file")
+
+		// Create file reader for the segment file
+		segmentFilePath := filepath.Join(seriesIndexPath, segmentFileName)
+		segmentFile, err := lfs.OpenFile(segmentFilePath)
+		if err != nil {
+			errorMsg := fmt.Sprintf("failed to open segment file %s: %v", segmentFilePath, err)
+			mv.progress.MarkStreamSeriesError(mv.group, mv.streamName, segmentID, errorMsg)
+			mv.logger.Error().
+				Str("path", segmentFilePath).
+				Err(err).
+				Msg("failed to open segment file")
+			return fmt.Errorf("failed to open segment file %s: %w", segmentFilePath, err)
+		}
+
+		// Create StreamingPartData for this segment
+		files := []queue.FileInfo{
+			{
+				Name:   segmentFileName,
+				Reader: segmentFile.SequentialRead(),
+			},
+		}
+
+		// Calculate target shard ID (using a simple approach for series index)
+		targetShardID := uint32(segmentID) % mv.targetShardNum
+
+		// Stream segment to target shard replicas
+		if err := mv.streamSegmentToTargetShard(targetShardID, files, segmentTR, segmentID, segmentFileName); err != nil {
+			errorMsg := fmt.Sprintf("failed to stream segment to target shard: %v", err)
+			mv.progress.MarkStreamSeriesError(mv.group, mv.streamName, segmentID, errorMsg)
+			// Close the file reader
+			segmentFile.Close()
+			return fmt.Errorf("failed to stream segment to target shard: %w", err)
+		}
+
+		// Close the file reader
+		segmentFile.Close()
+
+		// Mark segment as completed
+		mv.progress.MarkStreamSeriesCompleted(mv.group, mv.streamName, segmentID)
+
+		mv.logger.Info().
+			Uint64("segment_id", segmentID).
+			Str("filename", segmentFileName).
+			Str("stream", mv.streamName).
+			Str("group", mv.group).
+			Int("completed_segments", mv.progress.GetStreamSeriesProgress(mv.group, mv.streamName)).
+			Int("total_segments", mv.progress.GetStreamSeriesCount(mv.group, mv.streamName)).
+			Msg("segment migration completed successfully")
+	}
+
 	return nil
 }
 
@@ -397,6 +510,106 @@ func (mv *MigrationVisitor) Close() error {
 	return nil
 }
 
+// streamSegmentToTargetShard sends segment data to all replicas of the target shard.
+func (mv *MigrationVisitor) streamSegmentToTargetShard(
+	targetShardID uint32,
+	files []queue.FileInfo,
+	segmentTR *timestamp.TimeRange,
+	segmentID uint64,
+	segmentFileName string,
+) error {
+	copies := mv.replicas + 1
+
+	// Send to all replicas using the exact pattern from steps.go:219-236
+	for replicaID := uint32(0); replicaID < copies; replicaID++ {
+		// Use selector.Pick exactly like steps.go:220
+		nodeID, err := mv.selector.Pick(mv.group, "", targetShardID, replicaID)
+		if err != nil {
+			return fmt.Errorf("failed to pick node for shard %d replica %d: %w", targetShardID, replicaID, err)
+		}
+
+		// Stream segment data to target node using chunked sync
+		if err := mv.streamSegmentToNode(nodeID, targetShardID, files, segmentTR, segmentID, segmentFileName); err != nil {
+			return fmt.Errorf("failed to stream segment to node %s: %w", nodeID, err)
+		}
+	}
+
+	return nil
+}
+
+// streamSegmentToNode streams segment data to a specific target node.
+func (mv *MigrationVisitor) streamSegmentToNode(
+	nodeID string,
+	targetShardID uint32,
+	files []queue.FileInfo,
+	segmentTR *timestamp.TimeRange,
+	segmentID uint64,
+	segmentFileName string,
+) error {
+	// Get or create chunked client for this node (cache hit optimization)
+	chunkedClient, exists := mv.chunkedClients[nodeID]
+	if !exists {
+		var err error
+		// Create new chunked sync client via queue.Client
+		chunkedClient, err = mv.client.NewChunkedSyncClient(nodeID, uint32(mv.chunkSize))
+		if err != nil {
+			return fmt.Errorf("failed to create chunked sync client for node %s: %w", nodeID, err)
+		}
+		mv.chunkedClients[nodeID] = chunkedClient // Cache for reuse
+	}
+
+	// Create streaming part data from the segment files
+	streamingParts := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, segmentID)
+
+	// Stream using chunked transfer (same as syncer.go:202)
+	ctx := context.Background()
+	result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
+	if err != nil {
+		return fmt.Errorf("failed to sync streaming segments to node %s: %w", nodeID, err)
+	}
+
+	if !result.Success {
+		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
+	}
+
+	// Log success metrics (same pattern as syncer.go:210-217)
+	mv.logger.Info().
+		Str("node", nodeID).
+		Str("session", result.SessionID).
+		Uint64("bytes", result.TotalBytes).
+		Int64("duration_ms", result.DurationMs).
+		Uint32("chunks", result.ChunksCount).
+		Uint32("parts", result.PartsCount).
+		Uint32("target_shard", targetShardID).
+		Uint64("segment_id", segmentID).
+		Str("segment_filename", segmentFileName).
+		Str("stream", mv.streamName).
+		Str("group", mv.group).
+		Msg("file-based migration segment completed successfully")
+
+	return nil
+}
+
+// createStreamingSegmentFromFiles creates StreamingPartData from segment files.
+func (mv *MigrationVisitor) createStreamingSegmentFromFiles(
+	targetShardID uint32,
+	files []queue.FileInfo,
+	segmentTR *timestamp.TimeRange,
+	segmentID uint64,
+) []queue.StreamingPartData {
+	segmentData := queue.StreamingPartData{
+		ID:           segmentID,
+		Group:        mv.group,
+		ShardID:      targetShardID,                       // Use calculated target shard
+		Topic:        data.TopicStreamSeriesSync.String(), // Use the new topic
+		Files:        files,
+		MinTimestamp: segmentTR.Start.UnixNano(),
+		MaxTimestamp: segmentTR.End.UnixNano(),
+	}
+
+	return []queue.StreamingPartData{segmentData}
+}
+
 // SetStreamPartCount sets the total number of parts for the current stream.
 func (mv *MigrationVisitor) SetStreamPartCount(totalParts int) {
 	if mv.progress != nil {
@@ -406,5 +619,17 @@ func (mv *MigrationVisitor) SetStreamPartCount(totalParts int) {
 			Str("group", mv.group).
 			Int("total_parts", totalParts).
 			Msg("set stream part count for progress tracking")
+	}
+}
+
+// SetStreamSeriesCount sets the total number of series segments for the current stream.
+func (mv *MigrationVisitor) SetStreamSeriesCount(totalSegments int) {
+	if mv.progress != nil {
+		mv.progress.SetStreamSeriesCount(mv.group, mv.streamName, totalSegments)
+		mv.logger.Info().
+			Str("stream", mv.streamName).
+			Str("group", mv.group).
+			Int("total_segments", totalSegments).
+			Msg("set stream series count for progress tracking")
 	}
 }

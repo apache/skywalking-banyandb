@@ -45,6 +45,7 @@ var (
 		TopicPropertyRepair.String():           TopicPropertyRepair,
 		TopicStreamSeriesIndexWrite.String():   TopicStreamSeriesIndexWrite,
 		TopicStreamLocalIndexWrite.String():    TopicStreamLocalIndexWrite,
+		TopicStreamSeriesSync.String():         TopicStreamSeriesSync,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -93,6 +94,9 @@ var (
 			return nil
 		},
 		TopicStreamLocalIndexWrite: func() proto.Message {
+			return nil
+		},
+		TopicStreamSeriesSync: func() proto.Message {
 			return nil
 		},
 	}
