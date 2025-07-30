@@ -45,7 +45,7 @@ type TestVisitor struct {
 }
 
 // VisitSeries records the visited series path.
-func (tv *TestVisitor) VisitSeries(_ *timestamp.TimeRange, seriesIndexPath string) error {
+func (tv *TestVisitor) VisitSeries(_ *timestamp.TimeRange, seriesIndexPath string, _ []common.ShardID) error {
 	tv.visitedSeries = append(tv.visitedSeries, seriesIndexPath)
 	return nil
 }

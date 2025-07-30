@@ -30,7 +30,7 @@ import (
 // Visitor defines the interface for visiting stream components.
 type Visitor interface {
 	// VisitSeries visits the series index directory for a segment.
-	VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string) error
+	VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error
 	// VisitPart visits a part directory within a shard.
 	VisitPart(segmentTR *timestamp.TimeRange, shardID common.ShardID, partPath string) error
 	// VisitElementIndex visits the element index directory within a shard.
@@ -43,8 +43,8 @@ type streamSegmentVisitor struct {
 }
 
 // VisitSeries implements storage.SegmentVisitor.
-func (sv *streamSegmentVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string) error {
-	return sv.visitor.VisitSeries(segmentTR, seriesIndexPath)
+func (sv *streamSegmentVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error {
+	return sv.visitor.VisitSeries(segmentTR, seriesIndexPath, shardIDs)
 }
 
 // VisitShard implements storage.SegmentVisitor.

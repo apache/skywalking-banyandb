@@ -97,7 +97,7 @@ func NewMigrationVisitor(group *commonv1.Group, nodeLabels map[string]string,
 }
 
 // VisitSeries implements stream.Visitor.
-func (mv *MigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string) error {
+func (mv *MigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error {
 	mv.logger.Info().
 		Str("path", seriesIndexPath).
 		Int64("min_timestamp", segmentTR.Start.UnixNano()).
@@ -187,16 +187,18 @@ func (mv *MigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIn
 			},
 		}
 
-		// Calculate target shard ID (using a simple approach for series index)
-		targetShardID := uint32(segmentID) % mv.targetShardNum
+		// Send segment file to each shard in shardIDs
+		for _, shardID := range shardIDs {
+			targetShardID := mv.calculateTargetShardID(uint32(shardID))
 
-		// Stream segment to target shard replicas
-		if err := mv.streamSegmentToTargetShard(targetShardID, files, segmentTR, segmentID, segmentFileName); err != nil {
-			errorMsg := fmt.Sprintf("failed to stream segment to target shard: %v", err)
-			mv.progress.MarkStreamSeriesError(mv.group, mv.streamName, segmentID, errorMsg)
-			// Close the file reader
-			segmentFile.Close()
-			return fmt.Errorf("failed to stream segment to target shard: %w", err)
+			// Stream segment to target shard replicas
+			if err := mv.streamSegmentToTargetShard(targetShardID, files, segmentTR, segmentID, segmentFileName); err != nil {
+				errorMsg := fmt.Sprintf("failed to stream segment to target shard %d: %v", targetShardID, err)
+				mv.progress.MarkStreamSeriesError(mv.group, mv.streamName, segmentID, errorMsg)
+				// Close the file reader
+				segmentFile.Close()
+				return fmt.Errorf("failed to stream segment to target shard %d: %w", targetShardID, err)
+			}
 		}
 
 		// Close the file reader

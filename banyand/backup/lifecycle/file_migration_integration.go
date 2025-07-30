@@ -110,7 +110,7 @@ type partCountVisitor struct {
 }
 
 // VisitSeries implements stream.Visitor.
-func (pcv *partCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string) error {
+func (pcv *partCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
 	return nil
 }
 

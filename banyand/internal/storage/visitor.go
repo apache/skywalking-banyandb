@@ -31,7 +31,7 @@ import (
 // SegmentVisitor defines the interface for visiting segment components.
 type SegmentVisitor interface {
 	// VisitSeries visits the series index directory for a segment.
-	VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string) error
+	VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error
 	// VisitShard visits a shard directory within a segment.
 	VisitShard(segmentTR *timestamp.TimeRange, shardID common.ShardID, shardPath string) error
 }
@@ -71,9 +71,15 @@ func VisitSegmentsInTimeRange(tsdbRootPath string, timeRange timestamp.TimeRange
 
 	// Visit each matching segment
 	for _, segInfo := range segmentPaths {
+		// Collect shard IDs for this segment
+		shardIDs, err := collectSegmentShardIDs(segInfo.path)
+		if err != nil {
+			return errors.Wrapf(err, "failed to collect shard IDs for segment %s", segInfo.suffix)
+		}
+
 		// Visit series index directory
 		seriesIndexPath := filepath.Join(segInfo.path, seriesIndexDirName)
-		if err := visitor.VisitSeries(&segInfo.timeRange, seriesIndexPath); err != nil {
+		if err := visitor.VisitSeries(&segInfo.timeRange, seriesIndexPath, shardIDs); err != nil {
 			return errors.Wrapf(err, "failed to visit series index for segment %s", segInfo.suffix)
 		}
 
@@ -91,6 +97,20 @@ type segmentInfo struct {
 	path      string
 	suffix    string
 	timeRange timestamp.TimeRange
+}
+
+// collectSegmentShardIDs collects all shard IDs within a segment.
+func collectSegmentShardIDs(segmentPath string) ([]common.ShardID, error) {
+	var shardIDs []common.ShardID
+	err := walkDir(segmentPath, shardPathPrefix, func(suffix string) error {
+		shardID, err := strconv.Atoi(suffix)
+		if err != nil {
+			return errors.Wrapf(err, "invalid shard suffix: %s", suffix)
+		}
+		shardIDs = append(shardIDs, common.ShardID(shardID))
+		return nil
+	})
+	return shardIDs, err
 }
 
 // visitSegmentShards traverses shard directories within a segment.

@@ -58,7 +58,7 @@ func NewTestVisitor() *TestVisitor {
 }
 
 // VisitSeries implements SegmentVisitor.VisitSeries.
-func (v *TestVisitor) VisitSeries(_ *timestamp.TimeRange, seriesIndexPath string) error {
+func (v *TestVisitor) VisitSeries(_ *timestamp.TimeRange, seriesIndexPath string, _ []common.ShardID) error {
 	if err, exists := v.seriesErrors[seriesIndexPath]; exists {
 		return err
 	}
