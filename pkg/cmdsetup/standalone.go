@@ -76,7 +76,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		PropertyNodeRegistry:       nr,
 	}, metricSvc)
 	profSvc := observability.NewProfService()
-	httpServer := http.NewServer()
+	httpServer := http.NewServer(grpcServer.GetAuthCfg())
 
 	var units []run.Unit
 	units = append(units, runners...)

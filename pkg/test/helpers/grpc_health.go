@@ -24,6 +24,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -33,14 +34,24 @@ var errServiceUnhealthy = errors.New("service is unhealthy")
 
 // HealthCheck returns a function for ginkgo "Eventually" poll it repeatedly to check whether a gRPC server is ready.
 func HealthCheck(addr string, connTimeout time.Duration, rpcTimeout time.Duration, opts ...grpc.DialOption) func() error {
+	return HealthCheckWithAuth(addr, connTimeout, rpcTimeout, "", "", opts...)
+}
+
+// HealthCheckWithAuth returns a function for ginkgo "Eventually" poll it repeatedly to check whether a gRPC server is ready with Auth.
+func HealthCheckWithAuth(addr string, connTimeout time.Duration, rpcTimeout time.Duration, username, password string, opts ...grpc.DialOption) func() error {
 	return func() error {
-		conn, err := grpchelper.Conn(addr, connTimeout, opts...)
+		conn, err := grpchelper.ConnWithAuth(addr, connTimeout, username, password, opts...)
 		if err != nil {
 			return err
 		}
 		defer conn.Close()
 		var resp *grpc_health_v1.HealthCheckResponse
 		if err := grpchelper.Request(context.Background(), rpcTimeout, func(rpcCtx context.Context) (err error) {
+			md := metadata.Pairs(
+				"username", username,
+				"password", password,
+			)
+			rpcCtx = metadata.NewOutgoingContext(rpcCtx, md)
 			resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
 				&grpc_health_v1.HealthCheckRequest{
 					Service: "",

@@ -27,11 +27,17 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/apache/skywalking-banyandb/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // HTTPHealthCheck returns a function for ginkgo "Eventually" poll it repeatedly to check whether a HTTP server is ready.
 func HTTPHealthCheck(addr, cert string) func() error {
+	return HTTPHealthCheckWithAuth(addr, cert, "", "")
+}
+
+// HTTPHealthCheckWithAuth returns a function for ginkgo "Eventually" poll it repeatedly to check whether a HTTP server is ready with Auth.
+func HTTPHealthCheckWithAuth(addr, cert, username, password string) func() error {
 	return func() error {
 		client := resty.New()
 		schema := "http"
@@ -50,9 +56,11 @@ func HTTPHealthCheck(addr, cert string) func() error {
 			client.SetTLSClientConfig(&config)
 			schema = "https"
 		}
-		resp, err := client.R().
-			SetHeader("Accept", "application/json").
-			Get(fmt.Sprintf("%s://%s/api/healthz", schema, addr))
+		req := client.R().SetHeader("Accept", "application/json")
+		if username != "" {
+			req.SetHeader("Authorization", auth.GenerateBasicAuthHeader(username, password))
+		}
+		resp, err := req.Get(fmt.Sprintf("%s://%s/api/healthz", schema, addr))
 		if err != nil {
 			time.Sleep(1 * time.Second)
 			return err

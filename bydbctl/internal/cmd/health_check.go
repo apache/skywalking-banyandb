@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -50,7 +51,7 @@ func newHealthCheckCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			err = helpers.HealthCheck(grpcAddr, 10*time.Second, 10*time.Second, opts...)()
+			err = healthCheck(grpcAddr, 10*time.Second, 10*time.Second, username, password, opts...)
 			if err == nil {
 				fmt.Println("connected")
 			}
@@ -60,4 +61,13 @@ func newHealthCheckCmd() *cobra.Command {
 	healthCheckCmd.Flags().StringVarP(&grpcAddr, "grpc-addr", "", "", "Grpc server's address, the format is Domain:Port")
 	bindTLSRelatedFlag(healthCheckCmd)
 	return healthCheckCmd
+}
+
+func healthCheck(grpcAddr string, connTimeout, rpcTimeout time.Duration, username, password string, opts ...grpc.DialOption) error {
+	if username != "" {
+		return helpers.HealthCheckWithAuth(grpcAddr, connTimeout, rpcTimeout, username, password, opts...)()
+	}
+	username = viper.GetString("username")
+	password = viper.GetString("password")
+	return helpers.HealthCheckWithAuth(grpcAddr, connTimeout, rpcTimeout, username, password, opts...)()
 }
