@@ -1,0 +1,126 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package lifecycle
+
+import (
+	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+)
+
+// MigrateStreamWithFileBased performs file-based stream migration using the visitor pattern.
+func MigrateStreamWithFileBased(
+	tsdbRootPath string,
+	timeRange timestamp.TimeRange,
+	group *commonv1.Group,
+	nodeLabels map[string]string,
+	nodes []*databasev1.Node,
+	metadata metadata.Repo,
+	intervalRule storage.IntervalRule,
+	logger *logger.Logger,
+	chunkSize int,
+) error {
+	// Create file-based migration visitor
+	visitor, err := NewMigrationVisitor(group, nodeLabels, nodes, metadata, logger, nil, "", chunkSize)
+	if err != nil {
+		return err
+	}
+	defer visitor.Close()
+
+	// Use the existing VisitStreamsInTimeRange function with our file-based visitor
+	return stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, visitor, intervalRule)
+}
+
+// MigrateStreamWithFileBasedAndProgress performs file-based stream migration with progress tracking.
+func MigrateStreamWithFileBasedAndProgress(
+	tsdbRootPath string,
+	timeRange timestamp.TimeRange,
+	group *commonv1.Group,
+	nodeLabels map[string]string,
+	nodes []*databasev1.Node,
+	metadata metadata.Repo,
+	intervalRule storage.IntervalRule,
+	logger *logger.Logger,
+	progress *Progress,
+	streamName string,
+	chunkSize int,
+) error {
+	// Count total parts for this stream before starting migration
+	totalParts, err := countStreamParts(tsdbRootPath, timeRange, streamName, intervalRule)
+	if err != nil {
+		logger.Warn().Err(err).Str("stream", streamName).Msg("failed to count stream parts, proceeding without part count")
+	} else {
+		logger.Info().Str("stream", streamName).Int("total_parts", totalParts).Msg("counted stream parts for progress tracking")
+	}
+
+	// Create file-based migration visitor with progress tracking
+	visitor, err := NewMigrationVisitor(group, nodeLabels, nodes, metadata, logger, progress, streamName, chunkSize)
+	if err != nil {
+		return err
+	}
+	defer visitor.Close()
+
+	// Set the total part count for progress tracking
+	if totalParts > 0 {
+		visitor.SetStreamPartCount(totalParts)
+	}
+
+	// Use the existing VisitStreamsInTimeRange function with our file-based visitor
+	return stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, visitor, intervalRule)
+}
+
+// countStreamParts counts the total number of parts for a specific stream in the given time range.
+func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, streamName string, intervalRule storage.IntervalRule) (int, error) {
+	// Create a simple visitor to count parts
+	partCounter := &partCountVisitor{streamName: streamName}
+
+	// Use the existing VisitStreamsInTimeRange function to count parts
+	err := stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, partCounter, intervalRule)
+	if err != nil {
+		return 0, err
+	}
+
+	return partCounter.partCount, nil
+}
+
+// partCountVisitor is a simple visitor that counts parts for a specific stream.
+type partCountVisitor struct {
+	streamName string
+	partCount  int
+}
+
+// VisitSeries implements stream.Visitor.
+func (pcv *partCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string) error {
+	return nil
+}
+
+// VisitPart implements stream.Visitor.
+func (pcv *partCountVisitor) VisitPart(_ *timestamp.TimeRange, _ common.ShardID, _ string) error {
+	pcv.partCount++
+	return nil
+}
+
+// VisitElementIndex implements stream.Visitor.
+func (pcv *partCountVisitor) VisitElementIndex(_ *timestamp.TimeRange, _ common.ShardID, _ string) error {
+	return nil
+}

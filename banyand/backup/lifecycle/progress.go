@@ -29,17 +29,19 @@ import (
 // Progress tracks the lifecycle migration progress to support resume after crash.
 type Progress struct {
 	CompletedGroups      map[string]bool              `json:"completed_groups"`
-	CompletedStreams     map[string]map[string]bool   `json:"completed_streams"`
 	CompletedMeasures    map[string]map[string]bool   `json:"completed_measures"`
 	DeletedStreamGroups  map[string]bool              `json:"deleted_stream_groups"`
 	DeletedMeasureGroups map[string]bool              `json:"deleted_measure_groups"`
-	StreamErrors         map[string]map[string]string `json:"stream_errors"`
 	MeasureErrors        map[string]map[string]string `json:"measure_errors"`
-	StreamCounts         map[string]map[string]int    `json:"stream_counts"`
 	MeasureCounts        map[string]map[string]int    `json:"measure_counts"`
-	SnapshotStreamDir    string                       `json:"snapshot_stream_dir"`
-	SnapshotMeasureDir   string                       `json:"snapshot_measure_dir"`
-	mu                   sync.Mutex                   `json:"-"`
+	// Part-level tracking for stream migration
+	CompletedStreamParts map[string]map[string]map[uint64]bool   `json:"completed_stream_parts"` // group -> stream -> partID -> completed
+	StreamPartErrors     map[string]map[string]map[uint64]string `json:"stream_part_errors"`     // group -> stream -> partID -> error
+	StreamPartCounts     map[string]map[string]int               `json:"stream_part_counts"`     // group -> stream -> total parts
+	StreamPartProgress   map[string]map[string]int               `json:"stream_part_progress"`   // group -> stream -> completed parts count
+	SnapshotStreamDir    string                                  `json:"snapshot_stream_dir"`
+	SnapshotMeasureDir   string                                  `json:"snapshot_measure_dir"`
+	mu                   sync.Mutex                              `json:"-"`
 }
 
 // AllGroupsFullyCompleted checks if all groups are fully completed.
@@ -59,14 +61,15 @@ func (p *Progress) AllGroupsFullyCompleted(groups []*commonv1.Group) bool {
 func NewProgress() *Progress {
 	return &Progress{
 		CompletedGroups:      make(map[string]bool),
-		CompletedStreams:     make(map[string]map[string]bool),
 		CompletedMeasures:    make(map[string]map[string]bool),
 		DeletedStreamGroups:  make(map[string]bool),
 		DeletedMeasureGroups: make(map[string]bool),
-		StreamErrors:         make(map[string]map[string]string),
 		MeasureErrors:        make(map[string]map[string]string),
-		StreamCounts:         make(map[string]map[string]int),
 		MeasureCounts:        make(map[string]map[string]int),
+		CompletedStreamParts: make(map[string]map[string]map[uint64]bool),
+		StreamPartErrors:     make(map[string]map[string]map[uint64]string),
+		StreamPartCounts:     make(map[string]map[string]int),
+		StreamPartProgress:   make(map[string]map[string]int),
 	}
 }
 
@@ -133,30 +136,6 @@ func (p *Progress) IsGroupCompleted(group string) bool {
 	return p.CompletedGroups[group]
 }
 
-// MarkStreamCompleted marks a stream as completed.
-func (p *Progress) MarkStreamCompleted(group, stream string, count int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.CompletedStreams[group] == nil {
-		p.CompletedStreams[group] = make(map[string]bool)
-	}
-	p.CompletedStreams[group][stream] = true
-	if p.StreamCounts[group] == nil {
-		p.StreamCounts[group] = make(map[string]int)
-	}
-	p.StreamCounts[group][stream] = count
-}
-
-// IsStreamCompleted checks if a stream has been completed.
-func (p *Progress) IsStreamCompleted(group, stream string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if streams, ok := p.CompletedStreams[group]; ok {
-		return streams[stream]
-	}
-	return false
-}
-
 // MarkMeasureCompleted marks a measure as completed.
 func (p *Progress) MarkMeasureCompleted(group, measure string, count int) {
 	p.mu.Lock()
@@ -209,26 +188,11 @@ func (p *Progress) IsMeasureGroupDeleted(group string) bool {
 	return p.DeletedMeasureGroups[group]
 }
 
-// ClearErrors resets all prior stream/measure error records.
+// ClearErrors resets all prior measure error records.
 func (p *Progress) ClearErrors() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.StreamErrors = make(map[string]map[string]string)
 	p.MeasureErrors = make(map[string]map[string]string)
-}
-
-// MarkStreamError records an error message for a specific stream.
-func (p *Progress) MarkStreamError(group, stream, msg string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.StreamErrors[group] == nil {
-		p.StreamErrors[group] = make(map[string]string)
-	}
-	p.StreamErrors[group][stream] = msg
-	if p.CompletedStreams[group] == nil {
-		p.CompletedStreams[group] = make(map[string]bool)
-	}
-	p.CompletedStreams[group][stream] = false
 }
 
 // MarkMeasureError records an error message for a specific measure.
@@ -258,4 +222,137 @@ func (p *Progress) Remove(path string, l *logger.Logger) {
 		return
 	}
 	l.Info().Msgf("Removed progress file at %s", path)
+}
+
+// MarkStreamPartCompleted marks a specific part of a stream as completed.
+func (p *Progress) MarkStreamPartCompleted(group, stream string, partID uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Initialize nested maps if they don't exist
+	if p.CompletedStreamParts[group] == nil {
+		p.CompletedStreamParts[group] = make(map[string]map[uint64]bool)
+	}
+	if p.CompletedStreamParts[group][stream] == nil {
+		p.CompletedStreamParts[group][stream] = make(map[uint64]bool)
+	}
+
+	// Mark part as completed
+	p.CompletedStreamParts[group][stream][partID] = true
+
+	// Update progress count
+	if p.StreamPartProgress[group] == nil {
+		p.StreamPartProgress[group] = make(map[string]int)
+	}
+	p.StreamPartProgress[group][stream]++
+}
+
+// IsStreamPartCompleted checks if a specific part of a stream has been completed.
+func (p *Progress) IsStreamPartCompleted(group, stream string, partID uint64) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if streams, ok := p.CompletedStreamParts[group]; ok {
+		if parts, ok := streams[stream]; ok {
+			return parts[partID]
+		}
+	}
+	return false
+}
+
+// MarkStreamPartError records an error for a specific part of a stream.
+func (p *Progress) MarkStreamPartError(group, stream string, partID uint64, errorMsg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Initialize nested maps if they don't exist
+	if p.StreamPartErrors[group] == nil {
+		p.StreamPartErrors[group] = make(map[string]map[uint64]string)
+	}
+	if p.StreamPartErrors[group][stream] == nil {
+		p.StreamPartErrors[group][stream] = make(map[uint64]string)
+	}
+
+	// Record the error
+	p.StreamPartErrors[group][stream][partID] = errorMsg
+}
+
+// SetStreamPartCount sets the total number of parts for a stream.
+func (p *Progress) SetStreamPartCount(group, stream string, totalParts int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.StreamPartCounts[group] == nil {
+		p.StreamPartCounts[group] = make(map[string]int)
+	}
+	p.StreamPartCounts[group][stream] = totalParts
+
+	// Initialize progress tracking
+	if p.StreamPartProgress[group] == nil {
+		p.StreamPartProgress[group] = make(map[string]int)
+	}
+	if p.StreamPartProgress[group][stream] == 0 {
+		p.StreamPartProgress[group][stream] = 0
+	}
+}
+
+// GetStreamPartCount returns the total number of parts for a stream.
+func (p *Progress) GetStreamPartCount(group, stream string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if counts, ok := p.StreamPartCounts[group]; ok {
+		return counts[stream]
+	}
+	return 0
+}
+
+// GetStreamPartProgress returns the number of completed parts for a stream.
+func (p *Progress) GetStreamPartProgress(group, stream string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if progress, ok := p.StreamPartProgress[group]; ok {
+		return progress[stream]
+	}
+	return 0
+}
+
+// IsStreamFullyCompleted checks if all parts of a stream have been completed.
+func (p *Progress) IsStreamFullyCompleted(group, stream string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	totalParts := p.StreamPartCounts[group][stream]
+	completedParts := p.StreamPartProgress[group][stream]
+
+	return totalParts > 0 && completedParts >= totalParts
+}
+
+// GetStreamPartErrors returns all errors for a specific stream.
+func (p *Progress) GetStreamPartErrors(group, stream string) map[uint64]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if streams, ok := p.StreamPartErrors[group]; ok {
+		if parts, ok := streams[stream]; ok {
+			// Return a copy to avoid race conditions
+			result := make(map[uint64]string)
+			for partID, errorMsg := range parts {
+				result[partID] = errorMsg
+			}
+			return result
+		}
+	}
+	return nil
+}
+
+// ClearStreamPartErrors clears all part errors for a specific stream.
+func (p *Progress) ClearStreamPartErrors(group, stream string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if streams, ok := p.StreamPartErrors[group]; ok {
+		delete(streams, stream)
+	}
 }

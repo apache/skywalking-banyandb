@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,13 +38,13 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -77,6 +76,7 @@ type lifecycleService struct {
 	maxExecutionTimes int
 	enableTLS         bool
 	insecure          bool
+	chunkSize         run.Bytes
 }
 
 // NewService creates a new lifecycle service.
@@ -107,6 +107,8 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
 	)
 	flagS.IntVar(&l.maxExecutionTimes, "max-execution-times", 0, "Maximum number of times to execute the lifecycle migration. 0 means no limit.")
+	l.chunkSize = run.Bytes(1024 * 1024)
+	flagS.VarP(&l.chunkSize, "chunk-size", "", "Chunk size in bytes for streaming data during migration (default: 1MB)")
 	return flagS
 }
 
@@ -212,13 +214,7 @@ func (l *lifecycleService) action() error {
 	for _, g := range groups {
 		switch g.Catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
-			if streamSVC == nil {
-				l.l.Error().Msgf("stream service is not available, skipping group: %s", g.Metadata.Name)
-				progress.MarkStreamError(g.Metadata.Name, "", fmt.Sprintf("stream service unavailable for group %s", g.Metadata.Name))
-				allGroupsCompleted = false
-				continue
-			}
-			l.processStreamGroup(ctx, g, streamSVC, nodes, labels, progress)
+			l.processStreamGroup(ctx, g, streamDir, nodes, labels, progress)
 		case commonv1.Catalog_CATALOG_MEASURE:
 			if measureSVC == nil {
 				l.l.Error().Msgf("measure service is not available, skipping group: %s", g.Metadata.Name)
@@ -247,9 +243,7 @@ func (l *lifecycleService) action() error {
 // generateReport gathers counts & errors from Progress, writes one JSON file per run, and keeps only 5 latest.
 func (l *lifecycleService) generateReport(p *Progress) {
 	type grp struct {
-		StreamCounts  map[string]int    `json:"stream_counts"`
 		MeasureCounts map[string]int    `json:"measure_counts"`
-		StreamErrors  map[string]string `json:"stream_errors"`
 		MeasureErrors map[string]string `json:"measure_errors"`
 		Name          string            `json:"name"`
 	}
@@ -261,25 +255,21 @@ func (l *lifecycleService) generateReport(p *Progress) {
 
 	// build report
 	var groups []grp
-	for name := range p.CompletedStreams {
+	for name := range p.CompletedGroups {
 		groups = append(groups, grp{
 			Name:          name,
-			StreamCounts:  p.StreamCounts[name],
 			MeasureCounts: p.MeasureCounts[name],
-			StreamErrors:  p.StreamErrors[name],
 			MeasureErrors: p.MeasureErrors[name],
 		})
 	}
 	// also include groups that had only measures
 	for name := range p.CompletedMeasures {
-		if _, seen := p.CompletedStreams[name]; seen {
+		if _, seen := p.CompletedGroups[name]; seen {
 			continue
 		}
 		groups = append(groups, grp{
 			Name:          name,
-			StreamCounts:  p.StreamCounts[name],
 			MeasureCounts: p.MeasureCounts[name],
-			StreamErrors:  p.StreamErrors[name],
 			MeasureErrors: p.MeasureErrors[name],
 		})
 	}
@@ -367,23 +357,11 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 	return groups, nil
 }
 
-func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group, streamSVC stream.Service,
-	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
+func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
+	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, replicas, selector, client, err := parseGroup(g, labels, nodes, l.l, l.metadata)
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
-		return
-	}
-	defer client.GracefulStop()
-
-	ss, err := l.metadata.StreamRegistry().ListStream(ctx, schema.ListOpt{Group: g.Metadata.Name})
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to list streams in group %s", g.Metadata.Name)
-		return
-	}
-
-	tr := streamSVC.GetRemovalSegmentsTimeRange(g.Metadata.Name)
+	// Calculate removal segments time range based on group TTL configuration
+	tr := l.getRemovalSegmentsTimeRange(g)
 	if tr.Start.IsZero() && tr.End.IsZero() {
 		l.l.Info().Msgf("no removal segments time range for group %s, skipping stream migration", g.Metadata.Name)
 		progress.MarkGroupCompleted(g.Metadata.Name)
@@ -391,92 +369,93 @@ func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.G
 		return
 	}
 
-	l.processStreams(ctx, g, ss, streamSVC, tr, shardNum, replicas, selector, client, progress)
+	// Use file-based migration instead of element-based
+	err := l.processStreamGroupFileBased(ctx, g, streamDir, tr, nodes, labels, progress)
+	if err != nil {
+		l.l.Error().Err(err).Msgf("failed to migrate stream group %s using file-based approach", g.Metadata.Name)
+		return
+	}
 
-	allStreamsDone := true
-	for _, s := range ss {
-		if !progress.IsStreamCompleted(g.Metadata.Name, s.Metadata.Name) {
-			allStreamsDone = false
-		}
-	}
-	if allStreamsDone {
-		l.l.Info().Msgf("deleting expired stream segments for group: %s", g.Metadata.Name)
-		l.deleteExpiredStreamSegments(ctx, g, tr, progress)
-		progress.MarkGroupCompleted(g.Metadata.Name)
-		progress.Save(l.progressFilePath, l.l)
-	} else {
-		l.l.Info().Msgf("skipping delete expired stream segments for group %s: some streams not fully migrated", g.Metadata.Name)
-	}
+	l.l.Info().Msgf("deleting expired stream segments for group: %s", g.Metadata.Name)
+	l.deleteExpiredStreamSegments(ctx, g, tr, progress)
+	progress.MarkGroupCompleted(g.Metadata.Name)
+	progress.Save(l.progressFilePath, l.l)
 }
 
-func (l *lifecycleService) processStreams(
-	ctx context.Context,
-	g *commonv1.Group,
-	streams []*databasev1.Stream,
-	streamSVC stream.Service,
-	tr *timestamp.TimeRange,
-	shardNum uint32,
-	replicas uint32,
-	selector node.Selector,
-	client queue.Client,
-	progress *Progress,
-) {
-	for _, s := range streams {
-		if progress.IsStreamCompleted(g.Metadata.Name, s.Metadata.Name) {
-			l.l.Debug().Msgf("skipping already completed stream: %s/%s", g.Metadata.Name, s.Metadata.Name)
-			continue
-		}
-		sum, err := l.processSingleStream(ctx, s, streamSVC, tr, shardNum, replicas, selector, client)
-		if err != nil {
-			progress.MarkStreamError(g.Metadata.Name, s.Metadata.Name, err.Error())
-		} else {
-			if sum < 1 {
-				l.l.Debug().Msgf("no elements migrated for stream %s", s.Metadata.Name)
-			} else {
-				l.l.Info().Msgf("migrated %d elements in stream %s", sum, s.Metadata.Name)
-			}
-			progress.MarkStreamCompleted(g.Metadata.Name, s.Metadata.Name, sum)
-		}
-		progress.Save(l.progressFilePath, l.l)
+// processStreamGroupFileBased uses file-based migration instead of element-based queries.
+func (l *lifecycleService) processStreamGroupFileBased(_ context.Context, g *commonv1.Group,
+	streamDir string, tr *timestamp.TimeRange, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
+) error {
+	if progress.IsStreamGroupDeleted(g.Metadata.Name) {
+		l.l.Info().Msgf("skipping already completed file-based migration for group: %s", g.Metadata.Name)
+		return nil
 	}
+
+	l.l.Info().Msgf("starting file-based stream migration for group: %s", g.Metadata.Name)
+
+	// Use the file-based migration with existing visitor pattern
+	err := MigrateStreamWithFileBased(
+		streamDir,  // Use snapshot directory as source
+		*tr,        // Time range for segments to migrate
+		g,          // Group configuration
+		labels,     // Node labels
+		nodes,      // Target nodes
+		l.metadata, // Metadata repository
+		storage.IntervalRule{Unit: storage.DAY, Num: 1}, // Use daily segments as default
+		l.l,              // Logger
+		int(l.chunkSize), // Chunk size for streaming
+	)
+	if err != nil {
+		return fmt.Errorf("file-based stream migration failed: %w", err)
+	}
+
+	l.l.Info().Msgf("completed file-based stream migration for group: %s", g.Metadata.Name)
+	return nil
 }
 
-func (l *lifecycleService) processSingleStream(ctx context.Context, s *databasev1.Stream,
-	streamSVC stream.Service, tr *timestamp.TimeRange, shardNum uint32, replicas uint32, selector node.Selector, client queue.Client,
-) (int, error) {
-	q, err := streamSVC.Stream(s.Metadata)
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to get stream %s", s.Metadata.Name)
-		return 0, err
+// getRemovalSegmentsTimeRange calculates the time range for segments that should be migrated
+// based on the group's TTL configuration, similar to storage.segmentController.getExpiredSegmentsTimeRange.
+func (l *lifecycleService) getRemovalSegmentsTimeRange(g *commonv1.Group) *timestamp.TimeRange {
+	if g.ResourceOpts == nil || g.ResourceOpts.Ttl == nil {
+		l.l.Debug().Msgf("no TTL configured for group %s", g.Metadata.Name)
+		return &timestamp.TimeRange{} // Return empty time range
 	}
 
-	tagProjection := make([]model.TagProjection, len(s.TagFamilies))
-	entity := make([]*modelv1.TagValue, len(s.Entity.TagNames))
-	for idx := range s.Entity.TagNames {
-		entity[idx] = pbv1.AnyTagValue
-	}
-	for i, tf := range s.TagFamilies {
-		tagProjection[i] = model.TagProjection{
-			Family: tf.Name,
-			Names:  make([]string, len(tf.Tags)),
-		}
-		for j, t := range tf.Tags {
-			tagProjection[i].Names[j] = t.Name
-		}
+	// Convert TTL to storage.IntervalRule
+	ttl := storage.MustToIntervalRule(g.ResourceOpts.Ttl)
+
+	// Calculate deadline based on TTL (same logic as segmentController.getExpiredSegmentsTimeRange)
+	deadline := time.Now().Local().Add(-l.calculateTTLDuration(ttl))
+
+	// Create time range for segments before the deadline
+	timeRange := &timestamp.TimeRange{
+		Start:        time.Time{}, // Will be set to earliest segment start time
+		End:          deadline,    // All segments before this time should be migrated
+		IncludeStart: true,
+		IncludeEnd:   false,
 	}
 
-	result, err := q.Query(ctx, model.StreamQueryOptions{
-		Name:           s.Metadata.Name,
-		TagProjection:  tagProjection,
-		Entities:       [][]*modelv1.TagValue{entity},
-		TimeRange:      tr,
-		MaxElementSize: math.MaxInt,
-	})
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to query stream %s", s.Metadata.Name)
-		return 0, err
+	l.l.Info().
+		Str("group", g.Metadata.Name).
+		Time("deadline", deadline).
+		Str("ttl", fmt.Sprintf("%d %s", g.ResourceOpts.Ttl.Num, g.ResourceOpts.Ttl.Unit.String())).
+		Msg("calculated removal segments time range based on TTL")
+
+	return timeRange
+}
+
+// calculateTTLDuration calculates the duration for a TTL interval rule.
+// This implements the same logic as storage.IntervalRule.estimatedDuration().
+func (l *lifecycleService) calculateTTLDuration(ttl storage.IntervalRule) time.Duration {
+	switch ttl.Unit {
+	case storage.HOUR:
+		return time.Hour * time.Duration(ttl.Num)
+	case storage.DAY:
+		return 24 * time.Hour * time.Duration(ttl.Num)
+	default:
+		l.l.Warn().Msgf("unknown TTL unit %v, defaulting to 1 day", ttl.Unit)
+		return 24 * time.Hour
 	}
-	return migrateStream(ctx, s, result, shardNum, replicas, selector, client, l.l), nil
 }
 
 func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *commonv1.Group, tr *timestamp.TimeRange, progress *Progress) {

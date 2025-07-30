@@ -40,7 +40,6 @@ func TestProgress(t *testing.T) {
 		progress := NewProgress()
 		assert.NotNil(t, progress)
 		assert.Empty(t, progress.CompletedGroups)
-		assert.Empty(t, progress.CompletedStreams)
 		assert.Empty(t, progress.CompletedMeasures)
 		assert.Empty(t, progress.DeletedStreamGroups)
 		assert.Empty(t, progress.DeletedMeasureGroups)
@@ -52,11 +51,6 @@ func TestProgress(t *testing.T) {
 		progress.MarkGroupCompleted("group1")
 		assert.True(t, progress.IsGroupCompleted("group1"))
 		assert.False(t, progress.IsGroupCompleted("group2"))
-
-		progress.MarkStreamCompleted("group1", "stream1", 1)
-		assert.True(t, progress.IsStreamCompleted("group1", "stream1"))
-		assert.False(t, progress.IsStreamCompleted("group1", "stream2"))
-		assert.False(t, progress.IsStreamCompleted("group2", "stream1"))
 
 		progress.MarkMeasureCompleted("group1", "measure1", 1)
 		assert.True(t, progress.IsMeasureCompleted("group1", "measure1"))
@@ -75,7 +69,6 @@ func TestProgress(t *testing.T) {
 	t.Run("SaveAndLoad", func(t *testing.T) {
 		progress := NewProgress()
 		progress.MarkGroupCompleted("group1")
-		progress.MarkStreamCompleted("group1", "stream1", 1)
 		progress.MarkMeasureCompleted("group1", "measure1", 1)
 		progress.MarkStreamGroupDeleted("group2")
 		progress.MarkMeasureGroupDeleted("group2")
@@ -85,13 +78,11 @@ func TestProgress(t *testing.T) {
 		loaded := LoadProgress(progressPath, l)
 
 		assert.True(t, loaded.IsGroupCompleted("group1"))
-		assert.True(t, loaded.IsStreamCompleted("group1", "stream1"))
 		assert.True(t, loaded.IsMeasureCompleted("group1", "measure1"))
 		assert.True(t, loaded.IsStreamGroupDeleted("group2"))
 		assert.True(t, loaded.IsMeasureGroupDeleted("group2"))
 
 		assert.False(t, loaded.IsGroupCompleted("group3"))
-		assert.False(t, loaded.IsStreamCompleted("group1", "stream2"))
 		assert.False(t, loaded.IsMeasureCompleted("group1", "measure2"))
 		assert.False(t, loaded.IsStreamGroupDeleted("group3"))
 		assert.False(t, loaded.IsMeasureGroupDeleted("group3"))
