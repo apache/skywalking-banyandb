@@ -503,8 +503,8 @@ type nodeContext struct {
 	clientWrapper *repairGossipClientWrapper
 	nodeID        string
 	stop          []func()
-	stopMutex     sync.RWMutex
 	node
+	stopMutex sync.RWMutex
 }
 
 func (n *nodeContext) appendStop(f func()) {
@@ -516,9 +516,7 @@ func (n *nodeContext) appendStop(f func()) {
 func (n *nodeContext) stopAll() {
 	n.stopMutex.RLock()
 	result := make([]func(), 0, len(n.stop))
-	for _, f := range n.stop {
-		result = append(result, f)
-	}
+	result = append(result, n.stop...)
 	n.stopMutex.RUnlock()
 	for _, f := range result {
 		f()
