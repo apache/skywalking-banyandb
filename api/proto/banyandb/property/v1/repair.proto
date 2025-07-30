@@ -39,12 +39,14 @@ message TreeLeafNode {
   string sha = 4;
 }
 
-message TreeSummary {
+message TreeRoot {
   string group = 1;
   uint32 shard_id = 2;
-  bool tree_found = 3;
-  string root_sha = 4;
-  repeated TreeSlotSHA slot_sha = 5;
+  string root_sha = 3;
+}
+
+message TreeSlots {
+  repeated TreeSlotSHA slot_sha = 1;
 }
 
 message PropertyMissing {
@@ -68,27 +70,28 @@ message NoMorePropertySync {}
 message RepairRequest {
   oneof data {
     // compare stage
-    TreeSummary tree_summary = 11;
+    TreeRoot tree_root = 1;
+    TreeSlots tree_slots = 2;
     // repair stage
     // case 1: client missing but server existing
-    PropertyMissing property_missing = 12;
+    PropertyMissing property_missing = 3;
     // case 2: client existing but server missing
     // case 3: SHA value mismatches
-    PropertySync property_sync = 13;
+    PropertySync property_sync = 4;
     // if client side is already send all the properties(missing or property sync)
     // which means the client side will not sending more properties to sync, server side should close the stream.
-    NoMorePropertySync no_more_property_sync = 14;
+    NoMorePropertySync no_more_property_sync = 5;
   }
 }
 
 message RepairResponse {
   oneof data {
     // compare stage
-    DifferTreeSummary differ_tree_summary = 11;
+    DifferTreeSummary differ_tree_summary = 1;
     // repair stage
     // case 1: return from PropertyMissing
     // case 3: return if the client is older
-    PropertySync property_sync = 12;
+    PropertySync property_sync = 2;
   }
 }
 

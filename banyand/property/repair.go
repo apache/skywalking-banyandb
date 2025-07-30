@@ -360,7 +360,7 @@ type repairTreeNode struct {
 }
 
 type repairTreeReader interface {
-	read(parent *repairTreeNode, pagingSize int64) ([]*repairTreeNode, error)
+	read(parent *repairTreeNode, pagingSize int64, forceReadFromStart bool) ([]*repairTreeNode, error)
 	close() error
 }
 
@@ -447,7 +447,7 @@ func (r *repairTreeFileReader) seekPosition(offset int64, whence int) error {
 	return nil
 }
 
-func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64) ([]*repairTreeNode, error) {
+func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, forceReFromStart bool) ([]*repairTreeNode, error) {
 	if parent == nil {
 		// reading the root node
 		err := r.seekPosition(r.footer.slotNodeFinishedOffset, io.SeekStart)
@@ -473,7 +473,7 @@ func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64) ([
 	var err error
 	if parent.tp == repairTreeNodeTypeRoot {
 		needSeek := false
-		if r.paging == nil || r.paging.lastNode != parent {
+		if r.paging == nil || r.paging.lastNode != parent || forceReFromStart {
 			needSeek = true
 			r.paging = newRepairTreeReaderPage(parent, r.footer.slotNodeCount)
 		}
@@ -524,7 +524,7 @@ func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64) ([
 
 	// otherwise, reading the leaf nodes
 	needSeek := false
-	if r.paging == nil || r.paging.lastNode != parent {
+	if r.paging == nil || r.paging.lastNode != parent || forceReFromStart {
 		needSeek = true
 		r.paging = newRepairTreeReaderPage(parent, r.footer.slotNodeCount)
 	}
@@ -877,14 +877,15 @@ func newRepairMetrics(fac *observability.Factory) *repairMetrics {
 type repairScheduler struct {
 	latestBuildTreeSchedule   time.Time
 	buildTreeClock            clock.Clock
-	l                         *logger.Logger
+	gossipMessenger           gossip.Messenger
 	closer                    *run.Closer
 	buildSnapshotFunc         func(context.Context) (string, error)
 	repairTreeScheduler       *timestamp.Scheduler
 	quickRepairNotified       *int32
 	db                        *database
-	gossipMessenger           gossip.Messenger
+	l                         *logger.Logger
 	metrics                   *repairSchedulerMetrics
+	treeSlotCount             int
 	buildTreeScheduleInterval time.Duration
 	quickBuildTreeTime        time.Duration
 	lastBuildTimeLocker       sync.Mutex
@@ -899,6 +900,7 @@ func newRepairScheduler(
 	quickBuildTreeTime time.Duration,
 	triggerCronExp string,
 	gossipMessenger gossip.Messenger,
+	treeSlotCount int,
 	db *database,
 	buildSnapshotFunc func(context.Context) (string, error),
 ) (*repairScheduler, error) {
@@ -913,6 +915,7 @@ func newRepairScheduler(
 		quickBuildTreeTime:  quickBuildTreeTime,
 		metrics:             newRepairSchedulerMetrics(omr.With(propertyScope.SubScope("scheduler"))),
 		gossipMessenger:     gossipMessenger,
+		treeSlotCount:       treeSlotCount,
 	}
 	c := timestamp.NewScheduler(l, s.buildTreeClock)
 	s.repairTreeScheduler = c
@@ -1018,6 +1021,7 @@ func (r *repairScheduler) buildingTree(shards []common.ShardID, group string, fo
 		r.buildTreeLocker.Lock()
 	} else if !r.buildTreeLocker.TryLock() {
 		// if not forced, we try to lock the build tree locker
+		r.metrics.totalRepairBuildTreeConflicts.Inc(1)
 		return nil
 	}
 	defer r.buildTreeLocker.Unlock()
@@ -1138,10 +1142,11 @@ func (r *repairScheduler) registerClientToGossip(messenger gossip.Messenger) {
 }
 
 type repairSchedulerMetrics struct {
-	totalRepairBuildTreeStarted  meter.Counter
-	totalRepairBuildTreeFinished meter.Counter
-	totalRepairBuildTreeFailures meter.Counter
-	totalRepairBuildTreeLatency  meter.Counter
+	totalRepairBuildTreeStarted   meter.Counter
+	totalRepairBuildTreeFinished  meter.Counter
+	totalRepairBuildTreeFailures  meter.Counter
+	totalRepairBuildTreeLatency   meter.Counter
+	totalRepairBuildTreeConflicts meter.Counter
 
 	totalRepairSuccessCount meter.Counter
 	totalRepairFailedCount  meter.Counter
@@ -1149,10 +1154,11 @@ type repairSchedulerMetrics struct {
 
 func newRepairSchedulerMetrics(omr *observability.Factory) *repairSchedulerMetrics {
 	return &repairSchedulerMetrics{
-		totalRepairBuildTreeStarted:  omr.NewCounter("repair_build_tree_started"),
-		totalRepairBuildTreeFinished: omr.NewCounter("repair_build_tree_finished"),
-		totalRepairBuildTreeFailures: omr.NewCounter("repair_build_tree_failures"),
-		totalRepairBuildTreeLatency:  omr.NewCounter("repair_build_tree_latency"),
+		totalRepairBuildTreeStarted:   omr.NewCounter("repair_build_tree_started"),
+		totalRepairBuildTreeFinished:  omr.NewCounter("repair_build_tree_finished"),
+		totalRepairBuildTreeFailures:  omr.NewCounter("repair_build_tree_failures"),
+		totalRepairBuildTreeLatency:   omr.NewCounter("repair_build_tree_latency"),
+		totalRepairBuildTreeConflicts: omr.NewCounter("repair_build_tree_conflicts"),
 
 		totalRepairSuccessCount: omr.NewCounter("property_repair_success_count", "group", "shard"),
 		totalRepairFailedCount:  omr.NewCounter("property_repair_failure_count", "group", "shard"),

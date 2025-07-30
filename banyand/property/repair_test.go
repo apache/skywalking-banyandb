@@ -199,7 +199,7 @@ func TestBuildTree(t *testing.T) {
 			}
 			defers = append(defers, snapshotDeferFunc)
 			db, err := openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32,
-				observability.BypassRegistry, fs.NewLocalFileSystem(), snapshotDir,
+				observability.BypassRegistry, fs.NewLocalFileSystem(), true, snapshotDir,
 				"@every 10m", time.Second*10, "* 2 * * *", nil, nil, func(context.Context) (string, error) {
 					snapshotDir, defFunc, newSpaceErr := test.NewSpace()
 					if newSpaceErr != nil {
@@ -289,7 +289,7 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 	}
 	defers = append(defers, snapshotDeferFunc)
 	db, err := openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32,
-		observability.BypassRegistry, fs.NewLocalFileSystem(), snapshotDir,
+		observability.BypassRegistry, fs.NewLocalFileSystem(), true, snapshotDir,
 		"@every 10m", time.Millisecond*50, "* 2 * * *", nil, nil, func(context.Context) (string, error) {
 			tmpDir, defFunc, newSpaceErr := test.NewSpace()
 			if newSpaceErr != nil {
@@ -523,7 +523,7 @@ func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 		_ = reader.close()
 	}()
 
-	roots, err := reader.read(nil, 10)
+	roots, err := reader.read(nil, 10, false)
 	if err != nil {
 		t.Fatalf("failed to read tree for group %s: %v", group, err)
 	}
@@ -536,7 +536,7 @@ func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 			shaValue: roots[0].shaValue,
 		},
 	}
-	slots, err := reader.read(roots[0], 10)
+	slots, err := reader.read(roots[0], 10, false)
 	if err != nil {
 		t.Fatalf("failed to read slots for group %s: %v", group, err)
 	}
@@ -549,7 +549,7 @@ func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 			shaValue: slot.shaValue,
 		}
 		tree.root.children = append(tree.root.children, slotNode)
-		children, err := reader.read(slot, 10)
+		children, err := reader.read(slot, 10, false)
 		if err != nil {
 			t.Fatalf("failed to read children for slot %d in group %s: %v", slot.slotInx, group, err)
 		}

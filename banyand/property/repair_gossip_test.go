@@ -361,7 +361,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 
 	db, err := openDB(context.Background(),
 		dbLocation, time.Minute*10, time.Minute*10, 32, observability.NewBypassRegistry(),
-		fs.NewLocalFileSystem(), repairLocation, "@every 10m", time.Minute*10, "* 2 * * *",
+		fs.NewLocalFileSystem(), true, repairLocation, "@every 10m", time.Minute*10, "* 2 * * *",
 		messenger, mockRepo, func(context.Context) (string, error) {
 			snapshotDir, defFunc, newSpaceErr := test.NewSpace()
 			if newSpaceErr != nil {

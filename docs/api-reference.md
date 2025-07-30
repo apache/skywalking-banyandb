@@ -263,8 +263,9 @@
     - [RepairRequest](#banyandb-property-v1-RepairRequest)
     - [RepairResponse](#banyandb-property-v1-RepairResponse)
     - [TreeLeafNode](#banyandb-property-v1-TreeLeafNode)
+    - [TreeRoot](#banyandb-property-v1-TreeRoot)
     - [TreeSlotSHA](#banyandb-property-v1-TreeSlotSHA)
-    - [TreeSummary](#banyandb-property-v1-TreeSummary)
+    - [TreeSlots](#banyandb-property-v1-TreeSlots)
   
     - [RepairService](#banyandb-property-v1-RepairService)
   
@@ -3927,7 +3928,8 @@ Property stores the user defined data
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tree_summary | [TreeSummary](#banyandb-property-v1-TreeSummary) |  | compare stage |
+| tree_root | [TreeRoot](#banyandb-property-v1-TreeRoot) |  | compare stage |
+| tree_slots | [TreeSlots](#banyandb-property-v1-TreeSlots) |  |  |
 | property_missing | [PropertyMissing](#banyandb-property-v1-PropertyMissing) |  | repair stage case 1: client missing but server existing |
 | property_sync | [PropertySync](#banyandb-property-v1-PropertySync) |  | case 2: client existing but server missing case 3: SHA value mismatches |
 | no_more_property_sync | [NoMorePropertySync](#banyandb-property-v1-NoMorePropertySync) |  | if client side is already send all the properties(missing or property sync) which means the client side will not sending more properties to sync, server side should close the stream. |
@@ -3971,6 +3973,23 @@ Property stores the user defined data
 
 
 
+<a name="banyandb-property-v1-TreeRoot"></a>
+
+### TreeRoot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| shard_id | [uint32](#uint32) |  |  |
+| root_sha | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="banyandb-property-v1-TreeSlotSHA"></a>
 
 ### TreeSlotSHA
@@ -3987,18 +4006,14 @@ Property stores the user defined data
 
 
 
-<a name="banyandb-property-v1-TreeSummary"></a>
+<a name="banyandb-property-v1-TreeSlots"></a>
 
-### TreeSummary
+### TreeSlots
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  |  |
-| shard_id | [uint32](#uint32) |  |  |
-| tree_found | [bool](#bool) |  |  |
-| root_sha | [string](#string) |  |  |
 | slot_sha | [TreeSlotSHA](#banyandb-property-v1-TreeSlotSHA) | repeated |  |
 
 

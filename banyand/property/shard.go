@@ -241,7 +241,9 @@ func (s *shard) updateDocuments(docs index.Documents) error {
 	if persistentError != nil {
 		return fmt.Errorf("persistent failure: %w", persistentError)
 	}
-	s.repairState.scheduler.documentUpdatesNotify()
+	if s.repairState.scheduler != nil {
+		s.repairState.scheduler.documentUpdatesNotify()
+	}
 	return nil
 }
 

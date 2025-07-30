@@ -74,6 +74,7 @@ func openDB(
 	repairSlotCount int,
 	omr observability.MetricsRegistry,
 	lfs fs.FileSystem,
+	repairEnabled bool,
 	repairBaseDir string,
 	repairBuildTreeCron string,
 	repairQuickBuildTreeTime time.Duration,
@@ -97,12 +98,16 @@ func openDB(
 		lfs:                 lfs,
 		metadata:            metadata,
 	}
+	var err error
 	// init repair scheduler
-	scheduler, err := newRepairScheduler(l, omr, repairBuildTreeCron, repairQuickBuildTreeTime, repairTriggerCron, gossipMessenger, db, buildSnapshotFunc)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to create repair scheduler for %s", loc)
+	if repairEnabled {
+		scheduler, schedulerErr := newRepairScheduler(l, omr, repairBuildTreeCron, repairQuickBuildTreeTime, repairTriggerCron,
+			gossipMessenger, repairSlotCount, db, buildSnapshotFunc)
+		if schedulerErr != nil {
+			return nil, errors.Wrapf(schedulerErr, "failed to create repair scheduler for %s", loc)
+		}
+		db.repairScheduler = scheduler
 	}
-	db.repairScheduler = scheduler
 	if err = db.load(ctx); err != nil {
 		return nil, err
 	}
@@ -218,7 +223,9 @@ func (db *database) close() error {
 	if db.closed.Swap(true) {
 		return nil
 	}
-	db.repairScheduler.close()
+	if db.repairScheduler != nil {
+		db.repairScheduler.close()
+	}
 	sLst := db.sLst.Load()
 	var err error
 	if sLst != nil {
