@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	gossipMerkelTreeReadPageSize int64 = 10
+	gossipMerkleTreeReadPageSize int64 = 10
 	gossipShardQueryDatabaseSize       = 100
 )
 
@@ -67,7 +67,7 @@ func (b *repairGossipBase) sendTreeSummary(
 	group string,
 	shardID uint32,
 	stream grpclib.BidiStreamingClient[propertyv1.RepairRequest, propertyv1.RepairResponse],
-) (map[int32]*repairTreeNode, error) {
+) (*repairTreeNode, error) {
 	root, err := reader.read(nil, 1, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read tree root: %w", err)
@@ -89,10 +89,9 @@ func (b *repairGossipBase) sendTreeSummary(
 		return nil, fmt.Errorf("failed to send tree root for group %s: %w", group, err)
 	}
 
-	slotsNodes := make(map[int32]*repairTreeNode)
 	var slots []*repairTreeNode
 	for {
-		slots, err = reader.read(root[0], gossipMerkelTreeReadPageSize, false)
+		slots, err = reader.read(root[0], gossipMerkleTreeReadPageSize, false)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read slots for group %s: %w", group, err)
 		}
@@ -104,7 +103,6 @@ func (b *repairGossipBase) sendTreeSummary(
 			SlotSha: make([]*propertyv1.TreeSlotSHA, 0, len(slots)),
 		}
 		for _, s := range slots {
-			slotsNodes[s.slotInx] = s
 			slotReq.SlotSha = append(slotReq.SlotSha, &propertyv1.TreeSlotSHA{
 				Slot:  s.slotInx,
 				Value: s.shaValue,
@@ -133,7 +131,7 @@ func (b *repairGossipBase) sendTreeSummary(
 		return nil, fmt.Errorf("failed to send empty tree slots for group %s: %w", group, err)
 	}
 
-	return slotsNodes, nil
+	return root[0], nil
 }
 
 func (b *repairGossipBase) queryProperty(ctx context.Context, syncShard *shard, leafNodeEntity string) (*queryProperty, *propertyv1.Property, error) {
@@ -207,7 +205,7 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 	}()
 
 	// step 1: send merkle tree data
-	clientSlotNodes, err := r.sendTreeSummary(reader, request.Group, request.ShardId, stream)
+	rootNode, err := r.sendTreeSummary(reader, request.Group, request.ShardId, stream)
 	if err != nil {
 		// if the tree summary cannot be built, we should abort the propagation
 		return errors.Wrapf(gossip.ErrAbortPropagation, "failed to query/send tree summary on client side: %v", err)
@@ -239,7 +237,7 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 			if firstTreeSummaryResp && len(resp.DifferTreeSummary.Nodes) == 0 {
 				return nil
 			}
-			r.handleDifferSummaryFromServer(ctx, stream, resp.DifferTreeSummary, reader, syncShard, clientSlotNodes)
+			r.handleDifferSummaryFromServer(ctx, stream, resp.DifferTreeSummary, reader, syncShard, rootNode)
 			firstTreeSummaryResp = false
 		case *propertyv1.RepairResponse_PropertySync:
 			// step 3: keep receiving messages from the server
@@ -305,7 +303,7 @@ func (r *repairGossipClient) handleDifferSummaryFromServer(
 	differTreeSummary *propertyv1.DifferTreeSummary,
 	reader repairTreeReader,
 	syncShard *shard,
-	clientSlotNodes map[int32]*repairTreeNode,
+	rootNode *repairTreeNode,
 ) {
 	// if their no more different nodes, means the client side could be send the no more property sync request to notify the server
 	if len(differTreeSummary.Nodes) == 0 {
@@ -330,14 +328,14 @@ func (r *repairGossipClient) handleDifferSummaryFromServer(
 		}
 		// if the repair node doesn't exist in the server side, then should send all the real property data to server
 		if !node.Exists {
-			clientSlotNode, exist := clientSlotNodes[node.SlotIndex]
-			if !exist {
-				r.scheduler.l.Warn().Msgf("client slot %d not exist", node.SlotIndex)
+			clientSlotNode, findError := r.findSlotNodeByRoot(reader, rootNode, node.SlotIndex)
+			if findError != nil {
+				r.scheduler.l.Warn().Err(findError).Msgf("client slot %d not exist", node.SlotIndex)
 				continue
 			}
 			// read the leaf nodes from the client side
 			for {
-				leafNodes, err := reader.read(clientSlotNode, gossipMerkelTreeReadPageSize, false)
+				leafNodes, err := reader.read(clientSlotNode, gossipMerkleTreeReadPageSize, false)
 				if err != nil {
 					r.scheduler.l.Warn().Err(err).Msgf("failed to read leaf nodes from client side")
 					break
@@ -371,14 +369,14 @@ func (r *repairGossipClient) handleDifferSummaryFromServer(
 			}
 		}
 
-		slotNodes, slotNodesExist := clientSlotNodes[node.SlotIndex]
+		clientSlotNode, findError := r.findSlotNodeByRoot(reader, rootNode, node.SlotIndex)
 		// if slot not exists in client side, then the client should ask the server for the property data of leaf nodes
-		if !slotNodesExist {
+		if findError != nil {
 			r.sendPropertyMissing(stream, node.Entity)
 			continue
 		}
 		// check the leaf node if exist in the client side or not
-		clientLeafNode, clientLeafNodeExist, err := r.findExistingLeafNode(reader, slotNodes, node.Entity)
+		clientLeafNode, clientLeafNodeExist, err := r.findExistingLeafNode(reader, clientSlotNode, node.Entity)
 		if err != nil {
 			r.scheduler.l.Warn().Err(err).Msgf("failed to find existing leaf node for entity %s", node.Entity)
 			continue
@@ -416,11 +414,31 @@ func (r *repairGossipClient) handleDifferSummaryFromServer(
 	}
 }
 
+func (r *repairGossipClient) findSlotNodeByRoot(reader repairTreeReader, root *repairTreeNode, index int32) (*repairTreeNode, error) {
+	firstRead := true
+	for {
+		slotNodes, err := reader.read(root, gossipMerkleTreeReadPageSize, firstRead)
+		if err != nil {
+			return nil, err
+		}
+		if len(slotNodes) == 0 {
+			return nil, fmt.Errorf("failed to find slot node by root: %d", index)
+		}
+		for _, s := range slotNodes {
+			if s.slotInx == index {
+				return s, nil
+			}
+		}
+
+		firstRead = false
+	}
+}
+
 func (r *repairGossipClient) findExistingLeafNode(reader repairTreeReader, parent *repairTreeNode, entity string) (*repairTreeNode, bool, error) {
 	isFirstRead := true
 	// if not found in the cache, read from the tree
 	for {
-		leafNodes, err := reader.read(parent, gossipMerkelTreeReadPageSize, isFirstRead)
+		leafNodes, err := reader.read(parent, gossipMerkleTreeReadPageSize, isFirstRead)
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to read tree for entity %s: %w", entity, err)
 		}
@@ -681,7 +699,7 @@ func (r *repairGossipServer) sendDifferSlots(
 	// send server mismatch slots to the client
 	for _, node := range clientMismatchSlots {
 		for {
-			leafNodes, err = reader.read(node, gossipMerkelTreeReadPageSize, false)
+			leafNodes, err = reader.read(node, gossipMerkleTreeReadPageSize, false)
 			if err != nil {
 				return hasSent, fmt.Errorf("failed to read leaf nodes for slot %d: %w", node.slotInx, err)
 			}
