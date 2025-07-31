@@ -230,3 +230,101 @@ func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, 
 
 	return nil
 }
+
+type syncElementIndexContext struct {
+	streamer index.ExternalSegmentStreamer
+}
+
+func (s *syncElementIndexContext) FinishSync() error {
+	if s.streamer != nil {
+		return s.streamer.CompleteSegment()
+	}
+	return nil
+}
+
+func (s *syncElementIndexContext) Close() error {
+	s.streamer = nil
+	return nil
+}
+
+type syncElementIndexCallback struct {
+	l          *logger.Logger
+	schemaRepo *schemaRepo
+}
+
+func setUpSyncElementIndexCallback(l *logger.Logger, schemaRepo *schemaRepo) queue.ChunkedSyncHandler {
+	return &syncElementIndexCallback{
+		l:          l,
+		schemaRepo: schemaRepo,
+	}
+}
+
+func (s *syncElementIndexCallback) CheckHealth() *common.Error {
+	return nil
+}
+
+// CreatePartHandler implements queue.ChunkedSyncHandler for element index synchronization.
+func (s *syncElementIndexCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
+		return nil, err
+	}
+	segmentTime := time.Unix(0, ctx.MinTimestamp)
+	segment, err := tsdb.CreateSegmentIfNotExist(segmentTime)
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
+		return nil, err
+	}
+	defer segment.DecRef()
+	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("failed to create ts table")
+		return nil, err
+	}
+
+	streamer, err := tsTable.index.EnableExternalSegments()
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to enable external segments for element index")
+		return nil, err
+	}
+
+	if err := streamer.StartSegment(); err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to start external segment for element index")
+		return nil, err
+	}
+
+	s.l.Debug().Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("created element index sync context")
+	return &syncElementIndexContext{
+		streamer: streamer,
+	}, nil
+}
+
+// HandleFileChunk implements queue.ChunkedSyncHandler for streaming element index chunks.
+func (s *syncElementIndexCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+	if ctx.Handler == nil {
+		return fmt.Errorf("part handler is nil")
+	}
+	elementCtx := ctx.Handler.(*syncElementIndexContext)
+
+	if elementCtx.streamer == nil {
+		return fmt.Errorf("external segment streamer is nil")
+	}
+
+	err := elementCtx.streamer.WriteChunk(chunk)
+	if err != nil {
+		s.l.Error().Err(err).
+			Str("group", ctx.Group).
+			Int("chunk_size", len(chunk)).
+			Msg("failed to write chunk to external segment streamer for element index")
+		return err
+	}
+
+	s.l.Debug().
+		Str("group", ctx.Group).
+		Int("chunk_size", len(chunk)).
+		Uint64("bytes_received", elementCtx.streamer.BytesReceived()).
+		Msg("wrote chunk to external segment streamer for element index")
+
+	return nil
+}

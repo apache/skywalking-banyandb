@@ -107,6 +107,10 @@ func (e *elementIndex) Search(ctx context.Context, seriesList []uint64, filter i
 	return result, resultTS, nil
 }
 
+func (e *elementIndex) EnableExternalSegments() (index.ExternalSegmentStreamer, error) {
+	return e.store.EnableExternalSegments()
+}
+
 func (e *elementIndex) Close() error {
 	return e.store.Close()
 }

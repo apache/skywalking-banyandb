@@ -334,7 +334,7 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 			Int("total_segments", mv.progress.GetStreamElementIndexCount(mv.group)).
 			Msg("element index segment migration completed successfully")
 	}
-	partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicStreamLocalIndexWrite.String())
+	partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicStreamElementIndexSync.String())
 
 	// Stream segment file to target shard replicas
 	if err := mv.streamPartToTargetShard(partData); err != nil {
