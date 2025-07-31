@@ -319,15 +319,15 @@ func (r *repairGossipClient) handleDifferSummaryFromServer(
 			return
 		}
 	}
-	select {
-	case <-ctx.Done():
-		r.scheduler.l.Warn().Msgf("context done while handling differ summary from server")
-		return
-	default:
-		break
-	}
 	// keep reading the tree summary until there are no more different nodes
 	for _, node := range differTreeSummary.Nodes {
+		select {
+		case <-ctx.Done():
+			r.scheduler.l.Warn().Msgf("context done while handling differ summary from server")
+			return
+		default:
+			break
+		}
 		// if the repair node doesn't exist in the server side, then should send all the real property data to server
 		if !node.Exists {
 			clientSlotNode, exist := clientSlotNodes[node.SlotIndex]
@@ -490,10 +490,6 @@ func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.Rep
 		// if the root SHA is the same, we can skip repair
 		return r.sendTreeFound(s, true)
 	}
-	clientSlots := make(map[int32]string)
-	for _, clientSlot := range summary.slots {
-		clientSlots[clientSlot.index] = clientSlot.shaValue
-	}
 	serverSlotNodes, err := reader.read(rootVal[0], int64(r.scheduler.treeSlotCount), false)
 	if err != nil {
 		r.scheduler.l.Warn().Err(err).Msgf("failed to read slot nodes on server side")
@@ -504,18 +500,35 @@ func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.Rep
 	// server missing slots
 	serverMissingSlots := make([]int32, 0)
 	for _, serverSlot := range serverSlotNodes {
-		sameSlotSha, exist := clientSlots[serverSlot.slotInx]
-		// if the slot not exists in the client or the SHA values are different,
-		// then, server side should send all the leaf nodes of the slot
-		if !exist || sameSlotSha != serverSlot.shaValue {
+		serverSlotFoundInClientSlots := false
+		for _, clientSlot := range summary.slots {
+			// if the slot exists in the client side, we should check the SHA value
+			if serverSlot.slotInx == clientSlot.index {
+				serverSlotFoundInClientSlots = true
+				// if the SHA value is the same, we can skip it
+				if serverSlot.shaValue == clientSlot.shaValue {
+					continue
+				}
+				clientMismatchSlots = append(clientMismatchSlots, serverSlot)
+				break
+			}
+		}
+		if !serverSlotFoundInClientSlots {
+			// if the server slot is not found in the client side, we should add it to the missing slots
 			clientMismatchSlots = append(clientMismatchSlots, serverSlot)
 		}
-		// remove the slot from the client slots map,
-		// so reduced client slots only contains the slots that are not in the server
-		delete(clientSlots, serverSlot.slotInx)
 	}
-	for slot := range clientSlots {
-		serverMissingSlots = append(serverMissingSlots, slot)
+	for _, clientSlot := range summary.slots {
+		clientSlotFoundInServerSlots := false
+		for _, serverSlot := range serverSlotNodes {
+			if clientSlot.index == serverSlot.slotInx {
+				clientSlotFoundInServerSlots = true
+				break
+			}
+		}
+		if !clientSlotFoundInServerSlots {
+			serverMissingSlots = append(serverMissingSlots, clientSlot.index)
+		}
 	}
 	sent, err := r.sendDifferSlots(reader, clientMismatchSlots, serverMissingSlots, s)
 	if err != nil {

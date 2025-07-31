@@ -86,7 +86,7 @@ func (s *service) Propagation(nodes []string, group string, shardID uint32) erro
 }
 
 func (s *service) LocateNodes(group string, shardID, replicasCount uint32) ([]string, error) {
-	result := make([]string, replicasCount)
+	result := make([]string, 0, replicasCount)
 	for r := range replicasCount {
 		node, err := s.sel.Pick(group, "", shardID, r)
 		if err != nil {
