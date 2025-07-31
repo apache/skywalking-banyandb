@@ -49,6 +49,9 @@ var (
 	      "RetryableStatusCodes": [ "UNAVAILABLE" ]
 	  }
 	}]}`, serviceName)
+
+	// perNodeSyncTimeout is the timeout for each node to sync the property data.
+	perNodeSyncTimeout = time.Minute * 10
 )
 
 func (s *service) Subscribe(listener MessageListener) {
@@ -112,7 +115,9 @@ func (q *protocolHandler) processPropagation() {
 			if request == nil {
 				continue
 			}
-			err := q.handle(q.s.closer.Ctx(), request)
+			timeoutCtx, cancelFunc := context.WithTimeout(q.s.closer.Ctx(), perNodeSyncTimeout)
+			err := q.handle(timeoutCtx, request)
+			cancelFunc()
 			if err != nil {
 				q.s.log.Warn().Err(err).Stringer("request", request).
 					Msgf("handle propagation request failure")
@@ -204,7 +209,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	}
 
 	// if no node is available or sync error for gossip message propagation, then it should be notified finished
-	if !executeSuccess && !q.contextIsDone(ctx) {
+	if !executeSuccess {
 		if nextNodeConn != nil {
 			_ = nextNodeConn.Close()
 		}
@@ -218,13 +223,21 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 		return nil
 	}
 
+	if q.contextIsDone(ctx) {
+		if nextNodeConn != nil {
+			_ = nextNodeConn.Close()
+		}
+		q.s.log.Debug().Msgf("context is done, no need to propagate further")
+		return nil
+	}
+
 	// propagate the message to the next node
 	needsKeepPropagation = true
 	q.s.serverMetrics.totalSendToNextStarted.Inc(1, request.Group)
 	propagationStart := time.Now()
 	q.s.log.Debug().Stringer("request", request).Str("nextNodeID", nextNodeID).
 		Msg("propagating gossip message to next node")
-	_, err = propertyv1.NewGossipServiceClient(nextNodeConn).Propagation(context.Background(), request)
+	_, err = propertyv1.NewGossipServiceClient(nextNodeConn).Propagation(ctx, request)
 	_ = nextNodeConn.Close()
 	q.s.serverMetrics.totalSendToNextFinished.Inc(1, request.Group)
 	q.s.serverMetrics.totalSendToNextLatency.Inc(time.Since(propagationStart).Seconds(), request.Group)
