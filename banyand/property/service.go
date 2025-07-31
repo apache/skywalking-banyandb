@@ -90,7 +90,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&s.repairQuickBuildTreeTime, "property-repair-quick-build-tree-time", time.Minute*10,
 		"the duration of the quick build tree after operate the property")
 	flagS.StringVar(&s.repairTriggerCron, "property-repair-trigger-cron", "* 2 * * *", "the cron expression for background repairing the property data")
-	flagS.BoolVar(&s.repairEnabled, "property-repair-enabled", true, "whether to enable the background property repair")
+	flagS.BoolVar(&s.repairEnabled, "property-repair-enabled", false, "whether to enable the background property repair")
 	s.gossipMessenger.FlagSet().VisitAll(func(f *pflag.Flag) {
 		flagS.AddFlag(f)
 	})
