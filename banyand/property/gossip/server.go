@@ -204,7 +204,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	}
 
 	// if no node is available or sync error for gossip message propagation, then it should be notified finished
-	if !executeSuccess {
+	if !executeSuccess && !q.contextIsDone(ctx) {
 		if nextNodeConn != nil {
 			_ = nextNodeConn.Close()
 		}
@@ -224,7 +224,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	propagationStart := time.Now()
 	q.s.log.Debug().Stringer("request", request).Str("nextNodeID", nextNodeID).
 		Msg("propagating gossip message to next node")
-	_, err = propertyv1.NewGossipServiceClient(nextNodeConn).Propagation(ctx, request)
+	_, err = propertyv1.NewGossipServiceClient(nextNodeConn).Propagation(context.Background(), request)
 	_ = nextNodeConn.Close()
 	q.s.serverMetrics.totalSendToNextFinished.Inc(1, request.Group)
 	q.s.serverMetrics.totalSendToNextLatency.Inc(time.Since(propagationStart).Seconds(), request.Group)
@@ -234,6 +234,15 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	}
 
 	return nil
+}
+
+func (q *protocolHandler) contextIsDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
+	}
 }
 
 func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest) bool {
