@@ -88,6 +88,10 @@ func (s *seriesIndex) Update(docs index.Documents) error {
 	})
 }
 
+func (s *seriesIndex) EnableExternalSegments() (index.ExternalSegmentStreamer, error) {
+	return s.store.EnableExternalSegments()
+}
+
 func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 	projection []index.FieldKey, secondaryQuery index.Query, timeRange *timestamp.TimeRange,
 ) (data SeriesData, err error) {

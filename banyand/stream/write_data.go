@@ -24,6 +24,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -132,6 +133,100 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 		s.l.Warn().Str("fileName", fileName).Msg("unknown file type in chunked sync")
 		return fmt.Errorf("unknown file type: %s", fileName)
 	}
+
+	return nil
+}
+
+type syncSeriesContext struct {
+	streamer index.ExternalSegmentStreamer
+}
+
+func (s *syncSeriesContext) FinishSync() error {
+	if s.streamer != nil {
+		return s.streamer.CompleteSegment()
+	}
+	return nil
+}
+
+func (s *syncSeriesContext) Close() error {
+	s.streamer = nil
+	return nil
+}
+
+type syncSeriesCallback struct {
+	l          *logger.Logger
+	schemaRepo *schemaRepo
+}
+
+func setUpSyncSeriesCallback(l *logger.Logger, schemaRepo *schemaRepo) queue.ChunkedSyncHandler {
+	return &syncSeriesCallback{
+		l:          l,
+		schemaRepo: schemaRepo,
+	}
+}
+
+func (s *syncSeriesCallback) CheckHealth() *common.Error {
+	return nil
+}
+
+// CreatePartHandler implements queue.ChunkedSyncHandler for series index synchronization.
+func (s *syncSeriesCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
+		return nil, err
+	}
+	segmentTime := time.Unix(0, ctx.MinTimestamp)
+	segment, err := tsdb.CreateSegmentIfNotExist(segmentTime)
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
+		return nil, err
+	}
+	defer segment.DecRef()
+
+	indexDB := segment.IndexDB()
+	streamer, err := indexDB.EnableExternalSegments()
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to enable external segments")
+		return nil, err
+	}
+
+	if err := streamer.StartSegment(); err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to start external segment")
+		return nil, err
+	}
+
+	s.l.Debug().Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("created series sync context")
+	return &syncSeriesContext{
+		streamer: streamer,
+	}, nil
+}
+
+// HandleFileChunk implements queue.ChunkedSyncHandler for streaming series index chunks.
+func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+	if ctx.Handler == nil {
+		return fmt.Errorf("part handler is nil")
+	}
+	seriesCtx := ctx.Handler.(*syncSeriesContext)
+
+	if seriesCtx.streamer == nil {
+		return fmt.Errorf("external segment streamer is nil")
+	}
+
+	err := seriesCtx.streamer.WriteChunk(chunk)
+	if err != nil {
+		s.l.Error().Err(err).
+			Str("group", ctx.Group).
+			Int("chunk_size", len(chunk)).
+			Msg("failed to write chunk to external segment streamer")
+		return err
+	}
+
+	s.l.Debug().
+		Str("group", ctx.Group).
+		Int("chunk_size", len(chunk)).
+		Uint64("bytes_received", seriesCtx.streamer.BytesReceived()).
+		Msg("wrote chunk to external segment streamer")
 
 	return nil
 }

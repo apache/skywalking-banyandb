@@ -165,6 +165,8 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		return err
 	}
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamPartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
+	// Register chunked sync handler for stream series index
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamSeriesIndexWrite, setUpSyncSeriesCallback(s.l, &s.schemaRepo))
 
 	err = s.pipeline.Subscribe(data.TopicStreamSeriesIndexWrite, setUpSeriesIndexCallback(s.l, &s.schemaRepo))
 	if err != nil {
