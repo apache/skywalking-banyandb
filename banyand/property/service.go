@@ -138,10 +138,6 @@ func (s *service) PreRun(ctx context.Context) error {
 	}
 	node := val.(common.Node)
 	s.nodeID = node.NodeID
-	// if the gossip address is empty, it means that the gossip is not enabled.
-	if node.PropertyGossipGrpcAddress == "" {
-		s.gossipMessenger = nil
-	}
 
 	var err error
 	snapshotLis := &snapshotListener{s: s}
@@ -160,7 +156,11 @@ func (s *service) PreRun(ctx context.Context) error {
 		return err
 	}
 
-	if s.gossipMessenger != nil && s.db.repairScheduler != nil {
+	// if the gossip address is empty or repair scheduler is not start, it means that the gossip is not enabled.
+	if node.PropertyGossipGrpcAddress == "" || s.db.repairScheduler == nil {
+		s.gossipMessenger = nil
+	}
+	if s.gossipMessenger != nil {
 		if err = s.gossipMessenger.PreRun(ctx); err != nil {
 			return err
 		}
