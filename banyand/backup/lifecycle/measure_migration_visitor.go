@@ -102,7 +102,7 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 	mv.SetMeasureSeriesCount(len(segmentFiles))
 
 	// Create StreamingPartData for this segment
-	files := make([]queue.FileInfo, 0, len(segmentFiles))
+	files := make([]fileInfo, 0, len(segmentFiles))
 	// Process each segment file
 	for _, segmentFileName := range segmentFiles {
 		// Extract segment ID from filename (remove .seg extension)
@@ -154,18 +154,10 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		// Close the file reader
 		defer segmentFile.Close()
 
-		files = append(files, queue.FileInfo{
-			Name:   segmentFileName,
-			Reader: segmentFile.SequentialRead(),
+		files = append(files, fileInfo{
+			file: segmentFile,
+			name: segmentFileName,
 		})
-
-		mv.logger.Info().
-			Uint64("segment_id", segmentID).
-			Str("filename", segmentFileName).
-			Str("group", mv.group).
-			Int("completed_segments", mv.progress.GetMeasureSeriesProgress(mv.group)).
-			Int("total_segments", mv.progress.GetMeasureSeriesCount(mv.group)).
-			Msg("measure segment migration completed successfully")
 	}
 
 	// Send segment file to each shard in shardIDs
@@ -192,11 +184,14 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 	if err != nil {
 		return fmt.Errorf("failed to parse measure part metadata: %w", err)
 	}
-	partID := partData.ID
+	partID, err := parsePartIDFromPath(partPath)
+	if err != nil {
+		return fmt.Errorf("failed to parse part ID from path: %w", err)
+	}
 
 	// Check if this part has already been completed
 	if mv.progress.IsMeasurePartCompleted(mv.group, partID) {
-		mv.logger.Debug().
+		mv.logger.Warn().
 			Uint64("part_id", partID).
 			Str("group", mv.group).
 			Msg("measure part already completed, skipping")
@@ -324,15 +319,22 @@ func (mv *measureMigrationVisitor) Close() error {
 // createStreamingSegmentFromFiles creates StreamingPartData from segment files.
 func (mv *measureMigrationVisitor) createStreamingSegmentFromFiles(
 	targetShardID uint32,
-	files []queue.FileInfo,
+	files []fileInfo,
 	segmentTR *timestamp.TimeRange,
 	topic string,
 ) queue.StreamingPartData {
+	filesInfo := make([]queue.FileInfo, 0, len(files))
+	for _, file := range files {
+		filesInfo = append(filesInfo, queue.FileInfo{
+			Name:   file.name,
+			Reader: file.file.SequentialRead(),
+		})
+	}
 	segmentData := queue.StreamingPartData{
 		Group:        mv.group,
 		ShardID:      targetShardID, // Use calculated target shard
 		Topic:        topic,         // Use the new topic
-		Files:        files,
+		Files:        filesInfo,
 		MinTimestamp: segmentTR.Start.UnixNano(),
 		MaxTimestamp: segmentTR.End.UnixNano(),
 	}

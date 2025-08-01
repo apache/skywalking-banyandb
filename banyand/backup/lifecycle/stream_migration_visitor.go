@@ -102,7 +102,7 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 	mv.SetStreamSeriesCount(len(segmentFiles))
 
 	// Create StreamingPartData for this segment
-	files := make([]queue.FileInfo, 0, len(segmentFiles))
+	files := make([]fileInfo, 0, len(segmentFiles))
 	// Process each segment file
 	for _, segmentFileName := range segmentFiles {
 		// Extract segment ID from filename (remove .seg extension)
@@ -154,9 +154,9 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		// Close the file reader
 		defer segmentFile.Close()
 
-		files = append(files, queue.FileInfo{
-			Name:   segmentFileName,
-			Reader: segmentFile.SequentialRead(),
+		files = append(files, fileInfo{
+			name: segmentFileName,
+			file: segmentFile,
 		})
 
 		mv.logger.Info().
@@ -171,7 +171,14 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 	// Send segment file to each shard in shardIDs
 	for _, shardID := range shardIDs {
 		targetShardID := mv.calculateTargetShardID(uint32(shardID))
-		partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicStreamSeriesSync.String())
+		ff := make([]queue.FileInfo, 0, len(files))
+		for _, file := range files {
+			ff = append(ff, queue.FileInfo{
+				Name:   file.name,
+				Reader: file.file.SequentialRead(),
+			})
+		}
+		partData := mv.createStreamingSegmentFromFiles(targetShardID, ff, segmentTR, data.TopicStreamSeriesSync.String())
 
 		// Stream segment to target shard replicas
 		if err := mv.streamPartToTargetShard(partData); err != nil {
@@ -192,7 +199,10 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 	if err != nil {
 		return fmt.Errorf("failed to parse part metadata: %w", err)
 	}
-	partID := partData.ID
+	partID, err := parsePartIDFromPath(partPath)
+	if err != nil {
+		return fmt.Errorf("failed to parse part ID from path: %w", err)
+	}
 
 	// Check if this part has already been completed
 	if mv.progress.IsStreamPartCompleted(mv.group, partID) {
@@ -491,4 +501,13 @@ func calculateTargetShardID(sourceShardID uint32, targetShardNum uint32) uint32 
 	// Simple modulo-based mapping from source shard to target shard
 	// This ensures deterministic and balanced distribution
 	return sourceShardID % targetShardNum
+}
+
+func parsePartIDFromPath(partPath string) (uint64, error) {
+	partDirName := filepath.Base(partPath)
+	partID, err := strconv.ParseUint(partDirName, 16, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse part ID from directory name %q: %w", partDirName, err)
+	}
+	return partID, nil
 }

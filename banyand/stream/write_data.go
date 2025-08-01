@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -138,18 +140,29 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 }
 
 type syncSeriesContext struct {
+	fileName string
 	streamer index.ExternalSegmentStreamer
+	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	l        *logger.Logger
 }
 
 func (s *syncSeriesContext) FinishSync() error {
 	if s.streamer != nil {
-		return s.streamer.CompleteSegment()
+		if err := s.streamer.CompleteSegment(); err != nil {
+			s.l.Error().Err(err).Msg("failed to complete external segment")
+			return err
+		}
 	}
-	return nil
+	return s.Close()
 }
 
 func (s *syncSeriesContext) Close() error {
+	if s.segment != nil {
+		s.segment.DecRef()
+	}
 	s.streamer = nil
+	s.fileName = ""
+	s.segment = nil
 	return nil
 }
 
@@ -182,23 +195,9 @@ func (s *syncSeriesCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext
 		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
 		return nil, err
 	}
-	defer segment.DecRef()
-
-	indexDB := segment.IndexDB()
-	streamer, err := indexDB.EnableExternalSegments()
-	if err != nil {
-		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to enable external segments")
-		return nil, err
-	}
-
-	if err := streamer.StartSegment(); err != nil {
-		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to start external segment")
-		return nil, err
-	}
-
-	s.l.Debug().Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("created series sync context")
 	return &syncSeriesContext{
-		streamer: streamer,
+		l:       s.l,
+		segment: segment,
 	}, nil
 }
 
@@ -209,41 +208,58 @@ func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, 
 	}
 	seriesCtx := ctx.Handler.(*syncSeriesContext)
 
-	if seriesCtx.streamer == nil {
-		return fmt.Errorf("external segment streamer is nil")
+	if seriesCtx.segment == nil {
+		return fmt.Errorf("segment is nil")
 	}
-
-	err := seriesCtx.streamer.WriteChunk(chunk)
-	if err != nil {
-		s.l.Error().Err(err).
-			Str("group", ctx.Group).
-			Int("chunk_size", len(chunk)).
-			Msg("failed to write chunk to external segment streamer")
-		return err
+	if seriesCtx.fileName != ctx.FileName {
+		if seriesCtx.streamer != nil {
+			if err := seriesCtx.streamer.CompleteSegment(); err != nil {
+				s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to complete external segment")
+				return err
+			}
+		}
+		indexDB := seriesCtx.segment.IndexDB()
+		streamer, err := indexDB.EnableExternalSegments()
+		if err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to enable external segments")
+			return err
+		}
+		if err := streamer.StartSegment(); err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to start external segment")
+			return err
+		}
+		seriesCtx.fileName = ctx.FileName
+		seriesCtx.streamer = streamer
 	}
-
-	s.l.Debug().
-		Str("group", ctx.Group).
-		Int("chunk_size", len(chunk)).
-		Uint64("bytes_received", seriesCtx.streamer.BytesReceived()).
-		Msg("wrote chunk to external segment streamer")
-
-	return nil
+	return seriesCtx.streamer.WriteChunk(chunk)
 }
 
 type syncElementIndexContext struct {
+	fileName string
 	streamer index.ExternalSegmentStreamer
+	tsTable  *tsTable
+	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	l        *logger.Logger
 }
 
 func (s *syncElementIndexContext) FinishSync() error {
 	if s.streamer != nil {
-		return s.streamer.CompleteSegment()
+		if err := s.streamer.CompleteSegment(); err != nil {
+			s.l.Error().Err(err).Msg("failed to complete external segment for element index")
+			return err
+		}
 	}
-	return nil
+	return s.Close()
 }
 
 func (s *syncElementIndexContext) Close() error {
 	s.streamer = nil
+	s.fileName = ""
+	s.tsTable = nil
+	if s.segment != nil {
+		s.segment.DecRef()
+	}
+	s.segment = nil
 	return nil
 }
 
@@ -276,27 +292,16 @@ func (s *syncElementIndexCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartC
 		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
 		return nil, err
 	}
-	defer segment.DecRef()
 	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))
 	if err != nil {
 		s.l.Error().Err(err).Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("failed to create ts table")
 		return nil, err
 	}
 
-	streamer, err := tsTable.index.EnableExternalSegments()
-	if err != nil {
-		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to enable external segments for element index")
-		return nil, err
-	}
-
-	if err := streamer.StartSegment(); err != nil {
-		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to start external segment for element index")
-		return nil, err
-	}
-
-	s.l.Debug().Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("created element index sync context")
 	return &syncElementIndexContext{
-		streamer: streamer,
+		l:       s.l,
+		tsTable: tsTable,
+		segment: segment,
 	}, nil
 }
 
@@ -307,24 +312,27 @@ func (s *syncElementIndexCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartCon
 	}
 	elementCtx := ctx.Handler.(*syncElementIndexContext)
 
-	if elementCtx.streamer == nil {
-		return fmt.Errorf("external segment streamer is nil")
+	if elementCtx.tsTable == nil {
+		return fmt.Errorf("ts table is nil")
 	}
-
-	err := elementCtx.streamer.WriteChunk(chunk)
-	if err != nil {
-		s.l.Error().Err(err).
-			Str("group", ctx.Group).
-			Int("chunk_size", len(chunk)).
-			Msg("failed to write chunk to external segment streamer for element index")
-		return err
+	if elementCtx.fileName != ctx.FileName {
+		if elementCtx.streamer != nil {
+			if err := elementCtx.streamer.CompleteSegment(); err != nil {
+				s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to complete external segment for element index")
+				return err
+			}
+		}
+		streamer, err := elementCtx.tsTable.index.EnableExternalSegments()
+		if err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to enable external segments for element index")
+			return err
+		}
+		if err := streamer.StartSegment(); err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to start external segment for element index")
+			return err
+		}
+		elementCtx.fileName = ctx.FileName
+		elementCtx.streamer = streamer
 	}
-
-	s.l.Debug().
-		Str("group", ctx.Group).
-		Int("chunk_size", len(chunk)).
-		Uint64("bytes_received", elementCtx.streamer.BytesReceived()).
-		Msg("wrote chunk to external segment streamer for element index")
-
-	return nil
+	return elementCtx.streamer.WriteChunk(chunk)
 }

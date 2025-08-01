@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
@@ -135,4 +136,9 @@ func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databa
 		return 0, 0, nil, nil, nil, errors.New("no nodes matched")
 	}
 	return nst.ShardNum, nst.Replicas, nst.Ttl, nodeSel, client, nil
+}
+
+type fileInfo struct {
+	file fs.File
+	name string
 }
