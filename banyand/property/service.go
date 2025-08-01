@@ -150,7 +150,7 @@ func (s *service) PreRun(ctx context.Context) error {
 			if snpMsg.Error != "" {
 				return "", errors.New(snpMsg.Error)
 			}
-			return snpMsg.Name, nil
+			return filepath.Join(snapshotLis.s.snapshotDir, snpMsg.Name, storage.DataDir), nil
 		})
 	if err != nil {
 		return err

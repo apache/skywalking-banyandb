@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
@@ -217,6 +218,9 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 	}
 	firstTreeSummaryResp := true
 
+	leafReader := newRepairBufferLeafReader(reader)
+	var currentComparingClientNode *repairTreeNode
+	var notProcessingClientNode *repairTreeNode
 	for {
 		recvResp, err := stream.Recv()
 		if err != nil {
@@ -237,7 +241,7 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 			if firstTreeSummaryResp && len(resp.DifferTreeSummary.Nodes) == 0 {
 				return nil
 			}
-			r.handleDifferSummaryFromServer(ctx, stream, resp.DifferTreeSummary, reader, syncShard, rootNode)
+			r.handleDifferSummaryFromServer(ctx, stream, resp.DifferTreeSummary, reader, syncShard, rootNode, leafReader, &notProcessingClientNode, &currentComparingClientNode)
 			firstTreeSummaryResp = false
 		case *propertyv1.RepairResponse_PropertySync:
 			// step 3: keep receiving messages from the server
@@ -250,7 +254,7 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 				r.scheduler.metrics.totalRepairFailedCount.Inc(1, request.Group, fmt.Sprintf("%d", request.ShardId))
 			}
 			if updated {
-				r.scheduler.l.Debug().Msgf("successfully repaired property %s", sync.Id)
+				r.scheduler.l.Debug().Msgf("successfully repaired property %s on client side", sync.Id)
 				r.scheduler.metrics.totalRepairSuccessCount.Inc(1, request.Group, fmt.Sprintf("%d", request.ShardId))
 				hasPropertyUpdated = true
 				continue
@@ -304,9 +308,24 @@ func (r *repairGossipClient) handleDifferSummaryFromServer(
 	reader repairTreeReader,
 	syncShard *shard,
 	rootNode *repairTreeNode,
+	bufSlotReader *repairBufferLeafReader,
+	notProcessingClientNode **repairTreeNode,
+	currentComparingClientNode **repairTreeNode,
 ) {
 	// if their no more different nodes, means the client side could be send the no more property sync request to notify the server
 	if len(differTreeSummary.Nodes) == 0 {
+		// if the current comparing client nodes still not empty, means the client side has leaf nodes that are not processed yet
+		// then queried and sent property to server
+		if *currentComparingClientNode != nil {
+			// reading all reduced properties from the client side, and send to the server
+			r.readingReduceLeafAndSendProperties(ctx, syncShard, stream, bufSlotReader, *currentComparingClientNode)
+			*currentComparingClientNode = nil
+		}
+		if *notProcessingClientNode != nil {
+			// if there still have difference client node not processing, means the client has property but server don't have
+			// then queried and sent property to server
+			r.queryPropertyAndSendToServer(ctx, syncShard, (*notProcessingClientNode).entity, stream)
+		}
 		err := stream.Send(&propertyv1.RepairRequest{
 			Data: &propertyv1.RepairRequest_NoMorePropertySync{
 				NoMorePropertySync: &propertyv1.NoMorePropertySync{},
@@ -314,9 +333,10 @@ func (r *repairGossipClient) handleDifferSummaryFromServer(
 		})
 		if err != nil {
 			r.scheduler.l.Warn().Err(err).Msgf("failed to send no more property sync request to server")
-			return
 		}
+		return
 	}
+
 	// keep reading the tree summary until there are no more different nodes
 	for _, node := range differTreeSummary.Nodes {
 		select {
@@ -333,84 +353,140 @@ func (r *repairGossipClient) handleDifferSummaryFromServer(
 				r.scheduler.l.Warn().Err(findError).Msgf("client slot %d not exist", node.SlotIndex)
 				continue
 			}
-			// read the leaf nodes from the client side
-			for {
-				leafNodes, err := reader.read(clientSlotNode, gossipMerkleTreeReadPageSize, false)
-				if err != nil {
-					r.scheduler.l.Warn().Err(err).Msgf("failed to read leaf nodes from client side")
-					break
-				}
-				if len(leafNodes) == 0 {
-					break
-				}
-				// reading the real property data from the leaf nodes and sending to the server
-				for _, leafNode := range leafNodes {
-					property, p, err := r.queryProperty(ctx, syncShard, leafNode.entity)
-					if err != nil {
-						r.scheduler.l.Warn().Err(err).Msgf("failed to query property for leaf node entity %s", leafNode.entity)
-						continue
-					}
-					if property != nil {
-						// send the property to the server
-						err = stream.Send(&propertyv1.RepairRequest{
-							Data: &propertyv1.RepairRequest_PropertySync{
-								PropertySync: &propertyv1.PropertySync{
-									Id:         property.id,
-									Property:   p,
-									DeleteTime: property.deleteTime,
-								},
-							},
-						})
-						if err != nil {
-							r.scheduler.l.Warn().Err(err).Msgf("failed to send property sync response to client, entity: %s", leafNode.entity)
-						}
-					}
-				}
-			}
+			// read the leaf nodes from the client side and send properties to the server
+			r.readingReduceLeafAndSendProperties(ctx, syncShard, stream, bufSlotReader, clientSlotNode)
+			continue
 		}
 
-		clientSlotNode, findError := r.findSlotNodeByRoot(reader, rootNode, node.SlotIndex)
-		// if slot not exists in client side, then the client should ask the server for the property data of leaf nodes
-		if findError != nil {
-			r.sendPropertyMissing(stream, node.Entity)
-			continue
+		needsFindSlot := false
+		if *currentComparingClientNode != nil && (*currentComparingClientNode).slotInx != node.SlotIndex {
+			// the comparing node has changed, checks the client side still has reduced properties or not
+			// reading all reduced properties from the client side, and send to the server
+			r.readingReduceLeafAndSendProperties(ctx, syncShard, stream, bufSlotReader, *currentComparingClientNode)
+			needsFindSlot = true
+		} else if *currentComparingClientNode == nil {
+			needsFindSlot = true
 		}
-		// check the leaf node if exist in the client side or not
-		clientLeafNode, clientLeafNodeExist, err := r.findExistingLeafNode(reader, clientSlotNode, node.Entity)
+
+		if needsFindSlot {
+			clientSlotNode, findError := r.findSlotNodeByRoot(reader, rootNode, node.SlotIndex)
+			// if slot not exists in client side, then the client should ask the server for the property data of leaf nodes
+			if findError != nil {
+				r.sendPropertyMissing(stream, node.Entity)
+				continue
+			}
+			*currentComparingClientNode = clientSlotNode
+		}
+
+		r.readingClientNodeAndCompare(ctx, syncShard, node, bufSlotReader, *currentComparingClientNode, stream, notProcessingClientNode)
+	}
+}
+
+func (r *repairGossipClient) readingReduceLeafAndSendProperties(
+	ctx context.Context,
+	syncShard *shard,
+	stream grpclib.BidiStreamingClient[propertyv1.RepairRequest, propertyv1.RepairResponse],
+	reader *repairBufferLeafReader, parent *repairTreeNode,
+) {
+	// read the leaf nodes from the client side
+	for {
+		leafNode, err := reader.next(parent)
 		if err != nil {
-			r.scheduler.l.Warn().Err(err).Msgf("failed to find existing leaf node for entity %s", node.Entity)
-			continue
+			r.scheduler.l.Warn().Err(err).Msgf("failed to read leaf nodes from client side")
+			break
 		}
-		if !clientLeafNodeExist {
-			r.sendPropertyMissing(stream, node.Entity)
-			continue
+		if leafNode == nil {
+			break
 		}
-		// if the client leaf node SHA is the same as the server leaf node SHA, then we can skip it
-		if clientLeafNode.shaValue == node.Sha {
-			continue
-		}
-		property, p, err := r.queryProperty(ctx, syncShard, clientLeafNode.entity)
+		// reading the real property data from the leaf nodes and sending to the server
+		r.queryPropertyAndSendToServer(ctx, syncShard, leafNode.entity, stream)
+	}
+}
+
+func (r *repairGossipClient) readingClientNodeAndCompare(
+	ctx context.Context,
+	syncShard *shard,
+	serverNode *propertyv1.TreeLeafNode,
+	bufReader *repairBufferLeafReader,
+	clientSlotNode *repairTreeNode,
+	stream grpclib.BidiStreamingClient[propertyv1.RepairRequest, propertyv1.RepairResponse],
+	notProcessingClientNode **repairTreeNode,
+) {
+	var clientLeafNode *repairTreeNode
+	// if the latest node is not nil, means the client side has a leaf node that is not processed yet
+	if *notProcessingClientNode != nil {
+		clientLeafNode = *notProcessingClientNode
+	} else {
+		node, err := bufReader.next(clientSlotNode)
 		if err != nil {
-			r.scheduler.l.Warn().Err(err).Msgf("failed to query property for leaf node entity %s", clientLeafNode.entity)
-			continue
+			r.sendPropertyMissing(stream, serverNode.Entity)
+			return
 		}
-		if property == nil {
-			continue
+		clientLeafNode = node
+	}
+
+	// if the client current leaf node is nil, means the client side doesn't have the leaf node,
+	// we should send the property missing request to the server
+	if clientLeafNode == nil {
+		r.sendPropertyMissing(stream, serverNode.Entity)
+		return
+	}
+
+	// compare the entity of the server leaf node with the client leaf node
+	entityCompare := strings.Compare(serverNode.Entity, clientLeafNode.entity)
+	if entityCompare == 0 {
+		// if the entity is the same, check the sha value
+		if serverNode.Sha != clientLeafNode.shaValue {
+			r.queryPropertyAndSendToServer(ctx, syncShard, serverNode.Entity, stream)
 		}
-		// send the property to the server
-		err = stream.Send(&propertyv1.RepairRequest{
-			Data: &propertyv1.RepairRequest_PropertySync{
-				PropertySync: &propertyv1.PropertySync{
-					Id:         GetPropertyID(p),
-					Property:   p,
-					DeleteTime: property.deleteTime,
-				},
+		*notProcessingClientNode = nil
+		return
+	} else if entityCompare < 0 {
+		// if the entity of the server leaf node is less than the client leaf node,
+		// it means the server leaf node does not exist in the client leaf nodes
+		r.sendPropertyMissing(stream, serverNode.Entity)
+		// means the client node is still not processing, waiting for the server node to compare
+		*notProcessingClientNode = clientLeafNode
+		return
+	}
+	// otherwise, the entity of the server leaf node is greater than the client leaf node,
+	// it means the client leaf node does not exist in the server leaf nodes,
+
+	// we should query the property from the client side and send it to the server
+	r.queryPropertyAndSendToServer(ctx, syncShard, clientLeafNode.entity, stream)
+	// cleanup the unprocess node, and let the client side leaf nodes keep reading
+	*notProcessingClientNode = nil
+	// cycle to read the next leaf node from the client side to make sure they have synced to the same entity
+	r.readingClientNodeAndCompare(ctx, syncShard, serverNode, bufReader, clientSlotNode, stream, notProcessingClientNode)
+}
+
+func (r *repairGossipClient) queryPropertyAndSendToServer(
+	ctx context.Context,
+	syncShard *shard,
+	entity string,
+	stream grpclib.BidiStreamingClient[propertyv1.RepairRequest, propertyv1.RepairResponse],
+) {
+	// otherwise, we need to send the property to the server
+	property, p, err := r.queryProperty(ctx, syncShard, entity)
+	if err != nil {
+		r.scheduler.l.Warn().Err(err).Msgf("failed to query property for leaf node entity %s", entity)
+		return
+	}
+	if property == nil {
+		return
+	}
+	// send the property to the server
+	err = stream.Send(&propertyv1.RepairRequest{
+		Data: &propertyv1.RepairRequest_PropertySync{
+			PropertySync: &propertyv1.PropertySync{
+				Id:         GetPropertyID(p),
+				Property:   p,
+				DeleteTime: property.deleteTime,
 			},
-		})
-		if err != nil {
-			r.scheduler.l.Warn().Err(err).Msgf("failed to send property sync request to server, entity: %s", clientLeafNode.entity)
-			continue
-		}
+		},
+	})
+	if err != nil {
+		r.scheduler.l.Warn().Err(err).Msgf("failed to send property sync request to server, entity: %s", entity)
 	}
 }
 
@@ -431,27 +507,6 @@ func (r *repairGossipClient) findSlotNodeByRoot(reader repairTreeReader, root *r
 		}
 
 		firstRead = false
-	}
-}
-
-func (r *repairGossipClient) findExistingLeafNode(reader repairTreeReader, parent *repairTreeNode, entity string) (*repairTreeNode, bool, error) {
-	isFirstRead := true
-	// if not found in the cache, read from the tree
-	for {
-		leafNodes, err := reader.read(parent, gossipMerkleTreeReadPageSize, isFirstRead)
-		if err != nil {
-			return nil, false, fmt.Errorf("failed to read tree for entity %s: %w", entity, err)
-		}
-		if len(leafNodes) == 0 {
-			return nil, false, nil
-		}
-		for _, leafNode := range leafNodes {
-			if leafNode.entity == entity {
-				// if the leaf node is found, cache it and return
-				return leafNode, true, nil
-			}
-		}
-		isFirstRead = false
 	}
 }
 
@@ -625,11 +680,12 @@ func (r *repairGossipServer) processPropertySync(
 ) bool {
 	updated, newer, err := syncShard.repair(ctx, sync.Id, sync.Property, sync.DeleteTime)
 	if err != nil {
-		r.scheduler.l.Warn().Err(err).Msgf("failed to repair property %s from client side", sync.Id)
+		r.scheduler.l.Warn().Err(err).Msgf("failed to repair property %s from server side", sync.Id)
 		r.scheduler.metrics.totalRepairFailedCount.Inc(1, group, fmt.Sprintf("%d", syncShard.id))
 		return false
 	}
 	if updated {
+		r.scheduler.l.Debug().Msgf("successfully repaired property %s on server side", sync.Id)
 		r.scheduler.metrics.totalRepairSuccessCount.Inc(1, group, fmt.Sprintf("%d", syncShard.id))
 	}
 	if !updated && newer != nil {

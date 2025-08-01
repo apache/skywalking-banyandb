@@ -372,6 +372,8 @@ type repairTreeFileReader struct {
 }
 
 func (r *repair) treeReader(group string) (repairTreeReader, error) {
+	r.scheduler.treeLocker.RLock()
+	defer r.scheduler.treeLocker.RUnlock()
 	groupFile := fmt.Sprintf(r.composeTreeFilePathFmt, group)
 	file, err := os.OpenFile(groupFile, os.O_RDONLY, os.ModePerm)
 	if err != nil {
@@ -526,7 +528,7 @@ func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, fo
 	needSeek := false
 	if r.paging == nil || r.paging.lastNode != parent || forceReFromStart {
 		needSeek = true
-		r.paging = newRepairTreeReaderPage(parent, r.footer.slotNodeCount)
+		r.paging = newRepairTreeReaderPage(parent, parent.leafCount)
 	}
 	if needSeek {
 		err = r.seekPosition(parent.leafStart, io.SeekStart)
@@ -581,11 +583,63 @@ func (r *repairTreeReaderPage) nextPage(count int64) int64 {
 		return 0
 	}
 	readCount := r.reduceCount - count
-	if readCount < 0 {
+	if readCount <= 0 {
 		readCount = r.reduceCount
 	}
 	r.reduceCount -= readCount
 	return readCount
+}
+
+type repairBufferLeafReader struct {
+	reader      repairTreeReader
+	currentSlot *repairTreeNode
+	pagingLeafs []*repairTreeNode
+}
+
+func newRepairBufferLeafReader(reader repairTreeReader) *repairBufferLeafReader {
+	return &repairBufferLeafReader{
+		reader: reader,
+	}
+}
+
+func (r *repairBufferLeafReader) next(slot *repairTreeNode) (*repairTreeNode, error) {
+	// slot is nil means reset the reader
+	if slot == nil {
+		r.currentSlot = nil
+		return nil, nil
+	}
+	if r.currentSlot == nil || r.currentSlot.slotInx != slot.slotInx {
+		// if the current slot is nil or the slot index is changed, we need to read the leaf nodes from the slot
+		err := r.readNodes(slot, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// if no more leaf nodes, trying to read slots
+	if len(r.pagingLeafs) == 0 {
+		err := r.readNodes(slot, false)
+		if err != nil {
+			return nil, err
+		}
+		// no more leaf nodes to read, return nil
+		if len(r.pagingLeafs) == 0 {
+			return nil, nil
+		}
+	}
+	// pop the first leaf node from the paging leafs
+	leaf := r.pagingLeafs[0]
+	r.pagingLeafs = r.pagingLeafs[1:]
+	return leaf, nil
+}
+
+func (r *repairBufferLeafReader) readNodes(slot *repairTreeNode, forceReadFromStart bool) error {
+	nodes, err := r.reader.read(slot, repairBatchSearchSize, forceReadFromStart)
+	if err != nil {
+		return fmt.Errorf("reading leaf nodes from slot %d failure: %w", slot.slotInx, err)
+	}
+	r.pagingLeafs = nodes
+	r.currentSlot = slot
+	return nil
 }
 
 type repairTreeFooter struct {
@@ -889,7 +943,7 @@ type repairScheduler struct {
 	buildTreeScheduleInterval time.Duration
 	quickBuildTreeTime        time.Duration
 	lastBuildTimeLocker       sync.Mutex
-	buildTreeLocker           sync.Mutex
+	treeLocker                sync.RWMutex
 }
 
 // nolint: contextcheck
@@ -1018,13 +1072,13 @@ func (r *repairScheduler) doBuildTree() (err error) {
 // nolint: contextcheck
 func (r *repairScheduler) buildingTree(shards []common.ShardID, group string, force bool) error {
 	if force {
-		r.buildTreeLocker.Lock()
-	} else if !r.buildTreeLocker.TryLock() {
+		r.treeLocker.Lock()
+	} else if !r.treeLocker.TryLock() {
 		// if not forced, we try to lock the build tree locker
 		r.metrics.totalRepairBuildTreeConflicts.Inc(1)
 		return nil
 	}
-	defer r.buildTreeLocker.Unlock()
+	defer r.treeLocker.Unlock()
 
 	buildAll := len(shards) == 0
 

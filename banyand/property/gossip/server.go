@@ -160,6 +160,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	now := n.UnixNano()
 	nodes := request.Context.Nodes
 	q.s.serverMetrics.totalStarted.Inc(1, request.Group)
+	q.s.log.Debug().Stringer("request", request).Msgf("handling gossip message for propagation")
 	var needsKeepPropagation bool
 	defer func() {
 		if err != nil {

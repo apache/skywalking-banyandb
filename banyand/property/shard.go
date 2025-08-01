@@ -318,7 +318,9 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 
 	// if the lastest property in shard is bigger than the repaired property,
 	// then the repaired process should be stopped.
-	if olderProperties[len(olderProperties)-1].timestamp > property.Metadata.ModRevision {
+	if (olderProperties[len(olderProperties)-1].timestamp > property.Metadata.ModRevision) ||
+		olderProperties[len(olderProperties)-1].timestamp == property.Metadata.ModRevision &&
+			olderProperties[len(olderProperties)-1].deleteTime == deleteTime {
 		return false, olderProperties[len(olderProperties)-1], nil
 	}
 

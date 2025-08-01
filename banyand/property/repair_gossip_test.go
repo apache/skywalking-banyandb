@@ -21,6 +21,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -28,12 +30,14 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -76,180 +80,208 @@ var _ = ginkgo.Describe("Property repair gossip", func() {
 		}
 		nodes = nil
 	})
+	//
+	// ginkgo.It("all repair tree not built", func() {
+	//	startingEachTest(&nodes, ctrl, &testCase{
+	//		groups: []group{
+	//			{name: testGroup1, shardCount: 2, replicasCount: 1},
+	//		},
+	//		nodes: []node{
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}},
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}},
+	//		},
+	//		propagation: func(nodes []*nodeContext) error {
+	//			return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+	//		},
+	//		result: func(original []node) []node {
+	//			// all nodes should keep their existing properties
+	//			return original
+	//		},
+	//	})
+	// })
+	//
+	//ginkgo.It("all repair tree with client built", func() {
+	//	startingEachTest(&nodes, ctrl, &testCase{
+	//		groups: []group{
+	//			{name: testGroup1, shardCount: 2, replicasCount: 1},
+	//		},
+	//		nodes: []node{
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, treeBuilt: true},
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}},
+	//		},
+	//		propagation: func(nodes []*nodeContext) error {
+	//			return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+	//		},
+	//		result: func(original []node) []node {
+	//			// all nodes should keep their existing properties
+	//			return original
+	//		},
+	//	})
+	//})
+	//
+	//ginkgo.It("gossip two data nodes with client version < server version", func() {
+	//	startingEachTest(&nodes, ctrl, &testCase{
+	//		groups: []group{
+	//			{name: testGroup1, shardCount: 2, replicasCount: 1},
+	//		},
+	//		nodes: []node{
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, treeBuilt: true},
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
+	//		},
+	//		propagation: func(nodes []*nodeContext) error {
+	//			return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+	//		},
+	//		result: func(original []node) []node {
+	//			// the first node property should be updated to the version 2
+	//			original[0].properties[0].version = 2
+	//			return original
+	//		},
+	//	})
+	//})
+	//
+	//ginkgo.It("gossip two data nodes with client version < server version", func() {
+	//	startingEachTest(&nodes, ctrl, &testCase{
+	//		groups: []group{
+	//			{name: testGroup1, shardCount: 2, replicasCount: 1},
+	//		},
+	//		nodes: []node{
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, treeBuilt: true},
+	//		},
+	//		propagation: func(nodes []*nodeContext) error {
+	//			return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+	//		},
+	//		result: func(original []node) []node {
+	//			// the first node property should be updated to version 2
+	//			original[1].properties[0].version = 2
+	//			return original
+	//		},
+	//	})
+	//})
+	//
+	//ginkgo.It("gossip two data nodes with client version = server version", func() {
+	//	startingEachTest(&nodes, ctrl, &testCase{
+	//		groups: []group{
+	//			{name: testGroup1, shardCount: 2, replicasCount: 1},
+	//		},
+	//		nodes: []node{
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
+	//		},
+	//		propagation: func(nodes []*nodeContext) error {
+	//			return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+	//		},
+	//		result: func(original []node) []node {
+	//			// keep the properties as is, since the versions are equal
+	//			return original
+	//		},
+	//	})
+	//})
+	//
+	//ginkgo.It("gossip two data nodes with client missing but server exist", func() {
+	//	startingEachTest(&nodes, ctrl, &testCase{
+	//		groups: []group{
+	//			{name: testGroup1, shardCount: 2, replicasCount: 1},
+	//		},
+	//		nodes: []node{
+	//			{properties: nil, shardCount: 2, treeBuilt: true},
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, shardCount: 2, treeBuilt: true},
+	//		},
+	//		propagation: func(nodes []*nodeContext) error {
+	//			return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+	//		},
+	//		result: func(original []node) []node {
+	//			// the first node should get the property from the second node
+	//			original[0].properties = original[1].properties
+	//			return original
+	//		},
+	//	})
+	//})
+	//
+	//ginkgo.It("gossip two data nodes with client exist but server missing", func() {
+	//	startingEachTest(&nodes, ctrl, &testCase{
+	//		groups: []group{
+	//			{name: testGroup1, shardCount: 2, replicasCount: 1},
+	//		},
+	//		nodes: []node{
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, shardCount: 2, treeBuilt: true},
+	//			{properties: nil, shardCount: 2, treeBuilt: true},
+	//		},
+	//		propagation: func(nodes []*nodeContext) error {
+	//			return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+	//		},
+	//		result: func(original []node) []node {
+	//			// the second node should get the property from the first node
+	//			original[1].properties = original[0].properties
+	//			return original
+	//		},
+	//	})
+	//})
+	//
+	//ginkgo.It("gossip only repair one shard", func() {
+	//	startingEachTest(&nodes, ctrl, &testCase{
+	//		groups: []group{
+	//			{name: testGroup1, shardCount: 2, replicasCount: 1},
+	//		},
+	//		nodes: []node{
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, shardCount: 2, treeBuilt: true},
+	//			{properties: []property{{group: testGroup1, shard: 1, id: "2", version: 2}}, treeBuilt: true},
+	//		},
+	//		propagation: func(nodes []*nodeContext) error {
+	//			return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 1)
+	//		},
+	//		result: func(original []node) []node {
+	//			// the first node should sync the property from the second node
+	//			original[0].properties = append(original[0].properties, original[1].properties[0])
+	//			return original
+	//		},
+	//	})
+	//})
+	//
+	//ginkgo.It("gossip with three nodes", func() {
+	//	startingEachTest(&nodes, ctrl, &testCase{
+	//		groups: []group{
+	//			{name: testGroup1, shardCount: 2, replicasCount: 1},
+	//		},
+	//		nodes: []node{
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, treeBuilt: true},
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
+	//			{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 3}}, treeBuilt: true},
+	//		},
+	//		propagation: func(nodes []*nodeContext) error {
+	//			return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID, nodes[2].nodeID}, testGroup1, 0)
+	//		},
+	//		result: func(original []node) []node {
+	//			original[0].properties[0] = original[2].properties[0]
+	//			original[1].properties[0] = original[2].properties[0]
+	//			return original
+	//		},
+	//	})
+	//})
 
-	ginkgo.It("all repair tree not built", func() {
+	ginkgo.It("gossip with three nodes and only one slot", func() {
 		startingEachTest(&nodes, ctrl, &testCase{
 			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
+				{name: testGroup1, shardCount: 2, replicasCount: 3},
 			},
 			nodes: []node{
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}},
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}},
-			},
-			propagation: func(nodes []*nodeContext) error {
-				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
-			},
-			result: func(original []node) []node {
-				// all nodes should keep their existing properties
-				return original
-			},
-		})
-	})
-
-	ginkgo.It("all repair tree with client built", func() {
-		startingEachTest(&nodes, ctrl, &testCase{
-			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
-			},
-			nodes: []node{
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, treeBuilt: true},
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}},
-			},
-			propagation: func(nodes []*nodeContext) error {
-				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
-			},
-			result: func(original []node) []node {
-				// all nodes should keep their existing properties
-				return original
-			},
-		})
-	})
-
-	ginkgo.It("gossip two data nodes with client version < server version", func() {
-		startingEachTest(&nodes, ctrl, &testCase{
-			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
-			},
-			nodes: []node{
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, treeBuilt: true},
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
-			},
-			propagation: func(nodes []*nodeContext) error {
-				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
-			},
-			result: func(original []node) []node {
-				// the first node property should be updated to the version 2
-				original[0].properties[0].version = 2
-				return original
-			},
-		})
-	})
-
-	ginkgo.It("gossip two data nodes with client version < server version", func() {
-		startingEachTest(&nodes, ctrl, &testCase{
-			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
-			},
-			nodes: []node{
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, treeBuilt: true},
-			},
-			propagation: func(nodes []*nodeContext) error {
-				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
-			},
-			result: func(original []node) []node {
-				// the first node property should be updated to version 2
-				original[1].properties[0].version = 2
-				return original
-			},
-		})
-	})
-
-	ginkgo.It("gossip two data nodes with client version = server version", func() {
-		startingEachTest(&nodes, ctrl, &testCase{
-			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
-			},
-			nodes: []node{
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
-			},
-			propagation: func(nodes []*nodeContext) error {
-				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
-			},
-			result: func(original []node) []node {
-				// keep the properties as is, since the versions are equal
-				return original
-			},
-		})
-	})
-
-	ginkgo.It("gossip two data nodes with client missing but server exist", func() {
-		startingEachTest(&nodes, ctrl, &testCase{
-			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
-			},
-			nodes: []node{
-				{properties: nil, shardCount: 2, treeBuilt: true},
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, shardCount: 2, treeBuilt: true},
-			},
-			propagation: func(nodes []*nodeContext) error {
-				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
-			},
-			result: func(original []node) []node {
-				// the first node should get the property from the second node
-				original[0].properties = original[1].properties
-				return original
-			},
-		})
-	})
-
-	ginkgo.It("gossip two data nodes with client exist but server missing", func() {
-		startingEachTest(&nodes, ctrl, &testCase{
-			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
-			},
-			nodes: []node{
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, shardCount: 2, treeBuilt: true},
-				{properties: nil, shardCount: 2, treeBuilt: true},
-			},
-			propagation: func(nodes []*nodeContext) error {
-				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
-			},
-			result: func(original []node) []node {
-				// the second node should get the property from the first node
-				original[1].properties = original[0].properties
-				return original
-			},
-		})
-	})
-
-	ginkgo.It("gossip only repair one shard", func() {
-		startingEachTest(&nodes, ctrl, &testCase{
-			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
-			},
-			nodes: []node{
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, shardCount: 2, treeBuilt: true},
-				{properties: []property{{group: testGroup1, shard: 1, id: "2", version: 2}}, treeBuilt: true},
-			},
-			propagation: func(nodes []*nodeContext) error {
-				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 1)
-			},
-			result: func(original []node) []node {
-				// the first node should sync the property from the second node
-				original[0].properties = append(original[0].properties, original[1].properties[0])
-				return original
-			},
-		})
-	})
-
-	ginkgo.It("gossip with three nodes", func() {
-		startingEachTest(&nodes, ctrl, &testCase{
-			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
-			},
-			nodes: []node{
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, treeBuilt: true},
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 3}}, treeBuilt: true},
+				{properties: []property{{group: testGroup1, shard: 0, id: "2", version: 1}}, treeBuilt: true, treeSlotCount: 1},
+				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 1}}, treeBuilt: true, treeSlotCount: 1},
+				{properties: []property{{group: testGroup1, shard: 0, id: "3", version: 1}}, treeBuilt: true, treeSlotCount: 1},
 			},
 			propagation: func(nodes []*nodeContext) error {
 				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID, nodes[2].nodeID}, testGroup1, 0)
 			},
 			result: func(original []node) []node {
-				original[0].properties[0] = original[2].properties[0]
-				original[1].properties[0] = original[2].properties[0]
+				// should all nodes have all properties
+				original[0].properties = append(original[0].properties, original[1].properties[0])
+				original[0].properties = append(original[0].properties, original[2].properties[0])
+
+				original[1].properties = append(original[1].properties, original[0].properties[0])
+				original[1].properties = append(original[1].properties, original[2].properties[0])
+
+				original[2].properties = append(original[2].properties, original[0].properties[0])
+				original[2].properties = append(original[2].properties, original[1].properties[0])
 				return original
 			},
 		})
@@ -319,6 +351,9 @@ func startDataNodes(ctrl *gomock.Controller, nodes []node, groups []group) []*no
 }
 
 func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeContext {
+	if node.treeSlotCount == 0 {
+		node.treeSlotCount = 32 // default value for tree slot count
+	}
 	result := &nodeContext{node: node}
 	dbLocation, dbLocationDefer, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -358,8 +393,12 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 		PropertyGossipGrpcAddress: addr,
 	}))
 
-	db, err := openDB(context.Background(),
-		dbLocation, time.Minute*10, time.Minute*10, 32, observability.NewBypassRegistry(),
+	ctx := context.WithValue(context.Background(), common.ContextNodeKey, common.Node{
+		NodeID: addr,
+	})
+	var db *database
+	db, err = openDB(ctx,
+		dbLocation, time.Minute*10, time.Minute*10, int(node.treeSlotCount), observability.NewBypassRegistry(),
 		fs.NewLocalFileSystem(), true, repairLocation, "@every 10m", time.Minute*10, "* 2 * * *",
 		messenger, mockRepo, func(context.Context) (string, error) {
 			snapshotDir, defFunc, newSpaceErr := test.NewSpace()
@@ -367,7 +406,16 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 				return "", newSpaceErr
 			}
 			result.appendStop(defFunc)
-			return snapshotDir, copyDirRecursive(dbLocation, snapshotDir)
+			sList := db.sLst.Load()
+			var snpError error
+			for _, s := range *sList {
+				snpDir := path.Join(snapshotDir, filepath.Base(s.location))
+				lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
+				if e := s.store.TakeFileSnapshot(snpDir); e != nil {
+					snpError = multierr.Append(snpError, e)
+				}
+			}
+			return snapshotDir, snpError
 		})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	result.database = db
@@ -486,7 +534,8 @@ type node struct {
 	properties []property
 	treeBuilt  bool
 	// for the no data scenario, we need to specify the shard count
-	shardCount int32
+	shardCount    int32
+	treeSlotCount int32
 }
 
 type property struct {
