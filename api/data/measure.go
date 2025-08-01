@@ -84,3 +84,12 @@ var MeasureSeriesIndexUpdateKindVersion = common.KindVersion{
 
 // TopicMeasureSeriesIndexUpdate is the measure series index update topic.
 var TopicMeasureSeriesIndexUpdate = bus.BiTopic(MeasureSeriesIndexUpdateKindVersion.String())
+
+// MeasureSeriesSyncKindVersion is the version tag of measure series sync kind.
+var MeasureSeriesSyncKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "measure-series-sync",
+}
+
+// TopicMeasureSeriesSync is the measure series sync topic.
+var TopicMeasureSeriesSync = bus.BiTopic(MeasureSeriesSyncKindVersion.String())

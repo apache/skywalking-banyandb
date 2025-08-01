@@ -171,7 +171,7 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 	// Send segment file to each shard in shardIDs
 	for _, shardID := range shardIDs {
 		targetShardID := mv.calculateTargetShardID(uint32(shardID))
-		partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicMeasureSeriesIndexUpdate.String())
+		partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicMeasureSeriesSync.String())
 
 		// Stream segment to target shard replicas
 		if err := mv.streamPartToTargetShard(partData); err != nil {

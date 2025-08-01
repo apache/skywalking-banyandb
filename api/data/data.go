@@ -42,6 +42,7 @@ var (
 		TopicMeasurePartSync.String():          TopicMeasurePartSync,
 		TopicMeasureSeriesIndexInsert.String(): TopicMeasureSeriesIndexInsert,
 		TopicMeasureSeriesIndexUpdate.String(): TopicMeasureSeriesIndexUpdate,
+		TopicMeasureSeriesSync.String():        TopicMeasureSeriesSync,
 		TopicPropertyRepair.String():           TopicPropertyRepair,
 		TopicStreamSeriesIndexWrite.String():   TopicStreamSeriesIndexWrite,
 		TopicStreamLocalIndexWrite.String():    TopicStreamLocalIndexWrite,
@@ -86,6 +87,9 @@ var (
 			return nil
 		},
 		TopicMeasureSeriesIndexUpdate: func() proto.Message {
+			return nil
+		},
+		TopicMeasureSeriesSync: func() proto.Message {
 			return nil
 		},
 		TopicPropertyRepair: func() proto.Message {
