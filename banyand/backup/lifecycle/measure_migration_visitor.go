@@ -27,16 +27,16 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// streamMigrationVisitor implements the stream.Visitor interface for file-based migration.
-type streamMigrationVisitor struct {
+// measureMigrationVisitor implements the measure.Visitor interface for file-based migration.
+type measureMigrationVisitor struct {
 	selector       node.Selector                      // From parseGroup - node selector
 	client         queue.Client                       // From parseGroup - queue client
 	chunkedClients map[string]queue.ChunkedSyncClient // Per-node chunked sync clients cache
@@ -49,11 +49,11 @@ type streamMigrationVisitor struct {
 	chunkSize      int    // Chunk size for streaming data
 }
 
-// newStreamMigrationVisitor creates a new file-based migration visitor.
-func newStreamMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
+// newMeasureMigrationVisitor creates a new file-based migration visitor.
+func newMeasureMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
 	l *logger.Logger, progress *Progress, chunkSize int,
-) *streamMigrationVisitor {
-	return &streamMigrationVisitor{
+) *measureMigrationVisitor {
+	return &measureMigrationVisitor{
 		group:          group.Metadata.Name,
 		targetShardNum: shardNum,
 		replicas:       replicas,
@@ -67,14 +67,14 @@ func newStreamMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32,
 	}
 }
 
-// VisitSeries implements stream.Visitor.
-func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error {
+// VisitSeries implements measure.Visitor.
+func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error {
 	mv.logger.Info().
 		Str("path", seriesIndexPath).
 		Int64("min_timestamp", segmentTR.Start.UnixNano()).
 		Int64("max_timestamp", segmentTR.End.UnixNano()).
 		Str("group", mv.group).
-		Msg("migrating series index")
+		Msg("migrating measure series index")
 
 	// Find all *.seg segment files in the seriesIndexPath
 	entries := mv.lfs.ReadDir(seriesIndexPath)
@@ -89,17 +89,17 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 	if len(segmentFiles) == 0 {
 		mv.logger.Debug().
 			Str("path", seriesIndexPath).
-			Msg("no .seg files found in series index path")
+			Msg("no .seg files found in measure series index path")
 		return nil
 	}
 
 	mv.logger.Info().
 		Int("segment_count", len(segmentFiles)).
 		Str("path", seriesIndexPath).
-		Msg("found segment files for migration")
+		Msg("found measure segment files for migration")
 
 	// Set the total number of series segments for progress tracking
-	mv.SetStreamSeriesCount(len(segmentFiles))
+	mv.SetMeasureSeriesCount(len(segmentFiles))
 
 	// Create StreamingPartData for this segment
 	files := make([]queue.FileInfo, 0, len(segmentFiles))
@@ -123,12 +123,12 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		shardID := common.ShardID(segmentID)
 
 		// Check if this segment has already been completed
-		if mv.progress.IsStreamSeriesCompleted(mv.group, shardID) {
+		if mv.progress.IsMeasureSeriesCompleted(mv.group, shardID) {
 			mv.logger.Debug().
 				Uint64("segment_id", segmentID).
 				Str("filename", segmentFileName).
 				Str("group", mv.group).
-				Msg("segment already completed, skipping")
+				Msg("measure segment already completed, skipping")
 			continue
 		}
 
@@ -136,19 +136,19 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 			Uint64("segment_id", segmentID).
 			Str("filename", segmentFileName).
 			Str("group", mv.group).
-			Msg("migrating segment file")
+			Msg("migrating measure segment file")
 
 		// Create file reader for the segment file
 		segmentFilePath := filepath.Join(seriesIndexPath, segmentFileName)
 		segmentFile, err := mv.lfs.OpenFile(segmentFilePath)
 		if err != nil {
-			errorMsg := fmt.Sprintf("failed to open segment file %s: %v", segmentFilePath, err)
-			mv.progress.MarkStreamSeriesError(mv.group, shardID, errorMsg)
+			errorMsg := fmt.Sprintf("failed to open measure segment file %s: %v", segmentFilePath, err)
+			mv.progress.MarkMeasureSeriesError(mv.group, shardID, errorMsg)
 			mv.logger.Error().
 				Str("path", segmentFilePath).
 				Err(err).
-				Msg("failed to open segment file")
-			return fmt.Errorf("failed to open segment file %s: %w", segmentFilePath, err)
+				Msg("failed to open measure segment file")
+			return fmt.Errorf("failed to open measure segment file %s: %w", segmentFilePath, err)
 		}
 
 		// Close the file reader
@@ -163,43 +163,43 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 			Uint64("segment_id", segmentID).
 			Str("filename", segmentFileName).
 			Str("group", mv.group).
-			Int("completed_segments", mv.progress.GetStreamSeriesProgress(mv.group)).
-			Int("total_segments", mv.progress.GetStreamSeriesCount(mv.group)).
-			Msg("segment migration completed successfully")
+			Int("completed_segments", mv.progress.GetMeasureSeriesProgress(mv.group)).
+			Int("total_segments", mv.progress.GetMeasureSeriesCount(mv.group)).
+			Msg("measure segment migration completed successfully")
 	}
 
 	// Send segment file to each shard in shardIDs
 	for _, shardID := range shardIDs {
 		targetShardID := mv.calculateTargetShardID(uint32(shardID))
-		partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicStreamSeriesSync.String())
+		partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicMeasureSeriesIndexUpdate.String())
 
 		// Stream segment to target shard replicas
 		if err := mv.streamPartToTargetShard(partData); err != nil {
-			errorMsg := fmt.Sprintf("failed to stream segment to target shard %d: %v", targetShardID, err)
-			mv.progress.MarkStreamSeriesError(mv.group, shardID, errorMsg)
-			return fmt.Errorf("failed to stream segment to target shard %d: %w", targetShardID, err)
+			errorMsg := fmt.Sprintf("failed to stream measure segment to target shard %d: %v", targetShardID, err)
+			mv.progress.MarkMeasureSeriesError(mv.group, shardID, errorMsg)
+			return fmt.Errorf("failed to stream measure segment to target shard %d: %w", targetShardID, err)
 		}
 		// Mark segment as completed
-		mv.progress.MarkStreamSeriesCompleted(mv.group, shardID)
+		mv.progress.MarkMeasureSeriesCompleted(mv.group, shardID)
 	}
 
 	return nil
 }
 
-// VisitPart implements stream.Visitor - core migration logic.
-func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardID common.ShardID, partPath string) error {
-	partData, err := stream.ParsePartMetadata(mv.lfs, partPath)
+// VisitPart implements measure.Visitor - core migration logic.
+func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardID common.ShardID, partPath string) error {
+	partData, err := measure.ParsePartMetadata(mv.lfs, partPath)
 	if err != nil {
-		return fmt.Errorf("failed to parse part metadata: %w", err)
+		return fmt.Errorf("failed to parse measure part metadata: %w", err)
 	}
 	partID := partData.ID
 
 	// Check if this part has already been completed
-	if mv.progress.IsStreamPartCompleted(mv.group, partID) {
+	if mv.progress.IsMeasurePartCompleted(mv.group, partID) {
 		mv.logger.Debug().
 			Uint64("part_id", partID).
 			Str("group", mv.group).
-			Msg("part already completed, skipping")
+			Msg("measure part already completed, skipping")
 		return nil
 	}
 
@@ -212,157 +212,43 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 		Uint32("target_shard", targetShardID).
 		Str("part_path", partPath).
 		Str("group", mv.group).
-		Msg("migrating part")
+		Msg("migrating measure part")
 
-	files, release := stream.CreatePartFileReaderFromPath(partPath, mv.lfs)
+	files, release := measure.CreatePartFileReaderFromPath(partPath, mv.lfs)
 	defer release()
 
 	partData.Group = mv.group
 	partData.ShardID = targetShardID
-	partData.Topic = data.TopicStreamPartSync.String()
+	partData.Topic = data.TopicMeasurePartSync.String()
 	partData.Files = files
 
 	// Stream entire part to target shard replicas
 	if err := mv.streamPartToTargetShard(partData); err != nil {
-		errorMsg := fmt.Sprintf("failed to stream part to target shard: %v", err)
-		mv.progress.MarkStreamPartError(mv.group, partID, errorMsg)
-		return fmt.Errorf("failed to stream part to target shard: %w", err)
+		errorMsg := fmt.Sprintf("failed to stream measure part to target shard: %v", err)
+		mv.progress.MarkMeasurePartError(mv.group, partID, errorMsg)
+		return fmt.Errorf("failed to stream measure part to target shard: %w", err)
 	}
 
 	// Mark part as completed in progress tracker
-	mv.progress.MarkStreamPartCompleted(mv.group, partID)
+	mv.progress.MarkMeasurePartCompleted(mv.group, partID)
 
 	mv.logger.Info().
 		Uint64("part_id", partID).
 		Str("group", mv.group).
-		Int("completed_parts", mv.progress.GetStreamPartProgress(mv.group)).
-		Int("total_parts", mv.progress.GetStreamPartCount(mv.group)).
-		Msg("part migration completed successfully")
-
-	return nil
-}
-
-// VisitElementIndex implements stream.Visitor.
-func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRange, sourceShardID common.ShardID, indexPath string) error {
-	if mv.progress.IsStreamElementIndexCompleted(mv.group) {
-		mv.logger.Debug().
-			Str("group", mv.group).
-			Msg("element index segment already completed, skipping")
-		return nil
-	}
-
-	mv.logger.Info().
-		Str("path", indexPath).
-		Uint32("shard_id", uint32(sourceShardID)).
-		Int64("min_timestamp", segmentTR.Start.UnixNano()).
-		Int64("max_timestamp", segmentTR.End.UnixNano()).
-		Str("group", mv.group).
-		Msg("migrating element index")
-
-	// Find all .seg files in the element index directory
-	entries := mv.lfs.ReadDir(indexPath)
-
-	var segmentFiles []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".seg") {
-			segmentFiles = append(segmentFiles, entry.Name())
-		}
-	}
-
-	if len(segmentFiles) == 0 {
-		mv.logger.Debug().
-			Str("path", indexPath).
-			Msg("no .seg files found in element index directory")
-		return nil
-	}
-
-	// Set the total number of element index segment files for progress tracking
-	mv.SetStreamElementIndexCount(len(segmentFiles))
-
-	// Calculate target shard ID (using a simple approach for element index)
-	targetShardID := mv.calculateTargetShardID(uint32(sourceShardID))
-	mv.logger.Info().
-		Int("segment_count", len(segmentFiles)).
-		Str("path", indexPath).
-		Uint32("source_shard", uint32(sourceShardID)).
-		Uint32("target_shard", targetShardID).
-		Msg("found element index segment files for migration")
-
-	// Create FileInfo for this segment file
-	files := make([]queue.FileInfo, 0, len(segmentFiles))
-	// Process each segment file
-	for _, segmentFileName := range segmentFiles {
-		// Extract segment ID from filename (remove .seg extension)
-		segmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
-
-		// Parse hex segment ID
-		segmentID, err := strconv.ParseUint(segmentIDStr, 16, 64)
-		if err != nil {
-			mv.logger.Error().
-				Str("filename", segmentFileName).
-				Str("id_str", segmentIDStr).
-				Err(err).
-				Msg("failed to parse segment ID from filename")
-			continue
-		}
-
-		mv.logger.Info().
-			Uint64("segment_id", segmentID).
-			Str("filename", segmentFileName).
-			Str("group", mv.group).
-			Msg("migrating element index segment file")
-
-		// Create file reader for the segment file
-		segmentFilePath := filepath.Join(indexPath, segmentFileName)
-		segmentFile, err := mv.lfs.OpenFile(segmentFilePath)
-		if err != nil {
-			mv.logger.Error().
-				Str("path", segmentFilePath).
-				Err(err).
-				Msg("failed to open element index segment file")
-			return fmt.Errorf("failed to open element index segment file %s: %w", segmentFilePath, err)
-		}
-
-		// Close the file reader
-		defer segmentFile.Close()
-
-		files = append(files, queue.FileInfo{
-			Name:   segmentFileName,
-			Reader: segmentFile.SequentialRead(),
-		})
-
-		mv.logger.Info().
-			Uint64("segment_id", segmentID).
-			Str("filename", segmentFileName).
-			Str("group", mv.group).
-			Int("completed_segments", mv.progress.GetStreamElementIndexProgress(mv.group)).
-			Int("total_segments", mv.progress.GetStreamElementIndexCount(mv.group)).
-			Msg("element index segment migration completed successfully")
-	}
-	partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicStreamElementIndexSync.String())
-
-	// Stream segment file to target shard replicas
-	if err := mv.streamPartToTargetShard(partData); err != nil {
-		errorMsg := fmt.Sprintf("failed to stream element index to target shard: %v", err)
-		mv.progress.MarkStreamElementIndexError(mv.group, errorMsg)
-		return fmt.Errorf("failed to stream element index to target shard: %w", err)
-	}
-
-	// Mark segment as completed
-	mv.progress.MarkStreamElementIndexCompleted(mv.group)
+		Int("completed_parts", mv.progress.GetMeasurePartProgress(mv.group)).
+		Int("total_parts", mv.progress.GetMeasurePartCount(mv.group)).
+		Msg("measure part migration completed successfully")
 
 	return nil
 }
 
 // calculateTargetShardID maps source shard ID to target shard ID.
-func (mv *streamMigrationVisitor) calculateTargetShardID(sourceShardID uint32) uint32 {
-	// Simple modulo-based mapping from source shard to target shard
-	// This ensures deterministic and balanced distribution
-	return sourceShardID % mv.targetShardNum
+func (mv *measureMigrationVisitor) calculateTargetShardID(sourceShardID uint32) uint32 {
+	return calculateTargetShardID(sourceShardID, mv.targetShardNum)
 }
 
 // streamPartToTargetShard sends part data to all replicas of the target shard.
-func (mv *streamMigrationVisitor) streamPartToTargetShard(partData queue.StreamingPartData) error {
+func (mv *measureMigrationVisitor) streamPartToTargetShard(partData queue.StreamingPartData) error {
 	targetShardID := partData.ShardID
 	copies := mv.replicas + 1
 
@@ -376,7 +262,7 @@ func (mv *streamMigrationVisitor) streamPartToTargetShard(partData queue.Streami
 
 		// Stream part data to target node using chunked sync
 		if err := mv.streamPartToNode(nodeID, targetShardID, partData); err != nil {
-			return fmt.Errorf("failed to stream part to node %s: %w", nodeID, err)
+			return fmt.Errorf("failed to stream measure part to node %s: %w", nodeID, err)
 		}
 	}
 
@@ -384,7 +270,7 @@ func (mv *streamMigrationVisitor) streamPartToTargetShard(partData queue.Streami
 }
 
 // streamPartToNode streams part data to a specific target node.
-func (mv *streamMigrationVisitor) streamPartToNode(nodeID string, targetShardID uint32, partData queue.StreamingPartData) error {
+func (mv *measureMigrationVisitor) streamPartToNode(nodeID string, targetShardID uint32, partData queue.StreamingPartData) error {
 	// Get or create chunked client for this node (cache hit optimization)
 	chunkedClient, exists := mv.chunkedClients[nodeID]
 	if !exists {
@@ -419,13 +305,13 @@ func (mv *streamMigrationVisitor) streamPartToNode(nodeID string, targetShardID 
 		Uint32("target_shard", targetShardID).
 		Uint64("part_id", partData.ID).
 		Str("group", mv.group).
-		Msg("file-based migration part completed successfully")
+		Msg("file-based measure migration part completed successfully")
 
 	return nil
 }
 
 // Close cleans up all chunked sync clients.
-func (mv *streamMigrationVisitor) Close() error {
+func (mv *measureMigrationVisitor) Close() error {
 	for nodeID, client := range mv.chunkedClients {
 		if err := client.Close(); err != nil {
 			mv.logger.Warn().Err(err).Str("node", nodeID).Msg("failed to close chunked sync client")
@@ -436,7 +322,7 @@ func (mv *streamMigrationVisitor) Close() error {
 }
 
 // createStreamingSegmentFromFiles creates StreamingPartData from segment files.
-func (mv *streamMigrationVisitor) createStreamingSegmentFromFiles(
+func (mv *measureMigrationVisitor) createStreamingSegmentFromFiles(
 	targetShardID uint32,
 	files []queue.FileInfo,
 	segmentTR *timestamp.TimeRange,
@@ -454,35 +340,24 @@ func (mv *streamMigrationVisitor) createStreamingSegmentFromFiles(
 	return segmentData
 }
 
-// SetStreamPartCount sets the total number of parts for the current stream.
-func (mv *streamMigrationVisitor) SetStreamPartCount(totalParts int) {
+// SetMeasurePartCount sets the total number of parts for the current measure.
+func (mv *measureMigrationVisitor) SetMeasurePartCount(totalParts int) {
 	if mv.progress != nil {
-		mv.progress.SetStreamPartCount(mv.group, totalParts)
+		mv.progress.SetMeasurePartCount(mv.group, totalParts)
 		mv.logger.Info().
 			Str("group", mv.group).
 			Int("total_parts", totalParts).
-			Msg("set stream part count for progress tracking")
+			Msg("set measure part count for progress tracking")
 	}
 }
 
-// SetStreamSeriesCount sets the total number of series segments for the current stream.
-func (mv *streamMigrationVisitor) SetStreamSeriesCount(totalSegments int) {
+// SetMeasureSeriesCount sets the total number of series segments for the current measure.
+func (mv *measureMigrationVisitor) SetMeasureSeriesCount(totalSegments int) {
 	if mv.progress != nil {
-		mv.progress.SetStreamSeriesCount(mv.group, totalSegments)
+		mv.progress.SetMeasureSeriesCount(mv.group, totalSegments)
 		mv.logger.Info().
 			Str("group", mv.group).
 			Int("total_segments", totalSegments).
-			Msg("set stream series count for progress tracking")
-	}
-}
-
-// SetStreamElementIndexCount sets the total number of element index segment files for the current stream.
-func (mv *streamMigrationVisitor) SetStreamElementIndexCount(totalSegmentFiles int) {
-	if mv.progress != nil {
-		mv.progress.SetStreamElementIndexCount(mv.group, totalSegmentFiles)
-		mv.logger.Info().
-			Str("group", mv.group).
-			Int("total_segment_files", totalSegmentFiles).
-			Msg("set stream element index segment count for progress tracking")
+			Msg("set measure series count for progress tracking")
 	}
 }

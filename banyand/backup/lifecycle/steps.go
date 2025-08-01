@@ -18,34 +18,21 @@
 package lifecycle
 
 import (
-	"context"
-	"encoding/base64"
 	"fmt"
-	"time"
 
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
-	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (streamDir string, measureDir string, err error) {
@@ -82,23 +69,6 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 	p.SnapshotStreamDir = streamDir
 	p.SnapshotMeasureDir = measureDir
 	return streamDir, measureDir, nil
-}
-
-func (l *lifecycleService) setupQuerySvc(ctx context.Context, measureDir string) (measureSVC measure.Service, err error) {
-	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{})
-	if measureDir != "" {
-		measureSVC, err = measure.NewReadonlyDataSVC(l.metadata, l.omr, l.pm)
-		if err != nil {
-			return nil, err
-		}
-		if err = measureSVC.FlagSet().Parse([]string{"--measure-data-path", measureDir}); err != nil {
-			return nil, err
-		}
-		if err = measureSVC.PreRun(ctx); err != nil {
-			return nil, err
-		}
-	}
-	return measureSVC, nil
 }
 
 func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
@@ -165,132 +135,4 @@ func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databa
 		return 0, 0, nil, nil, nil, errors.New("no nodes matched")
 	}
 	return nst.ShardNum, nst.Replicas, nst.Ttl, nodeSel, client, nil
-}
-
-func migrateStream(ctx context.Context, s *databasev1.Stream, result model.StreamQueryResult,
-	shardNum uint32, replicas uint32, selector node.Selector, client queue.Client, l *logger.Logger,
-) (sum int) {
-	if result == nil {
-		return 0
-	}
-	defer result.Release()
-	copies := replicas + 1
-
-	entityLocator := partition.NewEntityLocator(s.TagFamilies, s.Entity, 0)
-
-	batch := client.NewBatchPublisher(30 * time.Second)
-	defer batch.Close()
-	for sr := result.Pull(ctx); sr != nil; sr = result.Pull(ctx) {
-		for i := range sr.ElementIDs {
-			writeEntity := &streamv1.WriteRequest{
-				Metadata: s.Metadata,
-				Element:  &streamv1.ElementValue{},
-			}
-			ev := writeEntity.Element
-			ev.ElementId = base64.StdEncoding.EncodeToString(convert.Uint64ToBytes(sr.ElementIDs[i]))
-			ev.Timestamp = timestamppb.New(time.Unix(0, sr.Timestamps[i]))
-			for _, tf := range sr.TagFamilies {
-				tfw := &modelv1.TagFamilyForWrite{}
-				for _, tag := range tf.Tags {
-					tfw.Tags = append(tfw.Tags, tag.Values[i])
-				}
-				ev.TagFamilies = append(ev.TagFamilies, tfw)
-			}
-			tagValues, shardID, err := entityLocator.Locate(s.Metadata.Name, ev.TagFamilies, shardNum)
-			if err != nil {
-				l.Error().Err(err).Msg("failed to locate entity")
-				continue
-			}
-
-			// Write to multiple replicas
-			for replicaID := uint32(0); replicaID < copies; replicaID++ {
-				nodeID, err := selector.Pick(s.Metadata.Group, s.Metadata.Name, uint32(shardID), replicaID)
-				if err != nil {
-					l.Error().Err(err).Msg("failed to pick node")
-					continue
-				}
-				iwr := &streamv1.InternalWriteRequest{
-					Request:      writeEntity,
-					ShardId:      uint32(shardID),
-					EntityValues: tagValues[1:].Encode(),
-				}
-				message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-				_, err = batch.Publish(ctx, data.TopicStreamWrite, message)
-				if err != nil {
-					l.Error().Err(err).Msg("failed to publish message")
-					continue
-				}
-			}
-			sum++
-		}
-	}
-	return sum
-}
-
-func migrateMeasure(ctx context.Context, m *databasev1.Measure, result model.MeasureQueryResult,
-	shardNum uint32, replicas uint32, selector node.Selector, client queue.Client, l *logger.Logger,
-) (sum int) {
-	if result == nil {
-		return 0
-	}
-	defer result.Release()
-	copies := replicas + 1
-
-	entityLocator := partition.NewEntityLocator(m.TagFamilies, m.Entity, 0)
-
-	batch := client.NewBatchPublisher(30 * time.Second)
-	defer batch.Close()
-	for mr := result.Pull(); mr != nil; mr = result.Pull() {
-		for i := range mr.Timestamps {
-			writeRequest := &measurev1.WriteRequest{
-				Metadata: m.Metadata,
-				DataPoint: &measurev1.DataPointValue{
-					Timestamp: timestamppb.New(time.Unix(0, mr.Timestamps[i])),
-					Version:   mr.Versions[i],
-				},
-				MessageId: uint64(time.Now().UnixNano()),
-			}
-
-			for _, tf := range mr.TagFamilies {
-				tfWrite := &modelv1.TagFamilyForWrite{}
-				for _, tag := range tf.Tags {
-					tfWrite.Tags = append(tfWrite.Tags, tag.Values[i])
-				}
-				writeRequest.DataPoint.TagFamilies = append(writeRequest.DataPoint.TagFamilies, tfWrite)
-			}
-
-			for _, field := range mr.Fields {
-				writeRequest.DataPoint.Fields = append(writeRequest.DataPoint.Fields, field.Values[i])
-			}
-
-			tagValues, shardID, err := entityLocator.Locate(m.Metadata.Name, writeRequest.DataPoint.TagFamilies, shardNum)
-			if err != nil {
-				l.Error().Err(err).Msg("failed to locate entity")
-				continue
-			}
-
-			// Write to multiple replicas
-			for replicaID := uint32(0); replicaID < copies; replicaID++ {
-				nodeID, err := selector.Pick(m.Metadata.Group, m.Metadata.Name, uint32(shardID), replicaID)
-				if err != nil {
-					l.Error().Err(err).Msg("failed to pick node")
-					continue
-				}
-
-				iwr := &measurev1.InternalWriteRequest{
-					Request:      writeRequest,
-					ShardId:      uint32(shardID),
-					EntityValues: tagValues[1:].Encode(),
-				}
-
-				message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-				_, err = batch.Publish(ctx, data.TopicMeasureWrite, message)
-				if err != nil {
-					l.Error().Err(err).Msg("failed to publish message")
-				}
-			}
-			sum++
-		}
-	}
-	return sum
 }
