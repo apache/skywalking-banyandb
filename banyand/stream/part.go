@@ -646,7 +646,7 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 	}
 	readers = append(readers, metaReader)
 	files = append(files, queue.FileInfo{
-		Name:   metaFilename,
+		Name:   streamMetaName,
 		Reader: metaReader.SequentialRead(),
 	})
 
@@ -657,7 +657,7 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 	}
 	readers = append(readers, primaryReader)
 	files = append(files, queue.FileInfo{
-		Name:   primaryFilename,
+		Name:   streamPrimaryName,
 		Reader: primaryReader.SequentialRead(),
 	})
 
@@ -668,7 +668,7 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 	}
 	readers = append(readers, timestampsReader)
 	files = append(files, queue.FileInfo{
-		Name:   timestampsFilename,
+		Name:   streamTimestampsName,
 		Reader: timestampsReader.SequentialRead(),
 	})
 
@@ -684,8 +684,9 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 				logger.Panicf("cannot open tag family metadata file %q: %s", tfmPath, err)
 			}
 			readers = append(readers, tfmReader)
+			tagName := removeExt(e.Name(), tagFamiliesMetadataFilenameExt)
 			files = append(files, queue.FileInfo{
-				Name:   e.Name(),
+				Name:   streamTagMetadataPrefix + tagName,
 				Reader: tfmReader.SequentialRead(),
 			})
 		}
@@ -696,8 +697,9 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 				logger.Panicf("cannot open tag family file %q: %s", tfPath, err)
 			}
 			readers = append(readers, tfReader)
+			tagName := removeExt(e.Name(), tagFamiliesFilenameExt)
 			files = append(files, queue.FileInfo{
-				Name:   e.Name(),
+				Name:   streamTagFamiliesPrefix + tagName,
 				Reader: tfReader.SequentialRead(),
 			})
 		}
@@ -708,8 +710,9 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 				logger.Panicf("cannot open tag family filter file %q: %s", tffPath, err)
 			}
 			readers = append(readers, tffReader)
+			tagName := removeExt(e.Name(), tagFamiliesFilterFilenameExt)
 			files = append(files, queue.FileInfo{
-				Name:   e.Name(),
+				Name:   streamTagFilterPrefix + tagName,
 				Reader: tffReader.SequentialRead(),
 			})
 		}

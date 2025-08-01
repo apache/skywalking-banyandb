@@ -326,6 +326,11 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 		// Close the file reader
 		defer segmentFile.Close()
 
+		files = append(files, queue.FileInfo{
+			Name:   segmentFileName,
+			Reader: segmentFile.SequentialRead(),
+		})
+
 		mv.logger.Info().
 			Uint64("segment_id", segmentID).
 			Str("filename", segmentFileName).

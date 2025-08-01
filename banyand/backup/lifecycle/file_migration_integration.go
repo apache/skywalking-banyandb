@@ -45,6 +45,7 @@ func migrateStreamWithFileBasedAndProgress(
 	if err != nil {
 		return err
 	}
+	defer client.GracefulStop()
 
 	// Convert TTL to IntervalRule using storage.MustToIntervalRule
 	intervalRule := storage.MustToIntervalRule(ttl)

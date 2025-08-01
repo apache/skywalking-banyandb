@@ -68,7 +68,7 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 	for _, snp := range snn {
 		snapshotDir, errDir := snapshot.Dir(snp, l.streamRoot, l.measureRoot, "")
 		if errDir != nil {
-			logger.Warningf("Failed to get snapshot directory for %s: %v", snp.Name, errDir)
+			l.l.Error().Err(errDir).Msgf("Failed to get snapshot directory for %s", snp.Name)
 			continue
 		}
 		if snp.Catalog == commonv1.Catalog_CATALOG_STREAM {

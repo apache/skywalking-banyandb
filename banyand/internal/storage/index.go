@@ -64,6 +64,7 @@ func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64,
 		Logger:        si.l,
 		BatchWaitSec:  flushTimeoutSeconds,
 		CacheMaxBytes: cacheMaxBytes,
+		// EnableDeduplication: true,
 	}
 	if metrics != nil {
 		opts.Metrics = metrics

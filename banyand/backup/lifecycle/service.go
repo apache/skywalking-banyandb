@@ -186,6 +186,11 @@ func (l *lifecycleService) action() error {
 		l.l.Error().Err(err).Msg("failed to get snapshots")
 		return err
 	}
+	if streamDir == "" && measureDir == "" {
+		l.l.Warn().Msg("no snapshots found, skipping lifecycle migration")
+		l.generateReport(progress)
+		return nil
+	}
 	l.l.Info().
 		Str("stream_snapshot", streamDir).
 		Str("measure_snapshot", measureDir).
@@ -211,6 +216,11 @@ func (l *lifecycleService) action() error {
 	for _, g := range groups {
 		switch g.Catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
+			if streamDir == "" {
+				l.l.Warn().Msgf("stream snapshot directory is not available, skipping group: %s", g.Metadata.Name)
+				progress.MarkGroupCompleted(g.Metadata.Name)
+				continue
+			}
 			l.processStreamGroup(ctx, g, streamDir, nodes, labels, progress)
 		case commonv1.Catalog_CATALOG_MEASURE:
 			if measureSVC == nil {
@@ -388,7 +398,7 @@ func (l *lifecycleService) processStreamGroupFileBased(_ context.Context, g *com
 
 	// Use the file-based migration with existing visitor pattern
 	err := migrateStreamWithFileBasedAndProgress(
-		streamDir,        // Use snapshot directory as source
+		filepath.Join(streamDir, g.Metadata.Name), // Use snapshot directory as source
 		*tr,              // Time range for segments to migrate
 		g,                // Group configuration
 		labels,           // Node labels

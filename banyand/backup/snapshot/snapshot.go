@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -76,7 +77,11 @@ func Dir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot st
 	default:
 		return "", errors.New("unknown catalog type")
 	}
-	return filepath.Join(baseDir, storage.SnapshotsDir, snapshot.Name), nil
+	snpPath := filepath.Join(baseDir, storage.SnapshotsDir, snapshot.Name)
+	if _, err := os.Stat(snpPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("snapshot directory %s does not exist", snpPath)
+	}
+	return snpPath, nil
 }
 
 // LocalDir returns the local directory path of the snapshot.
