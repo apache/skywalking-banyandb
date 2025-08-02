@@ -262,6 +262,7 @@
     - [PropertySync](#banyandb-property-v1-PropertySync)
     - [RepairRequest](#banyandb-property-v1-RepairRequest)
     - [RepairResponse](#banyandb-property-v1-RepairResponse)
+    - [RootCompare](#banyandb-property-v1-RootCompare)
     - [TreeLeafNode](#banyandb-property-v1-TreeLeafNode)
     - [TreeRoot](#banyandb-property-v1-TreeRoot)
     - [TreeSlotSHA](#banyandb-property-v1-TreeSlotSHA)
@@ -3870,7 +3871,6 @@ Property stores the user defined data
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tree_found | [bool](#bool) |  |  |
 | nodes | [TreeLeafNode](#banyandb-property-v1-TreeLeafNode) | repeated | if the nodes is empty, mean the server side don&#39;t have more tree leaf nodes to send. |
 
 
@@ -3947,8 +3947,25 @@ Property stores the user defined data
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| differ_tree_summary | [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary) |  | compare stage |
+| root_compare | [RootCompare](#banyandb-property-v1-RootCompare) |  | compare stage |
+| differ_tree_summary | [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary) |  |  |
 | property_sync | [PropertySync](#banyandb-property-v1-PropertySync) |  | repair stage case 1: return from PropertyMissing case 3: return if the client is older |
+
+
+
+
+
+
+<a name="banyandb-property-v1-RootCompare"></a>
+
+### RootCompare
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tree_found | [bool](#bool) |  |  |
+| root_sha_match | [bool](#bool) |  |  |
 
 
 
