@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -60,31 +61,32 @@ const (
 
 type service struct {
 	schema.UnimplementedOnInitHandler
-	metadata        metadata.Repo
-	creds           credentials.TransportCredentials
-	omr             observability.MetricsRegistry
-	registered      map[string]*databasev1.Node
-	ser             *grpclib.Server
-	serverMetrics   *serverMetrics
-	log             *logger.Logger
-	closer          *run.Closer
-	protocolHandler *protocolHandler
-	keyFile         string
-	addr            string
-	certFile        string
-	host            string
-	nodeID          string
-	caCertPath      string
-	listeners       []MessageListener
-	maxRecvMsgSize  run.Bytes
-	listenersLock   sync.RWMutex
-	mu              sync.RWMutex
-	port            uint32
-	tls             bool
-
-	totalTimeout time.Duration
-	// TODO: should pass by property repair configuration
-	scheduleInterval time.Duration
+	metadata            metadata.Repo
+	creds               credentials.TransportCredentials
+	omr                 observability.MetricsRegistry
+	sel                 node.Selector
+	registered          map[string]*databasev1.Node
+	ser                 *grpclib.Server
+	serverMetrics       *serverMetrics
+	log                 *logger.Logger
+	closer              *run.Closer
+	protocolHandler     *protocolHandler
+	certFile            string
+	keyFile             string
+	host                string
+	nodeID              string
+	caCertPath          string
+	addr                string
+	listeners           []MessageListener
+	serviceRegister     []func(s *grpclib.Server)
+	maxRecvMsgSize      run.Bytes
+	totalTimeout        time.Duration
+	scheduleInterval    time.Duration
+	serviceRegisterLock sync.RWMutex
+	mu                  sync.RWMutex
+	listenersLock       sync.RWMutex
+	port                uint32
+	tls                 bool
 }
 
 // NewMessenger creates a new instance of Messenger for gossip propagation communication between nodes.
@@ -99,12 +101,15 @@ func NewMessenger(omr observability.MetricsRegistry, metadata metadata.Repo) Mes
 		listeners:        make([]MessageListener, 0),
 		registered:       make(map[string]*databasev1.Node),
 		scheduleInterval: time.Hour * 2,
+		sel:              node.NewRoundRobinSelector("", metadata),
 	}
 }
 
 // NewMessengerWithoutMetadata creates a new instance of Messenger without metadata.
-func NewMessengerWithoutMetadata(omr observability.MetricsRegistry) Messenger {
-	return NewMessenger(omr, nil)
+func NewMessengerWithoutMetadata(omr observability.MetricsRegistry, port int) Messenger {
+	messenger := NewMessenger(omr, nil)
+	messenger.(*service).port = uint32(port)
+	return messenger
 }
 
 func (s *service) PreRun(ctx context.Context) error {
@@ -207,6 +212,9 @@ func (s *service) Serve(stopCh chan struct{}) {
 	s.ser = grpclib.NewServer(opts...)
 
 	propertyv1.RegisterGossipServiceServer(s.ser, s.protocolHandler)
+	for _, register := range s.getServiceRegisters() {
+		register(s.ser)
+	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {

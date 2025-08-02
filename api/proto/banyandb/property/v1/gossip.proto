@@ -30,8 +30,9 @@ message PropagationContext {
 }
 
 message PropagationRequest {
-  PropagationContext context = 2;
-  string group = 3;
+  PropagationContext context = 1;
+  string group = 2;
+  uint32 shard_id = 3;
 }
 
 message PropagationResponse {}

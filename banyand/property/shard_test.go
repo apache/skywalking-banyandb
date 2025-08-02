@@ -102,7 +102,7 @@ func TestMergeDeleted(t *testing.T) {
 			}
 			defers = append(defers, snapshotDeferFunc)
 			db, err := openDB(context.Background(), dataDir, 3*time.Second, tt.expireDeletionTime, 32, observability.BypassRegistry, fs.NewLocalFileSystem(),
-				snapshotDir, "@every 10m", time.Second*10, nil)
+				true, snapshotDir, "@every 10m", time.Second*10, "* 2 * * *", nil, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,13 +161,13 @@ func TestRepair(t *testing.T) {
 	now := time.Now()
 	tests := []struct {
 		beforeApply func() []*propertyv1.Property
-		repair      func(ctx context.Context, s *shard) error
+		repair      func(ctx context.Context, s *shard) (bool, *queryProperty, error)
 		verify      func(t *testing.T, ctx context.Context, s *shard) error
 		name        string
 	}{
 		{
 			name: "repair normal with no properties",
-			repair: func(ctx context.Context, s *shard) error {
+			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
 				property := generateProperty(fmt.Sprintf("test-id%d", 0), now.UnixNano(), 0)
 				return s.repair(ctx, GetPropertyID(property), property, 0)
 			},
@@ -182,7 +182,7 @@ func TestRepair(t *testing.T) {
 		},
 		{
 			name: "repair deleted with no properties",
-			repair: func(ctx context.Context, s *shard) error {
+			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
 				property := generateProperty(fmt.Sprintf("test-id%d", 0), now.UnixNano(), 0)
 				return s.repair(ctx, GetPropertyID(property), property, now.UnixNano())
 			},
@@ -203,7 +203,7 @@ func TestRepair(t *testing.T) {
 				}
 				return
 			},
-			repair: func(ctx context.Context, s *shard) error {
+			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
 				property := generateProperty("test-id3", now.UnixNano(), 1000)
 				return s.repair(ctx, GetPropertyID(property), property, 0)
 			},
@@ -225,7 +225,7 @@ func TestRepair(t *testing.T) {
 					generateProperty("test-id", now.UnixNano()-100, 0),
 				}
 			},
-			repair: func(ctx context.Context, s *shard) error {
+			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
 				property := generateProperty("test-id", now.UnixNano(), 1000)
 				return s.repair(ctx, GetPropertyID(property), property, now.UnixNano())
 			},
@@ -248,7 +248,7 @@ func TestRepair(t *testing.T) {
 				}
 				return res
 			},
-			repair: func(ctx context.Context, s *shard) error {
+			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
 				// Create a property with an older mod revision
 				property := generateProperty("test-id", now.UnixNano()-1000, 2000)
 				return s.repair(ctx, GetPropertyID(property), property, 0)
@@ -273,7 +273,7 @@ func TestRepair(t *testing.T) {
 					generateProperty("test-id", now.UnixNano(), 0),
 				}
 			},
-			repair: func(ctx context.Context, s *shard) error {
+			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
 				// Create a property with the same data but marked as deleted
 				property := generateProperty("test-id", now.UnixNano(), 0)
 				return s.repair(ctx, GetPropertyID(property), property, now.UnixNano())
@@ -311,7 +311,7 @@ func TestRepair(t *testing.T) {
 			}
 			defers = append(defers, snapshotDeferFunc)
 			db, err := openDB(context.Background(), dataDir, 3*time.Second, 1*time.Hour, 32, observability.BypassRegistry, fs.NewLocalFileSystem(),
-				snapshotDir, "@every 10m", time.Second*10, nil)
+				true, snapshotDir, "@every 10m", time.Second*10, "* 2 * * *", nil, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -333,7 +333,7 @@ func TestRepair(t *testing.T) {
 				}
 			}
 
-			if err = tt.repair(context.Background(), newShard); err != nil {
+			if _, _, err = tt.repair(context.Background(), newShard); err != nil {
 				t.Fatal(err)
 			}
 

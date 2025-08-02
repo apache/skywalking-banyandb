@@ -26,7 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
-func (s *service) Propagation(nodes []string, group string) error {
+func (s *service) Propagation(nodes []string, group string, shardID uint32) error {
 	if len(nodes) < 2 {
 		return fmt.Errorf("must provide at least 2 node")
 	}
@@ -45,6 +45,7 @@ func (s *service) Propagation(nodes []string, group string) error {
 	request := &propertyv1.PropagationRequest{
 		Context: ctx,
 		Group:   group,
+		ShardId: shardID,
 	}
 
 	var sendTo func(context.Context, *propertyv1.PropagationRequest) (*propertyv1.PropagationResponse, error)
@@ -84,6 +85,18 @@ func (s *service) Propagation(nodes []string, group string) error {
 	return nil
 }
 
+func (s *service) LocateNodes(group string, shardID, replicasCount uint32) ([]string, error) {
+	result := make([]string, 0, replicasCount)
+	for r := range replicasCount {
+		node, err := s.sel.Pick(group, "", shardID, r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to locate node for group %s, shardID %d, replica %d: %w", group, shardID, r, err)
+		}
+		result = append(result, node)
+	}
+	return result, nil
+}
+
 func (s *service) getRegisteredNode(id string) (*databasev1.Node, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -100,6 +113,7 @@ func (s *service) OnAddOrUpdate(md schema.Metadata) {
 		s.log.Warn().Msg("invalid metadata type")
 		return
 	}
+	s.sel.AddNode(node)
 	address := node.PropertyRepairGossipGrpcAddress
 	if address == "" {
 		s.log.Warn().Stringer("node", node).Msg("node does not have gossip address, skipping registration")
@@ -132,6 +146,7 @@ func (s *service) OnDelete(md schema.Metadata) {
 		s.log.Warn().Stringer("node", node).Msg("node does not have a name, skipping deregistration")
 		return
 	}
+	s.sel.RemoveNode(node)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

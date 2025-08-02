@@ -68,7 +68,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(1)
 		node := nodes[0]
 
-		err := node.messenger.Propagation([]string{node.nodeID}, "test")
+		err := node.messenger.Propagation([]string{node.nodeID}, "test", 0)
 		gomega.Expect(err).To(gomega.HaveOccurred())
 	})
 
@@ -76,7 +76,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(2)
 		node1, node2 := nodes[0], nodes[1]
 
-		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup)
+		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup, 0)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		nodeVerify(node1, []string{node2.nodeID}, 1)
 	})
@@ -85,7 +85,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(2)
 		node1, node2 := nodes[0], nodes[1]
 
-		err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup)
+		err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID}, mockGroup, 0)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		nodeVerify(node1, []string{node2.nodeID}, 1)
 		nodeVerify(node2, []string{}, 0)
@@ -95,7 +95,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(2)
 		node1, node2 := nodes[0], nodes[1]
 
-		err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID, "no-existing"}, mockGroup)
+		err := node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID, "no-existing"}, mockGroup, 0)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		nodeVerify(node1, []string{node2.nodeID, node2.nodeID}, 2)
 		nodeVerify(node2, []string{node1.nodeID}, 1)
@@ -105,7 +105,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodes = startNodes(3)
 		node1, node2, node3 := nodes[0], nodes[1], nodes[2]
 
-		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
+		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup, 0)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		nodeVerify(node1, []string{node2.nodeID}, 1)
 		nodeVerify(node2, []string{node3.nodeID}, 1)
@@ -117,7 +117,7 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		node1, node2, node3 := nodes[0], nodes[1], nodes[2]
 		node3.listener.mockErr = fmt.Errorf("mock error")
 
-		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
+		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup, 0)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		nodeVerify(node1, []string{node2.nodeID}, 1)
 		nodeVerify(node2, []string{node3.nodeID}, 1)
@@ -129,9 +129,9 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		node1, node2, node3 := nodes[0], nodes[1], nodes[2]
 		node1.listener.delay = time.Second
 
-		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
+		err := node1.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup, 0)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		err = node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup)
+		err = node2.messenger.Propagation([]string{node1.nodeID, node2.nodeID, node3.nodeID}, mockGroup, 0)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// should only the first propagation execute, the second one is ignored
@@ -183,9 +183,8 @@ func startNodes(count int) []*nodeContext {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// starting gossip messenger
-		messenger := NewMessengerWithoutMetadata(observability.NewBypassRegistry())
+		messenger := NewMessengerWithoutMetadata(observability.NewBypassRegistry(), ports[0])
 		gomega.Expect(messenger).NotTo(gomega.BeNil())
-		messenger.(*service).port = uint32(ports[0])
 		addr := fmt.Sprintf("127.0.0.1:%d", ports[0])
 		messenger.(run.PreRunner).PreRun(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{
 			NodeID: addr,

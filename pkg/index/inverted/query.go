@@ -683,6 +683,25 @@ func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string
 	}, nil
 }
 
+// BuildPropertyQueryFromEntity builds a property query from entity information.
+func BuildPropertyQueryFromEntity(groupField, group, name, entityIDField, entityID string) (index.Query, error) {
+	if group == "" || name == "" || entityID == "" {
+		return nil, errors.New("group, name and entityID are mandatory for property query")
+	}
+	bq := bluge.NewBooleanQuery()
+	bn := newMustNode()
+	bq.AddMust(bluge.NewTermQuery(group).SetField(groupField))
+	bn.Append(newTermNode(group, nil))
+	bq.AddMust(bluge.NewTermQuery(name).SetField(index.IndexModeName))
+	bn.Append(newTermNode(name, nil))
+	bq.AddMust(bluge.NewTermQuery(entityID).SetField(entityIDField))
+	bn.Append(newTermNode(entityID, nil))
+	return &queryNode{
+		query: bq,
+		node:  bn,
+	}, nil
+}
+
 var (
 	_              logical.Schema = (*schema)(nil)
 	schemaInstance                = &schema{}
