@@ -37,8 +37,8 @@ type Progress struct {
 	StreamPartErrors            map[string]map[common.ShardID]map[uint64]string         `json:"stream_part_errors"`
 	CompletedStreamSeries       map[string]map[common.ShardID]bool   `json:"completed_stream_series"`
 	StreamSeriesErrors          map[string]map[common.ShardID]string `json:"stream_series_errors"`
-	CompletedStreamElementIndex map[string]bool                      `json:"completed_stream_element_index"`
-	StreamElementIndexErrors    map[string]string                    `json:"stream_element_index_errors"`
+	CompletedStreamElementIndex map[string]map[common.ShardID]bool   `json:"completed_stream_element_index"`
+	StreamElementIndexErrors    map[string]map[common.ShardID]string `json:"stream_element_index_errors"`
 	StreamPartCounts            map[string]int                       `json:"stream_part_counts"`
 	StreamPartProgress          map[string]int                       `json:"stream_part_progress"`
 	StreamSeriesCounts          map[string]int                       `json:"stream_series_counts"`
@@ -87,8 +87,8 @@ func NewProgress(path string, l *logger.Logger) *Progress {
 		StreamSeriesErrors:          make(map[string]map[common.ShardID]string),
 		StreamSeriesCounts:          make(map[string]int),
 		StreamSeriesProgress:        make(map[string]int),
-		CompletedStreamElementIndex: make(map[string]bool),
-		StreamElementIndexErrors:    make(map[string]string),
+		CompletedStreamElementIndex: make(map[string]map[common.ShardID]bool),
+		StreamElementIndexErrors:    make(map[string]map[common.ShardID]string),
 		StreamElementIndexCounts:    make(map[string]int),
 		StreamElementIndexProgress:  make(map[string]int),
 		CompletedMeasureParts:       make(map[string]map[common.ShardID]map[uint64]bool),
@@ -409,34 +409,47 @@ func (p *Progress) ClearStreamSeriesErrors(group string) {
 }
 
 // MarkStreamElementIndexCompleted marks a specific element index file of a stream as completed.
-func (p *Progress) MarkStreamElementIndexCompleted(group string) {
+func (p *Progress) MarkStreamElementIndexCompleted(group string, shardID common.ShardID) {
 	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Mark group as completed
-	p.CompletedStreamElementIndex[group] = true
+	// Initialize nested maps if they don't exist
+	if p.CompletedStreamElementIndex[group] == nil {
+		p.CompletedStreamElementIndex[group] = make(map[common.ShardID]bool)
+	}
+
+	// Mark shard as completed
+	p.CompletedStreamElementIndex[group][shardID] = true
 
 	// Update progress count
 	p.StreamElementIndexProgress[group]++
 }
 
 // IsStreamElementIndexCompleted checks if a specific element index file of a stream has been completed.
-func (p *Progress) IsStreamElementIndexCompleted(group string) bool {
+func (p *Progress) IsStreamElementIndexCompleted(group string, shardID common.ShardID) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return p.CompletedStreamElementIndex[group]
+	if shards, ok := p.CompletedStreamElementIndex[group]; ok {
+		return shards[shardID]
+	}
+	return false
 }
 
 // MarkStreamElementIndexError records an error for a specific element index file of a stream.
-func (p *Progress) MarkStreamElementIndexError(group string, errorMsg string) {
+func (p *Progress) MarkStreamElementIndexError(group string, shardID common.ShardID, errorMsg string) {
 	defer p.saveProgress()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Initialize nested maps if they don't exist
+	if p.StreamElementIndexErrors[group] == nil {
+		p.StreamElementIndexErrors[group] = make(map[common.ShardID]string)
+	}
+
 	// Record the error
-	p.StreamElementIndexErrors[group] = errorMsg
+	p.StreamElementIndexErrors[group][shardID] = errorMsg
 }
 
 // SetStreamElementIndexCount sets the total number of element index files for a stream.
@@ -559,7 +572,7 @@ func (p *Progress) ClearErrors() {
 	defer p.mu.Unlock()
 	p.StreamPartErrors = make(map[string]map[common.ShardID]map[uint64]string)
 	p.StreamSeriesErrors = make(map[string]map[common.ShardID]string)
-	p.StreamElementIndexErrors = make(map[string]string)
+	p.StreamElementIndexErrors = make(map[string]map[common.ShardID]string)
 	p.MeasurePartErrors = make(map[string]map[common.ShardID]map[uint64]string)
 	p.MeasureSeriesErrors = make(map[string]map[common.ShardID]string)
 }

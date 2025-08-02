@@ -255,9 +255,10 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 
 // VisitElementIndex implements stream.Visitor.
 func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRange, sourceShardID common.ShardID, indexPath string) error {
-	if mv.progress.IsStreamElementIndexCompleted(mv.group) {
+	if mv.progress.IsStreamElementIndexCompleted(mv.group, sourceShardID) {
 		mv.logger.Debug().
 			Str("group", mv.group).
+			Uint32("source_shard", uint32(sourceShardID)).
 			Msg("element index segment already completed, skipping")
 		return nil
 	}
@@ -355,12 +356,12 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 	// Stream segment file to target shard replicas
 	if err := mv.streamPartToTargetShard(partData); err != nil {
 		errorMsg := fmt.Sprintf("failed to stream element index to target shard: %v", err)
-		mv.progress.MarkStreamElementIndexError(mv.group, errorMsg)
+		mv.progress.MarkStreamElementIndexError(mv.group, sourceShardID, errorMsg)
 		return fmt.Errorf("failed to stream element index to target shard: %w", err)
 	}
 
 	// Mark segment as completed
-	mv.progress.MarkStreamElementIndexCompleted(mv.group)
+	mv.progress.MarkStreamElementIndexCompleted(mv.group, sourceShardID)
 
 	return nil
 }
