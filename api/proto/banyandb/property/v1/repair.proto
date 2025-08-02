@@ -53,8 +53,12 @@ message PropertyMissing {
   string entity = 1;
 }
 
-message DifferTreeSummary {
+message RootCompare {
   bool tree_found = 1;
+  bool root_sha_match = 2;
+}
+
+message DifferTreeSummary {
   // if the nodes is empty, mean the server side don't have more tree leaf nodes to send.
   repeated TreeLeafNode nodes = 2;
 }
@@ -87,11 +91,12 @@ message RepairRequest {
 message RepairResponse {
   oneof data {
     // compare stage
-    DifferTreeSummary differ_tree_summary = 1;
+    RootCompare root_compare = 1;
+    DifferTreeSummary differ_tree_summary = 2;
     // repair stage
     // case 1: return from PropertyMissing
     // case 3: return if the client is older
-    PropertySync property_sync = 2;
+    PropertySync property_sync = 3;
   }
 }
 

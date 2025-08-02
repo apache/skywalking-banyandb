@@ -68,13 +68,13 @@ func (b *repairGossipBase) sendTreeSummary(
 	group string,
 	shardID uint32,
 	stream grpclib.BidiStreamingClient[propertyv1.RepairRequest, propertyv1.RepairResponse],
-) (*repairTreeNode, error) {
-	root, err := reader.read(nil, 1, false)
+) (root *repairTreeNode, rootMatches bool, err error) {
+	roots, err := reader.read(nil, 1, false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read tree root: %w", err)
+		return nil, false, fmt.Errorf("failed to read tree root: %w", err)
 	}
-	if len(root) == 0 {
-		return nil, fmt.Errorf("tree root is empty for group %s", group)
+	if len(roots) == 0 {
+		return nil, false, fmt.Errorf("tree root is empty for group %s", group)
 	}
 
 	err = stream.Send(&propertyv1.RepairRequest{
@@ -82,19 +82,34 @@ func (b *repairGossipBase) sendTreeSummary(
 			TreeRoot: &propertyv1.TreeRoot{
 				Group:   group,
 				ShardId: shardID,
-				RootSha: root[0].shaValue,
+				RootSha: roots[0].shaValue,
 			},
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to send tree root for group %s: %w", group, err)
+		return nil, false, fmt.Errorf("failed to send tree root for group %s: %w", group, err)
+	}
+
+	recv, err := stream.Recv()
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to receive tree summary response for group %s: %w", group, err)
+	}
+	rootCompare, ok := recv.Data.(*propertyv1.RepairResponse_RootCompare)
+	if !ok {
+		return nil, false, fmt.Errorf("unexpected response type: %T, expected RootCompare", recv.Data)
+	}
+	if !rootCompare.RootCompare.TreeFound {
+		return nil, false, fmt.Errorf("server tree not found for group: %s", group)
+	}
+	if rootCompare.RootCompare.RootShaMatch {
+		return roots[0], true, nil
 	}
 
 	var slots []*repairTreeNode
 	for {
-		slots, err = reader.read(root[0], gossipMerkleTreeReadPageSize, false)
+		slots, err = reader.read(roots[0], gossipMerkleTreeReadPageSize, false)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read slots for group %s: %w", group, err)
+			return nil, false, fmt.Errorf("failed to read slots for group %s: %w", group, err)
 		}
 		if len(slots) == 0 {
 			break
@@ -116,7 +131,7 @@ func (b *repairGossipBase) sendTreeSummary(
 			},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to send tree slots for group %s: %w", group, err)
+			return nil, false, fmt.Errorf("failed to send tree slots for group %s: %w", group, err)
 		}
 	}
 
@@ -129,10 +144,10 @@ func (b *repairGossipBase) sendTreeSummary(
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to send empty tree slots for group %s: %w", group, err)
+		return nil, false, fmt.Errorf("failed to send empty tree slots for group %s: %w", group, err)
 	}
 
-	return root[0], nil
+	return roots[0], false, nil
 }
 
 func (b *repairGossipBase) queryProperty(ctx context.Context, syncShard *shard, leafNodeEntity string) (*queryProperty, *propertyv1.Property, error) {
@@ -206,10 +221,14 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 	}()
 
 	// step 1: send merkle tree data
-	rootNode, err := r.sendTreeSummary(reader, request.Group, request.ShardId, stream)
+	rootNode, rootMatch, err := r.sendTreeSummary(reader, request.Group, request.ShardId, stream)
 	if err != nil {
 		// if the tree summary cannot be built, we should abort the propagation
 		return errors.Wrapf(gossip.ErrAbortPropagation, "failed to query/send tree summary on client side: %v", err)
+	}
+	// if the root node matched, then ignore the repair
+	if rootMatch {
+		return nil
 	}
 
 	syncShard, err := r.scheduler.db.loadShard(ctx, common.ShardID(request.ShardId))
@@ -233,10 +252,6 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 		switch resp := recvResp.Data.(type) {
 		case *propertyv1.RepairResponse_DifferTreeSummary:
 			// step 2: check with the server for different leaf nodes
-			if !resp.DifferTreeSummary.TreeFound {
-				// if the tree is not found, we should abort the propagation
-				return errors.Wrapf(gossip.ErrAbortPropagation, "tree for group %s not found on server side", request.Group)
-			}
 			// there no different nodes, we can skip repair
 			if firstTreeSummaryResp && len(resp.DifferTreeSummary.Nodes) == 0 {
 				return nil
@@ -524,9 +539,15 @@ func newRepairGossipServer(s *repairScheduler) *repairGossipServer {
 }
 
 func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse]) error {
-	summary, err := r.combineTreeSummary(s)
+	summary, reader, err := r.combineTreeSummary(s)
 	if err != nil {
 		return fmt.Errorf("failed to receive tree summary request: %w", err)
+	}
+	defer reader.close()
+	// if no need to compare the tree, we can skip the rest of the process
+	if summary.ignoreCompare {
+		r.scheduler.l.Debug().Msgf("tree root for group %s, shard %d is the same, skip tree slots", summary.group, summary.shardID)
+		return nil
 	}
 	group := summary.group
 	shardID := summary.shardID
@@ -540,66 +561,33 @@ func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.Rep
 		}
 	}()
 
-	reader, found, err := r.getTreeReader(s.Context(), group, shardID)
-	if err != nil {
-		r.scheduler.l.Err(err).Msgf("failed to read tree on server side")
-		return r.sendTreeFound(s, false)
-	}
-	if !found {
-		r.scheduler.l.Warn().Msgf("tree for group %s, shard %d not found on server side", group, shardID)
-		return r.sendTreeFound(s, false)
-	}
-	defer reader.close()
-	rootVal, err := reader.read(nil, 1, true)
-	if err != nil {
-		r.scheduler.l.Err(err).Msgf("failed to read tree root on server side")
-		return r.sendTreeFound(s, false)
-	}
-	if len(rootVal) == 0 {
-		r.scheduler.l.Warn().Msgf("tree root not found for group %s, shard %d", group, shardID)
-		return r.sendTreeFound(s, false)
-	}
-	if summary.rootSHA == rootVal[0].shaValue {
-		// if the root SHA is the same, we can skip repair
-		return r.sendTreeFound(s, true)
-	}
-	serverSlotNodes, err := reader.read(rootVal[0], int64(r.scheduler.treeSlotCount), false)
+	serverSlotNodes, err := reader.read(summary.rootNode, int64(r.scheduler.treeSlotCount), false)
 	if err != nil {
 		r.scheduler.l.Warn().Err(err).Msgf("failed to read slot nodes on server side")
-		return r.sendTreeFound(s, false)
+		return r.sendEmptyDiffer(s)
 	}
 	// client missing slots or server slots with different SHA values
 	clientMismatchSlots := make([]*repairTreeNode, 0)
 	// server missing slots
 	serverMissingSlots := make([]int32, 0)
+	clientSlotMap := make(map[int32]string, len(summary.slots))
+	for _, clientSlot := range summary.slots {
+		clientSlotMap[clientSlot.index] = clientSlot.shaValue
+	}
+	serverSlotSet := make(map[int32]bool, len(serverSlotNodes))
 	for _, serverSlot := range serverSlotNodes {
-		serverSlotFoundInClientSlots := false
-		for _, clientSlot := range summary.slots {
-			// if the slot exists in the client side, we should check the SHA value
-			if serverSlot.slotInx == clientSlot.index {
-				serverSlotFoundInClientSlots = true
-				// if the SHA value is the same, we can skip it
-				if serverSlot.shaValue == clientSlot.shaValue {
-					continue
-				}
-				clientMismatchSlots = append(clientMismatchSlots, serverSlot)
-				break
-			}
-		}
-		if !serverSlotFoundInClientSlots {
-			// if the server slot is not found in the client side, we should add it to the missing slots
+		serverSlotSet[serverSlot.slotInx] = true
+		// if the client slot exists but the SHA value is different, or client slot does not exist
+		// then we should add it to the client mismatch slots
+		if clientSha, ok := clientSlotMap[serverSlot.slotInx]; ok && clientSha != serverSlot.shaValue {
+			clientMismatchSlots = append(clientMismatchSlots, serverSlot)
+		} else if !ok {
 			clientMismatchSlots = append(clientMismatchSlots, serverSlot)
 		}
 	}
+	// if the client slot exists but the server slot does not exist, we should add it to the server missing slots
 	for _, clientSlot := range summary.slots {
-		clientSlotFoundInServerSlots := false
-		for _, serverSlot := range serverSlotNodes {
-			if clientSlot.index == serverSlot.slotInx {
-				clientSlotFoundInServerSlots = true
-				break
-			}
-		}
-		if !clientSlotFoundInServerSlots {
+		if _, ok := serverSlotSet[clientSlot.index]; !ok {
 			serverMissingSlots = append(serverMissingSlots, clientSlot.index)
 		}
 	}
@@ -608,7 +596,7 @@ func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.Rep
 		r.scheduler.l.Warn().Err(err).Msgf("failed to send different slots to client")
 	}
 	// send the tree and no more different slots needs to be sent
-	err = r.sendTreeFound(s, true)
+	err = r.sendEmptyDiffer(s)
 	if !sent {
 		return err
 	} else if err != nil {
@@ -641,23 +629,37 @@ func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.Rep
 	}
 }
 
-func (r *repairGossipServer) combineTreeSummary(s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse]) (*repairTreeSummary, error) {
-	summary := &repairTreeSummary{}
+func (r *repairGossipServer) combineTreeSummary(
+	s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse],
+) (*repairTreeSummary, repairTreeReader, error) {
+	var summary *repairTreeSummary
+	var reader repairTreeReader
 	for {
 		recvData, err := s.Recv()
 		if err != nil {
 			r.scheduler.l.Warn().Err(err).Msgf("failed to receive tree summary from client")
-			return nil, err
+			return nil, nil, err
 		}
 
 		switch data := recvData.Data.(type) {
 		case *propertyv1.RepairRequest_TreeRoot:
-			summary.group = data.TreeRoot.Group
-			summary.shardID = data.TreeRoot.ShardId
-			summary.rootSHA = data.TreeRoot.RootSha
+			summary, reader, err = r.handleTreeRootRequest(s, data)
+			if err != nil {
+				if sendError := r.sendRootCompare(s, false, false); sendError != nil {
+					r.scheduler.l.Warn().Err(sendError).Msgf("failed to send root compare response to client")
+				}
+				return nil, nil, err
+			}
+			if err = r.sendRootCompare(s, true, summary.ignoreCompare); err != nil {
+				_ = reader.close()
+				return nil, nil, err
+			}
+			if summary.ignoreCompare {
+				return summary, reader, nil
+			}
 		case *propertyv1.RepairRequest_TreeSlots:
 			if len(data.TreeSlots.SlotSha) == 0 {
-				return summary, nil
+				return summary, reader, nil
 			}
 			for _, slot := range data.TreeSlots.SlotSha {
 				summary.slots = append(summary.slots, &repairTreeSummarySlot{
@@ -669,6 +671,44 @@ func (r *repairGossipServer) combineTreeSummary(s grpclib.BidiStreamingServer[pr
 			r.scheduler.l.Warn().Msgf("unexpected data type: %T, expected TreeRoot or TreeSlots", data)
 		}
 	}
+}
+
+func (r *repairGossipServer) handleTreeRootRequest(
+	s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse],
+	req *propertyv1.RepairRequest_TreeRoot,
+) (*repairTreeSummary, repairTreeReader, error) {
+	summary := &repairTreeSummary{
+		group:   req.TreeRoot.Group,
+		shardID: req.TreeRoot.ShardId,
+	}
+
+	reader, exist, err := r.getTreeReader(s.Context(), summary.group, summary.shardID)
+	if err != nil || !exist {
+		return nil, nil, fmt.Errorf("tree not found or not exist: %w", err)
+	}
+	rootNode, err := reader.read(nil, 1, false)
+	if err != nil {
+		_ = reader.close()
+		return nil, nil, fmt.Errorf("failed to read tree root for group %s: %w", summary.group, err)
+	}
+	if len(rootNode) == 0 {
+		_ = reader.close()
+		return nil, nil, fmt.Errorf("failed to read tree root for group %s: %w", summary.group, err)
+	}
+	summary.rootNode = rootNode[0]
+	summary.ignoreCompare = req.TreeRoot.RootSha == rootNode[0].shaValue
+	return summary, reader, nil
+}
+
+func (r *repairGossipServer) sendRootCompare(s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse], treeFound, rootMatch bool) error {
+	return s.Send(&propertyv1.RepairResponse{
+		Data: &propertyv1.RepairResponse_RootCompare{
+			RootCompare: &propertyv1.RootCompare{
+				TreeFound:    treeFound,
+				RootShaMatch: rootMatch,
+			},
+		},
+	})
 }
 
 func (r *repairGossipServer) processPropertySync(
@@ -776,8 +816,7 @@ func (r *repairGossipServer) sendDifferSlots(
 			err = s.Send(&propertyv1.RepairResponse{
 				Data: &propertyv1.RepairResponse_DifferTreeSummary{
 					DifferTreeSummary: &propertyv1.DifferTreeSummary{
-						TreeFound: true,
-						Nodes:     mismatchLeafNodes,
+						Nodes: mismatchLeafNodes,
 					},
 				},
 			})
@@ -803,8 +842,7 @@ func (r *repairGossipServer) sendDifferSlots(
 		err = s.Send(&propertyv1.RepairResponse{
 			Data: &propertyv1.RepairResponse_DifferTreeSummary{
 				DifferTreeSummary: &propertyv1.DifferTreeSummary{
-					TreeFound: true,
-					Nodes:     missingSlots,
+					Nodes: missingSlots,
 				},
 			},
 		})
@@ -818,21 +856,20 @@ func (r *repairGossipServer) sendDifferSlots(
 	return hasSent, nil
 }
 
-func (r *repairGossipServer) sendTreeFound(s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse], found bool) error {
+func (r *repairGossipServer) sendEmptyDiffer(s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse]) error {
 	return s.Send(&propertyv1.RepairResponse{
 		Data: &propertyv1.RepairResponse_DifferTreeSummary{
-			DifferTreeSummary: &propertyv1.DifferTreeSummary{
-				TreeFound: found,
-			},
+			DifferTreeSummary: &propertyv1.DifferTreeSummary{},
 		},
 	})
 }
 
 type repairTreeSummary struct {
-	group   string
-	rootSHA string
-	slots   []*repairTreeSummarySlot
-	shardID uint32
+	rootNode      *repairTreeNode
+	group         string
+	slots         []*repairTreeSummarySlot
+	shardID       uint32
+	ignoreCompare bool
 }
 
 type repairTreeSummarySlot struct {
