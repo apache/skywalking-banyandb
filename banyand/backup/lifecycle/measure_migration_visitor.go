@@ -190,9 +190,10 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 	}
 
 	// Check if this part has already been completed
-	if mv.progress.IsMeasurePartCompleted(mv.group, partID) {
+	if mv.progress.IsMeasurePartCompleted(mv.group, sourceShardID, partID) {
 		mv.logger.Warn().
 			Uint64("part_id", partID).
+			Uint32("source_shard", uint32(sourceShardID)).
 			Str("group", mv.group).
 			Msg("measure part already completed, skipping")
 		return nil
@@ -220,12 +221,12 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 	// Stream entire part to target shard replicas
 	if err := mv.streamPartToTargetShard(partData); err != nil {
 		errorMsg := fmt.Sprintf("failed to stream measure part to target shard: %v", err)
-		mv.progress.MarkMeasurePartError(mv.group, partID, errorMsg)
+		mv.progress.MarkMeasurePartError(mv.group, sourceShardID, partID, errorMsg)
 		return fmt.Errorf("failed to stream measure part to target shard: %w", err)
 	}
 
 	// Mark part as completed in progress tracker
-	mv.progress.MarkMeasurePartCompleted(mv.group, partID)
+	mv.progress.MarkMeasurePartCompleted(mv.group, sourceShardID, partID)
 
 	mv.logger.Info().
 		Uint64("part_id", partID).

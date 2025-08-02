@@ -205,9 +205,10 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 	}
 
 	// Check if this part has already been completed
-	if mv.progress.IsStreamPartCompleted(mv.group, partID) {
+	if mv.progress.IsStreamPartCompleted(mv.group, sourceShardID, partID) {
 		mv.logger.Debug().
 			Uint64("part_id", partID).
+			Uint32("source_shard", uint32(sourceShardID)).
 			Str("group", mv.group).
 			Msg("part already completed, skipping")
 		return nil
@@ -235,12 +236,12 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 	// Stream entire part to target shard replicas
 	if err := mv.streamPartToTargetShard(partData); err != nil {
 		errorMsg := fmt.Sprintf("failed to stream part to target shard: %v", err)
-		mv.progress.MarkStreamPartError(mv.group, partID, errorMsg)
+		mv.progress.MarkStreamPartError(mv.group, sourceShardID, partID, errorMsg)
 		return fmt.Errorf("failed to stream part to target shard: %w", err)
 	}
 
 	// Mark part as completed in progress tracker
-	mv.progress.MarkStreamPartCompleted(mv.group, partID)
+	mv.progress.MarkStreamPartCompleted(mv.group, sourceShardID, partID)
 
 	mv.logger.Info().
 		Uint64("part_id", partID).
