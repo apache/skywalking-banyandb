@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	logicaltrace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
 )
@@ -188,7 +189,7 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress index block: %w", err)
 	}
-	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf, int(mr.traceIDLen))
+	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf, pi.p.tagType, int(mr.traceIDLen))
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
@@ -259,6 +260,7 @@ func (pi *partIter) findBlock() bool {
 
 type partMergeIter struct {
 	seqReaders           seqReaders
+	tagType              map[string]pbv1.ValueType
 	err                  error
 	primaryBlockMetadata []primaryBlockMetadata
 	compressedPrimaryBuf []byte
@@ -270,6 +272,7 @@ type partMergeIter struct {
 func (pmi *partMergeIter) reset() {
 	pmi.err = nil
 	pmi.seqReaders.reset()
+	clear(pmi.tagType)
 	pmi.primaryBlockMetadata = nil
 	pmi.primaryMetadataIdx = 0
 	pmi.primaryBuf = pmi.primaryBuf[:0]
@@ -280,6 +283,7 @@ func (pmi *partMergeIter) reset() {
 func (pmi *partMergeIter) mustInitFromPart(p *part) {
 	pmi.reset()
 	pmi.seqReaders.init(p)
+	pmi.tagType = p.tagType
 	pmi.primaryBlockMetadata = p.primaryBlockMetadata
 }
 
@@ -328,7 +332,7 @@ func (pmi *partMergeIter) loadBlockMetadata() error {
 	pmi.block.reset()
 	var err error
 	traceIDLen := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1].traceIDLen
-	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf, int(traceIDLen))
+	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf, pmi.tagType, int(traceIDLen))
 	if err != nil {
 		pm := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1]
 		return fmt.Errorf("can't read block metadata from primary at %d: %w", pm.offset, err)

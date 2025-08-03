@@ -143,11 +143,12 @@ func (bm *blockMetadata) marshal(dst []byte, traceIDLen uint32) []byte {
 	return dst
 }
 
-func (bm *blockMetadata) unmarshal(src []byte, traceIDLen int) ([]byte, error) {
+func (bm *blockMetadata) unmarshal(src []byte, tagType map[string]pbv1.ValueType, traceIDLen int) ([]byte, error) {
 	if len(src) < traceIDLen {
 		return nil, fmt.Errorf("cannot unmarshal blockMetadata from less than %d bytes", traceIDLen)
 	}
 	bm.traceID = strings.TrimRight(string(src[:traceIDLen]), "\x00")
+	bm.tagType = tagType
 	src = src[traceIDLen:]
 	src, n := encoding.BytesToVarUint64(src)
 	bm.spanSize = n
@@ -248,7 +249,7 @@ func (tm *timestampsMetadata) unmarshal(src []byte) []byte {
 	return src
 }
 
-func unmarshalBlockMetadata(dst []blockMetadata, src []byte, traceIDLen int) ([]blockMetadata, error) {
+func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]pbv1.ValueType, traceIDLen int) ([]blockMetadata, error) {
 	dstOrig := dst
 	var pre *blockMetadata
 	for len(src) > 0 {
@@ -258,7 +259,7 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte, traceIDLen int) ([]
 			dst = append(dst, blockMetadata{})
 		}
 		bm := &dst[len(dst)-1]
-		tail, err := bm.unmarshal(src, traceIDLen)
+		tail, err := bm.unmarshal(src, tagType, traceIDLen)
 		if err != nil {
 			return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", err)
 		}

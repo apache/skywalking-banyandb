@@ -166,7 +166,7 @@ func (b *block) marshalTag(t tag, bm *blockMetadata, ww *writers) {
 }
 
 func (b *block) unmarshalTag(decoder *encoding.BytesBlockDecoder, i int,
-	tagMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader, count int,
+	tagMetadataBlock *dataBlock, tagProjection []string, tagType map[string]pbv1.ValueType, metaReader, valueReader fs.Reader, count int,
 ) {
 	if len(tagProjection) < 1 {
 		return
@@ -177,14 +177,21 @@ func (b *block) unmarshalTag(decoder *encoding.BytesBlockDecoder, i int,
 	tm := generateTagMetadata()
 	defer releaseTagMetadata(tm)
 	_, err := tm.unmarshal(bb.Buf)
-	// TODO: set tag name and type
+
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagMetadata: %v", metaReader.Path(), err)
 	}
 	bigValuePool.Release(bb)
 	b.resizeTags(len(tagProjection))
 	if tagProjection[i] == tm.name {
+		b.tags[i].name = tm.name
+		if valueType, ok := tagType[tm.name]; ok {
+			b.tags[i].valueType = valueType
+		} else {
+			b.tags[i].valueType = pbv1.ValueTypeUnknown
+		}
 		b.tags[i].mustReadValues(decoder, valueReader, *tm, uint64(b.Len()))
+		return
 	}
 	b.tags[i].name = tagProjection[i]
 	b.tags[i].valueType = pbv1.ValueTypeUnknown
@@ -240,7 +247,7 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 			}
 			continue
 		}
-		b.unmarshalTag(decoder, i, block, bm.tagProjection.Names, p.tagMetadata[name], p.tags[name], int(bm.count))
+		b.unmarshalTag(decoder, i, block, bm.tagProjection.Names, bm.tagType, p.tagMetadata[name], p.tags[name], int(bm.count))
 	}
 }
 
