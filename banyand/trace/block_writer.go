@@ -155,10 +155,6 @@ type blockWriter struct {
 	totalMaxTimestamp              int64
 	minTimestampLast               int64
 	traceIDLen                     uint32
-	// TODO: remove tidFirst and tidLast
-	tidFirst         string
-	tidLast          string
-	hasWrittenBlocks bool
 }
 
 func (bw *blockWriter) reset() {
@@ -166,12 +162,9 @@ func (bw *blockWriter) reset() {
 	bw.traceIDLen = 0
 	bw.traceIDs = bw.traceIDs[:0]
 	bw.tagType.reset()
-	bw.tidLast = ""
-	bw.tidFirst = ""
 	bw.minTimestampLast = 0
 	bw.minTimestamp = 0
 	bw.maxTimestamp = 0
-	bw.hasWrittenBlocks = false
 	bw.totalUncompressedSpanSizeBytes = 0
 	bw.totalCount = 0
 	bw.totalBlocksCount = 0
@@ -222,16 +215,12 @@ func (bw *blockWriter) mustWriteBlock(tidLen uint32, tid string, b *block) {
 	if b.Len() == 0 {
 		return
 	}
-	if tid < bw.tidLast {
-		logger.Panicf("the tid=%d cannot be smaller than the previously written tid=%d", tid, &bw.tidLast)
+	tidLast := bw.traceIDs[len(bw.traceIDs)-1]
+	if tid < tidLast {
+		logger.Panicf("the tid=%d cannot be smaller than the previously written tid=%d", tid, tidLast)
 	}
-	hasWrittenBlocks := bw.hasWrittenBlocks
-	if !hasWrittenBlocks {
-		bw.tidFirst = tid
-		bw.hasWrittenBlocks = true
-	}
-	isSeenTid := tid == bw.tidLast
-	bw.tidLast = tid
+	hasWrittenBlocks := len(bw.traceIDs) > 0
+	isSeenTid := tid == tidLast
 
 	bm := generateBlockMetadata()
 	b.mustWriteTo(tid, bm, &bw.writers)
@@ -269,13 +258,11 @@ func (bw *blockWriter) mustWriteBlock(tidLen uint32, tid string, b *block) {
 
 func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
-		bw.primaryBlockMetadata.mustWriteBlock(data, bw.traceIDLen, bw.tidFirst, bw.minTimestamp, bw.maxTimestamp, &bw.writers)
+		bw.primaryBlockMetadata.mustWriteBlock(data, bw.traceIDLen, bw.traceIDs[0], bw.minTimestamp, bw.maxTimestamp, &bw.writers)
 		bw.metaData = bw.primaryBlockMetadata.marshal(bw.metaData)
 	}
-	bw.hasWrittenBlocks = false
 	bw.minTimestamp = 0
 	bw.maxTimestamp = 0
-	bw.tidFirst = ""
 }
 
 func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
