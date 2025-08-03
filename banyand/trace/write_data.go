@@ -18,21 +18,41 @@
 package trace
 
 import (
-	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+type syncPartContext struct {
+	tsTable *tsTable
+	writers *writers
+	memPart *memPart
+}
+
+func (s *syncPartContext) FinishSync() error {
+	s.tsTable.mustAddMemPart(s.memPart)
+	return s.Close()
+}
+
+func (s *syncPartContext) Close() error {
+	s.writers.MustClose()
+	releaseWriters(s.writers)
+	s.writers = nil
+	s.memPart = nil
+	s.tsTable = nil
+	return nil
+}
 
 type syncCallback struct {
 	l          *logger.Logger
 	schemaRepo *schemaRepo
 }
 
-func setUpSyncCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageListener {
+func setUpChunkedSyncCallback(l *logger.Logger, schemaRepo *schemaRepo) queue.ChunkedSyncHandler {
 	return &syncCallback{
 		l:          l,
 		schemaRepo: schemaRepo,
@@ -43,71 +63,75 @@ func (s *syncCallback) CheckHealth() *common.Error {
 	return nil
 }
 
-func (s *syncCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
-	data, ok := message.Data().([]byte)
-	if !ok {
-		s.l.Warn().Msg("invalid sync message data type")
-		return
-	}
-
-	// Decode group name
-	tail, groupBytes, err := encoding.DecodeBytes(data)
+// CreatePartHandler implements queue.ChunkedSyncHandler.
+func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
 	if err != nil {
-		s.l.Error().Err(err).Msg("failed to decode group name from sync message")
-		return
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
+		return nil, err
 	}
-	group := string(groupBytes)
-
-	// Decode shardID (uint32)
-	if len(tail) < 4 {
-		s.l.Error().Msg("insufficient data for shardID in sync message")
-		return
-	}
-	shardID := encoding.BytesToUint32(tail[:4])
-	tail = tail[4:]
-
-	// Decode memPart
-	memPart := generateMemPart()
-
-	if err = memPart.Unmarshal(tail); err != nil {
-		s.l.Error().Err(err).Msg("failed to unmarshal memPart from sync message")
-		return
-	}
-
-	// Get the group schema from schemaRepo by the string group
-	tsdb, err := s.schemaRepo.loadTSDB(group)
-	if err != nil {
-		s.l.Error().Err(err).Str("group", group).Msg("failed to load TSDB for group")
-		return
-	}
-
-	// Get the segment using memPart.partMetadata.MinTimestamp
-	segmentTime := time.Unix(0, memPart.partMetadata.MinTimestamp)
+	segmentTime := time.Unix(0, ctx.MinTimestamp)
 	segment, err := tsdb.CreateSegmentIfNotExist(segmentTime)
 	if err != nil {
-		s.l.Error().Err(err).Str("group", group).Time("segmentTime", segmentTime).Msg("failed to create segment")
-		return
+		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
+		return nil, err
 	}
 	defer segment.DecRef()
-
-	// Get Shard from a segment using shardID
-	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(shardID))
+	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))
 	if err != nil {
-		s.l.Error().Err(err).Str("group", group).Uint32("shardID", shardID).Msg("failed to create ts table")
-		return
+		s.l.Error().Err(err).Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("failed to create ts table")
+		return nil, err
 	}
 
-	tsdb.Tick(memPart.partMetadata.MaxTimestamp)
-	// Use tsTable.mustAddMemPart to introduce memPart to tsTable
-	tsTable.mustAddMemPart(memPart)
+	tsdb.Tick(ctx.MaxTimestamp)
+	memPart := generateMemPart()
+	memPart.partMetadata.CompressedSizeBytes = ctx.CompressedSizeBytes
+	memPart.partMetadata.UncompressedSpanSizeBytes = ctx.UncompressedSizeBytes
+	memPart.partMetadata.TotalCount = ctx.TotalCount
+	memPart.partMetadata.BlocksCount = ctx.BlocksCount
+	memPart.partMetadata.MinTimestamp = ctx.MinTimestamp
+	memPart.partMetadata.MaxTimestamp = ctx.MaxTimestamp
+	writers := generateWriters()
+	writers.mustInitForMemPart(memPart)
+	return &syncPartContext{
+		tsTable: tsTable,
+		writers: writers,
+		memPart: memPart,
+	}, nil
+}
 
-	if e := s.l.Debug(); e.Enabled() {
-		e.
-			Str("group", group).
-			Uint32("shardID", shardID).
-			Uint64("partID", memPart.partMetadata.ID).
-			Msg("successfully stored memPart to tsTable")
+// HandleFileChunk implements queue.ChunkedSyncHandler for streaming file chunks.
+func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+	if ctx.Handler == nil {
+		return fmt.Errorf("part handler is nil")
+	}
+	partCtx := ctx.Handler.(*syncPartContext)
+
+	// Select the appropriate writer based on the filename and write the chunk.
+	fileName := ctx.FileName
+	switch {
+	case fileName == traceMetaName:
+		partCtx.writers.metaWriter.MustWrite(chunk)
+	case fileName == tracePrimaryName:
+		partCtx.writers.primaryWriter.MustWrite(chunk)
+	case fileName == traceSpansName:
+		partCtx.writers.spanWriter.MustWrite(chunk)
+	case strings.HasPrefix(fileName, traceTagsPrefix):
+		tagName := fileName[len(traceTagsPrefix):]
+		_, tagWriter, _ := partCtx.writers.getWriters(tagName)
+		tagWriter.MustWrite(chunk)
+	case strings.HasPrefix(fileName, traceTagMetadataPrefix):
+		tagName := fileName[len(traceTagMetadataPrefix):]
+		tagMetadataWriter, _, _ := partCtx.writers.getWriters(tagName)
+		tagMetadataWriter.MustWrite(chunk)
+	case strings.HasPrefix(fileName, traceTagFilterPrefix):
+		tagName := fileName[len(traceTagFilterPrefix):]
+		_, _, tagFilterWriter := partCtx.writers.getWriters(tagName)
+		tagFilterWriter.MustWrite(chunk)
+	default:
+		s.l.Warn().Str("fileName", fileName).Msg("unknown file type in chunked sync")
+		return fmt.Errorf("unknown file type: %s", fileName)
 	}
 
-	return
+	return nil
 }

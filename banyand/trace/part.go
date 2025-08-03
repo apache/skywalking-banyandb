@@ -35,12 +35,19 @@ import (
 )
 
 const (
+	// Tracing file names (without extensions).
+	tracePrimaryName        = "primary"
+	traceMetaName           = "meta"
+	traceSpansName          = "spans"
+	traceTagsPrefix         = "t:"
+	traceTagMetadataPrefix  = "tm:"
+	traceTagFilterPrefix    = "tf:"
 	metadataFilename        = "metadata.json"
 	traceIDFilterFilename   = "traceID.filter"
 	tagTypeFilename         = "tag.type"
-	primaryFilename         = "primary.bin"
-	metaFilename            = "meta.bin"
-	spansFilename           = "spans.bin"
+	primaryFilename         = tracePrimaryName + ".bin"
+	metaFilename            = traceMetaName + ".bin"
+	spansFilename           = traceSpansName + ".bin"
 	tagsMetadataFilenameExt = ".tm"
 	tagsFilenameExt         = ".t"
 	tagsFilterFilenameExt   = ".tf"
