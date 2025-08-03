@@ -382,14 +382,14 @@ func (tst *tsTable) Collect(m storage.Metrics) {
 			totalFileElements += p.p.partMetadata.TotalCount
 			totalFileBlocks += p.p.partMetadata.BlocksCount
 			totalFilePartBytes += p.p.partMetadata.CompressedSizeBytes
-			totalFilePartUncompressedBytes += p.p.partMetadata.UncompressedSizeBytes
+			totalFilePartUncompressedBytes += p.p.partMetadata.UncompressedSpanSizeBytes
 			continue
 		}
 		totalMemPart++
 		totalMemElements += p.mp.partMetadata.TotalCount
 		totalMemBlocks += p.mp.partMetadata.BlocksCount
 		totalMemPartBytes += p.mp.partMetadata.CompressedSizeBytes
-		totalMemPartUncompressedBytes += p.mp.partMetadata.UncompressedSizeBytes
+		totalMemPartUncompressedBytes += p.mp.partMetadata.UncompressedSpanSizeBytes
 	}
 	metrics.totalMemParts.Set(float64(totalMemPart), tst.p.ShardLabelValues()...)
 	metrics.totalMemElements.Set(float64(totalMemElements), tst.p.ShardLabelValues()...)

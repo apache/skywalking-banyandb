@@ -38,12 +38,11 @@ import (
 
 const (
 	maxValuesBlockSize              = 8 * 1024 * 1024
-	maxElementIDsBlockSize          = 8 * 1024 * 1024
-	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
-	maxUncompressedBlockSize        = 2 * 1024 * 1024
+	maxTagsMetadataSize             = 8 * 1024 * 1024
+	maxUncompressedSpanSize         = 2 * 1024 * 1024
 	maxUncompressedPrimaryBlockSize = 128 * 1024
 
-	defaultFlushTimeout             = time.Second
+	defaultFlushTimeout = time.Second
 )
 
 var traceScope = observability.RootScope.SubScope("trace")
@@ -80,7 +79,7 @@ type Trace interface {
 
 type indexSchema struct {
 	tagMap            map[string]*databasev1.TraceTagSpec
-	indexRuleLocators interface{} // Will be properly typed when trace partition support is added
+	indexRuleLocators map[string]*databasev1.IndexRule
 	indexRules        []*databasev1.IndexRule
 }
 

@@ -25,7 +25,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -87,7 +86,7 @@ func releaseTagValue(v *tagValue) {
 	tagValuePool.Put(v)
 }
 
-var tagValuePool = pool.Register[*tagValue]("stream-tagValue")
+var tagValuePool = pool.Register[*tagValue]("trace-tagValue")
 
 const (
 	entityDelimiter = '|'
@@ -148,82 +147,72 @@ func (t *tagValues) reset() {
 	t.values = t.values[:0]
 }
 
-type elements struct {
-	seriesIDs   []common.SeriesID
-	timestamps  []int64
-	elementIDs  []uint64
-	tagFamilies [][]tagValues
+type traces struct {
+	traceIDs   []string
+	timestamps []int64
+	tags       [][]*tagValue
+	spans      [][]byte
 }
 
-func (e *elements) reset() {
-	e.seriesIDs = e.seriesIDs[:0]
-	e.timestamps = e.timestamps[:0]
-	e.elementIDs = e.elementIDs[:0]
-	for i := range e.tagFamilies {
-		for j := range e.tagFamilies[i] {
-			e.tagFamilies[i][j].reset()
+func (t *traces) reset() {
+	t.traceIDs = t.traceIDs[:0]
+	t.timestamps = t.timestamps[:0]
+	for i := range t.tags {
+		for j := range t.tags[i] {
+			t.tags[i][j].reset()
 		}
 	}
-	e.tagFamilies = e.tagFamilies[:0]
+	t.tags = t.tags[:0]
+	t.spans = t.spans[:0]
 }
 
-func (e *elements) Len() int {
-	return len(e.seriesIDs)
+func (t *traces) Len() int {
+	return len(t.traceIDs)
 }
 
-func (e *elements) Less(i, j int) bool {
-	if e.seriesIDs[i] != e.seriesIDs[j] {
-		return e.seriesIDs[i] < e.seriesIDs[j]
-	}
-	return e.timestamps[i] < e.timestamps[j]
+func (t *traces) Less(i, j int) bool {
+	return t.traceIDs[i] < t.traceIDs[j]
 }
 
-func (e *elements) Swap(i, j int) {
-	e.seriesIDs[i], e.seriesIDs[j] = e.seriesIDs[j], e.seriesIDs[i]
-	e.timestamps[i], e.timestamps[j] = e.timestamps[j], e.timestamps[i]
-	e.elementIDs[i], e.elementIDs[j] = e.elementIDs[j], e.elementIDs[i]
-	e.tagFamilies[i], e.tagFamilies[j] = e.tagFamilies[j], e.tagFamilies[i]
+func (t *traces) Swap(i, j int) {
+	t.traceIDs[i], t.traceIDs[j] = t.traceIDs[j], t.traceIDs[i]
+	t.timestamps[i], t.timestamps[j] = t.timestamps[j], t.timestamps[i]
+	t.tags[i], t.tags[j] = t.tags[j], t.tags[i]
+	t.spans[i], t.spans[j] = t.spans[j], t.spans[i]
 }
 
-func generateElements() *elements {
-	v := elementsPool.Get()
+func generateTraces() *traces {
+	v := tracesPool.Get()
 	if v == nil {
-		return &elements{}
+		return &traces{}
 	}
 	return v
 }
 
-func releaseElements(e *elements) {
-	e.reset()
-	elementsPool.Put(e)
+func releaseTraces(t *traces) {
+	t.reset()
+	tracesPool.Put(t)
 }
 
-var elementsPool = pool.Register[*elements]("stream-elements")
+var tracesPool = pool.Register[*traces]("trace-traces")
 
-type elementsInTable struct {
-	seriesDocs seriesDoc
-	segment    storage.Segment[*tsTable, option]
-	tsTable    *tsTable
-	elements   *elements
-	timeRange  timestamp.TimeRange
-	docs       index.Documents
-	shardID    common.ShardID
+type tracesInTable struct {
+	segment   storage.Segment[*tsTable, option]
+	tsTable   *tsTable
+	traces    *traces
+	timeRange timestamp.TimeRange
+	shardID   common.ShardID
 }
 
-type elementsInGroup struct {
+type tracesInGroup struct {
 	tsdb     storage.TSDB[*tsTable, option]
-	tables   []*elementsInTable
+	tables   []*tracesInTable
 	segments []storage.Segment[*tsTable, option]
 	latestTS int64
 }
 
-type elementsInQueue struct {
+type tracesInQueue struct {
 	name   string
 	queue  *wqueue.Queue[*tsTable, option]
-	tables []*elementsInTable
-}
-
-type seriesDoc struct {
-	docIDsAdded map[uint64]struct{}
-	docs        index.Documents
+	tables []*tracesInTable
 }

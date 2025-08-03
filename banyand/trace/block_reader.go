@@ -80,28 +80,28 @@ func releaseSeqReader(sr *seqReader) {
 	seqReaderPool.Put(sr)
 }
 
-var seqReaderPool = pool.Register[*seqReader]("stream-seqReader")
+var seqReaderPool = pool.Register[*seqReader]("trace-seqReader")
 
 type seqReaders struct {
-	tagFamilyMetadata map[string]*seqReader
-	tagFamilies       map[string]*seqReader
-	primary           seqReader
-	timestamps        seqReader
+	tagMetadata map[string]*seqReader
+	tags        map[string]*seqReader
+	primary     seqReader
+	spans        seqReader
 }
 
 func (sr *seqReaders) reset() {
 	sr.primary.reset()
-	sr.timestamps.reset()
-	if sr.tagFamilyMetadata != nil {
-		for k, r := range sr.tagFamilyMetadata {
+	sr.spans.reset()
+	if sr.tagMetadata != nil {
+		for k, r := range sr.tagMetadata {
 			releaseSeqReader(r)
-			delete(sr.tagFamilyMetadata, k)
+			delete(sr.tagMetadata, k)
 		}
 	}
-	if sr.tagFamilies != nil {
-		for k, r := range sr.tagFamilies {
+	if sr.tags != nil {
+		for k, r := range sr.tags {
 			releaseSeqReader(r)
-			delete(sr.tagFamilies, k)
+			delete(sr.tags, k)
 		}
 	}
 }
@@ -109,17 +109,17 @@ func (sr *seqReaders) reset() {
 func (sr *seqReaders) init(p *part) {
 	sr.reset()
 	sr.primary.init(p.primary)
-	sr.timestamps.init(p.timestamps)
-	if sr.tagFamilies == nil {
-		sr.tagFamilies = make(map[string]*seqReader)
-		sr.tagFamilyMetadata = make(map[string]*seqReader)
+	sr.spans.init(p.spans)
+	if sr.tags == nil {
+		sr.tags = make(map[string]*seqReader)
+		sr.tagMetadata = make(map[string]*seqReader)
 	}
 
-	for k, r := range p.tagFamilies {
-		sr.tagFamilies[k] = generateSeqReader()
-		sr.tagFamilies[k].init(r)
-		sr.tagFamilyMetadata[k] = generateSeqReader()
-		sr.tagFamilyMetadata[k].init(p.tagFamilyMetadata[k])
+	for k, r := range p.tags {
+		sr.tags[k] = generateSeqReader()
+		sr.tags[k].init(r)
+		sr.tagMetadata[k] = generateSeqReader()
+		sr.tagMetadata[k].init(p.tagMetadata[k])
 	}
 }
 
@@ -216,7 +216,7 @@ func (br *blockReader) error() error {
 	return br.err
 }
 
-var blockReaderPool = pool.Register[*blockReader]("stream-blockReader")
+var blockReaderPool = pool.Register[*blockReader]("trace-blockReader")
 
 func generateBlockReader() *blockReader {
 	if v := blockReaderPool.Get(); v != nil {

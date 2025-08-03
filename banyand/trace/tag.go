@@ -79,9 +79,9 @@ func releaseDictionary(d *encoding.Dictionary) {
 }
 
 var (
-	int64SlicePool   = pool.Register[*[]int64]("stream-int64Slice")
-	float64SlicePool = pool.Register[*[]float64]("stream-float64Slice")
-	dictionaryPool   = pool.Register[*encoding.Dictionary]("stream-dictionary")
+	int64SlicePool   = pool.Register[*[]int64]("trace-int64Slice")
+	float64SlicePool = pool.Register[*[]float64]("trace-float64Slice")
+	dictionaryPool   = pool.Register[*encoding.Dictionary]("trace-dictionary")
 )
 
 type tag struct {
@@ -393,29 +393,4 @@ func (t *tag) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffe
 	}
 }
 
-var bigValuePool = bytes.NewBufferPool("stream-big-value")
-
-type tagFamily struct {
-	name string
-	tags []tag
-}
-
-func (tf *tagFamily) reset() {
-	tf.name = ""
-
-	tags := tf.tags
-	for i := range tags {
-		tags[i].reset()
-	}
-	tf.tags = tags[:0]
-}
-
-func (tf *tagFamily) resizeTags(tagsLen int) []tag {
-	tags := tf.tags
-	if n := tagsLen - cap(tags); n > 0 {
-		tags = append(tags[:cap(tags)], make([]tag, n)...)
-	}
-	tags = tags[:tagsLen]
-	tf.tags = tags
-	return tags
-}
+var bigValuePool = bytes.NewBufferPool("trace-big-value")

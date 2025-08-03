@@ -193,7 +193,6 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 
 	is := stm.indexSchema.Load().(indexSchema)
 	tagFamilies := make([]tagValues, 0, len(stm.schema.TagFamilies))
-	indexedTags := make(map[string]map[string]struct{})
 	var fields []index.Field
 
 	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
@@ -213,7 +212,6 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 		tf := tagValues{
 			tag: tagFamilySpec.Name,
 		}
-		indexedTags[tagFamilySpec.Name] = make(map[string]struct{})
 
 		for j := range tagFamilySpec.Tags {
 			var tagValue *modelv1.TagValue

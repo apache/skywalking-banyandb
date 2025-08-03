@@ -252,6 +252,13 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	br.init(pii)
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
+	for _, pw := range parts {
+		for _, pbm := range pw.p.primaryBlockMetadata {
+			if len(pbm.traceID) > int(bw.traceIDLen) {
+				bw.traceIDLen = uint32(len(pbm.traceID))
+			}
+		}
+	}
 
 	pm, err := mergeBlocks(closeCh, bw, br)
 	releaseBlockWriter(bw)
@@ -304,9 +311,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			continue
 		}
 
-		if pendingBlock.bm.seriesID != b.bm.seriesID ||
-			(pendingBlock.isFull() && pendingBlock.bm.timestamps.max <= b.bm.timestamps.min) {
-			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
+		if pendingBlock.bm.traceID != b.bm.traceID || pendingBlock.isFull() {
+			bw.mustWriteBlock(bw.traceIDLen, pendingBlock.bm.traceID, &pendingBlock.block)
 			releaseDecoder()
 			pendingBlock.reset()
 			br.loadBlockData(getDecoder())
@@ -319,17 +325,17 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			defer releaseBlockPointer(tmpBlock)
 		}
 		tmpBlock.reset()
-		tmpBlock.bm.seriesID = b.bm.seriesID
+		tmpBlock.bm.traceID = b.bm.traceID
 		br.loadBlockData(getDecoder())
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
-		if tmpBlock.uncompressedSizeBytes() <= maxUncompressedBlockSize {
-			if len(tmpBlock.timestamps) == 0 {
+		if tmpBlock.bm.spanSize <= maxUncompressedSpanSize {
+			if tmpBlock.bm.count == 0 {
 				pendingBlockIsEmpty = true
 			}
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
 			continue
 		}
-		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
+		bw.mustWriteBlock(bw.traceIDLen, tmpBlock.bm.traceID, &tmpBlock.block)
 		releaseDecoder()
 		pendingBlock.reset()
 		tmpBlock.reset()
@@ -339,50 +345,17 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		return nil, fmt.Errorf("cannot read block to merge: %w", err)
 	}
 	if !pendingBlockIsEmpty {
-		bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
+		bw.mustWriteBlock(bw.traceIDLen, pendingBlock.bm.traceID, &pendingBlock.block)
 	}
 	releaseDecoder()
-	var result partMetadata
-	bw.Flush(&result)
-	return &result, nil
+	var partMetadata partMetadata
+	var traceIDFilter traceIDFilter
+	var tagType tagType
+	bw.Flush(&partMetadata, &traceIDFilter, &tagType)
+	return &partMetadata, nil
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {
-	appendIfEmpty := func(ib1, ib2 *blockPointer) bool {
-		if ib1.idx >= len(ib1.timestamps) {
-			target.appendAll(ib2)
-			return true
-		}
-		return false
-	}
-
-	defer target.updateMetadata()
-
-	if left.bm.timestamps.max < right.bm.timestamps.min {
-		target.appendAll(left)
-		target.appendAll(right)
-		return
-	}
-	if right.bm.timestamps.max < left.bm.timestamps.min {
-		target.appendAll(right)
-		target.appendAll(left)
-		return
-	}
-	if appendIfEmpty(left, right) || appendIfEmpty(right, left) {
-		return
-	}
-
-	for {
-		i := left.idx
-		ts2 := right.timestamps[right.idx]
-		for i < len(left.timestamps) && left.timestamps[i] <= ts2 {
-			i++
-		}
-		target.append(left, i)
-		left.idx = i
-		if appendIfEmpty(left, right) {
-			return
-		}
-		left, right = right, left
-	}
+	target.appendAll(left)
+	target.appendAll(right)
 }

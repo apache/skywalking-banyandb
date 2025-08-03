@@ -186,7 +186,7 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, option option, m any, initIndex bool,
 ) (*tsTable, uint64, error) {
 	if option.protector == nil {
-		logger.GetLogger("stream").
+		logger.GetLogger("trace").
 			Panic().
 			Msg("protector can not be nil")
 	}
@@ -211,9 +211,6 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	var needToDelete []string
 	for i := range ee {
 		if ee[i].IsDir() {
-			if ee[i].Name() == elementIndexFilename {
-				continue
-			}
 			p, err := parseEpoch(ee[i].Name())
 			if err != nil {
 				l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")
@@ -306,13 +303,13 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
 }
 
-func (tst *tsTable) mustAddElements(es *elements) {
-	if len(es.seriesIDs) == 0 {
+func (tst *tsTable) mustAddTraces(ts *traces) {
+	if len(ts.traceIDs) == 0 {
 		return
 	}
 
 	mp := generateMemPart()
-	mp.mustInitFromElements(es)
+	mp.mustInitFromTraces(ts)
 	tst.mustAddMemPart(mp)
 }
 
@@ -344,7 +341,7 @@ func (ti *tstIter) reset() {
 	ti.nextBlockNoop = false
 }
 
-func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64, blockFilter index.Filter) {
+func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, tids []string, minTimestamp, maxTimestamp int64, blockFilter index.Filter) {
 	ti.reset()
 	ti.parts = parts
 
@@ -353,7 +350,7 @@ func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, sids []common.Se
 	}
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
-		ti.piPool[i].init(bma, p, sids, minTimestamp, maxTimestamp, blockFilter)
+		ti.piPool[i].init(bma, p, tids, minTimestamp, maxTimestamp, blockFilter)
 	}
 
 	ti.piHeap = ti.piHeap[:0]
@@ -434,7 +431,7 @@ func releaseTstIter(ti *tstIter) {
 	tstIterPool.Put(ti)
 }
 
-var tstIterPool = pool.Register[*tstIter]("stream-tstIter")
+var tstIterPool = pool.Register[*tstIter]("trace-tstIter")
 
 type partIterHeap []*partIter
 

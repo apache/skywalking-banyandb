@@ -273,7 +273,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 		gg = s.s.schemaRepo.LoadAllGroups()
 	} else {
 		for _, g := range groups {
-			if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
+			if g.Catalog != commonv1.Catalog_CATALOG_TRACE {
 				continue
 			}
 			group, ok := s.s.schemaRepo.LoadGroup(g.Group)
@@ -305,7 +305,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	}
 	snp := &databasev1.Snapshot{
 		Name:    sn,
-		Catalog: commonv1.Catalog_CATALOG_STREAM,
+		Catalog: commonv1.Catalog_CATALOG_TRACE,
 	}
 	if err != nil {
 		snp.Error = err.Error()

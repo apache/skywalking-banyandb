@@ -314,3 +314,41 @@ type StreamQueryResult interface {
 	Pull(context.Context) *StreamResult
 	Release()
 }
+
+// TraceQueryOptions is the options of a trace query.
+type TraceQueryOptions struct {
+	Name           string
+	TimeRange      *timestamp.TimeRange
+	SkippingFilter index.Filter
+	Order          *index.OrderBy
+	TagProjection  *TagProjection
+	MaxTraceSize   int
+}
+
+// Reset resets the StreamQueryOptions.
+func (t *TraceQueryOptions) Reset() {
+	t.Name = ""
+	t.TimeRange = nil
+	t.SkippingFilter = nil
+	t.Order = nil
+	t.TagProjection = nil
+	t.MaxTraceSize = 0
+}
+
+// CopyFrom copies the StreamQueryOptions from other to s.
+func (t *TraceQueryOptions) CopyFrom(other *TraceQueryOptions) {
+	t.Name = other.Name
+	t.TimeRange = other.TimeRange
+	t.SkippingFilter = other.SkippingFilter
+	t.Order = other.Order
+	t.TagProjection = other.TagProjection
+	t.MaxTraceSize = other.MaxTraceSize
+}
+
+// TraceResult is the result of a query.
+type TraceResult struct {
+	Error error
+	Tags  []Tag
+	Spans [][]byte
+	TIDs  []string
+}

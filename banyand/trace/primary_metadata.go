@@ -18,10 +18,11 @@
 package trace
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -29,56 +30,54 @@ import (
 )
 
 type primaryBlockMetadata struct {
-	seriesID     common.SeriesID
-	minTimestamp int64
-	maxTimestamp int64
+	traceIDLen uint32
+	traceID    string
 	dataBlock
 }
 
-// reset resets ih for subsequent re-use.
-func (ph *primaryBlockMetadata) reset() {
-	ph.seriesID = 0
-	ph.minTimestamp = 0
-	ph.maxTimestamp = 0
-	ph.offset = 0
-	ph.size = 0
+// reset resets pbm for subsequent re-use.
+func (pbm *primaryBlockMetadata) reset() {
+	pbm.traceIDLen = 0
+	pbm.traceID = ""
+	pbm.offset = 0
+	pbm.size = 0
 }
 
-func (ph *primaryBlockMetadata) mustWriteBlock(data []byte, sidFirst common.SeriesID, minTimestamp, maxTimestamp int64, sw *writers) {
-	ph.seriesID = sidFirst
-	ph.minTimestamp = minTimestamp
-	ph.maxTimestamp = maxTimestamp
+func (pbm *primaryBlockMetadata) mustWriteBlock(data []byte, traceIDLen uint32, traceID string, minTimestamp, maxTimestamp int64, sw *writers) {
+	pbm.traceIDLen = traceIDLen
+	pbm.traceID = traceID
 
 	bb := bigValuePool.Generate()
 	bb.Buf = zstd.Compress(bb.Buf[:0], data, 1)
-	ph.offset = sw.primaryWriter.bytesWritten
-	ph.size = uint64(len(bb.Buf))
+	pbm.offset = sw.primaryWriter.bytesWritten
+	pbm.size = uint64(len(bb.Buf))
 	sw.primaryWriter.MustWrite(bb.Buf)
 	bigValuePool.Release(bb)
 }
 
-func (ph *primaryBlockMetadata) marshal(dst []byte) []byte {
-	dst = ph.seriesID.AppendToBytes(dst)
-	dst = encoding.Uint64ToBytes(dst, uint64(ph.minTimestamp))
-	dst = encoding.Uint64ToBytes(dst, uint64(ph.maxTimestamp))
-	dst = encoding.Uint64ToBytes(dst, ph.offset)
-	dst = encoding.Uint64ToBytes(dst, ph.size)
+func (pbm *primaryBlockMetadata) marshal(dst []byte) []byte {
+	dst = encoding.Uint32ToBytes(dst, pbm.traceIDLen)
+	dst = append(dst, pbm.traceID...)
+	paddingLen := pbm.traceIDLen - uint32(len(pbm.traceID))
+	if paddingLen > 0 {
+		dst = append(dst, bytes.Repeat([]byte{0}, int(paddingLen))...)
+	}
+	dst = encoding.Uint64ToBytes(dst, pbm.offset)
+	dst = encoding.Uint64ToBytes(dst, pbm.size)
 	return dst
 }
 
-func (ph *primaryBlockMetadata) unmarshal(src []byte) ([]byte, error) {
-	if len(src) < 40 {
-		return nil, fmt.Errorf("cannot unmarshal primaryBlockMetadata from %d bytes; expect at least 40 bytes", len(src))
+func (pbm *primaryBlockMetadata) unmarshal(src []byte) ([]byte, error) {
+	pbm.traceIDLen = encoding.BytesToUint32(src)
+	src = src[4:]
+	if len(src) < int(16+pbm.traceIDLen) {
+		return nil, fmt.Errorf("cannot unmarshal primaryBlockMetadata from %d bytes; expect at least %d bytes", len(src), 32+pbm.traceIDLen)
 	}
-	ph.seriesID = common.SeriesID(encoding.BytesToUint64(src))
+	pbm.traceID = strings.TrimRight(string(src[:pbm.traceIDLen]), "\x00")
+	src = src[pbm.traceIDLen:]
+	pbm.offset = encoding.BytesToUint64(src)
 	src = src[8:]
-	ph.minTimestamp = int64(encoding.BytesToUint64(src))
-	src = src[8:]
-	ph.maxTimestamp = int64(encoding.BytesToUint64(src))
-	src = src[8:]
-	ph.offset = encoding.BytesToUint64(src)
-	src = src[8:]
-	ph.size = encoding.BytesToUint64(src)
+	pbm.size = encoding.BytesToUint64(src)
 	return src[8:], nil
 }
 
@@ -111,8 +110,8 @@ func unmarshalPrimaryBlockMetadata(dst []primaryBlockMetadata, src []byte) ([]pr
 		} else {
 			dst = append(dst, primaryBlockMetadata{})
 		}
-		ih := &dst[len(dst)-1]
-		tail, err := ih.unmarshal(src)
+		pbm := &dst[len(dst)-1]
+		tail, err := pbm.unmarshal(src)
 		if err != nil {
 			return dstOrig, fmt.Errorf("cannot unmarshal primaryBlockHeader %d: %w", len(dst)-len(dstOrig), err)
 		}
@@ -124,10 +123,10 @@ func unmarshalPrimaryBlockMetadata(dst []primaryBlockMetadata, src []byte) ([]pr
 	return dst, nil
 }
 
-func validatePrimaryBlockMetadata(ihs []primaryBlockMetadata) error {
-	for i := 1; i < len(ihs); i++ {
-		if ihs[i].seriesID < ihs[i-1].seriesID {
-			return fmt.Errorf("unexpected primaryBlockMetadata with smaller seriesID=%d after bigger seriesID=%d", &ihs[i].seriesID, &ihs[i-1].seriesID)
+func validatePrimaryBlockMetadata(pbm []primaryBlockMetadata) error {
+	for i := 1; i < len(pbm); i++ {
+		if pbm[i].traceID < pbm[i-1].traceID {
+			return fmt.Errorf("unexpected primaryBlockMetadata with smaller traceID=%s after bigger traceID=%s", pbm[i].traceID, pbm[i-1].traceID)
 		}
 	}
 	return nil

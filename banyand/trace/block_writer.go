@@ -20,7 +20,6 @@ package trace
 import (
 	"path/filepath"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -57,48 +56,48 @@ func (w *writer) MustClose() {
 	w.reset()
 }
 
-type mustCreateTagFamilyWriters func(name string) (fs.Writer, fs.Writer, fs.Writer)
+type mustCreateTagWriters func(name string) (fs.Writer, fs.Writer, fs.Writer)
 
 type writers struct {
-	mustCreateTagFamilyWriters mustCreateTagFamilyWriters
-	metaWriter                 writer
-	primaryWriter              writer
-	tagFamilyMetadataWriters   map[string]*writer
-	tagFamilyWriters           map[string]*writer
-	tagFamilyFilterWriters     map[string]*writer
-	timestampsWriter           writer
+	mustCreateTagWriters mustCreateTagWriters
+	metaWriter           writer
+	primaryWriter        writer
+	tagMetadataWriters   map[string]*writer
+	tagWriters           map[string]*writer
+	tagFilterWriters     map[string]*writer
+	spanWriter           writer
 }
 
 func (sw *writers) reset() {
-	sw.mustCreateTagFamilyWriters = nil
+	sw.mustCreateTagWriters = nil
 	sw.metaWriter.reset()
 	sw.primaryWriter.reset()
-	sw.timestampsWriter.reset()
+	sw.spanWriter.reset()
 
-	for i, w := range sw.tagFamilyMetadataWriters {
+	for i, w := range sw.tagMetadataWriters {
 		w.reset()
-		delete(sw.tagFamilyMetadataWriters, i)
+		delete(sw.tagMetadataWriters, i)
 	}
-	for i, w := range sw.tagFamilyWriters {
+	for i, w := range sw.tagWriters {
 		w.reset()
-		delete(sw.tagFamilyWriters, i)
+		delete(sw.tagWriters, i)
 	}
-	for i, w := range sw.tagFamilyFilterWriters {
+	for i, w := range sw.tagFilterWriters {
 		w.reset()
-		delete(sw.tagFamilyFilterWriters, i)
+		delete(sw.tagFilterWriters, i)
 	}
 }
 
 func (sw *writers) totalBytesWritten() uint64 {
 	n := sw.metaWriter.bytesWritten + sw.primaryWriter.bytesWritten +
-		sw.timestampsWriter.bytesWritten
-	for _, w := range sw.tagFamilyMetadataWriters {
+		sw.spanWriter.bytesWritten
+	for _, w := range sw.tagMetadataWriters {
 		n += w.bytesWritten
 	}
-	for _, w := range sw.tagFamilyWriters {
+	for _, w := range sw.tagWriters {
 		n += w.bytesWritten
 	}
-	for _, w := range sw.tagFamilyFilterWriters {
+	for _, w := range sw.tagFilterWriters {
 		n += w.bytesWritten
 	}
 	return n
@@ -107,66 +106,73 @@ func (sw *writers) totalBytesWritten() uint64 {
 func (sw *writers) MustClose() {
 	sw.metaWriter.MustClose()
 	sw.primaryWriter.MustClose()
-	sw.timestampsWriter.MustClose()
+	sw.spanWriter.MustClose()
 
-	for _, w := range sw.tagFamilyMetadataWriters {
+	for _, w := range sw.tagMetadataWriters {
 		w.MustClose()
 	}
-	for _, w := range sw.tagFamilyWriters {
+	for _, w := range sw.tagWriters {
 		w.MustClose()
 	}
-	for _, w := range sw.tagFamilyFilterWriters {
+	for _, w := range sw.tagFilterWriters {
 		w.MustClose()
 	}
 }
 
 func (sw *writers) getWriters(tagName string) (*writer, *writer, *writer) {
-	thw, ok := sw.tagFamilyMetadataWriters[tagName]
-	tw := sw.tagFamilyWriters[tagName]
-	tfw := sw.tagFamilyFilterWriters[tagName]
+	tmw, ok := sw.tagMetadataWriters[tagName]
+	tw := sw.tagWriters[tagName]
+	tfw := sw.tagFilterWriters[tagName]
 	if ok {
-		return thw, tw, tfw
+		return tmw, tw, tfw
 	}
-	hw, w, fw := sw.mustCreateTagFamilyWriters(tagName)
-	thw = new(writer)
-	thw.init(hw)
+	mw, w, fw := sw.mustCreateTagWriters(tagName)
+	tmw = new(writer)
+	tmw.init(mw)
 	tw = new(writer)
 	tw.init(w)
 	tfw = new(writer)
 	tfw.init(fw)
-	sw.tagFamilyMetadataWriters[tagName] = thw
-	sw.tagFamilyWriters[tagName] = tw
-	sw.tagFamilyFilterWriters[tagName] = tfw
-	return thw, tw, tfw
+	sw.tagMetadataWriters[tagName] = tmw
+	sw.tagWriters[tagName] = tw
+	sw.tagFilterWriters[tagName] = tfw
+	return tmw, tw, tfw
 }
 
 type blockWriter struct {
-	writers                    writers
-	metaData                   []byte
-	primaryBlockData           []byte
-	primaryBlockMetadata       primaryBlockMetadata
-	totalBlocksCount           uint64
-	maxTimestamp               int64
-	totalUncompressedSizeBytes uint64
-	totalCount                 uint64
-	minTimestamp               int64
-	totalMinTimestamp          int64
-	totalMaxTimestamp          int64
-	minTimestampLast           int64
-	sidFirst                   common.SeriesID
-	sidLast                    common.SeriesID
-	hasWrittenBlocks           bool
+	writers                        writers
+	traceIDs                       []string
+	tagType                        tagType
+	metaData                       []byte
+	primaryBlockData               []byte
+	primaryBlockMetadata           primaryBlockMetadata
+	totalBlocksCount               uint64
+	maxTimestamp                   int64
+	totalUncompressedSpanSizeBytes uint64
+	totalCount                     uint64
+	minTimestamp                   int64
+	totalMinTimestamp              int64
+	totalMaxTimestamp              int64
+	minTimestampLast               int64
+	traceIDLen                     uint32
+	// TODO: remove tidFirst and tidLast
+	tidFirst         string
+	tidLast          string
+	hasWrittenBlocks bool
 }
 
 func (bw *blockWriter) reset() {
 	bw.writers.reset()
-	bw.sidLast = 0
-	bw.sidFirst = 0
+	bw.traceIDLen = 0
+	bw.traceIDs = bw.traceIDs[:0]
+	bw.tagType.reset()
+	bw.tidLast = ""
+	bw.tidFirst = ""
 	bw.minTimestampLast = 0
 	bw.minTimestamp = 0
 	bw.maxTimestamp = 0
 	bw.hasWrittenBlocks = false
-	bw.totalUncompressedSizeBytes = 0
+	bw.totalUncompressedSpanSizeBytes = 0
 	bw.totalCount = 0
 	bw.totalBlocksCount = 0
 	bw.totalMinTimestamp = 0
@@ -178,19 +184,19 @@ func (bw *blockWriter) reset() {
 
 func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.reset()
-	bw.writers.mustCreateTagFamilyWriters = mp.mustCreateMemTagFamilyWriters
+	bw.writers.mustCreateTagWriters = mp.mustCreateMemTagWriters
 	bw.writers.metaWriter.init(&mp.meta)
 	bw.writers.primaryWriter.init(&mp.primary)
-	bw.writers.timestampsWriter.init(&mp.timestamps)
+	bw.writers.spanWriter.init(&mp.spans)
 }
 
 func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
-	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer, fs.Writer) {
-		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
-		dataPath := filepath.Join(path, name+tagFamiliesFilenameExt)
-		fitlerPath := filepath.Join(path, name+tagFamiliesFilterFilenameExt)
+	bw.writers.mustCreateTagWriters = func(name string) (fs.Writer, fs.Writer, fs.Writer) {
+		metaPath := filepath.Join(path, name+tagsMetadataFilenameExt)
+		dataPath := filepath.Join(path, name+tagsFilenameExt)
+		fitlerPath := filepath.Join(path, name+tagsFilterFilenameExt)
 		return fs.MustCreateFile(fileSystem, metaPath, storage.FilePerm, shouldCache),
 			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache),
 			fs.MustCreateFile(fileSystem, fitlerPath, storage.FilePerm, shouldCache)
@@ -198,37 +204,39 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 
 	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
 	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
-	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm, shouldCache))
+	bw.writers.spanWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, spansFilename), storage.FilePerm, shouldCache))
 }
 
-func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {
-	if len(timestamps) == 0 {
+func (bw *blockWriter) MustWriteTrace(tidLen uint32, tid string, spans [][]byte, tags [][]*tagValue, timestamps []int64) {
+	if len(spans) == 0 {
 		return
 	}
 
 	b := generateBlock()
 	defer releaseBlock(b)
-	b.mustInitFromElements(timestamps, elementIDs, tagFamilies)
-	bw.mustWriteBlock(sid, b)
+	b.mustInitFromTrace(spans, tags, timestamps)
+	bw.mustWriteBlock(tidLen, tid, b)
 }
 
-func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
+func (bw *blockWriter) mustWriteBlock(tidLen uint32, tid string, b *block) {
 	if b.Len() == 0 {
 		return
 	}
-	if sid < bw.sidLast {
-		logger.Panicf("the sid=%d cannot be smaller than the previously written sid=%d", sid, &bw.sidLast)
+	if tid < bw.tidLast {
+		logger.Panicf("the tid=%d cannot be smaller than the previously written tid=%d", tid, &bw.tidLast)
 	}
 	hasWrittenBlocks := bw.hasWrittenBlocks
 	if !hasWrittenBlocks {
-		bw.sidFirst = sid
+		bw.tidFirst = tid
 		bw.hasWrittenBlocks = true
 	}
-	isSeenSid := sid == bw.sidLast
-	bw.sidLast = sid
+	isSeenTid := tid == bw.tidLast
+	bw.tidLast = tid
 
 	bm := generateBlockMetadata()
-	b.mustWriteTo(sid, bm, &bw.writers)
+	b.mustWriteTo(tid, bm, &bw.writers)
+	bw.traceIDs = append(bw.traceIDs, tid)
+	bw.tagType.copyFrom(bm.tagType)
 	tm := &bm.timestamps
 	if bw.totalCount == 0 || tm.min < bw.totalMinTimestamp {
 		bw.totalMinTimestamp = tm.min
@@ -242,16 +250,16 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 	if !hasWrittenBlocks || tm.max > bw.maxTimestamp {
 		bw.maxTimestamp = tm.max
 	}
-	if isSeenSid && tm.min < bw.minTimestampLast {
-		logger.Panicf("the block for sid=%d cannot contain timestamp smaller than %d, but it contains timestamp %d", sid, bw.minTimestampLast, tm.min)
+	if isSeenTid && tm.min < bw.minTimestampLast {
+		logger.Panicf("the block for tid=%d cannot contain timestamp smaller than %d, but it contains timestamp %d", tid, bw.minTimestampLast, tm.min)
 	}
 	bw.minTimestampLast = tm.min
 
-	bw.totalUncompressedSizeBytes += bm.uncompressedSizeBytes
+	bw.totalUncompressedSpanSizeBytes += bm.spanSize
 	bw.totalCount += bm.count
 	bw.totalBlocksCount++
 
-	bw.primaryBlockData = bm.marshal(bw.primaryBlockData)
+	bw.primaryBlockData = bm.marshal(bw.primaryBlockData, bw.traceIDLen)
 	releaseBlockMetadata(bm)
 	if len(bw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
 		bw.mustFlushPrimaryBlock(bw.primaryBlockData)
@@ -261,17 +269,17 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 
 func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
-		bw.primaryBlockMetadata.mustWriteBlock(data, bw.sidFirst, bw.minTimestamp, bw.maxTimestamp, &bw.writers)
+		bw.primaryBlockMetadata.mustWriteBlock(data, bw.traceIDLen, bw.tidFirst, bw.minTimestamp, bw.maxTimestamp, &bw.writers)
 		bw.metaData = bw.primaryBlockMetadata.marshal(bw.metaData)
 	}
 	bw.hasWrittenBlocks = false
 	bw.minTimestamp = 0
 	bw.maxTimestamp = 0
-	bw.sidFirst = 0
+	bw.tidFirst = ""
 }
 
-func (bw *blockWriter) Flush(pm *partMetadata) {
-	pm.UncompressedSizeBytes = bw.totalUncompressedSizeBytes
+func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
+	pm.UncompressedSpanSizeBytes = bw.totalUncompressedSpanSizeBytes
 	pm.TotalCount = bw.totalCount
 	pm.BlocksCount = bw.totalBlocksCount
 	pm.MinTimestamp = bw.totalMinTimestamp
@@ -285,6 +293,10 @@ func (bw *blockWriter) Flush(pm *partMetadata) {
 	bigValuePool.Release(bb)
 
 	pm.CompressedSizeBytes = bw.writers.totalBytesWritten()
+	for _, traceID := range bw.traceIDs {
+		tf.filter.Add([]byte(traceID))
+	}
+	tt.copyFrom(bw.tagType)
 
 	bw.writers.MustClose()
 	bw.reset()
@@ -295,9 +307,9 @@ func generateBlockWriter() *blockWriter {
 	if v == nil {
 		return &blockWriter{
 			writers: writers{
-				tagFamilyMetadataWriters: make(map[string]*writer),
-				tagFamilyWriters:         make(map[string]*writer),
-				tagFamilyFilterWriters:   make(map[string]*writer),
+				tagMetadataWriters: make(map[string]*writer),
+				tagWriters:         make(map[string]*writer),
+				tagFilterWriters:   make(map[string]*writer),
 			},
 		}
 	}
@@ -309,4 +321,4 @@ func releaseBlockWriter(bsw *blockWriter) {
 	blockWriterPool.Put(bsw)
 }
 
-var blockWriterPool = pool.Register[*blockWriter]("stream-blockWriter")
+var blockWriterPool = pool.Register[*blockWriter]("trace-blockWriter")

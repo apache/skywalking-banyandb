@@ -23,7 +23,6 @@ import (
 	"io"
 	"sort"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -31,20 +30,20 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
-	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
+	logicaltrace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
 )
 
 type partIter struct {
 	err                  error
 	p                    *part
 	curBlock             *blockMetadata
-	sids                 []common.SeriesID
+	tids                 []string
 	blockFilter          index.Filter
 	primaryBlockMetadata []primaryBlockMetadata
 	bms                  []blockMetadata
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
-	sidIdx               int
+	tidIdx               int
 	minTimestamp         int64
 	maxTimestamp         int64
 }
@@ -52,9 +51,9 @@ type partIter struct {
 func (pi *partIter) reset() {
 	pi.curBlock = nil
 	pi.p = nil
-	pi.sids = nil
+	pi.tids = nil
 	pi.blockFilter = nil
-	pi.sidIdx = 0
+	pi.tidIdx = 0
 	pi.primaryBlockMetadata = nil
 	pi.bms = nil
 	pi.compressedPrimaryBuf = pi.compressedPrimaryBuf[:0]
@@ -62,13 +61,13 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64, blockFilter index.Filter) {
+func (pi *partIter) init(bma *blockMetadataArray, p *part, tids []string, minTimestamp, maxTimestamp int64, blockFilter index.Filter) {
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
 
 	pi.bms = bma.arr
-	pi.sids = sids
+	pi.tids = tids
 	pi.blockFilter = blockFilter
 	pi.minTimestamp = minTimestamp
 	pi.maxTimestamp = maxTimestamp
@@ -102,54 +101,50 @@ func (pi *partIter) error() error {
 }
 
 func (pi *partIter) nextSeriesID() bool {
-	if pi.sidIdx >= len(pi.sids) {
+	if pi.tidIdx >= len(pi.tids) {
 		pi.err = io.EOF
 		return false
 	}
-	pi.curBlock.seriesID = pi.sids[pi.sidIdx]
-	pi.sidIdx++
+	pi.curBlock.traceID = pi.tids[pi.tidIdx]
+	pi.tidIdx++
 	return true
 }
 
-func (pi *partIter) searchTargetSeriesID(sid common.SeriesID) bool {
-	if pi.curBlock.seriesID >= sid {
+func (pi *partIter) searchTargetTraceID(tid string) bool {
+	if pi.curBlock.traceID >= tid {
 		return true
 	}
 	if !pi.nextSeriesID() {
 		return false
 	}
-	if pi.curBlock.seriesID >= sid {
+	if pi.curBlock.traceID >= tid {
 		return true
 	}
-	sids := pi.sids[pi.sidIdx:]
-	pi.sidIdx += sort.Search(len(sids), func(i int) bool {
-		return sid <= sids[i]
+	tids := pi.tids[pi.tidIdx:]
+	pi.tidIdx += sort.Search(len(tids), func(i int) bool {
+		return tid <= tids[i]
 	})
-	if pi.sidIdx >= len(pi.sids) {
-		pi.sidIdx = len(pi.sids)
+	if pi.tidIdx >= len(pi.tids) {
+		pi.tidIdx = len(pi.tids)
 		pi.err = io.EOF
 		return false
 	}
-	pi.curBlock.seriesID = pi.sids[pi.sidIdx]
-	pi.sidIdx++
+	pi.curBlock.traceID = pi.tids[pi.tidIdx]
+	pi.tidIdx++
 	return true
 }
 
 func (pi *partIter) loadNextBlockMetadata() bool {
 	for len(pi.primaryBlockMetadata) > 0 {
-		if !pi.searchTargetSeriesID(pi.primaryBlockMetadata[0].seriesID) {
+		if !pi.searchTargetTraceID(pi.primaryBlockMetadata[0].traceID) {
 			return false
 		}
-		pi.primaryBlockMetadata = searchPBM(pi.primaryBlockMetadata, pi.curBlock.seriesID)
+		pi.primaryBlockMetadata = searchPBM(pi.primaryBlockMetadata, pi.curBlock.traceID)
 
 		pbm := &pi.primaryBlockMetadata[0]
 		pi.primaryBlockMetadata = pi.primaryBlockMetadata[1:]
-		if pi.curBlock.seriesID < pbm.seriesID {
-			logger.Panicf("invariant violation: pi.curBlock.seriesID cannot be smaller than pbm.seriesID; got %+v vs %+v", &pi.curBlock.seriesID, &pbm.seriesID)
-		}
-
-		if pbm.maxTimestamp < pi.minTimestamp || pbm.minTimestamp > pi.maxTimestamp {
-			continue
+		if pi.curBlock.traceID < pbm.traceID {
+			logger.Panicf("invariant violation: pi.curBlock.traceID cannot be smaller than pbm.traceID; got %+v vs %+v", &pi.curBlock.traceID, &pbm.traceID)
 		}
 
 		var err error
@@ -165,21 +160,21 @@ func (pi *partIter) loadNextBlockMetadata() bool {
 	return false
 }
 
-func searchPBM(pbmIndex []primaryBlockMetadata, sid common.SeriesID) []primaryBlockMetadata {
-	if sid < pbmIndex[0].seriesID {
-		logger.Panicf("invariant violation: sid cannot be smaller than pbmIndex[0]; got %d vs %d", sid, &pbmIndex[0].seriesID)
+func searchPBM(pbmIndex []primaryBlockMetadata, tid string) []primaryBlockMetadata {
+	if tid < pbmIndex[0].traceID {
+		logger.Panicf("invariant violation: tid cannot be smaller than pbmIndex[0]; got %d vs %d", tid, &pbmIndex[0].traceID)
 	}
 
-	if sid == pbmIndex[0].seriesID {
+	if tid == pbmIndex[0].traceID {
 		return pbmIndex
 	}
 
 	n := sort.Search(len(pbmIndex), func(i int) bool {
-		return sid <= pbmIndex[i].seriesID
+		return tid <= pbmIndex[i].traceID
 	})
 	if n == 0 {
-		logger.Panicf("invariant violation: sort.Search returned 0 for sid > pbmIndex[0].seriesID; sid=%+v; pbmIndex[0].seriesID=%+v",
-			sid, &pbmIndex[0].seriesID)
+		logger.Panicf("invariant violation: sort.Search returned 0 for tid > pbmIndex[0].traceID; tid=%+v; pbmIndex[0].traceID=%+v",
+			tid, &pbmIndex[0].traceID)
 	}
 	return pbmIndex[n-1:]
 }
@@ -193,7 +188,7 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress index block: %w", err)
 	}
-	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf)
+	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf, int(mr.traceIDLen))
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
@@ -203,10 +198,10 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 func (pi *partIter) findBlock() bool {
 	bhs := pi.bms
 	for len(bhs) > 0 {
-		sid := pi.curBlock.seriesID
-		if bhs[0].seriesID < sid {
+		tid := pi.curBlock.traceID
+		if bhs[0].traceID < tid {
 			n := sort.Search(len(bhs), func(i int) bool {
-				return sid <= bhs[i].seriesID
+				return tid <= bhs[i].traceID
 			})
 			if n == len(bhs) {
 				break
@@ -215,8 +210,8 @@ func (pi *partIter) findBlock() bool {
 		}
 		bm := &bhs[0]
 
-		if bm.seriesID != sid {
-			if !pi.searchTargetSeriesID(bm.seriesID) {
+		if bm.traceID != tid {
+			if !pi.searchTargetTraceID(bm.traceID) {
 				return false
 			}
 			continue
@@ -234,11 +229,11 @@ func (pi *partIter) findBlock() bool {
 			continue
 		}
 
-		if pi.blockFilter != nil && pi.blockFilter != logicalstream.ENode {
+		if pi.blockFilter != nil && pi.blockFilter != logicaltrace.ENode {
 			shouldSkip, err := func() (bool, error) {
-				tfs := generateTagFamilyFilters()
-				defer releaseTagFamilyFilters(tfs)
-				tfs.unmarshal(bm.tagFamilies, pi.p.tagFamilyMetadata, pi.p.tagFamilyFilter)
+				tfs := generateTagFilters()
+				defer releaseTagFilters(tfs)
+				tfs.unmarshal(bm.tags, pi.p.tagMetadata, pi.p.tagFilter)
 				return pi.blockFilter.ShouldSkip(tfs)
 			}()
 			if err != nil {
@@ -332,7 +327,8 @@ func (pmi *partMergeIter) loadPrimaryBuf() error {
 func (pmi *partMergeIter) loadBlockMetadata() error {
 	pmi.block.reset()
 	var err error
-	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf)
+	traceIDLen := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1].traceIDLen
+	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf, int(traceIDLen))
 	if err != nil {
 		pm := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1]
 		return fmt.Errorf("can't read block metadata from primary at %d: %w", pm.offset, err)
@@ -357,7 +353,7 @@ func releasePartMergeIter(pmi *partMergeIter) {
 	pmiPool.Put(pmi)
 }
 
-var pmiPool = pool.Register[*partMergeIter]("stream-partMergeIter")
+var pmiPool = pool.Register[*partMergeIter]("trace-partMergeIter")
 
 type partMergeIterHeap []*partMergeIter
 
@@ -399,4 +395,4 @@ func releaseColumnValuesDecoder(d *encoding.BytesBlockDecoder) {
 	columnValuesDecoderPool.Put(d)
 }
 
-var columnValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("stream-columnValuesDecoder")
+var columnValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("trace-columnValuesDecoder")

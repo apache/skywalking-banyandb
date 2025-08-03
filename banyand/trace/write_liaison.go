@@ -25,15 +25,11 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/data"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -59,7 +55,7 @@ func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUs
 
 func (w *writeQueueCallback) CheckHealth() *common.Error {
 	if w.maxDiskUsagePercent < 1 {
-		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "stream is readonly because \"stream-max-disk-usage-percent\" is 0")
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "trace is readonly because \"trace-max-disk-usage-percent\" is 0")
 	}
 	diskPercent := observability.GetPathUsedPercent(w.schemaRepo.path)
 	if diskPercent < w.maxDiskUsagePercent {
@@ -69,8 +65,16 @@ func (w *writeQueueCallback) CheckHealth() *common.Error {
 	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
-func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent *streamv1.InternalWriteRequest) (map[string]*elementsInQueue, error) {
-	t := writeEvent.Request.Element.Timestamp.AsTime().Local()
+func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *tracev1.InternalWriteRequest) (map[string]*tracesInQueue, error) {
+	stm, ok := w.schemaRepo.loadTrace(writeEvent.GetRequest().GetMetadata())
+	if !ok {
+		return nil, fmt.Errorf("cannot find trace definition: %s", writeEvent.GetRequest().GetMetadata())
+	}
+	idx, err := getTagIndex(stm, stm.schema.TimestampTagName)
+	if err != nil {
+		return nil, err
+	}
+	t := writeEvent.Request.Tags[idx].GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
@@ -83,14 +87,14 @@ func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent 
 	if err != nil {
 		return nil, err
 	}
-	err = processElements(w.schemaRepo, et.elements, writeEvent, ts, &et.docs, &et.seriesDocs)
+	err = processTraces(w.schemaRepo, et.traces, writeEvent)
 	if err != nil {
 		return nil, err
 	}
 	return dst, nil
 }
 
-func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*elementsInQueue, writeEvent *streamv1.InternalWriteRequest) (*elementsInQueue, error) {
+func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*tracesInQueue, writeEvent *tracev1.InternalWriteRequest) (*tracesInQueue, error) {
 	gn := writeEvent.Request.Metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
@@ -99,18 +103,18 @@ func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*elementsInQu
 
 	eq, ok := dst[gn]
 	if !ok {
-		eq = &elementsInQueue{
+		eq = &tracesInQueue{
 			name:   gn,
 			queue:  queue,
-			tables: make([]*elementsInTable, 0),
+			tables: make([]*tracesInTable, 0),
 		}
 		dst[gn] = eq
 	}
 	return eq, nil
 }
 
-func (w *writeQueueCallback) prepareElementsInTable(eq *elementsInQueue, writeEvent *streamv1.InternalWriteRequest, ts int64) (*elementsInTable, error) {
-	var et *elementsInTable
+func (w *writeQueueCallback) prepareElementsInTable(eq *tracesInQueue, writeEvent *tracev1.InternalWriteRequest, ts int64) (*tracesInTable, error) {
+	var et *tracesInTable
 	for i := range eq.tables {
 		if eq.tables[i].timeRange.Contains(ts) {
 			et = eq.tables[i]
@@ -128,17 +132,13 @@ func (w *writeQueueCallback) prepareElementsInTable(eq *elementsInQueue, writeEv
 		tstb := shard.SubQueue()
 		timeRange := eq.queue.GetTimeRange(time.Unix(0, ts))
 
-		et = &elementsInTable{
+		et = &tracesInTable{
 			shardID:   shardID,
 			timeRange: timeRange,
 			tsTable:   tstb,
-			elements:  generateElements(),
-			seriesDocs: seriesDoc{
-				docs:        make(index.Documents, 0),
-				docIDsAdded: make(map[uint64]struct{}),
-			},
+			traces:    generateTraces(),
 		}
-		et.elements.reset()
+		et.traces.reset()
 		eq.tables = append(eq.tables, et)
 	}
 	return et, nil
@@ -154,14 +154,14 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		w.l.Warn().Msg("empty event")
 		return
 	}
-	groups := make(map[string]*elementsInQueue)
+	groups := make(map[string]*tracesInQueue)
 	for i := range events {
-		var writeEvent *streamv1.InternalWriteRequest
+		var writeEvent *tracev1.InternalWriteRequest
 		switch e := events[i].(type) {
-		case *streamv1.InternalWriteRequest:
+		case *tracev1.InternalWriteRequest:
 			writeEvent = e
 		case []byte:
-			writeEvent = &streamv1.InternalWriteRequest{}
+			writeEvent = &tracev1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
 				continue
@@ -173,7 +173,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		var err error
 		if groups, err = w.handle(groups, writeEvent); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
-			groups = make(map[string]*elementsInQueue)
+			groups = make(map[string]*tracesInQueue)
 			continue
 		}
 	}
@@ -181,59 +181,8 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddElements(es.elements)
-			releaseElements(es.elements)
-			// Get nodes for this shard
-			nodes := g.queue.GetNodes(es.shardID)
-			if len(nodes) == 0 {
-				w.l.Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
-				continue
-			}
-			// Process series documents independently
-			if len(es.seriesDocs.docs) > 0 {
-				seriesDocData, marshalErr := es.seriesDocs.docs.Marshal()
-				if marshalErr != nil {
-					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series documents")
-				} else {
-					// Encode group name, start timestamp from timeRange, and prepend to docData
-					combinedData := make([]byte, 0, len(seriesDocData)+len(g.name)+8)
-					combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
-					combinedData = encoding.Int64ToBytes(combinedData, es.timeRange.Start.UnixNano())
-					combinedData = append(combinedData, seriesDocData...)
-
-					// Send to all nodes for this shard
-					for _, node := range nodes {
-						message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-						_, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamSeriesIndexWrite, message)
-						if publishErr != nil {
-							w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
-						}
-					}
-				}
-			}
-
-			// Process documents independently
-			if len(es.docs) > 0 {
-				docData, marshalErr := es.docs.Marshal()
-				if marshalErr != nil {
-					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal documents")
-				} else {
-					// Encode group name, shardID and prepend to docData
-					combinedData := make([]byte, 0, len(docData)+len(g.name)+4)
-					combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
-					combinedData = encoding.Uint32ToBytes(combinedData, uint32(es.shardID))
-					combinedData = append(combinedData, docData...)
-
-					// Send to all nodes for this shard
-					for _, node := range nodes {
-						message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-						_, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamLocalIndexWrite, message)
-						if publishErr != nil {
-							w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish local index to node")
-						}
-					}
-				}
-			}
+			es.tsTable.mustAddTraces(es.traces)
+			releaseTraces(es.traces)
 		}
 	}
 	return

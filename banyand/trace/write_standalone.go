@@ -28,7 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -58,7 +58,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 
 func (w *writeCallback) CheckHealth() *common.Error {
 	if w.maxDiskUsagePercent < 1 {
-		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "stream is readonly because \"stream-max-disk-usage-percent\" is 0")
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "trace is readonly because \"trace-max-disk-usage-percent\" is 0")
 	}
 	diskPercent := observability.GetPathUsedPercent(w.schemaRepo.path)
 	if diskPercent < w.maxDiskUsagePercent {
@@ -68,29 +68,37 @@ func (w *writeCallback) CheckHealth() *common.Error {
 	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
-func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest,
-) (map[string]*elementsInGroup, error) {
-	t := writeEvent.Request.Element.Timestamp.AsTime().Local()
+func (w *writeCallback) handle(dst map[string]*tracesInGroup, writeEvent *tracev1.InternalWriteRequest,
+) (map[string]*tracesInGroup, error) {
+	stm, ok := w.schemaRepo.loadTrace(writeEvent.GetRequest().GetMetadata())
+	if !ok {
+		return nil, fmt.Errorf("cannot find trace definition: %s", writeEvent.GetRequest().GetMetadata())
+	}
+	idx, err := getTagIndex(stm, stm.schema.TimestampTagName)
+	if err != nil {
+		return nil, err
+	}
+	t := writeEvent.Request.Tags[idx].GetTimestamp().AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := t.UnixNano()
-	eg, err := w.prepareElementsInGroup(dst, writeEvent, ts)
+	eg, err := w.prepareTracesInGroup(dst, writeEvent, ts)
 	if err != nil {
 		return nil, err
 	}
-	et, err := w.prepareElementsInTable(eg, writeEvent, ts)
+	et, err := w.prepareTracesInTable(eg, writeEvent, ts)
 	if err != nil {
 		return nil, err
 	}
-	err = processElements(w.schemaRepo, et.elements, writeEvent, ts, &et.docs, &et.seriesDocs)
+	err = processTraces(w.schemaRepo, et.traces, writeEvent)
 	if err != nil {
 		return nil, err
 	}
 	return dst, nil
 }
 
-func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest, ts int64) (*elementsInGroup, error) {
+func (w *writeCallback) prepareTracesInGroup(dst map[string]*tracesInGroup, writeEvent *tracev1.InternalWriteRequest, ts int64) (*tracesInGroup, error) {
 	gn := writeEvent.Request.Metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
@@ -99,9 +107,9 @@ func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, 
 
 	eg, ok := dst[gn]
 	if !ok {
-		eg = &elementsInGroup{
+		eg = &tracesInGroup{
 			tsdb:     tsdb,
-			tables:   make([]*elementsInTable, 0),
+			tables:   make([]*tracesInTable, 0),
 			segments: make([]storage.Segment[*tsTable, option], 0),
 		}
 		dst[gn] = eg
@@ -112,8 +120,8 @@ func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, 
 	return eg, nil
 }
 
-func (w *writeCallback) prepareElementsInTable(eg *elementsInGroup, writeEvent *streamv1.InternalWriteRequest, ts int64) (*elementsInTable, error) {
-	var et *elementsInTable
+func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *tracev1.InternalWriteRequest, ts int64) (*tracesInTable, error) {
+	var et *tracesInTable
 	for i := range eg.tables {
 		if eg.tables[i].timeRange.Contains(ts) {
 			et = eg.tables[i]
@@ -144,127 +152,75 @@ func (w *writeCallback) prepareElementsInTable(eg *elementsInGroup, writeEvent *
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
 
-		et = &elementsInTable{
+		et = &tracesInTable{
 			timeRange: segment.GetTimeRange(),
 			tsTable:   tstb,
-			elements:  generateElements(),
+			traces:    generateTraces(),
 			segment:   segment,
-			seriesDocs: seriesDoc{
-				docs:        make(index.Documents, 0),
-				docIDsAdded: make(map[uint64]struct{}),
-			},
 		}
-		et.elements.reset()
+		et.traces.reset()
 		eg.tables = append(eg.tables, et)
 	}
 	return et, nil
 }
 
-func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *streamv1.InternalWriteRequest,
-	ts int64, tableDocs *index.Documents, seriesDocs *seriesDoc,
-) error {
+func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.InternalWriteRequest) error {
 	req := writeEvent.Request
-
-	elements.timestamps = append(elements.timestamps, ts)
-	eID := convert.HashStr(req.Metadata.Name + "|" + req.Element.ElementId)
-	elements.elementIDs = append(elements.elementIDs, eID)
-
-	stm, ok := schemaRepo.loadTrace(writeEvent.GetRequest().GetMetadata())
+	stm, ok := schemaRepo.loadTrace(req.GetMetadata())
 	if !ok {
-		return fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
+		return fmt.Errorf("cannot find trace definition: %s", req.GetMetadata())
 	}
 
-	fLen := len(req.Element.GetTagFamilies())
-	if fLen < 1 {
+	idx, err := getTagIndex(stm, stm.schema.TraceIdTagName)
+	if err != nil {
+		return err
+	}
+	traces.traceIDs = append(traces.traceIDs, req.Tags[idx].GetStr().GetValue())
+	traces.spans = append(traces.spans, req.Span)
+
+	tLen := len(req.GetTags())
+	if tLen < 1 {
 		return fmt.Errorf("%s has no tag family", req)
 	}
-	if fLen > len(stm.schema.GetTagFamilies()) {
-		return fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
+	if tLen > len(stm.schema.GetTags()) {
+		return fmt.Errorf("%s has more tag than %s", req.Metadata, stm.schema)
 	}
-
-	series := &pbv1.Series{
-		Subject:      req.Metadata.Name,
-		EntityValues: writeEvent.EntityValues,
-	}
-	if err := series.Marshal(); err != nil {
-		return fmt.Errorf("cannot marshal series: %w", err)
-	}
-	elements.seriesIDs = append(elements.seriesIDs, series.ID)
 
 	is := stm.indexSchema.Load().(indexSchema)
-	tagFamilies := make([]tagValues, 0, len(stm.schema.TagFamilies))
-	indexedTags := make(map[string]map[string]struct{})
-	var fields []index.Field
-
-	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
-		return fmt.Errorf("metadata crashed, tag family rule length %d, tag family length %d",
-			len(is.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
+	if len(is.indexRuleLocators) != len(stm.GetSchema().GetTags()) {
+		return fmt.Errorf("metadata crashed, tag rule length %d, tag length %d",
+			len(is.indexRuleLocators), len(stm.GetSchema().GetTags()))
 	}
 
-	for i := range stm.GetSchema().GetTagFamilies() {
-		var tagFamily *modelv1.TagFamilyForWrite
-		if len(req.Element.TagFamilies) <= i {
-			tagFamily = pbv1.NullTagFamily
+	tags := make([]*tagValue, 0, len(stm.schema.Tags))
+	tagSpecs := stm.GetSchema().GetTags()
+	for i := range tagSpecs {
+		tagSpec := tagSpecs[i]
+		if tagSpec.Name == stm.schema.TraceIdTagName {
+			continue
+		}
+		if tagSpec.Name == stm.schema.TimestampTagName {
+			traces.timestamps = append(traces.timestamps, req.Tags[i].GetTimestamp().AsTime().UnixNano())
+		}	
+
+		var tagValue *modelv1.TagValue
+		if len(req.Tags) <= i {
+			tagValue = pbv1.NullTagValue
 		} else {
-			tagFamily = req.Element.TagFamilies[i]
+			tagValue = req.Tags[i]
 		}
-		tfr := is.indexRuleLocators.TagFamilyTRule[i]
-		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
-		tf := tagValues{
-			tag: tagFamilySpec.Name,
-		}
-		indexedTags[tagFamilySpec.Name] = make(map[string]struct{})
 
-		for j := range tagFamilySpec.Tags {
-			var tagValue *modelv1.TagValue
-			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
-				tagValue = pbv1.NullTagValue
-			} else {
-				tagValue = tagFamily.Tags[j]
+		indexed := false
+		if r, ok := is.indexRuleLocators[tagSpec.Name]; ok && tagValue != pbv1.NullTagValue {
+			if r.GetType() == databasev1.IndexRule_TYPE_SKIPPING {
+				indexed = true
 			}
-
-			t := tagFamilySpec.Tags[j]
-			indexed := false
-			if r, ok := tfr[t.Name]; ok && tagValue != pbv1.NullTagValue {
-				if r.GetType() == databasev1.IndexRule_TYPE_INVERTED {
-					fields = appendField(fields, index.FieldKey{
-						IndexRuleID: r.GetMetadata().GetId(),
-						Analyzer:    r.Analyzer,
-						SeriesID:    series.ID,
-					}, t.Type, tagValue, r.GetNoSort())
-				} else if r.GetType() == databasev1.IndexRule_TYPE_SKIPPING {
-					indexed = true
-				}
-			}
-			_, isEntity := is.indexRuleLocators.EntitySet[t.Name]
-			if isEntity {
-				continue
-			}
-			tv := encodeTagValue(t.Name, t.Type, tagValue)
-			tv.indexed = indexed
-			tf.values = append(tf.values, tv)
 		}
-		if len(tf.values) > 0 {
-			tagFamilies = append(tagFamilies, tf)
-		}
+		tv := encodeTagValue(tagSpec.Name, tagSpec.Type, tagValue)
+		tv.indexed = indexed
+		tags = append(tags, tv)
 	}
-	elements.tagFamilies = append(elements.tagFamilies, tagFamilies)
-
-	*tableDocs = append(*tableDocs, index.Document{
-		DocID:     eID,
-		Fields:    fields,
-		Timestamp: ts,
-	})
-
-	docID := uint64(series.ID)
-	if _, existed := seriesDocs.docIDsAdded[docID]; !existed {
-		seriesDocs.docs = append(seriesDocs.docs, index.Document{
-			DocID:        docID,
-			EntityValues: series.Buffer,
-		})
-		seriesDocs.docIDsAdded[docID] = struct{}{}
-	}
-
+	traces.tags = append(traces.tags, tags)
 	return nil
 }
 
@@ -278,14 +234,14 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		w.l.Warn().Msg("empty event")
 		return
 	}
-	groups := make(map[string]*elementsInGroup)
+	groups := make(map[string]*tracesInGroup)
 	for i := range events {
-		var writeEvent *streamv1.InternalWriteRequest
+		var writeEvent *tracev1.InternalWriteRequest
 		switch e := events[i].(type) {
-		case *streamv1.InternalWriteRequest:
+		case *tracev1.InternalWriteRequest:
 			writeEvent = e
 		case []byte:
-			writeEvent = &streamv1.InternalWriteRequest{}
+			writeEvent = &tracev1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
 				continue
@@ -297,7 +253,7 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		var err error
 		if groups, err = w.handle(groups, writeEvent); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
-			groups = make(map[string]*elementsInGroup)
+			groups = make(map[string]*tracesInGroup)
 			continue
 		}
 	}
@@ -305,8 +261,8 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddElements(es.elements)
-			releaseElements(es.elements)
+			es.tsTable.mustAddTraces(es.traces)
+			releaseTraces(es.traces)
 		}
 		if len(g.segments) > 0 {
 			for _, segment := range g.segments {
@@ -409,4 +365,13 @@ func appendField(dest []index.Field, fieldKey index.FieldKey, tagType databasev1
 		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())
 	}
 	return dest
+}
+
+func getTagIndex(trace *trace, name string) (int, error) {
+	for i, tag := range trace.schema.Tags {
+		if tag.Name == name {
+			return i, nil
+		}
+	}
+	return -1, fmt.Errorf("tag %s not found in trace %s", name, trace.name)
 }

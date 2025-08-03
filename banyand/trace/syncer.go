@@ -127,7 +127,7 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 
 			// Create message with combined data (group + shardID + partData)
 			message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-			f, err := tst.option.tire2Client.Publish(ctx, data.TopicStreamPartSync, message)
+			f, err := tst.option.tire2Client.Publish(ctx, data.TopicTracePartSync, message)
 			if err != nil {
 				return fmt.Errorf("failed to publish part %d to pipeline: %w", part.partMetadata.ID, err)
 			}

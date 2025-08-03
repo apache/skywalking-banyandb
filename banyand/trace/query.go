@@ -29,17 +29,15 @@ import (
 )
 
 type queryOptions struct {
-	elementFilter  posting.List
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
 	sortedSids     []common.SeriesID
-	model.StreamQueryOptions
+	model.TraceQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
 }
 
 func (qo *queryOptions) reset() {
-	qo.StreamQueryOptions.Reset()
-	qo.elementFilter = nil
+	qo.TraceQueryOptions.Reset()
 	qo.seriesToEntity = nil
 	qo.sortedSids = nil
 	qo.minTimestamp = 0
@@ -47,8 +45,7 @@ func (qo *queryOptions) reset() {
 }
 
 func (qo *queryOptions) copyFrom(other *queryOptions) {
-	qo.StreamQueryOptions.CopyFrom(&other.StreamQueryOptions)
-	qo.elementFilter = other.elementFilter
+	qo.TraceQueryOptions.CopyFrom(&other.TraceQueryOptions)
 	qo.seriesToEntity = other.seriesToEntity
 	qo.sortedSids = other.sortedSids
 	qo.minTimestamp = other.minTimestamp
