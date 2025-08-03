@@ -20,11 +20,15 @@ package gossip
 import (
 	"context"
 
+	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
+
+// ErrAbortPropagation is an error that indicates the gossip propagation of a message should be aborted.
+var ErrAbortPropagation = errors.New("abort propagation")
 
 // MessageListener is an interface that defines a method to handle the incoming propagation message.
 type MessageListener interface {
@@ -48,14 +52,18 @@ type Messenger interface {
 type MessageClient interface {
 	run.Unit
 	// Propagation using anti-entropy gossip protocol to propagate messages to the specified nodes.
-	Propagation(nodes []string, topic string) error
+	Propagation(nodes []string, group string, shardID uint32) error
+	// LocateNodes finds nodes in the specified group and shard ID, returning a list of node addresses.
+	LocateNodes(group string, shardID, replicasCount uint32) ([]string, error)
 }
 
 // MessageServer is an interface that defines methods for subscribing to topics and receiving messages in a gossip protocol.
 type MessageServer interface {
 	run.Unit
 	// Subscribe allows subscribing to a topic to receive messages.
-	Subscribe(listener MessageListener) error
+	Subscribe(listener MessageListener)
+	// RegisterServices registers the gRPC services with the provided server.
+	RegisterServices(func(r *grpc.Server))
 	// GetServerPort returns the port number of the server.
 	GetServerPort() *uint32
 }

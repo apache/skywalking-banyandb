@@ -241,7 +241,9 @@ func (s *shard) updateDocuments(docs index.Documents) error {
 	if persistentError != nil {
 		return fmt.Errorf("persistent failure: %w", persistentError)
 	}
-	s.repairState.scheduler.documentUpdatesNotify()
+	if s.repairState.scheduler != nil {
+		s.repairState.scheduler.documentUpdatesNotify()
+	}
 	return nil
 }
 
@@ -286,18 +288,18 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 	return data, nil
 }
 
-func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Property, deleteTime int64) error {
+func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Property, deleteTime int64) (updated bool, selfNewer *queryProperty, err error) {
 	iq, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
 		Groups: []string{property.Metadata.Group},
 		Name:   property.Metadata.Name,
 		Ids:    []string{property.Id},
 	}, groupField, entityID)
 	if err != nil {
-		return fmt.Errorf("build property query failure: %w", err)
+		return false, nil, fmt.Errorf("build property query failure: %w", err)
 	}
 	olderProperties, err := s.search(ctx, iq, 100)
 	if err != nil {
-		return fmt.Errorf("query older properties failed: %w", err)
+		return false, nil, fmt.Errorf("query older properties failed: %w", err)
 	}
 	sort.Sort(queryPropertySlice(olderProperties))
 	// if there no older properties, we can insert the latest document.
@@ -305,35 +307,41 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 		var doc *index.Document
 		doc, err = s.buildUpdateDocument(id, property, deleteTime)
 		if err != nil {
-			return fmt.Errorf("build update document failed: %w", err)
+			return false, nil, fmt.Errorf("build update document failed: %w", err)
 		}
-		return s.updateDocuments(index.Documents{*doc})
+		err = s.updateDocuments(index.Documents{*doc})
+		if err != nil {
+			return false, nil, fmt.Errorf("update document failed: %w", err)
+		}
+		return true, nil, nil
 	}
 
 	// if the lastest property in shard is bigger than the repaired property,
 	// then the repaired process should be stopped.
-	if olderProperties[len(olderProperties)-1].timestamp > property.Metadata.ModRevision {
-		return nil
+	if (olderProperties[len(olderProperties)-1].timestamp > property.Metadata.ModRevision) ||
+		olderProperties[len(olderProperties)-1].timestamp == property.Metadata.ModRevision &&
+			olderProperties[len(olderProperties)-1].deleteTime == deleteTime {
+		return false, olderProperties[len(olderProperties)-1], nil
 	}
 
 	docIDList := s.buildNotDeletedDocIDList(olderProperties)
 	deletedDocuments, err := s.buildDeleteFromTimeDocuments(ctx, docIDList, time.Now().UnixNano())
 	if err != nil {
-		return fmt.Errorf("build delete older documents failed: %w", err)
+		return false, nil, fmt.Errorf("build delete older documents failed: %w", err)
 	}
 	// update the property to mark it as delete
 	updateDoc, err := s.buildUpdateDocument(id, property, deleteTime)
 	if err != nil {
-		return fmt.Errorf("build repair document failure: %w", err)
+		return false, nil, fmt.Errorf("build repair document failure: %w", err)
 	}
 	result := make([]index.Document, 0, len(deletedDocuments)+1)
 	result = append(result, deletedDocuments...)
 	result = append(result, *updateDoc)
 	err = s.updateDocuments(result)
 	if err != nil {
-		return fmt.Errorf("update documents failed: %w", err)
+		return false, nil, fmt.Errorf("update documents failed: %w", err)
 	}
-	return nil
+	return true, nil, nil
 }
 
 func (s *shard) buildNotDeletedDocIDList(properties []*queryProperty) [][]byte {

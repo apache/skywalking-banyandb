@@ -49,13 +49,21 @@ var (
 	      "RetryableStatusCodes": [ "UNAVAILABLE" ]
 	  }
 	}]}`, serviceName)
+
+	// perNodeSyncTimeout is the timeout for each node to sync the property data.
+	perNodeSyncTimeout = time.Minute * 10
 )
 
-func (s *service) Subscribe(listener MessageListener) error {
+func (s *service) Subscribe(listener MessageListener) {
 	s.listenersLock.Lock()
 	defer s.listenersLock.Unlock()
 	s.listeners = append(s.listeners, listener)
-	return nil
+}
+
+func (s *service) RegisterServices(f func(r *grpc.Server)) {
+	s.serviceRegisterLock.Lock()
+	defer s.serviceRegisterLock.Unlock()
+	s.serviceRegister = append(s.serviceRegister, f)
 }
 
 func (s *service) getListener() MessageListener {
@@ -67,7 +75,16 @@ func (s *service) getListener() MessageListener {
 	return s.listeners[0]
 }
 
-type groupPropagation struct {
+func (s *service) getServiceRegisters() []func(server *grpc.Server) {
+	s.serviceRegisterLock.RLock()
+	defer s.serviceRegisterLock.RUnlock()
+	if len(s.serviceRegister) == 0 {
+		return nil
+	}
+	return s.serviceRegister
+}
+
+type groupWithShardPropagation struct {
 	latestTime     time.Time
 	channel        chan *propertyv1.PropagationRequest
 	originalNodeID string
@@ -75,17 +92,17 @@ type groupPropagation struct {
 
 type protocolHandler struct {
 	propertyv1.UnimplementedGossipServiceServer
-	s           *service
-	groups      map[string]*groupPropagation
-	groupNotify chan struct{}
-	mu          sync.RWMutex
+	s               *service
+	groupWithShards map[string]*groupWithShardPropagation
+	groupNotify     chan struct{}
+	mu              sync.RWMutex
 }
 
 func newProtocolHandler(s *service) *protocolHandler {
 	return &protocolHandler{
-		s:           s,
-		groups:      make(map[string]*groupPropagation),
-		groupNotify: make(chan struct{}, 10),
+		s:               s,
+		groupWithShards: make(map[string]*groupWithShardPropagation),
+		groupNotify:     make(chan struct{}, 10),
 	}
 }
 
@@ -98,7 +115,9 @@ func (q *protocolHandler) processPropagation() {
 			if request == nil {
 				continue
 			}
-			err := q.handle(q.s.closer.Ctx(), request)
+			timeoutCtx, cancelFunc := context.WithTimeout(q.s.closer.Ctx(), perNodeSyncTimeout)
+			err := q.handle(timeoutCtx, request)
+			cancelFunc()
 			if err != nil {
 				q.s.log.Warn().Err(err).Stringer("request", request).
 					Msgf("handle propagation request failure")
@@ -112,7 +131,7 @@ func (q *protocolHandler) processPropagation() {
 func (q *protocolHandler) findUnProcessRequest() *propertyv1.PropagationRequest {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	for _, g := range q.groups {
+	for _, g := range q.groupWithShards {
 		select {
 		case d := <-g.channel:
 			return d
@@ -141,6 +160,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	now := n.UnixNano()
 	nodes := request.Context.Nodes
 	q.s.serverMetrics.totalStarted.Inc(1, request.Group)
+	q.s.log.Debug().Stringer("request", request).Msgf("handling gossip message for propagation")
 	var needsKeepPropagation bool
 	defer func() {
 		if err != nil {
@@ -175,6 +195,11 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 		// process the message using the listener
 		err = listener.Rev(ctx, nextNodeConn, request)
 		if err != nil {
+			if errors.Is(err, ErrAbortPropagation) {
+				q.s.log.Warn().Err(err).Msgf("propagation aborted by listener for node: %s", nextNodeID)
+				_ = nextNodeConn.Close()
+				return nil // Abort propagation, no need to continue
+			}
 			q.s.log.Warn().Err(err).Msgf("failed to process with next node: %s", nextNodeID)
 			_ = nextNodeConn.Close()
 			continue
@@ -199,6 +224,14 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 		return nil
 	}
 
+	if q.contextIsDone(ctx) {
+		if nextNodeConn != nil {
+			_ = nextNodeConn.Close()
+		}
+		q.s.log.Debug().Msgf("context is done, no need to propagate further")
+		return nil
+	}
+
 	// propagate the message to the next node
 	needsKeepPropagation = true
 	q.s.serverMetrics.totalSendToNextStarted.Inc(1, request.Group)
@@ -217,42 +250,52 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	return nil
 }
 
+func (q *protocolHandler) contextIsDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
+	}
+}
+
 func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	group, exist := q.groups[request.Group]
+	shardKey := fmt.Sprintf("%s_%d", request.Group, request.ShardId)
+	groupShard, exist := q.groupWithShards[shardKey]
 	if !exist {
-		group = &groupPropagation{
+		groupShard = &groupWithShardPropagation{
 			channel:        make(chan *propertyv1.PropagationRequest, 1),
 			originalNodeID: request.Context.OriginNode,
 			latestTime:     time.Now(),
 		}
-		group.channel <- request
-		q.groups[request.Group] = group
+		groupShard.channel <- request
+		q.groupWithShards[shardKey] = groupShard
 		q.notifyNewRequest()
 		return true
 	}
 
 	// if the latest round is out of ttl, then needs to change to current node to executing
-	if time.Since(group.latestTime) > q.s.scheduleInterval/2 {
-		group.originalNodeID = request.Context.OriginNode
+	if time.Since(groupShard.latestTime) > q.s.scheduleInterval/2 {
+		groupShard.originalNodeID = request.Context.OriginNode
 		select {
-		case group.channel <- request:
+		case groupShard.channel <- request:
 			q.notifyNewRequest()
 		default:
-			q.s.log.Error().Msgf("ready to added propagation into group %s in a new round, but it's full", request.Group)
+			q.s.log.Error().Msgf("ready to added propagation into group shard %s(%d) in a new round, but it's full", request.Group, request.ShardId)
 		}
 		return true
 	}
 
 	// if the original node ID are a same node, means which from the same round
-	if group.originalNodeID == request.Context.OriginNode {
+	if groupShard.originalNodeID == request.Context.OriginNode {
 		select {
-		case group.channel <- request:
+		case groupShard.channel <- request:
 			q.notifyNewRequest()
 		default:
-			q.s.log.Error().Msgf("ready to added propagation into group %s in a same round, but it's full", request.Group)
+			q.s.log.Error().Msgf("ready to added propagation into group shard %s(%d) in a same round, but it's full", request.Group, request.ShardId)
 		}
 		return true
 	}
