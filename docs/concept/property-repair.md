@@ -153,10 +153,9 @@ After each synchronization cycle, the receiving node will send its trace data ba
 ## Property Repair
 
 Based on the Merkel tree and Gossip concept, the system can proceed with the Property Repair process.
-This process is scheduled to run on each data node daily at 1:00 AM(it's configurable as `property-background-repair-cron` flag), and follows these steps:
-1. **Select a Group**: The node retrieves a list of Property groups where the number of **replicas is greater than or equal to 2**, and randomly selects one group for repair.
+This process is scheduled to run on each data node daily at 2:00 AM(it's configurable as `property-background-repair-cron` flag), and follows these steps:
+1. **Select a Group and Select a Shard**: The node retrieves a list of Property groups where the number of **replicas is greater than or equal to 2**, and randomly selects one group for repair, then randomly selects a shard within that group.
 2. **Query Node List**: Then determines the list of nodes that hold replicas for the selected group and sends the gossip propagation message to those nodes to synchronize the Property data for that group.
-3. **Wait for the Result**: The initiating node waits for the final result of the synchronization process before proceeding.
 
 ### Property Synchronize between Two Nodes
 
@@ -165,20 +164,22 @@ Let’s refer to the current node as A and the target node as B. The process is 
 
 1. **(A)Establish Connection**: Node A initiates a **bidirectional streaming connection** with node B to enable real-time, two-way data transfer.
 2. **(A)Iterate Over Shards**: Node A retrieves the list of all Property-related shards for the selected group and processes them one by one.
-3. **(A)Send Merkle Tree Summary**: For each shard, node A reads its Merkle Tree and sends a summary (including root SHA and slots SHA) to node B. 
+3. **(A)Send Merkle Tree Root**: For each shard, node A reads its Merkle Tree and sends root SHA to node B.
 This allows B to quickly identify which slots may contain differences.
-4. **(B)Verify Merkle Tree Summary and Respond**: Node B compares the received summary against its own Merkle Tree for the same shard and group:
-   * If the root SHA matches, node B returns an empty slot list, indicating no differences. 
-   * If the root SHA differ, node B checks the slot SHA, identifies mismatched slots, and sends back all relevant leaf node details, including the **slot index**, **entity**, and **SHA value**.
-5. **(A)Compare Leaf Data**: Node A processes the received leaf data and takes the following actions: 
+4. **(B)Receive Merkle Tree Root**: Node B receives the root SHA from node A and sent the root SHA value is same or not.
+5. **(A)Send Slot Summary**: If the root SHA matches, node A finished the synchronization for that shard and moves to the next one.
+   If the root SHA differs, node A sends a summary of the slots, including the **slot index** and **SHA value** for each slot that has differences.
+6. **(B)Verify Merkle Tree Summary and Respond**: Node B compares the received summary against its own Merkle Tree for the same shard and group,
+identifies mismatched slots, and sends back all relevant leaf node details, including the **slot index**, **entity**, and **SHA value**.
+7. **(A)Compare Leaf Data**: Node A processes the received leaf data and takes the following actions: 
    * For missing entities (present on B but not on A), A requests the full Property data from B.
    * For entities present on A, but not on B, A sends the full Property data to B.
    * For SHA mismatches, A sends its full Property data to B for validation.
-6. **(B)Validate Actual Data**: Node B handles the data as follows: 
+8. **(B)Validate Actual Data**: Node B handles the data as follows: 
    * For missing entities, B returns the latest version of the data.
    * For entities present on A, but not on B, B updates its local copy with the data from A.
    * For SHA mismatches, B uses the "last-write-win" strategy. It compares the version numbers. If B’s version is newer, it returns the Property data to A. If A’s version is newer, B updates its local copy and does not return any data. If the versions are the same, it selects the data from the smaller index of the node list; in this case, it would be from A.
-7. **(A)Update Local Data**: Node A receives updated Property data from B and applies the changes to its local store.
+9. **(A)Update Local Data**: Node A receives updated Property data from B and applies the changes to its local store.
 
 This concludes the A-to-B synchronization cycle for a given group in the Property repair process.
 
@@ -186,7 +187,9 @@ This concludes the A-to-B synchronization cycle for a given group in the Propert
 
 During the synchronization process, the system will terminate or skip processing under the following scenarios:
 
-1. **Merkle Tree Not Built**: If either node A or node B has not yet built the Merkle Tree for the target group, the gossip protocol is immediately terminated.
+1. **Merkle Tree Not Built**: 
+   1. If node A(client) has not yet built the Merkel Tree for the target group, the gossip protocol is immediately terminated.
+   2. If node B(server) has not yet built the Merkle Tree for the target group, the client would skip the current server and try to find another next to continue the gossip protocol.
 2. **Duplicate Sync Request**: If a new gossip sync request for the same group is received by either node while an existing synchronization is in progress, the new request is terminated to avoid conflicts.
 3. **Target Node Connection Failure Handling**: When the current node fails to connect to the target node, the following fallback logic applies:
    1. **Target Not in Connection Pool**: Skip the target, decrement the max round count by 1, and attempt the next available node. Trace information is recorded.
