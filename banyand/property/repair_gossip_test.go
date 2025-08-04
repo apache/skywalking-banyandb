@@ -468,8 +468,8 @@ type repairGossipClientWrapper struct {
 	once *sync.Once
 }
 
-func (w *repairGossipClientWrapper) Rev(ctx context.Context, nextNode *grpc.ClientConn, request *propertyv1.PropagationRequest) error {
-	err := w.repairGossipClient.Rev(ctx, nextNode, request)
+func (w *repairGossipClientWrapper) Rev(ctx context.Context, t gossip.Trace, nextNode *grpc.ClientConn, request *propertyv1.PropagationRequest) error {
+	err := w.repairGossipClient.Rev(ctx, t, nextNode, request)
 	w.once.Do(func() {
 		close(w.c)
 	})

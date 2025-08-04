@@ -86,8 +86,14 @@ func (s *service) getServiceRegisters() []func(server *grpc.Server) {
 
 type groupWithShardPropagation struct {
 	latestTime     time.Time
-	channel        chan *propertyv1.PropagationRequest
+	channel        chan *handlingRequest
 	originalNodeID string
+}
+
+type handlingRequest struct {
+	*propertyv1.PropagationRequest
+	tracer     Trace
+	parentSpan Span
 }
 
 type protocolHandler struct {
@@ -119,7 +125,7 @@ func (q *protocolHandler) processPropagation() {
 			err := q.handle(timeoutCtx, request)
 			cancelFunc()
 			if err != nil {
-				q.s.log.Warn().Err(err).Stringer("request", request).
+				q.s.log.Warn().Err(err).Stringer("request", request.PropagationRequest).
 					Msgf("handle propagation request failure")
 			}
 		case <-q.s.closer.CloseNotify():
@@ -128,7 +134,7 @@ func (q *protocolHandler) processPropagation() {
 	}
 }
 
-func (q *protocolHandler) findUnProcessRequest() *propertyv1.PropagationRequest {
+func (q *protocolHandler) findUnProcessRequest() *handlingRequest {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for _, g := range q.groupWithShards {
@@ -142,20 +148,36 @@ func (q *protocolHandler) findUnProcessRequest() *propertyv1.PropagationRequest 
 	return nil
 }
 
+// nolint: contextcheck
 func (q *protocolHandler) Propagation(_ context.Context, request *propertyv1.PropagationRequest) (resp *propertyv1.PropagationResponse, err error) {
+	tracer := q.s.createTraceForRequest(request)
+	return q.propagation0(nil, request, tracer)
+}
+
+func (q *protocolHandler) propagation0(_ context.Context, request *propertyv1.PropagationRequest, tracer Trace) (resp *propertyv1.PropagationResponse, err error) {
+	span := tracer.CreateSpan(tracer.ActivateSpan(), "receive gossip message")
+	defer span.End()
+	span.Tag(TraceTagGroupName, request.Group)
+	span.Tag(TraceTagShardID, fmt.Sprintf("%d", request.ShardId))
+	span.Tag(TraceTagOperateType, TraceTagOperateReceive)
 	q.s.serverMetrics.totalReceived.Inc(1, request.Group)
 	q.s.log.Debug().Stringer("request", request).Msg("received property repair gossip message for propagation")
-	if q.addToProcess(request) {
+
+	if q.addToProcess(request, tracer) {
+		span.Tag("added_to_process", "true")
 		q.s.serverMetrics.totalAddProcessed.Inc(1, request.Group)
 		q.s.log.Debug().Msgf("add the propagation request to the process")
 	} else {
+		span.Tag("added_to_process", "false")
 		q.s.serverMetrics.totalSkipProcess.Inc(1, request.Group)
 		q.s.log.Debug().Msgf("propagation request discarded")
 	}
 	return &propertyv1.PropagationResponse{}, nil
 }
 
-func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.PropagationRequest) (err error) {
+func (q *protocolHandler) handle(ctx context.Context, request *handlingRequest) (err error) {
+	handlingSpan := request.tracer.CreateSpan(request.parentSpan, "handling gossip message")
+	handlingSpan.Tag(TraceTagOperateType, TraceTagOperateHandle)
 	n := time.Now()
 	now := n.UnixNano()
 	nodes := request.Context.Nodes
@@ -165,6 +187,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	defer func() {
 		if err != nil {
 			q.s.serverMetrics.totalSendToNextErr.Inc(1, request.Group)
+			handlingSpan.Error(err.Error())
 		}
 		q.s.serverMetrics.totalFinished.Inc(1, request.Group)
 		q.s.serverMetrics.totalLatency.Inc(n.Sub(time.Unix(0, now)).Seconds(), request.Group)
@@ -174,6 +197,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 			q.s.serverMetrics.totalPropagationPercent.Observe(
 				float64(request.Context.CurrentPropagationCount)/float64(request.Context.MaxPropagationCount), request.Group)
 		}
+		handlingSpan.End()
 	}()
 	if len(nodes) == 0 {
 		return nil
@@ -186,15 +210,25 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	var nextNodeConn *grpc.ClientConn
 	var executeSuccess bool
 	for offset := 1; offset < len(nodes); offset++ {
-		nextNodeID, nextNodeConn, err = q.nextNodeConnection(nodes, offset)
+		selectNodeSpan := request.tracer.CreateSpan(handlingSpan, "selecting next node")
+		selectNodeSpan.Tag(TraceTagOperateType, TraceTagOperateSelectNode)
+		nextNodeID, nextNodeConn, err = q.nextNodeConnection(nodes, offset, selectNodeSpan)
 		if err != nil {
+			selectNodeSpan.Error(err.Error())
+			selectNodeSpan.End()
 			q.s.log.Warn().Err(err).Msgf("failed to connect to next node with offset: %d", offset)
 			continue
 		}
+		selectNodeSpan.Tag(TraceTagTargetNode, nextNodeID)
+		selectNodeSpan.End()
 
 		// process the message using the listener
-		err = listener.Rev(ctx, nextNodeConn, request)
+		listenerProcessSpan := request.tracer.CreateSpan(handlingSpan, "listener processing sync")
+		listenerProcessSpan.Tag(TraceTagOperateType, TraceTagOperateListenerReceive)
+		err = listener.Rev(ctx, request.tracer, nextNodeConn, request.PropagationRequest)
 		if err != nil {
+			listenerProcessSpan.Error(err.Error())
+			listenerProcessSpan.End()
 			if errors.Is(err, ErrAbortPropagation) {
 				q.s.log.Warn().Err(err).Msgf("propagation aborted by listener for node: %s", nextNodeID)
 				_ = nextNodeConn.Close()
@@ -204,6 +238,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 			_ = nextNodeConn.Close()
 			continue
 		}
+		listenerProcessSpan.End()
 
 		executeSuccess = true
 		break
@@ -233,19 +268,25 @@ func (q *protocolHandler) handle(ctx context.Context, request *propertyv1.Propag
 	}
 
 	// propagate the message to the next node
+	toNextSpan := request.tracer.CreateSpan(handlingSpan, "propagation to next node")
+	toNextSpan.Tag(TraceTagTargetNode, nextNodeID)
+	toNextSpan.Tag(TraceTagOperateType, TraceTagOperateSendToNext)
 	needsKeepPropagation = true
 	q.s.serverMetrics.totalSendToNextStarted.Inc(1, request.Group)
 	propagationStart := time.Now()
 	q.s.log.Debug().Stringer("request", request).Str("nextNodeID", nextNodeID).
 		Msg("propagating gossip message to next node")
-	_, err = propertyv1.NewGossipServiceClient(nextNodeConn).Propagation(ctx, request)
+	_, err = propertyv1.NewGossipServiceClient(nextNodeConn).Propagation(ctx, request.PropagationRequest)
 	_ = nextNodeConn.Close()
 	q.s.serverMetrics.totalSendToNextFinished.Inc(1, request.Group)
 	q.s.serverMetrics.totalSendToNextLatency.Inc(time.Since(propagationStart).Seconds(), request.Group)
 	if err != nil {
+		toNextSpan.Error(err.Error())
+		toNextSpan.End()
 		q.s.serverMetrics.totalSendToNextErr.Inc(1, request.Group)
 		return fmt.Errorf("failed to propagate gossip message to next node: %w", err)
 	}
+	toNextSpan.End()
 
 	return nil
 }
@@ -259,19 +300,24 @@ func (q *protocolHandler) contextIsDone(ctx context.Context) bool {
 	}
 }
 
-func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest) bool {
+func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest, tracer Trace) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	shardKey := fmt.Sprintf("%s_%d", request.Group, request.ShardId)
 	groupShard, exist := q.groupWithShards[shardKey]
+	handlingRequestData := &handlingRequest{
+		PropagationRequest: request,
+		tracer:             tracer,
+		parentSpan:         tracer.ActivateSpan(),
+	}
 	if !exist {
 		groupShard = &groupWithShardPropagation{
-			channel:        make(chan *propertyv1.PropagationRequest, 1),
+			channel:        make(chan *handlingRequest, 1),
 			originalNodeID: request.Context.OriginNode,
 			latestTime:     time.Now(),
 		}
-		groupShard.channel <- request
+		groupShard.channel <- handlingRequestData
 		q.groupWithShards[shardKey] = groupShard
 		q.notifyNewRequest()
 		return true
@@ -281,7 +327,7 @@ func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest) b
 	if time.Since(groupShard.latestTime) > q.s.scheduleInterval/2 {
 		groupShard.originalNodeID = request.Context.OriginNode
 		select {
-		case groupShard.channel <- request:
+		case groupShard.channel <- handlingRequestData:
 			q.notifyNewRequest()
 		default:
 			q.s.log.Error().Msgf("ready to added propagation into group shard %s(%d) in a new round, but it's full", request.Group, request.ShardId)
@@ -292,7 +338,7 @@ func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest) b
 	// if the original node ID are a same node, means which from the same round
 	if groupShard.originalNodeID == request.Context.OriginNode {
 		select {
-		case groupShard.channel <- request:
+		case groupShard.channel <- handlingRequestData:
 			q.notifyNewRequest()
 		default:
 			q.s.log.Error().Msgf("ready to added propagation into group shard %s(%d) in a same round, but it's full", request.Group, request.ShardId)
@@ -312,7 +358,7 @@ func (q *protocolHandler) notifyNewRequest() {
 	}
 }
 
-func (q *protocolHandler) nextNodeConnection(nodes []string, offset int) (string, *grpc.ClientConn, error) {
+func (q *protocolHandler) nextNodeConnection(nodes []string, offset int, span Span) (string, *grpc.ClientConn, error) {
 	if len(nodes) == 0 {
 		return "", nil, errors.New("no nodes available for gossip message propagation")
 	}
@@ -328,6 +374,7 @@ func (q *protocolHandler) nextNodeConnection(nodes []string, offset int) (string
 	if !exist {
 		return "", nil, errors.New("no valid node found for gossip message propagation")
 	}
+	span.Tag(TraceTagTargetNode, nodeID)
 	conn, err := q.s.newConnectionFromNode(node)
 	if err != nil {
 		return "", nil, err

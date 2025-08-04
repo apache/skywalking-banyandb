@@ -206,7 +206,7 @@ func CMD(flags ...string) func() {
 	}
 }
 
-func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, func()) {
+func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, string, func()) {
 	ports, err := test.AllocateFreePorts(2)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -236,14 +236,14 @@ func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, func(
 		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
 	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
 
-	return addr, closeFn
+	return addr, fmt.Sprintf("%s:%d", host, ports[1]), closeFn
 }
 
 // DataNode runs a data node.
 func DataNode(etcdEndpoint string, flags ...string) func() {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	closeFn := DataNodeFromDataDir(etcdEndpoint, path, flags...)
+	_, _, closeFn := DataNodeFromDataDir(etcdEndpoint, path, flags...)
 	return func() {
 		fmt.Printf("Data tsdb path: %s\n", path)
 		_ = filepath.Walk(path, func(path string, _ os.FileInfo, err error) error {
@@ -260,16 +260,16 @@ func DataNode(etcdEndpoint string, flags ...string) func() {
 }
 
 // DataNodeFromDataDir runs a data node with a specific data directory.
-func DataNodeFromDataDir(etcdEndpoint, dataDir string, flags ...string) func() {
-	_, closeFn := startDataNode(etcdEndpoint, dataDir, flags...)
-	return closeFn
+func DataNodeFromDataDir(etcdEndpoint, dataDir string, flags ...string) (string, string, func()) {
+	grpcAddr, propertyRepairAddr, closeFn := startDataNode(etcdEndpoint, dataDir, flags...)
+	return grpcAddr, propertyRepairAddr, closeFn
 }
 
 // DataNodeWithAddrAndDir runs a data node and returns the address and root path.
 func DataNodeWithAddrAndDir(etcdEndpoint string, flags ...string) (string, string, func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	addr, closeFn := startDataNode(etcdEndpoint, path, flags...)
+	addr, _, closeFn := startDataNode(etcdEndpoint, path, flags...)
 	return addr, path, func() {
 		closeFn()
 		deferFn()

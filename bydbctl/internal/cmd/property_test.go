@@ -33,9 +33,15 @@ import (
 	"github.com/zenizh/go-capturer"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -453,9 +459,9 @@ var _ = Describe("Property Cluster Operation", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 		<-server.ReadyNotify()
 		By("Starting data node 0")
-		closeNode1 = setup.DataNodeFromDataDir(ep, node1Dir)
+		_, _, closeNode1 = setup.DataNodeFromDataDir(ep, node1Dir)
 		By("Starting data node 1")
-		closeNode2 = setup.DataNodeFromDataDir(ep, node2Dir)
+		_, _, closeNode2 = setup.DataNodeFromDataDir(ep, node2Dir)
 		By("Starting liaison node")
 		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(ep)
 		By("Initializing test cases")
@@ -562,6 +568,136 @@ var _ = Describe("Property Cluster Operation", func() {
 
 		// created again, the created should be true
 		applyData(rootCmd, addr, p1YAML, true, propertyTagCount)
+	})
+})
+
+var _ = Describe("Property Cluster background Repair Operation", func() {
+	Expect(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})).To(Succeed())
+
+	var deferFunc func()
+	var addr string
+	var rootCmd *cobra.Command
+	var node1Dir, node2Dir string
+	var node1ID, node2ID string
+	var messenger gossip.Messenger
+	var closeNode1, closeNode2 func()
+
+	BeforeEach(func() {
+		rootCmd = &cobra.Command{Use: "root"}
+		cmd.RootCmdFlags(rootCmd)
+		var ports []int
+		var err error
+		var spaceDef1, spaceDef2 func()
+
+		// first creating
+		By("Starting node1 with data")
+		node1Dir, spaceDef1, err = test.NewSpace()
+		Expect(err).NotTo(HaveOccurred())
+		ports, err = test.AllocateFreePorts(4)
+		Expect(err).NotTo(HaveOccurred())
+		_, node1Addr, node1Defer := setup.ClosableStandalone(node1Dir, ports)
+		node1Addr = httpSchema + node1Addr
+		defUITemplateWithSchema(rootCmd, node1Addr, 1, 0)
+		applyData(rootCmd, node1Addr, p1YAML, true, propertyTagCount)
+		node1Defer()
+
+		By("Starting node2 with data")
+		node2Dir, spaceDef2, err = test.NewSpace()
+		Expect(err).NotTo(HaveOccurred())
+		ports, err = test.AllocateFreePorts(4)
+		Expect(err).NotTo(HaveOccurred())
+		_, node2Addr, node2Defer := setup.ClosableStandalone(node2Dir, ports)
+		node2Addr = httpSchema + node2Addr
+		defUITemplateWithSchema(rootCmd, node2Addr, 1, 0)
+		applyData(rootCmd, node2Addr, p2YAML, true, propertyTagCount)
+		node2Defer()
+
+		// setup cluster with two data nodes
+		By("Starting etcd server")
+		ports, err = test.AllocateFreePorts(4)
+		Expect(err).NotTo(HaveOccurred())
+		dir, spaceDef, err := test.NewSpace()
+		Expect(err).NotTo(HaveOccurred())
+		ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
+		server, err := embeddedetcd.NewServer(
+			embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
+			embeddedetcd.RootDir(dir),
+		)
+		Expect(err).ShouldNot(HaveOccurred())
+		<-server.ReadyNotify()
+		By("Starting data node 0")
+		var node1Repair, node2Repair string
+		node1ID, node1Repair, closeNode1 = setup.DataNodeFromDataDir(ep, node1Dir, "--property-repair-enabled=true")
+		By("Starting data node 1")
+		node2ID, node2Repair, closeNode2 = setup.DataNodeFromDataDir(ep, node2Dir, "--property-repair-enabled=true")
+		By("Initializing test cases")
+		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(ep)
+		addr = httpSchema + liaisonHTTPAddr
+
+		// update the node ID to use 127.0.0.1
+		_, node1Port, found := strings.Cut(node1ID, ":")
+		Expect(found).To(BeTrue())
+		_, node2Port, found := strings.Cut(node2ID, ":")
+		Expect(found).To(BeTrue())
+		node1ID = fmt.Sprintf("127.0.0.1:%s", node1Port)
+		node2ID = fmt.Sprintf("127.0.0.1:%s", node2Port)
+
+		messenger = gossip.NewMessengerWithoutMetadata(observability.NewBypassRegistry(), 9999)
+		messenger.Validate()
+		err = messenger.PreRun(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{
+			NodeID: "not-exist",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		registerNodeToMessenger(messenger, node1ID, node1Repair)
+		registerNodeToMessenger(messenger, node2ID, node2Repair)
+
+		deferFunc = func() {
+			messenger.GracefulStop()
+			closerLiaisonNode()
+			closeNode1()
+			closeNode2()
+			_ = server.Close()
+			<-server.StopNotify()
+			spaceDef()
+			spaceDef1()
+			spaceDef2()
+		}
+	})
+
+	AfterEach(func() {
+		deferFunc()
+	})
+
+	It("Repair with tracing", func() {
+		err := messenger.Propagation([]string{node1ID, node2ID}, propertyGroup, 0)
+		Expect(err).NotTo(HaveOccurred())
+
+		rootCmd.SetArgs([]string{"stream", "query", "-a", addr, "-f", "-"})
+		issue := func() string {
+			rootCmd.SetIn(strings.NewReader(`
+name: _property_gossip_trace_stream
+groups: ["_property_gossip"]
+projection:
+  tagFamilies:
+    - name: searchable
+      tags:
+        - trace_id`))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				Expect(err).NotTo(HaveOccurred())
+			})
+		}
+		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
+		Eventually(func() int {
+			out := issue()
+			resp := new(streamv1.QueryResponse)
+			helpers.UnmarshalYAML([]byte(out), resp)
+			GinkgoWriter.Println(resp)
+			return len(resp.Elements)
+		}, flags.EventuallyTimeout).Should(BeNumerically(">", 0))
 	})
 })
 
@@ -713,4 +849,21 @@ func (p propertySlice) Less(i, j int) bool {
 
 func (p propertySlice) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
+}
+
+func registerNodeToMessenger(m gossip.Messenger, nodeID, gossipRepairAddr string) {
+	m.(schema.EventHandler).OnAddOrUpdate(schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Name: nodeID,
+			Kind: schema.KindNode,
+		},
+		Spec: &databasev1.Node{
+			Metadata: &commonv1.Metadata{
+				Name: nodeID,
+			},
+			Roles:                           []databasev1.Role{databasev1.Role_ROLE_DATA},
+			GrpcAddress:                     nodeID,
+			PropertyRepairGossipGrpcAddress: gossipRepairAddr,
+		},
+	})
 }
