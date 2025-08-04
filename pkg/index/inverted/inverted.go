@@ -22,6 +22,8 @@ import (
 	"context"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -226,6 +228,27 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	config.DefaultSearchAnalyzer = analyzer.Analyzers[index.AnalyzerKeyword]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
 	config = config.WithPrepareMergeCallback(opts.PrepareMergeCallback)
+	if opts.EnableDeduplication {
+		if opts.ExternalSegmentTempDir == "" {
+			return nil, errors.New("ExternalSegmentTempDir must be set when EnableDeduplication is true")
+		}
+		absPath, err := filepath.Abs(opts.ExternalSegmentTempDir)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get absolute path for ExternalSegmentTempDir")
+		}
+		info, err := os.Stat(absPath)
+		switch {
+		case os.IsNotExist(err):
+			if mkErr := os.MkdirAll(absPath, 0o755); mkErr != nil {
+				return nil, errors.Wrap(mkErr, "failed to create ExternalSegmentTempDir")
+			}
+		case err != nil:
+			return nil, errors.Wrap(err, "failed to stat ExternalSegmentTempDir")
+		case !info.IsDir():
+			return nil, errors.Errorf("ExternalSegmentTempDir path exists but is not a directory: %s", absPath)
+		}
+		opts.ExternalSegmentTempDir = absPath
+	}
 
 	config = config.WithExternalSegments(opts.ExternalSegmentTempDir, opts.EnableDeduplication)
 	w, err := bluge.OpenWriter(config)

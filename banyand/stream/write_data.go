@@ -231,7 +231,10 @@ func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, 
 		seriesCtx.fileName = ctx.FileName
 		seriesCtx.streamer = streamer
 	}
-	return seriesCtx.streamer.WriteChunk(chunk)
+	if err := seriesCtx.streamer.WriteChunk(chunk); err != nil {
+		return fmt.Errorf("failed to write chunk (size: %d) to file %q: %w", len(chunk), ctx.FileName, err)
+	}
+	return nil
 }
 
 type syncElementIndexContext struct {

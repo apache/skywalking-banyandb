@@ -501,8 +501,12 @@ func (mv *streamMigrationVisitor) SetStreamElementIndexCount(totalSegmentFiles i
 	}
 }
 
-// calculateTargetShardID maps source shard ID to target shard ID.
+// calculateTargetShardID maps source shard ID to target shard ID using proportional mapping.
+// This approach distributes source shards as evenly as possible among target shards,
+// minimizing the risk of uneven data distribution during migration.
 // Used by both stream and measure migration visitors.
+// sourceShardNum: total number of source shards.
+// targetShardNum: total number of target shards.
 func calculateTargetShardID(sourceShardID uint32, targetShardNum uint32) uint32 {
 	// Simple modulo-based mapping from source shard to target shard
 	// This ensures deterministic and balanced distribution

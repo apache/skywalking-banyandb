@@ -80,12 +80,12 @@ func VisitSegmentsInTimeRange(tsdbRootPath string, timeRange timestamp.TimeRange
 		// Visit series index directory
 		seriesIndexPath := filepath.Join(segInfo.path, seriesIndexDirName)
 		if err := visitor.VisitSeries(&segInfo.timeRange, seriesIndexPath, shardIDs); err != nil {
-			return errors.Wrapf(err, "failed to visit series index for segment %s", segInfo.suffix)
+			return errors.Wrapf(err, "failed to visit series index for segment (suffix: %s, path: %s, timeRange: %v)", segInfo.suffix, segInfo.path, segInfo.timeRange)
 		}
 
 		// Visit shard directories
 		if err := visitSegmentShards(segInfo.path, &segInfo.timeRange, visitor); err != nil {
-			return errors.Wrapf(err, "failed to visit shards for segment %s", segInfo.suffix)
+			return errors.Wrapf(err, "failed to visit shards for segment (suffix: %s, path: %s, timeRange: %v)", segInfo.suffix, segInfo.path, segInfo.timeRange)
 		}
 	}
 
