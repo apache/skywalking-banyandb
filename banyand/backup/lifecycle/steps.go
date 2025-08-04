@@ -19,6 +19,7 @@ package lifecycle
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/pkg/errors"
 
@@ -57,6 +58,10 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 		snapshotDir, errDir := snapshot.Dir(snp, l.streamRoot, l.measureRoot, "")
 		if errDir != nil {
 			l.l.Error().Err(errDir).Msgf("Failed to get snapshot directory for %s", snp.Name)
+			continue
+		}
+		if _, err := os.Stat(snapshotDir); os.IsNotExist(err) {
+			l.l.Error().Err(err).Msgf("Snapshot directory %s does not exist", snapshotDir)
 			continue
 		}
 		if snp.Catalog == commonv1.Catalog_CATALOG_STREAM {
