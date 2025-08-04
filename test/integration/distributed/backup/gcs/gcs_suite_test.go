@@ -18,6 +18,7 @@
 package gcs
 
 import (
+	"path"
 	"path/filepath"
 	"testing"
 
@@ -49,8 +50,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		ginkgo.Skip("fake-gcs-server unavailable")
 	}
 
-	// Create remote FS instance pointing to the emulator
-	fs, err := remotegcs.NewFS(filepath.Join(dockertesthelper.GCSBucketName, testVars.DestDir), &config.FsConfig{
+	// Create remote FS instance pointing to the emulator with basePath set to dest dir
+	destDirName := filepath.Base(testVars.DestDir)
+	fsPath := path.Join(dockertesthelper.GCSBucketName, destDirName)
+	fs, err := remotegcs.NewFS(fsPath, &config.FsConfig{
 		GCP: &config.GCPConfig{
 			Bucket: dockertesthelper.GCSBucketName,
 		},
@@ -65,9 +68,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	testVars.Connection, err = backup.SetupClientConnection(string(address))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+	destDir := filepath.Base(testVars.DestDir)
 	// Prepare shared context for backup/restore cases
 	backup.SetupSharedContext(testVars,
-		"gcs:///"+dockertesthelper.GCSBucketName+testVars.DestDir,
+		"gcs:///"+path.Join(dockertesthelper.GCSBucketName, destDir),
 		nil)
 })
 

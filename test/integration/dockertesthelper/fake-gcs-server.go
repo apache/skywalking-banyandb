@@ -74,7 +74,11 @@ func InitFakeGCSServer() error {
 	}
 
 	// Set env var so that storage client connects to emulator
-	if err = os.Setenv("STORAGE_EMULATOR_HOST", "http://"+FakeGCSEndpoint); err != nil {
+	if err = os.Setenv("STORAGE_EMULATOR_HOST", FakeGCSEndpoint); err != nil {
+		return err
+	}
+
+	if err = os.Setenv("GCP_PROJECT", "test-project"); err != nil {
 		return err
 	}
 
