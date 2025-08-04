@@ -296,7 +296,7 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 	// Calculate error counts
 	streamPartErrors := l.countErrors(p.StreamPartErrors)
 	streamSeriesErrors := l.countErrors(p.StreamSeriesErrors)
-	streamElementIndexErrors := len(p.StreamElementIndexErrors)
+	streamElementIndexErrors := l.countErrors(p.StreamElementIndexErrors)
 	measurePartErrors := l.countErrors(p.MeasurePartErrors)
 	measureSeriesErrors := l.countErrors(p.MeasureSeriesErrors)
 
@@ -348,7 +348,7 @@ func (l *lifecycleService) buildErrorSummary(p *Progress) map[string]interface{}
 	errors := map[string]interface{}{
 		"stream_parts":         l.buildErrorDetails(p.StreamPartErrors),
 		"stream_series":        l.buildErrorDetails(p.StreamSeriesErrors),
-		"stream_element_index": p.StreamElementIndexErrors,
+		"stream_element_index": l.buildErrorDetails(p.StreamElementIndexErrors),
 		"measure_parts":        l.buildErrorDetails(p.MeasurePartErrors),
 		"measure_series":       l.buildErrorDetails(p.MeasureSeriesErrors),
 	}
@@ -370,12 +370,34 @@ func (l *lifecycleService) calculateTotalCounts(counts, progress map[string]int)
 
 func (l *lifecycleService) countErrors(errorMaps interface{}) int {
 	switch v := errorMaps.(type) {
+	// New four-level structure: map[group]map[segmentID]map[shardID]map[partID]error
+	case map[string]map[string]map[common.ShardID]map[uint64]string:
+		total := 0
+		for _, segments := range v {
+			for _, shards := range segments {
+				for _, parts := range shards {
+					total += len(parts)
+				}
+			}
+		}
+		return total
+	// New three-level structure: map[group]map[segmentID]map[shardID]error
+	case map[string]map[string]map[common.ShardID]string:
+		total := 0
+		for _, segments := range v {
+			for _, shards := range segments {
+				total += len(shards)
+			}
+		}
+		return total
+	// Legacy two-level structure: map[group]map[partID]error
 	case map[string]map[uint64]string:
 		total := 0
 		for _, groupErrors := range v {
 			total += len(groupErrors)
 		}
 		return total
+	// Legacy two-level structure: map[group]map[shardID]error
 	case map[string]map[string]string:
 		total := 0
 		for _, groupErrors := range v {
@@ -398,12 +420,51 @@ func (l *lifecycleService) buildErrorDetails(errorMaps interface{}) map[string]i
 	result := make(map[string]interface{})
 
 	switch v := errorMaps.(type) {
+	// New four-level structure: map[group]map[segmentID]map[shardID]map[partID]error
+	case map[string]map[string]map[common.ShardID]map[uint64]string:
+		for group, segments := range v {
+			groupDetails := make(map[string]interface{})
+			for segmentID, shards := range segments {
+				segmentDetails := make(map[string]interface{})
+				for shardID, parts := range shards {
+					if len(parts) > 0 {
+						segmentDetails[fmt.Sprintf("shard_%d", shardID)] = parts
+					}
+				}
+				if len(segmentDetails) > 0 {
+					groupDetails[segmentID] = segmentDetails
+				}
+			}
+			if len(groupDetails) > 0 {
+				result[group] = groupDetails
+			}
+		}
+	// New three-level structure: map[group]map[segmentID]map[shardID]error
+	case map[string]map[string]map[common.ShardID]string:
+		for group, segments := range v {
+			groupDetails := make(map[string]interface{})
+			for segmentID, shards := range segments {
+				if len(shards) > 0 {
+					// Convert ShardID keys to strings for JSON serialization
+					shardDetails := make(map[string]string)
+					for shardID, errorMsg := range shards {
+						shardDetails[fmt.Sprintf("shard_%d", shardID)] = errorMsg
+					}
+					groupDetails[segmentID] = shardDetails
+				}
+			}
+			if len(groupDetails) > 0 {
+				result[group] = groupDetails
+			}
+		}
+	// Legacy two-level structure: map[group]map[partID]error
 	case map[string]map[uint64]string:
 		for group, groupErrors := range v {
 			if len(groupErrors) > 0 {
 				result[group] = groupErrors
 			}
 		}
+	// Legacy two-level structure: map[group]map[shardID]error
 	case map[string]map[string]string:
 		for group, groupErrors := range v {
 			if len(groupErrors) > 0 {

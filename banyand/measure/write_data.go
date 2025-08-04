@@ -175,10 +175,10 @@ func (sw *writers) mustInitForMemPart(mp *memPart) {
 }
 
 type syncSeriesContext struct {
-	fileName string
 	streamer index.ExternalSegmentStreamer
 	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
 	l        *logger.Logger
+	fileName string
 }
 
 func (s *syncSeriesContext) FinishSync() error {

@@ -106,14 +106,14 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 	// Process each segment file
 	for _, segmentFileName := range segmentFiles {
 		// Extract segment ID from filename (remove .seg extension)
-		segmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
 
 		// Parse hex segment ID
-		segmentID, err := strconv.ParseUint(segmentIDStr, 16, 64)
+		segmentID, err := strconv.ParseUint(fileSegmentIDStr, 16, 64)
 		if err != nil {
 			mv.logger.Error().
 				Str("filename", segmentFileName).
-				Str("id_str", segmentIDStr).
+				Str("id_str", fileSegmentIDStr).
 				Err(err).
 				Msg("failed to parse segment ID from filename")
 			continue
@@ -123,7 +123,8 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		shardID := common.ShardID(segmentID)
 
 		// Check if this segment has already been completed
-		if mv.progress.IsMeasureSeriesCompleted(mv.group, shardID) {
+		segmentIDStr := segmentTR.String()
+		if mv.progress.IsMeasureSeriesCompleted(mv.group, segmentIDStr, shardID) {
 			mv.logger.Debug().
 				Uint64("segment_id", segmentID).
 				Str("filename", segmentFileName).
@@ -143,7 +144,7 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		segmentFile, err := mv.lfs.OpenFile(segmentFilePath)
 		if err != nil {
 			errorMsg := fmt.Sprintf("failed to open measure segment file %s: %v", segmentFilePath, err)
-			mv.progress.MarkMeasureSeriesError(mv.group, shardID, errorMsg)
+			mv.progress.MarkMeasureSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
 			mv.logger.Error().
 				Str("path", segmentFilePath).
 				Err(err).
@@ -161,6 +162,7 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 	}
 
 	// Send segment file to each shard in shardIDs
+	segmentIDStr := segmentTR.String()
 	for _, shardID := range shardIDs {
 		targetShardID := mv.calculateTargetShardID(uint32(shardID))
 		partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicMeasureSeriesSync.String())
@@ -168,18 +170,18 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		// Stream segment to target shard replicas
 		if err := mv.streamPartToTargetShard(partData); err != nil {
 			errorMsg := fmt.Sprintf("failed to stream measure segment to target shard %d: %v", targetShardID, err)
-			mv.progress.MarkMeasureSeriesError(mv.group, shardID, errorMsg)
+			mv.progress.MarkMeasureSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
 			return fmt.Errorf("failed to stream measure segment to target shard %d: %w", targetShardID, err)
 		}
 		// Mark segment as completed
-		mv.progress.MarkMeasureSeriesCompleted(mv.group, shardID)
+		mv.progress.MarkMeasureSeriesCompleted(mv.group, segmentIDStr, shardID)
 	}
 
 	return nil
 }
 
 // VisitPart implements measure.Visitor - core migration logic.
-func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardID common.ShardID, partPath string) error {
+func (mv *measureMigrationVisitor) VisitPart(segmentTR *timestamp.TimeRange, sourceShardID common.ShardID, partPath string) error {
 	partData, err := measure.ParsePartMetadata(mv.lfs, partPath)
 	if err != nil {
 		return fmt.Errorf("failed to parse measure part metadata: %w", err)
@@ -190,7 +192,8 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 	}
 
 	// Check if this part has already been completed
-	if mv.progress.IsMeasurePartCompleted(mv.group, sourceShardID, partID) {
+	segmentIDStr := segmentTR.String()
+	if mv.progress.IsMeasurePartCompleted(mv.group, segmentIDStr, sourceShardID, partID) {
 		mv.logger.Warn().
 			Uint64("part_id", partID).
 			Uint32("source_shard", uint32(sourceShardID)).
@@ -221,12 +224,12 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 	// Stream entire part to target shard replicas
 	if err := mv.streamPartToTargetShard(partData); err != nil {
 		errorMsg := fmt.Sprintf("failed to stream measure part to target shard: %v", err)
-		mv.progress.MarkMeasurePartError(mv.group, sourceShardID, partID, errorMsg)
+		mv.progress.MarkMeasurePartError(mv.group, segmentIDStr, sourceShardID, partID, errorMsg)
 		return fmt.Errorf("failed to stream measure part to target shard: %w", err)
 	}
 
 	// Mark part as completed in progress tracker
-	mv.progress.MarkMeasurePartCompleted(mv.group, sourceShardID, partID)
+	mv.progress.MarkMeasurePartCompleted(mv.group, segmentIDStr, sourceShardID, partID)
 
 	mv.logger.Info().
 		Uint64("part_id", partID).

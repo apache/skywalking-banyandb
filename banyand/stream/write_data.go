@@ -140,10 +140,10 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 }
 
 type syncSeriesContext struct {
-	fileName string
 	streamer index.ExternalSegmentStreamer
 	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
 	l        *logger.Logger
+	fileName string
 }
 
 func (s *syncSeriesContext) FinishSync() error {
@@ -235,11 +235,11 @@ func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, 
 }
 
 type syncElementIndexContext struct {
-	fileName string
 	streamer index.ExternalSegmentStreamer
-	tsTable  *tsTable
 	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	tsTable  *tsTable
 	l        *logger.Logger
+	fileName string
 }
 
 func (s *syncElementIndexContext) FinishSync() error {

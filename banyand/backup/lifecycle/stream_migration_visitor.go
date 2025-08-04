@@ -106,14 +106,14 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 	// Process each segment file
 	for _, segmentFileName := range segmentFiles {
 		// Extract segment ID from filename (remove .seg extension)
-		segmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
 
 		// Parse hex segment ID
-		segmentID, err := strconv.ParseUint(segmentIDStr, 16, 64)
+		segmentID, err := strconv.ParseUint(fileSegmentIDStr, 16, 64)
 		if err != nil {
 			mv.logger.Error().
 				Str("filename", segmentFileName).
-				Str("id_str", segmentIDStr).
+				Str("id_str", fileSegmentIDStr).
 				Err(err).
 				Msg("failed to parse segment ID from filename")
 			continue
@@ -123,7 +123,8 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		shardID := common.ShardID(segmentID)
 
 		// Check if this segment has already been completed
-		if mv.progress.IsStreamSeriesCompleted(mv.group, shardID) {
+		segmentIDStr := segmentTR.String()
+		if mv.progress.IsStreamSeriesCompleted(mv.group, segmentIDStr, shardID) {
 			mv.logger.Debug().
 				Uint64("segment_id", segmentID).
 				Str("filename", segmentFileName).
@@ -143,7 +144,7 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		segmentFile, err := mv.lfs.OpenFile(segmentFilePath)
 		if err != nil {
 			errorMsg := fmt.Sprintf("failed to open segment file %s: %v", segmentFilePath, err)
-			mv.progress.MarkStreamSeriesError(mv.group, shardID, errorMsg)
+			mv.progress.MarkStreamSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
 			mv.logger.Error().
 				Str("path", segmentFilePath).
 				Err(err).
@@ -169,6 +170,7 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 	}
 
 	// Send segment file to each shard in shardIDs
+	segmentIDStr := segmentTR.String()
 	for _, shardID := range shardIDs {
 		targetShardID := mv.calculateTargetShardID(uint32(shardID))
 		ff := make([]queue.FileInfo, 0, len(files))
@@ -183,18 +185,18 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		// Stream segment to target shard replicas
 		if err := mv.streamPartToTargetShard(partData); err != nil {
 			errorMsg := fmt.Sprintf("failed to stream segment to target shard %d: %v", targetShardID, err)
-			mv.progress.MarkStreamSeriesError(mv.group, shardID, errorMsg)
+			mv.progress.MarkStreamSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
 			return fmt.Errorf("failed to stream segment to target shard %d: %w", targetShardID, err)
 		}
 		// Mark segment as completed
-		mv.progress.MarkStreamSeriesCompleted(mv.group, shardID)
+		mv.progress.MarkStreamSeriesCompleted(mv.group, segmentIDStr, shardID)
 	}
 
 	return nil
 }
 
 // VisitPart implements stream.Visitor - core migration logic.
-func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardID common.ShardID, partPath string) error {
+func (mv *streamMigrationVisitor) VisitPart(segmentTR *timestamp.TimeRange, sourceShardID common.ShardID, partPath string) error {
 	partData, err := stream.ParsePartMetadata(mv.lfs, partPath)
 	if err != nil {
 		return fmt.Errorf("failed to parse part metadata: %w", err)
@@ -205,7 +207,8 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 	}
 
 	// Check if this part has already been completed
-	if mv.progress.IsStreamPartCompleted(mv.group, sourceShardID, partID) {
+	segmentIDStr := segmentTR.String()
+	if mv.progress.IsStreamPartCompleted(mv.group, segmentIDStr, sourceShardID, partID) {
 		mv.logger.Debug().
 			Uint64("part_id", partID).
 			Uint32("source_shard", uint32(sourceShardID)).
@@ -236,12 +239,12 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 	// Stream entire part to target shard replicas
 	if err := mv.streamPartToTargetShard(partData); err != nil {
 		errorMsg := fmt.Sprintf("failed to stream part to target shard: %v", err)
-		mv.progress.MarkStreamPartError(mv.group, sourceShardID, partID, errorMsg)
+		mv.progress.MarkStreamPartError(mv.group, segmentIDStr, sourceShardID, partID, errorMsg)
 		return fmt.Errorf("failed to stream part to target shard: %w", err)
 	}
 
 	// Mark part as completed in progress tracker
-	mv.progress.MarkStreamPartCompleted(mv.group, sourceShardID, partID)
+	mv.progress.MarkStreamPartCompleted(mv.group, segmentIDStr, sourceShardID, partID)
 
 	mv.logger.Info().
 		Uint64("part_id", partID).
@@ -255,7 +258,8 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 
 // VisitElementIndex implements stream.Visitor.
 func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRange, sourceShardID common.ShardID, indexPath string) error {
-	if mv.progress.IsStreamElementIndexCompleted(mv.group, sourceShardID) {
+	segmentIDStr := segmentTR.String()
+	if mv.progress.IsStreamElementIndexCompleted(mv.group, segmentIDStr, sourceShardID) {
 		mv.logger.Debug().
 			Str("group", mv.group).
 			Uint32("source_shard", uint32(sourceShardID)).
@@ -305,14 +309,14 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 	// Process each segment file
 	for _, segmentFileName := range segmentFiles {
 		// Extract segment ID from filename (remove .seg extension)
-		segmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
 
 		// Parse hex segment ID
-		segmentID, err := strconv.ParseUint(segmentIDStr, 16, 64)
+		segmentID, err := strconv.ParseUint(fileSegmentIDStr, 16, 64)
 		if err != nil {
 			mv.logger.Error().
 				Str("filename", segmentFileName).
-				Str("id_str", segmentIDStr).
+				Str("id_str", fileSegmentIDStr).
 				Err(err).
 				Msg("failed to parse segment ID from filename")
 			continue
@@ -356,12 +360,12 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 	// Stream segment file to target shard replicas
 	if err := mv.streamPartToTargetShard(partData); err != nil {
 		errorMsg := fmt.Sprintf("failed to stream element index to target shard: %v", err)
-		mv.progress.MarkStreamElementIndexError(mv.group, sourceShardID, errorMsg)
+		mv.progress.MarkStreamElementIndexError(mv.group, segmentIDStr, sourceShardID, errorMsg)
 		return fmt.Errorf("failed to stream element index to target shard: %w", err)
 	}
 
 	// Mark segment as completed
-	mv.progress.MarkStreamElementIndexCompleted(mv.group, sourceShardID)
+	mv.progress.MarkStreamElementIndexCompleted(mv.group, segmentIDStr, sourceShardID)
 
 	return nil
 }
