@@ -151,7 +151,7 @@ func (q *protocolHandler) findUnProcessRequest() *handlingRequest {
 // nolint: contextcheck
 func (q *protocolHandler) Propagation(_ context.Context, request *propertyv1.PropagationRequest) (resp *propertyv1.PropagationResponse, err error) {
 	tracer := q.s.createTraceForRequest(request)
-	return q.propagation0(nil, request, tracer)
+	return q.propagation0(context.TODO(), request, tracer)
 }
 
 func (q *protocolHandler) propagation0(_ context.Context, request *propertyv1.PropagationRequest, tracer Trace) (resp *propertyv1.PropagationResponse, err error) {
