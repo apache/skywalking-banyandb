@@ -255,6 +255,21 @@
 - [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
     - [Property](#banyandb-property-v1-Property)
   
+- [banyandb/property/v1/repair.proto](#banyandb_property_v1_repair-proto)
+    - [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary)
+    - [NoMorePropertySync](#banyandb-property-v1-NoMorePropertySync)
+    - [PropertyMissing](#banyandb-property-v1-PropertyMissing)
+    - [PropertySync](#banyandb-property-v1-PropertySync)
+    - [RepairRequest](#banyandb-property-v1-RepairRequest)
+    - [RepairResponse](#banyandb-property-v1-RepairResponse)
+    - [RootCompare](#banyandb-property-v1-RootCompare)
+    - [TreeLeafNode](#banyandb-property-v1-TreeLeafNode)
+    - [TreeRoot](#banyandb-property-v1-TreeRoot)
+    - [TreeSlotSHA](#banyandb-property-v1-TreeSlotSHA)
+    - [TreeSlots](#banyandb-property-v1-TreeSlots)
+  
+    - [RepairService](#banyandb-property-v1-RepairService)
+  
 - [banyandb/property/v1/rpc.proto](#banyandb_property_v1_rpc-proto)
     - [ApplyRequest](#banyandb-property-v1-ApplyRequest)
     - [ApplyResponse](#banyandb-property-v1-ApplyResponse)
@@ -3771,6 +3786,7 @@ WriteResponse is the response contract for write
 | ----- | ---- | ----- | ----------- |
 | context | [PropagationContext](#banyandb-property-v1-PropagationContext) |  |  |
 | group | [string](#string) |  |  |
+| shard_id | [uint32](#uint32) |  |  |
 
 
 
@@ -3835,6 +3851,207 @@ Property stores the user defined data
  
 
  
+
+ 
+
+
+
+<a name="banyandb_property_v1_repair-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/property/v1/repair.proto
+
+
+
+<a name="banyandb-property-v1-DifferTreeSummary"></a>
+
+### DifferTreeSummary
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [TreeLeafNode](#banyandb-property-v1-TreeLeafNode) | repeated | if the nodes is empty, mean the server side don&#39;t have more tree leaf nodes to send. |
+
+
+
+
+
+
+<a name="banyandb-property-v1-NoMorePropertySync"></a>
+
+### NoMorePropertySync
+
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropertyMissing"></a>
+
+### PropertyMissing
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| entity | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropertySync"></a>
+
+### PropertySync
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [bytes](#bytes) |  |  |
+| property | [Property](#banyandb-property-v1-Property) |  |  |
+| delete_time | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-RepairRequest"></a>
+
+### RepairRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tree_root | [TreeRoot](#banyandb-property-v1-TreeRoot) |  | compare stage |
+| tree_slots | [TreeSlots](#banyandb-property-v1-TreeSlots) |  |  |
+| property_missing | [PropertyMissing](#banyandb-property-v1-PropertyMissing) |  | repair stage case 1: client missing but server existing |
+| property_sync | [PropertySync](#banyandb-property-v1-PropertySync) |  | case 2: client existing but server missing case 3: SHA value mismatches |
+| no_more_property_sync | [NoMorePropertySync](#banyandb-property-v1-NoMorePropertySync) |  | if client side is already send all the properties(missing or property sync) which means the client side will not sending more properties to sync, server side should close the stream. |
+
+
+
+
+
+
+<a name="banyandb-property-v1-RepairResponse"></a>
+
+### RepairResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| root_compare | [RootCompare](#banyandb-property-v1-RootCompare) |  | compare stage |
+| differ_tree_summary | [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary) |  |  |
+| property_sync | [PropertySync](#banyandb-property-v1-PropertySync) |  | repair stage case 1: return from PropertyMissing case 3: return if the client is older |
+
+
+
+
+
+
+<a name="banyandb-property-v1-RootCompare"></a>
+
+### RootCompare
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tree_found | [bool](#bool) |  |  |
+| root_sha_match | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-TreeLeafNode"></a>
+
+### TreeLeafNode
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| slot_index | [int32](#int32) |  | slot_index is the index of the slot in the tree. |
+| exists | [bool](#bool) |  | if the slot is empty, means the server side don&#39;t have the slot. |
+| entity | [string](#string) |  | if the slot and entity exists, the SHA value of the entity. |
+| sha | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-TreeRoot"></a>
+
+### TreeRoot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| shard_id | [uint32](#uint32) |  |  |
+| root_sha | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-TreeSlotSHA"></a>
+
+### TreeSlotSHA
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| slot | [int32](#int32) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-TreeSlots"></a>
+
+### TreeSlots
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| slot_sha | [TreeSlotSHA](#banyandb-property-v1-TreeSlotSHA) | repeated |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-property-v1-RepairService"></a>
+
+### RepairService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Repair | [RepairRequest](#banyandb-property-v1-RepairRequest) stream | [RepairResponse](#banyandb-property-v1-RepairResponse) stream |  |
 
  
 
