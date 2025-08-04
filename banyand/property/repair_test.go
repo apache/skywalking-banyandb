@@ -199,8 +199,8 @@ func TestBuildTree(t *testing.T) {
 			}
 			defers = append(defers, snapshotDeferFunc)
 			db, err := openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32,
-				observability.BypassRegistry, fs.NewLocalFileSystem(), snapshotDir,
-				"@every 10m", time.Second*10, func(context.Context) (string, error) {
+				observability.BypassRegistry, fs.NewLocalFileSystem(), true, snapshotDir,
+				"@every 10m", time.Second*10, "* 2 * * *", nil, nil, func(context.Context) (string, error) {
 					snapshotDir, defFunc, newSpaceErr := test.NewSpace()
 					if newSpaceErr != nil {
 						return "", newSpaceErr
@@ -231,7 +231,7 @@ func TestBuildTree(t *testing.T) {
 				}
 			}
 
-			err = newShard.repairState.scheduler.doRepair()
+			err = newShard.repairState.scheduler.doBuildTree()
 			if err != nil {
 				t.Fatalf("failed to build status: %v", err)
 			}
@@ -254,7 +254,7 @@ func TestBuildTree(t *testing.T) {
 			}
 
 			if tt.nextStatusVerify != nil {
-				err := newShard.repairState.scheduler.doRepair()
+				err := newShard.repairState.scheduler.doBuildTree()
 				if err != nil {
 					t.Fatalf("failed to build status after update: %v", err)
 				}
@@ -289,8 +289,8 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 	}
 	defers = append(defers, snapshotDeferFunc)
 	db, err := openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32,
-		observability.BypassRegistry, fs.NewLocalFileSystem(), snapshotDir,
-		"@every 10m", time.Millisecond*50, func(context.Context) (string, error) {
+		observability.BypassRegistry, fs.NewLocalFileSystem(), true, snapshotDir,
+		"@every 10m", time.Millisecond*50, "* 2 * * *", nil, nil, func(context.Context) (string, error) {
 			tmpDir, defFunc, newSpaceErr := test.NewSpace()
 			if newSpaceErr != nil {
 				return "", newSpaceErr
@@ -523,7 +523,7 @@ func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 		_ = reader.close()
 	}()
 
-	roots, err := reader.read(nil, 10)
+	roots, err := reader.read(nil, 10, false)
 	if err != nil {
 		t.Fatalf("failed to read tree for group %s: %v", group, err)
 	}
@@ -536,7 +536,7 @@ func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 			shaValue: roots[0].shaValue,
 		},
 	}
-	slots, err := reader.read(roots[0], 10)
+	slots, err := reader.read(roots[0], 10, false)
 	if err != nil {
 		t.Fatalf("failed to read slots for group %s: %v", group, err)
 	}
@@ -545,20 +545,20 @@ func (r *repairData) readTree(t *testing.T, group string) *repairTestTree {
 	}
 	for _, slot := range slots {
 		slotNode := &repairTestTreeNode{
-			id:       slot.id,
+			id:       fmt.Sprintf("%d", slot.slotInx),
 			shaValue: slot.shaValue,
 		}
 		tree.root.children = append(tree.root.children, slotNode)
-		children, err := reader.read(slot, 10)
+		children, err := reader.read(slot, 10, false)
 		if err != nil {
-			t.Fatalf("failed to read children for slot %s in group %s: %v", slot.id, group, err)
+			t.Fatalf("failed to read children for slot %d in group %s: %v", slot.slotInx, group, err)
 		}
 		if len(children) == 0 {
-			t.Fatalf("expected at least one child for slot %s in group %s, but got none", slot.id, group)
+			t.Fatalf("expected at least one child for slot %d in group %s, but got none", slot.slotInx, group)
 		}
 		for _, child := range children {
 			childNode := &repairTestTreeNode{
-				id:       child.id,
+				id:       child.entity,
 				shaValue: child.shaValue,
 			}
 			slotNode.children = append(slotNode.children, childNode)

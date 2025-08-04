@@ -26,11 +26,13 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"math/rand/v2"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,10 +44,14 @@ import (
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/multierr"
+	grpclib "google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -119,7 +125,7 @@ func (r *repair) checkHasUpdates() (bool, error) {
 	return true, nil
 }
 
-func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err error) {
+func (r *repair) buildStatus(ctx context.Context, snapshotPath string, group string) (err error) {
 	startTime := time.Now()
 	defer func() {
 		r.metrics.totalBuildTreeFinished.Inc(1)
@@ -136,9 +142,14 @@ func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err erro
 	sort.Sort(snapshotIDList(items))
 
 	blugeConf := bluge.DefaultConfig(snapshotPath)
-	err = r.buildTree(ctx, blugeConf)
+	err = r.buildTree(ctx, blugeConf, group)
 	if err != nil {
 		return fmt.Errorf("building trees failure: %w", err)
+	}
+	// if only update a specific group, the repair base status file doesn't need to update
+	// because not all the group have been processed
+	if group != "" {
+		return nil
 	}
 
 	var latestSnapshotID uint64
@@ -154,6 +165,9 @@ func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err erro
 	if err != nil {
 		return fmt.Errorf("marshall state failure: %w", err)
 	}
+	if err = os.MkdirAll(filepath.Dir(r.statePath), storage.DirPerm); err != nil {
+		return fmt.Errorf("creating state directory failure: %w", err)
+	}
 	err = os.WriteFile(r.statePath, stateVal, storage.FilePerm)
 	if err != nil {
 		return fmt.Errorf("writing state file failure: %w", err)
@@ -161,15 +175,23 @@ func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err erro
 	return nil
 }
 
-func (r *repair) buildTree(ctx context.Context, conf bluge.Config) error {
+func (r *repair) buildTree(ctx context.Context, conf bluge.Config, group string) error {
 	reader, err := bluge.OpenReader(conf)
 	if err != nil {
+		// means no data found
+		if strings.Contains(err.Error(), "unable to find a usable snapshot") {
+			return nil
+		}
 		return fmt.Errorf("opening index reader failure: %w", err)
 	}
 	defer func() {
 		_ = reader.Close()
 	}()
-	topNSearch := bluge.NewTopNSearch(r.batchSearchSize, bluge.NewMatchAllQuery())
+	query := bluge.Query(bluge.NewMatchAllQuery())
+	if group != "" {
+		query = bluge.NewTermQuery(group).SetField(groupField)
+	}
+	topNSearch := bluge.NewTopNSearch(r.batchSearchSize, query)
 	topNSearch.SortBy([]string{
 		fmt.Sprintf("+%s", groupField),
 		fmt.Sprintf("+%s", nameField),
@@ -185,7 +207,7 @@ func (r *repair) buildTree(ctx context.Context, conf bluge.Config) error {
 		}
 		group := convert.BytesToString(sortValue[0])
 		name := convert.BytesToString(sortValue[1])
-		entity := fmt.Sprintf("%s/%s/%s", group, name, convert.BytesToString(sortValue[2]))
+		entity := r.buildLeafNodeEntity(group, name, convert.BytesToString(sortValue[2]))
 
 		s := newSearchingProperty(group, shaValue, entity)
 		if latestProperty != nil {
@@ -224,6 +246,18 @@ func (r *repair) buildTree(ctx context.Context, conf bluge.Config) error {
 	}
 
 	return nil
+}
+
+func (r *repair) buildLeafNodeEntity(group, name, entityID string) string {
+	return fmt.Sprintf("%s/%s/%s", group, name, entityID)
+}
+
+func (r *repair) parseLeafNodeEntity(entity string) (string, string, string, error) {
+	parts := strings.SplitN(entity, "/", 3)
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("invalid leaf node entity format: %s", entity)
+	}
+	return parts[0], parts[1], parts[2], nil
 }
 
 func (r *repair) pageSearch(
@@ -318,19 +352,28 @@ const (
 
 type repairTreeNode struct {
 	shaValue  string
-	id        string
+	entity    string
 	tp        repairTreeNodeType
 	leafStart int64
 	leafCount int64
+	slotInx   int32
 }
-type repairTreeReader struct {
+
+type repairTreeReader interface {
+	read(parent *repairTreeNode, pagingSize int64, forceReadFromStart bool) ([]*repairTreeNode, error)
+	close() error
+}
+
+type repairTreeFileReader struct {
 	file   *os.File
 	reader *bufio.Reader
 	footer *repairTreeFooter
 	paging *repairTreeReaderPage
 }
 
-func (r *repair) treeReader(group string) (*repairTreeReader, error) {
+func (r *repair) treeReader(group string) (repairTreeReader, error) {
+	r.scheduler.treeLocker.RLock()
+	defer r.scheduler.treeLocker.RUnlock()
 	groupFile := fmt.Sprintf(r.composeTreeFilePathFmt, group)
 	file, err := os.OpenFile(groupFile, os.O_RDONLY, os.ModePerm)
 	if err != nil {
@@ -340,7 +383,7 @@ func (r *repair) treeReader(group string) (*repairTreeReader, error) {
 		}
 		return nil, fmt.Errorf("opening repair tree file %s failure: %w", group, err)
 	}
-	reader := &repairTreeReader{
+	reader := &repairTreeFileReader{
 		file:   file,
 		reader: bufio.NewReader(file),
 	}
@@ -351,7 +394,18 @@ func (r *repair) treeReader(group string) (*repairTreeReader, error) {
 	return reader, nil
 }
 
-func (r *repairTreeReader) readFoot() error {
+func (r *repair) stateFileExist() (bool, error) {
+	_, err := os.Stat(r.statePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking state file existence failure: %w", err)
+	}
+	return true, nil
+}
+
+func (r *repairTreeFileReader) readFoot() error {
 	stat, err := r.file.Stat()
 	if err != nil {
 		return fmt.Errorf("getting file stat for %s failure: %w", r.file.Name(), err)
@@ -386,7 +440,7 @@ func (r *repairTreeReader) readFoot() error {
 	return nil
 }
 
-func (r *repairTreeReader) seekPosition(offset int64, whence int) error {
+func (r *repairTreeFileReader) seekPosition(offset int64, whence int) error {
 	_, err := r.file.Seek(offset, whence)
 	if err != nil {
 		return fmt.Errorf("seeking position failure: %w", err)
@@ -395,7 +449,7 @@ func (r *repairTreeReader) seekPosition(offset int64, whence int) error {
 	return nil
 }
 
-func (r *repairTreeReader) read(parent *repairTreeNode, pagingSize int64) ([]*repairTreeNode, error) {
+func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, forceReFromStart bool) ([]*repairTreeNode, error) {
 	if parent == nil {
 		// reading the root node
 		err := r.seekPosition(r.footer.slotNodeFinishedOffset, io.SeekStart)
@@ -421,7 +475,7 @@ func (r *repairTreeReader) read(parent *repairTreeNode, pagingSize int64) ([]*re
 	var err error
 	if parent.tp == repairTreeNodeTypeRoot {
 		needSeek := false
-		if r.paging == nil || r.paging.lastNode != parent {
+		if r.paging == nil || r.paging.lastNode != parent || forceReFromStart {
 			needSeek = true
 			r.paging = newRepairTreeReaderPage(parent, r.footer.slotNodeCount)
 		}
@@ -458,7 +512,7 @@ func (r *repairTreeReader) read(parent *repairTreeNode, pagingSize int64) ([]*re
 			}
 			nodes = append(nodes, &repairTreeNode{
 				shaValue:  string(slotShaVal),
-				id:        fmt.Sprintf("%d", slotNodeIndex),
+				slotInx:   int32(slotNodeIndex),
 				tp:        repairTreeNodeTypeSlot,
 				leafStart: leafStartOff,
 				leafCount: leafCount,
@@ -472,9 +526,9 @@ func (r *repairTreeReader) read(parent *repairTreeNode, pagingSize int64) ([]*re
 
 	// otherwise, reading the leaf nodes
 	needSeek := false
-	if r.paging == nil || r.paging.lastNode != parent {
+	if r.paging == nil || r.paging.lastNode != parent || forceReFromStart {
 		needSeek = true
-		r.paging = newRepairTreeReaderPage(parent, r.footer.slotNodeCount)
+		r.paging = newRepairTreeReaderPage(parent, parent.leafCount)
 	}
 	if needSeek {
 		err = r.seekPosition(parent.leafStart, io.SeekStart)
@@ -499,15 +553,16 @@ func (r *repairTreeReader) read(parent *repairTreeNode, pagingSize int64) ([]*re
 			return nil, fmt.Errorf("decoding leaf node sha value from file %s failure: %w", r.file.Name(), err)
 		}
 		nodes = append(nodes, &repairTreeNode{
+			slotInx:  parent.slotInx,
 			shaValue: string(shaVal),
-			id:       string(entity),
+			entity:   string(entity),
 			tp:       repairTreeNodeTypeLeaf,
 		})
 	}
 	return nodes, nil
 }
 
-func (r *repairTreeReader) close() error {
+func (r *repairTreeFileReader) close() error {
 	return r.file.Close()
 }
 
@@ -528,11 +583,63 @@ func (r *repairTreeReaderPage) nextPage(count int64) int64 {
 		return 0
 	}
 	readCount := r.reduceCount - count
-	if readCount < 0 {
+	if readCount <= 0 {
 		readCount = r.reduceCount
 	}
 	r.reduceCount -= readCount
 	return readCount
+}
+
+type repairBufferLeafReader struct {
+	reader      repairTreeReader
+	currentSlot *repairTreeNode
+	pagingLeafs []*repairTreeNode
+}
+
+func newRepairBufferLeafReader(reader repairTreeReader) *repairBufferLeafReader {
+	return &repairBufferLeafReader{
+		reader: reader,
+	}
+}
+
+func (r *repairBufferLeafReader) next(slot *repairTreeNode) (*repairTreeNode, error) {
+	// slot is nil means reset the reader
+	if slot == nil {
+		r.currentSlot = nil
+		return nil, nil
+	}
+	if r.currentSlot == nil || r.currentSlot.slotInx != slot.slotInx {
+		// if the current slot is nil or the slot index is changed, we need to read the leaf nodes from the slot
+		err := r.readNodes(slot, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// if no more leaf nodes, trying to read slots
+	if len(r.pagingLeafs) == 0 {
+		err := r.readNodes(slot, false)
+		if err != nil {
+			return nil, err
+		}
+		// no more leaf nodes to read, return nil
+		if len(r.pagingLeafs) == 0 {
+			return nil, nil
+		}
+	}
+	// pop the first leaf node from the paging leafs
+	leaf := r.pagingLeafs[0]
+	r.pagingLeafs = r.pagingLeafs[1:]
+	return leaf, nil
+}
+
+func (r *repairBufferLeafReader) readNodes(slot *repairTreeNode, forceReadFromStart bool) error {
+	nodes, err := r.reader.read(slot, repairBatchSearchSize, forceReadFromStart)
+	if err != nil {
+		return fmt.Errorf("reading leaf nodes from slot %d failure: %w", slot.slotInx, err)
+	}
+	r.pagingLeafs = nodes
+	r.currentSlot = slot
+	return nil
 }
 
 type repairTreeFooter struct {
@@ -824,24 +931,30 @@ func newRepairMetrics(fac *observability.Factory) *repairMetrics {
 type repairScheduler struct {
 	latestBuildTreeSchedule   time.Time
 	buildTreeClock            clock.Clock
-	l                         *logger.Logger
+	gossipMessenger           gossip.Messenger
 	closer                    *run.Closer
 	buildSnapshotFunc         func(context.Context) (string, error)
 	repairTreeScheduler       *timestamp.Scheduler
 	quickRepairNotified       *int32
 	db                        *database
+	l                         *logger.Logger
 	metrics                   *repairSchedulerMetrics
+	treeSlotCount             int
 	buildTreeScheduleInterval time.Duration
 	quickBuildTreeTime        time.Duration
 	lastBuildTimeLocker       sync.Mutex
-	buildTreeLocker           sync.Mutex
+	treeLocker                sync.RWMutex
 }
 
+// nolint: contextcheck
 func newRepairScheduler(
 	l *logger.Logger,
 	omr observability.MetricsRegistry,
-	cronExp string,
+	buildTreeCronExp string,
 	quickBuildTreeTime time.Duration,
+	triggerCronExp string,
+	gossipMessenger gossip.Messenger,
+	treeSlotCount int,
 	db *database,
 	buildSnapshotFunc func(context.Context) (string, error),
 ) (*repairScheduler, error) {
@@ -855,15 +968,28 @@ func newRepairScheduler(
 		closer:              run.NewCloser(1),
 		quickBuildTreeTime:  quickBuildTreeTime,
 		metrics:             newRepairSchedulerMetrics(omr.With(propertyScope.SubScope("scheduler"))),
+		gossipMessenger:     gossipMessenger,
+		treeSlotCount:       treeSlotCount,
 	}
 	c := timestamp.NewScheduler(l, s.buildTreeClock)
 	s.repairTreeScheduler = c
-	err := c.Register("repair", cron.Descriptor, cronExp, func(t time.Time, _ *logger.Logger) bool {
-		s.doRepairScheduler(t, true)
+	err := c.Register("build-tree", cron.Descriptor, buildTreeCronExp, func(t time.Time, _ *logger.Logger) bool {
+		s.doBuildTreeScheduler(t, true)
 		return true
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to add repair build tree cron task: %w", err)
+	}
+	err = c.Register("trigger", cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
+		triggerCronExp, func(time.Time, *logger.Logger) bool {
+			gossipErr := s.doRepairGossip(s.closer.Ctx())
+			if gossipErr != nil {
+				s.l.Err(fmt.Errorf("repair gossip failure: %w", gossipErr))
+			}
+			return true
+		})
+	if err != nil {
+		return nil, fmt.Errorf("failed to add repair trigger cron task: %w", err)
 	}
 	err = s.initializeInterval()
 	if err != nil {
@@ -872,18 +998,18 @@ func newRepairScheduler(
 	return s, nil
 }
 
-func (r *repairScheduler) doRepairScheduler(t time.Time, triggerByCron bool) {
-	if !r.verifyShouldExecute(t, triggerByCron) {
+func (r *repairScheduler) doBuildTreeScheduler(t time.Time, triggerByCron bool) {
+	if !r.verifyShouldExecuteBuildTree(t, triggerByCron) {
 		return
 	}
 
-	err := r.doRepair()
+	err := r.doBuildTree()
 	if err != nil {
 		r.l.Err(fmt.Errorf("repair build status failure: %w", err))
 	}
 }
 
-func (r *repairScheduler) verifyShouldExecute(t time.Time, triggerByCron bool) bool {
+func (r *repairScheduler) verifyShouldExecuteBuildTree(t time.Time, triggerByCron bool) bool {
 	r.lastBuildTimeLocker.Lock()
 	defer r.lastBuildTimeLocker.Unlock()
 	if !triggerByCron {
@@ -900,7 +1026,7 @@ func (r *repairScheduler) verifyShouldExecute(t time.Time, triggerByCron bool) b
 func (r *repairScheduler) initializeInterval() error {
 	r.lastBuildTimeLocker.Lock()
 	defer r.lastBuildTimeLocker.Unlock()
-	interval, nextTime, exist := r.repairTreeScheduler.Interval("repair")
+	interval, nextTime, exist := r.repairTreeScheduler.Interval("build-tree")
 	if !exist {
 		return fmt.Errorf("failed to get repair build tree cron task interval")
 	}
@@ -910,7 +1036,7 @@ func (r *repairScheduler) initializeInterval() error {
 }
 
 //nolint:contextcheck
-func (r *repairScheduler) doRepair() (err error) {
+func (r *repairScheduler) doBuildTree() (err error) {
 	now := time.Now()
 	r.metrics.totalRepairBuildTreeStarted.Inc(1)
 	defer func() {
@@ -920,11 +1046,6 @@ func (r *repairScheduler) doRepair() (err error) {
 			r.metrics.totalRepairBuildTreeFailures.Inc(1)
 		}
 	}()
-	if !r.buildTreeLocker.TryLock() {
-		return nil
-	}
-	defer r.buildTreeLocker.Unlock()
-	// check each shard have any updates
 	sLst := r.db.sLst.Load()
 	if sLst == nil {
 		return nil
@@ -945,6 +1066,22 @@ func (r *repairScheduler) doRepair() (err error) {
 	}
 
 	// otherwise, we need to build the trees
+	return r.buildingTree(nil, "", false)
+}
+
+// nolint: contextcheck
+func (r *repairScheduler) buildingTree(shards []common.ShardID, group string, force bool) error {
+	if force {
+		r.treeLocker.Lock()
+	} else if !r.treeLocker.TryLock() {
+		// if not forced, we try to lock the build tree locker
+		r.metrics.totalRepairBuildTreeConflicts.Inc(1)
+		return nil
+	}
+	defer r.treeLocker.Unlock()
+
+	buildAll := len(shards) == 0
+
 	// take a new snapshot first
 	snapshotPath, err := r.buildSnapshotFunc(r.closer.Ctx())
 	if err != nil {
@@ -955,11 +1092,24 @@ func (r *repairScheduler) doRepair() (err error) {
 		if err != nil {
 			return err
 		}
+		if !buildAll {
+			// if not building all shards, check if the shard is in the list
+			found := false
+			for _, s := range shards {
+				if s == common.ShardID(id) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil // skip this shard
+			}
+		}
 		s, err := r.db.loadShard(r.closer.Ctx(), common.ShardID(id))
 		if err != nil {
 			return fmt.Errorf("loading shard %d failure: %w", id, err)
 		}
-		err = s.repairState.buildStatus(r.closer.Ctx(), path.Join(snapshotPath, fmt.Sprintf("shard-%s", suffix)))
+		err = s.repairState.buildStatus(r.closer.Ctx(), path.Join(snapshotPath, fmt.Sprintf("shard-%s", suffix)), group)
 		if err != nil {
 			return fmt.Errorf("building status for shard %d failure: %w", id, err)
 		}
@@ -977,7 +1127,7 @@ func (r *repairScheduler) documentUpdatesNotify() {
 		case <-r.closer.CloseNotify():
 			return
 		case <-time.After(r.quickBuildTreeTime):
-			r.doRepairScheduler(r.buildTreeClock.Now(), false)
+			r.doBuildTreeScheduler(r.buildTreeClock.Now(), false)
 			// reset the notified flag to allow the next notification
 			atomic.StoreInt32(r.quickRepairNotified, 0)
 		}
@@ -990,18 +1140,81 @@ func (r *repairScheduler) close() {
 	r.closer.CloseThenWait()
 }
 
+func (r *repairScheduler) doRepairGossip(ctx context.Context) error {
+	group, shardNum, err := r.randomSelectGroup(ctx)
+	if err != nil {
+		return fmt.Errorf("selecting random group failure: %w", err)
+	}
+
+	nodes, err := r.gossipMessenger.LocateNodes(group.Metadata.Name, shardNum, uint32(r.copiesCount(group)))
+	if err != nil {
+		return fmt.Errorf("locating nodes for group %s, shard %d failure: %w", group.Metadata.Name, shardNum, err)
+	}
+	return r.gossipMessenger.Propagation(nodes, group.Metadata.Name, shardNum)
+}
+
+func (r *repairScheduler) randomSelectGroup(ctx context.Context) (*commonv1.Group, uint32, error) {
+	allGroups, err := r.db.metadata.GroupRegistry().ListGroup(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing groups failure: %w", err)
+	}
+
+	groups := make([]*commonv1.Group, 0)
+	for _, group := range allGroups {
+		if group.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
+			continue
+		}
+		// if the group don't have copies, skip it
+		if r.copiesCount(group) < 2 {
+			continue
+		}
+		groups = append(groups, group)
+	}
+
+	if len(groups) == 0 {
+		return nil, 0, fmt.Errorf("no groups found with enough copies for repair")
+	}
+	// #nosec G404 -- not security-critical, just for random selection
+	group := groups[rand.Int64()%int64(len(groups))]
+	// #nosec G404 -- not security-critical, just for random selection
+	return group, rand.Uint32() % group.ResourceOpts.ShardNum, nil
+}
+
+func (r *repairScheduler) copiesCount(group *commonv1.Group) int {
+	return int(group.ResourceOpts.Replicas + 1)
+}
+
+func (r *repairScheduler) registerServerToGossip() func(server *grpclib.Server) {
+	s := newRepairGossipServer(r)
+	return func(server *grpclib.Server) {
+		propertyv1.RegisterRepairServiceServer(server, s)
+	}
+}
+
+func (r *repairScheduler) registerClientToGossip(messenger gossip.Messenger) {
+	messenger.Subscribe(newRepairGossipClient(r))
+}
+
 type repairSchedulerMetrics struct {
-	totalRepairBuildTreeStarted  meter.Counter
-	totalRepairBuildTreeFinished meter.Counter
-	totalRepairBuildTreeFailures meter.Counter
-	totalRepairBuildTreeLatency  meter.Counter
+	totalRepairBuildTreeStarted   meter.Counter
+	totalRepairBuildTreeFinished  meter.Counter
+	totalRepairBuildTreeFailures  meter.Counter
+	totalRepairBuildTreeLatency   meter.Counter
+	totalRepairBuildTreeConflicts meter.Counter
+
+	totalRepairSuccessCount meter.Counter
+	totalRepairFailedCount  meter.Counter
 }
 
 func newRepairSchedulerMetrics(omr *observability.Factory) *repairSchedulerMetrics {
 	return &repairSchedulerMetrics{
-		totalRepairBuildTreeStarted:  omr.NewCounter("repair_build_tree_started"),
-		totalRepairBuildTreeFinished: omr.NewCounter("repair_build_tree_finished"),
-		totalRepairBuildTreeFailures: omr.NewCounter("repair_build_tree_failures"),
-		totalRepairBuildTreeLatency:  omr.NewCounter("repair_build_tree_latency"),
+		totalRepairBuildTreeStarted:   omr.NewCounter("repair_build_tree_started"),
+		totalRepairBuildTreeFinished:  omr.NewCounter("repair_build_tree_finished"),
+		totalRepairBuildTreeFailures:  omr.NewCounter("repair_build_tree_failures"),
+		totalRepairBuildTreeLatency:   omr.NewCounter("repair_build_tree_latency"),
+		totalRepairBuildTreeConflicts: omr.NewCounter("repair_build_tree_conflicts"),
+
+		totalRepairSuccessCount: omr.NewCounter("property_repair_success_count", "group", "shard"),
+		totalRepairFailedCount:  omr.NewCounter("property_repair_failure_count", "group", "shard"),
 	}
 }
