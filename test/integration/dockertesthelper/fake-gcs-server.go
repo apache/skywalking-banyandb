@@ -60,7 +60,7 @@ func InitFakeGCSServer() error {
 	fakeGCSRes, err = fakeGCSPool.RunWithOptions(&dockertest.RunOptions{
 		Repository: "fsouza/fake-gcs-server",
 		Tag:        "latest",
-		Cmd:        []string{"-scheme", "http", "-port", FakeGCSPort},
+		Cmd:        []string{"-scheme", "http", "-public-host", "localhost", "-port", FakeGCSPort, "-data", "/data"},
 		Name:       FakeGCSContainerName,
 	}, func(cfg *docker.HostConfig) {
 		cfg.AutoRemove = true
