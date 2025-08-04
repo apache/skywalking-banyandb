@@ -86,7 +86,7 @@ type seqReaders struct {
 	tagMetadata map[string]*seqReader
 	tags        map[string]*seqReader
 	primary     seqReader
-	spans        seqReader
+	spans       seqReader
 }
 
 func (sr *seqReaders) reset() {

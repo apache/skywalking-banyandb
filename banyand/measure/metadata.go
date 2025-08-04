@@ -164,7 +164,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			return
 		}
-		if err := validate.GroupForStreamOrMeasure(g); err != nil {
+		if err := validate.GroupForNonProperty(g); err != nil {
 			sr.l.Warn().Err(err).Msg("group is ignored")
 			return
 		}

@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	// Tracing file names (without extensions).
+	// Streaming file names (without extensions).
 	tracePrimaryName        = "primary"
 	traceMetaName           = "meta"
 	traceSpansName          = "spans"

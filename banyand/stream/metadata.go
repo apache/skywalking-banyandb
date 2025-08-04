@@ -132,7 +132,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
 			return
 		}
-		if err := validate.GroupForStreamOrMeasure(g); err != nil {
+		if err := validate.GroupForNonProperty(g); err != nil {
 			sr.l.Warn().Err(err).Msg("group is ignored")
 			return
 		}
@@ -201,7 +201,7 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		})
 	case schema.KindIndexRuleBinding:
 		if binding, ok := metadata.Spec.(*databasev1.IndexRuleBinding); ok {
-			if binding.GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
+			if binding.GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
 				sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 					Typ:      resourceSchema.EventDelete,
 					Kind:     resourceSchema.EventKindIndexRuleBinding,

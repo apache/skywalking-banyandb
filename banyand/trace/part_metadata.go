@@ -204,7 +204,7 @@ type traceIDFilter struct {
 }
 
 func (tf *traceIDFilter) reset() {
-	tf.filter.Reset()
+	tf.filter = nil
 }
 
 func (tf *traceIDFilter) mustReadTraceIDFilter(fileSystem fs.FileSystem, partPath string) {

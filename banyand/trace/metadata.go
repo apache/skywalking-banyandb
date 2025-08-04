@@ -112,7 +112,7 @@ func (sr *schemaRepo) OnInit(kinds []schema.Kind) (bool, []int64) {
 		logger.Panicf("invalid kinds: %v", kinds)
 		return false, nil
 	}
-	_, revs := sr.Repository.Init(schema.KindStream)
+	_, revs := sr.Repository.Init(schema.KindTrace)
 	return true, revs
 }
 
@@ -120,10 +120,10 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindGroup:
 		g := metadata.Spec.(*commonv1.Group)
-		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
+		if g.Catalog != commonv1.Catalog_CATALOG_TRACE {
 			return
 		}
-		if err := validate.GroupForStreamOrMeasure(g); err != nil {
+		if err := validate.GroupForNonProperty(g); err != nil {
 			sr.l.Warn().Err(err).Msg("group is ignored")
 			return
 		}
@@ -132,15 +132,15 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
-	case schema.KindStream:
-		if err := validate.Stream(metadata.Spec.(*databasev1.Stream)); err != nil {
-			sr.l.Warn().Err(err).Msg("stream is ignored")
+	case schema.KindTrace:
+		if err := validate.Trace(metadata.Spec.(*databasev1.Trace)); err != nil {
+			sr.l.Warn().Err(err).Msg("trace is ignored")
 			return
 		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Stream),
+			Metadata: metadata.Spec.(*databasev1.Trace),
 		})
 	case schema.KindIndexRuleBinding:
 		if irb, ok := metadata.Spec.(*databasev1.IndexRuleBinding); ok {
@@ -148,7 +148,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 				sr.l.Warn().Err(err).Msg("index rule binding is ignored")
 				return
 			}
-			if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_STREAM {
+			if irb.GetSubject().Catalog == commonv1.Catalog_CATALOG_TRACE {
 				sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 					Typ:      resourceSchema.EventAddOrUpdate,
 					Kind:     resourceSchema.EventKindIndexRuleBinding,
@@ -176,7 +176,7 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 	switch metadata.Kind {
 	case schema.KindGroup:
 		g := metadata.Spec.(*commonv1.Group)
-		if g.Catalog != commonv1.Catalog_CATALOG_STREAM {
+		if g.Catalog != commonv1.Catalog_CATALOG_TRACE {
 			return
 		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -184,15 +184,15 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
-	case schema.KindStream:
+	case schema.KindTrace:
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Stream),
+			Metadata: metadata.Spec.(*databasev1.Trace),
 		})
 	case schema.KindIndexRuleBinding:
 		if binding, ok := metadata.Spec.(*databasev1.IndexRuleBinding); ok {
-			if binding.GetSubject().Catalog == commonv1.Catalog_CATALOG_MEASURE {
+			if binding.GetSubject().Catalog == commonv1.Catalog_CATALOG_TRACE {
 				sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 					Typ:      resourceSchema.EventDelete,
 					Kind:     resourceSchema.EventKindIndexRuleBinding,

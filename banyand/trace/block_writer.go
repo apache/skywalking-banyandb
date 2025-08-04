@@ -225,7 +225,7 @@ func (bw *blockWriter) mustWriteBlock(tidLen uint32, tid string, b *block) {
 	}
 	tidLast := bw.traceIDs[len(bw.traceIDs)-1]
 	if tid < tidLast {
-		logger.Panicf("the tid=%d cannot be smaller than the previously written tid=%d", tid, tidLast)
+		logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", tid, tidLast)
 	}
 	hasWrittenBlocks := len(bw.traceIDs) > 0
 	isSeenTid := tid == tidLast
@@ -248,7 +248,7 @@ func (bw *blockWriter) mustWriteBlock(tidLen uint32, tid string, b *block) {
 		bw.maxTimestamp = tm.max
 	}
 	if isSeenTid && tm.min < bw.minTimestampLast {
-		logger.Panicf("the block for tid=%d cannot contain timestamp smaller than %d, but it contains timestamp %d", tid, bw.minTimestampLast, tm.min)
+		logger.Panicf("the block for tid=%s cannot contain timestamp smaller than %d, but it contains timestamp %d", tid, bw.minTimestampLast, tm.min)
 	}
 	bw.minTimestampLast = tm.min
 

@@ -325,7 +325,7 @@ type TraceQueryOptions struct {
 	MaxTraceSize   int
 }
 
-// Reset resets the StreamQueryOptions.
+// Reset resets the TraceQueryOptions.
 func (t *TraceQueryOptions) Reset() {
 	t.Name = ""
 	t.TimeRange = nil
@@ -335,7 +335,7 @@ func (t *TraceQueryOptions) Reset() {
 	t.MaxTraceSize = 0
 }
 
-// CopyFrom copies the StreamQueryOptions from other to s.
+// CopyFrom copies the TraceQueryOptions from other to t.
 func (t *TraceQueryOptions) CopyFrom(other *TraceQueryOptions) {
 	t.Name = other.Name
 	t.TimeRange = other.TimeRange

@@ -163,7 +163,7 @@ func (pi *partIter) loadNextBlockMetadata() bool {
 
 func searchPBM(pbmIndex []primaryBlockMetadata, tid string) []primaryBlockMetadata {
 	if tid < pbmIndex[0].traceID {
-		logger.Panicf("invariant violation: tid cannot be smaller than pbmIndex[0]; got %d vs %d", tid, &pbmIndex[0].traceID)
+		logger.Panicf("invariant violation: tid cannot be smaller than pbmIndex[0]; got %s vs %s", tid, pbmIndex[0].traceID)
 	}
 
 	if tid == pbmIndex[0].traceID {

@@ -201,7 +201,7 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 		}
 		if tagSpec.Name == stm.schema.TimestampTagName {
 			traces.timestamps = append(traces.timestamps, req.Tags[i].GetTimestamp().AsTime().UnixNano())
-		}	
+		}
 
 		var tagValue *modelv1.TagValue
 		if len(req.Tags) <= i {

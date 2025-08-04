@@ -278,7 +278,7 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]
 
 func validateBlockMetadataOrder(pre, cur *blockMetadata) error {
 	if cur.traceID < pre.traceID {
-		return fmt.Errorf("unexpected blockMetadata with smaller traceID=%d after bigger traceID=%d", cur.traceID, pre.traceID)
+		return fmt.Errorf("unexpected blockMetadata with smaller traceID=%s after bigger traceID=%s", cur.traceID, pre.traceID)
 	}
 	return nil
 }
