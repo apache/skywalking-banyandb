@@ -37,7 +37,7 @@ clean:
 
 .PHONY: build-server
 build-server:
-	(cd $(root_dir) && TARGET_OS=linux PLATFORMS=linux/arm64 make release)
+	(cd $(root_dir) && TARGET_OS=linux PLATFORMS="linux/arm64, linux/amd64" make release)
 
 .PHONY: dev-up
 dev-up: clean
