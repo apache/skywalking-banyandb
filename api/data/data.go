@@ -42,9 +42,12 @@ var (
 		TopicMeasurePartSync.String():          TopicMeasurePartSync,
 		TopicMeasureSeriesIndexInsert.String(): TopicMeasureSeriesIndexInsert,
 		TopicMeasureSeriesIndexUpdate.String(): TopicMeasureSeriesIndexUpdate,
+		TopicMeasureSeriesSync.String():        TopicMeasureSeriesSync,
 		TopicPropertyRepair.String():           TopicPropertyRepair,
 		TopicStreamSeriesIndexWrite.String():   TopicStreamSeriesIndexWrite,
 		TopicStreamLocalIndexWrite.String():    TopicStreamLocalIndexWrite,
+		TopicStreamSeriesSync.String():         TopicStreamSeriesSync,
+		TopicStreamElementIndexSync.String():   TopicStreamElementIndexSync,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -86,6 +89,9 @@ var (
 		TopicMeasureSeriesIndexUpdate: func() proto.Message {
 			return nil
 		},
+		TopicMeasureSeriesSync: func() proto.Message {
+			return nil
+		},
 		TopicPropertyRepair: func() proto.Message {
 			return &propertyv1.InternalRepairRequest{}
 		},
@@ -93,6 +99,12 @@ var (
 			return nil
 		},
 		TopicStreamLocalIndexWrite: func() proto.Message {
+			return nil
+		},
+		TopicStreamSeriesSync: func() proto.Message {
+			return nil
+		},
+		TopicStreamElementIndexSync: func() proto.Message {
 			return nil
 		},
 	}

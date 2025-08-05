@@ -794,6 +794,7 @@ type Writer interface {
 	InsertSeriesBatch(batch Batch) error
 	UpdateSeriesBatch(batch Batch) error
 	Delete(docID [][]byte) error
+	EnableExternalSegments() (ExternalSegmentStreamer, error)
 }
 
 // FieldIterable allows building a FieldIterator.
@@ -914,6 +915,20 @@ func (s SeriesMatcher) String() string {
 
 // GetSearcher returns a searcher associated with input index rule type.
 type GetSearcher func(location databasev1.IndexRule_Type) (Searcher, error)
+
+// ExternalSegmentStreamer provides methods for streaming external segments into an index.
+type ExternalSegmentStreamer interface {
+	// StartSegment begins streaming a new segment.
+	StartSegment() error
+	// WriteChunk writes a chunk of segment data.
+	WriteChunk(data []byte) error
+	// CompleteSegment signals completion of segment streaming.
+	CompleteSegment() error
+	// Status returns the current status of the segment streaming.
+	Status() string
+	// BytesReceived returns the number of bytes received so far.
+	BytesReceived() uint64
+}
 
 // Filter is a node in the filter tree.
 type Filter interface {
