@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,17 +38,11 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
-	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/node"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -77,6 +70,7 @@ type lifecycleService struct {
 	maxExecutionTimes int
 	enableTLS         bool
 	insecure          bool
+	chunkSize         run.Bytes
 }
 
 // NewService creates a new lifecycle service.
@@ -107,6 +101,8 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 		"Schedule expression for periodic backup. Options: @yearly, @monthly, @weekly, @daily, @hourly or @every <duration>",
 	)
 	flagS.IntVar(&l.maxExecutionTimes, "max-execution-times", 0, "Maximum number of times to execute the lifecycle migration. 0 means no limit.")
+	l.chunkSize = run.Bytes(1024 * 1024)
+	flagS.VarP(&l.chunkSize, "chunk-size", "", "Chunk size in bytes for streaming data during migration (default: 1MB)")
 	return flagS
 }
 
@@ -184,22 +180,16 @@ func (l *lifecycleService) action() error {
 		l.l.Error().Err(err).Msg("failed to get snapshots")
 		return err
 	}
+	if streamDir == "" && measureDir == "" {
+		l.l.Warn().Msg("no snapshots found, skipping lifecycle migration")
+		l.generateReport(progress)
+		return nil
+	}
 	l.l.Info().
 		Str("stream_snapshot", streamDir).
 		Str("measure_snapshot", measureDir).
 		Msg("created snapshots")
 	progress.Save(l.progressFilePath, l.l)
-	streamSVC, measureSVC, err := l.setupQuerySvc(ctx, streamDir, measureDir)
-	if streamSVC != nil {
-		defer streamSVC.GracefulStop()
-	}
-	if measureSVC != nil {
-		defer measureSVC.GracefulStop()
-	}
-	if err != nil {
-		l.l.Error().Err(err).Msg("failed to setup query service")
-		return err
-	}
 
 	nodes, err := l.metadata.NodeRegistry().ListNode(ctx, databasev1.Role_ROLE_DATA)
 	if err != nil {
@@ -212,21 +202,19 @@ func (l *lifecycleService) action() error {
 	for _, g := range groups {
 		switch g.Catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
-			if streamSVC == nil {
-				l.l.Error().Msgf("stream service is not available, skipping group: %s", g.Metadata.Name)
-				progress.MarkStreamError(g.Metadata.Name, "", fmt.Sprintf("stream service unavailable for group %s", g.Metadata.Name))
-				allGroupsCompleted = false
+			if streamDir == "" {
+				l.l.Warn().Msgf("stream snapshot directory is not available, skipping group: %s", g.Metadata.Name)
+				progress.MarkGroupCompleted(g.Metadata.Name)
 				continue
 			}
-			l.processStreamGroup(ctx, g, streamSVC, nodes, labels, progress)
+			l.processStreamGroup(ctx, g, streamDir, nodes, labels, progress)
 		case commonv1.Catalog_CATALOG_MEASURE:
-			if measureSVC == nil {
-				l.l.Error().Msgf("measure service is not available, skipping group: %s", g.Metadata.Name)
-				progress.MarkMeasureError(g.Metadata.Name, "", fmt.Sprintf("measure service unavailable for group %s", g.Metadata.Name))
-				allGroupsCompleted = false
+			if measureDir == "" {
+				l.l.Warn().Msgf("measure snapshot directory is not available, skipping group: %s", g.Metadata.Name)
+				progress.MarkGroupCompleted(g.Metadata.Name)
 				continue
 			}
-			l.processMeasureGroup(ctx, g, measureSVC, nodes, labels, progress)
+			l.processMeasureGroup(ctx, g, measureDir, nodes, labels, progress)
 		default:
 			l.l.Info().Msgf("group catalog: %s doesn't support lifecycle management", g.Catalog)
 		}
@@ -244,57 +232,21 @@ func (l *lifecycleService) action() error {
 	return fmt.Errorf("lifecycle migration partially completed, progress file retained; %d groups not fully completed", len(groups)-len(progress.CompletedGroups))
 }
 
-// generateReport gathers counts & errors from Progress, writes one JSON file per run, and keeps only 5 latest.
+// generateReport gathers detailed counts & errors from Progress, writes comprehensive JSON file per run, and keeps only 5 latest.
 func (l *lifecycleService) generateReport(p *Progress) {
-	type grp struct {
-		StreamCounts  map[string]int    `json:"stream_counts"`
-		MeasureCounts map[string]int    `json:"measure_counts"`
-		StreamErrors  map[string]string `json:"stream_errors"`
-		MeasureErrors map[string]string `json:"measure_errors"`
-		Name          string            `json:"name"`
-	}
 	reportDir := l.reportDir
 	if err := os.MkdirAll(reportDir, 0o755); err != nil {
 		l.l.Error().Err(err).Msgf("failed to create report dir %s", reportDir)
 		return
 	}
 
-	// build report
-	var groups []grp
-	for name := range p.CompletedStreams {
-		groups = append(groups, grp{
-			Name:          name,
-			StreamCounts:  p.StreamCounts[name],
-			MeasureCounts: p.MeasureCounts[name],
-			StreamErrors:  p.StreamErrors[name],
-			MeasureErrors: p.MeasureErrors[name],
-		})
-	}
-	// also include groups that had only measures
-	for name := range p.CompletedMeasures {
-		if _, seen := p.CompletedStreams[name]; seen {
-			continue
-		}
-		groups = append(groups, grp{
-			Name:          name,
-			StreamCounts:  p.StreamCounts[name],
-			MeasureCounts: p.MeasureCounts[name],
-			StreamErrors:  p.StreamErrors[name],
-			MeasureErrors: p.MeasureErrors[name],
-		})
-	}
-	payload := struct {
-		GeneratedAt time.Time `json:"generated_at"`
-		Groups      []grp     `json:"groups"`
-	}{
-		GeneratedAt: time.Now(),
-		Groups:      groups,
-	}
+	// Build comprehensive migration report
+	report := l.buildMigrationReport(p)
 
 	// write file
 	fname := time.Now().Format("20060102_150405") + ".json"
 	fpath := filepath.Join(reportDir, fname)
-	data, err := json.MarshalIndent(payload, "", "  ")
+	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to marshal migration report")
 		return
@@ -303,18 +255,240 @@ func (l *lifecycleService) generateReport(p *Progress) {
 		l.l.Error().Err(err).Msgf("failed to write report file %s", fpath)
 		return
 	}
-	l.l.Info().Msgf("wrote migration report %s", fpath)
+	l.l.Info().Msgf("wrote comprehensive migration report %s", fpath)
 
 	// rotate: keep only 5 latest
+	l.rotateReportFiles(reportDir)
+}
+
+// buildMigrationReport creates a comprehensive migration report from progress data.
+func (l *lifecycleService) buildMigrationReport(p *Progress) map[string]interface{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	now := time.Now()
+	report := map[string]interface{}{
+		"generated_at":   now,
+		"report_version": "2.0",
+		"summary":        l.buildSummaryStats(p),
+		"errors":         l.buildErrorSummary(p),
+		"snapshot_info": map[string]interface{}{
+			"stream_dir":  p.SnapshotStreamDir,
+			"measure_dir": p.SnapshotMeasureDir,
+		},
+	}
+
+	return report
+}
+
+// buildSummaryStats creates overall migration statistics.
+func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{} {
+	totalGroups := len(p.CompletedGroups) + len(p.DeletedStreamGroups) + len(p.DeletedMeasureGroups)
+	completedGroups := len(p.CompletedGroups)
+
+	// Calculate total parts and series across all groups
+	totalStreamParts, completedStreamParts := l.calculateTotalCounts(p.StreamPartCounts, p.StreamPartProgress)
+	totalStreamSeries, completedStreamSeries := l.calculateTotalCounts(p.StreamSeriesCounts, p.StreamSeriesProgress)
+	totalStreamElementIndex, completedStreamElementIndex := l.calculateTotalCounts(p.StreamElementIndexCounts, p.StreamElementIndexProgress)
+	totalMeasureParts, completedMeasureParts := l.calculateTotalCounts(p.MeasurePartCounts, p.MeasurePartProgress)
+	totalMeasureSeries, completedMeasureSeries := l.calculateTotalCounts(p.MeasureSeriesCounts, p.MeasureSeriesProgress)
+
+	// Calculate error counts
+	streamPartErrors := l.countErrors(p.StreamPartErrors)
+	streamSeriesErrors := l.countErrors(p.StreamSeriesErrors)
+	streamElementIndexErrors := l.countErrors(p.StreamElementIndexErrors)
+	measurePartErrors := l.countErrors(p.MeasurePartErrors)
+	measureSeriesErrors := l.countErrors(p.MeasureSeriesErrors)
+
+	return map[string]interface{}{
+		"migration_status": map[string]interface{}{
+			"total_groups":     totalGroups,
+			"completed_groups": completedGroups,
+			"completion_rate":  l.calculatePercentage(completedGroups, totalGroups),
+		},
+		"stream_migration": map[string]interface{}{
+			"parts": map[string]interface{}{
+				"total":           totalStreamParts,
+				"completed":       completedStreamParts,
+				"errors":          streamPartErrors,
+				"completion_rate": l.calculatePercentage(completedStreamParts, totalStreamParts),
+			},
+			"series": map[string]interface{}{
+				"total":           totalStreamSeries,
+				"completed":       completedStreamSeries,
+				"errors":          streamSeriesErrors,
+				"completion_rate": l.calculatePercentage(completedStreamSeries, totalStreamSeries),
+			},
+			"element_index": map[string]interface{}{
+				"total":           totalStreamElementIndex,
+				"completed":       completedStreamElementIndex,
+				"errors":          streamElementIndexErrors,
+				"completion_rate": l.calculatePercentage(completedStreamElementIndex, totalStreamElementIndex),
+			},
+		},
+		"measure_migration": map[string]interface{}{
+			"parts": map[string]interface{}{
+				"total":           totalMeasureParts,
+				"completed":       completedMeasureParts,
+				"errors":          measurePartErrors,
+				"completion_rate": l.calculatePercentage(completedMeasureParts, totalMeasureParts),
+			},
+			"series": map[string]interface{}{
+				"total":           totalMeasureSeries,
+				"completed":       completedMeasureSeries,
+				"errors":          measureSeriesErrors,
+				"completion_rate": l.calculatePercentage(completedMeasureSeries, totalMeasureSeries),
+			},
+		},
+	}
+}
+
+// buildErrorSummary creates detailed error information.
+func (l *lifecycleService) buildErrorSummary(p *Progress) map[string]interface{} {
+	errors := map[string]interface{}{
+		"stream_parts":         l.buildErrorDetails(p.StreamPartErrors),
+		"stream_series":        l.buildErrorDetails(p.StreamSeriesErrors),
+		"stream_element_index": l.buildErrorDetails(p.StreamElementIndexErrors),
+		"measure_parts":        l.buildErrorDetails(p.MeasurePartErrors),
+		"measure_series":       l.buildErrorDetails(p.MeasureSeriesErrors),
+	}
+
+	return errors
+}
+
+// Helper functions.
+func (l *lifecycleService) calculateTotalCounts(counts, progress map[string]int) (int, int) {
+	totalCount, totalProgress := 0, 0
+	for _, count := range counts {
+		totalCount += count
+	}
+	for _, prog := range progress {
+		totalProgress += prog
+	}
+	return totalCount, totalProgress
+}
+
+func (l *lifecycleService) countErrors(errorMaps interface{}) int {
+	switch v := errorMaps.(type) {
+	// New four-level structure: map[group]map[segmentID]map[shardID]map[partID]error
+	case map[string]map[string]map[common.ShardID]map[uint64]string:
+		total := 0
+		for _, segments := range v {
+			for _, shards := range segments {
+				for _, parts := range shards {
+					total += len(parts)
+				}
+			}
+		}
+		return total
+	// New three-level structure: map[group]map[segmentID]map[shardID]error
+	case map[string]map[string]map[common.ShardID]string:
+		total := 0
+		for _, segments := range v {
+			for _, shards := range segments {
+				total += len(shards)
+			}
+		}
+		return total
+	// Legacy two-level structure: map[group]map[partID]error
+	case map[string]map[uint64]string:
+		total := 0
+		for _, groupErrors := range v {
+			total += len(groupErrors)
+		}
+		return total
+	// Legacy two-level structure: map[group]map[shardID]error
+	case map[string]map[string]string:
+		total := 0
+		for _, groupErrors := range v {
+			total += len(groupErrors)
+		}
+		return total
+	default:
+		return 0
+	}
+}
+
+func (l *lifecycleService) calculatePercentage(completed, total int) float64 {
+	if total == 0 {
+		return 0.0
+	}
+	return float64(completed) / float64(total) * 100.0
+}
+
+func (l *lifecycleService) buildErrorDetails(errorMaps interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	switch v := errorMaps.(type) {
+	// New four-level structure: map[group]map[segmentID]map[shardID]map[partID]error
+	case map[string]map[string]map[common.ShardID]map[uint64]string:
+		for group, segments := range v {
+			groupDetails := make(map[string]interface{})
+			for segmentID, shards := range segments {
+				segmentDetails := make(map[string]interface{})
+				for shardID, parts := range shards {
+					if len(parts) > 0 {
+						segmentDetails[fmt.Sprintf("shard_%d", shardID)] = parts
+					}
+				}
+				if len(segmentDetails) > 0 {
+					groupDetails[segmentID] = segmentDetails
+				}
+			}
+			if len(groupDetails) > 0 {
+				result[group] = groupDetails
+			}
+		}
+	// New three-level structure: map[group]map[segmentID]map[shardID]error
+	case map[string]map[string]map[common.ShardID]string:
+		for group, segments := range v {
+			groupDetails := make(map[string]interface{})
+			for segmentID, shards := range segments {
+				if len(shards) > 0 {
+					// Convert ShardID keys to strings for JSON serialization
+					shardDetails := make(map[string]string)
+					for shardID, errorMsg := range shards {
+						shardDetails[fmt.Sprintf("shard_%d", shardID)] = errorMsg
+					}
+					groupDetails[segmentID] = shardDetails
+				}
+			}
+			if len(groupDetails) > 0 {
+				result[group] = groupDetails
+			}
+		}
+	// Legacy two-level structure: map[group]map[partID]error
+	case map[string]map[uint64]string:
+		for group, groupErrors := range v {
+			if len(groupErrors) > 0 {
+				result[group] = groupErrors
+			}
+		}
+	// Legacy two-level structure: map[group]map[shardID]error
+	case map[string]map[string]string:
+		for group, groupErrors := range v {
+			if len(groupErrors) > 0 {
+				result[group] = groupErrors
+			}
+		}
+	}
+
+	return result
+}
+
+// rotateReportFiles keeps only the 5 most recent report files.
+func (l *lifecycleService) rotateReportFiles(reportDir string) {
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
 		return
 	}
-	type fi struct {
+
+	type fileInfo struct {
 		t    time.Time
 		name string
 	}
-	var list []fi
+
+	var list []fileInfo
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -323,15 +497,20 @@ func (l *lifecycleService) generateReport(p *Progress) {
 		if err != nil {
 			continue
 		}
-		list = append(list, fi{name: e.Name(), t: info.ModTime()})
+		list = append(list, fileInfo{name: e.Name(), t: info.ModTime()})
 	}
+
 	sort.Slice(list, func(i, j int) bool {
 		return list[i].t.After(list[j].t)
 	})
+
 	for i := 5; i < len(list); i++ {
 		_ = os.Remove(filepath.Join(reportDir, list[i].name))
 	}
-	l.l.Info().Msg("rotated old migration reports")
+
+	if len(list) > 5 {
+		l.l.Info().Msgf("rotated %d old migration reports", len(list)-5)
+	}
 }
 
 func getGroupNames(groups []*commonv1.Group) []string {
@@ -367,116 +546,101 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 	return groups, nil
 }
 
-func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group, streamSVC stream.Service,
-	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
+func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
+	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, replicas, selector, client, err := parseGroup(g, labels, nodes, l.l, l.metadata)
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
-		return
-	}
-	defer client.GracefulStop()
-
-	ss, err := l.metadata.StreamRegistry().ListStream(ctx, schema.ListOpt{Group: g.Metadata.Name})
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to list streams in group %s", g.Metadata.Name)
-		return
-	}
-
-	tr := streamSVC.GetRemovalSegmentsTimeRange(g.Metadata.Name)
+	tr := l.getRemovalSegmentsTimeRange(g)
 	if tr.Start.IsZero() && tr.End.IsZero() {
 		l.l.Info().Msgf("no removal segments time range for group %s, skipping stream migration", g.Metadata.Name)
 		progress.MarkGroupCompleted(g.Metadata.Name)
-		progress.Save(l.progressFilePath, l.l)
 		return
 	}
 
-	l.processStreams(ctx, g, ss, streamSVC, tr, shardNum, replicas, selector, client, progress)
+	err := l.processStreamGroupFileBased(ctx, g, streamDir, tr, nodes, labels, progress)
+	if err != nil {
+		l.l.Error().Err(err).Msgf("failed to migrate stream group %s using file-based approach", g.Metadata.Name)
+		return
+	}
 
-	allStreamsDone := true
-	for _, s := range ss {
-		if !progress.IsStreamCompleted(g.Metadata.Name, s.Metadata.Name) {
-			allStreamsDone = false
-		}
-	}
-	if allStreamsDone {
-		l.l.Info().Msgf("deleting expired stream segments for group: %s", g.Metadata.Name)
-		l.deleteExpiredStreamSegments(ctx, g, tr, progress)
-		progress.MarkGroupCompleted(g.Metadata.Name)
-		progress.Save(l.progressFilePath, l.l)
-	} else {
-		l.l.Info().Msgf("skipping delete expired stream segments for group %s: some streams not fully migrated", g.Metadata.Name)
-	}
+	l.l.Info().Msgf("deleting expired stream segments for group: %s", g.Metadata.Name)
+	l.deleteExpiredStreamSegments(ctx, g, tr, progress)
+	progress.MarkGroupCompleted(g.Metadata.Name)
 }
 
-func (l *lifecycleService) processStreams(
-	ctx context.Context,
-	g *commonv1.Group,
-	streams []*databasev1.Stream,
-	streamSVC stream.Service,
-	tr *timestamp.TimeRange,
-	shardNum uint32,
-	replicas uint32,
-	selector node.Selector,
-	client queue.Client,
-	progress *Progress,
-) {
-	for _, s := range streams {
-		if progress.IsStreamCompleted(g.Metadata.Name, s.Metadata.Name) {
-			l.l.Debug().Msgf("skipping already completed stream: %s/%s", g.Metadata.Name, s.Metadata.Name)
-			continue
-		}
-		sum, err := l.processSingleStream(ctx, s, streamSVC, tr, shardNum, replicas, selector, client)
-		if err != nil {
-			progress.MarkStreamError(g.Metadata.Name, s.Metadata.Name, err.Error())
-		} else {
-			if sum < 1 {
-				l.l.Debug().Msgf("no elements migrated for stream %s", s.Metadata.Name)
-			} else {
-				l.l.Info().Msgf("migrated %d elements in stream %s", sum, s.Metadata.Name)
-			}
-			progress.MarkStreamCompleted(g.Metadata.Name, s.Metadata.Name, sum)
-		}
-		progress.Save(l.progressFilePath, l.l)
+// processStreamGroupFileBased uses file-based migration instead of element-based queries.
+func (l *lifecycleService) processStreamGroupFileBased(_ context.Context, g *commonv1.Group,
+	streamDir string, tr *timestamp.TimeRange, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
+) error {
+	if progress.IsStreamGroupDeleted(g.Metadata.Name) {
+		l.l.Info().Msgf("skipping already completed file-based migration for group: %s", g.Metadata.Name)
+		return nil
 	}
+
+	l.l.Info().Msgf("starting file-based stream migration for group: %s", g.Metadata.Name)
+
+	// Use the file-based migration with existing visitor pattern
+	err := migrateStreamWithFileBasedAndProgress(
+		filepath.Join(streamDir, g.Metadata.Name), // Use snapshot directory as source
+		*tr,              // Time range for segments to migrate
+		g,                // Group configuration
+		labels,           // Node labels
+		nodes,            // Target nodes
+		l.metadata,       // Metadata repository
+		l.l,              // Logger
+		progress,         // Progress tracking
+		int(l.chunkSize), // Chunk size for streaming
+	)
+	if err != nil {
+		return fmt.Errorf("file-based stream migration failed: %w", err)
+	}
+
+	l.l.Info().Msgf("completed file-based stream migration for group: %s", g.Metadata.Name)
+	return nil
 }
 
-func (l *lifecycleService) processSingleStream(ctx context.Context, s *databasev1.Stream,
-	streamSVC stream.Service, tr *timestamp.TimeRange, shardNum uint32, replicas uint32, selector node.Selector, client queue.Client,
-) (int, error) {
-	q, err := streamSVC.Stream(s.Metadata)
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to get stream %s", s.Metadata.Name)
-		return 0, err
+// getRemovalSegmentsTimeRange calculates the time range for segments that should be migrated
+// based on the group's TTL configuration, similar to storage.segmentController.getExpiredSegmentsTimeRange.
+func (l *lifecycleService) getRemovalSegmentsTimeRange(g *commonv1.Group) *timestamp.TimeRange {
+	if g.ResourceOpts == nil || g.ResourceOpts.Ttl == nil {
+		l.l.Debug().Msgf("no TTL configured for group %s", g.Metadata.Name)
+		return &timestamp.TimeRange{} // Return empty time range
 	}
 
-	tagProjection := make([]model.TagProjection, len(s.TagFamilies))
-	entity := make([]*modelv1.TagValue, len(s.Entity.TagNames))
-	for idx := range s.Entity.TagNames {
-		entity[idx] = pbv1.AnyTagValue
-	}
-	for i, tf := range s.TagFamilies {
-		tagProjection[i] = model.TagProjection{
-			Family: tf.Name,
-			Names:  make([]string, len(tf.Tags)),
-		}
-		for j, t := range tf.Tags {
-			tagProjection[i].Names[j] = t.Name
-		}
+	// Convert TTL to storage.IntervalRule
+	ttl := storage.MustToIntervalRule(g.ResourceOpts.Ttl)
+
+	// Calculate deadline based on TTL (same logic as segmentController.getExpiredSegmentsTimeRange)
+	deadline := time.Now().Local().Add(-l.calculateTTLDuration(ttl))
+
+	// Create time range for segments before the deadline
+	timeRange := &timestamp.TimeRange{
+		Start:        time.Time{}, // Will be set to earliest segment start time
+		End:          deadline,    // All segments before this time should be migrated
+		IncludeStart: true,
+		IncludeEnd:   false,
 	}
 
-	result, err := q.Query(ctx, model.StreamQueryOptions{
-		Name:           s.Metadata.Name,
-		TagProjection:  tagProjection,
-		Entities:       [][]*modelv1.TagValue{entity},
-		TimeRange:      tr,
-		MaxElementSize: math.MaxInt,
-	})
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to query stream %s", s.Metadata.Name)
-		return 0, err
+	l.l.Info().
+		Str("group", g.Metadata.Name).
+		Time("deadline", deadline).
+		Str("ttl", fmt.Sprintf("%d %s", g.ResourceOpts.Ttl.Num, g.ResourceOpts.Ttl.Unit.String())).
+		Msg("calculated removal segments time range based on TTL")
+
+	return timeRange
+}
+
+// calculateTTLDuration calculates the duration for a TTL interval rule.
+// This implements the same logic as storage.IntervalRule.estimatedDuration().
+func (l *lifecycleService) calculateTTLDuration(ttl storage.IntervalRule) time.Duration {
+	switch ttl.Unit {
+	case storage.HOUR:
+		return time.Hour * time.Duration(ttl.Num)
+	case storage.DAY:
+		return 24 * time.Hour * time.Duration(ttl.Num)
+	default:
+		l.l.Warn().Msgf("unknown TTL unit %v, defaulting to 1 day", ttl.Unit)
+		return 24 * time.Hour
 	}
-	return migrateStream(ctx, s, result, shardNum, replicas, selector, client, l.l), nil
 }
 
 func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *commonv1.Group, tr *timestamp.TimeRange, progress *Progress) {
@@ -505,23 +669,10 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 	progress.Save(l.progressFilePath, l.l)
 }
 
-func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureSVC measure.Service,
+func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	shardNum, replicas, selector, client, err := parseGroup(g, labels, nodes, l.l, l.metadata)
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
-		return
-	}
-	defer client.GracefulStop()
-
-	mm, err := l.metadata.MeasureRegistry().ListMeasure(ctx, schema.ListOpt{Group: g.Metadata.Name})
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to list measures in group %s", g.Metadata.Name)
-		return
-	}
-
-	tr := measureSVC.GetRemovalSegmentsTimeRange(g.Metadata.Name)
+	tr := l.getRemovalSegmentsTimeRange(g)
 	if tr.Start.IsZero() && tr.End.IsZero() {
 		l.l.Info().Msgf("no removal segments time range for group %s, skipping measure migration", g.Metadata.Name)
 		progress.MarkGroupCompleted(g.Metadata.Name)
@@ -529,98 +680,47 @@ func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.
 		return
 	}
 
-	l.processMeasures(ctx, g, mm, measureSVC, tr, shardNum, replicas, selector, client, progress)
+	// Try file-based migration first
+	if err := l.processMeasureGroupFileBased(ctx, g, measureDir, tr, nodes, labels, progress); err != nil {
+		l.l.Error().Err(err).Msgf("failed to migrate measure group %s using file-based approach", g.Metadata.Name)
+		return
+	}
 
-	allMeasuresDone := true
-	for _, m := range mm {
-		if !progress.IsMeasureCompleted(g.Metadata.Name, m.Metadata.Name) {
-			allMeasuresDone = false
-			break
-		}
-	}
-	if allMeasuresDone {
-		l.l.Info().Msgf("deleting expired measure segments for group: %s", g.Metadata.Name)
-		l.deleteExpiredMeasureSegments(ctx, g, tr, progress)
-		progress.MarkGroupCompleted(g.Metadata.Name)
-		progress.Save(l.progressFilePath, l.l)
-	} else {
-		l.l.Info().Msgf("skipping delete expired measure segments for group %s: some measures not fully migrated", g.Metadata.Name)
-	}
+	l.l.Info().Msgf("deleting expired measure segments for group: %s", g.Metadata.Name)
+	l.deleteExpiredMeasureSegments(ctx, g, tr, progress)
+	progress.MarkGroupCompleted(g.Metadata.Name)
+	progress.Save(l.progressFilePath, l.l)
 }
 
-func (l *lifecycleService) processMeasures(
-	ctx context.Context,
-	g *commonv1.Group,
-	measures []*databasev1.Measure,
-	measureSVC measure.Service,
-	tr *timestamp.TimeRange,
-	shardNum uint32,
-	replicas uint32,
-	selector node.Selector,
-	client queue.Client,
-	progress *Progress,
-) {
-	for _, m := range measures {
-		if progress.IsMeasureCompleted(g.Metadata.Name, m.Metadata.Name) {
-			l.l.Debug().Msgf("skipping already completed measure: %s/%s", g.Metadata.Name, m.Metadata.Name)
-			continue
-		}
-		sum, err := l.processSingleMeasure(ctx, m, measureSVC, tr, shardNum, replicas, selector, client)
-		if err != nil {
-			progress.MarkMeasureError(g.Metadata.Name, m.Metadata.Name, err.Error())
-		} else {
-			if sum < 1 {
-				l.l.Debug().Msgf("no elements migrated for measure %s", m.Metadata.Name)
-			} else {
-				l.l.Info().Msgf("migrated %d elements in measure %s", sum, m.Metadata.Name)
-			}
-			progress.MarkMeasureCompleted(g.Metadata.Name, m.Metadata.Name, sum)
-		}
-		progress.Save(l.progressFilePath, l.l)
+// processMeasureGroupFileBased uses file-based migration instead of query-based migration.
+func (l *lifecycleService) processMeasureGroupFileBased(_ context.Context, g *commonv1.Group,
+	measureDir string, tr *timestamp.TimeRange, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
+) error {
+	if progress.IsMeasureGroupDeleted(g.Metadata.Name) {
+		l.l.Info().Msgf("skipping already completed file-based measure migration for group: %s", g.Metadata.Name)
+		return nil
 	}
-}
 
-func (l *lifecycleService) processSingleMeasure(ctx context.Context, m *databasev1.Measure,
-	measureSVC measure.Service, tr *timestamp.TimeRange, shardNum uint32, replicas uint32, selector node.Selector, client queue.Client,
-) (int, error) {
-	q, err := measureSVC.Measure(m.Metadata)
+	l.l.Info().Msgf("starting file-based measure migration for group: %s", g.Metadata.Name)
+
+	// Use the file-based migration with existing visitor pattern
+	err := migrateMeasureWithFileBasedAndProgress(
+		filepath.Join(measureDir, g.Metadata.Name), // Use snapshot directory as source
+		*tr,              // Time range for segments to migrate
+		g,                // Group configuration
+		labels,           // Node labels
+		nodes,            // Target nodes
+		l.metadata,       // Metadata repository
+		l.l,              // Logger
+		progress,         // Progress tracking
+		int(l.chunkSize), // Chunk size for streaming
+	)
 	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to get measure %s", m.Metadata.Name)
-		return 0, err
+		return fmt.Errorf("file-based measure migration failed: %w", err)
 	}
 
-	tagProjection := make([]model.TagProjection, len(m.TagFamilies))
-	for i, tf := range m.TagFamilies {
-		tagProjection[i] = model.TagProjection{
-			Family: tf.Name,
-			Names:  make([]string, len(tf.Tags)),
-		}
-		for j, t := range tf.Tags {
-			tagProjection[i].Names[j] = t.Name
-		}
-	}
-	fieldProjection := make([]string, len(m.Fields))
-	for i, f := range m.Fields {
-		fieldProjection[i] = f.Name
-	}
-	entity := make([]*modelv1.TagValue, len(m.Entity.TagNames))
-	for idx := range m.Entity.TagNames {
-		entity[idx] = pbv1.AnyTagValue
-	}
-
-	result, err := q.Query(ctx, model.MeasureQueryOptions{
-		Name:            m.Metadata.Name,
-		TagProjection:   tagProjection,
-		FieldProjection: fieldProjection,
-		Entities:        [][]*modelv1.TagValue{entity},
-		TimeRange:       tr,
-	})
-	if err != nil {
-		l.l.Error().Err(err).Msgf("failed to query measure %s", m.Metadata.Name)
-		return 0, err
-	}
-
-	return migrateMeasure(ctx, m, result, shardNum, replicas, selector, client, l.l), nil
+	l.l.Info().Msgf("completed file-based measure migration for group: %s", g.Metadata.Name)
+	return nil
 }
 
 func (l *lifecycleService) deleteExpiredMeasureSegments(ctx context.Context, g *commonv1.Group, tr *timestamp.TimeRange, progress *Progress) {

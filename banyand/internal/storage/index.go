@@ -60,10 +60,12 @@ func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64,
 		p: common.GetPosition(ctx),
 	}
 	opts := inverted.StoreOpts{
-		Path:          path.Join(root, seriesIndexDirName),
-		Logger:        si.l,
-		BatchWaitSec:  flushTimeoutSeconds,
-		CacheMaxBytes: cacheMaxBytes,
+		Path:                   path.Join(root, seriesIndexDirName),
+		Logger:                 si.l,
+		BatchWaitSec:           flushTimeoutSeconds,
+		CacheMaxBytes:          cacheMaxBytes,
+		EnableDeduplication:    true,
+		ExternalSegmentTempDir: path.Join(root, inverted.ExternalSegmentTempDirName),
 	}
 	if metrics != nil {
 		opts.Metrics = metrics
@@ -86,6 +88,10 @@ func (s *seriesIndex) Update(docs index.Documents) error {
 	return s.store.UpdateSeriesBatch(index.Batch{
 		Documents: docs,
 	})
+}
+
+func (s *seriesIndex) EnableExternalSegments() (index.ExternalSegmentStreamer, error) {
+	return s.store.EnableExternalSegments()
 }
 
 func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,

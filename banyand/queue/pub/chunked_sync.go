@@ -97,6 +97,13 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 	if err != nil {
 		return nil, fmt.Errorf("failed to stream parts: %w", err)
 	}
+	if totalChunks == 0 {
+		return &queue.SyncResult{
+			Success:    true,
+			SessionID:  sessionID,
+			PartsCount: uint32(len(parts)),
+		}, nil
+	}
 
 	var finalResp *clusterv1.SyncPartResponse
 	for {
