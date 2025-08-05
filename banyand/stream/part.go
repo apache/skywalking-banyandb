@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -631,6 +632,99 @@ func mustOpenReader(name string, fileSystem fs.FileSystem) fs.Reader {
 
 func removeExt(nameWithExt, ext string) string {
 	return nameWithExt[:len(nameWithExt)-len(ext)]
+}
+
+// CreatePartFileReaderFromPath opens all files in a part directory and returns their FileInfo and a cleanup function.
+func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.FileInfo, func()) {
+	var files []queue.FileInfo
+	var readers []fs.Reader
+
+	metaPath := path.Join(partPath, metaFilename)
+	metaReader, err := lfs.OpenFile(metaPath)
+	if err != nil {
+		logger.Panicf("cannot open meta file %q: %s", metaPath, err)
+	}
+	readers = append(readers, metaReader)
+	files = append(files, queue.FileInfo{
+		Name:   streamMetaName,
+		Reader: metaReader.SequentialRead(),
+	})
+
+	primaryPath := path.Join(partPath, primaryFilename)
+	primaryReader, err := lfs.OpenFile(primaryPath)
+	if err != nil {
+		logger.Panicf("cannot open primary file %q: %s", primaryPath, err)
+	}
+	readers = append(readers, primaryReader)
+	files = append(files, queue.FileInfo{
+		Name:   streamPrimaryName,
+		Reader: primaryReader.SequentialRead(),
+	})
+
+	timestampsPath := path.Join(partPath, timestampsFilename)
+	timestampsReader, err := lfs.OpenFile(timestampsPath)
+	if err != nil {
+		logger.Panicf("cannot open timestamps file %q: %s", timestampsPath, err)
+	}
+	readers = append(readers, timestampsReader)
+	files = append(files, queue.FileInfo{
+		Name:   streamTimestampsName,
+		Reader: timestampsReader.SequentialRead(),
+	})
+
+	ee := lfs.ReadDir(partPath)
+	for _, e := range ee {
+		if e.IsDir() {
+			continue
+		}
+		if filepath.Ext(e.Name()) == tagFamiliesMetadataFilenameExt {
+			tfmPath := path.Join(partPath, e.Name())
+			tfmReader, err := lfs.OpenFile(tfmPath)
+			if err != nil {
+				logger.Panicf("cannot open tag family metadata file %q: %s", tfmPath, err)
+			}
+			readers = append(readers, tfmReader)
+			tagName := removeExt(e.Name(), tagFamiliesMetadataFilenameExt)
+			files = append(files, queue.FileInfo{
+				Name:   streamTagMetadataPrefix + tagName,
+				Reader: tfmReader.SequentialRead(),
+			})
+		}
+		if filepath.Ext(e.Name()) == tagFamiliesFilenameExt {
+			tfPath := path.Join(partPath, e.Name())
+			tfReader, err := lfs.OpenFile(tfPath)
+			if err != nil {
+				logger.Panicf("cannot open tag family file %q: %s", tfPath, err)
+			}
+			readers = append(readers, tfReader)
+			tagName := removeExt(e.Name(), tagFamiliesFilenameExt)
+			files = append(files, queue.FileInfo{
+				Name:   streamTagFamiliesPrefix + tagName,
+				Reader: tfReader.SequentialRead(),
+			})
+		}
+		if filepath.Ext(e.Name()) == tagFamiliesFilterFilenameExt {
+			tffPath := path.Join(partPath, e.Name())
+			tffReader, err := lfs.OpenFile(tffPath)
+			if err != nil {
+				logger.Panicf("cannot open tag family filter file %q: %s", tffPath, err)
+			}
+			readers = append(readers, tffReader)
+			tagName := removeExt(e.Name(), tagFamiliesFilterFilenameExt)
+			files = append(files, queue.FileInfo{
+				Name:   streamTagFilterPrefix + tagName,
+				Reader: tffReader.SequentialRead(),
+			})
+		}
+	}
+
+	cleanup := func() {
+		for _, reader := range readers {
+			fs.MustClose(reader)
+		}
+	}
+
+	return files, cleanup
 }
 
 func partPath(root string, epoch uint64) string {
