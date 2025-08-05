@@ -22,7 +22,10 @@ import (
 	"context"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
@@ -48,13 +51,13 @@ import (
 )
 
 const (
+	// ExternalSegmentTempDirName is the name of the directory used for temporary external segments.
+	ExternalSegmentTempDirName = "external-segment-temp"
+
 	docIDField     = "_id"
-	batchSize      = 1024
 	seriesIDField  = "_series_id"
 	timestampField = "_timestamp"
 	versionField   = "_version"
-	sourceField    = "_source"
-	deletedField   = "_deleted"
 )
 
 var (
@@ -66,13 +69,14 @@ var _ index.Store = (*store)(nil)
 
 // StoreOpts wraps options to create an inverted index repository.
 type StoreOpts struct {
-	Logger               *logger.Logger
-	Metrics              *Metrics
-	PrepareMergeCallback func(src []*roaringpkg.Bitmap, segments []segment.Segment, id uint64) (dest []*roaringpkg.Bitmap, err error)
-
-	Path          string
-	BatchWaitSec  int64
-	CacheMaxBytes int
+	Logger                 *logger.Logger
+	Metrics                *Metrics
+	PrepareMergeCallback   func(src []*roaringpkg.Bitmap, segments []segment.Segment, id uint64) (dest []*roaringpkg.Bitmap, err error)
+	Path                   string
+	ExternalSegmentTempDir string
+	BatchWaitSec           int64
+	CacheMaxBytes          int
+	EnableDeduplication    bool
 }
 
 type store struct {
@@ -80,6 +84,79 @@ type store struct {
 	closer  *run.Closer
 	l       *logger.Logger
 	metrics *Metrics
+}
+
+// ExternalSegmentWrapper wraps Bluge's ExternalSegmentReceiver for BanyanDB usage.
+type ExternalSegmentWrapper struct {
+	receiver *blugeIndex.ExternalSegmentReceiver
+	logger   *logger.Logger
+	mutex    sync.RWMutex
+}
+
+// NewExternalSegmentWrapper creates a new wrapper for external segment operations.
+func NewExternalSegmentWrapper(receiver *blugeIndex.ExternalSegmentReceiver, logger *logger.Logger) *ExternalSegmentWrapper {
+	return &ExternalSegmentWrapper{
+		receiver: receiver,
+		logger:   logger,
+	}
+}
+
+// StartSegment begins streaming a new segment.
+func (esw *ExternalSegmentWrapper) StartSegment() error {
+	esw.mutex.Lock()
+	defer esw.mutex.Unlock()
+
+	if err := esw.receiver.StartSegment(); err != nil {
+		esw.logger.Error().Err(err).Msg("failed to start external segment")
+		return errors.Wrap(err, "failed to start external segment")
+	}
+
+	esw.logger.Debug().Msg("external segment started")
+	return nil
+}
+
+// WriteChunk writes a chunk of segment data.
+func (esw *ExternalSegmentWrapper) WriteChunk(data []byte) error {
+	esw.mutex.Lock()
+	defer esw.mutex.Unlock()
+
+	if err := esw.receiver.WriteChunk(data); err != nil {
+		esw.logger.Error().Err(err).Int("chunk_size", len(data)).Msg("failed to write external segment chunk")
+		return errors.Wrap(err, "failed to write external segment chunk")
+	}
+
+	return nil
+}
+
+// CompleteSegment signals completion of segment streaming.
+func (esw *ExternalSegmentWrapper) CompleteSegment() error {
+	esw.mutex.Lock()
+	defer esw.mutex.Unlock()
+
+	if err := esw.receiver.CompleteSegment(); err != nil {
+		esw.logger.Error().Err(err).Msg("failed to complete external segment")
+		return errors.Wrap(err, "failed to complete external segment")
+	}
+
+	esw.logger.Info().
+		Uint64("bytes_received", esw.receiver.BytesReceived()).
+		Str("status", esw.receiver.Status().String()).
+		Msg("external segment completed successfully")
+	return nil
+}
+
+// Status returns the current status of the segment streaming.
+func (esw *ExternalSegmentWrapper) Status() string {
+	esw.mutex.RLock()
+	defer esw.mutex.RUnlock()
+	return esw.receiver.Status().String()
+}
+
+// BytesReceived returns the number of bytes received so far.
+func (esw *ExternalSegmentWrapper) BytesReceived() uint64 {
+	esw.mutex.RLock()
+	defer esw.mutex.RUnlock()
+	return esw.receiver.BytesReceived()
 }
 
 var batchPool = pool.Register[*blugeIndex.Batch]("index-bluge-batch")
@@ -154,6 +231,26 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	config.DefaultSearchAnalyzer = analyzer.Analyzers[index.AnalyzerKeyword]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
 	config = config.WithPrepareMergeCallback(opts.PrepareMergeCallback)
+	if opts.ExternalSegmentTempDir != "" {
+		absPath, err := filepath.Abs(opts.ExternalSegmentTempDir)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get absolute path for ExternalSegmentTempDir")
+		}
+		info, err := os.Stat(absPath)
+		switch {
+		case os.IsNotExist(err):
+			if mkErr := os.MkdirAll(absPath, 0o755); mkErr != nil {
+				return nil, errors.Wrap(mkErr, "failed to create ExternalSegmentTempDir")
+			}
+		case err != nil:
+			return nil, errors.Wrap(err, "failed to stat ExternalSegmentTempDir")
+		case !info.IsDir():
+			return nil, errors.Errorf("ExternalSegmentTempDir path exists but is not a directory: %s", absPath)
+		}
+		opts.ExternalSegmentTempDir = absPath
+	}
+
+	config = config.WithExternalSegments(opts.ExternalSegmentTempDir, opts.EnableDeduplication)
 	w, err := bluge.OpenWriter(config)
 	if err != nil {
 		return nil, err
@@ -165,6 +262,24 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 		metrics: opts.Metrics,
 	}
 	return s, nil
+}
+
+// EnableExternalSegments creates and returns an ExternalSegmentStreamer for streaming external segments.
+func (s *store) EnableExternalSegments() (index.ExternalSegmentStreamer, error) {
+	if !s.closer.AddRunning() {
+		return nil, errors.New("store is closing, cannot enable external segments")
+	}
+	defer s.closer.Done()
+
+	receiver, err := s.writer.EnableExternalSegments()
+	if err != nil {
+		s.l.Error().Err(err).Msg("failed to enable external segments on writer")
+		return nil, errors.Wrap(err, "failed to enable external segments")
+	}
+
+	wrapper := NewExternalSegmentWrapper(receiver, s.l)
+	s.l.Info().Msg("external segments enabled successfully")
+	return wrapper, nil
 }
 
 func (s *store) Close() error {

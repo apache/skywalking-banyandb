@@ -445,14 +445,19 @@ func (sc *segmentController[T, O]) format(tm time.Time) string {
 	panic("invalid interval unit")
 }
 
-func (sc *segmentController[T, O]) parse(value string) (time.Time, error) {
-	switch sc.getOptions().SegmentInterval.Unit {
+// parseSegmentTime parses a segment suffix into a time based on the interval unit.
+func parseSegmentTime(value string, unit IntervalUnit) (time.Time, error) {
+	switch unit {
 	case HOUR:
 		return time.ParseInLocation(hourFormat, value, time.Local)
 	case DAY:
 		return time.ParseInLocation(dayFormat, value, time.Local)
 	}
 	panic("invalid interval unit")
+}
+
+func (sc *segmentController[T, O]) parse(value string) (time.Time, error) {
+	return parseSegmentTime(value, sc.getOptions().SegmentInterval.Unit)
 }
 
 func (sc *segmentController[T, O]) open() error {
