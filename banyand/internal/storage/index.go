@@ -60,11 +60,12 @@ func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64,
 		p: common.GetPosition(ctx),
 	}
 	opts := inverted.StoreOpts{
-		Path:                path.Join(root, seriesIndexDirName),
-		Logger:              si.l,
-		BatchWaitSec:        flushTimeoutSeconds,
-		CacheMaxBytes:       cacheMaxBytes,
-		EnableDeduplication: true,
+		Path:                   path.Join(root, seriesIndexDirName),
+		Logger:                 si.l,
+		BatchWaitSec:           flushTimeoutSeconds,
+		CacheMaxBytes:          cacheMaxBytes,
+		EnableDeduplication:    true,
+		ExternalSegmentTempDir: path.Join(root, inverted.ExternalSegmentTempDirName),
 	}
 	if metrics != nil {
 		opts.Metrics = metrics

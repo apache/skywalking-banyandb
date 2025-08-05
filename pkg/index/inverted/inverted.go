@@ -51,6 +51,9 @@ import (
 )
 
 const (
+	// ExternalSegmentTempDirName is the name of the directory used for temporary external segments.
+	ExternalSegmentTempDirName = "external-segment-temp"
+
 	docIDField     = "_id"
 	seriesIDField  = "_series_id"
 	timestampField = "_timestamp"
@@ -228,10 +231,7 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 	config.DefaultSearchAnalyzer = analyzer.Analyzers[index.AnalyzerKeyword]
 	config.Logger = log.New(opts.Logger, opts.Logger.Module(), 0)
 	config = config.WithPrepareMergeCallback(opts.PrepareMergeCallback)
-	if opts.EnableDeduplication {
-		if opts.ExternalSegmentTempDir == "" {
-			return nil, errors.New("ExternalSegmentTempDir must be set when EnableDeduplication is true")
-		}
+	if opts.ExternalSegmentTempDir != "" {
 		absPath, err := filepath.Abs(opts.ExternalSegmentTempDir)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get absolute path for ExternalSegmentTempDir")

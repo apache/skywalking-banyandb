@@ -178,7 +178,7 @@
 Apache-2.0 licenses
 ========================================================================
 
-    github.com/SkyAPM/bluge v0.0.0-20250619030236-3750bbbf63b9 Apache-2.0
+    github.com/SkyAPM/bluge v0.0.0-20250804100126-cccf29a55f01 Apache-2.0
     github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3 Apache-2.0
     github.com/apache/skywalking-cli v0.0.0-20240227151024-ee371a210afe Apache-2.0
     github.com/aws/aws-sdk-go-v2 v1.36.3 Apache-2.0
@@ -310,7 +310,7 @@ BSD-3-Clause licenses
     github.com/fsnotify/fsnotify v1.9.0 BSD-3-Clause
     github.com/gogo/protobuf v1.3.2 BSD-3-Clause
     github.com/golang/protobuf v1.5.4 BSD-3-Clause
-    github.com/golang/snappy v1.0.0 BSD-3-Clause
+    github.com/golang/snappy v0.0.4 BSD-3-Clause
     github.com/google/go-cmp v0.7.0 BSD-3-Clause
     github.com/google/uuid v1.6.0 BSD-3-Clause
     github.com/grpc-ecosystem/grpc-gateway v1.16.0 BSD-3-Clause
