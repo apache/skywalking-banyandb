@@ -118,9 +118,6 @@ func initConfig() {
 			return err
 		}
 		configFile := viper.ConfigFileUsed()
-		if err := os.Chmod(configFile, 0o600); err != nil {
-			cobra.CheckErr(fmt.Errorf("failed to set permissions on config file %s: %w", configFile, err))
-		}
 		info, err := os.Stat(configFile)
 		if err != nil {
 			return fmt.Errorf("unable to stat config file: %w", err)
@@ -138,6 +135,12 @@ func initConfig() {
 			cobra.CheckErr(err)
 		}
 		cobra.CheckErr(viper.SafeWriteConfig())
+		// Reload config to ensure Viper updates ConfigFileUsed(), avoiding empty path for chmod
+		cobra.CheckErr(viper.ReadInConfig())
+		configFile := viper.ConfigFileUsed()
+		if err := os.Chmod(configFile, 0o600); err != nil {
+			cobra.CheckErr(fmt.Errorf("failed to set permissions on config file %s: %w", configFile, err))
+		}
 		cobra.CheckErr(readCfg())
 	}
 }

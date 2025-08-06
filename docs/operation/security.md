@@ -4,6 +4,53 @@ Security is a critical aspect of any application. In this section, we will discu
 
 ## Authentication
 
+### External Basic Auth (Client ↔ Server)
+
+BanyanDB supports username/password-based authentication across both gRPC and HTTP endpoints. The following flags are used to configure basic auth:
+
+- `--auth-config-file`: Path to the authentication config file (YAML format)
+
+For example, an authentication config file might be defined like this:
+```yaml
+users:
+  - username: admin
+    password: 123456
+  - username: test
+    password: 123456
+```
+BanyanDB server supports setting multiple usernames and passwords. And the config file must have permissions `0600`. Run this command after creating config file:
+```shell
+chmod 600 /path/to/config.yaml
+``` 
+Then, you can use the following flags:
+```shell
+banyand liaison --auth-config-file=/path/to/config.yaml
+```
+
+When you use bydbctl, you should append `username` and `password` parameter. For example:
+```shell
+bydbctl group get -g group1 -a http://localhost:17913 -u admin -p 123456
+```
+The flags `addr`, `group`, `username`, `password` will be automatically saved to home directory with name `.bydbctl.yaml` with permissions `0600` if it not exists.
+
+Also, you can customize the config file, for example:
+```yaml
+addr: http://localhost:17913
+group: group1
+username: admin
+password: 123456
+```
+The bydbctl config file should have permissions `0600` as well. Run this command after creating config file:
+```shell
+chmod 600 /path/to/bydbctlCfg.yaml
+``` 
+Then, you can use the following flags:
+```shell
+bydbctl --config /path/to/bydbctlCfg.yaml group list
+```
+
+### External TLS (Client ↔ Server)
+
 BanyanDB supports TLS for secure communication between servers. The following flags are used to configure TLS:
 
 - `--tls`: gRPC Connection uses TLS if true, else plain TCP.
