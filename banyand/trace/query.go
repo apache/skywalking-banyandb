@@ -22,7 +22,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -147,16 +146,4 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 			},
 		},
 	}
-}
-
-func updateTimeRange(filterTS posting.List, minTimestamp, maxTimestamp int64) (int64, int64) {
-	if filterTS != nil && !filterTS.IsEmpty() {
-		if minTS, err := filterTS.Min(); err == nil && int64(minTS) > minTimestamp {
-			minTimestamp = int64(minTS)
-		}
-		if maxTS, err := filterTS.Max(); err == nil && int64(maxTS) < maxTimestamp {
-			maxTimestamp = int64(maxTS)
-		}
-	}
-	return minTimestamp, maxTimestamp
 }

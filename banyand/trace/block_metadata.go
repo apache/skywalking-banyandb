@@ -250,20 +250,6 @@ func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
 	tm.max = src.max
 }
 
-func (tm *timestampsMetadata) marshal(dst []byte) []byte {
-	dst = encoding.Uint64ToBytes(dst, uint64(tm.min))
-	dst = encoding.Uint64ToBytes(dst, uint64(tm.max))
-	return dst
-}
-
-func (tm *timestampsMetadata) unmarshal(src []byte) []byte {
-	tm.min = int64(encoding.BytesToUint64(src))
-	src = src[8:]
-	tm.max = int64(encoding.BytesToUint64(src))
-	src = src[8:]
-	return src
-}
-
 func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]pbv1.ValueType, traceIDLen int) ([]blockMetadata, error) {
 	dstOrig := dst
 	var pre *blockMetadata

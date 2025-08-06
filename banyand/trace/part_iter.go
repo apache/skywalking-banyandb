@@ -136,7 +136,7 @@ func (pi *partIter) searchTargetTraceID(tid string) bool {
 }
 
 func (pi *partIter) loadNextBlockMetadata() bool {
-	for len(pi.primaryBlockMetadata) > 0 {
+	if len(pi.primaryBlockMetadata) > 0 {
 		if !pi.searchTargetTraceID(pi.primaryBlockMetadata[0].traceID) {
 			return false
 		}

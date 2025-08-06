@@ -221,10 +221,10 @@ func (bw *blockWriter) MustWriteTrace(tidLen uint32, tid string, spans [][]byte,
 	b := generateBlock()
 	defer releaseBlock(b)
 	b.mustInitFromTrace(spans, tags, timestamps)
-	bw.mustWriteBlock(tidLen, tid, b)
+	bw.mustWriteBlock(tid, b)
 }
 
-func (bw *blockWriter) mustWriteBlock(tidLen uint32, tid string, b *block) {
+func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 	if b.Len() == 0 {
 		return
 	}

@@ -33,7 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -315,56 +314,6 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.Tag
 		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())
 	}
 	return tv
-}
-
-func appendField(dest []index.Field, fieldKey index.FieldKey, tagType databasev1.TagType, tagVal *modelv1.TagValue, noSort bool) []index.Field {
-	switch tagType {
-	case databasev1.TagType_TAG_TYPE_INT:
-		v := tagVal.GetInt()
-		if v == nil {
-			return dest
-		}
-		f := index.NewIntField(fieldKey, v.Value)
-		f.NoSort = noSort
-		dest = append(dest, f)
-	case databasev1.TagType_TAG_TYPE_STRING:
-		v := tagVal.GetStr()
-		if v == nil {
-			return dest
-		}
-		f := index.NewStringField(fieldKey, v.Value)
-		f.NoSort = noSort
-		dest = append(dest, f)
-	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
-		v := tagVal.GetBinaryData()
-		if v == nil {
-			return dest
-		}
-		f := index.NewBytesField(fieldKey, v)
-		f.NoSort = noSort
-		dest = append(dest, f)
-	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
-		if tagVal.GetIntArray() == nil {
-			return dest
-		}
-		for i := range tagVal.GetIntArray().Value {
-			f := index.NewIntField(fieldKey, tagVal.GetIntArray().Value[i])
-			f.NoSort = noSort
-			dest = append(dest, f)
-		}
-	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
-		if tagVal.GetStrArray() == nil {
-			return dest
-		}
-		for i := range tagVal.GetStrArray().Value {
-			f := index.NewStringField(fieldKey, tagVal.GetStrArray().Value[i])
-			f.NoSort = noSort
-			dest = append(dest, f)
-		}
-	default:
-		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())
-	}
-	return dest
 }
 
 func getTagIndex(trace *trace, name string) (int, error) {

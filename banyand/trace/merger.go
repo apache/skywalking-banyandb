@@ -312,7 +312,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 
 		if pendingBlock.bm.traceID != b.bm.traceID || pendingBlock.isFull() {
-			bw.mustWriteBlock(bw.traceIDLen, pendingBlock.bm.traceID, &pendingBlock.block)
+			bw.mustWriteBlock(pendingBlock.bm.traceID, &pendingBlock.block)
 			releaseDecoder()
 			pendingBlock.reset()
 			br.loadBlockData(getDecoder())
@@ -335,7 +335,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
 			continue
 		}
-		bw.mustWriteBlock(bw.traceIDLen, tmpBlock.bm.traceID, &tmpBlock.block)
+		bw.mustWriteBlock(tmpBlock.bm.traceID, &tmpBlock.block)
 		releaseDecoder()
 		pendingBlock.reset()
 		tmpBlock.reset()
@@ -345,7 +345,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		return nil, fmt.Errorf("cannot read block to merge: %w", err)
 	}
 	if !pendingBlockIsEmpty {
-		bw.mustWriteBlock(bw.traceIDLen, pendingBlock.bm.traceID, &pendingBlock.block)
+		bw.mustWriteBlock(pendingBlock.bm.traceID, &pendingBlock.block)
 	}
 	releaseDecoder()
 	var partMetadata partMetadata
