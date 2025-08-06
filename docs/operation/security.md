@@ -4,50 +4,23 @@ Security is a critical aspect of any application. In this section, we will discu
 
 ## Authentication
 
-### External Basic Auth (Client ↔ Server)
 
-BanyanDB supports username/password-based authentication across both gRPC and HTTP endpoints. The following flags are used to configure basic auth:
+BanyanDB supports username and password-based authentication for both gRPC and HTTP endpoints. This guide explains how to configure and use this feature for both the BanyanDB server and the `bydbctl` command-line tool.
 
-- `--auth-config-file`: Path to the authentication config file (YAML format)
+### 1. Configuring the BanyanDB Server
 
-For example, an authentication config file might be defined like this:
+To enable authentication on the BanyanDB server, you need to create a **YAML configuration file** that defines your users and their passwords.
+
+#### a. Create the Configuration File
+
+The configuration file should contain a list of users. For security, it's highly recommended to use strong, unique passwords instead of the examples provided below.
+
 ```yaml
 users:
   - username: admin
-    password: 123456
-  - username: test
-    password: 123456
-```
-BanyanDB server supports setting multiple usernames and passwords. And the config file must have permissions `0600`. Run this command after creating config file:
-```shell
-chmod 600 /path/to/config.yaml
-``` 
-Then, you can use the following flags:
-```shell
-banyand liaison --auth-config-file=/path/to/config.yaml
-```
-
-When you use bydbctl, you should append `username` and `password` parameter. For example:
-```shell
-bydbctl group get -g group1 -a http://localhost:17913 -u admin -p 123456
-```
-The flags `addr`, `group`, `username`, `password` will be automatically saved to home directory with name `.bydbctl.yaml` with permissions `0600` if it not exists.
-
-Also, you can customize the config file, for example:
-```yaml
-addr: http://localhost:17913
-group: group1
-username: admin
-password: 123456
-```
-The bydbctl config file should have permissions `0600` as well. Run this command after creating config file:
-```shell
-chmod 600 /path/to/bydbctlCfg.yaml
-``` 
-Then, you can use the following flags:
-```shell
-bydbctl --config /path/to/bydbctlCfg.yaml group list
-```
+    password: StrongPassword123
+  - username: dev_user
+    password: AnotherStrongPassword456
 
 ### External TLS (Client ↔ Server)
 
