@@ -26,10 +26,14 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const pathTemp = "/{group}/{name}"
+const (
+	pathTemp  = "/{group}/{name}"
+	envPrefix = "BYDBCTL"
+)
 
 var (
 	filePath  string
@@ -40,6 +44,8 @@ var (
 	enableTLS bool
 	insecure  bool
 	cert      string
+	username  string
+	password  string
 	rootCmd   = &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
@@ -65,9 +71,13 @@ func RootCmdFlags(command *cobra.Command) {
 	command.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.bydbctl.yaml)")
 	command.PersistentFlags().StringP("group", "g", "", "If present, list objects in this group.")
 	command.PersistentFlags().StringP("addr", "a", "", "Server's address, the format is Schema://Domain:Port")
+	command.PersistentFlags().StringVarP(&username, "username", "u", "", "Username for authentication")
+	command.PersistentFlags().StringVarP(&password, "password", "p", "", "Password for authentication")
 	_ = viper.BindPFlag("group", command.PersistentFlags().Lookup("group"))
 	_ = viper.BindPFlag("addr", command.PersistentFlags().Lookup("addr"))
 	viper.SetDefault("addr", "http://localhost:17913")
+	_ = viper.BindPFlag("username", command.PersistentFlags().Lookup("username"))
+	_ = viper.BindPFlag("password", command.PersistentFlags().Lookup("password"))
 
 	command.AddCommand(newGroupCmd(), newUseCmd(), newStreamCmd(), newMeasureCmd(), newTopnCmd(),
 		newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newTraceCmd(), newHealthCheckCmd(), newAnalyzeCmd())
@@ -96,14 +106,27 @@ func initConfig() {
 		viper.SetConfigName(".bydbctl")
 	}
 
+	viper.SetEnvPrefix(envPrefix)
 	viper.AutomaticEnv()
+	err := config.BindFlags(rootCmd.PersistentFlags(), viper.GetViper(), envPrefix)
+	if err != nil {
+		cobra.CheckErr(err)
+	}
 
 	readCfg := func() error {
 		if err := viper.ReadInConfig(); err != nil {
 			return err
 		}
+		configFile := viper.ConfigFileUsed()
+		info, err := os.Stat(configFile)
+		if err != nil {
+			return fmt.Errorf("unable to stat config file: %w", err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			fmt.Printf("config file %s has unsafe permissions: %o (expected 0600)", configFile, info.Mode().Perm())
+		}
 		// Dump this to stderr in case of mixing up response yaml
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		fmt.Fprintln(os.Stderr, "Using config file:", configFile)
 		return nil
 	}
 
@@ -112,6 +135,12 @@ func initConfig() {
 			cobra.CheckErr(err)
 		}
 		cobra.CheckErr(viper.SafeWriteConfig())
+		// Reload config to ensure Viper updates ConfigFileUsed(), avoiding empty path for chmod
+		cobra.CheckErr(viper.ReadInConfig())
+		configFile := viper.ConfigFileUsed()
+		if err := os.Chmod(configFile, 0o600); err != nil {
+			cobra.CheckErr(fmt.Errorf("failed to set permissions on config file %s: %w", configFile, err))
+		}
 		cobra.CheckErr(readCfg())
 	}
 }

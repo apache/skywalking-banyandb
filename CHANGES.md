@@ -27,6 +27,7 @@ Release Notes.
 - Add chunked data sync to improve memory efficiency and performance during data transfer operations, supporting configurable chunk sizes, retry mechanisms, and out-of-order handling for both measure and stream services.
 - Implement comprehensive migration system for both measure and stream data with file-based approach and enhanced progress tracking
 - Improve TopN processing by adding "source" tag to track node-specific data, enhancing data handling across distributed nodes
+- Implement Login with Username/Password authentication in BanyanDB
 
 ### Bug Fixes
 
