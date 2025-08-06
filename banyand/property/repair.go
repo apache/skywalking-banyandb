@@ -984,7 +984,7 @@ func newRepairScheduler(
 		triggerCronExp, func(time.Time, *logger.Logger) bool {
 			gossipErr := s.doRepairGossip(s.closer.Ctx())
 			if gossipErr != nil {
-				s.l.Err(fmt.Errorf("repair gossip failure: %w", gossipErr))
+				s.l.Err(gossipErr).Msg("failed to repair gossip")
 			}
 			return true
 		})
@@ -1169,7 +1169,10 @@ func (r *repairScheduler) randomSelectGroup(ctx context.Context) (*commonv1.Grou
 			continue
 		}
 		// if the group don't have copies, skip it
-		if r.copiesCount(group) < 2 {
+		copies := r.copiesCount(group)
+		if copies < 2 {
+			r.l.Debug().Int("copies", copies).Str("group", group.Metadata.Name).
+				Msg("group does not have enough copies for repair, skipping")
 			continue
 		}
 		groups = append(groups, group)
