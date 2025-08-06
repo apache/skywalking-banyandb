@@ -302,7 +302,7 @@ func (t *distributedPlan) Children() []logical.Plan {
 }
 
 func (t *distributedPlan) Schema() logical.Schema {
-	if t.needCompletePushDownAgg && t.queryTemplate.Agg != nil {
+	if t.needCompletePushDownAgg {
 		return &pushDownAggSchema{
 			originalSchema:   t.s,
 			aggregationField: logical.NewField(t.queryTemplate.Agg.FieldName),
