@@ -26,15 +26,19 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/checksum"
 	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 )
+
+const checksumSha256Key = "checksum_sha256"
 
 var _ remote.FS = (*gcsFS)(nil)
 
@@ -54,7 +58,7 @@ func NewFS(p string, cfg *config2.FsConfig) (remote.FS, error) {
 		cfg = &config2.FsConfig{}
 	}
 	if cfg.GCP == nil {
-		cfg.GCP = &config2.GCPConfig{}
+		cfg = &config2.FsConfig{GCP: &config2.GCPConfig{}}
 	}
 
 	rawPath := strings.Trim(p, "/")
@@ -70,11 +74,10 @@ func NewFS(p string, cfg *config2.FsConfig) (remote.FS, error) {
 		}
 	} else {
 		parts := strings.SplitN(rawPath, "/", 2)
-		if len(parts) == 0 || parts[0] == "" {
+		if parts[0] == "" {
 			return nil, fmt.Errorf("bucket name must be specified either in config or path")
 		}
 		bucket = parts[0]
-		cfg.GCP.Bucket = bucket
 		if len(parts) == 2 {
 			basePath = parts[1]
 		} else {
@@ -82,17 +85,19 @@ func NewFS(p string, cfg *config2.FsConfig) (remote.FS, error) {
 		}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	var client *storage.Client
 	var err error
 	if cfg.GCP.GCPServiceAccountFile != "" {
+		if info, statErr := os.Stat(cfg.GCP.GCPServiceAccountFile); statErr != nil {
+			return nil, fmt.Errorf("credentials file error: %w", statErr)
+		} else if info.Mode().Perm() != 0o600 {
+			return nil, fmt.Errorf("credentials file %s must have permission 0600", cfg.GCP.GCPServiceAccountFile)
+		}
 		client, err = storage.NewClient(ctx, option.WithCredentialsFile(cfg.GCP.GCPServiceAccountFile))
 	} else {
-		if os.Getenv("STORAGE_EMULATOR_HOST") != "" {
-			client, err = storage.NewClient(ctx, option.WithoutAuthentication())
-		} else {
-			client, err = storage.NewClient(ctx)
-		}
+		client, err = storage.NewClient(ctx)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS client: %w", err)
@@ -102,7 +107,7 @@ func NewFS(p string, cfg *config2.FsConfig) (remote.FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("GCS NewFS: input path=%s, bucket=%s, basePath=%s\n", p, bucket, basePath)
+	logger.Infof("GCS NewFS: input path=%s, bucket=%s, basePath=%s", p, bucket, basePath)
 	return &gcsFS{
 		client:   client,
 		bucket:   bucket,
@@ -128,7 +133,7 @@ func (g *gcsFS) Upload(ctx context.Context, p string, data io.Reader) error {
 	}
 
 	objPath := g.getFullPath(p)
-	fmt.Printf("GCS Upload: bucket=%s, path=%s, fullPath=%s\n", g.bucket, p, objPath)
+	logger.Infof("GCS Upload: bucket=%s, path=%s, fullPath=%s", g.bucket, p, objPath)
 	wrappedReader, getHash := g.verifier.ComputeAndWrap(data)
 
 	w := g.client.Bucket(g.bucket).Object(objPath).NewWriter(ctx)
@@ -152,7 +157,7 @@ func (g *gcsFS) Upload(ctx context.Context, p string, data io.Reader) error {
 	// environment variable which is set by the test helper.
 	if os.Getenv("STORAGE_EMULATOR_HOST") == "" {
 		_, err = g.client.Bucket(g.bucket).Object(objPath).Update(ctx, storage.ObjectAttrsToUpdate{
-			Metadata: map[string]string{"checksum_sha256": hash},
+			Metadata: map[string]string{checksumSha256Key: hash},
 		})
 		if err != nil {
 			return fmt.Errorf("failed to set metadata: %w", err)
@@ -167,35 +172,18 @@ func (g *gcsFS) Download(ctx context.Context, p string) (io.ReadCloser, error) {
 	}
 
 	objPath := g.getFullPath(p)
-	fmt.Printf("GCS Download: bucket=%s, path=%s, fullPath=%s\n", g.bucket, p, objPath)
+	logger.Infof("GCS Download: bucket=%s, path=%s, fullPath=%s", g.bucket, p, objPath)
 	obj := g.client.Bucket(g.bucket).Object(objPath)
 
 	attrs, err := obj.Attrs(ctx)
 	if err != nil {
-		if os.Getenv("STORAGE_EMULATOR_HOST") != "" {
-			// In test environment with fake-gcs-server, proceed without verification
-			reader, readErr := obj.NewReader(ctx)
-			if readErr != nil {
-				return nil, fmt.Errorf("failed to create reader: %w", readErr)
-			}
-			return reader, nil
-		}
 		return nil, fmt.Errorf("failed to get object attrs: %w", err)
 	}
 	expected := ""
-	const checksumKey = "checksum_sha256"
 	if attrs.Metadata != nil {
-		expected = attrs.Metadata[checksumKey]
+		expected = attrs.Metadata[checksumSha256Key]
 	}
 	if expected == "" {
-		if os.Getenv("STORAGE_EMULATOR_HOST") != "" {
-			// fake-gcs-server in tests does not support metadata
-			reader, readErr := obj.NewReader(ctx)
-			if readErr != nil {
-				return nil, fmt.Errorf("failed to create reader: %w", readErr)
-			}
-			return reader, nil
-		}
 		return nil, fmt.Errorf("sha256 metadata missing for object %s", objPath)
 	}
 
@@ -204,13 +192,13 @@ func (g *gcsFS) Download(ctx context.Context, p string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("failed to create reader: %w", err)
 	}
 
-	fmt.Printf("GCS Upload completed: %s\n", objPath)
+	logger.Infof("GCS Upload completed: %s", objPath)
 	return g.verifier.Wrap(reader, expected), nil
 }
 
 func (g *gcsFS) List(ctx context.Context, prefix string) ([]string, error) {
 	fullPrefix := g.getFullPath(prefix)
-	fmt.Printf("GCS List: bucket=%s, prefix=%s, fullPrefix=%s\n", g.bucket, prefix, fullPrefix)
+	logger.Infof("GCS List: bucket=%s, prefix=%s, fullPrefix=%s", g.bucket, prefix, fullPrefix)
 	it := g.client.Bucket(g.bucket).Objects(ctx, &storage.Query{Prefix: fullPrefix})
 	var files []string
 	basePrefix := g.basePath
@@ -236,7 +224,7 @@ func (g *gcsFS) List(ctx context.Context, prefix string) ([]string, error) {
 		}
 		files = append(files, key)
 	}
-	fmt.Printf("GCS List found %d files with prefix %s\n", len(files), prefix)
+	logger.Infof("GCS List found %d files with prefix %s", len(files), prefix)
 	return files, nil
 }
 
