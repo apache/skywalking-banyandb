@@ -1143,14 +1143,17 @@ func (r *repairScheduler) close() {
 func (r *repairScheduler) doRepairGossip(ctx context.Context) error {
 	r.l.Debug().Msg("starting repair gossip scheduler")
 	group, shardNum, err := r.randomSelectGroup(ctx)
+	r.l.Debug().Stringer("group", group).Err(err).Msg("finished selecting random group for repair gossip")
 	if err != nil {
 		return fmt.Errorf("selecting random group failure: %w", err)
 	}
+	r.l.Debug().Str("group", group.Metadata.Name).Uint32("shard", shardNum).Msg("starting repair gossip for group and shard")
 
 	nodes, err := r.gossipMessenger.LocateNodes(group.Metadata.Name, shardNum, uint32(r.copiesCount(group)))
 	if err != nil {
 		return fmt.Errorf("locating nodes for group %s, shard %d failure: %w", group.Metadata.Name, shardNum, err)
 	}
+	r.l.Debug().Strs("nodes", nodes).Msg("finished repair gossip selection for group and shard")
 	return r.gossipMessenger.Propagation(nodes, group.Metadata.Name, shardNum)
 }
 
