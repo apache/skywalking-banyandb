@@ -163,7 +163,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	s.c = storage.NewServiceCacheWithConfig(s.cc)
 	node := val.(common.Node)
-	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
+	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
 
 	s.cm = newCacheMetrics(s.omr)
 	observability.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)
