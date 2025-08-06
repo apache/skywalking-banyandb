@@ -79,11 +79,11 @@ func (c *config) initializeConfig(fs *pflag.FlagSet) error {
 	v.AutomaticEnv()
 
 	// Bind the current command's flags to viper
-	return bindFlags(fs, v)
+	return BindFlags(fs, v, envPrefix)
 }
 
-// Bind each cobra flag to its associated viper configuration (config file and environment variable).
-func bindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
+// BindFlags bind each cobra flag to its associated viper configuration (config file and environment variable).
+func BindFlags(fs *pflag.FlagSet, v *viper.Viper, envPrefix string) error {
 	var err error
 	fs.VisitAll(func(f *pflag.Flag) {
 		// Environment variables can't have dashes in them, so bind them to their equivalent
