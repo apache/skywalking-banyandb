@@ -32,10 +32,10 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/checksum"
 	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const checksumSha256Key = "checksum_sha256"
