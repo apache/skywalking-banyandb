@@ -179,11 +179,9 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 		return err
 	}
 
-	err := s.pipeline.Subscribe(data.TopicMeasurePartSync, setUpSyncCallback(s.l, s.schemaRepo))
-	if err != nil {
-		return err
-	}
-	err = s.pipeline.Subscribe(data.TopicMeasureSeriesIndexInsert, setUpIndexCallback(s.l, s.schemaRepo, data.TopicMeasureSeriesIndexInsert))
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasurePartSync, setUpChunkedSyncCallback(s.l, s.schemaRepo))
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasureSeriesSync, setUpSyncSeriesCallback(s.l, s.schemaRepo))
+	err := s.pipeline.Subscribe(data.TopicMeasureSeriesIndexInsert, setUpIndexCallback(s.l, s.schemaRepo, data.TopicMeasureSeriesIndexInsert))
 	if err != nil {
 		return err
 	}

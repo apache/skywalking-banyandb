@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -37,6 +38,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/pkg/file"
+	"github.com/apache/skywalking-banyandb/pkg/auth"
 )
 
 const (
@@ -337,6 +339,11 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 			client.SetTLSClientConfig(&config)
 		}
 		req := client.R()
+		// Add req headers.
+		authHeader := getAuthHeader()
+		if authHeader != "" {
+			req.Header.Set("Authorization", authHeader)
+		}
 		resp, err := fn(request{
 			reqBody: r,
 			req:     req,
@@ -351,6 +358,9 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 			s := status.FromProto(st)
 			return s.Err()
 		}
+		if resp.StatusCode() != http.StatusOK {
+			return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode())
+		}
 		err = printer(i, r, bd)
 		if err != nil {
 			return err
@@ -358,4 +368,17 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 	}
 
 	return nil
+}
+
+func getAuthHeader() string {
+	if username != "" {
+		return auth.GenerateBasicAuthHeader(username, password)
+	}
+	// If the command line username is not available, then look for it in the configuration file.
+	user := viper.GetString("username")
+	pwd := viper.GetString("password")
+	if user == "" && pwd == "" {
+		return ""
+	}
+	return auth.GenerateBasicAuthHeader(user, pwd)
 }

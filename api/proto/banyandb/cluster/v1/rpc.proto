@@ -47,7 +47,98 @@ message HealthCheckResponse {
   string error = 3;
 }
 
+// Chunked Sync Service Messages.
+message SyncPartRequest {
+  string session_id = 1; // Unique session identifier for this sync operation.
+  uint32 chunk_index = 2; // Current chunk index (0-based).
+  bytes chunk_data = 4; // Actual chunk data.
+  string chunk_checksum = 5; // CRC32 checksum for this chunk.
+  repeated PartInfo parts_info = 6; // Information about parts contained in this chunk.
+
+  oneof content {
+    SyncMetadata metadata = 7; // Sent with first chunk (chunk_index = 0).
+    SyncCompletion completion = 8; // Sent with last chunk to finalize.
+  }
+}
+
+// Information about a part contained within a chunk.
+message PartInfo {
+  uint64 id = 1; // Unique identifier for this part.
+  repeated FileInfo files = 2; // Information about individual files within this part.
+  uint64 compressed_size_bytes = 3; // Compressed size in bytes from partMetadata.
+  uint64 uncompressed_size_bytes = 4; // Uncompressed size in bytes from partMetadata.
+  uint64 total_count = 5; // Total count from partMetadata.
+  uint64 blocks_count = 6; // Blocks count from partMetadata.
+  int64 min_timestamp = 7; // Minimum timestamp from partMetadata.
+  int64 max_timestamp = 8; // Maximum timestamp from partMetadata.
+}
+
+// Information about an individual file within a part.
+message FileInfo {
+  string name = 1; // File identifier (e.g., "primary", "timestamps", "tagFamilies:seriesId").
+  uint32 offset = 2; // Byte offset within the part where this file starts.
+  uint32 size = 3; // Size of this file in bytes.
+}
+
+// SyncMetadata contains metadata for the sync operation.
+message SyncMetadata {
+  string group = 1; // Group name (stream/measure).
+  uint32 shard_id = 2; // Shard identifier.
+  string topic = 4; // Sync topic (stream-part-sync or measure-part-sync).
+  int64 timestamp = 6; // Timestamp when sync started.
+  uint32 total_parts = 7; // Total number of parts being synced.
+}
+
+// SyncCompletion contains completion information for the sync operation.
+message SyncCompletion {
+  uint64 total_bytes_sent = 1; // Total bytes sent for validation.
+  uint32 total_parts_sent = 2; // Total number of parts sent.
+  uint32 total_chunks = 3; // Total number of chunks in this sync.
+}
+
+// SyncPartResponse contains the response for a sync part request.
+message SyncPartResponse {
+  string session_id = 1;
+  uint32 chunk_index = 2;
+  SyncStatus status = 3;
+  string error = 4;
+  SyncResult sync_result = 5; // Final result when sync completes.
+}
+
+// SyncResult contains the result of a sync operation.
+message SyncResult {
+  bool success = 1; // Whether entire sync was successful.
+  uint64 total_bytes_received = 2; // Total bytes received.
+  int64 duration_ms = 3; // Time taken for sync in milliseconds.
+  uint32 chunks_received = 4; // Number of chunks successfully received.
+  uint32 parts_received = 5; // Number of parts successfully received.
+  repeated PartResult parts_results = 6; // Results for each part.
+}
+
+// PartResult contains the result for individual parts.
+message PartResult {
+  bool success = 1; // Whether this part was processed successfully.
+  string error = 2; // Error message if processing failed.
+  uint32 bytes_processed = 3; // Number of bytes processed for this part.
+}
+
+// SyncStatus represents the status of a sync operation.
+enum SyncStatus {
+  SYNC_STATUS_UNSPECIFIED = 0; // Unspecified status.
+  SYNC_STATUS_CHUNK_RECEIVED = 1; // Chunk received and validated successfully.
+  SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH = 2; // Chunk checksum validation failed.
+  SYNC_STATUS_CHUNK_OUT_OF_ORDER = 3; // Chunk received out of expected order.
+  SYNC_STATUS_SESSION_NOT_FOUND = 4; // Session ID not recognized.
+  SYNC_STATUS_SYNC_COMPLETE = 5; // Entire sync operation completed successfully.
+}
+
 service Service {
   rpc Send(stream SendRequest) returns (stream SendResponse);
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ChunkedSyncService provides streaming sync capabilities for chunked data transfer.
+service ChunkedSyncService {
+  // SyncPart synchronizes part data using chunked transfer.
+  rpc SyncPart(stream SyncPartRequest) returns (stream SyncPartResponse);
 }

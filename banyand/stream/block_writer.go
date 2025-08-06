@@ -89,6 +89,14 @@ func (sw *writers) reset() {
 	}
 }
 
+func (sw *writers) mustInitForMemPart(mp *memPart) {
+	sw.reset()
+	sw.mustCreateTagFamilyWriters = mp.mustCreateMemTagFamilyWriters
+	sw.metaWriter.init(&mp.meta)
+	sw.primaryWriter.init(&mp.primary)
+	sw.timestampsWriter.init(&mp.timestamps)
+}
+
 func (sw *writers) totalBytesWritten() uint64 {
 	n := sw.metaWriter.bytesWritten + sw.primaryWriter.bytesWritten +
 		sw.timestampsWriter.bytesWritten
@@ -310,3 +318,22 @@ func releaseBlockWriter(bsw *blockWriter) {
 }
 
 var blockWriterPool = pool.Register[*blockWriter]("stream-blockWriter")
+
+func generateWriters() *writers {
+	v := writersPool.Get()
+	if v == nil {
+		return &writers{
+			tagFamilyMetadataWriters: make(map[string]*writer),
+			tagFamilyWriters:         make(map[string]*writer),
+			tagFamilyFilterWriters:   make(map[string]*writer),
+		}
+	}
+	return v
+}
+
+func releaseWriters(sw *writers) {
+	sw.reset()
+	writersPool.Put(sw)
+}
+
+var writersPool = pool.Register[*writers]("stream-writers")

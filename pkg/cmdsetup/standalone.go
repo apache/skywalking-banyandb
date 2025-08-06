@@ -76,7 +76,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		PropertyNodeRegistry:       nr,
 	}, metricSvc)
 	profSvc := observability.NewProfService()
-	httpServer := http.NewServer()
+	httpServer := http.NewServer(grpcServer.GetAuthCfg())
 
 	var units []run.Unit
 	units = append(units, runners...)
@@ -102,7 +102,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the standalone server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			nodeID, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort())
+			nodeID, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort(), nil)
 			if err != nil {
 				return err
 			}

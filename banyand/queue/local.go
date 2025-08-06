@@ -148,3 +148,30 @@ func (l *localBatchPublisher) Close() (map[string]*common.Error, error) {
 	}
 	return nil, nil
 }
+
+func (l *local) RegisterChunkedSyncHandler(_ bus.Topic, _ ChunkedSyncHandler) {
+}
+
+func (l *local) NewChunkedSyncClient(node string, _ uint32) (ChunkedSyncClient, error) {
+	return &localChunkedSyncClient{local: l.local, node: node}, nil
+}
+
+type localChunkedSyncClient struct {
+	local *bus.Bus
+	node  string
+}
+
+func (l *localChunkedSyncClient) Close() error {
+	return nil
+}
+
+func (l *localChunkedSyncClient) SyncStreamingParts(_ context.Context, parts []StreamingPartData) (*SyncResult, error) {
+	return &SyncResult{
+		Success:     true,
+		SessionID:   "local-session",
+		TotalBytes:  0,
+		DurationMs:  0,
+		ChunksCount: 0,
+		PartsCount:  uint32(len(parts)),
+	}, nil
+}

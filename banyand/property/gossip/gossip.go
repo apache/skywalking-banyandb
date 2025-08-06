@@ -15,13 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package remote
-
-// FsConfig represents the configuration for the file system.
-type FsConfig struct {
-	S3ConfigFilePath     string
-	S3CredentialFilePath string
-	S3ProfileName        string
-	S3StorageClass       string
-	S3ChecksumAlgorithm  string
-}
+// Package gossip implements the gossip protocol for BanyanDB property repair.
+package gossip

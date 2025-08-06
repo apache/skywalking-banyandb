@@ -18,22 +18,44 @@
 package stream
 
 import (
-	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+type syncPartContext struct {
+	tsTable *tsTable
+	writers *writers
+	memPart *memPart
+}
+
+func (s *syncPartContext) FinishSync() error {
+	s.tsTable.mustAddMemPart(s.memPart)
+	return s.Close()
+}
+
+func (s *syncPartContext) Close() error {
+	s.writers.MustClose()
+	releaseWriters(s.writers)
+	s.writers = nil
+	s.memPart = nil
+	s.tsTable = nil
+	return nil
+}
 
 type syncCallback struct {
 	l          *logger.Logger
 	schemaRepo *schemaRepo
 }
 
-func setUpSyncCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageListener {
+func setUpChunkedSyncCallback(l *logger.Logger, schemaRepo *schemaRepo) queue.ChunkedSyncHandler {
 	return &syncCallback{
 		l:          l,
 		schemaRepo: schemaRepo,
@@ -44,242 +66,276 @@ func (s *syncCallback) CheckHealth() *common.Error {
 	return nil
 }
 
-func (s *syncCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
-	data, ok := message.Data().([]byte)
-	if !ok {
-		s.l.Warn().Msg("invalid sync message data type")
-		return
-	}
-
-	// Decode group name
-	tail, groupBytes, err := encoding.DecodeBytes(data)
+// CreatePartHandler implements queue.ChunkedSyncHandler.
+func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
 	if err != nil {
-		s.l.Error().Err(err).Msg("failed to decode group name from sync message")
-		return
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
+		return nil, err
 	}
-	group := string(groupBytes)
-
-	// Decode shardID (uint32)
-	if len(tail) < 4 {
-		s.l.Error().Msg("insufficient data for shardID in sync message")
-		return
+	segmentTime := time.Unix(0, ctx.MinTimestamp)
+	segment, err := tsdb.CreateSegmentIfNotExist(segmentTime)
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
+		return nil, err
 	}
-	shardID := encoding.BytesToUint32(tail[:4])
-	tail = tail[4:]
+	defer segment.DecRef()
+	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("failed to create ts table")
+		return nil, err
+	}
 
-	// Decode memPart
+	tsdb.Tick(ctx.MaxTimestamp)
 	memPart := generateMemPart()
-
-	if err = memPart.Unmarshal(tail); err != nil {
-		s.l.Error().Err(err).Msg("failed to unmarshal memPart from sync message")
-		return
-	}
-
-	// Get the group schema from schemaRepo by the string group
-	tsdb, err := s.schemaRepo.loadTSDB(group)
-	if err != nil {
-		s.l.Error().Err(err).Str("group", group).Msg("failed to load TSDB for group")
-		return
-	}
-
-	// Get the segment using memPart.partMetadata.MinTimestamp
-	segmentTime := time.Unix(0, memPart.partMetadata.MinTimestamp)
-	segment, err := tsdb.CreateSegmentIfNotExist(segmentTime)
-	if err != nil {
-		s.l.Error().Err(err).Str("group", group).Time("segmentTime", segmentTime).Msg("failed to create segment")
-		return
-	}
-	defer segment.DecRef()
-
-	// Get Shard from a segment using shardID
-	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(shardID))
-	if err != nil {
-		s.l.Error().Err(err).Str("group", group).Uint32("shardID", shardID).Msg("failed to create ts table")
-		return
-	}
-
-	tsdb.Tick(memPart.partMetadata.MaxTimestamp)
-	// Use tsTable.mustAddMemPart to introduce memPart to tsTable
-	tsTable.mustAddMemPart(memPart)
-
-	if e := s.l.Debug(); e.Enabled() {
-		e.
-			Str("group", group).
-			Uint32("shardID", shardID).
-			Uint64("partID", memPart.partMetadata.ID).
-			Msg("successfully stored memPart to tsTable")
-	}
-
-	return
+	memPart.partMetadata.CompressedSizeBytes = ctx.CompressedSizeBytes
+	memPart.partMetadata.UncompressedSizeBytes = ctx.UncompressedSizeBytes
+	memPart.partMetadata.TotalCount = ctx.TotalCount
+	memPart.partMetadata.BlocksCount = ctx.BlocksCount
+	memPart.partMetadata.MinTimestamp = ctx.MinTimestamp
+	memPart.partMetadata.MaxTimestamp = ctx.MaxTimestamp
+	writers := generateWriters()
+	writers.mustInitForMemPart(memPart)
+	return &syncPartContext{
+		tsTable: tsTable,
+		writers: writers,
+		memPart: memPart,
+	}, nil
 }
 
-type seriesIndexCallback struct {
+// HandleFileChunk implements queue.ChunkedSyncHandler for streaming file chunks.
+func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+	if ctx.Handler == nil {
+		return fmt.Errorf("part handler is nil")
+	}
+	partCtx := ctx.Handler.(*syncPartContext)
+
+	// Select the appropriate writer based on the filename and write the chunk.
+	fileName := ctx.FileName
+	switch {
+	case fileName == streamMetaName:
+		partCtx.writers.metaWriter.MustWrite(chunk)
+	case fileName == streamPrimaryName:
+		partCtx.writers.primaryWriter.MustWrite(chunk)
+	case fileName == streamTimestampsName:
+		partCtx.writers.timestampsWriter.MustWrite(chunk)
+	case strings.HasPrefix(fileName, streamTagFamiliesPrefix):
+		tagName := fileName[len(streamTagFamiliesPrefix):]
+		_, tagWriter, _ := partCtx.writers.getWriters(tagName)
+		tagWriter.MustWrite(chunk)
+	case strings.HasPrefix(fileName, streamTagMetadataPrefix):
+		tagName := fileName[len(streamTagMetadataPrefix):]
+		tagMetadataWriter, _, _ := partCtx.writers.getWriters(tagName)
+		tagMetadataWriter.MustWrite(chunk)
+	case strings.HasPrefix(fileName, streamTagFilterPrefix):
+		tagName := fileName[len(streamTagFilterPrefix):]
+		_, _, tagFilterWriter := partCtx.writers.getWriters(tagName)
+		tagFilterWriter.MustWrite(chunk)
+	default:
+		s.l.Warn().Str("fileName", fileName).Msg("unknown file type in chunked sync")
+		return fmt.Errorf("unknown file type: %s", fileName)
+	}
+
+	return nil
+}
+
+type syncSeriesContext struct {
+	streamer index.ExternalSegmentStreamer
+	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	l        *logger.Logger
+	fileName string
+}
+
+func (s *syncSeriesContext) FinishSync() error {
+	if s.streamer != nil {
+		if err := s.streamer.CompleteSegment(); err != nil {
+			s.l.Error().Err(err).Msg("failed to complete external segment")
+			return err
+		}
+	}
+	return s.Close()
+}
+
+func (s *syncSeriesContext) Close() error {
+	if s.segment != nil {
+		s.segment.DecRef()
+	}
+	s.streamer = nil
+	s.fileName = ""
+	s.segment = nil
+	return nil
+}
+
+type syncSeriesCallback struct {
 	l          *logger.Logger
 	schemaRepo *schemaRepo
 }
 
-func setUpSeriesIndexCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageListener {
-	return &seriesIndexCallback{
+func setUpSyncSeriesCallback(l *logger.Logger, schemaRepo *schemaRepo) queue.ChunkedSyncHandler {
+	return &syncSeriesCallback{
 		l:          l,
 		schemaRepo: schemaRepo,
 	}
 }
 
-func (s *seriesIndexCallback) CheckHealth() *common.Error {
+func (s *syncSeriesCallback) CheckHealth() *common.Error {
 	return nil
 }
 
-func (s *seriesIndexCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
-	data, ok := message.Data().([]byte)
-	if !ok {
-		s.l.Warn().Msg("invalid series index message data type")
-		return
-	}
-
-	// Decode group name (first part of the message)
-	tail, groupBytes, err := encoding.DecodeBytes(data)
+// CreatePartHandler implements queue.ChunkedSyncHandler for series index synchronization.
+func (s *syncSeriesCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
 	if err != nil {
-		s.l.Error().Err(err).Msg("failed to decode group name from series index message")
-		return
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
+		return nil, err
 	}
-	group := string(groupBytes)
-
-	// Decode timestamp (uint64) - second part of the message
-	if len(tail) < 8 {
-		s.l.Error().Msg("insufficient data for timestamp in series index message")
-		return
-	}
-	timestamp := encoding.BytesToInt64(tail[:8])
-	tail = tail[8:]
-
-	// Unmarshal Documents from the remaining data
-	var documents index.Documents
-	if err = documents.Unmarshal(tail); err != nil {
-		s.l.Error().Err(err).Msg("failed to unmarshal documents from series index message")
-		return
-	}
-
-	if len(documents) == 0 {
-		s.l.Warn().Msg("empty documents in series index message")
-		return
-	}
-
-	// Get TSDB by group name using schemaRepo
-	tsdb, err := s.schemaRepo.loadTSDB(group)
-	if err != nil {
-		s.l.Error().Err(err).Str("group", group).Msg("failed to load TSDB for group")
-		return
-	}
-
-	// Use the timestamp to get the segment directly
-	segmentTime := time.Unix(0, timestamp)
+	segmentTime := time.Unix(0, ctx.MinTimestamp)
 	segment, err := tsdb.CreateSegmentIfNotExist(segmentTime)
 	if err != nil {
-		s.l.Error().Err(err).Str("group", group).Time("segmentTime", segmentTime).Msg("failed to create segment")
-		return
+		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
+		return nil, err
 	}
-	defer segment.DecRef()
-
-	// Insert all documents into the segment's index
-	if err := segment.IndexDB().Insert(documents); err != nil {
-		s.l.Error().Err(err).Str("group", group).Int("documentCount", len(documents)).Msg("failed to insert documents to index")
-		return
-	}
-
-	s.l.Info().
-		Str("group", group).
-		Int("documentCount", len(documents)).
-		Time("segmentTime", segmentTime).
-		Msg("successfully inserted documents to series index")
-
-	return
+	return &syncSeriesContext{
+		l:       s.l,
+		segment: segment,
+	}, nil
 }
 
-type localIndexCallback struct {
+// HandleFileChunk implements queue.ChunkedSyncHandler for streaming series index chunks.
+func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+	if ctx.Handler == nil {
+		return fmt.Errorf("part handler is nil")
+	}
+	seriesCtx := ctx.Handler.(*syncSeriesContext)
+
+	if seriesCtx.segment == nil {
+		return fmt.Errorf("segment is nil")
+	}
+	if seriesCtx.fileName != ctx.FileName {
+		if seriesCtx.streamer != nil {
+			if err := seriesCtx.streamer.CompleteSegment(); err != nil {
+				s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to complete external segment")
+				return err
+			}
+		}
+		indexDB := seriesCtx.segment.IndexDB()
+		streamer, err := indexDB.EnableExternalSegments()
+		if err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to enable external segments")
+			return err
+		}
+		if err := streamer.StartSegment(); err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to start external segment")
+			return err
+		}
+		seriesCtx.fileName = ctx.FileName
+		seriesCtx.streamer = streamer
+	}
+	if err := seriesCtx.streamer.WriteChunk(chunk); err != nil {
+		return fmt.Errorf("failed to write chunk (size: %d) to file %q: %w", len(chunk), ctx.FileName, err)
+	}
+	return nil
+}
+
+type syncElementIndexContext struct {
+	streamer index.ExternalSegmentStreamer
+	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	tsTable  *tsTable
+	l        *logger.Logger
+	fileName string
+}
+
+func (s *syncElementIndexContext) FinishSync() error {
+	if s.streamer != nil {
+		if err := s.streamer.CompleteSegment(); err != nil {
+			s.l.Error().Err(err).Msg("failed to complete external segment for element index")
+			return err
+		}
+	}
+	return s.Close()
+}
+
+func (s *syncElementIndexContext) Close() error {
+	s.streamer = nil
+	s.fileName = ""
+	s.tsTable = nil
+	if s.segment != nil {
+		s.segment.DecRef()
+	}
+	s.segment = nil
+	return nil
+}
+
+type syncElementIndexCallback struct {
 	l          *logger.Logger
 	schemaRepo *schemaRepo
 }
 
-func setUpLocalIndexCallback(l *logger.Logger, schemaRepo *schemaRepo) bus.MessageListener {
-	return &localIndexCallback{
+func setUpSyncElementIndexCallback(l *logger.Logger, schemaRepo *schemaRepo) queue.ChunkedSyncHandler {
+	return &syncElementIndexCallback{
 		l:          l,
 		schemaRepo: schemaRepo,
 	}
 }
 
-func (l *localIndexCallback) CheckHealth() *common.Error {
+func (s *syncElementIndexCallback) CheckHealth() *common.Error {
 	return nil
 }
 
-func (l *localIndexCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
-	data, ok := message.Data().([]byte)
-	if !ok {
-		l.l.Warn().Msg("invalid local index message data type")
-		return
-	}
-
-	// Decode group name (first part of the message)
-	tail, groupBytes, err := encoding.DecodeBytes(data)
+// CreatePartHandler implements queue.ChunkedSyncHandler for element index synchronization.
+func (s *syncElementIndexCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
 	if err != nil {
-		l.l.Error().Err(err).Msg("failed to decode group name from local index message")
-		return
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
+		return nil, err
 	}
-	group := string(groupBytes)
-
-	// Decode shardID (uint32)
-	if len(tail) < 4 {
-		l.l.Error().Msg("insufficient data for shardID in local index message")
-		return
-	}
-	shardID := encoding.BytesToUint32(tail[:4])
-	tail = tail[4:]
-
-	// Unmarshal Documents from the remaining data
-	var documents index.Documents
-	if err = documents.Unmarshal(tail); err != nil {
-		l.l.Error().Err(err).Msg("failed to unmarshal documents from local index message")
-		return
-	}
-
-	if len(documents) == 0 {
-		l.l.Warn().Msg("empty documents in local index message")
-		return
-	}
-
-	// Get TSDB by group name using schemaRepo
-	tsdb, err := l.schemaRepo.loadTSDB(group)
+	segmentTime := time.Unix(0, ctx.MinTimestamp)
+	segment, err := tsdb.CreateSegmentIfNotExist(segmentTime)
 	if err != nil {
-		l.l.Error().Err(err).Str("group", group).Msg("failed to load TSDB for group")
-		return
+		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
+		return nil, err
 	}
-
-	// Use the first document's timestamp to get the segment
-	firstDocTime := time.Unix(0, documents[0].Timestamp)
-	segment, err := tsdb.CreateSegmentIfNotExist(firstDocTime)
+	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))
 	if err != nil {
-		l.l.Error().Err(err).Str("group", group).Time("docTime", firstDocTime).Msg("failed to create segment for documents")
-		return
-	}
-	defer segment.DecRef()
-
-	// Get the tsTable using shardID
-	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(shardID))
-	if err != nil {
-		l.l.Error().Err(err).Str("group", group).Uint32("shardID", shardID).Msg("failed to create ts table")
-		return
+		s.l.Error().Err(err).Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("failed to create ts table")
+		return nil, err
 	}
 
-	// Insert documents into tsTable.index
-	if err := tsTable.Index().Write(documents); err != nil {
-		l.l.Error().Err(err).Str("group", group).Uint32("shardID", shardID).Int("documentCount", len(documents)).Msg("failed to insert documents to tsTable index")
-		return
+	return &syncElementIndexContext{
+		l:       s.l,
+		tsTable: tsTable,
+		segment: segment,
+	}, nil
+}
+
+// HandleFileChunk implements queue.ChunkedSyncHandler for streaming element index chunks.
+func (s *syncElementIndexCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+	if ctx.Handler == nil {
+		return fmt.Errorf("part handler is nil")
 	}
+	elementCtx := ctx.Handler.(*syncElementIndexContext)
 
-	l.l.Info().
-		Str("group", group).
-		Uint32("shardID", shardID).
-		Int("documentCount", len(documents)).
-		Msg("successfully inserted documents to tsTable index")
-
-	return
+	if elementCtx.tsTable == nil {
+		return fmt.Errorf("ts table is nil")
+	}
+	if elementCtx.fileName != ctx.FileName {
+		if elementCtx.streamer != nil {
+			if err := elementCtx.streamer.CompleteSegment(); err != nil {
+				s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to complete external segment for element index")
+				return err
+			}
+		}
+		streamer, err := elementCtx.tsTable.index.EnableExternalSegments()
+		if err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to enable external segments for element index")
+			return err
+		}
+		if err := streamer.StartSegment(); err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to start external segment for element index")
+			return err
+		}
+		elementCtx.fileName = ctx.FileName
+		elementCtx.streamer = streamer
+	}
+	return elementCtx.streamer.WriteChunk(chunk)
 }

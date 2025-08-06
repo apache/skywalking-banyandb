@@ -163,7 +163,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	s.c = storage.NewServiceCacheWithConfig(s.cc)
 	node := val.(common.Node)
-	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
+	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
 
 	s.cm = newCacheMetrics(s.omr)
 	observability.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)
@@ -192,6 +192,8 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Register chunked sync handler for measure data.
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasurePartSync, setUpChunkedSyncCallback(s.l, s.schemaRepo))
 	return s.localPipeline.Subscribe(data.TopicMeasureWrite, writeListener)
 }
 

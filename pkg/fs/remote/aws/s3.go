@@ -31,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	config2 "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 )
 
 // todo: Maybe we can bring in minio, oss
@@ -43,13 +44,16 @@ type s3FS struct {
 }
 
 // NewFS creates a new instance of the file system for accessing S3 storage.
-func NewFS(path string, userConfig *remote.FsConfig) (remote.FS, error) {
+func NewFS(path string, userConfig *config2.FsConfig) (remote.FS, error) {
 	bucket, basePath := extractBucketAndBase(path)
 	if bucket == "" {
 		return nil, fmt.Errorf("bucket name not provided")
 	}
 	if userConfig == nil {
 		return nil, fmt.Errorf("userConfig is nil")
+	}
+	if userConfig.S3 == nil {
+		return nil, fmt.Errorf("S3 config is nil")
 	}
 
 	opts := buildAWSCfgOptions(userConfig)
@@ -67,28 +71,29 @@ func NewFS(path string, userConfig *remote.FsConfig) (remote.FS, error) {
 		basePath: basePath,
 	}
 
-	if userConfig.S3ChecksumAlgorithm != "" {
-		fs.checksumAlgorithm = types.ChecksumAlgorithm(userConfig.S3ChecksumAlgorithm)
+	if userConfig.S3.S3ChecksumAlgorithm != "" {
+		fs.checksumAlgorithm = types.ChecksumAlgorithm(userConfig.S3.S3ChecksumAlgorithm)
 	}
-	if userConfig.S3StorageClass != "" {
-		fs.storageClass = types.StorageClass(userConfig.S3StorageClass)
+	if userConfig.S3.S3StorageClass != "" {
+		fs.storageClass = types.StorageClass(userConfig.S3.S3StorageClass)
 	}
 	return fs, nil
 }
 
-func buildAWSCfgOptions(userConfig *remote.FsConfig) []func(*config.LoadOptions) error {
+func buildAWSCfgOptions(userConfig *config2.FsConfig) []func(*config.LoadOptions) error {
+	s3Config := userConfig.S3
 	opts := []func(*config.LoadOptions) error{
 		config.WithClientLogMode(aws.LogRetries),
 	}
 
-	if userConfig.S3ProfileName != "" {
-		opts = append(opts, config.WithSharedConfigProfile(userConfig.S3ProfileName))
+	if s3Config.S3ProfileName != "" {
+		opts = append(opts, config.WithSharedConfigProfile(s3Config.S3ProfileName))
 	}
-	if userConfig.S3ConfigFilePath != "" {
-		opts = append(opts, config.WithSharedConfigFiles([]string{userConfig.S3ConfigFilePath}))
+	if s3Config.S3ConfigFilePath != "" {
+		opts = append(opts, config.WithSharedConfigFiles([]string{s3Config.S3ConfigFilePath}))
 	}
-	if userConfig.S3CredentialFilePath != "" {
-		opts = append(opts, config.WithSharedCredentialsFiles([]string{userConfig.S3CredentialFilePath}))
+	if s3Config.S3CredentialFilePath != "" {
+		opts = append(opts, config.WithSharedCredentialsFiles([]string{s3Config.S3CredentialFilePath}))
 	}
 
 	return opts

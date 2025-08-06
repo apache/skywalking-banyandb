@@ -81,7 +81,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
 	}, metricSvc)
 	profSvc := observability.NewProfService()
-	httpServer := http.NewServer()
+	httpServer := http.NewServer(grpcServer.GetAuthCfg())
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,
@@ -123,7 +123,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 					sel.SetNodeSelector(ls)
 				}
 			}
-			node, err := common.GenerateNode(internalPipeline.GetPort(), httpServer.GetPort())
+			node, err := common.GenerateNode(internalPipeline.GetPort(), httpServer.GetPort(), nil)
 			if err != nil {
 				return err
 			}

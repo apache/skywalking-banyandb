@@ -52,6 +52,7 @@ var (
 	_ IndexRuleBinding = (*etcdSchemaRegistry)(nil)
 	_ IndexRule        = (*etcdSchemaRegistry)(nil)
 	_ Measure          = (*etcdSchemaRegistry)(nil)
+	_ Trace            = (*etcdSchemaRegistry)(nil)
 	_ Group            = (*etcdSchemaRegistry)(nil)
 
 	errUnexpectedNumberOfEntities = errors.New("unexpected number of entities")

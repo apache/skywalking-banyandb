@@ -86,6 +86,7 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 		m, _ := sr.topNProcessorMap.LoadOrStore(key, &topNProcessorManager{
 			l:        sr.l,
 			pipeline: pipeline,
+			nodeID:   sr.nodeID,
 		})
 		manager = m.(*topNProcessorManager)
 		return manager
@@ -99,6 +100,7 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 			manager = &topNProcessorManager{
 				l:        sr.l,
 				pipeline: pipeline,
+				nodeID:   sr.nodeID,
 			}
 			manager.registeredTasks = append(manager.registeredTasks, pre.registeredTasks...)
 		} else {
@@ -109,6 +111,7 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 		manager = &topNProcessorManager{
 			l:        sr.l,
 			pipeline: pipeline,
+			nodeID:   sr.nodeID,
 		}
 	}
 	manager.init(sourceMeasure.GetSchema())
@@ -141,6 +144,7 @@ type topNStreamingProcessor struct {
 	m             *databasev1.Measure
 	errCh         <-chan error
 	stopCh        chan struct{}
+	nodeID        string
 	flow.ComponentState
 	interval      time.Duration
 	sortDirection modelv1.Sort
@@ -250,6 +254,13 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 					},
 				},
 			},
+			{
+				Value: &modelv1.TagValue_Str{
+					Str: &modelv1.Str{
+						Value: t.nodeID,
+					},
+				},
+			},
 		}
 		buf = buf[:0]
 		if buf, err = topNValue.marshal(buf); err != nil {
@@ -329,14 +340,15 @@ func (t *topNStreamingProcessor) handleError() {
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
-	l               *logger.Logger
 	pipeline        queue.Client
-	m               *databasev1.Measure
 	s               logical.TagSpecRegistry
+	l               *logger.Logger
+	m               *databasev1.Measure
+	nodeID          string
 	registeredTasks []*databasev1.TopNAggregation
 	processorList   []*topNStreamingProcessor
-	closed          bool
 	sync.RWMutex
+	closed bool
 }
 
 func (manager *topNProcessorManager) init(m *databasev1.Measure) {
@@ -479,6 +491,7 @@ func (manager *topNProcessorManager) start(topNSchema *databasev1.TopNAggregatio
 			stopCh:        make(chan struct{}),
 			streamingFlow: streamingFlow,
 			pipeline:      manager.pipeline,
+			nodeID:        manager.nodeID,
 		}
 		processorList[i] = processor.start()
 	}

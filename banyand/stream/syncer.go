@@ -23,9 +23,8 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -60,6 +59,7 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 						}
 						tst.l.Logger.Warn().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
 						tst.incTotalSyncLoopErr(1)
+						time.Sleep(2 * time.Second)
 						return false
 					}
 					epoch = curSnapshot.epoch
@@ -73,6 +73,61 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 				return
 			}
 		}
+	}
+}
+
+func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
+	var files []queue.FileInfo
+
+	buf := bigValuePool.Generate()
+	// Stream metadata
+	for i := range part.primaryBlockMetadata {
+		buf.Buf = part.primaryBlockMetadata[i].marshal(buf.Buf)
+	}
+	bb := bigValuePool.Generate()
+	bb.Buf = zstd.Compress(bb.Buf[:0], buf.Buf, 1)
+	bigValuePool.Release(buf)
+	files = append(files,
+		queue.FileInfo{
+			Name:   streamMetaName,
+			Reader: bb.SequentialRead(),
+		},
+		queue.FileInfo{
+			Name:   streamPrimaryName,
+			Reader: part.primary.SequentialRead(),
+		},
+		queue.FileInfo{
+			Name:   streamTimestampsName,
+			Reader: part.timestamps.SequentialRead(),
+		},
+	)
+
+	// Stream tag families data
+	if part.tagFamilies != nil {
+		for name, reader := range part.tagFamilies {
+			files = append(files, queue.FileInfo{
+				Name:   fmt.Sprintf("%s%s", streamTagFamiliesPrefix, name),
+				Reader: reader.SequentialRead(),
+			})
+		}
+
+		for name, reader := range part.tagFamilyMetadata {
+			files = append(files, queue.FileInfo{
+				Name:   fmt.Sprintf("%s%s", streamTagMetadataPrefix, name),
+				Reader: reader.SequentialRead(),
+			})
+		}
+
+		for name, reader := range part.tagFamilyFilter {
+			files = append(files, queue.FileInfo{
+				Name:   fmt.Sprintf("%s%s", streamTagFilterPrefix, name),
+				Reader: reader.SequentialRead(),
+			})
+		}
+	}
+
+	return files, func() {
+		bigValuePool.Release(bb)
 	}
 }
 
@@ -103,41 +158,63 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 		}
 	}
 
-	// Send parts through pipeline
+	// Use chunked sync with streaming for better memory efficiency
 	ctx := context.Background()
+	releaseFuncs := make([]func(), 0, len(partsToSync))
+	defer func() {
+		for _, release := range releaseFuncs {
+			release()
+		}
+	}()
 
 	for _, node := range nodes {
-		for _, part := range partsToSync {
-			// Convert part to memPart
-			memPart := generateMemPart()
-			memPart.mustInitFromPart(part)
-
-			// Marshal memPart to []byte
-			partData, err := memPart.Marshal()
-			releaseMemPart(memPart)
-			if err != nil {
-				return fmt.Errorf("failed to marshal part %d: %w", part.partMetadata.ID, err)
-			}
-
-			// Encode group, shardID and prepend to partData
-			combinedData := make([]byte, 0, len(partData)+len(tst.group)+4)
-			combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(tst.group))
-			combinedData = encoding.Uint32ToBytes(combinedData, uint32(tst.shardID))
-			combinedData = append(combinedData, partData...)
-
-			// Create message with combined data (group + shardID + partData)
-			message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-			f, err := tst.option.tire2Client.Publish(ctx, data.TopicStreamPartSync, message)
-			if err != nil {
-				return fmt.Errorf("failed to publish part %d to pipeline: %w", part.partMetadata.ID, err)
-			}
-			if f != nil {
-				_, err = f.GetAll()
-				if err != nil {
-					tst.l.Warn().Err(err).Msgf("failed to get all sync results: %v", err)
-				}
-			}
+		// Get chunked sync client for this node
+		chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, 1024*1024)
+		if err != nil {
+			return fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
 		}
+		defer chunkedClient.Close()
+
+		// Prepare streaming parts data for chunked sync
+		var streamingParts []queue.StreamingPartData
+		for _, part := range partsToSync {
+			// Create streaming reader for the part
+			files, release := createPartFileReaders(part)
+			releaseFuncs = append(releaseFuncs, release)
+
+			// Create streaming part sync data
+			streamingParts = append(streamingParts, queue.StreamingPartData{
+				ID:                    part.partMetadata.ID,
+				Group:                 tst.group,
+				ShardID:               uint32(tst.shardID),
+				Topic:                 data.TopicStreamPartSync.String(),
+				Files:                 files,
+				CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
+				UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
+				TotalCount:            part.partMetadata.TotalCount,
+				BlocksCount:           part.partMetadata.BlocksCount,
+				MinTimestamp:          part.partMetadata.MinTimestamp,
+				MaxTimestamp:          part.partMetadata.MaxTimestamp,
+			})
+		}
+
+		// Sync parts using chunked transfer with streaming
+		result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
+		if err != nil {
+			return fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
+		}
+
+		if !result.Success {
+			return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
+		}
+		tst.l.Info().
+			Str("node", node).
+			Str("session", result.SessionID).
+			Uint64("bytes", result.TotalBytes).
+			Int64("duration_ms", result.DurationMs).
+			Uint32("chunks", result.ChunksCount).
+			Uint32("parts", result.PartsCount).
+			Msg("chunked sync completed successfully")
 	}
 
 	// Construct syncIntroduction to remove synced parts from snapshot

@@ -7,11 +7,22 @@
     - [Status](#banyandb-model-v1-Status)
   
 - [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
+    - [FileInfo](#banyandb-cluster-v1-FileInfo)
     - [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest)
     - [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse)
+    - [PartInfo](#banyandb-cluster-v1-PartInfo)
+    - [PartResult](#banyandb-cluster-v1-PartResult)
     - [SendRequest](#banyandb-cluster-v1-SendRequest)
     - [SendResponse](#banyandb-cluster-v1-SendResponse)
+    - [SyncCompletion](#banyandb-cluster-v1-SyncCompletion)
+    - [SyncMetadata](#banyandb-cluster-v1-SyncMetadata)
+    - [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest)
+    - [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse)
+    - [SyncResult](#banyandb-cluster-v1-SyncResult)
   
+    - [SyncStatus](#banyandb-cluster-v1-SyncStatus)
+  
+    - [ChunkedSyncService](#banyandb-cluster-v1-ChunkedSyncService)
     - [Service](#banyandb-cluster-v1-Service)
   
 - [banyandb/common/v1/common.proto](#banyandb_common_v1_common-proto)
@@ -183,6 +194,18 @@
     - [TopNAggregationRegistryServiceListResponse](#banyandb-database-v1-TopNAggregationRegistryServiceListResponse)
     - [TopNAggregationRegistryServiceUpdateRequest](#banyandb-database-v1-TopNAggregationRegistryServiceUpdateRequest)
     - [TopNAggregationRegistryServiceUpdateResponse](#banyandb-database-v1-TopNAggregationRegistryServiceUpdateResponse)
+    - [TraceRegistryServiceCreateRequest](#banyandb-database-v1-TraceRegistryServiceCreateRequest)
+    - [TraceRegistryServiceCreateResponse](#banyandb-database-v1-TraceRegistryServiceCreateResponse)
+    - [TraceRegistryServiceDeleteRequest](#banyandb-database-v1-TraceRegistryServiceDeleteRequest)
+    - [TraceRegistryServiceDeleteResponse](#banyandb-database-v1-TraceRegistryServiceDeleteResponse)
+    - [TraceRegistryServiceExistRequest](#banyandb-database-v1-TraceRegistryServiceExistRequest)
+    - [TraceRegistryServiceExistResponse](#banyandb-database-v1-TraceRegistryServiceExistResponse)
+    - [TraceRegistryServiceGetRequest](#banyandb-database-v1-TraceRegistryServiceGetRequest)
+    - [TraceRegistryServiceGetResponse](#banyandb-database-v1-TraceRegistryServiceGetResponse)
+    - [TraceRegistryServiceListRequest](#banyandb-database-v1-TraceRegistryServiceListRequest)
+    - [TraceRegistryServiceListResponse](#banyandb-database-v1-TraceRegistryServiceListResponse)
+    - [TraceRegistryServiceUpdateRequest](#banyandb-database-v1-TraceRegistryServiceUpdateRequest)
+    - [TraceRegistryServiceUpdateResponse](#banyandb-database-v1-TraceRegistryServiceUpdateResponse)
   
     - [GroupRegistryService](#banyandb-database-v1-GroupRegistryService)
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
@@ -192,6 +215,7 @@
     - [SnapshotService](#banyandb-database-v1-SnapshotService)
     - [StreamRegistryService](#banyandb-database-v1-StreamRegistryService)
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
+    - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
 - [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
     - [DataPoint](#banyandb-measure-v1-DataPoint)
@@ -221,8 +245,30 @@
   
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
+- [banyandb/property/v1/gossip.proto](#banyandb_property_v1_gossip-proto)
+    - [PropagationContext](#banyandb-property-v1-PropagationContext)
+    - [PropagationRequest](#banyandb-property-v1-PropagationRequest)
+    - [PropagationResponse](#banyandb-property-v1-PropagationResponse)
+  
+    - [GossipService](#banyandb-property-v1-GossipService)
+  
 - [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
     - [Property](#banyandb-property-v1-Property)
+  
+- [banyandb/property/v1/repair.proto](#banyandb_property_v1_repair-proto)
+    - [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary)
+    - [NoMorePropertySync](#banyandb-property-v1-NoMorePropertySync)
+    - [PropertyMissing](#banyandb-property-v1-PropertyMissing)
+    - [PropertySync](#banyandb-property-v1-PropertySync)
+    - [RepairRequest](#banyandb-property-v1-RepairRequest)
+    - [RepairResponse](#banyandb-property-v1-RepairResponse)
+    - [RootCompare](#banyandb-property-v1-RootCompare)
+    - [TreeLeafNode](#banyandb-property-v1-TreeLeafNode)
+    - [TreeRoot](#banyandb-property-v1-TreeRoot)
+    - [TreeSlotSHA](#banyandb-property-v1-TreeSlotSHA)
+    - [TreeSlots](#banyandb-property-v1-TreeSlots)
+  
+    - [RepairService](#banyandb-property-v1-RepairService)
   
 - [banyandb/property/v1/rpc.proto](#banyandb_property_v1_rpc-proto)
     - [ApplyRequest](#banyandb-property-v1-ApplyRequest)
@@ -314,6 +360,23 @@ Status is the response status for write
 
 
 
+<a name="banyandb-cluster-v1-FileInfo"></a>
+
+### FileInfo
+Information about an individual file within a part.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | File identifier (e.g., &#34;primary&#34;, &#34;timestamps&#34;, &#34;tagFamilies:seriesId&#34;). |
+| offset | [uint32](#uint32) |  | Byte offset within the part where this file starts. |
+| size | [uint32](#uint32) |  | Size of this file in bytes. |
+
+
+
+
+
+
 <a name="banyandb-cluster-v1-HealthCheckRequest"></a>
 
 ### HealthCheckRequest
@@ -340,6 +403,45 @@ Status is the response status for write
 | service_name | [string](#string) |  |  |
 | status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
 | error | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-PartInfo"></a>
+
+### PartInfo
+Information about a part contained within a chunk.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [uint64](#uint64) |  | Unique identifier for this part. |
+| files | [FileInfo](#banyandb-cluster-v1-FileInfo) | repeated | Information about individual files within this part. |
+| compressed_size_bytes | [uint64](#uint64) |  | Compressed size in bytes from partMetadata. |
+| uncompressed_size_bytes | [uint64](#uint64) |  | Uncompressed size in bytes from partMetadata. |
+| total_count | [uint64](#uint64) |  | Total count from partMetadata. |
+| blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
+| min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
+| max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-PartResult"></a>
+
+### PartResult
+PartResult contains the result for individual parts.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  | Whether this part was processed successfully. |
+| error | [string](#string) |  | Error message if processing failed. |
+| bytes_processed | [uint32](#uint32) |  | Number of bytes processed for this part. |
 
 
 
@@ -381,11 +483,133 @@ Status is the response status for write
 
 
 
+
+<a name="banyandb-cluster-v1-SyncCompletion"></a>
+
+### SyncCompletion
+SyncCompletion contains completion information for the sync operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| total_bytes_sent | [uint64](#uint64) |  | Total bytes sent for validation. |
+| total_parts_sent | [uint32](#uint32) |  | Total number of parts sent. |
+| total_chunks | [uint32](#uint32) |  | Total number of chunks in this sync. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncMetadata"></a>
+
+### SyncMetadata
+SyncMetadata contains metadata for the sync operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  | Group name (stream/measure). |
+| shard_id | [uint32](#uint32) |  | Shard identifier. |
+| topic | [string](#string) |  | Sync topic (stream-part-sync or measure-part-sync). |
+| timestamp | [int64](#int64) |  | Timestamp when sync started. |
+| total_parts | [uint32](#uint32) |  | Total number of parts being synced. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncPartRequest"></a>
+
+### SyncPartRequest
+Chunked Sync Service Messages.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| session_id | [string](#string) |  | Unique session identifier for this sync operation. |
+| chunk_index | [uint32](#uint32) |  | Current chunk index (0-based). |
+| chunk_data | [bytes](#bytes) |  | Actual chunk data. |
+| chunk_checksum | [string](#string) |  | CRC32 checksum for this chunk. |
+| parts_info | [PartInfo](#banyandb-cluster-v1-PartInfo) | repeated | Information about parts contained in this chunk. |
+| metadata | [SyncMetadata](#banyandb-cluster-v1-SyncMetadata) |  | Sent with first chunk (chunk_index = 0). |
+| completion | [SyncCompletion](#banyandb-cluster-v1-SyncCompletion) |  | Sent with last chunk to finalize. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncPartResponse"></a>
+
+### SyncPartResponse
+SyncPartResponse contains the response for a sync part request.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| session_id | [string](#string) |  |  |
+| chunk_index | [uint32](#uint32) |  |  |
+| status | [SyncStatus](#banyandb-cluster-v1-SyncStatus) |  |  |
+| error | [string](#string) |  |  |
+| sync_result | [SyncResult](#banyandb-cluster-v1-SyncResult) |  | Final result when sync completes. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncResult"></a>
+
+### SyncResult
+SyncResult contains the result of a sync operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  | Whether entire sync was successful. |
+| total_bytes_received | [uint64](#uint64) |  | Total bytes received. |
+| duration_ms | [int64](#int64) |  | Time taken for sync in milliseconds. |
+| chunks_received | [uint32](#uint32) |  | Number of chunks successfully received. |
+| parts_received | [uint32](#uint32) |  | Number of parts successfully received. |
+| parts_results | [PartResult](#banyandb-cluster-v1-PartResult) | repeated | Results for each part. |
+
+
+
+
+
  
+
+
+<a name="banyandb-cluster-v1-SyncStatus"></a>
+
+### SyncStatus
+SyncStatus represents the status of a sync operation.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SYNC_STATUS_UNSPECIFIED | 0 | Unspecified status. |
+| SYNC_STATUS_CHUNK_RECEIVED | 1 | Chunk received and validated successfully. |
+| SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH | 2 | Chunk checksum validation failed. |
+| SYNC_STATUS_CHUNK_OUT_OF_ORDER | 3 | Chunk received out of expected order. |
+| SYNC_STATUS_SESSION_NOT_FOUND | 4 | Session ID not recognized. |
+| SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully. |
+
 
  
 
  
+
+
+<a name="banyandb-cluster-v1-ChunkedSyncService"></a>
+
+### ChunkedSyncService
+ChunkedSyncService provides streaming sync capabilities for chunked data transfer.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| SyncPart | [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest) stream | [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse) stream | SyncPart synchronizes part data using chunked transfer. |
 
 
 <a name="banyandb-cluster-v1-Service"></a>
@@ -700,6 +924,7 @@ Trace is the top level message of a trace.
 | http_address | [string](#string) |  |  |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
+| property_repair_gossip_grpc_address | [string](#string) |  |  |
 
 
 
@@ -2813,6 +3038,187 @@ Type determine the index structure under the hood
 
 
 
+
+<a name="banyandb-database-v1-TraceRegistryServiceCreateRequest"></a>
+
+### TraceRegistryServiceCreateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace | [Trace](#banyandb-database-v1-Trace) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceCreateResponse"></a>
+
+### TraceRegistryServiceCreateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceDeleteRequest"></a>
+
+### TraceRegistryServiceDeleteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceDeleteResponse"></a>
+
+### TraceRegistryServiceDeleteResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceExistRequest"></a>
+
+### TraceRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceExistResponse"></a>
+
+### TraceRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_trace | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceGetRequest"></a>
+
+### TraceRegistryServiceGetRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceGetResponse"></a>
+
+### TraceRegistryServiceGetResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace | [Trace](#banyandb-database-v1-Trace) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceListRequest"></a>
+
+### TraceRegistryServiceListRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceListResponse"></a>
+
+### TraceRegistryServiceListResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace | [Trace](#banyandb-database-v1-Trace) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceUpdateRequest"></a>
+
+### TraceRegistryServiceUpdateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace | [Trace](#banyandb-database-v1-Trace) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-TraceRegistryServiceUpdateResponse"></a>
+
+### TraceRegistryServiceUpdateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
  
 
  
@@ -2933,6 +3339,21 @@ Type determine the index structure under the hood
 | Get | [TopNAggregationRegistryServiceGetRequest](#banyandb-database-v1-TopNAggregationRegistryServiceGetRequest) | [TopNAggregationRegistryServiceGetResponse](#banyandb-database-v1-TopNAggregationRegistryServiceGetResponse) |  |
 | List | [TopNAggregationRegistryServiceListRequest](#banyandb-database-v1-TopNAggregationRegistryServiceListRequest) | [TopNAggregationRegistryServiceListResponse](#banyandb-database-v1-TopNAggregationRegistryServiceListResponse) |  |
 | Exist | [TopNAggregationRegistryServiceExistRequest](#banyandb-database-v1-TopNAggregationRegistryServiceExistRequest) | [TopNAggregationRegistryServiceExistResponse](#banyandb-database-v1-TopNAggregationRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+
+
+<a name="banyandb-database-v1-TraceRegistryService"></a>
+
+### TraceRegistryService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Create | [TraceRegistryServiceCreateRequest](#banyandb-database-v1-TraceRegistryServiceCreateRequest) | [TraceRegistryServiceCreateResponse](#banyandb-database-v1-TraceRegistryServiceCreateResponse) |  |
+| Update | [TraceRegistryServiceUpdateRequest](#banyandb-database-v1-TraceRegistryServiceUpdateRequest) | [TraceRegistryServiceUpdateResponse](#banyandb-database-v1-TraceRegistryServiceUpdateResponse) |  |
+| Delete | [TraceRegistryServiceDeleteRequest](#banyandb-database-v1-TraceRegistryServiceDeleteRequest) | [TraceRegistryServiceDeleteResponse](#banyandb-database-v1-TraceRegistryServiceDeleteResponse) |  |
+| Get | [TraceRegistryServiceGetRequest](#banyandb-database-v1-TraceRegistryServiceGetRequest) | [TraceRegistryServiceGetResponse](#banyandb-database-v1-TraceRegistryServiceGetResponse) |  |
+| List | [TraceRegistryServiceListRequest](#banyandb-database-v1-TraceRegistryServiceListRequest) | [TraceRegistryServiceListResponse](#banyandb-database-v1-TraceRegistryServiceListResponse) |  |
+| Exist | [TraceRegistryServiceExistRequest](#banyandb-database-v1-TraceRegistryServiceExistRequest) | [TraceRegistryServiceExistResponse](#banyandb-database-v1-TraceRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 
  
 
@@ -3330,6 +3751,77 @@ WriteResponse is the response contract for write
 
 
 
+<a name="banyandb_property_v1_gossip-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/property/v1/gossip.proto
+
+
+
+<a name="banyandb-property-v1-PropagationContext"></a>
+
+### PropagationContext
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [string](#string) | repeated |  |
+| max_propagation_count | [int32](#int32) |  |  |
+| current_propagation_count | [int32](#int32) |  |  |
+| origin_node | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropagationRequest"></a>
+
+### PropagationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| context | [PropagationContext](#banyandb-property-v1-PropagationContext) |  |  |
+| group | [string](#string) |  |  |
+| shard_id | [uint32](#uint32) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropagationResponse"></a>
+
+### PropagationResponse
+
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-property-v1-GossipService"></a>
+
+### GossipService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Propagation | [PropagationRequest](#banyandb-property-v1-PropagationRequest) | [PropagationResponse](#banyandb-property-v1-PropagationResponse) | Propagation is used to propagate messages across nodes in the cluster. |
+
+ 
+
+
+
 <a name="banyandb_property_v1_property-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -3359,6 +3851,207 @@ Property stores the user defined data
  
 
  
+
+ 
+
+
+
+<a name="banyandb_property_v1_repair-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/property/v1/repair.proto
+
+
+
+<a name="banyandb-property-v1-DifferTreeSummary"></a>
+
+### DifferTreeSummary
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [TreeLeafNode](#banyandb-property-v1-TreeLeafNode) | repeated | if the nodes is empty, mean the server side don&#39;t have more tree leaf nodes to send. |
+
+
+
+
+
+
+<a name="banyandb-property-v1-NoMorePropertySync"></a>
+
+### NoMorePropertySync
+
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropertyMissing"></a>
+
+### PropertyMissing
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| entity | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropertySync"></a>
+
+### PropertySync
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [bytes](#bytes) |  |  |
+| property | [Property](#banyandb-property-v1-Property) |  |  |
+| delete_time | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-RepairRequest"></a>
+
+### RepairRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tree_root | [TreeRoot](#banyandb-property-v1-TreeRoot) |  | compare stage |
+| tree_slots | [TreeSlots](#banyandb-property-v1-TreeSlots) |  |  |
+| property_missing | [PropertyMissing](#banyandb-property-v1-PropertyMissing) |  | repair stage case 1: client missing but server existing |
+| property_sync | [PropertySync](#banyandb-property-v1-PropertySync) |  | case 2: client existing but server missing case 3: SHA value mismatches |
+| no_more_property_sync | [NoMorePropertySync](#banyandb-property-v1-NoMorePropertySync) |  | if client side is already send all the properties(missing or property sync) which means the client side will not sending more properties to sync, server side should close the stream. |
+
+
+
+
+
+
+<a name="banyandb-property-v1-RepairResponse"></a>
+
+### RepairResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| root_compare | [RootCompare](#banyandb-property-v1-RootCompare) |  | compare stage |
+| differ_tree_summary | [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary) |  |  |
+| property_sync | [PropertySync](#banyandb-property-v1-PropertySync) |  | repair stage case 1: return from PropertyMissing case 3: return if the client is older |
+
+
+
+
+
+
+<a name="banyandb-property-v1-RootCompare"></a>
+
+### RootCompare
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tree_found | [bool](#bool) |  |  |
+| root_sha_match | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-TreeLeafNode"></a>
+
+### TreeLeafNode
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| slot_index | [int32](#int32) |  | slot_index is the index of the slot in the tree. |
+| exists | [bool](#bool) |  | if the slot is empty, means the server side don&#39;t have the slot. |
+| entity | [string](#string) |  | if the slot and entity exists, the SHA value of the entity. |
+| sha | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-TreeRoot"></a>
+
+### TreeRoot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| shard_id | [uint32](#uint32) |  |  |
+| root_sha | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-TreeSlotSHA"></a>
+
+### TreeSlotSHA
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| slot | [int32](#int32) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-TreeSlots"></a>
+
+### TreeSlots
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| slot_sha | [TreeSlotSHA](#banyandb-property-v1-TreeSlotSHA) | repeated |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-property-v1-RepairService"></a>
+
+### RepairService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Repair | [RepairRequest](#banyandb-property-v1-RepairRequest) stream | [RepairResponse](#banyandb-property-v1-RepairResponse) stream |  |
 
  
 

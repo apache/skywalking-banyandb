@@ -32,6 +32,8 @@ type Service interface {
 	run.PreRunner
 	run.Config
 	run.Service
+
+	GetGossIPGrpcPort() *uint32
 }
 
 // GetPropertyID returns the property ID based on the property metadata and revision.

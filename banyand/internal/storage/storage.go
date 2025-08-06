@@ -101,6 +101,7 @@ type IndexDB interface {
 	Update(docs index.Documents) error
 	Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (SeriesData, [][]byte, error)
 	SearchWithoutSeries(ctx context.Context, opts IndexSearchOpts) (sd SeriesData, sortedValues [][]byte, err error)
+	EnableExternalSegments() (index.ExternalSegmentStreamer, error)
 }
 
 // TSDB allows listing and getting shard details.
