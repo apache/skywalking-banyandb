@@ -1141,6 +1141,7 @@ func (r *repairScheduler) close() {
 }
 
 func (r *repairScheduler) doRepairGossip(ctx context.Context) error {
+	r.l.Debug().Msg("starting repair gossip scheduler")
 	group, shardNum, err := r.randomSelectGroup(ctx)
 	if err != nil {
 		return fmt.Errorf("selecting random group failure: %w", err)

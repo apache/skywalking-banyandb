@@ -100,6 +100,7 @@ func openDB(
 	}
 	var err error
 	// init repair scheduler
+	l.Debug().Bool("enabled", repairEnabled).Str("repair_trigger", repairTriggerCron).Msg("repair scheduler enabled")
 	if repairEnabled {
 		scheduler, schedulerErr := newRepairScheduler(l, omr, repairBuildTreeCron, repairQuickBuildTreeTime, repairTriggerCron,
 			gossipMessenger, repairSlotCount, db, buildSnapshotFunc)
