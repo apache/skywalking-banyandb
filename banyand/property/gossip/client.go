@@ -27,6 +27,8 @@ import (
 )
 
 func (s *service) Propagation(nodes []string, group string, shardID uint32) error {
+	s.log.Debug().Str("group", group).Uint32("shardID", shardID).Strs("nodes", nodes).
+		Msg("received propagation request")
 	if len(nodes) < 2 {
 		return fmt.Errorf("must provide at least 2 node")
 	}
@@ -53,10 +55,12 @@ func (s *service) Propagation(nodes []string, group string, shardID uint32) erro
 	// send it to the current node if it is the first node
 	if nodes[0] == s.nodeID {
 		sendTo = func(ctx context.Context, req *propertyv1.PropagationRequest) (*propertyv1.PropagationResponse, error) {
+			s.log.Debug().Msg("propagation request received by the current node")
 			return s.protocolHandler.Propagation(ctx, req)
 		}
 	} else {
 		sendTo = func(ctx context.Context, request *propertyv1.PropagationRequest) (*propertyv1.PropagationResponse, error) {
+			s.log.Debug().Str("node", nodes[0]).Msg("propagation request sent to the node")
 			node, exist := s.getRegisteredNode(nodes[0])
 			if !exist {
 				return nil, fmt.Errorf("node %s not found", nodes[0])
