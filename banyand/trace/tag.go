@@ -268,8 +268,6 @@ func (t *tag) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Read
 }
 
 func (t *tag) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seqReader, cm tagMetadata, count uint64) {
-	t.name = cm.name
-	t.valueType = cm.valueType
 	if cm.offset != reader.bytesRead {
 		logger.Panicf("%s: offset mismatch: %d vs %d", reader.Path(), cm.offset, reader.bytesRead)
 	}

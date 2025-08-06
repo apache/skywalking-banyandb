@@ -42,7 +42,7 @@ func (pm *partMetadata) String() string {
 
 func (bc *blockCursor) String() string {
 	return fmt.Sprintf("%d, %s, %d, %s",
-		bc.p.partMetadata.ID, bc.bm.traceID, bc.bm.count, humanize.Bytes(bc.bm.spanSize))
+		bc.p.partMetadata.ID, bc.bm.traceID, bc.bm.count, humanize.Bytes(bc.bm.uncompressedSpanSizeBytes))
 }
 
 func startBlockScanSpan(ctx context.Context, sids int, parts []*part) func() {

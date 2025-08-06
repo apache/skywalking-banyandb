@@ -144,7 +144,11 @@ func (mp *memPart) mustCreateMemTagWriters(name string) (fs.Writer, fs.Writer, f
 
 func (mp *memPart) reset() {
 	mp.partMetadata.reset()
-	mp.tagType.reset()
+	if mp.tagType == nil {
+		mp.tagType = make(tagType)
+	} else {
+		mp.tagType.reset()
+	}
 	mp.traceIDFilter.reset()
 	mp.meta.Reset()
 	mp.primary.Reset()
@@ -197,7 +201,6 @@ func (mp *memPart) Marshal() ([]byte, error) {
 
 	// Marshal traceIDFilter
 	if mp.traceIDFilter.filter != nil {
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, 1)
 		var filterBuf []byte
 		filterBuf = encodeBloomFilter(filterBuf, mp.traceIDFilter.filter)
 		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(filterBuf)))
@@ -544,6 +547,7 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 
 	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(path, metaFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(path, primaryFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.spans.Buf, filepath.Join(path, spansFilename), storage.FilePerm)
 	for name, t := range mp.tags {
 		fs.MustFlush(fileSystem, t.Buf, filepath.Join(path, name+tagsFilenameExt), storage.FilePerm)
 	}
@@ -628,6 +632,8 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	p.fileSystem = fileSystem
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
 	p.partMetadata.ID = id
+
+	p.tagType = make(tagType)
 	p.tagType.mustReadTagType(fileSystem, partPath)
 	p.traceIDFilter.mustReadTraceIDFilter(fileSystem, partPath)
 
@@ -637,6 +643,7 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	fs.MustClose(pr)
 
 	p.primary = mustOpenReader(path.Join(partPath, primaryFilename), fileSystem)
+	p.spans = mustOpenReader(path.Join(partPath, spansFilename), fileSystem)
 	ee := fileSystem.ReadDir(partPath)
 	for _, e := range ee {
 		if e.IsDir() {

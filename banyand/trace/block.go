@@ -66,6 +66,8 @@ func (b *block) mustInitFromTags(tags [][]*tagValue) {
 	if spansLen == 0 {
 		return
 	}
+
+	b.resizeTags(len(tags[0]))
 	for i, t := range tags {
 		b.processTags(t, i, spansLen)
 	}
@@ -121,8 +123,21 @@ func (b *block) mustWriteTo(tid string, bm *blockMetadata, ww *writers) {
 	bm.reset()
 
 	bm.traceID = tid
-	bm.spanSize = b.spanSize()
+	bm.uncompressedSpanSizeBytes = b.spanSize()
 	bm.count = uint64(b.Len())
+
+	if len(b.timestamps) > 0 {
+		bm.timestamps.min = b.timestamps[0]
+		bm.timestamps.max = b.timestamps[0]
+		for _, ts := range b.timestamps {
+			if ts < bm.timestamps.min {
+				bm.timestamps.min = ts
+			}
+			if ts > bm.timestamps.max {
+				bm.timestamps.max = ts
+			}
+		}
+	}
 
 	mustWriteSpansTo(bm.spans, b.spans, &ww.spanWriter)
 	for ti := range b.tags {
@@ -154,55 +169,37 @@ func (b *block) marshalTag(t tag, bm *blockMetadata, ww *writers) {
 		logger.Panicf("too big tagMetadataSize: %d bytes; mustn't exceed %d bytes", cm.size, maxTagsMetadataSize)
 	}
 	mw.MustWrite(bb.Buf)
-	for _, ts := range b.timestamps {
-		if ts < bm.timestamps.min {
-			bm.timestamps.min = ts
-		}
-		if ts > bm.timestamps.max {
-			bm.timestamps.max = ts
-		}
-	}
 	bm.tagType[t.name] = t.valueType
 }
 
 func (b *block) unmarshalTag(decoder *encoding.BytesBlockDecoder, i int,
-	tagMetadataBlock *dataBlock, tagProjection []string, tagType map[string]pbv1.ValueType, metaReader, valueReader fs.Reader, count int,
+	tagMetadataBlock *dataBlock, name string, tagType map[string]pbv1.ValueType, metaReader, valueReader fs.Reader,
 ) {
-	if len(tagProjection) < 1 {
-		return
-	}
 	bb := bigValuePool.Generate()
 	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tagMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(tagMetadataBlock.offset), bb.Buf)
 	tm := generateTagMetadata()
 	defer releaseTagMetadata(tm)
 	_, err := tm.unmarshal(bb.Buf)
-
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagMetadata: %v", metaReader.Path(), err)
 	}
 	bigValuePool.Release(bb)
-	b.resizeTags(len(tagProjection))
-	if tagProjection[i] == tm.name {
-		b.tags[i].name = tm.name
-		if valueType, ok := tagType[tm.name]; ok {
-			b.tags[i].valueType = valueType
-		} else {
-			b.tags[i].valueType = pbv1.ValueTypeUnknown
+	b.tags[i].name = name
+	if valueType, ok := tagType[name]; ok {
+		b.tags[i].valueType = valueType
+	} else {
+		b.tags[i].valueType = pbv1.ValueTypeUnknown
+		for j := range b.tags[i].values {
+			b.tags[i].values[j] = nil
 		}
-		b.tags[i].mustReadValues(decoder, valueReader, *tm, uint64(b.Len()))
 		return
 	}
-	b.tags[i].name = tagProjection[i]
-	b.tags[i].valueType = pbv1.ValueTypeUnknown
-	b.tags[i].resizeValues(count)
-	for j := range b.tags[i].values {
-		b.tags[i].values[j] = nil
-	}
+	b.tags[i].mustReadValues(decoder, valueReader, *tm, uint64(b.Len()))
 }
 
-func (b *block) unmarshalTagFromSeqReaders(decoder *encoding.BytesBlockDecoder, i int,
-	tagMetadataBlock *dataBlock, metaReader, valueReader *seqReader,
+func (b *block) unmarshalTagFromSeqReaders(decoder *encoding.BytesBlockDecoder, i int, tagMetadataBlock *dataBlock,
+	tagType map[string]pbv1.ValueType, metaReader, valueReader *seqReader,
 ) {
 	if tagMetadataBlock.offset != metaReader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", tagMetadataBlock.offset, metaReader.bytesRead)
@@ -219,6 +216,14 @@ func (b *block) unmarshalTagFromSeqReaders(decoder *encoding.BytesBlockDecoder, 
 	bigValuePool.Release(bb)
 
 	b.resizeTags(len(b.tags))
+	// TODO: avoid sorting the tagType map
+	keys := make([]string, 0, len(tagType))
+	for k := range tagType {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	b.tags[i].name = keys[i]
+	b.tags[i].valueType = tagType[keys[i]]
 	b.tags[i].mustSeqReadValues(decoder, valueReader, *tm, uint64(b.Len()))
 }
 
@@ -247,7 +252,7 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 			}
 			continue
 		}
-		b.unmarshalTag(decoder, i, block, bm.tagProjection.Names, bm.tagType, p.tagMetadata[name], p.tags[name], int(bm.count))
+		b.unmarshalTag(decoder, i, block, name, bm.tagType, p.tagMetadata[name], p.tags[name])
 	}
 }
 
@@ -264,7 +269,7 @@ func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders 
 	sort.Strings(keys)
 	for i, name := range keys {
 		block := bm.tags[name]
-		b.unmarshalTagFromSeqReaders(decoder, i, block, seqReaders.tagMetadata[name], seqReaders.tags[name])
+		b.unmarshalTagFromSeqReaders(decoder, i, block, bm.tagType, seqReaders.tagMetadata[name], seqReaders.tags[name])
 	}
 }
 
@@ -302,12 +307,13 @@ func mustReadSpansFrom(spans [][]byte, sm *dataBlock, count int, reader fs.Reade
 
 	src := bb.Buf
 	spans = resizeSpans(spans, count)
+	var spanLen uint64
 	for i := 0; i < count; i++ {
-		src, spanLen := encoding.BytesToVarUint64(src)
+		src, spanLen = encoding.BytesToVarUint64(src)
 		if uint64(len(src)) < spanLen {
 			logger.Panicf("insufficient data for span: need %d bytes, have %d", spanLen, len(src))
 		}
-		spans = append(spans, src[:spanLen])
+		spans[i] = append(spans[i], src[:spanLen]...)
 		src = src[spanLen:]
 	}
 	return spans
@@ -324,12 +330,13 @@ func mustSeqReadSpansFrom(spans [][]byte, sm *dataBlock, count int, reader *seqR
 
 	src := bb.Buf
 	spans = resizeSpans(spans, count)
+	var spanLen uint64
 	for i := 0; i < count; i++ {
-		src, spanLen := encoding.BytesToVarUint64(src)
+		src, spanLen = encoding.BytesToVarUint64(src)
 		if uint64(len(src)) < spanLen {
 			logger.Panicf("insufficient data for span: need %d bytes, have %d", spanLen, len(src))
 		}
-		spans = append(spans, src[:spanLen])
+		spans[i] = append(spans[i], src[:spanLen]...)
 		src = src[spanLen:]
 	}
 	return spans
@@ -628,7 +635,7 @@ func assertIdxAndOffset(name string, length int, idx int, offset int) {
 }
 
 func (bi *blockPointer) isFull() bool {
-	return bi.bm.spanSize >= maxUncompressedSpanSize
+	return bi.bm.uncompressedSpanSizeBytes >= maxUncompressedSpanSize
 }
 
 func (bi *blockPointer) reset() {

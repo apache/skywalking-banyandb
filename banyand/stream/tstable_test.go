@@ -37,7 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
-func Test_tsTable_mustAddDataPoints(t *testing.T) {
+func Test_tsTable_mustAddElements(t *testing.T) {
 	tests := []struct {
 		name   string
 		esList []*elements

@@ -19,7 +19,6 @@ package trace
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"sort"
 
@@ -162,7 +161,7 @@ func (tt tagType) mustReadTagType(fileSystem fs.FileSystem, partPath string) {
 	tagTypePath := filepath.Join(partPath, tagTypeFilename)
 	data, err := fileSystem.Read(tagTypePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if fsErr, ok := err.(*fs.FileSystemError); ok && fsErr.Code == fs.IsNotExistError {
 			return
 		}
 		logger.Panicf("cannot read %s: %s", tagTypePath, err)
@@ -211,7 +210,7 @@ func (tf *traceIDFilter) mustReadTraceIDFilter(fileSystem fs.FileSystem, partPat
 	traceIDFilterPath := filepath.Join(partPath, traceIDFilterFilename)
 	data, err := fileSystem.Read(traceIDFilterPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if fsErr, ok := err.(*fs.FileSystemError); ok && fsErr.Code == fs.IsNotExistError {
 			tf.filter = nil
 			return
 		}

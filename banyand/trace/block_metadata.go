@@ -61,20 +61,23 @@ func (d *dataBlock) unmarshal(src []byte) []byte {
 }
 
 type blockMetadata struct {
-	tags          map[string]*dataBlock
-	tagType       map[string]pbv1.ValueType
-	spans         *dataBlock
-	timestamps    timestampsMetadata
-	tagProjection *model.TagProjection
-	traceID       string
-	spanSize      uint64
-	count         uint64
+	tags                      map[string]*dataBlock
+	tagType                   map[string]pbv1.ValueType
+	spans                     *dataBlock
+	timestamps                timestampsMetadata
+	tagProjection             *model.TagProjection
+	traceID                   string
+	uncompressedSpanSizeBytes uint64
+	count                     uint64
 }
 
 func (bm *blockMetadata) copyFrom(src *blockMetadata) {
 	bm.traceID = src.traceID
-	bm.spanSize = src.spanSize
+	bm.uncompressedSpanSizeBytes = src.uncompressedSpanSizeBytes
 	bm.count = src.count
+	if bm.spans == nil {
+		bm.spans = &dataBlock{}
+	}
 	bm.spans.copyFrom(src.spans)
 	bm.timestamps.copyFrom(&src.timestamps)
 	for k, db := range src.tags {
@@ -106,17 +109,29 @@ func (bm *blockMetadata) getTagMetadata(name string) *dataBlock {
 
 func (bm *blockMetadata) reset() {
 	bm.traceID = ""
-	bm.spanSize = 0
+	bm.uncompressedSpanSizeBytes = 0
 	bm.count = 0
 	bm.tagProjection = nil
-	bm.spans.reset()
-	bm.timestamps.reset()
-	for k := range bm.tags {
-		bm.tags[k].reset()
-		delete(bm.tags, k)
+	if bm.spans == nil {
+		bm.spans = &dataBlock{}
+	} else {
+		bm.spans.reset()
 	}
-	for k := range bm.tagType {
-		delete(bm.tagType, k)
+	bm.timestamps.reset()
+	if bm.tags == nil {
+		bm.tags = make(map[string]*dataBlock)
+	} else {
+		for k := range bm.tags {
+			bm.tags[k].reset()
+			delete(bm.tags, k)
+		}
+	}
+	if bm.tagType == nil {
+		bm.tagType = make(map[string]pbv1.ValueType)
+	} else {
+		for k := range bm.tagType {
+			delete(bm.tagType, k)
+		}
 	}
 }
 
@@ -126,7 +141,7 @@ func (bm *blockMetadata) marshal(dst []byte, traceIDLen uint32) []byte {
 	if paddingLen > 0 {
 		dst = append(dst, bytes.Repeat([]byte{0}, int(paddingLen))...)
 	}
-	dst = encoding.VarUint64ToBytes(dst, bm.spanSize)
+	dst = encoding.VarUint64ToBytes(dst, bm.uncompressedSpanSizeBytes)
 	dst = encoding.VarUint64ToBytes(dst, bm.count)
 	dst = encoding.VarUint64ToBytes(dst, uint64(len(bm.tags)))
 	// make sure the order of tags is stable
@@ -151,7 +166,7 @@ func (bm *blockMetadata) unmarshal(src []byte, tagType map[string]pbv1.ValueType
 	bm.tagType = tagType
 	src = src[traceIDLen:]
 	src, n := encoding.BytesToVarUint64(src)
-	bm.spanSize = n
+	bm.uncompressedSpanSizeBytes = n
 	src, n = encoding.BytesToVarUint64(src)
 	bm.count = n
 

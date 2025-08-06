@@ -22,6 +22,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -169,7 +170,11 @@ func (bw *blockWriter) reset() {
 	bw.writers.reset()
 	bw.traceIDLen = 0
 	bw.traceIDs = bw.traceIDs[:0]
-	bw.tagType.reset()
+	if bw.tagType == nil {
+		bw.tagType = make(tagType)
+	} else {
+		bw.tagType.reset()
+	}
 	bw.minTimestampLast = 0
 	bw.minTimestamp = 0
 	bw.maxTimestamp = 0
@@ -223,12 +228,17 @@ func (bw *blockWriter) mustWriteBlock(tidLen uint32, tid string, b *block) {
 	if b.Len() == 0 {
 		return
 	}
-	tidLast := bw.traceIDs[len(bw.traceIDs)-1]
-	if tid < tidLast {
-		logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", tid, tidLast)
-	}
 	hasWrittenBlocks := len(bw.traceIDs) > 0
-	isSeenTid := tid == tidLast
+	var tidLast string
+	var isSeenTid bool
+
+	if hasWrittenBlocks {
+		tidLast = bw.traceIDs[len(bw.traceIDs)-1]
+		if tid < tidLast {
+			logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", tid, tidLast)
+		}
+		isSeenTid = tid == tidLast
+	}
 
 	bm := generateBlockMetadata()
 	b.mustWriteTo(tid, bm, &bw.writers)
@@ -252,7 +262,7 @@ func (bw *blockWriter) mustWriteBlock(tidLen uint32, tid string, b *block) {
 	}
 	bw.minTimestampLast = tm.min
 
-	bw.totalUncompressedSpanSizeBytes += bm.spanSize
+	bw.totalUncompressedSpanSizeBytes += bm.uncompressedSpanSizeBytes
 	bw.totalCount += bm.count
 	bw.totalBlocksCount++
 
@@ -277,6 +287,7 @@ func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
 	pm.UncompressedSpanSizeBytes = bw.totalUncompressedSpanSizeBytes
 	pm.TotalCount = bw.totalCount
 	pm.BlocksCount = bw.totalBlocksCount
+	// TODO: update timestamp metadata when merging blocks
 	pm.MinTimestamp = bw.totalMinTimestamp
 	pm.MaxTimestamp = bw.totalMaxTimestamp
 
@@ -288,8 +299,16 @@ func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
 	bigValuePool.Release(bb)
 
 	pm.CompressedSizeBytes = bw.writers.totalBytesWritten()
-	for _, traceID := range bw.traceIDs {
-		tf.filter.Add([]byte(traceID))
+
+	if len(bw.traceIDs) > 0 {
+		if tf.filter == nil {
+			tf.filter = generateBloomFilter()
+		}
+		tf.filter.SetN(len(bw.traceIDs))
+		tf.filter.ResizeBits((len(bw.traceIDs)*filter.B + 63) / 64)
+		for _, traceID := range bw.traceIDs {
+			tf.filter.Add([]byte(traceID))
+		}
 	}
 	tt.copyFrom(bw.tagType)
 
