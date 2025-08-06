@@ -28,6 +28,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -44,15 +45,72 @@ const defaultQueryTimeout = 15 * time.Second
 
 var _ logical.UnresolvedPlan = (*unresolvedDistributed)(nil)
 
+type pushDownAggSchema struct {
+	originalSchema   logical.Schema
+	aggregationField *logical.Field
+}
+
+func (as *pushDownAggSchema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
+	originalRefs, err := as.originalSchema.CreateFieldRef(fields...)
+	if err != nil {
+		return nil, err
+	}
+	for _, ref := range originalRefs {
+		if ref.Spec != nil {
+			ref.Spec.FieldIdx = 0
+		}
+	}
+	return originalRefs, nil
+}
+
+func (as *pushDownAggSchema) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
+	return as.originalSchema.CreateTagRef(tags...)
+}
+
+func (as *pushDownAggSchema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
+	return &pushDownAggSchema{
+		originalSchema:   as.originalSchema.ProjTags(refs...),
+		aggregationField: as.aggregationField,
+	}
+}
+
+func (as *pushDownAggSchema) ProjFields(fieldRefs ...*logical.FieldRef) logical.Schema {
+	return &pushDownAggSchema{
+		originalSchema:   as.originalSchema.ProjFields(fieldRefs...),
+		aggregationField: as.aggregationField,
+	}
+}
+
+func (as *pushDownAggSchema) FindTagSpecByName(name string) *logical.TagSpec {
+	return as.originalSchema.FindTagSpecByName(name)
+}
+
+func (as *pushDownAggSchema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+	return as.originalSchema.IndexDefined(tagName)
+}
+
+func (as *pushDownAggSchema) IndexRuleDefined(ruleName string) (bool, *databasev1.IndexRule) {
+	return as.originalSchema.IndexRuleDefined(ruleName)
+}
+
+func (as *pushDownAggSchema) EntityList() []string {
+	return as.originalSchema.EntityList()
+}
+
+func (as *pushDownAggSchema) Children() []logical.Schema {
+	return as.originalSchema.Children()
+}
+
 type unresolvedDistributed struct {
 	originalQuery           *measurev1.QueryRequest
 	groupByEntity           bool
 	needCompletePushDownAgg bool
 }
 
-func newUnresolvedDistributed(query *measurev1.QueryRequest) logical.UnresolvedPlan {
+func newUnresolvedDistributed(query *measurev1.QueryRequest, needCompletePushDownAgg bool) logical.UnresolvedPlan {
 	return &unresolvedDistributed{
-		originalQuery: query,
+		originalQuery:           query,
+		needCompletePushDownAgg: needCompletePushDownAgg,
 	}
 }
 
@@ -109,10 +167,11 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			return nil, fmt.Errorf("entity tag %s not found", e)
 		}
 		result := &distributedPlan{
-			queryTemplate: temp,
-			s:             s,
-			sortByTime:    false,
-			sortTagSpec:   *sortTagSpec,
+			queryTemplate:           temp,
+			s:                       s,
+			sortByTime:              false,
+			sortTagSpec:             *sortTagSpec,
+			needCompletePushDownAgg: ud.needCompletePushDownAgg,
 		}
 		if ud.originalQuery.OrderBy != nil && ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -121,16 +180,18 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	}
 	if ud.originalQuery.OrderBy == nil {
 		return &distributedPlan{
-			queryTemplate: temp,
-			s:             s,
-			sortByTime:    true,
+			queryTemplate:           temp,
+			s:                       s,
+			sortByTime:              true,
+			needCompletePushDownAgg: ud.needCompletePushDownAgg,
 		}, nil
 	}
 	if ud.originalQuery.OrderBy.IndexRuleName == "" {
 		result := &distributedPlan{
-			queryTemplate: temp,
-			s:             s,
-			sortByTime:    true,
+			queryTemplate:           temp,
+			s:                       s,
+			sortByTime:              true,
+			needCompletePushDownAgg: ud.needCompletePushDownAgg,
 		}
 		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -149,10 +210,11 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		return nil, fmt.Errorf("tag %s not found", indexRule.Tags[0])
 	}
 	result := &distributedPlan{
-		queryTemplate: temp,
-		s:             s,
-		sortByTime:    false,
-		sortTagSpec:   *sortTagSpec,
+		queryTemplate:           temp,
+		s:                       s,
+		sortByTime:              false,
+		sortTagSpec:             *sortTagSpec,
+		needCompletePushDownAgg: ud.needCompletePushDownAgg,
 	}
 	if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
@@ -161,12 +223,13 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 }
 
 type distributedPlan struct {
-	s                 logical.Schema
-	queryTemplate     *measurev1.QueryRequest
-	sortTagSpec       logical.TagSpec
-	sortByTime        bool
-	desc              bool
-	maxDataPointsSize uint32
+	s                       logical.Schema
+	queryTemplate           *measurev1.QueryRequest
+	sortTagSpec             logical.TagSpec
+	maxDataPointsSize       uint32
+	sortByTime              bool
+	desc                    bool
+	needCompletePushDownAgg bool
 }
 
 func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, err error) {
@@ -198,6 +261,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		return nil, err
 	}
 	var see []sort.Iterator[*comparableDataPoint]
+	var pushedDownAggDps []*measurev1.DataPoint
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			err = multierr.Append(err, getErr)
@@ -210,10 +274,17 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 			if span != nil {
 				span.AddSubTrace(resp.Trace)
 			}
+			if t.needCompletePushDownAgg {
+				pushedDownAggDps = append(pushedDownAggDps, resp.DataPoints...)
+				continue
+			}
 			see = append(see,
 				newSortableElements(resp.DataPoints,
 					t.sortByTime, t.sortTagSpec))
 		}
+	}
+	if t.needCompletePushDownAgg {
+		return &pushedDownAggregatedIterator{dataPoints: pushedDownAggDps}, err
 	}
 	smi := &sortedMIterator{
 		Iterator: sort.NewItemIter(see, t.desc),
@@ -231,6 +302,12 @@ func (t *distributedPlan) Children() []logical.Plan {
 }
 
 func (t *distributedPlan) Schema() logical.Schema {
+	if t.needCompletePushDownAgg && t.queryTemplate.Agg != nil {
+		return &pushDownAggSchema{
+			originalSchema:   t.s,
+			aggregationField: logical.NewField(t.queryTemplate.Agg.FieldName),
+		}
+	}
 	return t.s
 }
 
@@ -403,4 +480,28 @@ func hashDataPoint(dp *measurev1.DataPoint) uint64 {
 	h = (h ^ uint64(dp.Timestamp.Seconds)) * prime64
 	h = (h ^ uint64(dp.Timestamp.Nanos)) * prime64
 	return h
+}
+
+type pushedDownAggregatedIterator struct {
+	dataPoints []*measurev1.DataPoint
+	index      int
+}
+
+func (s *pushedDownAggregatedIterator) Next() bool {
+	if s.index >= len(s.dataPoints) {
+		return false
+	}
+	s.index++
+	return true
+}
+
+func (s *pushedDownAggregatedIterator) Current() []*measurev1.DataPoint {
+	if s.index == 0 || s.index > len(s.dataPoints) {
+		return nil
+	}
+	return []*measurev1.DataPoint{s.dataPoints[s.index-1]}
+}
+
+func (s *pushedDownAggregatedIterator) Close() error {
+	return nil
 }

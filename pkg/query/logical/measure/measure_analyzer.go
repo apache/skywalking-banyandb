@@ -110,7 +110,6 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
-			false,
 		)
 		pushedLimit = math.MaxInt
 	}
@@ -145,8 +144,14 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 		}
 	}
 
+	// TODO: to support all aggregation functions
+	needCompletePushDownAgg := criteria.GetAgg() != nil &&
+		(criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX ||
+			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN) &&
+		criteria.GetTop() == nil
+
 	// parse fields
-	plan := newUnresolvedDistributed(criteria)
+	plan := newUnresolvedDistributed(criteria, needCompletePushDownAgg)
 
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()
@@ -154,10 +159,6 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 		limitParameter = defaultLimit
 	}
 	pushedLimit := int(limitParameter + criteria.GetOffset())
-
-	needCompletePushDownAgg := criteria.GetAgg() != nil &&
-		criteria.GetAgg().GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN &&
-		criteria.GetTop() == nil
 
 	if criteria.GetGroupBy() != nil {
 		plan = newUnresolvedGroupBy(plan, groupByTags, false)
@@ -169,7 +170,6 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
-			needCompletePushDownAgg,
 		)
 		pushedLimit = math.MaxInt
 	}

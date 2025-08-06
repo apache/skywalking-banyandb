@@ -22,7 +22,7 @@ Release Notes.
 - Data Model: Introduce the `Trace` data model to store the trace/span data.
 - Support dictionary encoding for low cardinality columns.
 - Push down aggregation for topN query.
-- Push down aggregation to data nodes.
+- Push down min/max aggregation to data nodes
 - Introduce write queue mechanism in liaison nodes to efficiently synchronize stream and measure partition folders, improving write throughput and consistency
 
 ### Bug Fixes

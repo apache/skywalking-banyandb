@@ -53,10 +53,6 @@ func (c *countFunc[N]) In(_ N) {
 	c.count++
 }
 
-func (c *countFunc[N]) InValue(val N) {
-	c.count += val
-}
-
 func (c countFunc[N]) Val() N {
 	return c.count
 }

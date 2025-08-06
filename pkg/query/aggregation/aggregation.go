@@ -114,12 +114,3 @@ func zero[N Number]() N {
 	var z N
 	return z
 }
-
-// InValue is a wrapper for In method in countFunc when push down aggregation to data node.
-func InValue[N Number](aggrFunc Func[N], val N) {
-	if countFunc, ok := aggrFunc.(*countFunc[N]); ok {
-		countFunc.InValue(val)
-	} else {
-		aggrFunc.In(val)
-	}
-}
