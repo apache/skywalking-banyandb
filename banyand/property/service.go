@@ -199,7 +199,7 @@ func (s *service) GetGossIPGrpcPort() *uint32 {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient queue.Client, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,
@@ -208,6 +208,6 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability
 		pm:       pm,
 		close:    make(chan struct{}),
 
-		gossipMessenger: gossip.NewMessenger(omr, metadata),
+		gossipMessenger: gossip.NewMessenger(omr, metadata, pipelineClient),
 	}, nil
 }

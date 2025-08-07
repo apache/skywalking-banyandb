@@ -249,6 +249,7 @@
     - [PropagationContext](#banyandb-property-v1-PropagationContext)
     - [PropagationRequest](#banyandb-property-v1-PropagationRequest)
     - [PropagationResponse](#banyandb-property-v1-PropagationResponse)
+    - [PropagationTraceContext](#banyandb-property-v1-PropagationTraceContext)
   
     - [GossipService](#banyandb-property-v1-GossipService)
   
@@ -3785,6 +3786,7 @@ WriteResponse is the response contract for write
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | context | [PropagationContext](#banyandb-property-v1-PropagationContext) |  |  |
+| trace_context | [PropagationTraceContext](#banyandb-property-v1-PropagationTraceContext) |  |  |
 | group | [string](#string) |  |  |
 | shard_id | [uint32](#uint32) |  |  |
 
@@ -3797,6 +3799,22 @@ WriteResponse is the response contract for write
 
 ### PropagationResponse
 
+
+
+
+
+
+
+<a name="banyandb-property-v1-PropagationTraceContext"></a>
+
+### PropagationTraceContext
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_id | [string](#string) |  |  |
+| parent_span_id | [string](#string) |  |  |
 
 
 

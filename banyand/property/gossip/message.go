@@ -32,7 +32,7 @@ var ErrAbortPropagation = errors.New("abort propagation")
 
 // MessageListener is an interface that defines a method to handle the incoming propagation message.
 type MessageListener interface {
-	Rev(ctx context.Context, nextNode *grpc.ClientConn, request *propertyv1.PropagationRequest) error
+	Rev(ctx context.Context, tracer Trace, nextNode *grpc.ClientConn, request *propertyv1.PropagationRequest) error
 }
 
 // Messenger is an interface that defines methods for message propagation and subscription in a gossip protocol.

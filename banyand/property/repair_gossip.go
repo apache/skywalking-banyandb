@@ -192,16 +192,27 @@ func newRepairGossipClient(s *repairScheduler) *repairGossipClient {
 	}
 }
 
-func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientConn, request *propertyv1.PropagationRequest) error {
+func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextNode *grpclib.ClientConn, request *propertyv1.PropagationRequest) (err error) {
+	startSyncSpan := tracer.CreateSpan(tracer.ActivateSpan(), "sync properties")
+	startSyncSpan.Tag(gossip.TraceTagOperateType, gossip.TraceTagOperateStartSync)
+	startSyncSpan.Tag(gossip.TraceTagTargetNode, nextNode.Target())
 	client := propertyv1.NewRepairServiceClient(nextNode)
 	var hasPropertyUpdated bool
 	defer func() {
-		if hasPropertyUpdated {
-			err := r.scheduler.buildingTree([]common.ShardID{common.ShardID(request.ShardId)}, request.Group, true)
-			if err != nil {
-				r.scheduler.l.Warn().Err(err).Msgf("failed to rebuild tree for group %s, shard %d", request.Group, request.ShardId)
-			}
+		if err != nil {
+			startSyncSpan.Tag("has_property_updates", fmt.Sprintf("%t", hasPropertyUpdated))
+			startSyncSpan.Error(err.Error())
 		}
+		if hasPropertyUpdated {
+			buildTreeSpan := tracer.CreateSpan(startSyncSpan, "rebuild tree")
+			buildTreeErr := r.scheduler.buildingTree([]common.ShardID{common.ShardID(request.ShardId)}, request.Group, true)
+			if buildTreeErr != nil {
+				buildTreeSpan.Error(buildTreeErr.Error())
+				r.scheduler.l.Warn().Err(buildTreeErr).Msgf("failed to rebuild tree for group %s, shard %d", request.Group, request.ShardId)
+			}
+			buildTreeSpan.End()
+		}
+		startSyncSpan.End()
 	}()
 	reader, found, err := r.getTreeReader(ctx, request.Group, request.ShardId)
 	if err != nil {
@@ -221,11 +232,15 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 	}()
 
 	// step 1: send merkle tree data
+	sendTreeSummarySpan := tracer.CreateSpan(startSyncSpan, "send tree summary")
 	rootNode, rootMatch, err := r.sendTreeSummary(reader, request.Group, request.ShardId, stream)
 	if err != nil {
+		sendTreeSummarySpan.Error(err.Error())
 		// if the tree summary cannot be built, we should abort the propagation
 		return errors.Wrapf(gossip.ErrAbortPropagation, "failed to query/send tree summary on client side: %v", err)
 	}
+	sendTreeSummarySpan.Tag("root_match", fmt.Sprintf("%t", rootMatch))
+	sendTreeSummarySpan.End()
 	// if the root node matched, then ignore the repair
 	if rootMatch {
 		return nil
@@ -251,20 +266,30 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 
 		switch resp := recvResp.Data.(type) {
 		case *propertyv1.RepairResponse_DifferTreeSummary:
+			differSpan := tracer.CreateSpan(startSyncSpan, "receive differ tree summary")
+			differSpan.Tag("nodes_count", fmt.Sprintf("%d", len(resp.DifferTreeSummary.Nodes)))
 			// step 2: check with the server for different leaf nodes
 			// there no different nodes, we can skip repair
 			if firstTreeSummaryResp && len(resp.DifferTreeSummary.Nodes) == 0 {
+				differSpan.End()
 				return nil
 			}
 			r.handleDifferSummaryFromServer(ctx, stream, resp.DifferTreeSummary, reader, syncShard, rootNode, leafReader, &notProcessingClientNode, &currentComparingClientNode)
 			firstTreeSummaryResp = false
+			differSpan.End()
 		case *propertyv1.RepairResponse_PropertySync:
 			// step 3: keep receiving messages from the server
 			// if the server still sending different nodes, we should keep reading them
 			// if the server sends a PropertySync, we should repair the property and send the newer property back to the server if needed
 			sync := resp.PropertySync
+			syncSpan := tracer.CreateSpan(startSyncSpan, "repair property")
+			syncSpan.Tag(gossip.TraceTagOperateType, gossip.TraceTagOperateRepairProperty)
+			syncSpan.Tag(gossip.TraceTagPropertyID, string(sync.Id))
 			updated, newer, err := syncShard.repair(ctx, sync.Id, sync.Property, sync.DeleteTime)
+			syncSpan.Tag("updated", fmt.Sprintf("%t", updated))
+			syncSpan.Tag("has_newer", fmt.Sprintf("%t", newer != nil))
 			if err != nil {
+				syncSpan.Error(err.Error())
 				r.scheduler.l.Warn().Err(err).Msgf("failed to repair property %s", sync.Id)
 				r.scheduler.metrics.totalRepairFailedCount.Inc(1, request.Group, fmt.Sprintf("%d", request.ShardId))
 			}
@@ -272,6 +297,7 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 				r.scheduler.l.Debug().Msgf("successfully repaired property %s on client side", sync.Id)
 				r.scheduler.metrics.totalRepairSuccessCount.Inc(1, request.Group, fmt.Sprintf("%d", request.ShardId))
 				hasPropertyUpdated = true
+				syncSpan.End()
 				continue
 			}
 			// if the property hasn't been updated, and the newer property is not nil,
@@ -281,6 +307,8 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 				err = protojson.Unmarshal(newer.source, &p)
 				if err != nil {
 					r.scheduler.l.Warn().Err(err).Msgf("failed to unmarshal property from db by entity %s", newer.id)
+					syncSpan.Error(err.Error())
+					syncSpan.End()
 					continue
 				}
 				// send the newer property to the server
@@ -294,8 +322,10 @@ func (r *repairGossipClient) Rev(ctx context.Context, nextNode *grpclib.ClientCo
 					},
 				})
 				if err != nil {
+					syncSpan.Error(err.Error())
 					r.scheduler.l.Warn().Err(err).Msgf("failed to send newer property sync response to server, entity: %s", newer.id)
 				}
+				syncSpan.End()
 			}
 		default:
 			r.scheduler.l.Warn().Msgf("unexpected response type: %T, expected DifferTreeSummary or PropertySync", resp)

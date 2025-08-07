@@ -984,7 +984,7 @@ func newRepairScheduler(
 		triggerCronExp, func(time.Time, *logger.Logger) bool {
 			gossipErr := s.doRepairGossip(s.closer.Ctx())
 			if gossipErr != nil {
-				s.l.Err(fmt.Errorf("repair gossip failure: %w", gossipErr))
+				s.l.Err(gossipErr).Msg("failed to repair gossip")
 			}
 			return true
 		})
