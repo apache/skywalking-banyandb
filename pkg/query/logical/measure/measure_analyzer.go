@@ -24,6 +24,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -143,8 +144,14 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 		}
 	}
 
+	// TODO: to support all aggregation functions
+	needCompletePushDownAgg := criteria.GetAgg() != nil &&
+		(criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX ||
+			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN) &&
+		criteria.GetTop() == nil
+
 	// parse fields
-	plan := newUnresolvedDistributed(criteria)
+	plan := newUnresolvedDistributed(criteria, needCompletePushDownAgg)
 
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()

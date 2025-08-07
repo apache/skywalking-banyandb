@@ -22,6 +22,7 @@ Release Notes.
 - Data Model: Introduce the `Trace` data model to store the trace/span data.
 - Support dictionary encoding for low cardinality columns.
 - Push down aggregation for topN query.
+- Push down min/max aggregation to data nodes
 - Introduce write queue mechanism in liaison nodes to efficiently synchronize stream and measure partition folders, improving write throughput and consistency
 - Add trace module metadata management.
 - Add chunked data sync to improve memory efficiency and performance during data transfer operations, supporting configurable chunk sizes, retry mechanisms, and out-of-order handling for both measure and stream services.
