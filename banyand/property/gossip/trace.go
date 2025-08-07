@@ -172,6 +172,7 @@ func (s *service) initInternalTraceGroup(ctx context.Context) error {
 
 func (s *service) savingTracingSpans() (err error) {
 	spans := s.readAllReadySendTraceSpan()
+	s.log.Debug().Int("spans", len(spans)).Msg("ready to save trace spans to storage")
 	if len(spans) == 0 {
 		return nil
 	}
@@ -211,27 +212,20 @@ func (s *service) savingTracingSpans() (err error) {
 			EntityValues: entityValues[1:].Encode(),
 		}
 
-		for i := range traceStreamCopiesCount {
-			nodeID, err := s.traceStreamSelector.Pick(stream.GetMetadata().GetGroup(), stream.GetMetadata().GetName(), uint32(shardID), uint32(i))
-			if err != nil {
-				return fmt.Errorf("failed to select node for trace span: %w", err)
-			}
-
-			message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-			if _, err := publisher.Publish(ctx, data.TopicStreamWrite, message); err != nil {
-				return fmt.Errorf("failed to publish trace span: %w", err)
-			}
+		message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), iwr)
+		if _, err := publisher.Publish(ctx, data.TopicStreamWrite, message); err != nil {
+			return fmt.Errorf("failed to publish trace span: %w", err)
 		}
 	}
 	return nil
 }
 
 func (s *service) readAllReadySendTraceSpan() []*recordTraceSpan {
-	s.traceSpanLock.RLock()
-	defer s.traceSpanLock.RUnlock()
+	s.traceSpanLock.Lock()
+	defer s.traceSpanLock.Unlock()
 	spans := make([]*recordTraceSpan, 0, len(s.traceSpanSending))
 	spans = append(spans, s.traceSpanSending...)
-	s.traceSpanSending = make([]*recordTraceSpan, 0)
+	s.traceSpanSending = s.traceSpanSending[:0]
 	return spans
 }
 

@@ -54,7 +54,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
 	}
-	streamSvc, err := stream.NewService(metaSvc, dataPipeline, metricSvc, pm)
+	streamSvc, err := stream.NewService(metaSvc, dataPipeline, metricSvc, pm, nil)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}

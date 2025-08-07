@@ -27,6 +27,7 @@ import (
 )
 
 func (s *service) Propagation(nodes []string, group string, shardID uint32) error {
+	s.log.Debug().Strs("nodes", nodes).Str("group", group).Uint32("shard", shardID).Msg("ready to propagate")
 	if len(nodes) < 2 {
 		return fmt.Errorf("must provide at least 2 node")
 	}
