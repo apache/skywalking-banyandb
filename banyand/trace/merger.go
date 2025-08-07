@@ -350,7 +350,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	releaseDecoder()
 	var partMetadata partMetadata
 	var traceIDFilter traceIDFilter
-	var tagType tagType
+	tagType := make(tagType)
 	bw.Flush(&partMetadata, &traceIDFilter, &tagType)
 	return &partMetadata, nil
 }

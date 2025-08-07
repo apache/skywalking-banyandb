@@ -641,7 +641,7 @@ func (bi *blockPointer) isFull() bool {
 func (bi *blockPointer) reset() {
 	bi.idx = 0
 	bi.block.reset()
-	bi.bm = blockMetadata{}
+	bi.bm.reset()
 }
 
 func generateBlockPointer() *blockPointer {

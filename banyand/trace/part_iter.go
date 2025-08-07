@@ -75,7 +75,7 @@ func (pi *partIter) init(bma *blockMetadataArray, p *part, tids []string, minTim
 
 	pi.primaryBlockMetadata = p.primaryBlockMetadata
 
-	pi.nextSeriesID()
+	pi.nextTraceID()
 }
 
 func (pi *partIter) nextBlock() bool {
@@ -101,7 +101,7 @@ func (pi *partIter) error() error {
 	return pi.err
 }
 
-func (pi *partIter) nextSeriesID() bool {
+func (pi *partIter) nextTraceID() bool {
 	if pi.tidIdx >= len(pi.tids) {
 		pi.err = io.EOF
 		return false
@@ -115,7 +115,7 @@ func (pi *partIter) searchTargetTraceID(tid string) bool {
 	if pi.curBlock.traceID >= tid {
 		return true
 	}
-	if !pi.nextSeriesID() {
+	if !pi.nextTraceID() {
 		return false
 	}
 	if pi.curBlock.traceID >= tid {
@@ -224,7 +224,7 @@ func (pi *partIter) findBlock() bool {
 		}
 
 		if bm.timestamps.min > pi.maxTimestamp {
-			if !pi.nextSeriesID() {
+			if !pi.nextTraceID() {
 				return false
 			}
 			continue
@@ -242,7 +242,7 @@ func (pi *partIter) findBlock() bool {
 				return false
 			}
 			if shouldSkip {
-				if !pi.nextSeriesID() {
+				if !pi.nextTraceID() {
 					return false
 				}
 				continue

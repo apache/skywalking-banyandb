@@ -112,6 +112,7 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 				uncompressedSpanSizeBytes: 0,
 				count:                     0,
 				timestamps:                timestampsMetadata{},
+				spans:                     &dataBlock{},
 				tags:                      make(map[string]*dataBlock),
 			},
 		},
@@ -125,15 +126,15 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 					min: 1,
 					max: 1,
 				},
+				spans: &dataBlock{
+					offset: 10,
+					size:   20,
+				},
 				tags: map[string]*dataBlock{
 					"service_name": {
 						offset: 1,
 						size:   1,
 					},
-				},
-				spans: &dataBlock{
-					offset: 10,
-					size:   20,
 				},
 			},
 		},
@@ -147,6 +148,10 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 					min: 2,
 					max: 2,
 				},
+				spans: &dataBlock{
+					offset: 30,
+					size:   40,
+				},
 				tags: map[string]*dataBlock{
 					"service_name": {
 						offset: 2,
@@ -156,10 +161,6 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 						offset: 3,
 						size:   3,
 					},
-				},
-				spans: &dataBlock{
-					offset: 30,
-					size:   40,
 				},
 			},
 		},
@@ -189,6 +190,10 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 		original := []blockMetadata{
 			{
 				traceID: "trace1",
+				spans: &dataBlock{
+					offset: 10,
+					size:   20,
+				},
 				timestamps: timestampsMetadata{
 					min: 1,
 					max: 1,
@@ -198,6 +203,10 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 			},
 			{
 				traceID: "trace2",
+				spans: &dataBlock{
+					offset: 30,
+					size:   40,
+				},
 				timestamps: timestampsMetadata{
 					min: 2,
 					max: 2,
@@ -208,16 +217,24 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 		}
 		wanted := []blockMetadata{
 			{
-				traceID:                   "trace1",
-				tagType:                   make(map[string]pbv1.ValueType),
-				timestamps:                timestampsMetadata{},
+				traceID: "trace1",
+				tagType: make(map[string]pbv1.ValueType),
+				spans: &dataBlock{
+					offset: 10,
+					size:   20,
+				},
+				timestamps: timestampsMetadata{},
 				uncompressedSpanSizeBytes: 100,
 				count:                     1,
 			},
 			{
-				traceID:                   "trace2",
-				tagType:                   make(map[string]pbv1.ValueType),
-				timestamps:                timestampsMetadata{},
+				traceID: "trace2",
+				tagType: make(map[string]pbv1.ValueType),
+				spans: &dataBlock{
+					offset: 30,
+					size:   40,
+				},
+				timestamps: timestampsMetadata{},
 				uncompressedSpanSizeBytes: 200,
 				count:                     2,
 			},
@@ -237,20 +254,22 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 	t.Run("unmarshal invalid blockMetadata", func(t *testing.T) {
 		original := []blockMetadata{
 			{
-				traceID: "trace1",
-				timestamps: timestampsMetadata{
-					min: 2,
-					max: 2,
+				traceID: "trace2",
+				spans: &dataBlock{
+					offset: 30,
+					size:   40,
 				},
+				timestamps: timestampsMetadata{},
 				uncompressedSpanSizeBytes: 200,
 				count:                     2,
 			},
 			{
-				traceID: "trace2",
-				timestamps: timestampsMetadata{
-					min: 1,
-					max: 1,
+				traceID: "trace1",
+				spans: &dataBlock{
+					offset: 10,
+					size:   20,
 				},
+				timestamps: timestampsMetadata{},
 				uncompressedSpanSizeBytes: 100,
 				count:                     1,
 			},
@@ -258,7 +277,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 
 		var marshaled []byte
 		for _, bm := range original {
-			marshaled = bm.marshal(marshaled, 10)
+			marshaled = bm.marshal(marshaled, 6)
 		}
 
 		tagType := make(map[string]pbv1.ValueType)

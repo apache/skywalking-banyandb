@@ -143,6 +143,7 @@ func (bm *blockMetadata) marshal(dst []byte, traceIDLen uint32) []byte {
 	}
 	dst = encoding.VarUint64ToBytes(dst, bm.uncompressedSpanSizeBytes)
 	dst = encoding.VarUint64ToBytes(dst, bm.count)
+	dst = bm.spans.marshal(dst)
 	dst = encoding.VarUint64ToBytes(dst, uint64(len(bm.tags)))
 	// make sure the order of tags is stable
 	keys := make([]string, 0, len(bm.tags))
@@ -169,6 +170,10 @@ func (bm *blockMetadata) unmarshal(src []byte, tagType map[string]pbv1.ValueType
 	bm.uncompressedSpanSizeBytes = n
 	src, n = encoding.BytesToVarUint64(src)
 	bm.count = n
+	if bm.spans == nil {
+		bm.spans = &dataBlock{}
+	}
+	src = bm.spans.unmarshal(src)
 
 	src, n = encoding.BytesToVarUint64(src)
 	if n > 0 {

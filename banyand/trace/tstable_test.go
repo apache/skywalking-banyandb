@@ -156,13 +156,13 @@ var ts2 = &traces{
 	spans: [][]byte{[]byte("span4"), []byte("span5"), []byte("span6")},
 }
 
-func generateHugeTs(startTimestamp, endTimestamp, timestamp int64) *traces {
+func generateHugeTs(num int) *traces {
 	hugeTs := &traces{
 		traceIDs: []string{},
 		tags:     [][]*tagValue{},
 		spans:    [][]byte{},
 	}
-	for i := startTimestamp; i <= endTimestamp; i++ {
+	for i := 1; i <= num; i++ {
 		hugeTs.traceIDs = append(hugeTs.traceIDs, "trace1")
 		hugeTs.tags = append(hugeTs.tags, []*tagValue{
 			{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},

@@ -241,7 +241,7 @@ func Test_mergeParts(t *testing.T) {
 		want    []blockMetadata
 	}{
 		{
-			name:    "Test with no data points",
+			name:    "Test with no element",
 			esList:  []*elements{},
 			wantErr: errNoPartToMerge,
 		},
