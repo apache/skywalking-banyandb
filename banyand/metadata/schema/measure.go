@@ -75,7 +75,7 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 	if err != nil {
 		return 0, err
 	}
-	if err := validate.GroupForStreamOrMeasure(g); err != nil {
+	if err := validate.GroupForNonProperty(g); err != nil {
 		return 0, err
 	}
 	return e.create(ctx, Metadata{
@@ -105,7 +105,7 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	if err != nil {
 		return 0, err
 	}
-	if err = validate.GroupForStreamOrMeasure(g); err != nil {
+	if err = validate.GroupForNonProperty(g); err != nil {
 		return 0, err
 	}
 	prev, err := e.GetMeasure(ctx, measure.GetMetadata())

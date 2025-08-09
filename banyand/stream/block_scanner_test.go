@@ -60,8 +60,8 @@ func TestBlockScanner_QuotaExceeded(t *testing.T) {
 			maxTimestamp:        1,
 			expectQuotaExceeded: false,
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 859},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
 				{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 			},
 		},

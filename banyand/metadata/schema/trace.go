@@ -62,7 +62,7 @@ func (e *etcdSchemaRegistry) CreateTrace(ctx context.Context, trace *databasev1.
 	if err != nil {
 		return 0, err
 	}
-	if err := validate.GroupForStreamOrMeasure(g); err != nil {
+	if err := validate.GroupForNonProperty(g); err != nil {
 		return 0, err
 	}
 	return e.create(ctx, Metadata{
@@ -87,7 +87,7 @@ func (e *etcdSchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.
 	if err != nil {
 		return 0, err
 	}
-	if err = validate.GroupForStreamOrMeasure(g); err != nil {
+	if err = validate.GroupForNonProperty(g); err != nil {
 		return 0, err
 	}
 	prev, err := e.GetTrace(ctx, trace.GetMetadata())

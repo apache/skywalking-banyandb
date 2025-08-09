@@ -228,12 +228,12 @@ NEXT:
 				cc[j].mustReadValues(decoder, valueReader, tfm.tagMetadata[i], uint64(b.Len()))
 				continue NEXT
 			}
-			cc[j].name = tagProjection[j]
-			cc[j].valueType = pbv1.ValueTypeUnknown
-			cc[j].resizeValues(count)
-			for k := range cc[j].values {
-				cc[j].values[k] = nil
-			}
+		}
+		cc[j].name = tagProjection[j]
+		cc[j].valueType = pbv1.ValueTypeUnknown
+		cc[j].resizeValues(count)
+		for k := range cc[j].values {
+			cc[j].values[k] = nil
 		}
 	}
 }
@@ -270,12 +270,12 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	tff := b.tagFamilies
 	for i := range tff {
 		tf := tff[i]
-		nameLen := uint64(len(tf.name))
+		n += uint64(len(tf.name))
 		for _, c := range tf.tags {
-			nameLen += uint64(len(c.name))
+			n += uint64(len(c.name))
 			for _, v := range c.values {
 				if len(v) > 0 {
-					n += nameLen + uint64(len(v))
+					n += uint64(len(v))
 				}
 			}
 		}

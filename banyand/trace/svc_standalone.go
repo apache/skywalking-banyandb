@@ -198,3 +198,13 @@ func (s *standalone) SetLocalPipeline(localPipeline queue.Queue) {
 func (s *standalone) SetFileSystem(lfs fs.FileSystem) {
 	s.lfs = lfs
 }
+
+// NewService returns a new service.
+func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
+	return &standalone{
+		metadata: metadata,
+		pipeline: pipeline,
+		omr:      omr,
+		pm:       pm,
+	}, nil
+}
