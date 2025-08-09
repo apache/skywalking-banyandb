@@ -166,7 +166,7 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 	req := writeEvent.Request
 
 	elements.timestamps = append(elements.timestamps, ts)
-	eID := convert.HashStr(req.Metadata.Name + "|" + req.Element.ElementId)
+	eID := convert.HashStr(req.Metadata.Group + "|" + req.Metadata.Name + "|" + req.Element.ElementId)
 	elements.elementIDs = append(elements.elementIDs, eID)
 
 	stm, ok := schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())

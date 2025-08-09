@@ -15,23 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Licensed to Apache Software Foundation (ASF) under one or more contributor
-// license agreements. See the NOTICE file distributed with
-// this work for additional information regarding copyright
-// ownership. Apache Software Foundation (ASF) licenses this file to you under
-// the Apache License, Version 2.0 (the "License"); you may
-// not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, "property",
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
-
 package grpc
 
 import (
@@ -76,22 +59,98 @@ type propertyServer struct {
 	repairQueueCount int
 }
 
-func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyRequest) (resp *propertyv1.ApplyResponse, err error) {
-	property := req.Property
+func (ps *propertyServer) validatePropertyRequest(property *propertyv1.Property) error {
 	if property.Metadata == nil {
-		return nil, schema.BadRequest("metadata", "metadata should not be nil")
+		return schema.BadRequest("metadata", "metadata should not be nil")
 	}
 	if property.Metadata.Group == "" {
-		return nil, schema.BadRequest("metadata.group", "group should not be nil")
+		return schema.BadRequest("metadata.group", "group should not be nil")
 	}
 	if property.Metadata.Name == "" {
-		return nil, schema.BadRequest("metadata.name", "name should not be empty")
+		return schema.BadRequest("metadata.name", "name should not be empty")
 	}
 	if property.Id == "" {
-		return nil, schema.BadRequest("id", "id should not be empty")
+		return schema.BadRequest("id", "id should not be empty")
 	}
 	if len(property.Tags) == 0 {
-		return nil, schema.BadRequest("tags", "tags should not be empty")
+		return schema.BadRequest("tags", "tags should not be empty")
+	}
+	return nil
+}
+
+func (ps *propertyServer) validateGroupForProperty(ctx context.Context, groupName string) (*commonv1.Group, error) {
+	group, err := ps.schemaRegistry.GroupRegistry().GetGroup(ctx, groupName)
+	if err != nil {
+		return nil, errors.Errorf("group %s not found", groupName)
+	}
+	if group.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
+		return nil, errors.Errorf("group %s is not allowed to have properties", groupName)
+	}
+	if group.ResourceOpts == nil {
+		return nil, errors.Errorf("group %s has no resource options", groupName)
+	}
+	if group.ResourceOpts.ShardNum == 0 {
+		return nil, errors.Errorf("group %s has no shard number", groupName)
+	}
+	return group, nil
+}
+
+func (ps *propertyServer) validatePropertyTags(ctx context.Context, property *propertyv1.Property) error {
+	propSchema, err := ps.schemaRegistry.PropertyRegistry().GetProperty(ctx, &commonv1.Metadata{
+		Group: property.Metadata.Group,
+		Name:  property.Metadata.Name,
+	})
+	if err != nil {
+		return err
+	}
+	if len(propSchema.Tags) < len(property.Tags) {
+		return errors.Errorf("property %s tags count mismatch", property.Metadata.Name)
+	}
+	for _, tag := range property.Tags {
+		found := false
+		for _, ts := range propSchema.Tags {
+			if ts.Name == tag.Key {
+				typ := databasev1.TagType(pbv1.MustTagValueToValueType(tag.Value))
+				if typ != databasev1.TagType_TAG_TYPE_UNSPECIFIED && ts.Type != typ {
+					return errors.Errorf("property %s tag %s type mismatch", property.Metadata.Name, tag.Key)
+				}
+				found = true
+			}
+		}
+		if !found {
+			return errors.Errorf("property %s tag %s not found", property.Metadata.Name, tag.Key)
+		}
+	}
+	return nil
+}
+
+func (ps *propertyServer) locateNodeSetForProperty(property *propertyv1.Property, shardID uint32) ([]string, error) {
+	copies, ok := ps.groupRepo.copies(property.Metadata.GetGroup())
+	if !ok {
+		return nil, errors.New("failed to get group copies")
+	}
+
+	nodeSet := make(map[string]struct{}, copies)
+	var nodeID string
+	var err error
+	for i := range copies {
+		nodeID, err = ps.nodeRegistry.Locate(property.GetMetadata().GetGroup(), property.GetMetadata().GetName(), shardID, i)
+		if err != nil {
+			return nil, err
+		}
+		nodeSet[nodeID] = struct{}{}
+	}
+	nodes := make([]string, 0, len(nodeSet))
+	for nodeID := range nodeSet {
+		nodes = append(nodes, nodeID)
+	}
+	return nodes, nil
+}
+
+func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyRequest) (resp *propertyv1.ApplyResponse, err error) {
+	property := req.Property
+	if err = ps.validatePropertyRequest(property); err != nil {
+		return nil, err
 	}
 	g := req.Property.Metadata.Group
 	ps.metrics.totalStarted.Inc(1, g, "property", "apply")
@@ -104,43 +163,11 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 		}
 	}()
 	var group *commonv1.Group
-	if group, err = ps.schemaRegistry.GroupRegistry().GetGroup(ctx, g); err != nil {
-		return nil, errors.Errorf("group %s not found", g)
-	}
-	if group.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
-		return nil, errors.Errorf("group %s is not allowed to have properties", g)
-	}
-	if group.ResourceOpts == nil {
-		return nil, errors.Errorf("group %s has no resource options", g)
-	}
-	if group.ResourceOpts.ShardNum == 0 {
-		return nil, errors.Errorf("group %s has no shard number", g)
-	}
-	var propSchema *databasev1.Property
-	propSchema, err = ps.schemaRegistry.PropertyRegistry().GetProperty(ctx, &commonv1.Metadata{
-		Group: g,
-		Name:  property.Metadata.Name,
-	})
-	if err != nil {
+	if group, err = ps.validateGroupForProperty(ctx, g); err != nil {
 		return nil, err
 	}
-	if len(propSchema.Tags) < len(property.Tags) {
-		return nil, errors.Errorf("property %s tags count mismatch", property.Metadata.Name)
-	}
-	for _, tag := range property.Tags {
-		found := false
-		for _, ts := range propSchema.Tags {
-			if ts.Name == tag.Key {
-				typ := databasev1.TagType(pbv1.MustTagValueToValueType(tag.Value))
-				if typ != databasev1.TagType_TAG_TYPE_UNSPECIFIED && ts.Type != typ {
-					return nil, errors.Errorf("property %s tag %s type mismatch", property.Metadata.Name, tag.Key)
-				}
-				found = true
-			}
-		}
-		if !found {
-			return nil, errors.Errorf("property %s tag %s not found", property.Metadata.Name, tag.Key)
-		}
+	if err = ps.validatePropertyTags(ctx, property); err != nil {
+		return nil, err
 	}
 	nodeProperties, _, _, err := ps.queryProperties(ctx, &propertyv1.QueryRequest{
 		Groups: []string{g},
@@ -156,19 +183,9 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	if err != nil {
 		return nil, err
 	}
-	copies, ok := ps.groupRepo.copies(property.Metadata.GetGroup())
-	if !ok {
-		return nil, errors.New("failed to get group copies")
-	}
-
-	nodes := make([]string, 0, copies)
-	var nodeID string
-	for i := range copies {
-		nodeID, err = ps.nodeRegistry.Locate(property.GetMetadata().GetGroup(), property.GetMetadata().GetName(), uint32(shardID), i)
-		if err != nil {
-			return nil, err
-		}
-		nodes = append(nodes, nodeID)
+	nodes, err := ps.locateNodeSetForProperty(property, uint32(shardID))
+	if err != nil {
+		return nil, err
 	}
 	var prev *propertyv1.Property
 	if prevPropertyWithMetadata != nil && prevPropertyWithMetadata.deletedTime <= 0 {
