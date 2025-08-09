@@ -32,6 +32,7 @@ import (
 var _ = ginkgo.Describe("Local File System", func() {
 	const (
 		data          string = "BanyanDB"
+		testData      string = "Hello BanyanDB World"
 		dirName       string = "tmpDir"
 		fileName      string = "tmpDir/temFile"
 		flushFileName string = "tmpDir/tempFlushFile"
@@ -121,6 +122,166 @@ var _ = ginkgo.Describe("Local File System", func() {
 					break
 				}
 			}
+		})
+
+		ginkgo.It("SeqReader Multiple Complete Reads", func() {
+			// Write test data
+			testStr := testData
+			size, err := file.Write([]byte(testStr))
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(size == len(testStr)).To(gomega.BeTrue())
+
+			// First SeqReader - read entire file
+			reader1 := file.SequentialRead()
+			buffer1 := make([]byte, len(testStr))
+			readSize1, err := reader1.Read(buffer1)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize1).To(gomega.Equal(len(testStr)))
+			gomega.Expect(string(buffer1)).To(gomega.Equal(testStr))
+			err = reader1.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Second SeqReader - should read entire file again (fixed behavior)
+			reader2 := file.SequentialRead()
+			buffer2 := make([]byte, len(testStr))
+			readSize2, err := reader2.Read(buffer2)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize2).To(gomega.Equal(len(testStr)))
+			gomega.Expect(string(buffer2)).To(gomega.Equal(testStr))
+			err = reader2.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Third SeqReader - should read entire file again (fixed behavior)
+			reader3 := file.SequentialRead()
+			buffer3 := make([]byte, len(testStr))
+			readSize3, err := reader3.Read(buffer3)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize3).To(gomega.Equal(len(testStr)))
+			gomega.Expect(string(buffer3)).To(gomega.Equal(testStr))
+			err = reader3.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("SeqReader Partial Reads", func() {
+			// Write test data
+			testStr := testData
+			size, err := file.Write([]byte(testStr))
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(size == len(testStr)).To(gomega.BeTrue())
+
+			// First SeqReader - read first part
+			reader1 := file.SequentialRead()
+			buffer1 := make([]byte, 5) // Read only first 5 bytes
+			readSize1, err := reader1.Read(buffer1)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize1).To(gomega.Equal(5))
+			gomega.Expect(string(buffer1)).To(gomega.Equal("Hello"))
+			err = reader1.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Second SeqReader - should read from beginning again (fixed behavior)
+			reader2 := file.SequentialRead()
+			buffer2 := make([]byte, 5) // Read only first 5 bytes
+			readSize2, err := reader2.Read(buffer2)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize2).To(gomega.Equal(5))
+			gomega.Expect(string(buffer2)).To(gomega.Equal("Hello"))
+			err = reader2.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Third SeqReader - should read from beginning again (fixed behavior)
+			reader3 := file.SequentialRead()
+			buffer3 := make([]byte, 5) // Read only first 5 bytes
+			readSize3, err := reader3.Read(buffer3)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize3).To(gomega.Equal(5))
+			gomega.Expect(string(buffer3)).To(gomega.Equal("Hello"))
+			err = reader3.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("SeqReader Mixed Read Patterns", func() {
+			// Write test data
+			testStr := testData
+			size, err := file.Write([]byte(testStr))
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(size == len(testStr)).To(gomega.BeTrue())
+
+			// First SeqReader - read entire file
+			reader1 := file.SequentialRead()
+			buffer1 := make([]byte, len(testStr))
+			readSize1, err := reader1.Read(buffer1)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize1).To(gomega.Equal(len(testStr)))
+			gomega.Expect(string(buffer1)).To(gomega.Equal(testStr))
+			err = reader1.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Second SeqReader - read only part
+			reader2 := file.SequentialRead()
+			buffer2 := make([]byte, 5) // Read only first 5 bytes
+			readSize2, err := reader2.Read(buffer2)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize2).To(gomega.Equal(5))
+			gomega.Expect(string(buffer2)).To(gomega.Equal("Hello"))
+			err = reader2.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Third SeqReader - read entire file again
+			reader3 := file.SequentialRead()
+			buffer3 := make([]byte, len(testStr))
+			readSize3, err := reader3.Read(buffer3)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize3).To(gomega.Equal(len(testStr)))
+			gomega.Expect(string(buffer3)).To(gomega.Equal(testStr))
+			err = reader3.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("SeqReader File Position Reset", func() {
+			// Write test data
+			testStr := testData
+			size, err := file.Write([]byte(testStr))
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(size == len(testStr)).To(gomega.BeTrue())
+
+			// Cast to LocalFile to access the underlying file
+			localFile, ok := file.(*LocalFile)
+			gomega.Expect(ok).To(gomega.BeTrue())
+
+			// Reset file position to beginning for testing
+			_, err = localFile.file.Seek(0, 0) // Seek to beginning
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// First SeqReader - read only part of the data and close
+			reader1 := file.SequentialRead()
+			buffer1 := make([]byte, 5) // Read only first 5 bytes
+			readSize1, err := reader1.Read(buffer1)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(readSize1).To(gomega.Equal(5))
+			gomega.Expect(string(buffer1)).To(gomega.Equal("Hello"))
+			err = reader1.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Second SeqReader - should now read from beginning (fixed behavior)
+			reader2 := file.SequentialRead()
+
+			// Check file position after creating second reader
+			posAfterSecond, err := localFile.file.Seek(0, 1) // Get current position
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			// Fixed: position should be 0 (reset to beginning)
+			gomega.Expect(posAfterSecond).To(gomega.Equal(int64(0)))
+
+			buffer2 := make([]byte, len(testStr))
+			readSize2, err := reader2.Read(buffer2)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Should read the full data from beginning (fixed behavior)
+			gomega.Expect(readSize2).To(gomega.Equal(len(testStr)))
+			gomega.Expect(string(buffer2)).To(gomega.Equal(testStr))
+
+			err = reader2.Close()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 
 		ginkgo.It("Size Test", func() {

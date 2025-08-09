@@ -135,11 +135,7 @@ func (m *mergePlan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
 			continue
 		}
 
-		iter := &sortableElements{
-			elements:     elements,
-			isSortByTime: m.sortByTime,
-			sortTagSpec:  m.sortTagSpec,
-		}
+		iter := newSortableElements(elements, m.sortByTime, m.sortTagSpec)
 		see = append(see, iter)
 	}
 
