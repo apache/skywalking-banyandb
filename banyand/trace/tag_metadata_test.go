@@ -82,7 +82,7 @@ func Test_tagMetadata_marshal(t *testing.T) {
 	assert.NotNil(t, marshaled)
 
 	unmarshaled := &tagMetadata{}
-	_, err := unmarshaled.unmarshal(marshaled)
+	err := unmarshaled.unmarshal(marshaled)
 	assert.Nil(t, err)
 
 	assert.Equal(t, wanted, unmarshaled)

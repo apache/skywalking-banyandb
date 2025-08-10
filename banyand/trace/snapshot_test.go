@@ -459,8 +459,8 @@ func TestSnapshotFunctionality(t *testing.T) {
 	}
 	defer tst.Close()
 
-	tst.mustAddTraces(ts1)
-	tst.mustAddTraces(ts2)
+	tst.mustAddTraces(tsTS1)
+	tst.mustAddTraces(tsTS2)
 	time.Sleep(100 * time.Millisecond) // allow time for flushing
 
 	require.Eventually(t, func() bool {

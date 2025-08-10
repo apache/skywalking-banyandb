@@ -68,8 +68,8 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 		{
 			name: "Test with multiple calls to mustAddTraces",
 			tsList: []*traces{
-				ts1,
-				ts2,
+				tsTS1,
+				tsTS2,
 			},
 			want: 2,
 		},
@@ -108,9 +108,9 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 	}
 }
 
-// TODO: Test_tstIter
+// TODO: Test_tstIter.
 
-var ts1 = &traces{
+var tsTS1 = &traces{
 	traceIDs:   []string{"trace1", "trace2", "trace3"},
 	timestamps: []int64{1, 1, 1},
 	tags: [][]*tagValue{
@@ -133,7 +133,7 @@ var ts1 = &traces{
 	spans: [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
 }
 
-var ts2 = &traces{
+var tsTS2 = &traces{
 	traceIDs:   []string{"trace1", "trace2", "trace3"},
 	timestamps: []int64{2, 2, 2},
 	tags: [][]*tagValue{
@@ -156,31 +156,31 @@ var ts2 = &traces{
 	spans: [][]byte{[]byte("span4"), []byte("span5"), []byte("span6")},
 }
 
-func generateHugeTs(num int) *traces {
-	hugeTs := &traces{
+func generateHugeTraces(num int) *traces {
+	traces := &traces{
 		traceIDs: []string{},
 		tags:     [][]*tagValue{},
 		spans:    [][]byte{},
 	}
 	for i := 1; i <= num; i++ {
-		hugeTs.traceIDs = append(hugeTs.traceIDs, "trace1")
-		hugeTs.tags = append(hugeTs.tags, []*tagValue{
+		traces.traceIDs = append(traces.traceIDs, "trace1")
+		traces.tags = append(traces.tags, []*tagValue{
 			{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
 			{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
 			{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
 			{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value3"), valueArr: nil},
 			{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
 		})
-		hugeTs.spans = append(hugeTs.spans, []byte("span1"))
+		traces.spans = append(traces.spans, []byte("span1"))
 	}
-	hugeTs.traceIDs = append(hugeTs.traceIDs, []string{"trace2", "trace3"}...)
-	hugeTs.tags = append(hugeTs.tags, [][]*tagValue{
+	traces.traceIDs = append(traces.traceIDs, []string{"trace2", "trace3"}...)
+	traces.tags = append(traces.tags, [][]*tagValue{
 		{
 			{tag: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
 			{tag: "strTag2", valueType: pbv1.ValueTypeStr, value: []byte("tag4"), valueArr: nil},
 		},
 		{}, // empty tags
 	}...)
-	hugeTs.spans = append(hugeTs.spans, [][]byte{[]byte("span2"), []byte("span3")}...)
-	return hugeTs
+	traces.spans = append(traces.spans, [][]byte{[]byte("span2"), []byte("span3")}...)
+	return traces
 }

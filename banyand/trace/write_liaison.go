@@ -75,7 +75,7 @@ func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *t
 		return nil, err
 	}
 	t := writeEvent.Request.Tags[idx].GetTimestamp().AsTime().Local()
-	if err := timestamp.Check(t); err != nil {
+	if err = timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := t.UnixNano()

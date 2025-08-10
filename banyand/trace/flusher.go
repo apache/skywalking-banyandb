@@ -228,4 +228,3 @@ func (tst *tsTable) persistSnapshot(snapshot *snapshot) {
 	tst.mustWriteSnapshot(snapshot.epoch, partNames)
 	tst.gc.registerSnapshot(snapshot)
 }
-

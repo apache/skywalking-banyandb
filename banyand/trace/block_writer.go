@@ -276,7 +276,7 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 
 func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
-		bw.primaryBlockMetadata.mustWriteBlock(data, bw.traceIDLen, bw.traceIDs[0], bw.minTimestamp, bw.maxTimestamp, &bw.writers)
+		bw.primaryBlockMetadata.mustWriteBlock(data, bw.traceIDLen, bw.traceIDs[0], &bw.writers)
 		bw.metaData = bw.primaryBlockMetadata.marshal(bw.metaData)
 	}
 	bw.minTimestamp = 0

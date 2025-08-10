@@ -43,7 +43,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 		},
 		{
 			name:   "Test with single part",
-			tsList: []*traces{ts1},
+			tsList: []*traces{tsTS1},
 			want: []blockMetadata{
 				{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
 				{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
@@ -52,7 +52,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 		},
 		{
 			name:   "Test with multiple parts",
-			tsList: []*traces{ts1, ts2},
+			tsList: []*traces{tsTS1, tsTS2},
 			want: []blockMetadata{
 				{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
 				{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},

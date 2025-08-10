@@ -60,19 +60,19 @@ func (tm *tagMetadata) marshal(dst []byte) []byte {
 	return dst
 }
 
-func (tm *tagMetadata) unmarshal(src []byte) ([]byte, error) {
+func (tm *tagMetadata) unmarshal(src []byte) error {
 	var err error
 	src = tm.dataBlock.unmarshal(src)
 	src, tm.min, err = encoding.DecodeBytes(src)
 	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal tagMetadata.min: %w", err)
+		return fmt.Errorf("cannot unmarshal tagMetadata.min: %w", err)
 	}
 	src, tm.max, err = encoding.DecodeBytes(src)
 	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal tagMetadata.max: %w", err)
+		return fmt.Errorf("cannot unmarshal tagMetadata.max: %w", err)
 	}
-	src = tm.filterBlock.unmarshal(src)
-	return src, nil
+	tm.filterBlock.unmarshal(src)
+	return nil
 }
 
 func generateTagMetadata() *tagMetadata {

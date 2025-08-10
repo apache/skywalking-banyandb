@@ -60,11 +60,11 @@ type part struct {
 	tagMetadata          map[string]fs.Reader
 	tags                 map[string]fs.Reader
 	tagFilter            map[string]fs.Reader
+	tagType              tagType
+	traceIDFilter        traceIDFilter
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
-	tagType              tagType
-	traceIDFilter        traceIDFilter
 }
 
 func (p *part) close() {
@@ -113,12 +113,12 @@ type memPart struct {
 	tagMetadata   map[string]*bytes.Buffer
 	tags          map[string]*bytes.Buffer
 	tagFilter     map[string]*bytes.Buffer
+	tagType       tagType
+	traceIDFilter traceIDFilter
 	spans         bytes.Buffer
 	meta          bytes.Buffer
 	primary       bytes.Buffer
 	partMetadata  partMetadata
-	tagType       tagType
-	traceIDFilter traceIDFilter
 }
 
 func (mp *memPart) mustCreateMemTagWriters(name string) (fs.Writer, fs.Writer, fs.Writer) {
@@ -296,7 +296,7 @@ func (mp *memPart) Unmarshal(data []byte) error {
 	}
 	tagTypeBytes := tail[:tagTypeLen]
 	tail = tail[tagTypeLen:]
-	if _, err := mp.tagType.unmarshal(tagTypeBytes); err != nil {
+	if err := mp.tagType.unmarshal(tagTypeBytes); err != nil {
 		return fmt.Errorf("cannot unmarshal tagType: %w", err)
 	}
 

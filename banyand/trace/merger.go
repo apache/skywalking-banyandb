@@ -348,11 +348,11 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		bw.mustWriteBlock(pendingBlock.bm.traceID, &pendingBlock.block)
 	}
 	releaseDecoder()
-	var partMetadata partMetadata
-	var traceIDFilter traceIDFilter
-	tagType := make(tagType)
-	bw.Flush(&partMetadata, &traceIDFilter, &tagType)
-	return &partMetadata, nil
+	var pm partMetadata
+	var tf traceIDFilter
+	tt := make(tagType)
+	bw.Flush(&pm, &tf, &tt)
+	return &pm, nil
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {

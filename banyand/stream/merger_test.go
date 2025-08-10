@@ -274,7 +274,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:   "Test with multiple parts with a large quantity of different ts",
-			esList: []*elements{generateHugeEs(1, 5000, 1), generateHugeEs(5001, 10000, 2)},
+			esList: []*elements{generateHugeElements(1, 5000, 1), generateHugeElements(5001, 10000, 2)},
 			want: []blockMetadata{
 				{seriesID: 1, count: 4896, uncompressedSizeBytes: 3897279},
 				{seriesID: 1, count: 5000, uncompressedSizeBytes: 3980063},

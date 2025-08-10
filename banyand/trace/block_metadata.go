@@ -64,9 +64,9 @@ type blockMetadata struct {
 	tags                      map[string]*dataBlock
 	tagType                   map[string]pbv1.ValueType
 	spans                     *dataBlock
-	timestamps                timestampsMetadata
 	tagProjection             *model.TagProjection
 	traceID                   string
+	timestamps                timestampsMetadata
 	uncompressedSpanSizeBytes uint64
 	count                     uint64
 }

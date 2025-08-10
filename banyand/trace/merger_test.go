@@ -123,7 +123,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:   "Test with single part",
-			tsList: []*traces{ts1},
+			tsList: []*traces{tsTS1},
 			want: []blockMetadata{
 				{traceID: "trace1", count: 1},
 				{traceID: "trace2", count: 1},
@@ -132,7 +132,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:   "Test with multiple parts with different tid",
-			tsList: []*traces{ts1, ts2, ts2},
+			tsList: []*traces{tsTS1, tsTS2, tsTS2},
 			want: []blockMetadata{
 				{traceID: "trace1", count: 3},
 				{traceID: "trace2", count: 3},
@@ -141,7 +141,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:   "Test with multiple parts with same tid",
-			tsList: []*traces{ts1, ts1, ts1},
+			tsList: []*traces{tsTS1, tsTS1, tsTS1},
 			want: []blockMetadata{
 				{traceID: "trace1", count: 3},
 				{traceID: "trace2", count: 3},

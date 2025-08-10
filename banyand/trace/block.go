@@ -104,14 +104,13 @@ func (b *block) processTags(tags []*tagValue, i, spansLen int) {
 	}
 }
 
-func (b *block) resizeTags(tagsLen int) []tag {
+func (b *block) resizeTags(tagsLen int) {
 	tags := b.tags[:0]
 	if n := tagsLen - cap(tags); n > 0 {
 		tags = append(tags[:cap(tags)], make([]tag, n)...)
 	}
 	tags = tags[:tagsLen]
 	b.tags = tags
-	return tags
 }
 
 func (b *block) Len() int {
@@ -180,7 +179,7 @@ func (b *block) unmarshalTag(decoder *encoding.BytesBlockDecoder, i int,
 	fs.MustReadData(metaReader, int64(tagMetadataBlock.offset), bb.Buf)
 	tm := generateTagMetadata()
 	defer releaseTagMetadata(tm)
-	_, err := tm.unmarshal(bb.Buf)
+	err := tm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagMetadata: %v", metaReader.Path(), err)
 	}
@@ -209,7 +208,7 @@ func (b *block) unmarshalTagFromSeqReaders(decoder *encoding.BytesBlockDecoder, 
 	metaReader.mustReadFull(bb.Buf)
 	tm := generateTagMetadata()
 	defer releaseTagMetadata(tm)
-	_, err := tm.unmarshal(bb.Buf)
+	err := tm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagMetadata: %v", metaReader.Path(), err)
 	}
@@ -261,7 +260,7 @@ func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders 
 
 	b.spans = mustSeqReadSpansFrom(b.spans, bm.spans, int(bm.count), &seqReaders.spans)
 
-	_ = b.resizeTags(len(bm.tags))
+	b.resizeTags(len(bm.tags))
 	keys := make([]string, 0, len(bm.tags))
 	for k := range bm.tags {
 		keys = append(keys, k)

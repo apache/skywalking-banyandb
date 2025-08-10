@@ -85,7 +85,7 @@ func (tf *tagFilter) unmarshal(tagMetadataBlock *dataBlock, metaReader, filterRe
 	fs.MustReadData(metaReader, int64(tagMetadataBlock.offset), bb.Buf)
 	tm := generateTagMetadata()
 	defer releaseTagMetadata(tm)
-	_, err := tm.unmarshal(bb.Buf)
+	err := tm.unmarshal(bb.Buf)
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}

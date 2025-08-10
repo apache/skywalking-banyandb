@@ -30,9 +30,9 @@ import (
 )
 
 type primaryBlockMetadata struct {
-	traceIDLen uint32
-	traceID    string
+	traceID string
 	dataBlock
+	traceIDLen uint32
 }
 
 // reset resets pbm for subsequent re-use.
@@ -43,7 +43,7 @@ func (pbm *primaryBlockMetadata) reset() {
 	pbm.size = 0
 }
 
-func (pbm *primaryBlockMetadata) mustWriteBlock(data []byte, traceIDLen uint32, traceID string, minTimestamp, maxTimestamp int64, sw *writers) {
+func (pbm *primaryBlockMetadata) mustWriteBlock(data []byte, traceIDLen uint32, traceID string, sw *writers) {
 	pbm.traceIDLen = traceIDLen
 	pbm.traceID = traceID
 

@@ -28,11 +28,11 @@ import (
 )
 
 type queryOptions struct {
+	model.TraceQueryOptions
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
 	sortedSids     []common.SeriesID
-	model.TraceQueryOptions
-	minTimestamp int64
-	maxTimestamp int64
+	minTimestamp   int64
+	maxTimestamp   int64
 }
 
 func (qo *queryOptions) reset() {

@@ -525,8 +525,8 @@ var duplicatedDps1 = &dataPoints{
 	},
 }
 
-func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints {
-	hugeDps := &dataPoints{
+func generateHugeDatapoints(startTimestamp, endTimestamp, timestamp int64) *dataPoints {
+	dataPoints := &dataPoints{
 		seriesIDs:   []common.SeriesID{},
 		timestamps:  []int64{},
 		versions:    []int64{},
@@ -535,10 +535,10 @@ func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints 
 	}
 	now := time.Now().UnixNano()
 	for i := startTimestamp; i <= endTimestamp; i++ {
-		hugeDps.seriesIDs = append(hugeDps.seriesIDs, 1)
-		hugeDps.timestamps = append(hugeDps.timestamps, i)
-		hugeDps.versions = append(hugeDps.versions, now+i)
-		hugeDps.tagFamilies = append(hugeDps.tagFamilies, []nameValues{
+		dataPoints.seriesIDs = append(dataPoints.seriesIDs, 1)
+		dataPoints.timestamps = append(dataPoints.timestamps, i)
+		dataPoints.versions = append(dataPoints.versions, now+i)
+		dataPoints.tagFamilies = append(dataPoints.tagFamilies, []nameValues{
 			{
 				name: "arrTag", values: []*nameValue{
 					{name: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
@@ -557,7 +557,7 @@ func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints 
 				},
 			},
 		})
-		hugeDps.fields = append(hugeDps.fields, nameValues{
+		dataPoints.fields = append(dataPoints.fields, nameValues{
 			name: "skipped", values: []*nameValue{
 				{name: "strField", valueType: pbv1.ValueTypeStr, value: []byte("field3"), valueArr: nil},
 				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(3330), valueArr: nil},
@@ -566,10 +566,10 @@ func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints 
 			},
 		})
 	}
-	hugeDps.seriesIDs = append(hugeDps.seriesIDs, []common.SeriesID{2, 3}...)
-	hugeDps.timestamps = append(hugeDps.timestamps, []int64{timestamp, timestamp}...)
-	hugeDps.versions = append(hugeDps.versions, []int64{now + timestamp, now + timestamp}...)
-	hugeDps.tagFamilies = append(hugeDps.tagFamilies, [][]nameValues{{
+	dataPoints.seriesIDs = append(dataPoints.seriesIDs, []common.SeriesID{2, 3}...)
+	dataPoints.timestamps = append(dataPoints.timestamps, []int64{timestamp, timestamp}...)
+	dataPoints.versions = append(dataPoints.versions, []int64{now + timestamp, now + timestamp}...)
+	dataPoints.tagFamilies = append(dataPoints.tagFamilies, [][]nameValues{{
 		{
 			name: "singleTag", values: []*nameValue{
 				{name: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
@@ -577,16 +577,16 @@ func generateHugeDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints 
 			},
 		},
 	}, {}}...)
-	hugeDps.fields = append(hugeDps.fields, []nameValues{{}, {
+	dataPoints.fields = append(dataPoints.fields, []nameValues{{}, {
 		name: "onlyFields", values: []*nameValue{
 			{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(4440), valueArr: nil},
 		},
 	}}...)
-	return hugeDps
+	return dataPoints
 }
 
-func generateHugeSmallDps(startTimestamp, endTimestamp, timestamp int64) *dataPoints {
-	hugeDps := &dataPoints{
+func generateSmallDatapoints(startTimestamp, endTimestamp, timestamp int64) *dataPoints {
+	dataPoints := &dataPoints{
 		seriesIDs:   []common.SeriesID{},
 		timestamps:  []int64{},
 		versions:    []int64{},
@@ -595,24 +595,24 @@ func generateHugeSmallDps(startTimestamp, endTimestamp, timestamp int64) *dataPo
 	}
 	now := time.Now().UnixNano()
 	for i := startTimestamp; i <= endTimestamp; i++ {
-		hugeDps.seriesIDs = append(hugeDps.seriesIDs, 1)
-		hugeDps.timestamps = append(hugeDps.timestamps, i)
-		hugeDps.versions = append(hugeDps.versions, now+i)
-		hugeDps.tagFamilies = append(hugeDps.tagFamilies, []nameValues{})
-		hugeDps.fields = append(hugeDps.fields, nameValues{
+		dataPoints.seriesIDs = append(dataPoints.seriesIDs, 1)
+		dataPoints.timestamps = append(dataPoints.timestamps, i)
+		dataPoints.versions = append(dataPoints.versions, now+i)
+		dataPoints.tagFamilies = append(dataPoints.tagFamilies, []nameValues{})
+		dataPoints.fields = append(dataPoints.fields, nameValues{
 			name: "skipped", values: []*nameValue{
 				{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(3330), valueArr: nil},
 			},
 		})
 	}
-	hugeDps.seriesIDs = append(hugeDps.seriesIDs, []common.SeriesID{2, 3}...)
-	hugeDps.timestamps = append(hugeDps.timestamps, []int64{timestamp, timestamp}...)
-	hugeDps.versions = append(hugeDps.versions, []int64{now + timestamp, now + timestamp}...)
-	hugeDps.tagFamilies = append(hugeDps.tagFamilies, [][]nameValues{{}, {}}...)
-	hugeDps.fields = append(hugeDps.fields, []nameValues{{}, {
+	dataPoints.seriesIDs = append(dataPoints.seriesIDs, []common.SeriesID{2, 3}...)
+	dataPoints.timestamps = append(dataPoints.timestamps, []int64{timestamp, timestamp}...)
+	dataPoints.versions = append(dataPoints.versions, []int64{now + timestamp, now + timestamp}...)
+	dataPoints.tagFamilies = append(dataPoints.tagFamilies, [][]nameValues{{}, {}}...)
+	dataPoints.fields = append(dataPoints.fields, []nameValues{{}, {
 		name: "onlyFields", values: []*nameValue{
 			{name: "intField", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(4440), valueArr: nil},
 		},
 	}}...)
-	return hugeDps
+	return dataPoints
 }

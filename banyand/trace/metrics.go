@@ -319,8 +319,8 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 	}
 }
 
-func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
-	factory := s.omr.With(tbScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
+func (qs *queueSupplier) newMetrics(p common.Position) storage.Metrics {
+	factory := qs.omr.With(tbScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
 	return &metrics{
 		totalWritten:               factory.NewCounter("total_written"),
 		totalBatch:                 factory.NewCounter("total_batch"),

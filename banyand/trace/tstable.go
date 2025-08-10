@@ -183,8 +183,8 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 
 // initTSTable initializes a tsTable and loads parts/snapshots, but does not start any background loops.
 func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, option option, m any, initIndex bool,
-) (*tsTable, uint64, error) {
+	l *logger.Logger, option option, m any,
+) (*tsTable, uint64) {
 	if option.protector == nil {
 		logger.GetLogger("trace").
 			Panic().
@@ -204,7 +204,7 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
-		return &tst, uint64(time.Now().UnixNano()), nil
+		return &tst, uint64(time.Now().UnixNano())
 	}
 	var loadedParts []uint64
 	var loadedSnapshots []uint64
@@ -242,23 +242,20 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
-		return &tst, uint64(time.Now().UnixNano()), nil
+		return &tst, uint64(time.Now().UnixNano())
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
 		return loadedSnapshots[i] > loadedSnapshots[j]
 	})
 	epoch := loadedSnapshots[0]
 	tst.loadSnapshot(epoch, loadedParts)
-	return &tst, epoch, nil
+	return &tst, epoch
 }
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
-	t, epoch, err := initTSTable(fileSystem, rootPath, p, l, option, m, true)
-	if err != nil {
-		return nil, err
-	}
+	t, epoch := initTSTable(fileSystem, rootPath, p, l, option, m)
 	t.startLoop(epoch)
 	return t, nil
 }

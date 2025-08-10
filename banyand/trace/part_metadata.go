@@ -131,7 +131,7 @@ func (tt tagType) marshal(dst []byte) []byte {
 	return dst
 }
 
-func (tt tagType) unmarshal(src []byte) ([]byte, error) {
+func (tt tagType) unmarshal(src []byte) error {
 	tt.reset()
 
 	src, count := encoding.BytesToVarUint64(src)
@@ -141,18 +141,18 @@ func (tt tagType) unmarshal(src []byte) ([]byte, error) {
 		var err error
 		src, nameBytes, err = encoding.DecodeBytes(src)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		name := string(nameBytes)
 
 		if len(src) < 1 {
-			return nil, errors.New("insufficient data for valueType")
+			return errors.New("insufficient data for valueType")
 		}
 		valueType := pbv1.ValueType(src[0])
 		src = src[1:]
 		tt[name] = valueType
 	}
-	return src, nil
+	return nil
 }
 
 func (tt tagType) mustReadTagType(fileSystem fs.FileSystem, partPath string) {
@@ -161,7 +161,8 @@ func (tt tagType) mustReadTagType(fileSystem fs.FileSystem, partPath string) {
 	tagTypePath := filepath.Join(partPath, tagTypeFilename)
 	data, err := fileSystem.Read(tagTypePath)
 	if err != nil {
-		if fsErr, ok := err.(*fs.FileSystemError); ok && fsErr.Code == fs.IsNotExistError {
+		var fsErr *fs.FileSystemError
+		if errors.As(err, &fsErr) && fsErr.Code == fs.IsNotExistError {
 			return
 		}
 		logger.Panicf("cannot read %s: %s", tagTypePath, err)
@@ -172,7 +173,7 @@ func (tt tagType) mustReadTagType(fileSystem fs.FileSystem, partPath string) {
 		return
 	}
 
-	_, err = tt.unmarshal(data)
+	err = tt.unmarshal(data)
 	if err != nil {
 		logger.Panicf("cannot parse %q: %s", tagTypePath, err)
 		return
@@ -210,7 +211,8 @@ func (tf *traceIDFilter) mustReadTraceIDFilter(fileSystem fs.FileSystem, partPat
 	traceIDFilterPath := filepath.Join(partPath, traceIDFilterFilename)
 	data, err := fileSystem.Read(traceIDFilterPath)
 	if err != nil {
-		if fsErr, ok := err.(*fs.FileSystemError); ok && fsErr.Code == fs.IsNotExistError {
+		var fsErr *fs.FileSystemError
+		if errors.As(err, &fsErr) && fsErr.Code == fs.IsNotExistError {
 			tf.filter = nil
 			return
 		}

@@ -286,7 +286,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:    "Test with multiple parts with a large quantity of different ts",
-			dpsList: []*dataPoints{generateHugeDps(1, 5000, 1), generateHugeDps(5001, 10000, 2)},
+			dpsList: []*dataPoints{generateHugeDatapoints(1, 5000, 1), generateHugeDatapoints(5001, 10000, 2)},
 			want: []blockMetadata{
 				{seriesID: 1, count: 2530, uncompressedSizeBytes: 4025293},
 				{seriesID: 1, count: 2470, uncompressedSizeBytes: 3929833},
@@ -298,7 +298,7 @@ func Test_mergeParts(t *testing.T) {
 		},
 		{
 			name:    "Test with multiple parts with a large small quantity of different ts",
-			dpsList: []*dataPoints{generateHugeSmallDps(1, 5000, 1), generateHugeSmallDps(5001, 10000, 2)},
+			dpsList: []*dataPoints{generateSmallDatapoints(1, 5000, 1), generateSmallDatapoints(5001, 10000, 2)},
 			want: []blockMetadata{
 				{seriesID: 1, count: 8192, uncompressedSizeBytes: 262144},
 				{seriesID: 1, count: 1808, uncompressedSizeBytes: 57856},
