@@ -218,18 +218,6 @@ func (pi *partIter) findBlock() bool {
 			continue
 		}
 
-		if bm.timestamps.max < pi.minTimestamp {
-			bhs = bhs[1:]
-			continue
-		}
-
-		if bm.timestamps.min > pi.maxTimestamp {
-			if !pi.nextTraceID() {
-				return false
-			}
-			continue
-		}
-
 		if pi.blockFilter != nil && pi.blockFilter != logicaltrace.ENode {
 			shouldSkip, err := func() (bool, error) {
 				tfs := generateTagFilters()

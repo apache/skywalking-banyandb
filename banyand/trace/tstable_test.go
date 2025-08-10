@@ -18,15 +18,20 @@
 package trace
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -108,7 +113,117 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 	}
 }
 
-// TODO: Test_tstIter.
+func Test_tstIter(t *testing.T) {
+	type testCtx struct {
+		wantErr      error
+		name         string
+		tsList       []*traces
+		tids         []string
+		want         []blockMetadata
+		minTimestamp int64
+		maxTimestamp int64
+	}
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+
+	verify := func(t *testing.T, tt testCtx, tst *tsTable) uint64 {
+		defer tst.Close()
+		s := tst.currentSnapshot()
+		if s == nil {
+			s = new(snapshot)
+		}
+		defer s.decRef()
+		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
+		require.Equal(t, len(s.parts), n)
+		ti := &tstIter{}
+		ti.init(bma, pp, tt.tids, tt.minTimestamp, tt.maxTimestamp, nil)
+		var got []blockMetadata
+		for ti.nextBlock() {
+			if ti.piHeap[0].curBlock.traceID == "" {
+				t.Errorf("Expected curBlock to be initialized, but it was nil")
+			}
+			var bm blockMetadata
+			bm.copyFrom(ti.piHeap[0].curBlock)
+			got = append(got, bm)
+		}
+
+		if !errors.Is(ti.Error(), tt.wantErr) {
+			t.Errorf("Unexpected error: got %v, want %v", ti.err, tt.wantErr)
+		}
+
+		if diff := cmp.Diff(got, tt.want,
+			cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
+			cmpopts.IgnoreFields(blockMetadata{}, "spans"),
+			cmpopts.IgnoreFields(blockMetadata{}, "tags"),
+			cmpopts.IgnoreFields(blockMetadata{}, "tagType"),
+			cmp.AllowUnexported(blockMetadata{}),
+		); diff != "" {
+			t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+		}
+		return s.epoch
+	}
+
+	t.Run("memory snapshot", func(t *testing.T) {
+		tests := []testCtx{
+			{
+				name:         "Test with no traces",
+				tsList:       []*traces{},
+				tids:         []string{"trace1", "trace2", "trace3"},
+				minTimestamp: 1,
+				maxTimestamp: 1,
+			},
+			{
+				name:         "Test with single part",
+				tsList:       []*traces{tsTS1},
+				tids:         []string{"trace1", "trace2", "trace3"},
+				minTimestamp: 1,
+				maxTimestamp: 1,
+				want: []blockMetadata{
+					{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
+					{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
+					{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
+				},
+			},
+			{
+				name:         "Test with multiple parts",
+				tsList:       []*traces{tsTS1, tsTS2},
+				tids:         []string{"trace1", "trace2", "trace3"},
+				minTimestamp: 1,
+				maxTimestamp: 2,
+				want: []blockMetadata{
+					{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
+					{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
+					{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
+					{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
+					{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
+					{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
+				},
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				tmpPath, defFn := test.Space(require.New(t))
+				defer defFn()
+				tst := &tsTable{
+					loopCloser:    run.NewCloser(2),
+					introductions: make(chan *introduction),
+					fileSystem:    fs.NewLocalFileSystem(),
+					root:          tmpPath,
+				}
+				tst.gc.init(tst)
+				flushCh := make(chan *flusherIntroduction)
+				mergeCh := make(chan *mergerIntroduction)
+				introducerWatcher := make(watcher.Channel, 1)
+				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
+				for _, ts := range tt.tsList {
+					tst.mustAddTraces(ts)
+					time.Sleep(100 * time.Millisecond)
+				}
+				verify(t, tt, tst)
+			})
+		}
+	})
+}
 
 var tsTS1 = &traces{
 	traceIDs:   []string{"trace1", "trace2", "trace3"},
@@ -158,12 +273,14 @@ var tsTS2 = &traces{
 
 func generateHugeTraces(num int) *traces {
 	traces := &traces{
-		traceIDs: []string{},
-		tags:     [][]*tagValue{},
-		spans:    [][]byte{},
+		traceIDs:   []string{},
+		timestamps: []int64{},
+		tags:       [][]*tagValue{},
+		spans:      [][]byte{},
 	}
 	for i := 1; i <= num; i++ {
 		traces.traceIDs = append(traces.traceIDs, "trace1")
+		traces.timestamps = append(traces.timestamps, int64(i))
 		traces.tags = append(traces.tags, []*tagValue{
 			{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
 			{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(35), convert.Int64ToBytes(40)}},
@@ -174,6 +291,7 @@ func generateHugeTraces(num int) *traces {
 		traces.spans = append(traces.spans, []byte("span1"))
 	}
 	traces.traceIDs = append(traces.traceIDs, []string{"trace2", "trace3"}...)
+	traces.timestamps = append(traces.timestamps, []int64{int64(num + 1), int64(num + 2)}...)
 	traces.tags = append(traces.tags, [][]*tagValue{
 		{
 			{tag: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},

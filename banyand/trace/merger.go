@@ -311,7 +311,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			continue
 		}
 
-		if pendingBlock.bm.traceID != b.bm.traceID || pendingBlock.isFull() {
+		if pendingBlock.bm.traceID != b.bm.traceID || pendingBlock.block.spanSize() >= maxUncompressedSpanSize {
 			bw.mustWriteBlock(pendingBlock.bm.traceID, &pendingBlock.block)
 			releaseDecoder()
 			pendingBlock.reset()
@@ -328,8 +328,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		tmpBlock.bm.traceID = b.bm.traceID
 		br.loadBlockData(getDecoder())
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
-		if tmpBlock.bm.uncompressedSpanSizeBytes <= maxUncompressedSpanSize {
-			if tmpBlock.bm.count == 0 {
+		if tmpBlock.block.spanSize() <= maxUncompressedSpanSize {
+			if len(tmpBlock.spans) == 0 {
 				pendingBlockIsEmpty = true
 			}
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
