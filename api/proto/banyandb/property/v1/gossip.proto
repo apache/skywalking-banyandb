@@ -29,10 +29,16 @@ message PropagationContext {
   string origin_node = 4;
 }
 
+message PropagationTraceContext {
+  string trace_id = 1;
+  string parent_span_id = 2;
+}
+
 message PropagationRequest {
   PropagationContext context = 1;
-  string group = 2;
-  uint32 shard_id = 3;
+  PropagationTraceContext trace_context = 2;
+  string group = 3;
+  uint32 shard_id = 4;
 }
 
 message PropagationResponse {}
