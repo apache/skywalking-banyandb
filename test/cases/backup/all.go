@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -70,7 +71,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 				}
 			}
 			gomega.Expect(backupTimeDir).NotTo(gomega.BeEmpty())
-
+			time.Sleep(1 * time.Second)
 			ginkgo.By("List remote time directories")
 			newCatalogDir, err := os.MkdirTemp("", "backup-restore-new-catalog")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -144,6 +145,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
 
+			time.Sleep(500 * time.Millisecond)
 			ginkgo.By("Restore data from the remote destination")
 			restoreCmd := backup.NewRestoreCommand()
 			restoreCmd.SetArgs(append([]string{

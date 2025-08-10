@@ -112,6 +112,38 @@ restore run \
 - Local data is compared with the remote backup snapshot; orphaned files in local directories are removed.
 - Upon success, the timedir marker files are deleted to ensure a clean recovery state.
 
+#### Cloud Storage Examples
+
+Restore from common cloud object stores using the same flag set:
+
+```bash
+# AWS S3 (using credential file)
+restore run \
+  --source "s3://my-bucket/backups" \
+  --s3-credential-file "/path/to/credentials" \
+  --s3-profile "my-profile" \
+  --stream-root-path /data \
+  --measure-root-path /data \
+  --property-root-path /data
+
+# Google Cloud Storage
+restore run \
+  --source "gs://my-bucket/backups" \
+  --gcp-service-account-file "/path/to/service-account.json" \
+  --stream-root-path /data \
+  --measure-root-path /data \
+  --property-root-path /data
+
+# Azure Blob Storage (using SAS token)
+restore run \
+  --source "azure://mycontainer/backups" \
+  --azure-account-name "myaccount" \
+  --azure-sas-token "mysastoken" \
+  --stream-root-path /data \
+  --measure-root-path /data \
+  --property-root-path /data
+```
+
 ## Kubernetes Deployment
 
 For environments running BanyanDB in Kubernetes, the backup and restore tools can be integrated as sidecar containers. A common pattern is to use an init container for restoring data and a sidecar to manage backup and timedir operations.

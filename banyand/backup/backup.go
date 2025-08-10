@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/azure"
 	remoteconfig "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/gcp"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -69,6 +70,7 @@ func NewBackupCommand() *cobra.Command {
 	// accessing fields of FsConfig.S3/Azure before they were allocated.
 	backupOpts.fsConfig.S3 = &remoteconfig.S3Config{}
 	backupOpts.fsConfig.Azure = &remoteconfig.AzureConfig{}
+	backupOpts.fsConfig.GCP = &remoteconfig.GCPConfig{}
 	logging := logger.Logging{}
 	cmd := &cobra.Command{
 		Short:             "Backup BanyanDB snapshots to remote storage",
@@ -138,6 +140,8 @@ func NewBackupCommand() *cobra.Command {
 	cmd.Flags().StringVar(&backupOpts.fsConfig.Azure.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
 	cmd.Flags().StringVar(&backupOpts.fsConfig.Azure.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
 	cmd.Flags().StringVar(&backupOpts.fsConfig.Azure.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint")
+	// GCP flags
+	cmd.Flags().StringVar(&backupOpts.fsConfig.GCP.GCPServiceAccountFile, "gcp-service-account-file", "", "Path to the GCP service account JSON file")
 	return cmd
 }
 
@@ -183,6 +187,8 @@ func newFS(dest string, config *remoteconfig.FsConfig) (remote.FS, error) {
 		return aws.NewFS(u.Path, config)
 	case "azure":
 		return azure.NewFS(u.Host+u.Path, config)
+	case "gcs", "gs":
+		return gcp.NewFS(u.Host+u.Path, config)
 	default:
 		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
