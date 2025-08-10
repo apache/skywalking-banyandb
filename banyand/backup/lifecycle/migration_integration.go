@@ -51,6 +51,9 @@ func migrateStreamWithFileBasedAndProgress(
 	// Convert TTL to IntervalRule using storage.MustToIntervalRule
 	intervalRule := storage.MustToIntervalRule(ttl)
 
+	// Get target stage configuration
+	targetStageInterval := getTargetStageInterval(group)
+
 	// Count total parts before starting migration
 	totalParts, err := countStreamParts(tsdbRootPath, timeRange, intervalRule)
 	if err != nil {
@@ -59,8 +62,8 @@ func migrateStreamWithFileBasedAndProgress(
 		logger.Info().Int("total_parts", totalParts).Msg("counted stream parts for progress tracking")
 	}
 
-	// Create file-based migration visitor with progress tracking
-	visitor := newStreamMigrationVisitor(group, shardNum, replicas, selector, client, logger, progress, chunkSize)
+	// Create file-based migration visitor with progress tracking and target stage interval
+	visitor := newStreamMigrationVisitor(group, shardNum, replicas, selector, client, logger, progress, chunkSize, targetStageInterval)
 	defer visitor.Close()
 
 	// Set the total part count for progress tracking
@@ -129,6 +132,9 @@ func migrateMeasureWithFileBasedAndProgress(
 	// Convert TTL to IntervalRule using storage.MustToIntervalRule
 	intervalRule := storage.MustToIntervalRule(ttl)
 
+	// Get target stage configuration
+	targetStageInterval := getTargetStageInterval(group)
+
 	// Count total parts before starting migration
 	totalParts, err := countMeasureParts(tsdbRootPath, timeRange, intervalRule)
 	if err != nil {
@@ -137,8 +143,8 @@ func migrateMeasureWithFileBasedAndProgress(
 		logger.Info().Int("total_parts", totalParts).Msg("counted measure parts for progress tracking")
 	}
 
-	// Create file-based migration visitor with progress tracking
-	visitor := newMeasureMigrationVisitor(group, shardNum, replicas, selector, client, logger, progress, chunkSize)
+	// Create file-based migration visitor with progress tracking and target stage interval
+	visitor := newMeasureMigrationVisitor(group, shardNum, replicas, selector, client, logger, progress, chunkSize, targetStageInterval)
 	defer visitor.Close()
 
 	// Set the total part count for progress tracking

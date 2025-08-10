@@ -226,6 +226,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 			if ee[i].Name() == elementIndexFilename {
 				continue
 			}
+			if ee[i].Name() == inverted.ExternalSegmentTempDirName {
+				continue
+			}
 			p, err := parseEpoch(ee[i].Name())
 			if err != nil {
 				l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")

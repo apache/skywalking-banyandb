@@ -175,11 +175,17 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 				newSortableElements(resp.Elements, t.sortByTime, t.sortTagSpec))
 		}
 	}
-	iter := sort.NewItemIter[*comparableElement](see, t.desc)
+	iter := sort.NewItemIter(see, t.desc)
 	var result []*streamv1.Element
+	seen := make(map[string]bool)
 	for iter.Next() {
-		result = append(result, iter.Val().Element)
+		element := iter.Val().Element
+		if !seen[element.ElementId] {
+			seen[element.ElementId] = true
+			result = append(result, element)
+		}
 	}
+
 	return result, allErr
 }
 

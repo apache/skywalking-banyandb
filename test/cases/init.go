@@ -59,4 +59,5 @@ func Initialize(addr string, now time.Time) {
 	casesmeasuredata.Write(conn, "endpoint_traffic", "sw_metric", "endpoint_traffic.json", now, interval)
 	casesmeasuredata.Write(conn, "duplicated", "exception", "duplicated.json", now, 0)
 	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_updated", "service_cpm_minute_updated_data.json", now.Add(10*time.Minute), interval)
+	time.Sleep(5 * time.Second)
 }

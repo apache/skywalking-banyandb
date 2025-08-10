@@ -197,38 +197,26 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *measurev1.WriteRequest, iwr *measurev1.InternalWriteRequest,
 	publisher queue.BatchPublisher, shardID uint32, measure measurev1.MeasureService_WriteServer,
 ) ([]string, error) {
-	copies, ok := ms.groupRepo.copies(writeRequest.Metadata.GetGroup())
-	if !ok {
-		ms.l.Error().RawJSON("written", logger.Proto(writeRequest)).Msg("failed to get the group copies")
+	nodeID, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), shardID, 0)
+	if errPickNode != nil {
+		ms.l.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to pick an available node")
 		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
-		return nil, errors.New("failed to get group copies")
+		return nil, errPickNode
 	}
 
-	nodes := make([]string, 0, copies)
-	for i := range copies {
-		nodeID, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), shardID, i)
-		if errPickNode != nil {
-			ms.l.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to pick an available node")
-			ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
-			return nil, errPickNode
-		}
-
-		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-		_, errWritePub := publisher.Publish(ctx, data.TopicMeasureWrite, message)
-		if errWritePub != nil {
-			ms.l.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
-			var ce *common.Error
-			if errors.As(errWritePub, &ce) {
-				ms.sendReply(writeRequest.GetMetadata(), ce.Status(), writeRequest.GetMessageId(), measure)
-				return nil, errWritePub
-			}
-			ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+	_, errWritePub := publisher.Publish(ctx, data.TopicMeasureWrite, message)
+	if errWritePub != nil {
+		ms.l.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
+		var ce *common.Error
+		if errors.As(errWritePub, &ce) {
+			ms.sendReply(writeRequest.GetMetadata(), ce.Status(), writeRequest.GetMessageId(), measure)
 			return nil, errWritePub
 		}
-		nodes = append(nodes, nodeID)
+		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+		return nil, errWritePub
 	}
-
-	return nodes, nil
+	return []string{nodeID}, nil
 }
 
 func (ms *measureService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, measure measurev1.MeasureService_WriteServer) {
