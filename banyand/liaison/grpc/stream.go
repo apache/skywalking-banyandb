@@ -117,26 +117,16 @@ func (s *streamService) publishMessages(
 		ShardId:      uint32(shardID),
 		EntityValues: tagValues[1:].Encode(),
 	}
-
-	copies, ok := s.groupRepo.copies(writeEntity.Metadata.GetGroup())
-	if !ok {
-		return nil, errors.New("failed to get group copies")
+	nodeID, err := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID), 0)
+	if err != nil {
+		return nil, err
 	}
 
-	nodes := make([]string, 0, copies)
-	for i := range copies {
-		nodeID, err := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID), i)
-		if err != nil {
-			return nil, err
-		}
-
-		message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-		if _, err := publisher.Publish(ctx, data.TopicStreamWrite, message); err != nil {
-			return nil, err
-		}
-		nodes = append(nodes, nodeID)
+	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+	if _, err := publisher.Publish(ctx, data.TopicStreamWrite, message); err != nil {
+		return nil, err
 	}
-	return nodes, nil
+	return []string{nodeID}, nil
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
