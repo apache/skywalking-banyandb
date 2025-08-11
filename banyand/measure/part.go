@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -604,4 +605,78 @@ func partPath(root string, epoch uint64) string {
 
 func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
+}
+
+// CreatePartFileReaderFromPath opens all files in a measure part directory and returns their FileInfo and a cleanup function.
+// Similar to stream.CreatePartFileReaderFromPath but adapted for measure file structure.
+func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.FileInfo, func()) {
+	var files []queue.FileInfo
+	var readers []fs.Reader
+
+	// Core measure files (required files)
+	coreFiles := map[string]string{
+		metaFilename:        measureMetaName,
+		primaryFilename:     measurePrimaryName,
+		timestampsFilename:  measureTimestampsName,
+		fieldValuesFilename: measureFieldValuesName,
+	}
+
+	for filename, streamName := range coreFiles {
+		filePath := path.Join(partPath, filename)
+		reader, err := lfs.OpenFile(filePath)
+		if err != nil {
+			logger.Panicf("cannot open measure file %q: %s", filePath, err)
+		}
+		readers = append(readers, reader)
+		files = append(files, queue.FileInfo{
+			Name:   streamName,
+			Reader: reader.SequentialRead(),
+		})
+	}
+
+	// Dynamic tag family files (*.tf and *.tfm)
+	ee := lfs.ReadDir(partPath)
+	for _, e := range ee {
+		if e.IsDir() {
+			continue
+		}
+
+		// Tag family metadata files (.tfm)
+		if filepath.Ext(e.Name()) == tagFamiliesMetadataFilenameExt {
+			tfmPath := path.Join(partPath, e.Name())
+			tfmReader, err := lfs.OpenFile(tfmPath)
+			if err != nil {
+				logger.Panicf("cannot open tag family metadata file %q: %s", tfmPath, err)
+			}
+			readers = append(readers, tfmReader)
+			tagName := removeExt(e.Name(), tagFamiliesMetadataFilenameExt)
+			files = append(files, queue.FileInfo{
+				Name:   measureTagMetadataPrefix + tagName,
+				Reader: tfmReader.SequentialRead(),
+			})
+		}
+
+		// Tag family data files (.tf)
+		if filepath.Ext(e.Name()) == tagFamiliesFilenameExt {
+			tfPath := path.Join(partPath, e.Name())
+			tfReader, err := lfs.OpenFile(tfPath)
+			if err != nil {
+				logger.Panicf("cannot open tag family file %q: %s", tfPath, err)
+			}
+			readers = append(readers, tfReader)
+			tagName := removeExt(e.Name(), tagFamiliesFilenameExt)
+			files = append(files, queue.FileInfo{
+				Name:   measureTagFamiliesPrefix + tagName,
+				Reader: tfReader.SequentialRead(),
+			})
+		}
+	}
+
+	cleanup := func() {
+		for _, reader := range readers {
+			fs.MustClose(reader)
+		}
+	}
+
+	return files, cleanup
 }

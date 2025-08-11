@@ -61,20 +61,21 @@ type Service interface {
 var _ Service = (*standalone)(nil)
 
 type standalone struct {
-	pm                  protector.Memory
-	pipeline            queue.Server
-	localPipeline       queue.Queue
-	omr                 observability.MetricsRegistry
-	lfs                 fs.FileSystem
-	metadata            metadata.Repo
-	l                   *logger.Logger
-	schemaRepo          schemaRepo
-	snapshotDir         string
-	root                string
-	dataPath            string
-	option              option
-	maxDiskUsagePercent int
-	maxFileSnapshotNum  int
+	pm                    protector.Memory
+	pipeline              queue.Server
+	localPipeline         queue.Queue
+	omr                   observability.MetricsRegistry
+	internalWritePipeline queue.Server
+	lfs                   fs.FileSystem
+	metadata              metadata.Repo
+	l                     *logger.Logger
+	schemaRepo            schemaRepo
+	snapshotDir           string
+	root                  string
+	dataPath              string
+	option                option
+	maxDiskUsagePercent   int
+	maxFileSnapshotNum    int
 }
 
 func (s *standalone) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -165,6 +166,10 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		return err
 	}
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamPartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
+	// Register chunked sync handler for stream series index
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamSeriesSync, setUpSyncSeriesCallback(s.l, &s.schemaRepo))
+	// Register chunked sync handler for stream element index
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamElementIndexSync, setUpSyncElementIndexCallback(s.l, &s.schemaRepo))
 
 	err = s.pipeline.Subscribe(data.TopicStreamSeriesIndexWrite, setUpSeriesIndexCallback(s.l, &s.schemaRepo))
 	if err != nil {
@@ -174,7 +179,15 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return s.localPipeline.Subscribe(data.TopicStreamWrite, writeListener)
+	err = s.localPipeline.Subscribe(data.TopicStreamWrite, writeListener)
+	if err != nil {
+		return err
+	}
+
+	if s.internalWritePipeline != nil {
+		return s.internalWritePipeline.Subscribe(data.TopicStreamWrite, writeListener)
+	}
+	return err
 }
 
 func (s *standalone) Serve() run.StopNotify {
@@ -189,12 +202,19 @@ func (s *standalone) GracefulStop() {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
+func NewService(
+	metadata metadata.Repo,
+	pipeline queue.Server,
+	omr observability.MetricsRegistry,
+	pm protector.Memory,
+	internalWritePipeline queue.Server,
+) (Service, error) {
 	return &standalone{
-		metadata: metadata,
-		pipeline: pipeline,
-		omr:      omr,
-		pm:       pm,
+		metadata:              metadata,
+		pipeline:              pipeline,
+		omr:                   omr,
+		pm:                    pm,
+		internalWritePipeline: internalWritePipeline,
 	}, nil
 }
 

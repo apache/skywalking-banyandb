@@ -50,11 +50,11 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	}
 	metricSvc := observability.NewMetricService(metaSvc, dataPipeline, "standalone", nil)
 	pm := protector.NewMemory(metricSvc)
-	propertySvc, err := property.NewService(metaSvc, dataPipeline, metricSvc, pm)
+	propertySvc, err := property.NewService(metaSvc, dataPipeline, nil, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
 	}
-	streamSvc, err := stream.NewService(metaSvc, dataPipeline, metricSvc, pm)
+	streamSvc, err := stream.NewService(metaSvc, dataPipeline, metricSvc, pm, nil)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}
@@ -76,7 +76,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		PropertyNodeRegistry:       nr,
 	}, metricSvc)
 	profSvc := observability.NewProfService()
-	httpServer := http.NewServer()
+	httpServer := http.NewServer(grpcServer.GetAuthCfg())
 
 	var units []run.Unit
 	units = append(units, runners...)

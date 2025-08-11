@@ -78,10 +78,11 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 				},
 			},
 			pbv1.AnyTagValue,
+			pbv1.AnyTagValue,
 		},
 	}
 	if len(groupByTags) > 0 {
-		entities[0][len(entities[0])-1] = &modelv1.TagValue{
+		entities[0][2] = &modelv1.TagValue{
 			Value: &modelv1.TagValue_Str{
 				Str: &modelv1.Str{
 					Value: measure.GroupName(groupByTags),

@@ -26,7 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
-func (s *service) Propagation(nodes []string, group string) error {
+func (s *service) Propagation(nodes []string, group string, shardID uint32) error {
+	s.log.Debug().Strs("nodes", nodes).Str("group", group).Uint32("shard", shardID).Msg("ready to propagate")
 	if len(nodes) < 2 {
 		return fmt.Errorf("must provide at least 2 node")
 	}
@@ -45,18 +46,30 @@ func (s *service) Propagation(nodes []string, group string) error {
 	request := &propertyv1.PropagationRequest{
 		Context: ctx,
 		Group:   group,
+		ShardId: shardID,
 	}
 
-	var sendTo func(context.Context, *propertyv1.PropagationRequest) (*propertyv1.PropagationResponse, error)
+	var sendTo func(context.Context, *propertyv1.PropagationRequest, Trace) (*propertyv1.PropagationResponse, error)
 
 	// send it to the current node if it is the first node
 	if nodes[0] == s.nodeID {
-		sendTo = func(ctx context.Context, req *propertyv1.PropagationRequest) (*propertyv1.PropagationResponse, error) {
-			return s.protocolHandler.Propagation(ctx, req)
+		sendTo = func(ctx context.Context, req *propertyv1.PropagationRequest, trace Trace) (*propertyv1.PropagationResponse, error) {
+			span := trace.CreateSpan(nil, "propagation from current node")
+			defer span.End()
+			return s.protocolHandler.propagation0(ctx, req, trace)
 		}
 	} else {
-		sendTo = func(ctx context.Context, request *propertyv1.PropagationRequest) (*propertyv1.PropagationResponse, error) {
+		sendTo = func(ctx context.Context, request *propertyv1.PropagationRequest, trace Trace) (resp *propertyv1.PropagationResponse, err error) {
+			span := trace.CreateSpan(nil, "propagation to first node")
+			span.Tag(TraceTagOperateSendToNext, "send_to_next_node")
+			span.Tag(TraceTagTargetNode, nodes[0])
 			node, exist := s.getRegisteredNode(nodes[0])
+			defer func() {
+				if err != nil {
+					span.Error(err.Error())
+				}
+				span.End()
+			}()
 			if !exist {
 				return nil, fmt.Errorf("node %s not found", nodes[0])
 			}
@@ -67,14 +80,15 @@ func (s *service) Propagation(nodes []string, group string) error {
 			defer func() {
 				_ = conn.Close()
 			}()
-			return propertyv1.NewGossipServiceClient(conn).Propagation(ctx, request)
+			propagation, err := propertyv1.NewGossipServiceClient(conn).Propagation(ctx, request)
+			return propagation, err
 		}
 	}
 
 	go func() {
 		cancelCtx, cancelFunc := context.WithTimeout(context.Background(), s.totalTimeout)
 		defer cancelFunc()
-		_, err := sendTo(cancelCtx, request)
+		_, err := sendTo(cancelCtx, request, s.createTraceForRequest(request))
 		if err != nil {
 			s.log.Warn().Err(err).Msg("propagation failed")
 			return
@@ -82,6 +96,18 @@ func (s *service) Propagation(nodes []string, group string) error {
 	}()
 
 	return nil
+}
+
+func (s *service) LocateNodes(group string, shardID, replicasCount uint32) ([]string, error) {
+	result := make([]string, 0, replicasCount)
+	for r := range replicasCount {
+		node, err := s.sel.Pick(group, "", shardID, r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to locate node for group %s, shardID %d, replica %d: %w", group, shardID, r, err)
+		}
+		result = append(result, node)
+	}
+	return result, nil
 }
 
 func (s *service) getRegisteredNode(id string) (*databasev1.Node, bool) {
@@ -92,6 +118,9 @@ func (s *service) getRegisteredNode(id string) (*databasev1.Node, bool) {
 }
 
 func (s *service) OnAddOrUpdate(md schema.Metadata) {
+	if s.traceStreamSelector != nil {
+		s.traceStreamSelector.(schema.EventHandler).OnAddOrUpdate(md)
+	}
 	if md.Kind != schema.KindNode {
 		return
 	}
@@ -99,6 +128,10 @@ func (s *service) OnAddOrUpdate(md schema.Metadata) {
 	if !ok {
 		s.log.Warn().Msg("invalid metadata type")
 		return
+	}
+	s.sel.AddNode(node)
+	if s.traceStreamSelector != nil {
+		s.traceStreamSelector.AddNode(node)
 	}
 	address := node.PropertyRepairGossipGrpcAddress
 	if address == "" {
@@ -119,6 +152,9 @@ func (s *service) OnAddOrUpdate(md schema.Metadata) {
 }
 
 func (s *service) OnDelete(md schema.Metadata) {
+	if s.traceStreamSelector != nil {
+		s.traceStreamSelector.(schema.EventHandler).OnDelete(md)
+	}
 	if md.Kind != schema.KindNode {
 		return
 	}
@@ -131,6 +167,10 @@ func (s *service) OnDelete(md schema.Metadata) {
 	if name == "" {
 		s.log.Warn().Stringer("node", node).Msg("node does not have a name, skipping deregistration")
 		return
+	}
+	s.sel.RemoveNode(node)
+	if s.traceStreamSelector != nil {
+		s.traceStreamSelector.RemoveNode(node)
 	}
 
 	s.mu.Lock()

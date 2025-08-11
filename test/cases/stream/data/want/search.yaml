@@ -16,7 +16,7 @@
 # under the License.
 
 elements:
-  - elementId: "1"
+  - elementId: "4dd999e3502d728d"
     tagFamilies:
     - name: searchable
       tags:
@@ -33,7 +33,7 @@ elements:
       - key: data_binary
         value:
           binaryData: YWJjMTIzIT8kKiYoKSctPUB+
-  - elementId: "2"
+  - elementId: "fafaa63b403a1604"
     tagFamilies:
     - name: searchable
       tags:

@@ -40,7 +40,10 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/node"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -60,51 +63,63 @@ const (
 
 type service struct {
 	schema.UnimplementedOnInitHandler
-	metadata        metadata.Repo
-	creds           credentials.TransportCredentials
-	omr             observability.MetricsRegistry
-	registered      map[string]*databasev1.Node
-	ser             *grpclib.Server
-	serverMetrics   *serverMetrics
-	log             *logger.Logger
-	closer          *run.Closer
-	protocolHandler *protocolHandler
-	keyFile         string
-	addr            string
-	certFile        string
-	host            string
-	nodeID          string
-	caCertPath      string
-	listeners       []MessageListener
-	maxRecvMsgSize  run.Bytes
-	listenersLock   sync.RWMutex
-	mu              sync.RWMutex
-	port            uint32
-	tls             bool
-
-	totalTimeout time.Duration
-	// TODO: should pass by property repair configuration
-	scheduleInterval time.Duration
+	pipeline            queue.Client
+	metadata            metadata.Repo
+	creds               credentials.TransportCredentials
+	omr                 observability.MetricsRegistry
+	sel                 node.Selector
+	traceStreamSelector node.Selector
+	ser                 *grpclib.Server
+	log                 *logger.Logger
+	closer              *run.Closer
+	serverMetrics       *serverMetrics
+	protocolHandler     *protocolHandler
+	registered          map[string]*databasev1.Node
+	traceSpanNotified   *int32
+	caCertPath          string
+	host                string
+	addr                string
+	nodeID              string
+	certFile            string
+	keyFile             string
+	traceSpanSending    []*recordTraceSpan
+	listeners           []MessageListener
+	serviceRegister     []func(s *grpclib.Server)
+	traceEntityLocator  partition.Locator
+	maxRecvMsgSize      run.Bytes
+	totalTimeout        time.Duration
+	scheduleInterval    time.Duration
+	serviceRegisterLock sync.RWMutex
+	traceSpanLock       sync.RWMutex
+	listenersLock       sync.RWMutex
+	mu                  sync.RWMutex
+	port                uint32
+	traceLogEnabled     bool
+	tls                 bool
 }
 
 // NewMessenger creates a new instance of Messenger for gossip propagation communication between nodes.
-func NewMessenger(omr observability.MetricsRegistry, metadata metadata.Repo) Messenger {
+func NewMessenger(omr observability.MetricsRegistry, metadata metadata.Repo, pipeline queue.Client) Messenger {
 	return &service{
 		metadata:         metadata,
 		omr:              omr,
 		closer:           run.NewCloser(1),
+		pipeline:         pipeline,
 		serverMetrics:    newServerMetrics(omr.With(serverScope)),
 		maxRecvMsgSize:   defaultRecvSize,
 		totalTimeout:     defaultTotalTimeout,
 		listeners:        make([]MessageListener, 0),
 		registered:       make(map[string]*databasev1.Node),
 		scheduleInterval: time.Hour * 2,
+		sel:              node.NewRoundRobinSelector("", metadata),
 	}
 }
 
 // NewMessengerWithoutMetadata creates a new instance of Messenger without metadata.
-func NewMessengerWithoutMetadata(omr observability.MetricsRegistry) Messenger {
-	return NewMessenger(omr, nil)
+func NewMessengerWithoutMetadata(omr observability.MetricsRegistry, port int) Messenger {
+	messenger := NewMessenger(omr, nil, nil)
+	messenger.(*service).port = uint32(port)
+	return messenger
 }
 
 func (s *service) PreRun(ctx context.Context) error {
@@ -118,7 +133,11 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.listeners = make([]MessageListener, 0)
 	s.serverMetrics = newServerMetrics(s.omr.With(serverScope))
 	if s.metadata != nil {
-		s.metadata.RegisterHandler("property-repair-gossip", schema.KindNode, s)
+		s.metadata.RegisterHandler("property-repair-nodes", schema.KindNode, s)
+		s.metadata.RegisterHandler("property-repair-groups", schema.KindGroup, s)
+		if err := s.initTracing(ctx); err != nil {
+			s.log.Warn().Err(err).Msg("failed to init internal trace stream")
+		}
 	}
 	s.protocolHandler = newProtocolHandler(s)
 	go s.protocolHandler.processPropagation()
@@ -149,6 +168,7 @@ func (s *service) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.keyFile, "property-repair-gossip-grpc-server-key-file", "", "the TLS key file")
 	fs.StringVar(&s.caCertPath, "property-repair-gossip-client-ca-cert", "", "Path to the CA certificate for gossip client TLS communication.")
 	fs.DurationVar(&s.totalTimeout, "property-repair-gossip-total-timeout", defaultTotalTimeout, "the total timeout for gossip propagation")
+	fs.BoolVar(&s.traceLogEnabled, "property-repair-gossip-trace-log", true, "enable trace log")
 	return fs
 }
 
@@ -207,6 +227,9 @@ func (s *service) Serve(stopCh chan struct{}) {
 	s.ser = grpclib.NewServer(opts...)
 
 	propertyv1.RegisterGossipServiceServer(s.ser, s.protocolHandler)
+	for _, register := range s.getServiceRegisters() {
+		register(s.ser)
+	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -230,6 +253,9 @@ func (s *service) Serve(stopCh chan struct{}) {
 }
 
 func (s *service) GracefulStop() {
+	if s.ser == nil {
+		return
+	}
 	s.closer.Done()
 	s.closer.CloseThenWait()
 

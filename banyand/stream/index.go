@@ -46,10 +46,11 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 	}
 	var err error
 	if ei.store, err = inverted.NewStore(inverted.StoreOpts{
-		Path:         ei.location,
-		Logger:       ei.l,
-		BatchWaitSec: flushTimeoutSeconds,
-		Metrics:      metrics,
+		Path:                   ei.location,
+		Logger:                 ei.l,
+		BatchWaitSec:           flushTimeoutSeconds,
+		Metrics:                metrics,
+		ExternalSegmentTempDir: path.Join(root, inverted.ExternalSegmentTempDirName),
 	}); err != nil {
 		return nil, err
 	}
@@ -105,6 +106,10 @@ func (e *elementIndex) Search(ctx context.Context, seriesList []uint64, filter i
 		}
 	}
 	return result, resultTS, nil
+}
+
+func (e *elementIndex) EnableExternalSegments() (index.ExternalSegmentStreamer, error) {
+	return e.store.EnableExternalSegments()
 }
 
 func (e *elementIndex) Close() error {

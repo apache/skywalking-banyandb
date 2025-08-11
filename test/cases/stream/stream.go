@@ -34,10 +34,8 @@ import (
 var (
 	// SharedContext is the parallel execution context.
 	SharedContext helpers.SharedContext
-	verify        = func(_ gm.Gomega, args helpers.Args) {
-		gm.Eventually(func(innerGm gm.Gomega) {
-			stream_test_data.VerifyFn(innerGm, SharedContext, args)
-		}, flags.EventuallyTimeout).Should(gm.Succeed())
+	verify        = func(innerGm gm.Gomega, args helpers.Args) {
+		stream_test_data.VerifyFn(innerGm, SharedContext, args)
 	}
 )
 

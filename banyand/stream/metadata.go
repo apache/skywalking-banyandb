@@ -434,13 +434,17 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 		SubQueueCreator: newWriteQueue,
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1
-			nodes := make([]string, 0, copies)
+			nodeSet := make(map[string]struct{}, copies)
 			for i := uint32(0); i < copies; i++ {
 				nodeID, err := s.streamDataNodeRegistry.Locate(group, "", uint32(shardID), i)
 				if err != nil {
 					s.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Uint32("copy", i).Msg("failed to locate node")
 					return nil
 				}
+				nodeSet[nodeID] = struct{}{}
+			}
+			nodes := make([]string, 0, len(nodeSet))
+			for nodeID := range nodeSet {
 				nodes = append(nodes, nodeID)
 			}
 			return nodes

@@ -36,12 +36,14 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -58,9 +60,10 @@ var (
 )
 
 // NewServer return a http service.
-func NewServer() Server {
+func NewServer(cfg *auth.Config) Server {
 	return &server{
 		stopCh: make(chan struct{}),
+		cfg:    cfg,
 	}
 }
 
@@ -87,6 +90,7 @@ type server struct {
 	grpcAddr        string
 	keyFile         string
 	certFile        string
+	cfg             *auth.Config
 	grpcCert        string
 	grpcMu          sync.Mutex
 	port            uint32
@@ -338,7 +342,7 @@ func (p *server) initGRPCClient() error {
 	p.grpcClient.Store(client)
 
 	// Create gateway mux with health endpoint
-	p.gwMux = runtime.NewServeMux(runtime.WithHealthzEndpoint(p.grpcClient.Load()))
+	p.gwMux = runtime.NewServeMux()
 
 	// Register all service handlers
 	err = multierr.Combine(
@@ -363,6 +367,27 @@ func (p *server) initGRPCClient() error {
 	// Create a new router to replace the existing one
 	// This avoids the conflict when remounting to /api path
 	newMux := chi.NewRouter()
+
+	newMux.Use(authMiddleware(p.cfg))
+	newMux.Handle("/api/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := buildGRPCContextForHealthCheck(p.cfg, r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		resp, err := p.grpcClient.Load().Check(ctx, &grpc_health_v1.HealthCheckRequest{}) //nolint:contextcheck
+		if err != nil {
+			http.Error(w, "gRPC health check failed: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, err = w.Write([]byte(resp.Status.String()))
+		if err != nil {
+			logger.Errorf("Failed to write health check response: %v", err)
+		}
+	}))
 
 	// Mount the gateway mux to the HTTP server
 	newMux.Mount("/api", http.StripPrefix("/api", p.gwMux))
