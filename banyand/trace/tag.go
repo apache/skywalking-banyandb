@@ -382,7 +382,7 @@ func (t *tag) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffe
 		defer releaseDictionary(dict)
 		t.values, err = dict.Decode(t.values[:0], bb.Buf[1:], count)
 	} else {
-		t.values, err = decoder.Decode(t.values[:0], bb.Buf, count)
+		t.values, err = decoder.Decode(t.values[:0], bb.Buf[1:], count)
 	}
 	if err != nil {
 		logger.Panicf("%s: cannot decode values: %v", path, err)

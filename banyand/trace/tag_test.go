@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -114,5 +115,126 @@ func TestTag_mustWriteTo_mustReadValues(t *testing.T) {
 			unmarshaled.mustReadValues(decoder, buf, *tm, uint64(len(tt.tag.values)))
 			assert.Equal(t, tt.tag.values, unmarshaled.values)
 		})
+	}
+}
+
+func TestTag_HighCardinalityStringEncoding(t *testing.T) {
+	tests := []struct {
+		name            string
+		description     string
+		expectedEncType encoding.EncodeType
+		uniqueCount     int
+		totalCount      int
+	}{
+		{
+			name:            "exactly 256 unique values - should use dictionary",
+			uniqueCount:     256,
+			totalCount:      256,
+			expectedEncType: encoding.EncodeTypeDictionary,
+			description:     "Dictionary encoding should be used when exactly at the threshold",
+		},
+		{
+			name:            "257 unique values - should use plain encoding",
+			uniqueCount:     257,
+			totalCount:      257,
+			expectedEncType: encoding.EncodeTypePlain,
+			description:     "Plain encoding should be used when exceeding dictionary threshold",
+		},
+		{
+			name:            "300 unique values - should use plain encoding",
+			uniqueCount:     300,
+			totalCount:      300,
+			expectedEncType: encoding.EncodeTypePlain,
+			description:     "Plain encoding should be used for high cardinality strings",
+		},
+		{
+			name:            "1000 unique values - should use plain encoding",
+			uniqueCount:     1000,
+			totalCount:      1000,
+			expectedEncType: encoding.EncodeTypePlain,
+			description:     "Plain encoding should be used for very high cardinality",
+		},
+		{
+			name:            "500 total with 200 unique - should use dictionary",
+			uniqueCount:     200,
+			totalCount:      500,
+			expectedEncType: encoding.EncodeTypeDictionary,
+			description:     "Dictionary should be used when unique count is below threshold despite high total count",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Generate unique string values
+			values := make([][]byte, tt.totalCount)
+
+			// Create unique values up to uniqueCount
+			for i := 0; i < tt.uniqueCount; i++ {
+				values[i] = []byte(fmt.Sprintf("unique_value_%06d", i))
+			}
+
+			// If totalCount > uniqueCount, repeat some values to reach totalCount
+			for i := tt.uniqueCount; i < tt.totalCount; i++ {
+				// Repeat values cyclically
+				repeatIndex := i % tt.uniqueCount
+				values[i] = []byte(fmt.Sprintf("unique_value_%06d", repeatIndex))
+			}
+
+			testTag := &tag{
+				name:      "high_cardinality_tag",
+				valueType: pbv1.ValueTypeStr,
+				values:    values,
+			}
+
+			// Encode the tag
+			tm := &tagMetadata{}
+			buf, filterBuf := &bytes.Buffer{}, &bytes.Buffer{}
+			w, fw := &writer{}, &writer{}
+			w.init(buf)
+			fw.init(filterBuf)
+
+			testTag.mustWriteTo(tm, w, fw)
+
+			// Verify basic metadata
+			assert.Equal(t, w.bytesWritten, tm.size)
+			assert.Equal(t, uint64(len(buf.Buf)), tm.size)
+			assert.Equal(t, uint64(0), tm.offset)
+			assert.Equal(t, testTag.name, tm.name)
+			assert.Equal(t, testTag.valueType, tm.valueType)
+
+			// Check encoding type by examining the first byte of the encoded data
+			assert.True(t, len(buf.Buf) > 0, "Encoded buffer should not be empty")
+			actualEncType := encoding.EncodeType(buf.Buf[0])
+			assert.Equal(t, tt.expectedEncType, actualEncType,
+				"Expected %s encoding (%d), got %d. %s",
+				getEncodeTypeName(tt.expectedEncType), tt.expectedEncType, actualEncType, tt.description)
+
+			// Test roundtrip: decode and verify all values are preserved
+			decoder := &encoding.BytesBlockDecoder{}
+			unmarshaled := &tag{}
+			unmarshaled.name = tm.name
+			unmarshaled.valueType = tm.valueType
+			unmarshaled.mustReadValues(decoder, buf, *tm, uint64(len(testTag.values)))
+
+			assert.Equal(t, len(testTag.values), len(unmarshaled.values), "Number of values should match")
+
+			// Verify all values are correctly decoded
+			for i, originalValue := range testTag.values {
+				assert.Equal(t, originalValue, unmarshaled.values[i],
+					"Value at index %d should match original", i)
+			}
+		})
+	}
+}
+
+// Helper function to get encode type name for better test output.
+func getEncodeTypeName(encType encoding.EncodeType) string {
+	switch encType {
+	case encoding.EncodeTypePlain:
+		return "Plain"
+	case encoding.EncodeTypeDictionary:
+		return "Dictionary"
+	default:
+		return fmt.Sprintf("Unknown(%d)", encType)
 	}
 }
