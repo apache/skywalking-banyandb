@@ -38,3 +38,8 @@ message WriteResponse {
   uint64 version = 2;
   string status = 3;
 }
+
+message InternalWriteRequest {
+  uint32 shard_id = 1;
+  WriteRequest request = 2;
+}

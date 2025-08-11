@@ -150,4 +150,8 @@ issues:
   - linters:
     - staticcheck
     text: "SA1019: package github.com/golang/protobuf"
+  - path: "^trace/"
+    linters:
+    - unused
+    - unparam
   max-same-issues: 0

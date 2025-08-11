@@ -37,7 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
-func Test_tsTable_mustAddDataPoints(t *testing.T) {
+func Test_tsTable_mustAddElements(t *testing.T) {
 	tests := []struct {
 		name   string
 		esList []*elements
@@ -187,8 +187,8 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 1,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 859},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
 					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 				},
 			},
@@ -199,10 +199,10 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 859},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 859},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
 					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 				},
@@ -214,10 +214,10 @@ func Test_tstIter(t *testing.T) {
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
-					{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
-					{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 859},
+					{seriesID: 1, count: 1, uncompressedSizeBytes: 859},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
+					{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
 					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 					{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 				},
@@ -322,18 +322,18 @@ var esTS2 = &elements{
 	},
 }
 
-func generateHugeEs(startTimestamp, endTimestamp, timestamp int64) *elements {
-	hugeEs := &elements{
+func generateHugeElements(startTimestamp, endTimestamp, timestamp int64) *elements {
+	elements := &elements{
 		seriesIDs:   []common.SeriesID{},
 		timestamps:  []int64{},
 		elementIDs:  []uint64{},
 		tagFamilies: [][]tagValues{},
 	}
 	for i := startTimestamp; i <= endTimestamp; i++ {
-		hugeEs.seriesIDs = append(hugeEs.seriesIDs, 1)
-		hugeEs.timestamps = append(hugeEs.timestamps, i)
-		hugeEs.elementIDs = append(hugeEs.elementIDs, 10+uint64(i))
-		hugeEs.tagFamilies = append(hugeEs.tagFamilies, []tagValues{
+		elements.seriesIDs = append(elements.seriesIDs, 1)
+		elements.timestamps = append(elements.timestamps, i)
+		elements.elementIDs = append(elements.elementIDs, 10+uint64(i))
+		elements.tagFamilies = append(elements.tagFamilies, []tagValues{
 			{
 				tag: "arrTag", values: []*tagValue{
 					{tag: "strArrTag", valueType: pbv1.ValueTypeStrArr, value: nil, valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
@@ -353,10 +353,10 @@ func generateHugeEs(startTimestamp, endTimestamp, timestamp int64) *elements {
 			},
 		})
 	}
-	hugeEs.seriesIDs = append(hugeEs.seriesIDs, []common.SeriesID{2, 3}...)
-	hugeEs.timestamps = append(hugeEs.timestamps, []int64{timestamp, timestamp}...)
-	hugeEs.elementIDs = append(hugeEs.elementIDs, []uint64{20 + uint64(timestamp), 30 + uint64(timestamp)}...)
-	hugeEs.tagFamilies = append(hugeEs.tagFamilies, [][]tagValues{{
+	elements.seriesIDs = append(elements.seriesIDs, []common.SeriesID{2, 3}...)
+	elements.timestamps = append(elements.timestamps, []int64{timestamp, timestamp}...)
+	elements.elementIDs = append(elements.elementIDs, []uint64{20 + uint64(timestamp), 30 + uint64(timestamp)}...)
+	elements.tagFamilies = append(elements.tagFamilies, [][]tagValues{{
 		{
 			tag: "singleTag", values: []*tagValue{
 				{tag: "strTag1", valueType: pbv1.ValueTypeStr, value: []byte("tag3"), valueArr: nil},
@@ -364,5 +364,5 @@ func generateHugeEs(startTimestamp, endTimestamp, timestamp int64) *elements {
 			},
 		},
 	}, {}}...)
-	return hugeEs
+	return elements
 }

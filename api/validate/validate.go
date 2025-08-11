@@ -51,12 +51,12 @@ func Group(group *commonv1.Group) error {
 		}
 		return nil
 	}
-	return GroupForStreamOrMeasure(group)
+	return GroupForNonProperty(group)
 }
 
-// GroupForStreamOrMeasure validates the provided Group object for Stream or Measure.
+// GroupForNonProperty validates the provided Group object for Stream or Measure.
 // It checks for nil values, empty strings, and unspecified enum values.
-func GroupForStreamOrMeasure(group *commonv1.Group) error {
+func GroupForNonProperty(group *commonv1.Group) error {
 	if group == nil {
 		return errors.New("group is nil")
 	}

@@ -241,7 +241,7 @@ func Test_mergeParts(t *testing.T) {
 		want    []blockMetadata
 	}{
 		{
-			name:    "Test with no data points",
+			name:    "Test with no element",
 			esList:  []*elements{},
 			wantErr: errNoPartToMerge,
 		},
@@ -249,8 +249,8 @@ func Test_mergeParts(t *testing.T) {
 			name:   "Test with single part",
 			esList: []*elements{esTS1},
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 889},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 859},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
 				{seriesID: 3, count: 1, uncompressedSizeBytes: 16},
 			},
 		},
@@ -258,8 +258,8 @@ func Test_mergeParts(t *testing.T) {
 			name:   "Test with multiple parts with different ts",
 			esList: []*elements{esTS1, esTS2, esTS2},
 			want: []blockMetadata{
-				{seriesID: 1, count: 3, uncompressedSizeBytes: 2667},
-				{seriesID: 2, count: 3, uncompressedSizeBytes: 189},
+				{seriesID: 1, count: 3, uncompressedSizeBytes: 2451},
+				{seriesID: 2, count: 3, uncompressedSizeBytes: 95},
 				{seriesID: 3, count: 3, uncompressedSizeBytes: 48},
 			},
 		},
@@ -267,21 +267,19 @@ func Test_mergeParts(t *testing.T) {
 			name:   "Test with multiple parts with same ts",
 			esList: []*elements{esTS1, esTS1, esTS1},
 			want: []blockMetadata{
-				{seriesID: 1, count: 3, uncompressedSizeBytes: 2667},
-				{seriesID: 2, count: 3, uncompressedSizeBytes: 189},
+				{seriesID: 1, count: 3, uncompressedSizeBytes: 2451},
+				{seriesID: 2, count: 3, uncompressedSizeBytes: 95},
 				{seriesID: 3, count: 3, uncompressedSizeBytes: 48},
 			},
 		},
 		{
 			name:   "Test with multiple parts with a large quantity of different ts",
-			esList: []*elements{generateHugeEs(1, 5000, 1), generateHugeEs(5001, 10000, 2)},
+			esList: []*elements{generateHugeElements(1, 5000, 1), generateHugeElements(5001, 10000, 2)},
 			want: []blockMetadata{
-				{seriesID: 1, count: 2448, uncompressedSizeBytes: 2176272},
-				{seriesID: 1, count: 2448, uncompressedSizeBytes: 2176272},
-				{seriesID: 1, count: 2552, uncompressedSizeBytes: 2268728},
-				{seriesID: 1, count: 2448, uncompressedSizeBytes: 2176272},
-				{seriesID: 1, count: 104, uncompressedSizeBytes: 92456},
-				{seriesID: 2, count: 2, uncompressedSizeBytes: 126},
+				{seriesID: 1, count: 4896, uncompressedSizeBytes: 3897279},
+				{seriesID: 1, count: 5000, uncompressedSizeBytes: 3980063},
+				{seriesID: 1, count: 104, uncompressedSizeBytes: 82847},
+				{seriesID: 2, count: 2, uncompressedSizeBytes: 71},
 				{seriesID: 3, count: 2, uncompressedSizeBytes: 32},
 			},
 		},
