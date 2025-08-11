@@ -317,11 +317,11 @@ type StreamQueryResult interface {
 
 // TraceQueryOptions is the options of a trace query.
 type TraceQueryOptions struct {
-	Name           string
 	TimeRange      *timestamp.TimeRange
 	SkippingFilter index.Filter
 	Order          *index.OrderBy
 	TagProjection  *TagProjection
+	Name           string
 	MaxTraceSize   int
 }
 

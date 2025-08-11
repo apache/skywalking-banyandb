@@ -144,7 +144,7 @@ func (w *writeQueueCallback) prepareElementsInTable(eq *tracesInQueue, writeEven
 	return et, nil
 }
 
-func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeQueueCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")

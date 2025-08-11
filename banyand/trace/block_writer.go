@@ -213,7 +213,7 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 	bw.writers.spanWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, spansFilename), storage.FilePerm, shouldCache))
 }
 
-func (bw *blockWriter) MustWriteTrace(tidLen uint32, tid string, spans [][]byte, tags [][]*tagValue, timestamps []int64) {
+func (bw *blockWriter) MustWriteTrace(tid string, spans [][]byte, tags [][]*tagValue, timestamps []int64) {
 	if len(spans) == 0 {
 		return
 	}

@@ -45,6 +45,6 @@ func (bc *blockCursor) String() string {
 		bc.p.partMetadata.ID, bc.bm.traceID, bc.bm.count, humanize.Bytes(bc.bm.uncompressedSpanSizeBytes))
 }
 
-func startBlockScanSpan(ctx context.Context, sids int, parts []*part) func() {
+func startBlockScanSpan(_ context.Context, _ int, _ []*part) func() {
 	panic("unimplemented")
 }
