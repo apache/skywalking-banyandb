@@ -32,6 +32,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -69,11 +70,11 @@ type FieldKey struct {
 }
 
 // Marshal encodes f to string.
-func (f FieldKey) Marshal() string {
-	if len(f.TagName) > 0 {
-		return f.TagName
+func (fk FieldKey) Marshal() string {
+	if len(fk.TagName) > 0 {
+		return fk.TagName
 	}
-	return string(convert.Uint32ToBytes(f.IndexRuleID))
+	return string(convert.Uint32ToBytes(fk.IndexRuleID))
 }
 
 // NewStringField creates a new string field.
@@ -144,6 +145,8 @@ func (f *Field) MarshalJSON() ([]byte, error) {
 type IsTermValue interface {
 	isTermValue()
 	String() string
+	Marshal() ([]byte, error)
+	Unmarshal(data []byte) error
 }
 
 // BytesTermValue represents a byte term value.
@@ -153,8 +156,37 @@ type BytesTermValue struct {
 
 func (BytesTermValue) isTermValue() {}
 
-func (b BytesTermValue) String() string {
-	return convert.BytesToString(b.Value)
+func (bv BytesTermValue) String() string {
+	return convert.BytesToString(bv.Value)
+}
+
+// Marshal encodes BytesTermValue to bytes.
+func (bv BytesTermValue) Marshal() ([]byte, error) {
+	var result []byte
+	result = append(result, 0) // type: bytes
+	result = encoding.EncodeBytes(result, bv.Value)
+	return result, nil
+}
+
+// Unmarshal decodes BytesTermValue from bytes.
+func (bv *BytesTermValue) Unmarshal(data []byte) error {
+	if len(data) < 1 {
+		return fmt.Errorf("insufficient data for term value type")
+	}
+
+	if data[0] != 0 {
+		return fmt.Errorf("invalid term value type, expected bytes (0), got %d", data[0])
+	}
+
+	var valueBytes []byte
+	var err error
+	_, valueBytes, err = encoding.DecodeBytes(data[1:])
+	if err != nil {
+		return fmt.Errorf("failed to decode bytes value: %w", err)
+	}
+
+	bv.Value = valueBytes
+	return nil
 }
 
 // FloatTermValue represents a float term value.
@@ -164,8 +196,41 @@ type FloatTermValue struct {
 
 func (FloatTermValue) isTermValue() {}
 
-func (f FloatTermValue) String() string {
-	return strconv.FormatInt(numeric.Float64ToInt64(f.Value), 10)
+func (fv FloatTermValue) String() string {
+	return strconv.FormatInt(numeric.Float64ToInt64(fv.Value), 10)
+}
+
+// Marshal encodes FloatTermValue to bytes.
+func (fv FloatTermValue) Marshal() ([]byte, error) {
+	var result []byte
+	result = append(result, 1) // type: float
+	result = encoding.EncodeBytes(result, convert.Float64ToBytes(fv.Value))
+	return result, nil
+}
+
+// Unmarshal decodes FloatTermValue from bytes.
+func (fv *FloatTermValue) Unmarshal(data []byte) error {
+	if len(data) < 1 {
+		return fmt.Errorf("insufficient data for term value type")
+	}
+
+	if data[0] != 1 {
+		return fmt.Errorf("invalid term value type, expected float (1), got %d", data[0])
+	}
+
+	var valueBytes []byte
+	var err error
+	_, valueBytes, err = encoding.DecodeBytes(data[1:])
+	if err != nil {
+		return fmt.Errorf("failed to decode float value: %w", err)
+	}
+
+	if len(valueBytes) != 8 {
+		return fmt.Errorf("invalid float value length: %d", len(valueBytes))
+	}
+
+	fv.Value = convert.BytesToFloat64(valueBytes)
+	return nil
 }
 
 // RangeOpts contains options to performance a continuous scan.
@@ -201,6 +266,123 @@ func (r RangeOpts) Valid() bool {
 	return true
 }
 
+// Marshal encodes RangeOpts to bytes.
+func (r RangeOpts) Marshal() ([]byte, error) {
+	var result []byte
+
+	// Marshal Upper
+	if r.Upper != nil {
+		result = append(result, 1) // has upper
+		upperBytes, err := r.Upper.Marshal()
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal upper: %w", err)
+		}
+		result = encoding.EncodeBytes(result, upperBytes)
+	} else {
+		result = append(result, 0) // no upper
+	}
+
+	// Marshal Lower
+	if r.Lower != nil {
+		result = append(result, 1) // has lower
+		lowerBytes, err := r.Lower.Marshal()
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal lower: %w", err)
+		}
+		result = encoding.EncodeBytes(result, lowerBytes)
+	} else {
+		result = append(result, 0) // no lower
+	}
+
+	// Marshal boolean flags
+	flags := byte(0)
+	if r.IncludesUpper {
+		flags |= 1
+	}
+	if r.IncludesLower {
+		flags |= 2
+	}
+	result = append(result, flags)
+
+	return result, nil
+}
+
+// Unmarshal decodes RangeOpts from bytes.
+func (r *RangeOpts) Unmarshal(data []byte) error {
+	if len(data) < 3 {
+		return fmt.Errorf("insufficient data for range options")
+	}
+
+	// Unmarshal Upper
+	hasUpper := data[0] == 1
+	tail := data[1:]
+
+	if hasUpper {
+		var upperBytes []byte
+		var err error
+		tail, upperBytes, err = encoding.DecodeBytes(tail)
+		if err != nil {
+			return fmt.Errorf("failed to decode upper: %w", err)
+		}
+		// Create the appropriate type based on the first byte
+		if len(upperBytes) > 0 {
+			switch upperBytes[0] {
+			case 0:
+				r.Upper = &BytesTermValue{}
+			case 1:
+				r.Upper = &FloatTermValue{}
+			default:
+				return fmt.Errorf("unknown term value type for upper: %d", upperBytes[0])
+			}
+		} else {
+			return fmt.Errorf("empty upperBytes for upper term")
+		}
+		if err := r.Upper.Unmarshal(upperBytes); err != nil {
+			return fmt.Errorf("failed to unmarshal upper: %w", err)
+		}
+	} else {
+		r.Upper = nil
+	}
+
+	// Unmarshal Lower
+	hasLower := tail[0] == 1
+	tail = tail[1:]
+
+	if hasLower {
+		var lowerBytes []byte
+		var err error
+		tail, lowerBytes, err = encoding.DecodeBytes(tail)
+		if err != nil {
+			return fmt.Errorf("failed to decode lower: %w", err)
+		}
+		// Create the appropriate type based on the first byte
+		if len(lowerBytes) > 0 {
+			switch lowerBytes[0] {
+			case 0:
+				r.Lower = &BytesTermValue{}
+			case 1:
+				r.Lower = &FloatTermValue{}
+			default:
+				return fmt.Errorf("unknown term value type for lower: %d", lowerBytes[0])
+			}
+		} else {
+			return fmt.Errorf("empty lowerBytes for lower term")
+		}
+		if err := r.Lower.Unmarshal(lowerBytes); err != nil {
+			return fmt.Errorf("failed to unmarshal lower: %w", err)
+		}
+	} else {
+		r.Lower = nil
+	}
+
+	// Unmarshal boolean flags
+	flags := tail[0]
+	r.IncludesUpper = (flags & 1) != 0
+	r.IncludesLower = (flags & 2) != 0
+
+	return nil
+}
+
 // NewStringRangeOpts creates a new string range option.
 func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) RangeOpts {
 	var upperBytes, lowerBytes []byte
@@ -215,8 +397,8 @@ func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) 
 		lowerBytes = convert.StringToBytes(lower)
 	}
 	return RangeOpts{
-		Lower:         &BytesTermValue{Value: upperBytes},
-		Upper:         &BytesTermValue{Value: lowerBytes},
+		Lower:         &BytesTermValue{Value: lowerBytes},
+		Upper:         &BytesTermValue{Value: upperBytes},
 		IncludesLower: includesLower,
 		IncludesUpper: includesUpper,
 	}
@@ -300,11 +482,305 @@ type Document struct {
 	Timestamp    int64
 	DocID        uint64
 	Version      int64
-	DeletedTime  int64 // for logical deletion
 }
 
 // Documents is a collection of documents.
 type Documents []Document
+
+// Marshal encodes Documents to bytes.
+func (docs Documents) Marshal() ([]byte, error) {
+	var result []byte
+
+	// Write the number of documents
+	result = encoding.VarUint64ToBytes(result, uint64(len(docs)))
+
+	// Marshal each document
+	for _, doc := range docs {
+		docBytes, err := doc.Marshal()
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal document: %w", err)
+		}
+		result = encoding.EncodeBytes(result, docBytes)
+	}
+
+	return result, nil
+}
+
+// Unmarshal decodes Documents from bytes.
+func (docs *Documents) Unmarshal(data []byte) error {
+	if len(data) == 0 {
+		*docs = nil
+		return nil
+	}
+
+	// Read the number of documents
+	tail, docCount := encoding.BytesToVarUint64(data)
+	if uint64(len(tail)) < docCount {
+		return fmt.Errorf("insufficient data for documents: need %d documents, have %d bytes", docCount, len(tail))
+	}
+
+	// Initialize the documents slice
+	*docs = make(Documents, 0, docCount)
+
+	// Unmarshal each document
+	for i := uint64(0); i < docCount; i++ {
+		var docBytes []byte
+		var err error
+		tail, docBytes, err = encoding.DecodeBytes(tail)
+		if err != nil {
+			return fmt.Errorf("failed to decode document %d: %w", i, err)
+		}
+
+		var doc Document
+		if err := doc.Unmarshal(docBytes); err != nil {
+			return fmt.Errorf("failed to unmarshal document %d: %w", i, err)
+		}
+
+		*docs = append(*docs, doc)
+	}
+
+	return nil
+}
+
+// Marshal encodes Document to bytes.
+func (doc Document) Marshal() ([]byte, error) {
+	var result []byte
+
+	// Marshal EntityValues
+	result = encoding.EncodeBytes(result, doc.EntityValues)
+
+	// Marshal Timestamp
+	result = encoding.VarInt64ToBytes(result, doc.Timestamp)
+
+	// Marshal DocID
+	result = encoding.VarUint64ToBytes(result, doc.DocID)
+
+	// Marshal Version
+	result = encoding.VarInt64ToBytes(result, doc.Version)
+
+	// Marshal Fields
+	result = encoding.VarUint64ToBytes(result, uint64(len(doc.Fields)))
+	for _, field := range doc.Fields {
+		fieldBytes, err := field.Marshal()
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal field: %w", err)
+		}
+		result = encoding.EncodeBytes(result, fieldBytes)
+	}
+
+	return result, nil
+}
+
+// Unmarshal decodes Document from bytes.
+func (doc *Document) Unmarshal(data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty data for document")
+	}
+	var (
+		tail         []byte
+		entityValues []byte
+		err          error
+	)
+	tail, entityValues, err = encoding.DecodeBytes(data)
+	if err != nil {
+		return fmt.Errorf("failed to decode entity values: %w", err)
+	}
+	doc.EntityValues = entityValues
+	var timestamp int64
+	tail, timestamp, err = encoding.BytesToVarInt64(tail)
+	if err != nil {
+		return fmt.Errorf("failed to decode timestamp: %w", err)
+	}
+	doc.Timestamp = timestamp
+	tail, doc.DocID = encoding.BytesToVarUint64(tail)
+	var version int64
+	tail, version, err = encoding.BytesToVarInt64(tail)
+	if err != nil {
+		return fmt.Errorf("failed to decode version: %w", err)
+	}
+	doc.Version = version
+	tail, fieldCount := encoding.BytesToVarUint64(tail)
+	doc.Fields = make([]Field, 0, fieldCount)
+	for i := uint64(0); i < fieldCount; i++ {
+		var fieldBytes []byte
+		tail, fieldBytes, err = encoding.DecodeBytes(tail)
+		if err != nil {
+			return fmt.Errorf("failed to decode field %d: %w", i, err)
+		}
+		var field Field
+		if err := field.Unmarshal(fieldBytes); err != nil {
+			return fmt.Errorf("failed to unmarshal field %d: %w", i, err)
+		}
+		doc.Fields = append(doc.Fields, field)
+	}
+	return nil
+}
+
+// Marshal encodes Field to bytes.
+func (f Field) Marshal() ([]byte, error) {
+	var result []byte
+	// Marshal Key
+	keyBytes, err := f.Key.MarshalAll()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal field key: %w", err)
+	}
+	result = encoding.EncodeBytes(result, keyBytes)
+	// Marshal term
+	termBytes, err := f.term.Marshal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal field term: %w", err)
+	}
+	result = encoding.EncodeBytes(result, termBytes)
+	// Marshal boolean flags
+	flags := byte(0)
+	if f.NoSort {
+		flags |= 1
+	}
+	if f.Store {
+		flags |= 2
+	}
+	if f.Index {
+		flags |= 4
+	}
+	result = append(result, flags)
+	return result, nil
+}
+
+// Unmarshal decodes Field from bytes.
+func (f *Field) Unmarshal(data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty data for field")
+	}
+	var (
+		tail     []byte
+		keyBytes []byte
+		err      error
+	)
+	tail, keyBytes, err = encoding.DecodeBytes(data)
+	if err != nil {
+		return fmt.Errorf("failed to decode field key: %w", err)
+	}
+	if unmarshalErr := f.Key.UnmarshalAll(keyBytes); unmarshalErr != nil {
+		return fmt.Errorf("failed to unmarshal field key: %w", unmarshalErr)
+	}
+	var termBytes []byte
+	tail, termBytes, err = encoding.DecodeBytes(tail)
+	if err != nil {
+		return fmt.Errorf("failed to decode field term: %w", err)
+	}
+	if f.term == nil {
+		// Try to detect type from first byte
+		if len(termBytes) > 0 {
+			switch termBytes[0] {
+			case 0:
+				f.term = &BytesTermValue{}
+			case 1:
+				f.term = &FloatTermValue{}
+			default:
+				return fmt.Errorf("unknown term value type: %d", termBytes[0])
+			}
+		} else {
+			return fmt.Errorf("empty termBytes for field term")
+		}
+	}
+	if err := f.term.Unmarshal(termBytes); err != nil {
+		return fmt.Errorf("failed to unmarshal field term: %w", err)
+	}
+	if len(tail) < 1 {
+		return fmt.Errorf("insufficient data for field flags")
+	}
+	flags := tail[0]
+	f.NoSort = (flags & 1) != 0
+	f.Store = (flags & 2) != 0
+	f.Index = (flags & 4) != 0
+	return nil
+}
+
+// MarshalAll encodes FieldKey to bytes.
+func (fk FieldKey) MarshalAll() ([]byte, error) {
+	var result []byte
+
+	// Marshal TimeRange
+	if fk.TimeRange != nil {
+		result = append(result, 1) // has time range
+		timeRangeBytes, err := fk.TimeRange.Marshal()
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal time range: %w", err)
+		}
+		result = encoding.EncodeBytes(result, timeRangeBytes)
+	} else {
+		result = append(result, 0) // no time range
+	}
+
+	// Marshal Analyzer
+	result = encoding.EncodeBytes(result, convert.StringToBytes(fk.Analyzer))
+
+	// Marshal TagName
+	result = encoding.EncodeBytes(result, convert.StringToBytes(fk.TagName))
+
+	// Marshal SeriesID
+	result = fk.SeriesID.AppendToBytes(result)
+
+	// Marshal IndexRuleID
+	result = encoding.Uint32ToBytes(result, fk.IndexRuleID)
+
+	return result, nil
+}
+
+// UnmarshalAll decodes FieldKey from bytes.
+func (fk *FieldKey) UnmarshalAll(data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty data for field key")
+	}
+	// Unmarshal TimeRange
+	if len(data) < 1 {
+		return fmt.Errorf("insufficient data for time range flag")
+	}
+	hasTimeRange := data[0] == 1
+	tail := data[1:]
+	if hasTimeRange {
+		var timeRangeBytes []byte
+		var err error
+		tail, timeRangeBytes, err = encoding.DecodeBytes(tail)
+		if err != nil {
+			return fmt.Errorf("failed to decode time range: %w", err)
+		}
+		fk.TimeRange = &RangeOpts{}
+		if err := fk.TimeRange.Unmarshal(timeRangeBytes); err != nil {
+			return fmt.Errorf("failed to unmarshal time range: %w", err)
+		}
+	} else {
+		fk.TimeRange = nil
+	}
+	// Unmarshal Analyzer
+	var analyzerBytes []byte
+	var err error
+	tail, analyzerBytes, err = encoding.DecodeBytes(tail)
+	if err != nil {
+		return fmt.Errorf("failed to decode analyzer: %w", err)
+	}
+	fk.Analyzer = convert.BytesToString(analyzerBytes)
+	// Unmarshal TagName
+	var tagNameBytes []byte
+	tail, tagNameBytes, err = encoding.DecodeBytes(tail)
+	if err != nil {
+		return fmt.Errorf("failed to decode tag name: %w", err)
+	}
+	fk.TagName = convert.BytesToString(tagNameBytes)
+	// Unmarshal SeriesID
+	if len(tail) < 8 {
+		return fmt.Errorf("insufficient data for series ID")
+	}
+	fk.SeriesID = common.SeriesID(encoding.BytesToUint64(tail))
+	tail = tail[8:]
+	// Unmarshal IndexRuleID (fixed 4 bytes)
+	if len(tail) < 4 {
+		return fmt.Errorf("insufficient data for IndexRuleID")
+	}
+	fk.IndexRuleID = encoding.BytesToUint32(tail)
+	// No need to advance tail further as this is the last field
+	return nil
+}
 
 // Batch is a collection of documents.
 type Batch struct {
@@ -318,6 +794,7 @@ type Writer interface {
 	InsertSeriesBatch(batch Batch) error
 	UpdateSeriesBatch(batch Batch) error
 	Delete(docID [][]byte) error
+	EnableExternalSegments() (ExternalSegmentStreamer, error)
 }
 
 // FieldIterable allows building a FieldIterator.
@@ -439,8 +916,29 @@ func (s SeriesMatcher) String() string {
 // GetSearcher returns a searcher associated with input index rule type.
 type GetSearcher func(location databasev1.IndexRule_Type) (Searcher, error)
 
+// ExternalSegmentStreamer provides methods for streaming external segments into an index.
+type ExternalSegmentStreamer interface {
+	// StartSegment begins streaming a new segment.
+	StartSegment() error
+	// WriteChunk writes a chunk of segment data.
+	WriteChunk(data []byte) error
+	// CompleteSegment signals completion of segment streaming.
+	CompleteSegment() error
+	// Status returns the current status of the segment streaming.
+	Status() string
+	// BytesReceived returns the number of bytes received so far.
+	BytesReceived() uint64
+}
+
 // Filter is a node in the filter tree.
 type Filter interface {
 	fmt.Stringer
 	Execute(getSearcher GetSearcher, seriesID common.SeriesID, timeRange *RangeOpts) (posting.List, posting.List, error)
+	ShouldSkip(tagFamilyFilters FilterOp) (bool, error)
+}
+
+// FilterOp is an interface for filtering operations based on skipping index.
+type FilterOp interface {
+	Eq(tagName string, tagValue string) bool
+	Range(tagName string, rangeOpts RangeOpts) (bool, error)
 }

@@ -65,6 +65,11 @@ func SecureOptions(dest []grpc.DialOption, enabled, insecure bool, cert string) 
 
 // Conn returns a gRPC client connection once connecting the server.
 func Conn(addr string, healthCheckTimeout time.Duration, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	return ConnWithAuth(addr, healthCheckTimeout, "", "", opts...)
+}
+
+// ConnWithAuth returns a gRPC client connection once connecting the server with Auth.
+func ConnWithAuth(addr string, healthCheckTimeout time.Duration, username, password string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	l := logger.GetLogger("grpc-helper")
 
 	conn, err := grpc.NewClient(addr, opts...)
@@ -82,6 +87,11 @@ func Conn(addr string, healthCheckTimeout time.Duration, opts ...grpc.DialOption
 		}
 		ctx := context.Background()
 		ctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+		md := metadata.Pairs(
+			"username", username,
+			"password", password,
+		)
+		ctx = metadata.NewOutgoingContext(ctx, md)
 		_, err = healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 		cancel()
 		if err == nil {
@@ -98,7 +108,8 @@ func Request(ctx context.Context, rpcTimeout time.Duration, fn func(rpcCtx conte
 	rpcStart := time.Now()
 	rpcCtx, rpcCancel := context.WithTimeout(ctx, rpcTimeout)
 	defer rpcCancel()
-	rpcCtx = metadata.NewOutgoingContext(rpcCtx, make(metadata.MD))
+	md, _ := metadata.FromOutgoingContext(ctx)
+	rpcCtx = metadata.NewOutgoingContext(rpcCtx, md)
 	l := logger.GetLogger("grpc-helper")
 
 	err := fn(rpcCtx)

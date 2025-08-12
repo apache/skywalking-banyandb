@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 
@@ -25,8 +26,9 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -103,6 +105,28 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int) 
 		tags[j].resizeValues(elementsLen)
 		tags[j].valueType = t.valueType
 		tags[j].values[i] = t.marshal()
+		if !t.indexed {
+			continue
+		}
+		if tags[j].filter == nil {
+			filter := generateBloomFilter()
+			tags[j].filter = filter
+		}
+		tags[j].filter.SetN(elementsLen)
+		tags[j].filter.ResizeBits((elementsLen*filter.B + 63) / 64)
+		tags[j].filter.Add(t.value)
+		if t.valueType == pbv1.ValueTypeInt64 {
+			if len(tags[j].min) == 0 {
+				tags[j].min = t.value
+			} else if bytes.Compare(t.value, tags[j].min) == -1 {
+				tags[j].min = t.value
+			}
+			if len(tags[j].max) == 0 {
+				tags[j].max = t.value
+			} else if bytes.Compare(t.value, tags[j].max) == 1 {
+				tags[j].max = t.value
+			}
+		}
 	}
 }
 
@@ -159,12 +183,12 @@ func (b *block) validate() {
 }
 
 func (b *block) marshalTagFamily(tf tagFamily, bm *blockMetadata, ww *writers) {
-	hw, w := ww.getTagMetadataWriterAndTagWriter(tf.name)
+	hw, w, fw := ww.getWriters(tf.name)
 	cc := tf.tags
 	cfm := generateTagFamilyMetadata()
 	cmm := cfm.resizeTagMetadata(len(cc))
 	for i := range cc {
-		cc[i].mustWriteTo(&cmm[i], w)
+		cc[i].mustWriteTo(&cmm[i], w, fw)
 	}
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
@@ -186,7 +210,7 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 		return
 	}
 	bb := bigValuePool.Generate()
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
@@ -221,7 +245,7 @@ func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDec
 		logger.Panicf("offset %d must be equal to bytesRead %d", columnFamilyMetadataBlock.offset, metaReader.bytesRead)
 	}
 	bb := bigValuePool.Generate()
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
 	metaReader.mustReadFull(bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
@@ -330,7 +354,7 @@ func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps []int64, elementID
 func mustReadTimestampsFrom(timestamps []int64, elementIDs []uint64, tm *timestampsMetadata, count int, reader fs.Reader) ([]int64, []uint64) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tm.size))
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
 	return mustDecodeTimestampsWithVersions(timestamps, elementIDs, tm, count, reader.Path(), bb.Buf)
 }
@@ -359,7 +383,7 @@ func mustSeqReadTimestampsFrom(timestamps []int64, elementIDs []uint64, tm *time
 	}
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
-	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tm.size))
 	reader.mustReadFull(bb.Buf)
 	return mustDecodeTimestampsWithVersions(timestamps, elementIDs, tm, count, reader.Path(), bb.Buf)
 }
@@ -373,6 +397,13 @@ func generateBlock() *block {
 }
 
 func releaseBlock(b *block) {
+	for _, tf := range b.tagFamilies {
+		for _, t := range tf.tags {
+			if t.filter != nil {
+				releaseBloomFilter(t.filter)
+			}
+		}
+	}
 	b.reset()
 	blockPool.Put(b)
 }
@@ -553,25 +584,28 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		bc.elementIDs = append(bc.elementIDs, tmpBlock.elementIDs[s:e+1]...)
 	}
 
-	for i, projection := range bc.bm.tagProjection {
+	for _, cf := range tmpBlock.tagFamilies {
 		tf := tagFamily{
-			name: projection.Family,
+			name: cf.name,
 		}
-		for j, name := range projection.Names {
+		for i := range cf.tags {
 			t := tag{
-				name: name,
+				name:      cf.tags[i].name,
+				valueType: cf.tags[i].valueType,
 			}
-			t.valueType = tmpBlock.tagFamilies[i].tags[j].valueType
-			if len(tmpBlock.tagFamilies[i].tags[j].values) != len(tmpBlock.timestamps) {
+			if len(cf.tags[i].values) == 0 {
+				continue
+			}
+			if len(cf.tags[i].values) != len(tmpBlock.timestamps) {
 				logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
-					tmpBlock.tagFamilies[i].tags[j].name, len(tmpBlock.tagFamilies[i].tags[j].values), len(tmpBlock.timestamps))
+					cf.tags[i].name, len(cf.tags[i].values), len(tmpBlock.timestamps))
 			}
 			if len(idxList) > 0 {
 				for _, idx := range idxList {
-					t.values = append(t.values, tmpBlock.tagFamilies[i].tags[j].values[idx])
+					t.values = append(t.values, cf.tags[i].values[idx])
 				}
 			} else {
-				t.values = append(t.values, tmpBlock.tagFamilies[i].tags[j].values[start:end+1]...)
+				t.values = append(t.values, cf.tags[i].values[start:end+1]...)
 			}
 			tf.tags = append(tf.tags, t)
 		}

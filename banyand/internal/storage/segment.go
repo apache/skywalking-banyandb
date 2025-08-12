@@ -445,14 +445,19 @@ func (sc *segmentController[T, O]) format(tm time.Time) string {
 	panic("invalid interval unit")
 }
 
-func (sc *segmentController[T, O]) parse(value string) (time.Time, error) {
-	switch sc.getOptions().SegmentInterval.Unit {
+// parseSegmentTime parses a segment suffix into a time based on the interval unit.
+func parseSegmentTime(value string, unit IntervalUnit) (time.Time, error) {
+	switch unit {
 	case HOUR:
 		return time.ParseInLocation(hourFormat, value, time.Local)
 	case DAY:
 		return time.ParseInLocation(dayFormat, value, time.Local)
 	}
 	panic("invalid interval unit")
+}
+
+func (sc *segmentController[T, O]) parse(value string) (time.Time, error) {
+	return parseSegmentTime(value, sc.getOptions().SegmentInterval.Unit)
 }
 
 func (sc *segmentController[T, O]) open() error {
@@ -501,7 +506,7 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 		}
 	}
 	options := sc.getOptions()
-	start = options.SegmentInterval.Unit.standard(start)
+	start = options.SegmentInterval.Unit.Standard(start)
 	var next *segment[T, O]
 	for _, s := range sc.lst {
 		if s.Contains(start.UnixNano()) {
@@ -511,7 +516,7 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 			next = s
 		}
 	}
-	stdEnd := options.SegmentInterval.nextTime(start)
+	stdEnd := options.SegmentInterval.NextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
 		end = next.Start
@@ -657,7 +662,7 @@ func loadSegments[T TSTable, O any](root, prefix string, parser *segmentControll
 		if i < len(startTimeLst)-1 {
 			end = startTimeLst[i+1]
 		} else {
-			end = intervalRule.nextTime(start)
+			end = intervalRule.NextTime(start)
 		}
 		if err := loadFn(start, end); err != nil {
 			return err

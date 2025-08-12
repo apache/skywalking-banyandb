@@ -37,6 +37,7 @@ package grpc
 import (
 	"context"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -67,10 +68,12 @@ const defaultQueryTimeout = 10 * time.Second
 type propertyServer struct {
 	propertyv1.UnimplementedPropertyServiceServer
 	*discoveryService
-	schemaRegistry metadata.Repo
-	pipeline       queue.Client
-	nodeRegistry   NodeRegistry
-	metrics        *metrics
+	schemaRegistry   metadata.Repo
+	pipeline         queue.Client
+	nodeRegistry     NodeRegistry
+	metrics          *metrics
+	repairQueue      *repairQueue
+	repairQueueCount int
 }
 
 func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyRequest) (resp *propertyv1.ApplyResponse, err error) {
@@ -139,7 +142,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 			return nil, errors.Errorf("property %s tag %s not found", property.Metadata.Name, tag.Key)
 		}
 	}
-	nodeProperties, _, err := ps.queryProperties(ctx, &propertyv1.QueryRequest{
+	nodeProperties, _, _, err := ps.queryProperties(ctx, &propertyv1.QueryRequest{
 		Groups: []string{g},
 		Name:   property.Metadata.Name,
 		Ids:    []string{property.Id},
@@ -149,7 +152,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	}
 	prevPropertyWithMetadata, olderProperties := ps.findPrevAndOlderProperties(nodeProperties)
 	entity := propertypkg.GetEntity(property)
-	id, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
+	shardID, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +164,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 	nodes := make([]string, 0, copies)
 	var nodeID string
 	for i := range copies {
-		nodeID, err = ps.nodeRegistry.Locate(property.GetMetadata().GetGroup(), property.GetMetadata().GetName(), uint32(id), i)
+		nodeID, err = ps.nodeRegistry.Locate(property.GetMetadata().GetGroup(), property.GetMetadata().GetName(), uint32(shardID), i)
 		if err != nil {
 			return nil, err
 		}
@@ -184,12 +187,12 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 		_ = ps.remove(ids)
 	}()
 	if req.Strategy == propertyv1.ApplyRequest_STRATEGY_REPLACE {
-		return ps.replaceProperty(ctx, start, uint64(id), nodes, prev, property)
+		return ps.replaceProperty(ctx, start, uint64(shardID), nodes, prev, property)
 	}
-	return ps.mergeProperty(ctx, start, uint64(id), nodes, prev, property)
+	return ps.mergeProperty(ctx, start, uint64(shardID), nodes, prev, property)
 }
 
-func (ps *propertyServer) findPrevAndOlderProperties(nodeProperties [][]*propertyWithMetadata) (*propertyWithMetadata, []*propertyWithMetadata) {
+func (ps *propertyServer) findPrevAndOlderProperties(nodeProperties map[string][]*propertyWithMetadata) (*propertyWithMetadata, []*propertyWithMetadata) {
 	var prevPropertyWithMetadata *propertyWithMetadata
 	var olderProperties []*propertyWithMetadata
 	for _, properties := range nodeProperties {
@@ -317,7 +320,7 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 	if len(req.Id) > 0 {
 		qReq.Ids = []string{req.Id}
 	}
-	nodeProperties, _, err := ps.queryProperties(ctx, qReq)
+	nodeProperties, _, _, err := ps.queryProperties(ctx, qReq)
 	if err != nil {
 		return nil, err
 	}
@@ -357,22 +360,24 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		req.Limit = 100
 	}
 
-	nodeProperties, trace, err := ps.queryProperties(ctx, req)
+	nodeProperties, groups, trace, err := ps.queryProperties(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	res := make(map[string]*propertyWithMetadata)
-	for _, nodeWithProperties := range nodeProperties {
+	res := make(map[string]*propertyWithCount)
+	for n, nodeWithProperties := range nodeProperties {
 		for _, propertyMetadata := range nodeWithProperties {
 			entity := propertypkg.GetEntity(propertyMetadata.Property)
 			cur, ok := res[entity]
 			if !ok {
-				res[entity] = propertyMetadata
+				res[entity] = newPropertyWithCounts(propertyMetadata, n)
 				continue
 			}
-			if cur.Metadata.ModRevision < propertyMetadata.Metadata.ModRevision {
-				res[entity] = propertyMetadata
-				// TODO(mrproliu) handle the case where the property detected multiple versions
+			switch {
+			case cur.Metadata.ModRevision < propertyMetadata.Metadata.ModRevision: // newer revision
+				res[entity] = newPropertyWithCounts(propertyMetadata, n)
+			case cur.Metadata.ModRevision == propertyMetadata.Metadata.ModRevision: // same revision
+				cur.addExistNode(n)
 			}
 		}
 	}
@@ -380,8 +385,12 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		return &propertyv1.QueryResponse{Properties: nil, Trace: trace}, nil
 	}
 	properties := make([]*propertyv1.Property, 0, len(res))
-	for _, p := range res {
-		// ignore deletedTime property
+	for entity, p := range res {
+		if err := ps.repairPropertyIfNeed(entity, p, groups); err != nil {
+			ps.log.Warn().Msgf("failed to repair properties when query: %v", err)
+		}
+
+		// ignore deleted property in the query
 		if p.deletedTime > 0 {
 			continue
 		}
@@ -405,11 +414,46 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	return &propertyv1.QueryResponse{Properties: properties, Trace: trace}, nil
 }
 
+func (ps *propertyServer) repairPropertyIfNeed(entity string, p *propertyWithCount, groups map[string]*commonv1.Group) error {
+	// make sure have the enough replicas
+	group := groups[p.Metadata.Group]
+	if group == nil {
+		return errors.Errorf("group %s not found", p.Metadata.Group)
+	}
+	copies, ok := ps.groupRepo.copies(p.Metadata.GetGroup())
+	if !ok {
+		return errors.New("failed to get group copies")
+	}
+	if copies == uint32(len(p.existNodes)) {
+		return nil
+	}
+	shardID, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
+	if err != nil {
+		return err
+	}
+	nodes := make([]string, 0, copies)
+	for i := range copies {
+		nodeID, err := ps.nodeRegistry.Locate(p.GetMetadata().GetGroup(),
+			p.GetMetadata().GetName(), uint32(shardID), i)
+		if err != nil {
+			return err
+		}
+		if _, ok := p.existNodes[nodeID]; !ok {
+			nodes = append(nodes, nodeID)
+		}
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+	ps.repairQueue.addProperty(entity, shardID, p, nodes)
+	return nil
+}
+
 // queryProperties internal properties query, return all properties with related nodes.
 func (ps *propertyServer) queryProperties(
 	ctx context.Context,
 	req *propertyv1.QueryRequest,
-) (nodeProperties [][]*propertyWithMetadata, trace *commonv1.Trace, err error) {
+) (nodeProperties map[string][]*propertyWithMetadata, groups map[string]*commonv1.Group, trace *commonv1.Trace, err error) {
 	start := time.Now()
 	if req.Limit == 0 {
 		req.Limit = 100
@@ -428,18 +472,21 @@ func (ps *propertyServer) queryProperties(
 			span.Stop()
 		}()
 	}
+	groups = make(map[string]*commonv1.Group, len(req.Groups))
 	for _, gn := range req.Groups {
-		if g, getGroupErr := ps.schemaRegistry.GroupRegistry().GetGroup(ctx, gn); getGroupErr != nil {
-			return nil, trace, errors.Errorf("group %s not found", gn)
+		g, getGroupErr := ps.schemaRegistry.GroupRegistry().GetGroup(ctx, gn)
+		if getGroupErr != nil {
+			return nil, nil, trace, errors.Errorf("group %s not found", gn)
 		} else if g.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
-			return nil, trace, errors.Errorf("group %s is not allowed to have properties", gn)
+			return nil, nil, trace, errors.Errorf("group %s is not allowed to have properties", gn)
 		}
+		groups[gn] = g
 	}
 	ff, err := ps.pipeline.Broadcast(defaultQueryTimeout, data.TopicPropertyQuery, bus.NewMessage(bus.MessageID(start.Unix()), req))
 	if err != nil {
-		return nil, trace, err
+		return nil, nil, trace, err
 	}
-	res := make([][]*propertyWithMetadata, 0)
+	res := make(map[string][]*propertyWithMetadata, len(ff))
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			err = multierr.Append(err, getErr)
@@ -456,7 +503,7 @@ func (ps *propertyServer) queryProperties(
 					var deleteTime int64
 					err = protojson.Unmarshal(s, &p)
 					if err != nil {
-						return nil, trace, err
+						return nil, groups, trace, err
 					}
 					if i < len(v.Deletes) {
 						deleteTime = v.Deletes[i]
@@ -470,19 +517,19 @@ func (ps *propertyServer) queryProperties(
 				if span != nil {
 					span.AddSubTrace(v.Trace)
 				}
-				res = append(res, nodeWithProperties)
+				res[m.Node()] = nodeWithProperties
 			case *common.Error:
 				err = multierr.Append(err, errors.New(v.Error()))
 			}
 		}
 	}
 	if err != nil {
-		return nil, trace, err
+		return nil, groups, trace, err
 	}
 	if len(res) == 0 {
-		return res, trace, nil
+		return res, groups, trace, nil
 	}
-	return res, trace, nil
+	return res, groups, trace, nil
 }
 
 func (ps *propertyServer) remove(ids [][]byte) error {
@@ -500,7 +547,143 @@ func (ps *propertyServer) remove(ids [][]byte) error {
 	return nil
 }
 
+func (ps *propertyServer) startRepairQueue(stop chan struct{}) {
+	ps.repairQueue = newRepairQueue(ps, ps.repairQueueCount)
+	ps.repairQueue.Start(stop)
+}
+
 type propertyWithMetadata struct {
 	*propertyv1.Property
 	deletedTime int64
+}
+
+type propertyWithCount struct {
+	*propertyWithMetadata
+	existNodes map[string]bool
+}
+
+func newPropertyWithCounts(p *propertyWithMetadata, existNode string) *propertyWithCount {
+	res := &propertyWithCount{
+		propertyWithMetadata: p,
+	}
+	res.addExistNode(existNode)
+	return res
+}
+
+func (p *propertyWithCount) addExistNode(node string) {
+	if p.existNodes == nil {
+		p.existNodes = make(map[string]bool)
+	}
+	p.existNodes[node] = true
+}
+
+type repairQueue struct {
+	queue         chan *repairTask
+	inProcess     map[repairInProcessKey]struct{}
+	ps            *propertyServer
+	processLocker sync.Mutex
+}
+
+func newRepairQueue(ps *propertyServer, size int) *repairQueue {
+	return &repairQueue{
+		queue:     make(chan *repairTask, size),
+		inProcess: make(map[repairInProcessKey]struct{}, size),
+		ps:        ps,
+	}
+}
+
+func (rq *repairQueue) addProperty(entity string, shardID uint, p *propertyWithCount, nodes []string) bool {
+	rq.processLocker.Lock()
+	defer rq.processLocker.Unlock()
+	key := repairInProcessKey{
+		entity:  entity,
+		modTime: p.Metadata.ModRevision,
+	}
+	if _, ok := rq.inProcess[key]; ok {
+		return false
+	}
+	task := &repairTask{
+		shardID:  shardID,
+		entity:   entity,
+		property: p,
+		nodes:    nodes,
+		key:      key,
+	}
+	// adding the task to the queue, if the queue is full, then ignore it
+	select {
+	case rq.queue <- task:
+		rq.inProcess[key] = struct{}{}
+	default:
+		return false
+	}
+	return true
+}
+
+func (rq *repairQueue) Start(stop chan struct{}) {
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case task := <-rq.queue:
+				if err := rq.processTask(context.Background(), task); err != nil {
+					rq.ps.log.Warn().Msgf("failed to repair property %s: %v", task.property.Metadata.Name, err)
+				}
+			}
+		}
+	}()
+}
+
+func (rq *repairQueue) processTask(ctx context.Context, t *repairTask) (err error) {
+	rq.ps.metrics.totalStarted.Inc(1, t.property.Metadata.Group, "property", "repair")
+	start := time.Now()
+	defer func() {
+		rq.ps.metrics.totalFinished.Inc(1, t.property.Metadata.Group, "property", "repair")
+		rq.ps.metrics.totalLatency.Inc(time.Since(start).Seconds(), t.property.Metadata.Group, "property", "repair")
+		if err != nil {
+			rq.ps.metrics.totalErr.Inc(1, t.property.Metadata.Group, "property", "repair")
+		}
+		rq.processLocker.Lock()
+		defer rq.processLocker.Unlock()
+		delete(rq.inProcess, t.key)
+	}()
+	futures := make([]bus.Future, 0, len(t.nodes))
+	var result error
+	// building the repair data
+	repairReq := &propertyv1.InternalRepairRequest{
+		ShardId:    uint64(t.shardID),
+		Id:         propertypkg.GetPropertyID(t.property.Property),
+		Property:   t.property.Property,
+		DeleteTime: t.property.deletedTime,
+	}
+	for _, nodeID := range t.nodes {
+		f, err := rq.ps.pipeline.Publish(ctx, data.TopicPropertyRepair, bus.NewMessageWithNode(
+			bus.MessageID(time.Now().Unix()), nodeID, repairReq))
+		if err != nil {
+			result = multierr.Append(result, errors.Errorf("failed to repair properties when query: %v", err))
+			continue
+		}
+		futures = append(futures, f)
+	}
+
+	// Wait for all futures to complete
+	for _, f := range futures {
+		if _, err := f.Get(); err != nil {
+			result = multierr.Append(result, err)
+		}
+	}
+	return result
+}
+
+type repairTask struct {
+	property *propertyWithCount
+	entity   string
+	nodes    []string
+	key      repairInProcessKey
+	shardID  uint
+}
+
+type repairInProcessKey struct {
+	entity  string
+	modTime int64
 }

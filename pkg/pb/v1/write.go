@@ -39,7 +39,6 @@ var (
 	TagFlag = make([]byte, fieldFlagLength)
 
 	strDelimiter = []byte("\n")
-	nullTag      = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 	nullTagValue = TagValue{}
 
 	errUnsupportedTagForIndexField = errors.New("the tag type(for example, null) can not be as the index field value")
@@ -165,11 +164,7 @@ func EncodeFamily(familySpec *databasev1.TagFamilySpec, family *modelv1.TagFamil
 		if !isNull && tType != tagSpec.GetType() {
 			return nil, errors.Wrapf(errMalformedElement, "tag %s type is unexpected", tagSpec.GetName())
 		}
-		if tagSpec.IndexedOnly {
-			data.Tags = append(data.Tags, nullTag)
-		} else {
-			data.Tags = append(data.Tags, tag)
-		}
+		data.Tags = append(data.Tags, tag)
 	}
 	return proto.Marshal(data)
 }

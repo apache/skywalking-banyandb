@@ -30,14 +30,24 @@ import (
 var (
 	// TopicMap is the map of topic name to topic.
 	TopicMap = map[string]bus.Topic{
-		TopicStreamWrite.String():    TopicStreamWrite,
-		TopicStreamQuery.String():    TopicStreamQuery,
-		TopicMeasureWrite.String():   TopicMeasureWrite,
-		TopicMeasureQuery.String():   TopicMeasureQuery,
-		TopicTopNQuery.String():      TopicTopNQuery,
-		TopicPropertyDelete.String(): TopicPropertyDelete,
-		TopicPropertyQuery.String():  TopicPropertyQuery,
-		TopicPropertyUpdate.String(): TopicPropertyUpdate,
+		TopicStreamWrite.String():              TopicStreamWrite,
+		TopicStreamQuery.String():              TopicStreamQuery,
+		TopicMeasureWrite.String():             TopicMeasureWrite,
+		TopicMeasureQuery.String():             TopicMeasureQuery,
+		TopicTopNQuery.String():                TopicTopNQuery,
+		TopicPropertyDelete.String():           TopicPropertyDelete,
+		TopicPropertyQuery.String():            TopicPropertyQuery,
+		TopicPropertyUpdate.String():           TopicPropertyUpdate,
+		TopicStreamPartSync.String():           TopicStreamPartSync,
+		TopicMeasurePartSync.String():          TopicMeasurePartSync,
+		TopicMeasureSeriesIndexInsert.String(): TopicMeasureSeriesIndexInsert,
+		TopicMeasureSeriesIndexUpdate.String(): TopicMeasureSeriesIndexUpdate,
+		TopicMeasureSeriesSync.String():        TopicMeasureSeriesSync,
+		TopicPropertyRepair.String():           TopicPropertyRepair,
+		TopicStreamSeriesIndexWrite.String():   TopicStreamSeriesIndexWrite,
+		TopicStreamLocalIndexWrite.String():    TopicStreamLocalIndexWrite,
+		TopicStreamSeriesSync.String():         TopicStreamSeriesSync,
+		TopicStreamElementIndexSync.String():   TopicStreamElementIndexSync,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -67,6 +77,36 @@ var (
 		TopicPropertyDelete: func() proto.Message {
 			return &propertyv1.InternalDeleteRequest{}
 		},
+		TopicStreamPartSync: func() proto.Message {
+			return nil
+		},
+		TopicMeasurePartSync: func() proto.Message {
+			return nil
+		},
+		TopicMeasureSeriesIndexInsert: func() proto.Message {
+			return nil
+		},
+		TopicMeasureSeriesIndexUpdate: func() proto.Message {
+			return nil
+		},
+		TopicMeasureSeriesSync: func() proto.Message {
+			return nil
+		},
+		TopicPropertyRepair: func() proto.Message {
+			return &propertyv1.InternalRepairRequest{}
+		},
+		TopicStreamSeriesIndexWrite: func() proto.Message {
+			return nil
+		},
+		TopicStreamLocalIndexWrite: func() proto.Message {
+			return nil
+		},
+		TopicStreamSeriesSync: func() proto.Message {
+			return nil
+		},
+		TopicStreamElementIndexSync: func() proto.Message {
+			return nil
+		},
 	}
 
 	// TopicResponseMap is the map of topic name to response message.
@@ -89,6 +129,9 @@ var (
 		},
 		TopicPropertyUpdate: func() proto.Message {
 			return &propertyv1.ApplyResponse{}
+		},
+		TopicPropertyRepair: func() proto.Message {
+			return &propertyv1.InternalRepairResponse{}
 		},
 	}
 

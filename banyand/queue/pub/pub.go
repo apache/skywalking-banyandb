@@ -47,6 +47,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+// ChunkedSyncClientConfig configures chunked sync client behavior.
+type ChunkedSyncClientConfig struct {
+	ChunkSize        uint32        // Size of each chunk in bytes
+	EnableRetryOnOOO bool          // Enable retry on out-of-order errors
+	MaxOOORetries    int           // Maximum retries for out-of-order chunks
+	OOORetryDelay    time.Duration // Delay between retries
+}
+
 var (
 	_ run.PreRunner = (*pub)(nil)
 	_ run.Service   = (*pub)(nil)
@@ -239,6 +247,7 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 		}
 		f.clients = append(f.clients, stream)
 		f.topics = append(f.topics, topic)
+		f.nodes = append(f.nodes, node)
 		return err
 	}
 	for _, m := range messages {
@@ -308,15 +317,20 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 		MessageId: uint64(m.ID()),
 		BatchMod:  m.BatchModeEnabled(),
 	}
-	message, ok := m.Data().(proto.Message)
-	if !ok {
+
+	switch data := m.Data().(type) {
+	case proto.Message:
+		messageData, err := proto.Marshal(data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal message %T: %w", m, err)
+		}
+		r.Body = messageData
+	case []byte:
+		r.Body = data
+	default:
 		return nil, fmt.Errorf("invalid message type %T", m.Data())
 	}
-	data, err := proto.Marshal(message)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal message %T: %w", m, err)
-	}
-	r.Body = data
+
 	return r, nil
 }
 
@@ -324,6 +338,7 @@ type future struct {
 	clients  []clusterv1.Service_SendClient
 	cancelFn []func()
 	topics   []bus.Topic
+	nodes    []string
 }
 
 func (l *future) Get() (bus.Message, error) {
@@ -332,11 +347,13 @@ func (l *future) Get() (bus.Message, error) {
 	}
 	c := l.clients[0]
 	t := l.topics[0]
+	n := l.nodes[0]
 	defer func() {
 		l.clients = l.clients[1:]
 		l.topics = l.topics[1:]
 		l.cancelFn[0]()
 		l.cancelFn = l.cancelFn[1:]
+		l.nodes = l.nodes[1:]
 	}()
 	resp, err := c.Recv()
 	if err != nil {
@@ -346,7 +363,7 @@ func (l *future) Get() (bus.Message, error) {
 		return bus.Message{}, errors.New(resp.Error)
 	}
 	if resp.Body == nil {
-		return bus.NewMessage(bus.MessageID(resp.MessageId), nil), nil
+		return bus.NewMessageWithNode(bus.MessageID(resp.MessageId), n, nil), nil
 	}
 	if messageSupplier, ok := data.TopicResponseMap[t]; ok {
 		m := messageSupplier()
@@ -354,8 +371,9 @@ func (l *future) Get() (bus.Message, error) {
 		if err != nil {
 			return bus.Message{}, err
 		}
-		return bus.NewMessage(
+		return bus.NewMessageWithNode(
 			bus.MessageID(resp.MessageId),
+			n,
 			m,
 		), nil
 	}
@@ -392,4 +410,37 @@ func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
 		return nil, fmt.Errorf("failed to load TLS config: %w", err)
 	}
 	return opts, nil
+}
+
+// NewChunkedSyncClient implements queue.Client.
+func (p *pub) NewChunkedSyncClient(node string, chunkSize uint32) (queue.ChunkedSyncClient, error) {
+	return p.NewChunkedSyncClientWithConfig(node, &ChunkedSyncClientConfig{
+		ChunkSize:        chunkSize,
+		EnableRetryOnOOO: true,
+		MaxOOORetries:    3,
+		OOORetryDelay:    100 * time.Millisecond,
+	})
+}
+
+// NewChunkedSyncClientWithConfig creates a chunked sync client with advanced configuration.
+func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncClientConfig) (queue.ChunkedSyncClient, error) {
+	p.mu.RLock()
+	client, ok := p.active[node]
+	p.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("no active client for node %s", node)
+	}
+
+	if config.ChunkSize == 0 {
+		config.ChunkSize = defaultChunkSize
+	}
+
+	return &chunkedSyncClient{
+		client:    client.client,
+		conn:      client.conn,
+		node:      node,
+		log:       p.log,
+		chunkSize: config.ChunkSize,
+		config:    config,
+	}, nil
 }

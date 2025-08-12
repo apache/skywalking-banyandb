@@ -32,7 +32,9 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -48,16 +50,20 @@ var (
 )
 
 type database struct {
-	lock          fs.File
-	omr           observability.MetricsRegistry
-	logger        *logger.Logger
-	lfs           fs.FileSystem
-	sLst          atomic.Pointer[[]*shard]
-	location      string
-	flushInterval time.Duration
-	expireDelete  time.Duration
-	closed        atomic.Bool
-	mu            sync.RWMutex
+	metadata            metadata.Repo
+	omr                 observability.MetricsRegistry
+	lfs                 fs.FileSystem
+	lock                fs.File
+	logger              *logger.Logger
+	repairScheduler     *repairScheduler
+	sLst                atomic.Pointer[[]*shard]
+	location            string
+	repairBaseDir       string
+	flushInterval       time.Duration
+	expireDelete        time.Duration
+	repairTreeSlotCount int
+	mu                  sync.RWMutex
+	closed              atomic.Bool
 }
 
 func openDB(
@@ -65,22 +71,44 @@ func openDB(
 	location string,
 	flushInterval time.Duration,
 	expireToDeleteDuration time.Duration,
+	repairSlotCount int,
 	omr observability.MetricsRegistry,
 	lfs fs.FileSystem,
+	repairEnabled bool,
+	repairBaseDir string,
+	repairBuildTreeCron string,
+	repairQuickBuildTreeTime time.Duration,
+	repairTriggerCron string,
+	gossipMessenger gossip.Messenger,
+	metadata metadata.Repo,
+	buildSnapshotFunc func(context.Context) (string, error),
 ) (*database, error) {
 	loc := filepath.Clean(location)
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
 
 	db := &database{
-		location:      loc,
-		logger:        l,
-		omr:           omr,
-		flushInterval: flushInterval,
-		expireDelete:  expireToDeleteDuration,
-		lfs:           lfs,
+		location:            loc,
+		logger:              l,
+		omr:                 omr,
+		flushInterval:       flushInterval,
+		expireDelete:        expireToDeleteDuration,
+		repairTreeSlotCount: repairSlotCount,
+		repairBaseDir:       repairBaseDir,
+		lfs:                 lfs,
+		metadata:            metadata,
 	}
-	if err := db.load(ctx); err != nil {
+	var err error
+	// init repair scheduler
+	if repairEnabled {
+		scheduler, schedulerErr := newRepairScheduler(l, omr, repairBuildTreeCron, repairQuickBuildTreeTime, repairTriggerCron,
+			gossipMessenger, repairSlotCount, db, buildSnapshotFunc)
+		if schedulerErr != nil {
+			return nil, errors.Wrapf(schedulerErr, "failed to create repair scheduler for %s", loc)
+		}
+		db.repairScheduler = scheduler
+	}
+	if err = db.load(ctx); err != nil {
 		return nil, err
 	}
 	db.logger.Info().Str("path", loc).Msg("initialized")
@@ -165,7 +193,7 @@ func (db *database) loadShard(ctx context.Context, id common.ShardID) (*shard, e
 		return s, nil
 	}
 	sd, err := db.newShard(context.WithValue(ctx, logger.ContextKey, db.logger), id, int64(db.flushInterval.Seconds()),
-		int64(db.expireDelete.Seconds()))
+		int64(db.expireDelete.Seconds()), db.repairBaseDir, db.repairTreeSlotCount)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +223,9 @@ func (db *database) close() error {
 	if db.closed.Swap(true) {
 		return nil
 	}
+	if db.repairScheduler != nil {
+		db.repairScheduler.close()
+	}
 	sLst := db.sLst.Load()
 	var err error
 	if sLst != nil {
@@ -219,6 +250,15 @@ func (db *database) collect() {
 	}
 }
 
+func (db *database) repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error {
+	s, err := db.loadShard(ctx, common.ShardID(shardID))
+	if err != nil {
+		return errors.WithMessagef(err, "failed to load shard %d", id)
+	}
+	_, _, err = s.repair(ctx, id, property, deleteTime)
+	return err
+}
+
 type walkFn func(suffix string) error
 
 func walkDir(root, prefix string, wf walkFn) error {
@@ -236,6 +276,8 @@ func walkDir(root, prefix string, wf walkFn) error {
 }
 
 type queryProperty struct {
+	id         []byte
 	source     []byte
+	timestamp  int64
 	deleteTime int64
 }

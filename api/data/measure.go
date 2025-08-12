@@ -57,3 +57,39 @@ var MeasureDeleteExpiredSegmentsKindVersion = common.KindVersion{
 
 // TopicMeasureDeleteExpiredSegments is the measure delete topic.
 var TopicMeasureDeleteExpiredSegments = bus.BiTopic(MeasureDeleteExpiredSegmentsKindVersion.String())
+
+// MeasurePartSyncKindVersion is the version tag of measure part sync kind.
+var MeasurePartSyncKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "measure-part-sync",
+}
+
+// TopicMeasurePartSync is the measure part sync topic.
+var TopicMeasurePartSync = bus.BiTopic(MeasurePartSyncKindVersion.String())
+
+// MeasureSeriesIndexInsertKindVersion is the version tag of measure series index insert kind.
+var MeasureSeriesIndexInsertKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "measure-series-index-insert",
+}
+
+// TopicMeasureSeriesIndexInsert is the measure series index insert topic.
+var TopicMeasureSeriesIndexInsert = bus.BiTopic(MeasureSeriesIndexInsertKindVersion.String())
+
+// MeasureSeriesIndexUpdateKindVersion is the version tag of measure series index update kind.
+var MeasureSeriesIndexUpdateKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "measure-series-index-update",
+}
+
+// TopicMeasureSeriesIndexUpdate is the measure series index update topic.
+var TopicMeasureSeriesIndexUpdate = bus.BiTopic(MeasureSeriesIndexUpdateKindVersion.String())
+
+// MeasureSeriesSyncKindVersion is the version tag of measure series sync kind.
+var MeasureSeriesSyncKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "measure-series-sync",
+}
+
+// TopicMeasureSeriesSync is the measure series sync topic.
+var TopicMeasureSeriesSync = bus.BiTopic(MeasureSeriesSyncKindVersion.String())

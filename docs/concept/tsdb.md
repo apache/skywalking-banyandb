@@ -1,4 +1,4 @@
-# TimeSeries Database(TSDB) v1.2.0
+# TimeSeries Database(TSDB) v1.3.0
 
 TSDB is a time-series storage engine designed to store and query large volumes of time-series data. One of the key features of TSDB is its ability to automatically manage data storage over time, optimize performance and ensure that the system can scale to handle large workloads. TSDB empowers `Measure` and `Stream` relevant data.
 
@@ -39,7 +39,7 @@ The segment file `xxxxxxxx.seg` contains the inverted index data. It includes fo
 - **Tags**: The mapping from the tag name to the dictionary location.
 - **Dictionary**: It's a FST(Finite State Transducer) dictionary to map tag value to the posting list.
 - **Posting List**: The mapping from the tag value to the series id or timestamp. It also contains a location info to the stored tag value.
-- **Stored Tag Value**: The stored tag value. If you set tag spec `indexed_only=true`, the tag value will not be stored here.
+- **Stored Tag Value**: The stored tag value.
 
 ![inverted-index](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/inverted-index.png)
 
@@ -57,8 +57,8 @@ The `primary.bin` file contains the index of each [block](#Block). Through it, t
 
 Notably, for data of the `Stream` type, since there are no field columns, the `fields.bin` file does not exist, while the rest of the structure is entirely consistent with the `Measure` type.
 
-![measure-part](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/measure-part.png)
-![stream-part](https://skywalking.apache.org/doc-graph/banyandb/v0.6.0/stream-part.png)
+![measure-part](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/measure-part.png)
+![stream-part](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/stream-part.png)
 
 ## Block
 
@@ -68,10 +68,11 @@ The diagram below shows the detailed fields within each block. The block is the 
 
 In measure's timestamp file, there are version fields to record the version of the data. The version field is used to deduplicate. It determine the latest data when the data's timestamp are identical. Only the latest data will be returned to the user.
 
-![measure-block](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/measure-block.png)
+![measure-block](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/measure-block.png)
 
-Unlike the measure, there are element ids in the stream's timestamp file. The element id is used to identify the data of the same series. The data with the same timestamp but different element id will both be stored in the TSDB.
-![stream-block](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/stream-block.png)
+Unlike the measure, there are element ids in the stream's timestamp file. The element id is used to identify the data of the same series. The data with the same timestamp but different element id will both be stored in the TSDB. This introduces a series of new files, named "*.tff", which contain bloom filters for each tag, enabling efficient skipping of irrelevant data. Additionally, min/max fields are added to the "*.tfm" file to further aid in skipping blocks.
+
+![stream-block](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/stream-block.png)
 
 ## Write Path
 

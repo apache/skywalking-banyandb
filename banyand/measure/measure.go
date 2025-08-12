@@ -27,6 +27,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -45,8 +46,9 @@ const (
 )
 
 type option struct {
-	mergePolicy        *mergePolicy
 	protector          protector.Memory
+	tire2Client        queue.Client
+	mergePolicy        *mergePolicy
 	seriesCacheMaxSize run.Bytes
 	flushTimeout       time.Duration
 }

@@ -20,10 +20,13 @@ package property
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"path/filepath"
 	"time"
 
+	"github.com/robfig/cron/v3"
+	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -32,8 +35,10 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -49,21 +54,28 @@ var (
 )
 
 type service struct {
-	metadata            metadata.Repo
-	pipeline            queue.Server
-	omr                 observability.MetricsRegistry
-	lfs                 fs.FileSystem
-	close               chan struct{}
-	db                  *database
-	l                   *logger.Logger
-	pm                  protector.Memory
-	root                string
-	nodeID              string
-	snapshotDir         string
-	flushTimeout        time.Duration
-	expireTimeout       time.Duration
-	maxDiskUsagePercent int
-	maxFileSnapshotNum  int
+	metadata                 metadata.Repo
+	pipeline                 queue.Server
+	gossipMessenger          gossip.Messenger
+	omr                      observability.MetricsRegistry
+	lfs                      fs.FileSystem
+	pm                       protector.Memory
+	close                    chan struct{}
+	db                       *database
+	l                        *logger.Logger
+	nodeID                   string
+	root                     string
+	snapshotDir              string
+	repairDir                string
+	repairBuildTreeCron      string
+	repairTriggerCron        string
+	flushTimeout             time.Duration
+	expireTimeout            time.Duration
+	repairQuickBuildTreeTime time.Duration
+	repairTreeSlotCount      int
+	maxDiskUsagePercent      int
+	maxFileSnapshotNum       int
+	repairEnabled            bool
 }
 
 func (s *service) FlagSet() *run.FlagSet {
@@ -73,6 +85,15 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.IntVar(&s.maxDiskUsagePercent, "property-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	flagS.IntVar(&s.maxFileSnapshotNum, "property-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
 	flagS.DurationVar(&s.expireTimeout, "property-expire-delete-timeout", time.Hour*24*7, "the duration of the expired data needs to be deleted")
+	flagS.IntVar(&s.repairTreeSlotCount, "property-repair-tree-slot-count", 32, "the slot count of the repair tree")
+	flagS.StringVar(&s.repairBuildTreeCron, "property-repair-build-tree-cron", "@every 1h", "the cron expression for repairing the build tree")
+	flagS.DurationVar(&s.repairQuickBuildTreeTime, "property-repair-quick-build-tree-time", time.Minute*10,
+		"the duration of the quick build tree after operate the property")
+	flagS.StringVar(&s.repairTriggerCron, "property-repair-trigger-cron", "* 2 * * *", "the cron expression for background repairing the property data")
+	flagS.BoolVar(&s.repairEnabled, "property-repair-enabled", false, "whether to enable the background property repair")
+	s.gossipMessenger.FlagSet().VisitAll(func(f *pflag.Flag) {
+		flagS.AddFlag(f)
+	})
 	return flagS
 }
 
@@ -85,6 +106,13 @@ func (s *service) Validate() error {
 	}
 	if s.maxDiskUsagePercent > 100 {
 		return errors.New("property-max-disk-usage-percent must be less than or equal to 100")
+	}
+	_, err := cron.ParseStandard(s.repairBuildTreeCron)
+	if err != nil {
+		return errors.New("property-repair-build-tree-cron is not a valid cron expression")
+	}
+	if err = s.gossipMessenger.Validate(); err != nil {
+		return fmt.Errorf("gossip vilidate failure: %w", err)
 	}
 	return nil
 }
@@ -102,6 +130,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
+	s.repairDir = filepath.Join(path, storage.RepairDir)
 	observability.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
@@ -111,28 +140,62 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.nodeID = node.NodeID
 
 	var err error
-	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.omr, s.lfs)
+	snapshotLis := &snapshotListener{s: s}
+	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs,
+		s.repairEnabled, s.repairDir, s.repairBuildTreeCron, s.repairQuickBuildTreeTime, s.repairTriggerCron, s.gossipMessenger, s.metadata,
+		func(ctx context.Context) (string, error) {
+			res := snapshotLis.Rev(ctx,
+				bus.NewMessage(bus.MessageID(time.Now().UnixNano()), []*databasev1.SnapshotRequest_Group{}))
+			snpMsg := res.Data().(*databasev1.Snapshot)
+			if snpMsg.Error != "" {
+				return "", errors.New(snpMsg.Error)
+			}
+			return filepath.Join(snapshotLis.s.snapshotDir, snpMsg.Name, storage.DataDir), nil
+		})
 	if err != nil {
 		return err
+	}
+
+	// if the gossip address is empty or repair scheduler is not start, it means that the gossip is not enabled.
+	if node.PropertyGossipGrpcAddress == "" || s.db.repairScheduler == nil {
+		s.gossipMessenger = nil
+	}
+	if s.gossipMessenger != nil {
+		if err = s.gossipMessenger.PreRun(ctx); err != nil {
+			return err
+		}
+		s.gossipMessenger.RegisterServices(s.db.repairScheduler.registerServerToGossip())
+		s.db.repairScheduler.registerClientToGossip(s.gossipMessenger)
 	}
 	return multierr.Combine(
 		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
 		s.pipeline.Subscribe(data.TopicPropertyDelete, &deleteListener{s: s}),
 		s.pipeline.Subscribe(data.TopicPropertyQuery, &queryListener{s: s}),
-		s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}),
+		s.pipeline.Subscribe(data.TopicSnapshot, snapshotLis),
+		s.pipeline.Subscribe(data.TopicPropertyRepair, &repairListener{s: s}),
 	)
 }
 
 func (s *service) Serve() run.StopNotify {
+	if s.gossipMessenger != nil {
+		s.gossipMessenger.Serve(s.close)
+	}
 	return s.close
 }
 
 func (s *service) GracefulStop() {
+	if s.gossipMessenger != nil {
+		s.gossipMessenger.GracefulStop()
+	}
 	close(s.close)
 	err := s.db.close()
 	if err != nil {
 		s.l.Err(err).Msg("Fail to close the property module")
 	}
+}
+
+func (s *service) GetGossIPGrpcPort() *uint32 {
+	return s.gossipMessenger.GetServerPort()
 }
 
 // NewService returns a new service.
@@ -144,5 +207,7 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, omr observability
 		db:       &database{},
 		pm:       pm,
 		close:    make(chan struct{}),
+
+		gossipMessenger: gossip.NewMessenger(omr, metadata),
 	}, nil
 }

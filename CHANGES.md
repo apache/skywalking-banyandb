@@ -16,14 +16,30 @@ Release Notes.
 - Add a wait and retry to write handlers to avoid the local metadata cache being loaded.
 - Implement primary block cache for measure.
 - Implement versioning properties and replace physical deletion with the tombstone mechanism for the property database.
+- Implement skipping index for stream.
 - Add Load Balancer Feature to Liaison. 
 - Implement fadvise for large files to prevent page cache pollution.
+- Data Model: Introduce the `Trace` data model to store the trace/span data.
+- Support dictionary encoding for low cardinality columns.
+- Push down aggregation for topN query.
+- Introduce write queue mechanism in liaison nodes to efficiently synchronize stream and measure partition folders, improving write throughput and consistency
+- Add trace module metadata management.
+- Add chunked data sync to improve memory efficiency and performance during data transfer operations, supporting configurable chunk sizes, retry mechanisms, and out-of-order handling for both measure and stream services.
+- Implement comprehensive migration system for both measure and stream data with file-based approach and enhanced progress tracking
+- Improve TopN processing by adding "source" tag to track node-specific data, enhancing data handling across distributed nodes
+- Implement Login with Username/Password authentication in BanyanDB
 
 ### Bug Fixes
 
 - Fix the deadlock issue when loading a closed segment.
 - Fix the issue that the etcd watcher gets the historical node registration events.
 - Fix the crash when collecting the metrics from a closed segment.
+- Fix topN parsing panic when the criteria is set.
+- Remove the indexed_only field in TagSpec.
+
+### Document
+
+- Introduce AI_CODING_GUIDELINES.md to provide guidelines for using AI assistants (like Claude, Cursor, GitHub Copilot) in development, ensuring generated code follows project standards around variable shadowing, imports, error handling, code style and documentation
 
 ## 0.8.0
 

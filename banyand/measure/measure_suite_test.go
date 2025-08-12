@@ -78,7 +78,7 @@ func setUp() (*services, func()) {
 	metricSvc := observability.NewMetricService(metadataService, pipeline, "test", nil)
 	pm := protector.NewMemory(metricSvc)
 	// Init Measure Service
-	measureService, err := measure.NewService(metadataService, pipeline, nil, metricSvc, pm)
+	measureService, err := measure.NewStandalone(metadataService, pipeline, nil, metricSvc, pm)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadMeasureSvc := &preloadMeasureService{metaSvc: metadataService}
 	querySvc, err := query.NewService(context.TODO(), nil, measureService, metadataService, pipeline)

@@ -45,6 +45,7 @@ type Repo interface {
 	IndexRuleRegistry() schema.IndexRule
 	IndexRuleBindingRegistry() schema.IndexRuleBinding
 	MeasureRegistry() schema.Measure
+	TraceRegistry() schema.Trace
 	GroupRegistry() schema.Group
 	TopNAggregationRegistry() schema.TopNAggregation
 	RegisterHandler(string, schema.Kind, schema.EventHandler)

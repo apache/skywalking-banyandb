@@ -20,8 +20,8 @@ package measure
 import (
 	"context"
 	"fmt"
-	"io"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +34,8 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -41,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -64,13 +67,12 @@ var (
 		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
 	}}
 	// TopNTagNames is the tag names of the topN result measure.
-	TopNTagNames = []string{"name", "direction", "group"}
+	TopNTagNames = []string{"name", "direction", "group", "source"}
 )
 
 // SchemaService allows querying schema information.
 type SchemaService interface {
 	Query
-	TopNService
 	Close()
 }
 type schemaRepo struct {
@@ -79,41 +81,43 @@ type schemaRepo struct {
 	pipeline         queue.Client
 	l                *logger.Logger
 	topNProcessorMap sync.Map
+	nodeID           string
 	path             string
 }
 
-func newSchemaRepo(path string, svc *service, nodeLabels map[string]string) *schemaRepo {
+func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, nodeID string) *schemaRepo {
 	sr := &schemaRepo{
 		path:     path,
 		l:        svc.l,
 		metadata: svc.metadata,
 		pipeline: svc.localPipeline,
+		nodeID:   nodeID,
 	}
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
 		svc.l,
-		newSupplier(path, svc, sr, nodeLabels),
+		newSupplier(path, svc, sr, nodeLabels, nodeID),
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
 	return sr
 }
 
-// NewPortableRepository creates a new portable repository.
-func NewPortableRepository(metadata metadata.Repo, l *logger.Logger, metrics *resourceSchema.Metrics, topNQueue queue.Client) SchemaService {
-	r := &schemaRepo{
-		l:        l,
-		metadata: metadata,
-		pipeline: topNQueue,
-		Repository: resourceSchema.NewPortableRepository(
-			metadata,
-			l,
-			newPortableSupplier(metadata, l),
-			metrics,
-		),
+func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grpc.NodeRegistry, pipeline queue.Client) *schemaRepo {
+	sr := &schemaRepo{
+		path:     path,
+		l:        svc.l,
+		metadata: svc.metadata,
+		pipeline: pipeline,
 	}
-	r.start()
-	return r
+	sr.Repository = resourceSchema.NewRepository(
+		svc.metadata,
+		svc.l,
+		newQueueSupplier(path, svc, measureDataNodeRegistry),
+		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
+	)
+	sr.start()
+	return sr
 }
 
 func (sr *schemaRepo) start() {
@@ -236,6 +240,7 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
+		sr.stopAllProcessorsWithGroupPrefix(g.Metadata.Name)
 	case schema.KindMeasure:
 		m := metadata.Spec.(*databasev1.Measure)
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -309,6 +314,18 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
+func (sr *schemaRepo) loadQueue(groupName string) (*wqueue.Queue[*tsTable, option], error) {
+	g, ok := sr.LoadGroup(groupName)
+	if !ok {
+		return nil, fmt.Errorf("group %s not found", groupName)
+	}
+	db := g.SupplyTSDB()
+	if db == nil {
+		return nil, fmt.Errorf("queue for group %s not found", groupName)
+	}
+	return db.(*wqueue.Queue[*tsTable, option]), nil
+}
+
 func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, group string) {
 	md := GetTopNSchemaMetadata(group)
 	operation := func() error {
@@ -338,21 +355,49 @@ func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchema
 	}
 }
 
+func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
+	var keysToDelete []string
+	groupPrefix := groupName + "/"
+
+	sr.topNProcessorMap.Range(func(key, _ any) bool {
+		keyStr := key.(string)
+		if strings.HasPrefix(keyStr, groupPrefix) {
+			keysToDelete = append(keysToDelete, keyStr)
+		}
+		return true
+	})
+
+	for _, key := range keysToDelete {
+		if v, ok := sr.topNProcessorMap.Load(key); ok {
+			manager := v.(*topNProcessorManager)
+			if err := manager.Close(); err != nil {
+				sr.l.Error().Err(err).Str("key", key).Msg("failed to close topN processor manager")
+			}
+			sr.topNProcessorMap.Delete(key)
+		}
+	}
+
+	if len(keysToDelete) > 0 {
+		sr.l.Info().Str("groupName", groupName).Int("count", len(keysToDelete)).Msg("stopped topN processors for group")
+	}
+}
+
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
 	metadata   metadata.Repo
 	omr        observability.MetricsRegistry
-	l          *logger.Logger
 	c          storage.Cache
 	pm         protector.Memory
+	l          *logger.Logger
 	schemaRepo *schemaRepo
 	nodeLabels map[string]string
+	nodeID     string
 	path       string
 	option     option
 }
 
-func newSupplier(path string, svc *service, sr *schemaRepo, nodeLabels map[string]string) *supplier {
+func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string, nodeID string) *supplier {
 	if svc.pm == nil {
 		svc.l.Panic().Msg("CRITICAL: svc.pm is nil in newSupplier")
 	}
@@ -373,6 +418,7 @@ func newSupplier(path string, svc *service, sr *schemaRepo, nodeLabels map[strin
 		pm:         svc.pm,
 		schemaRepo: sr,
 		nodeLabels: nodeLabels,
+		nodeID:     nodeID,
 	}
 }
 
@@ -449,33 +495,127 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		opts, s.c, group)
 }
 
-type portableSupplier struct {
-	metadata metadata.Repo
-	l        *logger.Logger
+type queueSupplier struct {
+	metadata                metadata.Repo
+	omr                     observability.MetricsRegistry
+	pm                      protector.Memory
+	measureDataNodeRegistry grpc.NodeRegistry
+	l                       *logger.Logger
+	schemaRepo              *schemaRepo
+	path                    string
+	option                  option
 }
 
-func newPortableSupplier(metadata metadata.Repo, l *logger.Logger) *portableSupplier {
-	return &portableSupplier{
-		metadata: metadata,
-		l:        l,
+func newQueueSupplier(path string, svc *liaison, measureDataNodeRegistry grpc.NodeRegistry) *queueSupplier {
+	opt := svc.option
+	opt.protector = svc.pm
+
+	if opt.protector == nil {
+		svc.l.Panic().Msg("CRITICAL: opt.protector is still nil after assignment")
+	}
+	return &queueSupplier{
+		metadata:                svc.metadata,
+		omr:                     svc.omr,
+		pm:                      svc.pm,
+		measureDataNodeRegistry: measureDataNodeRegistry,
+		l:                       svc.l,
+		path:                    path,
+		option:                  opt,
 	}
 }
 
-func (s *portableSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
+func (s *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
+	measureSchema := spec.Schema().(*databasev1.Measure)
+	return openMeasure(measureSpec{
+		schema: measureSchema,
+	}, s.l, nil, s.pm, s.schemaRepo)
+}
+
+func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
 }
 
-func (*portableSupplier) OpenDB(_ *commonv1.Group) (io.Closer, error) {
-	panic("do not support open db")
+func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {
+	name := groupSchema.Metadata.Name
+	p := common.Position{
+		Module:   "measure",
+		Database: name,
+	}
+	ro := groupSchema.ResourceOpts
+	if ro == nil {
+		return nil, fmt.Errorf("no resource opts in group %s", name)
+	}
+	shardNum := ro.ShardNum
+	group := groupSchema.Metadata.Name
+	opts := wqueue.Opts[*tsTable, option]{
+		Group:           group,
+		ShardNum:        shardNum,
+		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
+		Location:        path.Join(s.path, group),
+		Option:          s.option,
+		Metrics:         s.newMetrics(p),
+		SubQueueCreator: newWriteQueue,
+		GetNodes: func(shardID common.ShardID) []string {
+			copies := ro.Replicas + 1
+			nodes := make([]string, 0, copies)
+			for i := uint32(0); i < copies; i++ {
+				nodeID, err := s.measureDataNodeRegistry.Locate(group, "", uint32(shardID), i)
+				if err != nil {
+					s.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Uint32("copy", i).Msg("failed to locate node")
+					return nil
+				}
+				nodes = append(nodes, nodeID)
+			}
+			return nodes
+		},
+	}
+	return wqueue.Open(
+		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
+			return p
+		}),
+		opts, group,
+	)
 }
 
-func (s *portableSupplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
-	measureSchema := spec.Schema().(*databasev1.Measure)
-	return openMeasure(measureSpec{
-		schema: measureSchema,
-	}, s.l, nil, nil, nil)
+func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
+	factory := s.omr.With(measureScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
+	return &metrics{
+		totalWritten:               factory.NewCounter("total_written"),
+		totalBatch:                 factory.NewCounter("total_batch"),
+		totalBatchIntroLatency:     factory.NewCounter("total_batch_intro_time"),
+		totalIntroduceLoopStarted:  factory.NewCounter("total_introduce_loop_started", "phase"),
+		totalIntroduceLoopFinished: factory.NewCounter("total_introduce_loop_finished", "phase"),
+		totalFlushLoopStarted:      factory.NewCounter("total_flush_loop_started"),
+		totalFlushLoopFinished:     factory.NewCounter("total_flush_loop_finished"),
+		totalFlushLoopErr:          factory.NewCounter("total_flush_loop_err"),
+		totalMergeLoopStarted:      factory.NewCounter("total_merge_loop_started"),
+		totalMergeLoopFinished:     factory.NewCounter("total_merge_loop_finished"),
+		totalMergeLoopErr:          factory.NewCounter("total_merge_loop_err"),
+		totalFlushLoopProgress:     factory.NewCounter("total_flush_loop_progress"),
+		totalFlushed:               factory.NewCounter("total_flushed"),
+		totalFlushedMemParts:       factory.NewCounter("total_flushed_mem_parts"),
+		totalFlushPauseCompleted:   factory.NewCounter("total_flush_pause_completed"),
+		totalFlushPauseBreak:       factory.NewCounter("total_flush_pause_break"),
+		totalFlushIntroLatency:     factory.NewCounter("total_flush_intro_latency"),
+		totalFlushLatency:          factory.NewCounter("total_flush_latency"),
+		totalMergedParts:           factory.NewCounter("total_merged_parts", "type"),
+		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type"),
+		totalMerged:                factory.NewCounter("total_merged", "type"),
+		tbMetrics: tbMetrics{
+			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
+			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
+			totalMemBlocks:                 factory.NewGauge("total_mem_blocks", common.ShardLabelNames()...),
+			totalMemPartBytes:              factory.NewGauge("total_mem_part_bytes", common.ShardLabelNames()...),
+			totalMemPartUncompressedBytes:  factory.NewGauge("total_mem_part_uncompressed_bytes", common.ShardLabelNames()...),
+			totalFileParts:                 factory.NewGauge("total_file_parts", common.ShardLabelNames()...),
+			totalFileElements:              factory.NewGauge("total_file_elements", common.ShardLabelNames()...),
+			totalFileBlocks:                factory.NewGauge("total_file_blocks", common.ShardLabelNames()...),
+			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
+			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
+		},
+	}
 }
 
 // GetTopNSchema returns the schema of the topN result measure.
@@ -489,6 +629,7 @@ func GetTopNSchema(md *commonv1.Metadata) *databasev1.Measure {
 					{Name: TopNTagNames[0], Type: databasev1.TagType_TAG_TYPE_STRING},
 					{Name: TopNTagNames[1], Type: databasev1.TagType_TAG_TYPE_INT},
 					{Name: TopNTagNames[2], Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: TopNTagNames[3], Type: databasev1.TagType_TAG_TYPE_STRING},
 				},
 			},
 		},

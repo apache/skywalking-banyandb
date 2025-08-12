@@ -66,13 +66,7 @@ var (
 	_ flow.Sink = (*topNStreamingProcessor)(nil)
 )
 
-// TopNService is the interface for top N service to write measures to the top N flow.
-type TopNService interface {
-	// InFlow is called when a measure is written to the top N flow.
-	InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue)
-}
-
-func (sr *schemaRepo) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
+func (sr *schemaRepo) inFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
 	if p, _ := sr.topNProcessorMap.Load(getKey(stm.GetMetadata())); p != nil {
 		p.(*topNProcessorManager).onMeasureWrite(seriesID, shardID, &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
@@ -92,6 +86,7 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 		m, _ := sr.topNProcessorMap.LoadOrStore(key, &topNProcessorManager{
 			l:        sr.l,
 			pipeline: pipeline,
+			nodeID:   sr.nodeID,
 		})
 		manager = m.(*topNProcessorManager)
 		return manager
@@ -105,6 +100,7 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 			manager = &topNProcessorManager{
 				l:        sr.l,
 				pipeline: pipeline,
+				nodeID:   sr.nodeID,
 			}
 			manager.registeredTasks = append(manager.registeredTasks, pre.registeredTasks...)
 		} else {
@@ -115,6 +111,7 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 		manager = &topNProcessorManager{
 			l:        sr.l,
 			pipeline: pipeline,
+			nodeID:   sr.nodeID,
 		}
 	}
 	manager.init(sourceMeasure.GetSchema())
@@ -147,6 +144,7 @@ type topNStreamingProcessor struct {
 	m             *databasev1.Measure
 	errCh         <-chan error
 	stopCh        chan struct{}
+	nodeID        string
 	flow.ComponentState
 	interval      time.Duration
 	sortDirection modelv1.Sort
@@ -256,6 +254,13 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 					},
 				},
 			},
+			{
+				Value: &modelv1.TagValue_Str{
+					Str: &modelv1.Str{
+						Value: t.nodeID,
+					},
+				},
+			},
 		}
 		buf = buf[:0]
 		if buf, err = topNValue.marshal(buf); err != nil {
@@ -335,24 +340,30 @@ func (t *topNStreamingProcessor) handleError() {
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
-	l               *logger.Logger
 	pipeline        queue.Client
-	m               *databasev1.Measure
 	s               logical.TagSpecRegistry
+	l               *logger.Logger
+	m               *databasev1.Measure
+	nodeID          string
 	registeredTasks []*databasev1.TopNAggregation
 	processorList   []*topNStreamingProcessor
 	sync.RWMutex
+	closed bool
 }
 
 func (manager *topNProcessorManager) init(m *databasev1.Measure) {
 	manager.Lock()
 	defer manager.Unlock()
+	if manager.closed {
+		return
+	}
 	if manager.m != nil {
 		return
 	}
 	manager.m = m
 	tagMapSpec := logical.TagSpecMap{}
 	tagMapSpec.RegisterTagFamilies(m.GetTagFamilies())
+	manager.s = tagMapSpec
 	for i := range manager.registeredTasks {
 		if err := manager.start(manager.registeredTasks[i]); err != nil {
 			manager.l.Err(err).Msg("fail to start processor")
@@ -363,12 +374,18 @@ func (manager *topNProcessorManager) init(m *databasev1.Measure) {
 func (manager *topNProcessorManager) Close() error {
 	manager.Lock()
 	defer manager.Unlock()
+	if manager.closed {
+		return nil
+	}
+	manager.closed = true
 	var err error
 	for _, processor := range manager.processorList {
 		err = multierr.Append(err, processor.Close())
 	}
 	manager.processorList = nil
 	manager.registeredTasks = nil
+	manager.s = nil
+	manager.m = nil
 	return err
 }
 
@@ -376,6 +393,9 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uin
 	go func() {
 		manager.RLock()
 		defer manager.RUnlock()
+		if manager.closed {
+			return
+		}
 		if manager.m == nil {
 			manager.RUnlock()
 			manager.init(measure)
@@ -395,6 +415,9 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uin
 func (manager *topNProcessorManager) register(topNSchema *databasev1.TopNAggregation) {
 	manager.Lock()
 	defer manager.Unlock()
+	if manager.closed {
+		return
+	}
 	exist := false
 	for i := range manager.registeredTasks {
 		if manager.registeredTasks[i].GetMetadata().GetName() == topNSchema.GetMetadata().GetName() {
@@ -468,6 +491,7 @@ func (manager *topNProcessorManager) start(topNSchema *databasev1.TopNAggregatio
 			stopCh:        make(chan struct{}),
 			streamingFlow: streamingFlow,
 			pipeline:      manager.pipeline,
+			nodeID:        manager.nodeID,
 		}
 		processorList[i] = processor.start()
 	}

@@ -24,8 +24,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
+	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"github.com/apache/skywalking-banyandb/test/integration/distributed/backup"
 	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
@@ -45,9 +45,11 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	err = dockertesthelper.InitMinIOContainer()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	fs, err := aws.NewFS(filepath.Join(dockertesthelper.BucketName, testVars.DestDir), &remote.FsConfig{
-		S3ConfigFilePath:     dockertesthelper.S3ConfigPath,
-		S3CredentialFilePath: dockertesthelper.S3CredentialsPath,
+	fs, err := aws.NewFS(filepath.Join(dockertesthelper.BucketName, testVars.DestDir), &config.FsConfig{
+		S3: &config.S3Config{
+			S3ConfigFilePath:     dockertesthelper.S3ConfigPath,
+			S3CredentialFilePath: dockertesthelper.S3CredentialsPath,
+		},
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	testVars.FS = fs

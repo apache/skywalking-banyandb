@@ -24,6 +24,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -35,12 +36,14 @@ type tagValue struct {
 	value     []byte
 	valueArr  [][]byte
 	valueType pbv1.ValueType
+	indexed   bool
 }
 
 func (t *tagValue) reset() {
 	t.tag = ""
 	t.value = nil
 	t.valueArr = nil
+	t.indexed = false
 }
 
 func (t *tagValue) size() int {
@@ -198,19 +201,29 @@ func releaseElements(e *elements) {
 var elementsPool = pool.Register[*elements]("stream-elements")
 
 type elementsInTable struct {
-	timeRange timestamp.TimeRange
-	tsTable   *tsTable
-
-	elements *elements
-
-	docs index.Documents
+	seriesDocs seriesDoc
+	segment    storage.Segment[*tsTable, option]
+	tsTable    *tsTable
+	elements   *elements
+	timeRange  timestamp.TimeRange
+	docs       index.Documents
+	shardID    common.ShardID
 }
 
 type elementsInGroup struct {
-	tsdb        storage.TSDB[*tsTable, option]
+	tsdb     storage.TSDB[*tsTable, option]
+	tables   []*elementsInTable
+	segments []storage.Segment[*tsTable, option]
+	latestTS int64
+}
+
+type elementsInQueue struct {
+	name   string
+	queue  *wqueue.Queue[*tsTable, option]
+	tables []*elementsInTable
+}
+
+type seriesDoc struct {
 	docIDsAdded map[uint64]struct{}
 	docs        index.Documents
-	tables      []*elementsInTable
-	segments    []storage.Segment[*tsTable, option]
-	latestTS    int64
 }

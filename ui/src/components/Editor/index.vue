@@ -123,7 +123,6 @@
             let obj = {
               name: item.tag,
               type: item.type,
-              indexedOnly: item.indexedOnly,
             };
             return tagFamilies[index].tags.push(obj);
           }
@@ -133,7 +132,6 @@
               {
                 name: item.tag,
                 type: item.type,
-                indexedOnly: item.indexedOnly,
               },
             ],
           };
@@ -230,10 +228,10 @@
       getStreamOrMeasure(data.type, data.form.group, data.form.name)
         .then((res) => {
           if (res.status === 200) {
-            data.form.indexMode = res.data[String(data.type)].indexMode;
-            const tagFamilies = res.data[String(data.type)].tagFamilies;
-            const entity = res.data[String(data.type)].entity.tagNames;
-            const shardingKey = res.data[String(data.type)].shardingKey?.tagNames;
+            data.form.indexMode = res.data[String(data.type)]?.indexMode || false;
+            const tagFamilies = res.data[String(data.type)]?.tagFamilies || [];
+            const entity = res.data[String(data.type)]?.entity?.tagNames || [];
+            const shardingKey = res.data[String(data.type)]?.shardingKey?.tagNames || [];
             const arr = [];
             tagFamilies.forEach((item) => {
               item.tags.forEach((tag) => {
@@ -247,7 +245,6 @@
                   tagFamily: item.name,
                   tag: tag.name,
                   type: tag.type,
-                  indexedOnly: tag.indexedOnly,
                   entity: entityIndex >= 0 ? true : false,
                   shardingKey: shardingKeyIndex >= 0 ? true : false,
                 };

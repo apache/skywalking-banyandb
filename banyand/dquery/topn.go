@@ -41,7 +41,7 @@ import (
 const defaultTopNQueryTimeout = 10 * time.Second
 
 type topNQueryProcessor struct {
-	measureService measure.SchemaService
+	measureService measure.Service
 	broadcaster    bus.Broadcaster
 	*queryService
 	*bus.UnImplementedHealthyListener
