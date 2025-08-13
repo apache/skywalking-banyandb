@@ -75,6 +75,7 @@ func generateFlusherIntroduction() *flusherIntroduction {
 }
 
 func releaseFlusherIntroduction(i *flusherIntroduction) {
+	i.reset()
 	flusherIntroductionPool.Put(i)
 }
 

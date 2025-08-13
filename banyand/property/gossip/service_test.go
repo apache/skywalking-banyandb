@@ -256,7 +256,7 @@ func newMockListener() *mockListener {
 	}
 }
 
-func (m *mockListener) Rev(_ context.Context, nextNode *grpc.ClientConn, req *propertyv1.PropagationRequest) error {
+func (m *mockListener) Rev(_ context.Context, _ Trace, nextNode *grpc.ClientConn, req *propertyv1.PropagationRequest) error {
 	if m.mockErr != nil {
 		return m.mockErr
 	}
