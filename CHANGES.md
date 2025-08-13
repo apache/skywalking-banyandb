@@ -30,6 +30,7 @@ Release Notes.
 - Backup/Restore: Add support for AWS S3, Google Cloud Storage (GCS), and Azure Blob Storage as remote targets for backup and restore operations.
 - Improve TopN processing by adding "source" tag to track node-specific data, enhancing data handling across distributed nodes
 - Implement Login with Username/Password authentication in BanyanDB
+- Enhance flusher and introducer loops to support merging operations, improving efficiency by eliminating the need for a separate merge loop and optimizing data handling process during flushing and merging
 
 ### Bug Fixes
 

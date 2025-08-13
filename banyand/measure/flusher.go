@@ -186,8 +186,10 @@ func (tst *tsTable) persistSnapshot(snapshot *snapshot) {
 	tst.gc.registerSnapshot(snapshot)
 }
 
-// flusherLoopNoMerger is like flusherLoop but does not perform merging, only flushing.
-func (tst *tsTable) flusherLoopNoMerger(flushCh chan *flusherIntroduction, introducerWatcher, flusherWatcher watcher.Channel, epoch uint64) {
+// flusherLoopNoMerger is like flusherLoop but merges parts before flushing without a separate merge loop.
+func (tst *tsTable) flusherLoopNoMerger(flushCh chan *flusherIntroduction, mergeCh chan *mergerIntroduction,
+	introducerWatcher, flusherWatcher watcher.Channel, epoch uint64,
+) {
 	defer tst.loopCloser.Done()
 	epochWatcher := introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
 	if epochWatcher == nil {
@@ -211,12 +213,32 @@ func (tst *tsTable) flusherLoopNoMerger(flushCh chan *flusherIntroduction, intro
 				}()
 				curSnapshot := tst.currentSnapshot()
 				if curSnapshot != nil {
-					defer func() {
-						curSnapshot.decRef()
-						curSnapshot = nil
-					}()
-					tst.flush(curSnapshot, flushCh)
+					flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, flusherWatchers)
+					curSnapshot.decRef()
+					curSnapshot = nil
+				}
+				tst.RLock()
+				if tst.snapshot != nil && tst.snapshot.epoch > epoch {
+					curSnapshot = tst.snapshot
+					curSnapshot.incRef()
+				}
+				tst.RUnlock()
+				if curSnapshot != nil {
+					defer curSnapshot.decRef()
+					merged, err := tst.mergeMemParts(curSnapshot, mergeCh)
+					if err != nil {
+						tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
+						tst.incTotalFlushLoopErr(1)
+						return false
+					}
+					if !merged {
+						tst.flush(curSnapshot, flushCh)
+					}
 					epoch = curSnapshot.epoch
+					// Notify merger to start a new round of merge.
+					// This round might have be triggered in pauseFlusherToPileupMemParts.
+					flusherWatchers.Notify(math.MaxUint64)
+					flusherWatchers = nil
 					if tst.currentEpoch() != epoch {
 						tst.incTotalFlushLoopProgress(1)
 						return false
@@ -228,6 +250,5 @@ func (tst *tsTable) flusherLoopNoMerger(flushCh chan *flusherIntroduction, intro
 				return
 			}
 		}
-		flusherWatchers.Notify(epoch)
 	}
 }

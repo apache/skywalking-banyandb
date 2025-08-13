@@ -74,9 +74,9 @@ func NewMemory(omr observability.MetricsRegistry) Memory {
 		omr:         omr,
 		blockedChan: make(chan struct{}, queueSize),
 		closed:      make(chan struct{}),
-
-		limitGauge: factory.NewGauge("limit"),
-		usageGauge: factory.NewGauge("usage"),
+		l:           logger.GetLogger("memory-protector"),
+		limitGauge:  factory.NewGauge("limit"),
+		usageGauge:  factory.NewGauge("usage"),
 	}
 }
 
