@@ -39,7 +39,7 @@ var (
 	}
 )
 
-var _ = g.FDescribeTable("Scanning Streams", func(args helpers.Args) {
+var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	gm.Eventually(func(innerGm gm.Gomega) {
 		verify(innerGm, args)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())

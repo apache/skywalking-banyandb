@@ -330,6 +330,7 @@ func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, 
 		"--stream-flush-timeout=500ms",
 		"--measure-flush-timeout=500ms",
 		"--stream-sync-interval=1s",
+		"--measure-sync-interval=1s",
 	)
 	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())

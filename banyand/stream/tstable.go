@@ -49,7 +49,6 @@ const (
 )
 
 type tsTable struct {
-	l             *logger.Logger
 	fileSystem    fs.FileSystem
 	pm            protector.Memory
 	metrics       *metrics
@@ -57,12 +56,13 @@ type tsTable struct {
 	snapshot      *snapshot
 	loopCloser    *run.Closer
 	getNodes      func() []string
-	option        option
+	l             *logger.Logger
 	introductions chan *introduction
 	p             common.Position
-	root          string
 	group         string
+	root          string
 	gc            garbageCleaner
+	option        option
 	curPartID     uint64
 	sync.RWMutex
 	shardID common.ShardID
@@ -133,7 +133,7 @@ func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
 	go tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
-	go tst.flusherLoopWithConditionalMerge(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
+	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
 	go tst.syncLoop(syncCh, flusherWatcher)
 }
 

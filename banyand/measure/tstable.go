@@ -135,7 +135,7 @@ func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
 	go tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
-	go tst.flusherLoopWithConditionalMerge(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
+	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
 	go tst.syncLoop(syncCh, flusherWatcher)
 }
 
