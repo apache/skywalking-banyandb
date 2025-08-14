@@ -125,16 +125,17 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	return t, nil
 }
 
-// startLoopNoMerge starts the background loops without the merge loop.
-func (tst *tsTable) startLoopNoMerge(cur uint64) {
+// startLoopWithConditionalMerge starts the background loops with conditional merging based on flushTimeout.
+func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 	tst.loopCloser = run.NewCloser(1 + 3)
 	tst.introductions = make(chan *introduction)
 	flushCh := make(chan *flusherIntroduction)
+	mergeCh := make(chan *mergerIntroduction)
 	syncCh := make(chan *syncIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoopWithSync(flushCh, syncCh, introducerWatcher, cur+1)
-	go tst.flusherLoopNoMerger(flushCh, introducerWatcher, flusherWatcher, cur)
+	go tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
+	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
 	go tst.syncLoop(syncCh, flusherWatcher)
 }
 
