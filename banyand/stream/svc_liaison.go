@@ -82,6 +82,7 @@ func (s *liaison) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.dataPath, "stream-data-path", "", "the data directory path of stream. If not set, <stream-root-path>/stream/data will be used")
 	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
 	flagS.IntVar(&s.maxDiskUsagePercent, "stream-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
+	flagS.DurationVar(&s.option.syncInterval, "stream-sync-interval", defaultSyncInterval, "the periodic sync interval for stream data")
 	return flagS
 }
 
