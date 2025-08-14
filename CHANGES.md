@@ -31,6 +31,8 @@ Release Notes.
 - Improve TopN processing by adding "source" tag to track node-specific data, enhancing data handling across distributed nodes
 - Implement Login with Username/Password authentication in BanyanDB
 - Enhance flusher and introducer loops to support merging operations, improving efficiency by eliminating the need for a separate merge loop and optimizing data handling process during flushing and merging
+- Enhance stream synchronization with configurable sync interval - Allows customization of synchronization timing for better performance tuning
+- Refactor flusher and introducer loops to support conditional merging - Optimizes data processing by adding conditional logic to merge operations
 
 ### Bug Fixes
 
