@@ -1232,8 +1232,6 @@ func TestQueryResult(t *testing.T) {
 		},
 	}
 
-	bma := generateBlockMetadataArray()
-	defer releaseBlockMetadataArray(bma)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			verify := func(t *testing.T, tst *tsTable) {
@@ -1253,7 +1251,7 @@ func TestQueryResult(t *testing.T) {
 					return sids[i] < tt.sids[j]
 				})
 				ti := &tstIter{}
-				ti.init(bma, pp, sids, tt.minTimestamp, tt.maxTimestamp)
+				ti.init(pp, sids, tt.minTimestamp, tt.maxTimestamp)
 
 				var result queryResult
 				result.ctx = context.TODO()
