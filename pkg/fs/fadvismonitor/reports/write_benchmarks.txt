@@ -1,2 +1,0 @@
-FAIL	github.com/apache/skywalking-banyandb/pkg/fs/fadvismonitor/benchmark [build failed]
-FAIL

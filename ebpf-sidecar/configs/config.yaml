@@ -1,0 +1,67 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# eBPF Sidecar Agent Configuration
+
+# Server configuration
+server:
+  # gRPC server configuration
+  grpc:
+    port: 9090
+    tls:
+      enabled: false
+      # cert_file: /etc/ebpf-sidecar/certs/server.crt
+      # key_file: /etc/ebpf-sidecar/certs/server.key
+  
+  # HTTP server configuration
+  http:
+    port: 8080
+    metrics_path: /metrics
+
+# Collector configuration
+collector:
+  # Collection interval
+  interval: 10s
+  
+  # Enabled modules
+  modules:
+    - fadvise    # File advisory monitoring
+    - memory     # Memory management monitoring
+    # - io       # I/O monitoring (future)
+    # - network  # Network monitoring (future)
+  
+  # eBPF specific configuration
+  ebpf:
+    # Path to pin eBPF maps (for persistence across restarts)
+    pin_path: /sys/fs/bpf/ebpf-sidecar
+    # Maximum map size
+    map_size_limit: 10240
+
+# Export configuration
+export:
+  # Export type: "prometheus" or "banyandb"
+  type: prometheus
+  
+  # BanyanDB export configuration (when type is "banyandb")
+  banyandb:
+    endpoint: localhost:17912
+    group: ebpf-metrics
+    timeout: 30s
+    tls:
+      enabled: false
+      # cert_file: /etc/ebpf-sidecar/certs/client.crt
+      # key_file: /etc/ebpf-sidecar/certs/client.key
