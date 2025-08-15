@@ -154,7 +154,6 @@ type partMetadata struct {
 type element struct {
     seriesID  common.SeriesID
     userKey   int64      // The ordering key from user (replaces timestamp)
-    elementID uint64     // Internal element identifier  
     data      []byte     // User payload data (pooled slice)
     tags      []tag      // Individual tags (pooled slice)
     
@@ -166,7 +165,6 @@ type element struct {
 func (e *element) reset() {
     e.seriesID = 0
     e.userKey = 0
-    e.elementID = 0
     if cap(e.data) <= maxPooledSliceSize {
         e.data = e.data[:0]  // Reuse slice if not too large
     } else {
@@ -188,7 +186,6 @@ func (e *element) reset() {
 type elements struct {
     seriesIDs []common.SeriesID  // Pooled slice
     userKeys  []int64           // Pooled slice
-    elementIDs []uint64         // Pooled slice
     data      [][]byte          // Pooled slice of slices
     tags      [][]tag           // Pooled slice of tag slices
     
@@ -201,7 +198,6 @@ type elements struct {
 func (e *elements) reset() {
     e.seriesIDs = e.seriesIDs[:0]
     e.userKeys = e.userKeys[:0] 
-    e.elementIDs = e.elementIDs[:0]
     e.data = e.data[:0]
     e.tags = e.tags[:0]
     e.pooled = false
@@ -452,9 +448,25 @@ func (s *snapshot) getParts(dst []*part, minKey, maxKey int64) ([]*part, int) {
 
 #### Part Organization
 - **Part naming**: Hex-encoded epoch numbers (generation-based)
+  - Function: `partName(epoch uint64)` returns `fmt.Sprintf("%016x", epoch)`
+  - Example: epoch `1` becomes directory `0000000000000001`
+  - Epochs assigned sequentially by introducer loop for total ordering
 - **Key ranges**: Each part covers a range of user keys
 - **Directory structure**: Similar to stream module (`000000001234abcd/`)
 - **File structure**: Core files plus individual tag files
+
+#### Epoch Management and Persistence
+
+**Epoch Assignment**: Each operation in the introducer loop increments the epoch counter:
+- Memory part introduction: `epoch++`
+- Flushed parts: `epoch++` 
+- Merged parts: `epoch++`
+
+**Snapshot Manifest Naming**: Snapshot manifests use epoch-based naming:
+- Function: `snapshotName(snapshot uint64)` returns `fmt.Sprintf("%016x%s", snapshot, ".snapshot")`
+- Example: epoch `1` becomes file `0000000000000001.snapshot`
+- Contains JSON array of part directory names for recovery
+- Used during startup to reconstruct snapshot state from epoch-based naming
 
 ##### Part Directory Example
 ```
@@ -502,7 +514,11 @@ The sidx design implements a **hybrid approach** that combines user-controlled t
 ### Component Relationships
 
 #### 1. Introducer Loop (Snapshot Coordinator)
-The introducer runs as a background goroutine that coordinates all snapshot updates through channel-based communication:
+The introducer runs as a background goroutine that coordinates all snapshot updates through channel-based communication.
+
+**Single-Writer Invariant**: All snapshot updates go through the introducer loop; readers only read snapshots.
+
+The introducer loop implements the same critical single-writer architecture as the stream module:
 
 ```go
 // Introduction types for different operations
@@ -554,6 +570,10 @@ func (sidx *SIDX) introducerLoop(
 - **Channel-based Communication**: Receives updates via channels for thread safety
 - **Epoch Management**: Maintains ordering and consistency through epochs
 - **Single Source of Truth**: Only the introducer can modify snapshots
+- **Centralized Coordination**: All operations that modify snapshots are serialized through the introducer
+- **Sequential Processing**: Updates processed sequentially via channels for consistency
+- **Atomic Replacement**: Snapshot updates are atomic with proper reference counting
+- **Read-Only Access**: Readers access immutable snapshots without modification
 
 #### 2. Flusher (User-Triggered Persistence)
 The flusher provides a simple interface for user-controlled persistence:
@@ -749,11 +769,13 @@ func (app *Application) optimizeStorage() error {
 ### Benefits of Hybrid Design
 
 1. **User Control with Safety**: Users control timing while introducer ensures snapshot consistency
-2. **Simple Interface**: Single-function interfaces (`Flush()`, `Merge()`) without parameters
-3. **Predictable Performance**: No unexpected background I/O, but reliable snapshot management
-4. **Application Integration**: Operations can be coordinated with application lifecycle
-5. **Efficient Coordination**: Channel-based introducer prevents race conditions
-6. **Flexible Policies**: Users implement custom flush/merge policies while system handles coordination
+2. **Single-Writer Invariant**: All snapshot updates serialized through introducer loop for data consistency
+3. **Simple Interface**: Single-function interfaces (`Flush()`, `Merge()`) without parameters
+4. **Predictable Performance**: No unexpected background I/O, but reliable snapshot management
+5. **Application Integration**: Operations can be coordinated with application lifecycle
+6. **Efficient Coordination**: Channel-based introducer prevents race conditions
+7. **Epoch-based Recovery**: Consistent epoch naming enables reliable crash recovery
+8. **Flexible Policies**: Users implement custom flush/merge policies while system handles coordination
 
 ### Implementation Considerations
 
@@ -819,12 +841,27 @@ func (m *merger) getPartsToMerge() []*partWrapper {
 This hybrid architecture provides:
 
 1. **Centralized Coordination**: Single introducer loop manages all snapshot updates
-2. **User Control**: Simple `Flush()` and `Merge()` interfaces give users timing control
-3. **Thread Safety**: Channel-based communication prevents race conditions
-4. **Simplicity**: No complex parameters or configuration - internal logic handles details
-5. **Flexibility**: Users can implement any policy for when to trigger operations
+2. **Single-Writer Invariant**: All snapshot modifications serialized for consistency
+3. **User Control**: Simple `Flush()` and `Merge()` interfaces give users timing control
+4. **Thread Safety**: Channel-based communication prevents race conditions
+5. **Epoch-based Consistency**: Sequential epoch assignment ensures total ordering
+6. **Reliable Recovery**: Epoch-based part and snapshot naming enables crash recovery
+7. **Simplicity**: No complex parameters or configuration - internal logic handles details
+8. **Flexibility**: Users can implement any policy for when to trigger operations
 
 The design ensures that sidx remains focused on efficient storage while providing users with predictable, controllable storage operations that integrate cleanly with application lifecycles.
+
+#### Consistency with Stream Module
+
+SIDX maintains architectural consistency with the stream module:
+
+- **Same Single-Writer Pattern**: Both use introducer loops to serialize snapshot updates
+- **Same Epoch Management**: Both use 16-character hex epoch naming for parts and snapshots
+- **Same Recovery Mechanism**: Both use epoch-based naming for crash recovery
+- **Same Reference Counting**: Both use atomic reference counting for safe concurrent access
+- **Same Channel Communication**: Both use channels for thread-safe coordination
+
+This consistency ensures that developers familiar with one module can easily understand and work with the other, while maintaining the same reliability guarantees across both systems.
 
 ### Configuration Options
 ```go
