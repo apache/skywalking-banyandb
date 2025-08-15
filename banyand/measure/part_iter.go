@@ -207,7 +207,9 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	}
 	bmPtrs := make([]*blockMetadata, 0, len(bms))
 	for _, bm := range bms {
-		bmPtrs = append(bmPtrs, &bm)
+		bmCopy := &blockMetadata{}
+		bmCopy.copyFrom(&bm)
+		bmPtrs = append(bmPtrs, bmCopy)
 	}
 	pi.c.Put(storage.NewEntryKey(pi.p.partMetadata.ID, mr.offset), bmPtrs)
 	return bms, nil
