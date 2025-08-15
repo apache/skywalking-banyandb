@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -280,14 +281,20 @@ func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, sh
 		Id:       propertypkg.GetPropertyID(cur),
 		Property: cur,
 	}
+	var successCount int
 	futures := make([]bus.Future, 0, len(nodes))
 	for _, node := range nodes {
 		f, err := ps.pipeline.Publish(ctx, data.TopicPropertyUpdate,
 			bus.NewMessageWithNode(bus.MessageID(time.Now().Unix()), node, req))
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to publish property update to node %s", node)
+			ps.log.Debug().Err(err).Str("node", node).Msg("failed to publish property update")
+			continue
 		}
+		successCount++
 		futures = append(futures, f)
+	}
+	if successCount == 0 {
+		return nil, fmt.Errorf("failed to publish property update to any node")
 	}
 	// Wait for all futures to complete, and which should last have one success
 	haveSuccess := false
