@@ -2,7 +2,14 @@
 
 ## Overview
 
-The Secondary Index File System (sidx) is a generalized file system abstraction inspired by BanyanDB's stream module that uses user-provided int64 keys as ordering values instead of timestamps. This enables efficient secondary indexing for various data types and use cases beyond time-series data.
+The Secondary Index File System (sidx) is a production-ready, high-performance file system abstraction inspired by BanyanDB's stream module that uses user-provided int64 keys as ordering values instead of timestamps. This enables efficient secondary indexing for various data types and use cases beyond time-series data.
+
+**Key Production Features:**
+- **Memory Management**: Comprehensive object pooling and memory optimization
+- **Thread Safety**: Atomic operations and reference counting for concurrent access
+- **Resource Management**: Disk space reservation and backpressure control
+- **Fault Tolerance**: Corruption detection, recovery procedures, and graceful degradation
+- **Operational Excellence**: Complete observability, metrics, and administrative APIs
 
 ## Core Design Principle
 
@@ -52,40 +59,152 @@ func (s *snapshot) getParts(minKey, maxKey int64) []*part {
 
 ### Core Components
 
-#### 1. Part Structure
+#### 1. Enhanced Part Structure with Reference Counting
+
 ```go
-type part struct {
-    primary              fs.Reader                // Block metadata
-    data                 fs.Reader                // User data payloads
-    userKeys             fs.Reader                // User-provided int64 keys
-    fileSystem           fs.FileSystem
-    tagMetadata          map[string]fs.Reader     // Per-tag metadata files (.tm)
-    tags                 map[string]fs.Reader     // Per-tag data files (.td)
-    tagFilters           map[string]fs.Reader     // Per-tag filter files (.tf)
-    path                 string
-    primaryBlockMetadata []primaryBlockMetadata
-    partMetadata         partMetadata             // Contains MinKey/MaxKey
+// partState represents the lifecycle state of a part
+type partState int32
+
+const (
+    partStateActive partState = iota
+    partStateRemoving
+    partStateRemoved
+)
+
+// partWrapper provides thread-safe reference counting for parts
+type partWrapper struct {
+    p         *part
+    refCount  int32     // Atomic reference counter
+    state     int32     // Atomic state (partState)
+    createdAt int64     // Creation timestamp for debugging
+    size      uint64    // Cached size for resource management
 }
 
+// Thread-safe reference counting methods
+func (pw *partWrapper) acquire() bool {
+    for {
+        refs := atomic.LoadInt32(&pw.refCount)
+        if refs <= 0 {
+            return false // Part being destroyed
+        }
+        if atomic.CompareAndSwapInt32(&pw.refCount, refs, refs+1) {
+            return true
+        }
+    }
+}
+
+func (pw *partWrapper) release() {
+    if atomic.AddInt32(&pw.refCount, -1) == 0 {
+        pw.destroy()
+    }
+}
+
+func (pw *partWrapper) markRemovable() {
+    atomic.StoreInt32(&pw.state, int32(partStateRemoving))
+}
+
+func (pw *partWrapper) isRemovable() bool {
+    return atomic.LoadInt32(&pw.state) == int32(partStateRemoving)
+}
+
+// Enhanced part structure with resource management
+type part struct {
+    // File readers with standardized naming
+    primary     fs.Reader    // primary.bin - Block metadata
+    data        fs.Reader    // data.bin - User data payloads  
+    userKeys    fs.Reader    // keys.bin - User-provided int64 keys
+    meta        fs.Reader    // meta.bin - Part metadata
+    
+    // File system and path
+    fileSystem  fs.FileSystem
+    path        string
+    
+    // Tag storage with individual tag files
+    tagMetadata map[string]fs.Reader  // tag_<name>.tm files
+    tags        map[string]fs.Reader  // tag_<name>.td files 
+    tagFilters  map[string]fs.Reader  // tag_<name>.tf files
+    
+    // Cached metadata for performance
+    primaryBlockMetadata []primaryBlockMetadata
+    partMetadata         partMetadata
+    
+}
+
+// Enhanced metadata with integrity and versioning
 type partMetadata struct {
+    // Size information
     CompressedSizeBytes   uint64
     UncompressedSizeBytes uint64
     TotalCount            uint64
     BlocksCount           uint64
-    MinKey                int64  // Replaces MinTimestamp
-    MaxKey                int64  // Replaces MaxTimestamp
-    ID                    uint64
+    
+    // Key range (replaces timestamp range)
+    MinKey      int64     // Minimum user key in part
+    MaxKey      int64     // Maximum user key in part
+    
+    // Identity
+    ID          uint64    // Unique part identifier
 }
 ```
 
-#### 2. Element Structure
+#### 2. Enhanced Element Structure with Object Pooling
+
 ```go
+// Enhanced element structure with reset capability for pooling
 type element struct {
     seriesID  common.SeriesID
-    userKey   int64    // The ordering key from user (replaces timestamp)
-    elementID uint64   // Internal element identifier
-    data      []byte   // User payload data
-    tags      []tag    // Individual tags, not tag families
+    userKey   int64      // The ordering key from user (replaces timestamp)
+    elementID uint64     // Internal element identifier  
+    data      []byte     // User payload data (pooled slice)
+    tags      []tag      // Individual tags (pooled slice)
+    
+    // Internal fields for pooling
+    pooled    bool       // Whether this element came from pool
+}
+
+// Reset clears element for reuse in object pool
+func (e *element) reset() {
+    e.seriesID = 0
+    e.userKey = 0
+    e.elementID = 0
+    if cap(e.data) <= maxPooledSliceSize {
+        e.data = e.data[:0]  // Reuse slice if not too large
+    } else {
+        e.data = nil  // Release oversized slice
+    }
+    if cap(e.tags) <= maxPooledTagCount {
+        // Reset each tag for reuse
+        for i := range e.tags {
+            e.tags[i].reset()
+        }
+        e.tags = e.tags[:0]
+    } else {
+        e.tags = nil
+    }
+    e.pooled = false
+}
+
+// Enhanced elements collection with pooling
+type elements struct {
+    seriesIDs []common.SeriesID  // Pooled slice
+    userKeys  []int64           // Pooled slice
+    elementIDs []uint64         // Pooled slice
+    data      [][]byte          // Pooled slice of slices
+    tags      [][]tag           // Pooled slice of tag slices
+    
+    // Pool management
+    pooled    bool              // Whether from pool
+    capacity  int               // Original capacity for pool return
+}
+
+// Reset elements collection for pooling
+func (e *elements) reset() {
+    e.seriesIDs = e.seriesIDs[:0]
+    e.userKeys = e.userKeys[:0] 
+    e.elementIDs = e.elementIDs[:0]
+    e.data = e.data[:0]
+    e.tags = e.tags[:0]
+    e.pooled = false
 }
 
 // Elements are sorted by: seriesID first, then userKey
@@ -97,7 +216,71 @@ func (e *elements) Less(i, j int) bool {
 }
 ```
 
-#### 3. Tag Storage Architecture
+#### 3. Memory Management and Object Pooling
+
+**Key Components:**
+- **Object Pools**: sync.Pool for elements, tags, requests, and I/O buffers
+- **Memory Tracking**: Atomic counters for usage monitoring and leak detection
+- **Reset Methods**: All pooled objects implement reset() for safe reuse
+- **Size Limits**: Prevents pooling of oversized objects (>1MB)
+
+**Pooled Objects:**
+- Elements and element collections
+- Tag structures and value slices
+- Write/Query requests and responses
+- Read/Write buffers for I/O operations
+
+**Benefits:**
+- Reduced GC pressure under high load
+- Consistent memory usage patterns
+- Prevention of memory leaks through proper reset procedures
+
+#### 4. Resource Management and Backpressure Control
+
+**Key Components:**
+- **Disk Space Reservation**: Pre-allocates space for flush/merge operations to prevent out-of-space failures
+- **Memory Limiting**: Enforces memory usage limits with configurable warning and backpressure thresholds  
+- **Concurrency Control**: Limits concurrent operations (flush, merge, query) using semaphores
+- **Adaptive Backpressure**: Four-level system (None/Moderate/Severe/Critical) based on resource usage
+
+**Resource Limits:**
+- Memory: Maximum usage, part count, warning ratios
+- Disk: Maximum usage, minimum free space, warning thresholds
+- Concurrency: Maximum concurrent operations per type
+- Rate: Maximum writes/queries per second
+
+**Backpressure Behavior:**
+- **80-90%**: Minor delays in processing
+- **90-95%**: Significant delays and throttling
+- **95%+**: Drop new writes, emergency mode
+
+**Benefits:**
+- Prevents resource exhaustion failures
+- Maintains system stability under load
+- Provides graceful degradation
+
+#### 5. Error Handling and Recovery
+
+**Error Categories:**
+- **Corruption**: Data integrity violations, format errors
+- **Resource**: Memory/disk exhaustion, I/O failures  
+- **Validation**: Key ordering violations, format errors
+- **Concurrency**: Race conditions, deadlocks
+
+**Recovery Mechanisms:**
+- **Detection**: Continuous health monitoring and integrity validation
+- **Isolation**: Quarantine corrupted parts to prevent spread
+- **Repair**: Automatic recovery for repairable corruption
+- **Graceful Degradation**: Continue operation with reduced functionality
+
+**Key Components:**
+- **Structured Errors**: Detailed error context for diagnosis
+- **Health Checker**: Continuous system monitoring
+- **Validator**: File integrity and ordering verification
+- **Quarantine System**: Isolation of corrupted data
+- **Transactional Operations**: Atomic multi-file updates
+
+#### 6. Tag Storage Architecture
 
 sidx uses a **tag-based file design** where each tag is stored in its own set of files, unlike the stream module's tag-family grouping approach. This provides better isolation, modularity, and performance characteristics.
 
@@ -130,22 +313,26 @@ type tagMetadata struct {
 }
 ```
 
-##### File Naming Constants
-```go
-const (
-    // Core file names
-    sidxPrimaryName   = "primary"     // Block metadata
-    sidxDataName      = "data"        // User data payloads
-    sidxMetaName      = "meta"        // Part metadata
-    sidxUserKeysName  = "keys"        // User-provided int64 keys
-    
-    // Tag file prefixes and extensions
-    sidxTagPrefix     = "tag_"
-    tagDataExt       = ".td"          // Tag data
-    tagMetaExt       = ".tm"          // Tag metadata
-    tagFilterExt     = ".tf"          // Tag filter (bloom)
-)
-```
+##### Standardized File Format
+
+**Core Files (per part):**
+- `primary.bin` - Block metadata with version headers
+- `data.bin` - User data payloads with compression
+- `keys.bin` - User-provided int64 ordering keys
+- `meta.bin` - Part metadata
+- `manifest.json` - Human-readable part manifest
+
+**Tag Files (per tag per part):**
+- `tag_<name>.td` - Tag data with encoding optimizations
+- `tag_<name>.tm` - Tag metadata and block offsets
+- `tag_<name>.tf` - Bloom filters for fast lookups
+
+**File Format Features:**
+- **Version Control**: Format versioning for backward compatibility
+- **Version Control**: Format versioning for backward compatibility
+- **Format Validation**: File format and structure verification
+- **Atomic Updates**: Transactional multi-file operations
+- **Compression Support**: Configurable compression algorithms
 
 ##### Benefits of Tag-Based Design
 - **Isolation**: Each tag is completely independent, reducing coupling
@@ -217,50 +404,34 @@ func (s *snapshot) getParts(dst []*part, minKey, maxKey int64) ([]*part, int) {
 }
 ```
 
-#### 6. Write Interface
-```go
-type WriteRequest struct {
-    SeriesID  common.SeriesID
-    Key       int64    // User-provided ordering key
-    Data      []byte
-    Tags      map[string][]byte
-}
+#### 6. Enhanced API Design
 
-// Write path receives user key as-is
-func (sidx *SIDX) Write(req WriteRequest) error {
-    // Store req.Key directly without interpretation
-    // Organize into parts based on key ranges
-    // No validation of key semantics
-}
-```
+**Write Interface:**
+- Context support for cancellation and timeouts
+- Batch operations for improved performance
+- Validation options for data integrity
+- Request tracking and tracing support
 
-#### 7. Query Interface
-```go
-type QueryRequest struct {
-    KeyRange  KeyRange
-    SeriesID  common.SeriesID
-    Order     Order
-    Limit     int
-}
+**Query Interface:**
+- Range queries with inclusive/exclusive bounds
+- Tag filtering with multiple operators (equals, in, regex)
+- Iterator pattern for large result sets
+- Memory usage limits and query timeouts
+- Comprehensive result metadata
 
-type KeyRange struct {
-    Min int64  // User-provided minimum key
-    Max int64  // User-provided maximum key
-}
+**Administrative Interface:**
+- Health checks and system status monitoring
+- Manual flush/merge/compaction triggers
+- Integrity validation and corruption repair
+- Configuration management
+- Part information and debugging tools
 
-type Order int
-const (
-    ASC Order = iota
-    DESC
-)
-
-// Query executes range queries on user keys
-func (sidx *SIDX) Query(req QueryRequest) ([]Element, error) {
-    // Filter parts by key range
-    // Scan blocks within key bounds
-    // Return results ordered by user keys
-}
-```
+**Core Features:**
+- Full context.Context integration
+- Structured error responses with detailed context
+- Comprehensive metrics and observability hooks
+- Request/response pooling for performance
+- Atomic batch operations
 
 ### Implementation Details
 
@@ -288,7 +459,7 @@ func (sidx *SIDX) Query(req QueryRequest) ([]Element, error) {
 ##### Part Directory Example
 ```
 000000001234abcd/                    # Part directory (epoch-based name)
-├── metadata.json                    # Part metadata and statistics
+├── manifest.json                    # Part metadata and statistics
 ├── primary.bin                      # Block metadata (references to all data files)
 ├── data.bin                        # User data payloads (compressed)
 ├── meta.bin                        # Part-level metadata (compressed)
@@ -838,9 +1009,31 @@ banyand/internal/sidx/
 └── sidx_test.go        # Comprehensive tests
 ```
 
+## Test Strategy
+
+**Test Categories:**
+- **Unit Tests**: Object pooling, reference counting, resource management
+- **Integration Tests**: Write-read consistency, flush-merge workflows  
+- **Concurrency Tests**: Concurrent read/write operations with race detection
+- **Failure Tests**: Corruption detection, recovery procedures, disk full scenarios
+- **Performance Tests**: Benchmark throughput, memory usage, latency
+- **Property Tests**: Key ordering invariants, data consistency
+
+**Coverage Requirements:**
+- Unit Tests: >90% line coverage
+- Integration Tests: All major workflows
+- Concurrency Tests: Race detection enabled
+- Property Tests: Key invariants verification
+- Benchmark Tests: Performance regression tracking
+
 ## Benefits
 
-1. **Flexibility**: Users can implement any int64-based ordering scheme
+1. **Production Readiness**: Comprehensive error handling, resource management, and monitoring
+2. **Performance**: Object pooling, atomic operations, and efficient memory management
+3. **Reliability**: Reference counting, corruption detection, and automatic recovery
+4. **Scalability**: Backpressure control, concurrency limiting, and resource reservation
+5. **Observability**: Complete metrics, health checks, and administrative interfaces
+6. **Flexibility**: Users can implement any int64-based ordering scheme
 2. **Simplicity**: sidx doesn't need domain knowledge about keys
 3. **Performance**: No key generation or transformation overhead
 4. **Extensibility**: New use cases without sidx changes
