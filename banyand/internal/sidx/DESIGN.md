@@ -391,8 +391,8 @@ type snapshot struct {
 // Generic key-range based part filtering
 func (s *snapshot) getParts(dst []*part, minKey, maxKey int64) ([]*part, int) {
     var count int
-    for _, p := range s.parts {
-        pm := p.p.partMetadata
+    for _, pw := range s.parts {
+        pm := pw.p.partMetadata
         // Pure numerical comparison - no time interpretation
         if maxKey < pm.MinKey || minKey > pm.MaxKey {
             continue
@@ -507,18 +507,18 @@ The introducer runs as a background goroutine that coordinates all snapshot upda
 ```go
 // Introduction types for different operations
 type memIntroduction struct {
-    memPart *PartWrapper
+    memPart *partWrapper
     applied chan struct{}
 }
 
 type flusherIntroduction struct {
-    flushed map[uint64]*PartWrapper
+    flushed map[uint64]*partWrapper
     applied chan struct{}
 }
 
 type mergerIntroduction struct {
     merged  map[uint64]struct{}
-    newPart *PartWrapper
+    newPart *partWrapper
     applied chan struct{}
 }
 
@@ -575,7 +575,7 @@ func (f *flusher) Flush() error {
     }
     
     // Persist parts to disk
-    flushedParts := make(map[uint64]*PartWrapper)
+    flushedParts := make(map[uint64]*partWrapper)
     for _, mp := range memParts {
         part, err := f.flushMemPartToDisk(mp)
         if err != nil {
@@ -798,7 +798,7 @@ type flusher struct {
     sidx *SIDX
 }
 
-func (f *flusher) getMemPartsToFlush() []*PartWrapper {
+func (f *flusher) getMemPartsToFlush() []*partWrapper {
     // Internal logic to select memory parts for flushing
     // Could be all memory parts, or based on size/age criteria
 }
@@ -808,7 +808,7 @@ type merger struct {
     sidx *SIDX
 }
 
-func (m *merger) getPartsToMerge() []*PartWrapper {
+func (m *merger) getPartsToMerge() []*partWrapper {
     // Internal logic to select parts for merging
     // Could be based on size ratios, part count, key ranges, etc.
 }
