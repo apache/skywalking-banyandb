@@ -41,27 +41,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Filter generation for indexed tags
   - [x] Tag serialization round-trip integrity
 
-### 1.3 PartWrapper with Reference Counting (`part_wrapper.go`)
-- [ ] Atomic reference counting for safe concurrent access
-- [ ] Thread-safe acquire/release methods
-- [ ] State management (active, removing, removed)
-- [ ] **Test Cases**:
-  - [ ] Concurrent reference counting under load
-  - [ ] Proper cleanup when reference count reaches zero
-  - [ ] State transitions work correctly
-  - [ ] No race conditions in reference management
-
-### 1.4 Part Structure (`part.go`)
-- [ ] File readers for primary.bin, data.bin, keys.bin, meta.bin
-- [ ] Individual tag file readers (tag_*.td, tag_*.tm, tag_*.tf)
-- [ ] Part opening/closing lifecycle
-- [ ] **Test Cases**:
-  - [ ] File lifecycle management
-  - [ ] Reader management and cleanup
-  - [ ] Memory mapping efficiency
-  - [ ] Error handling for corrupted files
-
-### 1.5 Metadata Structures (`metadata.go`)
+### 1.3 Metadata Structures (`metadata.go`)
 - [ ] partMetadata with MinKey/MaxKey (replacing timestamps)
 - [ ] primaryBlockMetadata with block offsets and key ranges
 - [ ] Validation methods for metadata integrity
@@ -71,7 +51,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Version compatibility checks
   - [ ] Corruption detection in metadata
 
-### 1.6 Block Structure (`block.go`) 🔥
+### 1.4 Block Structure (`block.go`) 🔥
 - [ ] **Core block organization for elements within parts**
 - [ ] Contains userKeys[], seriesIDs[], data[], tags[]
 - [ ] Methods: reset(), mustInitFromElements(), validation
@@ -86,6 +66,26 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Key ordering validation within blocks
   - [ ] Block reset and reuse functionality
   - [ ] Tag encoding/decoding with various value types
+
+### 1.5 Part Structure (`part.go`)
+- [ ] File readers for primary.bin, data.bin, keys.bin, meta.bin
+- [ ] Individual tag file readers (tag_*.td, tag_*.tm, tag_*.tf)
+- [ ] Part opening/closing lifecycle
+- [ ] **Test Cases**:
+  - [ ] File lifecycle management
+  - [ ] Reader management and cleanup
+  - [ ] Memory mapping efficiency
+  - [ ] Error handling for corrupted files
+
+### 1.6 PartWrapper with Reference Counting (`part_wrapper.go`)
+- [ ] Atomic reference counting for safe concurrent access
+- [ ] Thread-safe acquire/release methods
+- [ ] State management (active, removing, removed)
+- [ ] **Test Cases**:
+  - [ ] Concurrent reference counting under load
+  - [ ] Proper cleanup when reference count reaches zero
+  - [ ] State transitions work correctly
+  - [ ] No race conditions in reference management
 
 ---
 
@@ -543,7 +543,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 The `block.go` file is central to the SIDX implementation and is used in multiple phases:
 
-1. **Phase 1.6**: Initial block structure creation
+1. **Phase 1.4**: Initial block structure creation
 2. **Phase 2.2**: Block writer uses block for serialization  
 3. **Phase 2.4**: Block initialization from elements
 4. **Phase 4.4**: Create blocks when memory threshold reached
