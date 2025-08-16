@@ -757,7 +757,8 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		// Start 5 data nodes
 		for i := 0; i < nodeCount; i++ {
 			By(fmt.Sprintf("Starting data node %d", i))
-			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i], "--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s")
+			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s")
 			// Update node ID to use 127.0.0.1
 			_, nodePort, found := strings.Cut(nodeIDs[i], ":")
 			Expect(found).To(BeTrue())
@@ -844,7 +845,8 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		By(fmt.Sprintf("Restarting the %d closed nodes with existing data directories", closedNodeCount))
 		for i := 0; i < closedNodeCount; i++ {
 			GinkgoWriter.Printf("Restarting node %d\n", i)
-			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i], "--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s")
+			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s")
 			// Update node ID to use 127.0.0.1
 			_, nodePort, found := strings.Cut(nodeIDs[i], ":")
 			Expect(found).To(BeTrue())
@@ -1080,17 +1082,6 @@ func registerNodeToMessenger(m gossip.Messenger, nodeID, gossipRepairAddr string
 	})
 }
 
-func executeOnceWrapper(f func()) func() {
-	var executed bool
-	return func() {
-		if executed {
-			return
-		}
-		executed = true
-		f()
-	}
-}
-
 func getRepairTreeFilePath(nodeDir, group string) string {
 	return path.Join(nodeDir, "property", "repairs", "shard0", fmt.Sprintf("state-tree-%s.data", group))
 }
@@ -1115,7 +1106,6 @@ func waitForRepairTreeRegeneration(nodeDirs []string, group string, beforeTime t
 			}
 			if !modTime.After(beforeTime) {
 				allRegenerated = false
-			} else {
 			}
 		}
 		return allRegenerated

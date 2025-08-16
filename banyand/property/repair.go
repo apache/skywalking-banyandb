@@ -467,9 +467,9 @@ func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, fo
 		if _, err = io.ReadFull(r.reader, rootDataBytes); err != nil {
 			return nil, fmt.Errorf("reading root node data from file %s failure: %w", r.file.Name(), err)
 		}
-		_, shaValue, err := encoding.DecodeBytes(rootDataBytes)
-		if err != nil {
-			return nil, fmt.Errorf("decoding root node sha value from file %s failure: %w", r.file.Name(), err)
+		_, shaValue, decodeErr := encoding.DecodeBytes(rootDataBytes)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decoding root node sha value from file %s failure: %w", r.file.Name(), decodeErr)
 		}
 		return []*repairTreeNode{
 			{

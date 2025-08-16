@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package property_repair
+// Package propertyrepair package provides utilities for property repair performance testing in BanyanDB.
+package propertyrepair
 
 import (
 	"context"
@@ -27,7 +28,7 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -35,6 +36,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
+// Constants for property repair performance testing.
 const (
 	DataSize     = 2048 // 2KB per property
 	LiaisonAddr  = "localhost:17912"
@@ -43,7 +45,7 @@ const (
 	PropertyName = "perf-test-property"
 )
 
-// GenerateLargeData creates a string of specified size filled with random characters
+// GenerateLargeData creates a string of specified size filled with random characters.
 func GenerateLargeData(size int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
@@ -77,7 +79,7 @@ func GenerateLargeData(size int) string {
 	return result
 }
 
-// FormatDuration formats a duration to a human-readable string
+// FormatDuration formats a duration to a human-readable string.
 func FormatDuration(duration time.Duration) string {
 	if duration < time.Second {
 		return fmt.Sprintf("%dms", duration.Milliseconds())
@@ -88,7 +90,7 @@ func FormatDuration(duration time.Duration) string {
 	return fmt.Sprintf("%.1fm", duration.Minutes())
 }
 
-// FormatThroughput calculates and formats throughput
+// FormatThroughput calculates and formats throughput.
 func FormatThroughput(count int64, duration time.Duration) string {
 	if duration == 0 {
 		return "N/A"
@@ -97,32 +99,7 @@ func FormatThroughput(count int64, duration time.Duration) string {
 	return fmt.Sprintf("%.1f/s", throughput)
 }
 
-// LogProgress prints progress information
-func LogProgress(current, total int64, startTime time.Time, operation string) {
-	elapsed := time.Since(startTime)
-	percentage := float64(current) / float64(total) * 100
-	throughput := FormatThroughput(current, elapsed)
-
-	fmt.Printf("[%s] Progress: %d/%d (%.1f%%) - Elapsed: %s - Throughput: %s\n",
-		operation, current, total, percentage, FormatDuration(elapsed), throughput)
-}
-
-// CreateGroupName generates group name with timestamp
-func CreateGroupName(prefix, suffix string) string {
-	return fmt.Sprintf("%s-%s", prefix, suffix)
-}
-
-// CreatePropertyName generates property name with timestamp
-func CreatePropertyName(prefix, suffix string) string {
-	return fmt.Sprintf("%s-%s", prefix, suffix)
-}
-
-// GetTimestampSuffix returns a timestamp-based suffix
-func GetTimestampSuffix() string {
-	return strings.ReplaceAll(time.Now().Format("2006-01-02-15-04-05"), "-", "")
-}
-
-// CreateGroup creates a property group with specified parameters
+// CreateGroup creates a property group with specified parameters.
 func CreateGroup(ctx context.Context, groupClient databasev1.GroupRegistryServiceClient, replicaNum uint32) {
 	fmt.Printf("Creating group %s with %d replicas...\n", GroupName, replicaNum)
 	_, err := groupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
@@ -137,10 +114,10 @@ func CreateGroup(ctx context.Context, groupClient databasev1.GroupRegistryServic
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
-// UpdateGroupReplicas updates the replica number of an existing group
+// UpdateGroupReplicas updates the replica number of an existing group.
 func UpdateGroupReplicas(ctx context.Context, groupClient databasev1.GroupRegistryServiceClient, newReplicaNum uint32) {
 	fmt.Printf("Updating group %s to %d replicas...\n", GroupName, newReplicaNum)
 	_, err := groupClient.Update(ctx, &databasev1.GroupRegistryServiceUpdateRequest{
@@ -155,10 +132,10 @@ func UpdateGroupReplicas(ctx context.Context, groupClient databasev1.GroupRegist
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
-// CreatePropertySchema creates a property schema
+// CreatePropertySchema creates a property schema.
 func CreatePropertySchema(ctx context.Context, propertyClient databasev1.PropertyRegistryServiceClient) {
 	fmt.Printf("Creating property schema %s...\n", PropertyName)
 	_, err := propertyClient.Create(ctx, &databasev1.PropertyRegistryServiceCreateRequest{
@@ -173,10 +150,10 @@ func CreatePropertySchema(ctx context.Context, propertyClient databasev1.Propert
 			},
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
-// WriteProperties writes a batch of properties concurrently
+// WriteProperties writes a batch of properties concurrently.
 func WriteProperties(ctx context.Context, propertyServiceClient propertyv1.PropertyServiceClient,
 	startIdx int, endIdx int,
 ) error {
@@ -224,7 +201,7 @@ func WriteProperties(ctx context.Context, propertyServiceClient propertyv1.Prope
 						},
 					},
 				})
-				Expect(writeErr).NotTo(HaveOccurred())
+				gomega.Expect(writeErr).NotTo(gomega.HaveOccurred())
 
 				count++
 				atomic.AddInt64(&totalProcessed, 1)
