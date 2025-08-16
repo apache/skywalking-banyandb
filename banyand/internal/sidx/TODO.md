@@ -4,7 +4,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ## Implementation Progress Overview
 
-- [x] **Phase 1**: Core Data Structures (6 tasks) - 1/6 completed
+- [x] **Phase 1**: Core Data Structures (6 tasks) - 2/6 completed
 - [ ] **Phase 2**: Memory Management (4 tasks) 
 - [ ] **Phase 3**: Snapshot Management (4 tasks)
 - [ ] **Phase 4**: Write Path (4 tasks)
@@ -31,15 +31,15 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Memory reuse reduces allocations
   - [x] Size calculation accuracy
 
-### 1.2 Tag Structure (`tag.go`)
-- [ ] Individual tag handling (not tag families like stream module)
-- [ ] Support for tag data, metadata, filter files
-- [ ] Implement tag value marshaling/unmarshaling
-- [ ] **Test Cases**:
-  - [ ] Tag encoding/decoding with various value types
-  - [ ] Value type handling (int64, string, bytes)
-  - [ ] Filter generation for indexed tags
-  - [ ] Tag serialization round-trip integrity
+### 1.2 Tag Structure (`tag.go`) ✅
+- [x] Individual tag handling (not tag families like stream module)
+- [x] Support for tag data, metadata, filter files
+- [x] Implement tag value marshaling/unmarshaling
+- [x] **Test Cases**:
+  - [x] Tag encoding/decoding with various value types
+  - [x] Value type handling (int64, string, bytes)
+  - [x] Filter generation for indexed tags
+  - [x] Tag serialization round-trip integrity
 
 ### 1.3 PartWrapper with Reference Counting (`part_wrapper.go`)
 - [ ] Atomic reference counting for safe concurrent access
@@ -76,11 +76,16 @@ This document tracks the implementation progress of the Secondary Index File Sys
 - [ ] Contains userKeys[], seriesIDs[], data[], tags[]
 - [ ] Methods: reset(), mustInitFromElements(), validation
 - [ ] Sorting validation for elements within blocks
+- [ ] **Tag encoding/decoding**: Uses shared encoding module from `banyand/internal/encoding/tag_encoder.go`
+  - [ ] Implement `block.marshal()` and `block.unmarshal()` methods
+  - [ ] Use `EncodeTagValues()` and `DecodeTagValues()` for tag serialization
+  - [ ] Apply sophisticated encoding: delta for int64, dictionary for strings, zstd for plain
 - [ ] **Test Cases**:
   - [ ] Block initialization from sorted elements
   - [ ] Element organization by seriesID and userKey
   - [ ] Key ordering validation within blocks
   - [ ] Block reset and reuse functionality
+  - [ ] Tag encoding/decoding with various value types
 
 ---
 

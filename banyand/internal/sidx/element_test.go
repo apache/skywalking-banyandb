@@ -349,28 +349,28 @@ func TestElementsSorting(t *testing.T) {
 }
 
 func TestNilSafety(t *testing.T) {
-	t.Run("release nil element", func(t *testing.T) {
+	t.Run("release nil element", func(_ *testing.T) {
 		// Should not panic
 		releaseElement(nil)
 	})
 
-	t.Run("release nil elements", func(t *testing.T) {
+	t.Run("release nil elements", func(_ *testing.T) {
 		// Should not panic
 		releaseElements(nil)
 	})
 
-	t.Run("release nil tag", func(t *testing.T) {
+	t.Run("release nil tag", func(_ *testing.T) {
 		// Should not panic
 		releaseTag(nil)
 	})
 
-	t.Run("release non-pooled element", func(t *testing.T) {
+	t.Run("release non-pooled element", func(_ *testing.T) {
 		e := &element{pooled: false}
 		// Should not panic or add to pool
 		releaseElement(e)
 	})
 
-	t.Run("release non-pooled elements", func(t *testing.T) {
+	t.Run("release non-pooled elements", func(_ *testing.T) {
 		es := &elements{pooled: false}
 		// Should not panic or add to pool
 		releaseElements(es)

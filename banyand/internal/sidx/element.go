@@ -15,6 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package sidx provides secondary index functionality for BanyanDB, including
+// element management, pooling, and sorting capabilities for efficient data storage
+// and retrieval operations.
 package sidx
 
 import (
