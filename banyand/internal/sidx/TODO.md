@@ -4,7 +4,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ## Implementation Progress Overview
 
-- [x] **Phase 1**: Core Data Structures (6 tasks) - 2/6 completed
+- [x] **Phase 1**: Core Data Structures (6 tasks) - 3/6 completed
 - [ ] **Phase 2**: Memory Management (4 tasks) 
 - [ ] **Phase 3**: Snapshot Management (4 tasks)
 - [ ] **Phase 4**: Write Path (4 tasks)
@@ -41,15 +41,15 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Filter generation for indexed tags
   - [x] Tag serialization round-trip integrity
 
-### 1.3 Metadata Structures (`metadata.go`)
-- [ ] partMetadata with MinKey/MaxKey (replacing timestamps)
-- [ ] primaryBlockMetadata with block offsets and key ranges
-- [ ] Validation methods for metadata integrity
-- [ ] **Test Cases**:
-  - [ ] Metadata serialization/deserialization
-  - [ ] Key range validation (MinKey <= MaxKey)
-  - [ ] Version compatibility checks
-  - [ ] Corruption detection in metadata
+### 1.3 Metadata Structures (`metadata.go`) ✅
+- [x] partMetadata with MinKey/MaxKey (replacing timestamps)
+- [x] primaryBlockMetadata with block offsets and key ranges
+- [x] Validation methods for metadata integrity
+- [x] **Test Cases**:
+  - [x] Metadata serialization/deserialization
+  - [x] Key range validation (MinKey <= MaxKey)
+  - [x] Version compatibility checks
+  - [x] Corruption detection in metadata
 
 ### 1.4 Block Structure (`block.go`) 🔥
 - [ ] **Core block organization for elements within parts**
