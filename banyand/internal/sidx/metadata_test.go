@@ -117,16 +117,16 @@ func TestPartMetadata_Validation(t *testing.T) {
 	}
 }
 
-func TestPrimaryBlockMetadata_Validation(t *testing.T) {
+func TestBlockMetadata_Validation(t *testing.T) {
 	tests := []struct {
-		metadata  *primaryBlockMetadata
+		metadata  *blockMetadata
 		name      string
 		errMsg    string
 		expectErr bool
 	}{
 		{
 			name: "valid block metadata",
-			metadata: &primaryBlockMetadata{
+			metadata: &blockMetadata{
 				seriesID:   1,
 				minKey:     1,
 				maxKey:     100,
@@ -138,7 +138,7 @@ func TestPrimaryBlockMetadata_Validation(t *testing.T) {
 		},
 		{
 			name: "invalid key range - minKey > maxKey",
-			metadata: &primaryBlockMetadata{
+			metadata: &blockMetadata{
 				seriesID:   1,
 				minKey:     100,
 				maxKey:     1,
@@ -151,7 +151,7 @@ func TestPrimaryBlockMetadata_Validation(t *testing.T) {
 		},
 		{
 			name: "invalid seriesID - zero",
-			metadata: &primaryBlockMetadata{
+			metadata: &blockMetadata{
 				seriesID:   0,
 				minKey:     1,
 				maxKey:     100,
@@ -164,7 +164,7 @@ func TestPrimaryBlockMetadata_Validation(t *testing.T) {
 		},
 		{
 			name: "invalid data block - zero size",
-			metadata: &primaryBlockMetadata{
+			metadata: &blockMetadata{
 				seriesID:   1,
 				minKey:     1,
 				maxKey:     100,
@@ -177,7 +177,7 @@ func TestPrimaryBlockMetadata_Validation(t *testing.T) {
 		},
 		{
 			name: "invalid keys block - zero size",
-			metadata: &primaryBlockMetadata{
+			metadata: &blockMetadata{
 				seriesID:   1,
 				minKey:     1,
 				maxKey:     100,
@@ -203,21 +203,21 @@ func TestPrimaryBlockMetadata_Validation(t *testing.T) {
 	}
 }
 
-func TestValidatePrimaryBlockMetadata(t *testing.T) {
+func TestValidateBlockMetadata(t *testing.T) {
 	tests := []struct {
 		name      string
 		errMsg    string
-		blocks    []primaryBlockMetadata
+		blocks    []blockMetadata
 		expectErr bool
 	}{
 		{
 			name:      "empty blocks",
-			blocks:    []primaryBlockMetadata{},
+			blocks:    []blockMetadata{},
 			expectErr: false,
 		},
 		{
 			name: "single valid block",
-			blocks: []primaryBlockMetadata{
+			blocks: []blockMetadata{
 				{
 					seriesID:   1,
 					minKey:     1,
@@ -231,7 +231,7 @@ func TestValidatePrimaryBlockMetadata(t *testing.T) {
 		},
 		{
 			name: "properly ordered blocks by seriesID",
-			blocks: []primaryBlockMetadata{
+			blocks: []blockMetadata{
 				{
 					seriesID:   1,
 					minKey:     1,
@@ -253,7 +253,7 @@ func TestValidatePrimaryBlockMetadata(t *testing.T) {
 		},
 		{
 			name: "properly ordered blocks by key within same seriesID",
-			blocks: []primaryBlockMetadata{
+			blocks: []blockMetadata{
 				{
 					seriesID:   1,
 					minKey:     1,
@@ -275,7 +275,7 @@ func TestValidatePrimaryBlockMetadata(t *testing.T) {
 		},
 		{
 			name: "improperly ordered blocks by seriesID",
-			blocks: []primaryBlockMetadata{
+			blocks: []blockMetadata{
 				{
 					seriesID:   2,
 					minKey:     1,
@@ -298,7 +298,7 @@ func TestValidatePrimaryBlockMetadata(t *testing.T) {
 		},
 		{
 			name: "improperly ordered blocks by key within same seriesID",
-			blocks: []primaryBlockMetadata{
+			blocks: []blockMetadata{
 				{
 					seriesID:   1,
 					minKey:     51,
@@ -321,7 +321,7 @@ func TestValidatePrimaryBlockMetadata(t *testing.T) {
 		},
 		{
 			name: "overlapping key ranges within same seriesID",
-			blocks: []primaryBlockMetadata{
+			blocks: []blockMetadata{
 				{
 					seriesID:   1,
 					minKey:     1,
@@ -344,7 +344,7 @@ func TestValidatePrimaryBlockMetadata(t *testing.T) {
 		},
 		{
 			name: "adjacent key ranges within same seriesID (valid)",
-			blocks: []primaryBlockMetadata{
+			blocks: []blockMetadata{
 				{
 					seriesID:   1,
 					minKey:     1,
@@ -368,7 +368,7 @@ func TestValidatePrimaryBlockMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validatePrimaryBlockMetadata(tt.blocks)
+			err := validateBlockMetadata(tt.blocks)
 			if tt.expectErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errMsg)
@@ -410,8 +410,8 @@ func TestPartMetadata_Serialization(t *testing.T) {
 	assert.Equal(t, original.ID, restored.ID)
 }
 
-func TestPrimaryBlockMetadata_Serialization(t *testing.T) {
-	original := &primaryBlockMetadata{
+func TestBlockMetadata_Serialization(t *testing.T) {
+	original := &blockMetadata{
 		seriesID:  common.SeriesID(123),
 		minKey:    10,
 		maxKey:    100,
@@ -430,9 +430,9 @@ func TestPrimaryBlockMetadata_Serialization(t *testing.T) {
 	assert.NotEmpty(t, data)
 
 	// Test unmarshaling
-	restored, err := unmarshalPrimaryBlockMetadata(data)
+	restored, err := unmarshalBlockMetadata(data)
 	require.NoError(t, err)
-	defer releasePrimaryBlockMetadata(restored)
+	defer releaseBlockMetadata(restored)
 
 	// Verify all fields match
 	assert.Equal(t, original.seriesID, restored.seriesID)
@@ -518,8 +518,8 @@ func TestPartMetadata_JSONFormat(t *testing.T) {
 	assert.Contains(t, jsonStr, "maxKey")
 }
 
-func TestPrimaryBlockMetadata_AccessorMethods(t *testing.T) {
-	pbm := &primaryBlockMetadata{
+func TestBlockMetadata_AccessorMethods(t *testing.T) {
+	bm := &blockMetadata{
 		seriesID:  common.SeriesID(123),
 		minKey:    10,
 		maxKey:    100,
@@ -531,35 +531,35 @@ func TestPrimaryBlockMetadata_AccessorMethods(t *testing.T) {
 	}
 
 	// Test accessor methods
-	assert.Equal(t, common.SeriesID(123), pbm.SeriesID())
-	assert.Equal(t, int64(10), pbm.MinKey())
-	assert.Equal(t, int64(100), pbm.MaxKey())
-	assert.Equal(t, dataBlock{offset: 1000, size: 2048}, pbm.DataBlock())
-	assert.Equal(t, dataBlock{offset: 3048, size: 512}, pbm.KeysBlock())
-	assert.Equal(t, map[string]dataBlock{"tag1": {offset: 3560, size: 256}}, pbm.TagsBlocks())
+	assert.Equal(t, common.SeriesID(123), bm.SeriesID())
+	assert.Equal(t, int64(10), bm.MinKey())
+	assert.Equal(t, int64(100), bm.MaxKey())
+	assert.Equal(t, dataBlock{offset: 1000, size: 2048}, bm.DataBlock())
+	assert.Equal(t, dataBlock{offset: 3048, size: 512}, bm.KeysBlock())
+	assert.Equal(t, map[string]dataBlock{"tag1": {offset: 3560, size: 256}}, bm.TagsBlocks())
 }
 
-func TestPrimaryBlockMetadata_SetterMethods(t *testing.T) {
-	pbm := generatePrimaryBlockMetadata()
-	defer releasePrimaryBlockMetadata(pbm)
+func TestBlockMetadata_SetterMethods(t *testing.T) {
+	bm := generateBlockMetadata()
+	defer releaseBlockMetadata(bm)
 
 	// Test setter methods
-	pbm.setSeriesID(common.SeriesID(456))
-	assert.Equal(t, common.SeriesID(456), pbm.seriesID)
+	bm.setSeriesID(common.SeriesID(456))
+	assert.Equal(t, common.SeriesID(456), bm.seriesID)
 
-	pbm.setKeyRange(20, 200)
-	assert.Equal(t, int64(20), pbm.minKey)
-	assert.Equal(t, int64(200), pbm.maxKey)
+	bm.setKeyRange(20, 200)
+	assert.Equal(t, int64(20), bm.minKey)
+	assert.Equal(t, int64(200), bm.maxKey)
 
-	pbm.setDataBlock(2000, 4096)
-	assert.Equal(t, dataBlock{offset: 2000, size: 4096}, pbm.dataBlock)
+	bm.setDataBlock(2000, 4096)
+	assert.Equal(t, dataBlock{offset: 2000, size: 4096}, bm.dataBlock)
 
-	pbm.setKeysBlock(6096, 1024)
-	assert.Equal(t, dataBlock{offset: 6096, size: 1024}, pbm.keysBlock)
+	bm.setKeysBlock(6096, 1024)
+	assert.Equal(t, dataBlock{offset: 6096, size: 1024}, bm.keysBlock)
 
-	pbm.addTagBlock("test_tag", 7120, 512)
+	bm.addTagBlock("test_tag", 7120, 512)
 	expected := dataBlock{offset: 7120, size: 512}
-	assert.Equal(t, expected, pbm.tagsBlocks["test_tag"])
+	assert.Equal(t, expected, bm.tagsBlocks["test_tag"])
 }
 
 func TestMetadata_Pooling(t *testing.T) {
@@ -579,21 +579,21 @@ func TestMetadata_Pooling(t *testing.T) {
 
 	releasePartMetadata(pm2)
 
-	// Test primaryBlockMetadata pooling
-	pbm1 := generatePrimaryBlockMetadata()
-	pbm1.seriesID = 456
-	pbm1.minKey = 20
-	pbm1.tagsBlocks["test"] = dataBlock{offset: 100, size: 200}
+	// Test blockMetadata pooling
+	bm1 := generateBlockMetadata()
+	bm1.seriesID = 456
+	bm1.minKey = 20
+	bm1.tagsBlocks["test"] = dataBlock{offset: 100, size: 200}
 
-	releasePrimaryBlockMetadata(pbm1)
+	releaseBlockMetadata(bm1)
 
-	pbm2 := generatePrimaryBlockMetadata()
-	// pbm2 should be the same instance as pbm1, but reset
-	assert.Equal(t, common.SeriesID(0), pbm2.seriesID)
-	assert.Equal(t, int64(0), pbm2.minKey)
-	assert.Equal(t, 0, len(pbm2.tagsBlocks))
+	bm2 := generateBlockMetadata()
+	// bm2 should be the same instance as bm1, but reset
+	assert.Equal(t, common.SeriesID(0), bm2.seriesID)
+	assert.Equal(t, int64(0), bm2.minKey)
+	assert.Equal(t, 0, len(bm2.tagsBlocks))
 
-	releasePrimaryBlockMetadata(pbm2)
+	releaseBlockMetadata(bm2)
 }
 
 func TestMetadata_Reset(t *testing.T) {
@@ -618,8 +618,8 @@ func TestMetadata_Reset(t *testing.T) {
 	assert.Equal(t, int64(0), pm.MaxKey)
 	assert.Equal(t, uint64(0), pm.ID)
 
-	// Test primaryBlockMetadata reset
-	pbm := &primaryBlockMetadata{
+	// Test blockMetadata reset
+	bm := &blockMetadata{
 		seriesID:  123,
 		minKey:    10,
 		maxKey:    100,
@@ -630,12 +630,12 @@ func TestMetadata_Reset(t *testing.T) {
 		},
 	}
 
-	pbm.reset()
+	bm.reset()
 
-	assert.Equal(t, common.SeriesID(0), pbm.seriesID)
-	assert.Equal(t, int64(0), pbm.minKey)
-	assert.Equal(t, int64(0), pbm.maxKey)
-	assert.Equal(t, dataBlock{}, pbm.dataBlock)
-	assert.Equal(t, dataBlock{}, pbm.keysBlock)
-	assert.Equal(t, 0, len(pbm.tagsBlocks))
+	assert.Equal(t, common.SeriesID(0), bm.seriesID)
+	assert.Equal(t, int64(0), bm.minKey)
+	assert.Equal(t, int64(0), bm.maxKey)
+	assert.Equal(t, dataBlock{}, bm.dataBlock)
+	assert.Equal(t, dataBlock{}, bm.keysBlock)
+	assert.Equal(t, 0, len(bm.tagsBlocks))
 }

@@ -44,24 +44,22 @@ type partMetadata struct {
 	ID uint64 `json:"id"` // Unique part identifier
 }
 
-// primaryBlockMetadata contains metadata for a block within a part.
-type primaryBlockMetadata struct {
-	// Block references to files
-	tagsBlocks map[string]dataBlock // References to tag files
-	dataBlock  dataBlock            // Reference to data in data.bin
-	keysBlock  dataBlock            // Reference to keys in keys.bin
-
-	// Block identification
-	seriesID common.SeriesID
-
-	// Key range within block
-	minKey int64 // Minimum user key in block
-	maxKey int64 // Maximum user key in block
+// blockMetadata contains metadata for a block within a part.
+type blockMetadata struct {
+	tagsBlocks       map[string]dataBlock
+	tagProjection    []string
+	dataBlock        dataBlock
+	keysBlock        dataBlock
+	seriesID         common.SeriesID
+	minKey           int64
+	maxKey           int64
+	uncompressedSize uint64
+	count            uint64
 }
 
 var (
-	partMetadataPool         = pool.Register[*partMetadata]("sidx-partMetadata")
-	primaryBlockMetadataPool = pool.Register[*primaryBlockMetadata]("sidx-primaryBlockMetadata")
+	partMetadataPool  = pool.Register[*partMetadata]("sidx-partMetadata")
+	blockMetadataPool = pool.Register[*blockMetadata]("sidx-blockMetadata")
 )
 
 // generatePartMetadata gets partMetadata from pool or creates new.
@@ -82,24 +80,24 @@ func releasePartMetadata(pm *partMetadata) {
 	partMetadataPool.Put(pm)
 }
 
-// generatePrimaryBlockMetadata gets primaryBlockMetadata from pool or creates new.
-func generatePrimaryBlockMetadata() *primaryBlockMetadata {
-	v := primaryBlockMetadataPool.Get()
+// generateBlockMetadata gets blockMetadata from pool or creates new.
+func generateBlockMetadata() *blockMetadata {
+	v := blockMetadataPool.Get()
 	if v == nil {
-		return &primaryBlockMetadata{
+		return &blockMetadata{
 			tagsBlocks: make(map[string]dataBlock),
 		}
 	}
 	return v
 }
 
-// releasePrimaryBlockMetadata returns primaryBlockMetadata to pool after reset.
-func releasePrimaryBlockMetadata(pbm *primaryBlockMetadata) {
-	if pbm == nil {
+// releaseBlockMetadata returns blockMetadata to pool after reset.
+func releaseBlockMetadata(bm *blockMetadata) {
+	if bm == nil {
 		return
 	}
-	pbm.reset()
-	primaryBlockMetadataPool.Put(pbm)
+	bm.reset()
+	blockMetadataPool.Put(bm)
 }
 
 // reset clears partMetadata for reuse in object pool.
@@ -113,17 +111,21 @@ func (pm *partMetadata) reset() {
 	pm.ID = 0
 }
 
-// reset clears primaryBlockMetadata for reuse in object pool.
-func (pbm *primaryBlockMetadata) reset() {
-	pbm.seriesID = 0
-	pbm.minKey = 0
-	pbm.maxKey = 0
-	pbm.dataBlock = dataBlock{}
-	pbm.keysBlock = dataBlock{}
-	// Clear the map instead of creating a new one
-	for k := range pbm.tagsBlocks {
-		delete(pbm.tagsBlocks, k)
+// reset clears blockMetadata for reuse in object pool.
+func (bm *blockMetadata) reset() {
+	bm.seriesID = 0
+	bm.minKey = 0
+	bm.maxKey = 0
+	bm.dataBlock = dataBlock{}
+	bm.keysBlock = dataBlock{}
+	bm.uncompressedSize = 0
+	bm.count = 0
+
+	// Clear maps but keep them allocated
+	for k := range bm.tagsBlocks {
+		delete(bm.tagsBlocks, k)
 	}
+	bm.tagProjection = bm.tagProjection[:0]
 }
 
 // validate validates the partMetadata for consistency.
@@ -141,25 +143,25 @@ func (pm *partMetadata) validate() error {
 	return nil
 }
 
-// validate validates the primaryBlockMetadata for consistency.
-func (pbm *primaryBlockMetadata) validate() error {
-	if pbm.minKey > pbm.maxKey {
-		return fmt.Errorf("invalid block key range: minKey (%d) > maxKey (%d)", pbm.minKey, pbm.maxKey)
+// validate validates the blockMetadata for consistency.
+func (bm *blockMetadata) validate() error {
+	if bm.minKey > bm.maxKey {
+		return fmt.Errorf("invalid block key range: minKey (%d) > maxKey (%d)", bm.minKey, bm.maxKey)
 	}
-	if pbm.seriesID == 0 {
+	if bm.seriesID == 0 {
 		return fmt.Errorf("invalid seriesID: cannot be zero")
 	}
-	if pbm.dataBlock.size == 0 {
+	if bm.dataBlock.size == 0 {
 		return fmt.Errorf("invalid data block: size cannot be zero")
 	}
-	if pbm.keysBlock.size == 0 {
+	if bm.keysBlock.size == 0 {
 		return fmt.Errorf("invalid keys block: size cannot be zero")
 	}
 	return nil
 }
 
-// validatePrimaryBlockMetadata validates ordering of blocks within a part.
-func validatePrimaryBlockMetadata(blocks []primaryBlockMetadata) error {
+// validateBlockMetadata validates ordering of blocks within a part.
+func validateBlockMetadata(blocks []blockMetadata) error {
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -232,46 +234,46 @@ func unmarshalPartMetadata(data []byte) (*partMetadata, error) {
 	return pm, nil
 }
 
-// marshal serializes primaryBlockMetadata to bytes.
-func (pbm *primaryBlockMetadata) marshal() ([]byte, error) {
+// marshal serializes blockMetadata to bytes.
+func (bm *blockMetadata) marshal() ([]byte, error) {
 	buf := &bytes.Buffer{}
 
 	// Write seriesID
-	if err := binary.Write(buf, binary.LittleEndian, pbm.seriesID); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, bm.seriesID); err != nil {
 		return nil, fmt.Errorf("failed to write seriesID: %w", err)
 	}
 
 	// Write key range
-	if err := binary.Write(buf, binary.LittleEndian, pbm.minKey); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, bm.minKey); err != nil {
 		return nil, fmt.Errorf("failed to write minKey: %w", err)
 	}
-	if err := binary.Write(buf, binary.LittleEndian, pbm.maxKey); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, bm.maxKey); err != nil {
 		return nil, fmt.Errorf("failed to write maxKey: %w", err)
 	}
 
 	// Write data block
-	if err := binary.Write(buf, binary.LittleEndian, pbm.dataBlock.offset); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, bm.dataBlock.offset); err != nil {
 		return nil, fmt.Errorf("failed to write data block offset: %w", err)
 	}
-	if err := binary.Write(buf, binary.LittleEndian, pbm.dataBlock.size); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, bm.dataBlock.size); err != nil {
 		return nil, fmt.Errorf("failed to write data block size: %w", err)
 	}
 
 	// Write keys block
-	if err := binary.Write(buf, binary.LittleEndian, pbm.keysBlock.offset); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, bm.keysBlock.offset); err != nil {
 		return nil, fmt.Errorf("failed to write keys block offset: %w", err)
 	}
-	if err := binary.Write(buf, binary.LittleEndian, pbm.keysBlock.size); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, bm.keysBlock.size); err != nil {
 		return nil, fmt.Errorf("failed to write keys block size: %w", err)
 	}
 
 	// Write tag blocks count
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(pbm.tagsBlocks))); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, uint32(len(bm.tagsBlocks))); err != nil {
 		return nil, fmt.Errorf("failed to write tag blocks count: %w", err)
 	}
 
 	// Write tag blocks
-	for tagName, tagBlock := range pbm.tagsBlocks {
+	for tagName, tagBlock := range bm.tagsBlocks {
 		// Write tag name length and name
 		nameBytes := []byte(tagName)
 		if err := binary.Write(buf, binary.LittleEndian, uint32(len(nameBytes))); err != nil {
@@ -293,51 +295,51 @@ func (pbm *primaryBlockMetadata) marshal() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// unmarshalPrimaryBlockMetadata deserializes primaryBlockMetadata from bytes.
-func unmarshalPrimaryBlockMetadata(data []byte) (*primaryBlockMetadata, error) {
-	pbm := generatePrimaryBlockMetadata()
+// unmarshalBlockMetadata deserializes blockMetadata from bytes.
+func unmarshalBlockMetadata(data []byte) (*blockMetadata, error) {
+	bm := generateBlockMetadata()
 	buf := bytes.NewReader(data)
 
 	// Read seriesID
-	if err := binary.Read(buf, binary.LittleEndian, &pbm.seriesID); err != nil {
-		releasePrimaryBlockMetadata(pbm)
+	if err := binary.Read(buf, binary.LittleEndian, &bm.seriesID); err != nil {
+		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("failed to read seriesID: %w", err)
 	}
 
 	// Read key range
-	if err := binary.Read(buf, binary.LittleEndian, &pbm.minKey); err != nil {
-		releasePrimaryBlockMetadata(pbm)
+	if err := binary.Read(buf, binary.LittleEndian, &bm.minKey); err != nil {
+		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("failed to read minKey: %w", err)
 	}
-	if err := binary.Read(buf, binary.LittleEndian, &pbm.maxKey); err != nil {
-		releasePrimaryBlockMetadata(pbm)
+	if err := binary.Read(buf, binary.LittleEndian, &bm.maxKey); err != nil {
+		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("failed to read maxKey: %w", err)
 	}
 
 	// Read data block
-	if err := binary.Read(buf, binary.LittleEndian, &pbm.dataBlock.offset); err != nil {
-		releasePrimaryBlockMetadata(pbm)
+	if err := binary.Read(buf, binary.LittleEndian, &bm.dataBlock.offset); err != nil {
+		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("failed to read data block offset: %w", err)
 	}
-	if err := binary.Read(buf, binary.LittleEndian, &pbm.dataBlock.size); err != nil {
-		releasePrimaryBlockMetadata(pbm)
+	if err := binary.Read(buf, binary.LittleEndian, &bm.dataBlock.size); err != nil {
+		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("failed to read data block size: %w", err)
 	}
 
 	// Read keys block
-	if err := binary.Read(buf, binary.LittleEndian, &pbm.keysBlock.offset); err != nil {
-		releasePrimaryBlockMetadata(pbm)
+	if err := binary.Read(buf, binary.LittleEndian, &bm.keysBlock.offset); err != nil {
+		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("failed to read keys block offset: %w", err)
 	}
-	if err := binary.Read(buf, binary.LittleEndian, &pbm.keysBlock.size); err != nil {
-		releasePrimaryBlockMetadata(pbm)
+	if err := binary.Read(buf, binary.LittleEndian, &bm.keysBlock.size); err != nil {
+		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("failed to read keys block size: %w", err)
 	}
 
 	// Read tag blocks count
 	var tagBlocksCount uint32
 	if err := binary.Read(buf, binary.LittleEndian, &tagBlocksCount); err != nil {
-		releasePrimaryBlockMetadata(pbm)
+		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("failed to read tag blocks count: %w", err)
 	}
 
@@ -346,12 +348,12 @@ func unmarshalPrimaryBlockMetadata(data []byte) (*primaryBlockMetadata, error) {
 		// Read tag name
 		var nameLen uint32
 		if err := binary.Read(buf, binary.LittleEndian, &nameLen); err != nil {
-			releasePrimaryBlockMetadata(pbm)
+			releaseBlockMetadata(bm)
 			return nil, fmt.Errorf("failed to read tag name length: %w", err)
 		}
 		nameBytes := make([]byte, nameLen)
 		if _, err := io.ReadFull(buf, nameBytes); err != nil {
-			releasePrimaryBlockMetadata(pbm)
+			releaseBlockMetadata(bm)
 			return nil, fmt.Errorf("failed to read tag name: %w", err)
 		}
 		tagName := string(nameBytes)
@@ -359,78 +361,78 @@ func unmarshalPrimaryBlockMetadata(data []byte) (*primaryBlockMetadata, error) {
 		// Read tag block
 		var tagBlock dataBlock
 		if err := binary.Read(buf, binary.LittleEndian, &tagBlock.offset); err != nil {
-			releasePrimaryBlockMetadata(pbm)
+			releaseBlockMetadata(bm)
 			return nil, fmt.Errorf("failed to read tag block offset: %w", err)
 		}
 		if err := binary.Read(buf, binary.LittleEndian, &tagBlock.size); err != nil {
-			releasePrimaryBlockMetadata(pbm)
+			releaseBlockMetadata(bm)
 			return nil, fmt.Errorf("failed to read tag block size: %w", err)
 		}
 
-		pbm.tagsBlocks[tagName] = tagBlock
+		bm.tagsBlocks[tagName] = tagBlock
 	}
 
 	// Validate the metadata
-	if err := pbm.validate(); err != nil {
-		releasePrimaryBlockMetadata(pbm)
+	if err := bm.validate(); err != nil {
+		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("block metadata validation failed: %w", err)
 	}
 
-	return pbm, nil
+	return bm, nil
 }
 
 // SeriesID returns the seriesID of the block.
-func (pbm *primaryBlockMetadata) SeriesID() common.SeriesID {
-	return pbm.seriesID
+func (bm *blockMetadata) SeriesID() common.SeriesID {
+	return bm.seriesID
 }
 
 // MinKey returns the minimum user key in the block.
-func (pbm *primaryBlockMetadata) MinKey() int64 {
-	return pbm.minKey
+func (bm *blockMetadata) MinKey() int64 {
+	return bm.minKey
 }
 
 // MaxKey returns the maximum user key in the block.
-func (pbm *primaryBlockMetadata) MaxKey() int64 {
-	return pbm.maxKey
+func (bm *blockMetadata) MaxKey() int64 {
+	return bm.maxKey
 }
 
 // DataBlock returns the data block reference.
-func (pbm *primaryBlockMetadata) DataBlock() dataBlock {
-	return pbm.dataBlock
+func (bm *blockMetadata) DataBlock() dataBlock {
+	return bm.dataBlock
 }
 
 // KeysBlock returns the keys block reference.
-func (pbm *primaryBlockMetadata) KeysBlock() dataBlock {
-	return pbm.keysBlock
+func (bm *blockMetadata) KeysBlock() dataBlock {
+	return bm.keysBlock
 }
 
 // TagsBlocks returns the tag blocks references.
-func (pbm *primaryBlockMetadata) TagsBlocks() map[string]dataBlock {
-	return pbm.tagsBlocks
+func (bm *blockMetadata) TagsBlocks() map[string]dataBlock {
+	return bm.tagsBlocks
 }
 
 // setSeriesID sets the seriesID of the block.
-func (pbm *primaryBlockMetadata) setSeriesID(seriesID common.SeriesID) {
-	pbm.seriesID = seriesID
+func (bm *blockMetadata) setSeriesID(seriesID common.SeriesID) {
+	bm.seriesID = seriesID
 }
 
 // setKeyRange sets the key range of the block.
-func (pbm *primaryBlockMetadata) setKeyRange(minKey, maxKey int64) {
-	pbm.minKey = minKey
-	pbm.maxKey = maxKey
+func (bm *blockMetadata) setKeyRange(minKey, maxKey int64) {
+	bm.minKey = minKey
+	bm.maxKey = maxKey
 }
 
 // setDataBlock sets the data block reference.
-func (pbm *primaryBlockMetadata) setDataBlock(offset, size uint64) {
-	pbm.dataBlock = dataBlock{offset: offset, size: size}
+func (bm *blockMetadata) setDataBlock(offset, size uint64) {
+	bm.dataBlock = dataBlock{offset: offset, size: size}
 }
 
 // setKeysBlock sets the keys block reference.
-func (pbm *primaryBlockMetadata) setKeysBlock(offset, size uint64) {
-	pbm.keysBlock = dataBlock{offset: offset, size: size}
+func (bm *blockMetadata) setKeysBlock(offset, size uint64) {
+	bm.keysBlock = dataBlock{offset: offset, size: size}
 }
 
 // addTagBlock adds a tag block reference.
-func (pbm *primaryBlockMetadata) addTagBlock(tagName string, offset, size uint64) {
-	pbm.tagsBlocks[tagName] = dataBlock{offset: offset, size: size}
+func (bm *blockMetadata) addTagBlock(tagName string, offset, size uint64) {
+	bm.tagsBlocks[tagName] = dataBlock{offset: offset, size: size}
 }

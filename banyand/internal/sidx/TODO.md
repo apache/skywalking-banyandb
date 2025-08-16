@@ -43,7 +43,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ### 1.3 Metadata Structures (`metadata.go`) ✅
 - [x] partMetadata with MinKey/MaxKey (replacing timestamps)
-- [x] primaryBlockMetadata with block offsets and key ranges
+- [x] blockMetadata with block offsets and key ranges
 - [x] Validation methods for metadata integrity
 - [x] **Test Cases**:
   - [x] Metadata serialization/deserialization
@@ -51,21 +51,26 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Version compatibility checks
   - [x] Corruption detection in metadata
 
-### 1.4 Block Structure (`block.go`) 🔥
-- [ ] **Core block organization for elements within parts**
-- [ ] Contains userKeys[], seriesIDs[], data[], tags[]
-- [ ] Methods: reset(), mustInitFromElements(), validation
-- [ ] Sorting validation for elements within blocks
-- [ ] **Tag encoding/decoding**: Uses shared encoding module from `banyand/internal/encoding/tag_encoder.go`
-  - [ ] Implement `block.marshal()` and `block.unmarshal()` methods
-  - [ ] Use `EncodeTagValues()` and `DecodeTagValues()` for tag serialization
-  - [ ] Apply sophisticated encoding: delta for int64, dictionary for strings, zstd for plain
+### 1.4 Block Structure (`block.go`) 🔥 - DESIGN COMPLETED ✅
+- [ ] **Core block structure**: userKeys[], elementIDs[], data[], tags map
+- [ ] **Block components design**: Block, Block Metadata, Block Reader, Block Scanner, Block Writer
+- [ ] **Memory management**: Object pooling with reset() methods
+- [ ] **Block operations**: mustInitFromElements(), validate(), uncompressedSizeBytes()
+- [ ] **Tag processing**: processTag() for individual tag handling within blocks
+- [ ] **Component relationships**: Dependency diagram and interaction patterns
+- [ ] **File organization**: Block storage within part directories
+- [ ] **Implementation Tasks**:
+  - [ ] Create block.go with core block structure
+  - [ ] Implement reset() and validation methods
+  - [ ] Add mustInitFromElements() for block initialization
+  - [ ] Implement processTag() for tag data organization
+  - [ ] Add size calculation methods
 - [ ] **Test Cases**:
   - [ ] Block initialization from sorted elements
-  - [ ] Element organization by seriesID and userKey
   - [ ] Key ordering validation within blocks
   - [ ] Block reset and reuse functionality
-  - [ ] Tag encoding/decoding with various value types
+  - [ ] Tag processing and bloom filter generation
+  - [ ] Memory pooling effectiveness
 
 ### 1.5 Part Structure (`part.go`)
 - [ ] File readers for primary.bin, data.bin, keys.bin, meta.bin
@@ -101,10 +106,18 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Element addition and retrieval
   - [ ] Memory usage tracking accuracy
 
-### 2.2 Block Writer (`block_writer.go`) 🔥
-- [ ] **Uses block.go to serialize block data**
-- [ ] Compression support (zstd)
-- [ ] Write blocks to memory/disk buffers
+### 2.2 Block Writer (`block_writer.go`) 🔥 - DESIGN COMPLETED ✅
+- [ ] **Complete block writer design added to DESIGN.md**
+- [ ] **Multi-file writing**: data.bin, keys.bin, tag_*.td files
+- [ ] **Compression**: zstd compression for data payloads
+- [ ] **Write tracking**: Track bytes written per file
+- [ ] **Memory management**: Object pooling with reset() methods
+- [ ] **Atomic operations**: mustWriteTo() for block serialization
+- [ ] **Implementation Tasks**:
+  - [ ] Create block_writer.go with core writer structure
+  - [ ] Implement writeUserKeys(), writeData(), writeTags()
+  - [ ] Add compression/decompression support
+  - [ ] Implement write tracking and position management
 - [ ] **Test Cases**:
   - [ ] Block serialization with various data sizes
   - [ ] Compression ratios meet expectations
@@ -121,10 +134,18 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Performance benchmarks for large datasets
   - [ ] Edge cases (empty, single element, duplicate keys)
 
-### 2.4 Block Initialization (`block.go` methods) 🔥
-- [ ] **mustInitFromElements() processes sorted elements into blocks**
-- [ ] Validate key ordering within blocks
-- [ ] Group elements by seriesID efficiently
+### 2.4 Block Initialization (`block.go` methods) 🔥 - DESIGN COMPLETED ✅
+- [ ] **Complete block initialization design added to DESIGN.md**
+- [ ] **mustInitFromElements()**: Process sorted elements into blocks
+- [ ] **mustInitFromTags()**: Process tag data for blocks
+- [ ] **processTag()**: Create tag data structures with bloom filters
+- [ ] **Key validation**: Verify sorting and consistency
+- [ ] **Tag optimization**: Bloom filters for indexed tags, min/max for int64 tags
+- [ ] **Implementation Tasks**:
+  - [ ] Implement mustInitFromElements() with element processing
+  - [ ] Add mustInitFromTags() for tag data organization
+  - [ ] Create processTag() with bloom filter generation
+  - [ ] Add validation for element ordering
 - [ ] **Test Cases**:
   - [ ] Block building from various element configurations
   - [ ] Validation errors for unsorted elements
@@ -209,10 +230,17 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Error messages are helpful for debugging
   - [ ] Edge cases (duplicate keys, negative keys)
 
-### 4.4 Block Building (`writer.go` + `block.go`) 🔥
-- [ ] **When memory part reaches threshold, organize elements into blocks**
-- [ ] **Call block.mustInitFromElements() with sorted elements**
-- [ ] Create blocks with configured size limits
+### 4.4 Block Building (`writer.go` + `block.go`) 🔥 - DESIGN COMPLETED ✅
+- [ ] **Complete block building design added to DESIGN.md**
+- [ ] **Element organization**: Sort elements by seriesID then userKey
+- [ ] **Block creation**: mustInitFromElements() with sorted elements
+- [ ] **Size management**: maxUncompressedBlockSize limits
+- [ ] **Memory efficiency**: Object pooling and resource management
+- [ ] **Implementation Tasks**:
+  - [ ] Integrate block building into write path
+  - [ ] Add threshold detection for block creation
+  - [ ] Implement size limit enforcement
+  - [ ] Add element distribution logic
 - [ ] **Test Cases**:
   - [ ] Block creation triggers at correct thresholds
   - [ ] Size limits are enforced properly
@@ -253,10 +281,17 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] File format compatibility
   - [ ] Performance of tag file generation
 
-### 5.4 Block Serialization (`flusher.go` + `block_writer.go`) 🔥
-- [ ] **Serialize blocks from memory parts to disk**
-- [ ] **Use block structure to write primary.bin**
-- [ ] Compress block data before writing
+### 5.4 Block Serialization (`flusher.go` + `block_writer.go`) 🔥 - DESIGN COMPLETED ✅
+- [ ] **Complete block serialization design added to DESIGN.md**
+- [ ] **Multi-file output**: primary.bin, data.bin, keys.bin, tag files
+- [ ] **Block writer integration**: mustWriteTo() for block persistence
+- [ ] **Compression strategy**: zstd for data, specialized encoding for keys
+- [ ] **Metadata generation**: Block metadata with file references
+- [ ] **Implementation Tasks**:
+  - [ ] Integrate block writer into flush operations
+  - [ ] Add primary.bin writing with block metadata
+  - [ ] Implement compression for block data
+  - [ ] Add file reference management
 - [ ] **Test Cases**:
   - [ ] Block persistence maintains data integrity
   - [ ] Compression reduces storage footprint
@@ -297,10 +332,17 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Key ordering is maintained across parts
   - [ ] Merged part metadata is accurate
 
-### 6.4 Block Merging (`merger.go` + `block.go`) 🔥
-- [ ] **Read blocks from multiple parts**
-- [ ] **Merge blocks maintaining seriesID/key ordering**
-- [ ] **Create new blocks for merged part**
+### 6.4 Block Merging (`merger.go` + `block.go`) 🔥 - DESIGN COMPLETED ✅
+- [ ] **Complete block merging design added to DESIGN.md**
+- [ ] **Block reader integration**: Read blocks from multiple parts
+- [ ] **Merge strategy**: Maintain key ordering across merged blocks
+- [ ] **Block writer output**: Create new blocks for merged parts
+- [ ] **Memory management**: Efficient block processing with pooling
+- [ ] **Implementation Tasks**:
+  - [ ] Integrate block reader for loading blocks from parts
+  - [ ] Add block merging logic with ordering preservation
+  - [ ] Implement merged block creation
+  - [ ] Add memory-efficient merge processing
 - [ ] **Test Cases**:
   - [ ] Block merge correctness across parts
   - [ ] Ordering preservation during merge
@@ -331,10 +373,18 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Boundary conditions handled correctly
   - [ ] Empty result sets handled gracefully
 
-### 7.3 Block Scanner (`block_scanner.go`) 🔥
-- [ ] **Read and scan blocks from parts**
-- [ ] **Deserialize block data using block structure**
-- [ ] Apply tag filters using bloom filters
+### 7.3 Block Scanner (`block_scanner.go`) 🔥 - DESIGN COMPLETED ✅
+- [ ] **Complete block scanner design added to DESIGN.md**
+- [ ] **Query processing**: scanBlock() with range and tag filtering
+- [ ] **Memory management**: Object pooling with reset() methods
+- [ ] **Efficient filtering**: Quick checks before loading block data
+- [ ] **Element matching**: scanBlockElements() with tag filter matching
+- [ ] **Resource management**: Block reader and temporary block handling
+- [ ] **Implementation Tasks**:
+  - [ ] Create block_scanner.go with scanner structure
+  - [ ] Implement scanBlock() with filtering logic
+  - [ ] Add scanBlockElements() for element processing
+  - [ ] Create matchesTagFilters() for tag filtering
 - [ ] **Test Cases**:
   - [ ] Scan completeness finds all matching data
   - [ ] Filter effectiveness reduces false positives
@@ -351,10 +401,18 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Ordering is maintained across parts
   - [ ] Iterator cleanup prevents resource leaks
 
-### 7.5 Block Reader (`block_reader.go`) 🔥
-- [ ] **Deserialize blocks from disk**
-- [ ] **Reconstruct block structure with elements**
-- [ ] Decompress block data efficiently
+### 7.5 Block Reader (`block_reader.go`) 🔥 - DESIGN COMPLETED ✅
+- [x] **Complete block reader design added to DESIGN.md**
+- [x] **Multi-file reading**: data.bin, keys.bin, tag_*.td files
+- [x] **Decompression**: zstd decompression for data payloads
+- [x] **Memory management**: Object pooling with reset() methods
+- [x] **Selective loading**: Tag projection for efficient I/O
+- [x] **Block reconstruction**: mustReadFrom() for complete block loading
+- [ ] **Implementation Tasks**:
+  - [ ] Create block_reader.go with reader structure
+  - [ ] Implement readUserKeys(), readData(), readTags()
+  - [ ] Add decompression support
+  - [ ] Create mustReadFrom() for block loading
 - [ ] **Test Cases**:
   - [ ] Block reading maintains data integrity
   - [ ] Decompression works correctly
