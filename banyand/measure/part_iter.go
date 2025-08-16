@@ -61,13 +61,12 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (pi *partIter) init(p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
 	pi.c = p.cache
 
-	pi.bms = bma.arr
 	pi.sids = sids
 	pi.minTimestamp = minTimestamp
 	pi.maxTimestamp = maxTimestamp
@@ -151,8 +150,7 @@ func (pi *partIter) loadNextBlockMetadata() bool {
 			continue
 		}
 
-		var err error
-		pi.bms, err = pi.readPrimaryBlock(pi.bms[:0], pbm)
+		err := pi.readPrimaryBlock(pbm)
 		if err != nil {
 			pi.err = fmt.Errorf("cannot read primary block for part %q at offset %d with size %d: %w",
 				&pi.p.partMetadata, pbm.offset, pbm.size, err)
@@ -183,14 +181,12 @@ func searchPBM(pbmIndex []primaryBlockMetadata, sid common.SeriesID) []primaryBl
 	return pbmIndex[n-1:]
 }
 
-func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetadata) ([]blockMetadata, error) {
+func (pi *partIter) readPrimaryBlock(mr *primaryBlockMetadata) error {
 	value := pi.c.Get(storage.NewEntryKey(pi.p.partMetadata.ID, mr.offset))
 	if value != nil {
-		bmPtrs := value.([]*blockMetadata)
-		for _, bmsPtr := range bmPtrs {
-			bms = append(bms, *bmsPtr)
-		}
-		return bms, nil
+		bma := value.(*blockMetadataArray)
+		pi.bms = bma.arr
+		return nil
 	}
 
 	pi.compressedPrimaryBuf = bytes.ResizeOver(pi.compressedPrimaryBuf, int(mr.size))
@@ -199,20 +195,16 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	var err error
 	pi.primaryBuf, err = zstd.Decompress(pi.primaryBuf[:0], pi.compressedPrimaryBuf)
 	if err != nil {
-		return nil, fmt.Errorf("cannot decompress index block: %w", err)
+		return fmt.Errorf("cannot decompress index block: %w", err)
 	}
-	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf)
+	bma := &blockMetadataArray{}
+	bma.arr, err = unmarshalBlockMetadata(bma.arr[:0], pi.primaryBuf)
 	if err != nil {
-		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
+		return fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
-	bmPtrs := make([]*blockMetadata, 0, len(bms))
-	for _, bm := range bms {
-		bmCopy := &blockMetadata{}
-		bmCopy.copyFrom(&bm)
-		bmPtrs = append(bmPtrs, bmCopy)
-	}
-	pi.c.Put(storage.NewEntryKey(pi.p.partMetadata.ID, mr.offset), bmPtrs)
-	return bms, nil
+	pi.c.Put(storage.NewEntryKey(pi.p.partMetadata.ID, mr.offset), bma)
+	pi.bms = bma.arr
+	return nil
 }
 
 func (pi *partIter) findBlock() bool {
@@ -248,7 +240,7 @@ func (pi *partIter) findBlock() bool {
 			continue
 		}
 
-		pi.curBlock = bm
+		pi.curBlock.copyFrom(bm)
 
 		pi.bms = bhs[1:]
 		return true

@@ -192,28 +192,6 @@ type blockMetadataArray struct {
 	arr []blockMetadata
 }
 
-func (bma *blockMetadataArray) reset() {
-	for i := range bma.arr {
-		bma.arr[i].reset()
-	}
-	bma.arr = bma.arr[:0]
-}
-
-var blockMetadataArrayPool = pool.Register[*blockMetadataArray]("measure-blockMetadataArray")
-
-func generateBlockMetadataArray() *blockMetadataArray {
-	v := blockMetadataArrayPool.Get()
-	if v == nil {
-		return &blockMetadataArray{}
-	}
-	return v
-}
-
-func releaseBlockMetadataArray(bma *blockMetadataArray) {
-	bma.reset()
-	blockMetadataArrayPool.Put(bma)
-}
-
 type timestampsMetadata struct {
 	dataBlock
 	min               int64
