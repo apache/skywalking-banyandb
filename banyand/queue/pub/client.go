@@ -283,13 +283,11 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 					}()
 					return
 				}
-				if errEvict != nil {
-					_ = connEvict.Close()
-				}
+				_ = connEvict.Close()
 				if _, ok := p.registered[name]; !ok {
 					return
 				}
-				p.log.Error().Err(errEvict).Msgf("failed to re-connect to grpc server after waiting for %s", backoff)
+				p.log.Error().Err(errEvict).Msgf("failed to re-connect to grpc server %s after waiting for %s", node.GrpcAddress, backoff)
 			case <-en.c:
 				return
 			case <-p.closer.CloseNotify():

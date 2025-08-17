@@ -48,32 +48,23 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 					tst.incTotalFlushLatency(time.Since(start).Seconds())
 				}()
 				curSnapshot := tst.currentSnapshot()
-				if curSnapshot != nil {
-					flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, flusherWatchers)
-					curSnapshot.decRef()
-					curSnapshot = nil
-				}
-				tst.RLock()
-				if tst.snapshot != nil && tst.snapshot.epoch > epoch {
-					curSnapshot = tst.snapshot
-					curSnapshot.incRef()
-				}
-				tst.RUnlock()
+				var ok bool
+				var merged bool
+				curSnapshot, flusherWatchers, ok, merged = tst.pauseFlusherToPileupMemPartsWithMerge(curSnapshot, flusherWatcher, flusherWatchers, epoch, mergeCh)
 				if curSnapshot != nil {
 					defer curSnapshot.decRef()
-					merged, err := tst.mergeMemParts(curSnapshot, mergeCh)
-					if err != nil {
-						tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
-						tst.incTotalFlushLoopErr(1)
+					if !ok {
 						return false
 					}
 					if !merged {
 						tst.flush(curSnapshot, flushCh)
 					}
 					epoch = curSnapshot.epoch
-					// Notify merger to start a new round of merge.
-					// This round might have be triggered in pauseFlusherToPileupMemParts.
-					flusherWatchers.Notify(math.MaxUint64)
+					if merged {
+						flusherWatchers.Notify(math.MaxUint64)
+					} else {
+						flusherWatchers.Notify(epoch)
+					}
 					flusherWatchers = nil
 					if tst.currentEpoch() != epoch {
 						tst.incTotalFlushLoopProgress(1)
@@ -186,45 +177,32 @@ func (tst *tsTable) persistSnapshot(snapshot *snapshot) {
 	tst.gc.registerSnapshot(snapshot)
 }
 
-// flusherLoopNoMerger is like flusherLoop but does not perform merging, only flushing.
-func (tst *tsTable) flusherLoopNoMerger(flushCh chan *flusherIntroduction, introducerWatcher, flusherWatcher watcher.Channel, epoch uint64) {
-	defer tst.loopCloser.Done()
-	epochWatcher := introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
-	if epochWatcher == nil {
-		return
+func (tst *tsTable) pauseFlusherToPileupMemPartsWithMerge(
+	curSnapshot *snapshot, flusherWatcher watcher.Channel, flusherWatchers watcher.Epochs,
+	epoch uint64, mergeCh chan *mergerIntroduction,
+) (*snapshot, watcher.Epochs, bool, bool) {
+	if tst.option.flushTimeout < 1 {
+		return curSnapshot, flusherWatchers, true, false
 	}
-	var flusherWatchers watcher.Epochs
-
-	for {
-		select {
-		case <-tst.loopCloser.CloseNotify():
-			return
-		case e := <-flusherWatcher:
-			flusherWatchers.Add(e)
-		case <-epochWatcher.Watch():
-			if func() bool {
-				tst.incTotalFlushLoopStarted(1)
-				start := time.Now()
-				defer func() {
-					tst.incTotalFlushLoopFinished(1)
-					tst.incTotalFlushLatency(time.Since(start).Seconds())
-				}()
-				curSnapshot := tst.currentSnapshot()
-				if curSnapshot != nil {
-					defer curSnapshot.decRef()
-					tst.flush(curSnapshot, flushCh)
-					epoch = curSnapshot.epoch
-					if tst.currentEpoch() != epoch {
-						tst.incTotalFlushLoopProgress(1)
-						return false
-					}
-				}
-				epochWatcher = introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
-				return epochWatcher == nil
-			}() {
-				return
-			}
-		}
-		flusherWatchers.Notify(epoch)
+	if curSnapshot != nil {
+		flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, flusherWatchers)
+		curSnapshot.decRef()
+		curSnapshot = nil
 	}
+	tst.RLock()
+	if tst.snapshot != nil && tst.snapshot.epoch > epoch {
+		curSnapshot = tst.snapshot
+		curSnapshot.incRef()
+	}
+	tst.RUnlock()
+	if curSnapshot == nil {
+		return nil, flusherWatchers, false, false
+	}
+	merged, err := tst.mergeMemParts(curSnapshot, mergeCh)
+	if err != nil {
+		tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
+		tst.incTotalFlushLoopErr(1)
+		return curSnapshot, flusherWatchers, false, false
+	}
+	return curSnapshot, flusherWatchers, true, merged
 }

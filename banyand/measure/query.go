@@ -361,8 +361,6 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 }
 
 func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []*part, qo queryOptions) error {
-	bma := generateBlockMetadataArray()
-	defer releaseBlockMetadataArray(bma)
 	defFn := startBlockScanSpan(ctx, len(sids), parts, result)
 	defer defFn()
 	tstIter := generateTstIter()
@@ -370,7 +368,7 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	originalSids := make([]common.SeriesID, len(sids))
 	copy(originalSids, sids)
 	sort.Slice(sids, func(i, j int) bool { return sids[i] < sids[j] })
-	tstIter.init(bma, parts, sids, qo.minTimestamp, qo.maxTimestamp)
+	tstIter.init(parts, sids, qo.minTimestamp, qo.maxTimestamp)
 	if tstIter.Error() != nil {
 		return fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
 	}

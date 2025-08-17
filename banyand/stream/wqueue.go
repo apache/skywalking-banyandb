@@ -42,6 +42,6 @@ func newWriteQueue(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	t.getNodes = getNodes
 	t.group = group
 	t.shardID = shardID
-	t.startLoopNoMerge(epoch)
+	t.startLoopWithConditionalMerge(epoch)
 	return t, nil
 }

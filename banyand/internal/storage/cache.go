@@ -171,6 +171,7 @@ func (sc *serviceCache) clean() {
 				if now-atomic.LoadUint64(&entry.lastAccess) > uint64(sc.idleTimeout.Nanoseconds()) {
 					delete(sc.entry, key)
 					heap.Remove(sc.entryIndexHeap, sc.entryIndex[key].index)
+					delete(sc.entryIndex, key)
 				}
 			}
 			sc.mu.Unlock()
