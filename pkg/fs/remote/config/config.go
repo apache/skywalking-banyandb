@@ -22,7 +22,8 @@ package config
 type FsConfig struct {
 	Azure    *AzureConfig `json:"azure,omitempty"`
 	S3       *S3Config    `json:"s3,omitempty"`
-	Provider string       `json:"provider"` // "azure" or "s3"
+	GCP      *GCPConfig   `json:"gcp,omitempty"`
+	Provider string       `json:"provider"` // "azure", "s3" or "gcp"
 }
 
 // S3Config represents the configuration for S3.
@@ -44,4 +45,12 @@ type AzureConfig struct {
 	AzureSASToken    string `json:"sas_token,omitempty"`
 	Container        string `json:"container"`
 	AzureEndpoint    string `json:"endpoint"`
+}
+
+// GCPConfig represents the configuration for GCP (Google Cloud Storage).
+type GCPConfig struct {
+	// Path to a GCP service account JSON file. If empty, the default credentials will be used.
+	GCPServiceAccountFile string `json:"service_account_file,omitempty"`
+	// Optional bucket name override. If empty, the bucket name is inferred from the path provided to NewFS.
+	Bucket string `json:"bucket,omitempty"`
 }

@@ -371,7 +371,7 @@ func (c *column) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Bu
 		defer releaseDictionary(dict)
 		c.values, err = dict.Decode(c.values[:0], bb.Buf[1:], count)
 	} else {
-		c.values, err = decoder.Decode(c.values[:0], bb.Buf, count)
+		c.values, err = decoder.Decode(c.values[:0], bb.Buf[1:], count)
 	}
 	if err != nil {
 		logger.Panicf("%s: cannot decode values: %v", path, err)

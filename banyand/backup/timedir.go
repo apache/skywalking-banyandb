@@ -57,6 +57,7 @@ func newListCmd() *cobra.Command {
 	// Initialize nested structs to avoid nil pointer when binding flags
 	fsConfig.S3 = &remoteconfig.S3Config{}
 	fsConfig.Azure = &remoteconfig.AzureConfig{}
+	fsConfig.GCP = &remoteconfig.GCPConfig{}
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -112,6 +113,8 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fsConfig.Azure.AzureAccountKey, "azure-account-key", "", "Azure storage account key")
 	cmd.Flags().StringVar(&fsConfig.Azure.AzureSASToken, "azure-sas-token", "", "Azure SAS token (alternative to account key)")
 	cmd.Flags().StringVar(&fsConfig.Azure.AzureEndpoint, "azure-endpoint", "", "Azure blob service endpoint (override)")
+	// GCP flag
+	cmd.Flags().StringVar(&fsConfig.GCP.GCPServiceAccountFile, "gcp-service-account-file", "", "Path to the GCP service account JSON file")
 	return cmd
 }
 

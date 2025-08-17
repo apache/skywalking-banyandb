@@ -4,6 +4,89 @@ Security is a critical aspect of any application. In this section, we will discu
 
 ## Authentication
 
+BanyanDB supports username and password-based authentication for both gRPC and HTTP endpoints. This guide explains how to configure and use this feature for both the BanyanDB server and the `bydbctl` command-line tool.
+
+### Basic Authentication
+
+To enable authentication on the BanyanDB server, you need to create a **YAML configuration file** that defines your users and their passwords.
+
+#### Create the Configuration File
+
+The configuration file should contain a list of users. For security, it's highly recommended to use strong, unique passwords instead of the examples provided below.
+
+```yaml
+users:
+  - username: admin
+    password: StrongPassword123
+  - username: dev_user
+    password: AnotherStrongPassword456
+```
+
+#### Set File Permissions
+
+To protect your credentials, the configuration file **must** have read/write permissions only for the owner. Set the correct permissions using the following command:
+
+```shell
+chmod 600 /path/to/auth_config.yaml
+```
+
+This command ensures that only the file's owner can read or modify the contents.
+
+#### Start the BanyanDB Server
+
+Finally, start the BanyanDB server with the `--auth-config-file` flag, pointing to the file you just created:
+
+```shell
+banyand liaison --auth-config-file=/path/to/auth_config.yaml
+```
+
+### Authenticating with `bydbctl`
+
+When the BanyanDB server has authentication enabled, you must provide a username and password with your `bydbctl` commands. There are two ways to do this.
+
+#### Option 1: Use Command-Line Flags
+
+You can provide the authentication details directly in your `bydbctl` command using the `-u` and `-p` flags.
+
+```shell
+bydbctl group get -g group1 -a http://localhost:17913 -u admin -p StrongPassword123
+```
+
+> **Note:** The `addr`, `group`, `username`, and `password` parameters will be automatically saved to a file named `.bydbctl.yaml` in your home directory if it doesn't already exist. This file will also have the permissions `0600` for security.
+
+#### Option 2: Use a `bydbctl` Configuration File
+
+You can create a separate configuration file for `bydbctl` to store your connection and authentication details.
+
+#### Create the Configuration File
+
+Create a YAML file containing your connection details. For example:
+
+```yaml
+addr: http://localhost:17913
+group: group1
+username: admin
+password: StrongPassword123
+```
+
+#### Set File Permissions
+
+Just like with the server's authentication file, the `bydbctl` configuration file should have secure permissions:
+
+```shell
+chmod 600 /path/to/bydbctl_config.yaml
+```
+
+#### Run `bydbctl` with the Configuration File
+
+You can then run `bydbctl` by specifying the path to your configuration file with the `--config` flag.
+
+```shell
+bydbctl --config /path/to/bydbctl_config.yaml group list
+```
+
+### External TLS (Client ↔ Server)
+
 BanyanDB supports TLS for secure communication between servers. The following flags are used to configure TLS:
 
 - `--tls`: gRPC Connection uses TLS if true, else plain TCP.

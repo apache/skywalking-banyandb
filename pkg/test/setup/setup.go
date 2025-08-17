@@ -50,7 +50,15 @@ func Standalone(flags ...string) (string, string, func()) {
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
-	}, "", "", flags...)
+	}, "", "", "", "", flags...)
+}
+
+// StandaloneWithAuth wires standalone modules to build a testing ready runtime with Auth.
+func StandaloneWithAuth(username, password string, flags ...string) (string, string, func()) {
+	return StandaloneWithSchemaLoaders([]SchemaLoader{
+		&preloadService{name: "stream"},
+		&preloadService{name: "measure"},
+	}, "", "", username, password, flags...)
 }
 
 // StandaloneWithTLS wires standalone modules to build a testing ready runtime with TLS enabled.
@@ -58,22 +66,27 @@ func StandaloneWithTLS(certFile, keyFile string, flags ...string) (string, strin
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
-	}, certFile, keyFile, flags...)
+	}, certFile, keyFile, "", "", flags...)
 }
 
 // EmptyStandalone wires standalone modules to build a testing ready runtime.
 func EmptyStandalone(flags ...string) (string, string, func()) {
-	return StandaloneWithSchemaLoaders(nil, "", "", flags...)
+	return StandaloneWithSchemaLoaders(nil, "", "", "", "", flags...)
+}
+
+// EmptyStandaloneWithAuth wires standalone modules to build a testing ready runtime with Auth.
+func EmptyStandaloneWithAuth(username, password string, flags ...string) (string, string, func()) {
+	return StandaloneWithSchemaLoaders(nil, "", "", username, password, flags...)
 }
 
 // StandaloneWithSchemaLoaders wires standalone modules to build a testing ready runtime. It also allows to preload schema.
-func StandaloneWithSchemaLoaders(schemaLoaders []SchemaLoader, certFile, keyFile string, flags ...string) (string, string, func()) {
+func StandaloneWithSchemaLoaders(schemaLoaders []SchemaLoader, certFile, keyFile string, username, password string, flags ...string) (string, string, func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var ports []int
 	ports, err = test.AllocateFreePorts(4)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	addr, httpAddr, closeFn := standaloneServer(path, ports, schemaLoaders, certFile, keyFile, flags...)
+	addr, httpAddr, closeFn := standaloneServerWithAuth(path, ports, schemaLoaders, certFile, keyFile, username, password, flags...)
 	return addr, httpAddr, func() {
 		closeFn()
 		deferFn()
@@ -99,6 +112,12 @@ func EmptyClosableStandalone(path string, ports []int, flags ...string) (string,
 }
 
 func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, certFile, keyFile string, flags ...string) (string, string, func()) {
+	return standaloneServerWithAuth(path, ports, schemaLoaders, certFile, keyFile, "", "", flags...)
+}
+
+func standaloneServerWithAuth(path string, ports []int, schemaLoaders []SchemaLoader, certFile, keyFile string,
+	username, password string, flags ...string,
+) (string, string, func()) {
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
 	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	endpoint := fmt.Sprintf("http://%s:%d", host, ports[2])
@@ -131,14 +150,16 @@ func standaloneServer(path string, ports []int, schemaLoaders []SchemaLoader, ce
 	if tlsEnabled {
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Eventually(helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(creds)), testflags.EventuallyTimeout).
+		gomega.Eventually(helpers.HealthCheckWithAuth(addr, 10*time.Second, 10*time.Second,
+			username, password, grpclib.WithTransportCredentials(creds)), testflags.EventuallyTimeout).
 			Should(gomega.Succeed())
-		gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, certFile), testflags.EventuallyTimeout).Should(gomega.Succeed())
+		gomega.Eventually(helpers.HTTPHealthCheckWithAuth(httpAddr, certFile, username, password), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	} else {
 		gomega.Eventually(
-			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
+			helpers.HealthCheckWithAuth(addr, 10*time.Second, 10*time.Second,
+				username, password, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 			testflags.EventuallyTimeout).Should(gomega.Succeed())
-		gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
+		gomega.Eventually(helpers.HTTPHealthCheckWithAuth(httpAddr, "", username, password), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	}
 
 	if schemaLoaders != nil {
@@ -206,7 +227,7 @@ func CMD(flags ...string) func() {
 	}
 }
 
-func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, func()) {
+func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, string, func()) {
 	ports, err := test.AllocateFreePorts(2)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -236,14 +257,14 @@ func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, func(
 		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
 	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
 
-	return addr, closeFn
+	return addr, fmt.Sprintf("%s:%d", host, ports[1]), closeFn
 }
 
 // DataNode runs a data node.
 func DataNode(etcdEndpoint string, flags ...string) func() {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	closeFn := DataNodeFromDataDir(etcdEndpoint, path, flags...)
+	_, _, closeFn := DataNodeFromDataDir(etcdEndpoint, path, flags...)
 	return func() {
 		fmt.Printf("Data tsdb path: %s\n", path)
 		_ = filepath.Walk(path, func(path string, _ os.FileInfo, err error) error {
@@ -260,16 +281,16 @@ func DataNode(etcdEndpoint string, flags ...string) func() {
 }
 
 // DataNodeFromDataDir runs a data node with a specific data directory.
-func DataNodeFromDataDir(etcdEndpoint, dataDir string, flags ...string) func() {
-	_, closeFn := startDataNode(etcdEndpoint, dataDir, flags...)
-	return closeFn
+func DataNodeFromDataDir(etcdEndpoint, dataDir string, flags ...string) (string, string, func()) {
+	grpcAddr, propertyRepairAddr, closeFn := startDataNode(etcdEndpoint, dataDir, flags...)
+	return grpcAddr, propertyRepairAddr, closeFn
 }
 
 // DataNodeWithAddrAndDir runs a data node and returns the address and root path.
 func DataNodeWithAddrAndDir(etcdEndpoint string, flags ...string) (string, string, func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	addr, closeFn := startDataNode(etcdEndpoint, path, flags...)
+	addr, _, closeFn := startDataNode(etcdEndpoint, path, flags...)
 	return addr, path, func() {
 		closeFn()
 		deferFn()

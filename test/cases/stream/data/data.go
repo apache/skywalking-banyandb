@@ -22,7 +22,6 @@ import (
 	"context"
 	"embed"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,7 +43,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
@@ -87,11 +85,6 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &streamv1.QueryResponse{}
 	helpers.UnmarshalYAML(ww, want)
-	if !args.IgnoreElementID {
-		for i := range want.Elements {
-			want.Elements[i].ElementId = hex.EncodeToString(convert.Uint64ToBytes(convert.HashStr(query.Name + "|" + want.Elements[i].ElementId)))
-		}
-	}
 	if args.DisOrder {
 		slices.SortFunc(want.Elements, func(a, b *streamv1.Element) int {
 			return strings.Compare(a.ElementId, b.ElementId)

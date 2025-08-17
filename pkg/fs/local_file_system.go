@@ -462,6 +462,10 @@ func (file *LocalFile) SequentialRead() SeqReader {
 	// Use the cached parameter from upper layer instead of local file's cached field
 	// This allows override when needed (e.g. metadata always cached)
 
+	// Reset file position to beginning to ensure each SeqReader starts from the beginning
+	// If seek fails, we'll still try to create the reader and the error will be handled when reading
+	_, _ = file.file.Seek(0, 0)
+
 	reader := generateReader(file.file, file.ioSize)
 	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), length: 0, skipFadvise: file.cached}
 }

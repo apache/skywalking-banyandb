@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 elements:
-- elementId: "3"
+- elementId: "93423d5c731c53ed"
   tagFamilies:
   - name: searchable
     tags:
@@ -40,7 +40,7 @@ elements:
     - key: data_binary
       value:
         binaryData: YWJjMTIzIT8kKiYoKSctPUB+
-- elementId: "0"
+- elementId: "5df4d9d2f751488d"
   tagFamilies:
   - name: searchable
     tags:
