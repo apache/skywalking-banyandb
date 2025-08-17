@@ -129,6 +129,106 @@ install-bpftool-auto:
 	fi
 ```
 
+### Phase 6: Package Structure Refactoring
+
+**Issue**: Package organization inconsistent with Go best practices
+**User Feedback**: "do u think we should move it into the ./pkg part? i am not sure about the go project design"
+
+**Solution**: Moved to follow BanyanDB patterns
+- **Before**: `/ebpf-sidecar/pkg/` with metrics and export packages
+- **After**: All moved to `/ebpf-sidecar/internal/` for encapsulation
+- **Rationale**: eBPF-specific code shouldn't be in shared `/pkg/` directory
+
+**Changes Made**:
+```bash
+# Moved packages to maintain consistency
+mv ebpf-sidecar/pkg/metrics → ebpf-sidecar/internal/metrics
+mv ebpf-sidecar/pkg/export → ebpf-sidecar/internal/export
+```
+
+### Phase 7: Integrated Metrics Collection Module
+
+**Challenge**: Replace stub implementations with real eBPF data collection
+**User Feedback**: "why the fadvise.go in controller is needed, can u both collection ebpf for fadvise and the pagecache miss rate part?"
+
+**Solution**: Created unified `iomonitor_module.go` with comprehensive collection
+- **Unified Collection**: Single module collects fadvise, cache, and memory stats
+- **Memory Management**: Implemented 3 cleanup strategies to prevent eBPF map growth
+- **Production Ready**: Default "clear-after-read" strategy for Prometheus
+
+**Key Innovation**: **eBPF Map Memory Management**
+```go
+// Three strategies to prevent memory exhaustion
+type CleanupStrategy string
+
+const (
+    ClearAfterRead CleanupStrategy = "clear_after_read"  // Clear after each collection
+    KeepRecent     CleanupStrategy = "keep_recent"       // TTL-based cleanup
+    NoCleanup      CleanupStrategy = "no_cleanup"       // Debug mode only
+)
+```
+
+**Problem Solved**: eBPF maps grow infinitely as new PIDs appear, consuming memory
+**Solutions Implemented**:
+1. **Clear-After-Read**: Ideal for Prometheus - fresh counters each scrape
+2. **TTL Cleanup**: Keep recent data (5min), remove stale PIDs automatically  
+3. **Monitoring**: Log map sizes, warn when growing too large
+
+**⚠️ CRITICAL ISSUE DISCOVERED**: TTL Strategy Fundamental Flaw
+**Problem**: TTL-based cleanup doesn't work for active processes
+```go
+// Issue: Active PID keeps updating, never becomes "stale"
+for pid, lastSeen := range m.activePIDs {
+    if now.Sub(lastSeen) > m.staleThreshold {  // Never true for active PIDs!
+        stalePIDs = append(stalePIDs, pid)
+    }
+}
+```
+
+**Scenario**: 
+- PID 1234 (long-running process) continuously generates fadvise calls
+- Each collection updates `m.activePIDs[1234] = time.Now()`
+- PID never becomes "stale", map entry never deleted
+- Map grows indefinitely for long-running processes
+
+**Impact**: 
+- TTL strategy fails for production workloads with persistent processes
+- Only works for short-lived processes that exit
+- BanyanDB (long-running database) would never trigger cleanup
+
+**Current Status**: 
+- **Recommended**: Use `ClearAfterRead` strategy for production
+- **Issue**: Need mentor guidance on handling accumulative vs. delta metrics
+- **Alternative**: Implement periodic full map reset (every N hours)
+
+**Metrics Exposed**:
+```prometheus
+# File advisory system calls
+ebpf_fadvise_calls_total                    # Total fadvise() calls
+ebpf_fadvise_success_total                  # Successful fadvise() calls  
+ebpf_fadvise_success_rate_percent           # Success rate percentage
+ebpf_fadvise_advice_total{advice="dontneed"} # Per-advice type counters
+
+# Page cache performance
+ebpf_cache_read_attempts_total              # Total read operations
+ebpf_cache_misses_total                     # Cache miss events
+ebpf_cache_hit_rate_percent                 # Cache hit rate
+ebpf_cache_miss_rate_percent                # Cache miss rate (key metric)
+ebpf_page_cache_adds_total                  # Pages loaded from disk
+
+# Memory reclaim monitoring  
+ebpf_memory_lru_pages_scanned               # Pages scanned by LRU
+ebpf_memory_lru_pages_reclaimed             # Pages successfully reclaimed
+ebpf_memory_reclaim_efficiency_percent      # Reclaim efficiency
+ebpf_memory_direct_reclaim_processes        # Processes in direct reclaim
+```
+
+**Architecture Benefits**:
+- **Single Module**: One `iomonitor` module replaces multiple specialized modules
+- **Memory Safe**: Automatic cleanup prevents resource exhaustion
+- **Production Ready**: Prometheus-compatible counter semantics
+- **Comprehensive**: Covers fadvise, cache performance, and memory pressure
+
 ## Implementation Guide for New eBPF Features
 
 ### Step 1: Plan Your Monitoring Target
@@ -201,16 +301,44 @@ func (l *Loader) GetYourStats() ([]YourStats, error) {
 
 ### Step 5: Add to Collection System
 
-Update `internal/collector/collector.go`:
+Update `internal/collector/iomonitor_module.go` to add new metrics collection:
 
 ```go
-func (c *Collector) collectYourStats() error {
-    stats, err := c.loader.GetYourStats()
-    if err != nil {
-        return err
+// Add to the Collect() method
+func (m *IOMonitorModule) Collect() (*metrics.MetricSet, error) {
+    ms := metrics.NewMetricSet()
+    
+    // Existing collections
+    m.collectFadviseStats(ms)
+    m.collectCacheStats(ms)
+    m.collectMemoryStats(ms)
+    
+    // Add your new collection
+    m.collectYourStats(ms)
+    
+    return ms, nil
+}
+
+// Implement your stats collection
+func (m *IOMonitorModule) collectYourStats(ms *metrics.MetricSet) error {
+    // Read from your eBPF map
+    var key uint32
+    var stats generated.IomonitorYourStatsT
+    iter := m.objs.YourStatsMap.Iterate()
+    
+    for iter.Next(&key, &stats) {
+        // Add metrics based on your data
+        ms.AddCounter("ebpf_your_metric_total", float64(stats.Counter), map[string]string{
+            "pid": fmt.Sprintf("%d", key),
+        })
     }
-    // Process and store stats
-    return nil
+    
+    // Optional: Clear after read for memory management
+    if m.cleanupStrategy == ClearAfterRead {
+        // Delete entries after collection
+    }
+    
+    return iter.Err()
 }
 ```
 
@@ -278,8 +406,9 @@ ebpf-sidecar/
 │       │   ├── *.o            # Compiled eBPF objects
 │       │   └── vmlinux.h      # Kernel type definitions
 │       └── loader.go          # eBPF program lifecycle management
-└── pkg/                       # Reusable packages
-    ├── metrics/               # Metrics type definitions
+└── internal/                  # Private implementation packages (continued)
+    ├── metrics/               # eBPF-specific metrics types
+    │   └── metrics.go        # MetricSet, Store for collecting data
     └── export/                # Export format implementations
         ├── prometheus.go      # Prometheus format export
         └── banyandb.go       # Native BanyanDB export
@@ -290,10 +419,18 @@ ebpf-sidecar/
 ### For New eBPF Features:
 1. **Start with C program**: Implement in `programs/iomonitor.c`
 2. **Add to generation**: Update Makefile with new types
-3. **Implement Go bindings**: Add collection logic in `loader.go`
-4. **Integrate collection**: Update `collector.go`
-5. **Expose via API**: Add endpoints in `server/`
-6. **Test thoroughly**: Both unit tests and integration tests
+3. **Implement Go bindings**: Add probe attachment in `loader.go`
+4. **Integrate collection**: Add collection method in `iomonitor_module.go`
+5. **Configure cleanup**: Choose appropriate cleanup strategy for your data
+6. **Expose via API**: Metrics automatically exposed via `/metrics` endpoint
+7. **Test thoroughly**: Both unit tests and integration tests
+
+### Memory Management Guidelines:
+- **Use ClearAfterRead** for production Prometheus metrics
+- **⚠️ Avoid KeepRecent** - TTL strategy has fundamental flaws with long-running processes
+- **Monitor map sizes** via maintenance logs
+- **Test memory behavior** under high PID churn scenarios
+- **Consult mentor** on accumulative vs. delta metrics strategy
 
 ### For Infrastructure Changes:
 1. **Update Makefile**: Ensure dependency management works
@@ -344,6 +481,7 @@ docker run --privileged -it skywalking-banyandb/ebpf-sidecar:latest make install
 1. **Permission denied**: eBPF requires CAP_BPF/CAP_PERFMON capabilities
 2. **Verifier rejection**: Simplify eBPF program logic
 3. **Map lookup failures**: Check map initialization and key types
+4. **⚠️ Memory growth**: TTL cleanup fails for long-running processes - use ClearAfterRead instead
 
 ### Container Deployment:
 1. **Privileged mode required**: eBPF needs privileged containers

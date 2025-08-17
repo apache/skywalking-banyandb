@@ -19,6 +19,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/collector"
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/config"
+	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/export"
 )
 
 // Server manages gRPC and HTTP servers

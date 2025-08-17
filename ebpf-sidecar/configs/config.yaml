@@ -39,9 +39,8 @@ collector:
   
   # Enabled modules
   modules:
-    - fadvise    # File advisory monitoring
-    - memory     # Memory management monitoring
-    # - io       # I/O monitoring (future)
+    - iomonitor  # Comprehensive I/O, cache, and memory monitoring
+    # Note: fadvise, memory, cache are now all included in iomonitor
     # - network  # Network monitoring (future)
   
   # eBPF specific configuration

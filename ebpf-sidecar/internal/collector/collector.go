@@ -26,7 +26,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/config"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/pkg/metrics"
+	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
 )
 
 // Collector manages eBPF program lifecycle and metrics collection
@@ -74,12 +74,22 @@ func New(cfg config.CollectorConfig, logger *zap.Logger) (*Collector, error) {
 // createModule creates a module instance by name
 func (c *Collector) createModule(name string) (Module, error) {
 	switch name {
-	case "fadvise":
-		// TODO: Implement fadvise module
-		return &stubModule{name: name}, nil
-	case "memory":
-		// TODO: Implement memory module
-		return &stubModule{name: name}, nil
+	case "iomonitor":
+		// Create the comprehensive I/O monitor module
+		module, err := NewIOMonitorModule(c.logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create iomonitor module: %w", err)
+		}
+		// Configure cleanup strategy for Prometheus (clear after read)
+		if ioModule, ok := module.(*IOMonitorModule); ok {
+			ioModule.SetCleanupStrategy(ClearAfterRead, 60*time.Second)
+		}
+		return module, nil
+	case "fadvise", "memory", "cache":
+		// These are all handled by iomonitor now
+		c.logger.Warn("Module is deprecated, use 'iomonitor' instead",
+			zap.String("module", name))
+		return nil, fmt.Errorf("module %s is deprecated, use 'iomonitor' instead", name)
 	default:
 		return nil, fmt.Errorf("unknown module: %s", name)
 	}
