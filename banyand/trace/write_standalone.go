@@ -208,15 +208,7 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 		} else {
 			tagValue = req.Tags[i]
 		}
-
-		indexed := false
-		if r, ok := is.indexRuleLocators[tagSpec.Name]; ok && tagValue != pbv1.NullTagValue {
-			if r.GetType() == databasev1.IndexRule_TYPE_SKIPPING {
-				indexed = true
-			}
-		}
 		tv := encodeTagValue(tagSpec.Name, tagSpec.Type, tagValue)
-		tv.indexed = indexed
 		tags = append(tags, tv)
 	}
 	traces.tags = append(traces.tags, tags)

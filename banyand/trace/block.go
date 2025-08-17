@@ -18,7 +18,6 @@
 package trace
 
 import (
-	"bytes"
 	"fmt"
 	"slices"
 	"sort"
@@ -26,7 +25,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -79,28 +77,6 @@ func (b *block) processTags(tags []*tagValue, i, spansLen int) {
 		b.tags[j].resizeValues(spansLen)
 		b.tags[j].valueType = t.valueType
 		b.tags[j].values[i] = t.marshal()
-		if !t.indexed {
-			continue
-		}
-		if b.tags[j].filter == nil {
-			filter := generateBloomFilter()
-			b.tags[j].filter = filter
-		}
-		b.tags[j].filter.SetN(spansLen)
-		b.tags[j].filter.ResizeBits((spansLen*filter.B + 63) / 64)
-		b.tags[j].filter.Add(t.value)
-		if t.valueType == pbv1.ValueTypeInt64 {
-			if len(b.tags[j].min) == 0 {
-				b.tags[j].min = t.value
-			} else if bytes.Compare(t.value, b.tags[j].min) == -1 {
-				b.tags[j].min = t.value
-			}
-			if len(b.tags[j].max) == 0 {
-				b.tags[j].max = t.value
-			} else if bytes.Compare(t.value, b.tags[j].max) == 1 {
-				b.tags[j].max = t.value
-			}
-		}
 	}
 }
 
@@ -359,11 +335,6 @@ func generateBlock() *block {
 }
 
 func releaseBlock(b *block) {
-	for _, t := range b.tags {
-		if t.filter != nil {
-			releaseBloomFilter(t.filter)
-		}
-	}
 	b.reset()
 	blockPool.Put(b)
 }

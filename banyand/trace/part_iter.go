@@ -27,11 +27,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
-	logicaltrace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
 )
 
 type partIter struct {
@@ -39,7 +37,6 @@ type partIter struct {
 	p                    *part
 	curBlock             *blockMetadata
 	tids                 []string
-	blockFilter          index.Filter
 	primaryBlockMetadata []primaryBlockMetadata
 	bms                  []blockMetadata
 	compressedPrimaryBuf []byte
@@ -53,7 +50,6 @@ func (pi *partIter) reset() {
 	pi.curBlock = nil
 	pi.p = nil
 	pi.tids = nil
-	pi.blockFilter = nil
 	pi.tidIdx = 0
 	pi.primaryBlockMetadata = nil
 	pi.bms = nil
@@ -62,14 +58,13 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(bma *blockMetadataArray, p *part, tids []string, minTimestamp, maxTimestamp int64, blockFilter index.Filter) {
+func (pi *partIter) init(bma *blockMetadataArray, p *part, tids []string, minTimestamp, maxTimestamp int64) {
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
 
 	pi.bms = bma.arr
 	pi.tids = tids
-	pi.blockFilter = blockFilter
 	pi.minTimestamp = minTimestamp
 	pi.maxTimestamp = maxTimestamp
 
@@ -216,25 +211,6 @@ func (pi *partIter) findBlock() bool {
 				return false
 			}
 			continue
-		}
-
-		if pi.blockFilter != nil && pi.blockFilter != logicaltrace.ENode {
-			shouldSkip, err := func() (bool, error) {
-				tfs := generateTagFilters()
-				defer releaseTagFilters(tfs)
-				tfs.unmarshal(bm.tags, pi.p.tagMetadata, pi.p.tagFilter)
-				return pi.blockFilter.ShouldSkip(tfs)
-			}()
-			if err != nil {
-				pi.err = err
-				return false
-			}
-			if shouldSkip {
-				if !pi.nextTraceID() {
-					return false
-				}
-				continue
-			}
 		}
 
 		pi.curBlock = bm

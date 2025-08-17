@@ -35,14 +35,12 @@ type tagValue struct {
 	value     []byte
 	valueArr  [][]byte
 	valueType pbv1.ValueType
-	indexed   bool
 }
 
 func (t *tagValue) reset() {
 	t.tag = ""
 	t.value = nil
 	t.valueArr = nil
-	t.indexed = false
 }
 
 func (t *tagValue) size() int {
