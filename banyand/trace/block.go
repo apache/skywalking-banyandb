@@ -33,15 +33,17 @@ import (
 )
 
 type block struct {
-	spans      [][]byte
-	tags       []tag
-	timestamps []int64
+	spans [][]byte
+	tags  []tag
+	minTS int64
+	maxTS int64
 }
 
 func (b *block) reset() {
 	b.spans = b.spans[:0]
 	b.tags = b.tags[:0]
-	b.timestamps = b.timestamps[:0]
+	b.minTS = 0
+	b.maxTS = 0
 }
 
 func (b *block) mustInitFromTrace(spans [][]byte, tags [][]*tagValue, timestamps []int64) {
@@ -55,7 +57,16 @@ func (b *block) mustInitFromTrace(spans [][]byte, tags [][]*tagValue, timestamps
 	}
 
 	b.spans = append(b.spans, spans...)
-	b.timestamps = append(b.timestamps, timestamps...)
+	b.minTS = timestamps[0]
+	b.maxTS = timestamps[0]
+	for _, ts := range timestamps {
+		if ts < b.minTS {
+			b.minTS = ts
+		}
+		if ts > b.maxTS {
+			b.maxTS = ts
+		}
+	}
 	b.mustInitFromTags(tags)
 }
 
@@ -100,19 +111,8 @@ func (b *block) mustWriteTo(tid string, bm *blockMetadata, ww *writers) {
 	bm.traceID = tid
 	bm.uncompressedSpanSizeBytes = b.spanSize()
 	bm.count = uint64(b.Len())
-
-	if len(b.timestamps) > 0 {
-		bm.timestamps.min = b.timestamps[0]
-		bm.timestamps.max = b.timestamps[0]
-		for _, ts := range b.timestamps {
-			if ts < bm.timestamps.min {
-				bm.timestamps.min = ts
-			}
-			if ts > bm.timestamps.max {
-				bm.timestamps.max = ts
-			}
-		}
-	}
+	bm.timestamps.min = b.minTS
+	bm.timestamps.max = b.maxTS
 
 	mustWriteSpansTo(bm.spans, b.spans, &ww.spanWriter)
 	for ti := range b.tags {

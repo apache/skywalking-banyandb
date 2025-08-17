@@ -33,9 +33,10 @@ import (
 
 func Test_block_reset(t *testing.T) {
 	type fields struct {
-		timestamps []int64
-		spans      [][]byte
-		tags       []tag
+		spans [][]byte
+		tags  []tag
+		minTS int64
+		maxTS int64
 	}
 	tests := []struct {
 		name   string
@@ -45,23 +46,26 @@ func Test_block_reset(t *testing.T) {
 		{
 			name: "Test reset",
 			fields: fields{
-				timestamps: []int64{1, 2, 3},
-				spans:      [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
-				tags:       []tag{{}, {}, {}},
+				spans: [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
+				tags:  []tag{{}, {}, {}},
+				minTS: 1,
+				maxTS: 3,
 			},
 			want: block{
-				timestamps: []int64{},
-				spans:      [][]byte{},
-				tags:       []tag{},
+				spans: [][]byte{},
+				tags:  []tag{},
+				minTS: 0,
+				maxTS: 0,
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{
-				timestamps: tt.fields.timestamps,
-				spans:      tt.fields.spans,
-				tags:       tt.fields.tags,
+				spans: tt.fields.spans,
+				tags:  tt.fields.tags,
+				minTS: tt.fields.minTS,
+				maxTS: tt.fields.maxTS,
 			}
 			b.reset()
 			if !reflect.DeepEqual(*b, tt.want) {
@@ -79,9 +83,8 @@ func toTagProjection(b block) []string {
 	return result
 }
 
-var conventionalBlockWithTimestamps = block{
-	spans:      [][]byte{[]byte("span1"), []byte("span2")},
-	timestamps: []int64{1, 2},
+var conventionalBlockWithTS = block{
+	spans: [][]byte{[]byte("span1"), []byte("span2")},
 	tags: []tag{
 		{
 			name: "binaryTag", valueType: pbv1.ValueTypeBinaryData,
@@ -108,6 +111,8 @@ var conventionalBlockWithTimestamps = block{
 			name: "strTag", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("value1"), []byte("value2")},
 		},
 	},
+	minTS: 1,
+	maxTS: 2,
 }
 
 var conventionalBlock = block{
@@ -175,7 +180,7 @@ func Test_block_mustInitFromTrace(t *testing.T) {
 					},
 				},
 			},
-			want: conventionalBlockWithTimestamps,
+			want: conventionalBlockWithTS,
 		},
 	}
 	for _, tt := range tests {
@@ -251,7 +256,7 @@ func Test_marshalAndUnmarshalTag(t *testing.T) {
 		tagWriters:         make(map[string]*writer),
 		tagFilterWriters:   make(map[string]*writer),
 	}
-	b := &conventionalBlockWithTimestamps
+	b := &conventionalBlock
 	tagProjection := toTagProjection(*b)
 	tagIndex := 0
 	name := b.tags[tagIndex].name
