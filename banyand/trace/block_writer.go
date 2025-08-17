@@ -57,7 +57,7 @@ func (w *writer) MustClose() {
 	w.reset()
 }
 
-type mustCreateTagWriters func(name string) (fs.Writer, fs.Writer, fs.Writer)
+type mustCreateTagWriters func(name string) (fs.Writer, fs.Writer)
 
 type writers struct {
 	mustCreateTagWriters mustCreateTagWriters
@@ -65,7 +65,6 @@ type writers struct {
 	primaryWriter        writer
 	tagMetadataWriters   map[string]*writer
 	tagWriters           map[string]*writer
-	tagFilterWriters     map[string]*writer
 	spanWriter           writer
 }
 
@@ -82,10 +81,6 @@ func (sw *writers) reset() {
 	for i, w := range sw.tagWriters {
 		w.reset()
 		delete(sw.tagWriters, i)
-	}
-	for i, w := range sw.tagFilterWriters {
-		w.reset()
-		delete(sw.tagFilterWriters, i)
 	}
 }
 
@@ -106,9 +101,6 @@ func (sw *writers) totalBytesWritten() uint64 {
 	for _, w := range sw.tagWriters {
 		n += w.bytesWritten
 	}
-	for _, w := range sw.tagFilterWriters {
-		n += w.bytesWritten
-	}
 	return n
 }
 
@@ -123,29 +115,22 @@ func (sw *writers) MustClose() {
 	for _, w := range sw.tagWriters {
 		w.MustClose()
 	}
-	for _, w := range sw.tagFilterWriters {
-		w.MustClose()
-	}
 }
 
-func (sw *writers) getWriters(tagName string) (*writer, *writer, *writer) {
+func (sw *writers) getWriters(tagName string) (*writer, *writer) {
 	tmw, ok := sw.tagMetadataWriters[tagName]
 	tw := sw.tagWriters[tagName]
-	tfw := sw.tagFilterWriters[tagName]
 	if ok {
-		return tmw, tw, tfw
+		return tmw, tw
 	}
-	mw, w, fw := sw.mustCreateTagWriters(tagName)
+	mw, w := sw.mustCreateTagWriters(tagName)
 	tmw = new(writer)
 	tmw.init(mw)
 	tw = new(writer)
 	tw.init(w)
-	tfw = new(writer)
-	tfw.init(fw)
 	sw.tagMetadataWriters[tagName] = tmw
 	sw.tagWriters[tagName] = tw
-	sw.tagFilterWriters[tagName] = tfw
-	return tmw, tw, tfw
+	return tmw, tw
 }
 
 type blockWriter struct {
@@ -199,13 +184,11 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
-	bw.writers.mustCreateTagWriters = func(name string) (fs.Writer, fs.Writer, fs.Writer) {
+	bw.writers.mustCreateTagWriters = func(name string) (fs.Writer, fs.Writer) {
 		metaPath := filepath.Join(path, name+tagsMetadataFilenameExt)
 		dataPath := filepath.Join(path, name+tagsFilenameExt)
-		fitlerPath := filepath.Join(path, name+tagsFilterFilenameExt)
 		return fs.MustCreateFile(fileSystem, metaPath, storage.FilePerm, shouldCache),
-			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache),
-			fs.MustCreateFile(fileSystem, fitlerPath, storage.FilePerm, shouldCache)
+			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache)
 	}
 
 	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
@@ -323,7 +306,6 @@ func generateBlockWriter() *blockWriter {
 			writers: writers{
 				tagMetadataWriters: make(map[string]*writer),
 				tagWriters:         make(map[string]*writer),
-				tagFilterWriters:   make(map[string]*writer),
 			},
 		}
 	}
@@ -343,7 +325,6 @@ func generateWriters() *writers {
 		return &writers{
 			tagMetadataWriters: make(map[string]*writer),
 			tagWriters:         make(map[string]*writer),
-			tagFilterWriters:   make(map[string]*writer),
 		}
 	}
 	return v

@@ -118,16 +118,12 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 		partCtx.writers.spanWriter.MustWrite(chunk)
 	case strings.HasPrefix(fileName, traceTagsPrefix):
 		tagName := fileName[len(traceTagsPrefix):]
-		_, tagWriter, _ := partCtx.writers.getWriters(tagName)
+		_, tagWriter := partCtx.writers.getWriters(tagName)
 		tagWriter.MustWrite(chunk)
 	case strings.HasPrefix(fileName, traceTagMetadataPrefix):
 		tagName := fileName[len(traceTagMetadataPrefix):]
-		tagMetadataWriter, _, _ := partCtx.writers.getWriters(tagName)
+		tagMetadataWriter, _ := partCtx.writers.getWriters(tagName)
 		tagMetadataWriter.MustWrite(chunk)
-	case strings.HasPrefix(fileName, traceTagFilterPrefix):
-		tagName := fileName[len(traceTagFilterPrefix):]
-		_, _, tagFilterWriter := partCtx.writers.getWriters(tagName)
-		tagFilterWriter.MustWrite(chunk)
 	default:
 		s.l.Warn().Str("fileName", fileName).Msg("unknown file type in chunked sync")
 		return fmt.Errorf("unknown file type: %s", fileName)

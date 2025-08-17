@@ -117,13 +117,6 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 				Reader: reader.SequentialRead(),
 			})
 		}
-
-		for name, reader := range part.tagFilter {
-			files = append(files, queue.FileInfo{
-				Name:   fmt.Sprintf("%s%s", traceTagFilterPrefix, name),
-				Reader: reader.SequentialRead(),
-			})
-		}
 	}
 
 	return files, func() {

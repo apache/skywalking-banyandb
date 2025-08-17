@@ -211,14 +211,6 @@ func TestMustInitFromPart(t *testing.T) {
 		assert.True(t, exists, "Tag metadata %s not found in new memPart", name)
 		assert.Equal(t, originalBuffer.Buf, newBuffer.Buf)
 	}
-
-	// Compare tag filters
-	assert.Equal(t, len(originalMemPart.tagFilter), len(newMemPart.tagFilter))
-	for name, originalBuffer := range originalMemPart.tagFilter {
-		newBuffer, exists := newMemPart.tagFilter[name]
-		assert.True(t, exists, "Tag filter %s not found in new memPart", name)
-		assert.Equal(t, originalBuffer.Buf, newBuffer.Buf)
-	}
 }
 
 func Test_memPart_Marshal_Unmarshal(t *testing.T) {
@@ -289,14 +281,6 @@ func Test_memPart_Marshal_Unmarshal(t *testing.T) {
 		require.True(t, exists)
 		require.Equal(t, tm.Buf, tm2.Buf)
 	}
-
-	// Verify tag filter
-	require.Equal(t, len(mp.tagFilter), len(mp2.tagFilter))
-	for name, tf := range mp.tagFilter {
-		tf2, exists := mp2.tagFilter[name]
-		require.True(t, exists)
-		require.Equal(t, tf.Buf, tf2.Buf)
-	}
 }
 
 func Test_memPart_Marshal_Unmarshal_Empty(t *testing.T) {
@@ -330,7 +314,6 @@ func Test_memPart_Marshal_Unmarshal_Empty(t *testing.T) {
 	require.Empty(t, mp2.spans.Buf)
 	require.Empty(t, mp2.tags)
 	require.Empty(t, mp2.tagMetadata)
-	require.Empty(t, mp2.tagFilter)
 }
 
 func Test_memPart_Marshal_Unmarshal_Simple(t *testing.T) {
@@ -359,11 +342,6 @@ func Test_memPart_Marshal_Unmarshal_Simple(t *testing.T) {
 	mp.tagMetadata = make(map[string]*bytes.Buffer)
 	mp.tagMetadata["service"] = &bytes.Buffer{Buf: []byte("service metadata")}
 	mp.tagMetadata["instance"] = &bytes.Buffer{Buf: []byte("instance metadata")}
-
-	// Create some tag filters
-	mp.tagFilter = make(map[string]*bytes.Buffer)
-	mp.tagFilter["service"] = &bytes.Buffer{Buf: []byte("service filter")}
-	mp.tagFilter["instance"] = &bytes.Buffer{Buf: []byte("instance filter")}
 
 	// Test marshal
 	marshaled, err := mp.Marshal()
@@ -403,14 +381,6 @@ func Test_memPart_Marshal_Unmarshal_Simple(t *testing.T) {
 		tm2, exists := mp2.tagMetadata[name]
 		require.True(t, exists)
 		require.Equal(t, tm.Buf, tm2.Buf)
-	}
-
-	// Verify tag filter
-	require.Equal(t, len(mp.tagFilter), len(mp2.tagFilter))
-	for name, tf := range mp.tagFilter {
-		tf2, exists := mp2.tagFilter[name]
-		require.True(t, exists)
-		require.Equal(t, tf.Buf, tf2.Buf)
 	}
 }
 
@@ -462,5 +432,4 @@ func Test_memPart_Marshal_Unmarshal_Minimal(t *testing.T) {
 	// Verify maps are empty (not nil, but empty)
 	require.Empty(t, mp2.tags)
 	require.Empty(t, mp2.tagMetadata)
-	require.Empty(t, mp2.tagFilter)
 }

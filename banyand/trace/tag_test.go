@@ -101,7 +101,7 @@ func TestTag_mustWriteTo_mustReadValues(t *testing.T) {
 			w.init(buf)
 			fw.init(filterBuf)
 
-			tt.tag.mustWriteTo(tm, w, fw)
+			tt.tag.mustWriteTo(tm, w)
 			assert.Equal(t, w.bytesWritten, tm.size)
 			assert.Equal(t, uint64(len(buf.Buf)), tm.size)
 			assert.Equal(t, uint64(0), tm.offset)
@@ -193,7 +193,7 @@ func TestTag_HighCardinalityStringEncoding(t *testing.T) {
 			w.init(buf)
 			fw.init(filterBuf)
 
-			testTag.mustWriteTo(tm, w, fw)
+			testTag.mustWriteTo(tm, w)
 
 			// Verify basic metadata
 			assert.Equal(t, w.bytesWritten, tm.size)

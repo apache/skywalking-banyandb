@@ -247,14 +247,13 @@ func Test_mustWriteAndReadSpans(t *testing.T) {
 }
 
 func Test_marshalAndUnmarshalTag(t *testing.T) {
-	metaBuffer, dataBuffer, filterBuffer := &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
+	metaBuffer, dataBuffer := &bytes.Buffer{}, &bytes.Buffer{}
 	ww := &writers{
-		mustCreateTagWriters: func(_ string) (fs.Writer, fs.Writer, fs.Writer) {
-			return metaBuffer, dataBuffer, filterBuffer
+		mustCreateTagWriters: func(_ string) (fs.Writer, fs.Writer) {
+			return metaBuffer, dataBuffer
 		},
 		tagMetadataWriters: make(map[string]*writer),
 		tagWriters:         make(map[string]*writer),
-		tagFilterWriters:   make(map[string]*writer),
 	}
 	b := &conventionalBlock
 	tagProjection := toTagProjection(*b)
@@ -316,12 +315,11 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	spanWriter := &writer{}
 	spanWriter.init(spanBuffer)
 	ww := &writers{
-		mustCreateTagWriters: func(_ string) (fs.Writer, fs.Writer, fs.Writer) {
-			return &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}
+		mustCreateTagWriters: func(_ string) (fs.Writer, fs.Writer) {
+			return &bytes.Buffer{}, &bytes.Buffer{}
 		},
 		tagMetadataWriters: make(map[string]*writer),
 		tagWriters:         make(map[string]*writer),
-		tagFilterWriters:   make(map[string]*writer),
 		spanWriter:         *spanWriter,
 	}
 	p := &part{

@@ -110,7 +110,7 @@ func (t *tag) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
-func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *writer) {
+func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	tm.reset()
 
 	tm.name = t.name

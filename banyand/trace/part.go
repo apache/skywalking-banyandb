@@ -41,7 +41,6 @@ const (
 	traceSpansName          = "spans"
 	traceTagsPrefix         = "t:"
 	traceTagMetadataPrefix  = "tm:"
-	traceTagFilterPrefix    = "tf:"
 	metadataFilename        = "metadata.json"
 	traceIDFilterFilename   = "traceID.filter"
 	tagTypeFilename         = "tag.type"
@@ -50,7 +49,6 @@ const (
 	spansFilename           = traceSpansName + ".bin"
 	tagsMetadataFilenameExt = ".tm"
 	tagsFilenameExt         = ".t"
-	tagsFilterFilenameExt   = ".tf"
 )
 
 type part struct {
@@ -59,7 +57,6 @@ type part struct {
 	fileSystem           fs.FileSystem
 	tagMetadata          map[string]fs.Reader
 	tags                 map[string]fs.Reader
-	tagFilter            map[string]fs.Reader
 	tagType              tagType
 	traceIDFilter        traceIDFilter
 	path                 string
@@ -75,9 +72,6 @@ func (p *part) close() {
 	}
 	for _, tm := range p.tagMetadata {
 		fs.MustClose(tm)
-	}
-	for _, tf := range p.tagFilter {
-		fs.MustClose(tf)
 	}
 }
 
@@ -99,11 +93,9 @@ func openMemPart(mp *memPart) *part {
 	if mp.tags != nil {
 		p.tags = make(map[string]fs.Reader)
 		p.tagMetadata = make(map[string]fs.Reader)
-		p.tagFilter = make(map[string]fs.Reader)
 		for name, t := range mp.tags {
 			p.tags[name] = t
 			p.tagMetadata[name] = mp.tagMetadata[name]
-			p.tagFilter[name] = mp.tagFilter[name]
 		}
 	}
 	return &p
@@ -112,7 +104,6 @@ func openMemPart(mp *memPart) *part {
 type memPart struct {
 	tagMetadata   map[string]*bytes.Buffer
 	tags          map[string]*bytes.Buffer
-	tagFilter     map[string]*bytes.Buffer
 	tagType       tagType
 	traceIDFilter traceIDFilter
 	spans         bytes.Buffer
@@ -121,25 +112,21 @@ type memPart struct {
 	partMetadata  partMetadata
 }
 
-func (mp *memPart) mustCreateMemTagWriters(name string) (fs.Writer, fs.Writer, fs.Writer) {
+func (mp *memPart) mustCreateMemTagWriters(name string) (fs.Writer, fs.Writer) {
 	if mp.tags == nil {
 		mp.tags = make(map[string]*bytes.Buffer)
 		mp.tagMetadata = make(map[string]*bytes.Buffer)
-		mp.tagFilter = make(map[string]*bytes.Buffer)
 	}
 	t, ok := mp.tags[name]
 	tm := mp.tagMetadata[name]
-	tf := mp.tagFilter[name]
 	if ok {
 		t.Reset()
 		tm.Reset()
-		tf.Reset()
-		return tm, t, tf
+		return tm, t
 	}
 	mp.tags[name] = &bytes.Buffer{}
 	mp.tagMetadata[name] = &bytes.Buffer{}
-	mp.tagFilter[name] = &bytes.Buffer{}
-	return mp.tagMetadata[name], mp.tags[name], mp.tagFilter[name]
+	return mp.tagMetadata[name], mp.tags[name]
 }
 
 func (mp *memPart) reset() {
@@ -165,12 +152,6 @@ func (mp *memPart) reset() {
 			delete(mp.tagMetadata, k)
 		}
 	}
-	if mp.tagFilter != nil {
-		for k, tf := range mp.tagFilter {
-			tf.Reset()
-			delete(mp.tagFilter, k)
-		}
-	}
 }
 
 // Marshal serializes the memPart to []byte for network transmission.
@@ -179,8 +160,7 @@ func (mp *memPart) reset() {
 // - meta buffer length + data
 // - primary buffer length + data
 // - tags count + (name + buffer length + data) for each
-// - tagMetadata count + (name + buffer length + data) for each
-// - tagFilter count + (name + buffer length + data) for each.
+// - tagMetadata count + (name + buffer length + data) for each.
 func (mp *memPart) Marshal() ([]byte, error) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
@@ -250,22 +230,6 @@ func (mp *memPart) Marshal() ([]byte, error) {
 			// Write buffer length and data
 			bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(tm.Buf)))
 			bb.Buf = append(bb.Buf, tm.Buf...)
-		}
-	}
-
-	// Marshal tagFilter
-	if mp.tagFilter == nil {
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, 0)
-	} else {
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(mp.tagFilter)))
-		for name, tf := range mp.tagFilter {
-			// Write name length and name
-			nameBytes := []byte(name)
-			bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(nameBytes)))
-			bb.Buf = append(bb.Buf, nameBytes...)
-			// Write buffer length and data
-			bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(tf.Buf)))
-			bb.Buf = append(bb.Buf, tf.Buf...)
 		}
 	}
 
@@ -390,31 +354,6 @@ func (mp *memPart) Unmarshal(data []byte) error {
 		}
 	}
 
-	// Unmarshal tagFilter
-	tail, tagFilterCount := encoding.BytesToVarUint64(tail)
-	if tagFilterCount > 0 {
-		mp.tagFilter = make(map[string]*bytes.Buffer)
-		for i := uint64(0); i < tagFilterCount; i++ {
-			// Read name length and name
-			tail, nameLen = encoding.BytesToVarUint64(tail)
-			if uint64(len(tail)) < nameLen {
-				return fmt.Errorf("insufficient data for tag filter name: need %d bytes, have %d", nameLen, len(tail))
-			}
-			name := string(tail[:nameLen])
-			tail = tail[nameLen:]
-
-			// Read buffer length and data
-			tail, bufLen = encoding.BytesToVarUint64(tail)
-			if uint64(len(tail)) < bufLen {
-				return fmt.Errorf("insufficient data for tag filter buffer: need %d bytes, have %d", bufLen, len(tail))
-			}
-			tf := &bytes.Buffer{}
-			tf.Buf = append(tf.Buf[:0], tail[:bufLen]...)
-			mp.tagFilter[name] = tf
-			tail = tail[bufLen:]
-		}
-	}
-
 	if len(tail) > 0 {
 		return fmt.Errorf("unexpected trailing data: %d bytes", len(tail))
 	}
@@ -452,7 +391,6 @@ func (mp *memPart) mustInitFromPart(p *part) {
 	if p.tags != nil {
 		mp.tags = make(map[string]*bytes.Buffer)
 		mp.tagMetadata = make(map[string]*bytes.Buffer)
-		mp.tagFilter = make(map[string]*bytes.Buffer)
 
 		for name, reader := range p.tags {
 			sr = reader.SequentialRead()
@@ -476,18 +414,6 @@ func (mp *memPart) mustInitFromPart(p *part) {
 
 			mp.tagMetadata[name] = &bytes.Buffer{}
 			mp.tagMetadata[name].Buf = append(mp.tagMetadata[name].Buf[:0], data...)
-		}
-
-		for name, reader := range p.tagFilter {
-			sr = reader.SequentialRead()
-			data, err = io.ReadAll(sr)
-			if err != nil {
-				logger.Panicf("cannot read tag filter from %s: %s", reader.Path(), err)
-			}
-			fs.MustClose(sr)
-
-			mp.tagFilter[name] = &bytes.Buffer{}
-			mp.tagFilter[name].Buf = append(mp.tagFilter[name].Buf[:0], data...)
 		}
 	}
 
@@ -553,9 +479,6 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	}
 	for name, tm := range mp.tagMetadata {
 		fs.MustFlush(fileSystem, tm.Buf, filepath.Join(path, name+tagsMetadataFilenameExt), storage.FilePerm)
-	}
-	for name, tf := range mp.tagFilter {
-		fs.MustFlush(fileSystem, tf.Buf, filepath.Join(path, name+tagsFilterFilenameExt), storage.FilePerm)
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
@@ -660,12 +583,6 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 				p.tags = make(map[string]fs.Reader)
 			}
 			p.tags[removeExt(e.Name(), tagsFilenameExt)] = mustOpenReader(path.Join(partPath, e.Name()), fileSystem)
-		}
-		if filepath.Ext(e.Name()) == tagsFilterFilenameExt {
-			if p.tagFilter == nil {
-				p.tagFilter = make(map[string]fs.Reader)
-			}
-			p.tagFilter[removeExt(e.Name(), tagsFilterFilenameExt)] = mustOpenReader(path.Join(partPath, e.Name()), fileSystem)
 		}
 	}
 	return &p

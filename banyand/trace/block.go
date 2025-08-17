@@ -130,9 +130,9 @@ func (b *block) validate() {
 }
 
 func (b *block) marshalTag(t tag, bm *blockMetadata, ww *writers) {
-	mw, w, fw := ww.getWriters(t.name)
+	mw, w := ww.getWriters(t.name)
 	cm := generateTagMetadata()
-	t.mustWriteTo(cm, w, fw)
+	t.mustWriteTo(cm, w)
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = cm.marshal(bb.Buf)
