@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"unsafe"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -190,6 +191,31 @@ var blockMetadataPool = pool.Register[*blockMetadata]("measure-blockMetadata")
 
 type blockMetadataArray struct {
 	arr []blockMetadata
+}
+
+func (bma *blockMetadataArray) Size() uint64 {
+	size := uint64(unsafe.Sizeof(*bma))
+	size += uint64(len(bma.arr)) * uint64(unsafe.Sizeof(blockMetadata{}))
+	for i := range bma.arr {
+		bm := &bma.arr[i]
+		if bm.tagFamilies != nil {
+			size += uint64(len(bm.tagFamilies)) * uint64(unsafe.Sizeof(dataBlock{}))
+			for name := range bm.tagFamilies {
+				size += uint64(unsafe.Sizeof("")) + uint64(len(name))
+			}
+		}
+		if bm.tagProjection != nil {
+			size += uint64(len(bm.tagProjection)) * uint64(unsafe.Sizeof(model.TagProjection{}))
+			for j := range bm.tagProjection {
+				tp := &bm.tagProjection[j]
+				size += uint64(unsafe.Sizeof("")) + uint64(len(tp.Family)) // Family string header + data
+				for _, name := range tp.Names {
+					size += uint64(unsafe.Sizeof("")) + uint64(len(name)) // Each name string header + data
+				}
+			}
+		}
+	}
+	return size
 }
 
 type timestampsMetadata struct {

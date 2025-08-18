@@ -53,12 +53,12 @@ type segmentCache struct {
 	segmentID segmentID
 }
 
-func (sc *segmentCache) get(key EntryKey) any {
+func (sc *segmentCache) get(key EntryKey) Sizable {
 	key.segmentID = sc.segmentID
 	return sc.groupCache.get(key)
 }
 
-func (sc *segmentCache) put(key EntryKey, value any) {
+func (sc *segmentCache) put(key EntryKey, value Sizable) {
 	key.segmentID = sc.segmentID
 	sc.groupCache.put(key, value)
 }
