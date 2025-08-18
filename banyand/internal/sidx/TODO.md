@@ -5,17 +5,19 @@ This document tracks the implementation progress of the Secondary Index File Sys
 ## Implementation Progress Overview
 
 - [x] **Phase 1**: Core Data Structures (6 tasks) - 4/6 completed
-- [ ] **Phase 2**: Memory Management (4 tasks) 
-- [ ] **Phase 3**: Snapshot Management (4 tasks)
-- [ ] **Phase 4**: Write Path (4 tasks)
-- [ ] **Phase 5**: Flush Operations (4 tasks)
-- [ ] **Phase 6**: Merge Operations (4 tasks)
-- [ ] **Phase 7**: Query Path (5 tasks)
-- [ ] **Phase 8**: Resource Management (3 tasks)
-- [ ] **Phase 9**: Error Handling (3 tasks)
-- [ ] **Phase 10**: Testing (4 tasks)
+- [ ] **Phase 2**: Interface Definitions (5 tasks) 🔥 **NEW - FOR CORE STORAGE REVIEW**
+- [ ] **Phase 3**: Mock Implementations (4 tasks) 🔥 **NEW - FOR EARLY TESTING**
+- [ ] **Phase 4**: Memory Management (4 tasks) 
+- [ ] **Phase 5**: Snapshot Management (4 tasks)
+- [ ] **Phase 6**: Write Path (4 tasks)
+- [ ] **Phase 7**: Flush Operations (4 tasks)
+- [ ] **Phase 8**: Merge Operations (4 tasks)
+- [ ] **Phase 9**: Query Path (5 tasks)
+- [ ] **Phase 10**: Resource Management (3 tasks)
+- [ ] **Phase 11**: Error Handling (3 tasks)
+- [ ] **Phase 12**: Testing (4 tasks)
 
-**Total Tasks**: 41
+**Total Tasks**: 50
 
 ---
 
@@ -94,9 +96,116 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 2: Memory Management
+## Phase 2: Interface Definitions 🔥 **NEW - FOR CORE STORAGE REVIEW**
 
-### 2.1 MemPart Implementation (`mempart.go`)
+### 2.1 Main SIDX Interface (`interfaces.go`)
+- [ ] Define core SIDX interface with primary methods
+- [ ] Add Write(WriteRequest) error method signature
+- [ ] Add Query(QueryRequest) (QueryResponse, error) method signature
+- [ ] Add administrative methods (Health, Stats, Close)
+- [ ] **Test Cases**:
+  - [ ] Interface definition compiles correctly
+  - [ ] Method signatures match design specification
+  - [ ] Documentation examples are comprehensive
+  - [ ] Interface supports all planned use cases
+
+### 2.2 Component Interfaces (`interfaces.go`)
+- [ ] Define Writer interface for write operations
+- [ ] Define Querier interface for query operations
+- [ ] Define Flusher interface with Flush() error method
+- [ ] Define Merger interface with Merge() error method
+- [ ] **Test Cases**:
+  - [ ] All interfaces are properly decoupled
+  - [ ] Interface composition works correctly
+  - [ ] Type assertions and casting work as expected
+  - [ ] Interface documentation is complete
+
+### 2.3 Request/Response Types (`types.go`)
+- [ ] Define WriteRequest struct with SeriesID, Key, Data, Tags
+- [ ] Define QueryRequest struct with KeyRange, TagFilters, Options
+- [ ] Define QueryResponse struct with Elements, Metadata
+- [ ] Add validation methods for all request types
+- [ ] **Test Cases**:
+  - [ ] Request/response serialization works correctly
+  - [ ] Validation catches invalid requests
+  - [ ] Type safety is maintained across operations
+  - [ ] Memory pooling integration is ready
+
+### 2.4 Configuration Interfaces (`options.go`)
+- [ ] Define Options struct for SIDX configuration
+- [ ] Add ResourceLimits for memory/disk management
+- [ ] Add PerformanceOptions for tuning parameters
+- [ ] Add MonitoringOptions for observability
+- [ ] **Test Cases**:
+  - [ ] Default configurations are sensible
+  - [ ] Configuration validation works correctly
+  - [ ] Options can be merged and overridden
+  - [ ] Performance tuning options are effective
+
+### 2.5 Interface Documentation and Examples (`interfaces_examples.go`)
+- [ ] Create comprehensive interface usage examples
+- [ ] Document integration patterns with core storage
+- [ ] Add performance considerations and best practices
+- [ ] Create interface contract specifications
+- [ ] **Test Cases**:
+  - [ ] All examples compile and run correctly
+  - [ ] Documentation covers error handling patterns
+  - [ ] Integration examples are realistic
+  - [ ] Contract specifications are testable
+
+---
+
+## Phase 3: Mock Implementations 🔥 **NEW - FOR EARLY TESTING**
+
+### 3.1 Mock SIDX Implementation (`mock_sidx.go`)
+- [ ] Create in-memory mock of main SIDX interface
+- [ ] Implement Write() with basic in-memory storage
+- [ ] Implement Query() with linear search and filtering
+- [ ] Add configurable delays and error injection
+- [ ] **Test Cases**:
+  - [ ] Mock maintains data consistency
+  - [ ] Write/read round-trip works correctly
+  - [ ] Query filtering produces correct results
+  - [ ] Error injection works as expected
+
+### 3.2 Mock Component Implementations (`mock_components.go`)
+- [ ] Create mock Writer with element accumulation
+- [ ] Create mock Querier with range filtering
+- [ ] Create mock Flusher with no-op operations
+- [ ] Create mock Merger with simple consolidation
+- [ ] **Test Cases**:
+  - [ ] All mock components integrate correctly
+  - [ ] Mock behavior is configurable and predictable
+  - [ ] Component interactions work as designed
+  - [ ] Performance characteristics are documented
+
+### 3.3 Integration Test Framework (`integration_test_framework.go`)
+- [ ] Create test harness using mock implementations
+- [ ] Add scenario testing for common use cases
+- [ ] Implement benchmarking framework for interface performance
+- [ ] Add stress testing with configurable load patterns
+- [ ] **Test Cases**:
+  - [ ] Framework supports all interface methods
+  - [ ] Scenarios cover realistic usage patterns
+  - [ ] Benchmarks provide meaningful metrics
+  - [ ] Stress tests reveal performance limits
+
+### 3.4 Mock Documentation and Usage Guide (`mock_usage.md`)
+- [ ] Document mock implementation capabilities and limitations
+- [ ] Provide integration examples for core storage team
+- [ ] Create migration guide from mocks to real implementation
+- [ ] Add troubleshooting guide for common issues
+- [ ] **Test Cases**:
+  - [ ] Documentation examples work correctly
+  - [ ] Integration guide is complete and accurate
+  - [ ] Migration path is clearly defined
+  - [ ] Troubleshooting covers real scenarios
+
+---
+
+## Phase 4: Memory Management
+
+### 4.1 MemPart Implementation (`mempart.go`)
 - [ ] In-memory buffer before flushing to disk
 - [ ] Element accumulation with size tracking
 - [ ] Memory usage monitoring
@@ -106,7 +215,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Element addition and retrieval
   - [ ] Memory usage tracking accuracy
 
-### 2.2 Block Writer (`block_writer.go`) 🔥 - DESIGN COMPLETED ✅
+### 4.2 Block Writer (`block_writer.go`) 🔥 - DESIGN COMPLETED ✅
 - [ ] **Complete block writer design added to DESIGN.md**
 - [ ] **Multi-file writing**: data.bin, keys.bin, tag_*.td files
 - [ ] **Compression**: zstd compression for data payloads
@@ -124,7 +233,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Data integrity after compression/decompression
   - [ ] Block writer reuse and pooling
 
-### 2.3 Element Sorting (`elements.go`)
+### 4.3 Element Sorting (`elements.go`)
 - [ ] Sort by seriesID first, then userKey
 - [ ] Efficient in-place sorting algorithms
 - [ ] Validation of sort order
@@ -134,7 +243,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Performance benchmarks for large datasets
   - [ ] Edge cases (empty, single element, duplicate keys)
 
-### 2.4 Block Initialization (`block.go` methods) 🔥 - DESIGN COMPLETED ✅
+### 4.4 Block Initialization (`block.go` methods) 🔥 - DESIGN COMPLETED ✅
 - [ ] **Complete block initialization design added to DESIGN.md**
 - [ ] **mustInitFromElements()**: Process sorted elements into blocks
 - [ ] **mustInitFromTags()**: Process tag data for blocks
@@ -154,9 +263,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 3: Snapshot Management
+## Phase 5: Snapshot Management
 
-### 3.1 Snapshot Structure (`snapshot.go`)
+### 5.1 Snapshot Structure (`snapshot.go`)
 - [ ] Part collection with epoch tracking
 - [ ] getParts() filters by key range
 - [ ] Reference counting for snapshot safety
@@ -166,7 +275,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Reference counting prevents premature cleanup
   - [ ] Snapshot immutability guarantees
 
-### 3.2 Introducer Loop (`introducer.go`)
+### 5.2 Introducer Loop (`introducer.go`)
 - [ ] Background goroutine for snapshot coordination
 - [ ] Channel-based communication for thread safety
 - [ ] Epoch increment management
@@ -176,7 +285,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Graceful shutdown handling
   - [ ] No deadlocks in channel communication
 
-### 3.3 Introduction Types (`introducer.go`)
+### 5.3 Introduction Types (`introducer.go`)
 - [ ] memIntroduction, flusherIntroduction, mergerIntroduction
 - [ ] Object pooling for introduction structures
 - [ ] Channel synchronization with applied notifications
@@ -186,7 +295,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Applied notifications work reliably
   - [ ] Introduction reset for reuse
 
-### 3.4 Snapshot Replacement (`snapshot.go`)
+### 5.4 Snapshot Replacement (`snapshot.go`)
 - [ ] Atomic updates with reference counting
 - [ ] Safe concurrent read access during replacement
 - [ ] Old snapshot cleanup after reference release
@@ -198,9 +307,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 4: Write Path
+## Phase 6: Write Path
 
-### 4.1 Write Implementation (`writer.go`)
+### 6.1 Write Implementation (`writer.go`)
 - [ ] Element accumulation and batching
 - [ ] Coordinate with memory parts
 - [ ] Request validation and processing
@@ -210,7 +319,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Data consistency across writes
   - [ ] Error handling for invalid requests
 
-### 4.2 Memory Part Introduction (`writer.go`)
+### 6.2 Memory Part Introduction (`writer.go`)
 - [ ] Automatic introduction at configured thresholds
 - [ ] Send to introducer via channel
 - [ ] Wait for introduction completion
@@ -220,7 +329,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Channel communication works reliably
   - [ ] Backpressure handling when introducer is busy
 
-### 4.3 Key Range Validation (`writer.go`)
+### 6.3 Key Range Validation (`writer.go`)
 - [ ] Validate monotonic ordering within series
 - [ ] Reject invalid key sequences
 - [ ] Provide meaningful error messages
@@ -230,7 +339,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Error messages are helpful for debugging
   - [ ] Edge cases (duplicate keys, negative keys)
 
-### 4.4 Block Building (`writer.go` + `block.go`) 🔥 - DESIGN COMPLETED ✅
+### 6.4 Block Building (`writer.go` + `block.go`) 🔥 - DESIGN COMPLETED ✅
 - [ ] **Complete block building design added to DESIGN.md**
 - [ ] **Element organization**: Sort elements by seriesID then userKey
 - [ ] **Block creation**: mustInitFromElements() with sorted elements
@@ -249,9 +358,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 5: Flush Operations
+## Phase 7: Flush Operations
 
-### 5.1 Flusher Interface (`flusher.go`)
+### 7.1 Flusher Interface (`flusher.go`)
 - [ ] Simple Flush() method for user control
 - [ ] Internal part selection logic
 - [ ] Error handling and retry mechanisms
@@ -261,7 +370,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Error handling for flush failures
   - [ ] Concurrent flush operations are handled safely
 
-### 5.2 Flush to Disk (`flusher.go`)
+### 7.2 Flush to Disk (`flusher.go`)
 - [ ] Create part directories with epoch names
 - [ ] Write all part files atomically
 - [ ] Implement crash recovery mechanisms
@@ -271,7 +380,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Crash recovery restores consistent state
   - [ ] Disk space management during flush
 
-### 5.3 Tag File Writing (`flusher.go`)
+### 7.3 Tag File Writing (`flusher.go`)
 - [ ] Write individual tag files (not families)
 - [ ] Generate bloom filters for indexed tags
 - [ ] Optimize file layout for query performance
@@ -281,7 +390,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] File format compatibility
   - [ ] Performance of tag file generation
 
-### 5.4 Block Serialization (`flusher.go` + `block_writer.go`) 🔥 - DESIGN COMPLETED ✅
+### 7.4 Block Serialization (`flusher.go` + `block_writer.go`) 🔥 - DESIGN COMPLETED ✅
 - [ ] **Complete block serialization design added to DESIGN.md**
 - [ ] **Multi-file output**: primary.bin, data.bin, keys.bin, tag files
 - [ ] **Block writer integration**: mustWriteTo() for block persistence
@@ -300,9 +409,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 6: Merge Operations
+## Phase 8: Merge Operations
 
-### 6.1 Merger Interface (`merger.go`)
+### 8.1 Merger Interface (`merger.go`)
 - [ ] Simple Merge() method for user control
 - [ ] Internal merge strategy implementation
 - [ ] Resource management during merge
@@ -312,7 +421,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Resource usage during merge operations
   - [ ] Concurrent merge safety
 
-### 6.2 Part Selection (`merger.go`)
+### 8.2 Part Selection (`merger.go`)
 - [ ] Select parts by size/age criteria
 - [ ] Avoid merging recent parts
 - [ ] Optimize merge efficiency
@@ -322,7 +431,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Selection criteria can be tuned
   - [ ] Selection performance is acceptable
 
-### 6.3 Merged Part Writer (`merger.go`)
+### 8.3 Merged Part Writer (`merger.go`)
 - [ ] Combine parts maintaining key order
 - [ ] Deduplicate overlapping data
 - [ ] Generate merged part metadata
@@ -332,7 +441,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Key ordering is maintained across parts
   - [ ] Merged part metadata is accurate
 
-### 6.4 Block Merging (`merger.go` + `block.go`) 🔥 - DESIGN COMPLETED ✅
+### 8.4 Block Merging (`merger.go` + `block.go`) 🔥 - DESIGN COMPLETED ✅
 - [ ] **Complete block merging design added to DESIGN.md**
 - [ ] **Block reader integration**: Read blocks from multiple parts
 - [ ] **Merge strategy**: Maintain key ordering across merged blocks
@@ -351,9 +460,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 7: Query Path
+## Phase 9: Query Path
 
-### 7.1 Query Interface (`query.go`)
+### 9.1 Query Interface (`query.go`)
 - [ ] Key range queries with tag filters
 - [ ] Support projections and result limits
 - [ ] Query validation and optimization
@@ -363,7 +472,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Query optimization improves performance
   - [ ] Complex queries return correct results
 
-### 7.2 Part Filtering (`query.go`)
+### 9.2 Part Filtering (`query.go`)
 - [ ] Filter parts by key range overlap
 - [ ] Minimize I/O operations through smart filtering
 - [ ] Support inclusive/exclusive bounds
@@ -373,7 +482,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Boundary conditions handled correctly
   - [ ] Empty result sets handled gracefully
 
-### 7.3 Block Scanner (`block_scanner.go`) 🔥 - DESIGN COMPLETED ✅
+### 9.3 Block Scanner (`block_scanner.go`) 🔥 - DESIGN COMPLETED ✅
 - [ ] **Complete block scanner design added to DESIGN.md**
 - [ ] **Query processing**: scanBlock() with range and tag filtering
 - [ ] **Memory management**: Object pooling with reset() methods
@@ -391,7 +500,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Block scanning performance meets targets
   - [ ] Memory usage during scanning is controlled
 
-### 7.4 Result Iterator (`query.go`)
+### 9.4 Result Iterator (`query.go`)
 - [ ] Stream results with proper ordering
 - [ ] Memory-efficient iteration patterns
 - [ ] Support both ASC and DESC ordering
@@ -401,7 +510,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Ordering is maintained across parts
   - [ ] Iterator cleanup prevents resource leaks
 
-### 7.5 Block Reader (`block_reader.go`) 🔥 - DESIGN COMPLETED ✅
+### 9.5 Block Reader (`block_reader.go`) 🔥 - DESIGN COMPLETED ✅
 - [x] **Complete block reader design added to DESIGN.md**
 - [x] **Multi-file reading**: data.bin, keys.bin, tag_*.td files
 - [x] **Decompression**: zstd decompression for data payloads
@@ -421,9 +530,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 8: Resource Management
+## Phase 10: Resource Management
 
-### 8.1 Disk Reservation (`resource_manager.go`)
+### 10.1 Disk Reservation (`resource_manager.go`)
 - [ ] Pre-allocate space for operations
 - [ ] Prevent out-of-space failures
 - [ ] Monitor disk usage continuously
@@ -433,7 +542,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Disk usage monitoring accuracy
   - [ ] Reservation cleanup after operations
 
-### 8.2 Memory Tracking (`resource_manager.go`)
+### 10.2 Memory Tracking (`resource_manager.go`)
 - [ ] Atomic counters for usage monitoring
 - [ ] Leak detection mechanisms
 - [ ] Memory pressure notifications
@@ -443,7 +552,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Pressure notifications trigger appropriately
   - [ ] Counter accuracy under concurrent load
 
-### 8.3 Backpressure Control (`resource_manager.go`)
+### 10.3 Backpressure Control (`resource_manager.go`)
 - [ ] Four-level system (None/Moderate/Severe/Critical)
 - [ ] Adaptive throttling based on resource usage
 - [ ] Recovery mechanisms when pressure decreases
@@ -455,9 +564,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 9: Error Handling
+## Phase 11: Error Handling
 
-### 9.1 Structured Errors (`errors.go`)
+### 11.1 Structured Errors (`errors.go`)
 - [ ] Detailed error types with context
 - [ ] Error wrapping and unwrapping support
 - [ ] Consistent error formatting
@@ -467,7 +576,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Error formatting is user-friendly
   - [ ] Error classification supports proper handling
 
-### 9.2 Corruption Recovery (`recovery.go`)
+### 11.2 Corruption Recovery (`recovery.go`)
 - [ ] Detect corrupted parts and blocks
 - [ ] Quarantine corrupted data safely
 - [ ] Implement recovery procedures
@@ -477,7 +586,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Recovery procedures restore functionality
   - [ ] System continues operation despite corruption
 
-### 9.3 Health Monitoring (`health.go`)
+### 11.3 Health Monitoring (`health.go`)
 - [ ] Continuous health checks
 - [ ] Metrics collection and reporting
 - [ ] Alerting hooks for external systems
@@ -489,9 +598,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 10: Testing
+## Phase 12: Testing
 
-### 10.1 Unit Tests
+### 12.1 Unit Tests
 - [ ] **Test block.go**: Block creation, initialization, validation
 - [ ] Test all components individually
 - [ ] Achieve >90% code coverage
@@ -501,7 +610,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Error conditions produce expected results
   - [ ] Performance characteristics meet requirements
 
-### 10.2 Integration Tests
+### 12.2 Integration Tests
 - [ ] End-to-end workflow testing
 - [ ] Write-flush-merge-query cycles
 - [ ] Multi-component interaction verification
@@ -511,7 +620,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Data consistency maintained throughout
   - [ ] Performance acceptable under realistic loads
 
-### 10.3 Performance Benchmarks
+### 12.3 Performance Benchmarks
 - [ ] **Benchmark block operations**: Creation, serialization, scanning
 - [ ] Throughput and latency measurements
 - [ ] Memory usage profiling
@@ -521,7 +630,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Latency remains within bounds
   - [ ] Memory usage is reasonable
 
-### 10.4 Concurrency Tests
+### 12.4 Concurrency Tests
 - [ ] Race condition detection with race detector
 - [ ] Stress testing with concurrent operations
 - [ ] Deadlock prevention verification
@@ -588,7 +697,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
 - [ ] Documentation updated
 
 ### Overall Success Criteria
-- [ ] All 41 tasks completed
+- [ ] All 50 tasks completed
 - [ ] Full test suite passes
 - [ ] Performance meets design targets
 - [ ] Code review approval
@@ -605,12 +714,12 @@ The `block.go` file is central to the SIDX implementation and is used in multipl
 2. **Phase 2.2**: Block writer uses block for serialization  
 3. **Phase 2.4**: Block initialization from elements
 4. **Phase 4.4**: Create blocks when memory threshold reached
-5. **Phase 5.4**: Serialize blocks to disk during flush
-6. **Phase 6.4**: Merge blocks from multiple parts
-7. **Phase 7.3**: Block scanner reads blocks during queries
-8. **Phase 7.5**: Block reader deserializes blocks
-9. **Phase 10.1**: Unit tests for block operations
-10. **Phase 10.3**: Performance benchmarks for block operations
+5. **Phase 7.4**: Serialize blocks to disk during flush
+6. **Phase 8.4**: Merge blocks from multiple parts
+7. **Phase 9.3**: Block scanner reads blocks during queries
+8. **Phase 9.5**: Block reader deserializes blocks
+9. **Phase 12.1**: Unit tests for block operations
+10. **Phase 12.3**: Performance benchmarks for block operations
 
 ---
 
@@ -621,9 +730,9 @@ The `block.go` file is central to the SIDX implementation and is used in multipl
 - **Phase 3** must complete before **Phase 4** (snapshot management needed)
 - **Phase 4** must complete before **Phase 5** (write path needed for flush)
 - **Phase 5** must complete before **Phase 6** (flush needed for merge)
-- **Phase 1-6** must complete before **Phase 7** (all components needed for queries)
-- **Phase 8-9** can be developed in parallel with other phases
-- **Phase 10** requires completion of relevant phases for testing
+- **Phase 1-6** must complete before **Phase 9** (all components needed for queries)
+- **Phase 10-11** can be developed in parallel with other phases
+- **Phase 12** requires completion of relevant phases for testing
 
 ---
 
