@@ -81,12 +81,12 @@ type groupCache struct {
 	group string
 }
 
-func (gc *groupCache) get(key EntryKey) any {
+func (gc *groupCache) get(key EntryKey) Sizable {
 	key.group = gc.group
 	return gc.Get(key)
 }
 
-func (gc *groupCache) put(key EntryKey, value any) {
+func (gc *groupCache) put(key EntryKey, value Sizable) {
 	key.group = gc.group
 	gc.Put(key, value)
 }
