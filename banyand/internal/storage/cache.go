@@ -291,3 +291,38 @@ func (sc *serviceCache) Size() uint64 {
 func (sc *serviceCache) size() uint64 {
 	return atomic.LoadUint64(&sc.currentSize)
 }
+
+var _ Cache = (*bypassCache)(nil)
+
+type bypassCache struct{}
+
+// NewBypassCache creates a no-op cache implementation.
+func NewBypassCache() Cache {
+	return &bypassCache{}
+}
+
+func (bc *bypassCache) Get(_ EntryKey) Sizable {
+	return nil
+}
+
+func (bc *bypassCache) Put(_ EntryKey, _ Sizable) {
+}
+
+func (bc *bypassCache) Close() {
+}
+
+func (bc *bypassCache) Requests() uint64 {
+	return 0
+}
+
+func (bc *bypassCache) Misses() uint64 {
+	return 0
+}
+
+func (bc *bypassCache) Entries() uint64 {
+	return 0
+}
+
+func (bc *bypassCache) Size() uint64 {
+	return 0
+}
