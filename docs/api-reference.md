@@ -311,6 +311,7 @@
     - [Span](#banyandb-trace-v1-Span)
   
 - [banyandb/trace/v1/write.proto](#banyandb_trace_v1_write-proto)
+    - [InternalWriteRequest](#banyandb-trace-v1-InternalWriteRequest)
     - [WriteRequest](#banyandb-trace-v1-WriteRequest)
     - [WriteResponse](#banyandb-trace-v1-WriteResponse)
   
@@ -4588,6 +4589,22 @@ Span is a single operation within a trace.
 <p align="right"><a href="#top">Top</a></p>
 
 ## banyandb/trace/v1/write.proto
+
+
+
+<a name="banyandb-trace-v1-InternalWriteRequest"></a>
+
+### InternalWriteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint32](#uint32) |  |  |
+| request | [WriteRequest](#banyandb-trace-v1-WriteRequest) |  |  |
+
+
+
 
 
 
