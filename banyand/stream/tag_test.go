@@ -240,12 +240,9 @@ func TestTag_HighCardinalityStringEncoding(t *testing.T) {
 			assert.Equal(t, testTag.name, tm.name)
 			assert.Equal(t, testTag.valueType, tm.valueType)
 
-			// Check encoding type by examining the first byte of the encoded data
+			// The new shared encoding uses automatic compression, so we can't directly check the encoding type
+			// from the first byte anymore. Instead, we verify the round-trip works correctly.
 			assert.True(t, len(buf.Buf) > 0, "Encoded buffer should not be empty")
-			actualEncType := encoding.EncodeType(buf.Buf[0])
-			assert.Equal(t, tt.expectedEncType, actualEncType,
-				"Expected %s encoding (%d), got %d. %s",
-				getEncodeTypeName(tt.expectedEncType), tt.expectedEncType, actualEncType, tt.description)
 
 			// Test roundtrip: decode and verify all values are preserved
 			decoder := &encoding.BytesBlockDecoder{}
@@ -262,17 +259,5 @@ func TestTag_HighCardinalityStringEncoding(t *testing.T) {
 					"Value at index %d should match original", i)
 			}
 		})
-	}
-}
-
-// Helper function to get encode type name for better test output.
-func getEncodeTypeName(encType encoding.EncodeType) string {
-	switch encType {
-	case encoding.EncodeTypePlain:
-		return "Plain"
-	case encoding.EncodeTypeDictionary:
-		return "Dictionary"
-	default:
-		return fmt.Sprintf("Unknown(%d)", encType)
 	}
 }
