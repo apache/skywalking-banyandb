@@ -153,6 +153,7 @@ type QueryRequest struct {
 
 // QueryResponse contains a batch of query results and execution metadata.
 // This follows BanyanDB result patterns with parallel arrays for efficiency.
+// Uses individual tag-based strategy (like trace module) rather than tag-family approach (like stream module).
 type QueryResponse struct {
 	// Error contains any error that occurred during this batch of query execution.
 	// Non-nil Error indicates partial or complete failure during result iteration.
@@ -165,8 +166,8 @@ type QueryResponse struct {
 	// Data contains the user payload data for each result
 	Data [][]byte
 
-	// TagFamilies contains tag data organized by tag families
-	TagFamilies []model.TagFamily
+	// Tags contains individual tag data for each result
+	Tags [][]Tag
 
 	// SIDs contains the series IDs for each result
 	SIDs []common.SeriesID
@@ -185,9 +186,81 @@ func (qr *QueryResponse) Reset() {
 	qr.Error = nil
 	qr.Keys = qr.Keys[:0]
 	qr.Data = qr.Data[:0]
-	qr.TagFamilies = qr.TagFamilies[:0]
+	qr.Tags = qr.Tags[:0]
 	qr.SIDs = qr.SIDs[:0]
 	qr.Metadata = ResponseMetadata{}
+}
+
+// Validate validates a QueryResponse for correctness.
+func (qr *QueryResponse) Validate() error {
+	keysLen := len(qr.Keys)
+	dataLen := len(qr.Data)
+	sidsLen := len(qr.SIDs)
+	
+	if keysLen != dataLen {
+		return fmt.Errorf("inconsistent array lengths: keys=%d, data=%d", keysLen, dataLen)
+	}
+	if keysLen != sidsLen {
+		return fmt.Errorf("inconsistent array lengths: keys=%d, sids=%d", keysLen, sidsLen)
+	}
+	
+	// Validate Tags structure if present
+	if len(qr.Tags) > 0 {
+		if len(qr.Tags) != keysLen {
+			return fmt.Errorf("tags length=%d, expected=%d", len(qr.Tags), keysLen)
+		}
+		for i, tagGroup := range qr.Tags {
+			for j, tag := range tagGroup {
+				if tag.name == "" {
+					return fmt.Errorf("tags[%d][%d] name cannot be empty", i, j)
+				}
+			}
+		}
+	}
+	
+	return nil
+}
+
+// CopyFrom copies the QueryResponse from other to qr.
+func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
+	qr.Error = other.Error
+	
+	// Copy parallel arrays
+	qr.Keys = append(qr.Keys[:0], other.Keys...)
+	qr.SIDs = append(qr.SIDs[:0], other.SIDs...)
+	
+	// Deep copy data
+	if cap(qr.Data) < len(other.Data) {
+		qr.Data = make([][]byte, len(other.Data))
+	} else {
+		qr.Data = qr.Data[:len(other.Data)]
+	}
+	for i, data := range other.Data {
+		qr.Data[i] = append(qr.Data[i][:0], data...)
+	}
+	
+	// Deep copy tags
+	if cap(qr.Tags) < len(other.Tags) {
+		qr.Tags = make([][]Tag, len(other.Tags))
+	} else {
+		qr.Tags = qr.Tags[:len(other.Tags)]
+	}
+	for i, tagGroup := range other.Tags {
+		if cap(qr.Tags[i]) < len(tagGroup) {
+			qr.Tags[i] = make([]Tag, len(tagGroup))
+		} else {
+			qr.Tags[i] = qr.Tags[i][:len(tagGroup)]
+		}
+		for j, tag := range tagGroup {
+			qr.Tags[i][j].name = tag.name
+			qr.Tags[i][j].value = append(qr.Tags[i][j].value[:0], tag.value...)
+			qr.Tags[i][j].valueType = tag.valueType
+			qr.Tags[i][j].indexed = tag.indexed
+		}
+	}
+	
+	// Copy metadata
+	qr.Metadata = other.Metadata
 }
 
 // Stats contains system statistics and performance metrics.
@@ -244,6 +317,32 @@ type ResponseMetadata struct {
 	TruncatedResults bool
 }
 
+// Validate validates ResponseMetadata for correctness.
+func (rm *ResponseMetadata) Validate() error {
+	if rm.ExecutionTimeMs < 0 {
+		return fmt.Errorf("executionTimeMs cannot be negative")
+	}
+	if rm.ElementsScanned < 0 {
+		return fmt.Errorf("elementsScanned cannot be negative")
+	}
+	if rm.ElementsFiltered < 0 {
+		return fmt.Errorf("elementsFiltered cannot be negative")
+	}
+	if rm.ElementsFiltered > rm.ElementsScanned {
+		return fmt.Errorf("elementsFiltered (%d) cannot exceed elementsScanned (%d)", rm.ElementsFiltered, rm.ElementsScanned)
+	}
+	if rm.PartsAccessed < 0 {
+		return fmt.Errorf("partsAccessed cannot be negative")
+	}
+	if rm.BlocksScanned < 0 {
+		return fmt.Errorf("blocksScanned cannot be negative")
+	}
+	if rm.CacheHitRatio < 0.0 || rm.CacheHitRatio > 1.0 {
+		return fmt.Errorf("cacheHitRatio must be between 0.0 and 1.0, got %f", rm.CacheHitRatio)
+	}
+	return nil
+}
+
 // Tag represents an individual tag for WriteRequest.
 // This uses the existing tag structure from the sidx package.
 type Tag = tag
@@ -256,6 +355,18 @@ func (wr WriteRequest) Validate() error {
 	if wr.Data == nil {
 		return fmt.Errorf("data cannot be nil")
 	}
+	if len(wr.Data) == 0 {
+		return fmt.Errorf("data cannot be empty")
+	}
+	// Validate tags if present
+	for i, tag := range wr.Tags {
+		if tag.name == "" {
+			return fmt.Errorf("tag[%d] name cannot be empty", i)
+		}
+		if len(tag.value) == 0 {
+			return fmt.Errorf("tag[%d] value cannot be empty", i)
+		}
+	}
 	return nil
 }
 
@@ -263,6 +374,26 @@ func (wr WriteRequest) Validate() error {
 func (qr QueryRequest) Validate() error {
 	if qr.Name == "" {
 		return fmt.Errorf("name cannot be empty")
+	}
+	if qr.MaxElementSize < 0 {
+		return fmt.Errorf("maxElementSize cannot be negative")
+	}
+	// Validate tag projection names
+	for i, projection := range qr.TagProjection {
+		if projection.Family == "" {
+			return fmt.Errorf("tagProjection[%d] family cannot be empty", i)
+		}
+	}
+	// Validate entities structure
+	for i, entityGroup := range qr.Entities {
+		if len(entityGroup) == 0 {
+			return fmt.Errorf("entities[%d] cannot be empty", i)
+		}
+		for j, tagValue := range entityGroup {
+			if tagValue == nil {
+				return fmt.Errorf("entities[%d][%d] cannot be nil", i, j)
+			}
+		}
 	}
 	return nil
 }
@@ -341,7 +472,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		if batch.Error != nil {
 //			log.Printf("query execution error: %v", batch.Error)
 //		}
-//		// Process batch.Keys, batch.Data, etc.
+//		// Process batch.Keys, batch.Data, batch.Tags, etc.
 //	}
 
 // Example: Interface composition in SIDX
