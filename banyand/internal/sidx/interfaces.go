@@ -521,7 +521,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		},
 //	}
 
-// Interface Design Principles
+// Interface Design Principles.
 //
 // 1. **Single Responsibility**: Each interface has a focused, well-defined purpose
 // 2. **Minimal Surface Area**: Interfaces expose only essential methods
