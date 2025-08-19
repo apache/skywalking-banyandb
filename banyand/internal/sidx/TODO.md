@@ -133,14 +133,13 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ### 2.4 Configuration Interfaces (`options.go`)
 - [ ] Define Options struct for SIDX configuration
-- [ ] Add ResourceLimits for memory/disk management
-- [ ] Add PerformanceOptions for tuning parameters
-- [ ] Add MonitoringOptions for observability
+- [ ] Add path where the files are put.
+- [ ] Add protector.Memory to control the resource limit.
+- [ ] Add *mergePolicy to control merge behaviour.
 - [ ] **Test Cases**:
   - [ ] Default configurations are sensible
   - [ ] Configuration validation works correctly
   - [ ] Options can be merged and overridden
-  - [ ] Performance tuning options are effective
 
 ### 2.5 Interface Documentation and Examples (`interfaces_examples.go`)
 - [ ] Create comprehensive interface usage examples
