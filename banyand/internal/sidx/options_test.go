@@ -27,6 +27,49 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 )
 
+func TestNewOptions(t *testing.T) {
+	mockMemory := protector.NewMemory(observability.NewBypassRegistry())
+
+	t.Run("valid parameters", func(t *testing.T) {
+		opts, err := NewOptions("/tmp/sidx", mockMemory)
+		require.NoError(t, err)
+		require.NotNil(t, opts)
+
+		assert.Equal(t, "/tmp/sidx", opts.Path)
+		assert.Equal(t, mockMemory, opts.Memory)
+		assert.NotNil(t, opts.MergePolicy)
+
+		// Verify default merge policy values
+		assert.Equal(t, 8, opts.MergePolicy.MaxParts)
+		assert.Equal(t, 1.7, opts.MergePolicy.MinMergeMultiplier)
+		assert.Equal(t, uint64(1<<30), opts.MergePolicy.MaxFanOutSize)
+
+		// Should validate successfully
+		assert.NoError(t, opts.Validate())
+	})
+
+	t.Run("empty path", func(t *testing.T) {
+		opts, err := NewOptions("", mockMemory)
+		assert.Error(t, err)
+		assert.Nil(t, opts)
+		assert.Contains(t, err.Error(), "path must not be empty")
+	})
+
+	t.Run("relative path", func(t *testing.T) {
+		opts, err := NewOptions("relative/path", mockMemory)
+		assert.Error(t, err)
+		assert.Nil(t, opts)
+		assert.Contains(t, err.Error(), "path must be absolute")
+	})
+
+	t.Run("nil memory", func(t *testing.T) {
+		opts, err := NewOptions("/tmp/sidx", nil)
+		assert.Error(t, err)
+		assert.Nil(t, opts)
+		assert.Contains(t, err.Error(), "memory protector must not be nil")
+	})
+}
+
 func TestNewDefaultOptions(t *testing.T) {
 	opts := NewDefaultOptions()
 
@@ -38,6 +81,9 @@ func TestNewDefaultOptions(t *testing.T) {
 	assert.Equal(t, 8, opts.MergePolicy.MaxParts)
 	assert.Equal(t, 1.7, opts.MergePolicy.MinMergeMultiplier)
 	assert.Equal(t, uint64(1<<30), opts.MergePolicy.MaxFanOutSize)
+
+	// Should fail validation due to nil memory
+	assert.Error(t, opts.Validate())
 }
 
 func TestNewDefaultMergePolicy(t *testing.T) {
@@ -65,10 +111,10 @@ func TestOptionsValidation(t *testing.T) {
 	mockMemory := protector.NewMemory(observability.NewBypassRegistry())
 
 	tests := []struct {
-		name        string
 		opts        *Options
-		expectError bool
+		name        string
 		errorMsg    string
+		expectError bool
 	}{
 		{
 			name: "valid options",
@@ -136,10 +182,10 @@ func TestOptionsValidation(t *testing.T) {
 
 func TestMergePolicyValidation(t *testing.T) {
 	tests := []struct {
-		name        string
 		policy      *MergePolicy
-		expectError bool
+		name        string
 		errorMsg    string
+		expectError bool
 	}{
 		{
 			name: "valid merge policy",
@@ -229,14 +275,14 @@ func TestOptionsWithMethods(t *testing.T) {
 func TestOptionsConfiguration(t *testing.T) {
 	mockMemory := protector.NewMemory(observability.NewBypassRegistry())
 
-	// Test default configurations are sensible
-	defaultOpts := NewDefaultOptions()
-	require.NotNil(t, defaultOpts.MergePolicy)
+	// Test using new mandatory constructor
+	baseOpts, err := NewOptions("/base/sidx", mockMemory)
+	require.NoError(t, err)
+	require.NotNil(t, baseOpts.MergePolicy)
 
 	// Test configuration can be merged and overridden
-	customOpts := defaultOpts.
+	customOpts := baseOpts.
 		WithPath("/custom/sidx").
-		WithMemory(mockMemory).
 		WithMergePolicy(NewMergePolicy(5, 1.5, 512<<20))
 
 	assert.Equal(t, "/custom/sidx", customOpts.Path)
@@ -247,6 +293,17 @@ func TestOptionsConfiguration(t *testing.T) {
 
 	// Ensure validation works with custom configuration
 	assert.NoError(t, customOpts.Validate())
+
+	// Test deprecated constructor still works but requires memory to be set
+	defaultOpts := NewDefaultOptions()
+	require.NotNil(t, defaultOpts.MergePolicy)
+
+	// Should fail validation due to nil memory
+	assert.Error(t, defaultOpts.Validate())
+
+	// But works after setting memory
+	optsWithMemory := defaultOpts.WithMemory(mockMemory)
+	assert.NoError(t, optsWithMemory.Validate())
 }
 
 func TestOptionsEdgeCases(t *testing.T) {

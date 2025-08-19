@@ -42,11 +42,16 @@ type InterfaceUsageExamples struct {
 // NewInterfaceUsageExamples creates a new example instance with a mock SIDX implementation.
 // In production, this would be replaced with an actual SIDX instance.
 func NewInterfaceUsageExamples() *InterfaceUsageExamples {
-	// Configuration setup - demonstrates proper Options usage
-	_ = NewDefaultOptions().
-		WithPath("/data/sidx").
-		WithMemory(protector.NewMemory(observability.NewBypassRegistry())).
-		WithMergePolicy(NewMergePolicy(8, 1.7, 1<<30))
+	// Configuration setup - demonstrates proper Options usage with mandatory parameters
+	memory := protector.NewMemory(observability.NewBypassRegistry())
+	opts, err := NewOptions("/data/sidx", memory)
+	if err != nil {
+		// In production, handle this error appropriately
+		panic(fmt.Sprintf("failed to create options: %v", err))
+	}
+
+	// Further customize options if needed
+	_ = opts.WithMergePolicy(NewMergePolicy(8, 1.7, 1<<30))
 
 	// In production, this would create an actual SIDX instance:
 	// sidx, err := NewSIDX(ctx, opts)

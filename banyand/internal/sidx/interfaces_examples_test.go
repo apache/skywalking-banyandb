@@ -171,8 +171,8 @@ func TestMockQueryResult(t *testing.T) {
 func TestInt64ToBytes(t *testing.T) {
 	testCases := []struct {
 		name     string
-		input    int64
 		expected []byte
+		input    int64
 	}{
 		{
 			name:     "zero value",

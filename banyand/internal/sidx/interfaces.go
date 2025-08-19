@@ -115,18 +115,10 @@ type QueryResult interface {
 // WriteRequest contains data for a single write operation within a batch.
 // The user provides the ordering key as an int64 value that sidx treats opaquely.
 type WriteRequest struct {
-	// SeriesID identifies the data series for this element
+	Data     []byte
+	Tags     []Tag
 	SeriesID common.SeriesID
-
-	// Key is the user-provided ordering value (opaque to sidx)
-	// sidx only uses this for numerical comparison and ordering
-	Key int64
-
-	// Data contains the user payload data
-	Data []byte
-
-	// Tags contains individual tags (not tag families like stream module)
-	Tags []Tag
+	Key      int64
 }
 
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
@@ -292,28 +284,13 @@ type Stats struct {
 
 // ResponseMetadata provides query execution information for monitoring and debugging.
 type ResponseMetadata struct {
-	// ExecutionTimeMs is the total query execution time
-	ExecutionTimeMs int64
-
-	// ElementsScanned is the total number of elements examined
-	ElementsScanned int64
-
-	// ElementsFiltered is the number of elements filtered out
+	Warnings         []string
+	ExecutionTimeMs  int64
+	ElementsScanned  int64
 	ElementsFiltered int64
-
-	// PartsAccessed is the number of parts touched during query
-	PartsAccessed int
-
-	// BlocksScanned is the number of blocks read
-	BlocksScanned int
-
-	// CacheHitRatio indicates cache effectiveness (0.0 to 1.0)
-	CacheHitRatio float64
-
-	// Warnings contains any data quality or performance warnings
-	Warnings []string
-
-	// TruncatedResults indicates if results were truncated due to limits
+	PartsAccessed    int
+	BlocksScanned    int
+	CacheHitRatio    float64
 	TruncatedResults bool
 }
 

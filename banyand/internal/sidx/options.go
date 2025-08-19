@@ -25,19 +25,23 @@ import (
 )
 
 // Options contains configuration options for the Secondary Index File System (SIDX).
+// Path and Memory are mandatory fields that must be provided during construction.
 type Options struct {
 	// MergePolicy controls the merge behavior for parts.
 	// It determines which parts should be merged together to optimize
 	// storage efficiency and query performance.
+	// If not set, a default policy will be used.
 	MergePolicy *MergePolicy
 
 	// Memory is the memory protector that controls resource limits.
 	// It monitors memory usage and prevents OOM by applying backpressure
 	// when memory consumption exceeds configured thresholds.
+	// MANDATORY: Must be provided and cannot be nil.
 	Memory protector.Memory
 
 	// Path is the directory where SIDX files are stored.
 	// This includes part directories, metadata files, and temporary files.
+	// MANDATORY: Must be provided, non-empty, and an absolute path.
 	Path string
 }
 
@@ -57,11 +61,34 @@ type MergePolicy struct {
 	MaxFanOutSize uint64
 }
 
-// NewDefaultOptions creates Options with sensible default values.
+// NewOptions creates Options with required path and memory parameters.
+// Path and Memory are mandatory and must be provided by the caller.
+// Returns an error if path is empty/relative or memory is nil.
+func NewOptions(path string, memory protector.Memory) (*Options, error) {
+	if path == "" {
+		return nil, fmt.Errorf("path must not be empty")
+	}
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("path must be absolute, got: %s", path)
+	}
+	if memory == nil {
+		return nil, fmt.Errorf("memory protector must not be nil")
+	}
+
+	return &Options{
+		Path:        path,
+		Memory:      memory,
+		MergePolicy: NewDefaultMergePolicy(),
+	}, nil
+}
+
+// NewDefaultOptions creates Options with a default path but requires memory to be set.
+// This method is deprecated - use NewOptions instead for explicit configuration.
+// Memory must be set using WithMemory() before using the Options.
 func NewDefaultOptions() *Options {
 	return &Options{
 		Path:        "/tmp/sidx",
-		Memory:      nil, // Must be provided by caller
+		Memory:      nil, // Must be provided by caller using WithMemory()
 		MergePolicy: NewDefaultMergePolicy(),
 	}
 }
