@@ -57,30 +57,46 @@ type SIDX interface {
 
 // Flusher provides user-triggered persistence operations.
 // Users control when memory parts are flushed to disk for durability.
+// This interface abstracts flush functionality to enable testing and modularity.
 type Flusher interface {
 	// Flush triggers persistence of memory parts to disk.
+	// The implementation should select appropriate memory parts, persist them to disk files,
+	// and coordinate with the introducer loop for snapshot updates.
+	// This operation is user-controlled and synchronous.
 	// Returns error if flush operation fails.
 	Flush() error
 }
 
 // Merger provides user-triggered compaction operations.
 // Users control when parts are merged to optimize storage and query performance.
+// This interface abstracts merge functionality to enable testing and modularity.
 type Merger interface {
 	// Merge triggers compaction of parts to optimize storage.
+	// The implementation should select appropriate parts for merging, combine them while maintaining key order,
+	// and coordinate with the introducer loop for snapshot updates.
+	// This operation is user-controlled and synchronous.
 	// Returns error if merge operation fails.
 	Merge() error
 }
 
 // Writer handles write path operations for batch processing.
+// This interface abstracts the write functionality to enable testing and modularity.
 type Writer interface {
-	// Write performs batch write operations.
+	// Write performs batch write operations on multiple elements.
+	// All elements in the batch should be pre-sorted by seriesID then userKey for optimal performance.
+	// The implementation should handle element accumulation, validation, and coordination with memory parts.
+	// Returns error if any element in the batch fails validation or if write operation fails.
 	Write(ctx context.Context, reqs []WriteRequest) error
 }
 
 // Querier handles query path operations with filtering and range selection.
+// This interface abstracts the query functionality to enable testing and modularity.
 type Querier interface {
-	// Query executes a query with specified parameters.
-	// Returns a QueryResult for iterating over results.
+	// Query executes a query with specified parameters including key ranges and tag filters.
+	// The implementation should handle snapshot access, part filtering, block scanning, and result assembly.
+	// Returns a QueryResult for iterating over results following the BanyanDB pattern.
+	// The returned error indicates query setup/validation failures.
+	// Execution errors during result iteration are available in QueryResponse.Error.
 	Query(ctx context.Context, req QueryRequest) (QueryResult, error)
 }
 
@@ -121,11 +137,9 @@ type QueryRequest struct {
 	// Entities specifies entity filtering (same as StreamQueryOptions)
 	Entities [][]*modelv1.TagValue
 
-	// InvertedFilter for key range and tag-based filtering using index.Filter
-	InvertedFilter index.Filter
-
-	// SkippingFilter for additional filtering (following stream pattern)
-	SkippingFilter index.Filter
+	// Filter for key range and tag-based filtering using index.Filter
+	// Note: sidx uses bloom filters for tag filtering, not inverted indexes
+	Filter index.Filter
 
 	// Order specifies result ordering using existing index.OrderBy
 	Order *index.OrderBy
@@ -175,7 +189,6 @@ func (qr *QueryResponse) Reset() {
 	qr.SIDs = qr.SIDs[:0]
 	qr.Metadata = ResponseMetadata{}
 }
-
 
 // Stats contains system statistics and performance metrics.
 type Stats struct {
@@ -258,8 +271,7 @@ func (qr QueryRequest) Validate() error {
 func (qr *QueryRequest) Reset() {
 	qr.Name = ""
 	qr.Entities = nil
-	qr.InvertedFilter = nil
-	qr.SkippingFilter = nil
+	qr.Filter = nil
 	qr.Order = nil
 	qr.TagProjection = nil
 	qr.MaxElementSize = 0
@@ -277,8 +289,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 		qr.Entities = nil
 	}
 
-	qr.InvertedFilter = other.InvertedFilter
-	qr.SkippingFilter = other.SkippingFilter
+	qr.Filter = other.Filter
 	qr.Order = other.Order
 
 	// Deep copy if TagProjection is a slice
@@ -291,3 +302,106 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 
 	qr.MaxElementSize = other.MaxElementSize
 }
+
+// Interface Usage Examples and Best Practices
+//
+// These examples demonstrate how the component interfaces work together and can be used
+// independently for testing, mocking, and modular implementations.
+
+// Example: Using Writer interface independently
+//
+//	writer := NewWriter(options)
+//	reqs := []WriteRequest{
+//		{SeriesID: 1, Key: 100, Data: []byte("data1")},
+//		{SeriesID: 1, Key: 101, Data: []byte("data2")},
+//	}
+//	if err := writer.Write(ctx, reqs); err != nil {
+//		log.Fatalf("write failed: %v", err)
+//	}
+
+// Example: Using Querier interface independently
+//
+//	querier := NewQuerier(options)
+//	req := QueryRequest{
+//		Name: "my-index",
+//		Filter: createKeyRangeFilter(100, 200),
+//		Order: &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+//	}
+//	result, err := querier.Query(ctx, req)
+//	if err != nil {
+//		log.Fatalf("query setup failed: %v", err)
+//	}
+//	defer result.Release()
+//
+//	for {
+//		batch := result.Pull()
+//		if batch == nil {
+//			break // No more results
+//		}
+//		if batch.Error != nil {
+//			log.Printf("query execution error: %v", batch.Error)
+//		}
+//		// Process batch.Keys, batch.Data, etc.
+//	}
+
+// Example: Interface composition in SIDX
+//
+//	type sidxImpl struct {
+//		writer  Writer
+//		querier Querier
+//		flusher Flusher
+//		merger  Merger
+//	}
+//
+//	func (s *sidxImpl) Write(ctx context.Context, reqs []WriteRequest) error {
+//		return s.writer.Write(ctx, reqs)
+//	}
+//
+//	func (s *sidxImpl) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+//		return s.querier.Query(ctx, req)
+//	}
+//
+//	func (s *sidxImpl) Flush() error {
+//		return s.flusher.Flush()
+//	}
+//
+//	func (s *sidxImpl) Merge() error {
+//		return s.merger.Merge()
+//	}
+
+// Example: Mock implementations for testing
+//
+//	type mockWriter struct {
+//		writeFunc func(context.Context, []WriteRequest) error
+//	}
+//
+//	func (m *mockWriter) Write(ctx context.Context, reqs []WriteRequest) error {
+//		if m.writeFunc != nil {
+//			return m.writeFunc(ctx, reqs)
+//		}
+//		return nil
+//	}
+//
+//	// Test usage
+//	writer := &mockWriter{
+//		writeFunc: func(ctx context.Context, reqs []WriteRequest) error {
+//			// Custom test logic
+//			return nil
+//		},
+//	}
+
+// Interface Design Principles
+//
+// 1. **Single Responsibility**: Each interface has a focused, well-defined purpose
+// 2. **Minimal Surface Area**: Interfaces expose only essential methods
+// 3. **Composability**: Interfaces can be combined to create larger systems
+// 4. **Testability**: Small interfaces are easy to mock and test
+// 5. **Modularity**: Implementations can be swapped independently
+// 6. **Documentation**: Clear contracts and usage examples
+//
+// Interface Decoupling Benefits:
+// - Independent testing of components
+// - Easy mocking for unit tests
+// - Flexible implementation strategies
+// - Clear separation of concerns
+// - Simplified dependency injection
