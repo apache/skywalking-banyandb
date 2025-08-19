@@ -268,4 +268,3 @@ func TestOptionsEdgeCases(t *testing.T) {
 		assert.NoError(t, policy.Validate())
 	})
 }
-

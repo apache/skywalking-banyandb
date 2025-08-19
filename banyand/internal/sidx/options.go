@@ -143,4 +143,3 @@ func (o *Options) WithMergePolicy(policy *MergePolicy) *Options {
 	opts.MergePolicy = policy
 	return &opts
 }
-

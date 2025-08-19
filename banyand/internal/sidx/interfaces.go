@@ -196,14 +196,14 @@ func (qr *QueryResponse) Validate() error {
 	keysLen := len(qr.Keys)
 	dataLen := len(qr.Data)
 	sidsLen := len(qr.SIDs)
-	
+
 	if keysLen != dataLen {
 		return fmt.Errorf("inconsistent array lengths: keys=%d, data=%d", keysLen, dataLen)
 	}
 	if keysLen != sidsLen {
 		return fmt.Errorf("inconsistent array lengths: keys=%d, sids=%d", keysLen, sidsLen)
 	}
-	
+
 	// Validate Tags structure if present
 	if len(qr.Tags) > 0 {
 		if len(qr.Tags) != keysLen {
@@ -217,18 +217,18 @@ func (qr *QueryResponse) Validate() error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
 // CopyFrom copies the QueryResponse from other to qr.
 func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 	qr.Error = other.Error
-	
+
 	// Copy parallel arrays
 	qr.Keys = append(qr.Keys[:0], other.Keys...)
 	qr.SIDs = append(qr.SIDs[:0], other.SIDs...)
-	
+
 	// Deep copy data
 	if cap(qr.Data) < len(other.Data) {
 		qr.Data = make([][]byte, len(other.Data))
@@ -238,7 +238,7 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 	for i, data := range other.Data {
 		qr.Data[i] = append(qr.Data[i][:0], data...)
 	}
-	
+
 	// Deep copy tags
 	if cap(qr.Tags) < len(other.Tags) {
 		qr.Tags = make([][]Tag, len(other.Tags))
@@ -258,7 +258,7 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 			qr.Tags[i][j].indexed = tag.indexed
 		}
 	}
-	
+
 	// Copy metadata
 	qr.Metadata = other.Metadata
 }
