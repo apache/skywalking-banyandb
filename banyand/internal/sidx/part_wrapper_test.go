@@ -330,4 +330,3 @@ func BenchmarkPartWrapper_StateCheck(b *testing.B) {
 		_ = pw.isActive()
 	}
 }
-
