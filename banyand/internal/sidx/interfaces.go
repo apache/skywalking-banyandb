@@ -498,9 +498,10 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		},
 //	}
 
+//nolint:godot
 // Interface Design Principles.
 //
-// 1. **Single Responsibility**: Each interface has a focused, well-defined purpose
+// 1. **Single Responsibility**: Each interface has a focused, well-defined purpose.
 // 2. **Minimal Surface Area**: Interfaces expose only essential methods
 // 3. **Composability**: Interfaces can be combined to create larger systems
 // 4. **Testability**: Small interfaces are easy to mock and test

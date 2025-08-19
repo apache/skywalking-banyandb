@@ -48,7 +48,7 @@ func TestInterfaceUsageExamples(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("ErrorHandlingExample", func(t *testing.T) {
+	t.Run("ErrorHandlingExample", func(_ *testing.T) {
 		// This example doesn't return errors, just demonstrates error handling
 		examples.ErrorHandlingExample(ctx)
 	})
@@ -162,7 +162,7 @@ func TestMockQueryResult(t *testing.T) {
 		assert.Nil(t, response)
 	})
 
-	t.Run("Release doesn't panic", func(t *testing.T) {
+	t.Run("Release doesn't panic", func(_ *testing.T) {
 		// Should not panic
 		result.Release()
 	})

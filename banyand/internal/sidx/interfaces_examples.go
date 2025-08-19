@@ -184,14 +184,14 @@ func (e *InterfaceUsageExamples) FlushAndMergeExample(ctx context.Context) error
 		stats.MemoryUsageBytes, stats.DiskUsageBytes, stats.PartCount)
 
 	// Trigger flush to persist memory parts
-	if err := e.sidx.Flush(); err != nil {
-		return fmt.Errorf("flush operation failed: %w", err)
+	if flushErr := e.sidx.Flush(); flushErr != nil {
+		return fmt.Errorf("flush operation failed: %w", flushErr)
 	}
 	log.Println("Flush completed successfully")
 
 	// Trigger merge to compact parts
-	if err := e.sidx.Merge(); err != nil {
-		return fmt.Errorf("merge operation failed: %w", err)
+	if mergeErr := e.sidx.Merge(); mergeErr != nil {
+		return fmt.Errorf("merge operation failed: %w", mergeErr)
 	}
 	log.Println("Merge completed successfully")
 
@@ -384,7 +384,7 @@ func int64ToBytes(val int64) []byte {
 // In production, this would be replaced with the actual SIDX implementation.
 type mockSIDX struct{}
 
-func (m *mockSIDX) Write(ctx context.Context, reqs []WriteRequest) error {
+func (m *mockSIDX) Write(_ context.Context, reqs []WriteRequest) error {
 	if len(reqs) == 0 {
 		return fmt.Errorf("empty write request")
 	}
@@ -396,7 +396,7 @@ func (m *mockSIDX) Write(ctx context.Context, reqs []WriteRequest) error {
 	return nil
 }
 
-func (m *mockSIDX) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+func (m *mockSIDX) Query(_ context.Context, req QueryRequest) (QueryResult, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("query name cannot be empty")
 	}
@@ -406,7 +406,7 @@ func (m *mockSIDX) Query(ctx context.Context, req QueryRequest) (QueryResult, er
 	return &mockQueryResult{}, nil
 }
 
-func (m *mockSIDX) Stats(ctx context.Context) (Stats, error) {
+func (m *mockSIDX) Stats(_ context.Context) (Stats, error) {
 	return Stats{
 		MemoryUsageBytes: 1024 * 1024 * 100, // 100MB
 		DiskUsageBytes:   1024 * 1024 * 500, // 500MB
@@ -471,9 +471,9 @@ func (m *mockQueryResult) Release() {
 // The following section provides contract specifications for each interface
 // to guide testing and implementation verification.
 
-// SIDXContract defines the behavioral contract for SIDX implementations.
+// Contract defines the behavioral contract for SIDX implementations.
 // All SIDX implementations must satisfy these contracts.
-type SIDXContract struct {
+type Contract struct {
 	// Write Contract:
 	// - MUST accept batch writes with pre-sorted elements
 	// - MUST validate WriteRequest fields (non-zero SeriesID, valid tags)
