@@ -1864,21 +1864,12 @@ This consistency ensures that developers familiar with one module can easily und
 ### Configuration Options
 ```go
 type Options struct {
-    // Part configuration
-    MaxKeysPerPart     int    // Maximum keys in memory part
-    KeyRangeSize       int64  // Target size of key ranges per part
-    
-    // Flush configuration
-    FlushTimeout       time.Duration
-    FlushKeyThreshold  int64  // Flush when key range exceeds this
-    
-    // Merge configuration
-    MergeMinParts      int
-    MergeMaxParts      int
-    
-    // Query configuration
-    DefaultOrder       Order  // Default ordering for queries
-    MaxQueryRange      int64  // Maximum allowed query key range
+    // Path specifies the directory where index files will be stored
+    Path string
+    // MergePolicy defines the strategy for merging index segments during compaction
+    MergePolicy              *MergePolicy
+    // Protector provides memory management and protection mechanisms
+    Protector                protector.Memory
 }
 ```
 

@@ -319,7 +319,7 @@ type segmentController[T TSTable, O any] struct {
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
 	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
-	idleTimeout time.Duration, lfs banyanfs.FileSystem, serviceCache *serviceCache, group string,
+	idleTimeout time.Duration, lfs banyanfs.FileSystem, cache Cache, group string,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	p := common.GetPosition(ctx)
@@ -335,7 +335,7 @@ func newSegmentController[T TSTable, O any](ctx context.Context, location string
 		db:           p.Database,
 		idleTimeout:  idleTimeout,
 		lfs:          lfs,
-		groupCache:   &groupCache{serviceCache, group},
+		groupCache:   &groupCache{cache, group},
 	}
 }
 
