@@ -158,9 +158,7 @@ var _ = g.Describe("Query service_cpm_minute with authentication", func() {
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 
 		// 2. Waiting for server to reload configuration
-		fmt.Println("开始等待2秒。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。")
 		time.Sleep(2 * time.Second)
-		fmt.Println("完成等待2秒。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。")
 
 		// 3. New gRPC connections use the updated username/password
 		newConn, err := grpchelper.ConnWithAuth(grpcAddr, 10*time.Second,
