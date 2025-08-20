@@ -179,6 +179,9 @@ func (e *InterfaceUsageExamples) FlushAndMergeExample(ctx context.Context) error
 	if err != nil {
 		return fmt.Errorf("failed to get stats: %w", err)
 	}
+	if stats == nil {
+		return fmt.Errorf("stats is nil")
+	}
 
 	log.Printf("Before operations - Memory: %d bytes, Disk: %d bytes, Parts: %d",
 		stats.MemoryUsageBytes, stats.DiskUsageBytes, stats.PartCount)
@@ -199,6 +202,9 @@ func (e *InterfaceUsageExamples) FlushAndMergeExample(ctx context.Context) error
 	statsAfter, err := e.sidx.Stats(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get stats after operations: %w", err)
+	}
+	if statsAfter == nil {
+		return fmt.Errorf("stats after operations is nil")
 	}
 
 	log.Printf("After operations - Memory: %d bytes, Disk: %d bytes, Parts: %d",
@@ -339,10 +345,13 @@ func (e *InterfaceUsageExamples) IntegrationPatternExample(ctx context.Context) 
 	if err != nil {
 		return fmt.Errorf("stats integration failed: %w", err)
 	}
+	if stats == nil {
+		return fmt.Errorf("stats is nil")
+	}
 
 	// Integration Pattern 3: Metric collection for observability
 	log.Printf("SIDX Metrics - Elements: %d, Parts: %d, Queries: %d",
-		stats.ElementCount, stats.PartCount, stats.QueryCount)
+		stats.ElementCount, stats.PartCount, stats.QueryCount.Load())
 
 	// Integration Pattern 4: Resource management following BanyanDB patterns
 	// Proper cleanup and resource release
@@ -406,14 +415,16 @@ func (m *mockSIDX) Query(_ context.Context, req QueryRequest) (QueryResult, erro
 	return &mockQueryResult{}, nil
 }
 
-func (m *mockSIDX) Stats(_ context.Context) (Stats, error) {
-	return Stats{
+func (m *mockSIDX) Stats(_ context.Context) (*Stats, error) {
+	stats := &Stats{
 		MemoryUsageBytes: 1024 * 1024 * 100, // 100MB
 		DiskUsageBytes:   1024 * 1024 * 500, // 500MB
 		ElementCount:     10000,
 		PartCount:        5,
-		QueryCount:       1000,
-	}, nil
+	}
+	stats.QueryCount.Store(1000)
+	stats.WriteCount.Store(0)
+	return stats, nil
 }
 
 func (m *mockSIDX) Close() error {

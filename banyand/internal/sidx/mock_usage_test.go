@@ -165,6 +165,9 @@ func TestDocumentation_CustomScenarios(t *testing.T) {
 			if err != nil {
 				return err
 			}
+			if stats == nil {
+				return fmt.Errorf("stats is nil")
+			}
 			if stats.ElementCount < 100 { // Reduced from 100000
 				return fmt.Errorf("expected at least 100 elements, got %d", stats.ElementCount)
 			}
@@ -474,10 +477,11 @@ func TestDocumentation_DebugTips(t *testing.T) {
 	// Check stats (from documentation example)
 	stats, err := mockSIDX.Stats(ctx)
 	require.NoError(t, err)
+	require.NotNil(t, stats)
 
 	assert.Equal(t, int64(2), stats.ElementCount)
 	assert.Greater(t, stats.MemoryUsageBytes, int64(0))
-	assert.Equal(t, int64(1), stats.WriteCount)
+	assert.Equal(t, int64(1), stats.WriteCount.Load())
 
 	// Verify element storage (MockSIDX only - from documentation)
 	keys := mockSIDX.GetStorageKeys()
@@ -496,7 +500,8 @@ func TestDocumentation_DebugTips(t *testing.T) {
 	// Verify query count updated
 	stats, err = mockSIDX.Stats(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), stats.QueryCount)
+	require.NotNil(t, stats)
+	assert.Equal(t, int64(1), stats.QueryCount.Load())
 }
 
 // Test migration examples from the documentation.

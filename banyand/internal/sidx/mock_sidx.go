@@ -90,8 +90,8 @@ func NewMockSIDX(config MockConfig) *MockSIDX {
 			DiskUsageBytes:   0,
 			ElementCount:     0,
 			PartCount:        1, // Mock always has 1 "virtual" part
-			QueryCount:       0,
-			WriteCount:       0,
+			QueryCount:       atomic.Int64{},
+			WriteCount:       atomic.Int64{},
 			LastFlushTime:    0,
 			LastMergeTime:    0,
 		},
@@ -176,7 +176,7 @@ func (m *MockSIDX) Write(_ context.Context, reqs []WriteRequest) error {
 	}
 
 	// Update stats
-	m.stats.WriteCount++
+	m.stats.WriteCount.Add(1)
 	m.stats.ElementCount = m.elementCounter.Load()
 	m.updateMemoryUsageLocked()
 
@@ -215,7 +215,7 @@ func (m *MockSIDX) Query(_ context.Context, req QueryRequest) (QueryResult, erro
 	}
 
 	// Update query stats
-	m.stats.QueryCount++
+	m.stats.QueryCount.Add(1)
 
 	// Create and return query result iterator
 	return &mockSIDXQueryResult{
@@ -226,18 +226,26 @@ func (m *MockSIDX) Query(_ context.Context, req QueryRequest) (QueryResult, erro
 }
 
 // Stats returns current system statistics.
-func (m *MockSIDX) Stats(_ context.Context) (Stats, error) {
+func (m *MockSIDX) Stats(_ context.Context) (*Stats, error) {
 	if m.closed.Load() {
-		return Stats{}, fmt.Errorf("SIDX is closed")
+		return nil, fmt.Errorf("SIDX is closed")
 	}
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	stats := m.stats
-	stats.ElementCount = m.elementCounter.Load()
-	stats.LastFlushTime = atomic.LoadInt64(&m.lastFlushTime)
-	stats.LastMergeTime = atomic.LoadInt64(&m.lastMergeTime)
+	// Create a new stats struct to avoid copying atomic values
+	stats := &Stats{
+		MemoryUsageBytes: m.stats.MemoryUsageBytes,
+		DiskUsageBytes:   m.stats.DiskUsageBytes,
+		ElementCount:     m.elementCounter.Load(),
+		PartCount:        m.stats.PartCount,
+		LastFlushTime:    atomic.LoadInt64(&m.lastFlushTime),
+		LastMergeTime:    atomic.LoadInt64(&m.lastMergeTime),
+	}
+	// Load atomic values
+	stats.QueryCount.Store(m.stats.QueryCount.Load())
+	stats.WriteCount.Store(m.stats.WriteCount.Load())
 	return stats, nil
 }
 

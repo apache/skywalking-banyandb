@@ -117,11 +117,12 @@ func TestMockSIDXImplementation(t *testing.T) {
 	t.Run("Stats returns valid data", func(t *testing.T) {
 		stats, err := sidx.Stats(ctx)
 		assert.NoError(t, err)
+		require.NotNil(t, stats)
 		assert.Greater(t, stats.MemoryUsageBytes, int64(0))
 		assert.Greater(t, stats.DiskUsageBytes, int64(0))
 		assert.Greater(t, stats.ElementCount, int64(0))
 		assert.Greater(t, stats.PartCount, int64(0))
-		assert.Greater(t, stats.QueryCount, int64(0))
+		assert.Greater(t, stats.QueryCount.Load(), int64(0))
 	})
 
 	t.Run("Flush and Merge succeed", func(t *testing.T) {
@@ -268,13 +269,14 @@ func TestContractCompliance(t *testing.T) {
 		// Contract: MUST return current system metrics
 		stats, err := sidx.Stats(ctx)
 		assert.NoError(t, err)
+		require.NotNil(t, stats)
 
 		// All metrics should be non-negative
 		assert.GreaterOrEqual(t, stats.MemoryUsageBytes, int64(0))
 		assert.GreaterOrEqual(t, stats.DiskUsageBytes, int64(0))
 		assert.GreaterOrEqual(t, stats.ElementCount, int64(0))
 		assert.GreaterOrEqual(t, stats.PartCount, int64(0))
-		assert.GreaterOrEqual(t, stats.QueryCount, int64(0))
+		assert.GreaterOrEqual(t, stats.QueryCount.Load(), int64(0))
 	})
 
 	t.Run("Close contract compliance", func(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -392,11 +393,11 @@ func (itf *IntegrationTestFramework) runSingleStressTest(ctx context.Context, st
 
 			opsPerWorker := stressTest.Operations / concurrency
 			for j := 0; j < opsPerWorker; j++ {
-				totalOps++
+				atomic.AddInt64(&totalOps, 1)
 				if err := stressTest.Execute(ctx, itf, workerID); err != nil {
-					failedOps++
+					atomic.AddInt64(&failedOps, 1)
 				} else {
-					successOps++
+					atomic.AddInt64(&successOps, 1)
 				}
 			}
 		}(i)
@@ -426,13 +427,13 @@ func (itf *IntegrationTestFramework) runSingleStressTest(ctx context.Context, st
 	}
 
 	result := StressTestResult{
-		TotalOperations:   totalOps,
-		SuccessfulOps:     successOps,
-		FailedOps:         failedOps,
+		TotalOperations:   atomic.LoadInt64(&totalOps),
+		SuccessfulOps:     atomic.LoadInt64(&successOps),
+		FailedOps:         atomic.LoadInt64(&failedOps),
 		Duration:          duration,
 		Concurrency:       concurrency,
-		ThroughputOpsPerS: float64(totalOps) / duration.Seconds(),
-		ErrorRate:         float64(failedOps) / float64(totalOps),
+		ThroughputOpsPerS: float64(atomic.LoadInt64(&totalOps)) / duration.Seconds(),
+		ErrorRate:         float64(atomic.LoadInt64(&failedOps)) / float64(atomic.LoadInt64(&totalOps)),
 	}
 
 	if itf.config.EnableMemoryProfiling {
@@ -552,6 +553,9 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			if err != nil {
 				return fmt.Errorf("failed to get stats: %w", err)
 			}
+			if stats == nil {
+				return fmt.Errorf("stats is nil")
+			}
 
 			if stats.ElementCount == 0 {
 				return fmt.Errorf("no elements found in stats")
@@ -590,6 +594,9 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			stats, err := framework.sidx.Stats(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get stats: %w", err)
+			}
+			if stats == nil {
+				return fmt.Errorf("stats is nil")
 			}
 
 			// Check that flush and merge timestamps are updated
@@ -652,6 +659,9 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			stats, err := framework.sidx.Stats(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get stats: %w", err)
+			}
+			if stats == nil {
+				return fmt.Errorf("stats is nil")
 			}
 
 			if stats.ElementCount < 1000 {
@@ -807,6 +817,9 @@ func (itf *IntegrationTestFramework) registerDefaultStressTests() {
 			stats, err := framework.sidx.Stats(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get stats: %w", err)
+			}
+			if stats == nil {
+				return fmt.Errorf("stats is nil")
 			}
 
 			if stats.ElementCount == 0 {

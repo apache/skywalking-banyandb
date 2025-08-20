@@ -42,9 +42,10 @@ func TestMockSIDX_BasicOperations(t *testing.T) {
 	// Test initial stats
 	stats, err := mock.Stats(ctx)
 	require.NoError(t, err)
+	require.NotNil(t, stats)
 	assert.Equal(t, int64(0), stats.ElementCount)
-	assert.Equal(t, int64(0), stats.WriteCount)
-	assert.Equal(t, int64(0), stats.QueryCount)
+	assert.Equal(t, int64(0), stats.WriteCount.Load())
+	assert.Equal(t, int64(0), stats.QueryCount.Load())
 
 	// Test write operations
 	writeReqs := []WriteRequest{
@@ -88,8 +89,9 @@ func TestMockSIDX_BasicOperations(t *testing.T) {
 	// Verify stats after write
 	stats, err = mock.Stats(ctx)
 	require.NoError(t, err)
+	require.NotNil(t, stats)
 	assert.Equal(t, int64(2), stats.ElementCount)
-	assert.Equal(t, int64(1), stats.WriteCount)
+	assert.Equal(t, int64(1), stats.WriteCount.Load())
 	assert.True(t, stats.MemoryUsageBytes > 0)
 
 	// Test query operations
@@ -120,7 +122,8 @@ func TestMockSIDX_BasicOperations(t *testing.T) {
 	// Verify query stats
 	stats, err = mock.Stats(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), stats.QueryCount)
+	require.NotNil(t, stats)
+	assert.Equal(t, int64(1), stats.QueryCount.Load())
 }
 
 func TestMockSIDX_WriteValidation(t *testing.T) {
@@ -447,8 +450,9 @@ func TestMockSIDX_ConcurrentOperations(t *testing.T) {
 	// Verify total elements
 	stats, err := mock.Stats(ctx)
 	require.NoError(t, err)
+	require.NotNil(t, stats)
 	assert.Equal(t, int64(numGoroutines*elementsPerGoroutine), stats.ElementCount)
-	assert.Equal(t, int64(numGoroutines), stats.WriteCount)
+	assert.Equal(t, int64(numGoroutines), stats.WriteCount.Load())
 }
 
 func TestMockSIDX_CloseOperations(t *testing.T) {
@@ -578,6 +582,7 @@ func TestMockSIDX_FlushAndMergeTimestamps(t *testing.T) {
 	// Initial timestamps should be zero
 	stats, err := mock.Stats(ctx)
 	require.NoError(t, err)
+	require.NotNil(t, stats)
 	assert.Equal(t, int64(0), stats.LastFlushTime)
 	assert.Equal(t, int64(0), stats.LastMergeTime)
 
@@ -589,6 +594,7 @@ func TestMockSIDX_FlushAndMergeTimestamps(t *testing.T) {
 
 	stats, err = mock.Stats(ctx)
 	require.NoError(t, err)
+	require.NotNil(t, stats)
 	assert.GreaterOrEqual(t, stats.LastFlushTime, startTime)
 	assert.LessOrEqual(t, stats.LastFlushTime, endTime)
 
@@ -600,6 +606,7 @@ func TestMockSIDX_FlushAndMergeTimestamps(t *testing.T) {
 
 	stats, err = mock.Stats(ctx)
 	require.NoError(t, err)
+	require.NotNil(t, stats)
 	assert.GreaterOrEqual(t, stats.LastMergeTime, startTime)
 	assert.LessOrEqual(t, stats.LastMergeTime, endTime)
 }
