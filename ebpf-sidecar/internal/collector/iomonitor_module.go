@@ -26,7 +26,7 @@ import (
 	"github.com/cilium/ebpf"
 	"go.uber.org/zap"
 
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf"
+	loader "github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf"
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf/generated"
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
 )
@@ -47,7 +47,7 @@ const (
 type IOMonitorModule struct {
 	name            string
 	logger          *zap.Logger
-	loader          *ebpf.Loader
+	loader          *loader.Loader
 	objs            *generated.IomonitorObjects
 	cleanupStrategy CleanupStrategy
 	cleanupInterval time.Duration
@@ -60,7 +60,7 @@ type IOMonitorModule struct {
 
 // NewIOMonitorModule creates a new I/O monitoring module with cleanup
 func NewIOMonitorModule(logger *zap.Logger) (*IOMonitorModule, error) {
-	loader, err := ebpf.NewLoader()
+	ebpfLoader, err := loader.NewLoader()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)
 	}
@@ -68,7 +68,7 @@ func NewIOMonitorModule(logger *zap.Logger) (*IOMonitorModule, error) {
 	return &IOMonitorModule{
 		name:            "iomonitor",
 		logger:          logger,
-		loader:          loader,
+		loader:          ebpfLoader,
 		cleanupStrategy: ClearAfterRead, // Default strategy
 		cleanupInterval: 60 * time.Second,
 		lastCleanup:     time.Now(),

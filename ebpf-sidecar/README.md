@@ -2,13 +2,32 @@
 
 The eBPF Sidecar Agent provides kernel-level observability for BanyanDB operations, offering insights into system calls, memory management, and I/O patterns.
 
-## Features
+## Current Status
 
-- **System Call Monitoring**: Track file advisory operations, I/O patterns
-- **Memory Management**: Monitor page cache, memory reclamation events
-- **Extensible Framework**: Plugin architecture for custom eBPF programs
-- **Multiple Export Formats**: Prometheus metrics, BanyanDB native format
-- **Low Overhead**: Efficient kernel-space data collection
+### ✅ Completed Features
+- **Core Architecture**: Standalone sidecar service with modular design
+- **eBPF Programs**: Comprehensive I/O monitoring (`iomonitor.c`)
+  - fadvise system call tracking (TID-based to avoid race conditions)
+  - Page cache hit/miss rate monitoring
+  - Memory reclaim and LRU statistics
+- **Metrics Collection**: Unified `iomonitor_module.go` with memory management
+- **Prometheus Export**: Full implementation with proper formatting
+- **BanyanDB Native Export**: Direct metrics push to BanyanDB with batching
+- **Memory Management**: Clear-after-read strategy for production use
+- **Integration Tests**: Located in `/test/integration/ebpf_sidecar/`
+- **Build System**: Makefile with automatic dependency installation
+
+### 🚧 In Progress
+- **gRPC API**: Protocol buffer definitions and service implementation
+- **Docker/Kubernetes**: Container image and deployment configurations
+
+### 📊 Available Metrics
+- `ebpf_fadvise_calls_total` - Total fadvise() system calls
+- `ebpf_fadvise_success_rate_percent` - Success rate of fadvise calls
+- `ebpf_cache_miss_rate_percent` - Page cache miss rate (key metric)
+- `ebpf_cache_hit_rate_percent` - Page cache hit rate
+- `ebpf_memory_reclaim_efficiency_percent` - Memory reclaim efficiency
+- `ebpf_memory_direct_reclaim_processes` - Processes in direct reclaim
 
 ## Architecture
 
@@ -51,31 +70,65 @@ The eBPF Sidecar Agent provides kernel-level observability for BanyanDB operatio
 ```bash
 # Build the sidecar
 cd ebpf-sidecar
-make build
+go build ./cmd/sidecar
 
-# Run tests
-make test
+# Or from root directory
+cd /path/to/skywalking-banyandb
+go build ./ebpf-sidecar/cmd/sidecar
 
-# Run eBPF tests (requires root)
-sudo make test-ebpf
+# Run integration tests (requires root)
+sudo go test -tags=integration -v ./test/integration/ebpf_sidecar/
+
+# Run specific test
+sudo go test -tags=integration -run TestIOMonitorIntegration -v ./test/integration/ebpf_sidecar/
 ```
 
 ### Running
 
 ```bash
 # Run with default configuration
-sudo ./build/bin/ebpf-sidecar
+sudo ./sidecar
 
 # Run with custom configuration
-sudo ./build/bin/ebpf-sidecar --config configs/config.yaml
+sudo ./sidecar --config configs/config.yaml
 
 # Check version
-./build/bin/ebpf-sidecar version
+./sidecar version
+
+# Check metrics endpoint (while running)
+curl http://localhost:8080/metrics
+curl http://localhost:8080/health
+curl http://localhost:8080/api/v1/stats
 ```
 
 ## Configuration
 
-The sidecar can be configured via YAML file or environment variables:
+The sidecar can be configured via YAML file or environment variables.
+
+### Export Options
+
+The sidecar supports two export modes:
+
+1. **Prometheus Export** (default): Metrics are exposed via HTTP endpoint for scraping
+2. **BanyanDB Native Export**: Metrics are pushed directly to BanyanDB
+
+#### Prometheus Mode:
+```yaml
+export:
+  type: prometheus
+```
+
+#### BanyanDB Mode:
+```yaml
+export:
+  type: banyandb
+  banyandb:
+    endpoint: localhost:17912
+    group: ebpf-metrics
+    timeout: 30s
+```
+
+### Full Configuration Example:
 
 ```yaml
 server:
@@ -88,11 +141,14 @@ server:
 collector:
   interval: 10s
   modules:
-    - fadvise
-    - memory
+    - iomonitor  # Unified module for all I/O monitoring
 
 export:
-  type: prometheus  # or "banyandb"
+  type: banyandb  # Switch to "prometheus" for Prometheus scraping
+  banyandb:
+    endpoint: localhost:17912
+    group: ebpf-metrics
+    timeout: 30s
 ```
 
 Environment variables use the prefix `EBPF_SIDECAR_` (e.g., `EBPF_SIDECAR_SERVER_GRPC_PORT=9090`).
@@ -175,17 +231,23 @@ spec:
 
 ```
 ebpf-sidecar/
-├── cmd/sidecar/           # Main entry point
+├── cmd/sidecar/          # Main entry point
 ├── internal/
-│   ├── config/           # Configuration management
-│   ├── server/           # gRPC/HTTP servers
-│   ├── collector/        # Metrics collection
-│   └── ebpf/            # eBPF programs and loaders
-├── api/proto/           # API definitions
-├── pkg/
-│   ├── metrics/         # Metric types
-│   └── export/          # Export formats
-└── configs/             # Configuration files
+│   ├── config/          # Configuration management
+│   ├── server/          # gRPC/HTTP servers  
+│   ├── collector/       # Metrics collection
+│   │   ├── collector.go
+│   │   └── iomonitor_module.go  # Unified I/O monitoring
+│   ├── ebpf/           # eBPF programs and loaders
+│   │   ├── programs/   # C source files
+│   │   │   └── iomonitor.c
+│   │   ├── generated/  # Auto-generated Go bindings
+│   │   └── loader.go   # Program lifecycle management
+│   ├── metrics/        # Metric types and storage
+│   └── export/         # Export formats
+│       └── prometheus.go
+├── configs/            # Configuration files
+└── test/integration/ebpf_sidecar/  # Integration tests
 ```
 
 ## Troubleshooting

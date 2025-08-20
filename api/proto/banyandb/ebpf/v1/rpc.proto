@@ -1,0 +1,223 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+package banyandb.ebpf.v1;
+
+import "banyandb/ebpf/v1/metrics.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "validate/validate.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/ebpf/v1";
+
+// EBPFMetricsService provides access to eBPF-collected metrics
+service EBPFMetricsService {
+  // GetMetrics retrieves current metrics from all modules
+  rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ebpf/metrics"
+    };
+  }
+  
+  // StreamMetrics streams metrics updates in real-time
+  rpc StreamMetrics(StreamMetricsRequest) returns (stream MetricSet) {
+    option (google.api.http) = {
+      get: "/api/v1/ebpf/metrics/stream"
+    };
+  }
+  
+  // GetIOStats retrieves detailed I/O statistics
+  rpc GetIOStats(GetIOStatsRequest) returns (GetIOStatsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ebpf/io/stats"
+    };
+  }
+  
+  // GetModuleStatus retrieves status of eBPF modules
+  rpc GetModuleStatus(GetModuleStatusRequest) returns (GetModuleStatusResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ebpf/modules/status"
+    };
+  }
+  
+  // ConfigureModule enables or disables an eBPF module
+  rpc ConfigureModule(ConfigureModuleRequest) returns (ConfigureModuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/ebpf/modules/configure"
+      body: "*"
+    };
+  }
+  
+  // Health check for the eBPF sidecar service
+  rpc GetHealth(google.protobuf.Empty) returns (HealthResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ebpf/health"
+    };
+  }
+}
+
+// GetMetricsRequest requests metrics from specified modules
+message GetMetricsRequest {
+  // Module names to retrieve metrics from (empty = all modules)
+  repeated string modules = 1;
+  
+  // Include only metrics matching these labels
+  map<string, string> label_filters = 2;
+  
+  // Time range for metrics (optional)
+  TimeRange time_range = 3;
+}
+
+// TimeRange specifies a time range for filtering
+message TimeRange {
+  // Start time (inclusive)
+  google.protobuf.Timestamp start = 1;
+  
+  // End time (exclusive)
+  google.protobuf.Timestamp end = 2;
+}
+
+// GetMetricsResponse contains requested metrics
+message GetMetricsResponse {
+  // Metric sets from requested modules
+  repeated MetricSet metric_sets = 1;
+  
+  // Total number of metrics returned
+  uint32 total_metrics = 2;
+  
+  // Response timestamp
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// StreamMetricsRequest configures metric streaming
+message StreamMetricsRequest {
+  // Module names to stream (empty = all)
+  repeated string modules = 1;
+  
+  // Streaming interval in seconds
+  uint32 interval_seconds = 2 [(validate.rules).uint32 = {gte: 1, lte: 3600}];
+  
+  // Include only metrics matching these labels
+  map<string, string> label_filters = 3;
+}
+
+// GetIOStatsRequest requests I/O statistics
+message GetIOStatsRequest {
+  // Include per-process statistics
+  bool include_process_stats = 1;
+  
+  // Filter by process IDs (empty = all)
+  repeated uint32 pids = 2;
+  
+  // Time range for statistics
+  TimeRange time_range = 3;
+}
+
+// GetIOStatsResponse contains I/O statistics
+message GetIOStatsResponse {
+  // I/O statistics
+  IOStats stats = 1;
+  
+  // Collection timestamp
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// GetModuleStatusRequest requests module status
+message GetModuleStatusRequest {
+  // Module names to check (empty = all)
+  repeated string modules = 1;
+}
+
+// GetModuleStatusResponse contains module status information
+message GetModuleStatusResponse {
+  // Status of requested modules
+  repeated ModuleStatus modules = 1;
+  
+  // Overall system status
+  SystemStatus system_status = 2;
+}
+
+// SystemStatus represents overall system status
+message SystemStatus {
+  // Whether eBPF is supported on this system
+  bool ebpf_supported = 1;
+  
+  // Kernel version
+  string kernel_version = 2;
+  
+  // Number of active modules
+  uint32 active_modules = 3;
+  
+  // Total metrics being collected
+  uint32 total_metrics = 4;
+  
+  // System uptime in seconds
+  uint64 uptime_seconds = 5;
+}
+
+// ConfigureModuleRequest configures an eBPF module
+message ConfigureModuleRequest {
+  // Module name
+  string module = 1 [(validate.rules).string.min_len = 1];
+  
+  // Enable or disable the module
+  bool enabled = 2;
+  
+  // Module-specific configuration (JSON)
+  string config_json = 3;
+}
+
+// ConfigureModuleResponse confirms module configuration
+message ConfigureModuleResponse {
+  // Whether configuration was successful
+  bool success = 1;
+  
+  // Error message if failed
+  string error = 2;
+  
+  // Updated module status
+  ModuleStatus status = 3;
+}
+
+// HealthResponse indicates service health
+message HealthResponse {
+  // Health status
+  HealthStatus status = 1;
+  
+  // Human-readable status message
+  string message = 2;
+  
+  // Service version
+  string version = 3;
+  
+  // Service uptime in seconds
+  uint64 uptime_seconds = 4;
+  
+  // Last error if any
+  string last_error = 5;
+}
+
+// HealthStatus enumeration
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNHEALTHY = 3;
+}

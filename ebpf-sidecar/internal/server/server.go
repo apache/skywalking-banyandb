@@ -23,10 +23,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
+	ebpfv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/ebpf/v1"
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/collector"
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/config"
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/export"
@@ -34,19 +36,41 @@ import (
 
 // Server manages gRPC and HTTP servers
 type Server struct {
-	config     config.ServerConfig
-	collector  *collector.Collector
-	logger     *zap.Logger
-	grpcServer *grpc.Server
-	httpServer *http.Server
+	config           config.ServerConfig
+	exportConfig     config.ExportConfig
+	collector        *collector.Collector
+	logger           *zap.Logger
+	grpcServer       *grpc.Server
+	httpServer       *http.Server
+	promExporter     *export.PrometheusExporter
+	banyandbExporter *export.BanyanDBExporter
 }
 
-// New creates a new server instance
-func New(cfg config.ServerConfig, coll *collector.Collector, logger *zap.Logger) (*Server, error) {
+// New creates a new server instance with export configuration
+func New(cfg config.ServerConfig, exportCfg config.ExportConfig, coll *collector.Collector, logger *zap.Logger) (*Server, error) {
 	s := &Server{
-		config:    cfg,
-		collector: coll,
-		logger:    logger,
+		config:       cfg,
+		exportConfig: exportCfg,
+		collector:    coll,
+		logger:       logger,
+		promExporter: export.NewPrometheusExporter("ebpf"),
+	}
+
+	// Initialize BanyanDB exporter if configured
+	if exportCfg.Type == "banyandb" {
+		banyandbCfg := export.BanyanDBConfig{
+			Endpoint:      exportCfg.BanyanDB.Endpoint,
+			Group:         exportCfg.BanyanDB.Group,
+			MeasureName:   "ebpf-metrics",
+			Timeout:       exportCfg.BanyanDB.Timeout,
+			BatchSize:     1000,
+			FlushInterval: 10 * time.Second,
+		}
+		exporter, err := export.NewBanyanDBExporter(banyandbCfg, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create BanyanDB exporter: %w", err)
+		}
+		s.banyandbExporter = exporter
 	}
 
 	// Initialize gRPC server
@@ -74,8 +98,9 @@ func (s *Server) initGRPC() error {
 
 	s.grpcServer = grpc.NewServer(opts...)
 	
-	// TODO: Register gRPC services
-	// pb.RegisterEBPFMetricsServer(s.grpcServer, s)
+	// Register gRPC services
+	grpcService := NewGRPCServer(s.collector, s.logger)
+	ebpfv1.RegisterEBPFMetricsServiceServer(s.grpcServer, grpcService)
 
 	return nil
 }
@@ -102,7 +127,18 @@ func (s *Server) initHTTP() error {
 }
 
 // Start starts both gRPC and HTTP servers
-func (s *Server) Start() error {
+func (s *Server) Start(ctx context.Context) error {
+	// Connect to BanyanDB if configured
+	if s.banyandbExporter != nil {
+		if err := s.banyandbExporter.Connect(ctx); err != nil {
+			return fmt.Errorf("failed to connect to BanyanDB: %w", err)
+		}
+		
+		// Start periodic export to BanyanDB
+		go s.banyandbExporter.StartPeriodicExport(ctx, s.collector.GetMetrics())
+		s.logger.Info("Started BanyanDB export", zap.String("endpoint", s.exportConfig.BanyanDB.Endpoint))
+	}
+
 	// Start gRPC server
 	go func() {
 		lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.config.GRPC.Port))
@@ -130,6 +166,13 @@ func (s *Server) Start() error {
 func (s *Server) Stop(ctx context.Context) error {
 	s.logger.Info("Stopping servers")
 
+	// Stop BanyanDB exporter if configured
+	if s.banyandbExporter != nil {
+		if err := s.banyandbExporter.Close(); err != nil {
+			s.logger.Error("Failed to close BanyanDB exporter", zap.Error(err))
+		}
+	}
+
 	// Stop gRPC server
 	s.grpcServer.GracefulStop()
 
@@ -145,16 +188,14 @@ func (s *Server) Stop(ctx context.Context) error {
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics := s.collector.GetMetrics()
 	
-	// TODO: Implement proper Prometheus format export
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	// Set proper Prometheus content type
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	
-	// Write metrics in Prometheus format
-	for module, metricSet := range metrics.GetAll() {
-		for _, metric := range metricSet.GetMetrics() {
-			fmt.Fprintf(w, "# HELP %s %s\n", metric.Name, metric.Help)
-			fmt.Fprintf(w, "# TYPE %s %s\n", metric.Name, metric.Type)
-			fmt.Fprintf(w, "%s{module=\"%s\"} %v\n", metric.Name, module, metric.Value)
-		}
+	// Use proper Prometheus exporter
+	if err := s.promExporter.Export(w, metrics); err != nil {
+		s.logger.Error("Failed to export metrics", zap.Error(err))
+		http.Error(w, "Failed to export metrics", http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -171,6 +212,26 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	
 	w.Header().Set("Content-Type", "application/json")
 	
-	// TODO: Implement proper JSON serialization
-	fmt.Fprintf(w, `{"modules":%d,"status":"ok"}`, len(metrics.GetAll()))
+	// Build comprehensive stats
+	allMetrics := metrics.GetAll()
+	totalMetrics := 0
+	moduleStats := make(map[string]int)
+	
+	for module, metricSet := range allMetrics {
+		count := metricSet.Count()
+		moduleStats[module] = count
+		totalMetrics += count
+	}
+	
+	stats := map[string]interface{}{
+		"status":        "ok",
+		"total_modules": len(allMetrics),
+		"total_metrics": totalMetrics,
+		"modules":       moduleStats,
+	}
+	
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		s.logger.Error("Failed to encode stats", zap.Error(err))
+		http.Error(w, "Failed to encode stats", http.StatusInternalServerError)
+	}
 }

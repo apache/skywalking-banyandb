@@ -81,9 +81,7 @@ func (c *Collector) createModule(name string) (Module, error) {
 			return nil, fmt.Errorf("failed to create iomonitor module: %w", err)
 		}
 		// Configure cleanup strategy for Prometheus (clear after read)
-		if ioModule, ok := module.(*IOMonitorModule); ok {
-			ioModule.SetCleanupStrategy(ClearAfterRead, 60*time.Second)
-		}
+		module.SetCleanupStrategy(ClearAfterRead, 60*time.Second)
 		return module, nil
 	case "fadvise", "memory", "cache":
 		// These are all handled by iomonitor now

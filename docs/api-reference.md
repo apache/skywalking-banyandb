@@ -217,6 +217,40 @@
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
     - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
+- [banyandb/ebpf/v1/metrics.proto](#banyandb_ebpf_v1_metrics-proto)
+    - [CacheStats](#banyandb-ebpf-v1-CacheStats)
+    - [FadviseStats](#banyandb-ebpf-v1-FadviseStats)
+    - [FadviseStats.AdviceCountsEntry](#banyandb-ebpf-v1-FadviseStats-AdviceCountsEntry)
+    - [IOStats](#banyandb-ebpf-v1-IOStats)
+    - [MemoryStats](#banyandb-ebpf-v1-MemoryStats)
+    - [Metric](#banyandb-ebpf-v1-Metric)
+    - [Metric.LabelsEntry](#banyandb-ebpf-v1-Metric-LabelsEntry)
+    - [MetricSet](#banyandb-ebpf-v1-MetricSet)
+    - [ModuleStatus](#banyandb-ebpf-v1-ModuleStatus)
+    - [ProcessFadviseStats](#banyandb-ebpf-v1-ProcessFadviseStats)
+  
+    - [MetricType](#banyandb-ebpf-v1-MetricType)
+  
+- [banyandb/ebpf/v1/rpc.proto](#banyandb_ebpf_v1_rpc-proto)
+    - [ConfigureModuleRequest](#banyandb-ebpf-v1-ConfigureModuleRequest)
+    - [ConfigureModuleResponse](#banyandb-ebpf-v1-ConfigureModuleResponse)
+    - [GetIOStatsRequest](#banyandb-ebpf-v1-GetIOStatsRequest)
+    - [GetIOStatsResponse](#banyandb-ebpf-v1-GetIOStatsResponse)
+    - [GetMetricsRequest](#banyandb-ebpf-v1-GetMetricsRequest)
+    - [GetMetricsRequest.LabelFiltersEntry](#banyandb-ebpf-v1-GetMetricsRequest-LabelFiltersEntry)
+    - [GetMetricsResponse](#banyandb-ebpf-v1-GetMetricsResponse)
+    - [GetModuleStatusRequest](#banyandb-ebpf-v1-GetModuleStatusRequest)
+    - [GetModuleStatusResponse](#banyandb-ebpf-v1-GetModuleStatusResponse)
+    - [HealthResponse](#banyandb-ebpf-v1-HealthResponse)
+    - [StreamMetricsRequest](#banyandb-ebpf-v1-StreamMetricsRequest)
+    - [StreamMetricsRequest.LabelFiltersEntry](#banyandb-ebpf-v1-StreamMetricsRequest-LabelFiltersEntry)
+    - [SystemStatus](#banyandb-ebpf-v1-SystemStatus)
+    - [TimeRange](#banyandb-ebpf-v1-TimeRange)
+  
+    - [HealthStatus](#banyandb-ebpf-v1-HealthStatus)
+  
+    - [EBPFMetricsService](#banyandb-ebpf-v1-EBPFMetricsService)
+  
 - [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
     - [DataPoint](#banyandb-measure-v1-DataPoint)
     - [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field)
@@ -3355,6 +3389,498 @@ Type determine the index structure under the hood
 | Get | [TraceRegistryServiceGetRequest](#banyandb-database-v1-TraceRegistryServiceGetRequest) | [TraceRegistryServiceGetResponse](#banyandb-database-v1-TraceRegistryServiceGetResponse) |  |
 | List | [TraceRegistryServiceListRequest](#banyandb-database-v1-TraceRegistryServiceListRequest) | [TraceRegistryServiceListResponse](#banyandb-database-v1-TraceRegistryServiceListResponse) |  |
 | Exist | [TraceRegistryServiceExistRequest](#banyandb-database-v1-TraceRegistryServiceExistRequest) | [TraceRegistryServiceExistResponse](#banyandb-database-v1-TraceRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+
+ 
+
+
+
+<a name="banyandb_ebpf_v1_metrics-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/ebpf/v1/metrics.proto
+
+
+
+<a name="banyandb-ebpf-v1-CacheStats"></a>
+
+### CacheStats
+CacheStats represents page cache statistics
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_attempts | [uint64](#uint64) |  | Total read attempts |
+| hits | [uint64](#uint64) |  | Cache hits |
+| misses | [uint64](#uint64) |  | Cache misses |
+| hit_rate_percent | [double](#double) |  | Hit rate percentage |
+| miss_rate_percent | [double](#double) |  | Miss rate percentage |
+| pages_added | [uint64](#uint64) |  | Pages added to cache |
+| pages_evicted | [uint64](#uint64) |  | Pages evicted from cache |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-FadviseStats"></a>
+
+### FadviseStats
+FadviseStats represents fadvise system call statistics
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| total_calls | [uint64](#uint64) |  | Total number of fadvise calls |
+| success_calls | [uint64](#uint64) |  | Number of successful calls |
+| failed_calls | [uint64](#uint64) |  | Number of failed calls |
+| advice_counts | [FadviseStats.AdviceCountsEntry](#banyandb-ebpf-v1-FadviseStats-AdviceCountsEntry) | repeated | Breakdown by advice type |
+| process_stats | [ProcessFadviseStats](#banyandb-ebpf-v1-ProcessFadviseStats) | repeated | Per-process statistics |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-FadviseStats-AdviceCountsEntry"></a>
+
+### FadviseStats.AdviceCountsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-IOStats"></a>
+
+### IOStats
+IOStats represents I/O monitoring statistics
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| fadvise | [FadviseStats](#banyandb-ebpf-v1-FadviseStats) |  | fadvise statistics |
+| cache | [CacheStats](#banyandb-ebpf-v1-CacheStats) |  | Cache statistics |
+| memory | [MemoryStats](#banyandb-ebpf-v1-MemoryStats) |  | Memory reclaim statistics |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-MemoryStats"></a>
+
+### MemoryStats
+MemoryStats represents memory reclaim statistics
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| lru_pages_scanned | [uint64](#uint64) |  | Pages scanned by LRU |
+| pages_reclaimed | [uint64](#uint64) |  | Pages reclaimed |
+| reclaim_efficiency_percent | [double](#double) |  | Reclaim efficiency percentage |
+| direct_reclaim_processes | [uint32](#uint32) |  | Number of processes in direct reclaim |
+| kswapd_wakeups | [uint64](#uint64) |  | Number of kswapd wakeups |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-Metric"></a>
+
+### Metric
+Metric represents a single metric data point
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | Name of the metric |
+| value | [double](#double) |  | Value of the metric |
+| type | [MetricType](#banyandb-ebpf-v1-MetricType) |  | Type of the metric (counter, gauge, histogram) |
+| labels | [Metric.LabelsEntry](#banyandb-ebpf-v1-Metric-LabelsEntry) | repeated | Labels associated with the metric |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Timestamp when the metric was collected |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-Metric-LabelsEntry"></a>
+
+### Metric.LabelsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-MetricSet"></a>
+
+### MetricSet
+MetricSet represents a collection of metrics from a module
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| module_name | [string](#string) |  | Module name that generated these metrics |
+| metrics | [Metric](#banyandb-ebpf-v1-Metric) | repeated | List of metrics |
+| collected_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Collection timestamp |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-ModuleStatus"></a>
+
+### ModuleStatus
+ModuleStatus represents the status of an eBPF module
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | Module name |
+| enabled | [bool](#bool) |  | Whether the module is enabled |
+| running | [bool](#bool) |  | Whether the module is currently running |
+| last_error | [string](#string) |  | Last error message if any |
+| metric_count | [uint32](#uint32) |  | Number of metrics collected |
+| last_collected | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Last collection time |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-ProcessFadviseStats"></a>
+
+### ProcessFadviseStats
+ProcessFadviseStats represents per-process fadvise statistics
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| pid | [uint32](#uint32) |  | Process ID |
+| comm | [string](#string) |  | Process name (command) |
+| call_count | [uint64](#uint64) |  | Number of fadvise calls |
+| success_count | [uint64](#uint64) |  | Success count |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-ebpf-v1-MetricType"></a>
+
+### MetricType
+MetricType defines the type of metric
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| METRIC_TYPE_UNSPECIFIED | 0 |  |
+| METRIC_TYPE_COUNTER | 1 |  |
+| METRIC_TYPE_GAUGE | 2 |  |
+| METRIC_TYPE_HISTOGRAM | 3 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_ebpf_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/ebpf/v1/rpc.proto
+
+
+
+<a name="banyandb-ebpf-v1-ConfigureModuleRequest"></a>
+
+### ConfigureModuleRequest
+ConfigureModuleRequest configures an eBPF module
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| module | [string](#string) |  | Module name |
+| enabled | [bool](#bool) |  | Enable or disable the module |
+| config_json | [string](#string) |  | Module-specific configuration (JSON) |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-ConfigureModuleResponse"></a>
+
+### ConfigureModuleResponse
+ConfigureModuleResponse confirms module configuration
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  | Whether configuration was successful |
+| error | [string](#string) |  | Error message if failed |
+| status | [ModuleStatus](#banyandb-ebpf-v1-ModuleStatus) |  | Updated module status |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-GetIOStatsRequest"></a>
+
+### GetIOStatsRequest
+GetIOStatsRequest requests I/O statistics
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| include_process_stats | [bool](#bool) |  | Include per-process statistics |
+| pids | [uint32](#uint32) | repeated | Filter by process IDs (empty = all) |
+| time_range | [TimeRange](#banyandb-ebpf-v1-TimeRange) |  | Time range for statistics |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-GetIOStatsResponse"></a>
+
+### GetIOStatsResponse
+GetIOStatsResponse contains I/O statistics
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| stats | [IOStats](#banyandb-ebpf-v1-IOStats) |  | I/O statistics |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Collection timestamp |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-GetMetricsRequest"></a>
+
+### GetMetricsRequest
+GetMetricsRequest requests metrics from specified modules
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| modules | [string](#string) | repeated | Module names to retrieve metrics from (empty = all modules) |
+| label_filters | [GetMetricsRequest.LabelFiltersEntry](#banyandb-ebpf-v1-GetMetricsRequest-LabelFiltersEntry) | repeated | Include only metrics matching these labels |
+| time_range | [TimeRange](#banyandb-ebpf-v1-TimeRange) |  | Time range for metrics (optional) |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-GetMetricsRequest-LabelFiltersEntry"></a>
+
+### GetMetricsRequest.LabelFiltersEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-GetMetricsResponse"></a>
+
+### GetMetricsResponse
+GetMetricsResponse contains requested metrics
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metric_sets | [MetricSet](#banyandb-ebpf-v1-MetricSet) | repeated | Metric sets from requested modules |
+| total_metrics | [uint32](#uint32) |  | Total number of metrics returned |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Response timestamp |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-GetModuleStatusRequest"></a>
+
+### GetModuleStatusRequest
+GetModuleStatusRequest requests module status
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| modules | [string](#string) | repeated | Module names to check (empty = all) |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-GetModuleStatusResponse"></a>
+
+### GetModuleStatusResponse
+GetModuleStatusResponse contains module status information
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| modules | [ModuleStatus](#banyandb-ebpf-v1-ModuleStatus) | repeated | Status of requested modules |
+| system_status | [SystemStatus](#banyandb-ebpf-v1-SystemStatus) |  | Overall system status |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-HealthResponse"></a>
+
+### HealthResponse
+HealthResponse indicates service health
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| status | [HealthStatus](#banyandb-ebpf-v1-HealthStatus) |  | Health status |
+| message | [string](#string) |  | Human-readable status message |
+| version | [string](#string) |  | Service version |
+| uptime_seconds | [uint64](#uint64) |  | Service uptime in seconds |
+| last_error | [string](#string) |  | Last error if any |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-StreamMetricsRequest"></a>
+
+### StreamMetricsRequest
+StreamMetricsRequest configures metric streaming
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| modules | [string](#string) | repeated | Module names to stream (empty = all) |
+| interval_seconds | [uint32](#uint32) |  | Streaming interval in seconds |
+| label_filters | [StreamMetricsRequest.LabelFiltersEntry](#banyandb-ebpf-v1-StreamMetricsRequest-LabelFiltersEntry) | repeated | Include only metrics matching these labels |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-StreamMetricsRequest-LabelFiltersEntry"></a>
+
+### StreamMetricsRequest.LabelFiltersEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-SystemStatus"></a>
+
+### SystemStatus
+SystemStatus represents overall system status
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ebpf_supported | [bool](#bool) |  | Whether eBPF is supported on this system |
+| kernel_version | [string](#string) |  | Kernel version |
+| active_modules | [uint32](#uint32) |  | Number of active modules |
+| total_metrics | [uint32](#uint32) |  | Total metrics being collected |
+| uptime_seconds | [uint64](#uint64) |  | System uptime in seconds |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-TimeRange"></a>
+
+### TimeRange
+TimeRange specifies a time range for filtering
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| start | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Start time (inclusive) |
+| end | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | End time (exclusive) |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-ebpf-v1-HealthStatus"></a>
+
+### HealthStatus
+HealthStatus enumeration
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| HEALTH_STATUS_UNSPECIFIED | 0 |  |
+| HEALTH_STATUS_HEALTHY | 1 |  |
+| HEALTH_STATUS_DEGRADED | 2 |  |
+| HEALTH_STATUS_UNHEALTHY | 3 |  |
+
+
+ 
+
+ 
+
+
+<a name="banyandb-ebpf-v1-EBPFMetricsService"></a>
+
+### EBPFMetricsService
+EBPFMetricsService provides access to eBPF-collected metrics
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetMetrics | [GetMetricsRequest](#banyandb-ebpf-v1-GetMetricsRequest) | [GetMetricsResponse](#banyandb-ebpf-v1-GetMetricsResponse) | GetMetrics retrieves current metrics from all modules |
+| StreamMetrics | [StreamMetricsRequest](#banyandb-ebpf-v1-StreamMetricsRequest) | [MetricSet](#banyandb-ebpf-v1-MetricSet) stream | StreamMetrics streams metrics updates in real-time |
+| GetIOStats | [GetIOStatsRequest](#banyandb-ebpf-v1-GetIOStatsRequest) | [GetIOStatsResponse](#banyandb-ebpf-v1-GetIOStatsResponse) | GetIOStats retrieves detailed I/O statistics |
+| GetModuleStatus | [GetModuleStatusRequest](#banyandb-ebpf-v1-GetModuleStatusRequest) | [GetModuleStatusResponse](#banyandb-ebpf-v1-GetModuleStatusResponse) | GetModuleStatus retrieves status of eBPF modules |
+| ConfigureModule | [ConfigureModuleRequest](#banyandb-ebpf-v1-ConfigureModuleRequest) | [ConfigureModuleResponse](#banyandb-ebpf-v1-ConfigureModuleResponse) | ConfigureModule enables or disables an eBPF module |
+| GetHealth | [.google.protobuf.Empty](#google-protobuf-Empty) | [HealthResponse](#banyandb-ebpf-v1-HealthResponse) | Health check for the eBPF sidecar service |
 
  
 
