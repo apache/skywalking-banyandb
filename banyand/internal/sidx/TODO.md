@@ -156,16 +156,16 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ## Phase 3: Mock Implementations 🔥 **NEW - FOR EARLY TESTING**
 
-### 3.1 Mock SIDX Implementation (`mock_sidx.go`)
-- [ ] Create in-memory mock of main SIDX interface
-- [ ] Implement Write() with basic in-memory storage
-- [ ] Implement Query() with linear search and filtering
-- [ ] Add configurable delays and error injection
-- [ ] **Test Cases**:
-  - [ ] Mock maintains data consistency
-  - [ ] Write/read round-trip works correctly
-  - [ ] Query filtering produces correct results
-  - [ ] Error injection works as expected
+### 3.1 Mock SIDX Implementation (`mock_sidx.go`) ✅
+- [x] Create in-memory mock of main SIDX interface
+- [x] Implement Write() with basic in-memory storage
+- [x] Implement Query() with linear search and filtering
+- [x] Add configurable delays and error injection
+- [x] **Test Cases**:
+  - [x] Mock maintains data consistency
+  - [x] Write/read round-trip works correctly
+  - [x] Query filtering produces correct results
+  - [x] Error injection works as expected
 
 ### 3.2 Mock Component Implementations (`mock_components.go`)
 - [ ] Create mock Writer with element accumulation
