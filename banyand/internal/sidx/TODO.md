@@ -214,23 +214,18 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Element addition and retrieval
   - [x] Memory usage tracking accuracy
 
-### 4.2 Block Writer (`block_writer.go`) 🔥 - DESIGN COMPLETED ✅
-- [ ] **Complete block writer design added to DESIGN.md**
-- [ ] **Multi-file writing**: meta.bin, primary.bin data.bin, keys.bin, *.td, *.tf, *.tm files
-- [ ] **Compression**: zstd compression for data payloads
-- [ ] **Write tracking**: Track bytes written per file
-- [ ] **Memory management**: Object pooling with reset() methods
-- [ ] **Atomic operations**: mustWriteTo() for block serialization
-- [ ] **Implementation Tasks**:
-  - [ ] Create block_writer.go with core writer structure
-  - [ ] Implement writeUserKeys(), writeData(), writeTags()
-  - [ ] Add compression/decompression support
-  - [ ] Implement write tracking and position management
-- [ ] **Test Cases**:
-  - [ ] Block serialization with various data sizes
-  - [ ] Compression ratios meet expectations
-  - [ ] Data integrity after compression/decompression
-  - [ ] Block writer reuse and pooling
+### 4.2 Block Writer (`block_writer.go`) ✅
+- [x] **Complete block writer design added to DESIGN.md**
+- [x] **Multi-file writing**: meta.bin, primary.bin data.bin, keys.bin, *.td, *.tf, *.tm files
+- [x] **Compression**: zstd compression for data payloads
+- [x] **Write tracking**: Track bytes written per file
+- [x] **Memory management**: Object pooling with reset() methods
+- [x] **Atomic operations**: mustWriteTo() for block serialization
+- [x] **Test Cases**:
+  - [x] Block serialization with various data sizes
+  - [x] Compression ratios meet expectations
+  - [x] Data integrity after compression/decompression
+  - [x] Block writer reuse and pooling
 
 ### 4.3 Element Sorting (`elements.go`)
 - [ ] Sort by seriesID first, then userKey

@@ -107,9 +107,9 @@ func (p *part) loadPartMetadata() error {
 	if err == nil {
 		// Parse JSON manifest
 		pm := generatePartMetadata()
-		if err := json.Unmarshal(manifestData, pm); err != nil {
+		if unmarshalErr := json.Unmarshal(manifestData, pm); unmarshalErr != nil {
 			releasePartMetadata(pm)
-			return fmt.Errorf("failed to unmarshal manifest.json: %w", err)
+			return fmt.Errorf("failed to unmarshal manifest.json: %w", unmarshalErr)
 		}
 		p.partMetadata = pm
 		return nil
@@ -419,8 +419,7 @@ func (mp *memPart) reset() {
 	}
 }
 
-// mustInitFromElements initializes the memory part from sorted elements.
-// This method will be completed when blockWriter is implemented.
+// mustInitFromElements initializes the memory part from sorted elements using blockWriter.
 func (mp *memPart) mustInitFromElements(es *elements) {
 	mp.reset()
 
@@ -431,16 +430,50 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 	// Sort elements by seriesID first, then by user key
 	sort.Sort(es)
 
-	// TODO: Initialize using blockWriter when implemented in 4.2
-	// For now, we prepare the structure
-
-	// Set basic metadata
+	// Initialize part metadata
 	if mp.partMetadata == nil {
 		mp.partMetadata = generatePartMetadata()
 	}
-	mp.partMetadata.TotalCount = uint64(len(es.userKeys))
-	mp.partMetadata.MinKey = es.userKeys[0]
-	mp.partMetadata.MaxKey = es.userKeys[len(es.userKeys)-1]
+
+	// Initialize block writer for memory part
+	bw := generateBlockWriter()
+	defer releaseBlockWriter(bw)
+
+	bw.MustInitForMemPart(mp)
+
+	// Group elements by seriesID and write to blocks
+	currentSeriesID := es.seriesIDs[0]
+	blockStart := 0
+
+	for i := 1; i <= len(es.seriesIDs); i++ {
+		// Process block when series changes or at end
+		if i == len(es.seriesIDs) || es.seriesIDs[i] != currentSeriesID {
+			// Extract elements for current series
+			seriesUserKeys := es.userKeys[blockStart:i]
+			seriesElementIDs := make([]uint64, i-blockStart)
+			for j := range seriesElementIDs {
+				seriesElementIDs[j] = uint64(blockStart + j)
+			}
+			seriesTags := es.tags[blockStart:i]
+
+			// Write elements for this series
+			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesElementIDs, seriesTags)
+
+			if i < len(es.seriesIDs) {
+				currentSeriesID = es.seriesIDs[i]
+				blockStart = i
+			}
+		}
+	}
+
+	// Flush the block writer to finalize metadata
+	bw.Flush(mp.partMetadata)
+
+	// Update key range in part metadata
+	if len(es.userKeys) > 0 {
+		mp.partMetadata.MinKey = es.userKeys[0]
+		mp.partMetadata.MaxKey = es.userKeys[len(es.userKeys)-1]
+	}
 }
 
 // mustFlush flushes the memory part to disk with tag-based file organization.
