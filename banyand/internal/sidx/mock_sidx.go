@@ -31,22 +31,22 @@ import (
 // MockSIDX provides an in-memory mock implementation of the SIDX interface
 // for early testing and integration development.
 type MockSIDX struct {
-	mu             sync.RWMutex
-	storage        map[string][]mockElement // Key: name, Value: sorted elements
+	storage        map[string][]mockElement
 	stats          Stats
-	closed         atomic.Bool
 	config         MockConfig
 	lastFlushTime  int64
 	lastMergeTime  int64
 	elementCounter atomic.Int64
+	mu             sync.RWMutex
+	closed         atomic.Bool
 }
 
 // mockElement represents a stored element in the mock implementation.
 type mockElement struct {
-	SeriesID common.SeriesID
-	Key      int64
 	Data     []byte
 	Tags     []tag
+	SeriesID common.SeriesID
+	Key      int64
 }
 
 // MockConfig provides configuration options for the mock implementation.
@@ -100,7 +100,7 @@ func NewMockSIDX(config MockConfig) *MockSIDX {
 
 // Write performs batch write operations with in-memory storage.
 // Elements are stored in a sorted slice by SeriesID, then by Key.
-func (m *MockSIDX) Write(ctx context.Context, reqs []WriteRequest) error {
+func (m *MockSIDX) Write(_ context.Context, reqs []WriteRequest) error {
 	if m.closed.Load() {
 		return fmt.Errorf("SIDX is closed")
 	}
@@ -184,7 +184,7 @@ func (m *MockSIDX) Write(ctx context.Context, reqs []WriteRequest) error {
 }
 
 // Query executes a query with linear search and filtering.
-func (m *MockSIDX) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+func (m *MockSIDX) Query(_ context.Context, req QueryRequest) (QueryResult, error) {
 	if m.closed.Load() {
 		return nil, fmt.Errorf("SIDX is closed")
 	}
@@ -226,7 +226,7 @@ func (m *MockSIDX) Query(ctx context.Context, req QueryRequest) (QueryResult, er
 }
 
 // Stats returns current system statistics.
-func (m *MockSIDX) Stats(ctx context.Context) (Stats, error) {
+func (m *MockSIDX) Stats(_ context.Context) (Stats, error) {
 	if m.closed.Load() {
 		return Stats{}, fmt.Errorf("SIDX is closed")
 	}
@@ -330,10 +330,10 @@ func (m *MockSIDX) updateMemoryUsageLocked() {
 
 // mockSIDXQueryResult implements QueryResult for the mock implementation.
 type mockSIDXQueryResult struct {
+	stats    *Stats
 	elements []mockElement
 	request  QueryRequest
 	position int
-	stats    *Stats
 	finished bool
 }
 

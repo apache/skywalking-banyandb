@@ -600,7 +600,7 @@ func TestMockComponents_ConcurrentOperations(t *testing.T) {
 
 func TestMockComponents_PerformanceCharacteristics(t *testing.T) {
 	// This test documents the performance characteristics of mock components
-	
+
 	suite := NewMockComponentSuite()
 	ctx := context.Background()
 
@@ -621,7 +621,7 @@ func TestMockComponents_PerformanceCharacteristics(t *testing.T) {
 	writeDuration := time.Since(start)
 
 	writeRate := float64(numElements) / writeDuration.Seconds()
-	t.Logf("Write performance: %d elements in %v (%.0f elem/sec)", 
+	t.Logf("Write performance: %d elements in %v (%.0f elem/sec)",
 		numElements, writeDuration, writeRate)
 
 	// Sync and measure query performance

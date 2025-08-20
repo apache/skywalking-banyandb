@@ -20,7 +20,6 @@ package sidx
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"runtime"
 	"sync"
 	"time"
@@ -34,25 +33,19 @@ import (
 type IntegrationTestFramework struct {
 	sidx        SIDX
 	components  *MockComponentSuite
-	config      FrameworkConfig
 	scenarios   []TestScenario
 	benchmarks  []Benchmark
 	stressTests []StressTest
+	config      FrameworkConfig
 }
 
 // FrameworkConfig provides configuration options for the integration test framework.
 type FrameworkConfig struct {
-	// EnableVerboseLogging enables detailed logging of test operations
-	EnableVerboseLogging bool
-	// MaxConcurrency limits the number of concurrent operations in stress tests
-	MaxConcurrency int
-	// DefaultTimeout sets the default timeout for all operations
-	DefaultTimeout time.Duration
-	// BenchmarkDuration sets the duration for benchmark tests
-	BenchmarkDuration time.Duration
-	// StressDuration sets the duration for stress tests
-	StressDuration time.Duration
-	// EnableMemoryProfiling enables memory usage tracking during tests
+	MaxConcurrency        int
+	DefaultTimeout        time.Duration
+	BenchmarkDuration     time.Duration
+	StressDuration        time.Duration
+	EnableVerboseLogging  bool
 	EnableMemoryProfiling bool
 }
 
@@ -70,33 +63,33 @@ func DefaultFrameworkConfig() FrameworkConfig {
 
 // TestScenario represents a specific use case test scenario.
 type TestScenario struct {
-	Name        string
-	Description string
 	Setup       func(ctx context.Context, framework *IntegrationTestFramework) error
 	Execute     func(ctx context.Context, framework *IntegrationTestFramework) error
 	Validate    func(ctx context.Context, framework *IntegrationTestFramework) error
 	Cleanup     func(ctx context.Context, framework *IntegrationTestFramework) error
+	Name        string
+	Description string
 }
 
 // Benchmark represents a performance benchmark test.
 type Benchmark struct {
-	Name        string
-	Description string
 	Setup       func(ctx context.Context, framework *IntegrationTestFramework) error
 	Execute     func(ctx context.Context, framework *IntegrationTestFramework) BenchmarkResult
 	Cleanup     func(ctx context.Context, framework *IntegrationTestFramework) error
+	Name        string
+	Description string
 }
 
 // StressTest represents a stress/load test configuration.
 type StressTest struct {
-	Name         string
-	Description  string
-	Concurrency  int
-	Operations   int
-	Setup        func(ctx context.Context, framework *IntegrationTestFramework) error
-	Execute      func(ctx context.Context, framework *IntegrationTestFramework, workerID int) error
-	Validate     func(ctx context.Context, framework *IntegrationTestFramework) error
-	Cleanup      func(ctx context.Context, framework *IntegrationTestFramework) error
+	Setup       func(ctx context.Context, framework *IntegrationTestFramework) error
+	Execute     func(ctx context.Context, framework *IntegrationTestFramework, workerID int) error
+	Validate    func(ctx context.Context, framework *IntegrationTestFramework) error
+	Cleanup     func(ctx context.Context, framework *IntegrationTestFramework) error
+	Name        string
+	Description string
+	Concurrency int
+	Operations  int
 }
 
 // BenchmarkResult contains the results of a benchmark test.
@@ -125,34 +118,34 @@ type StressTestResult struct {
 
 // ScenarioResult contains the results of a scenario test.
 type ScenarioResult struct {
-	Name       string
-	Success    bool
-	Duration   time.Duration
 	Error      error
+	Name       string
+	Duration   time.Duration
 	MemoryUsed int64
+	Success    bool
 }
 
 // NewIntegrationTestFramework creates a new integration test framework with mock implementations.
 func NewIntegrationTestFramework(config FrameworkConfig) *IntegrationTestFramework {
 	components := NewMockComponentSuite()
-	
+
 	// Create a mock SIDX that properly integrates with components
 	mockSIDX := NewMockSIDX(DefaultMockConfig())
-	
+
 	framework := &IntegrationTestFramework{
-		sidx:       mockSIDX,
-		components: components,
-		config:     config,
-		scenarios:  make([]TestScenario, 0),
-		benchmarks: make([]Benchmark, 0),
+		sidx:        mockSIDX,
+		components:  components,
+		config:      config,
+		scenarios:   make([]TestScenario, 0),
+		benchmarks:  make([]Benchmark, 0),
 		stressTests: make([]StressTest, 0),
 	}
-	
+
 	// Register default scenarios, benchmarks, and stress tests
 	framework.registerDefaultScenarios()
 	framework.registerDefaultBenchmarks()
 	framework.registerDefaultStressTests()
-	
+
 	return framework
 }
 
@@ -186,82 +179,82 @@ func (itf *IntegrationTestFramework) RegisterStressTest(stressTest StressTest) {
 // RunScenarios executes all registered test scenarios.
 func (itf *IntegrationTestFramework) RunScenarios(ctx context.Context) ([]ScenarioResult, error) {
 	results := make([]ScenarioResult, 0, len(itf.scenarios))
-	
+
 	for _, scenario := range itf.scenarios {
 		result := itf.runSingleScenario(ctx, scenario)
 		results = append(results, result)
-		
+
 		if itf.config.EnableVerboseLogging {
-			fmt.Printf("Scenario %s: %v (Duration: %v)\n", 
+			fmt.Printf("Scenario %s: %v (Duration: %v)\n",
 				scenario.Name, result.Success, result.Duration)
 			if result.Error != nil {
 				fmt.Printf("  Error: %v\n", result.Error)
 			}
 		}
 	}
-	
+
 	return results, nil
 }
 
 // RunBenchmarks executes all registered benchmarks.
 func (itf *IntegrationTestFramework) RunBenchmarks(ctx context.Context) (map[string]BenchmarkResult, error) {
 	results := make(map[string]BenchmarkResult)
-	
+
 	for _, benchmark := range itf.benchmarks {
 		result := itf.runSingleBenchmark(ctx, benchmark)
 		results[benchmark.Name] = result
-		
+
 		if itf.config.EnableVerboseLogging {
 			fmt.Printf("Benchmark %s: %.2f ops/sec (P95: %v, P99: %v)\n",
 				benchmark.Name, result.OperationsPerSecond, result.LatencyP95, result.LatencyP99)
 		}
 	}
-	
+
 	return results, nil
 }
 
 // RunStressTests executes all registered stress tests.
 func (itf *IntegrationTestFramework) RunStressTests(ctx context.Context) (map[string]StressTestResult, error) {
 	results := make(map[string]StressTestResult)
-	
+
 	for _, stressTest := range itf.stressTests {
 		result := itf.runSingleStressTest(ctx, stressTest)
 		results[stressTest.Name] = result
-		
+
 		if itf.config.EnableVerboseLogging {
 			fmt.Printf("Stress Test %s: %.2f ops/sec (Error Rate: %.2f%%)\n",
 				stressTest.Name, result.ThroughputOpsPerS, result.ErrorRate*100)
 		}
 	}
-	
+
 	return results, nil
 }
 
 // RunAll executes all scenarios, benchmarks, and stress tests.
 func (itf *IntegrationTestFramework) RunAll(ctx context.Context) (map[string]interface{}, error) {
 	results := make(map[string]interface{})
-	
+
 	// Run scenarios
 	scenarioResults, err := itf.RunScenarios(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to run scenarios: %w", err)
 	}
 	results["scenarios"] = scenarioResults
-	
+
 	// Run benchmarks
 	benchmarkResults, err := itf.RunBenchmarks(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to run benchmarks: %w", err)
 	}
 	results["benchmarks"] = benchmarkResults
-	
+
 	// Run stress tests
 	stressResults, err := itf.RunStressTests(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to run stress tests: %w", err)
 	}
 	results["stress_tests"] = stressResults
-	
+
 	return results, nil
 }
 
@@ -269,17 +262,17 @@ func (itf *IntegrationTestFramework) RunAll(ctx context.Context) (map[string]int
 func (itf *IntegrationTestFramework) runSingleScenario(ctx context.Context, scenario TestScenario) ScenarioResult {
 	start := time.Now()
 	var memBefore, memAfter runtime.MemStats
-	
+
 	if itf.config.EnableMemoryProfiling {
 		runtime.GC()
 		runtime.ReadMemStats(&memBefore)
 	}
-	
+
 	result := ScenarioResult{
 		Name:    scenario.Name,
 		Success: false,
 	}
-	
+
 	// Setup phase
 	if scenario.Setup != nil {
 		if err := scenario.Setup(ctx, itf); err != nil {
@@ -288,7 +281,7 @@ func (itf *IntegrationTestFramework) runSingleScenario(ctx context.Context, scen
 			return result
 		}
 	}
-	
+
 	// Execute phase
 	if scenario.Execute != nil {
 		if err := scenario.Execute(ctx, itf); err != nil {
@@ -297,7 +290,7 @@ func (itf *IntegrationTestFramework) runSingleScenario(ctx context.Context, scen
 			return result
 		}
 	}
-	
+
 	// Validate phase
 	if scenario.Validate != nil {
 		if err := scenario.Validate(ctx, itf); err != nil {
@@ -306,7 +299,7 @@ func (itf *IntegrationTestFramework) runSingleScenario(ctx context.Context, scen
 			return result
 		}
 	}
-	
+
 	// Cleanup phase
 	if scenario.Cleanup != nil {
 		if err := scenario.Cleanup(ctx, itf); err != nil {
@@ -315,83 +308,88 @@ func (itf *IntegrationTestFramework) runSingleScenario(ctx context.Context, scen
 			return result
 		}
 	}
-	
+
 	result.Success = true
 	result.Duration = time.Since(start)
-	
+
 	if itf.config.EnableMemoryProfiling {
 		runtime.GC()
 		runtime.ReadMemStats(&memAfter)
 		result.MemoryUsed = int64(memAfter.Alloc - memBefore.Alloc)
 	}
-	
+
 	return result
 }
 
 // runSingleBenchmark executes a single benchmark.
 func (itf *IntegrationTestFramework) runSingleBenchmark(ctx context.Context, benchmark Benchmark) BenchmarkResult {
 	var memBefore, memAfter runtime.MemStats
-	
+
 	if itf.config.EnableMemoryProfiling {
 		runtime.GC()
 		runtime.ReadMemStats(&memBefore)
 	}
-	
+
 	// Setup phase
 	if benchmark.Setup != nil {
 		if err := benchmark.Setup(ctx, itf); err != nil {
 			return BenchmarkResult{ErrorCount: 1}
 		}
 	}
-	
+
 	// Execute benchmark
 	result := benchmark.Execute(ctx, itf)
-	
+
 	// Cleanup phase
 	if benchmark.Cleanup != nil {
-		benchmark.Cleanup(ctx, itf)
+		if err := benchmark.Cleanup(ctx, itf); err != nil {
+			// Log cleanup error but don't fail the benchmark
+			if itf.config.EnableVerboseLogging {
+				fmt.Printf("Benchmark cleanup error: %v\n", err)
+			}
+		}
 	}
-	
+
 	if itf.config.EnableMemoryProfiling {
 		runtime.GC()
 		runtime.ReadMemStats(&memAfter)
 		result.MemoryUsedBytes = int64(memAfter.Alloc - memBefore.Alloc)
 	}
-	
+
 	return result
 }
 
 // runSingleStressTest executes a single stress test.
 func (itf *IntegrationTestFramework) runSingleStressTest(ctx context.Context, stressTest StressTest) StressTestResult {
 	var memBefore, memAfter runtime.MemStats
-	
+
 	if itf.config.EnableMemoryProfiling {
 		runtime.GC()
 		runtime.ReadMemStats(&memBefore)
 	}
-	
+
 	// Setup phase
 	if stressTest.Setup != nil {
 		if err := stressTest.Setup(ctx, itf); err != nil {
 			return StressTestResult{FailedOps: 1}
 		}
 	}
-	
+
 	// Execute stress test
 	var wg sync.WaitGroup
 	var totalOps, successOps, failedOps int64
-	
+
 	start := time.Now()
 	concurrency := stressTest.Concurrency
 	if concurrency <= 0 {
 		concurrency = itf.config.MaxConcurrency
 	}
-	
+
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			
+
 			opsPerWorker := stressTest.Operations / concurrency
 			for j := 0; j < opsPerWorker; j++ {
 				totalOps++
@@ -403,20 +401,30 @@ func (itf *IntegrationTestFramework) runSingleStressTest(ctx context.Context, st
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
 	duration := time.Since(start)
-	
+
 	// Validate phase
 	if stressTest.Validate != nil {
-		stressTest.Validate(ctx, itf)
+		if err := stressTest.Validate(ctx, itf); err != nil {
+			// Log validation error but don't fail the stress test
+			if itf.config.EnableVerboseLogging {
+				fmt.Printf("Stress test validation error: %v\n", err)
+			}
+		}
 	}
-	
+
 	// Cleanup phase
 	if stressTest.Cleanup != nil {
-		stressTest.Cleanup(ctx, itf)
+		if err := stressTest.Cleanup(ctx, itf); err != nil {
+			// Log cleanup error but don't fail the stress test
+			if itf.config.EnableVerboseLogging {
+				fmt.Printf("Stress test cleanup error: %v\n", err)
+			}
+		}
 	}
-	
+
 	result := StressTestResult{
 		TotalOperations:   totalOps,
 		SuccessfulOps:     successOps,
@@ -426,13 +434,13 @@ func (itf *IntegrationTestFramework) runSingleStressTest(ctx context.Context, st
 		ThroughputOpsPerS: float64(totalOps) / duration.Seconds(),
 		ErrorRate:         float64(failedOps) / float64(totalOps),
 	}
-	
+
 	if itf.config.EnableMemoryProfiling {
 		runtime.GC()
 		runtime.ReadMemStats(&memAfter)
 		result.MemoryUsedBytes = int64(memAfter.Alloc - memBefore.Alloc)
 	}
-	
+
 	return result
 }
 
@@ -449,12 +457,12 @@ func (itf *IntegrationTestFramework) GetComponents() *MockComponentSuite {
 // GenerateTestData creates test data for scenarios and benchmarks.
 func (itf *IntegrationTestFramework) GenerateTestData(seriesCount, elementsPerSeries int) []WriteRequest {
 	var requests []WriteRequest
-	
+
 	for seriesID := 1; seriesID <= seriesCount; seriesID++ {
 		for i := 0; i < elementsPerSeries; i++ {
 			requests = append(requests, WriteRequest{
 				SeriesID: common.SeriesID(seriesID),
-				Key:      int64(time.Now().UnixNano() + int64(i*1000)), // Sequential keys
+				Key:      time.Now().UnixNano() + int64(i*1000), // Sequential keys
 				Data:     []byte(fmt.Sprintf(`{"series":%d,"seq":%d,"timestamp":%d}`, seriesID, i, time.Now().UnixNano())),
 				Tags: []tag{
 					{
@@ -479,7 +487,7 @@ func (itf *IntegrationTestFramework) GenerateTestData(seriesCount, elementsPerSe
 			})
 		}
 	}
-	
+
 	return requests
 }
 
@@ -498,7 +506,7 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 	itf.RegisterScenario(TestScenario{
 		Name:        "BasicWriteRead",
 		Description: "Write elements and read them back",
-		Setup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Setup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 		Execute: func(ctx context.Context, framework *IntegrationTestFramework) error {
@@ -507,19 +515,19 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			if err := framework.sidx.Write(ctx, requests); err != nil {
 				return fmt.Errorf("write failed: %w", err)
 			}
-			
+
 			// Query the data back (use the series name that was written)
 			queryReq := QueryRequest{
 				Name:           "series_1", // Match the key used in MockSIDX write
 				MaxElementSize: 100,
 			}
-			
+
 			result, err := framework.sidx.Query(ctx, queryReq)
 			if err != nil {
 				return fmt.Errorf("query failed: %w", err)
 			}
 			defer result.Release()
-			
+
 			// Count results
 			totalResults := 0
 			for {
@@ -532,11 +540,11 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 				}
 				totalResults += response.Len()
 			}
-			
+
 			if totalResults == 0 {
 				return fmt.Errorf("no results returned from query")
 			}
-			
+
 			return nil
 		},
 		Validate: func(ctx context.Context, framework *IntegrationTestFramework) error {
@@ -544,18 +552,18 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			if err != nil {
 				return fmt.Errorf("failed to get stats: %w", err)
 			}
-			
+
 			if stats.ElementCount == 0 {
 				return fmt.Errorf("no elements found in stats")
 			}
-			
+
 			return nil
 		},
-		Cleanup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Cleanup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 	})
-	
+
 	// Flush and Merge Scenario
 	itf.RegisterScenario(TestScenario{
 		Name:        "FlushAndMerge",
@@ -570,12 +578,12 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			if err := framework.sidx.Flush(); err != nil {
 				return fmt.Errorf("flush failed: %w", err)
 			}
-			
+
 			// Test merge
 			if err := framework.sidx.Merge(); err != nil {
 				return fmt.Errorf("merge failed: %w", err)
 			}
-			
+
 			return nil
 		},
 		Validate: func(ctx context.Context, framework *IntegrationTestFramework) error {
@@ -583,7 +591,7 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			if err != nil {
 				return fmt.Errorf("failed to get stats: %w", err)
 			}
-			
+
 			// Check that flush and merge timestamps are updated
 			if stats.LastFlushTime == 0 {
 				return fmt.Errorf("flush time not updated")
@@ -591,19 +599,19 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			if stats.LastMergeTime == 0 {
 				return fmt.Errorf("merge time not updated")
 			}
-			
+
 			return nil
 		},
-		Cleanup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Cleanup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 	})
-	
+
 	// Large Dataset Scenario
 	itf.RegisterScenario(TestScenario{
 		Name:        "LargeDataset",
 		Description: "Handle large datasets efficiently",
-		Setup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Setup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 		Execute: func(ctx context.Context, framework *IntegrationTestFramework) error {
@@ -612,19 +620,19 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			if err := framework.sidx.Write(ctx, requests); err != nil {
 				return fmt.Errorf("large write failed: %w", err)
 			}
-			
+
 			// Query with pagination
 			queryReq := QueryRequest{
 				Name:           "large-dataset-query",
 				MaxElementSize: 50,
 			}
-			
+
 			result, err := framework.sidx.Query(ctx, queryReq)
 			if err != nil {
 				return fmt.Errorf("large query failed: %w", err)
 			}
 			defer result.Release()
-			
+
 			// Process all results
 			totalResults := 0
 			for {
@@ -637,7 +645,7 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 				}
 				totalResults += response.Len()
 			}
-			
+
 			return nil
 		},
 		Validate: func(ctx context.Context, framework *IntegrationTestFramework) error {
@@ -645,14 +653,14 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			if err != nil {
 				return fmt.Errorf("failed to get stats: %w", err)
 			}
-			
+
 			if stats.ElementCount < 1000 {
 				return fmt.Errorf("expected at least 1000 elements, got %d", stats.ElementCount)
 			}
-			
+
 			return nil
 		},
-		Cleanup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Cleanup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 	})
@@ -664,34 +672,34 @@ func (itf *IntegrationTestFramework) registerDefaultBenchmarks() {
 	itf.RegisterBenchmark(Benchmark{
 		Name:        "WritePerformance",
 		Description: "Measure write throughput and latency",
-		Setup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Setup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 		Execute: func(ctx context.Context, framework *IntegrationTestFramework) BenchmarkResult {
 			const batchSize = 100
 			const numBatches = 100
-			
+
 			var latencies []time.Duration
 			var errorCount int64
-			
+
 			start := time.Now()
-			
+
 			for i := 0; i < numBatches; i++ {
 				requests := framework.GenerateTestData(1, batchSize)
-				
+
 				opStart := time.Now()
 				if err := framework.sidx.Write(ctx, requests); err != nil {
 					errorCount++
 				}
 				latencies = append(latencies, time.Since(opStart))
 			}
-			
+
 			duration := time.Since(start)
 			totalOps := int64(numBatches * batchSize)
-			
+
 			// Calculate percentiles
 			latencyP50, latencyP95, latencyP99 := calculatePercentiles(latencies)
-			
+
 			return BenchmarkResult{
 				OperationsPerSecond: float64(totalOps) / duration.Seconds(),
 				LatencyP50:          latencyP50,
@@ -702,11 +710,11 @@ func (itf *IntegrationTestFramework) registerDefaultBenchmarks() {
 				ErrorCount:          errorCount,
 			}
 		},
-		Cleanup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Cleanup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 	})
-	
+
 	// Query Performance Benchmark
 	itf.RegisterBenchmark(Benchmark{
 		Name:        "QueryPerformance",
@@ -718,26 +726,26 @@ func (itf *IntegrationTestFramework) registerDefaultBenchmarks() {
 		},
 		Execute: func(ctx context.Context, framework *IntegrationTestFramework) BenchmarkResult {
 			const numQueries = 100
-			
+
 			var latencies []time.Duration
 			var errorCount int64
 			var totalResults int64
-			
+
 			start := time.Now()
-			
+
 			for i := 0; i < numQueries; i++ {
 				queryReq := QueryRequest{
 					Name:           fmt.Sprintf("series_%d", (i%10)+1), // Query existing series
 					MaxElementSize: 50,
 				}
-				
+
 				opStart := time.Now()
 				result, err := framework.sidx.Query(ctx, queryReq)
 				if err != nil {
 					errorCount++
 					continue
 				}
-				
+
 				// Count results
 				for {
 					response := result.Pull()
@@ -751,15 +759,15 @@ func (itf *IntegrationTestFramework) registerDefaultBenchmarks() {
 					totalResults += int64(response.Len())
 				}
 				result.Release()
-				
+
 				latencies = append(latencies, time.Since(opStart))
 			}
-			
+
 			duration := time.Since(start)
-			
+
 			// Calculate percentiles
 			latencyP50, latencyP95, latencyP99 := calculatePercentiles(latencies)
-			
+
 			return BenchmarkResult{
 				OperationsPerSecond: float64(totalResults) / duration.Seconds(),
 				LatencyP50:          latencyP50,
@@ -770,7 +778,7 @@ func (itf *IntegrationTestFramework) registerDefaultBenchmarks() {
 				ErrorCount:          errorCount,
 			}
 		},
-		Cleanup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Cleanup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 	})
@@ -784,7 +792,7 @@ func (itf *IntegrationTestFramework) registerDefaultStressTests() {
 		Description: "Test concurrent write performance and stability",
 		Concurrency: 10,
 		Operations:  1000,
-		Setup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Setup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 		Execute: func(ctx context.Context, framework *IntegrationTestFramework, workerID int) error {
@@ -800,18 +808,18 @@ func (itf *IntegrationTestFramework) registerDefaultStressTests() {
 			if err != nil {
 				return fmt.Errorf("failed to get stats: %w", err)
 			}
-			
+
 			if stats.ElementCount == 0 {
 				return fmt.Errorf("no elements written during stress test")
 			}
-			
+
 			return nil
 		},
-		Cleanup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Cleanup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 	})
-	
+
 	// Mixed Operations Stress Test
 	itf.RegisterStressTest(StressTest{
 		Name:        "MixedOperations",
@@ -825,43 +833,44 @@ func (itf *IntegrationTestFramework) registerDefaultStressTests() {
 		},
 		Execute: func(ctx context.Context, framework *IntegrationTestFramework, workerID int) error {
 			// Randomly choose between write and read operations
-			if rand.Intn(2) == 0 {
+			// Use workerID to create deterministic but varied behavior
+			if workerID%2 == 0 {
 				// Write operation
 				requests := framework.GenerateTestData(1, 5)
 				for i := range requests {
 					requests[i].SeriesID = common.SeriesID(workerID*100 + int(requests[i].SeriesID))
 				}
 				return framework.sidx.Write(ctx, requests)
-			} else {
-				// Read operation
-				queryReq := QueryRequest{
-					Name:           fmt.Sprintf("stress-query-%d", workerID),
-					MaxElementSize: 20,
-				}
-				
-				result, err := framework.sidx.Query(ctx, queryReq)
-				if err != nil {
-					return err
-				}
-				defer result.Release()
-				
-				// Consume results
-				for {
-					response := result.Pull()
-					if response == nil {
-						break
-					}
-					if response.Error != nil {
-						return response.Error
-					}
-				}
-				return nil
 			}
-		},
-		Validate: func(ctx context.Context, framework *IntegrationTestFramework) error {
+
+			// Read operation
+			queryReq := QueryRequest{
+				Name:           fmt.Sprintf("stress-query-%d", workerID),
+				MaxElementSize: 20,
+			}
+
+			result, err := framework.sidx.Query(ctx, queryReq)
+			if err != nil {
+				return err
+			}
+			defer result.Release()
+
+			// Consume results
+			for {
+				response := result.Pull()
+				if response == nil {
+					break
+				}
+				if response.Error != nil {
+					return response.Error
+				}
+			}
 			return nil
 		},
-		Cleanup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Validate: func(_ context.Context, _ *IntegrationTestFramework) error {
+			return nil
+		},
+		Cleanup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return nil
 		},
 	})
@@ -872,11 +881,11 @@ func calculatePercentiles(latencies []time.Duration) (p50, p95, p99 time.Duratio
 	if len(latencies) == 0 {
 		return 0, 0, 0
 	}
-	
+
 	// Sort latencies
 	sortedLatencies := make([]time.Duration, len(latencies))
 	copy(sortedLatencies, latencies)
-	
+
 	// Simple insertion sort for small datasets
 	for i := 1; i < len(sortedLatencies); i++ {
 		key := sortedLatencies[i]
@@ -887,12 +896,12 @@ func calculatePercentiles(latencies []time.Duration) (p50, p95, p99 time.Duratio
 		}
 		sortedLatencies[j+1] = key
 	}
-	
+
 	n := len(sortedLatencies)
-	p50Index := (n*50/100) - 1
-	p95Index := (n*95/100) - 1
-	p99Index := (n*99/100) - 1
-	
+	p50Index := (n * 50 / 100) - 1
+	p95Index := (n * 95 / 100) - 1
+	p99Index := (n * 99 / 100) - 1
+
 	// Ensure indices don't go below 0 or above n-1
 	if p50Index < 0 {
 		p50Index = 0
@@ -912,15 +921,15 @@ func calculatePercentiles(latencies []time.Duration) (p50, p95, p99 time.Duratio
 	if p99Index >= n {
 		p99Index = n - 1
 	}
-	
+
 	// For P99 with small datasets, use the max element
 	if n <= 10 && p99Index < n-1 {
 		p99Index = n - 1
 	}
-	
+
 	p50 = sortedLatencies[p50Index]
 	p95 = sortedLatencies[p95Index]
 	p99 = sortedLatencies[p99Index]
-	
+
 	return p50, p95, p99
 }

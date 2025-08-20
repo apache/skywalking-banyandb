@@ -31,12 +31,12 @@ import (
 // MockWriter provides a mock implementation of the Writer interface
 // for testing and early integration development.
 type MockWriter struct {
-	mu            sync.RWMutex
 	elements      []WriteRequest
 	config        MockWriterConfig
 	writeCount    atomic.Int64
 	elementCount  atomic.Int64
 	lastWriteTime int64
+	mu            sync.RWMutex
 }
 
 // MockWriterConfig provides configuration options for the mock writer.
@@ -73,7 +73,7 @@ func NewMockWriter(config MockWriterConfig) *MockWriter {
 }
 
 // Write implements the Writer interface with element accumulation.
-func (mw *MockWriter) Write(ctx context.Context, reqs []WriteRequest) error {
+func (mw *MockWriter) Write(_ context.Context, reqs []WriteRequest) error {
 	if len(reqs) == 0 {
 		return nil
 	}
@@ -167,11 +167,11 @@ func (mw *MockWriter) SetErrorRate(rate int) {
 // MockQuerier provides a mock implementation of the Querier interface
 // for testing and early integration development.
 type MockQuerier struct {
-	mu           sync.RWMutex
-	elements     []WriteRequest
-	config       MockQuerierConfig
-	queryCount   atomic.Int64
+	elements      []WriteRequest
+	config        MockQuerierConfig
+	queryCount    atomic.Int64
 	lastQueryTime int64
+	mu            sync.RWMutex
 }
 
 // MockQuerierConfig provides configuration options for the mock querier.
@@ -222,7 +222,7 @@ func (mq *MockQuerier) SetElements(elements []WriteRequest) {
 }
 
 // Query implements the Querier interface with range filtering.
-func (mq *MockQuerier) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+func (mq *MockQuerier) Query(_ context.Context, req QueryRequest) (QueryResult, error) {
 	// Simulate artificial delay if configured
 	if mq.config.DelayMs > 0 {
 		time.Sleep(time.Duration(mq.config.DelayMs) * time.Millisecond)
@@ -271,7 +271,7 @@ func (mq *MockQuerier) Query(ctx context.Context, req QueryRequest) (QueryResult
 func (mq *MockQuerier) matchesQuery(elem WriteRequest, req QueryRequest) bool {
 	// Basic range filtering - in reality this would be more sophisticated
 	// For the mock, we'll match all elements unless specific filters are applied
-	
+
 	// Apply entity filtering if specified
 	if len(req.Entities) > 0 {
 		// Simplified entity matching for the mock
@@ -454,20 +454,20 @@ func (mf *MockFlusher) SetErrorRate(rate int) {
 // MockMerger provides a mock implementation of the Merger interface
 // for testing and early integration development.
 type MockMerger struct {
-	mu            sync.RWMutex
-	config        MockMergerConfig
-	mergeCount    atomic.Int64
-	lastMergeTime int64
 	consolidations []MergeConsolidation
+	config         MockMergerConfig
+	mergeCount     atomic.Int64
+	lastMergeTime  int64
+	mu             sync.RWMutex
 }
 
 // MergeConsolidation represents a simulated merge operation result.
 type MergeConsolidation struct {
-	Timestamp    time.Time
-	PartsInput   int
-	PartsOutput  int
+	Timestamp         time.Time
+	PartsInput        int
+	PartsOutput       int
 	ElementsProcessed int64
-	Duration     time.Duration
+	Duration          time.Duration
 }
 
 // MockMergerConfig provides configuration options for the mock merger.
@@ -524,12 +524,12 @@ func (mm *MockMerger) Merge() error {
 	}
 
 	// Simulate consolidation
-	inputParts := 3 + (int(time.Now().UnixNano()) % 5)  // 3-7 input parts
+	inputParts := 3 + (int(time.Now().UnixNano()) % 5) // 3-7 input parts
 	outputParts := int(float64(inputParts) * mm.config.ConsolidationRatio)
 	if outputParts < 1 {
 		outputParts = 1
 	}
-	elementsProcessed := int64(1000 + (time.Now().UnixNano() % 5000)) // 1000-6000 elements
+	elementsProcessed := 1000 + (time.Now().UnixNano() % 5000) // 1000-6000 elements
 
 	consolidation := MergeConsolidation{
 		Timestamp:         startTime,
