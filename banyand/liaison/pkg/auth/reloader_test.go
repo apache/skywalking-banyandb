@@ -92,12 +92,10 @@ users:
 	}
 	defer ar.Stop()
 
-	// 确认初始状态
 	if !ar.CheckUsernameAndPassword("alice", "secret") {
 		t.Fatalf("expected alice/secret to be valid before update")
 	}
 
-	// 修改配置文件
 	updatedYAML := `
 users:
   - username: "bob"
@@ -108,7 +106,6 @@ users:
 		t.Fatalf("failed to update config file: %v", err)
 	}
 
-	// 等待 updateCh 通知
 	select {
 	case <-ar.GetUpdateChannel():
 		// ok
@@ -116,7 +113,6 @@ users:
 		t.Fatalf("timed out waiting for update channel notification")
 	}
 
-	// 检查新配置是否生效
 	if ar.CheckUsernameAndPassword("alice", "secret") {
 		t.Errorf("alice should no longer be valid after update")
 	}
