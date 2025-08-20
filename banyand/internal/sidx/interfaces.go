@@ -22,6 +22,7 @@ package sidx
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -45,7 +46,7 @@ type SIDX interface {
 	Query(ctx context.Context, req QueryRequest) (QueryResult, error)
 
 	// Stats returns current system statistics and performance metrics.
-	Stats(ctx context.Context) (Stats, error)
+	Stats(ctx context.Context) (*Stats, error)
 
 	// Close gracefully shuts down the SIDX instance, ensuring all data is persisted.
 	Close() error
@@ -270,10 +271,10 @@ type Stats struct {
 	PartCount int64
 
 	// QueryCount tracks total queries executed
-	QueryCount int64
+	QueryCount atomic.Int64
 
 	// WriteCount tracks total write operations
-	WriteCount int64
+	WriteCount atomic.Int64
 
 	// LastFlushTime tracks when last flush occurred
 	LastFlushTime int64
