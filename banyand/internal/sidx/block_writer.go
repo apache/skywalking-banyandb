@@ -72,13 +72,13 @@ type mustCreateTagWriters func(name string) (fs.Writer, fs.Writer, fs.Writer)
 // writers manages all file writers for a part.
 type writers struct {
 	mustCreateTagWriters mustCreateTagWriters
+	tagMetadataWriters   map[string]*writer
+	tagDataWriters       map[string]*writer
+	tagFilterWriters     map[string]*writer
 	metaWriter           writer
 	primaryWriter        writer
 	dataWriter           writer
 	keysWriter           writer
-	tagMetadataWriters   map[string]*writer
-	tagDataWriters       map[string]*writer
-	tagFilterWriters     map[string]*writer
 }
 
 // reset clears all writers for reuse.
@@ -174,28 +174,6 @@ func (sw *writers) getWriters(tagName string) (*writer, *writer, *writer) {
 	return tmw, tdw, tfw
 }
 
-// primaryBlockMetadata tracks metadata for a primary block.
-type primaryBlockMetadata struct {
-	compressedBlockData []byte
-}
-
-// reset clears primary block metadata.
-func (pbm *primaryBlockMetadata) reset() {
-	pbm.compressedBlockData = pbm.compressedBlockData[:0]
-}
-
-// marshal serializes primary block metadata.
-func (pbm *primaryBlockMetadata) marshal(dst []byte) []byte {
-	return append(dst, pbm.compressedBlockData...)
-}
-
-// mustWriteBlock writes a compressed primary block.
-func (pbm *primaryBlockMetadata) mustWriteBlock(data []byte, sidFirst common.SeriesID, minKey, maxKey int64, sw *writers) {
-	// Compress the block data
-	pbm.compressedBlockData = zstd.Compress(pbm.compressedBlockData[:0], data, 1)
-	sw.primaryWriter.MustWrite(pbm.compressedBlockData)
-}
-
 // blockWriter handles writing blocks to files.
 type blockWriter struct {
 	writers                    writers
@@ -261,7 +239,7 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 }
 
 // MustWriteElements writes elements to the block writer.
-func (bw *blockWriter) MustWriteElements(sid common.SeriesID, userKeys []int64, elementIDs []uint64, tags [][]tag) {
+func (bw *blockWriter) MustWriteElements(sid common.SeriesID, userKeys []int64, tags [][]tag) {
 	if len(userKeys) == 0 {
 		return
 	}
@@ -388,73 +366,6 @@ func (bw *blockWriter) Flush(pm *partMetadata) {
 
 	bw.writers.MustClose()
 	bw.reset()
-}
-
-// mustWriteTo writes the block data to writers.
-func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, sw *writers) {
-	if b.Len() == 0 {
-		return
-	}
-
-	// Write user keys
-	keysData := make([]byte, len(b.userKeys)*8)
-	for i, key := range b.userKeys {
-		for j := 0; j < 8; j++ {
-			keysData[i*8+j] = byte(key >> (j * 8))
-		}
-	}
-	keysOffset := sw.keysWriter.bytesWritten
-	sw.keysWriter.MustWrite(keysData)
-	bm.setKeysBlock(keysOffset, uint64(len(keysData)))
-
-	// Write data payloads
-	var dataBytes []byte
-	for _, payload := range b.data {
-		dataBytes = append(dataBytes, payload...)
-	}
-	compressedData := zstd.Compress(nil, dataBytes, 1)
-	dataOffset := sw.dataWriter.bytesWritten
-	sw.dataWriter.MustWrite(compressedData)
-	bm.setDataBlock(dataOffset, uint64(len(compressedData)))
-
-	// Write tag files
-	for tagName, td := range b.tags {
-		tmw, tdw, tfw := sw.getWriters(tagName)
-
-		// Encode tag values
-		tagData, err := EncodeTagValues(td.values, td.valueType)
-		if err != nil {
-			logger.Panicf("failed to encode tag values for %s: %v", tagName, err)
-		}
-
-		// Write tag data
-		tagDataOffset := tdw.bytesWritten
-		tdw.MustWrite(tagData)
-
-		// Write tag metadata
-		tm := generateTagMetadata()
-		tm.name = tagName
-		tm.valueType = td.valueType
-		tm.indexed = td.indexed
-		tm.dataBlock = dataBlock{offset: tagDataOffset, size: uint64(len(tagData))}
-		tm.min = td.min
-		tm.max = td.max
-
-		tmData, err := tm.marshal()
-		if err != nil {
-			logger.Panicf("failed to marshal tag metadata for %s: %v", tagName, err)
-		}
-		tmw.MustWrite(tmData)
-		releaseTagMetadata(tm)
-
-		// Write bloom filter for indexed tags
-		if td.indexed && td.filter != nil {
-			filterData := encodeBloomFilter(nil, td.filter)
-			filterOffset := tfw.bytesWritten
-			tfw.MustWrite(filterData)
-			bm.addTagBlock(tagName, filterOffset, uint64(len(filterData)))
-		}
-	}
 }
 
 // Pool management for block writers and writers.

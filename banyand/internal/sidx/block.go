@@ -22,6 +22,10 @@ package sidx
 import (
 	"fmt"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
@@ -267,4 +271,133 @@ func (b *block) getKeyRange() (int64, int64) {
 		return 0, 0
 	}
 	return b.userKeys[0], b.userKeys[len(b.userKeys)-1]
+}
+
+// mustWriteTo writes block data to files through the provided writers.
+// This method serializes the block's userKeys, elementIDs, data, and tags
+// to their respective files while updating the block metadata.
+func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers) {
+	if err := b.validate(); err != nil {
+		panic(fmt.Sprintf("block validation failed: %v", err))
+	}
+	bm.reset()
+
+	bm.seriesID = sid
+	bm.uncompressedSize = b.uncompressedSizeBytes()
+	bm.count = uint64(b.Len())
+
+	// Write user keys and element IDs to keys.bin
+	mustWriteKeysTo(&bm.keysBlock, b.userKeys, b.elementIDs, &ww.keysWriter)
+
+	// Write data payloads to data.bin
+	mustWriteDataTo(&bm.dataBlock, b.data, &ww.dataWriter)
+
+	// Write each tag to its respective files
+	for tagName, tagData := range b.tags {
+		b.mustWriteTag(tagName, tagData, bm, ww)
+	}
+}
+
+// mustWriteTag writes a single tag's data to its tag files.
+func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww *writers) {
+	tmw, tdw, tfw := ww.getWriters(tagName)
+
+	// Create tag metadata
+	tm := generateTagMetadata()
+	defer releaseTagMetadata(tm)
+
+	tm.name = tagName
+	tm.valueType = td.valueType
+	tm.indexed = td.indexed
+
+	// Write tag values to data file
+	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
+	}
+	defer func() {
+		bb.Buf = bb.Buf[:0]
+		bigValuePool.Put(bb)
+	}()
+
+	// Encode tag values using the encoding module
+	encodedData, err := EncodeTagValues(td.values, td.valueType)
+	if err != nil {
+		panic(fmt.Sprintf("failed to encode tag values: %v", err))
+	}
+
+	// Compress and write tag data
+	compressedData := zstd.Compress(nil, encodedData, 1)
+	tm.dataBlock.offset = tdw.bytesWritten
+	tm.dataBlock.size = uint64(len(compressedData))
+	tdw.MustWrite(compressedData)
+
+	// Write bloom filter if indexed
+	if td.indexed && td.filter != nil {
+		filterData := encodeBloomFilter(nil, td.filter)
+		tm.filterBlock.offset = tfw.bytesWritten
+		tm.filterBlock.size = uint64(len(filterData))
+		tfw.MustWrite(filterData)
+	}
+
+	// Set min/max for int64 tags
+	if td.valueType == pbv1.ValueTypeInt64 {
+		tm.min = td.min
+		tm.max = td.max
+	}
+
+	// Marshal and write tag metadata
+	bb.Buf = bb.Buf[:0]
+	bb.Buf = tm.marshalAppend(bb.Buf)
+	tmw.MustWrite(bb.Buf)
+
+	// Update block metadata
+	tagMeta := bm.getTagMetadata(tagName)
+	tagMeta.offset = tmw.bytesWritten - uint64(len(bb.Buf))
+	tagMeta.size = uint64(len(bb.Buf))
+}
+
+// mustWriteKeysTo writes user keys and element IDs to the keys writer.
+func mustWriteKeysTo(kb *dataBlock, userKeys []int64, elementIDs []uint64, keysWriter *writer) {
+	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
+	}
+	defer func() {
+		bb.Buf = bb.Buf[:0]
+		bigValuePool.Put(bb)
+	}()
+
+	// Encode user keys
+	bb.Buf, _, _ = encoding.Int64ListToBytes(bb.Buf[:0], userKeys)
+
+	// Encode element IDs
+	bb.Buf = encoding.VarUint64sToBytes(bb.Buf, elementIDs)
+
+	// Compress and write
+	compressedData := zstd.Compress(nil, bb.Buf, 1)
+	kb.offset = keysWriter.bytesWritten
+	kb.size = uint64(len(compressedData))
+	keysWriter.MustWrite(compressedData)
+}
+
+// mustWriteDataTo writes data payloads to the data writer.
+func mustWriteDataTo(db *dataBlock, data [][]byte, dataWriter *writer) {
+	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
+	}
+	defer func() {
+		bb.Buf = bb.Buf[:0]
+		bigValuePool.Put(bb)
+	}()
+
+	// Encode all data payloads as a block
+	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], data)
+
+	// Compress and write
+	compressedData := zstd.Compress(nil, bb.Buf, 1)
+	db.offset = dataWriter.bytesWritten
+	db.size = uint64(len(compressedData))
+	dataWriter.MustWrite(compressedData)
 }

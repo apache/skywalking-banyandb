@@ -346,18 +346,14 @@ func (p *part) Path() string {
 // memPart represents an in-memory part for SIDX with tag-based file design.
 // This structure mirrors the stream module's memPart but uses user keys instead of timestamps.
 type memPart struct {
-	// Tag storage with individual tag buffers (tag-based design)
-	tagMetadata map[string]*bytes.Buffer // Individual tag metadata buffers
-	tagData     map[string]*bytes.Buffer // Individual tag data buffers
-	tagFilters  map[string]*bytes.Buffer // Individual tag filter buffers
-
-	// Core data buffers
-	meta    bytes.Buffer // Part metadata
-	primary bytes.Buffer // Block metadata
-	data    bytes.Buffer // User data payloads
-	keys    bytes.Buffer // User-provided int64 keys
-
+	tagMetadata  map[string]*bytes.Buffer
+	tagData      map[string]*bytes.Buffer
+	tagFilters   map[string]*bytes.Buffer
 	partMetadata *partMetadata
+	meta         bytes.Buffer
+	primary      bytes.Buffer
+	data         bytes.Buffer
+	keys         bytes.Buffer
 }
 
 // mustCreateTagWriters creates writers for individual tag files.
@@ -450,14 +446,10 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 		if i == len(es.seriesIDs) || es.seriesIDs[i] != currentSeriesID {
 			// Extract elements for current series
 			seriesUserKeys := es.userKeys[blockStart:i]
-			seriesElementIDs := make([]uint64, i-blockStart)
-			for j := range seriesElementIDs {
-				seriesElementIDs[j] = uint64(blockStart + j)
-			}
 			seriesTags := es.tags[blockStart:i]
 
 			// Write elements for this series
-			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesElementIDs, seriesTags)
+			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesTags)
 
 			if i < len(es.seriesIDs) {
 				currentSeriesID = es.seriesIDs[i]
