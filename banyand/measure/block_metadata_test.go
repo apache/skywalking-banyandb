@@ -691,7 +691,7 @@ func TestBlockMetadataArrayGarbageCollection(t *testing.T) {
 		var bmSlice []blockMetadata
 		if retrieved := cache.Get(key); retrieved != nil {
 			retrievedBma := retrieved.(*blockMetadataArray)
-			bmSlice = retrievedBma.arr // pi.bms = bma.arr
+			bmSlice = retrievedBma.arr
 		}
 
 		assert.NotNil(t, bmSlice)
@@ -709,7 +709,10 @@ func TestBlockMetadataArrayGarbageCollection(t *testing.T) {
 		assert.Len(t, bmSlice, 3, "Slice reference should still be valid")
 
 		// Simulate partIter.reset()
-		bmSlice = nil // pi.bms = nil
+		bmSlice = nil
+
+		// Verify the reference is cleared
+		assert.Nil(t, bmSlice, "Reference should be cleared after reset")
 
 		// Force GC
 		runtime.GC()

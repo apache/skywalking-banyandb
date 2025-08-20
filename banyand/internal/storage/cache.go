@@ -25,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -247,6 +248,10 @@ func (sc *serviceCache) Put(key EntryKey, value Sizable) {
 	valueSize := value.Size()
 	entryOverhead := uint64(unsafe.Sizeof(entry{}) + unsafe.Sizeof(entryIndex{}) + unsafe.Sizeof(key))
 	totalSize := valueSize + entryOverhead
+	if totalSize > sc.maxCacheSize {
+		logger.Warningf("value size exceeds max cache size: %d > %d: overhead %d", totalSize, sc.maxCacheSize, entryOverhead)
+		return
+	}
 
 	// Remove existing entry if present
 	if existing, exists := sc.entry[key]; exists {
