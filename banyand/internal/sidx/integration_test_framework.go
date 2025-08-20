@@ -573,7 +573,7 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 			requests := framework.GenerateTestData(2, 5)
 			return framework.sidx.Write(ctx, requests)
 		},
-		Execute: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Execute: func(_ context.Context, framework *IntegrationTestFramework) error {
 			// Test flush
 			if err := framework.sidx.Flush(); err != nil {
 				return fmt.Errorf("flush failed: %w", err)

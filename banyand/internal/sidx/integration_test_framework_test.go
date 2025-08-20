@@ -298,19 +298,19 @@ func TestIntegrationTestFramework_CustomScenario(t *testing.T) {
 	customScenario := TestScenario{
 		Name:        "TestCustomScenario",
 		Description: "Test that all phases are called",
-		Setup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Setup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			setupCalled = true
 			return nil
 		},
-		Execute: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Execute: func(_ context.Context, _ *IntegrationTestFramework) error {
 			executeCalled = true
 			return nil
 		},
-		Validate: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Validate: func(_ context.Context, _ *IntegrationTestFramework) error {
 			validateCalled = true
 			return nil
 		},
-		Cleanup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Cleanup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			cleanupCalled = true
 			return nil
 		},
@@ -341,7 +341,7 @@ func TestIntegrationTestFramework_ScenarioFailure(t *testing.T) {
 	failingScenario := TestScenario{
 		Name:        "FailingScenario",
 		Description: "A scenario that fails during execution",
-		Execute: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Execute: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return fmt.Errorf("intentional failure")
 		},
 	}
@@ -366,7 +366,7 @@ func TestIntegrationTestFramework_MemoryProfiling(t *testing.T) {
 	memoryScenario := TestScenario{
 		Name:        "MemoryScenario",
 		Description: "Test memory profiling",
-		Execute: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Execute: func(_ context.Context, _ *IntegrationTestFramework) error {
 			// Allocate some memory
 			_ = make([]byte, 1024*1024) // 1MB
 			return nil
@@ -403,10 +403,10 @@ func TestIntegrationTestFramework_BenchmarkErrorHandling(t *testing.T) {
 	errorBenchmark := Benchmark{
 		Name:        "ErrorBenchmark",
 		Description: "A benchmark with setup error",
-		Setup: func(ctx context.Context, framework *IntegrationTestFramework) error {
+		Setup: func(_ context.Context, _ *IntegrationTestFramework) error {
 			return fmt.Errorf("setup error")
 		},
-		Execute: func(ctx context.Context, framework *IntegrationTestFramework) BenchmarkResult {
+		Execute: func(_ context.Context, _ *IntegrationTestFramework) BenchmarkResult {
 			return BenchmarkResult{OperationsPerSecond: 1000}
 		},
 	}
