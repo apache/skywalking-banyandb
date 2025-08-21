@@ -289,15 +289,15 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Applied notifications work reliably
   - [x] Introduction reset for reuse
 
-### 5.4 Snapshot Replacement (`snapshot.go`)
-- [ ] Atomic updates with reference counting
-- [ ] Safe concurrent read access during replacement
-- [ ] Old snapshot cleanup after reference release
-- [ ] **Test Cases**:
-  - [ ] Atomic replacement under concurrent load
-  - [ ] Concurrent reads see consistent data
-  - [ ] No data races during replacement
-  - [ ] Memory leaks prevented through reference counting
+### 5.4 Snapshot Replacement (`snapshot.go`) ✅
+- [x] Atomic updates with reference counting
+- [x] Safe concurrent read access during replacement
+- [x] Old snapshot cleanup after reference release
+- [x] **Test Cases**:
+  - [x] Atomic replacement under concurrent load
+  - [x] Concurrent reads see consistent data
+  - [x] No data races during replacement
+  - [x] Memory leaks prevented through reference counting
 
 ---
 

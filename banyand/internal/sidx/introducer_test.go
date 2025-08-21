@@ -272,7 +272,7 @@ func TestIntroductionGeneration(t *testing.T) {
 }
 
 func TestConcurrentPoolAccess(t *testing.T) {
-	t.Run("concurrent pool access is safe", func(t *testing.T) {
+	t.Run("concurrent pool access is safe", func(_ *testing.T) {
 		const numGoroutines = 10
 		const operationsPerGoroutine = 100
 
@@ -296,7 +296,7 @@ func TestConcurrentPoolAccess(t *testing.T) {
 		// Test should complete without data races
 	})
 
-	t.Run("concurrent flusher introduction pool access", func(t *testing.T) {
+	t.Run("concurrent flusher introduction pool access", func(_ *testing.T) {
 		const numGoroutines = 10
 		const operationsPerGoroutine = 100
 
@@ -318,7 +318,7 @@ func TestConcurrentPoolAccess(t *testing.T) {
 		wg.Wait()
 	})
 
-	t.Run("concurrent merger introduction pool access", func(t *testing.T) {
+	t.Run("concurrent merger introduction pool access", func(_ *testing.T) {
 		const numGoroutines = 10
 		const operationsPerGoroutine = 100
 

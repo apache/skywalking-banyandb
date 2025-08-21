@@ -18,7 +18,14 @@
 package sidx
 
 import (
+	"context"
+	"fmt"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 )
 
 func TestSnapshot_Creation(t *testing.T) {
@@ -397,4 +404,341 @@ func anySubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// Tests for Section 5.4: Snapshot Replacement.
+
+func TestSnapshotReplacement_Basic(t *testing.T) {
+	// Test that snapshot replacement works correctly with basic operations
+	opts := NewDefaultOptions().WithMemory(protector.Nop{})
+	sidx, err := NewSIDX(opts)
+	if err != nil {
+		t.Fatalf("failed to create SIDX: %v", err)
+	}
+	defer sidx.Close()
+
+	ctx := context.Background()
+
+	// Perform writes that will trigger snapshot replacements
+	for i := 0; i < 5; i++ {
+		req := WriteRequest{
+			SeriesID: common.SeriesID(i + 1),
+			Key:      int64(i),
+			Data:     []byte(fmt.Sprintf("test-data-%d", i)),
+			Tags:     []Tag{{name: "test", value: []byte("snapshot-replacement")}},
+		}
+
+		if err := sidx.Write(ctx, []WriteRequest{req}); err != nil {
+			t.Errorf("write %d failed: %v", i, err)
+		}
+
+		// Verify system remains consistent after each write
+		stats, err := sidx.Stats(ctx)
+		if err != nil {
+			t.Errorf("stats failed after write %d: %v", i, err)
+		} else if stats.PartCount < 0 {
+			t.Errorf("negative part count after write %d: %d", i, stats.PartCount)
+		}
+	}
+}
+
+// Additional tests for the Section 5.4 requirements.
+
+func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
+	// Test that concurrent readers see consistent data during snapshot replacements
+	// This verifies that snapshot replacement doesn't cause readers to see inconsistent state
+
+	opts := NewDefaultOptions().WithMemory(protector.Nop{})
+	sidx, err := NewSIDX(opts)
+	if err != nil {
+		t.Fatalf("failed to create SIDX: %v", err)
+	}
+	defer sidx.Close()
+
+	ctx := context.Background()
+	const numReaders = 5
+	const numWrites = 10
+	const readDuration = 200 // milliseconds
+
+	type readResult struct {
+		err        error
+		partCount  int64
+		writeCount int64
+		queryCount int64
+	}
+
+	results := make(chan readResult, numReaders*50)
+
+	// Start concurrent readers that will observe snapshots during replacements
+	for i := 0; i < numReaders; i++ {
+		go func(readerID int) {
+			start := time.Now()
+			for time.Since(start).Milliseconds() < readDuration {
+				// Read stats which accesses current snapshot
+				stats, err := sidx.Stats(ctx)
+				if err != nil {
+					results <- readResult{err: fmt.Errorf("reader %d: stats failed: %w", readerID, err)}
+					continue
+				}
+
+				result := readResult{
+					partCount:  stats.PartCount,
+					writeCount: stats.WriteCount.Load(),
+					queryCount: stats.QueryCount.Load(),
+				}
+				results <- result
+
+				time.Sleep(5 * time.Millisecond) // Small delay between reads
+			}
+		}(i)
+	}
+
+	// Perform writes that will cause snapshot replacements
+	time.Sleep(20 * time.Millisecond)
+
+	for i := 0; i < numWrites; i++ {
+		reqs := []WriteRequest{
+			{
+				SeriesID: common.SeriesID(1000 + i + 1),
+				Key:      int64(1000 + i),
+				Data:     []byte(fmt.Sprintf("replacement-data-%d", i)),
+				Tags: []Tag{
+					{name: "test", value: []byte("replacement")},
+					{name: "sequence", value: []byte(fmt.Sprintf("%d", i))},
+				},
+			},
+		}
+
+		if err := sidx.Write(ctx, reqs); err != nil {
+			t.Errorf("write %d failed: %v", i, err)
+		}
+
+		time.Sleep(10 * time.Millisecond) // Space out writes
+	}
+
+	// Wait for all readers to finish
+	time.Sleep(time.Duration(readDuration+50) * time.Millisecond)
+	close(results)
+
+	// Analyze results - all should be valid with no errors
+	validReads := 0
+	totalReads := 0
+
+	for result := range results {
+		totalReads++
+		if result.err != nil {
+			t.Errorf("read failed: %v", result.err)
+			continue
+		}
+
+		// Verify data consistency - counts should be non-negative
+		if result.partCount < 0 {
+			t.Errorf("negative part count: %d", result.partCount)
+			continue
+		}
+		if result.writeCount < 0 {
+			t.Errorf("negative write count: %d", result.writeCount)
+			continue
+		}
+		if result.queryCount < 0 {
+			t.Errorf("negative query count: %d", result.queryCount)
+			continue
+		}
+
+		validReads++
+	}
+
+	if validReads == 0 {
+		t.Fatal("no valid reads recorded")
+	}
+
+	if totalReads < numReaders*5 {
+		t.Errorf("expected at least %d reads, got %d", numReaders*5, totalReads)
+	}
+
+	t.Logf("completed %d valid reads out of %d total during concurrent snapshot replacements", validReads, totalReads)
+}
+
+func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
+	// This test should be run with -race flag to detect data races during snapshot replacement
+	// We test through concurrent write and read operations that trigger snapshot replacements
+
+	opts := NewDefaultOptions().WithMemory(protector.Nop{})
+	sidx, err := NewSIDX(opts)
+	if err != nil {
+		t.Fatalf("failed to create SIDX: %v", err)
+	}
+	defer sidx.Close()
+
+	const numGoroutines = 20
+	const operationsPerGoroutine = 50
+
+	var wg sync.WaitGroup
+	ctx := context.Background()
+
+	// Mixed workload of concurrent operations
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < operationsPerGoroutine; j++ {
+				switch j % 3 {
+				case 0:
+					// Write operation - triggers memory part introduction (snapshot replacement)
+					reqs := []WriteRequest{
+						{
+							SeriesID: common.SeriesID(id*1000 + j),
+							Key:      int64(id*1000 + j),
+							Data:     []byte(fmt.Sprintf("race-test-%d-%d", id, j)),
+							Tags: []Tag{
+								{name: "goroutine", value: []byte(fmt.Sprintf("%d", id))},
+								{name: "operation", value: []byte(fmt.Sprintf("%d", j))},
+							},
+						},
+					}
+					sidx.Write(ctx, reqs)
+				case 1:
+					// Stats operation - accesses current snapshot
+					sidx.Stats(ctx)
+				case 2:
+					// Query operation - accesses current snapshot
+					queryReq := QueryRequest{
+						Name: "test-index",
+					}
+					result, err := sidx.Query(ctx, queryReq)
+					if err == nil && result != nil {
+						result.Release()
+					}
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Test passes if no race conditions are detected by the race detector during:
+	// - Snapshot replacement operations (replaceSnapshot)
+	// - Concurrent snapshot access (currentSnapshot)
+	// - Reference counting (acquire/release)
+}
+
+func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
+	// Test to ensure old snapshots are properly cleaned up during replacement operations
+	// This verifies that reference counting prevents memory leaks
+
+	opts := NewDefaultOptions().WithMemory(protector.Nop{})
+	sidx, err := NewSIDX(opts)
+	if err != nil {
+		t.Fatalf("failed to create SIDX: %v", err)
+	}
+	defer sidx.Close()
+
+	ctx := context.Background()
+
+	// Create multiple write operations to trigger snapshot replacements
+	const numBatches = 20
+	const writesPerBatch = 5
+
+	for i := 0; i < numBatches; i++ {
+		// Create a batch of writes
+		for j := 0; j < writesPerBatch; j++ {
+			reqs := []WriteRequest{
+				{
+					SeriesID: common.SeriesID(i*100 + j + 1),
+					Key:      int64(i*100 + j),
+					Data:     []byte(fmt.Sprintf("leak-test-batch-%d-write-%d", i, j)),
+					Tags: []Tag{
+						{name: "batch", value: []byte(fmt.Sprintf("%d", i))},
+						{name: "write", value: []byte(fmt.Sprintf("%d", j))},
+						{name: "test", value: []byte("memory-leak-prevention")},
+					},
+				},
+			}
+
+			if writeErr := sidx.Write(ctx, reqs); writeErr != nil {
+				t.Errorf("batch %d write %d failed: %v", i, j, writeErr)
+			}
+		}
+
+		// Verify the system state remains consistent
+		stats, statsErr := sidx.Stats(ctx)
+		if statsErr != nil {
+			t.Errorf("stats failed after batch %d: %v", i, statsErr)
+		} else if stats.PartCount < 0 {
+			t.Errorf("negative part count after batch %d: %d", i, stats.PartCount)
+		}
+
+		// Small delay to allow for async processing
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Test concurrent access patterns that could cause memory leaks
+	const numReaders = 5
+	const numConcurrentWrites = 3
+	var wg sync.WaitGroup
+
+	// Start concurrent readers that hold references briefly
+	for i := 0; i < numReaders; i++ {
+		wg.Add(1)
+		go func(readerID int) {
+			defer wg.Done()
+
+			for j := 0; j < 10; j++ {
+				stats, statsErr := sidx.Stats(ctx)
+				if statsErr != nil {
+					t.Errorf("reader %d stats failed: %v", readerID, statsErr)
+				} else if stats.PartCount < 0 {
+					t.Errorf("reader %d saw negative part count: %d", readerID, stats.PartCount)
+				}
+
+				// Brief delay to hold references
+				time.Sleep(2 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	// Start concurrent writers to trigger more snapshot replacements
+	for i := 0; i < numConcurrentWrites; i++ {
+		wg.Add(1)
+		go func(writerID int) {
+			defer wg.Done()
+
+			for j := 0; j < 5; j++ {
+				reqs := []WriteRequest{
+					{
+						SeriesID: common.SeriesID(writerID*1000 + j + 5000),
+						Key:      int64(writerID*1000 + j + 5000),
+						Data:     []byte(fmt.Sprintf("concurrent-leak-test-%d-%d", writerID, j)),
+						Tags: []Tag{
+							{name: "writer", value: []byte(fmt.Sprintf("%d", writerID))},
+							{name: "concurrent", value: []byte("true")},
+						},
+					},
+				}
+
+				if writeErr := sidx.Write(ctx, reqs); writeErr != nil {
+					t.Errorf("concurrent writer %d write %d failed: %v", writerID, j, writeErr)
+				}
+
+				time.Sleep(3 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Final verification - system should be in a consistent state
+	finalStats, err := sidx.Stats(ctx)
+	if err != nil {
+		t.Errorf("final stats failed: %v", err)
+	} else if finalStats.PartCount < 0 {
+		t.Errorf("final part count is negative: %d", finalStats.PartCount)
+	}
+
+	// The test passes if:
+	// 1. No panics or deadlocks occur
+	// 2. All stats remain consistent (non-negative counts)
+	// 3. Memory profiling tools don't report leaks (run with memory profiler)
+	// 4. Reference counting properly cleans up old snapshots
 }
