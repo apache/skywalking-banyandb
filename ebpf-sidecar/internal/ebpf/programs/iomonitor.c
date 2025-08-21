@@ -18,6 +18,7 @@
 #include "../generated/vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
 
 // POSIX_FADV_* constants (man 2 posix_fadvise)
 #define POSIX_FADV_NORMAL     0 /* No further special treatment.  */
@@ -68,10 +69,11 @@ int trace_enter_fadvise64(struct trace_event_raw_sys_enter *ctx) {
     __u64 tid = bpf_get_current_pid_tgid();
     struct fadvise_args_t args = {};
 
-    args.fd     = ctx->args[0];
-    args.offset = ctx->args[1];
-    args.len    = ctx->args[2];
-    args.advice = ctx->args[3];
+    // Use CO-RE for portable struct access
+    args.fd     = BPF_CORE_READ(ctx, args[0]);
+    args.offset = BPF_CORE_READ(ctx, args[1]);
+    args.len    = BPF_CORE_READ(ctx, args[2]);
+    args.advice = BPF_CORE_READ(ctx, args[3]);
 
     bpf_map_update_elem(&fadvise_args_map, &tid, &args, BPF_ANY);
 
@@ -115,7 +117,9 @@ int trace_exit_fadvise64(struct trace_event_raw_sys_exit *ctx) {
     __u64 tid = bpf_get_current_pid_tgid();
     __u32 pid = tid >> 32;
 
-    if (ctx->ret == 0) {
+    // Use CO-RE for portable access to return value
+    long ret = BPF_CORE_READ(ctx, ret);
+    if (ret == 0) {
         struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
         if (stats) {
             stats->success_calls++;
@@ -325,6 +329,126 @@ static __always_inline long get_return_value(struct pt_regs *ctx) {
     return 0;
 #endif
 }
+
+// ========== FENTRY/FEXIT Programs (Best Performance - Kernel 5.5+) ==========
+
+// Fentry for ksys_fadvise64_64 - modern kernels with BTF support
+SEC("fentry/ksys_fadvise64_64")
+int BPF_PROG(fentry_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int advice) {
+    __u64 tid = bpf_get_current_pid_tgid();
+    struct fadvise_args_t args = {};
+
+    args.fd = fd;
+    args.offset = offset;
+    args.len = len;
+    args.advice = advice;
+
+    bpf_map_update_elem(&fadvise_args_map, &tid, &args, BPF_ANY);
+
+    __u32 pid = tid >> 32;
+    struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
+    struct fadvise_stats_t new_stats = {};
+    if (!stats) {
+        stats = &new_stats;
+    }
+
+    stats->total_calls++;
+
+    switch (advice) {
+        case POSIX_FADV_DONTNEED:
+            stats->advice_dontneed++;
+            break;
+        case POSIX_FADV_SEQUENTIAL:
+            stats->advice_sequential++;
+            break;
+        case POSIX_FADV_NORMAL:
+            stats->advice_normal++;
+            break;
+        case POSIX_FADV_RANDOM:
+            stats->advice_random++;
+            break;
+        case POSIX_FADV_WILLNEED:
+            stats->advice_willneed++;
+            break;
+        case POSIX_FADV_NOREUSE:
+            stats->advice_noreuse++;
+            break;
+    }
+
+    bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
+    return 0;
+}
+
+// Fexit for ksys_fadvise64_64 - capture return value
+SEC("fexit/ksys_fadvise64_64")
+int BPF_PROG(fexit_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int advice, long ret) {
+    __u64 tid = bpf_get_current_pid_tgid();
+    __u32 pid = tid >> 32;
+
+    if (ret == 0) {
+        struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
+        if (stats) {
+            stats->success_calls++;
+            bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
+        }
+    }
+
+    bpf_map_delete_elem(&fadvise_args_map, &tid);
+    return 0;
+}
+
+// Fentry for filemap operations
+SEC("fentry/filemap_get_read_batch")
+int BPF_PROG(fentry_filemap_get_read_batch) {
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
+    struct cache_stats_t new_stats = {};
+    if (!stats) {
+        stats = &new_stats;
+    }
+
+    stats->total_read_attempts++;
+    stats->read_batch_calls++;
+    
+    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
+
+    __u32 key = 0;
+    struct cache_event_t event = {};
+    event.pid = pid;
+    event.timestamp = bpf_ktime_get_ns();
+    bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
+
+    return 0;
+}
+
+// Fentry for page cache add
+SEC("fentry/add_to_page_cache_lru")
+int BPF_PROG(fentry_add_to_page_cache_lru) {
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
+    struct cache_stats_t new_stats = {};
+    if (!stats) {
+        stats = &new_stats;
+    }
+
+    stats->cache_misses++;
+    stats->page_cache_adds++;
+    
+    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
+
+    __u32 key = 0;
+    struct cache_event_t event = {};
+    event.pid = pid;
+    event.page_count = 1;
+    event.timestamp = bpf_ktime_get_ns();
+    bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
+
+    return 0;
+}
+
+// ========== KPROBE Programs (Fallback for older kernels) ==========
 
 // Kprobe fallback for fadvise64 entry
 SEC("kprobe/ksys_fadvise64_64")
