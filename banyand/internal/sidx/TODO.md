@@ -259,15 +259,15 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ## Phase 5: Snapshot Management
 
-### 5.1 Snapshot Structure (`snapshot.go`)
-- [ ] Part collection with epoch tracking
-- [ ] getParts() filters by key range
-- [ ] Reference counting for snapshot safety
-- [ ] **Test Cases**:
-  - [ ] Snapshot creation with various part configurations
-  - [ ] Part filtering accuracy by key range
-  - [ ] Reference counting prevents premature cleanup
-  - [ ] Snapshot immutability guarantees
+### 5.1 Snapshot Structure (`snapshot.go`) ✅
+- [x] Part collection with epoch tracking
+- [x] getParts() filters by key range
+- [x] Reference counting for snapshot safety
+- [x] **Test Cases**:
+  - [x] Snapshot creation with various part configurations
+  - [x] Part filtering accuracy by key range
+  - [x] Reference counting prevents premature cleanup
+  - [x] Snapshot immutability guarantees
 
 ### 5.2 Introducer Loop (`introducer.go`)
 - [ ] Background goroutine for snapshot coordination
