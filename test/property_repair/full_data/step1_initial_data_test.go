@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build initial_load
-
 package full_data
 
 import (
@@ -33,14 +31,15 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	propertyrepair "github.com/apache/skywalking-banyandb/test/property_repair"
 )
 
 func TestPropertyRepairInitialLoad(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Property Repair Initial Load Test Suite", g.Label("integration", "slow"))
+	RunSpecs(t, "Property Repair Initial Load Test Suite", Label("integration", "slow"))
 }
 
-var _ = Describe("Property Repair Initial Load Test", func() {
+var _ = Describe("Property Repair Initial Load Test", Label("initial_load"), func() {
 	var conn *grpc.ClientConn
 	var groupClient databasev1.GroupRegistryServiceClient
 	var propertyClient databasev1.PropertyRegistryServiceClient
@@ -49,7 +48,7 @@ var _ = Describe("Property Repair Initial Load Test", func() {
 	BeforeEach(func() {
 		var err error
 		fmt.Println("Start connecting to Liaison server")
-		conn, err = grpchelper.Conn(property_repair.LiaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpchelper.Conn(propertyrepair.LiaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 		fmt.Println("Connected to Liaison server")
 
@@ -68,13 +67,13 @@ var _ = Describe("Property Repair Initial Load Test", func() {
 		ctx := context.Background()
 
 		// Create group with 1 copies
-		property_repair.CreateGroup(ctx, groupClient, 1)
+		propertyrepair.CreateGroup(ctx, groupClient, 1)
 
 		// Create property schema
-		property_repair.CreatePropertySchema(ctx, propertyClient)
+		propertyrepair.CreatePropertySchema(ctx, propertyClient)
 
 		// Write properties concurrently
-		property_repair.WriteProperties(ctx, propertyServiceClient, 0, 100000)
+		propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 100000)
 	})
 
 })

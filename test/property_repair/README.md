@@ -55,7 +55,7 @@ cd test/property_repair/full_data
 # Start the cluster with 2 data nodes
 docker-compose -f docker-compose-2nodes.yml up -d
 # Load initial data into the cluster
-go test . -v -tags initial_load -timeout 2h -count=1
+go test . -v -ginkgo.label-filter 'initial_load' -timeout 2h -count=1
 ```
 
 ### Step 2: Add a New Node and Change Copies Count
@@ -66,7 +66,7 @@ and the number of copies in the group will be changed to two.
 ```bash
 # Add a new data node to the cluster and restart the Prometheus service to monitor the new node
 docker-compose -f docker-compose-3nodes.yml up data-node-3 -d --force-recreate prometheus
-go test . -v -tags update_copies -count=1
+go test . -v -ginkgo.label-filter 'update_copies' -count=1
 ```
 
 Then, wait for the propagation to complete in the cluster.
@@ -102,7 +102,7 @@ This test case can be completed in a single step, with the script executing the 
 ```bash
 cd test/property_repair/half_data
 docker-compose -f docker-compose-3nodes.yml up -d
-go test . -v -tags load_and_scale -timeout 2h -count=1
+go test . -v -timeout 2h -count=1
 ```
 
 Then, wait for the propagation to complete in the cluster.
@@ -134,7 +134,7 @@ This test case can also be completed in a single step, with the script executing
 ```bash
 cd test/property_repair/same_data
 docker-compose -f docker-compose-3nodes.yml up -d
-go test . -v -tags initial_load -timeout 2h -count=1
+go test . -v -timeout 2h -count=1
 ```
 
 Then, wait for the propagation to complete in the cluster.

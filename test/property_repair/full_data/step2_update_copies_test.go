@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build update_copies
-
 package full_data
 
 import (
@@ -31,20 +29,21 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	propertyrepair "github.com/apache/skywalking-banyandb/test/property_repair"
 )
 
 func TestPropertyRepairPropagation(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Property Repair Propagation Test Suite", g.Label("integration", "slow"))
+	RunSpecs(t, "Property Repair Propagation Test Suite", Label("integration", "slow"))
 }
 
-var _ = Describe("Property Repair Propagation Test", func() {
+var _ = Describe("Property Repair Propagation Test", Label("update_copies"), func() {
 	var conn *grpc.ClientConn
 	var groupClient databasev1.GroupRegistryServiceClient
 
 	BeforeEach(func() {
 		var err error
-		conn, err = grpchelper.Conn(property_repair.LiaisonAddr, 30*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpchelper.Conn(propertyrepair.LiaisonAddr, 30*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 
 		groupClient = databasev1.NewGroupRegistryServiceClient(conn)
@@ -60,6 +59,6 @@ var _ = Describe("Property Repair Propagation Test", func() {
 		ctx := context.Background()
 
 		// Update group replicas to 2
-		property_repair.UpdateGroupReplicas(ctx, groupClient, 2)
+		propertyrepair.UpdateGroupReplicas(ctx, groupClient, 2)
 	})
 })

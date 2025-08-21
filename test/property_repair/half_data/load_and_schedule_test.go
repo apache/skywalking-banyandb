@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build load_and_scale
-
 package half_data
 
 import (
@@ -33,17 +31,12 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
-)
-
-const (
-	initialPropertyCount = 5000
-	groupName            = "half-data-property-group"
-	propertyName         = "half-data-property"
+	propertyrepair "github.com/apache/skywalking-banyandb/test/property_repair"
 )
 
 func TestHalfDataStep1(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Half Data Step1: Initial Load Test Suite", g.Label("integration", "slow"))
+	RunSpecs(t, "Half Data Step1: Initial Load Test Suite", Label("integration", "slow"))
 }
 
 var _ = Describe("Initial Load with 2 Copies", func() {
@@ -55,7 +48,7 @@ var _ = Describe("Initial Load with 2 Copies", func() {
 	BeforeEach(func() {
 		var err error
 
-		conn, err = grpchelper.Conn(property_repair.LiaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpchelper.Conn(propertyrepair.LiaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 
 		groupClient = databasev1.NewGroupRegistryServiceClient(conn)
@@ -72,20 +65,20 @@ var _ = Describe("Initial Load with 2 Copies", func() {
 	It("should create group with 2 copies, write 5k properties, then reduce copies to 1", func() {
 		ctx := context.Background()
 
-		property_repair.CreateGroup(ctx, groupClient, 2)
-		property_repair.CreatePropertySchema(ctx, propertyClient)
-		property_repair.WriteProperties(ctx, propertyServiceClient, 0, 50000)
+		propertyrepair.CreateGroup(ctx, groupClient, 2)
+		propertyrepair.CreatePropertySchema(ctx, propertyClient)
+		propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 50000)
 
 		time.Sleep(time.Second * 10)
 		fmt.Println("ready to update the copies to 1")
-		property_repair.UpdateGroupReplicas(ctx, groupClient, 1)
+		propertyrepair.UpdateGroupReplicas(ctx, groupClient, 1)
 
 		time.Sleep(time.Second * 10)
 		fmt.Println("write other 5k properties")
-		property_repair.WriteProperties(ctx, propertyServiceClient, 50000, 100000)
+		propertyrepair.WriteProperties(ctx, propertyServiceClient, 50000, 100000)
 
 		time.Sleep(time.Second * 10)
 		fmt.Println("ready to update the copies to 2")
-		property_repair.UpdateGroupReplicas(ctx, groupClient, 2)
+		propertyrepair.UpdateGroupReplicas(ctx, groupClient, 2)
 	})
 })

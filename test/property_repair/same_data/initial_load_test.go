@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build initial_load
-
 package half_data
 
 import (
@@ -32,17 +30,12 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
-)
-
-const (
-	initialPropertyCount = 5000
-	groupName            = "half-data-property-group"
-	propertyName         = "half-data-property"
+	propertyrepair "github.com/apache/skywalking-banyandb/test/property_repair"
 )
 
 func TestHalfDataStep1(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Half Data Step1: Initial Load Test Suite", g.Label("integration", "slow"))
+	RunSpecs(t, "Half Data Step1: Initial Load Test Suite", Label("integration", "slow", "step", "initial_load"))
 }
 
 var _ = Describe("Initial Load with 2 Copies", func() {
@@ -54,7 +47,7 @@ var _ = Describe("Initial Load with 2 Copies", func() {
 	BeforeEach(func() {
 		var err error
 
-		conn, err = grpchelper.Conn(property_repair.LiaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err = grpchelper.Conn(propertyrepair.LiaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		Expect(err).NotTo(HaveOccurred())
 
 		groupClient = databasev1.NewGroupRegistryServiceClient(conn)
@@ -71,8 +64,8 @@ var _ = Describe("Initial Load with 2 Copies", func() {
 	It("should create group with 2 copies, write 10k properties", func() {
 		ctx := context.Background()
 
-		property_repair.CreateGroup(ctx, groupClient, 2)
-		property_repair.CreatePropertySchema(ctx, propertyClient)
-		property_repair.WriteProperties(ctx, propertyServiceClient, 0, 1000)
+		propertyrepair.CreateGroup(ctx, groupClient, 2)
+		propertyrepair.CreatePropertySchema(ctx, propertyClient)
+		propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 1000)
 	})
 })
