@@ -33,7 +33,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
-	"github.com/apache/skywalking-banyandb/test/property_repair"
 )
 
 const (
@@ -44,7 +43,7 @@ const (
 
 func TestHalfDataStep1(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Half Data Step1: Initial Load Test Suite")
+	RunSpecs(t, "Half Data Step1: Initial Load Test Suite", g.Label("integration", "slow"))
 }
 
 var _ = Describe("Initial Load with 2 Copies", func() {

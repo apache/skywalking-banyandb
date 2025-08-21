@@ -31,12 +31,11 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
-	"github.com/apache/skywalking-banyandb/test/property_repair"
 )
 
 func TestPropertyRepairPropagation(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Property Repair Propagation Test Suite")
+	RunSpecs(t, "Property Repair Propagation Test Suite", g.Label("integration", "slow"))
 }
 
 var _ = Describe("Property Repair Propagation Test", func() {
