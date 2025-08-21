@@ -303,3 +303,60 @@ func releaseSnapshot(s *snapshot) {
 	s.reset()
 	snapshotPool.Put(s)
 }
+
+// copyAllTo creates a new snapshot with all parts from current snapshot.
+func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
+	result := generateSnapshot()
+	result.parts = make([]*partWrapper, len(s.parts))
+	result.epoch = epoch
+	result.ref = 1
+	result.released.Store(false)
+
+	// Copy all parts and acquire references
+	copy(result.parts, s.parts)
+	for _, pw := range result.parts {
+		if pw != nil {
+			pw.acquire()
+		}
+	}
+
+	return result
+}
+
+// merge creates a new snapshot by merging flushed parts into the current snapshot.
+func (s *snapshot) merge(epoch uint64, flushed map[uint64]*part) *snapshot {
+	result := s.copyAllTo(epoch)
+
+	// Add flushed parts to the snapshot
+	for partID, part := range flushed {
+		// Set the part ID from the map key
+		if part != nil && part.partMetadata != nil {
+			part.partMetadata.ID = partID
+		}
+		// Create part wrapper for the flushed part
+		pw := newPartWrapper(part)
+		result.parts = append(result.parts, pw)
+	}
+
+	result.sortPartsByEpoch()
+	return result
+}
+
+// remove creates a new snapshot by removing specified parts.
+func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot {
+	result := generateSnapshot()
+	result.epoch = epoch
+	result.ref = 1
+	result.released.Store(false)
+
+	// Copy parts except those being removed
+	for _, pw := range s.parts {
+		if _, shouldRemove := toRemove[pw.ID()]; !shouldRemove {
+			if pw.acquire() {
+				result.parts = append(result.parts, pw)
+			}
+		}
+	}
+
+	return result
+}
