@@ -15,15 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package full_data
+package fulldata
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -33,29 +33,29 @@ import (
 )
 
 func TestPropertyRepairPropagation(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Property Repair Propagation Test Suite", Label("integration", "slow"))
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.RunSpecs(t, "Property Repair Propagation Test Suite", ginkgo.Label("integration", "slow"))
 }
 
-var _ = Describe("Property Repair Propagation Test", Label("update_copies"), func() {
+var _ = ginkgo.Describe("Property Repair Propagation Test", ginkgo.Label("update_copies"), func() {
 	var conn *grpc.ClientConn
 	var groupClient databasev1.GroupRegistryServiceClient
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		var err error
 		conn, err = grpchelper.Conn(propertyrepair.LiaisonAddr, 30*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		Expect(err).NotTo(HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		groupClient = databasev1.NewGroupRegistryServiceClient(conn)
 	})
 
-	AfterEach(func() {
+	ginkgo.AfterEach(func() {
 		if conn != nil {
 			_ = conn.Close()
 		}
 	})
 
-	It("Update group to 2 copies", func() {
+	ginkgo.It("Update group to 2 copies", func() {
 		ctx := context.Background()
 
 		// Update group replicas to 2

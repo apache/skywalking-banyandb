@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package full_data
+package fulldata
 
 import (
 	"context"
@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -35,21 +35,21 @@ import (
 )
 
 func TestPropertyRepairInitialLoad(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Property Repair Initial Load Test Suite", Label("integration", "slow"))
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.RunSpecs(t, "Property Repair Initial Load Test Suite", ginkgo.Label("integration", "slow"))
 }
 
-var _ = Describe("Property Repair Initial Load Test", Label("initial_load"), func() {
+var _ = ginkgo.Describe("Property Repair Initial Load Test", ginkgo.Label("initial_load"), func() {
 	var conn *grpc.ClientConn
 	var groupClient databasev1.GroupRegistryServiceClient
 	var propertyClient databasev1.PropertyRegistryServiceClient
 	var propertyServiceClient propertyv1.PropertyServiceClient
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		var err error
 		fmt.Println("Start connecting to Liaison server")
 		conn, err = grpchelper.Conn(propertyrepair.LiaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		Expect(err).NotTo(HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		fmt.Println("Connected to Liaison server")
 
 		groupClient = databasev1.NewGroupRegistryServiceClient(conn)
@@ -57,13 +57,13 @@ var _ = Describe("Property Repair Initial Load Test", Label("initial_load"), fun
 		propertyServiceClient = propertyv1.NewPropertyServiceClient(conn)
 	})
 
-	AfterEach(func() {
+	ginkgo.AfterEach(func() {
 		if conn != nil {
 			_ = conn.Close()
 		}
 	})
 
-	It("Create group with 2 copies, and write 100k properties", func() {
+	ginkgo.It("Create group with 2 copies, and write 100k properties", func() {
 		ctx := context.Background()
 
 		// Create group with 1 copies
@@ -75,5 +75,4 @@ var _ = Describe("Property Repair Initial Load Test", Label("initial_load"), fun
 		// Write properties concurrently
 		propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 100000)
 	})
-
 })

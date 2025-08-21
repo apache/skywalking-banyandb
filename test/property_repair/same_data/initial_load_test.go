@@ -15,15 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package half_data
+package halfdata
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -34,34 +34,34 @@ import (
 )
 
 func TestHalfDataStep1(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Half Data Step1: Initial Load Test Suite", Label("integration", "slow", "step", "initial_load"))
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.RunSpecs(t, "Half Data Step1: Initial Load Test Suite", ginkgo.Label("integration", "slow", "step", "initial_load"))
 }
 
-var _ = Describe("Initial Load with 2 Copies", func() {
+var _ = ginkgo.Describe("Initial Load with 2 Copies", func() {
 	var conn *grpc.ClientConn
 	var groupClient databasev1.GroupRegistryServiceClient
 	var propertyClient databasev1.PropertyRegistryServiceClient
 	var propertyServiceClient propertyv1.PropertyServiceClient
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		var err error
 
 		conn, err = grpchelper.Conn(propertyrepair.LiaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		Expect(err).NotTo(HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		groupClient = databasev1.NewGroupRegistryServiceClient(conn)
 		propertyClient = databasev1.NewPropertyRegistryServiceClient(conn)
 		propertyServiceClient = propertyv1.NewPropertyServiceClient(conn)
 	})
 
-	AfterEach(func() {
+	ginkgo.AfterEach(func() {
 		if conn != nil {
 			conn.Close()
 		}
 	})
 
-	It("should create group with 2 copies, write 10k properties", func() {
+	ginkgo.It("should create group with 2 copies, write 10k properties", func() {
 		ctx := context.Background()
 
 		propertyrepair.CreateGroup(ctx, groupClient, 2)
