@@ -253,7 +253,7 @@ func Test_mergeParts(t *testing.T) {
 		want    []blockMetadata
 	}{
 		{
-			name:    "Test with no data points",
+			name:    "Test with no data point",
 			dpsList: []*dataPoints{},
 			wantErr: errNoPartToMerge,
 		},
@@ -261,8 +261,8 @@ func Test_mergeParts(t *testing.T) {
 			name:    "Test with single part",
 			dpsList: []*dataPoints{dpsTS1},
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 1654},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
 				{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
 			},
 		},
@@ -270,8 +270,8 @@ func Test_mergeParts(t *testing.T) {
 			name:    "Test with multiple parts with different ts",
 			dpsList: []*dataPoints{dpsTS1, dpsTS2, dpsTS2},
 			want: []blockMetadata{
-				{seriesID: 1, count: 2, uncompressedSizeBytes: 3368},
-				{seriesID: 2, count: 2, uncompressedSizeBytes: 126},
+				{seriesID: 1, count: 2, uncompressedSizeBytes: 3245},
+				{seriesID: 2, count: 2, uncompressedSizeBytes: 71},
 				{seriesID: 3, count: 2, uncompressedSizeBytes: 64},
 			},
 		},
@@ -279,29 +279,26 @@ func Test_mergeParts(t *testing.T) {
 			name:    "Test with multiple parts with same ts",
 			dpsList: []*dataPoints{dpsTS11, dpsTS1},
 			want: []blockMetadata{
-				{seriesID: 1, count: 1, uncompressedSizeBytes: 1684},
-				{seriesID: 2, count: 1, uncompressedSizeBytes: 63},
+				{seriesID: 1, count: 1, uncompressedSizeBytes: 1654},
+				{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
 				{seriesID: 3, count: 1, uncompressedSizeBytes: 32},
 			},
 		},
 		{
 			name:    "Test with multiple parts with a large quantity of different ts",
-			dpsList: []*dataPoints{generateHugeDps(1, 5000, 1), generateHugeDps(5001, 10000, 2)},
+			dpsList: []*dataPoints{generateHugeDatapoints(1, 5000, 1), generateHugeDatapoints(5001, 10000, 2)},
 			want: []blockMetadata{
-				{seriesID: 1, count: 1265, uncompressedSizeBytes: 2130260},
-				{seriesID: 1, count: 1265, uncompressedSizeBytes: 2130260},
-				{seriesID: 1, count: 1265, uncompressedSizeBytes: 2130260},
-				{seriesID: 1, count: 2470, uncompressedSizeBytes: 4159480},
-				{seriesID: 1, count: 1265, uncompressedSizeBytes: 2130260},
-				{seriesID: 1, count: 1265, uncompressedSizeBytes: 2130260},
-				{seriesID: 1, count: 1205, uncompressedSizeBytes: 2029220},
-				{seriesID: 2, count: 2, uncompressedSizeBytes: 126},
+				{seriesID: 1, count: 2530, uncompressedSizeBytes: 4025293},
+				{seriesID: 1, count: 2470, uncompressedSizeBytes: 3929833},
+				{seriesID: 1, count: 2530, uncompressedSizeBytes: 4025293},
+				{seriesID: 1, count: 2470, uncompressedSizeBytes: 3929833},
+				{seriesID: 2, count: 2, uncompressedSizeBytes: 71},
 				{seriesID: 3, count: 2, uncompressedSizeBytes: 64},
 			},
 		},
 		{
 			name:    "Test with multiple parts with a large small quantity of different ts",
-			dpsList: []*dataPoints{generateHugeSmallDps(1, 5000, 1), generateHugeSmallDps(5001, 10000, 2)},
+			dpsList: []*dataPoints{generateSmallDatapoints(1, 5000, 1), generateSmallDatapoints(5001, 10000, 2)},
 			want: []blockMetadata{
 				{seriesID: 1, count: 8192, uncompressedSizeBytes: 262144},
 				{seriesID: 1, count: 1808, uncompressedSizeBytes: 57856},

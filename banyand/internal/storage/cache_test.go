@@ -29,6 +29,19 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+// testSizableString is a test implementation of Sizable for string values.
+type testSizableString struct {
+	value string
+}
+
+func (s testSizableString) Size() uint64 {
+	return uint64(len(s.value)) + 16 // base struct overhead
+}
+
+func (s testSizableString) String() string {
+	return s.value
+}
+
 func TestCachePutAndGet(t *testing.T) {
 	serviceCache := NewServiceCache()
 
@@ -39,7 +52,7 @@ func TestCachePutAndGet(t *testing.T) {
 		segmentID: segmentID(0),
 		shardID:   common.ShardID(0),
 	}
-	value := "test-value"
+	value := testSizableString{value: "test-value"}
 
 	serviceCache.Put(key, value)
 	assert.Equal(t, uint64(1), serviceCache.Entries())
@@ -64,10 +77,16 @@ func TestCachePutAndGet(t *testing.T) {
 
 func TestCacheEvict(t *testing.T) {
 	serviceCache := NewServiceCache().(*serviceCache)
-	serviceCache.maxCacheSize = 50
+
+	// Calculate the size of one entry to set appropriate cache size
+	testValue := testSizableString{value: "v0"}
+	valueSize := testValue.Size()
+	// Each entry has overhead: unsafe.Sizeof(entry{}) + unsafe.Sizeof(entryIndex{}) + unsafe.Sizeof(EntryKey{})
+	// Setting cache size to allow only 1 entry plus some buffer
+	serviceCache.maxCacheSize = valueSize + 150 // Enough for 1 entry with overhead
 
 	var expectedKey EntryKey
-	var expectedValue string
+	var expectedValue testSizableString
 	for i := 0; i < 10; i++ {
 		key := EntryKey{
 			group:     "test-group",
@@ -76,7 +95,7 @@ func TestCacheEvict(t *testing.T) {
 			segmentID: segmentID(i),
 			shardID:   common.ShardID(i),
 		}
-		value := "test-value" + strconv.Itoa(i)
+		value := testSizableString{value: "v" + strconv.Itoa(i)}
 		serviceCache.Put(key, value)
 		if i == 9 {
 			expectedKey, expectedValue = key, value
@@ -104,7 +123,7 @@ func TestCacheClean(t *testing.T) {
 		segmentID: segmentID(0),
 		shardID:   common.ShardID(0),
 	}
-	value := "test-value"
+	value := testSizableString{value: "test-value"}
 
 	serviceCache.Put(key, value)
 	assert.Equal(t, uint64(1), serviceCache.Entries())
@@ -123,7 +142,7 @@ func TestCacheClose(t *testing.T) {
 		segmentID: segmentID(0),
 		shardID:   common.ShardID(0),
 	}
-	value := "test-value"
+	value := testSizableString{value: "test-value"}
 
 	serviceCache.Put(key, value)
 	assert.Equal(t, uint64(1), serviceCache.Entries())
@@ -140,7 +159,7 @@ func TestCacheConcurrency(t *testing.T) {
 	const numOperations = 100
 	var wg sync.WaitGroup
 	var expectedKey EntryKey
-	var expectedValue string
+	var expectedValue testSizableString
 	wg.Add(numGoroutines * 2)
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
@@ -154,7 +173,7 @@ func TestCacheConcurrency(t *testing.T) {
 					segmentID: segmentID(num),
 					shardID:   common.ShardID(num),
 				}
-				value := "test-value" + strconv.Itoa(num)
+				value := testSizableString{value: "test-value" + strconv.Itoa(num)}
 				if id == 0 && j == 0 {
 					expectedKey, expectedValue = key, value
 				}

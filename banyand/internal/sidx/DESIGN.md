@@ -125,12 +125,12 @@ type part struct {
     tagFilters  map[string]fs.Reader  // tag_<name>.tf files
     
     // Cached metadata for performance
-    primaryBlockMetadata []primaryBlockMetadata
-    partMetadata         partMetadata
+    blockMetadata []blockMetadata
+    partMetadata  partMetadata
     
 }
 
-// Enhanced metadata with integrity and versioning
+// Enhanced metadata with integrity
 type partMetadata struct {
     // Size information
     CompressedSizeBytes   uint64
@@ -312,7 +312,7 @@ type tagMetadata struct {
 ##### Standardized File Format
 
 **Core Files (per part):**
-- `primary.bin` - Block metadata with version headers
+- `primary.bin` - Block metadata
 - `data.bin` - User data payloads with compression
 - `keys.bin` - User-provided int64 ordering keys
 - `meta.bin` - Part metadata
@@ -324,8 +324,7 @@ type tagMetadata struct {
 - `tag_<name>.tf` - Bloom filters for fast lookups
 
 **File Format Features:**
-- **Version Control**: Format versioning for backward compatibility
-- **Version Control**: Format versioning for backward compatibility
+- **No Version Control**: Do not support format versioning 
 - **Format Validation**: File format and structure verification
 - **Atomic Updates**: Transactional multi-file operations
 - **Compression Support**: Configurable compression algorithms
@@ -351,20 +350,19 @@ sidx separates user data payloads from metadata to enable efficient querying and
 
 ##### Data Block Structure
 ```go
-// Metadata for a block of user data in data.bin
-type dataBlockMetadata struct {
-    offset uint64  // Offset in data.bin file
-    size   uint64  // Compressed size in bytes
-}
-
-// Enhanced primary block metadata with data references
-type primaryBlockMetadata struct {
+// Enhanced block metadata with data references
+type blockMetadata struct {
     seriesID    common.SeriesID
     minKey      int64                      // Minimum user key in block
     maxKey      int64                      // Maximum user key in block
-    dataBlock   dataBlockMetadata          // Reference to data in data.bin
-    keysBlock   dataBlockMetadata          // Reference to keys in keys.bin
-    tagsBlocks  map[string]dataBlockMetadata // References to tag files
+    dataBlock   dataBlock          // Reference to data in data.bin
+    keysBlock   dataBlock          // Reference to keys in keys.bin
+    tagsBlocks  map[string]dataBlock // References to tag files
+    
+    // Additional metadata for query processing
+    tagProjection    []string // Tags to load for queries
+    uncompressedSize uint64   // Uncompressed size of block
+    count           uint64   // Number of elements in block
 }
 ```
 
@@ -375,7 +373,792 @@ type primaryBlockMetadata struct {
 - **Clean Separation**: Metadata operations don't require data I/O
 - **Better Cache Utilization**: Metadata fits better in memory caches
 
-#### 5. Snapshot Management
+#### 5. Block Architecture
+
+The block design in sidx provides a comprehensive system for organizing, reading, writing, and scanning data blocks within parts. This architecture is inspired by the stream module but adapted for user-provided int64 keys instead of timestamps.
+
+##### Block Architecture Overview
+
+Blocks are the fundamental units of data organization within parts, providing:
+- **Efficient Storage**: Elements are organized into blocks for optimal compression and access
+- **Key-based Organization**: Sorted by seriesID first, then by user-provided int64 keys
+- **Memory Management**: Object pooling and reference counting for production use
+- **I/O Optimization**: Separate files for different data types enable selective loading
+
+##### Core Components
+
+###### A. Block Structure (`block`)
+
+The core block structure organizes elements for efficient storage and retrieval:
+
+```go
+// block represents a collection of elements organized for storage
+type block struct {
+    // Core data arrays (all same length)
+    userKeys   []int64           // User-provided ordering keys
+    elementIDs []uint64          // Unique element identifiers
+    data       [][]byte          // User payload data
+    
+    // Tag data organized by tag name
+    tags       map[string]*tagData  // Runtime tag data with filtering
+    
+    // Internal state
+    pooled     bool   // Whether this block came from pool
+}
+
+// Pool management for memory efficiency
+var blockPool = pool.Register[*block]("sidx-block")
+
+func generateBlock() *block {
+    v := blockPool.Get()
+    if v == nil {
+        return &block{
+            tags: make(map[string]*tagData),
+        }
+    }
+    return v
+}
+
+func releaseBlock(b *block) {
+    // Release tag filters back to pool
+    for _, tag := range b.tags {
+        if tag.filter != nil {
+            releaseBloomFilter(tag.filter)
+        }
+        releaseTagData(tag)
+    }
+    b.reset()
+    blockPool.Put(b)
+}
+
+// reset clears block for reuse in object pool
+func (b *block) reset() {
+    b.userKeys = b.userKeys[:0]
+    b.elementIDs = b.elementIDs[:0]
+    
+    // Reset data slices if not too large
+    if cap(b.data) <= maxPooledSliceCount {
+        for i := range b.data {
+            if cap(b.data[i]) <= maxPooledSliceSize {
+                b.data[i] = b.data[i][:0] // Reuse slice
+            }
+        }
+        b.data = b.data[:0]
+    } else {
+        b.data = nil // Release oversized slice
+    }
+    
+    // Clear tag map but keep the map itself
+    for k := range b.tags {
+        delete(b.tags, k)
+    }
+    
+    b.pooled = false
+}
+
+// mustInitFromElements initializes block from sorted elements
+func (b *block) mustInitFromElements(elements *elements) {
+    b.reset()
+    if elements.len() == 0 {
+        return
+    }
+    
+    // Verify elements are sorted
+    elements.assertSorted()
+    
+    // Copy core data
+    b.userKeys = append(b.userKeys, elements.userKeys...)
+    b.elementIDs = append(b.elementIDs, elements.elementIDs...)
+    b.data = append(b.data, elements.data...)
+    
+    // Process tags
+    b.mustInitFromTags(elements.tags)
+}
+
+// mustInitFromTags processes tag data for the block
+func (b *block) mustInitFromTags(elementTags [][]tag) {
+    if len(elementTags) == 0 {
+        return
+    }
+    
+    // Collect all unique tag names
+    tagNames := make(map[string]struct{})
+    for _, tags := range elementTags {
+        for _, tag := range tags {
+            tagNames[tag.name] = struct{}{}
+        }
+    }
+    
+    // Process each tag
+    for tagName := range tagNames {
+        b.processTag(tagName, elementTags)
+    }
+}
+
+// processTag creates tag data structure for a specific tag
+func (b *block) processTag(tagName string, elementTags [][]tag) {
+    td := generateTagData()
+    td.name = tagName
+    td.values = make([][]byte, len(b.userKeys))
+    
+    var valueType pbv1.ValueType
+    var indexed bool
+    
+    // Collect values for this tag across all elements
+    for i, tags := range elementTags {
+        found := false
+        for _, tag := range tags {
+            if tag.name == tagName {
+                td.values[i] = tag.value
+                valueType = tag.valueType
+                indexed = tag.indexed
+                found = true
+                break
+            }
+        }
+        if !found {
+            td.values[i] = nil // Missing tag value
+        }
+    }
+    
+    td.valueType = valueType
+    td.indexed = indexed
+    
+    // Create bloom filter for indexed tags
+    if indexed {
+        td.filter = generateBloomFilter()
+        td.filter.SetN(len(b.userKeys))
+        td.filter.ResizeBits((len(b.userKeys)*filter.B + 63) / 64)
+        
+        for _, value := range td.values {
+            if value != nil {
+                td.filter.Add(value)
+            }
+        }
+    }
+    
+    // Track min/max for int64 tags
+    if valueType == pbv1.ValueTypeInt64 {
+        for _, value := range td.values {
+            if value == nil {
+                continue
+            }
+            if len(td.min) == 0 || bytes.Compare(value, td.min) < 0 {
+                td.min = value
+            }
+            if len(td.max) == 0 || bytes.Compare(value, td.max) > 0 {
+                td.max = value
+            }
+        }
+    }
+    
+    b.tags[tagName] = td
+}
+
+// validate ensures block data consistency
+func (b *block) validate() error {
+    count := len(b.userKeys)
+    if count != len(b.elementIDs) || count != len(b.data) {
+        return fmt.Errorf("inconsistent block arrays: keys=%d, ids=%d, data=%d",
+            len(b.userKeys), len(b.elementIDs), len(b.data))
+    }
+    
+    // Verify sorting
+    for i := 1; i < count; i++ {
+        if b.userKeys[i] < b.userKeys[i-1] {
+            return fmt.Errorf("block not sorted by userKey at index %d", i)
+        }
+    }
+    
+    // Verify tag consistency
+    for tagName, tagData := range b.tags {
+        if len(tagData.values) != count {
+            return fmt.Errorf("tag %s has %d values but block has %d elements", 
+                tagName, len(tagData.values), count)
+        }
+    }
+    
+    return nil
+}
+
+// uncompressedSizeBytes calculates the uncompressed size of the block
+func (b *block) uncompressedSizeBytes() uint64 {
+    count := uint64(len(b.userKeys))
+    size := count * (8 + 8) // userKey + elementID
+    
+    // Add data payload sizes
+    for _, payload := range b.data {
+        size += uint64(len(payload))
+    }
+    
+    // Add tag data sizes
+    for tagName, tagData := range b.tags {
+        nameSize := uint64(len(tagName))
+        for _, value := range tagData.values {
+            if value != nil {
+                size += nameSize + uint64(len(value))
+            }
+        }
+    }
+    
+    return size
+}
+```
+
+###### B. Block Metadata (`blockMetadata`)
+
+Block metadata provides references to data stored in files:
+
+```go
+// blockMetadata contains metadata for a block within a part
+type blockMetadata struct {
+    // Block references to files
+    tagsBlocks map[string]dataBlock // References to tag files
+    dataBlock  dataBlock            // Reference to data in data.bin
+    keysBlock  dataBlock            // Reference to keys in keys.bin
+
+    // Block identification
+    seriesID common.SeriesID
+
+    // Key range within block
+    minKey int64 // Minimum user key in block
+    maxKey int64 // Maximum user key in block
+    
+    // Additional metadata for query processing
+    tagProjection    []string // Tags to load for queries
+    uncompressedSize uint64   // Uncompressed size of block
+    count           uint64   // Number of elements in block
+}
+
+// copyFrom creates a deep copy of block metadata
+func (bm *blockMetadata) copyFrom(src *blockMetadata) {
+    bm.seriesID = src.seriesID
+    bm.minKey = src.minKey
+    bm.maxKey = src.maxKey
+    bm.dataBlock = src.dataBlock
+    bm.keysBlock = src.keysBlock
+    bm.uncompressedSize = src.uncompressedSize
+    bm.count = src.count
+    
+    // Deep copy tag blocks
+    if bm.tagsBlocks == nil {
+        bm.tagsBlocks = make(map[string]dataBlock)
+    }
+    for k, v := range src.tagsBlocks {
+        bm.tagsBlocks[k] = v
+    }
+    
+    // Deep copy tag projection
+    bm.tagProjection = make([]string, len(src.tagProjection))
+    copy(bm.tagProjection, src.tagProjection)
+}
+
+// reset clears blockMetadata for reuse in object pool
+func (bm *blockMetadata) reset() {
+    bm.seriesID = 0
+    bm.minKey = 0
+    bm.maxKey = 0
+    bm.dataBlock = dataBlock{}
+    bm.keysBlock = dataBlock{}
+    bm.uncompressedSize = 0
+    bm.count = 0
+    
+    // Clear maps but keep them allocated
+    for k := range bm.tagsBlocks {
+        delete(bm.tagsBlocks, k)
+    }
+    bm.tagProjection = bm.tagProjection[:0]
+}
+
+// overlapsKeyRange checks if block overlaps with query key range
+func (bm *blockMetadata) overlapsKeyRange(minKey, maxKey int64) bool {
+    return !(maxKey < bm.minKey || minKey > bm.maxKey)
+}
+
+// overlapsSeriesID checks if block contains the specified series
+func (bm *blockMetadata) overlapsSeriesID(seriesID common.SeriesID) bool {
+    return bm.seriesID == seriesID
+}
+
+var blockMetadataPool = pool.Register[*blockMetadata]("sidx-blockMetadata")
+
+func generateBlockMetadata() *blockMetadata {
+    v := blockMetadataPool.Get()
+    if v == nil {
+        return &blockMetadata{
+            tagsBlocks: make(map[string]dataBlock),
+        }
+    }
+    return v
+}
+
+func releaseBlockMetadata(bm *blockMetadata) {
+    bm.reset()
+    blockMetadataPool.Put(bm)
+}
+```
+
+###### C. Block Reader (`block_reader`)
+
+The block reader provides efficient reading of blocks from disk:
+
+```go
+// blockReader reads blocks from parts with memory optimization
+type blockReader struct {
+    // File readers
+    dataReader fs.Reader      // Reads from data.bin
+    keysReader fs.Reader      // Reads from keys.bin
+    tagReaders map[string]fs.Reader // Reads from *.td files
+    
+    // Decoders for efficient processing
+    decoder    *encoding.BytesBlockDecoder
+    
+    // Pool management
+    pooled     bool
+}
+
+var blockReaderPool = pool.Register[*blockReader]("sidx-blockReader")
+
+func generateBlockReader() *blockReader {
+    v := blockReaderPool.Get()
+    if v == nil {
+        return &blockReader{
+            tagReaders: make(map[string]fs.Reader),
+            decoder:    &encoding.BytesBlockDecoder{},
+        }
+    }
+    return v
+}
+
+func releaseBlockReader(br *blockReader) {
+    br.reset()
+    blockReaderPool.Put(br)
+}
+
+// reset clears reader for reuse
+func (br *blockReader) reset() {
+    br.dataReader = nil
+    br.keysReader = nil
+    
+    // Clear tag readers map
+    for k := range br.tagReaders {
+        delete(br.tagReaders, k)
+    }
+    
+    br.decoder.Reset()
+    br.pooled = false
+}
+
+// init initializes reader with part files
+func (br *blockReader) init(p *part, tagProjection []string) error {
+    br.reset()
+    
+    br.dataReader = p.data
+    br.keysReader = p.userKeys
+    
+    // Initialize tag readers for projected tags only
+    for _, tagName := range tagProjection {
+        if tagReader, ok := p.tags[tagName]; ok {
+            br.tagReaders[tagName] = tagReader
+        }
+    }
+    
+    return nil
+}
+
+// mustReadFrom loads block data from files
+func (br *blockReader) mustReadFrom(bm *blockMetadata, dst *block) error {
+    dst.reset()
+    
+    // Read user keys
+    if err := br.readUserKeys(bm, dst); err != nil {
+        return fmt.Errorf("failed to read user keys: %w", err)
+    }
+    
+    // Read data payloads
+    if err := br.readData(bm, dst); err != nil {
+        return fmt.Errorf("failed to read data: %w", err)
+    }
+    
+    // Read tag data
+    if err := br.readTags(bm, dst); err != nil {
+        return fmt.Errorf("failed to read tags: %w", err)
+    }
+    
+    // Validate loaded block
+    if err := dst.validate(); err != nil {
+        return fmt.Errorf("loaded block validation failed: %w", err)
+    }
+    
+    return nil
+}
+
+// readUserKeys reads user keys from keys.bin
+func (br *blockReader) readUserKeys(bm *blockMetadata, dst *block) error {
+    bb := bigValuePool.Generate()
+    defer bigValuePool.Release(bb)
+    
+    // Read keys block
+    bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(bm.keysBlock.size))
+    fs.MustReadData(br.keysReader, int64(bm.keysBlock.offset), bb.Buf)
+    
+    // Decode keys
+    dst.userKeys = encoding.ExtendListCapacity(dst.userKeys, int(bm.count))
+    dst.userKeys = dst.userKeys[:bm.count]
+    
+    _, err := encoding.BytesToInt64List(dst.userKeys, bb.Buf)
+    if err != nil {
+        return fmt.Errorf("failed to decode user keys: %w", err)
+    }
+    
+    return nil
+}
+
+// readData reads data payloads from data.bin
+func (br *blockReader) readData(bm *blockMetadata, dst *block) error {
+    bb := bigValuePool.Generate()
+    defer bigValuePool.Release(bb)
+    
+    // Read data block
+    bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(bm.dataBlock.size))
+    fs.MustReadData(br.dataReader, int64(bm.dataBlock.offset), bb.Buf)
+    
+    // Decompress if necessary
+    decompressed, err := zstd.DecompressBytes(bb.Buf)
+    if err != nil {
+        return fmt.Errorf("failed to decompress data block: %w", err)
+    }
+    
+    // Decode data payloads
+    dst.data = encoding.ExtendSliceCapacity(dst.data, int(bm.count))
+    dst.data = dst.data[:bm.count]
+    
+    if err := br.decoder.DecodeBytesList(dst.data, decompressed); err != nil {
+        return fmt.Errorf("failed to decode data payloads: %w", err)
+    }
+    
+    return nil
+}
+
+// readTags reads tag data from tag files
+func (br *blockReader) readTags(bm *blockMetadata, dst *block) error {
+    for tagName, tagBlock := range bm.tagsBlocks {
+        tagReader, ok := br.tagReaders[tagName]
+        if !ok {
+            continue // Tag not in projection
+        }
+        
+        if err := br.readTag(tagName, tagBlock, tagReader, dst, int(bm.count)); err != nil {
+            return fmt.Errorf("failed to read tag %s: %w", tagName, err)
+        }
+    }
+    
+    return nil
+}
+
+// readTag reads a single tag's data
+func (br *blockReader) readTag(tagName string, tagBlock dataBlock, 
+                              tagReader fs.Reader, dst *block, count int) error {
+    bb := bigValuePool.Generate()
+    defer bigValuePool.Release(bb)
+    
+    // Read tag data block
+    bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tagBlock.size))
+    fs.MustReadData(tagReader, int64(tagBlock.offset), bb.Buf)
+    
+    // Create tag data
+    td := generateTagData()
+    td.name = tagName
+    td.values = make([][]byte, count)
+    
+    // Decode tag values
+    if err := br.decoder.DecodeBytesList(td.values, bb.Buf); err != nil {
+        releaseTagData(td)
+        return fmt.Errorf("failed to decode tag values: %w", err)
+    }
+    
+    dst.tags[tagName] = td
+    return nil
+}
+```
+
+###### D. Block Scanner (`block_scanner`)
+
+The block scanner provides efficient scanning for queries:
+
+```go
+// blockScanner scans blocks for query processing
+type blockScanner struct {
+    // Query parameters
+    minKey        int64
+    maxKey        int64
+    seriesFilter  map[common.SeriesID]struct{}
+    tagFilters    map[string][]byte // Tag filters for optimization
+    
+    // Current scan state  
+    currentBlock  *block
+    currentIndex  int
+    
+    // Resources
+    reader        *blockReader
+    tmpBlock      *block
+    
+    // Pool management
+    pooled        bool
+}
+
+var blockScannerPool = pool.Register[*blockScanner]("sidx-blockScanner")
+
+func generateBlockScanner() *blockScanner {
+    v := blockScannerPool.Get()
+    if v == nil {
+        return &blockScanner{
+            seriesFilter: make(map[common.SeriesID]struct{}),
+            tagFilters:   make(map[string][]byte),
+            reader:       generateBlockReader(),
+            tmpBlock:     generateBlock(),
+        }
+    }
+    return v
+}
+
+func releaseBlockScanner(bs *blockScanner) {
+    bs.reset()
+    blockScannerPool.Put(bs)
+}
+
+// reset clears scanner for reuse
+func (bs *blockScanner) reset() {
+    bs.minKey = 0
+    bs.maxKey = 0
+    bs.currentIndex = 0
+    
+    // Clear filters
+    for k := range bs.seriesFilter {
+        delete(bs.seriesFilter, k)
+    }
+    for k := range bs.tagFilters {
+        delete(bs.tagFilters, k)
+    }
+    
+    // Reset resources
+    if bs.reader != nil {
+        releaseBlockReader(bs.reader)
+        bs.reader = generateBlockReader()
+    }
+    
+    if bs.tmpBlock != nil {
+        releaseBlock(bs.tmpBlock)
+        bs.tmpBlock = generateBlock()
+    }
+    
+    bs.currentBlock = nil
+    bs.pooled = false
+}
+
+// init initializes scanner with query parameters
+func (bs *blockScanner) init(minKey, maxKey int64, 
+                           seriesIDs []common.SeriesID,
+                           tagFilters map[string][]byte) {
+    bs.reset()
+    
+    bs.minKey = minKey
+    bs.maxKey = maxKey
+    
+    // Convert series slice to map for fast lookup
+    for _, id := range seriesIDs {
+        bs.seriesFilter[id] = struct{}{}
+    }
+    
+    // Copy tag filters
+    for k, v := range tagFilters {
+        bs.tagFilters[k] = v
+    }
+}
+
+// scanBlock scans a block and returns matching elements
+func (bs *blockScanner) scanBlock(bm *blockMetadata, p *part) ([]*element, error) {
+    // Quick check: does block overlap with query range?
+    if !bm.overlapsKeyRange(bs.minKey, bs.maxKey) {
+        return nil, nil
+    }
+    
+    // Quick check: does block contain relevant series?
+    if len(bs.seriesFilter) > 0 {
+        if _, ok := bs.seriesFilter[bm.seriesID]; !ok {
+            return nil, nil
+        }
+    }
+    
+    // Initialize reader and load block
+    if err := bs.reader.init(p, bm.tagProjection); err != nil {
+        return nil, fmt.Errorf("failed to init block reader: %w", err)
+    }
+    
+    if err := bs.reader.mustReadFrom(bm, bs.tmpBlock); err != nil {
+        return nil, fmt.Errorf("failed to read block: %w", err)
+    }
+    
+    // Scan block for matching elements
+    return bs.scanBlockElements(bs.tmpBlock)
+}
+
+// scanBlockElements scans elements within a loaded block
+func (bs *blockScanner) scanBlockElements(block *block) ([]*element, error) {
+    var results []*element
+    
+    for i := 0; i < len(block.userKeys); i++ {
+        // Check key range
+        if block.userKeys[i] < bs.minKey || block.userKeys[i] > bs.maxKey {
+            continue
+        }
+        
+        // Check tag filters
+        if !bs.matchesTagFilters(block, i) {
+            continue
+        }
+        
+        // Create matching element
+        elem := generateElement()
+        elem.userKey = block.userKeys[i]
+        elem.data = block.data[i]
+        
+        // Copy tag values
+        for tagName, tagData := range block.tags {
+            if i < len(tagData.values) && tagData.values[i] != nil {
+                tag := generateTag()
+                tag.name = tagName
+                tag.value = tagData.values[i]
+                tag.valueType = tagData.valueType
+                elem.tags = append(elem.tags, tag)
+            }
+        }
+        
+        results = append(results, elem)
+    }
+    
+    return results, nil
+}
+
+// matchesTagFilters checks if element matches tag filters
+func (bs *blockScanner) matchesTagFilters(block *block, index int) bool {
+    for filterTagName, filterValue := range bs.tagFilters {
+        tagData, ok := block.tags[filterTagName]
+        if !ok {
+            return false // Tag not present
+        }
+        
+        if index >= len(tagData.values) {
+            return false // No value for this element
+        }
+        
+        elementValue := tagData.values[index]
+        if elementValue == nil {
+            return false // Null value
+        }
+        
+        if !bytes.Equal(elementValue, filterValue) {
+            return false // Value doesn't match
+        }
+    }
+    
+    return true
+}
+```
+
+###### E. Block Writer (`block_writer`)
+
+The block writer handles efficient writing of blocks to disk:
+
+refer to @banyand/stream/block_writer.go to implement the blockWriter. 
+
+##### Component Dependency Relationships
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│     Block       │    │  Block Metadata │    │  Block Writer   │
+│   (Runtime)     │◄──►│   (Storage)     │◄───│   (Persist)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         ▲                        ▲                        ▲
+         │                        │                        │
+         │                        │                        │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  Block Reader   │    │  Block Scanner  │    │      Parts      │
+│   (Load)        │────│   (Query)       │────│   (Storage)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+**Key Dependencies:**
+
+1. **Block → Block Metadata**: Blocks generate metadata during write operations
+2. **Block Metadata → Block Reader**: Metadata guides what and how to read
+3. **Block Reader → Block**: Reader loads data into block structures
+4. **Block Scanner → Block Reader**: Scanner uses reader to load blocks for queries
+5. **Block Writer → Parts**: Writer creates files within part directories
+6. **Parts → Block Scanner**: Scanner operates on blocks within parts
+
+##### Key Design Features
+
+###### Block Size Management
+```go
+const (
+    // maxElementsPerBlock defines the maximum number of elements per block.
+	maxElementsPerBlock = 8 * 1024
+)
+
+// isFull checks if block has reached element count limit.
+func (b *block) isFull() bool {
+	return len(b.userKeys) >= maxElementsPerBlock
+}
+```
+
+###### Compression Strategy
+- **Data Payloads**: zstd compression for user data
+- **User Keys**: Specialized int64 encoding for optimal space usage
+- **Tag Values**: Type-specific encoding with bloom filters for indexed tags
+- **Metadata**: JSON for readability, binary for performance-critical paths
+
+###### Memory Management
+- **Object Pooling**: All major structures use sync.Pool for allocation efficiency
+- **Reference Counting**: Safe concurrent access with atomic operations
+- **Resource Limits**: Configurable limits prevent memory exhaustion
+- **Reset Methods**: Proper cleanup enables safe object reuse
+
+###### Error Handling
+- **Validation**: Comprehensive validation at all levels
+- **Recovery**: Graceful handling of corruption and I/O errors
+- **Logging**: Detailed error context for debugging
+- **Consistency**: Atomic operations maintain data integrity
+
+##### File Organization in Parts
+
+```
+000000001234abcd/                    # Part directory (epoch-based name)
+├── manifest.json                    # Part metadata and statistics  
+├── primary.bin                      # Block metadata (references to all files)
+├── data.bin                        # User data payloads (compressed)
+├── keys.bin                        # User-provided int64 ordering keys
+├── meta.bin                        # Part-level metadata
+├── tag_service_id.td               # Service ID tag data
+├── tag_service_id.tm               # Service ID tag metadata
+├── tag_service_id.tf               # Service ID tag filter (bloom)
+├── tag_endpoint.td                 # Endpoint tag data
+├── tag_endpoint.tm                 # Endpoint tag metadata
+├── tag_endpoint.tf                 # Endpoint tag filter
+└── ...                             # Additional tag files
+```
+
+**File Format Details:**
+- **primary.bin**: Contains array of blockMetadata structures
+- **data.bin**: Compressed user payloads with block boundaries
+- **keys.bin**: Int64-encoded user keys with block boundaries
+- ***.td**: Tag value data with type-specific encoding
+- ***.tm**: Tag metadata with bloom filter parameters
+- ***.tf**: Bloom filter data for fast tag filtering
+
+This block architecture provides efficient, scalable storage for user-key-based data while maintaining consistency with the existing sidx design principles and production requirements.
+
+#### 6. Snapshot Management
 ```go
 type snapshot struct {
     parts   []*partWrapper
@@ -400,7 +1183,7 @@ func (s *snapshot) getParts(dst []*part, minKey, maxKey int64) ([]*part, int) {
 }
 ```
 
-#### 6. Enhanced API Design
+#### 7. Enhanced API Design
 
 **Write Interface:**
 - Context support for cancellation and timeouts
@@ -490,7 +1273,7 @@ func (s *snapshot) getParts(dst []*part, minKey, maxKey int64) ([]*part, int) {
 #### Block Metadata Validation
 ```go
 // Validation ensures monotonic ordering of blocks
-func validatePrimaryBlockMetadata(blocks []primaryBlockMetadata) error {
+func validateBlockMetadata(blocks []blockMetadata) error {
     for i := 1; i < len(blocks); i++ {
         if blocks[i].seriesID < blocks[i-1].seriesID {
             return fmt.Errorf("unexpected block with smaller seriesID")
@@ -866,21 +1649,12 @@ This consistency ensures that developers familiar with one module can easily und
 ### Configuration Options
 ```go
 type Options struct {
-    // Part configuration
-    MaxKeysPerPart     int    // Maximum keys in memory part
-    KeyRangeSize       int64  // Target size of key ranges per part
-    
-    // Flush configuration
-    FlushTimeout       time.Duration
-    FlushKeyThreshold  int64  // Flush when key range exceeds this
-    
-    // Merge configuration
-    MergeMinParts      int
-    MergeMaxParts      int
-    
-    // Query configuration
-    DefaultOrder       Order  // Default ordering for queries
-    MaxQueryRange      int64  // Maximum allowed query key range
+    // Path specifies the directory where index files will be stored
+    Path string
+    // MergePolicy defines the strategy for merging index segments during compaction
+    MergePolicy              *MergePolicy
+    // Protector provides memory management and protection mechanisms
+    Protector                protector.Memory
 }
 ```
 

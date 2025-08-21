@@ -271,12 +271,12 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	tff := b.tagFamilies
 	for i := range tff {
 		tf := tff[i]
-		nameLen := uint64(len(tf.name))
+		n += uint64(len(tf.name))
 		for _, c := range tf.columns {
-			nameLen += uint64(len(c.name))
+			n += uint64(len(c.name))
 			for _, v := range c.values {
 				if len(v) > 0 {
-					n += nameLen + uint64(len(v))
+					n += uint64(len(v))
 				}
 			}
 		}
