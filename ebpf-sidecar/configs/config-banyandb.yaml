@@ -1,0 +1,19 @@
+# Configuration for BanyanDB export mode
+server:
+  grpc:
+    port: 9090
+  http:
+    port: 8080
+    metrics_path: /metrics
+
+collector:
+  interval: 10s
+  modules:
+    - iomonitor
+
+export:
+  type: banyandb
+  banyandb:
+    endpoint: banyandb:17912
+    group: ebpf-metrics
+    timeout: 30s

@@ -265,7 +265,7 @@ func (e *BanyanDBExporter) convertToFields() []*modelv1.FieldValue {
 	}
 
 	// Convert aggregated metrics to fields
-	for name, value := range aggregated {
+	for _, value := range aggregated {
 		fields = append(fields, &modelv1.FieldValue{
 			Value: &modelv1.FieldValue_Float{
 				Float: &modelv1.Float{

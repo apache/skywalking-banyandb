@@ -13,13 +13,12 @@ The eBPF Sidecar Agent provides kernel-level observability for BanyanDB operatio
 - **Metrics Collection**: Unified `iomonitor_module.go` with memory management
 - **Prometheus Export**: Full implementation with proper formatting
 - **BanyanDB Native Export**: Direct metrics push to BanyanDB with batching
+- **gRPC API**: Full service implementation with protobuf definitions in `/api/proto/banyandb/ebpf/v1/`
+- **Docker Support**: Multi-stage Dockerfiles (Ubuntu and Alpine based)
+- **Docker Compose**: Complete stack for local testing with BanyanDB, Prometheus, and Grafana
 - **Memory Management**: Clear-after-read strategy for production use
 - **Integration Tests**: Located in `/test/integration/ebpf_sidecar/`
 - **Build System**: Makefile with automatic dependency installation
-
-### 🚧 In Progress
-- **gRPC API**: Protocol buffer definitions and service implementation
-- **Docker/Kubernetes**: Container image and deployment configurations
 
 ### 📊 Available Metrics
 - `ebpf_fadvise_calls_total` - Total fadvise() system calls
@@ -163,27 +162,70 @@ Environment variables use the prefix `EBPF_SIDECAR_` (e.g., `EBPF_SIDECAR_SERVER
 
 ### gRPC Services
 
-- `EBPFMetrics.GetMetrics` - Get current metrics
-- `EBPFMetrics.StreamMetrics` - Stream metrics updates
-- `EBPFMetrics.GetHealth` - Health check
+The gRPC API is defined in `/api/proto/banyandb/ebpf/v1/` and provides:
+
+- `EBPFMetricsService.GetMetrics` - Get current metrics from all or specific modules
+- `EBPFMetricsService.StreamMetrics` - Stream real-time metrics updates
+- `EBPFMetricsService.GetIOStats` - Get detailed I/O statistics
+- `EBPFMetricsService.GetModuleStatus` - Check status of eBPF modules
+- `EBPFMetricsService.ConfigureModule` - Enable/disable modules (coming soon)
+- `EBPFMetricsService.GetHealth` - Health check
 
 ## Deployment
 
 ### Docker
 
 ```bash
-# Build Docker image
-make docker
+# Build Docker image (Ubuntu-based)
+docker build -f ebpf-sidecar/Dockerfile -t banyandb/ebpf-sidecar:latest .
 
-# Run container
+# Build lightweight Alpine image
+docker build -f ebpf-sidecar/Dockerfile.alpine -t banyandb/ebpf-sidecar:alpine .
+
+# Run container with Prometheus export
 docker run -d \
   --name ebpf-sidecar \
   --privileged \
-  -v /sys:/sys \
+  --pid host \
+  -v /sys:/sys:ro \
+  -v /proc:/proc:ro \
   -v /lib/modules:/lib/modules:ro \
   -p 8080:8080 \
   -p 9090:9090 \
-  skywalking-banyandb/ebpf-sidecar:latest
+  banyandb/ebpf-sidecar:latest
+
+# Run with BanyanDB export
+docker run -d \
+  --name ebpf-sidecar \
+  --privileged \
+  --pid host \
+  -e EBPF_SIDECAR_EXPORT_TYPE=banyandb \
+  -e EBPF_SIDECAR_EXPORT_BANYANDB_ENDPOINT=banyandb:17912 \
+  -p 8080:8080 \
+  -p 9090:9090 \
+  banyandb/ebpf-sidecar:latest
+```
+
+### Docker Compose
+
+```bash
+# Start complete stack (BanyanDB + eBPF Sidecar + Prometheus + Grafana)
+cd ebpf-sidecar
+docker-compose up -d
+
+# View logs
+docker-compose logs -f ebpf-sidecar-prometheus
+docker-compose logs -f ebpf-sidecar-banyandb
+
+# Access services
+# - eBPF Metrics (Prometheus): http://localhost:8080/metrics
+# - eBPF Metrics (BanyanDB): http://localhost:8081/metrics
+# - Prometheus UI: http://localhost:9092
+# - Grafana: http://localhost:3000 (admin/admin)
+# - BanyanDB gRPC: localhost:17912
+
+# Stop stack
+docker-compose down
 ```
 
 ### Kubernetes

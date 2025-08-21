@@ -1,0 +1,15 @@
+# Configuration for Prometheus export mode
+server:
+  grpc:
+    port: 9090
+  http:
+    port: 8080
+    metrics_path: /metrics
+
+collector:
+  interval: 10s
+  modules:
+    - iomonitor
+
+export:
+  type: prometheus
