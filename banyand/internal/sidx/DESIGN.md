@@ -708,7 +708,7 @@ type blockReader struct {
     // File readers
     dataReader fs.Reader      // Reads from data.bin
     keysReader fs.Reader      // Reads from keys.bin
-    tagReaders map[string]fs.Reader // Reads from tag_*.td files
+    tagReaders map[string]fs.Reader // Reads from *.td files
     
     // Decoders for efficient processing
     decoder    *encoding.BytesBlockDecoder
@@ -1070,221 +1070,7 @@ func (bs *blockScanner) matchesTagFilters(block *block, index int) bool {
 
 The block writer handles efficient writing of blocks to disk:
 
-```go
-// blockWriter writes blocks to part files with compression
-type blockWriter struct {
-    // File writers
-    dataWriter fs.Writer                // Writes to data.bin
-    keysWriter fs.Writer                // Writes to keys.bin
-    tagWriters map[string]fs.Writer     // Writes to tag_*.td files
-    
-    // Compression
-    compressor *zstd.Compressor
-    
-    // Write tracking
-    bytesWritten map[string]uint64  // Track bytes written per file
-    
-    // Pool management
-    pooled       bool
-}
-
-var blockWriterPool = pool.Register[*blockWriter]("sidx-blockWriter")
-
-func generateBlockWriter() *blockWriter {
-    v := blockWriterPool.Get()
-    if v == nil {
-        return &blockWriter{
-            tagWriters:   make(map[string]fs.Writer),
-            bytesWritten: make(map[string]uint64),
-            compressor:   zstd.NewCompressor(),
-        }
-    }
-    return v
-}
-
-func releaseBlockWriter(bw *blockWriter) {
-    bw.reset()
-    blockWriterPool.Put(bw)
-}
-
-// reset clears writer for reuse
-func (bw *blockWriter) reset() {
-    bw.dataWriter = nil
-    bw.keysWriter = nil
-    
-    // Clear writers and tracking
-    for k := range bw.tagWriters {
-        delete(bw.tagWriters, k)
-    }
-    for k := range bw.bytesWritten {
-        delete(bw.bytesWritten, k)
-    }
-    
-    if bw.compressor != nil {
-        bw.compressor.Reset()
-    }
-    
-    bw.pooled = false
-}
-
-// init initializes writer with part writers
-func (bw *blockWriter) init(dataWriter, keysWriter fs.Writer,
-                           tagWriters map[string]fs.Writer) {
-    bw.reset()
-    
-    bw.dataWriter = dataWriter
-    bw.keysWriter = keysWriter
-    
-    // Copy tag writers
-    for tagName, writer := range tagWriters {
-        bw.tagWriters[tagName] = writer
-    }
-}
-
-// mustWriteTo writes block to files and updates metadata
-func (bw *blockWriter) mustWriteTo(block *block, bm *blockMetadata) error {
-    if err := block.validate(); err != nil {
-        return fmt.Errorf("block validation failed: %w", err)
-    }
-    
-    bm.reset()
-    
-    // Set basic metadata
-    bm.minKey = block.userKeys[0]
-    bm.maxKey = block.userKeys[len(block.userKeys)-1]
-    bm.count = uint64(len(block.userKeys))
-    bm.uncompressedSize = block.uncompressedSizeBytes()
-    
-    // Write user keys
-    if err := bw.writeUserKeys(block, bm); err != nil {
-        return fmt.Errorf("failed to write user keys: %w", err)
-    }
-    
-    // Write data payloads
-    if err := bw.writeData(block, bm); err != nil {
-        return fmt.Errorf("failed to write data: %w", err)
-    }
-    
-    // Write tags
-    if err := bw.writeTags(block, bm); err != nil {
-        return fmt.Errorf("failed to write tags: %w", err)
-    }
-    
-    return nil
-}
-
-// writeUserKeys writes user keys to keys.bin
-func (bw *blockWriter) writeUserKeys(block *block, bm *blockMetadata) error {
-    bb := bigValuePool.Generate()
-    defer bigValuePool.Release(bb)
-    
-    // Encode user keys
-    bb.Buf = encoding.Int64ListToBytes(bb.Buf[:0], block.userKeys)
-    
-    // Track write position
-    offset := bw.bytesWritten["keys"]
-    size := uint64(len(bb.Buf))
-    
-    // Write to file
-    fs.MustWriteData(bw.keysWriter.SequentialWrite(), bb.Buf)
-    
-    // Update metadata
-    bm.keysBlock = dataBlock{offset: offset, size: size}
-    bw.bytesWritten["keys"] = offset + size
-    
-    return nil
-}
-
-// writeData writes data payloads to data.bin
-func (bw *blockWriter) writeData(block *block, bm *blockMetadata) error {
-    bb := bigValuePool.Generate()
-    defer bigValuePool.Release(bb)
-    
-    // Encode data payloads
-    bb.Buf = encoding.BytesListToBytes(bb.Buf[:0], block.data)
-    
-    // Compress data
-    compressed, err := bw.compressor.CompressBytes(bb.Buf)
-    if err != nil {
-        return fmt.Errorf("failed to compress data: %w", err)
-    }
-    
-    // Track write position
-    offset := bw.bytesWritten["data"]
-    size := uint64(len(compressed))
-    
-    // Write to file
-    fs.MustWriteData(bw.dataWriter.SequentialWrite(), compressed)
-    
-    // Update metadata
-    bm.dataBlock = dataBlock{offset: offset, size: size}
-    bw.bytesWritten["data"] = offset + size
-    
-    return nil
-}
-
-// writeTags writes tag data to tag files
-func (bw *blockWriter) writeTags(block *block, bm *blockMetadata) error {
-    for tagName, tagData := range block.tags {
-        writer, ok := bw.tagWriters[tagName]
-        if !ok {
-            continue // Tag writer not available
-        }
-        
-        if err := bw.writeTag(tagName, tagData, writer, bm); err != nil {
-            return fmt.Errorf("failed to write tag %s: %w", tagName, err)
-        }
-    }
-    
-    return nil
-}
-
-// writeTag writes a single tag's data
-func (bw *blockWriter) writeTag(tagName string, tagData *tagData,
-                               writer fs.Writer, bm *blockMetadata) error {
-    bb := bigValuePool.Generate()
-    defer bigValuePool.Release(bb)
-    
-    // Encode tag values
-    bb.Buf = encoding.BytesListToBytes(bb.Buf[:0], tagData.values)
-    
-    // Track write position
-    fileKey := "tag_" + tagName
-    offset := bw.bytesWritten[fileKey]
-    size := uint64(len(bb.Buf))
-    
-    // Write to file
-    fs.MustWriteData(writer.SequentialWrite(), bb.Buf)
-    
-    // Update metadata
-    bm.tagsBlocks[tagName] = dataBlock{offset: offset, size: size}
-    bw.bytesWritten[fileKey] = offset + size
-    
-    return nil
-}
-
-// totalBytesWritten returns total bytes written across all files
-func (bw *blockWriter) totalBytesWritten() uint64 {
-    var total uint64
-    for _, bytes := range bw.bytesWritten {
-        total += bytes
-    }
-    return total
-}
-
-// mustClose closes all writers
-func (bw *blockWriter) mustClose() {
-    if bw.dataWriter != nil {
-        fs.MustClose(bw.dataWriter.SequentialWrite())
-    }
-    if bw.keysWriter != nil {
-        fs.MustClose(bw.keysWriter.SequentialWrite())
-    }
-    for _, writer := range bw.tagWriters {
-        fs.MustClose(writer.SequentialWrite())
-    }
-}
-```
+refer to @banyand/stream/block_writer.go to implement the blockWriter. 
 
 ##### Component Dependency Relationships
 
@@ -1316,14 +1102,13 @@ func (bw *blockWriter) mustClose() {
 ###### Block Size Management
 ```go
 const (
-    maxUncompressedBlockSize = 8 * 1024 * 1024  // 8MB uncompressed
-    maxPooledSliceSize       = 1024 * 1024      // 1MB max pooled slice
-    maxPooledSliceCount      = 1000             // Max pooled slice count
+    // maxElementsPerBlock defines the maximum number of elements per block.
+	maxElementsPerBlock = 8 * 1024
 )
 
-// isFull checks if block has reached size limit
+// isFull checks if block has reached element count limit.
 func (b *block) isFull() bool {
-    return b.uncompressedSizeBytes() >= maxUncompressedBlockSize
+	return len(b.userKeys) >= maxElementsPerBlock
 }
 ```
 
@@ -1367,9 +1152,9 @@ func (b *block) isFull() bool {
 - **primary.bin**: Contains array of blockMetadata structures
 - **data.bin**: Compressed user payloads with block boundaries
 - **keys.bin**: Int64-encoded user keys with block boundaries
-- **tag_*.td**: Tag value data with type-specific encoding
-- **tag_*.tm**: Tag metadata with bloom filter parameters
-- **tag_*.tf**: Bloom filter data for fast tag filtering
+- ***.td**: Tag value data with type-specific encoding
+- ***.tm**: Tag metadata with bloom filter parameters
+- ***.tf**: Bloom filter data for fast tag filtering
 
 This block architecture provides efficient, scalable storage for user-key-based data while maintaining consistency with the existing sidx design principles and production requirements.
 

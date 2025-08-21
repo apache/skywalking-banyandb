@@ -10,9 +10,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 - [ ] **Phase 4**: Memory Management (4 tasks) 
 - [ ] **Phase 5**: Snapshot Management (4 tasks)
 - [ ] **Phase 6**: Write Path (4 tasks)
-- [ ] **Phase 7**: Flush Operations (4 tasks)
-- [ ] **Phase 8**: Merge Operations (4 tasks)
-- [ ] **Phase 9**: Query Path (5 tasks)
+- [ ] **Phase 7**: Query Path (5 tasks)
+- [ ] **Phase 8**: Flush Operations (4 tasks)
+- [ ] **Phase 9**: Merge Operations (4 tasks)
 - [ ] **Phase 10**: Resource Management (3 tasks)
 - [ ] **Phase 11**: Error Handling (3 tasks)
 - [ ] **Phase 12**: Testing (4 tasks)
@@ -76,7 +76,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ### 1.5 Part Structure (`part.go`) ✅
 - [x] File readers for primary.bin, data.bin, keys.bin, meta.bin
-- [x] Individual tag file readers (tag_*.td, tag_*.tm, tag_*.tf)
+- [x] Individual tag file readers (*.td, *.tm, *.tf)
 - [x] Part opening/closing lifecycle
 - [x] **Test Cases**:
   - [x] File lifecycle management
@@ -204,61 +204,56 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ## Phase 4: Memory Management
 
-### 4.1 MemPart Implementation (`mempart.go`)
-- [ ] In-memory buffer before flushing to disk
-- [ ] Element accumulation with size tracking
-- [ ] Memory usage monitoring
-- [ ] **Test Cases**:
-  - [ ] Memory part creation and lifecycle
-  - [ ] Size limits enforcement
-  - [ ] Element addition and retrieval
-  - [ ] Memory usage tracking accuracy
+### 4.1 MemPart Implementation (`mempart.go`) ✅
+- [x] In-memory buffer before flushing to disk
+- [x] Element accumulation with size tracking
+- [x] Memory usage monitoring
+- [x] **Test Cases**:
+  - [x] Memory part creation and lifecycle
+  - [x] Size limits enforcement
+  - [x] Element addition and retrieval
+  - [x] Memory usage tracking accuracy
 
-### 4.2 Block Writer (`block_writer.go`) 🔥 - DESIGN COMPLETED ✅
-- [ ] **Complete block writer design added to DESIGN.md**
-- [ ] **Multi-file writing**: data.bin, keys.bin, tag_*.td files
-- [ ] **Compression**: zstd compression for data payloads
-- [ ] **Write tracking**: Track bytes written per file
-- [ ] **Memory management**: Object pooling with reset() methods
-- [ ] **Atomic operations**: mustWriteTo() for block serialization
-- [ ] **Implementation Tasks**:
-  - [ ] Create block_writer.go with core writer structure
-  - [ ] Implement writeUserKeys(), writeData(), writeTags()
-  - [ ] Add compression/decompression support
-  - [ ] Implement write tracking and position management
-- [ ] **Test Cases**:
-  - [ ] Block serialization with various data sizes
-  - [ ] Compression ratios meet expectations
-  - [ ] Data integrity after compression/decompression
-  - [ ] Block writer reuse and pooling
+### 4.2 Block Writer (`block_writer.go`) ✅
+- [x] **Complete block writer design added to DESIGN.md**
+- [x] **Multi-file writing**: meta.bin, primary.bin data.bin, keys.bin, *.td, *.tf, *.tm files
+- [x] **Compression**: zstd compression for data payloads
+- [x] **Write tracking**: Track bytes written per file
+- [x] **Memory management**: Object pooling with reset() methods
+- [x] **Atomic operations**: mustWriteTo() for block serialization
+- [x] **Test Cases**:
+  - [x] Block serialization with various data sizes
+  - [x] Compression ratios meet expectations
+  - [x] Data integrity after compression/decompression
+  - [x] Block writer reuse and pooling
 
-### 4.3 Element Sorting (`elements.go`)
-- [ ] Sort by seriesID first, then userKey
-- [ ] Efficient in-place sorting algorithms
-- [ ] Validation of sort order
-- [ ] **Test Cases**:
-  - [ ] Sorting correctness with various data sizes
-  - [ ] Sorting stability preserves order of equal elements
-  - [ ] Performance benchmarks for large datasets
-  - [ ] Edge cases (empty, single element, duplicate keys)
+### 4.3 Element Sorting (`elements.go`) ✅
+- [x] Sort by seriesID first, then userKey
+- [x] Efficient in-place sorting algorithms
+- [x] Validation of sort order
+- [x] **Test Cases**:
+  - [x] Sorting correctness with various data sizes
+  - [x] Sorting stability preserves order of equal elements
+  - [x] Performance benchmarks for large datasets
+  - [x] Edge cases (empty, single element, duplicate keys)
 
 ### 4.4 Block Initialization (`block.go` methods) 🔥 - DESIGN COMPLETED ✅
-- [ ] **Complete block initialization design added to DESIGN.md**
-- [ ] **mustInitFromElements()**: Process sorted elements into blocks
-- [ ] **mustInitFromTags()**: Process tag data for blocks
-- [ ] **processTag()**: Create tag data structures with bloom filters
-- [ ] **Key validation**: Verify sorting and consistency
-- [ ] **Tag optimization**: Bloom filters for indexed tags, min/max for int64 tags
-- [ ] **Implementation Tasks**:
-  - [ ] Implement mustInitFromElements() with element processing
-  - [ ] Add mustInitFromTags() for tag data organization
-  - [ ] Create processTag() with bloom filter generation
-  - [ ] Add validation for element ordering
-- [ ] **Test Cases**:
-  - [ ] Block building from various element configurations
-  - [ ] Validation errors for unsorted elements
-  - [ ] Edge cases (empty elements, single series)
-  - [ ] Memory usage during block initialization
+- [x] **Complete block initialization design added to DESIGN.md**
+- [x] **mustInitFromElements()**: Process sorted elements into blocks
+- [x] **mustInitFromTags()**: Process tag data for blocks
+- [x] **processTag()**: Create tag data structures with bloom filters
+- [x] **Key validation**: Verify sorting and consistency
+- [x] **Tag optimization**: Bloom filters for indexed tags, min/max for int64 tags
+- [x] **Implementation Tasks**:
+  - [x] Implement mustInitFromElements() with element processing
+  - [x] Add mustInitFromTags() for tag data organization
+  - [x] Create processTag() with bloom filter generation
+  - [x] Add validation for element ordering
+- [x] **Test Cases**:
+  - [x] Block building from various element configurations
+  - [x] Validation errors for unsorted elements
+  - [x] Edge cases (empty elements, single series)
+  - [x] Memory usage during block initialization
 
 ---
 
@@ -342,7 +337,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
 - [ ] **Complete block building design added to DESIGN.md**
 - [ ] **Element organization**: Sort elements by seriesID then userKey
 - [ ] **Block creation**: mustInitFromElements() with sorted elements
-- [ ] **Size management**: maxUncompressedBlockSize limits
+- [ ] **Size management**: maxElementsPerBlock limits
 - [ ] **Memory efficiency**: Object pooling and resource management
 - [ ] **Implementation Tasks**:
   - [ ] Integrate block building into write path
@@ -357,9 +352,79 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 7: Flush Operations
+## Phase 7: Query Path
 
-### 7.1 Flusher Interface (`flusher.go`)
+### 7.1 Query Interface (`query.go`)
+- [ ] Key range queries with tag filters
+- [ ] Support projections and result limits
+- [ ] Query validation and optimization
+- [ ] **Test Cases**:
+  - [ ] Query parsing handles all parameter types
+  - [ ] Validation rejects invalid queries
+  - [ ] Query optimization improves performance
+  - [ ] Complex queries return correct results
+
+### 7.2 Part Filtering (`query.go`)
+- [ ] Filter parts by key range overlap
+- [ ] Minimize I/O operations through smart filtering
+- [ ] Support inclusive/exclusive bounds
+- [ ] **Test Cases**:
+  - [ ] Filtering accuracy eliminates non-overlapping parts
+  - [ ] Performance improvement through reduced I/O
+  - [ ] Boundary conditions handled correctly
+  - [ ] Empty result sets handled gracefully
+
+### 7.3 Block Scanner (`block_scanner.go`) 🔥 - DESIGN COMPLETED ✅
+- [ ] **Complete block scanner design added to DESIGN.md**
+- [ ] **Query processing**: scanBlock() with range and tag filtering
+- [ ] **Memory management**: Object pooling with reset() methods
+- [ ] **Efficient filtering**: Quick checks before loading block data
+- [ ] **Element matching**: scanBlockElements() with tag filter matching
+- [ ] **Resource management**: Block reader and temporary block handling
+- [ ] **Implementation Tasks**:
+  - [ ] Create block_scanner.go with scanner structure
+  - [ ] Implement scanBlock() with filtering logic
+  - [ ] Add scanBlockElements() for element processing
+  - [ ] Create matchesTagFilters() for tag filtering
+- [ ] **Test Cases**:
+  - [ ] Scan completeness finds all matching data
+  - [ ] Filter effectiveness reduces false positives
+  - [ ] Block scanning performance meets targets
+  - [ ] Memory usage during scanning is controlled
+
+### 7.4 Result Iterator (`query.go`)
+- [ ] Stream results with proper ordering
+- [ ] Memory-efficient iteration patterns
+- [ ] Support both ASC and DESC ordering
+- [ ] **Test Cases**:
+  - [ ] Iterator correctness for various query types
+  - [ ] Memory usage remains bounded
+  - [ ] Ordering is maintained across parts
+  - [ ] Iterator cleanup prevents resource leaks
+
+### 7.5 Block Reader (`block_reader.go`) 🔥 - DESIGN COMPLETED ✅
+- [x] **Complete block reader design added to DESIGN.md**
+- [x] **Multi-file reading**: data.bin, keys.bin, *.td files
+- [x] **Decompression**: zstd decompression for data payloads
+- [x] **Memory management**: Object pooling with reset() methods
+- [x] **Selective loading**: Tag projection for efficient I/O
+- [x] **Block reconstruction**: mustReadFrom() for complete block loading
+- [ ] **Implementation Tasks**:
+  - [ ] Create block_reader.go with reader structure
+  - [ ] Implement readUserKeys(), readData(), readTags()
+  - [ ] Add decompression support
+  - [ ] Create mustReadFrom() for block loading
+- [ ] **Test Cases**:
+  - [ ] Block reading maintains data integrity
+  - [ ] Decompression works correctly
+  - [ ] Block structure reconstruction is accurate
+  - [ ] Read performance meets requirements
+
+---
+
+## Phase 8: Flush Operations
+
+### 8.1 Flusher Interface (`flusher.go`)
 - [ ] Simple Flush() method for user control
 - [ ] Internal part selection logic
 - [ ] Error handling and retry mechanisms
@@ -369,7 +434,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Error handling for flush failures
   - [ ] Concurrent flush operations are handled safely
 
-### 7.2 Flush to Disk (`flusher.go`)
+### 8.2 Flush to Disk (`flusher.go`)
 - [ ] Create part directories with epoch names
 - [ ] Write all part files atomically
 - [ ] Implement crash recovery mechanisms
@@ -379,7 +444,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Crash recovery restores consistent state
   - [ ] Disk space management during flush
 
-### 7.3 Tag File Writing (`flusher.go`)
+### 8.3 Tag File Writing (`flusher.go`)
 - [ ] Write individual tag files (not families)
 - [ ] Generate bloom filters for indexed tags
 - [ ] Optimize file layout for query performance
@@ -389,7 +454,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] File format compatibility
   - [ ] Performance of tag file generation
 
-### 7.4 Block Serialization (`flusher.go` + `block_writer.go`) 🔥 - DESIGN COMPLETED ✅
+### 8.4 Block Serialization (`flusher.go` + `block_writer.go`) 🔥 - DESIGN COMPLETED ✅
 - [ ] **Complete block serialization design added to DESIGN.md**
 - [ ] **Multi-file output**: primary.bin, data.bin, keys.bin, tag files
 - [ ] **Block writer integration**: mustWriteTo() for block persistence
@@ -408,9 +473,9 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 8: Merge Operations
+## Phase 9: Merge Operations
 
-### 8.1 Merger Interface (`merger.go`)
+### 9.1 Merger Interface (`merger.go`)
 - [ ] Simple Merge() method for user control
 - [ ] Internal merge strategy implementation
 - [ ] Resource management during merge
@@ -420,7 +485,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Resource usage during merge operations
   - [ ] Concurrent merge safety
 
-### 8.2 Part Selection (`merger.go`)
+### 9.2 Part Selection (`merger.go`)
 - [ ] Select parts by size/age criteria
 - [ ] Avoid merging recent parts
 - [ ] Optimize merge efficiency
@@ -430,7 +495,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Selection criteria can be tuned
   - [ ] Selection performance is acceptable
 
-### 8.3 Merged Part Writer (`merger.go`)
+### 9.3 Merged Part Writer (`merger.go`)
 - [ ] Combine parts maintaining key order
 - [ ] Deduplicate overlapping data
 - [ ] Generate merged part metadata
@@ -440,7 +505,7 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Key ordering is maintained across parts
   - [ ] Merged part metadata is accurate
 
-### 8.4 Block Merging (`merger.go` + `block.go`) 🔥 - DESIGN COMPLETED ✅
+### 9.4 Block Merging (`merger.go` + `block.go`) 🔥 - DESIGN COMPLETED ✅
 - [ ] **Complete block merging design added to DESIGN.md**
 - [ ] **Block reader integration**: Read blocks from multiple parts
 - [ ] **Merge strategy**: Maintain key ordering across merged blocks
@@ -456,76 +521,6 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [ ] Ordering preservation during merge
   - [ ] Memory efficiency during block merge
   - [ ] Performance of block merge operations
-
----
-
-## Phase 9: Query Path
-
-### 9.1 Query Interface (`query.go`)
-- [ ] Key range queries with tag filters
-- [ ] Support projections and result limits
-- [ ] Query validation and optimization
-- [ ] **Test Cases**:
-  - [ ] Query parsing handles all parameter types
-  - [ ] Validation rejects invalid queries
-  - [ ] Query optimization improves performance
-  - [ ] Complex queries return correct results
-
-### 9.2 Part Filtering (`query.go`)
-- [ ] Filter parts by key range overlap
-- [ ] Minimize I/O operations through smart filtering
-- [ ] Support inclusive/exclusive bounds
-- [ ] **Test Cases**:
-  - [ ] Filtering accuracy eliminates non-overlapping parts
-  - [ ] Performance improvement through reduced I/O
-  - [ ] Boundary conditions handled correctly
-  - [ ] Empty result sets handled gracefully
-
-### 9.3 Block Scanner (`block_scanner.go`) 🔥 - DESIGN COMPLETED ✅
-- [ ] **Complete block scanner design added to DESIGN.md**
-- [ ] **Query processing**: scanBlock() with range and tag filtering
-- [ ] **Memory management**: Object pooling with reset() methods
-- [ ] **Efficient filtering**: Quick checks before loading block data
-- [ ] **Element matching**: scanBlockElements() with tag filter matching
-- [ ] **Resource management**: Block reader and temporary block handling
-- [ ] **Implementation Tasks**:
-  - [ ] Create block_scanner.go with scanner structure
-  - [ ] Implement scanBlock() with filtering logic
-  - [ ] Add scanBlockElements() for element processing
-  - [ ] Create matchesTagFilters() for tag filtering
-- [ ] **Test Cases**:
-  - [ ] Scan completeness finds all matching data
-  - [ ] Filter effectiveness reduces false positives
-  - [ ] Block scanning performance meets targets
-  - [ ] Memory usage during scanning is controlled
-
-### 9.4 Result Iterator (`query.go`)
-- [ ] Stream results with proper ordering
-- [ ] Memory-efficient iteration patterns
-- [ ] Support both ASC and DESC ordering
-- [ ] **Test Cases**:
-  - [ ] Iterator correctness for various query types
-  - [ ] Memory usage remains bounded
-  - [ ] Ordering is maintained across parts
-  - [ ] Iterator cleanup prevents resource leaks
-
-### 9.5 Block Reader (`block_reader.go`) 🔥 - DESIGN COMPLETED ✅
-- [x] **Complete block reader design added to DESIGN.md**
-- [x] **Multi-file reading**: data.bin, keys.bin, tag_*.td files
-- [x] **Decompression**: zstd decompression for data payloads
-- [x] **Memory management**: Object pooling with reset() methods
-- [x] **Selective loading**: Tag projection for efficient I/O
-- [x] **Block reconstruction**: mustReadFrom() for complete block loading
-- [ ] **Implementation Tasks**:
-  - [ ] Create block_reader.go with reader structure
-  - [ ] Implement readUserKeys(), readData(), readTags()
-  - [ ] Add decompression support
-  - [ ] Create mustReadFrom() for block loading
-- [ ] **Test Cases**:
-  - [ ] Block reading maintains data integrity
-  - [ ] Decompression works correctly
-  - [ ] Block structure reconstruction is accurate
-  - [ ] Read performance meets requirements
 
 ---
 
@@ -713,10 +708,10 @@ The `block.go` file is central to the SIDX implementation and is used in multipl
 2. **Phase 2.2**: Block writer uses block for serialization  
 3. **Phase 2.4**: Block initialization from elements
 4. **Phase 4.4**: Create blocks when memory threshold reached
-5. **Phase 7.4**: Serialize blocks to disk during flush
-6. **Phase 8.4**: Merge blocks from multiple parts
-7. **Phase 9.3**: Block scanner reads blocks during queries
-8. **Phase 9.5**: Block reader deserializes blocks
+5. **Phase 7.3**: Block scanner reads blocks during queries
+6. **Phase 7.5**: Block reader deserializes blocks
+7. **Phase 8.4**: Serialize blocks to disk during flush
+8. **Phase 9.4**: Merge blocks from multiple parts
 9. **Phase 12.1**: Unit tests for block operations
 10. **Phase 12.3**: Performance benchmarks for block operations
 
@@ -727,9 +722,12 @@ The `block.go` file is central to the SIDX implementation and is used in multipl
 - **Phase 1** must complete before **Phase 2** (data structures needed)
 - **Phase 2** must complete before **Phase 4** (memory management needed for writes)
 - **Phase 3** must complete before **Phase 4** (snapshot management needed)
-- **Phase 4** must complete before **Phase 5** (write path needed for flush)
-- **Phase 5** must complete before **Phase 6** (flush needed for merge)
-- **Phase 1-6** must complete before **Phase 9** (all components needed for queries)
+- **Phase 4** must complete before **Phase 5** (memory management needed for snapshot)
+- **Phase 5** must complete before **Phase 6** (snapshot management needed for write path)
+- **Phase 6** must complete before **Phase 7** (write path needed for queries)
+- **Phase 7** can be developed independently (queries work with existing persisted data)
+- **Phase 6** must complete before **Phase 8** (write path needed for flush)
+- **Phase 8** must complete before **Phase 9** (flush needed for merge)
 - **Phase 10-11** can be developed in parallel with other phases
 - **Phase 12** requires completion of relevant phases for testing
 

@@ -153,7 +153,7 @@ func TestPartLifecycleManagement(t *testing.T) {
 	assert.Equal(t, 2, cap(part.blockMetadata)) // Capacity based on BlocksCount
 
 	// Verify String method
-	expectedString := fmt.Sprintf("part %d at %s", pm.ID, tempDir)
+	expectedString := fmt.Sprintf("sidx part %d at %s", pm.ID, tempDir)
 	assert.Equal(t, expectedString, part.String())
 
 	// Test accessors
@@ -451,12 +451,12 @@ func TestPartStringRepresentation(t *testing.T) {
 
 	part := mustOpenPart(tempDir, testFS)
 
-	expectedString := fmt.Sprintf("part %d at %s", pm.ID, tempDir)
+	expectedString := fmt.Sprintf("sidx part %d at %s", pm.ID, tempDir)
 	assert.Equal(t, expectedString, part.String())
 
 	// Test 2: Part with nil metadata (after close)
 	part.close()
-	expectedStringAfterClose := fmt.Sprintf("part at %s", tempDir)
+	expectedStringAfterClose := fmt.Sprintf("sidx part at %s", tempDir)
 	assert.Equal(t, expectedStringAfterClose, part.String())
 
 	// Cleanup
