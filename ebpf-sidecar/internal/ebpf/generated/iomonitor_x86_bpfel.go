@@ -109,6 +109,10 @@ type IomonitorSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type IomonitorProgramSpecs struct {
+	FentryAddToPageCacheLru      *ebpf.ProgramSpec `ebpf:"fentry_add_to_page_cache_lru"`
+	FentryFilemapGetReadBatch    *ebpf.ProgramSpec `ebpf:"fentry_filemap_get_read_batch"`
+	FentryKsysFadvise6464        *ebpf.ProgramSpec `ebpf:"fentry_ksys_fadvise64_64"`
+	FexitKsysFadvise6464         *ebpf.ProgramSpec `ebpf:"fexit_ksys_fadvise64_64"`
 	KprobeAddToPageCacheLru      *ebpf.ProgramSpec `ebpf:"kprobe_add_to_page_cache_lru"`
 	KprobeFilemapGetReadBatch    *ebpf.ProgramSpec `ebpf:"kprobe_filemap_get_read_batch"`
 	KprobeKsysFadvise6464        *ebpf.ProgramSpec `ebpf:"kprobe_ksys_fadvise64_64"`
@@ -191,6 +195,10 @@ type IomonitorVariables struct {
 //
 // It can be passed to LoadIomonitorObjects or ebpf.CollectionSpec.LoadAndAssign.
 type IomonitorPrograms struct {
+	FentryAddToPageCacheLru      *ebpf.Program `ebpf:"fentry_add_to_page_cache_lru"`
+	FentryFilemapGetReadBatch    *ebpf.Program `ebpf:"fentry_filemap_get_read_batch"`
+	FentryKsysFadvise6464        *ebpf.Program `ebpf:"fentry_ksys_fadvise64_64"`
+	FexitKsysFadvise6464         *ebpf.Program `ebpf:"fexit_ksys_fadvise64_64"`
 	KprobeAddToPageCacheLru      *ebpf.Program `ebpf:"kprobe_add_to_page_cache_lru"`
 	KprobeFilemapGetReadBatch    *ebpf.Program `ebpf:"kprobe_filemap_get_read_batch"`
 	KprobeKsysFadvise6464        *ebpf.Program `ebpf:"kprobe_ksys_fadvise64_64"`
@@ -205,6 +213,10 @@ type IomonitorPrograms struct {
 
 func (p *IomonitorPrograms) Close() error {
 	return _IomonitorClose(
+		p.FentryAddToPageCacheLru,
+		p.FentryFilemapGetReadBatch,
+		p.FentryKsysFadvise6464,
+		p.FexitKsysFadvise6464,
 		p.KprobeAddToPageCacheLru,
 		p.KprobeFilemapGetReadBatch,
 		p.KprobeKsysFadvise6464,

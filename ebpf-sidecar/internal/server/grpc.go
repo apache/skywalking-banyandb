@@ -26,7 +26,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 
 	ebpfv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/ebpf/v1"
@@ -34,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
 )
 
-// grpcServer implements the EBPFMetricsService
+// grpcServer implements the EBPFMetricsService.
 type grpcServer struct {
 	ebpfv1.UnimplementedEBPFMetricsServiceServer
 	collector *collector.Collector
@@ -43,7 +42,7 @@ type grpcServer struct {
 	version   string
 }
 
-// NewGRPCServer creates a new gRPC server implementation
+// NewGRPCServer creates a new gRPC server implementation.
 func NewGRPCServer(coll *collector.Collector, logger *zap.Logger) ebpfv1.EBPFMetricsServiceServer {
 	return &grpcServer{
 		collector: coll,
@@ -53,7 +52,7 @@ func NewGRPCServer(coll *collector.Collector, logger *zap.Logger) ebpfv1.EBPFMet
 	}
 }
 
-// GetMetrics retrieves current metrics from all modules
+// GetMetrics retrieves current metrics from all modules.
 func (s *grpcServer) GetMetrics(ctx context.Context, req *ebpfv1.GetMetricsRequest) (*ebpfv1.GetMetricsResponse, error) {
 	store := s.collector.GetMetrics()
 	if store == nil {
@@ -113,7 +112,7 @@ func (s *grpcServer) GetMetrics(ctx context.Context, req *ebpfv1.GetMetricsReque
 	return response, nil
 }
 
-// StreamMetrics streams metrics updates in real-time
+// StreamMetrics streams metrics updates in real-time.
 func (s *grpcServer) StreamMetrics(req *ebpfv1.StreamMetricsRequest, stream ebpfv1.EBPFMetricsService_StreamMetricsServer) error {
 	interval := time.Duration(req.IntervalSeconds) * time.Second
 	if interval < time.Second {
@@ -171,7 +170,10 @@ func (s *grpcServer) StreamMetrics(req *ebpfv1.StreamMetricsRequest, stream ebpf
 				}
 
 				if len(pbMetricSet.Metrics) > 0 {
-					if err := stream.Send(pbMetricSet); err != nil {
+					response := &ebpfv1.StreamMetricsResponse{
+						MetricSet: pbMetricSet,
+					}
+					if err := stream.Send(response); err != nil {
 						s.logger.Error("Failed to send metrics", zap.Error(err))
 						return err
 					}
@@ -181,7 +183,7 @@ func (s *grpcServer) StreamMetrics(req *ebpfv1.StreamMetricsRequest, stream ebpf
 	}
 }
 
-// GetIOStats retrieves detailed I/O statistics
+// GetIOStats retrieves detailed I/O statistics.
 func (s *grpcServer) GetIOStats(ctx context.Context, req *ebpfv1.GetIOStatsRequest) (*ebpfv1.GetIOStatsResponse, error) {
 	store := s.collector.GetMetrics()
 	if store == nil {
@@ -245,11 +247,11 @@ func (s *grpcServer) GetIOStats(ctx context.Context, req *ebpfv1.GetIOStatsReque
 	}, nil
 }
 
-// GetModuleStatus retrieves status of eBPF modules
+// GetModuleStatus retrieves status of eBPF modules.
 func (s *grpcServer) GetModuleStatus(ctx context.Context, req *ebpfv1.GetModuleStatusRequest) (*ebpfv1.GetModuleStatusResponse, error) {
 	// Get module status from collector
 	modules := make([]*ebpfv1.ModuleStatus, 0)
-	
+
 	// For now, we only have iomonitor module
 	// TODO: Get actual status from collector
 	ioStatus := &ebpfv1.ModuleStatus{
@@ -285,25 +287,25 @@ func (s *grpcServer) GetModuleStatus(ctx context.Context, req *ebpfv1.GetModuleS
 	}, nil
 }
 
-// ConfigureModule enables or disables an eBPF module
+// ConfigureModule enables or disables an eBPF module.
 func (s *grpcServer) ConfigureModule(ctx context.Context, req *ebpfv1.ConfigureModuleRequest) (*ebpfv1.ConfigureModuleResponse, error) {
 	// TODO: Implement module configuration
 	// For now, return not implemented
 	return nil, status.Error(codes.Unimplemented, "module configuration not yet implemented")
 }
 
-// GetHealth returns health status
-func (s *grpcServer) GetHealth(ctx context.Context, _ *emptypb.Empty) (*ebpfv1.HealthResponse, error) {
+// GetHealth returns health status.
+func (s *grpcServer) GetHealth(ctx context.Context, req *ebpfv1.GetHealthRequest) (*ebpfv1.GetHealthResponse, error) {
 	healthStatus := ebpfv1.HealthStatus_HEALTH_STATUS_HEALTHY
 	message := "eBPF sidecar is healthy"
-	
+
 	// Check if collector is working
 	if store := s.collector.GetMetrics(); store == nil {
 		healthStatus = ebpfv1.HealthStatus_HEALTH_STATUS_DEGRADED
 		message = "Metrics collection is degraded"
 	}
 
-	return &ebpfv1.HealthResponse{
+	return &ebpfv1.GetHealthResponse{
 		Status:        healthStatus,
 		Message:       message,
 		Version:       s.version,
@@ -312,7 +314,7 @@ func (s *grpcServer) GetHealth(ctx context.Context, _ *emptypb.Empty) (*ebpfv1.H
 	}, nil
 }
 
-// Helper functions
+// Helper functions.
 
 func convertMetricType(t metrics.MetricType) ebpfv1.MetricType {
 	switch t {
@@ -331,7 +333,7 @@ func matchLabels(metricLabels, filterLabels map[string]string) bool {
 	if len(filterLabels) == 0 {
 		return true
 	}
-	
+
 	for k, v := range filterLabels {
 		if metricLabels[k] != v {
 			return false

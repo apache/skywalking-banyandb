@@ -29,7 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
 )
 
-// Collector manages eBPF program lifecycle and metrics collection
+// Collector manages eBPF program lifecycle and metrics collection.
 type Collector struct {
 	config   config.CollectorConfig
 	logger   *zap.Logger
@@ -41,7 +41,7 @@ type Collector struct {
 	mu       sync.RWMutex
 }
 
-// Module represents an eBPF monitoring module
+// Module represents an eBPF monitoring module.
 type Module interface {
 	Name() string
 	Start() error
@@ -49,7 +49,7 @@ type Module interface {
 	Collect() (*metrics.MetricSet, error)
 }
 
-// New creates a new collector instance
+// New creates a new collector instance.
 func New(cfg config.CollectorConfig, logger *zap.Logger) (*Collector, error) {
 	c := &Collector{
 		config:   cfg,
@@ -71,7 +71,7 @@ func New(cfg config.CollectorConfig, logger *zap.Logger) (*Collector, error) {
 	return c, nil
 }
 
-// createModule creates a module instance by name
+// createModule creates a module instance by name.
 func (c *Collector) createModule(name string) (Module, error) {
 	switch name {
 	case "iomonitor":
@@ -93,7 +93,7 @@ func (c *Collector) createModule(name string) (Module, error) {
 	}
 }
 
-// Start starts the collector
+// Start starts the collector.
 func (c *Collector) Start(ctx context.Context) error {
 	c.logger.Info("Starting collector")
 
@@ -113,7 +113,7 @@ func (c *Collector) Start(ctx context.Context) error {
 	return nil
 }
 
-// collectLoop runs the collection loop
+// collectLoop runs the collection loop.
 func (c *Collector) collectLoop(ctx context.Context) {
 	defer c.wg.Done()
 
@@ -129,7 +129,7 @@ func (c *Collector) collectLoop(ctx context.Context) {
 	}
 }
 
-// collect collects metrics from all modules
+// collect collects metrics from all modules.
 func (c *Collector) collect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -151,14 +151,14 @@ func (c *Collector) collect() {
 	}
 }
 
-// GetMetrics returns current metrics
+// GetMetrics returns current metrics.
 func (c *Collector) GetMetrics() *metrics.Store {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.metrics
 }
 
-// Close stops the collector and cleans up resources
+// Close stops the collector and cleans up resources.
 func (c *Collector) Close() error {
 	c.logger.Info("Stopping collector")
 
@@ -183,35 +183,4 @@ func (c *Collector) Close() error {
 	}
 
 	return nil
-}
-
-// stubModule is a temporary stub implementation
-type stubModule struct {
-	name string
-}
-
-func (s *stubModule) Name() string {
-	return s.name
-}
-
-func (s *stubModule) Start() error {
-	// TODO: Implement actual eBPF program loading
-	return nil
-}
-
-func (s *stubModule) Stop() error {
-	// TODO: Implement actual eBPF program cleanup
-	return nil
-}
-
-func (s *stubModule) Collect() (*metrics.MetricSet, error) {
-	// TODO: Implement actual metrics collection
-	ms := metrics.NewMetricSet()
-	
-	// Add some dummy metrics for testing
-	ms.AddGauge(fmt.Sprintf("%s_test_metric", s.name), 42.0, map[string]string{
-		"module": s.name,
-	})
-	
-	return ms, nil
 }

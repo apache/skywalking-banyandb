@@ -28,23 +28,23 @@ import (
 	"github.com/cilium/ebpf/btf"
 )
 
-// KernelFeatures represents available kernel features for eBPF
+// KernelFeatures represents available kernel features for eBPF.
 type KernelFeatures struct {
-	KernelVersion   KernelVersion
-	HasBTF          bool
-	HasFentry       bool
-	HasTracepoints  bool
-	HasKprobes      bool
+	KernelVersion  KernelVersion
+	HasBTF         bool
+	HasFentry      bool
+	HasTracepoints bool
+	HasKprobes     bool
 }
 
-// KernelVersion represents a parsed kernel version
+// KernelVersion represents a parsed kernel version.
 type KernelVersion struct {
 	Major int
 	Minor int
 	Patch int
 }
 
-// DetectKernelFeatures detects available kernel features for eBPF attachment
+// DetectKernelFeatures detects available kernel features for eBPF attachment.
 func DetectKernelFeatures() (*KernelFeatures, error) {
 	features := &KernelFeatures{
 		HasTracepoints: true, // Available since 4.7
@@ -69,7 +69,7 @@ func DetectKernelFeatures() (*KernelFeatures, error) {
 	return features, nil
 }
 
-// GetKernelVersion parses the kernel version from /proc/version_signature or uname
+// GetKernelVersion parses the kernel version from /proc/version_signature or uname.
 func GetKernelVersion() (KernelVersion, error) {
 	// Try Ubuntu's version_signature first (more reliable)
 	if data, err := os.ReadFile("/proc/version_signature"); err == nil {
@@ -89,7 +89,7 @@ func GetKernelVersion() (KernelVersion, error) {
 	return parseVersionString(versionStr)
 }
 
-// parseVersionString parses a kernel version string like "5.15.0-91-generic"
+// parseVersionString parses a kernel version string like "5.15.0-91-generic".
 func parseVersionString(versionStr string) (KernelVersion, error) {
 	// Remove any suffix after the version numbers
 	if idx := strings.IndexAny(versionStr, "-_"); idx != -1 {
@@ -121,7 +121,7 @@ func parseVersionString(versionStr string) (KernelVersion, error) {
 	return version, nil
 }
 
-// checkBTFSupport checks if the kernel has BTF support
+// checkBTFSupport checks if the kernel has BTF support.
 func checkBTFSupport() bool {
 	// Check if BTF is available in /sys/kernel/btf/vmlinux
 	if _, err := os.Stat("/sys/kernel/btf/vmlinux"); err == nil {
@@ -133,7 +133,7 @@ func checkBTFSupport() bool {
 	return err == nil
 }
 
-// GetFadviseFunctionNames returns possible function names for fadvise based on kernel version
+// GetFadviseFunctionNames returns possible function names for fadvise based on kernel version.
 func GetFadviseFunctionNames(version KernelVersion) []string {
 	// Kernel >= 5.11: ksys_fadvise64_64 is the primary internal function
 	if version.Major > 5 || (version.Major == 5 && version.Minor >= 11) {
@@ -162,7 +162,7 @@ func GetFadviseFunctionNames(version KernelVersion) []string {
 	}
 }
 
-// GetFilemapFunctionNames returns possible function names for filemap operations
+// GetFilemapFunctionNames returns possible function names for filemap operations.
 func GetFilemapFunctionNames(version KernelVersion) (readFuncs []string, addFuncs []string) {
 	// Read batch functions (varies by kernel version)
 	if version.Major > 5 || (version.Major == 5 && version.Minor >= 15) {
@@ -197,7 +197,7 @@ func GetFilemapFunctionNames(version KernelVersion) (readFuncs []string, addFunc
 	return readFuncs, addFuncs
 }
 
-// ShouldUseFentry determines if fentry should be used for a given function
+// ShouldUseFentry determines if fentry should be used for a given function.
 func ShouldUseFentry(features *KernelFeatures, funcName string) bool {
 	if !features.HasFentry {
 		return false
@@ -214,7 +214,7 @@ func ShouldUseFentry(features *KernelFeatures, funcName string) bool {
 	return err == nil && found
 }
 
-// AttachmentModeString returns a string representation of the best available attachment mode
+// AttachmentModeString returns a string representation of the best available attachment mode.
 func AttachmentModeString(features *KernelFeatures) string {
 	if features.HasFentry {
 		return "fentry/fexit (optimal)"

@@ -24,58 +24,58 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Config represents the complete configuration for the eBPF sidecar
+// Config represents the complete configuration for the eBPF sidecar.
 type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
 	Collector CollectorConfig `mapstructure:"collector"`
 	Export    ExportConfig    `mapstructure:"export"`
 }
 
-// ServerConfig defines the server configuration
+// ServerConfig defines the server configuration.
 type ServerConfig struct {
 	GRPC GRPCConfig `mapstructure:"grpc"`
 	HTTP HTTPConfig `mapstructure:"http"`
 }
 
-// GRPCConfig defines gRPC server configuration
+// GRPCConfig defines gRPC server configuration.
 type GRPCConfig struct {
-	Port int        `mapstructure:"port"`
-	TLS  TLSConfig  `mapstructure:"tls"`
+	Port int       `mapstructure:"port"`
+	TLS  TLSConfig `mapstructure:"tls"`
 }
 
-// HTTPConfig defines HTTP server configuration
+// HTTPConfig defines HTTP server configuration.
 type HTTPConfig struct {
 	Port        int    `mapstructure:"port"`
 	MetricsPath string `mapstructure:"metrics_path"`
 }
 
-// TLSConfig defines TLS configuration
+// TLSConfig defines TLS configuration.
 type TLSConfig struct {
 	Enabled  bool   `mapstructure:"enabled"`
 	CertFile string `mapstructure:"cert_file"`
 	KeyFile  string `mapstructure:"key_file"`
 }
 
-// CollectorConfig defines the collector configuration
+// CollectorConfig defines the collector configuration.
 type CollectorConfig struct {
 	Interval time.Duration `mapstructure:"interval"`
 	Modules  []string      `mapstructure:"modules"`
 	eBPF     eBPFConfig    `mapstructure:"ebpf"`
 }
 
-// eBPFConfig defines eBPF-specific configuration
+// eBPFConfig defines eBPF-specific configuration.
 type eBPFConfig struct {
-	PinPath      string `mapstructure:"pin_path"`      // Path to pin eBPF maps
+	PinPath      string `mapstructure:"pin_path"`       // Path to pin eBPF maps
 	MapSizeLimit int    `mapstructure:"map_size_limit"` // Maximum map size
 }
 
-// ExportConfig defines export configuration
+// ExportConfig defines export configuration.
 type ExportConfig struct {
 	Type     string         `mapstructure:"type"` // "prometheus" or "banyandb"
 	BanyanDB BanyanDBConfig `mapstructure:"banyandb"`
 }
 
-// BanyanDBConfig defines BanyanDB export configuration
+// BanyanDBConfig defines BanyanDB export configuration.
 type BanyanDBConfig struct {
 	Endpoint string        `mapstructure:"endpoint"`
 	Group    string        `mapstructure:"group"`
@@ -83,7 +83,7 @@ type BanyanDBConfig struct {
 	TLS      TLSConfig     `mapstructure:"tls"`
 }
 
-// DefaultConfig returns the default configuration
+// DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
@@ -117,7 +117,7 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load loads configuration from file or returns default
+// Load loads configuration from file or returns default.
 func Load(configFile string) (*Config, error) {
 	cfg := DefaultConfig()
 
@@ -159,7 +159,7 @@ func Load(configFile string) (*Config, error) {
 	return cfg, nil
 }
 
-// Validate validates the configuration
+// Validate validates the configuration.
 func (c *Config) Validate() error {
 	// Validate server configuration
 	if c.Server.GRPC.Port <= 0 || c.Server.GRPC.Port > 65535 {

@@ -29,18 +29,18 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
-	
+
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf/generated"
 )
 
-// Loader handles loading and managing eBPF programs
+// Loader handles loading and managing eBPF programs.
 type Loader struct {
 	spec    *ebpf.CollectionSpec
 	objects *generated.IomonitorObjects
 	links   []link.Link
 }
 
-// NewLoader creates a new eBPF program loader
+// NewLoader creates a new eBPF program loader.
 func NewLoader() (*Loader, error) {
 	// Remove memory limit for eBPF
 	if err := rlimit.RemoveMemlock(); err != nil {
@@ -52,7 +52,7 @@ func NewLoader() (*Loader, error) {
 	}, nil
 }
 
-// LoadPrograms loads the eBPF programs
+// LoadPrograms loads the eBPF programs.
 func (l *Loader) LoadPrograms() error {
 	var err error
 
@@ -71,7 +71,7 @@ func (l *Loader) LoadPrograms() error {
 	return nil
 }
 
-// AttachTracepoints attaches the eBPF programs to tracepoints and kprobes
+// AttachTracepoints attaches the eBPF programs to tracepoints and kprobes.
 func (l *Loader) AttachTracepoints() error {
 	if l.objects == nil {
 		return fmt.Errorf("eBPF objects not loaded")
@@ -83,19 +83,15 @@ func (l *Loader) AttachTracepoints() error {
 	}
 
 	// Attach memory tracepoints
-	if err := l.attachMemoryTracepoints(); err != nil {
-		return fmt.Errorf("failed to attach memory tracepoints: %w", err)
-	}
+	l.attachMemoryTracepoints()
 
 	// Attach cache tracepoints (with fallback to kprobes)
-	if err := l.attachCacheTracepoints(); err != nil {
-		return fmt.Errorf("failed to attach cache tracepoints: %w", err)
-	}
+	l.attachCacheTracepoints()
 
 	return nil
 }
 
-// attachFadviseTracepoints attaches fadvise-related tracepoints
+// attachFadviseTracepoints attaches fadvise-related tracepoints.
 func (l *Loader) attachFadviseTracepoints() error {
 	// Try tracepoints first
 	tpEnter, err := link.Tracepoint("syscalls", "sys_enter_fadvise64", l.objects.TraceEnterFadvise64, nil)
@@ -115,7 +111,7 @@ func (l *Loader) attachFadviseTracepoints() error {
 	return nil
 }
 
-// attachFadviseKprobes attaches fadvise kprobes as fallback
+// attachFadviseKprobes attaches fadvise kprobes as fallback.
 func (l *Loader) attachFadviseKprobes() error {
 	kpEnter, err := link.Kprobe("ksys_fadvise64_64", l.objects.KprobeKsysFadvise6464, nil)
 	if err != nil {
@@ -132,8 +128,8 @@ func (l *Loader) attachFadviseKprobes() error {
 	return nil
 }
 
-// attachMemoryTracepoints attaches memory-related tracepoints
-func (l *Loader) attachMemoryTracepoints() error {
+// attachMemoryTracepoints attaches memory-related tracepoints.
+func (l *Loader) attachMemoryTracepoints() {
 	// LRU shrink tracepoint
 	tpLru, err := link.Tracepoint("vmscan", "mm_vmscan_lru_shrink_inactive", l.objects.TraceLruShrinkInactive, nil)
 	if err != nil {
@@ -151,12 +147,10 @@ func (l *Loader) attachMemoryTracepoints() error {
 	} else {
 		l.links = append(l.links, tpReclaim)
 	}
-
-	return nil
 }
 
-// attachCacheTracepoints attaches cache-related tracepoints with kprobe fallback
-func (l *Loader) attachCacheTracepoints() error {
+// attachCacheTracepoints attaches cache-related tracepoints with kprobe fallback.
+func (l *Loader) attachCacheTracepoints() {
 	// Try filemap tracepoints first
 	tpReadBatch, err := link.Tracepoint("filemap", "filemap_get_read_batch", l.objects.TraceFilemapGetReadBatch, nil)
 	if err != nil {
@@ -184,16 +178,14 @@ func (l *Loader) attachCacheTracepoints() error {
 	} else {
 		l.links = append(l.links, tpPageAdd)
 	}
-
-	return nil
 }
 
-// GetObjects returns the loaded eBPF objects
+// GetObjects returns the loaded eBPF objects.
 func (l *Loader) GetObjects() *generated.IomonitorObjects {
 	return l.objects
 }
 
-// Close cleans up all resources
+// Close cleans up all resources.
 func (l *Loader) Close() error {
 	// Close all links
 	for _, lnk := range l.links {

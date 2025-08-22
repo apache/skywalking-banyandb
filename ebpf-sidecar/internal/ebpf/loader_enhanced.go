@@ -19,7 +19,7 @@
 
 package ebpf
 
-// Enhanced loader with fentry/fexit support and intelligent fallback
+// Enhanced loader with fentry/fexit support and intelligent fallback.
 
 import (
 	"fmt"
@@ -29,23 +29,23 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
 	"go.uber.org/zap"
-	
+
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf/generated"
 )
 
-// EnhancedLoader handles loading and managing eBPF programs with intelligent fallback
+// EnhancedLoader handles loading and managing eBPF programs with intelligent fallback.
 type EnhancedLoader struct {
 	spec     *ebpf.CollectionSpec
 	objects  *generated.IomonitorObjects
 	links    []link.Link
 	features *KernelFeatures
 	logger   *zap.Logger
-	
+
 	// Track attachment modes for monitoring
 	attachmentModes map[string]string // function -> mode (fentry/tracepoint/kprobe)
 }
 
-// NewEnhancedLoader creates a new enhanced eBPF program loader
+// NewEnhancedLoader creates a new enhanced eBPF program loader.
 func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 	// Remove memory limit for eBPF
 	if err := rlimit.RemoveMemlock(); err != nil {
@@ -59,9 +59,9 @@ func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 	}
 
 	logger.Info("Detected kernel features",
-		zap.String("version", fmt.Sprintf("%d.%d.%d", 
-			features.KernelVersion.Major, 
-			features.KernelVersion.Minor, 
+		zap.String("version", fmt.Sprintf("%d.%d.%d",
+			features.KernelVersion.Major,
+			features.KernelVersion.Minor,
 			features.KernelVersion.Patch)),
 		zap.Bool("BTF", features.HasBTF),
 		zap.Bool("fentry", features.HasFentry),
@@ -76,7 +76,7 @@ func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 	}, nil
 }
 
-// LoadPrograms loads the eBPF programs
+// LoadPrograms loads the eBPF programs.
 func (l *EnhancedLoader) LoadPrograms() error {
 	var err error
 
@@ -95,7 +95,7 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	return nil
 }
 
-// AttachPrograms attaches the eBPF programs with intelligent fallback
+// AttachPrograms attaches the eBPF programs with intelligent fallback.
 func (l *EnhancedLoader) AttachPrograms() error {
 	if l.objects == nil {
 		return fmt.Errorf("eBPF objects not loaded")
@@ -108,14 +108,10 @@ func (l *EnhancedLoader) AttachPrograms() error {
 	}
 
 	// Attach memory monitoring (optional, continue on failure)
-	if err := l.attachMemoryTracepoints(); err != nil {
-		l.logger.Warn("Failed to attach memory monitoring (non-critical)", zap.Error(err))
-	}
+	l.attachMemoryTracepoints()
 
 	// Attach cache monitoring
-	if err := l.attachCacheWithFallback(); err != nil {
-		l.logger.Warn("Failed to attach cache monitoring (non-critical)", zap.Error(err))
-	}
+	l.attachCacheWithFallback()
 
 	// Log attachment summary
 	l.logger.Info("eBPF programs attached successfully",
@@ -124,10 +120,10 @@ func (l *EnhancedLoader) AttachPrograms() error {
 	return nil
 }
 
-// attachFadviseWithFallback tries fentry -> tracepoint -> kprobe
+// attachFadviseWithFallback tries fentry -> tracepoint -> kprobe.
 func (l *EnhancedLoader) attachFadviseWithFallback() error {
 	funcName := "fadvise64"
-	
+
 	// Try fentry/fexit first (best performance)
 	if l.features.HasFentry {
 		if l.objects.FentryKsysFadvise6464 != nil && l.objects.FexitKsysFadvise6464 != nil {
@@ -136,11 +132,11 @@ func (l *EnhancedLoader) attachFadviseWithFallback() error {
 			})
 			if err == nil {
 				l.links = append(l.links, fentryLink)
-				
-				fexitLink, err := link.AttachTracing(link.TracingOptions{
+
+				fexitLink, fexitErr := link.AttachTracing(link.TracingOptions{
 					Program: l.objects.FexitKsysFadvise6464,
 				})
-				if err == nil {
+				if fexitErr == nil {
 					l.links = append(l.links, fexitLink)
 					l.attachmentModes[funcName] = "fentry/fexit"
 					l.logger.Info("Attached fadvise monitoring using fentry/fexit")
@@ -156,16 +152,16 @@ func (l *EnhancedLoader) attachFadviseWithFallback() error {
 
 	// Try tracepoints (stable API)
 	if l.objects.TraceEnterFadvise64 != nil && l.objects.TraceExitFadvise64 != nil {
-		tpEnter, err := link.Tracepoint("syscalls", "sys_enter_fadvise64", 
+		tpEnter, err := link.Tracepoint("syscalls", "sys_enter_fadvise64",
 			l.objects.TraceEnterFadvise64, nil)
 		if err == nil {
 			l.links = append(l.links, tpEnter)
-			
-			tpExit, err := link.Tracepoint("syscalls", "sys_exit_fadvise64", 
+
+			tpExit, exitErr := link.Tracepoint("syscalls", "sys_exit_fadvise64",
 				l.objects.TraceExitFadvise64, nil)
-			if err == nil {
+			if exitErr == nil {
 				l.links = append(l.links, tpExit)
-				l.attachmentModes[funcName] = "tracepoint"
+				l.attachmentModes[funcName] = attachModeTracepoint
 				l.logger.Info("Attached fadvise monitoring using tracepoints")
 				return nil
 			}
@@ -180,47 +176,47 @@ func (l *EnhancedLoader) attachFadviseWithFallback() error {
 	return l.attachFadviseKprobesWithSymbolFallback()
 }
 
-// attachFadviseKprobesWithSymbolFallback tries multiple kernel symbols
+// attachFadviseKprobesWithSymbolFallback tries multiple kernel symbols.
 func (l *EnhancedLoader) attachFadviseKprobesWithSymbolFallback() error {
 	symbolNames := GetFadviseFunctionNames(l.features.KernelVersion)
-	
+
 	for _, symbol := range symbolNames {
 		l.logger.Debug("Trying kprobe attachment", zap.String("symbol", symbol))
-		
+
 		if l.objects.KprobeKsysFadvise6464 == nil || l.objects.KretprobeKsysFadvise6464 == nil {
 			continue
 		}
-		
+
 		kpEnter, err := link.Kprobe(symbol, l.objects.KprobeKsysFadvise6464, nil)
 		if err != nil {
-			l.logger.Debug("Kprobe attachment failed", 
-				zap.String("symbol", symbol), 
+			l.logger.Debug("Kprobe attachment failed",
+				zap.String("symbol", symbol),
 				zap.Error(err))
 			continue
 		}
-		
+
 		kpExit, err := link.Kretprobe(symbol, l.objects.KretprobeKsysFadvise6464, nil)
 		if err != nil {
 			kpEnter.Close()
-			l.logger.Debug("Kretprobe attachment failed", 
-				zap.String("symbol", symbol), 
+			l.logger.Debug("Kretprobe attachment failed",
+				zap.String("symbol", symbol),
 				zap.Error(err))
 			continue
 		}
-		
+
 		// Success!
 		l.links = append(l.links, kpEnter, kpExit)
 		l.attachmentModes["fadvise64"] = fmt.Sprintf("kprobe/%s", symbol)
-		l.logger.Info("Attached fadvise monitoring using kprobe", 
+		l.logger.Info("Attached fadvise monitoring using kprobe",
 			zap.String("symbol", symbol))
 		return nil
 	}
-	
+
 	return fmt.Errorf("failed to attach fadvise monitoring: tried %d symbols", len(symbolNames))
 }
 
-// attachCacheWithFallback tries fentry -> tracepoint -> kprobe for cache monitoring
-func (l *EnhancedLoader) attachCacheWithFallback() error {
+// attachCacheWithFallback tries fentry -> tracepoint -> kprobe for cache monitoring.
+func (l *EnhancedLoader) attachCacheWithFallback() {
 	// Try fentry first for filemap operations
 	if l.features.HasFentry && l.objects.FentryFilemapGetReadBatch != nil {
 		fentryLink, err := link.AttachTracing(link.TracingOptions{
@@ -228,24 +224,24 @@ func (l *EnhancedLoader) attachCacheWithFallback() error {
 		})
 		if err == nil {
 			l.links = append(l.links, fentryLink)
-			l.attachmentModes["filemap_read"] = "fentry"
+			l.attachmentModes["filemap_read"] = attachModeFentry
 			l.logger.Info("Attached cache read monitoring using fentry")
 		}
 	}
-	
+
 	// If fentry failed, try tracepoint
 	if _, ok := l.attachmentModes["filemap_read"]; !ok {
 		if l.objects.TraceFilemapGetReadBatch != nil {
-			tp, err := link.Tracepoint("filemap", "filemap_get_read_batch", 
+			tp, err := link.Tracepoint("filemap", "filemap_get_read_batch",
 				l.objects.TraceFilemapGetReadBatch, nil)
 			if err == nil {
 				l.links = append(l.links, tp)
-				l.attachmentModes["filemap_read"] = "tracepoint"
+				l.attachmentModes["filemap_read"] = attachModeTracepoint
 				l.logger.Info("Attached cache read monitoring using tracepoint")
 			}
 		}
 	}
-	
+
 	// If both failed, try kprobe with multiple symbols
 	if _, ok := l.attachmentModes["filemap_read"]; !ok {
 		readFuncs, _ := GetFilemapFunctionNames(l.features.KernelVersion)
@@ -255,14 +251,14 @@ func (l *EnhancedLoader) attachCacheWithFallback() error {
 				if err == nil {
 					l.links = append(l.links, kp)
 					l.attachmentModes["filemap_read"] = fmt.Sprintf("kprobe/%s", symbol)
-					l.logger.Info("Attached cache read monitoring using kprobe", 
+					l.logger.Info("Attached cache read monitoring using kprobe",
 						zap.String("symbol", symbol))
 					break
 				}
 			}
 		}
 	}
-	
+
 	// Similar logic for page cache add operations
 	if l.features.HasFentry && l.objects.FentryAddToPageCacheLru != nil {
 		fentryLink, err := link.AttachTracing(link.TracingOptions{
@@ -270,24 +266,24 @@ func (l *EnhancedLoader) attachCacheWithFallback() error {
 		})
 		if err == nil {
 			l.links = append(l.links, fentryLink)
-			l.attachmentModes["page_cache_add"] = "fentry"
+			l.attachmentModes["page_cache_add"] = attachModeFentry
 			l.logger.Info("Attached page cache add monitoring using fentry")
-			return nil
+			return
 		}
 	}
-	
+
 	// Fallback to tracepoint and then kprobe
 	if l.objects.TraceMmFilemapAddToPageCache != nil {
-		tp, err := link.Tracepoint("filemap", "mm_filemap_add_to_page_cache", 
+		tp, err := link.Tracepoint("filemap", "mm_filemap_add_to_page_cache",
 			l.objects.TraceMmFilemapAddToPageCache, nil)
 		if err == nil {
 			l.links = append(l.links, tp)
-			l.attachmentModes["page_cache_add"] = "tracepoint"
+			l.attachmentModes["page_cache_add"] = attachModeTracepoint
 			l.logger.Info("Attached page cache add monitoring using tracepoint")
-			return nil
+			return
 		}
 	}
-	
+
 	// Final fallback to kprobe
 	_, addFuncs := GetFilemapFunctionNames(l.features.KernelVersion)
 	for _, symbol := range addFuncs {
@@ -296,57 +292,53 @@ func (l *EnhancedLoader) attachCacheWithFallback() error {
 			if err == nil {
 				l.links = append(l.links, kp)
 				l.attachmentModes["page_cache_add"] = fmt.Sprintf("kprobe/%s", symbol)
-				l.logger.Info("Attached page cache add monitoring using kprobe", 
+				l.logger.Info("Attached page cache add monitoring using kprobe",
 					zap.String("symbol", symbol))
-				return nil
+				return
 			}
 		}
 	}
-	
-	return nil // Cache monitoring is optional
 }
 
-// attachMemoryTracepoints attaches memory-related tracepoints (no fallback needed)
-func (l *EnhancedLoader) attachMemoryTracepoints() error {
+// attachMemoryTracepoints attaches memory-related tracepoints (no fallback needed).
+func (l *EnhancedLoader) attachMemoryTracepoints() {
 	// LRU shrink tracepoint
 	if l.objects.TraceLruShrinkInactive != nil {
-		tpLru, err := link.Tracepoint("vmscan", "mm_vmscan_lru_shrink_inactive", 
+		tpLru, err := link.Tracepoint("vmscan", "mm_vmscan_lru_shrink_inactive",
 			l.objects.TraceLruShrinkInactive, nil)
 		if err == nil {
 			l.links = append(l.links, tpLru)
-			l.attachmentModes["lru_shrink"] = "tracepoint"
+			l.attachmentModes["lru_shrink"] = attachModeTracepoint
 		}
 	}
 
 	// Direct reclaim tracepoint
 	if l.objects.TraceDirectReclaimBegin != nil {
-		tpReclaim, err := link.Tracepoint("vmscan", "mm_vmscan_direct_reclaim_begin", 
+		tpReclaim, err := link.Tracepoint("vmscan", "mm_vmscan_direct_reclaim_begin",
 			l.objects.TraceDirectReclaimBegin, nil)
 		if err == nil {
 			l.links = append(l.links, tpReclaim)
-			l.attachmentModes["direct_reclaim"] = "tracepoint"
+			l.attachmentModes["direct_reclaim"] = attachModeTracepoint
 		}
 	}
-
-	return nil
 }
 
-// GetObjects returns the loaded eBPF objects
+// GetObjects returns the loaded eBPF objects.
 func (l *EnhancedLoader) GetObjects() *generated.IomonitorObjects {
 	return l.objects
 }
 
-// GetAttachmentModes returns the attachment modes used for each function
+// GetAttachmentModes returns the attachment modes used for each function.
 func (l *EnhancedLoader) GetAttachmentModes() map[string]string {
 	return l.attachmentModes
 }
 
-// GetKernelFeatures returns detected kernel features
+// GetKernelFeatures returns detected kernel features.
 func (l *EnhancedLoader) GetKernelFeatures() *KernelFeatures {
 	return l.features
 }
 
-// Close cleans up all resources
+// Close cleans up all resources.
 func (l *EnhancedLoader) Close() error {
 	// Close all links
 	for _, lnk := range l.links {

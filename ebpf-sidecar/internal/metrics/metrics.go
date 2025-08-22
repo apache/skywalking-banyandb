@@ -22,19 +22,19 @@ import (
 	"time"
 )
 
-// MetricType represents the type of metric
+// MetricType represents the type of metric.
 type MetricType string
 
 const (
-	// MetricTypeCounter represents a counter metric
+	// MetricTypeCounter represents a counter metric.
 	MetricTypeCounter MetricType = "counter"
-	// MetricTypeGauge represents a gauge metric
+	// MetricTypeGauge represents a gauge metric.
 	MetricTypeGauge MetricType = "gauge"
-	// MetricTypeHistogram represents a histogram metric
+	// MetricTypeHistogram represents a histogram metric.
 	MetricTypeHistogram MetricType = "histogram"
 )
 
-// Metric represents a single metric
+// Metric represents a single metric.
 type Metric struct {
 	Name      string
 	Type      MetricType
@@ -44,24 +44,24 @@ type Metric struct {
 	Help      string
 }
 
-// MetricSet represents a collection of metrics
+// MetricSet represents a collection of metrics.
 type MetricSet struct {
 	metrics []Metric
 	mu      sync.RWMutex
 }
 
-// NewMetricSet creates a new metric set
+// NewMetricSet creates a new metric set.
 func NewMetricSet() *MetricSet {
 	return &MetricSet{
 		metrics: make([]Metric, 0),
 	}
 }
 
-// AddCounter adds a counter metric
+// AddCounter adds a counter metric.
 func (ms *MetricSet) AddCounter(name string, value float64, labels map[string]string) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
-	
+
 	ms.metrics = append(ms.metrics, Metric{
 		Name:      name,
 		Type:      MetricTypeCounter,
@@ -71,11 +71,11 @@ func (ms *MetricSet) AddCounter(name string, value float64, labels map[string]st
 	})
 }
 
-// AddGauge adds a gauge metric
+// AddGauge adds a gauge metric.
 func (ms *MetricSet) AddGauge(name string, value float64, labels map[string]string) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
-	
+
 	ms.metrics = append(ms.metrics, Metric{
 		Name:      name,
 		Type:      MetricTypeGauge,
@@ -85,55 +85,55 @@ func (ms *MetricSet) AddGauge(name string, value float64, labels map[string]stri
 	})
 }
 
-// GetMetrics returns all metrics
+// GetMetrics returns all metrics.
 func (ms *MetricSet) GetMetrics() []Metric {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
-	
+
 	result := make([]Metric, len(ms.metrics))
 	copy(result, ms.metrics)
 	return result
 }
 
-// Count returns the number of metrics
+// Count returns the number of metrics.
 func (ms *MetricSet) Count() int {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 	return len(ms.metrics)
 }
 
-// Store manages metrics from multiple modules
+// Store manages metrics from multiple modules.
 type Store struct {
 	data map[string]*MetricSet
 	mu   sync.RWMutex
 }
 
-// NewStore creates a new metrics store
+// NewStore creates a new metrics store.
 func NewStore() *Store {
 	return &Store{
 		data: make(map[string]*MetricSet),
 	}
 }
 
-// Update updates metrics for a module
+// Update updates metrics for a module.
 func (s *Store) Update(module string, metrics *MetricSet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data[module] = metrics
 }
 
-// Get returns metrics for a specific module
+// Get returns metrics for a specific module.
 func (s *Store) Get(module string) *MetricSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.data[module]
 }
 
-// GetAll returns all metrics
+// GetAll returns all metrics.
 func (s *Store) GetAll() map[string]*MetricSet {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	result := make(map[string]*MetricSet)
 	for k, v := range s.data {
 		result[k] = v

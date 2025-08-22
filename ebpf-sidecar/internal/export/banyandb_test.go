@@ -108,7 +108,7 @@ func TestBanyanDBExporter(t *testing.T) {
 			Endpoint:  "localhost:17912",
 			BatchSize: 2, // Small batch for testing
 		}
-		
+
 		exporter, err := NewBanyanDBExporter(config, logger)
 		require.NoError(t, err)
 
@@ -123,21 +123,21 @@ func TestBanyanDBExporter(t *testing.T) {
 		// Since we can't actually connect to BanyanDB in unit tests,
 		// we just verify the buffer management logic
 		assert.Equal(t, 0, len(exporter.buffer))
-		
+
 		// Simulate adding metrics to buffer
 		now := time.Now()
 		for _, m := range ms.GetMetrics() {
 			dp := exporter.createDataPoint("test", m, now)
 			exporter.buffer = append(exporter.buffer, dp)
 		}
-		
+
 		assert.Equal(t, 3, len(exporter.buffer))
 	})
 }
 
 func TestDefaultBanyanDBConfig(t *testing.T) {
 	config := DefaultBanyanDBConfig()
-	
+
 	assert.Equal(t, "localhost:17912", config.Endpoint)
 	assert.Equal(t, "ebpf-metrics", config.Group)
 	assert.Equal(t, "system-metrics", config.MeasureName)
@@ -146,14 +146,14 @@ func TestDefaultBanyanDBConfig(t *testing.T) {
 	assert.Equal(t, 10*time.Second, config.FlushInterval)
 }
 
-// TestBanyanDBExportIntegration would test actual connection
+// TestBanyanDBExportIntegration would test actual connection.
 // This is skipped in unit tests as it requires a running BanyanDB instance
 func TestBanyanDBExportIntegration(t *testing.T) {
 	t.Skip("Integration test requires running BanyanDB instance")
 
 	logger := zaptest.NewLogger(t)
 	config := DefaultBanyanDBConfig()
-	
+
 	exporter, err := NewBanyanDBExporter(config, logger)
 	require.NoError(t, err)
 	defer exporter.Close()

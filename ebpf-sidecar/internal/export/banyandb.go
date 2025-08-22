@@ -19,6 +19,7 @@ package export
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -35,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 )
 
-// BanyanDBConfig holds configuration for BanyanDB export
+// BanyanDBConfig holds configuration for BanyanDB export.
 type BanyanDBConfig struct {
 	Endpoint      string        `yaml:"endpoint"`
 	Group         string        `yaml:"group"`
@@ -45,7 +46,7 @@ type BanyanDBConfig struct {
 	FlushInterval time.Duration `yaml:"flush_interval"`
 }
 
-// DefaultBanyanDBConfig returns default configuration
+// DefaultBanyanDBConfig returns default configuration.
 func DefaultBanyanDBConfig() BanyanDBConfig {
 	return BanyanDBConfig{
 		Endpoint:      "localhost:17912",
@@ -57,7 +58,7 @@ func DefaultBanyanDBConfig() BanyanDBConfig {
 	}
 }
 
-// BanyanDBExporter exports metrics to BanyanDB
+// BanyanDBExporter exports metrics to BanyanDB.
 type BanyanDBExporter struct {
 	config  BanyanDBConfig
 	logger  *zap.Logger
@@ -67,7 +68,7 @@ type BanyanDBExporter struct {
 	lastErr error
 }
 
-// NewBanyanDBExporter creates a new BanyanDB exporter
+// NewBanyanDBExporter creates a new BanyanDB exporter.
 func NewBanyanDBExporter(config BanyanDBConfig, logger *zap.Logger) (*BanyanDBExporter, error) {
 	if config.Endpoint == "" {
 		return nil, fmt.Errorf("BanyanDB endpoint is required")
@@ -92,9 +93,10 @@ func NewBanyanDBExporter(config BanyanDBConfig, logger *zap.Logger) (*BanyanDBEx
 	}, nil
 }
 
-// Connect establishes connection to BanyanDB
+// Connect establishes connection to BanyanDB.
 func (e *BanyanDBExporter) Connect(ctx context.Context) error {
 	var err error
+	//nolint:contextcheck // grpchelper.Conn doesn't accept context parameter
 	e.conn, err = grpchelper.Conn(e.config.Endpoint, e.config.Timeout,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -106,7 +108,7 @@ func (e *BanyanDBExporter) Connect(ctx context.Context) error {
 	return nil
 }
 
-// Close closes the connection to BanyanDB
+// Close closes the connection to BanyanDB.
 func (e *BanyanDBExporter) Close() error {
 	if e.conn != nil {
 		if err := e.Flush(context.Background()); err != nil {
@@ -117,7 +119,7 @@ func (e *BanyanDBExporter) Close() error {
 	return nil
 }
 
-// Export sends metrics to BanyanDB
+// Export sends metrics to BanyanDB.
 func (e *BanyanDBExporter) Export(ctx context.Context, store *metrics.Store) error {
 	if e.client == nil {
 		return fmt.Errorf("not connected to BanyanDB")
@@ -148,7 +150,7 @@ func (e *BanyanDBExporter) Export(ctx context.Context, store *metrics.Store) err
 	return nil
 }
 
-// Flush sends buffered metrics to BanyanDB
+// Flush sends buffered metrics to BanyanDB.
 func (e *BanyanDBExporter) Flush(ctx context.Context) error {
 	if len(e.buffer) == 0 {
 		return nil
@@ -188,25 +190,25 @@ func (e *BanyanDBExporter) Flush(ctx context.Context) error {
 	}
 
 	// Send the write request through the stream
-	if err := stream.Send(req); err != nil {
-		e.lastErr = err
+	if sendErr := stream.Send(req); sendErr != nil {
+		e.lastErr = sendErr
 		e.logger.Error("Failed to send metrics to BanyanDB",
-			zap.Error(err),
+			zap.Error(sendErr),
 			zap.Int("batch_size", len(e.buffer)))
-		return fmt.Errorf("failed to send metrics: %w", err)
+		return fmt.Errorf("failed to send metrics: %w", sendErr)
 	}
 
 	// Close the send side to signal we're done sending
-	if err := stream.CloseSend(); err != nil {
-		e.lastErr = err
+	if closeErr := stream.CloseSend(); closeErr != nil {
+		e.lastErr = closeErr
 		e.logger.Error("Failed to close write stream",
-			zap.Error(err))
-		return fmt.Errorf("failed to close stream: %w", err)
+			zap.Error(closeErr))
+		return fmt.Errorf("failed to close stream: %w", closeErr)
 	}
 
 	// Receive response from the stream
 	_, err = stream.Recv()
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		e.lastErr = err
 		e.logger.Error("Failed to receive write response",
 			zap.Error(err))
@@ -221,7 +223,7 @@ func (e *BanyanDBExporter) Flush(ctx context.Context) error {
 	return nil
 }
 
-// createDataPoint creates a BanyanDB data point from a metric
+// createDataPoint creates a BanyanDB data point from a metric.
 func (e *BanyanDBExporter) createDataPoint(moduleName string, metric metrics.Metric, timestamp time.Time) *measurev1.DataPointValue {
 	tags := []*modelv1.TagValue{
 		{
@@ -270,10 +272,10 @@ func (e *BanyanDBExporter) createDataPoint(moduleName string, metric metrics.Met
 	}
 }
 
-// convertToFields converts buffered data points to field values
+// convertToFields converts buffered data points to field values.
 func (e *BanyanDBExporter) convertToFields() []*modelv1.FieldValue {
 	fields := make([]*modelv1.FieldValue, 0, len(e.buffer))
-	
+
 	// Aggregate metrics by name
 	aggregated := make(map[string]float64)
 	for _, dp := range e.buffer {
@@ -304,12 +306,12 @@ func (e *BanyanDBExporter) convertToFields() []*modelv1.FieldValue {
 	return fields
 }
 
-// GetLastError returns the last error encountered during export
+// GetLastError returns the last error encountered during export.
 func (e *BanyanDBExporter) GetLastError() error {
 	return e.lastErr
 }
 
-// StartPeriodicExport starts periodic export to BanyanDB
+// StartPeriodicExport starts periodic export to BanyanDB.
 func (e *BanyanDBExporter) StartPeriodicExport(ctx context.Context, store *metrics.Store) {
 	ticker := time.NewTicker(e.config.FlushInterval)
 	defer ticker.Stop()
