@@ -108,12 +108,6 @@ func (s *snapshot) release() {
 
 	// Mark as released first
 	s.released.Store(true)
-
-	// Release all part references
-	for _, pw := range s.parts {
-		pw.release()
-	}
-
 	// Return to pool
 	releaseSnapshot(s)
 }
