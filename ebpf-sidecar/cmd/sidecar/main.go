@@ -83,7 +83,9 @@ func run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to setup logger: %w", err)
 	}
-	defer logger.Sync()
+	defer func() {
+		_ = logger.Sync() // Best effort flush
+	}()
 
 	// Load configuration
 	cfg, err := config.Load(configFile)
@@ -108,20 +110,20 @@ func run(cmd *cobra.Command, args []string) error {
 	defer coll.Close()
 
 	// Start collector
-	if err := coll.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start collector: %w", err)
+	if startErr := coll.Start(ctx); startErr != nil {
+		return fmt.Errorf("failed to start collector: %w", startErr)
 	}
 
 	// Initialize and start servers
 	logger.Info("Starting servers...")
-	srv, err := server.New(cfg.Server, coll, logger)
+	srv, err := server.New(cfg.Server, cfg.Export, coll, logger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}
 
 	// Start servers in background
 	go func() {
-		if err := srv.Start(); err != nil {
+		if err := srv.Start(ctx); err != nil {
 			logger.Error("Server error", zap.Error(err))
 			cancel()
 		}
@@ -133,7 +135,7 @@ func run(cmd *cobra.Command, args []string) error {
 	case <-sigChan:
 		logger.Info("Received shutdown signal")
 	case <-ctx.Done():
-		logger.Info("Context cancelled")
+		logger.Info("Context canceled")
 	}
 
 	// Graceful shutdown

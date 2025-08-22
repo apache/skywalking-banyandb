@@ -234,6 +234,8 @@
 - [banyandb/ebpf/v1/rpc.proto](#banyandb_ebpf_v1_rpc-proto)
     - [ConfigureModuleRequest](#banyandb-ebpf-v1-ConfigureModuleRequest)
     - [ConfigureModuleResponse](#banyandb-ebpf-v1-ConfigureModuleResponse)
+    - [GetHealthRequest](#banyandb-ebpf-v1-GetHealthRequest)
+    - [GetHealthResponse](#banyandb-ebpf-v1-GetHealthResponse)
     - [GetIOStatsRequest](#banyandb-ebpf-v1-GetIOStatsRequest)
     - [GetIOStatsResponse](#banyandb-ebpf-v1-GetIOStatsResponse)
     - [GetMetricsRequest](#banyandb-ebpf-v1-GetMetricsRequest)
@@ -241,9 +243,9 @@
     - [GetMetricsResponse](#banyandb-ebpf-v1-GetMetricsResponse)
     - [GetModuleStatusRequest](#banyandb-ebpf-v1-GetModuleStatusRequest)
     - [GetModuleStatusResponse](#banyandb-ebpf-v1-GetModuleStatusResponse)
-    - [HealthResponse](#banyandb-ebpf-v1-HealthResponse)
     - [StreamMetricsRequest](#banyandb-ebpf-v1-StreamMetricsRequest)
     - [StreamMetricsRequest.LabelFiltersEntry](#banyandb-ebpf-v1-StreamMetricsRequest-LabelFiltersEntry)
+    - [StreamMetricsResponse](#banyandb-ebpf-v1-StreamMetricsResponse)
     - [SystemStatus](#banyandb-ebpf-v1-SystemStatus)
     - [TimeRange](#banyandb-ebpf-v1-TimeRange)
   
@@ -3647,6 +3649,40 @@ ConfigureModuleResponse confirms module configuration
 
 
 
+<a name="banyandb-ebpf-v1-GetHealthRequest"></a>
+
+### GetHealthRequest
+GetHealthRequest requests health status
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| include_diagnostics | [bool](#bool) |  | Optional: include detailed diagnostics |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-GetHealthResponse"></a>
+
+### GetHealthResponse
+GetHealthResponse indicates service health
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| status | [HealthStatus](#banyandb-ebpf-v1-HealthStatus) |  | Health status |
+| message | [string](#string) |  | Human-readable status message |
+| version | [string](#string) |  | Service version |
+| uptime_seconds | [uint64](#uint64) |  | Service uptime in seconds |
+| last_error | [string](#string) |  | Last error if any |
+
+
+
+
+
+
 <a name="banyandb-ebpf-v1-GetIOStatsRequest"></a>
 
 ### GetIOStatsRequest
@@ -3761,25 +3797,6 @@ GetModuleStatusResponse contains module status information
 
 
 
-<a name="banyandb-ebpf-v1-HealthResponse"></a>
-
-### HealthResponse
-HealthResponse indicates service health
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| status | [HealthStatus](#banyandb-ebpf-v1-HealthStatus) |  | Health status |
-| message | [string](#string) |  | Human-readable status message |
-| version | [string](#string) |  | Service version |
-| uptime_seconds | [uint64](#uint64) |  | Service uptime in seconds |
-| last_error | [string](#string) |  | Last error if any |
-
-
-
-
-
-
 <a name="banyandb-ebpf-v1-StreamMetricsRequest"></a>
 
 ### StreamMetricsRequest
@@ -3807,6 +3824,21 @@ StreamMetricsRequest configures metric streaming
 | ----- | ---- | ----- | ----------- |
 | key | [string](#string) |  |  |
 | value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-ebpf-v1-StreamMetricsResponse"></a>
+
+### StreamMetricsResponse
+StreamMetricsResponse contains a single metric set for streaming
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metric_set | [MetricSet](#banyandb-ebpf-v1-MetricSet) |  | Metric set data |
 
 
 
@@ -3876,11 +3908,11 @@ EBPFMetricsService provides access to eBPF-collected metrics
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | GetMetrics | [GetMetricsRequest](#banyandb-ebpf-v1-GetMetricsRequest) | [GetMetricsResponse](#banyandb-ebpf-v1-GetMetricsResponse) | GetMetrics retrieves current metrics from all modules |
-| StreamMetrics | [StreamMetricsRequest](#banyandb-ebpf-v1-StreamMetricsRequest) | [MetricSet](#banyandb-ebpf-v1-MetricSet) stream | StreamMetrics streams metrics updates in real-time |
+| StreamMetrics | [StreamMetricsRequest](#banyandb-ebpf-v1-StreamMetricsRequest) | [StreamMetricsResponse](#banyandb-ebpf-v1-StreamMetricsResponse) stream | StreamMetrics streams metrics updates in real-time |
 | GetIOStats | [GetIOStatsRequest](#banyandb-ebpf-v1-GetIOStatsRequest) | [GetIOStatsResponse](#banyandb-ebpf-v1-GetIOStatsResponse) | GetIOStats retrieves detailed I/O statistics |
 | GetModuleStatus | [GetModuleStatusRequest](#banyandb-ebpf-v1-GetModuleStatusRequest) | [GetModuleStatusResponse](#banyandb-ebpf-v1-GetModuleStatusResponse) | GetModuleStatus retrieves status of eBPF modules |
 | ConfigureModule | [ConfigureModuleRequest](#banyandb-ebpf-v1-ConfigureModuleRequest) | [ConfigureModuleResponse](#banyandb-ebpf-v1-ConfigureModuleResponse) | ConfigureModule enables or disables an eBPF module |
-| GetHealth | [.google.protobuf.Empty](#google-protobuf-Empty) | [HealthResponse](#banyandb-ebpf-v1-HealthResponse) | Health check for the eBPF sidecar service |
+| GetHealth | [GetHealthRequest](#banyandb-ebpf-v1-GetHealthRequest) | [GetHealthResponse](#banyandb-ebpf-v1-GetHealthResponse) | Health check for the eBPF sidecar service |
 
  
 

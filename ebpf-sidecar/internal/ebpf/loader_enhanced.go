@@ -33,6 +33,16 @@ import (
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf/generated"
 )
 
+// Attachment mode constants for tracking how programs are attached.
+const (
+	// attachModeTracepoint indicates attachment via tracepoint.
+	attachModeTracepoint = "tracepoint"
+	// attachModeFentry indicates attachment via fentry.
+	attachModeFentry = "fentry"
+	// attachModeKprobe indicates attachment via kprobe.
+	attachModeKprobe = "kprobe"
+)
+
 // EnhancedLoader handles loading and managing eBPF programs with intelligent fallback.
 type EnhancedLoader struct {
 	spec     *ebpf.CollectionSpec

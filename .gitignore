@@ -73,3 +73,6 @@ gomock_reflect*
 Claude.md
 .claude/
 
+# eBPF generated files
+ebpf-sidecar/internal/ebpf/generated/
+

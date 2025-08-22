@@ -222,6 +222,12 @@ distclean: clean
 	@rm -f internal/ebpf/generated/vmlinux.h
 	@rm -rf internal/ebpf/generated
 
+.PHONY: lint
+lint:
+	@echo "Running lint for $(NAME)..."
+	@../bin/golangci-lint run -v --config ../.golangci.yml --timeout 10m ./... && \
+	  ../bin/revive -config ../revive.toml -formatter friendly ./...
+
 .PHONY: test
 test:
 	@echo "Running tests for $(NAME)..."
@@ -259,6 +265,7 @@ help:
 	@echo "  build           - Build the sidecar binary"
 	@echo "  clean           - Clean build artifacts (preserves vmlinux.h)"
 	@echo "  distclean       - Deep clean including vmlinux.h"
+	@echo "  lint            - Run linting checks"
 	@echo "  test            - Run unit tests"
 	@echo "  test-ebpf       - Run eBPF tests (requires root)"
 	@echo "  docker          - Build Docker image"

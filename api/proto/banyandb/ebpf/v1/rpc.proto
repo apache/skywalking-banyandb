@@ -21,7 +21,6 @@ package banyandb.ebpf.v1;
 
 import "banyandb/ebpf/v1/metrics.proto";
 import "google/api/annotations.proto";
-import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
@@ -37,7 +36,7 @@ service EBPFMetricsService {
   }
   
   // StreamMetrics streams metrics updates in real-time
-  rpc StreamMetrics(StreamMetricsRequest) returns (stream MetricSet) {
+  rpc StreamMetrics(StreamMetricsRequest) returns (stream StreamMetricsResponse) {
     option (google.api.http) = {
       get: "/api/v1/ebpf/metrics/stream"
     };
@@ -66,7 +65,7 @@ service EBPFMetricsService {
   }
   
   // Health check for the eBPF sidecar service
-  rpc GetHealth(google.protobuf.Empty) returns (HealthResponse) {
+  rpc GetHealth(GetHealthRequest) returns (GetHealthResponse) {
     option (google.api.http) = {
       get: "/api/v1/ebpf/health"
     };
@@ -196,8 +195,20 @@ message ConfigureModuleResponse {
   ModuleStatus status = 3;
 }
 
-// HealthResponse indicates service health
-message HealthResponse {
+// StreamMetricsResponse contains a single metric set for streaming
+message StreamMetricsResponse {
+  // Metric set data
+  MetricSet metric_set = 1;
+}
+
+// GetHealthRequest requests health status
+message GetHealthRequest {
+  // Optional: include detailed diagnostics
+  bool include_diagnostics = 1;
+}
+
+// GetHealthResponse indicates service health
+message GetHealthResponse {
   // Health status
   HealthStatus status = 1;
   

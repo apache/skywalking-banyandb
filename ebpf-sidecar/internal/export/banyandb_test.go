@@ -147,7 +147,7 @@ func TestDefaultBanyanDBConfig(t *testing.T) {
 }
 
 // TestBanyanDBExportIntegration would test actual connection.
-// This is skipped in unit tests as it requires a running BanyanDB instance
+// This is skipped in unit tests as it requires a running BanyanDB instance.
 func TestBanyanDBExportIntegration(t *testing.T) {
 	t.Skip("Integration test requires running BanyanDB instance")
 
