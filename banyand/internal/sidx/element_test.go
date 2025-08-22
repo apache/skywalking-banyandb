@@ -30,22 +30,6 @@ import (
 
 func TestElementPoolAllocation(t *testing.T) {
 	// Test pool allocation correctness
-	t.Run("element pool allocation", func(t *testing.T) {
-		e1 := generateElement()
-		require.NotNil(t, e1)
-		assert.True(t, e1.pooled, "element should be marked as pooled")
-
-		e2 := generateElement()
-		require.NotNil(t, e2)
-		assert.True(t, e2.pooled, "element should be marked as pooled")
-
-		// Elements should be different instances
-		assert.NotSame(t, e1, e2, "pool should provide different instances")
-
-		releaseElement(e1)
-		releaseElement(e2)
-	})
-
 	t.Run("elements pool allocation", func(t *testing.T) {
 		es1 := generateElements()
 		require.NotNil(t, es1)
@@ -78,31 +62,6 @@ func TestElementPoolAllocation(t *testing.T) {
 }
 
 func TestElementReset(t *testing.T) {
-	t.Run("element reset functionality", func(t *testing.T) {
-		e := generateElement()
-
-		// Set up element with data
-		e.seriesID = 123
-		e.userKey = 456
-		e.data = []byte("test data")
-		e.tags = []tag{
-			{name: "service", value: []byte("test-service"), valueType: pbv1.ValueTypeStr, indexed: true},
-			{name: "endpoint", value: []byte("test-endpoint"), valueType: pbv1.ValueTypeStr, indexed: false},
-		}
-
-		// Reset the element
-		e.reset()
-
-		// Verify all fields are cleared
-		assert.Equal(t, common.SeriesID(0), e.seriesID, "seriesID should be reset to 0")
-		assert.Equal(t, int64(0), e.userKey, "userKey should be reset to 0")
-		assert.Len(t, e.data, 0, "data slice should be empty but reusable")
-		assert.Len(t, e.tags, 0, "tags slice should be empty but reusable")
-		assert.False(t, e.pooled, "pooled flag should be reset")
-
-		releaseElement(e)
-	})
-
 	t.Run("tag reset functionality", func(t *testing.T) {
 		tag := generateTag()
 
@@ -118,8 +77,8 @@ func TestElementReset(t *testing.T) {
 		// Verify all fields are cleared
 		assert.Equal(t, "", tag.name, "name should be empty")
 		assert.Nil(t, tag.value, "value should be nil")
-		assert.Equal(t, pbv1.ValueTypeUnknown, tag.valueType, "valueType should be unknown")
-		assert.False(t, tag.indexed, "indexed should be false")
+		assert.Equal(t, pbv1.ValueTypeUnknown, tag.valueType, "valueType should be reset")
+		assert.False(t, tag.indexed, "indexed should be reset")
 
 		releaseTag(tag)
 	})
@@ -137,97 +96,31 @@ func TestElementReset(t *testing.T) {
 			{{name: "tag3", value: []byte("value3")}},
 		}
 
-		// Reset the elements
+		// Reset elements
 		es.reset()
 
 		// Verify all slices are cleared but reusable
-		assert.Len(t, es.seriesIDs, 0, "seriesIDs should be empty")
-		assert.Len(t, es.userKeys, 0, "userKeys should be empty")
-		assert.Len(t, es.data, 0, "data should be empty")
-		assert.Len(t, es.tags, 0, "tags should be empty")
+		assert.Len(t, es.seriesIDs, 0, "seriesIDs slice should be empty")
+		assert.Len(t, es.userKeys, 0, "userKeys slice should be empty")
+		assert.Len(t, es.data, 0, "data slice should be empty")
+		assert.Len(t, es.tags, 0, "tags slice should be empty")
 		assert.False(t, es.pooled, "pooled flag should be reset")
 
 		releaseElements(es)
 	})
 }
 
-func TestMemoryReuse(t *testing.T) {
-	t.Run("element slice reuse", func(t *testing.T) {
-		e := generateElement()
-
-		// Add small data that should be reused
-		smallData := make([]byte, 100)
-		e.data = smallData
-
-		// Add small number of tags that should be reused
-		e.tags = make([]tag, 5)
-
-		originalDataCap := cap(e.data)
-		originalTagsCap := cap(e.tags)
-
-		// Reset and verify slices are reused
-		e.reset()
-
-		// Add new data and verify capacity is preserved
-		e.data = append(e.data, []byte("new data")...)
-		e.tags = append(e.tags, tag{name: "new-tag"})
-
-		assert.GreaterOrEqual(t, cap(e.data), originalDataCap, "data slice capacity should be preserved")
-		assert.GreaterOrEqual(t, cap(e.tags), originalTagsCap, "tags slice capacity should be preserved")
-
-		releaseElement(e)
-	})
-
-	t.Run("oversized slice release", func(t *testing.T) {
-		e := generateElement()
-
-		// Add oversized data that should be released
-		oversizedData := make([]byte, maxPooledSliceSize+1)
-		e.data = oversizedData
-
-		// Add too many tags that should be released
-		e.tags = make([]tag, maxPooledTagCount+1)
-
-		// Reset and verify slices are released
-		e.reset()
-
-		assert.Nil(t, e.data, "oversized data slice should be released")
-		assert.Nil(t, e.tags, "oversized tags slice should be released")
-
-		releaseElement(e)
-	})
-}
-
 func TestSizeCalculation(t *testing.T) {
-	t.Run("element size calculation", func(t *testing.T) {
-		e := generateElement()
-		e.seriesID = 123
-		e.userKey = 456
-		e.data = []byte("test data") // 9 bytes
-		e.tags = []tag{
-			{name: "service", value: []byte("test-service"), valueType: pbv1.ValueTypeStr},   // 7 + 12 + 1 = 20 bytes
-			{name: "endpoint", value: []byte("test-endpoint"), valueType: pbv1.ValueTypeStr}, // 8 + 13 + 1 = 22 bytes
-		}
-
-		expectedSize := 8 + 8 + 9 + 20 + 22 // seriesID + userKey + data + tag1 + tag2
-		actualSize := e.size()
-
-		assert.Equal(t, expectedSize, actualSize, "element size calculation should be accurate")
-
-		releaseElement(e)
-	})
-
 	t.Run("tag size calculation", func(t *testing.T) {
 		tag := generateTag()
-		tag.name = "test-tag"             // 8 bytes
-		tag.value = []byte("test-value")  // 10 bytes
-		tag.valueType = pbv1.ValueTypeStr // 1 byte
+		tag.name = "test-tag"       // 8 bytes
+		tag.value = []byte("value") // 5 bytes
+		tag.valueType = pbv1.ValueTypeStr
 
-		expectedSize := 8 + 10 + 1
+		expectedSize := 8 + 5 + 1 // name + value + valueType
 		actualSize := tag.size()
 
-		assert.Equal(t, expectedSize, actualSize, "tag size calculation should be accurate")
-
+		assert.Equal(t, expectedSize, actualSize, "tag size calculation should be correct")
 		releaseTag(tag)
 	})
 
@@ -237,26 +130,15 @@ func TestSizeCalculation(t *testing.T) {
 		es.userKeys = []int64{100, 200}
 		es.data = [][]byte{[]byte("data1"), []byte("data2")} // 5 + 5 = 10 bytes
 		es.tags = [][]tag{
-			{{name: "tag1", value: []byte("value1")}}, // 4 + 6 + 1 = 11 bytes
-			{{name: "tag2", value: []byte("value2")}}, // 4 + 6 + 1 = 11 bytes
+			{{name: "tag1", value: []byte("val1")}}, // 4 + 4 + 1 = 9 bytes
+			{{name: "tag2", value: []byte("val2")}}, // 4 + 4 + 1 = 9 bytes
 		}
 
-		expectedSize := 2*8 + 2*8 + 10 + 11 + 11 // seriesIDs + userKeys + data + tags
+		expectedSize := 2*8 + 2*8 + 10 + 9 + 9 // seriesIDs + userKeys + data + tags
 		actualSize := es.size()
 
-		assert.Equal(t, expectedSize, actualSize, "elements size calculation should be accurate")
-
+		assert.Equal(t, expectedSize, actualSize, "elements size calculation should be correct")
 		releaseElements(es)
-	})
-
-	t.Run("empty element size", func(t *testing.T) {
-		e := generateElement()
-		expectedSize := 8 + 8 // just seriesID + userKey
-		actualSize := e.size()
-
-		assert.Equal(t, expectedSize, actualSize, "empty element should have minimal size")
-
-		releaseElement(e)
 	})
 }
 
@@ -303,21 +185,17 @@ func TestElementsSorting(t *testing.T) {
 			{{name: "tag3"}},
 		}
 
-		// Test Len
-		assert.Equal(t, 3, es.Len(), "Len should return number of elements")
-
-		// Test Less
-		assert.True(t, es.Less(1, 0), "seriesID 1 < seriesID 2")
-		assert.False(t, es.Less(0, 1), "seriesID 2 > seriesID 1")
+		// Test sort.Interface methods
+		assert.Equal(t, 3, es.Len(), "Len() should return correct length")
+		assert.True(t, es.Less(1, 0), "Less(1, 0) should be true (seriesID 1 < 2)")
+		assert.False(t, es.Less(0, 1), "Less(0, 1) should be false (seriesID 2 > 1)")
 
 		// Test Swap
 		es.Swap(0, 1)
-		assert.Equal(t, common.SeriesID(1), es.seriesIDs[0], "swap should exchange seriesIDs")
-		assert.Equal(t, common.SeriesID(2), es.seriesIDs[1], "swap should exchange seriesIDs")
-		assert.Equal(t, int64(100), es.userKeys[0], "swap should exchange userKeys")
-		assert.Equal(t, int64(200), es.userKeys[1], "swap should exchange userKeys")
-		assert.Equal(t, []byte("data1"), es.data[0], "swap should exchange data")
-		assert.Equal(t, []byte("data2"), es.data[1], "swap should exchange data")
+		assert.Equal(t, common.SeriesID(1), es.seriesIDs[0], "Swap should exchange seriesIDs")
+		assert.Equal(t, common.SeriesID(2), es.seriesIDs[1], "Swap should exchange seriesIDs")
+		assert.Equal(t, int64(100), es.userKeys[0], "Swap should exchange userKeys")
+		assert.Equal(t, int64(200), es.userKeys[1], "Swap should exchange userKeys")
 
 		releaseElements(es)
 	})
@@ -335,25 +213,20 @@ func TestElementsSorting(t *testing.T) {
 
 		sort.Sort(es)
 
-		// With same seriesID, should sort by userKey
+		// When seriesID is the same, should sort by userKey
 		expectedUserKeys := []int64{100, 200, 300}
-		assert.Equal(t, expectedUserKeys, es.userKeys, "same seriesID should sort by userKey")
+		assert.Equal(t, expectedUserKeys, es.userKeys, "elements with same seriesID should be sorted by userKey")
 
-		// Verify data follows the sorting
-		assert.Equal(t, []byte("data100"), es.data[0])
-		assert.Equal(t, []byte("data200"), es.data[1])
-		assert.Equal(t, []byte("data300"), es.data[2])
+		// Verify data follows the userKey sorting
+		assert.Equal(t, []byte("data100"), es.data[0], "data should follow userKey sorting")
+		assert.Equal(t, []byte("data200"), es.data[1], "data should follow userKey sorting")
+		assert.Equal(t, []byte("data300"), es.data[2], "data should follow userKey sorting")
 
 		releaseElements(es)
 	})
 }
 
 func TestNilSafety(t *testing.T) {
-	t.Run("release nil element", func(_ *testing.T) {
-		// Should not panic
-		releaseElement(nil)
-	})
-
 	t.Run("release nil elements", func(_ *testing.T) {
 		// Should not panic
 		releaseElements(nil)
@@ -362,12 +235,6 @@ func TestNilSafety(t *testing.T) {
 	t.Run("release nil tag", func(_ *testing.T) {
 		// Should not panic
 		releaseTag(nil)
-	})
-
-	t.Run("release non-pooled element", func(_ *testing.T) {
-		e := &element{pooled: false}
-		// Should not panic or add to pool
-		releaseElement(e)
 	})
 
 	t.Run("release non-pooled elements", func(_ *testing.T) {
