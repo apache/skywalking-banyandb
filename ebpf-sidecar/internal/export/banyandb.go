@@ -20,6 +20,7 @@ package export
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"go.uber.org/zap"
@@ -177,14 +178,39 @@ func (e *BanyanDBExporter) Flush(ctx context.Context) error {
 		},
 	}
 
-	// Send batch write request
-	_, err := e.client.Write(ctx, req)
+	// Create streaming client for batch write
+	stream, err := e.client.Write(ctx)
 	if err != nil {
 		e.lastErr = err
-		e.logger.Error("Failed to write metrics to BanyanDB",
+		e.logger.Error("Failed to create write stream",
+			zap.Error(err))
+		return fmt.Errorf("failed to create write stream: %w", err)
+	}
+
+	// Send the write request through the stream
+	if err := stream.Send(req); err != nil {
+		e.lastErr = err
+		e.logger.Error("Failed to send metrics to BanyanDB",
 			zap.Error(err),
 			zap.Int("batch_size", len(e.buffer)))
-		return fmt.Errorf("failed to write metrics: %w", err)
+		return fmt.Errorf("failed to send metrics: %w", err)
+	}
+
+	// Close the send side to signal we're done sending
+	if err := stream.CloseSend(); err != nil {
+		e.lastErr = err
+		e.logger.Error("Failed to close write stream",
+			zap.Error(err))
+		return fmt.Errorf("failed to close stream: %w", err)
+	}
+
+	// Receive response from the stream
+	_, err = stream.Recv()
+	if err != nil && err != io.EOF {
+		e.lastErr = err
+		e.logger.Error("Failed to receive write response",
+			zap.Error(err))
+		return fmt.Errorf("failed to receive response: %w", err)
 	}
 
 	e.logger.Debug("Successfully wrote metrics to BanyanDB",
