@@ -468,16 +468,22 @@ func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
 	}
 
 	results := make(chan readResult, numReaders*50)
+	var wg sync.WaitGroup
 
 	// Start concurrent readers that will observe snapshots during replacements
 	for i := 0; i < numReaders; i++ {
+		wg.Add(1)
 		go func(readerID int) {
+			defer wg.Done()
 			start := time.Now()
 			for time.Since(start).Milliseconds() < readDuration {
 				// Read stats which accesses current snapshot
 				stats, err := sidx.Stats(ctx)
 				if err != nil {
-					results <- readResult{err: fmt.Errorf("reader %d: stats failed: %w", readerID, err)}
+					select {
+					case results <- readResult{err: fmt.Errorf("reader %d: stats failed: %w", readerID, err)}:
+					default:
+					}
 					continue
 				}
 
@@ -486,7 +492,10 @@ func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
 					writeCount: stats.WriteCount.Load(),
 					queryCount: stats.QueryCount.Load(),
 				}
-				results <- result
+				select {
+				case results <- result:
+				default:
+				}
 
 				time.Sleep(5 * time.Millisecond) // Small delay between reads
 			}
@@ -516,8 +525,8 @@ func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
 		time.Sleep(10 * time.Millisecond) // Space out writes
 	}
 
-	// Wait for all readers to finish
-	time.Sleep(time.Duration(readDuration+50) * time.Millisecond)
+	// Wait for all readers to finish before closing channel
+	wg.Wait()
 	close(results)
 
 	// Analyze results - all should be valid with no errors
