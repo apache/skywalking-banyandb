@@ -214,7 +214,7 @@ func (l *EnhancedLoader) attachFadviseKprobesWithSymbolFallback() error {
 
 		// Success!
 		l.links = append(l.links, kpEnter, kpExit)
-		l.attachmentModes["fadvise64"] = fmt.Sprintf("kprobe/%s", symbol)
+		l.attachmentModes["fadvise64"] = fmt.Sprintf("%s/%s", attachModeKprobe, symbol)
 		l.logger.Info("Attached fadvise monitoring using kprobe",
 			zap.String("symbol", symbol))
 		return nil
@@ -258,7 +258,7 @@ func (l *EnhancedLoader) attachCacheWithFallback() {
 				kp, err := link.Kprobe(symbol, l.objects.KprobeFilemapGetReadBatch, nil)
 				if err == nil {
 					l.links = append(l.links, kp)
-					l.attachmentModes["filemap_read"] = fmt.Sprintf("kprobe/%s", symbol)
+					l.attachmentModes["filemap_read"] = fmt.Sprintf("%s/%s", attachModeKprobe, symbol)
 					l.logger.Info("Attached cache read monitoring using kprobe",
 						zap.String("symbol", symbol))
 					break
@@ -299,7 +299,7 @@ func (l *EnhancedLoader) attachCacheWithFallback() {
 			kp, err := link.Kprobe(symbol, l.objects.KprobeAddToPageCacheLru, nil)
 			if err == nil {
 				l.links = append(l.links, kp)
-				l.attachmentModes["page_cache_add"] = fmt.Sprintf("kprobe/%s", symbol)
+				l.attachmentModes["page_cache_add"] = fmt.Sprintf("%s/%s", attachModeKprobe, symbol)
 				l.logger.Info("Attached page cache add monitoring using kprobe",
 					zap.String("symbol", symbol))
 				return
