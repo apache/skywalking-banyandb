@@ -36,12 +36,12 @@ const (
 
 // Metric represents a single metric.
 type Metric struct {
+	Timestamp time.Time
+	Labels    map[string]string
 	Name      string
 	Type      MetricType
-	Value     float64
-	Labels    map[string]string
-	Timestamp time.Time
 	Help      string
+	Value     float64
 }
 
 // MetricSet represents a collection of metrics.

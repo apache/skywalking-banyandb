@@ -26,41 +26,41 @@ import (
 
 // Config represents the complete configuration for the eBPF sidecar.
 type Config struct {
+	Export    ExportConfig    `mapstructure:"export"`
 	Server    ServerConfig    `mapstructure:"server"`
 	Collector CollectorConfig `mapstructure:"collector"`
-	Export    ExportConfig    `mapstructure:"export"`
 }
 
 // ServerConfig defines the server configuration.
 type ServerConfig struct {
-	GRPC GRPCConfig `mapstructure:"grpc"`
 	HTTP HTTPConfig `mapstructure:"http"`
+	GRPC GRPCConfig `mapstructure:"grpc"`
 }
 
 // GRPCConfig defines gRPC server configuration.
 type GRPCConfig struct {
-	Port int       `mapstructure:"port"`
 	TLS  TLSConfig `mapstructure:"tls"`
+	Port int       `mapstructure:"port"`
 }
 
 // HTTPConfig defines HTTP server configuration.
 type HTTPConfig struct {
-	Port        int    `mapstructure:"port"`
 	MetricsPath string `mapstructure:"metrics_path"`
+	Port        int    `mapstructure:"port"`
 }
 
 // TLSConfig defines TLS configuration.
 type TLSConfig struct {
-	Enabled  bool   `mapstructure:"enabled"`
 	CertFile string `mapstructure:"cert_file"`
 	KeyFile  string `mapstructure:"key_file"`
+	Enabled  bool   `mapstructure:"enabled"`
 }
 
 // CollectorConfig defines the collector configuration.
 type CollectorConfig struct {
-	Interval time.Duration `mapstructure:"interval"`
 	Modules  []string      `mapstructure:"modules"`
 	eBPF     eBPFConfig    `mapstructure:"ebpf"`
+	Interval time.Duration `mapstructure:"interval"`
 }
 
 // eBPFConfig defines eBPF-specific configuration.
@@ -79,8 +79,8 @@ type ExportConfig struct {
 type BanyanDBConfig struct {
 	Endpoint string        `mapstructure:"endpoint"`
 	Group    string        `mapstructure:"group"`
-	Timeout  time.Duration `mapstructure:"timeout"`
 	TLS      TLSConfig     `mapstructure:"tls"`
+	Timeout  time.Duration `mapstructure:"timeout"`
 }
 
 // DefaultConfig returns the default configuration.

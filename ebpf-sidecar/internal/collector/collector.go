@@ -31,12 +31,12 @@ import (
 
 // Collector manages eBPF program lifecycle and metrics collection.
 type Collector struct {
-	config   config.CollectorConfig
 	logger   *zap.Logger
 	modules  map[string]Module
 	metrics  *metrics.Store
 	ticker   *time.Ticker
 	stopChan chan struct{}
+	config   config.CollectorConfig
 	wg       sync.WaitGroup
 	mu       sync.RWMutex
 }

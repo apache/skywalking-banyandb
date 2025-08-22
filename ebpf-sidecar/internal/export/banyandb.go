@@ -60,12 +60,12 @@ func DefaultBanyanDBConfig() BanyanDBConfig {
 
 // BanyanDBExporter exports metrics to BanyanDB.
 type BanyanDBExporter struct {
-	config  BanyanDBConfig
+	client  measurev1.MeasureServiceClient
+	lastErr error
 	logger  *zap.Logger
 	conn    *grpc.ClientConn
-	client  measurev1.MeasureServiceClient
 	buffer  []*measurev1.DataPointValue
-	lastErr error
+	config  BanyanDBConfig
 }
 
 // NewBanyanDBExporter creates a new BanyanDB exporter.

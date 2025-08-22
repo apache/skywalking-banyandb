@@ -46,17 +46,15 @@ const (
 
 // IOMonitorModule collects I/O, cache, and memory statistics from eBPF.
 type IOMonitorModule struct {
-	name            string
+	lastCleanup     time.Time
 	logger          *zap.Logger
 	loader          *loader.Loader
 	objs            *generated.IomonitorObjects
+	activePIDs      map[uint32]time.Time
+	name            string
 	cleanupStrategy CleanupStrategy
 	cleanupInterval time.Duration
-	lastCleanup     time.Time
-
-	// Track PIDs to detect stale entries
-	activePIDs     map[uint32]time.Time
-	staleThreshold time.Duration
+	staleThreshold  time.Duration
 }
 
 // NewIOMonitorModule creates a new I/O monitoring module with cleanup.

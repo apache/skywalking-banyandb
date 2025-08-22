@@ -45,14 +45,12 @@ const (
 
 // EnhancedLoader handles loading and managing eBPF programs with intelligent fallback.
 type EnhancedLoader struct {
-	spec     *ebpf.CollectionSpec
-	objects  *generated.IomonitorObjects
-	links    []link.Link
-	features *KernelFeatures
-	logger   *zap.Logger
-
-	// Track attachment modes for monitoring
-	attachmentModes map[string]string // function -> mode (fentry/tracepoint/kprobe)
+	spec            *ebpf.CollectionSpec
+	objects         *generated.IomonitorObjects
+	features        *KernelFeatures
+	logger          *zap.Logger
+	attachmentModes map[string]string
+	links           []link.Link
 }
 
 // NewEnhancedLoader creates a new enhanced eBPF program loader.

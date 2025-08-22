@@ -36,14 +36,14 @@ import (
 
 // Server manages gRPC and HTTP servers.
 type Server struct {
-	config           config.ServerConfig
-	exportConfig     config.ExportConfig
 	collector        *collector.Collector
 	logger           *zap.Logger
 	grpcServer       *grpc.Server
 	httpServer       *http.Server
 	promExporter     *export.PrometheusExporter
 	banyandbExporter *export.BanyanDBExporter
+	exportConfig     config.ExportConfig
+	config           config.ServerConfig
 }
 
 // New creates a new server instance with export configuration.
