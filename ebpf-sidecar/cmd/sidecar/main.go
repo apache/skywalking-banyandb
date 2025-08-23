@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package main implements the eBPF sidecar command-line interface.
 package main
 
 import (
@@ -70,6 +71,10 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
+		// NOTE: cmd and args are standard Cobra parameters
+		// We keep them for potential future use (subcommands, etc)
+		_ = cmd
+		_ = args
 		fmt.Printf("eBPF Sidecar Agent\n")
 		fmt.Printf("Version:    %s\n", version)
 		fmt.Printf("Build Time: %s\n", buildTime)
@@ -78,6 +83,10 @@ var versionCmd = &cobra.Command{
 }
 
 func run(cmd *cobra.Command, args []string) error {
+	// NOTE: cmd could be used for accessing command flags dynamically
+	// args could be used for additional positional arguments
+	_ = cmd
+	_ = args
 	// Setup logger
 	logger, err := setupLogger(logLevel)
 	if err != nil {

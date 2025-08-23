@@ -506,6 +506,176 @@ docker run --privileged -it skywalking-banyandb/ebpf-sidecar:latest make install
 - Implement circuit breakers for error conditions
 - Provide configurable collection intervals
 
+## Current Implementation Gaps and TODOs
+
+### Critical Missing Features (Should Implement Now)
+
+During lint fixing, we identified several parameters marked as unused that actually represent important missing functionality:
+
+#### 1. **Context Usage in gRPC Methods** ⚠️ CRITICAL
+**Issue**: All gRPC methods ignore the `context.Context` parameter
+**Impact**: No request cancellation, no timeouts, potential resource leaks
+**Implementation Priority**: HIGH
+
+```go
+// Current (BAD):
+func (s *grpcServer) GetMetrics(ctx context.Context, ...) {
+    _ = ctx  // IGNORED!
+    // Long running operation without cancellation check
+}
+
+// Should be:
+func (s *grpcServer) GetMetrics(ctx context.Context, ...) {
+    select {
+    case <-ctx.Done():
+        return nil, ctx.Err()
+    default:
+        // Process request
+    }
+}
+```
+
+**Required Changes**:
+- Add context cancellation checks in all gRPC methods
+- Pass context to collector operations
+- Implement request timeouts
+- Add context-based logging/tracing
+
+#### 2. **Request Filtering Parameters** 🔍 IMPORTANT
+**Issue**: Request parameters in gRPC methods are ignored
+**Impact**: Cannot filter metrics, no pagination, always returns all data
+
+```go
+// GetMetricsRequest could support:
+message GetMetricsRequest {
+    repeated string modules = 1;        // Filter by module names
+    string time_range = 2;              // Time range for metrics
+    repeated string metric_names = 3;   // Specific metrics to return
+    int32 limit = 4;                   // Pagination support
+}
+```
+
+**Implementation Plan**:
+- Add filtering logic to GetMetrics
+- Support module-specific queries in GetIOStats
+- Add time-based filtering for historical data
+- Implement pagination for large result sets
+
+#### 3. **HTTP Request Parameters** 🌐 USEFUL
+**Issue**: HTTP handlers ignore request parameters
+**Impact**: No query customization, no content negotiation
+
+```go
+// handleMetrics should support:
+// GET /metrics?format=openmetrics&module=iomonitor
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+    format := r.URL.Query().Get("format")
+    module := r.URL.Query().Get("module")
+    // Filter and format based on parameters
+}
+```
+
+**Features to Add**:
+- Query parameter parsing for filtering
+- Content type negotiation (Prometheus vs OpenMetrics)
+- HTTP method validation
+- Request logging for debugging
+
+#### 4. **BanyanDB Export Context** 🐛 BUG
+**Issue**: BanyanDBExporter.Connect ignores context
+**Impact**: Connection attempts cannot be cancelled/timed out
+
+```go
+// Current:
+func (e *BanyanDBExporter) Connect(ctx context.Context) error {
+    _ = ctx  // BUG: Should use context!
+    e.conn, err = grpchelper.Conn(...) // No context passed
+}
+```
+
+**Fix Required**: Pass context to connection establishment
+
+### Implementation Priority Order
+
+1. **Phase 1 - Critical Fixes** (Do Now)
+   - [ ] Use context in all gRPC methods for cancellation
+   - [ ] Fix BanyanDBExporter context usage
+   - [ ] Add basic timeout handling
+
+2. **Phase 2 - Core Features** (Next Sprint)
+   - [ ] Implement request filtering in GetMetrics
+   - [ ] Add module selection support
+   - [ ] Support time range queries
+
+3. **Phase 3 - Enhanced Features** (Future)
+   - [ ] HTTP query parameters
+   - [ ] Pagination support
+   - [ ] Content negotiation
+   - [ ] Request logging/tracing
+
+### Code Examples for Implementation
+
+#### Proper Context Usage Pattern
+```go
+func (s *grpcServer) GetMetrics(ctx context.Context, req *ebpfv1.GetMetricsRequest) (*ebpfv1.GetMetricsResponse, error) {
+    // Set operation timeout
+    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+    defer cancel()
+    
+    // Check context before expensive operations
+    if err := ctx.Err(); err != nil {
+        return nil, status.Error(codes.Canceled, "request cancelled")
+    }
+    
+    // Pass context to collector
+    store := s.collector.GetMetricsWithContext(ctx)
+    
+    // Filter based on request
+    if len(req.Modules) > 0 {
+        store = filterByModules(store, req.Modules)
+    }
+    
+    return &ebpfv1.GetMetricsResponse{
+        Metrics: convertMetrics(store),
+    }, nil
+}
+```
+
+#### Request Filtering Implementation
+```go
+func filterByModules(store *metrics.Store, modules []string) *metrics.Store {
+    filtered := metrics.NewStore()
+    for _, module := range modules {
+        if ms := store.Get(module); ms != nil {
+            filtered.Update(module, ms)
+        }
+    }
+    return filtered
+}
+```
+
+### Testing Requirements
+
+For each implemented feature:
+1. Unit tests with context cancellation scenarios
+2. Integration tests with various request parameters
+3. Timeout behavior validation
+4. Error handling verification
+
+### Impact on Production Deployment
+
+**Without these fixes**:
+- ❌ No graceful shutdown on pod termination
+- ❌ Requests can hang indefinitely
+- ❌ Cannot debug specific modules
+- ❌ All-or-nothing data retrieval
+
+**With these fixes**:
+- ✅ Proper request lifecycle management
+- ✅ Granular metric queries
+- ✅ Better resource utilization
+- ✅ Production-ready error handling
+
 ---
 
 This document serves as both a record of our development journey and a guide for future enhancements. The architecture is designed to be extensible while maintaining performance and reliability standards suitable for production deployment.

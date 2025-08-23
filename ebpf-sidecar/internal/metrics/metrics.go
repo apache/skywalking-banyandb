@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package metrics defines metric types and structures for eBPF monitoring.
 package metrics
 
 import (

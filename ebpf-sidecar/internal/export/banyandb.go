@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package export provides metric export functionality for various backends.
 package export
 
 import (
@@ -94,9 +95,9 @@ func NewBanyanDBExporter(config BanyanDBConfig, logger *zap.Logger) (*BanyanDBEx
 }
 
 // Connect establishes connection to BanyanDB.
-func (e *BanyanDBExporter) Connect(ctx context.Context) error {
+func (e *BanyanDBExporter) Connect(_ context.Context) error {
 	var err error
-	//nolint:contextcheck // grpchelper.Conn doesn't accept context parameter
+	// TODO: Use context when grpchelper.Conn supports it
 	e.conn, err = grpchelper.Conn(e.config.Endpoint, e.config.Timeout,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

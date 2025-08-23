@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package collector implements metrics collection from eBPF programs.
 package collector
 
 import (

@@ -293,7 +293,7 @@ func (m *IOMonitorModule) collectAndClearCacheStats(ms *metrics.MetricSet) {
 // collectAndClearMemoryStats collects memory metrics and clears maps.
 func (m *IOMonitorModule) collectAndClearMemoryStats(ms *metrics.MetricSet) {
 	// LRU shrink stats (single entry)
-	var key uint32 = 0
+	var key uint32
 	var shrinkInfo generated.IomonitorLruShrinkInfoT
 
 	if err := m.objs.ShrinkStatsMap.Lookup(key, &shrinkInfo); err == nil {
@@ -440,7 +440,9 @@ func (m *IOMonitorModule) collectCacheStats(ms *metrics.MetricSet) error {
 }
 
 func (m *IOMonitorModule) collectMemoryStats(ms *metrics.MetricSet) error {
-	// Similar implementation without cleanup
+	// TODO: Implement memory stats collection similar to collectAndClearMemoryStats
+	// but without clearing the maps (for keep_recent strategy)
+	_ = ms // Will be used when implementation is added
 	return nil
 }
 
@@ -497,6 +499,6 @@ func (m *IOMonitorModule) cleanupAllMaps() {
 	}
 
 	// Clear shrink stats
-	var key uint32 = 0
+	var key uint32
 	_ = m.objs.ShrinkStatsMap.Delete(key) // Ignore delete errors for map cleanup
 }

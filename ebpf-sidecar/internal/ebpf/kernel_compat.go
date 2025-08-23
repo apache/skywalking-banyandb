@@ -17,6 +17,7 @@
 
 //go:build linux
 
+// Package ebpf provides eBPF program loading and management functionality.
 package ebpf
 
 import (

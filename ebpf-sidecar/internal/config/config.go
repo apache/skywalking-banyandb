@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package config provides configuration management for the eBPF sidecar service.
 package config
 
 import (

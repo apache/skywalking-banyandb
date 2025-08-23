@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package server implements HTTP and gRPC servers for the eBPF sidecar.
 package server
 
 import (
@@ -54,6 +55,10 @@ func NewGRPCServer(coll *collector.Collector, logger *zap.Logger) ebpfv1.EBPFMet
 
 // GetMetrics retrieves current metrics from all modules.
 func (s *grpcServer) GetMetrics(ctx context.Context, req *ebpfv1.GetMetricsRequest) (*ebpfv1.GetMetricsResponse, error) {
+	// TODO: Use ctx for timeout/cancellation
+	// TODO: Use req for filtering by module, time range, or metric names
+	_ = ctx
+	_ = req
 	store := s.collector.GetMetrics()
 	if store == nil {
 		return nil, status.Error(codes.Internal, "metrics store not available")
@@ -185,6 +190,10 @@ func (s *grpcServer) StreamMetrics(req *ebpfv1.StreamMetricsRequest, stream ebpf
 
 // GetIOStats retrieves detailed I/O statistics.
 func (s *grpcServer) GetIOStats(ctx context.Context, req *ebpfv1.GetIOStatsRequest) (*ebpfv1.GetIOStatsResponse, error) {
+	// TODO: Use ctx for timeout/cancellation
+	// TODO: Use req for filtering by PID, time range, or specific stats
+	_ = ctx
+	_ = req
 	store := s.collector.GetMetrics()
 	if store == nil {
 		return nil, status.Error(codes.Internal, "metrics store not available")
@@ -249,6 +258,10 @@ func (s *grpcServer) GetIOStats(ctx context.Context, req *ebpfv1.GetIOStatsReque
 
 // GetModuleStatus retrieves status of eBPF modules.
 func (s *grpcServer) GetModuleStatus(ctx context.Context, req *ebpfv1.GetModuleStatusRequest) (*ebpfv1.GetModuleStatusResponse, error) {
+	// TODO: Use ctx for timeout/cancellation
+	// TODO: Use req to filter for specific module status
+	_ = ctx
+	_ = req
 	// Get module status from collector
 	modules := make([]*ebpfv1.ModuleStatus, 0)
 
@@ -289,6 +302,10 @@ func (s *grpcServer) GetModuleStatus(ctx context.Context, req *ebpfv1.GetModuleS
 
 // ConfigureModule enables or disables an eBPF module.
 func (s *grpcServer) ConfigureModule(ctx context.Context, req *ebpfv1.ConfigureModuleRequest) (*ebpfv1.ConfigureModuleResponse, error) {
+	// TODO: Use ctx for timeout/cancellation
+	// TODO: Use req.ModuleName and req.Enabled to configure modules
+	_ = ctx
+	_ = req
 	// TODO: Implement module configuration
 	// For now, return not implemented
 	return nil, status.Error(codes.Unimplemented, "module configuration not yet implemented")
@@ -296,6 +313,10 @@ func (s *grpcServer) ConfigureModule(ctx context.Context, req *ebpfv1.ConfigureM
 
 // GetHealth returns health status.
 func (s *grpcServer) GetHealth(ctx context.Context, req *ebpfv1.GetHealthRequest) (*ebpfv1.GetHealthResponse, error) {
+	// TODO: Use ctx for timeout/cancellation
+	// TODO: Use req for detailed health check options
+	_ = ctx
+	_ = req
 	healthStatus := ebpfv1.HealthStatus_HEALTH_STATUS_HEALTHY
 	message := "eBPF sidecar is healthy"
 

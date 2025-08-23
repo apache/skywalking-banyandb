@@ -180,6 +180,8 @@ func (s *Server) Stop(ctx context.Context) error {
 
 // handleMetrics handles the metrics endpoint.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	// TODO: Use r for query parameters like ?format=openmetrics or ?module=iomonitor
+	_ = r
 	metrics := s.collector.GetMetrics()
 
 	// Set proper Prometheus content type
@@ -195,6 +197,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 // handleHealth handles the health check endpoint.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// TODO: Use r.Method to ensure GET request
+	// TODO: Could add detailed health check with query params
+	_ = r
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, `{"status":"healthy"}`)
@@ -202,6 +207,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // handleStats handles the stats API endpoint.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	// TODO: Use r for query parameters like ?module=iomonitor or ?format=detailed
+	// TODO: Could support POST with JSON body for complex queries
+	_ = r
 	metrics := s.collector.GetMetrics()
 
 	w.Header().Set("Content-Type", "application/json")
