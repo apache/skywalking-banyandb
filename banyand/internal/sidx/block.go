@@ -41,10 +41,9 @@ type block struct {
 	// Tag data organized by tag name (pointer field - 8 bytes)
 	tags map[string]*tagData // Runtime tag data with filtering
 
-	// Core data arrays (all same length - pointer fields - 24 bytes total)
-	userKeys   []int64  // User-provided ordering keys
-	elementIDs []uint64 // Unique element identifiers
-	data       [][]byte // User payload data
+	// Core data arrays (all same length - pointer fields)
+	userKeys []int64  // User-provided ordering keys
+	data     [][]byte // User payload data
 
 	// Internal state (bool field - 1 byte, padded to 8 bytes)
 	pooled bool // Whether this block came from pool
@@ -82,7 +81,6 @@ func releaseBlock(b *block) {
 // reset clears block for reuse in object pool.
 func (b *block) reset() {
 	b.userKeys = b.userKeys[:0]
-	b.elementIDs = b.elementIDs[:0]
 
 	for i := range b.data {
 		b.data[i] = b.data[i][:0]
@@ -109,10 +107,6 @@ func (b *block) mustInitFromElements(elems *elements) {
 
 	// Copy core data
 	b.userKeys = append(b.userKeys, elems.userKeys...)
-	b.elementIDs = make([]uint64, len(elems.userKeys))
-	for i := range b.elementIDs {
-		b.elementIDs[i] = uint64(i) // Generate sequential IDs
-	}
 	b.data = append(b.data, elems.data...)
 
 	// Process tags
@@ -203,9 +197,9 @@ func (b *block) processTag(tagName string, elementTags [][]tag) {
 // validate ensures block data consistency.
 func (b *block) validate() error {
 	count := len(b.userKeys)
-	if count != len(b.elementIDs) || count != len(b.data) {
-		return fmt.Errorf("inconsistent block arrays: keys=%d, ids=%d, data=%d",
-			len(b.userKeys), len(b.elementIDs), len(b.data))
+	if count != len(b.data) {
+		return fmt.Errorf("inconsistent block arrays: keys=%d, data=%d",
+			len(b.userKeys), len(b.data))
 	}
 
 	// Verify sorting by userKey
@@ -230,7 +224,7 @@ func (b *block) validate() error {
 // uncompressedSizeBytes calculates the uncompressed size of the block.
 func (b *block) uncompressedSizeBytes() uint64 {
 	count := uint64(len(b.userKeys))
-	size := count * (8 + 8) // userKey + elementID
+	size := count * 8 // userKey
 
 	// Add data payload sizes
 	for _, payload := range b.data {
@@ -274,7 +268,7 @@ func (b *block) getKeyRange() (int64, int64) {
 }
 
 // mustWriteTo writes block data to files through the provided writers.
-// This method serializes the block's userKeys, elementIDs, data, and tags
+// This method serializes the block's userKeys, data, and tags
 // to their respective files while updating the block metadata.
 func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers) {
 	if err := b.validate(); err != nil {
@@ -286,8 +280,8 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 	bm.uncompressedSize = b.uncompressedSizeBytes()
 	bm.count = uint64(b.Len())
 
-	// Write user keys and element IDs to keys.bin
-	mustWriteKeysTo(&bm.keysBlock, b.userKeys, b.elementIDs, &ww.keysWriter)
+	// Write user keys to keys.bin
+	mustWriteKeysTo(&bm.keysBlock, b.userKeys, &ww.keysWriter)
 
 	// Write data payloads to data.bin
 	mustWriteDataTo(&bm.dataBlock, b.data, &ww.dataWriter)
@@ -357,8 +351,8 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	tagMeta.size = uint64(len(bb.Buf))
 }
 
-// mustWriteKeysTo writes user keys and element IDs to the keys writer.
-func mustWriteKeysTo(kb *dataBlock, userKeys []int64, elementIDs []uint64, keysWriter *writer) {
+// mustWriteKeysTo writes user keys to the keys writer.
+func mustWriteKeysTo(kb *dataBlock, userKeys []int64, keysWriter *writer) {
 	bb := bigValuePool.Get()
 	if bb == nil {
 		bb = &bytes.Buffer{}
@@ -370,9 +364,6 @@ func mustWriteKeysTo(kb *dataBlock, userKeys []int64, elementIDs []uint64, keysW
 
 	// Encode user keys
 	bb.Buf, _, _ = encoding.Int64ListToBytes(bb.Buf[:0], userKeys)
-
-	// Encode element IDs
-	bb.Buf = encoding.VarUint64sToBytes(bb.Buf, elementIDs)
 
 	// Compress and write
 	compressedData := zstd.Compress(nil, bb.Buf, 1)

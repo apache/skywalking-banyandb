@@ -558,8 +558,7 @@ func openMemPart(mp *memPart) *part {
 // This is a utility function similar to the stream module.
 func uncompressedElementSizeBytes(index int, es *elements) uint64 {
 	// 8 bytes for user key
-	// 8 bytes for elementID
-	n := uint64(8 + 8)
+	n := uint64(8)
 
 	// Add data payload size
 	if index < len(es.data) && es.data[index] != nil {

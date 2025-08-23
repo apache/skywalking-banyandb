@@ -119,8 +119,8 @@ func TestBlock_Validation(t *testing.T) {
 	}
 
 	// Add inconsistent data
-	b.userKeys = append(b.userKeys, 100, 200)
-	b.elementIDs = append(b.elementIDs, 1) // Only one element ID for two keys
+	b.userKeys = append(b.userKeys, 100)
+	b.data = append(b.data, []byte("dummy"), []byte("dummy2"))
 
 	// Should fail validation
 	if err := b.validate(); err == nil {
@@ -139,7 +139,6 @@ func TestBlock_SizeCalculation(t *testing.T) {
 
 	// Add some data
 	b.userKeys = append(b.userKeys, 100, 200)
-	b.elementIDs = append(b.elementIDs, 1, 2)
 	b.data = append(b.data, []byte("test1"), []byte("test2"))
 
 	// Should have non-zero size
@@ -160,7 +159,6 @@ func TestBlock_IsFull(t *testing.T) {
 	// Add elements up to the limit
 	for i := 0; i < maxElementsPerBlock-1; i++ {
 		b.userKeys = append(b.userKeys, int64(i))
-		b.elementIDs = append(b.elementIDs, uint64(i))
 		b.data = append(b.data, []byte("data"))
 	}
 
@@ -171,7 +169,6 @@ func TestBlock_IsFull(t *testing.T) {
 
 	// Add one more element to reach the limit
 	b.userKeys = append(b.userKeys, int64(maxElementsPerBlock))
-	b.elementIDs = append(b.elementIDs, uint64(maxElementsPerBlock))
 	b.data = append(b.data, []byte("data"))
 
 	// Should now be full
