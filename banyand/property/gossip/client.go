@@ -114,12 +114,16 @@ func (s *service) getRegisteredNode(id string) (*databasev1.Node, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	node, exist := s.registered[id]
+	s.log.Debug().Str("node", id).Bool("exist", exist).Int("register_count", len(s.registered)).Msg("get registered gossip node")
 	return node, exist
 }
 
 func (s *service) OnAddOrUpdate(md schema.Metadata) {
 	if s.traceStreamSelector != nil {
 		s.traceStreamSelector.(schema.EventHandler).OnAddOrUpdate(md)
+	}
+	if selEventHandler, ok := s.sel.(schema.EventHandler); ok {
+		selEventHandler.OnAddOrUpdate(md)
 	}
 	if md.Kind != schema.KindNode {
 		return
@@ -128,10 +132,6 @@ func (s *service) OnAddOrUpdate(md schema.Metadata) {
 	if !ok {
 		s.log.Warn().Msg("invalid metadata type")
 		return
-	}
-	s.sel.AddNode(node)
-	if s.traceStreamSelector != nil {
-		s.traceStreamSelector.AddNode(node)
 	}
 	address := node.PropertyRepairGossipGrpcAddress
 	if address == "" {
@@ -142,6 +142,10 @@ func (s *service) OnAddOrUpdate(md schema.Metadata) {
 	if name == "" {
 		s.log.Warn().Stringer("node", node).Msg("node does not have a name, skipping registration")
 		return
+	}
+	s.sel.AddNode(node)
+	if s.traceStreamSelector != nil {
+		s.traceStreamSelector.AddNode(node)
 	}
 
 	s.mu.Lock()
@@ -154,6 +158,9 @@ func (s *service) OnAddOrUpdate(md schema.Metadata) {
 func (s *service) OnDelete(md schema.Metadata) {
 	if s.traceStreamSelector != nil {
 		s.traceStreamSelector.(schema.EventHandler).OnDelete(md)
+	}
+	if selEventHandler, ok := s.sel.(schema.EventHandler); ok {
+		selEventHandler.OnDelete(md)
 	}
 	if md.Kind != schema.KindNode {
 		return
