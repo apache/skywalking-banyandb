@@ -41,8 +41,12 @@ generate: vmlinux ebpf-bindings
 # eBPF compilation flags
 BPF_CFLAGS := -O2 -g -Wall -Werror -D__TARGET_ARCH_$(ARCH)
 
+# Check for required tools
+LLVM_STRIP := $(shell command -v llvm-strip 2> /dev/null)
+BPF2GO := $(shell command -v bpf2go 2> /dev/null)
+
 .PHONY: ebpf-bindings
-ebpf-bindings:
+ebpf-bindings: check-ebpf-deps
 	@echo "Generating eBPF Go bindings..."
 	@mkdir -p internal/ebpf/generated
 	@echo "Building for amd64..."
@@ -96,8 +100,8 @@ vmlinux: install-bpftool
 check-bpftool:
 	@echo "Checking for bpftool..."
 	@if ! command -v bpftool >/dev/null 2>&1; then \
-		echo "bpftool not found in PATH. Installing..."; \
-		$(MAKE) install-bpftool-auto; \
+		echo "bpftool not found. Installing..."; \
+		sudo $(MAKE) install-bpftool-auto; \
 	fi
 	@# Check for Ubuntu wrapper script issues
 	@ver="$$(bpftool version 2>&1 || true)"; \
@@ -126,7 +130,7 @@ install-bpftool-auto:
 	@if [ -f /etc/debian_version ]; then \
 		echo "Debian/Ubuntu detected, installing bpftools..."; \
 		if command -v apt-get >/dev/null 2>&1; then \
-			apt-get update && apt-get install -y linux-tools-common linux-tools-generic bpftools || \
+			apt-get update 2>/dev/null && apt-get install -y linux-tools-common linux-tools-generic bpftools || \
 			apt-get install -y linux-tools-$$(uname -r) || \
 			apt-get install -y bpftools; \
 		else \
@@ -190,6 +194,7 @@ install-bpftool-source:
 install-deps: install-bpftool
 	@echo "Installing additional eBPF dependencies..."
 	@if [ -f /etc/debian_version ]; then \
+		apt-get update && \
 		apt-get install -y clang llvm libbpf-dev linux-headers-$$(uname -r) || \
 		apt-get install -y clang llvm linux-headers-generic; \
 	elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ] || [ -f /etc/fedora-release ]; then \
@@ -205,6 +210,12 @@ install-deps: install-bpftool
 .PHONY: build
 build: generate
 	@echo "Building $(NAME)..."
+	@# Check if someone accidentally created a binary in the wrong place
+	@if [ -f "./sidecar" ] || [ -f "./$(NAME)" ]; then \
+		echo "ERROR: Found binary in wrong location. Please remove it and use 'make build' instead."; \
+		echo "The binary should only be created in $(BUILD_DIR)/"; \
+		exit 1; \
+	fi
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -o $(BUILD_DIR)/$(NAME) ./cmd/sidecar
 
@@ -251,6 +262,70 @@ docker:
 run: build
 	@echo "Running $(NAME)..."
 	./$(BUILD_DIR)/$(NAME)
+
+.PHONY: check-ebpf-deps
+check-ebpf-deps:
+	@echo "Checking for eBPF build dependencies..."
+	@# Test if we can use sudo without password (CI environment)
+	@CAN_SUDO=0; \
+	if sudo -n true 2>/dev/null; then \
+		CAN_SUDO=1; \
+	fi; \
+	# Check and install clang
+	if ! command -v clang >/dev/null 2>&1; then \
+		if [ $$CAN_SUDO -eq 1 ]; then \
+			echo "clang not found. Installing..."; \
+			if [ -f /etc/debian_version ]; then \
+				sudo apt-get update && sudo apt-get install -y clang; \
+			elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ] || [ -f /etc/fedora-release ]; then \
+				sudo dnf install -y clang || sudo yum install -y clang; \
+			elif [ -f /etc/alpine-release ]; then \
+				sudo apk add --no-cache clang; \
+			fi; \
+		else \
+			echo "ERROR: clang not found. Please install manually:"; \
+			echo "  Ubuntu/Debian: sudo apt-get install -y clang"; \
+			echo "  RedHat/Fedora: sudo dnf install -y clang"; \
+			exit 1; \
+		fi; \
+	fi; \
+	# Check and install llvm-strip
+	if ! command -v llvm-strip >/dev/null 2>&1; then \
+		if [ $$CAN_SUDO -eq 1 ]; then \
+			echo "llvm-strip not found. Installing..."; \
+			if [ -f /etc/debian_version ]; then \
+				sudo apt-get install -y llvm; \
+			elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ] || [ -f /etc/fedora-release ]; then \
+				sudo dnf install -y llvm || sudo yum install -y llvm; \
+			elif [ -f /etc/alpine-release ]; then \
+				sudo apk add --no-cache llvm; \
+			fi; \
+		else \
+			echo "ERROR: llvm-strip not found. Please install manually:"; \
+			echo "  Ubuntu/Debian: sudo apt-get install -y llvm"; \
+			echo "  RedHat/Fedora: sudo dnf install -y llvm"; \
+			exit 1; \
+		fi; \
+	fi; \
+	# Install libbpf-dev and linux-headers if we can
+	if [ $$CAN_SUDO -eq 1 ]; then \
+		echo "Installing libbpf and kernel headers..."; \
+		if [ -f /etc/debian_version ]; then \
+			sudo apt-get install -y libbpf-dev linux-headers-$$(uname -r) 2>/dev/null || \
+			sudo apt-get install -y libbpf-dev linux-headers-generic || true; \
+		elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ] || [ -f /etc/fedora-release ]; then \
+			sudo dnf install -y libbpf-devel kernel-headers kernel-devel || \
+			sudo yum install -y libbpf-devel kernel-headers kernel-devel || true; \
+		elif [ -f /etc/alpine-release ]; then \
+			sudo apk add --no-cache libbpf-dev linux-headers || true; \
+		fi; \
+	fi; \
+	# Final check for critical dependencies
+	if ! command -v clang >/dev/null 2>&1 || ! command -v llvm-strip >/dev/null 2>&1; then \
+		echo "ERROR: Missing critical dependencies"; \
+		exit 1; \
+	fi; \
+	echo "All eBPF build dependencies are installed"
 
 .PHONY: help
 help:
