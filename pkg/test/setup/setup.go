@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/cmdsetup"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -311,6 +312,7 @@ func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, 
 	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	nodeHost := "127.0.0.1"
 	path, deferFn, err := test.NewSpace()
+	logger.Infof("liaison test directory: %s", path)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "liaison",
 		"--grpc-host="+host,
@@ -325,6 +327,10 @@ func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, 
 		"--node-host", nodeHost,
 		"--stream-root-path="+path,
 		"--measure-root-path="+path,
+		"--stream-flush-timeout=500ms",
+		"--measure-flush-timeout=500ms",
+		"--stream-sync-interval=1s",
+		"--measure-sync-interval=1s",
 	)
 	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())

@@ -38,12 +38,12 @@ import (
 
 const (
 	maxValuesBlockSize              = 8 * 1024 * 1024
-	maxElementIDsBlockSize          = 8 * 1024 * 1024
 	maxTagFamiliesMetadataSize      = 8 * 1024 * 1024
 	maxUncompressedBlockSize        = 2 * 1024 * 1024
 	maxUncompressedPrimaryBlockSize = 128 * 1024
 
 	defaultFlushTimeout = time.Second
+	defaultSyncInterval = 30 * time.Second
 )
 
 type option struct {
@@ -53,6 +53,7 @@ type option struct {
 	seriesCacheMaxSize       run.Bytes
 	flushTimeout             time.Duration
 	elementIndexFlushTimeout time.Duration
+	syncInterval             time.Duration
 }
 
 // Query allow to retrieve elements in a series of streams.

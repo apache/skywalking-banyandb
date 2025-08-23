@@ -95,7 +95,11 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 	if v, ok := sr.topNProcessorMap.Load(key); ok {
 		pre := v.(*topNProcessorManager)
 		pre.init(sourceMeasure.GetSchema())
-		if pre.m.GetMetadata().GetModRevision() < sourceMeasure.schema.GetMetadata().GetModRevision() {
+		var modRevision int64
+		pre.RLock()
+		modRevision = pre.m.GetMetadata().GetModRevision()
+		pre.RUnlock()
+		if modRevision < sourceMeasure.schema.GetMetadata().GetModRevision() {
 			defer pre.Close()
 			manager = &topNProcessorManager{
 				l:        sr.l,

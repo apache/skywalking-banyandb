@@ -43,6 +43,7 @@ const (
 	maxBlockLength = 8 * 1024
 
 	defaultFlushTimeout = 5 * time.Second
+	defaultSyncInterval = 30 * time.Second
 )
 
 type option struct {
@@ -51,6 +52,7 @@ type option struct {
 	mergePolicy        *mergePolicy
 	seriesCacheMaxSize run.Bytes
 	flushTimeout       time.Duration
+	syncInterval       time.Duration
 }
 
 type indexSchema struct {

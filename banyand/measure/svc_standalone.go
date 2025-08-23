@@ -161,7 +161,11 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if val == nil {
 		return errors.New("node id is empty")
 	}
-	s.c = storage.NewServiceCacheWithConfig(s.cc)
+	if s.cc.MaxCacheSize == 0 {
+		s.c = storage.NewBypassCache()
+	} else {
+		s.c = storage.NewServiceCacheWithConfig(s.cc)
+	}
 	node := val.(common.Node)
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
 

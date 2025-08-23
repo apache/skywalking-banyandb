@@ -143,7 +143,9 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 	}
 }
 
-func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, syncCh chan *syncIntroduction, watcherCh watcher.Channel, epoch uint64) {
+func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, mergeCh chan *mergerIntroduction,
+	syncCh chan *syncIntroduction, watcherCh watcher.Channel, epoch uint64,
+) {
 	var introducerWatchers watcher.Epochs
 	defer tst.loopCloser.Done()
 	for {
@@ -159,6 +161,12 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, sy
 			tst.incTotalIntroduceLoopStarted("flush")
 			tst.introduceFlushed(next, epoch)
 			tst.incTotalIntroduceLoopFinished("flush")
+			tst.gc.clean()
+			epoch++
+		case next := <-mergeCh:
+			tst.incTotalIntroduceLoopStarted("merge")
+			tst.introduceMerged(next, epoch)
+			tst.incTotalIntroduceLoopFinished("merge")
 			tst.gc.clean()
 			epoch++
 		case next := <-syncCh:

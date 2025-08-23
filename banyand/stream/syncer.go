@@ -32,10 +32,44 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 	defer tst.loopCloser.Done()
 
 	var epoch uint64
+	var lastTriggerTime time.Time
 
 	ew := flusherNotifier.Add(0, tst.loopCloser.CloseNotify())
 	if ew == nil {
 		return
+	}
+
+	syncTimer := time.NewTimer(tst.option.syncInterval)
+	defer syncTimer.Stop()
+
+	trySync := func(triggerTime time.Time) bool {
+		defer syncTimer.Reset(tst.option.syncInterval)
+		curSnapshot := tst.currentSnapshot()
+		if curSnapshot == nil {
+			return false
+		}
+		defer curSnapshot.decRef()
+		if curSnapshot.epoch != epoch {
+			tst.incTotalSyncLoopStarted(1)
+			defer tst.incTotalSyncLoopFinished(1)
+			var err error
+			if err = tst.syncSnapshot(curSnapshot, syncCh); err != nil {
+				if tst.loopCloser.Closed() {
+					return true
+				}
+				tst.l.Logger.Warn().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
+				tst.incTotalSyncLoopErr(1)
+				time.Sleep(2 * time.Second)
+				return false
+			}
+			epoch = curSnapshot.epoch
+			lastTriggerTime = triggerTime
+			if tst.currentEpoch() != epoch {
+				return false
+			}
+		}
+		ew = flusherNotifier.Add(epoch, tst.loopCloser.CloseNotify())
+		return ew == nil
 	}
 
 	for {
@@ -43,33 +77,16 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case <-ew.Watch():
-			if func() bool {
-				curSnapshot := tst.currentSnapshot()
-				if curSnapshot == nil {
-					return false
-				}
-				defer curSnapshot.decRef()
-				if curSnapshot.epoch != epoch {
-					tst.incTotalSyncLoopStarted(1)
-					defer tst.incTotalSyncLoopFinished(1)
-					var err error
-					if err = tst.syncSnapshot(curSnapshot, syncCh); err != nil {
-						if tst.loopCloser.Closed() {
-							return true
-						}
-						tst.l.Logger.Warn().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
-						tst.incTotalSyncLoopErr(1)
-						time.Sleep(2 * time.Second)
-						return false
-					}
-					epoch = curSnapshot.epoch
-					if tst.currentEpoch() != epoch {
-						return false
-					}
-				}
-				ew = flusherNotifier.Add(epoch, tst.loopCloser.CloseNotify())
-				return ew == nil
-			}() {
+			if trySync(time.Now()) {
+				return
+			}
+		case <-syncTimer.C:
+			now := time.Now()
+			if now.Sub(lastTriggerTime) < tst.option.syncInterval {
+				syncTimer.Reset(tst.option.syncInterval - now.Sub(lastTriggerTime))
+				continue
+			}
+			if trySync(now) {
 				return
 			}
 		}

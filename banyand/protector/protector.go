@@ -20,6 +20,8 @@ package protector
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"runtime/metrics"
@@ -36,6 +38,18 @@ import (
 )
 
 var scope = observability.RootScope.SubScope("memory_protector")
+
+// secureRandFloat64 generates a cryptographically secure random float64 in the range [0.0, 1.0).
+func secureRandFloat64() float64 {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// If crypto/rand fails, fallback to a simple deterministic jitter
+		// This should rarely happen in practice
+		return 0.5
+	}
+	// Convert bytes to uint64, then to float64 in range [0.0, 1.0)
+	return float64(binary.BigEndian.Uint64(buf[:])) / float64(^uint64(0))
+}
 
 // Memory is an interface for monitoring and limiting memory usage to prevent OOM.
 type Memory interface {
@@ -74,13 +88,13 @@ func NewMemory(omr observability.MetricsRegistry) Memory {
 		omr:         omr,
 		blockedChan: make(chan struct{}, queueSize),
 		closed:      make(chan struct{}),
-
-		limitGauge: factory.NewGauge("limit"),
-		usageGauge: factory.NewGauge("usage"),
+		l:           logger.GetLogger("memory-protector"),
+		limitGauge:  factory.NewGauge("limit"),
+		usageGauge:  factory.NewGauge("usage"),
 	}
 }
 
-// AcquireResource attempts to acquire a `size` amount of memory.
+// AcquireResource attempts to acquire a `size` amount of memory using exponential back-off.
 func (m *memory) AcquireResource(ctx context.Context, size uint64) error {
 	if m.limit.Load() == 0 {
 		return nil
@@ -94,19 +108,39 @@ func (m *memory) AcquireResource(ctx context.Context, size uint64) error {
 		return fmt.Errorf("context canceled while waiting for blocked queue slot: %w", ctx.Err())
 	}
 
+	const (
+		initialBackoff = 10 * time.Millisecond
+		maxBackoff     = 1 * time.Second
+		backoffFactor  = 1.5
+		jitterFactor   = 0.1
+	)
+
+	backoff := initialBackoff
+	attempt := 0
+
 	for {
 		currentUsage := atomic.LoadUint64(&m.usage)
 		if currentUsage+size <= m.limit.Load() {
 			return nil
 		}
 
+		attempt++
+
+		// Calculate next backoff with exponential growth
+		nextBackoff := min(time.Duration(float64(backoff)*backoffFactor), maxBackoff)
+
+		// Add jitter to prevent thundering herd
+		jitter := time.Duration(secureRandFloat64() * float64(nextBackoff) * jitterFactor)
+		finalBackoff := nextBackoff + jitter
+
 		select {
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(finalBackoff):
+			backoff = nextBackoff
 			continue
 		case <-ctx.Done():
 			return fmt.Errorf(
-				"context canceled: memory acquisition failed (currentUsage: %d, limit: %d, size: %d, blockedDuration: %v): %w",
-				currentUsage, m.limit.Load(), size, time.Since(start), ctx.Err(),
+				"context canceled: memory acquisition failed (currentUsage: %d, limit: %d, size: %d, attempts: %d, blockedDuration: %v): %w",
+				currentUsage, m.limit.Load(), size, attempt, time.Since(start), ctx.Err(),
 			)
 		}
 	}
