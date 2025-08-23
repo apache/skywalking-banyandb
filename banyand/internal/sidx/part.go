@@ -55,16 +55,16 @@ const (
 // - <name>.tm: Tag metadata files (one per tag)
 // - <name>.tf: Tag filter files (bloom filters, one per tag).
 type part struct {
-	primary       fs.Reader
-	data          fs.Reader
-	keys          fs.Reader
-	fileSystem    fs.FileSystem
-	tagData       map[string]fs.Reader
-	tagMetadata   map[string]fs.Reader
-	tagFilters    map[string]fs.Reader
-	partMetadata  *partMetadata
-	path          string
-	blockMetadata []blockMetadata
+	primary              fs.Reader
+	data                 fs.Reader
+	keys                 fs.Reader
+	fileSystem           fs.FileSystem
+	tagData              map[string]fs.Reader
+	tagMetadata          map[string]fs.Reader
+	tagFilters           map[string]fs.Reader
+	partMetadata         *partMetadata
+	path                 string
+	primaryBlockMetadata []primaryBlockMetadata
 }
 
 // mustOpenPart opens a part from the specified path using the given file system.
@@ -87,10 +87,10 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load part metadata")
 	}
 
-	// Load block metadata from primary.bin.
-	if err := p.loadBlockMetadata(); err != nil {
+	// Load primary block metadata from primary.bin.
+	if err := p.loadPrimaryBlockMetadata(); err != nil {
 		p.close()
-		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load block metadata")
+		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load primary block metadata")
 	}
 
 	// Discover and open tag files.
@@ -131,21 +131,10 @@ func (p *part) loadPartMetadata() error {
 	return nil
 }
 
-// loadBlockMetadata reads and parses block metadata from primary.bin.
-func (p *part) loadBlockMetadata() error {
-	// Read the entire primary.bin file.
-	_, err := p.fileSystem.Read(filepath.Join(p.path, primaryFilename))
-	if err != nil {
-		return fmt.Errorf("failed to read primary.bin: %w", err)
-	}
-
-	// Parse block metadata (implementation would depend on the exact format).
-	// For now, we'll allocate space based on the part metadata.
-	p.blockMetadata = make([]blockMetadata, 0, p.partMetadata.BlocksCount)
-
-	// TODO: Implement actual primary.bin parsing when block format is defined.
-	// This is a placeholder for the structure.
-
+// loadBlockMetadata reads and parses primary block metadata from primary.bin.
+func (p *part) loadPrimaryBlockMetadata() error {
+	// Load primary block metadata from primary.bin file
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], p.primary)
 	return nil
 }
 
@@ -254,11 +243,7 @@ func (p *part) close() {
 		p.partMetadata = nil
 	}
 
-	// Release block metadata.
-	for i := range p.blockMetadata {
-		releaseBlockMetadata(&p.blockMetadata[i])
-	}
-	p.blockMetadata = nil
+	// No block metadata to release since it's now passed as parameter
 }
 
 // mustOpenReader opens a file reader and panics if it fails.
@@ -283,10 +268,6 @@ func (p *part) getPartMetadata() *partMetadata {
 	return p.partMetadata
 }
 
-// getBlockMetadata returns the block metadata slice.
-func (p *part) getBlockMetadata() []blockMetadata {
-	return p.blockMetadata
-}
 
 // getTagDataReader returns the tag data reader for the specified tag name.
 func (p *part) getTagDataReader(tagName string) (fs.Reader, bool) {
@@ -527,8 +508,7 @@ func openMemPart(mp *memPart) *part {
 		*p.partMetadata = *mp.partMetadata
 	}
 
-	// TODO: Read block metadata when blockWriter is implemented
-	// p.blockMetadata = mustReadBlockMetadata(p.blockMetadata[:0], &mp.primary)
+	// Block metadata is now handled via blockMetadataArray parameter
 
 	// Open data files as readers from memory buffers
 	p.primary = &mp.primary
@@ -554,29 +534,6 @@ func openMemPart(mp *memPart) *part {
 	return p
 }
 
-// uncompressedElementSizeBytes calculates the uncompressed size of an element.
-// This is a utility function similar to the stream module.
-func uncompressedElementSizeBytes(index int, es *elements) uint64 {
-	// 8 bytes for user key
-	n := uint64(8)
-
-	// Add data payload size
-	if index < len(es.data) && es.data[index] != nil {
-		n += uint64(len(es.data[index]))
-	}
-
-	// Add tag sizes
-	if index < len(es.tags) {
-		for _, tag := range es.tags[index] {
-			n += uint64(len(tag.name))
-			if tag.value != nil {
-				n += uint64(len(tag.value))
-			}
-		}
-	}
-
-	return n
-}
 
 // partPath returns the path for a part with the given epoch.
 func partPath(root string, epoch uint64) string {

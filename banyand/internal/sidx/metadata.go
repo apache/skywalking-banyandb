@@ -57,9 +57,21 @@ type blockMetadata struct {
 	count            uint64
 }
 
+type blockMetadataArray struct {
+	arr []blockMetadata
+}
+
+func (bma *blockMetadataArray) reset() {
+	for i := range bma.arr {
+		bma.arr[i].reset()
+	}
+	bma.arr = bma.arr[:0]
+}
+
 var (
-	partMetadataPool  = pool.Register[*partMetadata]("sidx-partMetadata")
-	blockMetadataPool = pool.Register[*blockMetadata]("sidx-blockMetadata")
+	partMetadataPool         = pool.Register[*partMetadata]("sidx-partMetadata")
+	blockMetadataPool        = pool.Register[*blockMetadata]("sidx-blockMetadata")
+	blockMetadataArrayPool   = pool.Register[*blockMetadataArray]("sidx-blockMetadataArray")
 )
 
 // generatePartMetadata gets partMetadata from pool or creates new.
@@ -98,6 +110,24 @@ func releaseBlockMetadata(bm *blockMetadata) {
 	}
 	bm.reset()
 	blockMetadataPool.Put(bm)
+}
+
+// generateBlockMetadataArray gets blockMetadataArray from pool or creates new.
+func generateBlockMetadataArray() *blockMetadataArray {
+	v := blockMetadataArrayPool.Get()
+	if v == nil {
+		return &blockMetadataArray{}
+	}
+	return v
+}
+
+// releaseBlockMetadataArray returns blockMetadataArray to pool after reset.
+func releaseBlockMetadataArray(bma *blockMetadataArray) {
+	if bma == nil {
+		return
+	}
+	bma.reset()
+	blockMetadataArrayPool.Put(bma)
 }
 
 // reset clears partMetadata for reuse in object pool.

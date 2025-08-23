@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
@@ -114,9 +115,24 @@ func TestPartLifecycleManagement(t *testing.T) {
 	metaData, err := pm.marshal()
 	require.NoError(t, err)
 
+	// Create valid primary block metadata
+	pbm := primaryBlockMetadata{
+		seriesID: 1,
+		minKey:   100,
+		maxKey:   999,
+		dataBlock: dataBlock{
+			offset: 0,
+			size:   1024,
+		},
+	}
+
+	// Marshal and compress primary block metadata
+	primaryData := pbm.marshal(nil)
+	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
+
 	// Create required files
 	testFiles := map[string][]byte{
-		primaryFilename: []byte("primary data"),
+		primaryFilename: compressedPrimaryData,
 		dataFilename:    []byte("data content"),
 		keysFilename:    []byte("keys content"),
 		metaFilename:    metaData,
@@ -147,18 +163,12 @@ func TestPartLifecycleManagement(t *testing.T) {
 	assert.Equal(t, int64(999), part.partMetadata.MaxKey)
 	assert.Equal(t, uint64(2), part.partMetadata.BlocksCount)
 
-	// Verify block metadata was initialized
-	assert.NotNil(t, part.blockMetadata)
-	assert.Equal(t, 0, len(part.blockMetadata)) // Empty since we don't parse primary.bin yet
-	assert.Equal(t, 2, cap(part.blockMetadata)) // Capacity based on BlocksCount
-
 	// Verify String method
 	expectedString := fmt.Sprintf("sidx part %d at %s", pm.ID, tempDir)
 	assert.Equal(t, expectedString, part.String())
 
 	// Test accessors
 	assert.Equal(t, part.partMetadata, part.getPartMetadata())
-	assert.Equal(t, part.blockMetadata, part.getBlockMetadata())
 	assert.Equal(t, tempDir, part.Path())
 
 	// Cleanup
@@ -177,8 +187,23 @@ func TestPartWithTagFiles(t *testing.T) {
 	metaData, err := pm.marshal()
 	require.NoError(t, err)
 
+	// Create valid primary block metadata
+	pbm := primaryBlockMetadata{
+		seriesID: 1,
+		minKey:   0,
+		maxKey:   100,
+		dataBlock: dataBlock{
+			offset: 0,
+			size:   512,
+		},
+	}
+
+	// Marshal and compress primary block metadata
+	primaryData := pbm.marshal(nil)
+	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
+
 	requiredFiles := map[string][]byte{
-		primaryFilename: []byte("primary"),
+		primaryFilename: compressedPrimaryData,
 		dataFilename:    []byte("data"),
 		keysFilename:    []byte("keys"),
 		metaFilename:    metaData,
@@ -334,8 +359,23 @@ func TestPartClosingBehavior(t *testing.T) {
 	metaData, err := pm.marshal()
 	require.NoError(t, err)
 
+	// Create valid primary block metadata
+	pbm := primaryBlockMetadata{
+		seriesID: 1,
+		minKey:   0,
+		maxKey:   100,
+		dataBlock: dataBlock{
+			offset: 0,
+			size:   256,
+		},
+	}
+
+	// Marshal and compress primary block metadata
+	primaryData := pbm.marshal(nil)
+	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
+
 	testFiles := map[string][]byte{
-		primaryFilename: []byte("primary"),
+		primaryFilename: compressedPrimaryData,
 		dataFilename:    []byte("data"),
 		keysFilename:    []byte("keys"),
 		metaFilename:    metaData,
@@ -370,7 +410,6 @@ func TestPartClosingBehavior(t *testing.T) {
 	// Note: We can't directly test that files are closed since fs.Reader
 	// doesn't expose that state, but we can verify that metadata is released
 	assert.Nil(t, part.partMetadata)
-	assert.Nil(t, part.blockMetadata)
 
 	// Test closing with defensive programming (nil check in close method)
 	// The close method should handle nil pointers gracefully
@@ -410,15 +449,12 @@ func TestPartMemoryManagement(t *testing.T) {
 
 		// Verify part was created correctly
 		assert.NotNil(t, part.partMetadata)
-		assert.Equal(t, 0, len(part.blockMetadata))
-		assert.Equal(t, 3, cap(part.blockMetadata))
 
 		// Close immediately
 		part.close()
 
 		// Verify cleanup
 		assert.Nil(t, part.partMetadata)
-		assert.Nil(t, part.blockMetadata)
 	}
 
 	// Cleanup
