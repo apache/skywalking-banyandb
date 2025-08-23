@@ -97,8 +97,9 @@ func NewBanyanDBExporter(config BanyanDBConfig, logger *zap.Logger) (*BanyanDBEx
 // Connect establishes connection to BanyanDB.
 func (e *BanyanDBExporter) Connect(_ context.Context) error {
 	var err error
-	// TODO: Use context when grpchelper.Conn supports it
-	e.conn, err = grpchelper.Conn(e.config.Endpoint, e.config.Timeout,
+	// NOTE: grpchelper.ConnWithAuth doesn't accept context parameter, it creates its own internally
+	//nolint:contextcheck // ConnWithAuth doesn't accept context, false positive
+	e.conn, err = grpchelper.ConnWithAuth(e.config.Endpoint, e.config.Timeout, "", "",
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return fmt.Errorf("failed to connect to BanyanDB at %s: %w", e.config.Endpoint, err)
