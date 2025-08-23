@@ -32,17 +32,17 @@ import (
 )
 
 type partIter struct {
-	err                      error
-	p                        *part
-	curBlock                 *blockMetadata
-	sids                     []common.SeriesID
-	primaryBlockMetadata     []primaryBlockMetadata
-	bms                      []blockMetadata
-	compressedPrimaryBuf     []byte
-	primaryBuf               []byte
-	sidIdx                   int
-	minKey                   int64
-	maxKey                   int64
+	err                  error
+	p                    *part
+	curBlock             *blockMetadata
+	sids                 []common.SeriesID
+	primaryBlockMetadata []primaryBlockMetadata
+	bms                  []blockMetadata
+	compressedPrimaryBuf []byte
+	primaryBuf           []byte
+	sidIdx               int
+	minKey               int64
+	maxKey               int64
 }
 
 func (pi *partIter) reset() {
@@ -238,8 +238,6 @@ func (pi *partIter) findBlock() bool {
 	return false
 }
 
-
-
 func (bm *blockMetadata) copyFrom(other *blockMetadata) {
 	bm.seriesID = other.seriesID
 	bm.minKey = other.minKey
@@ -248,16 +246,15 @@ func (bm *blockMetadata) copyFrom(other *blockMetadata) {
 	bm.uncompressedSize = other.uncompressedSize
 	bm.dataBlock = other.dataBlock
 	bm.keysBlock = other.keysBlock
-	
+
 	// Copy tag blocks
 	if bm.tagsBlocks == nil {
 		bm.tagsBlocks = make(map[string]dataBlock)
 	}
 	clear(bm.tagsBlocks)
 	maps.Copy(bm.tagsBlocks, other.tagsBlocks)
-	
+
 	// Copy tag projection
 	bm.tagProjection = bm.tagProjection[:0]
 	bm.tagProjection = append(bm.tagProjection, other.tagProjection...)
 }
-

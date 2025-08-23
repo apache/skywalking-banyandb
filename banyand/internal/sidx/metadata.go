@@ -69,9 +69,9 @@ func (bma *blockMetadataArray) reset() {
 }
 
 var (
-	partMetadataPool         = pool.Register[*partMetadata]("sidx-partMetadata")
-	blockMetadataPool        = pool.Register[*blockMetadata]("sidx-blockMetadata")
-	blockMetadataArrayPool   = pool.Register[*blockMetadataArray]("sidx-blockMetadataArray")
+	partMetadataPool       = pool.Register[*partMetadata]("sidx-partMetadata")
+	blockMetadataPool      = pool.Register[*blockMetadata]("sidx-blockMetadata")
+	blockMetadataArrayPool = pool.Register[*blockMetadataArray]("sidx-blockMetadataArray")
 )
 
 // generatePartMetadata gets partMetadata from pool or creates new.

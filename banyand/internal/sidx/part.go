@@ -268,7 +268,6 @@ func (p *part) getPartMetadata() *partMetadata {
 	return p.partMetadata
 }
 
-
 // getTagDataReader returns the tag data reader for the specified tag name.
 func (p *part) getTagDataReader(tagName string) (fs.Reader, bool) {
 	reader, exists := p.tagData[tagName]
@@ -533,7 +532,6 @@ func openMemPart(mp *memPart) *part {
 	}
 	return p
 }
-
 
 // partPath returns the path for a part with the given epoch.
 func partPath(root string, epoch uint64) string {

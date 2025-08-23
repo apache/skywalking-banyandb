@@ -429,8 +429,23 @@ func TestPartMemoryManagement(t *testing.T) {
 	metaData, err := pm.marshal()
 	require.NoError(t, err)
 
+	// Create valid primary block metadata
+	pbm := primaryBlockMetadata{
+		seriesID: 1,
+		minKey:   0,
+		maxKey:   100,
+		dataBlock: dataBlock{
+			offset: 0,
+			size:   256,
+		},
+	}
+
+	// Marshal and compress primary block metadata
+	primaryData := pbm.marshal(nil)
+	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
+
 	testFiles := map[string][]byte{
-		primaryFilename: []byte("primary with block data"),
+		primaryFilename: compressedPrimaryData,
 		dataFilename:    []byte("data"),
 		keysFilename:    []byte("keys"),
 		metaFilename:    metaData,
@@ -472,8 +487,23 @@ func TestPartStringRepresentation(t *testing.T) {
 	metaData, err := pm.marshal()
 	require.NoError(t, err)
 
+	// Create valid primary block metadata
+	pbm := primaryBlockMetadata{
+		seriesID: 1,
+		minKey:   0,
+		maxKey:   100,
+		dataBlock: dataBlock{
+			offset: 0,
+			size:   256,
+		},
+	}
+
+	// Marshal and compress primary block metadata
+	primaryData := pbm.marshal(nil)
+	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
+
 	testFiles := map[string][]byte{
-		primaryFilename: []byte("primary"),
+		primaryFilename: compressedPrimaryData,
 		dataFilename:    []byte("data"),
 		keysFilename:    []byte("keys"),
 		metaFilename:    metaData,
@@ -511,8 +541,23 @@ func BenchmarkPartOpen(b *testing.B) {
 	metaData, err := pm.marshal()
 	require.NoError(b, err)
 
+	// Create valid primary block metadata
+	pbm := primaryBlockMetadata{
+		seriesID: 1,
+		minKey:   0,
+		maxKey:   1000,
+		dataBlock: dataBlock{
+			offset: 0,
+			size:   1024,
+		},
+	}
+
+	// Marshal and compress primary block metadata
+	primaryData := pbm.marshal(nil)
+	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
+
 	testFiles := map[string][]byte{
-		primaryFilename: []byte("primary data for benchmark"),
+		primaryFilename: compressedPrimaryData,
 		dataFilename:    []byte("data content for benchmark"),
 		keysFilename:    []byte("keys content for benchmark"),
 		metaFilename:    metaData,
@@ -555,8 +600,23 @@ func BenchmarkPartTagAccess(b *testing.B) {
 	metaData, err := pm.marshal()
 	require.NoError(b, err)
 
+	// Create valid primary block metadata
+	pbm := primaryBlockMetadata{
+		seriesID: 1,
+		minKey:   0,
+		maxKey:   100,
+		dataBlock: dataBlock{
+			offset: 0,
+			size:   256,
+		},
+	}
+
+	// Marshal and compress primary block metadata
+	primaryData := pbm.marshal(nil)
+	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
+
 	testFiles := map[string][]byte{
-		primaryFilename: []byte("primary"),
+		primaryFilename: compressedPrimaryData,
 		dataFilename:    []byte("data"),
 		keysFilename:    []byte("keys"),
 		metaFilename:    metaData,
