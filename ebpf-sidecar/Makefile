@@ -50,7 +50,7 @@ ebpf-bindings: check-ebpf-deps
 	@echo "Generating eBPF Go bindings..."
 	@mkdir -p internal/ebpf/generated
 	@echo "Building for amd64..."
-	@cd internal/ebpf/generated && \
+	@(cd internal/ebpf/generated && \
 		$(GO) run github.com/cilium/ebpf/cmd/bpf2go \
 			-cc $(CLANG) \
 			-cflags "$(BPF_CFLAGS)" \
@@ -62,9 +62,9 @@ ebpf-bindings: check-ebpf-deps
 			-type reclaim_info_t \
 			-type cache_stats_t \
 			-type cache_event_t \
-			Iomonitor ../programs/iomonitor.c -- -I.
+			Iomonitor ../programs/iomonitor.c -- -I.)
 	@echo "Building for arm64..."
-	@cd internal/ebpf/generated && \
+	@(cd internal/ebpf/generated && \
 		$(GO) run github.com/cilium/ebpf/cmd/bpf2go \
 			-cc $(CLANG) \
 			-cflags "$(BPF_CFLAGS)" \
@@ -76,7 +76,7 @@ ebpf-bindings: check-ebpf-deps
 			-type reclaim_info_t \
 			-type cache_stats_t \
 			-type cache_event_t \
-			Iomonitor ../programs/iomonitor.c -- -I.
+			Iomonitor ../programs/iomonitor.c -- -I.)
 	@echo "eBPF bindings generated in internal/ebpf/generated"
 	@# Verify build tags are present
 	@grep -l "//go:build" internal/ebpf/generated/*.go 2>/dev/null | head -5 || true

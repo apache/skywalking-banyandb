@@ -46,15 +46,6 @@ clean-build: default  ## Clean build artifacts in all projects
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
 generate: default  ## Generate API codes
-	@echo ">>> Generating eBPF code in fadvismonitor..."
-	@OS_TYPE=$$(uname -s); \
-	if [ "$$OS_TYPE" = "Linux" ]; then \
-		echo "Linux detected. Generating full eBPF functionality..."; \
-		$(MAKE) -C pkg/fs/fadvismonitor bpf; \
-	else \
-		echo "Non-Linux OS ($$OS_TYPE) detected. Generating cross-platform compatible stubs..."; \
-		$(MAKE) -C pkg/fs/fadvismonitor bpf; \
-	fi
 build: TARGET=all
 build: default  ## Build all projects
 
