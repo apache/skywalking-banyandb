@@ -23,61 +23,67 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ---
 
-## Phase 6: Query Path
+## Phase 6: Query Path (Following Stream Architecture)
 
-### 6.1 Query Interface (`query.go`)
-- [ ] Key range queries with tag filters
-- [ ] Support projections and result limits
-- [ ] Query validation and optimization
-- [ ] **Test Cases**:
-  - [ ] Query parsing handles all parameter types
-  - [ ] Validation rejects invalid queries
-  - [ ] Query optimization improves performance
-  - [ ] Complex queries return correct results
-
-### 6.2 Part Filtering (`query.go`)
-- [ ] Filter parts by key range overlap
-- [ ] Minimize I/O operations through smart filtering
-- [ ] Support inclusive/exclusive bounds
-- [ ] **Test Cases**:
-  - [ ] Filtering accuracy eliminates non-overlapping parts
-  - [ ] Performance improvement through reduced I/O
-  - [ ] Boundary conditions handled correctly
-  - [ ] Empty result sets handled gracefully
-
-### 6.3 Block Scanner (`block_scanner.go`)
+### 6.1 Part Iterator (`part_iter.go` or extend `part.go`)
 - [ ] **Implementation Tasks**:
-  - [ ] Create block_scanner.go with scanner structure
-  - [ ] Implement scanBlock() with filtering logic
-  - [ ] Add scanBlockElements() for element processing
-  - [ ] Create matchesTagFilters() for tag filtering
+  - [ ] Create `partIter` struct for single part iteration
+  - [ ] Implement `init(part, seriesIDs, minKey, maxKey, filter)`
+  - [ ] Add `nextBlock() bool` method for block advancement
+  - [ ] Create `curBlock` access and `error()` handling
 - [ ] **Test Cases**:
-  - [ ] Scan completeness finds all matching data
-  - [ ] Filter effectiveness reduces false positives
-  - [ ] Block scanning performance meets targets
-  - [ ] Memory usage during scanning is controlled
+  - [ ] Part iteration finds all matching blocks in correct order
+  - [ ] Key range filtering works at block level
+  - [ ] Error handling for corrupted parts
+  - [ ] Performance meets single-part iteration targets
 
-### 6.4 Result Iterator (`query.go`)
-- [ ] Stream results with proper ordering
-- [ ] Memory-efficient iteration patterns
-- [ ] Support both ASC and DESC ordering
-- [ ] **Test Cases**:
-  - [ ] Iterator correctness for various query types
-  - [ ] Memory usage remains bounded
-  - [ ] Ordering is maintained across parts
-  - [ ] Iterator cleanup prevents resource leaks
-
-### 6.5 Block Reader (`block_reader.go`)
+### 6.2 Multi-Part Iterator (`iter.go` - like stream's `tstIter`)
 - [ ] **Implementation Tasks**:
-  - [ ] Create block_reader.go with reader structure
-  - [ ] Implement readUserKeys(), readData(), readTags()
-  - [ ] Add decompression support
-  - [ ] Create mustReadFrom() for block loading
+  - [ ] Create `iter` struct with `partIterHeap` for ordering
+  - [ ] Implement `init(parts, seriesIDs, minKey, maxKey, filter)`
+  - [ ] Add `nextBlock() bool` with heap-based merge logic
+  - [ ] Create `Error()` method for aggregated error handling
 - [ ] **Test Cases**:
-  - [ ] Block reading maintains data integrity
-  - [ ] Decompression works correctly
-  - [ ] Block structure reconstruction is accurate
-  - [ ] Read performance meets requirements
+  - [ ] Multi-part ordering maintained across parts
+  - [ ] Heap operations preserve key ordering (ASC/DESC)
+  - [ ] Iterator handles empty parts gracefully
+  - [ ] Memory usage during multi-part iteration is controlled
+
+### 6.3 Block Scanner (`block_scanner.go` - like stream's block_scanner)
+- [ ] **Implementation Tasks**:
+  - [ ] Create `blockScanner` struct using `iter` for block access
+  - [ ] Implement `scan(ctx, blockCh chan *blockScanResultBatch)`
+  - [ ] Add batch processing with `blockScanResultBatch` pattern
+  - [ ] Create element-level filtering and tag matching
+- [ ] **Test Cases**:
+  - [ ] Batch processing maintains correct element ordering
+  - [ ] Memory quota management prevents OOM
+  - [ ] Tag filtering accuracy with bloom filters
+  - [ ] Worker coordination and error propagation
+
+### 6.4 Query Result (`query_result.go` - like stream's `tsResult`)
+- [ ] **Implementation Tasks**:
+  - [ ] Create `queryResult` struct implementing `QueryResult` interface
+  - [ ] Implement `Pull() *QueryResponse` with worker pool pattern
+  - [ ] Add `runBlockScanner(ctx)` for parallel processing
+  - [ ] Create `Release()` for resource cleanup
+- [ ] **Test Cases**:
+  - [ ] Pull/Release pattern prevents resource leaks
+  - [ ] Parallel workers maintain result ordering
+  - [ ] Result merging produces correct final output
+  - [ ] Performance scales with worker count
+
+### 6.5 SIDX Query Interface (extend `sidx.go`)
+- [ ] **Implementation Tasks**:
+  - [ ] Implement `Query(ctx context.Context, req QueryRequest) (QueryResult, error)`
+  - [ ] Add query validation and snapshot acquisition
+  - [ ] Create part selection by key range overlap
+  - [ ] Integrate with existing sidx snapshot management
+- [ ] **Test Cases**:
+  - [ ] Query validation catches invalid requests
+  - [ ] Part selection optimizes I/O by filtering non-overlapping parts
+  - [ ] Integration with snapshot reference counting works correctly
+  - [ ] End-to-end query performance meets targets
 
 ---
 
