@@ -448,3 +448,10 @@ func (bm *blockMetadata) addTagBlock(tagName string, offset, size uint64) {
 func (bm *blockMetadata) setTagMetadata(tagName string, offset, size uint64) {
 	bm.tagsBlocks[tagName] = dataBlock{offset: offset, size: size}
 }
+
+func (bm *blockMetadata) less(other *blockMetadata) bool {
+	if bm.seriesID == other.seriesID {
+		return bm.minKey < other.minKey
+	}
+	return bm.seriesID < other.seriesID
+}

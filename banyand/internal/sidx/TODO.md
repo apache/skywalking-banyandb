@@ -38,16 +38,16 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Performance meets single-part iteration targets
 
 ### 6.2 Multi-Part Iterator (`iter.go` - like stream's `tstIter`)
-- [ ] **Implementation Tasks**:
-  - [ ] Create `iter` struct with `partIterHeap` for ordering
-  - [ ] Implement `init(parts, seriesIDs, minKey, maxKey, filter)`
-  - [ ] Add `nextBlock() bool` with heap-based merge logic
-  - [ ] Create `Error()` method for aggregated error handling
-- [ ] **Test Cases**:
-  - [ ] Multi-part ordering maintained across parts
-  - [ ] Heap operations preserve key ordering (ASC/DESC)
-  - [ ] Iterator handles empty parts gracefully
-  - [ ] Memory usage during multi-part iteration is controlled
+- [x] **Implementation Tasks**:
+  - [x] Create `iter` struct with `partIterHeap` for ordering
+  - [x] Implement `init(parts, seriesIDs, minKey, maxKey, filter)`
+  - [x] Add `nextBlock() bool` with heap-based merge logic
+  - [x] Create `Error()` method for aggregated error handling
+- [x] **Test Cases**:
+  - [x] Multi-part ordering maintained across parts
+  - [x] Heap operations preserve key ordering (ASC/DESC)
+  - [x] Iterator handles empty parts gracefully
+  - [x] Memory usage during multi-part iteration is controlled
 
 ### 6.3 Block Scanner (`block_scanner.go` - like stream's block_scanner)
 - [ ] **Implementation Tasks**:
