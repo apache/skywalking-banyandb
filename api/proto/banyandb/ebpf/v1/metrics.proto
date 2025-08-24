@@ -28,16 +28,16 @@ option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/eb
 message Metric {
   // Name of the metric
   string name = 1 [(validate.rules).string.min_len = 1];
-  
+
   // Value of the metric
   double value = 2;
-  
+
   // Type of the metric (counter, gauge, histogram)
   MetricType type = 3;
-  
+
   // Labels associated with the metric
   map<string, string> labels = 4;
-  
+
   // Timestamp when the metric was collected
   google.protobuf.Timestamp timestamp = 5;
 }
@@ -54,10 +54,10 @@ enum MetricType {
 message MetricSet {
   // Module name that generated these metrics
   string module_name = 1 [(validate.rules).string.min_len = 1];
-  
+
   // List of metrics
   repeated Metric metrics = 2;
-  
+
   // Collection timestamp
   google.protobuf.Timestamp collected_at = 3;
 }
@@ -66,10 +66,10 @@ message MetricSet {
 message IOStats {
   // fadvise statistics
   FadviseStats fadvise = 1;
-  
+
   // Cache statistics
   CacheStats cache = 2;
-  
+
   // Memory reclaim statistics
   MemoryStats memory = 3;
 }
@@ -78,16 +78,16 @@ message IOStats {
 message FadviseStats {
   // Total number of fadvise calls
   uint64 total_calls = 1;
-  
+
   // Number of successful calls
   uint64 success_calls = 2;
-  
+
   // Number of failed calls
   uint64 failed_calls = 3;
-  
+
   // Breakdown by advice type
   map<string, uint64> advice_counts = 4;
-  
+
   // Per-process statistics
   repeated ProcessFadviseStats process_stats = 5;
 }
@@ -96,13 +96,13 @@ message FadviseStats {
 message ProcessFadviseStats {
   // Process ID
   uint32 pid = 1;
-  
+
   // Process name (command)
   string comm = 2;
-  
+
   // Number of fadvise calls
   uint64 call_count = 3;
-  
+
   // Success count
   uint64 success_count = 4;
 }
@@ -111,22 +111,22 @@ message ProcessFadviseStats {
 message CacheStats {
   // Total read attempts
   uint64 read_attempts = 1;
-  
+
   // Cache hits
   uint64 hits = 2;
-  
+
   // Cache misses
   uint64 misses = 3;
-  
+
   // Hit rate percentage
   double hit_rate_percent = 4;
-  
-  // Miss rate percentage  
+
+  // Miss rate percentage
   double miss_rate_percent = 5;
-  
+
   // Pages added to cache
   uint64 pages_added = 6;
-  
+
   // Pages evicted from cache
   uint64 pages_evicted = 7;
 }
@@ -135,16 +135,16 @@ message CacheStats {
 message MemoryStats {
   // Pages scanned by LRU
   uint64 lru_pages_scanned = 1;
-  
+
   // Pages reclaimed
   uint64 pages_reclaimed = 2;
-  
+
   // Reclaim efficiency percentage
   double reclaim_efficiency_percent = 3;
-  
+
   // Number of processes in direct reclaim
   uint32 direct_reclaim_processes = 4;
-  
+
   // Number of kswapd wakeups
   uint64 kswapd_wakeups = 5;
 }
@@ -153,19 +153,19 @@ message MemoryStats {
 message ModuleStatus {
   // Module name
   string name = 1;
-  
+
   // Whether the module is enabled
   bool enabled = 2;
-  
+
   // Whether the module is currently running
   bool running = 3;
-  
+
   // Last error message if any
   string last_error = 4;
-  
+
   // Number of metrics collected
   uint32 metric_count = 5;
-  
+
   // Last collection time
   google.protobuf.Timestamp last_collected = 6;
 }

@@ -246,6 +246,11 @@ lint:
 	@../bin/golangci-lint run -v --config ../.golangci.yml --timeout 10m ./... && \
 	  ../bin/revive -config ../revive.toml -formatter friendly ./...
 
+.PHONY: format
+format:
+	@echo "Running format for $(NAME)..."
+	@../bin/golangci-lint run --fix --timeout 10m -c ../.golangci-format.yml ./...
+
 .PHONY: test
 test:
 	@echo "Running tests for $(NAME)..."
