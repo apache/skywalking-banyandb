@@ -26,16 +26,16 @@ This document tracks the implementation progress of the Secondary Index File Sys
 ## Phase 6: Query Path (Following Stream Architecture)
 
 ### 6.1 Part Iterator (`part_iter.go` or extend `part.go`)
-- [ ] **Implementation Tasks**:
-  - [ ] Create `partIter` struct for single part iteration
-  - [ ] Implement `init(part, seriesIDs, minKey, maxKey, filter)`
-  - [ ] Add `nextBlock() bool` method for block advancement
-  - [ ] Create `curBlock` access and `error()` handling
-- [ ] **Test Cases**:
-  - [ ] Part iteration finds all matching blocks in correct order
-  - [ ] Key range filtering works at block level
-  - [ ] Error handling for corrupted parts
-  - [ ] Performance meets single-part iteration targets
+- [x] **Implementation Tasks**:
+  - [x] Create `partIter` struct for single part iteration
+  - [x] Implement `init(part, seriesIDs, minKey, maxKey, filter)`
+  - [x] Add `nextBlock() bool` method for block advancement
+  - [x] Create `curBlock` access and `error()` handling
+- [x] **Test Cases**:
+  - [x] Part iteration finds all matching blocks in correct order
+  - [x] Key range filtering works at block level
+  - [x] Error handling for corrupted parts
+  - [x] Performance meets single-part iteration targets
 
 ### 6.2 Multi-Part Iterator (`iter.go` - like stream's `tstIter`)
 - [ ] **Implementation Tasks**:
