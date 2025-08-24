@@ -308,11 +308,7 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 	// Serialize block metadata
 	bm.setSeriesID(sid)
 	bm.setKeyRange(minKey, maxKey)
-	bmData, err := bm.marshal()
-	if err != nil {
-		logger.Panicf("failed to marshal block metadata: %v", err)
-	}
-	bw.primaryBlockData = append(bw.primaryBlockData, bmData...)
+	bw.primaryBlockData = bm.marshal(bw.primaryBlockData)
 
 	if len(bw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
 		bw.mustFlushPrimaryBlock(bw.primaryBlockData)

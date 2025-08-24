@@ -93,10 +93,7 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 	}
 
 	// Load primary block metadata from primary.bin.
-	if err := p.loadPrimaryBlockMetadata(); err != nil {
-		p.close()
-		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load primary block metadata")
-	}
+	p.loadPrimaryBlockMetadata()
 
 	// Discover and open tag files.
 	p.openTagFiles()
@@ -136,11 +133,10 @@ func (p *part) loadPartMetadata() error {
 	return nil
 }
 
-// loadBlockMetadata reads and parses primary block metadata from meta.bin.
-func (p *part) loadPrimaryBlockMetadata() error {
+// loadPrimaryBlockMetadata reads and parses primary block metadata from meta.bin.
+func (p *part) loadPrimaryBlockMetadata() {
 	// Load primary block metadata from meta.bin file (compressed primaryBlockMetadata)
 	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], p.meta)
-	return nil
 }
 
 // openTagFiles discovers and opens all tag files in the part directory.
@@ -278,8 +274,6 @@ func (p *part) readAll() ([]*elements, error) {
 	compressedKeysBuf := make([]byte, 0, 1024)
 	keysBuf := make([]byte, 0, 1024)
 
-	bytesDecoder := &encoding.BytesBlockDecoder{}
-
 	for _, pbm := range p.primaryBlockMetadata {
 		// Read and decompress primary block metadata
 		compressedPrimaryBuf = bytes.ResizeOver(compressedPrimaryBuf, int(pbm.size))
@@ -295,8 +289,8 @@ func (p *part) readAll() ([]*elements, error) {
 			return nil, fmt.Errorf("cannot decompress primary block: %w", err)
 		}
 
-		// Unmarshal block metadata
-		bm, err := unmarshalBlockMetadata(primaryBuf)
+		// Unmarshal all block metadata entries in this primary block
+		blockMetadataArray, err := unmarshalBlockMetadata(nil, primaryBuf)
 		if err != nil {
 			// Clean up any elements created so far
 			for _, e := range result {
@@ -305,78 +299,83 @@ func (p *part) readAll() ([]*elements, error) {
 			return nil, fmt.Errorf("cannot unmarshal block metadata: %w", err)
 		}
 
-		// Create elements for this block
-		elems := generateElements()
+		// Process each block metadata
+		for i := range blockMetadataArray {
+			bm := &blockMetadataArray[i]
 
-		// Read user keys
-		compressedKeysBuf = bytes.ResizeOver(compressedKeysBuf, int(bm.keysBlock.size))
-		fs.MustReadData(p.keys, int64(bm.keysBlock.offset), compressedKeysBuf)
+			// Create elements for this block
+			elems := generateElements()
 
-		keysBuf, err = zstd.Decompress(keysBuf[:0], compressedKeysBuf)
-		if err != nil {
-			releaseElements(elems)
-			for _, e := range result {
-				releaseElements(e)
-			}
-			return nil, fmt.Errorf("cannot decompress keys block: %w", err)
-		}
+			// Read user keys
+			compressedKeysBuf = bytes.ResizeOver(compressedKeysBuf, int(bm.keysBlock.size))
+			fs.MustReadData(p.keys, int64(bm.keysBlock.offset), compressedKeysBuf)
 
-		// Decode user keys using the stored encoding information
-		elems.userKeys, err = encoding.BytesToInt64List(elems.userKeys[:0], keysBuf, bm.keysEncodeType, bm.minKey, int(bm.count))
-		if err != nil {
-			releaseElements(elems)
-			for _, e := range result {
-				releaseElements(e)
-			}
-			return nil, fmt.Errorf("cannot decode user keys: %w", err)
-		}
-
-		// Read data payloads
-		compressedDataBuf = bytes.ResizeOver(compressedDataBuf, int(bm.dataBlock.size))
-		fs.MustReadData(p.data, int64(bm.dataBlock.offset), compressedDataBuf)
-
-		dataBuf, err = zstd.Decompress(dataBuf[:0], compressedDataBuf)
-		if err != nil {
-			releaseElements(elems)
-			for _, e := range result {
-				releaseElements(e)
-			}
-			return nil, fmt.Errorf("cannot decompress data block: %w", err)
-		}
-
-		// Decode data payloads
-		bytesDecoder.Reset()
-		elems.data, err = bytesDecoder.Decode(elems.data[:0], dataBuf, bm.count)
-		if err != nil {
-			releaseElements(elems)
-			for _, e := range result {
-				releaseElements(e)
-			}
-			return nil, fmt.Errorf("cannot decode data payloads: %w", err)
-		}
-
-		// Initialize seriesIDs and tags slices
-		elems.seriesIDs = make([]common.SeriesID, int(bm.count))
-		elems.tags = make([][]tag, int(bm.count))
-
-		// Fill seriesIDs - all elements in this block have the same seriesID
-		for i := range elems.seriesIDs {
-			elems.seriesIDs[i] = bm.seriesID
-		}
-
-		// Read tags for each tag name
-		for tagName := range bm.tagsBlocks {
-			err = p.readBlockTags(tagName, bm, elems)
+			keysBuf, err = zstd.Decompress(keysBuf[:0], compressedKeysBuf)
 			if err != nil {
 				releaseElements(elems)
 				for _, e := range result {
 					releaseElements(e)
 				}
-				return nil, fmt.Errorf("cannot read tags for %s: %w", tagName, err)
+				return nil, fmt.Errorf("cannot decompress keys block: %w", err)
 			}
-		}
 
-		result = append(result, elems)
+			// Decode user keys using the stored encoding information
+			elems.userKeys, err = encoding.BytesToInt64List(elems.userKeys[:0], keysBuf, bm.keysEncodeType, bm.minKey, int(bm.count))
+			if err != nil {
+				releaseElements(elems)
+				for _, e := range result {
+					releaseElements(e)
+				}
+				return nil, fmt.Errorf("cannot decode user keys: %w", err)
+			}
+
+			// Read data payloads
+			compressedDataBuf = bytes.ResizeOver(compressedDataBuf, int(bm.dataBlock.size))
+			fs.MustReadData(p.data, int64(bm.dataBlock.offset), compressedDataBuf)
+
+			dataBuf, err = zstd.Decompress(dataBuf[:0], compressedDataBuf)
+			if err != nil {
+				releaseElements(elems)
+				for _, e := range result {
+					releaseElements(e)
+				}
+				return nil, fmt.Errorf("cannot decompress data block: %w", err)
+			}
+
+			// Decode data payloads - create a new decoder for each block to avoid state corruption
+			blockBytesDecoder := &encoding.BytesBlockDecoder{}
+			elems.data, err = blockBytesDecoder.Decode(elems.data[:0], dataBuf, bm.count)
+			if err != nil {
+				releaseElements(elems)
+				for _, e := range result {
+					releaseElements(e)
+				}
+				return nil, fmt.Errorf("cannot decode data payloads: %w", err)
+			}
+
+			// Initialize seriesIDs and tags slices
+			elems.seriesIDs = make([]common.SeriesID, int(bm.count))
+			elems.tags = make([][]tag, int(bm.count))
+
+			// Fill seriesIDs - all elements in this block have the same seriesID
+			for j := range elems.seriesIDs {
+				elems.seriesIDs[j] = bm.seriesID
+			}
+
+			// Read tags for each tag name
+			for tagName := range bm.tagsBlocks {
+				err = p.readBlockTags(tagName, bm, elems)
+				if err != nil {
+					releaseElements(elems)
+					for _, e := range result {
+						releaseElements(e)
+					}
+					return nil, fmt.Errorf("cannot read tags for %s: %w", tagName, err)
+				}
+			}
+
+			result = append(result, elems)
+		}
 	}
 
 	return result, nil
@@ -426,10 +425,14 @@ func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements)
 		return fmt.Errorf("cannot decode tag values: %w", err)
 	}
 
-	// Add tag values to elements
+	// Add tag values to elements (only for non-nil values)
 	for i, value := range tagValues {
 		if i >= len(elems.tags) {
 			break
+		}
+		// Skip nil values - they represent missing tags for this element
+		if value == nil {
+			continue
 		}
 		if elems.tags[i] == nil {
 			elems.tags[i] = make([]tag, 0, 1)

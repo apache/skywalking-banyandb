@@ -18,11 +18,9 @@
 package sidx
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
+	"sort"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -268,188 +266,126 @@ func unmarshalPartMetadata(data []byte) (*partMetadata, error) {
 }
 
 // marshal serializes blockMetadata to bytes.
-func (bm *blockMetadata) marshal() ([]byte, error) {
-	buf := &bytes.Buffer{}
+func (bm *blockMetadata) marshal(dst []byte) []byte {
+	dst = bm.seriesID.AppendToBytes(dst)
+	dst = encoding.VarUint64ToBytes(dst, uint64(bm.minKey))
+	dst = encoding.VarUint64ToBytes(dst, uint64(bm.maxKey))
+	dst = encoding.VarUint64ToBytes(dst, bm.dataBlock.offset)
+	dst = encoding.VarUint64ToBytes(dst, bm.dataBlock.size)
+	dst = encoding.VarUint64ToBytes(dst, bm.keysBlock.offset)
+	dst = encoding.VarUint64ToBytes(dst, bm.keysBlock.size)
+	dst = append(dst, byte(bm.keysEncodeType))
+	dst = encoding.VarUint64ToBytes(dst, bm.count)
+	dst = encoding.VarUint64ToBytes(dst, bm.uncompressedSize)
+	dst = encoding.VarUint64ToBytes(dst, uint64(len(bm.tagsBlocks)))
 
-	// Write seriesID
-	if err := binary.Write(buf, binary.LittleEndian, bm.seriesID); err != nil {
-		return nil, fmt.Errorf("failed to write seriesID: %w", err)
-	}
-
-	// Write key range
-	if err := binary.Write(buf, binary.LittleEndian, bm.minKey); err != nil {
-		return nil, fmt.Errorf("failed to write minKey: %w", err)
-	}
-	if err := binary.Write(buf, binary.LittleEndian, bm.maxKey); err != nil {
-		return nil, fmt.Errorf("failed to write maxKey: %w", err)
-	}
-
-	// Write data block
-	if err := binary.Write(buf, binary.LittleEndian, bm.dataBlock.offset); err != nil {
-		return nil, fmt.Errorf("failed to write data block offset: %w", err)
-	}
-	if err := binary.Write(buf, binary.LittleEndian, bm.dataBlock.size); err != nil {
-		return nil, fmt.Errorf("failed to write data block size: %w", err)
-	}
-
-	// Write keys block
-	if err := binary.Write(buf, binary.LittleEndian, bm.keysBlock.offset); err != nil {
-		return nil, fmt.Errorf("failed to write keys block offset: %w", err)
-	}
-	if err := binary.Write(buf, binary.LittleEndian, bm.keysBlock.size); err != nil {
-		return nil, fmt.Errorf("failed to write keys block size: %w", err)
-	}
-
-	// Write keys encoding information
-	if err := binary.Write(buf, binary.LittleEndian, byte(bm.keysEncodeType)); err != nil {
-		return nil, fmt.Errorf("failed to write keys encode type: %w", err)
-	}
-	if err := binary.Write(buf, binary.LittleEndian, bm.minKey); err != nil {
-		return nil, fmt.Errorf("failed to write keys first value: %w", err)
-	}
-
-	// Write count and uncompressed size
-	if err := binary.Write(buf, binary.LittleEndian, bm.count); err != nil {
-		return nil, fmt.Errorf("failed to write count: %w", err)
-	}
-	if err := binary.Write(buf, binary.LittleEndian, bm.uncompressedSize); err != nil {
-		return nil, fmt.Errorf("failed to write uncompressed size: %w", err)
-	}
-
-	// Write tag blocks count
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(bm.tagsBlocks))); err != nil {
-		return nil, fmt.Errorf("failed to write tag blocks count: %w", err)
-	}
-
-	// Write tag blocks
-	for tagName, tagBlock := range bm.tagsBlocks {
-		// Write tag name length and name
-		nameBytes := []byte(tagName)
-		if err := binary.Write(buf, binary.LittleEndian, uint32(len(nameBytes))); err != nil {
-			return nil, fmt.Errorf("failed to write tag name length: %w", err)
+	// Write tag blocks in sorted order for consistency
+	if len(bm.tagsBlocks) > 0 {
+		tagNames := make([]string, 0, len(bm.tagsBlocks))
+		for tagName := range bm.tagsBlocks {
+			tagNames = append(tagNames, tagName)
 		}
-		if _, err := buf.Write(nameBytes); err != nil {
-			return nil, fmt.Errorf("failed to write tag name: %w", err)
-		}
+		sort.Strings(tagNames)
 
-		// Write tag block
-		if err := binary.Write(buf, binary.LittleEndian, tagBlock.offset); err != nil {
-			return nil, fmt.Errorf("failed to write tag block offset: %w", err)
-		}
-		if err := binary.Write(buf, binary.LittleEndian, tagBlock.size); err != nil {
-			return nil, fmt.Errorf("failed to write tag block size: %w", err)
+		for _, tagName := range tagNames {
+			block := bm.tagsBlocks[tagName]
+			dst = encoding.EncodeBytes(dst, []byte(tagName))
+			dst = encoding.VarUint64ToBytes(dst, block.offset)
+			dst = encoding.VarUint64ToBytes(dst, block.size)
 		}
 	}
 
-	return buf.Bytes(), nil
+	return dst
 }
 
-// unmarshalBlockMetadata deserializes blockMetadata from bytes.
-func unmarshalBlockMetadata(data []byte) (*blockMetadata, error) {
-	bm := generateBlockMetadata()
-	buf := bytes.NewReader(data)
+// unmarshal deserializes blockMetadata from bytes.
+func (bm *blockMetadata) unmarshal(src []byte) ([]byte, error) {
+	if len(src) < 8 {
+		return nil, fmt.Errorf("cannot unmarshal blockMetadata from less than 8 bytes")
+	}
+	bm.seriesID = common.SeriesID(encoding.BytesToUint64(src))
+	src = src[8:]
 
-	// Read seriesID
-	if err := binary.Read(buf, binary.LittleEndian, &bm.seriesID); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read seriesID: %w", err)
-	}
+	var n uint64
+	src, n = encoding.BytesToVarUint64(src)
+	bm.minKey = int64(n)
 
-	// Read key range
-	if err := binary.Read(buf, binary.LittleEndian, &bm.minKey); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read minKey: %w", err)
-	}
-	if err := binary.Read(buf, binary.LittleEndian, &bm.maxKey); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read maxKey: %w", err)
-	}
+	src, n = encoding.BytesToVarUint64(src)
+	bm.maxKey = int64(n)
 
-	// Read data block
-	if err := binary.Read(buf, binary.LittleEndian, &bm.dataBlock.offset); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read data block offset: %w", err)
-	}
-	if err := binary.Read(buf, binary.LittleEndian, &bm.dataBlock.size); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read data block size: %w", err)
-	}
+	src, n = encoding.BytesToVarUint64(src)
+	bm.dataBlock.offset = n
 
-	// Read keys block
-	if err := binary.Read(buf, binary.LittleEndian, &bm.keysBlock.offset); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read keys block offset: %w", err)
-	}
-	if err := binary.Read(buf, binary.LittleEndian, &bm.keysBlock.size); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read keys block size: %w", err)
-	}
+	src, n = encoding.BytesToVarUint64(src)
+	bm.dataBlock.size = n
 
-	// Read keys encoding information
-	var encodeTypeByte byte
-	if err := binary.Read(buf, binary.LittleEndian, &encodeTypeByte); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read keys encode type: %w", err)
-	}
-	bm.keysEncodeType = encoding.EncodeType(encodeTypeByte)
-	if err := binary.Read(buf, binary.LittleEndian, &bm.minKey); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read keys first value: %w", err)
-	}
+	src, n = encoding.BytesToVarUint64(src)
+	bm.keysBlock.offset = n
 
-	// Read count and uncompressed size
-	if err := binary.Read(buf, binary.LittleEndian, &bm.count); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read count: %w", err)
-	}
-	if err := binary.Read(buf, binary.LittleEndian, &bm.uncompressedSize); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read uncompressed size: %w", err)
-	}
+	src, n = encoding.BytesToVarUint64(src)
+	bm.keysBlock.size = n
 
-	// Read tag blocks count
-	var tagBlocksCount uint32
-	if err := binary.Read(buf, binary.LittleEndian, &tagBlocksCount); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("failed to read tag blocks count: %w", err)
+	if len(src) < 1 {
+		return nil, fmt.Errorf("not enough bytes to read keysEncodeType")
 	}
+	bm.keysEncodeType = encoding.EncodeType(src[0])
+	src = src[1:]
 
-	// Read tag blocks
-	for i := uint32(0); i < tagBlocksCount; i++ {
-		// Read tag name
-		var nameLen uint32
-		if err := binary.Read(buf, binary.LittleEndian, &nameLen); err != nil {
-			releaseBlockMetadata(bm)
-			return nil, fmt.Errorf("failed to read tag name length: %w", err)
+	src, n = encoding.BytesToVarUint64(src)
+	bm.count = n
+
+	src, n = encoding.BytesToVarUint64(src)
+	bm.uncompressedSize = n
+
+	src, n = encoding.BytesToVarUint64(src)
+	tagBlocksCount := n
+
+	if tagBlocksCount > 0 {
+		if bm.tagsBlocks == nil {
+			bm.tagsBlocks = make(map[string]dataBlock, tagBlocksCount)
 		}
-		nameBytes := make([]byte, nameLen)
-		if _, err := io.ReadFull(buf, nameBytes); err != nil {
-			releaseBlockMetadata(bm)
-			return nil, fmt.Errorf("failed to read tag name: %w", err)
-		}
-		tagName := string(nameBytes)
+		var nameBytes []byte
+		var err error
+		for i := uint64(0); i < tagBlocksCount; i++ {
+			src, nameBytes, err = encoding.DecodeBytes(src)
+			if err != nil {
+				return nil, fmt.Errorf("cannot unmarshal tag name: %w", err)
+			}
+			tagName := string(nameBytes)
 
-		// Read tag block
-		var tagBlock dataBlock
-		if err := binary.Read(buf, binary.LittleEndian, &tagBlock.offset); err != nil {
-			releaseBlockMetadata(bm)
-			return nil, fmt.Errorf("failed to read tag block offset: %w", err)
-		}
-		if err := binary.Read(buf, binary.LittleEndian, &tagBlock.size); err != nil {
-			releaseBlockMetadata(bm)
-			return nil, fmt.Errorf("failed to read tag block size: %w", err)
-		}
+			src, n = encoding.BytesToVarUint64(src)
+			offset := n
 
-		bm.tagsBlocks[tagName] = tagBlock
+			src, n = encoding.BytesToVarUint64(src)
+			size := n
+
+			bm.tagsBlocks[tagName] = dataBlock{
+				offset: offset,
+				size:   size,
+			}
+		}
 	}
 
-	// Validate the metadata
-	if err := bm.validate(); err != nil {
-		releaseBlockMetadata(bm)
-		return nil, fmt.Errorf("block metadata validation failed: %w", err)
-	}
+	return src, nil
+}
 
-	return bm, nil
+// unmarshalBlockMetadata deserializes multiple blockMetadata from bytes.
+func unmarshalBlockMetadata(dst []blockMetadata, src []byte) ([]blockMetadata, error) {
+	dstOrig := dst
+	for len(src) > 0 {
+		if len(dst) < cap(dst) {
+			dst = dst[:len(dst)+1]
+		} else {
+			dst = append(dst, blockMetadata{})
+		}
+		bm := &dst[len(dst)-1]
+		tail, err := bm.unmarshal(src)
+		if err != nil {
+			return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", err)
+		}
+		src = tail
+	}
+	return dst, nil
 }
 
 // SeriesID returns the seriesID of the block.

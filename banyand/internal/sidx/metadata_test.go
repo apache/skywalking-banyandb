@@ -425,14 +425,14 @@ func TestBlockMetadata_Serialization(t *testing.T) {
 	}
 
 	// Test marshaling
-	data, err := original.marshal()
-	require.NoError(t, err)
+	data := original.marshal(nil)
 	assert.NotEmpty(t, data)
 
 	// Test unmarshaling
-	restored, err := unmarshalBlockMetadata(data)
+	restoredArray, err := unmarshalBlockMetadata(nil, data)
 	require.NoError(t, err)
-	defer releaseBlockMetadata(restored)
+	require.Len(t, restoredArray, 1)
+	restored := &restoredArray[0]
 
 	// Verify all fields match
 	assert.Equal(t, original.seriesID, restored.seriesID)

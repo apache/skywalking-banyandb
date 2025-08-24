@@ -121,15 +121,16 @@ func TestPartStringRepresentation(t *testing.T) {
 		},
 	}
 
-	// Marshal and compress primary block metadata
+	// Marshal and compress primary block metadata for meta.bin
 	primaryData := pbm.marshal(nil)
 	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
 
 	testFiles := map[string][]byte{
-		primaryFilename: compressedPrimaryData,
-		dataFilename:    []byte("data"),
-		keysFilename:    []byte("keys"),
-		metaFilename:    metaData,
+		primaryFilename:  []byte("primary"), // placeholder for primary.bin
+		dataFilename:     []byte("data"),
+		keysFilename:     []byte("keys"),
+		metaFilename:     compressedPrimaryData, // meta.bin should contain compressed primary block metadata
+		manifestFilename: metaData,              // manifest.json should contain part metadata
 	}
 
 	for fileName, content := range testFiles {
@@ -216,8 +217,8 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 	tempDir := t.TempDir()
 
 	tests := []struct {
-		name     string
 		elements *elements
+		name     string
 	}{
 		{
 			name: "single series with single element",
@@ -390,13 +391,13 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 			// Create a copy of elements for initialization to avoid modifying the original
 			elementsCopy := generateElements()
 			defer releaseElements(elementsCopy)
-			
+
 			// Deep copy the elements
 			elementsCopy.seriesIDs = append(elementsCopy.seriesIDs, tt.elements.seriesIDs...)
 			elementsCopy.userKeys = append(elementsCopy.userKeys, tt.elements.userKeys...)
 			elementsCopy.data = append(elementsCopy.data, tt.elements.data...)
 			elementsCopy.tags = append(elementsCopy.tags, tt.elements.tags...)
-			
+
 			// Initialize memPart from elements copy
 			mp.mustInitFromElements(elementsCopy)
 
@@ -407,7 +408,6 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 			// Step 3: Open the flushed part from disk
 			part := mustOpenPart(partDir, testFS)
 			defer part.close()
-
 
 			// Step 4: Read all elements back from part
 			resultElements, err := part.readAll()
@@ -430,7 +430,7 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 			// Create a clean copy of original elements for comparison (avoid sorting corruption)
 			originalCopy := generateElements()
 			defer releaseElements(originalCopy)
-			
+
 			originalCopy.seriesIDs = append(originalCopy.seriesIDs, tt.elements.seriesIDs...)
 			originalCopy.userKeys = append(originalCopy.userKeys, tt.elements.userKeys...)
 			originalCopy.data = append(originalCopy.data, tt.elements.data...)
@@ -451,15 +451,15 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 	}
 }
 
-// testElement represents a single element for test creation
+// testElement represents a single element for test creation.
 type testElement struct {
-	seriesID common.SeriesID
-	userKey  int64
 	data     []byte
 	tags     []tag
+	seriesID common.SeriesID
+	userKey  int64
 }
 
-// createTestElements creates an elements collection from test data
+// createTestElements creates an elements collection from test data.
 func createTestElements(testElems []testElement) *elements {
 	elems := generateElements()
 
@@ -488,7 +488,7 @@ func createTestElements(testElems []testElement) *elements {
 	return elems
 }
 
-// compareElements compares two elements collections for equality
+// compareElements compares two elements collections for equality.
 func compareElements(t *testing.T, expected, actual *elements) {
 	require.Equal(t, len(expected.seriesIDs), len(actual.seriesIDs), "seriesIDs length mismatch")
 	require.Equal(t, len(expected.userKeys), len(actual.userKeys), "userKeys length mismatch")
