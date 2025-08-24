@@ -28,7 +28,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type partIter struct {
@@ -36,6 +38,7 @@ type partIter struct {
 	p                    *part
 	curBlock             *blockMetadata
 	sids                 []common.SeriesID
+	blockFilter          index.Filter
 	primaryBlockMetadata []primaryBlockMetadata
 	bms                  []blockMetadata
 	compressedPrimaryBuf []byte
@@ -49,6 +52,7 @@ func (pi *partIter) reset() {
 	pi.curBlock = nil
 	pi.p = nil
 	pi.sids = nil
+	pi.blockFilter = nil
 	pi.sidIdx = 0
 	pi.primaryBlockMetadata = nil
 	pi.bms = nil
@@ -57,13 +61,14 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minKey, maxKey int64) {
+func (pi *partIter) init(bma *blockMetadataArray, p *part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter) {
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
 
 	pi.bms = bma.arr
 	pi.sids = sids
+	pi.blockFilter = blockFilter
 	pi.minKey = minKey
 	pi.maxKey = maxKey
 
@@ -229,6 +234,24 @@ func (pi *partIter) findBlock() bool {
 			continue
 		}
 
+		if pi.blockFilter != nil {
+			shouldSkip, err := func() (bool, error) {
+				tfo := generateTagFilterOp(bm, pi.p)
+				defer releaseTagFilterOp(tfo)
+				return pi.blockFilter.ShouldSkip(tfo)
+			}()
+			if err != nil {
+				pi.err = err
+				return false
+			}
+			if shouldSkip {
+				if !pi.nextSeriesID() {
+					return false
+				}
+				continue
+			}
+		}
+
 		pi.curBlock.copyFrom(bm)
 
 		pi.bms = bhs[1:]
@@ -258,3 +281,81 @@ func (bm *blockMetadata) copyFrom(other *blockMetadata) {
 	bm.tagProjection = bm.tagProjection[:0]
 	bm.tagProjection = append(bm.tagProjection, other.tagProjection...)
 }
+
+// tagFilterOp provides a FilterOp implementation for tag filtering in sidx.
+type tagFilterOp struct {
+	blockMetadata *blockMetadata
+	part          *part
+	tagCache      map[string][]byte
+}
+
+// Eq checks if a tag equals a specific value.
+func (tfo *tagFilterOp) Eq(tagName string, tagValue string) bool {
+	// For sidx, we need to check if the tag value exists in the block's tags
+	// This is a simplified implementation that can be enhanced
+	if tfo.blockMetadata == nil || tfo.part == nil {
+		return false
+	}
+
+	// Check if the tag exists in the block
+	if _, exists := tfo.blockMetadata.tagsBlocks[tagName]; !exists {
+		return false
+	}
+
+	// For now, return true indicating the tag exists
+	// In a full implementation, this would check the actual tag values
+	// against bloom filters or other indexing structures
+	return true
+}
+
+// Range checks if a tag is within a specific range.
+func (tfo *tagFilterOp) Range(tagName string, rangeOpts index.RangeOpts) (bool, error) {
+	// For sidx, we need to check if the tag values fall within the range
+	// This is a simplified implementation that can be enhanced
+	if tfo.blockMetadata == nil || tfo.part == nil {
+		return false, nil
+	}
+
+	// Check if the tag exists in the block
+	if _, exists := tfo.blockMetadata.tagsBlocks[tagName]; !exists {
+		return false, nil
+	}
+
+	// For now, return true indicating the tag exists within range
+	// In a full implementation, this would check the actual tag value ranges
+	// against the min/max metadata stored in the block
+	return true, nil
+}
+
+// reset resets the tagFilterOp for reuse.
+func (tfo *tagFilterOp) reset() {
+	tfo.blockMetadata = nil
+	tfo.part = nil
+	for k := range tfo.tagCache {
+		delete(tfo.tagCache, k)
+	}
+}
+
+// generateTagFilterOp gets a tagFilterOp from pool or creates new.
+func generateTagFilterOp(bm *blockMetadata, p *part) *tagFilterOp {
+	v := tagFilterOpPool.Get()
+	if v == nil {
+		return &tagFilterOp{
+			blockMetadata: bm,
+			part:          p,
+			tagCache:      make(map[string][]byte),
+		}
+	}
+	tfo := v
+	tfo.blockMetadata = bm
+	tfo.part = p
+	return tfo
+}
+
+// releaseTagFilterOp returns tagFilterOp to pool after reset.
+func releaseTagFilterOp(tfo *tagFilterOp) {
+	tfo.reset()
+	tagFilterOpPool.Put(tfo)
+}
+
+var tagFilterOpPool = pool.Register[*tagFilterOp]("sidx-tagFilterOp")
