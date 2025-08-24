@@ -219,6 +219,13 @@ build: generate
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -o $(BUILD_DIR)/$(NAME) ./cmd/sidecar
 
+.PHONY: release
+release: generate
+	@echo "Building release binary for $(NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=linux $(GO) build -ldflags="-s -w" -o $(BUILD_DIR)/$(NAME)-static ./cmd/sidecar
+	@echo "Release binary built: $(BUILD_DIR)/$(NAME)-static"
+
 .PHONY: clean
 clean:
 	@echo "Cleaning $(NAME)..."
@@ -338,6 +345,7 @@ help:
 	@echo "  ebpf-bindings   - Generate eBPF Go bindings for multiple architectures"
 	@echo "  generate        - Generate vmlinux.h and eBPF bindings"
 	@echo "  build           - Build the sidecar binary"
+	@echo "  release         - Build static release binary"
 	@echo "  clean           - Clean build artifacts (preserves vmlinux.h)"
 	@echo "  distclean       - Deep clean including vmlinux.h"
 	@echo "  lint            - Run linting checks"
