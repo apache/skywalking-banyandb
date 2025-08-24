@@ -516,7 +516,7 @@ func compareElements(t *testing.T, expected, actual *elements) {
 			return actualTags[a].name < actualTags[b].name
 		})
 
-		for j := 0; j < len(expectedTags); j++ {
+		for j := range expectedTags {
 			assert.Equal(t, expectedTags[j].name, actualTags[j].name,
 				"tag name mismatch at element %d, tag %d", i, j)
 			assert.Equal(t, expectedTags[j].value, actualTags[j].value,
