@@ -31,9 +31,7 @@ import (
 )
 
 func TestPartIterVerification(t *testing.T) {
-	testFS := fs.NewLocalFileSystem()
-	tempDir := t.TempDir()
-
+	// Shared test cases for both subtests
 	tests := []struct {
 		name        string
 		elements    []testElement
@@ -245,75 +243,118 @@ func TestPartIterVerification(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Step 1: Create elements and initialize memPart
-			elements := createTestElements(tt.elements)
-			defer releaseElements(elements)
+	// Helper function to run test cases against a part
+	runTestCase := func(t *testing.T, tt struct {
+		name        string
+		elements    []testElement
+		querySids   []common.SeriesID
+		minKey      int64
+		maxKey      int64
+		expectedLen int
+	}, part *part,
+	) {
+		// Create partIter and blockMetadataArray
+		bma := &blockMetadataArray{}
+		defer bma.reset()
 
-			mp := generateMemPart()
-			defer releaseMemPart(mp)
+		pi := &partIter{}
 
-			mp.mustInitFromElements(elements)
+		// Initialize partIter with clean blockMetadataArray
+		bma.reset() // Keep blockMetadataArray clean before passing to init
+		pi.init(bma, part, tt.querySids, tt.minKey, tt.maxKey)
 
-			// Step 2: Create part from memPart by flushing to disk
-			partDir := filepath.Join(tempDir, fmt.Sprintf("part_%s", tt.name))
-			mp.mustFlush(testFS, partDir)
+		// Iterate through blocks and collect results
+		var foundElements []testElement
+		blockCount := 0
 
-			part := mustOpenPart(partDir, testFS)
-			defer part.close()
+		for pi.nextBlock() {
+			blockCount++
+			curBlock := pi.curBlock
 
-			// Step 3: Create partIter and blockMetadataArray
-			bma := &blockMetadataArray{}
-			defer bma.reset()
+			t.Logf("Found block for seriesID %d, key range [%d, %d], count: %d",
+				curBlock.seriesID, curBlock.minKey, curBlock.maxKey, curBlock.count)
 
-			pi := &partIter{}
+			// Verify the block overlaps with query range (partIter returns overlapping blocks)
+			overlaps := curBlock.maxKey >= tt.minKey && curBlock.minKey <= tt.maxKey
+			assert.True(t, overlaps, "block should overlap with query range [%d, %d], but got block range [%d, %d]",
+				tt.minKey, tt.maxKey, curBlock.minKey, curBlock.maxKey)
+			assert.Contains(t, tt.querySids, curBlock.seriesID, "block seriesID should be in query sids")
 
-			// Step 4: Initialize partIter with clean blockMetadataArray
-			bma.reset() // Keep blockMetadataArray clean before passing to init
-			pi.init(bma, part, tt.querySids, tt.minKey, tt.maxKey)
+			// For verification, create a test element representing this block
+			// Note: In a real scenario, you'd read the actual block data
+			foundElements = append(foundElements, testElement{
+				seriesID: curBlock.seriesID,
+				userKey:  curBlock.minKey, // Use minKey as representative
+				data:     nil,             // Not reading actual data in this test
+				tags:     nil,             // Not reading actual tags in this test
+			})
+		}
 
-			// Step 5: Iterate through blocks and collect results
-			var foundElements []testElement
-			blockCount := 0
+		// Check for iteration errors
+		require.NoError(t, pi.error(), "partIter should not have errors")
 
-			for pi.nextBlock() {
-				blockCount++
-				curBlock := pi.curBlock
+		// Verify results
+		assert.Equal(t, tt.expectedLen, len(foundElements), "should find expected number of elements")
 
-				t.Logf("Found block for seriesID %d, key range [%d, %d], count: %d",
-					curBlock.seriesID, curBlock.minKey, curBlock.maxKey, curBlock.count)
+		// Additional verification: ensure all found elements match expected series
+		for _, elem := range foundElements {
+			assert.Contains(t, tt.querySids, elem.seriesID, "found element should have expected seriesID")
+		}
 
-				// Verify the block overlaps with query range (partIter returns overlapping blocks)
-				overlaps := curBlock.maxKey >= tt.minKey && curBlock.minKey <= tt.maxKey
-				assert.True(t, overlaps, "block should overlap with query range [%d, %d], but got block range [%d, %d]",
-					tt.minKey, tt.maxKey, curBlock.minKey, curBlock.maxKey)
-				assert.Contains(t, tt.querySids, curBlock.seriesID, "block seriesID should be in query sids")
-
-				// For verification, create a test element representing this block
-				// Note: In a real scenario, you'd read the actual block data
-				foundElements = append(foundElements, testElement{
-					seriesID: curBlock.seriesID,
-					userKey:  curBlock.minKey, // Use minKey as representative
-					data:     nil,             // Not reading actual data in this test
-					tags:     nil,             // Not reading actual tags in this test
-				})
-			}
-
-			// Step 6: Check for iteration errors
-			require.NoError(t, pi.error(), "partIter should not have errors")
-
-			// Step 7: Verify results
-			assert.Equal(t, tt.expectedLen, len(foundElements), "should find expected number of elements")
-
-			// Additional verification: ensure all found elements match expected series
-			for _, elem := range foundElements {
-				assert.Contains(t, tt.querySids, elem.seriesID, "found element should have expected seriesID")
-			}
-
-			t.Logf("Test %s completed: found %d blocks, expected %d", tt.name, blockCount, tt.expectedLen)
-		})
+		t.Logf("Test %s completed: found %d blocks, expected %d", tt.name, blockCount, tt.expectedLen)
 	}
+
+	// Subtest 1: File-based part (existing approach)
+	t.Run("file_based_part", func(t *testing.T) {
+		testFS := fs.NewLocalFileSystem()
+		tempDir := t.TempDir()
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				// Step 1: Create elements and initialize memPart
+				elements := createTestElements(tt.elements)
+				defer releaseElements(elements)
+
+				mp := generateMemPart()
+				defer releaseMemPart(mp)
+
+				mp.mustInitFromElements(elements)
+
+				// Step 2: Create part from memPart by flushing to disk
+				partDir := filepath.Join(tempDir, fmt.Sprintf("part_%s", tt.name))
+				mp.mustFlush(testFS, partDir)
+
+				part := mustOpenPart(partDir, testFS)
+				defer part.close()
+
+				// Run the test case
+				runTestCase(t, tt, part)
+			})
+		}
+	})
+
+	// Subtest 2: Memory-based part using openMemPart
+	t.Run("memory_based_part", func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				// Step 1: Create elements and initialize memPart
+				elements := createTestElements(tt.elements)
+				defer releaseElements(elements)
+
+				mp := generateMemPart()
+				defer releaseMemPart(mp)
+
+				mp.mustInitFromElements(elements)
+
+				// Step 2: Create part directly from memPart using openMemPart
+				part := openMemPart(mp)
+				defer part.close()
+
+				// Run the test case
+				runTestCase(t, tt, part)
+			})
+		}
+	})
 }
 
 func TestPartIterEdgeCases(t *testing.T) {
