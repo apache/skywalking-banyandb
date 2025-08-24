@@ -239,29 +239,20 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 }
 
 // MustWriteElements writes elements to the block writer.
-func (bw *blockWriter) MustWriteElements(sid common.SeriesID, userKeys []int64, tags [][]tag) {
+func (bw *blockWriter) MustWriteElements(sid common.SeriesID, userKeys []int64, data [][]byte, tags [][]tag) {
 	if len(userKeys) == 0 {
 		return
 	}
 
 	b := generateBlock()
 	defer releaseBlock(b)
+	// Copy core data
+	b.userKeys = append(b.userKeys, userKeys...)
+	b.data = append(b.data, data...)
 
-	// Convert to elements format for initialization
-	es := generateElements()
-	defer releaseElements(es)
+	// Process tags
+	b.mustInitFromTags(tags)
 
-	es.seriesIDs = append(es.seriesIDs, sid)
-	es.userKeys = append(es.userKeys, userKeys...)
-	es.tags = append(es.tags, tags...)
-
-	// Create data slice with proper length
-	es.data = make([][]byte, len(userKeys))
-	for i := range es.data {
-		es.data[i] = nil // Placeholder data
-	}
-
-	b.mustInitFromElements(es)
 	bw.mustWriteBlock(sid, b)
 }
 

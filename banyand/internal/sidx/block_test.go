@@ -19,9 +19,6 @@ package sidx
 
 import (
 	"testing"
-
-	"github.com/apache/skywalking-banyandb/api/common"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 func TestBlock_BasicOperations(t *testing.T) {
@@ -40,72 +37,6 @@ func TestBlock_BasicOperations(t *testing.T) {
 
 	if b.isFull() {
 		t.Error("Empty block should not be full")
-	}
-}
-
-func TestBlock_InitFromElements(t *testing.T) {
-	// Create test elements
-	elems := generateElements()
-	defer releaseElements(elems)
-
-	// Add test data
-	elems.seriesIDs = append(elems.seriesIDs, common.SeriesID(1), common.SeriesID(1))
-	elems.userKeys = append(elems.userKeys, 100, 200)
-	elems.data = append(elems.data, []byte("data1"), []byte("data2"))
-
-	// Add test tags
-	tag1 := tag{
-		name:      "service",
-		value:     []byte("web-service"),
-		valueType: pbv1.ValueTypeStr,
-		indexed:   true,
-	}
-	tag2 := tag{
-		name:      "endpoint",
-		value:     []byte("/api/users"),
-		valueType: pbv1.ValueTypeStr,
-		indexed:   false,
-	}
-
-	elems.tags = append(elems.tags,
-		[]tag{tag1, tag2},
-		[]tag{tag1, tag2},
-	)
-
-	// Create block and initialize from elements
-	b := generateBlock()
-	defer releaseBlock(b)
-
-	b.mustInitFromElements(elems)
-
-	// Verify block state
-	if b.isEmpty() {
-		t.Error("Block should not be empty after initialization")
-	}
-
-	if b.Len() != 2 {
-		t.Errorf("Expected block length 2, got %d", b.Len())
-	}
-
-	if len(b.userKeys) != 2 {
-		t.Errorf("Expected 2 user keys, got %d", len(b.userKeys))
-	}
-
-	if b.userKeys[0] != 100 || b.userKeys[1] != 200 {
-		t.Errorf("User keys not properly set: got %v", b.userKeys)
-	}
-
-	// Verify tags were processed
-	if len(b.tags) != 2 {
-		t.Errorf("Expected 2 tags, got %d", len(b.tags))
-	}
-
-	if _, exists := b.tags["service"]; !exists {
-		t.Error("Expected 'service' tag to exist")
-	}
-
-	if _, exists := b.tags["endpoint"]; !exists {
-		t.Error("Expected 'endpoint' tag to exist")
 	}
 }
 

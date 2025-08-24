@@ -25,6 +25,7 @@ import (
 	"io"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
@@ -55,6 +56,7 @@ type blockMetadata struct {
 	maxKey           int64
 	uncompressedSize uint64
 	count            uint64
+	keysEncodeType   encoding.EncodeType
 }
 
 type blockMetadataArray struct {
@@ -150,6 +152,7 @@ func (bm *blockMetadata) reset() {
 	bm.keysBlock = dataBlock{}
 	bm.uncompressedSize = 0
 	bm.count = 0
+	bm.keysEncodeType = 0
 
 	// Clear maps but keep them allocated
 	for k := range bm.tagsBlocks {
@@ -184,8 +187,8 @@ func (bm *blockMetadata) validate() error {
 	if bm.dataBlock.size == 0 {
 		return fmt.Errorf("invalid data block: size cannot be zero")
 	}
-	if bm.keysBlock.size == 0 {
-		return fmt.Errorf("invalid keys block: size cannot be zero")
+	if bm.keysBlock.size == 0 && bm.keysEncodeType != encoding.EncodeTypeConst {
+		return fmt.Errorf("invalid keys block: size cannot be zero unless using const encoding")
 	}
 	return nil
 }
@@ -297,6 +300,22 @@ func (bm *blockMetadata) marshal() ([]byte, error) {
 		return nil, fmt.Errorf("failed to write keys block size: %w", err)
 	}
 
+	// Write keys encoding information
+	if err := binary.Write(buf, binary.LittleEndian, byte(bm.keysEncodeType)); err != nil {
+		return nil, fmt.Errorf("failed to write keys encode type: %w", err)
+	}
+	if err := binary.Write(buf, binary.LittleEndian, bm.minKey); err != nil {
+		return nil, fmt.Errorf("failed to write keys first value: %w", err)
+	}
+
+	// Write count and uncompressed size
+	if err := binary.Write(buf, binary.LittleEndian, bm.count); err != nil {
+		return nil, fmt.Errorf("failed to write count: %w", err)
+	}
+	if err := binary.Write(buf, binary.LittleEndian, bm.uncompressedSize); err != nil {
+		return nil, fmt.Errorf("failed to write uncompressed size: %w", err)
+	}
+
 	// Write tag blocks count
 	if err := binary.Write(buf, binary.LittleEndian, uint32(len(bm.tagsBlocks))); err != nil {
 		return nil, fmt.Errorf("failed to write tag blocks count: %w", err)
@@ -364,6 +383,28 @@ func unmarshalBlockMetadata(data []byte) (*blockMetadata, error) {
 	if err := binary.Read(buf, binary.LittleEndian, &bm.keysBlock.size); err != nil {
 		releaseBlockMetadata(bm)
 		return nil, fmt.Errorf("failed to read keys block size: %w", err)
+	}
+
+	// Read keys encoding information
+	var encodeTypeByte byte
+	if err := binary.Read(buf, binary.LittleEndian, &encodeTypeByte); err != nil {
+		releaseBlockMetadata(bm)
+		return nil, fmt.Errorf("failed to read keys encode type: %w", err)
+	}
+	bm.keysEncodeType = encoding.EncodeType(encodeTypeByte)
+	if err := binary.Read(buf, binary.LittleEndian, &bm.minKey); err != nil {
+		releaseBlockMetadata(bm)
+		return nil, fmt.Errorf("failed to read keys first value: %w", err)
+	}
+
+	// Read count and uncompressed size
+	if err := binary.Read(buf, binary.LittleEndian, &bm.count); err != nil {
+		releaseBlockMetadata(bm)
+		return nil, fmt.Errorf("failed to read count: %w", err)
+	}
+	if err := binary.Read(buf, binary.LittleEndian, &bm.uncompressedSize); err != nil {
+		releaseBlockMetadata(bm)
+		return nil, fmt.Errorf("failed to read uncompressed size: %w", err)
 	}
 
 	// Read tag blocks count
@@ -467,12 +508,7 @@ func (bm *blockMetadata) addTagBlock(tagName string, offset, size uint64) {
 	bm.tagsBlocks[tagName] = dataBlock{offset: offset, size: size}
 }
 
-// getTagMetadata gets or creates a tag metadata reference in the block metadata.
-func (bm *blockMetadata) getTagMetadata(tagName string) *dataBlock {
-	if _, exists := bm.tagsBlocks[tagName]; !exists {
-		bm.tagsBlocks[tagName] = dataBlock{}
-	}
-	// Return pointer to the dataBlock for the tag
-	block := bm.tagsBlocks[tagName]
-	return &block
+// setTagMetadata sets the tag metadata reference in the block metadata.
+func (bm *blockMetadata) setTagMetadata(tagName string, offset, size uint64) {
+	bm.tagsBlocks[tagName] = dataBlock{offset: offset, size: size}
 }

@@ -95,38 +95,6 @@ func (b *block) reset() {
 	b.pooled = false
 }
 
-// mustInitFromElements initializes block from sorted elements.
-func (b *block) mustInitFromElements(elems *elements) {
-	b.reset()
-	if elems.Len() == 0 {
-		return
-	}
-
-	// Verify elements are sorted
-	elems.assertSorted()
-
-	// Copy core data
-	b.userKeys = append(b.userKeys, elems.userKeys...)
-	b.data = append(b.data, elems.data...)
-
-	// Process tags
-	b.mustInitFromTags(elems.tags)
-}
-
-// assertSorted verifies that elements are sorted correctly.
-func (e *elements) assertSorted() {
-	for i := 1; i < e.Len(); i++ {
-		if e.seriesIDs[i] < e.seriesIDs[i-1] {
-			panic(fmt.Sprintf("elements not sorted by seriesID: index %d (%d) < index %d (%d)",
-				i, e.seriesIDs[i], i-1, e.seriesIDs[i-1]))
-		}
-		if e.seriesIDs[i] == e.seriesIDs[i-1] && e.userKeys[i] < e.userKeys[i-1] {
-			panic(fmt.Sprintf("elements not sorted by userKey: index %d (%d) < index %d (%d) for seriesID %d",
-				i, e.userKeys[i], i-1, e.userKeys[i-1], e.seriesIDs[i]))
-		}
-	}
-}
-
 // mustInitFromTags processes tag data for the block.
 func (b *block) mustInitFromTags(elementTags [][]tag) {
 	if len(elementTags) == 0 {
@@ -280,8 +248,8 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 	bm.uncompressedSize = b.uncompressedSizeBytes()
 	bm.count = uint64(b.Len())
 
-	// Write user keys to keys.bin
-	mustWriteKeysTo(&bm.keysBlock, b.userKeys, &ww.keysWriter)
+	// Write user keys to keys.bin and capture encoding information
+	bm.keysEncodeType, bm.minKey = mustWriteKeysTo(&bm.keysBlock, b.userKeys, &ww.keysWriter)
 
 	// Write data payloads to data.bin
 	mustWriteDataTo(&bm.dataBlock, b.data, &ww.dataWriter)
@@ -346,13 +314,13 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	tmw.MustWrite(bb.Buf)
 
 	// Update block metadata
-	tagMeta := bm.getTagMetadata(tagName)
-	tagMeta.offset = tmw.bytesWritten - uint64(len(bb.Buf))
-	tagMeta.size = uint64(len(bb.Buf))
+	offset := tmw.bytesWritten - uint64(len(bb.Buf))
+	size := uint64(len(bb.Buf))
+	bm.setTagMetadata(tagName, offset, size)
 }
 
-// mustWriteKeysTo writes user keys to the keys writer.
-func mustWriteKeysTo(kb *dataBlock, userKeys []int64, keysWriter *writer) {
+// mustWriteKeysTo writes user keys to the keys writer and returns encoding metadata.
+func mustWriteKeysTo(kb *dataBlock, userKeys []int64, keysWriter *writer) (encoding.EncodeType, int64) {
 	bb := bigValuePool.Get()
 	if bb == nil {
 		bb = &bytes.Buffer{}
@@ -363,13 +331,17 @@ func mustWriteKeysTo(kb *dataBlock, userKeys []int64, keysWriter *writer) {
 	}()
 
 	// Encode user keys
-	bb.Buf, _, _ = encoding.Int64ListToBytes(bb.Buf[:0], userKeys)
+	var encodeType encoding.EncodeType
+	var firstValue int64
+	bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], userKeys)
 
 	// Compress and write
 	compressedData := zstd.Compress(nil, bb.Buf, 1)
 	kb.offset = keysWriter.bytesWritten
 	kb.size = uint64(len(compressedData))
 	keysWriter.MustWrite(compressedData)
+
+	return encodeType, firstValue
 }
 
 // mustWriteDataTo writes data payloads to the data writer.
