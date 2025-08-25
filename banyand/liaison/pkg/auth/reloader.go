@@ -62,8 +62,6 @@ func (ar *Reloader) loadConfig(filePath string) error {
 	if filePath == "" {
 		return errors.New("configFile must be provided")
 	}
-	cfg := ar.GetConfig()
-	originalHealthAuthEnabled := cfg.HealthAuthEnabled
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return err
@@ -77,12 +75,13 @@ func (ar *Reloader) loadConfig(filePath string) error {
 	if err != nil {
 		return err
 	}
-	err = yaml.Unmarshal(data, cfg)
+	newCfg := InitCfg()
+	err = yaml.Unmarshal(data, newCfg)
 	if err != nil {
 		return err
 	}
-	cfg.Enabled = true
-	cfg.HealthAuthEnabled = originalHealthAuthEnabled
+	ar.setAuthEnabled(true)
+	ar.setUsers(newCfg.Users)
 	return nil
 }
 
@@ -114,11 +113,11 @@ func (ar *Reloader) ConfigAuthReloader(configFile string, healthAuthEnabled bool
 		return errors.New("logger must not be nil")
 	}
 	err := ar.loadConfig(configFile)
-	cfg := ar.GetConfig()
-	cfg.HealthAuthEnabled = healthAuthEnabled
 	if err != nil {
-		return errors.Wrap(err, "failed to load initial auth config")
+		return errors.Wrapf(err, "failed to load initial auth config from %s", configFile)
 	}
+	cfg := ar.GetConfig()
+	ar.setHealthAuthEnabled(healthAuthEnabled)
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -155,6 +154,24 @@ func (ar *Reloader) GetConfig() *Config {
 	ar.mu.RLock()
 	defer ar.mu.RUnlock()
 	return ar.Config
+}
+
+func (ar *Reloader) setHealthAuthEnabled(enabled bool) {
+	ar.mu.Lock()
+	defer ar.mu.Unlock()
+	ar.Config.HealthAuthEnabled = enabled
+}
+
+func (ar *Reloader) setAuthEnabled(enabled bool) {
+	ar.mu.Lock()
+	defer ar.mu.Unlock()
+	ar.Config.Enabled = enabled
+}
+
+func (ar *Reloader) setUsers(users []User) {
+	ar.mu.Lock()
+	defer ar.mu.Unlock()
+	ar.Config.Users = users
 }
 
 // CheckUsernameAndPassword returns true if the provided username and password match any configured user.
