@@ -27,7 +27,7 @@ endif
 
 include scripts/build/version.mk
 
-PROJECTS := ui banyand bydbctl
+PROJECTS := ui banyand bydbctl ebpf-sidecar
 
 TEST_CI_OPTS ?=
 
@@ -46,7 +46,6 @@ clean-build: default  ## Clean build artifacts in all projects
 generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
 generate: default  ## Generate API codes
-
 build: TARGET=all
 build: default  ## Build all projects
 

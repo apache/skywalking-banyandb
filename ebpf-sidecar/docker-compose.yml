@@ -1,0 +1,135 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+version: '3.8'
+
+services:
+  # BanyanDB standalone instance
+  banyandb:
+    image: apache/skywalking-banyandb:latest
+    container_name: banyandb
+    ports:
+      - "17912:17912"  # gRPC port
+      - "17913:17913"  # HTTP port
+    environment:
+      - BANYANDB_MODE=standalone
+      - BANYANDB_LOGGING_LEVEL=info
+    volumes:
+      - banyandb-data:/tmp/banyandb
+    networks:
+      - banyandb-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:17913/api/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # eBPF Sidecar with Prometheus export
+  ebpf-sidecar-prometheus:
+    build:
+      context: ../
+      dockerfile: ebpf-sidecar/Dockerfile
+    image: banyandb/ebpf-sidecar:latest
+    container_name: ebpf-sidecar-prometheus
+    privileged: true  # Required for eBPF
+    pid: host         # Access host processes
+    network_mode: host # Access host network for monitoring
+    ports:
+      - "8080:8080"  # HTTP metrics endpoint
+      - "9090:9090"  # gRPC API
+    volumes:
+      - /sys:/sys:ro
+      - /proc:/proc:ro
+      - /lib/modules:/lib/modules:ro
+      - ./configs/config-prometheus.yaml:/etc/ebpf-sidecar/config.yaml:ro
+    environment:
+      - EBPF_SIDECAR_EXPORT_TYPE=prometheus
+      - EBPF_SIDECAR_COLLECTOR_INTERVAL=10s
+    depends_on:
+      - banyandb
+
+  # eBPF Sidecar with BanyanDB export
+  ebpf-sidecar-banyandb:
+    build:
+      context: ../
+      dockerfile: ebpf-sidecar/Dockerfile
+    image: banyandb/ebpf-sidecar:latest
+    container_name: ebpf-sidecar-banyandb
+    privileged: true  # Required for eBPF
+    pid: host         # Access host processes
+    ports:
+      - "8081:8080"  # HTTP metrics endpoint
+      - "9091:9090"  # gRPC API
+    volumes:
+      - /sys:/sys:ro
+      - /proc:/proc:ro
+      - /lib/modules:/lib/modules:ro
+      - ./configs/config-banyandb.yaml:/etc/ebpf-sidecar/config.yaml:ro
+    environment:
+      - EBPF_SIDECAR_EXPORT_TYPE=banyandb
+      - EBPF_SIDECAR_EXPORT_BANYANDB_ENDPOINT=banyandb:17912
+      - EBPF_SIDECAR_EXPORT_BANYANDB_GROUP=ebpf-metrics
+      - EBPF_SIDECAR_COLLECTOR_INTERVAL=10s
+    networks:
+      - banyandb-net
+    depends_on:
+      - banyandb
+
+  # Prometheus for scraping metrics (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - banyandb-net
+    depends_on:
+      - ebpf-sidecar-prometheus
+
+  # Grafana for visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./configs/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./configs/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - banyandb-net
+    depends_on:
+      - prometheus
+      - banyandb
+
+networks:
+  banyandb-net:
+    driver: bridge
+
+volumes:
+  banyandb-data:
+  prometheus-data:
+  grafana-data:

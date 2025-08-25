@@ -1,3 +1,4 @@
+#!/bin/bash
 # Licensed to Apache Software Foundation (ASF) under one or more contributor
 # license agreements. See the NOTICE file distributed with
 # this work for additional information regarding copyright
@@ -15,66 +16,39 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-bin
-include
-/build
-target
-tmp
+set -e
 
-# Test binary, build with `go test -c`
-*.test
-*.log
+echo "=== Basic I/O Test ==="
 
-# Ginkgo test report
-*.report
+TEST_DIR="/data/basic_io_test"
+mkdir -p $TEST_DIR
+cd $TEST_DIR
 
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
+# Test 1: Simple file operations
+echo "Test 1: Simple file operations"
+for i in {1..100}; do
+    echo "Test data $i" > file_$i.txt
+    cat file_$i.txt > /dev/null
+    rm file_$i.txt
+done
 
-# editor and IDE paraphernalia
-.idea
-*.swp
-*.swo
-*~
-.vscode
+# Test 2: Sequential reads
+echo "Test 2: Sequential reads"
+dd if=/dev/urandom of=sequential.dat bs=1M count=10 2>/dev/null
+for i in {1..10}; do
+    dd if=sequential.dat of=/dev/null bs=1M 2>/dev/null
+done
 
-.DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.run
+# Test 3: Multiple file descriptors
+echo "Test 3: Multiple file descriptors"
+for i in {1..10}; do
+    exec {fd}<>multi_fd_$i.txt
+    echo "FD test $i" >&$fd
+    exec {fd}>&-
+done
 
-# mock files
-*mock.go
-*mock_test.go
-gomock_reflect*
+# Cleanup
+cd /
+rm -rf $TEST_DIR
 
-# snky cache
-.dccache
-
-# okteto
-.stignore
-
-# profile result
-*.prof
-
-# cursor
-.cursorrules
-.cursor/
-
-# Claude
-Claude.md
-.claude/
-
-# eBPF generated files and binaries
-ebpf-sidecar/internal/ebpf/generated/
-ebpf-sidecar/sidecar
-ebpf-sidecar/build/
-
+echo "Basic I/O test completed"

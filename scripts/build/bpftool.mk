@@ -14,67 +14,20 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-bin
-include
-/build
-target
-tmp
+# Define the bpftool location - use 'which bpftool' if available on system
+BPFTL := $(shell which bpftool 2>/dev/null)
+IS_LINUX := $(shell uname -s | grep -i linux)
 
-# Test binary, build with `go test -c`
-*.test
-*.log
-
-# Ginkgo test report
-*.report
-
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
-
-# editor and IDE paraphernalia
-.idea
-*.swp
-*.swo
-*~
-.vscode
-
-.DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.run
-
-# mock files
-*mock.go
-*mock_test.go
-gomock_reflect*
-
-# snky cache
-.dccache
-
-# okteto
-.stignore
-
-# profile result
-*.prof
-
-# cursor
-.cursorrules
-.cursor/
-
-# Claude
-Claude.md
-.claude/
-
-# eBPF generated files and binaries
-ebpf-sidecar/internal/ebpf/generated/
-ebpf-sidecar/sidecar
-ebpf-sidecar/build/
-
+$(BPFTL):
+ifeq ($(IS_LINUX),Linux)
+	@echo "Installing bpftool (Linux detected)..."
+	@sudo apt-get update && sudo apt-get install -y bpftool clang llvm libelf-dev
+	@echo "Verifying bpftool installation..."
+	@which bpftool || (echo "Failed to install bpftool" && exit 1)
+	$(eval BPFTL := $(shell which bpftool))
+else
+	@echo "Non-Linux OS detected, switching to Docker for eBPF generation..."
+	@echo "Please ensure Docker is installed and running"
+endif
