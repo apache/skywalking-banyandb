@@ -38,14 +38,14 @@ func TestIterComprehensive(t *testing.T) {
 
 	// Test cases for comprehensive iterator testing
 	testCases := []struct {
+		blockFilter  index.Filter
 		name         string
-		parts        [][]testElement // Multiple parts, each containing elements
+		parts        [][]testElement
 		querySids    []common.SeriesID
+		expectOrder  []blockExpectation
 		minKey       int64
 		maxKey       int64
-		blockFilter  index.Filter
 		expectBlocks int
-		expectOrder  []blockExpectation
 	}{
 		{
 			name: "single_part_single_block",
@@ -531,14 +531,14 @@ type blockExpectation struct {
 
 // runIteratorTest runs the iterator test with the given test case and parts
 func runIteratorTest(t *testing.T, tc struct {
+	blockFilter  index.Filter
 	name         string
 	parts        [][]testElement
 	querySids    []common.SeriesID
+	expectOrder  []blockExpectation
 	minKey       int64
 	maxKey       int64
-	blockFilter  index.Filter
 	expectBlocks int
-	expectOrder  []blockExpectation
 }, parts []*part,
 ) {
 	bma := generateBlockMetadataArray()

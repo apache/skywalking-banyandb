@@ -4,20 +4,21 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ## Implementation Progress Overview
 
-**Completed Phases (25 tasks)**: ✅
+**Completed Phases (29 tasks)**: ✅
 - Phase 1: Core Data Structures (6 tasks)
-- Phase 2: Interface Definitions (5 tasks) 
+- Phase 2: Interface Definitions (5 tasks)
 - Phase 3: Mock Implementations (4 tasks)
 - Phase 4: Memory Management (4 tasks)
 - Phase 5: Snapshot Management (6 tasks)
+- Phase 6: Query Path (4 tasks) - Block Scanner completed
 
 **Remaining Phases**:
-- [ ] **Phase 6**: Query Path (5 tasks)
+- [ ] **Phase 6**: Query Path (1 remaining task)
 - [ ] **Phase 7**: Flush Operations (4 tasks)
 - [ ] **Phase 8**: Merge Operations (4 tasks)
 - [ ] **Phase 9**: Testing (4 tasks)
 
-**Total Tasks**: 40 (25 completed, 15 remaining)
+**Total Tasks**: 40 (29 completed, 11 remaining)
 
 ---
 
@@ -50,16 +51,16 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Memory usage during multi-part iteration is controlled
 
 ### 6.3 Block Scanner (`block_scanner.go` - like stream's block_scanner)
-- [ ] **Implementation Tasks**:
-  - [ ] Create `blockScanner` struct using `iter` for block access
-  - [ ] Implement `scan(ctx, blockCh chan *blockScanResultBatch)`
-  - [ ] Add batch processing with `blockScanResultBatch` pattern
-  - [ ] Create element-level filtering and tag matching
-- [ ] **Test Cases**:
-  - [ ] Batch processing maintains correct element ordering
-  - [ ] Memory quota management prevents OOM
-  - [ ] Tag filtering accuracy with bloom filters
-  - [ ] Worker coordination and error propagation
+- [x] **Implementation Tasks**:
+  - [x] Create `blockScanner` struct using `iter` for block access
+  - [x] Implement `scan(ctx, blockCh chan *blockScanResultBatch)`
+  - [x] Add batch processing with `blockScanResultBatch` pattern
+  - [x] Create element-level filtering and tag matching
+- [x] **Test Cases**:
+  - [x] Batch processing maintains correct element ordering
+  - [x] Memory quota management prevents OOM
+  - [x] Tag filtering accuracy with bloom filters
+  - [x] Worker coordination and error propagation
 
 ### 6.4 Query Result (`query_result.go` - like stream's `tsResult`)
 - [ ] **Implementation Tasks**:
