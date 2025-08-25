@@ -270,7 +270,6 @@ func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
 	pm.UncompressedSpanSizeBytes = bw.totalUncompressedSpanSizeBytes
 	pm.TotalCount = bw.totalCount
 	pm.BlocksCount = bw.totalBlocksCount
-	// TODO: update timestamp metadata when merging blocks
 	pm.MinTimestamp = bw.totalMinTimestamp
 	pm.MaxTimestamp = bw.totalMaxTimestamp
 

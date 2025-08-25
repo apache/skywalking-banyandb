@@ -18,7 +18,6 @@
 package trace
 
 import (
-	"container/heap"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -310,11 +309,10 @@ func (tst *tsTable) mustAddTraces(ts *traces) {
 }
 
 type tstIter struct {
-	err           error
-	parts         []*part
-	piPool        []partIter
-	piHeap        partIterHeap
-	nextBlockNoop bool
+	err    error
+	parts  []*part
+	piPool []*partIter
+	idx    int
 }
 
 func (ti *tstIter) reset() {
@@ -328,54 +326,32 @@ func (ti *tstIter) reset() {
 	}
 	ti.piPool = ti.piPool[:0]
 
-	for i := range ti.piHeap {
-		ti.piHeap[i] = nil
-	}
-	ti.piHeap = ti.piHeap[:0]
-
 	ti.err = nil
-	ti.nextBlockNoop = false
+	ti.idx = 0
 }
 
-func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, tids []string, minTimestamp, maxTimestamp int64) {
+func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, tid string) {
 	ti.reset()
 	ti.parts = parts
 
 	if n := len(ti.parts) - cap(ti.piPool); n > 0 {
-		ti.piPool = append(ti.piPool[:cap(ti.piPool)], make([]partIter, n)...)
+		ti.piPool = append(ti.piPool[:cap(ti.piPool)], make([]*partIter, n)...)
 	}
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
-		ti.piPool[i].init(bma, p, tids, minTimestamp, maxTimestamp)
+		ti.piPool[i] = &partIter{}
+		ti.piPool[i].init(bma, p, tid)
 	}
 
-	ti.piHeap = ti.piHeap[:0]
-	for i := range ti.piPool {
-		ps := &ti.piPool[i]
-		if !ps.nextBlock() {
-			if err := ps.error(); err != nil {
-				ti.err = fmt.Errorf("cannot initialize tsTable iteration: %w", err)
-				return
-			}
-			continue
-		}
-		ti.piHeap = append(ti.piHeap, ps)
-	}
-	if len(ti.piHeap) == 0 {
+	if len(ti.piPool) == 0 {
 		ti.err = io.EOF
 		return
 	}
-	heap.Init(&ti.piHeap)
-	ti.nextBlockNoop = true
 }
 
 func (ti *tstIter) nextBlock() bool {
 	if ti.err != nil {
 		return false
-	}
-	if ti.nextBlockNoop {
-		ti.nextBlockNoop = false
-		return true
 	}
 
 	ti.err = ti.next()
@@ -389,22 +365,17 @@ func (ti *tstIter) nextBlock() bool {
 }
 
 func (ti *tstIter) next() error {
-	psMin := ti.piHeap[0]
-	if psMin.nextBlock() {
-		heap.Fix(&ti.piHeap, 0)
-		return nil
+	for ti.idx < len(ti.piPool) {
+		pi := ti.piPool[ti.idx]
+		if pi.nextBlock() {
+			return nil
+		}
+		if err := pi.error(); err != nil {
+			return err
+		}
+		ti.idx++
 	}
-
-	if err := psMin.error(); err != nil {
-		return err
-	}
-
-	heap.Pop(&ti.piHeap)
-
-	if len(ti.piHeap) == 0 {
-		return io.EOF
-	}
-	return nil
+	return io.EOF
 }
 
 func (ti *tstIter) Error() error {
@@ -428,30 +399,3 @@ func releaseTstIter(ti *tstIter) {
 }
 
 var tstIterPool = pool.Register[*tstIter]("trace-tstIter")
-
-type partIterHeap []*partIter
-
-func (pih *partIterHeap) Len() int {
-	return len(*pih)
-}
-
-func (pih *partIterHeap) Less(i, j int) bool {
-	x := *pih
-	return x[i].curBlock.less(x[j].curBlock)
-}
-
-func (pih *partIterHeap) Swap(i, j int) {
-	x := *pih
-	x[i], x[j] = x[j], x[i]
-}
-
-func (pih *partIterHeap) Push(x any) {
-	*pih = append(*pih, x.(*partIter))
-}
-
-func (pih *partIterHeap) Pop() any {
-	a := *pih
-	v := a[len(a)-1]
-	*pih = a[:len(a)-1]
-	return v
-}
