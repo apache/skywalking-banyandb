@@ -272,11 +272,15 @@ func (mq *MockQuerier) matchesQuery(elem WriteRequest, req QueryRequest) bool {
 	// Basic range filtering - in reality this would be more sophisticated
 	// For the mock, we'll match all elements unless specific filters are applied
 
-	// Apply entity filtering if specified
-	if len(req.Entities) > 0 {
-		// Simplified entity matching for the mock
-		// In practice, this would properly evaluate entity constraints
-		_ = elem // Use elem to avoid unused parameter warning
+	// Apply SeriesID filtering if specified
+	if len(req.SeriesIDs) > 0 {
+		// Check if the element's SeriesID is in the requested list
+		for _, sid := range req.SeriesIDs {
+			if elem.SeriesID == sid {
+				return true
+			}
+		}
+		return false
 	}
 
 	// For the mock, we'll accept all elements that pass basic checks

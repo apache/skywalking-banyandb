@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -107,14 +106,10 @@ func (e *InterfaceUsageExamples) BasicWriteExample(ctx context.Context) error {
 func (e *InterfaceUsageExamples) AdvancedQueryExample(ctx context.Context) error {
 	// Create query request with range and tag filtering
 	queryReq := QueryRequest{
-		Name: "trace-sidx",
-		Entities: [][]*modelv1.TagValue{
-			{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "user-service"}}},
-			},
-		},
-		Filter: nil, // In production, use actual index.Filter implementation
-		Order:  nil, // In production, use actual index.OrderBy implementation
+		Name:      "trace-sidx",
+		SeriesIDs: []common.SeriesID{1, 2, 3}, // Example series IDs
+		Filter:    nil,                        // In production, use actual index.Filter implementation
+		Order:     nil,                        // In production, use actual index.OrderBy implementation
 		TagProjection: []model.TagProjection{
 			{Family: "service", Names: []string{"name"}},
 			{Family: "endpoint", Names: []string{"path"}},

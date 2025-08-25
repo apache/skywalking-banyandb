@@ -25,7 +25,6 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
@@ -127,10 +126,10 @@ type QueryRequest struct {
 	// Name identifies the series/index to query
 	Name string
 
-	// Entities specifies entity filtering (same as StreamQueryOptions)
-	Entities [][]*modelv1.TagValue
+	// SeriesIDs specifies the series to query (provided externally)
+	SeriesIDs []common.SeriesID
 
-	// Filter for key range and tag-based filtering using index.Filter
+	// Filter for tag-based filtering using index.Filter
 	// Note: sidx uses bloom filters for tag filtering, not inverted indexes
 	Filter index.Filter
 
@@ -142,6 +141,12 @@ type QueryRequest struct {
 
 	// MaxElementSize limits result size
 	MaxElementSize int
+
+	// MinKey specifies the minimum key for range queries (nil = no limit)
+	MinKey *int64
+
+	// MaxKey specifies the maximum key for range queries (nil = no limit)
+	MaxKey *int64
 }
 
 // QueryResponse contains a batch of query results and execution metadata.
@@ -353,24 +358,20 @@ func (qr QueryRequest) Validate() error {
 	if qr.Name == "" {
 		return fmt.Errorf("name cannot be empty")
 	}
+	if len(qr.SeriesIDs) == 0 {
+		return fmt.Errorf("at least one SeriesID is required")
+	}
 	if qr.MaxElementSize < 0 {
 		return fmt.Errorf("maxElementSize cannot be negative")
+	}
+	// Validate key range
+	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
+		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
 	// Validate tag projection names
 	for i, projection := range qr.TagProjection {
 		if projection.Family == "" {
 			return fmt.Errorf("tagProjection[%d] family cannot be empty", i)
-		}
-	}
-	// Validate entities structure
-	for i, entityGroup := range qr.Entities {
-		if len(entityGroup) == 0 {
-			return fmt.Errorf("entities[%d] cannot be empty", i)
-		}
-		for j, tagValue := range entityGroup {
-			if tagValue == nil {
-				return fmt.Errorf("entities[%d][%d] cannot be nil", i, j)
-			}
 		}
 	}
 	return nil
@@ -379,23 +380,25 @@ func (qr QueryRequest) Validate() error {
 // Reset resets the QueryRequest to its zero state.
 func (qr *QueryRequest) Reset() {
 	qr.Name = ""
-	qr.Entities = nil
+	qr.SeriesIDs = nil
 	qr.Filter = nil
 	qr.Order = nil
 	qr.TagProjection = nil
 	qr.MaxElementSize = 0
+	qr.MinKey = nil
+	qr.MaxKey = nil
 }
 
 // CopyFrom copies the QueryRequest from other to qr.
 func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 	qr.Name = other.Name
 
-	// Deep copy for Entities if it's a slice
-	if other.Entities != nil {
-		qr.Entities = make([][]*modelv1.TagValue, len(other.Entities))
-		copy(qr.Entities, other.Entities)
+	// Deep copy for SeriesIDs if it's a slice
+	if other.SeriesIDs != nil {
+		qr.SeriesIDs = make([]common.SeriesID, len(other.SeriesIDs))
+		copy(qr.SeriesIDs, other.SeriesIDs)
 	} else {
-		qr.Entities = nil
+		qr.SeriesIDs = nil
 	}
 
 	qr.Filter = other.Filter
@@ -410,6 +413,21 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 	}
 
 	qr.MaxElementSize = other.MaxElementSize
+
+	// Copy key range pointers
+	if other.MinKey != nil {
+		minKey := *other.MinKey
+		qr.MinKey = &minKey
+	} else {
+		qr.MinKey = nil
+	}
+
+	if other.MaxKey != nil {
+		maxKey := *other.MaxKey
+		qr.MaxKey = &maxKey
+	} else {
+		qr.MaxKey = nil
+	}
 }
 
 // Interface Usage Examples and Best Practices
