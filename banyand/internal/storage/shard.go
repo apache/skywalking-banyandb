@@ -37,10 +37,10 @@ type shardCache struct {
 
 // NewShardCache creates a new shard cache.
 func NewShardCache(group string, segmentID segmentID, shardID common.ShardID) Cache {
-	serviceCache := NewServiceCache().(*serviceCache)
+	serviceCache := NewServiceCache()
 	groupCache := &groupCache{
-		serviceCache: serviceCache,
-		group:        group,
+		cache: serviceCache,
+		group: group,
 	}
 	segmentCache := &segmentCache{
 		groupCache: groupCache,

@@ -77,7 +77,13 @@ func TestCachePutAndGet(t *testing.T) {
 
 func TestCacheEvict(t *testing.T) {
 	serviceCache := NewServiceCache().(*serviceCache)
-	serviceCache.maxCacheSize = 50
+
+	// Calculate the size of one entry to set appropriate cache size
+	testValue := testSizableString{value: "v0"}
+	valueSize := testValue.Size()
+	// Each entry has overhead: unsafe.Sizeof(entry{}) + unsafe.Sizeof(entryIndex{}) + unsafe.Sizeof(EntryKey{})
+	// Setting cache size to allow only 1 entry plus some buffer
+	serviceCache.maxCacheSize = valueSize + 150 // Enough for 1 entry with overhead
 
 	var expectedKey EntryKey
 	var expectedValue testSizableString
@@ -89,7 +95,7 @@ func TestCacheEvict(t *testing.T) {
 			segmentID: segmentID(i),
 			shardID:   common.ShardID(i),
 		}
-		value := testSizableString{value: "test-value" + strconv.Itoa(i)}
+		value := testSizableString{value: "v" + strconv.Itoa(i)}
 		serviceCache.Put(key, value)
 		if i == 9 {
 			expectedKey, expectedValue = key, value

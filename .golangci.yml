@@ -150,8 +150,13 @@ issues:
   - linters:
     - staticcheck
     text: "SA1019: package github.com/golang/protobuf"
+  # TODO: remove this after the trace is done
   - path: "^trace/"
     linters:
     - unused
     - unparam
+  # TODO: remove this after the sidx is done
+  - path: "internal/sidx/"
+    linters:
+    - unused
   max-same-issues: 0

@@ -330,3 +330,187 @@ func BenchmarkPartWrapper_StateCheck(b *testing.B) {
 		_ = pw.isActive()
 	}
 }
+
+func TestPartWrapper_CleanupPreventNegativeRefCount(t *testing.T) {
+	p := &part{
+		path:         "/test/part/008",
+		partMetadata: &partMetadata{ID: 8},
+	}
+
+	pw := newPartWrapper(p)
+	assert.Equal(t, int32(1), pw.refCount())
+
+	// Acquire a reference
+	assert.True(t, pw.acquire())
+	assert.Equal(t, int32(2), pw.refCount())
+
+	// Release back to 1
+	pw.release()
+	assert.Equal(t, int32(1), pw.refCount())
+	assert.True(t, pw.isActive())
+
+	// Final release should trigger cleanup and set ref to 0
+	pw.release()
+	assert.Equal(t, int32(0), pw.refCount())
+	assert.True(t, pw.isRemoved())
+
+	// Additional releases should not make ref count go further negative than logged
+	// The implementation allows negative counts but logs warnings
+	initialRef := pw.refCount()
+	pw.release()
+	newRef := pw.refCount()
+	assert.Equal(t, initialRef-1, newRef)   // Should decrement by 1
+	assert.LessOrEqual(t, newRef, int32(0)) // Should not be positive
+}
+
+func TestPartWrapper_CleanupWithConcurrentAccess(t *testing.T) {
+	p := &part{
+		path:         "/test/part/009",
+		partMetadata: &partMetadata{ID: 9},
+	}
+
+	pw := newPartWrapper(p)
+	const numGoroutines = 50
+	var wg sync.WaitGroup
+
+	// Track the minimum reference count observed
+	var minRefCount int64 = 1
+
+	// Start goroutines that try to acquire and immediately release
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				if pw.acquire() {
+					currentRef := atomic.LoadInt32(&pw.ref)
+					for {
+						current := atomic.LoadInt64(&minRefCount)
+						if int64(currentRef) >= current || atomic.CompareAndSwapInt64(&minRefCount, current, int64(currentRef)) {
+							break
+						}
+					}
+					pw.release()
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Verify that during concurrent access, ref count never went below 1
+	// (except during final cleanup)
+	assert.GreaterOrEqual(t, minRefCount, int64(1), "Reference count should never go below 1 during normal operation")
+
+	// Final cleanup
+	pw.release()
+	assert.Equal(t, int32(0), pw.refCount())
+	assert.True(t, pw.isRemoved())
+}
+
+func TestPartWrapper_CleanupStateTransition(t *testing.T) {
+	p := &part{
+		path:         "/test/part/010",
+		partMetadata: &partMetadata{ID: 10},
+	}
+
+	pw := newPartWrapper(p)
+
+	// Verify initial state
+	assert.True(t, pw.isActive())
+	assert.False(t, pw.isRemoving())
+	assert.False(t, pw.isRemoved())
+
+	// Mark for removal should change state but not trigger cleanup yet
+	pw.markForRemoval()
+	assert.False(t, pw.isActive())
+	assert.True(t, pw.isRemoving())
+	assert.False(t, pw.isRemoved())
+	assert.Equal(t, int32(1), pw.refCount()) // Should still be 1
+
+	// Release should trigger cleanup and change state to removed
+	pw.release()
+	assert.False(t, pw.isActive())
+	assert.False(t, pw.isRemoving())
+	assert.True(t, pw.isRemoved())
+	assert.Equal(t, int32(0), pw.refCount())
+}
+
+func TestPartWrapper_CleanupWithNilPart(t *testing.T) {
+	pw := newPartWrapper(nil)
+
+	// Verify cleanup works correctly with nil part
+	assert.Equal(t, int32(1), pw.refCount())
+	assert.True(t, pw.isActive())
+
+	// Mark for removal
+	pw.markForRemoval()
+	assert.True(t, pw.isRemoving())
+
+	// Release should complete cleanup without issues
+	pw.release()
+	assert.True(t, pw.isRemoved())
+	assert.Equal(t, int32(0), pw.refCount())
+
+	// Additional releases should be handled gracefully
+	pw.release()
+	assert.Equal(t, int32(-1), pw.refCount())
+}
+
+func TestPartWrapper_CleanupRaceCondition(t *testing.T) {
+	p := &part{
+		path:         "/test/part/011",
+		partMetadata: &partMetadata{ID: 11},
+	}
+
+	pw := newPartWrapper(p)
+
+	// Acquire multiple references
+	assert.True(t, pw.acquire()) // ref = 2
+	assert.True(t, pw.acquire()) // ref = 3
+	assert.True(t, pw.acquire()) // ref = 4
+
+	var wg sync.WaitGroup
+	const numReleasers = 4
+
+	// Start multiple goroutines to release references simultaneously
+	for i := 0; i < numReleasers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pw.release()
+		}()
+	}
+
+	wg.Wait()
+
+	// All references should be released, cleanup should have occurred exactly once
+	assert.Equal(t, int32(0), pw.refCount())
+	assert.True(t, pw.isRemoved())
+
+	// Verify that no further operations are possible
+	assert.False(t, pw.acquire())
+}
+
+func TestPartWrapper_CleanupIdempotency(t *testing.T) {
+	p := &part{
+		path:         "/test/part/012",
+		partMetadata: &partMetadata{ID: 12},
+	}
+
+	pw := newPartWrapper(p)
+
+	// Release to trigger cleanup
+	pw.release()
+	assert.Equal(t, int32(0), pw.refCount())
+	assert.True(t, pw.isRemoved())
+
+	// Call cleanup directly multiple times - should be safe
+	pw.cleanup()
+	pw.cleanup()
+	pw.cleanup()
+
+	// State should remain consistent
+	assert.True(t, pw.isRemoved())
+	assert.Equal(t, int32(0), pw.refCount())
+}

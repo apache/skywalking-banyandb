@@ -24,12 +24,7 @@ This is the SkyWalking BanyanDB project - a distributed time-series database wri
 Follow these strict coding standards when generating or modifying Go code.
 
 ## FORMATTING RULES
-1. Use gofumpt for code formatting (stricter than gofmt)
-2. Use gci for import organization with specific sections:
-   - standard library imports
-   - default imports  
-   - github.com/apache/skywalking-banyandb/ prefix imports
-3. Maximum line length: 170 characters
+1. Maximum line length: 170 characters
 
 ## LINTING RULES
 1. Variable shadowing prevention (govet shadow enabled)
@@ -40,7 +35,7 @@ Follow these strict coding standards when generating or modifying Go code.
 6. Documentation standards (godot scope: toplevel)
 
 ## IMPORT ORGANIZATION
-Follow the gci sections order:
+Follow the sections order:
 1. Standard library imports
 2. Default imports
 3. github.com/apache/skywalking-banyandb/ prefix imports
@@ -205,7 +200,7 @@ if x != nil && x.y {
 ### IMPORTANT: Always follow these steps:
 1. Check for existing variable names in the current scope before declaring new ones
 2. Use descriptive variable names to avoid shadowing
-3. Organize imports according to gci sections
+3. Organize imports according to "IMPORT ORGANIZATION" sections
 4. Use proper import aliases for the project's protobuf packages
 5. Follow error handling patterns with proper error wrapping
 6. Add appropriate documentation for exported functions and types

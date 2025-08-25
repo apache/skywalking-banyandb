@@ -436,3 +436,13 @@ func (bm *blockMetadata) setKeysBlock(offset, size uint64) {
 func (bm *blockMetadata) addTagBlock(tagName string, offset, size uint64) {
 	bm.tagsBlocks[tagName] = dataBlock{offset: offset, size: size}
 }
+
+// getTagMetadata gets or creates a tag metadata reference in the block metadata.
+func (bm *blockMetadata) getTagMetadata(tagName string) *dataBlock {
+	if _, exists := bm.tagsBlocks[tagName]; !exists {
+		bm.tagsBlocks[tagName] = dataBlock{}
+	}
+	// Return pointer to the dataBlock for the tag
+	block := bm.tagsBlocks[tagName]
+	return &block
+}

@@ -194,21 +194,38 @@ type blockMetadataArray struct {
 }
 
 func (bma *blockMetadataArray) Size() uint64 {
+	// Size of the struct itself (contains slice header)
 	size := uint64(unsafe.Sizeof(*bma))
-	size += uint64(len(bma.arr)) * uint64(unsafe.Sizeof(blockMetadata{}))
+
+	// Size of each blockMetadata struct (just the static parts)
 	for i := range bma.arr {
 		bm := &bma.arr[i]
+		// Base struct size (fixed fields only)
+		size += uint64(unsafe.Sizeof(blockMetadata{}))
+
 		if bm.tagFamilies != nil {
-			size += uint64(len(bm.tagFamilies)) * uint64(unsafe.Sizeof(dataBlock{}))
-			for name := range bm.tagFamilies {
-				size += uint64(unsafe.Sizeof("")) + uint64(len(name))
+			// Map overhead + entries (key string header + key data + pointer to dataBlock + actual dataBlock)
+			mapOverhead := uint64(48) // Approximate Go map overhead
+			size += mapOverhead
+			for name, db := range bm.tagFamilies {
+				if db != nil {
+					size += uint64(unsafe.Sizeof("")) + uint64(len(name)) // key
+					size += uint64(unsafe.Sizeof((*dataBlock)(nil)))      // pointer
+					size += uint64(unsafe.Sizeof(*db))                    // actual dataBlock value
+				}
 			}
 		}
 		if bm.tagProjection != nil {
-			size += uint64(len(bm.tagProjection)) * uint64(unsafe.Sizeof(model.TagProjection{}))
+			// Account for slice header
+			size += uint64(unsafe.Sizeof(bm.tagProjection))
 			for j := range bm.tagProjection {
 				tp := &bm.tagProjection[j]
-				size += uint64(unsafe.Sizeof("")) + uint64(len(tp.Family)) // Family string header + data
+				// TagProjection struct size
+				size += uint64(unsafe.Sizeof(model.TagProjection{}))
+				// Family string header + data
+				size += uint64(unsafe.Sizeof("")) + uint64(len(tp.Family))
+				// Names slice header + entries
+				size += uint64(unsafe.Sizeof(tp.Names))
 				for _, name := range tp.Names {
 					size += uint64(unsafe.Sizeof("")) + uint64(len(name)) // Each name string header + data
 				}
