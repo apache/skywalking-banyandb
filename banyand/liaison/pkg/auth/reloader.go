@@ -124,7 +124,7 @@ func (ar *Reloader) ConfigAuthReloader(configFile string, healthAuthEnabled bool
 		return errors.Wrap(err, "failed to create fsnotify watcher")
 	}
 
-	ar.Config = cfg
+	ar.setConfig(cfg)
 	ar.configFile = configFile
 	ar.log = log
 	ar.watcher = watcher
@@ -154,6 +154,12 @@ func (ar *Reloader) GetConfig() *Config {
 	ar.mu.RLock()
 	defer ar.mu.RUnlock()
 	return ar.Config
+}
+
+func (ar *Reloader) setConfig(cfg *Config) {
+	ar.mu.Lock()
+	defer ar.mu.Unlock()
+	ar.Config = cfg
 }
 
 func (ar *Reloader) setHealthAuthEnabled(enabled bool) {
