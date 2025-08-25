@@ -1,0 +1,19 @@
+# Environment configuration for eBPF sidecar testing
+
+# Export mode: banyandb, file, or prometheus
+EXPORT_MODE=file
+
+# BanyanDB configuration
+BYDB_ENDPOINT=localhost:17912
+
+# Collection settings
+COLLECTION_INTERVAL=10s
+CLEANUP_INTERVAL=60s
+
+# Load generation settings
+LOAD_DURATION=60
+LOAD_CONCURRENCY=10
+TEST_DATA_SIZE=100M
+
+# Logging
+LOG_LEVEL=debug

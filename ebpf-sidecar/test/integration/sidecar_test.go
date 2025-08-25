@@ -18,11 +18,10 @@
 //go:build integration && linux
 // +build integration,linux
 
-package ebpf_sidecar_test
+package integration_test
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"syscall"
@@ -35,7 +34,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/collector"
 	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/config"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
 )
 
 func TestIOMonitorIntegration(t *testing.T) {

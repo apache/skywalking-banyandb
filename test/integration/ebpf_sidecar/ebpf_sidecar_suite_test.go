@@ -15,19 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build integration && linux
-// +build integration,linux
-
-package ebpf_sidecar_test
+// Package integration_ebpf_sidecar_test is an integration test suite.
+package integration_ebpf_sidecar_test
 
 import (
 	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-// TestMain can be used for global setup/teardown if needed
-// For now, we keep tests simple and self-contained in sidecar_test.go
-func TestMain(m *testing.M) {
-	// Each test handles its own setup/cleanup
-	// This keeps tests independent and easier to debug
-	m.Run()
+func TestEBPFSidecar(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "eBPF Sidecar Integration Suite", Label("integration", "ebpf"))
 }

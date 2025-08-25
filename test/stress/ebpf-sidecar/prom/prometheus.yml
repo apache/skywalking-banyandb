@@ -1,0 +1,16 @@
+# Prometheus configuration for eBPF sidecar monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'ebpf-sidecar'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+    metrics_path: '/metrics'
+    
+  - job_name: 'banyandb'
+    static_configs:
+      - targets: ['banyandb:2121']
+    metrics_path: '/metrics'
