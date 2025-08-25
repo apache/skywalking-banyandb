@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -115,10 +116,10 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 
 func Test_tstIter(t *testing.T) {
 	type testCtx struct {
+		tsList       []*traces
 		wantErr      error
 		name         string
-		tsList       []*traces
-		tids         []string
+		tid          string
 		want         []blockMetadata
 		minTimestamp int64
 		maxTimestamp int64
@@ -136,14 +137,14 @@ func Test_tstIter(t *testing.T) {
 		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
 		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
-		ti.init(bma, pp, tt.tids, tt.minTimestamp, tt.maxTimestamp)
+		ti.init(bma, pp, tt.tid)
 		var got []blockMetadata
 		for ti.nextBlock() {
-			if ti.piHeap[0].curBlock.traceID == "" {
+			if ti.piPool[ti.idx].curBlock.traceID == "" {
 				t.Errorf("Expected curBlock to be initialized, but it was nil")
 			}
 			var bm blockMetadata
-			bm.copyFrom(ti.piHeap[0].curBlock)
+			bm.copyFrom(ti.piPool[ti.idx].curBlock)
 			got = append(got, bm)
 		}
 
@@ -166,37 +167,28 @@ func Test_tstIter(t *testing.T) {
 	t.Run("memory snapshot", func(t *testing.T) {
 		tests := []testCtx{
 			{
-				name:         "Test with no traces",
-				tsList:       []*traces{},
-				tids:         []string{"trace1", "trace2", "trace3"},
-				minTimestamp: 1,
-				maxTimestamp: 1,
+				name:   "Test with no traces",
+				tsList: []*traces{},
 			},
 			{
 				name:         "Test with single part",
 				tsList:       []*traces{tsTS1},
-				tids:         []string{"trace1", "trace2", "trace3"},
+				tid:          "trace1",
 				minTimestamp: 1,
-				maxTimestamp: 1,
+				maxTimestamp: 2,
 				want: []blockMetadata{
 					{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
 				},
 			},
 			{
 				name:         "Test with multiple parts",
 				tsList:       []*traces{tsTS1, tsTS2},
-				tids:         []string{"trace1", "trace2", "trace3"},
+				tid:          "trace1",
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
 					{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
 					{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
 				},
 			},
 		}
@@ -223,6 +215,10 @@ func Test_tstIter(t *testing.T) {
 			})
 		}
 	})
+}
+
+var allTagProjections = &model.TagProjection{
+	Names: []string{"strArrTag", "strTag", "intTag"},
 }
 
 var tsTS1 = &traces{
