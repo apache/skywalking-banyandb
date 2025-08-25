@@ -87,10 +87,10 @@ Located in `ebpf-sidecar/internal/*/`:
 - No special privileges required
 
 ### Integration Tests
-Located in `ebpf-sidecar/test/integration/`:
-- Test with real eBPF programs
-- Require Linux + root privileges
-- Use build tag: `//go:build integration && linux`
+Located in `test/integration/ebpf_sidecar/`:
+- Currently contains placeholder tests for CI
+- Real eBPF tests would require Linux + root privileges
+- Future tests will use build tag: `//go:build integration && linux`
 
 ### Stress Tests
 Located in `test/stress/ebpf-sidecar/`:
@@ -107,8 +107,12 @@ Located in `test/stress/ebpf-sidecar/`:
 cd ebpf-sidecar
 go test ./...
 
-# Integration tests (requires root)
-sudo go test -tags=integration,linux ./test/integration/
+# Integration tests from root directory (requires root for real tests)
+cd /path/to/skywalking-banyandb
+sudo go test -tags=integration,linux ./test/integration/ebpf_sidecar/
+
+# Or using ginkgo
+bin/ginkgo ./test/integration/ebpf_sidecar/
 
 # Stress tests
 cd test/stress/ebpf-sidecar
@@ -122,8 +126,8 @@ make test-stress
 ginkgo ./test/integration/ebpf_sidecar
 
 # Future CI with mock mode
-./ebpf-sidecar --mock-mode &
-go test ./test/integration/ebpf_sidecar/api_test.go
+./ebpf-sidecar/build/bin/ebpf-sidecar --mock-mode &
+go test ./test/integration/ebpf_sidecar/
 
 # Future CI with privileged container
 docker run --privileged ... make test-ebpf

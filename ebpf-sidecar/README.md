@@ -1,135 +1,103 @@
-# eBPF Sidecar Agent
+# Apache SkyWalking BanyanDB eBPF Sidecar Agent
 
-The eBPF Sidecar Agent provides kernel-level observability for BanyanDB operations, offering insights into system calls, memory management, and I/O patterns.
+## Overview
 
-## Current Status
+The eBPF Sidecar Agent is a standalone observability service that provides kernel-level monitoring for Apache SkyWalking BanyanDB. It leverages eBPF (extended Berkeley Packet Filter) technology to collect system metrics with minimal overhead, offering deep insights into I/O patterns, memory management, and system call behavior.
 
-### ✅ Completed Features
-- **Core Architecture**: Standalone sidecar service with modular design
-- **eBPF Programs**: Comprehensive I/O monitoring (`iomonitor.c`)
-  - fadvise system call tracking (TID-based to avoid race conditions)
-  - Page cache hit/miss rate monitoring
-  - Memory reclaim and LRU statistics
-- **Metrics Collection**: Unified `iomonitor_module.go` with memory management
-- **Prometheus Export**: Full implementation with proper formatting
-- **BanyanDB Native Export**: Direct metrics push to BanyanDB with batching
-- **gRPC API**: Full service implementation with protobuf definitions in `/api/proto/banyandb/ebpf/v1/`
-- **Docker Support**: Multi-stage Dockerfiles (Ubuntu and Alpine based)
-- **Docker Compose**: Complete stack for local testing with BanyanDB, Prometheus, and Grafana
-- **Memory Management**: Clear-after-read strategy for production use
-- **Integration Tests**: Located in `/test/integration/ebpf_sidecar/`
-- **Build System**: Makefile with automatic dependency installation
+## Features
 
-### 📊 Available Metrics
-- `ebpf_fadvise_calls_total` - Total fadvise() system calls
-- `ebpf_fadvise_success_rate_percent` - Success rate of fadvise calls
-- `ebpf_cache_miss_rate_percent` - Page cache miss rate (key metric)
-- `ebpf_cache_hit_rate_percent` - Page cache hit rate
-- `ebpf_memory_reclaim_efficiency_percent` - Memory reclaim efficiency
-- `ebpf_memory_direct_reclaim_processes` - Processes in direct reclaim
+### Core Capabilities
+- **System Call Monitoring**: Track and analyze critical system calls including `fadvise64` for cache management
+- **Page Cache Analytics**: Monitor cache hit/miss rates to optimize database performance
+- **Memory Pressure Detection**: Track memory reclaim operations and efficiency
+- **Multi-Architecture Support**: Compatible with x86_64 and ARM64 architectures
+- **Flexible Export Options**: Support for both Prometheus scraping and native BanyanDB push
+
+### Metrics Provided
+
+| Metric | Description | Type |
+|--------|-------------|------|
+| `ebpf_fadvise_calls_total` | Total number of fadvise() system calls | Counter |
+| `ebpf_fadvise_success_rate_percent` | Success rate of fadvise operations | Gauge |
+| `ebpf_cache_hit_rate_percent` | Page cache hit rate | Gauge |
+| `ebpf_cache_miss_rate_percent` | Page cache miss rate (critical for performance) | Gauge |
+| `ebpf_memory_reclaim_efficiency_percent` | Memory reclaim operation efficiency | Gauge |
+| `ebpf_memory_direct_reclaim_processes` | Number of processes in direct memory reclaim | Gauge |
 
 ## Architecture
 
+The sidecar operates as an independent service alongside BanyanDB instances:
+
 ```
-┌─────────────────────────────────────────┐
-│            User Space                    │
-│  ┌─────────────────────────────────┐    │
-│  │     eBPF Sidecar Agent          │    │
-│  │  ┌──────────┐  ┌──────────┐    │    │
-│  │  │Collector │  │ Server   │    │    │
-│  │  │          │  │ (gRPC/   │    │    │
-│  │  │          │  │  HTTP)   │    │    │
-│  │  └────┬─────┘  └──────────┘    │    │
-│  └───────┼─────────────────────────┘    │
-└──────────┼───────────────────────────────┘
-           │
-┌──────────┼───────────────────────────────┐
-│          ▼        Kernel Space           │
-│  ┌─────────────────────────────────┐    │
-│  │      eBPF Programs              │    │
-│  │  ┌──────────┐  ┌──────────┐    │    │
-│  │  │ fadvise  │  │ memory   │    │    │
-│  │  │ monitor  │  │ monitor  │    │    │
-│  │  └──────────┘  └──────────┘    │    │
-│  └─────────────────────────────────┘    │
-└──────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│                BanyanDB Pod                  │
+│                                              │
+│  ┌──────────────┐      ┌──────────────────┐ │
+│  │   BanyanDB   │      │  eBPF Sidecar    │ │
+│  │    Server    │      │                  │ │
+│  │              │      │  ┌────────────┐  │ │
+│  │              │      │  │ Collector  │  │ │
+│  │              │◄─────┤  ├────────────┤  │ │
+│  │              │      │  │ gRPC/HTTP │  │ │
+│  └──────────────┘      │  │  Server    │  │ │
+│                        │  └─────┬──────┘  │ │
+│                        └────────┼──────────┘ │
+│                                 │            │
+│                          ┌──────▼──────┐     │
+│                          │ eBPF Kernel │     │
+│                          │  Programs   │     │
+│                          └─────────────┘     │
+└─────────────────────────────────────────────┘
 ```
 
-## Quick Start
+## Requirements
 
-### Prerequisites
-
-- Go 1.24+
+### System Requirements
 - Linux kernel 4.14+ with eBPF support
-- Root privileges (for eBPF program loading)
-- clang and llvm (for compiling eBPF programs)
+- Root privileges or CAP_BPF and CAP_PERFMON capabilities
+- Go 1.24+ (for building from source)
 
-### Building
+### Build Requirements
+- clang and LLVM (for compiling eBPF programs)
+- bpftool (for generating vmlinux.h)
+- Linux kernel headers
+
+## Installation
+
+### Building from Source
 
 ```bash
+# Clone the repository
+git clone https://github.com/apache/skywalking-banyandb.git
+cd skywalking-banyandb/ebpf-sidecar
+
+# Install dependencies (automatic detection)
+make install-deps
+
 # Build the sidecar
-cd ebpf-sidecar
-go build ./cmd/sidecar
+make build
 
-# Or from root directory
-cd /path/to/skywalking-banyandb
-go build ./ebpf-sidecar/cmd/sidecar
-
-# Run integration tests (requires root)
-sudo go test -tags=integration -v ./test/integration/ebpf_sidecar/
-
-# Run specific test
-sudo go test -tags=integration -run TestIOMonitorIntegration -v ./test/integration/ebpf_sidecar/
+# Binary will be available at build/bin/ebpf-sidecar
 ```
 
-### Running
+### Docker Images
 
 ```bash
-# Run with default configuration
-sudo ./sidecar
+# Build Ubuntu-based image
+docker build -f Dockerfile -t skywalking-banyandb/ebpf-sidecar:latest .
 
-# Run with custom configuration
-sudo ./sidecar --config configs/config.yaml
-
-# Check version
-./sidecar version
-
-# Check metrics endpoint (while running)
-curl http://localhost:8080/metrics
-curl http://localhost:8080/health
-curl http://localhost:8080/api/v1/stats
+# Build Alpine-based image (smaller size)
+docker build -f Dockerfile.alpine -t skywalking-banyandb/ebpf-sidecar:alpine .
 ```
 
 ## Configuration
 
-The sidecar can be configured via YAML file or environment variables.
+The sidecar supports configuration via YAML files or environment variables.
 
-### Export Options
-
-The sidecar supports two export modes:
-
-1. **Prometheus Export** (default): Metrics are exposed via HTTP endpoint for scraping
-2. **BanyanDB Native Export**: Metrics are pushed directly to BanyanDB
-
-#### Prometheus Mode:
-```yaml
-export:
-  type: prometheus
-```
-
-#### BanyanDB Mode:
-```yaml
-export:
-  type: banyandb
-  banyandb:
-    endpoint: localhost:17912
-    group: ebpf-metrics
-    timeout: 30s
-```
-
-### Full Configuration Example:
+### Basic Configuration
 
 ```yaml
+# configs/config.yaml
 server:
   grpc:
     port: 9090
@@ -140,49 +108,56 @@ server:
 collector:
   interval: 10s
   modules:
-    - iomonitor  # Unified module for all I/O monitoring
+    - iomonitor
 
 export:
-  type: banyandb  # Switch to "prometheus" for Prometheus scraping
+  type: prometheus  # or "banyandb"
+```
+
+### Export Configurations
+
+#### Prometheus Mode (Default)
+```yaml
+export:
+  type: prometheus
+```
+
+Metrics available at `http://localhost:8080/metrics`
+
+#### BanyanDB Native Mode
+```yaml
+export:
+  type: banyandb
   banyandb:
     endpoint: localhost:17912
     group: ebpf-metrics
     timeout: 30s
 ```
 
-Environment variables use the prefix `EBPF_SIDECAR_` (e.g., `EBPF_SIDECAR_SERVER_GRPC_PORT=9090`).
+### Environment Variables
 
-## API Endpoints
+All configuration options can be set via environment variables with the prefix `EBPF_SIDECAR_`:
 
-### HTTP Endpoints
-
-- `GET /metrics` - Prometheus format metrics
-- `GET /health` - Health check
-- `GET /api/v1/stats` - JSON statistics
-
-### gRPC Services
-
-The gRPC API is defined in `/api/proto/banyandb/ebpf/v1/` and provides:
-
-- `EBPFMetricsService.GetMetrics` - Get current metrics from all or specific modules
-- `EBPFMetricsService.StreamMetrics` - Stream real-time metrics updates
-- `EBPFMetricsService.GetIOStats` - Get detailed I/O statistics
-- `EBPFMetricsService.GetModuleStatus` - Check status of eBPF modules
-- `EBPFMetricsService.ConfigureModule` - Enable/disable modules (coming soon)
-- `EBPFMetricsService.GetHealth` - Health check
+```bash
+export EBPF_SIDECAR_SERVER_GRPC_PORT=9090
+export EBPF_SIDECAR_EXPORT_TYPE=prometheus
+```
 
 ## Deployment
 
-### Docker
+### Standalone Mode
 
 ```bash
-# Build Docker image (Ubuntu-based)
-docker build -f ebpf-sidecar/Dockerfile -t banyandb/ebpf-sidecar:latest .
+# Run with default configuration
+sudo ./build/bin/ebpf-sidecar
 
-# Build lightweight Alpine image
-docker build -f ebpf-sidecar/Dockerfile.alpine -t banyandb/ebpf-sidecar:alpine .
+# Run with custom configuration
+sudo ./build/bin/ebpf-sidecar --config configs/config.yaml
+```
 
-# Run container with Prometheus export
+### Docker Deployment
+
+```bash
 docker run -d \
   --name ebpf-sidecar \
   --privileged \
@@ -192,120 +167,179 @@ docker run -d \
   -v /lib/modules:/lib/modules:ro \
   -p 8080:8080 \
   -p 9090:9090 \
-  banyandb/ebpf-sidecar:latest
-
-# Run with BanyanDB export
-docker run -d \
-  --name ebpf-sidecar \
-  --privileged \
-  --pid host \
-  -e EBPF_SIDECAR_EXPORT_TYPE=banyandb \
-  -e EBPF_SIDECAR_EXPORT_BANYANDB_ENDPOINT=banyandb:17912 \
-  -p 8080:8080 \
-  -p 9090:9090 \
-  banyandb/ebpf-sidecar:latest
+  skywalking-banyandb/ebpf-sidecar:latest
 ```
 
 ### Docker Compose
 
+A complete stack with BanyanDB, Prometheus, and Grafana is provided:
+
 ```bash
-# Start complete stack (BanyanDB + eBPF Sidecar + Prometheus + Grafana)
 cd ebpf-sidecar
 docker-compose up -d
 
-# View logs
-docker-compose logs -f ebpf-sidecar-prometheus
-docker-compose logs -f ebpf-sidecar-banyandb
-
-# Access services
-# - eBPF Metrics (Prometheus): http://localhost:8080/metrics
-# - eBPF Metrics (BanyanDB): http://localhost:8081/metrics
-# - Prometheus UI: http://localhost:9092
+# Access services:
+# - eBPF Metrics: http://localhost:8080/metrics
+# - Prometheus: http://localhost:9092
 # - Grafana: http://localhost:3000 (admin/admin)
-# - BanyanDB gRPC: localhost:17912
-
-# Stop stack
-docker-compose down
 ```
 
-### Kubernetes
+### Kubernetes Deployment
 
-Deploy as a sidecar container with BanyanDB:
+Deploy as a sidecar container alongside BanyanDB:
 
 ```yaml
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banyandb
 spec:
-  containers:
-  - name: banyandb
-    image: apache/skywalking-banyandb:latest
-    
-  - name: ebpf-sidecar
-    image: skywalking-banyandb/ebpf-sidecar:latest
-    securityContext:
-      privileged: true
-    volumeMounts:
-    - name: sys
-      mountPath: /sys
-    - name: modules
-      mountPath: /lib/modules
-      readOnly: true
-      
-  volumes:
-  - name: sys
-    hostPath:
-      path: /sys
-  - name: modules
-    hostPath:
-      path: /lib/modules
+  template:
+    spec:
+      containers:
+      - name: banyandb
+        image: apache/skywalking-banyandb:latest
+        ports:
+        - containerPort: 17912
+        
+      - name: ebpf-sidecar
+        image: skywalking-banyandb/ebpf-sidecar:latest
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - BPF
+            - PERFMON
+            - SYS_ADMIN
+        ports:
+        - containerPort: 8080
+          name: metrics
+        - containerPort: 9090
+          name: grpc
+        volumeMounts:
+        - name: sys
+          mountPath: /sys
+          readOnly: true
+        - name: proc
+          mountPath: /proc
+          readOnly: true
+        - name: modules
+          mountPath: /lib/modules
+          readOnly: true
+        env:
+        - name: EBPF_SIDECAR_EXPORT_TYPE
+          value: "prometheus"
+          
+      volumes:
+      - name: sys
+        hostPath:
+          path: /sys
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: modules
+        hostPath:
+          path: /lib/modules
+```
+
+## API Reference
+
+### HTTP Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/metrics` | GET | Prometheus-format metrics |
+| `/health` | GET | Health check endpoint |
+| `/api/v1/stats` | GET | JSON-formatted statistics |
+
+### gRPC Services
+
+The gRPC API is defined in `/api/proto/banyandb/ebpf/v1/`:
+
+```protobuf
+service EBPFMetricsService {
+  rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse);
+  rpc StreamMetrics(StreamMetricsRequest) returns (stream MetricData);
+  rpc GetIOStats(GetIOStatsRequest) returns (GetIOStatsResponse);
+  rpc GetModuleStatus(GetModuleStatusRequest) returns (GetModuleStatusResponse);
+  rpc GetHealth(HealthRequest) returns (HealthResponse);
+}
 ```
 
 ## Development
-
-### Adding New eBPF Programs
-
-1. Create eBPF C program in `internal/ebpf/programs/`
-2. Add Go bindings generation in `internal/ebpf/loader.go`
-3. Implement collector module in `internal/collector/modules/`
-4. Register module in collector configuration
 
 ### Project Structure
 
 ```
 ebpf-sidecar/
-├── cmd/sidecar/          # Main entry point
+├── cmd/sidecar/          # Application entry point
 ├── internal/
 │   ├── config/          # Configuration management
-│   ├── server/          # gRPC/HTTP servers  
-│   ├── collector/       # Metrics collection
-│   │   ├── collector.go
-│   │   └── iomonitor_module.go  # Unified I/O monitoring
+│   ├── server/          # gRPC and HTTP servers
+│   ├── collector/       # Metrics collection logic
 │   ├── ebpf/           # eBPF programs and loaders
-│   │   ├── programs/   # C source files
-│   │   │   └── iomonitor.c
-│   │   ├── generated/  # Auto-generated Go bindings
-│   │   └── loader.go   # Program lifecycle management
-│   ├── metrics/        # Metric types and storage
-│   └── export/         # Export formats
-│       └── prometheus.go
-├── configs/            # Configuration files
-└── test/integration/ebpf_sidecar/  # Integration tests
+│   │   ├── programs/   # eBPF C source code
+│   │   └── generated/  # Auto-generated Go bindings
+│   ├── metrics/        # Metric definitions
+│   └── export/         # Export format implementations
+├── configs/            # Configuration examples
+├── Dockerfile          # Container images
+└── Makefile           # Build automation
+```
+
+### Adding New eBPF Programs
+
+1. Add eBPF C code to `internal/ebpf/programs/`
+2. Update the Makefile to generate Go bindings
+3. Implement collection logic in `internal/collector/`
+4. Add metrics to the export formats
+
+### Testing
+
+```bash
+# Run unit tests
+make test
+
+# Run integration tests (requires root)
+sudo make test-integration
+
+# Run specific test suites
+cd ../test/integration/ebpf_sidecar
+sudo go test -v ./...
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Permission Denied**
-   - Ensure running with root privileges or appropriate capabilities (CAP_BPF, CAP_PERFMON)
+#### Permission Denied
+- Ensure the process has root privileges or appropriate capabilities (CAP_BPF, CAP_PERFMON)
+- For containers, use `--privileged` flag or add specific capabilities
 
-2. **eBPF Verifier Errors**
-   - Check kernel version compatibility
-   - Simplify eBPF program logic
-   - Verify loop bounds
+#### eBPF Program Load Failures
+- Verify kernel version supports required eBPF features
+- Check kernel configuration has CONFIG_BPF enabled
+- Ensure kernel headers are installed
 
-3. **Missing Kernel Headers**
-   - Install `linux-headers-$(uname -r)` package
+#### Missing Dependencies
+- Run `make install-deps` to automatically install required tools
+- For containers, dependencies are handled in the Dockerfile
+
+#### High Memory Usage
+- The default configuration uses "clear-after-read" strategy for Prometheus compatibility
+- Adjust collection interval if needed
+- Monitor eBPF map sizes via logs
+
+## Performance Considerations
+
+- eBPF programs have minimal overhead (typically < 1% CPU)
+- Memory usage scales with the number of monitored processes
+- Default configuration is optimized for production use
+- Collection interval can be adjusted based on requirements
+
+## Contributing
+
+Please refer to the [Apache SkyWalking Contributing Guide](https://github.com/apache/skywalking/blob/master/CONTRIBUTING.md) for guidelines on contributing to this project.
 
 ## License
 
