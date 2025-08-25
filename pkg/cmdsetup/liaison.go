@@ -81,7 +81,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
 	}, metricSvc)
 	profSvc := observability.NewProfService()
-	httpServer := http.NewServer(grpcServer.GetAuthCfg())
+	httpServer := http.NewServer(grpcServer.GetAuthReloader())
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,
