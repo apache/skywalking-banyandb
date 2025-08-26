@@ -60,12 +60,12 @@ var PrometheusEndpoints = []string{
 
 // NodeMetrics represents the metrics for a data node.
 type NodeMetrics struct {
+	LastScrapeTime        time.Time
 	NodeName              string
+	ErrorMessage          string
 	TotalPropagationCount int64
 	RepairSuccessCount    int64
 	IsHealthy             bool
-	LastScrapeTime        time.Time
-	ErrorMessage          string
 }
 
 // GenerateLargeData creates a string of specified size filled with random characters.
@@ -282,17 +282,8 @@ func GetNodeMetrics(endpoint string, nodeIndex int) *NodeMetrics {
 
 	// Parse metrics from prometheus data
 	content := string(body)
-	totalPropagationCount, parseErr := parseTotalPropagationCount(content)
-	if parseErr != nil {
-		metrics.ErrorMessage = fmt.Sprintf("Failed to parse total_propagation_count from %s: %v", endpoint, parseErr)
-		return metrics
-	}
-
-	repairSuccessCount, parseErr := parseRepairSuccessCount(content)
-	if parseErr != nil {
-		metrics.ErrorMessage = fmt.Sprintf("Failed to parse repair_success_count from %s: %v", endpoint, parseErr)
-		return metrics
-	}
+	totalPropagationCount := parseTotalPropagationCount(content)
+	repairSuccessCount := parseRepairSuccessCount(content)
 
 	metrics.TotalPropagationCount = totalPropagationCount
 	metrics.RepairSuccessCount = repairSuccessCount
@@ -301,7 +292,7 @@ func GetNodeMetrics(endpoint string, nodeIndex int) *NodeMetrics {
 }
 
 // parseTotalPropagationCount parses the total_propagation_count from prometheus metrics text.
-func parseTotalPropagationCount(content string) (int64, error) {
+func parseTotalPropagationCount(content string) int64 {
 	// Look for metric lines like: banyandb_property_repair_gossip_server_total_propagation_count{group="perf-test-group",original_node="data-node-1:17912"} 3
 	re := regexp.MustCompile(`banyandb_property_repair_gossip_server_total_propagation_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
 	matches := re.FindAllStringSubmatch(content, -1)
@@ -317,11 +308,11 @@ func parseTotalPropagationCount(content string) (int64, error) {
 		}
 	}
 
-	return totalCount, nil
+	return totalCount
 }
 
 // parseRepairSuccessCount parses the repair_success_count from prometheus metrics text.
-func parseRepairSuccessCount(content string) (int64, error) {
+func parseRepairSuccessCount(content string) int64 {
 	// Look for metric lines like: banyandb_property_scheduler_property_repair_success_count{group="perf-test-group",shard="0"} 100
 	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
 	matches := re.FindAllStringSubmatch(content, -1)
@@ -337,7 +328,7 @@ func parseRepairSuccessCount(content string) (int64, error) {
 		}
 	}
 
-	return totalCount, nil
+	return totalCount
 }
 
 // GetAllNodeMetrics fetches metrics from all data nodes concurrently.
@@ -416,7 +407,8 @@ func ExecuteComposeCommand(args ...string) error {
 	if _, err := exec.LookPath("docker"); err == nil {
 		check := exec.Command("docker", "compose", "version")
 		if out, err := check.CombinedOutput(); err == nil && strings.Contains(string(out), "Docker Compose") {
-			cmd := exec.Command("docker", append([]string{"compose"}, args...)...)
+			composeArgs := append([]string{"compose"}, args...)
+			cmd := exec.Command("docker", composeArgs...)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			return cmd.Run()

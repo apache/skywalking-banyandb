@@ -72,9 +72,7 @@ var _ = ginkgo.AfterSuite(func() {
 })
 
 var _ = ginkgo.Describe("Property Repair Half Data Test", ginkgo.Ordered, func() {
-
 	ginkgo.Describe("Step 1: Initial Setup and Data Load", func() {
-
 		ginkgo.It("Should start 3 data node cluster", func() {
 			// Initialize compose stack with 3-node configuration
 			var err error
@@ -171,7 +169,6 @@ var _ = ginkgo.Describe("Property Repair Half Data Test", ginkgo.Ordered, func()
 	})
 
 	ginkgo.Describe("Verification", func() {
-
 		ginkgo.It("Should verify the property repair completed and prometheus metrics", func() {
 			fmt.Println("=== Verification: Property repair process and prometheus metrics ===")
 
