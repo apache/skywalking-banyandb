@@ -402,6 +402,7 @@ func PrintMetricsComparison(beforeMetrics, afterMetrics []*NodeMetrics) {
 	fmt.Println()
 }
 
+// ExecuteComposeCommand executes a docker-compose command, supporting both v1 and v2.
 func ExecuteComposeCommand(args ...string) error {
 	// v2
 	if _, err := exec.LookPath("docker"); err == nil {
