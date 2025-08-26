@@ -36,26 +36,17 @@ import (
 // queryResult implements QueryResult interface with worker pool pattern.
 // Following the tsResult architecture from the stream module.
 type queryResult struct {
-	// Core query components
-	snapshot *snapshot    // Reference to current snapshot
-	request  QueryRequest // Original query request (contains all parameters)
-	ctx      context.Context
-
-	// Block scanning components
-	bs    *blockScanner // Block scanner for iteration
-	parts []*part       // Selected parts for query
-
-	// Worker coordination
-	shards []*QueryResponse // Result shards from parallel workers
-	pm     protector.Memory // Memory quota management
-	l      *logger.Logger   // Logger instance
-
-	// Query parameters (derived from request)
-	asc        bool                // Ordering direction
-	tagsToLoad map[string]struct{} // Shared map of tags to load across workers
-
-	// State management
-	released bool
+	request    QueryRequest
+	ctx        context.Context
+	pm         protector.Memory
+	snapshot   *snapshot
+	bs         *blockScanner
+	l          *logger.Logger
+	tagsToLoad map[string]struct{}
+	parts      []*part
+	shards     []*QueryResponse
+	asc        bool
+	released   bool
 }
 
 // Pull returns the next batch of query results using parallel worker processing.

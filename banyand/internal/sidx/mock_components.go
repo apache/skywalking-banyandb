@@ -307,8 +307,8 @@ func (mq *MockQuerier) SetErrorRate(rate int) {
 
 // mockQuerierResult implements QueryResult for the mock querier.
 type mockQuerierResult struct {
-	elements []WriteRequest
 	request  QueryRequest
+	elements []WriteRequest
 	position int
 	finished bool
 }

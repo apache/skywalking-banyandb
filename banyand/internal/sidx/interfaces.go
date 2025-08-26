@@ -123,30 +123,14 @@ type WriteRequest struct {
 
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
 type QueryRequest struct {
-	// Name identifies the series/index to query
-	Name string
-
-	// SeriesIDs specifies the series to query (provided externally)
-	SeriesIDs []common.SeriesID
-
-	// Filter for tag-based filtering using index.Filter
-	// Note: sidx uses bloom filters for tag filtering, not inverted indexes
-	Filter index.Filter
-
-	// Order specifies result ordering using existing index.OrderBy
-	Order *index.OrderBy
-
-	// TagProjection specifies which tags to include
-	TagProjection []model.TagProjection
-
-	// MaxElementSize limits result size
+	Filter         index.Filter
+	Order          *index.OrderBy
+	MinKey         *int64
+	MaxKey         *int64
+	Name           string
+	SeriesIDs      []common.SeriesID
+	TagProjection  []model.TagProjection
 	MaxElementSize int
-
-	// MinKey specifies the minimum key for range queries (nil = no limit)
-	MinKey *int64
-
-	// MaxKey specifies the maximum key for range queries (nil = no limit)
-	MaxKey *int64
 }
 
 // QueryResponse contains a batch of query results and execution metadata.

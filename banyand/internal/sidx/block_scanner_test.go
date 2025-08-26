@@ -96,12 +96,12 @@ func TestBlockScanner_EmptyPartsHandling(t *testing.T) {
 func TestBlockScanner_QuotaExceeded(t *testing.T) {
 	type testCtx struct {
 		name                string
+		seriesIDs           []common.SeriesID
 		seriesCount         int
 		elementsPerSeries   int
-		expectQuotaExceeded bool
-		seriesIDs           []common.SeriesID
 		minKey              int64
 		maxKey              int64
+		expectQuotaExceeded bool
 		asc                 bool
 	}
 
@@ -342,8 +342,8 @@ func TestBlockScanner_FilteredScan(t *testing.T) {
 func TestBlockScanner_AscendingDescendingOrder(t *testing.T) {
 	testCases := []struct {
 		name string
-		asc  bool
 		desc string
+		asc  bool
 	}{
 		{
 			name: "AscendingOrder",

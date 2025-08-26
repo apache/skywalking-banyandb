@@ -338,9 +338,9 @@ func (m *MockSIDX) updateMemoryUsageLocked() {
 
 // mockSIDXQueryResult implements QueryResult for the mock implementation.
 type mockSIDXQueryResult struct {
+	request  QueryRequest
 	stats    *Stats
 	elements []mockElement
-	request  QueryRequest
 	position int
 	finished bool
 }
