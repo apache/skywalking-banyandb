@@ -136,7 +136,10 @@ func (qr *queryResult) processWorkerBatches(workerID int, batchCh chan *blockSca
 		}
 
 		for _, bs := range batch.bss {
-			qr.loadAndProcessBlock(tmpBlock, bs, qr.shards[workerID])
+			if !qr.loadAndProcessBlock(tmpBlock, bs, qr.shards[workerID]) {
+				// If load fails, continue with next block rather than stopping
+				continue
+			}
 		}
 
 		releaseBlockScanResultBatch(batch)
@@ -165,6 +168,11 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 
 	// Early exit if no data
 	if bm.count == 0 {
+		return false
+	}
+
+	// Check if readers are properly initialized
+	if p.keys == nil || p.data == nil {
 		return false
 	}
 
@@ -316,8 +324,8 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 	elemCount := len(block.userKeys)
 
 	for i := 0; i < elemCount; i++ {
-		// Apply MaxElementSize limit from request
-		if result.Len() >= qr.request.MaxElementSize {
+		// Apply MaxElementSize limit from request (only if positive)
+		if qr.request.MaxElementSize > 0 && result.Len() >= qr.request.MaxElementSize {
 			break
 		}
 
@@ -548,7 +556,7 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 		result.Tags = append(result.Tags, resp.Tags[idx])
 		result.SIDs = append(result.SIDs, resp.SIDs[idx])
 
-		if result.Len() >= limit {
+		if limit > 0 && result.Len() >= limit {
 			break
 		}
 

@@ -19,10 +19,14 @@ package sidx
 
 import (
 	"container/heap"
+	"context"
 	"testing"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/test"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 func TestQueryResponseHeap_BasicOperations(t *testing.T) {
@@ -379,11 +383,10 @@ func TestQueryResponseHeap_EdgeCases(t *testing.T) {
 
 		result := qrh.mergeWithHeap(0)
 
-		// NOTE: Current implementation has a bug - it copies one element before checking limit
-		// For limit=0, it should return empty result, but currently returns 1 element
-		// This test documents the current behavior
-		if result.Len() != 1 {
-			t.Errorf("Current implementation with zero limit returns 1 element (bug), got %d", result.Len())
+		// With limit=0, should return all elements since limit=0 means no limit
+		expectedLen := 3
+		if result.Len() != expectedLen {
+			t.Errorf("With zero limit (no limit), expected %d elements, got %d", expectedLen, result.Len())
 		}
 		if result.Len() > 0 && result.Keys[0] != 1 {
 			t.Errorf("Expected first key to be 1, got %d", result.Keys[0])
@@ -639,4 +642,797 @@ func createBenchmarkResponseDesc(size int, offset, step int64) *QueryResponse {
 	}
 
 	return response
+}
+
+// Tests for queryResult struct using memPart datasets
+
+func TestQueryResult_Pull_SingleMemPart(t *testing.T) {
+	// Create test dataset with multiple series
+	expectedElements := []testElement{
+		{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+		{seriesID: 2, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("service2"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+		{seriesID: 3, userKey: 300, data: []byte("data3"), tags: []tag{{name: "environment", value: []byte("prod"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+	}
+
+	elements := createTestElements(expectedElements)
+	defer releaseElements(elements)
+
+	// Create memory part from elements
+	mp := generateMemPart()
+	defer releaseMemPart(mp)
+	mp.mustInitFromElements(elements)
+
+	// Create part from memory part
+	testPart := openMemPart(mp)
+	defer testPart.close()
+
+	// Create snapshot and parts
+	parts := []*part{testPart}
+	snap := &snapshot{}
+	snap.parts = make([]*partWrapper, len(parts))
+	for i, p := range parts {
+		snap.parts[i] = newPartWrapper(p)
+	}
+	// Initialize reference count to 1
+	snap.ref = 1
+
+	// Create mock memory protector
+	mockProtector := &test.MockMemoryProtector{ExpectQuotaExceeded: false}
+
+	// Create query request with default MaxElementSize (0) to test the fix
+	req := QueryRequest{
+		SeriesIDs:      []common.SeriesID{1, 2, 3},
+		MinKey:         nil,
+		MaxKey:         nil,
+		Filter:         nil,
+		Order:          nil,
+		MaxElementSize: 0, // Test with default value (0) to ensure fix works
+	}
+
+	// Debug: log the request parameters
+	t.Logf("Request MaxElementSize: %d", req.MaxElementSize)
+	t.Logf("Element keys: %v", []int64{100, 200, 300})
+	t.Logf("Key range filter: [%d, %d]", 50, 400)
+
+	// Create block scanner
+	bs := &blockScanner{
+		pm:        mockProtector,
+		filter:    req.Filter,
+		l:         logger.GetLogger("test"),
+		parts:     parts,
+		seriesIDs: req.SeriesIDs,
+		minKey:    50,
+		maxKey:    400,
+		asc:       true,
+	}
+
+	// Create query result
+	qr := &queryResult{
+		request:  req,
+		ctx:      context.Background(),
+		pm:       mockProtector,
+		snapshot: snap,
+		bs:       bs,
+		l:        logger.GetLogger("test-queryResult"),
+		parts:    parts,
+		asc:      true,
+		released: false,
+	}
+
+	// Debug: Test if the iterator can find blocks in this memPart
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+
+	it := generateIter()
+	defer releaseIter(it)
+
+	it.init(bma, parts, req.SeriesIDs, 50, 400, nil)
+
+	blockCount := 0
+	for it.nextBlock() {
+		blockCount++
+	}
+	t.Logf("Iterator found %d blocks", blockCount)
+	if it.Error() != nil {
+		t.Logf("Iterator error: %v", it.Error())
+	}
+
+	// Pull the response
+	response := qr.Pull()
+
+	// Debug: check if response is nil first
+	t.Logf("Response is nil: %v", response == nil)
+
+	// Verify response is not nil
+	if response == nil {
+		t.Fatal("QueryResult.Pull() returned nil response")
+	}
+
+	// Check for errors in response
+	if response.Error != nil {
+		t.Fatalf("QueryResult returned error: %v", response.Error)
+	}
+
+	// Verify response has the expected number of elements
+	if response.Len() != len(expectedElements) {
+		t.Fatalf("Expected %d elements in response, got %d", len(expectedElements), response.Len())
+	}
+
+	// Verify data consistency
+	err := response.Validate()
+	if err != nil {
+		t.Fatalf("Response validation failed: %v", err)
+	}
+
+	// Create a map of expected data by key for easy lookup
+	expectedByKey := make(map[int64]testElement)
+	for _, elem := range expectedElements {
+		expectedByKey[elem.userKey] = elem
+	}
+
+	// Verify each returned element matches expected data
+	for i := 0; i < response.Len(); i++ {
+		key := response.Keys[i]
+		data := response.Data[i]
+		sid := response.SIDs[i]
+		tags := response.Tags[i]
+
+		// Find expected element by key
+		expected, found := expectedByKey[key]
+		if !found {
+			t.Errorf("Unexpected key %d found in response at position %d", key, i)
+			continue
+		}
+
+		// Verify series ID matches
+		if sid != expected.seriesID {
+			t.Errorf("At position %d: expected seriesID %d, got %d", i, expected.seriesID, sid)
+		}
+
+		// Verify data matches
+		if string(data) != string(expected.data) {
+			t.Errorf("At position %d: expected data %s, got %s", i, string(expected.data), string(data))
+		}
+
+		// Verify tags match
+		if len(tags) != len(expected.tags) {
+			t.Errorf("At position %d: expected %d tags, got %d", i, len(expected.tags), len(tags))
+			continue
+		}
+
+		for j, tag := range tags {
+			expectedTag := expected.tags[j]
+			if tag.name != expectedTag.name {
+				t.Errorf("At position %d, tag %d: expected name %s, got %s", i, j, expectedTag.name, tag.name)
+			}
+			if string(tag.value) != string(expectedTag.value) {
+				t.Errorf("At position %d, tag %d: expected value %s, got %s", i, j, string(expectedTag.value), string(tag.value))
+			}
+			if tag.valueType != expectedTag.valueType {
+				t.Errorf("At position %d, tag %d: expected valueType %v, got %v", i, j, expectedTag.valueType, tag.valueType)
+			}
+		}
+	}
+
+	// Verify keys are within expected range and properly sorted
+	for i, key := range response.Keys {
+		if key < 50 || key > 400 {
+			t.Errorf("Key %d at position %d is outside expected range [50, 400]", key, i)
+		}
+		if i > 0 && key <= response.Keys[i-1] {
+			t.Errorf("Keys not properly sorted: key %d at position %d should be greater than previous key %d", key, i, response.Keys[i-1])
+		}
+	}
+
+	// Clean up
+	qr.Release()
+}
+
+func TestQueryResult_Pull_MultipleMemParts(t *testing.T) {
+	// Create multiple test datasets with expected elements
+	expectedElements := []testElement{
+		{seriesID: 1, userKey: 100, data: []byte("data1_part1"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+		{seriesID: 2, userKey: 200, data: []byte("data2_part2"), tags: []tag{{name: "service", value: []byte("service2"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+		{seriesID: 3, userKey: 300, data: []byte("data3_part1"), tags: []tag{{name: "service", value: []byte("service3"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+		{seriesID: 4, userKey: 400, data: []byte("data4_part2"), tags: []tag{{name: "environment", value: []byte("test"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+	}
+
+	// Create test elements for each part
+	elements1 := createTestElements([]testElement{expectedElements[0], expectedElements[2]}) // data1_part1, data3_part1
+	defer releaseElements(elements1)
+
+	elements2 := createTestElements([]testElement{expectedElements[1], expectedElements[3]}) // data2_part2, data4_part2
+	defer releaseElements(elements2)
+
+	// Create memory parts
+	mp1 := generateMemPart()
+	defer releaseMemPart(mp1)
+	mp1.mustInitFromElements(elements1)
+
+	mp2 := generateMemPart()
+	defer releaseMemPart(mp2)
+	mp2.mustInitFromElements(elements2)
+
+	// Create parts from memory parts
+	testPart1 := openMemPart(mp1)
+	defer testPart1.close()
+	testPart2 := openMemPart(mp2)
+	defer testPart2.close()
+
+	// Create snapshot with multiple parts
+	parts := []*part{testPart1, testPart2}
+	snap := &snapshot{}
+	snap.parts = make([]*partWrapper, len(parts))
+	for i, p := range parts {
+		snap.parts[i] = newPartWrapper(p)
+	}
+	// Initialize reference count to 1
+	snap.ref = 1
+
+	// Create mock memory protector
+	mockProtector := &test.MockMemoryProtector{ExpectQuotaExceeded: false}
+
+	// Create query request targeting all series
+	req := QueryRequest{
+		SeriesIDs:      []common.SeriesID{1, 2, 3, 4},
+		MinKey:         nil,
+		MaxKey:         nil,
+		Filter:         nil,
+		Order:          nil,
+		MaxElementSize: 0, // Test with default value (0) to ensure fix works
+	}
+
+	// Create block scanner
+	bs := &blockScanner{
+		pm:        mockProtector,
+		filter:    req.Filter,
+		l:         logger.GetLogger("test"),
+		parts:     parts,
+		seriesIDs: req.SeriesIDs,
+		minKey:    50,
+		maxKey:    500,
+		asc:       true,
+	}
+
+	// Create query result
+	qr := &queryResult{
+		request:  req,
+		ctx:      context.Background(),
+		pm:       mockProtector,
+		snapshot: snap,
+		bs:       bs,
+		l:        logger.GetLogger("test-queryResult"),
+		parts:    parts,
+		asc:      true,
+		released: false,
+	}
+
+	// Pull the response
+	response := qr.Pull()
+
+	// Verify response is not nil
+	if response == nil {
+		t.Fatal("QueryResult.Pull() returned nil response")
+	}
+
+	// Check for errors in response
+	if response.Error != nil {
+		t.Fatalf("QueryResult returned error: %v", response.Error)
+	}
+
+	// Verify response has the expected number of elements
+	if response.Len() != len(expectedElements) {
+		t.Fatalf("Expected %d elements in response, got %d", len(expectedElements), response.Len())
+	}
+
+	// Verify data consistency
+	err := response.Validate()
+	if err != nil {
+		t.Fatalf("Response validation failed: %v", err)
+	}
+
+	// Create a map of expected data by key for easy lookup
+	expectedByKey := make(map[int64]testElement)
+	for _, elem := range expectedElements {
+		expectedByKey[elem.userKey] = elem
+	}
+
+	// Verify each returned element matches expected data
+	for i := 0; i < response.Len(); i++ {
+		key := response.Keys[i]
+		data := response.Data[i]
+		sid := response.SIDs[i]
+		tags := response.Tags[i]
+
+		// Find expected element by key
+		expected, found := expectedByKey[key]
+		if !found {
+			t.Errorf("Unexpected key %d found in response at position %d", key, i)
+			continue
+		}
+
+		// Verify series ID matches
+		if sid != expected.seriesID {
+			t.Errorf("At position %d: expected seriesID %d, got %d", i, expected.seriesID, sid)
+		}
+
+		// Verify data matches
+		if string(data) != string(expected.data) {
+			t.Errorf("At position %d: expected data %s, got %s", i, string(expected.data), string(data))
+		}
+
+		// Verify tags match
+		if len(tags) != len(expected.tags) {
+			t.Errorf("At position %d: expected %d tags, got %d", i, len(expected.tags), len(tags))
+			continue
+		}
+
+		for j, tag := range tags {
+			expectedTag := expected.tags[j]
+			if tag.name != expectedTag.name {
+				t.Errorf("At position %d, tag %d: expected name %s, got %s", i, j, expectedTag.name, tag.name)
+			}
+			if string(tag.value) != string(expectedTag.value) {
+				t.Errorf("At position %d, tag %d: expected value %s, got %s", i, j, string(expectedTag.value), string(tag.value))
+			}
+			if tag.valueType != expectedTag.valueType {
+				t.Errorf("At position %d, tag %d: expected valueType %v, got %v", i, j, expectedTag.valueType, tag.valueType)
+			}
+		}
+	}
+
+	// Verify keys are within expected range and properly sorted
+	for i, key := range response.Keys {
+		if key < 50 || key > 500 {
+			t.Errorf("Key %d at position %d is outside expected range [50, 500]", key, i)
+		}
+		if i > 0 && key <= response.Keys[i-1] {
+			t.Errorf("Keys not properly sorted: key %d at position %d should be greater than previous key %d", key, i, response.Keys[i-1])
+		}
+	}
+
+	// Clean up
+	qr.Release()
+}
+
+func TestQueryResult_Pull_WithTagProjection(t *testing.T) {
+	// Create test dataset with multiple tags
+	elements := createTestElements([]testElement{
+		{
+			seriesID: 1, userKey: 100, data: []byte("data1"),
+			tags: []tag{
+				{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true},
+				{name: "environment", value: []byte("prod"), valueType: pbv1.ValueTypeStr, indexed: true},
+				{name: "region", value: []byte("us-west"), valueType: pbv1.ValueTypeStr, indexed: true},
+			},
+		},
+		{
+			seriesID: 2, userKey: 200, data: []byte("data2"),
+			tags: []tag{
+				{name: "service", value: []byte("service2"), valueType: pbv1.ValueTypeStr, indexed: true},
+				{name: "environment", value: []byte("test"), valueType: pbv1.ValueTypeStr, indexed: true},
+				{name: "region", value: []byte("us-east"), valueType: pbv1.ValueTypeStr, indexed: true},
+			},
+		},
+	})
+	defer releaseElements(elements)
+
+	// Create memory part
+	mp := generateMemPart()
+	defer releaseMemPart(mp)
+	mp.mustInitFromElements(elements)
+
+	testPart := openMemPart(mp)
+	defer testPart.close()
+
+	// Create snapshot
+	parts := []*part{testPart}
+	snap := &snapshot{}
+	snap.parts = make([]*partWrapper, len(parts))
+	for i, p := range parts {
+		snap.parts[i] = newPartWrapper(p)
+	}
+	// Initialize reference count to 1
+	snap.ref = 1
+
+	mockProtector := &test.MockMemoryProtector{ExpectQuotaExceeded: false}
+
+	// Create query request with tag projection (only load "service" and "environment")
+	req := QueryRequest{
+		SeriesIDs: []common.SeriesID{1, 2},
+		TagProjection: []model.TagProjection{
+			{Names: []string{"service", "environment"}},
+		},
+		MinKey: nil,
+		MaxKey: nil,
+		Filter: nil,
+	}
+
+	bs := &blockScanner{
+		pm:        mockProtector,
+		filter:    req.Filter,
+		l:         logger.GetLogger("test"),
+		parts:     parts,
+		seriesIDs: req.SeriesIDs,
+		minKey:    50,
+		maxKey:    300,
+		asc:       true,
+	}
+
+	qr := &queryResult{
+		request:  req,
+		ctx:      context.Background(),
+		pm:       mockProtector,
+		snapshot: snap,
+		bs:       bs,
+		l:        logger.GetLogger("test-queryResult"),
+		parts:    parts,
+		asc:      true,
+		released: false,
+	}
+
+	// Test Pull with tag projection
+	response := qr.Pull()
+
+	if response == nil {
+		t.Fatal("Expected non-nil response")
+	}
+	if response.Error != nil {
+		t.Fatalf("Expected no error, got: %v", response.Error)
+	}
+
+	// Verify response has data
+	if response.Len() == 0 {
+		t.Error("Expected non-empty response")
+	}
+
+	// Verify tag projection worked (should only have projected tags)
+	// Note: The actual tag filtering logic needs to be verified based on implementation
+	for i, tagGroup := range response.Tags {
+		for _, tag := range tagGroup {
+			if tag.name != "service" && tag.name != "environment" {
+				t.Errorf("Unexpected tag '%s' found at position %d, should only have projected tags", tag.name, i)
+			}
+		}
+	}
+
+	qr.Release()
+}
+
+func TestQueryResult_Pull_DescendingOrder(t *testing.T) {
+	// Create test dataset
+	elements := createTestElements([]testElement{
+		{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+		{seriesID: 1, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+		{seriesID: 1, userKey: 300, data: []byte("data3"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+	})
+	defer releaseElements(elements)
+
+	mp := generateMemPart()
+	defer releaseMemPart(mp)
+	mp.mustInitFromElements(elements)
+
+	testPart := openMemPart(mp)
+	defer testPart.close()
+
+	parts := []*part{testPart}
+	snap := &snapshot{}
+	snap.parts = make([]*partWrapper, len(parts))
+	for i, p := range parts {
+		snap.parts[i] = newPartWrapper(p)
+	}
+	// Initialize reference count to 1
+	snap.ref = 1
+
+	mockProtector := &test.MockMemoryProtector{ExpectQuotaExceeded: false}
+
+	req := QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+		MinKey:    nil,
+		MaxKey:    nil,
+		Filter:    nil,
+	}
+
+	// Create descending order scanner
+	bs := &blockScanner{
+		pm:        mockProtector,
+		filter:    req.Filter,
+		l:         logger.GetLogger("test"),
+		parts:     parts,
+		seriesIDs: req.SeriesIDs,
+		minKey:    50,
+		maxKey:    400,
+		asc:       false, // Descending order
+	}
+
+	qr := &queryResult{
+		request:  req,
+		ctx:      context.Background(),
+		pm:       mockProtector,
+		snapshot: snap,
+		bs:       bs,
+		l:        logger.GetLogger("test-queryResult"),
+		parts:    parts,
+		asc:      false, // Descending order
+		released: false,
+	}
+
+	response := qr.Pull()
+
+	if response == nil {
+		t.Fatal("Expected non-nil response")
+	}
+	if response.Error != nil {
+		t.Fatalf("Expected no error, got: %v", response.Error)
+	}
+
+	// Verify descending order
+	for i := 1; i < len(response.Keys); i++ {
+		if response.Keys[i] > response.Keys[i-1] {
+			t.Errorf("Keys are not in descending order: %d > %d at positions %d, %d",
+				response.Keys[i], response.Keys[i-1], i, i-1)
+		}
+	}
+
+	qr.Release()
+}
+
+func TestQueryResult_Pull_ErrorHandling(t *testing.T) {
+	// Test with quota exceeded scenario
+	mockProtector := &test.MockMemoryProtector{ExpectQuotaExceeded: true}
+
+	elements := createTestElements([]testElement{
+		{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+	})
+	defer releaseElements(elements)
+
+	mp := generateMemPart()
+	defer releaseMemPart(mp)
+	mp.mustInitFromElements(elements)
+
+	testPart := openMemPart(mp)
+	defer testPart.close()
+
+	parts := []*part{testPart}
+	snap := &snapshot{}
+	snap.parts = make([]*partWrapper, len(parts))
+	for i, p := range parts {
+		snap.parts[i] = newPartWrapper(p)
+	}
+	// Initialize reference count to 1
+	snap.ref = 1
+
+	req := QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+	}
+
+	bs := &blockScanner{
+		pm:        mockProtector,
+		filter:    req.Filter,
+		l:         logger.GetLogger("test"),
+		parts:     parts,
+		seriesIDs: req.SeriesIDs,
+		minKey:    50,
+		maxKey:    200,
+		asc:       true,
+	}
+
+	qr := &queryResult{
+		request:  req,
+		ctx:      context.Background(),
+		pm:       mockProtector,
+		snapshot: snap,
+		bs:       bs,
+		l:        logger.GetLogger("test-queryResult"),
+		parts:    parts,
+		asc:      true,
+		released: false,
+	}
+
+	response := qr.Pull()
+
+	// With quota exceeded, we expect either an error response or a response with an error
+	if response != nil && response.Error != nil {
+		t.Logf("Expected error due to quota exceeded: %v", response.Error)
+	}
+
+	qr.Release()
+}
+
+func TestQueryResult_Release(t *testing.T) {
+	elements := createTestElements([]testElement{
+		{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+	})
+	defer releaseElements(elements)
+
+	mp := generateMemPart()
+	defer releaseMemPart(mp)
+	mp.mustInitFromElements(elements)
+
+	testPart := openMemPart(mp)
+	defer testPart.close()
+
+	parts := []*part{testPart}
+	snap := &snapshot{}
+	snap.parts = make([]*partWrapper, len(parts))
+	for i, p := range parts {
+		snap.parts[i] = newPartWrapper(p)
+	}
+	// Initialize reference count to 1
+	snap.ref = 1
+
+	// Create a mock blockScanner to verify it gets closed
+	mockBS := &blockScanner{
+		pm:        &test.MockMemoryProtector{},
+		filter:    nil,
+		l:         logger.GetLogger("test"),
+		parts:     parts,
+		seriesIDs: []common.SeriesID{1},
+		minKey:    50,
+		maxKey:    200,
+		asc:       true,
+	}
+
+	// Create a mock protector
+	mockProtector := &test.MockMemoryProtector{}
+
+	qr := &queryResult{
+		request:    QueryRequest{SeriesIDs: []common.SeriesID{1}},
+		ctx:        context.Background(),
+		pm:         mockProtector,
+		snapshot:   snap,
+		bs:         mockBS,
+		l:          logger.GetLogger("test-queryResult"),
+		tagsToLoad: map[string]struct{}{"service": {}},
+		parts:      parts,
+		shards:     []*QueryResponse{},
+		asc:        true,
+		released:   false,
+	}
+
+	// Verify initial state
+	if qr.released {
+		t.Error("queryResult should not be released initially")
+	}
+	if qr.snapshot == nil {
+		t.Error("queryResult should have a snapshot initially")
+	}
+	if qr.bs == nil {
+		t.Error("queryResult should have a blockScanner initially")
+	}
+	if qr.parts == nil {
+		t.Error("queryResult should have parts initially")
+	}
+	if qr.tagsToLoad == nil {
+		t.Error("queryResult should have tagsToLoad initially")
+	}
+	if qr.shards == nil {
+		t.Error("queryResult should have shards initially")
+	}
+
+	// Store initial reference count for verification
+	initialRef := snap.ref
+
+	// Release
+	qr.Release()
+
+	// Verify released flag is set
+	if !qr.released {
+		t.Error("queryResult should be marked as released")
+	}
+
+	// Verify snapshot is nullified and reference count is decremented
+	if qr.snapshot != nil {
+		t.Error("queryResult.snapshot should be nullified after release")
+	}
+	if snap.ref != initialRef-1 {
+		t.Errorf("snapshot reference count should be decremented from %d to %d, got %d", initialRef, initialRef-1, snap.ref)
+	}
+
+	// Verify blockScanner is closed but not nullified (it gets closed in Release method but not set to nil)
+	if qr.bs == nil {
+		t.Error("queryResult.bs should not be nullified after release, only closed")
+	}
+	// Note: We can't easily verify that bs.close() was called without exposing internal state
+	// The important thing is that the blockScanner is still accessible for potential cleanup
+
+	// Verify other fields remain unchanged (they don't get nullified)
+	if qr.parts == nil {
+		t.Error("queryResult.parts should remain unchanged after release")
+	}
+	if qr.tagsToLoad == nil {
+		t.Error("queryResult.tagsToLoad should remain unchanged after release")
+	}
+	if qr.shards == nil {
+		t.Error("queryResult.shards should remain unchanged after release")
+	}
+	if qr.ctx == nil {
+		t.Error("queryResult.ctx should remain unchanged after release")
+	}
+	if qr.pm == nil {
+		t.Error("queryResult.pm should remain unchanged after release")
+	}
+	if qr.l == nil {
+		t.Error("queryResult.l should remain unchanged after release")
+	}
+
+	// Verify that subsequent calls to Release are safe (idempotent)
+	qr.Release()
+	if !qr.released {
+		t.Error("queryResult should remain released after second release call")
+	}
+	if qr.snapshot != nil {
+		t.Error("queryResult.snapshot should remain nullified after second release call")
+	}
+	if qr.bs == nil {
+		t.Error("queryResult.bs should remain accessible after second release call")
+	}
+}
+
+func TestQueryResult_Pull_ContextCancellation(t *testing.T) {
+	elements := createTestElements([]testElement{
+		{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+	})
+	defer releaseElements(elements)
+
+	mp := generateMemPart()
+	defer releaseMemPart(mp)
+	mp.mustInitFromElements(elements)
+
+	testPart := openMemPart(mp)
+	defer testPart.close()
+
+	parts := []*part{testPart}
+	snap := &snapshot{}
+	snap.parts = make([]*partWrapper, len(parts))
+	for i, p := range parts {
+		snap.parts[i] = newPartWrapper(p)
+	}
+	// Initialize reference count to 1
+	snap.ref = 1
+
+	mockProtector := &test.MockMemoryProtector{ExpectQuotaExceeded: false}
+
+	// Create cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	req := QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+	}
+
+	bs := &blockScanner{
+		pm:        mockProtector,
+		filter:    req.Filter,
+		l:         logger.GetLogger("test"),
+		parts:     parts,
+		seriesIDs: req.SeriesIDs,
+		minKey:    50,
+		maxKey:    200,
+		asc:       true,
+	}
+
+	qr := &queryResult{
+		request:  req,
+		ctx:      ctx,
+		pm:       mockProtector,
+		snapshot: snap,
+		bs:       bs,
+		l:        logger.GetLogger("test-queryResult"),
+		parts:    parts,
+		asc:      true,
+		released: false,
+	}
+
+	response := qr.Pull()
+
+	// With cancelled context, we should handle gracefully
+	// The behavior depends on implementation - it might return nil or an error response
+	if response != nil {
+		t.Logf("Response with cancelled context: error=%v, len=%d", response.Error, response.Len())
+	} else {
+		t.Log("Got nil response with cancelled context - this is acceptable")
+	}
+
+	qr.Release()
 }

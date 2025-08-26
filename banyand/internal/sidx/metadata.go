@@ -20,6 +20,7 @@ package sidx
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -157,6 +158,32 @@ func (bm *blockMetadata) reset() {
 		delete(bm.tagsBlocks, k)
 	}
 	bm.tagProjection = bm.tagProjection[:0]
+}
+
+func (bm *blockMetadata) copyFrom(other *blockMetadata) {
+	if other == nil {
+		return
+	}
+
+	bm.seriesID = other.seriesID
+	bm.minKey = other.minKey
+	bm.maxKey = other.maxKey
+	bm.count = other.count
+	bm.uncompressedSize = other.uncompressedSize
+	bm.keysEncodeType = other.keysEncodeType
+	bm.dataBlock = other.dataBlock
+	bm.keysBlock = other.keysBlock
+
+	// Copy tag blocks
+	if bm.tagsBlocks == nil {
+		bm.tagsBlocks = make(map[string]dataBlock)
+	}
+	clear(bm.tagsBlocks)
+	maps.Copy(bm.tagsBlocks, other.tagsBlocks)
+
+	// Copy tag projection
+	bm.tagProjection = bm.tagProjection[:0]
+	bm.tagProjection = append(bm.tagProjection, other.tagProjection...)
 }
 
 // validate validates the partMetadata for consistency.
