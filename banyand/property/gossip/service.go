@@ -112,6 +112,7 @@ func NewMessenger(omr observability.MetricsRegistry, metadata metadata.Repo, pip
 		registered:       make(map[string]*databasev1.Node),
 		scheduleInterval: time.Hour * 2,
 		sel:              node.NewRoundRobinSelector("", metadata),
+		port:             17932,
 	}
 }
 
@@ -133,6 +134,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.listeners = make([]MessageListener, 0)
 	s.serverMetrics = newServerMetrics(s.omr.With(serverScope))
 	if s.metadata != nil {
+		s.sel.OnInit([]schema.Kind{schema.KindGroup})
 		s.metadata.RegisterHandler("property-repair-nodes", schema.KindNode, s)
 		s.metadata.RegisterHandler("property-repair-groups", schema.KindGroup, s)
 		if err := s.initTracing(ctx); err != nil {
