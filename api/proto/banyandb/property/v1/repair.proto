@@ -69,7 +69,6 @@ message PropertySync {
   int64 delete_time = 3;
 }
 
-message NoMorePropertySync {}
 
 enum PropertySyncFromType {
   PROPERTY_SYNC_FROM_TYPE_UNSPECIFIED = 0;
