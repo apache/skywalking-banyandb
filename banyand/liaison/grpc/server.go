@@ -66,7 +66,7 @@ var (
 // Server defines the gRPC server.
 type Server interface {
 	run.Unit
-	GetAuthCfg() *auth.Config
+	GetAuthReloader() *auth.Reloader
 	GetPort() *uint32
 }
 
@@ -96,12 +96,12 @@ type server struct {
 	*propertyServer
 	*indexRuleBindingRegistryServer
 	*traceRegistryServer
+	authReloader             *auth.Reloader
 	groupRepo                *groupRepo
 	metrics                  *metrics
 	certFile                 string
 	keyFile                  string
 	authConfigFile           string
-	cfg                      *auth.Config
 	host                     string
 	addr                     string
 	accessLogRootPath        string
@@ -110,6 +110,7 @@ type server struct {
 	port                     uint32
 	enableIngestionAccessLog bool
 	tls                      bool
+	healthAuthEnabled        bool
 }
 
 // NewServer returns a new gRPC server.
@@ -164,8 +165,8 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		traceRegistryServer: &traceRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
-		schemaRepo: schemaRegistry,
-		cfg:        auth.InitCfg(),
+		schemaRepo:   schemaRegistry,
+		authReloader: auth.InitAuthReloader(),
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
 
@@ -190,7 +191,7 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}
 	if s.authConfigFile != "" {
-		if err := auth.LoadConfig(s.cfg, s.authConfigFile); err != nil {
+		if err := s.authReloader.ConfigAuthReloader(s.authConfigFile, s.healthAuthEnabled, s.log); err != nil {
 			return err
 		}
 	}
@@ -239,9 +240,9 @@ func (s *server) GetPort() *uint32 {
 	return &s.port
 }
 
-// GetAuthCfg returns auth cfg (for httpserver).
-func (s *server) GetAuthCfg() *auth.Config {
-	return s.cfg
+// GetAuthReloader returns auth reloader (for httpserver).
+func (s *server) GetAuthReloader() *auth.Reloader {
+	return s.authReloader
 }
 
 func (s *server) FlagSet() *run.FlagSet {
@@ -252,7 +253,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
 	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "Path to the authentication config file (YAML format)")
-	fs.BoolVar(&s.cfg.HealthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
+	fs.BoolVar(&s.healthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
@@ -300,6 +301,14 @@ func (s *server) Serve() run.StopNotify {
 		creds := credentials.NewTLS(tlsConfig)
 		opts = append(opts, grpclib.Creds(creds))
 	}
+	if s.authConfigFile != "" {
+		if err := s.authReloader.Start(); err != nil {
+			s.log.Error().Err(err).Msg("Failed to start authReloader for gRPC")
+			close(s.stopCh)
+			return s.stopCh
+		}
+		s.log.Info().Str("authConfigFile", s.authConfigFile).Msg("Starting auth config file monitoring")
+	}
 	grpcPanicRecoveryHandler := func(p any) (err error) {
 		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
 		s.metrics.totalPanic.Inc(1)
@@ -315,8 +324,8 @@ func (s *server) Serve() run.StopNotify {
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
 	if s.authConfigFile != "" {
-		streamChain = append(streamChain, authStreamInterceptor(s.cfg))
-		unaryChain = append(unaryChain, authInterceptor(s.cfg))
+		streamChain = append(streamChain, authStreamInterceptor(s.authReloader))
+		unaryChain = append(unaryChain, authInterceptor(s.authReloader))
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
@@ -364,6 +373,9 @@ func (s *server) GracefulStop() {
 	s.log.Info().Msg("stopping")
 	if s.tls && s.tlsReloader != nil {
 		s.tlsReloader.Stop()
+	}
+	if s.authConfigFile != "" && s.authReloader != nil {
+		s.authReloader.Stop()
 	}
 	stopped := make(chan struct{})
 	go func() {
