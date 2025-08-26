@@ -46,7 +46,7 @@ var (
 
 func TestPropertyRepairSameData(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
-	ginkgo.RunSpecs(t, "Property Repair Same Data Test Suite", ginkgo.Label("integration", "slow"))
+	ginkgo.RunSpecs(t, "Property Repair Same Data Test Suite", ginkgo.Label("integration", "slow", "property_repair", "same_data"))
 }
 
 var _ = ginkgo.BeforeSuite(func() {
