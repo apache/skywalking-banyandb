@@ -18,20 +18,26 @@
 package sidx
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 const (
 	// Standard file names for sidx parts.
-	primaryFilename = "primary.bin"
-	dataFilename    = "data.bin"
-	keysFilename    = "keys.bin"
-	metaFilename    = "meta.bin"
+	primaryFilename  = "primary.bin"
+	dataFilename     = "data.bin"
+	keysFilename     = "keys.bin"
+	metaFilename     = "meta.bin"
+	manifestFilename = "manifest.json"
 
 	// Tag file extensions.
 	tagDataExtension     = ".td" // <name>.td files
@@ -93,9 +99,23 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 	return p
 }
 
-// loadPartMetadata reads and parses the part metadata from meta.bin.
+// loadPartMetadata reads and parses the part metadata from manifest.json.
 func (p *part) loadPartMetadata() error {
-	// Read the entire meta.bin file.
+	// First try to read from manifest.json (new format)
+	manifestPath := filepath.Join(p.path, manifestFilename)
+	manifestData, err := p.fileSystem.Read(manifestPath)
+	if err == nil {
+		// Parse JSON manifest
+		pm := generatePartMetadata()
+		if unmarshalErr := json.Unmarshal(manifestData, pm); unmarshalErr != nil {
+			releasePartMetadata(pm)
+			return fmt.Errorf("failed to unmarshal manifest.json: %w", unmarshalErr)
+		}
+		p.partMetadata = pm
+		return nil
+	}
+
+	// Fallback to meta.bin for backward compatibility
 	metaData, err := p.fileSystem.Read(filepath.Join(p.path, metaFilename))
 	if err != nil {
 		return fmt.Errorf("failed to read meta.bin: %w", err)
@@ -253,9 +273,9 @@ func mustOpenReader(filePath string, fileSystem fs.FileSystem) fs.Reader {
 // String returns a string representation of the part.
 func (p *part) String() string {
 	if p.partMetadata != nil {
-		return fmt.Sprintf("part %d at %s", p.partMetadata.ID, p.path)
+		return fmt.Sprintf("sidx part %d at %s", p.partMetadata.ID, p.path)
 	}
-	return fmt.Sprintf("part at %s", p.path)
+	return fmt.Sprintf("sidx part at %s", p.path)
 }
 
 // getPartMetadata returns the part metadata.
@@ -321,4 +341,251 @@ func (p *part) hasTagFiles(tagName string) bool {
 // Path returns the part's directory path.
 func (p *part) Path() string {
 	return p.path
+}
+
+// memPart represents an in-memory part for SIDX with tag-based file design.
+// This structure mirrors the stream module's memPart but uses user keys instead of timestamps.
+type memPart struct {
+	tagMetadata  map[string]*bytes.Buffer
+	tagData      map[string]*bytes.Buffer
+	tagFilters   map[string]*bytes.Buffer
+	partMetadata *partMetadata
+	meta         bytes.Buffer
+	primary      bytes.Buffer
+	data         bytes.Buffer
+	keys         bytes.Buffer
+}
+
+// mustCreateTagWriters creates writers for individual tag files.
+// Returns metadata writer, data writer, and filter writer for the specified tag.
+func (mp *memPart) mustCreateTagWriters(tagName string) (fs.Writer, fs.Writer, fs.Writer) {
+	if mp.tagData == nil {
+		mp.tagData = make(map[string]*bytes.Buffer)
+		mp.tagMetadata = make(map[string]*bytes.Buffer)
+		mp.tagFilters = make(map[string]*bytes.Buffer)
+	}
+
+	// Get or create buffers for this tag
+	td, tdExists := mp.tagData[tagName]
+	tm := mp.tagMetadata[tagName]
+	tf := mp.tagFilters[tagName]
+
+	if tdExists {
+		td.Reset()
+		tm.Reset()
+		tf.Reset()
+		return tm, td, tf
+	}
+
+	// Create new buffers for this tag
+	mp.tagData[tagName] = &bytes.Buffer{}
+	mp.tagMetadata[tagName] = &bytes.Buffer{}
+	mp.tagFilters[tagName] = &bytes.Buffer{}
+
+	return mp.tagMetadata[tagName], mp.tagData[tagName], mp.tagFilters[tagName]
+}
+
+// reset clears the memory part for reuse.
+func (mp *memPart) reset() {
+	if mp.partMetadata != nil {
+		mp.partMetadata.reset()
+	}
+	mp.meta.Reset()
+	mp.primary.Reset()
+	mp.data.Reset()
+	mp.keys.Reset()
+
+	if mp.tagData != nil {
+		for k, td := range mp.tagData {
+			td.Reset()
+			delete(mp.tagData, k)
+		}
+	}
+	if mp.tagMetadata != nil {
+		for k, tm := range mp.tagMetadata {
+			tm.Reset()
+			delete(mp.tagMetadata, k)
+		}
+	}
+	if mp.tagFilters != nil {
+		for k, tf := range mp.tagFilters {
+			tf.Reset()
+			delete(mp.tagFilters, k)
+		}
+	}
+}
+
+// mustInitFromElements initializes the memory part from sorted elements using blockWriter.
+func (mp *memPart) mustInitFromElements(es *elements) {
+	mp.reset()
+
+	if len(es.userKeys) == 0 {
+		return
+	}
+
+	// Sort elements by seriesID first, then by user key
+	sort.Sort(es)
+
+	// Initialize part metadata
+	if mp.partMetadata == nil {
+		mp.partMetadata = generatePartMetadata()
+	}
+
+	// Initialize block writer for memory part
+	bw := generateBlockWriter()
+	defer releaseBlockWriter(bw)
+
+	bw.MustInitForMemPart(mp)
+
+	// Group elements by seriesID and write to blocks
+	currentSeriesID := es.seriesIDs[0]
+	blockStart := 0
+
+	for i := 1; i <= len(es.seriesIDs); i++ {
+		// Process block when series changes or at end
+		if i == len(es.seriesIDs) || es.seriesIDs[i] != currentSeriesID {
+			// Extract elements for current series
+			seriesUserKeys := es.userKeys[blockStart:i]
+			seriesTags := es.tags[blockStart:i]
+
+			// Write elements for this series
+			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesTags)
+
+			if i < len(es.seriesIDs) {
+				currentSeriesID = es.seriesIDs[i]
+				blockStart = i
+			}
+		}
+	}
+
+	// Flush the block writer to finalize metadata
+	bw.Flush(mp.partMetadata)
+
+	// Update key range in part metadata
+	if len(es.userKeys) > 0 {
+		mp.partMetadata.MinKey = es.userKeys[0]
+		mp.partMetadata.MaxKey = es.userKeys[len(es.userKeys)-1]
+	}
+}
+
+// mustFlush flushes the memory part to disk with tag-based file organization.
+func (mp *memPart) mustFlush(fileSystem fs.FileSystem, partPath string) {
+	fileSystem.MkdirPanicIfExist(partPath, storage.DirPerm)
+
+	// Write core files
+	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(partPath, metaFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(partPath, primaryFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.data.Buf, filepath.Join(partPath, dataFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.keys.Buf, filepath.Join(partPath, keysFilename), storage.FilePerm)
+
+	// Write individual tag files
+	for tagName, td := range mp.tagData {
+		fs.MustFlush(fileSystem, td.Buf, filepath.Join(partPath, tagName+tagDataExtension), storage.FilePerm)
+	}
+	for tagName, tm := range mp.tagMetadata {
+		fs.MustFlush(fileSystem, tm.Buf, filepath.Join(partPath, tagName+tagMetadataExtension), storage.FilePerm)
+	}
+	for tagName, tf := range mp.tagFilters {
+		fs.MustFlush(fileSystem, tf.Buf, filepath.Join(partPath, tagName+tagFilterExtension), storage.FilePerm)
+	}
+
+	// Write part metadata manifest
+	if mp.partMetadata != nil {
+		manifestData, err := mp.partMetadata.marshal()
+		if err != nil {
+			logger.GetLogger().Panic().Err(err).Str("path", partPath).Msg("failed to marshal part metadata")
+		}
+		fs.MustFlush(fileSystem, manifestData, filepath.Join(partPath, manifestFilename), storage.FilePerm)
+	}
+
+	fileSystem.SyncPath(partPath)
+}
+
+// generateMemPart gets memPart from pool or creates new.
+func generateMemPart() *memPart {
+	v := memPartPool.Get()
+	if v == nil {
+		return &memPart{}
+	}
+	return v
+}
+
+// releaseMemPart returns memPart to pool after reset.
+func releaseMemPart(mp *memPart) {
+	mp.reset()
+	memPartPool.Put(mp)
+}
+
+var memPartPool = pool.Register[*memPart]("sidx-memPart")
+
+// openMemPart creates a part from a memory part.
+func openMemPart(mp *memPart) *part {
+	p := &part{}
+	if mp.partMetadata != nil {
+		// Copy part metadata
+		p.partMetadata = generatePartMetadata()
+		*p.partMetadata = *mp.partMetadata
+	}
+
+	// TODO: Read block metadata when blockWriter is implemented
+	// p.blockMetadata = mustReadBlockMetadata(p.blockMetadata[:0], &mp.primary)
+
+	// Open data files as readers from memory buffers
+	p.primary = &mp.primary
+	p.data = &mp.data
+	p.keys = &mp.keys
+
+	// Open individual tag files if they exist
+	if mp.tagData != nil {
+		p.tagData = make(map[string]fs.Reader)
+		p.tagMetadata = make(map[string]fs.Reader)
+		p.tagFilters = make(map[string]fs.Reader)
+
+		for tagName, td := range mp.tagData {
+			p.tagData[tagName] = td
+			if tm, exists := mp.tagMetadata[tagName]; exists {
+				p.tagMetadata[tagName] = tm
+			}
+			if tf, exists := mp.tagFilters[tagName]; exists {
+				p.tagFilters[tagName] = tf
+			}
+		}
+	}
+	return p
+}
+
+// uncompressedElementSizeBytes calculates the uncompressed size of an element.
+// This is a utility function similar to the stream module.
+func uncompressedElementSizeBytes(index int, es *elements) uint64 {
+	// 8 bytes for user key
+	// 8 bytes for elementID
+	n := uint64(8 + 8)
+
+	// Add data payload size
+	if index < len(es.data) && es.data[index] != nil {
+		n += uint64(len(es.data[index]))
+	}
+
+	// Add tag sizes
+	if index < len(es.tags) {
+		for _, tag := range es.tags[index] {
+			n += uint64(len(tag.name))
+			if tag.value != nil {
+				n += uint64(len(tag.value))
+			}
+		}
+	}
+
+	return n
+}
+
+// partPath returns the path for a part with the given epoch.
+func partPath(root string, epoch uint64) string {
+	return filepath.Join(root, partName(epoch))
+}
+
+// partName returns the directory name for a part with the given epoch.
+// Uses 16-character hex format consistent with stream module.
+func partName(epoch uint64) string {
+	return fmt.Sprintf("%016x", epoch)
 }

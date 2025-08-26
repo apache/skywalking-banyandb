@@ -59,13 +59,9 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 					if !merged {
 						tst.flush(curSnapshot, flushCh)
 					}
-					epoch = curSnapshot.epoch
-					if merged {
-						flusherWatchers.Notify(math.MaxUint64)
-					} else {
-						flusherWatchers.Notify(epoch)
-					}
+					flusherWatchers.Notify(math.MaxUint64)
 					flusherWatchers = nil
+					epoch = curSnapshot.epoch
 					if tst.currentEpoch() != epoch {
 						tst.incTotalFlushLoopProgress(1)
 						return false

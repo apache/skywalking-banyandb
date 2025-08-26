@@ -73,11 +73,13 @@ type partWrapper struct {
 // newPartWrapper creates a new partWrapper with an initial reference count of 1.
 // The part starts in the active state.
 func newPartWrapper(p *part) *partWrapper {
-	return &partWrapper{
+	pw := &partWrapper{
 		p:     p,
 		ref:   1,
 		state: int32(partStateActive),
 	}
+
+	return pw
 }
 
 // acquire increments the reference count atomically.
@@ -200,6 +202,12 @@ func (pw *partWrapper) isRemoving() bool {
 // isRemoved returns true if the part is in the removed state.
 func (pw *partWrapper) isRemoved() bool {
 	return atomic.LoadInt32(&pw.state) == int32(partStateRemoved)
+}
+
+// isMemPart returns true if this wrapper contains a memory part.
+func (pw *partWrapper) isMemPart() bool {
+	// A memory part typically has no file system path or is stored in memory
+	return pw.p != nil && pw.p.path == ""
 }
 
 // String returns a string representation of the partWrapper.

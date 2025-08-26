@@ -147,10 +147,11 @@ func encodeInt64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
 		if v == nil || string(v) == "null" {
 			// Handle null values by falling back to default encoding
 			bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], values)
-			bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
 			// Apply zstd compression for plain encoding
 			compressed := zstd.Compress(nil, bb.Buf, defaultCompressionLevel)
-			return compressed, nil
+			// Prepend EncodeTypePlain at the head of compressed data
+			result := append([]byte{byte(encoding.EncodeTypePlain)}, compressed...)
+			return result, nil
 		}
 		if len(v) != 8 {
 			logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
@@ -188,10 +189,11 @@ func encodeFloat64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
 		if v == nil || string(v) == "null" {
 			// Handle null values by falling back to default encoding
 			bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], values)
-			bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
 			// Apply zstd compression for plain encoding
 			compressed := zstd.Compress(nil, bb.Buf, defaultCompressionLevel)
-			return compressed, nil
+			// Prepend EncodeTypePlain at the head of compressed data
+			result := append([]byte{byte(encoding.EncodeTypePlain)}, compressed...)
+			return result, nil
 		}
 		if len(v) != 8 {
 			logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
@@ -204,10 +206,11 @@ func encodeFloat64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
 		logger.Errorf("cannot convert Float64List to DecimalIntList: %v", err)
 		// Handle error by falling back to default encoding
 		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], values)
-		bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
 		// Apply zstd compression for plain encoding
 		compressed := zstd.Compress(nil, bb.Buf, defaultCompressionLevel)
-		return compressed, nil
+		// Prepend EncodeTypePlain at the head of compressed data
+		result := append([]byte{byte(encoding.EncodeTypePlain)}, compressed...)
+		return result, nil
 	}
 
 	var firstValue int64
@@ -256,28 +259,29 @@ func decodeInt64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer,
 		logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", 1, len(bb.Buf))
 	}
 
-	// Check if this is zstd compressed data (no encode type prefix)
-	decompressed, err := zstd.Decompress(nil, bb.Buf)
-	if err == nil {
-		// Successfully decompressed, this is compressed data
-		bb.Buf = decompressed
-		if len(bb.Buf) < 1 {
-			logger.Panicf("decompressed data too short: expect at least %d bytes, but got %d bytes", 1, len(bb.Buf))
-		}
-	}
+	// Check the first byte to determine the encoding type
+	firstByte := encoding.EncodeType(bb.Buf[0])
 
-	encodeType := encoding.EncodeType(bb.Buf[0])
-	if encodeType == encoding.EncodeTypePlain {
-		bb.Buf = bb.Buf[1:]
-		// Data is already decompressed, decode directly without trying to decompress again
+	if firstByte == encoding.EncodeTypePlain {
+		// This is compressed data with EncodeTypePlain at the head
+		// Skip the EncodeTypePlain byte and decompress the rest
+		compressedData := bb.Buf[1:]
+		decompressed, err := zstd.Decompress(nil, compressedData)
+		if err != nil {
+			logger.Panicf("cannot decompress data: %v", err)
+		}
+
+		// Decode the decompressed data
 		values := make([][]byte, 0, count)
-		values, decodeErr := decoder.Decode(values[:0], bb.Buf, count)
+		values, decodeErr := decoder.Decode(values[:0], decompressed, count)
 		if decodeErr != nil {
 			logger.Panicf("cannot decode values: %v", decodeErr)
 		}
 		return values, nil
 	}
 
+	// Otherwise, this is int list data with EncodeType at the beginning
+	encodeType := firstByte
 	const expectedLen = 9
 	if len(bb.Buf) < expectedLen {
 		logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", expectedLen, len(bb.Buf))
@@ -285,6 +289,7 @@ func decodeInt64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer,
 	firstValue := convert.BytesToInt64(bb.Buf[1:9])
 	bb.Buf = bb.Buf[9:]
 
+	var err error
 	intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
 	if err != nil {
 		logger.Panicf("cannot decode int values: %v", err)
@@ -311,28 +316,29 @@ func decodeFloat64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffe
 		logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", 1, len(bb.Buf))
 	}
 
-	// Check if this is zstd compressed data (no encode type prefix)
-	decompressed, err := zstd.Decompress(nil, bb.Buf)
-	if err == nil {
-		// Successfully decompressed, this is compressed data
-		bb.Buf = decompressed
-		if len(bb.Buf) < 1 {
-			logger.Panicf("decompressed data too short: expect at least %d bytes, but got %d bytes", 1, len(bb.Buf))
-		}
-	}
+	// Check the first byte to determine the encoding type
+	firstByte := encoding.EncodeType(bb.Buf[0])
 
-	encodeType := encoding.EncodeType(bb.Buf[0])
-	if encodeType == encoding.EncodeTypePlain {
-		bb.Buf = bb.Buf[1:]
-		// Data is already decompressed, decode directly without trying to decompress again
+	if firstByte == encoding.EncodeTypePlain {
+		// This is compressed data with EncodeTypePlain at the head
+		// Skip the EncodeTypePlain byte and decompress the rest
+		compressedData := bb.Buf[1:]
+		decompressed, err := zstd.Decompress(nil, compressedData)
+		if err != nil {
+			logger.Panicf("cannot decompress data: %v", err)
+		}
+
+		// Decode the decompressed data
 		values := make([][]byte, 0, count)
-		values, decodeErr := decoder.Decode(values[:0], bb.Buf, count)
+		values, decodeErr := decoder.Decode(values[:0], decompressed, count)
 		if decodeErr != nil {
 			logger.Panicf("cannot decode values: %v", decodeErr)
 		}
 		return values, nil
 	}
 
+	// Otherwise, this is float64 int list data with EncodeType at the beginning
+	encodeType := firstByte
 	const expectedLen = 11
 	if len(bb.Buf) < expectedLen {
 		logger.Panicf("bb.Buf length too short: expect at least %d bytes, but got %d bytes", expectedLen, len(bb.Buf))
@@ -341,6 +347,7 @@ func decodeFloat64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffe
 	firstValue := convert.BytesToInt64(bb.Buf[3:11])
 	bb.Buf = bb.Buf[11:]
 
+	var err error
 	intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
 	if err != nil {
 		logger.Panicf("cannot decode int values: %v", err)

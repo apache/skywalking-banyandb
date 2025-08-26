@@ -452,3 +452,81 @@ func unmarshalTagMetadata(data []byte) (*tagMetadata, error) {
 
 	return tm, nil
 }
+
+// marshalAppend serializes tagMetadata to bytes and appends to dst (panic version for mustWriteTag).
+func (tm *tagMetadata) marshalAppend(dst []byte) []byte {
+	data, err := tm.marshal()
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal tag metadata: %v", err))
+	}
+	return append(dst, data...)
+}
+
+// marshalTagMetadata is the error-returning version of marshal.
+func (tm *tagMetadata) marshalTagMetadata() ([]byte, error) {
+	buf := &bytes.Buffer{}
+
+	// Write name length and name
+	nameBytes := []byte(tm.name)
+	if err := binary.Write(buf, binary.LittleEndian, uint32(len(nameBytes))); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write(nameBytes); err != nil {
+		return nil, err
+	}
+
+	// Write value type
+	if err := binary.Write(buf, binary.LittleEndian, uint32(tm.valueType)); err != nil {
+		return nil, err
+	}
+
+	// Write data block
+	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.offset); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.size); err != nil {
+		return nil, err
+	}
+
+	// Write filter block
+	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.offset); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.size); err != nil {
+		return nil, err
+	}
+
+	// Write flags
+	var flags uint8
+	if tm.indexed {
+		flags |= 1
+	}
+	if tm.compressed {
+		flags |= 2
+	}
+	if err := binary.Write(buf, binary.LittleEndian, flags); err != nil {
+		return nil, err
+	}
+
+	// Write min length and min
+	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.min))); err != nil {
+		return nil, err
+	}
+	if len(tm.min) > 0 {
+		if _, err := buf.Write(tm.min); err != nil {
+			return nil, err
+		}
+	}
+
+	// Write max length and max
+	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.max))); err != nil {
+		return nil, err
+	}
+	if len(tm.max) > 0 {
+		if _, err := buf.Write(tm.max); err != nil {
+			return nil, err
+		}
+	}
+
+	return buf.Bytes(), nil
+}

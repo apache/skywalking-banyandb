@@ -25,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -169,12 +170,12 @@ func (sc *serviceCache) startCleaner() {
 
 func (sc *serviceCache) removeEntry(key EntryKey) {
 	if entry, exists := sc.entry[key]; exists {
-		atomic.AddUint64(&sc.currentSize, ^(entry.size - 1))
+		sc.atomicSubtract(entry.size)
 		delete(sc.entry, key)
-		if ei, exists := sc.entryIndex[key]; exists && ei.index >= 0 && ei.index < sc.entryIndexHeap.Len() {
-			heap.Remove(sc.entryIndexHeap, ei.index)
-			delete(sc.entryIndex, key)
-		}
+	}
+	if ei, exists := sc.entryIndex[key]; exists && ei.index >= 0 && ei.index < sc.entryIndexHeap.Len() {
+		heap.Remove(sc.entryIndexHeap, ei.index)
+		delete(sc.entryIndex, key)
 	}
 }
 
@@ -186,10 +187,16 @@ func (sc *serviceCache) clean() {
 		case <-ticker.C:
 			now := uint64(time.Now().UnixNano())
 			sc.mu.Lock()
+			// Collect keys to remove to avoid modifying map during iteration
+			var keysToRemove []EntryKey
 			for key, entry := range sc.entry {
 				if now-atomic.LoadUint64(&entry.lastAccess) > uint64(sc.idleTimeout.Nanoseconds()) {
-					sc.removeEntry(key)
+					keysToRemove = append(keysToRemove, key)
 				}
+			}
+			// Remove expired entries
+			for _, key := range keysToRemove {
+				sc.removeEntry(key)
 			}
 			sc.mu.Unlock()
 		case <-sc.stopCh:
@@ -211,15 +218,19 @@ func (sc *serviceCache) Get(key EntryKey) Sizable {
 
 	sc.mu.RLock()
 	entry := sc.entry[key]
+	ei := sc.entryIndex[key]
 	sc.mu.RUnlock()
 
 	if entry != nil {
 		now := uint64(time.Now().UnixNano())
 		if atomic.LoadUint64(&entry.lastAccess) != now {
 			sc.mu.Lock()
-			atomic.StoreUint64(&entry.lastAccess, now)
-			if ei := sc.entryIndex[key]; ei != nil {
-				heap.Fix(sc.entryIndexHeap, ei.index)
+			// Verify entry still exists and update access time
+			if currentEntry := sc.entry[key]; currentEntry == entry {
+				atomic.StoreUint64(&entry.lastAccess, now)
+				if ei != nil && ei.index >= 0 && ei.index < sc.entryIndexHeap.Len() {
+					heap.Fix(sc.entryIndexHeap, ei.index)
+				}
 			}
 			sc.mu.Unlock()
 		}
@@ -237,15 +248,31 @@ func (sc *serviceCache) Put(key EntryKey, value Sizable) {
 	valueSize := value.Size()
 	entryOverhead := uint64(unsafe.Sizeof(entry{}) + unsafe.Sizeof(entryIndex{}) + unsafe.Sizeof(key))
 	totalSize := valueSize + entryOverhead
-
-	if existing, exists := sc.entry[key]; exists {
-		atomic.AddUint64(&sc.currentSize, ^(existing.size - 1))
-		sc.removeEntry(key)
+	if totalSize > sc.maxCacheSize {
+		logger.Warningf("value size exceeds max cache size: %d > %d: overhead %d", totalSize, sc.maxCacheSize, entryOverhead)
+		return
 	}
 
-	for atomic.LoadUint64(&sc.currentSize)+totalSize > sc.maxCacheSize && sc.len() > 0 {
+	// Remove existing entry if present
+	if existing, exists := sc.entry[key]; exists {
+		sc.atomicSubtract(existing.size)
+		delete(sc.entry, key)
+		if ei, exists := sc.entryIndex[key]; exists {
+			if ei.index >= 0 && ei.index < sc.entryIndexHeap.Len() {
+				heap.Remove(sc.entryIndexHeap, ei.index)
+			}
+			delete(sc.entryIndex, key)
+		}
+	}
+
+	// Evict entries until there's space
+	for atomic.LoadUint64(&sc.currentSize)+totalSize > sc.maxCacheSize && sc.entryIndexHeap.Len() > 0 {
 		ei := heap.Pop(sc.entryIndexHeap).(*entryIndex)
-		sc.removeEntry(ei.key)
+		if entry, exists := sc.entry[ei.key]; exists {
+			sc.atomicSubtract(entry.size)
+			delete(sc.entry, ei.key)
+		}
+		delete(sc.entryIndex, ei.key)
 	}
 
 	now := uint64(time.Now().UnixNano())
@@ -283,13 +310,27 @@ func (sc *serviceCache) len() uint64 {
 }
 
 func (sc *serviceCache) Size() uint64 {
-	sc.mu.RLock()
-	defer sc.mu.RUnlock()
 	return sc.size()
 }
 
 func (sc *serviceCache) size() uint64 {
 	return atomic.LoadUint64(&sc.currentSize)
+}
+
+// atomicSubtract safely subtracts a value from currentSize.
+func (sc *serviceCache) atomicSubtract(size uint64) {
+	for {
+		current := atomic.LoadUint64(&sc.currentSize)
+		var newSize uint64
+		if current >= size {
+			newSize = current - size
+		} else {
+			newSize = 0
+		}
+		if atomic.CompareAndSwapUint64(&sc.currentSize, current, newSize) {
+			break
+		}
+	}
 }
 
 var _ Cache = (*bypassCache)(nil)

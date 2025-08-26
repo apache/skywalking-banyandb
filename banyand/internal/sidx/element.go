@@ -28,19 +28,7 @@ import (
 
 const (
 	maxPooledSliceSize = 1024 * 1024 // 1MB
-	maxPooledTagCount  = 100
 )
-
-// element represents a single data element in sidx.
-type element struct {
-	data     []byte // User payload data (pooled slice)
-	tags     []tag  // Individual tags (pooled slice)
-	seriesID common.SeriesID
-	userKey  int64 // The ordering key from user (replaces timestamp)
-
-	// Internal fields for pooling
-	pooled bool // Whether this element came from pool
-}
 
 // tag represents an individual tag (not tag family like stream).
 type tag struct {
@@ -59,27 +47,6 @@ type elements struct {
 
 	// Pool management
 	pooled bool // Whether from pool
-}
-
-// reset clears element for reuse in object pool.
-func (e *element) reset() {
-	e.seriesID = 0
-	e.userKey = 0
-	if cap(e.data) <= maxPooledSliceSize {
-		e.data = e.data[:0] // Reuse slice if not too large
-	} else {
-		e.data = nil // Release oversized slice
-	}
-	if cap(e.tags) <= maxPooledTagCount {
-		// Reset each tag for reuse
-		for i := range e.tags {
-			e.tags[i].reset()
-		}
-		e.tags = e.tags[:0]
-	} else {
-		e.tags = nil
-	}
-	e.pooled = false
 }
 
 // reset clears tag for reuse.
@@ -108,16 +75,6 @@ func (e *elements) reset() {
 	}
 	e.tags = e.tags[:0]
 	e.pooled = false
-}
-
-// size returns the total size of the element in bytes.
-func (e *element) size() int {
-	size := 8 + 8 // seriesID + userKey
-	size += len(e.data)
-	for i := range e.tags {
-		size += e.tags[i].size()
-	}
-	return size
 }
 
 // size returns the size of the tag in bytes.
@@ -160,29 +117,9 @@ func (e *elements) Swap(i, j int) {
 }
 
 var (
-	elementPool  = pool.Register[*element]("sidx-element")
 	elementsPool = pool.Register[*elements]("sidx-elements")
 	tagPool      = pool.Register[*tag]("sidx-tag")
 )
-
-// generateElement gets an element from pool or creates new.
-func generateElement() *element {
-	v := elementPool.Get()
-	if v == nil {
-		return &element{pooled: true}
-	}
-	v.pooled = true
-	return v
-}
-
-// releaseElement returns element to pool after reset.
-func releaseElement(e *element) {
-	if e == nil || !e.pooled {
-		return
-	}
-	e.reset()
-	elementPool.Put(e)
-}
 
 // generateElements gets elements collection from pool.
 func generateElements() *elements {
@@ -219,4 +156,27 @@ func releaseTag(t *tag) {
 	}
 	t.reset()
 	tagPool.Put(t)
+}
+
+// mustAppend adds a new element to the collection.
+func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, data []byte, tags []Tag) {
+	e.seriesIDs = append(e.seriesIDs, seriesID)
+	e.userKeys = append(e.userKeys, userKey)
+
+	// Copy data
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+	e.data = append(e.data, dataCopy)
+
+	// Convert and copy tags
+	elementTags := make([]tag, len(tags))
+	for i, t := range tags {
+		elementTags[i] = tag{
+			name:      t.name,
+			value:     append([]byte(nil), t.value...),
+			valueType: t.valueType,
+			indexed:   t.indexed,
+		}
+	}
+	e.tags = append(e.tags, elementTags)
 }

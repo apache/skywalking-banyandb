@@ -77,17 +77,65 @@ func generateSegID(unit IntervalUnit, suffix int) segmentID {
 var _ Cache = (*groupCache)(nil)
 
 type groupCache struct {
-	*serviceCache
+	cache Cache
 	group string
 }
 
-func (gc *groupCache) get(key EntryKey) Sizable {
+func (gc *groupCache) Get(key EntryKey) Sizable {
+	if gc.cache == nil {
+		return nil
+	}
 	key.group = gc.group
+	return gc.cache.Get(key)
+}
+
+func (gc *groupCache) Put(key EntryKey, value Sizable) {
+	if gc.cache == nil {
+		return
+	}
+	key.group = gc.group
+	gc.cache.Put(key, value)
+}
+
+func (gc *groupCache) Close() {
+	if gc.cache != nil {
+		gc.cache.Close()
+	}
+}
+
+func (gc *groupCache) Requests() uint64 {
+	if gc.cache == nil {
+		return 0
+	}
+	return gc.cache.Requests()
+}
+
+func (gc *groupCache) Misses() uint64 {
+	if gc.cache == nil {
+		return 0
+	}
+	return gc.cache.Misses()
+}
+
+func (gc *groupCache) Entries() uint64 {
+	if gc.cache == nil {
+		return 0
+	}
+	return gc.cache.Entries()
+}
+
+func (gc *groupCache) Size() uint64 {
+	if gc.cache == nil {
+		return 0
+	}
+	return gc.cache.Size()
+}
+
+func (gc *groupCache) get(key EntryKey) Sizable {
 	return gc.Get(key)
 }
 
 func (gc *groupCache) put(key EntryKey, value Sizable) {
-	key.group = gc.group
 	gc.Put(key, value)
 }
 
@@ -146,9 +194,9 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	if opts.StorageMetricsFactory != nil {
 		indexMetrics = inverted.NewMetrics(opts.StorageMetricsFactory, common.SegLabelNames()...)
 	}
-	var sc *serviceCache
+	var sc Cache
 	if cache != nil {
-		sc = cache.(*serviceCache)
+		sc = cache
 	}
 	db := &database[T, O]{
 		location:  location,
