@@ -259,22 +259,26 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 			}
 		}
 	}
+
+	var minTimestamp, maxTimestamp int64
 	for i, pw := range parts {
 		pm := pw.p.partMetadata
 		if i == 0 {
-			bw.totalMinTimestamp = pm.MinTimestamp
-			bw.totalMaxTimestamp = pm.MaxTimestamp
+			minTimestamp = pm.MinTimestamp
+			maxTimestamp = pm.MaxTimestamp
 			continue
 		}
-		if pm.MinTimestamp < bw.totalMinTimestamp {
-			bw.totalMinTimestamp = pm.MinTimestamp
+		if pm.MinTimestamp < minTimestamp {
+			minTimestamp = pm.MinTimestamp
 		}
-		if pm.MaxTimestamp > bw.totalMaxTimestamp {
-			bw.totalMaxTimestamp = pm.MaxTimestamp
+		if pm.MaxTimestamp > maxTimestamp {
+			maxTimestamp = pm.MaxTimestamp
 		}
 	}
 
 	pm, tf, tt, err := mergeBlocks(closeCh, bw, br)
+	pm.MinTimestamp = minTimestamp
+	pm.MaxTimestamp = maxTimestamp
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
