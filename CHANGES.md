@@ -33,6 +33,10 @@ Release Notes.
 - Enhance flusher and introducer loops to support merging operations, improving efficiency by eliminating the need for a separate merge loop and optimizing data handling process during flushing and merging
 - Enhance stream synchronization with configurable sync interval - Allows customization of synchronization timing for better performance tuning
 - Refactor flusher and introducer loops to support conditional merging - Optimizes data processing by adding conditional logic to merge operations
+- New storage engine for trace:
+  - Data ingestion and retrieval.
+  - Flush memory data to disk.
+  - Merge memory data and disk data.
 
 ### Bug Fixes
 

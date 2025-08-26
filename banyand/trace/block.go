@@ -288,6 +288,7 @@ func mustReadSpansFrom(spans [][]byte, sm *dataBlock, count int, reader fs.Reade
 		if uint64(len(src)) < spanLen {
 			logger.Panicf("insufficient data for span: need %d bytes, have %d", spanLen, len(src))
 		}
+		spans[i] = spans[i][:0]
 		spans[i] = append(spans[i], src[:spanLen]...)
 		src = src[spanLen:]
 	}
@@ -311,6 +312,7 @@ func mustSeqReadSpansFrom(spans [][]byte, sm *dataBlock, count int, reader *seqR
 		if uint64(len(src)) < spanLen {
 			logger.Panicf("insufficient data for span: need %d bytes, have %d", spanLen, len(src))
 		}
+		spans[i] = spans[i][:0]
 		spans[i] = append(spans[i], src[:spanLen]...)
 		src = src[spanLen:]
 	}
@@ -381,11 +383,7 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 		return
 	}
 
-	requiredCapacity := end - start
-	r.TIDs = append(r.TIDs, make([]string, requiredCapacity)...)
-	for i := range r.TIDs[len(r.TIDs)-requiredCapacity:] {
-		r.TIDs[len(r.TIDs)-requiredCapacity+i] = bc.bm.traceID
-	}
+	r.TID = bc.bm.traceID
 	r.Spans = append(r.Spans, bc.spans[start:end]...)
 
 	if desc {
@@ -417,7 +415,7 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 
 func (bc *blockCursor) copyTo(r *model.TraceResult) {
 	r.Spans = append(r.Spans, bc.spans[bc.idx])
-	r.TIDs = append(r.TIDs, bc.bm.traceID)
+	r.TID = bc.bm.traceID
 	if len(r.Tags) != len(bc.tagProjection.Names) {
 		for _, name := range bc.tagProjection.Names {
 			r.Tags = append(r.Tags, model.Tag{Name: name})

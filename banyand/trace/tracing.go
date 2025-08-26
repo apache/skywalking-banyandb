@@ -23,11 +23,14 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
+// TODO: check the header.
 const (
 	partMetadataHeader = "MinTimestamp, MaxTimestamp, CompressionSize, UncompressedSize, TotalCount, BlocksCount"
-	blockHeader        = "PartID, SeriesID, MinTimestamp, MaxTimestamp, Count, UncompressedSize"
+	blockHeader        = "PartID, TraceID, Count, UncompressedSize"
 )
 
 func (pm *partMetadata) String() string {
@@ -45,6 +48,26 @@ func (bc *blockCursor) String() string {
 		bc.p.partMetadata.ID, bc.bm.traceID, bc.bm.count, humanize.Bytes(bc.bm.uncompressedSpanSizeBytes))
 }
 
-func startBlockScanSpan(_ context.Context, _ int, _ []*part) func() {
-	panic("unimplemented")
+func startBlockScanSpan(ctx context.Context, tid string, parts []*part, qr *queryResult) func() {
+	tracer := query.GetTracer(ctx)
+	if tracer == nil {
+		return func() {}
+	}
+
+	span, _ := tracer.StartSpan(ctx, "scan-blocks")
+	span.Tag("trace_id", tid)
+	span.Tag("part_header", partMetadataHeader)
+	span.Tag("part_num", fmt.Sprintf("%d", len(parts)))
+	for i := range parts {
+		span.Tag(fmt.Sprintf("part_%d_%s", parts[i].partMetadata.ID, parts[i].path),
+			parts[i].partMetadata.String())
+	}
+
+	return func() {
+		span.Tag("block_header", blockHeader)
+		for i := range qr.data {
+			span.Tag(fmt.Sprintf("block_%d", i), qr.data[i].String())
+		}
+		span.Stop()
+	}
 }
