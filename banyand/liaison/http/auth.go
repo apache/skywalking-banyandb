@@ -29,14 +29,14 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
-func authMiddleware(cfg *auth.Config) func(http.Handler) http.Handler {
+func authMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isStaticPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
-
+			cfg := authReloader.GetConfig()
 			if !cfg.Enabled {
 				next.ServeHTTP(w, r)
 				return
@@ -77,7 +77,7 @@ func authMiddleware(cfg *auth.Config) func(http.Handler) http.Handler {
 
 			username := parts[0]
 			password := parts[1]
-			if !auth.CheckUsernameAndPassword(cfg, username, password) {
+			if !authReloader.CheckUsernameAndPassword(username, password) {
 				http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
 				return
 			}
@@ -105,9 +105,9 @@ func isStaticPath(path string) bool {
 	return false
 }
 
-func buildGRPCContextForHealthCheck(cfg *auth.Config, r *http.Request) (context.Context, error) {
+func buildGRPCContextForHealthCheck(authReloader *auth.Reloader, r *http.Request) (context.Context, error) {
 	ctx := r.Context()
-
+	cfg := authReloader.GetConfig()
 	if cfg.HealthAuthEnabled {
 		username := r.Header.Get("Grpc-Metadata-Username")
 		password := r.Header.Get("Grpc-Metadata-Password")
