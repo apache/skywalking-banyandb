@@ -69,7 +69,6 @@ message PropertySync {
   int64 delete_time = 3;
 }
 
-
 enum PropertySyncFromType {
   PROPERTY_SYNC_FROM_TYPE_UNSPECIFIED = 0;
   PROPERTY_SYNC_FROM_TYPE_MISSING = 1; // client missing but server existing

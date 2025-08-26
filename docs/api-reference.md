@@ -258,7 +258,6 @@
   
 - [banyandb/property/v1/repair.proto](#banyandb_property_v1_repair-proto)
     - [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary)
-    - [NoMorePropertySync](#banyandb-property-v1-NoMorePropertySync)
     - [PropertyMissing](#banyandb-property-v1-PropertyMissing)
     - [PropertySync](#banyandb-property-v1-PropertySync)
     - [PropertySyncWithFrom](#banyandb-property-v1-PropertySyncWithFrom)
@@ -3895,16 +3894,6 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | nodes | [TreeLeafNode](#banyandb-property-v1-TreeLeafNode) | repeated | if the nodes is empty, mean the server side don&#39;t have more tree leaf nodes to send. |
-
-
-
-
-
-
-<a name="banyandb-property-v1-NoMorePropertySync"></a>
-
-### NoMorePropertySync
-
 
 
 
