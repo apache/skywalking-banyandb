@@ -196,7 +196,7 @@ func (q *protocolHandler) handle(ctx context.Context, request *handlingRequest) 
 		if !needsKeepPropagation {
 			q.s.log.Info().Str("group", request.Group).Uint32("shardNum", request.ShardId).
 				Msgf("propagation message for propagation is finished")
-			q.s.serverMetrics.totalPropagationCount.Inc(float64(request.Context.CurrentPropagationCount),
+			q.s.serverMetrics.totalPropagationCount.Inc(1,
 				request.Group, request.Context.OriginNode)
 			q.s.serverMetrics.totalPropagationPercent.Observe(
 				float64(request.Context.CurrentPropagationCount)/float64(request.Context.MaxPropagationCount), request.Group)

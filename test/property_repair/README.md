@@ -43,31 +43,24 @@ avg by (instance) (
 
 In the first test case, a brand-new, empty node will be started, 
 and **100,000** records will be synchronized to it in a single batch. 
-This test is designed to measure the node’s CPU usage and the total time consumed during the process.
+This test is designed to measure the node's CPU usage and the total time consumed during the process.
 
-### Step 1: Start the Cluster and Load Data
+### Running the Integrated Test
 
-In the first step, a single liaison node and two data nodes will be started, 
-with the number of copies in the group set to one. Then, **100,000** records will be written in parallel.
+The full data test case runs as an integrated test that handles all steps automatically:
 
 ```bash
 cd test/property_repair/full_data
-# Start the cluster with 2 data nodes
-docker-compose -f docker-compose-2nodes.yml up -d
-# Load initial data into the cluster
-go test . -v -ginkgo.label-filter 'initial_load' -timeout 2h -count=1
+# Run the complete integrated test
+go test . -v -timeout 3h -count=1
 ```
 
-### Step 2: Add a New Node and Change Copies Count
-
-In the second step, a new data node will be added to the cluster,
-and the number of copies in the group will be changed to two.
-
-```bash
-# Add a new data node to the cluster and restart the Prometheus service to monitor the new node
-docker-compose -f docker-compose-3nodes.yml up data-node-3 -d --force-recreate prometheus
-go test . -v -ginkgo.label-filter 'update_copies' -count=1
-```
+The test performs the following steps:
+1. Starts a 3-node cluster using docker-compose
+2. Creates a group with 1 replica and loads 100,000 properties
+3. Updates the group to 2 replicas to trigger property repair
+4. Monitors the repair process through Prometheus metrics
+5. Verifies both propagation count and repair success count increase
 
 Then, wait for the propagation to complete in the cluster.
 
@@ -81,12 +74,6 @@ The detailed CPU usage rate is shown in the figure below.
 
 ![CPU Usage](full_data/cpu-usage.png)
 
-### Cleanup
-
-```bash
-docker-compose -f docker-compose-3nodes.yml down
-```
-
 ## Case 2: Half-Data Property Repair
 
 In the second test case, three nodes are started, with the group’s number of copies initially set to two. 
@@ -95,15 +82,24 @@ Next, the group’s copies' setting is changed to one, and the remaining **50,00
 At this point, the third node’s dataset is missing half of the data compared to the other nodes.
 Finally, the group’s copies' setting is changed back to two, allowing the backend Property Repair process to perform the data synchronization automatically.
 
-### Start and Load Data, Scale the Copies
+### Running the Integrated Test
 
-This test case can be completed in a single step, with the script executing the operations exactly as described above.
+This test case runs as an integrated test that handles all steps automatically:
 
 ```bash
 cd test/property_repair/half_data
-docker-compose -f docker-compose-3nodes.yml up -d
-go test . -v -timeout 2h -count=1
+# Run the complete integrated test
+go test . -v -timeout 3h -count=1
 ```
+
+The test performs the following steps:
+1. Starts a 3-node cluster using docker-compose
+2. Creates a group with 2 replicas and loads 50,000 properties
+3. Reduces the group to 1 replica
+4. Writes additional 50,000 properties (creating data inconsistency)
+5. Increases the group back to 2 replicas to trigger property repair
+6. Monitors the repair process through Prometheus metrics
+7. Verifies both propagation count and repair success count increase
 
 Then, wait for the propagation to complete in the cluster.
 
@@ -117,25 +113,25 @@ The detailed CPU usage rate is shown in the figure below.
 
 ![CPU Usage](half_data/cpu-usage.png)
 
-### Cleanup
-
-```bash
-docker-compose -f docker-compose-3nodes.yml down
-```
-
 ## Case 3: All Nodes Data are the Same
 
 In the third test case, which represents the most common scenario, all nodes contain identical data.
 
-### Start and Load Data
+### Running the Integrated Test
 
-This test case can also be completed in a single step, with the script executing the operations exactly as described above.
+This test case runs as an integrated test that handles all steps automatically:
 
 ```bash
 cd test/property_repair/same_data
-docker-compose -f docker-compose-3nodes.yml up -d
-go test . -v -timeout 2h -count=1
+# Run the complete integrated test
+go test . -v -timeout 3h -count=1
 ```
+
+The test performs the following steps:
+1. Starts a 3-node cluster using docker-compose
+2. Creates a group with 2 replicas and loads 100,000 properties across all nodes
+3. Monitors the repair process through Prometheus metrics
+4. Verifies propagation count increases (repair count verification is skipped since data is consistent)
 
 Then, wait for the propagation to complete in the cluster.
 
@@ -144,9 +140,3 @@ Then, wait for the propagation to complete in the cluster.
 After waiting for the Property Repair process to complete, the following information was recorded:
 1. **Duration**: Almost Less than **1 minute**.
 2. **CPU Consumption**: The estimated CPU usage in almost has no impact.
-
-### Cleanup
-
-```bash
-docker-compose -f docker-compose-3nodes.yml down
-```

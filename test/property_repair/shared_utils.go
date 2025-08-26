@@ -22,6 +22,12 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,6 +50,23 @@ const (
 	GroupName    = "perf-test-group"
 	PropertyName = "perf-test-property"
 )
+
+// PrometheusEndpoints defines the prometheus endpoints for data nodes.
+var PrometheusEndpoints = []string{
+	"http://localhost:2122/metrics", // data-node-1
+	"http://localhost:2123/metrics", // data-node-2
+	"http://localhost:2124/metrics", // data-node-3
+}
+
+// NodeMetrics represents the metrics for a data node.
+type NodeMetrics struct {
+	NodeName              string
+	TotalPropagationCount int64
+	RepairSuccessCount    int64
+	IsHealthy             bool
+	LastScrapeTime        time.Time
+	ErrorMessage          string
+}
 
 // GenerateLargeData creates a string of specified size filled with random characters.
 func GenerateLargeData(size int) string {
@@ -222,5 +245,191 @@ func WriteProperties(ctx context.Context, propertyServiceClient propertyv1.Prope
 	duration := endTime.Sub(startTime)
 	fmt.Printf("Write completed: %d properties in %s (%s props/sec)\n",
 		endIdx, FormatDuration(duration), FormatThroughput(int64(endIdx), duration))
+	return nil
+}
+
+// GetNodeMetrics fetches prometheus metrics from a single data node endpoint.
+func GetNodeMetrics(endpoint string, nodeIndex int) *NodeMetrics {
+	nodeName := fmt.Sprintf("data-node-%d", nodeIndex+1)
+	metrics := &NodeMetrics{
+		NodeName:       nodeName,
+		LastScrapeTime: time.Now(),
+		IsHealthy:      false,
+	}
+
+	// Set timeout for HTTP request
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		metrics.ErrorMessage = fmt.Sprintf("Failed to connect to %s: %v", endpoint, err)
+		return metrics
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		metrics.ErrorMessage = fmt.Sprintf("HTTP error %d from %s", resp.StatusCode, endpoint)
+		return metrics
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		metrics.ErrorMessage = fmt.Sprintf("Failed to read response from %s: %v", endpoint, err)
+		return metrics
+	}
+
+	// Parse metrics from prometheus data
+	content := string(body)
+	totalPropagationCount, parseErr := parseTotalPropagationCount(content)
+	if parseErr != nil {
+		metrics.ErrorMessage = fmt.Sprintf("Failed to parse total_propagation_count from %s: %v", endpoint, parseErr)
+		return metrics
+	}
+
+	repairSuccessCount, parseErr := parseRepairSuccessCount(content)
+	if parseErr != nil {
+		metrics.ErrorMessage = fmt.Sprintf("Failed to parse repair_success_count from %s: %v", endpoint, parseErr)
+		return metrics
+	}
+
+	metrics.TotalPropagationCount = totalPropagationCount
+	metrics.RepairSuccessCount = repairSuccessCount
+	metrics.IsHealthy = true
+	return metrics
+}
+
+// parseTotalPropagationCount parses the total_propagation_count from prometheus metrics text.
+func parseTotalPropagationCount(content string) (int64, error) {
+	// Look for metric lines like: banyandb_property_repair_gossip_server_total_propagation_count{group="perf-test-group",original_node="data-node-1:17912"} 3
+	re := regexp.MustCompile(`banyandb_property_repair_gossip_server_total_propagation_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	var totalCount int64
+	for _, match := range matches {
+		if len(match) >= 2 {
+			value, err := strconv.ParseFloat(match[1], 64)
+			if err != nil {
+				continue
+			}
+			totalCount += int64(value)
+		}
+	}
+
+	return totalCount, nil
+}
+
+// parseRepairSuccessCount parses the repair_success_count from prometheus metrics text.
+func parseRepairSuccessCount(content string) (int64, error) {
+	// Look for metric lines like: banyandb_property_scheduler_property_repair_success_count{group="perf-test-group",shard="0"} 100
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	var totalCount int64
+	for _, match := range matches {
+		if len(match) >= 2 {
+			value, err := strconv.ParseFloat(match[1], 64)
+			if err != nil {
+				continue
+			}
+			totalCount += int64(value)
+		}
+	}
+
+	return totalCount, nil
+}
+
+// GetAllNodeMetrics fetches metrics from all data nodes concurrently.
+func GetAllNodeMetrics() []*NodeMetrics {
+	var wg sync.WaitGroup
+	metrics := make([]*NodeMetrics, len(PrometheusEndpoints))
+
+	for i, endpoint := range PrometheusEndpoints {
+		wg.Add(1)
+		go func(index int, url string) {
+			defer wg.Done()
+			metrics[index] = GetNodeMetrics(url, index)
+		}(i, endpoint)
+	}
+
+	wg.Wait()
+	return metrics
+}
+
+// VerifyPropagationCountIncreased compares metrics before and after to verify total_propagation_count increased by exactly 1.
+func VerifyPropagationCountIncreased(beforeMetrics, afterMetrics []*NodeMetrics) error {
+	if len(beforeMetrics) != len(afterMetrics) {
+		return fmt.Errorf("metrics array length mismatch: before=%d, after=%d", len(beforeMetrics), len(afterMetrics))
+	}
+
+	for i, after := range afterMetrics {
+		before := beforeMetrics[i]
+
+		if !after.IsHealthy {
+			return fmt.Errorf("node %s is not healthy after update: %s", after.NodeName, after.ErrorMessage)
+		}
+
+		if !before.IsHealthy {
+			return fmt.Errorf("node %s was not healthy before update: %s", before.NodeName, before.ErrorMessage)
+		}
+
+		expectedCount := before.TotalPropagationCount + 1
+		if after.TotalPropagationCount != expectedCount {
+			return fmt.Errorf("node %s propagation count mismatch: expected=%d, actual=%d (before=%d)",
+				after.NodeName, expectedCount, after.TotalPropagationCount, before.TotalPropagationCount)
+		}
+	}
+
+	return nil
+}
+
+// PrintMetricsComparison prints a comparison of metrics before and after.
+func PrintMetricsComparison(beforeMetrics, afterMetrics []*NodeMetrics) {
+	fmt.Println("=== Prometheus Metrics Comparison ===")
+	fmt.Printf("%-12s | %-29s | %-29s | %-7s\n", "Node", "Propagation Count", "Repair Success Count", "Healthy")
+	fmt.Printf("%-12s | %-9s %-9s %-9s | %-9s %-9s %-9s | %-7s\n", "", "Before", "After", "Delta", "Before", "After", "Delta", "")
+	fmt.Println(strings.Repeat("-", 85))
+
+	for i, after := range afterMetrics {
+		if i < len(beforeMetrics) {
+			before := beforeMetrics[i]
+			propagationDelta := after.TotalPropagationCount - before.TotalPropagationCount
+			repairDelta := after.RepairSuccessCount - before.RepairSuccessCount
+			healthStatus := "✓"
+			if !after.IsHealthy {
+				healthStatus = "✗"
+			}
+
+			fmt.Printf("%-12s | %-9d %-9d %-9d | %-9d %-9d %-9d | %-7s\n",
+				after.NodeName,
+				before.TotalPropagationCount, after.TotalPropagationCount, propagationDelta,
+				before.RepairSuccessCount, after.RepairSuccessCount, repairDelta,
+				healthStatus)
+		}
+	}
+	fmt.Println()
+}
+
+func ExecuteComposeCommand(args ...string) error {
+	// v2
+	if _, err := exec.LookPath("docker"); err == nil {
+		check := exec.Command("docker", "compose", "version")
+		if out, err := check.CombinedOutput(); err == nil && strings.Contains(string(out), "Docker Compose") {
+			cmd := exec.Command("docker", append([]string{"compose"}, args...)...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			return cmd.Run()
+		}
+	}
+
+	// v1
+	if _, err := exec.LookPath("docker-compose"); err == nil {
+		cmd := exec.Command("docker-compose", args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
 	return nil
 }

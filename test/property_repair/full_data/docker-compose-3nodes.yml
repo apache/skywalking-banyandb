@@ -18,30 +18,31 @@ version: '3.8'
 services:
   etcd:
     extends:
-      file: docker-compose-2nodes.yml
+      file: ../base-compose.yml
       service: etcd
+    networks:
+      - property-repair
 
   liaison:
     extends:
-      file: docker-compose-2nodes.yml
+      file: ../base-compose.yml
       service: liaison
+    networks:
+      - property-repair
 
   data-node-1:
     extends:
-      file: docker-compose-2nodes.yml
+      file: ../base-compose.yml
       service: data-node-1
+    networks:
+      - property-repair
 
   data-node-2:
     extends:
-      file: docker-compose-2nodes.yml
+      file: ../base-compose.yml
       service: data-node-2
-
-  prometheus:
-    extends:
-      file: docker-compose-2nodes.yml
-      service: prometheus
-    volumes:
-      - ../prometheus-3nodes.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - property-repair
 
   data-node-3:
     extends:
@@ -49,6 +50,15 @@ services:
       service: data-node-3
     networks:
       - property-repair
+
+  prometheus:
+    extends:
+      file: ../base-compose.yml
+      service: prometheus
+    networks:
+      - property-repair
+    volumes:
+      - ../prometheus-3nodes.yml:/etc/prometheus/prometheus.yml
 
 networks:
   property-repair:
