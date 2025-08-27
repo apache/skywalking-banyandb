@@ -424,7 +424,18 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 				combined.seriesIDs = append(combined.seriesIDs, elems.seriesIDs...)
 				combined.userKeys = append(combined.userKeys, elems.userKeys...)
 				combined.data = append(combined.data, elems.data...)
-				combined.tags = append(combined.tags, elems.tags...)
+				for _, tagSlice := range elems.tags {
+					newTagSlice := make([]*tag, 0, len(tagSlice))
+					for _, t := range tagSlice {
+						newTag := generateTag()
+						newTag.name = t.name
+						newTag.value = append([]byte(nil), t.value...)
+						newTag.valueType = t.valueType
+						newTag.indexed = t.indexed
+						newTagSlice = append(newTagSlice, newTag)
+					}
+					combined.tags = append(combined.tags, newTagSlice)
+				}
 			}
 
 			// Create a clean copy of original elements for comparison (avoid sorting corruption)
@@ -434,7 +445,18 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 			originalCopy.seriesIDs = append(originalCopy.seriesIDs, tt.elements.seriesIDs...)
 			originalCopy.userKeys = append(originalCopy.userKeys, tt.elements.userKeys...)
 			originalCopy.data = append(originalCopy.data, tt.elements.data...)
-			originalCopy.tags = append(originalCopy.tags, tt.elements.tags...)
+			for _, tagSlice := range tt.elements.tags {
+				newTagSlice := make([]*tag, 0, len(tagSlice))
+				for _, t := range tagSlice {
+					newTag := generateTag()
+					newTag.name = t.name
+					newTag.value = append([]byte(nil), t.value...)
+					newTag.valueType = t.valueType
+					newTag.indexed = t.indexed
+					newTagSlice = append(newTagSlice, newTag)
+				}
+				originalCopy.tags = append(originalCopy.tags, newTagSlice)
+			}
 
 			// Sort both original copy and result for comparison
 			sort.Sort(originalCopy)
@@ -515,6 +537,10 @@ func compareElements(t *testing.T, expected, actual *elements) {
 		sort.Slice(actualTags, func(a, b int) bool {
 			return actualTags[a].name < actualTags[b].name
 		})
+		for i, tag := range expectedTags {
+			fmt.Printf("expected tag %d: %s\n", i, tag.name)
+			fmt.Printf("actual tag %d: %s\n", i, actualTags[i].name)
+		}
 
 		for j := range expectedTags {
 			assert.Equal(t, expectedTags[j].name, actualTags[j].name,

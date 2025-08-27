@@ -28,6 +28,11 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
+const (
+	tag1Name = "tag1"
+	tag2Name = "tag2"
+)
+
 func TestElementPoolAllocation(t *testing.T) {
 	// Test pool allocation correctness
 	t.Run("elements pool allocation", func(t *testing.T) {
@@ -90,10 +95,10 @@ func TestElementReset(t *testing.T) {
 		es.data = [][]byte{[]byte("data1"), []byte("data2"), []byte("data3")}
 		// Create tag pointers
 		tag1 := generateTag()
-		tag1.name = "tag1"
+		tag1.name = tag1Name
 		tag1.value = []byte("value1")
 		tag2 := generateTag()
-		tag2.name = "tag2"
+		tag2.name = tag2Name
 		tag2.value = []byte("value2")
 		tag3 := generateTag()
 		tag3.name = "tag3"
@@ -138,10 +143,10 @@ func TestSizeCalculation(t *testing.T) {
 		es.data = [][]byte{[]byte("data1"), []byte("data2")} // 5 + 5 = 10 bytes
 		// Create tag pointers
 		tag1 := generateTag()
-		tag1.name = "tag1"
+		tag1.name = tag1Name
 		tag1.value = []byte("val1")
 		tag2 := generateTag()
-		tag2.name = "tag2"
+		tag2.name = tag2Name
 		tag2.value = []byte("val2")
 		es.tags = [][]*tag{
 			{tag1}, // 4 + 4 + 1 = 9 bytes
@@ -166,9 +171,9 @@ func TestElementsSorting(t *testing.T) {
 		tag3 := generateTag()
 		tag3.name = "tag3"
 		tag1 := generateTag()
-		tag1.name = "tag1"
+		tag1.name = tag1Name
 		tag2 := generateTag()
-		tag2.name = "tag2"
+		tag2.name = tag2Name
 		tag1b := generateTag()
 		tag1b.name = "tag1b"
 		es.tags = [][]*tag{
@@ -204,9 +209,9 @@ func TestElementsSorting(t *testing.T) {
 		es.data = [][]byte{[]byte("data2"), []byte("data1"), []byte("data3")}
 		// Create tag pointers
 		tag2 := generateTag()
-		tag2.name = "tag2"
+		tag2.name = tag2Name
 		tag1 := generateTag()
-		tag1.name = "tag1"
+		tag1.name = tag1Name
 		tag3 := generateTag()
 		tag3.name = "tag3"
 		es.tags = [][]*tag{
