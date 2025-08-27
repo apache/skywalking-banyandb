@@ -307,8 +307,7 @@ func TestTagMetadataOperations(t *testing.T) {
 		original.max = []byte{0xFF, 0xFE}
 
 		// Marshal
-		data, err := original.marshal()
-		require.NoError(t, err)
+		data := original.marshal(nil)
 		assert.NotNil(t, data)
 
 		// Unmarshal
@@ -334,8 +333,7 @@ func TestTagMetadataOperations(t *testing.T) {
 		tm.name = "empty_tag"
 		tm.valueType = pbv1.ValueTypeStr
 
-		data, err := tm.marshal()
-		require.NoError(t, err)
+		data := tm.marshal(nil)
 
 		unmarshaled, err := unmarshalTagMetadata(data)
 		require.NoError(t, err)
@@ -522,8 +520,7 @@ func TestRoundTripIntegrity(t *testing.T) {
 		require.NoError(t, err)
 
 		// Marshal metadata
-		marshaledMetadata, err := original.marshal()
-		require.NoError(t, err)
+		marshaledMetadata := original.marshal(nil)
 
 		// Unmarshal metadata
 		unmarshaledMetadata, err := unmarshalTagMetadata(marshaledMetadata)

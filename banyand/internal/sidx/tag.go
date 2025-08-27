@@ -19,9 +19,7 @@ package sidx
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
-	"io"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
@@ -298,39 +296,14 @@ func (td *tagData) hasValue(value []byte) bool {
 	return td.filter.MightContain(value)
 }
 
-// marshalTagMetadata serializes tag metadata to bytes.
-func (tm *tagMetadata) marshal() ([]byte, error) {
-	buf := &bytes.Buffer{}
-
-	// Write name length and name
-	nameBytes := []byte(tm.name)
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(nameBytes))); err != nil {
-		return nil, err
-	}
-	if _, err := buf.Write(nameBytes); err != nil {
-		return nil, err
-	}
-
-	// Write value type
-	if err := binary.Write(buf, binary.LittleEndian, uint32(tm.valueType)); err != nil {
-		return nil, err
-	}
-
-	// Write data block
-	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.offset); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.size); err != nil {
-		return nil, err
-	}
-
-	// Write filter block
-	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.offset); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.size); err != nil {
-		return nil, err
-	}
+// marshal serializes tag metadata to bytes using encoding package.
+func (tm *tagMetadata) marshal(dst []byte) []byte {
+	dst = pkgencoding.EncodeBytes(dst, []byte(tm.name))
+	dst = append(dst, byte(tm.valueType))
+	dst = pkgencoding.VarUint64ToBytes(dst, tm.dataBlock.offset)
+	dst = pkgencoding.VarUint64ToBytes(dst, tm.dataBlock.size)
+	dst = pkgencoding.VarUint64ToBytes(dst, tm.filterBlock.offset)
+	dst = pkgencoding.VarUint64ToBytes(dst, tm.filterBlock.size)
 
 	// Write flags
 	var flags uint8
@@ -340,193 +313,74 @@ func (tm *tagMetadata) marshal() ([]byte, error) {
 	if tm.compressed {
 		flags |= 2
 	}
-	if err := binary.Write(buf, binary.LittleEndian, flags); err != nil {
-		return nil, err
+	dst = append(dst, flags)
+
+	dst = pkgencoding.EncodeBytes(dst, tm.min)
+	dst = pkgencoding.EncodeBytes(dst, tm.max)
+	return dst
+}
+
+// unmarshal deserializes tag metadata from bytes using encoding package.
+func (tm *tagMetadata) unmarshal(src []byte) ([]byte, error) {
+	var nameBytes []byte
+	var err error
+
+	src, nameBytes, err = pkgencoding.DecodeBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata.name: %w", err)
+	}
+	tm.name = string(nameBytes)
+
+	if len(src) < 1 {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata.valueType: src is too short")
+	}
+	tm.valueType = pbv1.ValueType(src[0])
+	src = src[1:]
+
+	src, tm.dataBlock.offset = pkgencoding.BytesToVarUint64(src)
+	src, tm.dataBlock.size = pkgencoding.BytesToVarUint64(src)
+	src, tm.filterBlock.offset = pkgencoding.BytesToVarUint64(src)
+	src, tm.filterBlock.size = pkgencoding.BytesToVarUint64(src)
+
+	if len(src) < 1 {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata flags: src is too short")
+	}
+	flags := src[0]
+	src = src[1:]
+	tm.indexed = (flags & 1) != 0
+	tm.compressed = (flags & 2) != 0
+
+	src, tm.min, err = pkgencoding.DecodeBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata.min: %w", err)
+	}
+	if len(tm.min) == 0 {
+		tm.min = nil
 	}
 
-	// Write min length and min
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.min))); err != nil {
-		return nil, err
+	src, tm.max, err = pkgencoding.DecodeBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata.max: %w", err)
 	}
-	if len(tm.min) > 0 {
-		if _, err := buf.Write(tm.min); err != nil {
-			return nil, err
-		}
+	if len(tm.max) == 0 {
+		tm.max = nil
 	}
 
-	// Write max length and max
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.max))); err != nil {
-		return nil, err
-	}
-	if len(tm.max) > 0 {
-		if _, err := buf.Write(tm.max); err != nil {
-			return nil, err
-		}
-	}
+	return src, nil
+}
 
-	return buf.Bytes(), nil
+// marshalAppend serializes tagMetadata to bytes and appends to dst (panic version for mustWriteTag).
+func (tm *tagMetadata) marshalAppend(dst []byte) []byte {
+	return tm.marshal(dst)
 }
 
 // unmarshalTagMetadata deserializes tag metadata from bytes.
 func unmarshalTagMetadata(data []byte) (*tagMetadata, error) {
 	tm := generateTagMetadata()
-	buf := bytes.NewReader(data)
-
-	// Read name
-	var nameLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &nameLen); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	nameBytes := make([]byte, nameLen)
-	if _, err := io.ReadFull(buf, nameBytes); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	tm.name = string(nameBytes)
-
-	// Read value type
-	var valueType uint32
-	if err := binary.Read(buf, binary.LittleEndian, &valueType); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	tm.valueType = pbv1.ValueType(valueType)
-
-	// Read data block
-	if err := binary.Read(buf, binary.LittleEndian, &tm.dataBlock.offset); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	if err := binary.Read(buf, binary.LittleEndian, &tm.dataBlock.size); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-
-	// Read filter block
-	if err := binary.Read(buf, binary.LittleEndian, &tm.filterBlock.offset); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	if err := binary.Read(buf, binary.LittleEndian, &tm.filterBlock.size); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-
-	// Read flags
-	var flags uint8
-	if err := binary.Read(buf, binary.LittleEndian, &flags); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	tm.indexed = (flags & 1) != 0
-	tm.compressed = (flags & 2) != 0
-
-	// Read min
-	var minLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &minLen); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	if minLen > 0 {
-		tm.min = make([]byte, minLen)
-		if _, err := io.ReadFull(buf, tm.min); err != nil {
-			releaseTagMetadata(tm)
-			return nil, err
-		}
-	}
-
-	// Read max
-	var maxLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &maxLen); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	if maxLen > 0 {
-		tm.max = make([]byte, maxLen)
-		if _, err := io.ReadFull(buf, tm.max); err != nil {
-			releaseTagMetadata(tm)
-			return nil, err
-		}
-	}
-
-	return tm, nil
-}
-
-// marshalAppend serializes tagMetadata to bytes and appends to dst (panic version for mustWriteTag).
-func (tm *tagMetadata) marshalAppend(dst []byte) []byte {
-	data, err := tm.marshal()
+	_, err := tm.unmarshal(data)
 	if err != nil {
-		panic(fmt.Sprintf("failed to marshal tag metadata: %v", err))
-	}
-	return append(dst, data...)
-}
-
-// marshalTagMetadata is the error-returning version of marshal.
-func (tm *tagMetadata) marshalTagMetadata() ([]byte, error) {
-	buf := &bytes.Buffer{}
-
-	// Write name length and name
-	nameBytes := []byte(tm.name)
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(nameBytes))); err != nil {
+		releaseTagMetadata(tm)
 		return nil, err
 	}
-	if _, err := buf.Write(nameBytes); err != nil {
-		return nil, err
-	}
-
-	// Write value type
-	if err := binary.Write(buf, binary.LittleEndian, uint32(tm.valueType)); err != nil {
-		return nil, err
-	}
-
-	// Write data block
-	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.offset); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.size); err != nil {
-		return nil, err
-	}
-
-	// Write filter block
-	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.offset); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.size); err != nil {
-		return nil, err
-	}
-
-	// Write flags
-	var flags uint8
-	if tm.indexed {
-		flags |= 1
-	}
-	if tm.compressed {
-		flags |= 2
-	}
-	if err := binary.Write(buf, binary.LittleEndian, flags); err != nil {
-		return nil, err
-	}
-
-	// Write min length and min
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.min))); err != nil {
-		return nil, err
-	}
-	if len(tm.min) > 0 {
-		if _, err := buf.Write(tm.min); err != nil {
-			return nil, err
-		}
-	}
-
-	// Write max length and max
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.max))); err != nil {
-		return nil, err
-	}
-	if len(tm.max) > 0 {
-		if _, err := buf.Write(tm.max); err != nil {
-			return nil, err
-		}
-	}
-
-	return buf.Bytes(), nil
+	return tm, nil
 }
