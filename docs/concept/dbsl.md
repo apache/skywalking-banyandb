@@ -23,20 +23,18 @@ It also provides a specialized syntax for optimized **Top-N** queries against me
 
 BDSL queries will be processed by a classic three-stage compiler front-end architecture, which ensures modularity and maintainability.
 
-```mermaid
-graph TD
-    A[BDSL Query String] --> B{Lexer};
-    B --> C{Parser};
-    C --> D[Abstract Syntax Tree (AST)];
-    D --> E{Transformer};
-    E --> F[Protobuf Request];
-
-    subgraph Parsing Pipeline
-        B;
-        C;
-        D;
-        E;
-    end
+```
+BDSL Query String
+        ↓
+      Lexer
+        ↓
+     Parser
+        ↓
+Abstract Syntax Tree (AST)
+        ↓
+   Transformer
+        ↓
+  Protobuf Request
 ```
 *   **Lexer**: Breaks the query string into a sequence of tokens.
 *   **Parser**: Builds an Abstract Syntax Tree (AST) from the tokens, validating the query's syntax.
@@ -61,6 +59,37 @@ The simplest possible BDSL query is `SELECT *`. When executed within the context
 
 When the `FROM` clause is present, it overrides any context provided by the environment. This is useful for clients that connect to a generic query endpoint and need to specify the target resource directly within the query text.
 
+### 2.4. Case Sensitivity
+
+BDSL follows SQL-like conventions for case sensitivity:
+
+*   **Reserved words are case-insensitive**: Keywords like `SELECT`, `FROM`, `WHERE`, `ORDER BY`, etc. can be written in any case combination.
+*   **Identifiers are case-sensitive**: Names of streams, measures, properties, tags, and fields preserve their case and must be referenced exactly as defined.
+
+#### Examples
+
+All of these queries are equivalent:
+```sql
+SELECT * FROM STREAM sw WHERE service_id = 'webapp';
+
+select * from stream sw where service_id = 'webapp';
+
+Select * From Stream sw Where service_id = 'webapp';
+```
+
+But these refer to different identifiers:
+```sql
+-- Different tag names (case-sensitive)
+SELECT ServiceName FROM STREAM sw;  -- refers to tag "ServiceName"
+SELECT servicename FROM STREAM sw;  -- refers to tag "servicename"
+
+-- Different stream names (case-sensitive)
+FROM STREAM MyStream    -- refers to stream "MyStream"
+FROM STREAM mystream    -- refers to stream "mystream"
+```
+
+**Best Practice**: Use uppercase for reserved words and consistent casing for identifiers to maintain readability.
+
 ## 3. BDSL for Streams
 
 BDSL for streams is designed for querying and retrieving raw time-series elements. The syntax maps to the `banyandb.stream.v1.QueryRequest` message.
@@ -79,6 +108,9 @@ binary_op       ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HA
 order_expression::= identifier ["ASC" | "DESC"]
 value           ::= string_literal | integer_literal | "NULL"
 value_list      ::= "(" value ("," value)* ")"
+identifier      ::= [a-zA-Z_][a-zA-Z0-9_]*
+string_literal  ::= "'" [^']* "'" | "\"" [^\"]* "\""
+integer_literal ::= [0-9]+
 ```
 
 ### 3.2. Mapping to `stream.v1.QueryRequest`
@@ -117,7 +149,27 @@ WHERE service_id IN ('webapp', 'api-gateway') OR http.method = 'POST';
 
 BDSL for measures is tailored for analytical queries on aggregated numerical data. It supports aggregation, grouping, and mixed selection of tags and fields, mapping to the `banyandb.measure.v1.QueryRequest` message.
 
-### 4.1. BDSL Extensions for `SELECT`
+### 4.1. Grammar
+
+```
+measure_query     ::= SELECT projection [from_measure_clause] [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer]
+from_measure_clause ::= "FROM MEASURE" identifier ["IN" "(" group_list ")"]
+projection        ::= "*" | (column_list | agg_function "(" identifier ")" | "TOP" integer projection)
+column_list       ::= identifier ("," identifier)* ["::tag" | "::field"]
+agg_function      ::= "SUM" | "MEAN" | "COUNT" | "MAX" | "MIN"
+group_list        ::= identifier ("," identifier)*
+criteria          ::= condition (("AND" | "OR") condition)*
+condition         ::= identifier binary_op (value | value_list)
+binary_op         ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HAVING" | "NOT HAVING" | "MATCH"
+order_expression  ::= identifier ["ASC" | "DESC"]
+value             ::= string_literal | integer_literal | "NULL"
+value_list        ::= "(" value ("," value)* ")"
+identifier        ::= [a-zA-Z_][a-zA-Z0-9_]*
+string_literal    ::= "'" [^']* "'" | "\"" [^\"]* "\""
+integer_literal   ::= [0-9]+
+```
+
+### 4.2. BDSL Extensions for `SELECT`
 
 The `SELECT` clause for measures is highly flexible, allowing for the selection of tags, fields, and aggregations in a single, flat list.
 
@@ -125,15 +177,15 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 *   `SELECT <identifier>::field, <identifier>::tag`: If a field and a tag share the same name, the `::field` or `::tag` syntax **must** be used to disambiguate the identifier's type.
 *   The clause also supports aggregation functions (`SUM`, `MEAN`, `COUNT`, `MAX`, `MIN`) and a `TOP N` clause for ranked results.
 
-### 4.2. Mapping to `measure.v1.QueryRequest`
+### 4.3. Mapping to `measure.v1.QueryRequest`
 
-*   **`FROM MEASURE name`**: Maps to the `name` field. If omitted, this value is taken from the execution context.
+*   **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. If the clause is omitted, these values are taken from the execution context.
 *   **`SELECT <tag1>, <field1>, <field2>`**: The transformer inspects each identifier. Those identified as tags (either by schema lookup or `::tag`) are added to `tag_projection`. Those identified as fields (by schema lookup or `::field`) are added to `field_projection`.
 *   **`SELECT SUM(field)`**: Maps to `agg`.
 *   **`GROUP BY <tag1>, <tag2>`**: The `GROUP BY` clause takes a simple list of tags and maps to `group_by.tag_projection`.
 *   **`SELECT TOP N ...`**: Maps to the `top` message.
 
-### 4.3. Examples
+### 4.4. Examples
 
 ```sql
 -- Simplest query (context must provide measure name)
@@ -167,6 +219,13 @@ SELECT TOP 10
 FROM MEASURE instance_metrics
 WHERE service = 'auth-service'
 ORDER BY cpu_usage DESC;
+
+-- Select aggregated latency from multiple groups
+SELECT
+    region,
+    SUM(latency)
+FROM MEASURE service_cpm IN (us-west, us-east, eu-central)
+GROUP BY region;
 ```
 
 ## 5. BDSL for Top-N
@@ -176,13 +235,24 @@ Top-N queries use a specialized, command-like syntax for clarity and to reflect 
 ### 5.1. Grammar
 
 ```
-topn_query ::= SHOW TOP integer from_measure_clause [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY value [ASC|DESC]]
-from_measure_clause ::= "FROM MEASURE" identifier
+topn_query         ::= SHOW TOP integer from_measure_clause [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY value ["ASC"|"DESC"]]
+from_measure_clause ::= "FROM MEASURE" identifier ["IN" "(" group_list ")"]
+topn_criteria      ::= condition (("AND" | "OR") condition)*
+condition          ::= identifier binary_op (value | value_list)
+binary_op          ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN"
+agg_function       ::= "SUM" | "MEAN" | "COUNT" | "MAX" | "MIN"
+group_list         ::= identifier ("," identifier)*
+value              ::= string_literal | integer_literal | "NULL"
+value_list         ::= "(" value ("," value)* ")"
+identifier         ::= [a-zA-Z_][a-zA-Z0-9_]*
+string_literal     ::= "'" [^']* "'" | "\"" [^\"]* "\""
+integer_literal    ::= [0-9]+
 ```
 
 ### 5.2. Mapping to `measure.v1.TopNRequest`
 
 *   **`SHOW TOP N`**: Maps to `top_n`.
+*   **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields.
 *   **`WHERE tag = 'value'`**: Maps to `conditions`. Only simple equality is supported.
 *   **`AGGREGATE BY FUNC`**: Maps to `agg`.
 *   **`ORDER BY value DESC`**: Maps to `field_value_sort`.
@@ -202,10 +272,15 @@ FROM MEASURE service_errors_total
 ORDER BY value ASC;
 
 -- Get the Top 3 pods with the most restarts in total over the time range
-SHOW TOP 3 
+SHOW TOP 3
 FROM MEASURE pod_restarts
 WHERE namespace = 'production'
 AGGREGATE BY SUM;
+
+-- Get the Top 5 services with the highest error rate across multiple groups
+SHOW TOP 5
+FROM MEASURE service_errors IN (production, staging)
+ORDER BY value DESC;
 ```
 
 ## 6. BDSL for Properties
@@ -215,14 +290,24 @@ BDSL for properties is designed for simple key-value lookups and metadata filter
 ### 6.1. Grammar
 
 ```
-property_query ::= SELECT projection [from_property_clause] [WHERE criteria] [LIMIT integer]
-from_property_clause ::= "FROM PROPERTY" identifier
-projection ::= "*" | column_list
+property_query      ::= SELECT projection [from_property_clause] [WHERE criteria] [LIMIT integer]
+from_property_clause ::= "FROM PROPERTY" identifier ["IN" "(" group_list ")"]
+projection          ::= "*" | column_list
+column_list         ::= identifier ("," identifier)*
+group_list          ::= identifier ("," identifier)*
+criteria            ::= condition (("AND" | "OR") condition)*
+condition           ::= identifier binary_op (value | value_list) | "ID" binary_op (value | value_list)
+binary_op           ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN"
+value               ::= string_literal | integer_literal | "NULL"
+value_list          ::= "(" value ("," value)* ")"
+identifier          ::= [a-zA-Z_][a-zA-Z0-9_]*
+string_literal      ::= "'" [^']* "'" | "\"" [^\"]* "\""
+integer_literal     ::= [0-9]+
 ```
 
 ### 6.2. Mapping to `property.v1.QueryRequest`
 
-*   **`FROM PROPERTY name`**: Maps to the `name` field. If omitted, this value is taken from the execution context.
+*   **`FROM PROPERTY name IN (groups)`**: Maps to the `name` and `groups` fields. If the clause is omitted, these values are taken from the execution context.
 *   **`SELECT tags`**: Maps to `tag_projection`.
 *   **`WHERE ID IN (...)`**: Maps to `ids`.
 *   **`WHERE tag = 'value'`**: Maps to `criteria`.
@@ -245,9 +330,15 @@ SELECT *
 WHERE ID = 'server-1a2b3c';
 
 -- Retrieve a set of properties by their unique IDs
-SELECT ip, region 
-FROM PROPERTY server_metadata 
+SELECT ip, region
+FROM PROPERTY server_metadata
 WHERE ID IN ('server-1a2b3c', 'server-4d5e6f');
+
+-- Find properties from multiple groups
+SELECT ip, owner
+FROM PROPERTY server_metadata IN (datacenter-1, datacenter-2, datacenter-3)
+WHERE in_service = 'true'
+LIMIT 100;
 ```
 
 ## 7. Summary of BDSL Capabilities

@@ -72,4 +72,5 @@ gomock_reflect*
 # Claude
 Claude.md
 .claude/
+CLAUDE.md
 
