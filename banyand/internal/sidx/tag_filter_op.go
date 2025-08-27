@@ -211,11 +211,7 @@ func (tfo *tagFilterOp) readBloomFilter(tagName string, filterBlock dataBlock) (
 	filterData := make([]byte, filterBlock.size)
 	fs.MustReadData(filterReader, int64(filterBlock.offset), filterData)
 
-	// Decode bloom filter (following stream module pattern)
-	bf := filter.NewBloomFilter(0)
-	bf = decodeBloomFilterFromBytes(filterData, bf)
-
-	return bf, nil
+	return decodeBloomFilter(filterData)
 }
 
 // decodeBloomFilterFromBytes decodes bloom filter data (similar to stream module).
@@ -240,7 +236,7 @@ func (tfo *tagFilterOp) reset() {
 	tfo.part = nil
 	for key, cache := range tfo.tagCache {
 		if cache.bloomFilter != nil {
-			cache.bloomFilter.Reset()
+			releaseBloomFilter(cache.bloomFilter)
 		}
 		delete(tfo.tagCache, key)
 	}

@@ -472,15 +472,15 @@ func createTestElements(testElems []testElement) *elements {
 		copy(dataCopy, te.data)
 		elems.data = append(elems.data, dataCopy)
 
-		// Copy tags
-		tagsCopy := make([]tag, len(te.tags))
-		for i, t := range te.tags {
-			tagsCopy[i] = tag{
-				name:      t.name,
-				value:     append([]byte(nil), t.value...),
-				valueType: t.valueType,
-				indexed:   t.indexed,
-			}
+		// Copy tags using generateTag()
+		tagsCopy := make([]*tag, 0, len(te.tags))
+		for _, t := range te.tags {
+			newTag := generateTag()
+			newTag.name = t.name
+			newTag.value = append([]byte(nil), t.value...)
+			newTag.valueType = t.valueType
+			newTag.indexed = t.indexed
+			tagsCopy = append(tagsCopy, newTag)
 		}
 		elems.tags = append(elems.tags, tagsCopy)
 	}
@@ -504,8 +504,8 @@ func compareElements(t *testing.T, expected, actual *elements) {
 		require.Equal(t, len(expected.tags[i]), len(actual.tags[i]), "tags length mismatch at element %d", i)
 
 		// Sort tags by name for consistent comparison
-		expectedTags := make([]tag, len(expected.tags[i]))
-		actualTags := make([]tag, len(actual.tags[i]))
+		expectedTags := make([]*tag, len(expected.tags[i]))
+		actualTags := make([]*tag, len(actual.tags[i]))
 		copy(expectedTags, expected.tags[i])
 		copy(actualTags, actual.tags[i])
 

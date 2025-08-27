@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -70,7 +71,7 @@ func TestTagValueMarshaling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Marshal values using shared encoding (default to string type for basic marshaling test)
-			data, err := EncodeTagValues(tt.values, pbv1.ValueTypeStr)
+			data, err := encodeTagValues(tt.values, pbv1.ValueTypeStr)
 			if tt.want {
 				require.NoError(t, err)
 			} else {
@@ -79,7 +80,7 @@ func TestTagValueMarshaling(t *testing.T) {
 			}
 
 			// Unmarshal and verify
-			unmarshaled, err := DecodeTagValues(data, pbv1.ValueTypeStr, len(tt.values))
+			unmarshaled, err := decodeTagValues(data, pbv1.ValueTypeStr, len(tt.values))
 			require.NoError(t, err)
 			assert.Equal(t, len(tt.values), len(unmarshaled))
 
@@ -127,7 +128,7 @@ func TestTagValueEncoding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encoded, err := EncodeTagValues(tt.values, tt.valueType)
+			encoded, err := encodeTagValues(tt.values, tt.valueType)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -137,7 +138,7 @@ func TestTagValueEncoding(t *testing.T) {
 			assert.NotNil(t, encoded)
 
 			// Decode and verify round-trip
-			decoded, err := DecodeTagValues(encoded, tt.valueType, len(tt.values))
+			decoded, err := decodeTagValues(encoded, tt.valueType, len(tt.values))
 			require.NoError(t, err)
 			assert.Equal(t, len(tt.values), len(decoded))
 			for i, expected := range tt.values {
@@ -436,16 +437,16 @@ func TestEdgeCases(t *testing.T) {
 		// The shared encoding module panics on invalid data (fail fast)
 		assert.Panics(t, func() {
 			invalidValues := [][]byte{{0x01, 0x02, 0x03}} // Only 3 bytes, not 8
-			_, _ = EncodeTagValues(invalidValues, pbv1.ValueTypeInt64)
+			_, _ = encodeTagValues(invalidValues, pbv1.ValueTypeInt64)
 		})
 	})
 
 	t.Run("marshal nil values", func(t *testing.T) {
-		data, err := EncodeTagValues(nil, pbv1.ValueTypeStr)
+		data, err := encodeTagValues(nil, pbv1.ValueTypeStr)
 		require.NoError(t, err)
 		assert.Nil(t, data)
 
-		values, err := DecodeTagValues(nil, pbv1.ValueTypeStr, 0)
+		values, err := decodeTagValues(nil, pbv1.ValueTypeStr, 0)
 		require.NoError(t, err)
 		assert.Nil(t, values)
 	})
@@ -510,7 +511,7 @@ func TestRoundTripIntegrity(t *testing.T) {
 		}
 
 		// Marshal values using shared encoding
-		marshaledValues, err := EncodeTagValues(encodedValues, pbv1.ValueTypeInt64)
+		marshaledValues, err := encodeTagValues(encodedValues, pbv1.ValueTypeInt64)
 		require.NoError(t, err)
 
 		// Marshal metadata
@@ -522,7 +523,7 @@ func TestRoundTripIntegrity(t *testing.T) {
 		defer releaseTagMetadata(unmarshaledMetadata)
 
 		// Unmarshal values using shared encoding
-		unmarshaledValues, err := DecodeTagValues(marshaledValues, pbv1.ValueTypeInt64, len(encodedValues))
+		unmarshaledValues, err := decodeTagValues(marshaledValues, pbv1.ValueTypeInt64, len(encodedValues))
 		require.NoError(t, err)
 
 		// Verify metadata integrity
@@ -595,4 +596,19 @@ func TestBloomFilterEncoding(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "too short")
 	})
+}
+
+// generateTagFilter creates a bloom filter for indexed tags.
+func generateTagFilter(values [][]byte, expectedElements int) *filter.BloomFilter {
+	if len(values) == 0 {
+		return nil
+	}
+
+	bloomFilter := generateBloomFilter(expectedElements)
+
+	for _, value := range values {
+		bloomFilter.Add(value)
+	}
+
+	return bloomFilter
 }

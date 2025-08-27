@@ -715,7 +715,6 @@ func TestQueryResult_Pull_SingleMemPart(t *testing.T) {
 		snapshot: snap,
 		bs:       bs,
 		l:        logger.GetLogger("test-queryResult"),
-		parts:    parts,
 		asc:      true,
 		released: false,
 	}
@@ -903,7 +902,6 @@ func TestQueryResult_Pull_MultipleMemParts(t *testing.T) {
 		snapshot: snap,
 		bs:       bs,
 		l:        logger.GetLogger("test-queryResult"),
-		parts:    parts,
 		asc:      true,
 		released: false,
 	}
@@ -1067,7 +1065,6 @@ func TestQueryResult_Pull_WithTagProjection(t *testing.T) {
 		snapshot: snap,
 		bs:       bs,
 		l:        logger.GetLogger("test-queryResult"),
-		parts:    parts,
 		asc:      true,
 		released: false,
 	}
@@ -1153,7 +1150,6 @@ func TestQueryResult_Pull_DescendingOrder(t *testing.T) {
 		snapshot: snap,
 		bs:       bs,
 		l:        logger.GetLogger("test-queryResult"),
-		parts:    parts,
 		asc:      false, // Descending order
 		released: false,
 	}
@@ -1225,7 +1221,6 @@ func TestQueryResult_Pull_ErrorHandling(t *testing.T) {
 		snapshot: snap,
 		bs:       bs,
 		l:        logger.GetLogger("test-queryResult"),
-		parts:    parts,
 		asc:      true,
 		released: false,
 	}
@@ -1285,7 +1280,6 @@ func TestQueryResult_Release(t *testing.T) {
 		bs:         mockBS,
 		l:          logger.GetLogger("test-queryResult"),
 		tagsToLoad: map[string]struct{}{"service": {}},
-		parts:      parts,
 		shards:     []*QueryResponse{},
 		asc:        true,
 		released:   false,
@@ -1300,9 +1294,6 @@ func TestQueryResult_Release(t *testing.T) {
 	}
 	if qr.bs == nil {
 		t.Error("queryResult should have a blockScanner initially")
-	}
-	if qr.parts == nil {
-		t.Error("queryResult should have parts initially")
 	}
 	if qr.tagsToLoad == nil {
 		t.Error("queryResult should have tagsToLoad initially")
@@ -1338,9 +1329,6 @@ func TestQueryResult_Release(t *testing.T) {
 	// The important thing is that the blockScanner is still accessible for potential cleanup
 
 	// Verify other fields remain unchanged (they don't get nullified)
-	if qr.parts == nil {
-		t.Error("queryResult.parts should remain unchanged after release")
-	}
 	if qr.tagsToLoad == nil {
 		t.Error("queryResult.tagsToLoad should remain unchanged after release")
 	}
@@ -1420,7 +1408,6 @@ func TestQueryResult_Pull_ContextCancellation(t *testing.T) {
 		snapshot: snap,
 		bs:       bs,
 		l:        logger.GetLogger("test-queryResult"),
-		parts:    parts,
 		asc:      true,
 		released: false,
 	}

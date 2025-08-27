@@ -44,9 +44,6 @@ type block struct {
 	// Core data arrays (all same length - pointer fields)
 	userKeys []int64  // User-provided ordering keys
 	data     [][]byte // User payload data
-
-	// Internal state (bool field - 1 byte, padded to 8 bytes)
-	pooled bool // Whether this block came from pool
 }
 
 var blockPool = pool.Register[*block]("sidx-block")
@@ -91,12 +88,10 @@ func (b *block) reset() {
 	for k := range b.tags {
 		delete(b.tags, k)
 	}
-
-	b.pooled = false
 }
 
 // mustInitFromTags processes tag data for the block.
-func (b *block) mustInitFromTags(elementTags [][]tag) {
+func (b *block) mustInitFromTags(elementTags [][]*tag) {
 	if len(elementTags) == 0 {
 		return
 	}
@@ -116,7 +111,7 @@ func (b *block) mustInitFromTags(elementTags [][]tag) {
 }
 
 // processTag creates tag data structure for a specific tag.
-func (b *block) processTag(tagName string, elementTags [][]tag) {
+func (b *block) processTag(tagName string, elementTags [][]*tag) {
 	td := generateTagData()
 	td.name = tagName
 	td.values = make([][]byte, len(b.userKeys))
@@ -283,7 +278,7 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	}()
 
 	// Encode tag values using the encoding module
-	encodedData, err := EncodeTagValues(td.values, td.valueType)
+	encodedData, err := encodeTagValues(td.values, td.valueType)
 	if err != nil {
 		panic(fmt.Sprintf("failed to encode tag values: %v", err))
 	}

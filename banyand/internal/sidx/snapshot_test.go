@@ -615,9 +615,9 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 					queryReq := QueryRequest{
 						SeriesIDs: []common.SeriesID{1},
 					}
-					result, err := sidx.Query(ctx, queryReq)
-					if err == nil && result != nil {
-						result.Release()
+					_, err := sidx.Query(ctx, queryReq)
+					if err != nil {
+						t.Errorf("query failed: %v", err)
 					}
 				}
 			}

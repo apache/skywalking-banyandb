@@ -186,28 +186,11 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 	return bf, nil
 }
 
-// generateTagFilter creates a bloom filter for indexed tags.
-func generateTagFilter(values [][]byte, expectedElements int) *filter.BloomFilter {
-	if len(values) == 0 {
-		return nil
-	}
-
-	bloomFilter := generateBloomFilter(expectedElements)
-
-	for _, value := range values {
-		bloomFilter.Add(value)
-	}
-
-	return bloomFilter
-}
-
-// EncodeTagValues encodes tag values using the shared encoding module.
-func EncodeTagValues(values [][]byte, valueType pbv1.ValueType) ([]byte, error) {
+func encodeTagValues(values [][]byte, valueType pbv1.ValueType) ([]byte, error) {
 	return encoding.EncodeTagValues(values, valueType)
 }
 
-// DecodeTagValues decodes tag values using the shared encoding module.
-func DecodeTagValues(data []byte, valueType pbv1.ValueType, count int) ([][]byte, error) {
+func decodeTagValues(data []byte, valueType pbv1.ValueType, count int) ([][]byte, error) {
 	return encoding.DecodeTagValues(data, valueType, count)
 }
 

@@ -39,10 +39,9 @@ type SIDX interface {
 	Write(ctx context.Context, reqs []WriteRequest) error
 
 	// Query executes a query with key range and tag filtering.
-	// Returns a QueryResult for iterating over results, following BanyanDB pattern.
-	// The returned error indicates query setup/validation failures.
-	// Execution errors during result iteration are available in QueryResponse.Error.
-	Query(ctx context.Context, req QueryRequest) (QueryResult, error)
+	// Returns a QueryResponse directly with all results loaded.
+	// Both setup/validation errors and execution errors are returned via the error return value.
+	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
 
 	// Stats returns current system statistics and performance metrics.
 	Stats(ctx context.Context) (*Stats, error)
@@ -94,10 +93,9 @@ type Writer interface {
 type Querier interface {
 	// Query executes a query with specified parameters including key ranges and tag filters.
 	// The implementation should handle snapshot access, part filtering, block scanning, and result assembly.
-	// Returns a QueryResult for iterating over results following the BanyanDB pattern.
-	// The returned error indicates query setup/validation failures.
-	// Execution errors during result iteration are available in QueryResponse.Error.
-	Query(ctx context.Context, req QueryRequest) (QueryResult, error)
+	// Returns a QueryResponse directly with all results loaded.
+	// Both setup/validation errors and execution errors are returned via the error return value.
+	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
 }
 
 // QueryResult provides iterator-like access to query results, following BanyanDB pattern.

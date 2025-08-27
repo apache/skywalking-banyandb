@@ -153,7 +153,7 @@ func selectPartsForQuery(snap *snapshot, minKey, maxKey int64) []*part {
 }
 
 // Query implements SIDX interface.
-func (s *sidx) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+func (s *sidx) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
@@ -161,7 +161,12 @@ func (s *sidx) Query(ctx context.Context, req QueryRequest) (QueryResult, error)
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
-		return &emptyQueryResult{}, nil
+		return &QueryResponse{
+			Keys: make([]int64, 0),
+			Data: make([][]byte, 0),
+			Tags: make([][]Tag, 0),
+			SIDs: make([]common.SeriesID, 0),
+		}, nil
 	}
 
 	// Extract parameters directly from request
@@ -172,7 +177,12 @@ func (s *sidx) Query(ctx context.Context, req QueryRequest) (QueryResult, error)
 	parts := selectPartsForQuery(snap, minKey, maxKey)
 	if len(parts) == 0 {
 		snap.decRef()
-		return &emptyQueryResult{}, nil
+		return &QueryResponse{
+			Keys: make([]int64, 0),
+			Data: make([][]byte, 0),
+			Tags: make([][]Tag, 0),
+			SIDs: make([]common.SeriesID, 0),
+		}, nil
 	}
 
 	// Sort SeriesIDs for efficient processing
@@ -194,16 +204,35 @@ func (s *sidx) Query(ctx context.Context, req QueryRequest) (QueryResult, error)
 		asc:       asc,
 	}
 
-	return &queryResult{
+	// Create queryResult and call Pull() once to get the QueryResponse
+	qr := &queryResult{
 		snapshot: snap,
 		request:  req,
 		ctx:      ctx,
 		bs:       bs,
-		parts:    parts,
 		asc:      asc,
 		pm:       s.pm,
 		l:        s.l,
-	}, nil
+	}
+	defer qr.Release()
+
+	// Pull once to get all results
+	response := qr.Pull()
+	if response == nil {
+		return &QueryResponse{
+			Keys: make([]int64, 0),
+			Data: make([][]byte, 0),
+			Tags: make([][]Tag, 0),
+			SIDs: make([]common.SeriesID, 0),
+		}, nil
+	}
+
+	// If there's an error in the response, return it as a function error
+	if response.Error != nil {
+		return nil, response.Error
+	}
+
+	return response, nil
 }
 
 // Stats implements SIDX interface.

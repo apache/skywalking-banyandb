@@ -44,7 +44,6 @@ type queryResult struct {
 	bs         *blockScanner
 	l          *logger.Logger
 	tagsToLoad map[string]struct{}
-	parts      []*part
 	shards     []*QueryResponse
 	request    QueryRequest
 	asc        bool
@@ -304,7 +303,7 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), bb2.Buf)
 
 	// Decode tag values directly (no compression)
-	tagValues, err := DecodeTagValues(bb2.Buf, tm.valueType, count)
+	tagValues, err := decodeTagValues(bb2.Buf, tm.valueType, count)
 	if err != nil {
 		return false
 	}
@@ -346,8 +345,17 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 			break
 		}
 
+		// Filter by key range from QueryRequest
+		key := block.userKeys[i]
+		if qr.request.MinKey != nil && key < *qr.request.MinKey {
+			continue
+		}
+		if qr.request.MaxKey != nil && key > *qr.request.MaxKey {
+			continue
+		}
+
 		// Copy parallel arrays
-		result.Keys = append(result.Keys, block.userKeys[i])
+		result.Keys = append(result.Keys, key)
 		result.Data = append(result.Data, block.data[i])
 		result.SIDs = append(result.SIDs, seriesID)
 

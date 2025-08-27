@@ -4,21 +4,20 @@ This document tracks the implementation progress of the Secondary Index File Sys
 
 ## Implementation Progress Overview
 
-**Completed Phases (29 tasks)**: ✅
+**Completed Phases (33 tasks)**: ✅
 - Phase 1: Core Data Structures (6 tasks)
 - Phase 2: Interface Definitions (5 tasks)
 - Phase 3: Mock Implementations (4 tasks)
 - Phase 4: Memory Management (4 tasks)
 - Phase 5: Snapshot Management (6 tasks)
-- Phase 6: Query Path (4 tasks) - Block Scanner completed
+- Phase 6: Query Path (5 tasks) - All query components completed
 
 **Remaining Phases**:
-- [ ] **Phase 6**: Query Path (1 remaining task)
 - [ ] **Phase 7**: Flush Operations (4 tasks)
 - [ ] **Phase 8**: Merge Operations (4 tasks)
 - [ ] **Phase 9**: Testing (4 tasks)
 
-**Total Tasks**: 40 (29 completed, 11 remaining)
+**Total Tasks**: 40 (33 completed, 7 remaining)
 
 ---
 
@@ -75,16 +74,16 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Performance scales with worker count
 
 ### 6.5 SIDX Query Interface (extend `sidx.go`)
-- [ ] **Implementation Tasks**:
-  - [ ] Implement `Query(ctx context.Context, req QueryRequest) (QueryResult, error)`
-  - [ ] Add query validation and snapshot acquisition
-  - [ ] Create part selection by key range overlap
-  - [ ] Integrate with existing sidx snapshot management
-- [ ] **Test Cases**:
-  - [ ] Query validation catches invalid requests
-  - [ ] Part selection optimizes I/O by filtering non-overlapping parts
-  - [ ] Integration with snapshot reference counting works correctly
-  - [ ] End-to-end query performance meets targets
+- [x] **Implementation Tasks**:
+  - [x] Implement `Query(ctx context.Context, req QueryRequest) (QueryResult, error)`
+  - [x] Add query validation and snapshot acquisition
+  - [x] Create part selection by key range overlap
+  - [x] Integrate with existing sidx snapshot management
+- [x] **Test Cases**:
+  - [x] Query validation catches invalid requests
+  - [x] Part selection optimizes I/O by filtering non-overlapping parts
+  - [x] Integration with snapshot reference counting works correctly
+  - [x] End-to-end query performance meets targets
 
 ---
 
@@ -261,8 +260,8 @@ This document tracks the implementation progress of the Secondary Index File Sys
 - [ ] Documentation updated
 
 ### Overall Success Criteria
-- [x] Phases 1-5 completed (25/40 tasks) ✅
-- [ ] Remaining 15 tasks completed
+- [x] Phases 1-6 completed (33/40 tasks) ✅
+- [ ] Remaining 7 tasks completed
 - [ ] Full test suite passes
 - [ ] Performance meets design targets
 - [ ] Code review approval

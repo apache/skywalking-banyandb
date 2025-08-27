@@ -345,7 +345,7 @@ func (p *part) readAll() ([]*elements, error) {
 
 			// Initialize seriesIDs and tags slices
 			elems.seriesIDs = make([]common.SeriesID, int(bm.count))
-			elems.tags = make([][]tag, int(bm.count))
+			elems.tags = make([][]*tag, int(bm.count))
 
 			// Fill seriesIDs - all elements in this block have the same seriesID
 			for j := range elems.seriesIDs {
@@ -405,7 +405,7 @@ func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements)
 	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), tdData)
 
 	// Decode tag values directly (no compression)
-	tagValues, err := DecodeTagValues(tdData, tm.valueType, int(bm.count))
+	tagValues, err := decodeTagValues(tdData, tm.valueType, int(bm.count))
 	if err != nil {
 		return fmt.Errorf("cannot decode tag values: %w", err)
 	}
@@ -420,14 +420,14 @@ func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements)
 			continue
 		}
 		if elems.tags[i] == nil {
-			elems.tags[i] = make([]tag, 0, 1)
+			elems.tags[i] = make([]*tag, 0, 1)
 		}
-		elems.tags[i] = append(elems.tags[i], tag{
-			name:      tagName,
-			value:     value,
-			valueType: tm.valueType,
-			indexed:   tm.indexed,
-		})
+		newTag := generateTag()
+		newTag.name = tagName
+		newTag.value = value
+		newTag.valueType = tm.valueType
+		newTag.indexed = tm.indexed
+		elems.tags[i] = append(elems.tags[i], newTag)
 	}
 
 	return nil

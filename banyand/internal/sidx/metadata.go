@@ -218,48 +218,6 @@ func (bm *blockMetadata) validate() error {
 	return nil
 }
 
-// validateBlockMetadata validates ordering of blocks within a part.
-func validateBlockMetadata(blocks []blockMetadata) error {
-	if len(blocks) == 0 {
-		return nil
-	}
-
-	for i := 1; i < len(blocks); i++ {
-		prev := &blocks[i-1]
-		curr := &blocks[i]
-
-		// Validate individual blocks
-		if err := prev.validate(); err != nil {
-			return fmt.Errorf("block %d validation failed: %w", i-1, err)
-		}
-
-		// Check ordering: seriesID first, then minKey
-		if curr.seriesID < prev.seriesID {
-			return fmt.Errorf("blocks not ordered by seriesID: block %d seriesID (%d) < block %d seriesID (%d)",
-				i, curr.seriesID, i-1, prev.seriesID)
-		}
-
-		// For same seriesID, check key ordering
-		if curr.seriesID == prev.seriesID && curr.minKey < prev.minKey {
-			return fmt.Errorf("blocks not ordered by key: block %d minKey (%d) < block %d minKey (%d) for seriesID %d",
-				i, curr.minKey, i-1, prev.minKey, curr.seriesID)
-		}
-
-		// Check for overlapping key ranges within same seriesID
-		if curr.seriesID == prev.seriesID && curr.minKey <= prev.maxKey {
-			return fmt.Errorf("overlapping key ranges: block %d [%d, %d] overlaps with block %d [%d, %d] for seriesID %d",
-				i, curr.minKey, curr.maxKey, i-1, prev.minKey, prev.maxKey, curr.seriesID)
-		}
-	}
-
-	// Validate the last block
-	if err := blocks[len(blocks)-1].validate(); err != nil {
-		return fmt.Errorf("block %d validation failed: %w", len(blocks)-1, err)
-	}
-
-	return nil
-}
-
 // marshal serializes partMetadata to JSON bytes.
 func (pm *partMetadata) marshal() ([]byte, error) {
 	data, err := json.Marshal(pm)
