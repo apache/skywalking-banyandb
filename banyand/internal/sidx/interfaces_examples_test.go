@@ -24,6 +24,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/api/common"
 )
 
 func TestInterfaceUsageExamples(t *testing.T) {
@@ -89,15 +91,15 @@ func TestMockSIDXImplementation(t *testing.T) {
 	})
 
 	t.Run("Query validates input", func(t *testing.T) {
-		// Test empty query name
-		result, err := sidx.Query(ctx, QueryRequest{Name: ""})
+		// Test empty SeriesIDs
+		result, err := sidx.Query(ctx, QueryRequest{SeriesIDs: nil})
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "query name cannot be empty")
+		assert.Contains(t, err.Error(), "at least one SeriesID is required")
 
 		// Test invalid MaxElementSize
 		result, err = sidx.Query(ctx, QueryRequest{
-			Name:           "test",
+			SeriesIDs:      []common.SeriesID{1},
 			MaxElementSize: -1,
 		})
 		assert.Error(t, err)
@@ -106,7 +108,7 @@ func TestMockSIDXImplementation(t *testing.T) {
 
 		// Test valid query
 		result, err = sidx.Query(ctx, QueryRequest{
-			Name:           "test",
+			SeriesIDs:      []common.SeriesID{1},
 			MaxElementSize: 100,
 		})
 		assert.NoError(t, err)
@@ -246,11 +248,11 @@ func TestContractCompliance(t *testing.T) {
 
 	t.Run("Query contract compliance", func(t *testing.T) {
 		// Contract: MUST validate QueryRequest parameters
-		_, err := sidx.Query(ctx, QueryRequest{Name: ""})
-		assert.Error(t, err, "Should validate query name")
+		_, err := sidx.Query(ctx, QueryRequest{SeriesIDs: nil})
+		assert.Error(t, err, "Should validate SeriesIDs")
 
 		// Contract: MUST return QueryResult with Pull/Release pattern
-		result, err := sidx.Query(ctx, QueryRequest{Name: "test"})
+		result, err := sidx.Query(ctx, QueryRequest{SeriesIDs: []common.SeriesID{1}})
 		assert.NoError(t, err)
 		assert.NotNil(t, result, "Should return QueryResult")
 
@@ -332,7 +334,7 @@ func BenchmarkMockQueryOperations(b *testing.B) {
 	ctx := context.Background()
 
 	req := QueryRequest{
-		Name:           "benchmark",
+		SeriesIDs:      []common.SeriesID{1},
 		MaxElementSize: 100,
 	}
 

@@ -487,7 +487,6 @@ func BenchmarkIntegrationTestFramework_QueryPerformance(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		seriesID := common.SeriesID((i % 5) + 1) // Query existing series
 		queryReq := QueryRequest{
-			Name:           fmt.Sprintf("bench-query-%d", i),
 			SeriesIDs:      []common.SeriesID{seriesID},
 			MaxElementSize: 50,
 		}

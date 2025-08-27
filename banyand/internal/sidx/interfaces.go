@@ -127,7 +127,6 @@ type QueryRequest struct {
 	Order          *index.OrderBy
 	MinKey         *int64
 	MaxKey         *int64
-	Name           string
 	SeriesIDs      []common.SeriesID
 	TagProjection  []model.TagProjection
 	MaxElementSize int
@@ -339,9 +338,6 @@ func (wr WriteRequest) Validate() error {
 
 // Validate validates a QueryRequest for correctness.
 func (qr QueryRequest) Validate() error {
-	if qr.Name == "" {
-		return fmt.Errorf("name cannot be empty")
-	}
 	if len(qr.SeriesIDs) == 0 {
 		return fmt.Errorf("at least one SeriesID is required")
 	}
@@ -363,7 +359,6 @@ func (qr QueryRequest) Validate() error {
 
 // Reset resets the QueryRequest to its zero state.
 func (qr *QueryRequest) Reset() {
-	qr.Name = ""
 	qr.SeriesIDs = nil
 	qr.Filter = nil
 	qr.Order = nil
@@ -375,8 +370,6 @@ func (qr *QueryRequest) Reset() {
 
 // CopyFrom copies the QueryRequest from other to qr.
 func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
-	qr.Name = other.Name
-
 	// Deep copy for SeriesIDs if it's a slice
 	if other.SeriesIDs != nil {
 		qr.SeriesIDs = make([]common.SeriesID, len(other.SeriesIDs))

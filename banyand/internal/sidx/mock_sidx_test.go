@@ -96,7 +96,6 @@ func TestMockSIDX_BasicOperations(t *testing.T) {
 
 	// Test query operations
 	queryReq := QueryRequest{
-		Name:           "series_1",
 		SeriesIDs:      []common.SeriesID{1},
 		MaxElementSize: 10,
 	}
@@ -255,7 +254,7 @@ func TestMockSIDX_ErrorInjection(t *testing.T) {
 	assert.Contains(t, err.Error(), "mock error injection")
 
 	// Test query error injection
-	queryReq := QueryRequest{Name: "test"}
+	queryReq := QueryRequest{SeriesIDs: []common.SeriesID{1}}
 	_, err = mock.Query(ctx, queryReq)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "mock error injection")
@@ -296,7 +295,7 @@ func TestMockSIDX_Delays(t *testing.T) {
 
 	// Test query delay
 	start = time.Now()
-	queryReq := QueryRequest{Name: "series_1", SeriesIDs: []common.SeriesID{1}}
+	queryReq := QueryRequest{SeriesIDs: []common.SeriesID{1}}
 	result, err := mock.Query(ctx, queryReq)
 	require.NoError(t, err)
 	result.Release()
@@ -338,7 +337,7 @@ func TestMockSIDX_Sorting(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query series 1 - should be sorted by key
-	queryReq := QueryRequest{Name: "series_1", SeriesIDs: []common.SeriesID{1}}
+	queryReq := QueryRequest{SeriesIDs: []common.SeriesID{1}}
 	result, err := mock.Query(ctx, queryReq)
 	require.NoError(t, err)
 	defer result.Release()
@@ -349,7 +348,7 @@ func TestMockSIDX_Sorting(t *testing.T) {
 	assert.Equal(t, [][]byte{[]byte("data1"), []byte("data3")}, response.Data)
 
 	// Query series 2 - should be sorted by key
-	queryReq = QueryRequest{Name: "series_2", SeriesIDs: []common.SeriesID{2}}
+	queryReq = QueryRequest{SeriesIDs: []common.SeriesID{2}}
 	result, err = mock.Query(ctx, queryReq)
 	require.NoError(t, err)
 	defer result.Release()
@@ -383,7 +382,6 @@ func TestMockSIDX_QueryBatching(t *testing.T) {
 
 	// Query with small batch size
 	queryReq := QueryRequest{
-		Name:           "series_1",
 		SeriesIDs:      []common.SeriesID{1},
 		MaxElementSize: 3,
 	}
@@ -475,7 +473,7 @@ func TestMockSIDX_CloseOperations(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "SIDX is closed")
 
-	queryReq := QueryRequest{Name: "test"}
+	queryReq := QueryRequest{SeriesIDs: []common.SeriesID{1}}
 	_, err = mock.Query(ctx, queryReq)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "SIDX is closed")
@@ -529,7 +527,7 @@ func TestMockSIDX_DynamicConfiguration(t *testing.T) {
 
 	mock.SetQueryDelay(30)
 	start = time.Now()
-	result, err := mock.Query(ctx, QueryRequest{Name: "series_1", SeriesIDs: []common.SeriesID{1}})
+	result, err := mock.Query(ctx, QueryRequest{SeriesIDs: []common.SeriesID{1}})
 	require.NoError(t, err)
 	result.Release()
 	elapsed = time.Since(start)

@@ -106,7 +106,6 @@ func (e *InterfaceUsageExamples) BasicWriteExample(ctx context.Context) error {
 func (e *InterfaceUsageExamples) AdvancedQueryExample(ctx context.Context) error {
 	// Create query request with range and tag filtering
 	queryReq := QueryRequest{
-		Name:      "trace-sidx",
 		SeriesIDs: []common.SeriesID{1, 2, 3}, // Example series IDs
 		Filter:    nil,                        // In production, use actual index.Filter implementation
 		Order:     nil,                        // In production, use actual index.OrderBy implementation
@@ -228,8 +227,8 @@ func (e *InterfaceUsageExamples) ErrorHandlingExample(ctx context.Context) {
 
 	// Example 2: Query error handling
 	invalidQuery := QueryRequest{
-		Name:           "", // Invalid name
-		MaxElementSize: -1, // Invalid size
+		SeriesIDs:      nil, // Invalid - empty SeriesIDs
+		MaxElementSize: -1,  // Invalid size
 	}
 
 	result, err := e.sidx.Query(ctx, invalidQuery)
@@ -293,8 +292,8 @@ func (e *InterfaceUsageExamples) PerformanceOptimizationExample(ctx context.Cont
 
 	// Best Practice 3: Use appropriate query limits
 	queryReq := QueryRequest{
-		Name:           "performance-test",
-		MaxElementSize: 100, // Reasonable batch size
+		SeriesIDs:      []common.SeriesID{1, 2, 3}, // Example series
+		MaxElementSize: 100,                        // Reasonable batch size
 		TagProjection: []model.TagProjection{
 			{Family: "series", Names: []string{"id"}}, // Only project needed tags
 		},
@@ -401,8 +400,8 @@ func (m *mockSIDX) Write(_ context.Context, reqs []WriteRequest) error {
 }
 
 func (m *mockSIDX) Query(_ context.Context, req QueryRequest) (QueryResult, error) {
-	if req.Name == "" {
-		return nil, fmt.Errorf("query name cannot be empty")
+	if len(req.SeriesIDs) == 0 {
+		return nil, fmt.Errorf("at least one SeriesID is required")
 	}
 	if req.MaxElementSize < 0 {
 		return nil, fmt.Errorf("invalid MaxElementSize: %d", req.MaxElementSize)

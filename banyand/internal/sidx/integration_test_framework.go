@@ -519,7 +519,6 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 
 			// Query the data back using SeriesIDs that were written
 			queryReq := QueryRequest{
-				Name:           "series_1", // Match the key used in MockSIDX write
 				SeriesIDs:      []common.SeriesID{common.SeriesID(1), common.SeriesID(2), common.SeriesID(3)},
 				MaxElementSize: 100,
 			}
@@ -635,7 +634,6 @@ func (itf *IntegrationTestFramework) registerDefaultScenarios() {
 				seriesIDs[i-1] = common.SeriesID(i)
 			}
 			queryReq := QueryRequest{
-				Name:           "large-dataset-query",
 				SeriesIDs:      seriesIDs,
 				MaxElementSize: 50,
 			}
@@ -752,7 +750,6 @@ func (itf *IntegrationTestFramework) registerDefaultBenchmarks() {
 			for i := 0; i < numQueries; i++ {
 				seriesID := common.SeriesID((i % 10) + 1) // Query existing series
 				queryReq := QueryRequest{
-					Name:           fmt.Sprintf("series_%d", seriesID),
 					SeriesIDs:      []common.SeriesID{seriesID},
 					MaxElementSize: 50,
 				}
@@ -867,7 +864,6 @@ func (itf *IntegrationTestFramework) registerDefaultStressTests() {
 			// Read operation - query one of the series we know exists (from setup)
 			seriesID := common.SeriesID((workerID % 5) + 1) // Query from the 5 series in setup
 			queryReq := QueryRequest{
-				Name:           fmt.Sprintf("stress-query-%d", workerID),
 				SeriesIDs:      []common.SeriesID{seriesID},
 				MaxElementSize: 20,
 			}

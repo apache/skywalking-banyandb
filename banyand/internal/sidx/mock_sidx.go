@@ -209,9 +209,13 @@ func (m *MockSIDX) Query(_ context.Context, req QueryRequest) (QueryResult, erro
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	elements, exists := m.storage[req.Name]
-	if !exists {
-		elements = []mockElement{}
+	// Collect elements from all requested SeriesIDs
+	var elements []mockElement
+	for _, seriesID := range req.SeriesIDs {
+		name := fmt.Sprintf("series_%d", seriesID)
+		if seriesElements, exists := m.storage[name]; exists {
+			elements = append(elements, seriesElements...)
+		}
 	}
 
 	// Update query stats

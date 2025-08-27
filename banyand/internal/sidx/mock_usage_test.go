@@ -67,7 +67,6 @@ func TestDocumentation_BasicWriteReadWorkflow(t *testing.T) {
 
 	// Query the data back (from documentation example)
 	queryReq := QueryRequest{
-		Name:           "series_1", // Matches the series name used in mock
 		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
 		MaxElementSize: 100,
 	}
@@ -116,7 +115,6 @@ func TestDocumentation_ComponentIntegration(t *testing.T) {
 
 	// Query data (from documentation example)
 	queryReq := QueryRequest{
-		Name:           "test-query",
 		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
 		MaxElementSize: 10,
 	}
@@ -353,7 +351,6 @@ func TestDocumentation_TroubleshootingExamples(t *testing.T) {
 
 		// Without syncing, query should return no results
 		queryReq := QueryRequest{
-			Name:           "test-query",
 			SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
 			MaxElementSize: 100,
 		}
@@ -496,7 +493,6 @@ func TestDocumentation_DebugTips(t *testing.T) {
 
 	// Query to increment query count
 	queryReq := QueryRequest{
-		Name:           "series_1",
 		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
 		MaxElementSize: 10,
 	}
@@ -531,7 +527,6 @@ func TestDocumentation_Migration(t *testing.T) {
 	require.NoError(t, err)
 
 	queryReq := QueryRequest{
-		Name:           "series_1",
 		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
 		MaxElementSize: 10,
 	}
@@ -576,7 +571,6 @@ func TestDocumentation_PerformanceCharacteristics(t *testing.T) {
 
 	// Test query performance (from documentation)
 	queryReq := QueryRequest{
-		Name:           "series_1",
 		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
 		MaxElementSize: 50,
 	}

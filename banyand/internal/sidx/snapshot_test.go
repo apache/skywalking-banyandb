@@ -613,7 +613,7 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 				case 2:
 					// Query operation - accesses current snapshot
 					queryReq := QueryRequest{
-						Name: "test-index",
+						SeriesIDs: []common.SeriesID{1},
 					}
 					result, err := sidx.Query(ctx, queryReq)
 					if err == nil && result != nil {
