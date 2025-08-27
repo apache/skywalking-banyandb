@@ -59,11 +59,11 @@ func createTestSIDX(t *testing.T) SIDX {
 }
 
 func createTestTag(name, value string) Tag {
-	return tag{
-		name:      name,
-		value:     []byte(value),
-		valueType: pbv1.ValueTypeStr,
-		indexed:   true,
+	return Tag{
+		Name:      name,
+		Value:     []byte(value),
+		ValueType: pbv1.ValueTypeStr,
+		Indexed:   true,
 	}
 }
 

@@ -154,9 +154,9 @@ func TestQueryResponseHeap_MergeWithHeapAscending(t *testing.T) {
 		Keys: []int64{1, 5, 9},
 		Data: [][]byte{[]byte("a1"), []byte("a5"), []byte("a9")},
 		Tags: [][]Tag{
-			{{name: "tag1", value: []byte("val1"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag1", value: []byte("val5"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag1", value: []byte("val9"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "tag1", Value: []byte("val1"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag1", Value: []byte("val5"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag1", Value: []byte("val9"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{1, 1, 1},
 	}
@@ -164,9 +164,9 @@ func TestQueryResponseHeap_MergeWithHeapAscending(t *testing.T) {
 		Keys: []int64{2, 6, 10},
 		Data: [][]byte{[]byte("b2"), []byte("b6"), []byte("b10")},
 		Tags: [][]Tag{
-			{{name: "tag2", value: []byte("val2"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag2", value: []byte("val6"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag2", value: []byte("val10"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "tag2", Value: []byte("val2"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag2", Value: []byte("val6"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag2", Value: []byte("val10"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{2, 2, 2},
 	}
@@ -174,8 +174,8 @@ func TestQueryResponseHeap_MergeWithHeapAscending(t *testing.T) {
 		Keys: []int64{3, 7},
 		Data: [][]byte{[]byte("c3"), []byte("c7")},
 		Tags: [][]Tag{
-			{{name: "tag3", value: []byte("val3"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag3", value: []byte("val7"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "tag3", Value: []byte("val3"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag3", Value: []byte("val7"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{3, 3},
 	}
@@ -230,9 +230,9 @@ func TestQueryResponseHeap_MergeWithHeapDescending(t *testing.T) {
 		Keys: []int64{1, 5, 9}, // Will be accessed backwards: 9, 5, 1
 		Data: [][]byte{[]byte("a1"), []byte("a5"), []byte("a9")},
 		Tags: [][]Tag{
-			{{name: "tag1", value: []byte("val1"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag1", value: []byte("val5"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag1", value: []byte("val9"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "tag1", Value: []byte("val1"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag1", Value: []byte("val5"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag1", Value: []byte("val9"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{1, 1, 1},
 	}
@@ -240,9 +240,9 @@ func TestQueryResponseHeap_MergeWithHeapDescending(t *testing.T) {
 		Keys: []int64{2, 6, 10}, // Will be accessed backwards: 10, 6, 2
 		Data: [][]byte{[]byte("b2"), []byte("b6"), []byte("b10")},
 		Tags: [][]Tag{
-			{{name: "tag2", value: []byte("val2"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag2", value: []byte("val6"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag2", value: []byte("val10"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "tag2", Value: []byte("val2"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag2", Value: []byte("val6"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag2", Value: []byte("val10"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{2, 2, 2},
 	}
@@ -292,9 +292,9 @@ func TestQueryResponseHeap_MergeWithLimit(t *testing.T) {
 		Keys: []int64{1, 3, 5},
 		Data: [][]byte{[]byte("a1"), []byte("a3"), []byte("a5")},
 		Tags: [][]Tag{
-			{{name: "tag1", value: []byte("val1"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag1", value: []byte("val3"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag1", value: []byte("val5"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "tag1", Value: []byte("val1"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag1", Value: []byte("val3"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag1", Value: []byte("val5"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{1, 1, 1},
 	}
@@ -302,9 +302,9 @@ func TestQueryResponseHeap_MergeWithLimit(t *testing.T) {
 		Keys: []int64{2, 4, 6},
 		Data: [][]byte{[]byte("b2"), []byte("b4"), []byte("b6")},
 		Tags: [][]Tag{
-			{{name: "tag2", value: []byte("val2"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag2", value: []byte("val4"), valueType: pbv1.ValueTypeStr}},
-			{{name: "tag2", value: []byte("val6"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "tag2", Value: []byte("val2"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag2", Value: []byte("val4"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "tag2", Value: []byte("val6"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{2, 2, 2},
 	}
@@ -345,7 +345,7 @@ func TestQueryResponseHeap_EdgeCases(t *testing.T) {
 		response := &QueryResponse{
 			Keys: []int64{42},
 			Data: [][]byte{[]byte("single")},
-			Tags: [][]Tag{{{name: "tag", value: []byte("value"), valueType: pbv1.ValueTypeStr}}},
+			Tags: [][]Tag{{{Name: "tag", Value: []byte("value"), ValueType: pbv1.ValueTypeStr}}},
 			SIDs: []common.SeriesID{1},
 		}
 
@@ -371,9 +371,9 @@ func TestQueryResponseHeap_EdgeCases(t *testing.T) {
 			Keys: []int64{1, 2, 3},
 			Data: [][]byte{[]byte("a"), []byte("b"), []byte("c")},
 			Tags: [][]Tag{
-				{{name: "tag", value: []byte("val1"), valueType: pbv1.ValueTypeStr}},
-				{{name: "tag", value: []byte("val2"), valueType: pbv1.ValueTypeStr}},
-				{{name: "tag", value: []byte("val3"), valueType: pbv1.ValueTypeStr}},
+				{{Name: "tag", Value: []byte("val1"), ValueType: pbv1.ValueTypeStr}},
+				{{Name: "tag", Value: []byte("val2"), ValueType: pbv1.ValueTypeStr}},
+				{{Name: "tag", Value: []byte("val3"), ValueType: pbv1.ValueTypeStr}},
 			},
 			SIDs: []common.SeriesID{1, 1, 1},
 		}
@@ -398,7 +398,7 @@ func TestQueryResponseHeap_EdgeCases(t *testing.T) {
 		normalResponse := &QueryResponse{
 			Keys: []int64{5},
 			Data: [][]byte{[]byte("normal")},
-			Tags: [][]Tag{{{name: "tag", value: []byte("value"), valueType: pbv1.ValueTypeStr}}},
+			Tags: [][]Tag{{{Name: "tag", Value: []byte("value"), ValueType: pbv1.ValueTypeStr}}},
 			SIDs: []common.SeriesID{1},
 		}
 
@@ -425,9 +425,9 @@ func TestMergeQueryResponseShardsAsc(t *testing.T) {
 		Keys: []int64{1, 5, 9},
 		Data: [][]byte{[]byte("s1_1"), []byte("s1_5"), []byte("s1_9")},
 		Tags: [][]Tag{
-			{{name: "shard1", value: []byte("val1"), valueType: pbv1.ValueTypeStr}},
-			{{name: "shard1", value: []byte("val5"), valueType: pbv1.ValueTypeStr}},
-			{{name: "shard1", value: []byte("val9"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "shard1", Value: []byte("val1"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "shard1", Value: []byte("val5"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "shard1", Value: []byte("val9"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{1, 1, 1},
 	}
@@ -435,9 +435,9 @@ func TestMergeQueryResponseShardsAsc(t *testing.T) {
 		Keys: []int64{2, 6, 10},
 		Data: [][]byte{[]byte("s2_2"), []byte("s2_6"), []byte("s2_10")},
 		Tags: [][]Tag{
-			{{name: "shard2", value: []byte("val2"), valueType: pbv1.ValueTypeStr}},
-			{{name: "shard2", value: []byte("val6"), valueType: pbv1.ValueTypeStr}},
-			{{name: "shard2", value: []byte("val10"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "shard2", Value: []byte("val2"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "shard2", Value: []byte("val6"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "shard2", Value: []byte("val10"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{2, 2, 2},
 	}
@@ -445,8 +445,8 @@ func TestMergeQueryResponseShardsAsc(t *testing.T) {
 		Keys: []int64{3, 7},
 		Data: [][]byte{[]byte("s3_3"), []byte("s3_7")},
 		Tags: [][]Tag{
-			{{name: "shard3", value: []byte("val3"), valueType: pbv1.ValueTypeStr}},
-			{{name: "shard3", value: []byte("val7"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "shard3", Value: []byte("val3"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "shard3", Value: []byte("val7"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{3, 3},
 	}
@@ -472,9 +472,9 @@ func TestMergeQueryResponseShardsDesc(t *testing.T) {
 		Keys: []int64{9, 5, 1},
 		Data: [][]byte{[]byte("s1_9"), []byte("s1_5"), []byte("s1_1")},
 		Tags: [][]Tag{
-			{{name: "shard1", value: []byte("val9"), valueType: pbv1.ValueTypeStr}},
-			{{name: "shard1", value: []byte("val5"), valueType: pbv1.ValueTypeStr}},
-			{{name: "shard1", value: []byte("val1"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "shard1", Value: []byte("val9"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "shard1", Value: []byte("val5"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "shard1", Value: []byte("val1"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{1, 1, 1},
 	}
@@ -482,9 +482,9 @@ func TestMergeQueryResponseShardsDesc(t *testing.T) {
 		Keys: []int64{10, 6, 2},
 		Data: [][]byte{[]byte("s2_10"), []byte("s2_6"), []byte("s2_2")},
 		Tags: [][]Tag{
-			{{name: "shard2", value: []byte("val10"), valueType: pbv1.ValueTypeStr}},
-			{{name: "shard2", value: []byte("val6"), valueType: pbv1.ValueTypeStr}},
-			{{name: "shard2", value: []byte("val2"), valueType: pbv1.ValueTypeStr}},
+			{{Name: "shard2", Value: []byte("val10"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "shard2", Value: []byte("val6"), ValueType: pbv1.ValueTypeStr}},
+			{{Name: "shard2", Value: []byte("val2"), ValueType: pbv1.ValueTypeStr}},
 		},
 		SIDs: []common.SeriesID{2, 2, 2},
 	}
@@ -539,8 +539,8 @@ func TestMergeQueryResponseShards_EmptyShards(t *testing.T) {
 				Keys: []int64{5, 10},
 				Data: [][]byte{[]byte("a"), []byte("b")},
 				Tags: [][]Tag{
-					{{name: "mixed", value: []byte("val5"), valueType: pbv1.ValueTypeStr}},
-					{{name: "mixed", value: []byte("val10"), valueType: pbv1.ValueTypeStr}},
+					{{Name: "mixed", Value: []byte("val5"), ValueType: pbv1.ValueTypeStr}},
+					{{Name: "mixed", Value: []byte("val10"), ValueType: pbv1.ValueTypeStr}},
 				},
 				SIDs: []common.SeriesID{1, 1},
 			},
@@ -619,7 +619,7 @@ func createBenchmarkResponse(size int, offset, step int64) *QueryResponse {
 		key := offset + int64(i)*step
 		response.Keys[i] = key
 		response.Data[i] = []byte("benchmark_data")
-		response.Tags[i] = []Tag{{name: "benchmark", value: []byte("value"), valueType: pbv1.ValueTypeStr}}
+		response.Tags[i] = []Tag{{Name: "benchmark", Value: []byte("value"), ValueType: pbv1.ValueTypeStr}}
 		response.SIDs[i] = common.SeriesID(offset)
 	}
 
@@ -638,7 +638,7 @@ func createBenchmarkResponseDesc(size int, offset, step int64) *QueryResponse {
 		key := offset + int64(size-1-i)*step
 		response.Keys[i] = key
 		response.Data[i] = []byte("benchmark_data")
-		response.Tags[i] = []Tag{{name: "benchmark", value: []byte("value"), valueType: pbv1.ValueTypeStr}}
+		response.Tags[i] = []Tag{{Name: "benchmark", Value: []byte("value"), ValueType: pbv1.ValueTypeStr}}
 		response.SIDs[i] = common.SeriesID(offset)
 	}
 
@@ -802,14 +802,14 @@ func TestQueryResult_Pull_SingleMemPart(t *testing.T) {
 
 		for j, tag := range tags {
 			expectedTag := expected.tags[j]
-			if tag.name != expectedTag.name {
-				t.Errorf("At position %d, tag %d: expected name %s, got %s", i, j, expectedTag.name, tag.name)
+			if tag.Name != expectedTag.name {
+				t.Errorf("At position %d, tag %d: expected name %s, got %s", i, j, expectedTag.name, tag.Name)
 			}
-			if !bytes.Equal(tag.value, expectedTag.value) {
-				t.Errorf("At position %d, tag %d: expected value %s, got %s", i, j, string(expectedTag.value), string(tag.value))
+			if !bytes.Equal(tag.Value, expectedTag.value) {
+				t.Errorf("At position %d, tag %d: expected value %s, got %s", i, j, string(expectedTag.value), string(tag.Value))
 			}
-			if tag.valueType != expectedTag.valueType {
-				t.Errorf("At position %d, tag %d: expected valueType %v, got %v", i, j, expectedTag.valueType, tag.valueType)
+			if tag.ValueType != expectedTag.valueType {
+				t.Errorf("At position %d, tag %d: expected valueType %v, got %v", i, j, expectedTag.valueType, tag.ValueType)
 			}
 		}
 	}
@@ -968,14 +968,14 @@ func TestQueryResult_Pull_MultipleMemParts(t *testing.T) {
 
 		for j, tag := range tags {
 			expectedTag := expected.tags[j]
-			if tag.name != expectedTag.name {
-				t.Errorf("At position %d, tag %d: expected name %s, got %s", i, j, expectedTag.name, tag.name)
+			if tag.Name != expectedTag.name {
+				t.Errorf("At position %d, tag %d: expected name %s, got %s", i, j, expectedTag.name, tag.Name)
 			}
-			if !bytes.Equal(tag.value, expectedTag.value) {
-				t.Errorf("At position %d, tag %d: expected value %s, got %s", i, j, string(expectedTag.value), string(tag.value))
+			if !bytes.Equal(tag.Value, expectedTag.value) {
+				t.Errorf("At position %d, tag %d: expected value %s, got %s", i, j, string(expectedTag.value), string(tag.Value))
 			}
-			if tag.valueType != expectedTag.valueType {
-				t.Errorf("At position %d, tag %d: expected valueType %v, got %v", i, j, expectedTag.valueType, tag.valueType)
+			if tag.ValueType != expectedTag.valueType {
+				t.Errorf("At position %d, tag %d: expected valueType %v, got %v", i, j, expectedTag.valueType, tag.ValueType)
 			}
 		}
 	}
@@ -1088,8 +1088,8 @@ func TestQueryResult_Pull_WithTagProjection(t *testing.T) {
 	// Note: The actual tag filtering logic needs to be verified based on implementation
 	for i, tagGroup := range response.Tags {
 		for _, tag := range tagGroup {
-			if tag.name != "service" && tag.name != "environment" {
-				t.Errorf("Unexpected tag '%s' found at position %d, should only have projected tags", tag.name, i)
+			if tag.Name != "service" && tag.Name != "environment" {
+				t.Errorf("Unexpected tag '%s' found at position %d, should only have projected tags", tag.Name, i)
 			}
 		}
 	}

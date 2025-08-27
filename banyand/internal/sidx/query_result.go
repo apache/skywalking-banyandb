@@ -376,9 +376,9 @@ func (qr *queryResult) extractElementTags(block *block, elemIndex int) []Tag {
 			for _, tagName := range proj.Names {
 				if tagData, exists := block.tags[tagName]; exists && elemIndex < len(tagData.values) {
 					elementTags = append(elementTags, Tag{
-						name:      tagName,
-						value:     tagData.values[elemIndex],
-						valueType: tagData.valueType,
+						Name:      tagName,
+						Value:     tagData.values[elemIndex],
+						ValueType: tagData.valueType,
 					})
 				}
 			}
@@ -389,9 +389,9 @@ func (qr *queryResult) extractElementTags(block *block, elemIndex int) []Tag {
 		for tagName, tagData := range block.tags {
 			if elemIndex < len(tagData.values) {
 				elementTags = append(elementTags, Tag{
-					name:      tagName,
-					value:     tagData.values[elemIndex],
-					valueType: tagData.valueType,
+					Name:      tagName,
+					Value:     tagData.values[elemIndex],
+					ValueType: tagData.valueType,
 				})
 			}
 		}

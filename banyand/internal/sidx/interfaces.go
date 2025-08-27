@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -190,7 +191,7 @@ func (qr *QueryResponse) Validate() error {
 		}
 		for i, tagGroup := range qr.Tags {
 			for j, tag := range tagGroup {
-				if tag.name == "" {
+				if tag.Name == "" {
 					return fmt.Errorf("tags[%d][%d] name cannot be empty", i, j)
 				}
 			}
@@ -231,10 +232,10 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 			qr.Tags[i] = qr.Tags[i][:len(tagGroup)]
 		}
 		for j, tag := range tagGroup {
-			qr.Tags[i][j].name = tag.name
-			qr.Tags[i][j].value = append(qr.Tags[i][j].value[:0], tag.value...)
-			qr.Tags[i][j].valueType = tag.valueType
-			qr.Tags[i][j].indexed = tag.indexed
+			qr.Tags[i][j].Name = tag.Name
+			qr.Tags[i][j].Value = append(qr.Tags[i][j].Value[:0], tag.Value...)
+			qr.Tags[i][j].ValueType = tag.ValueType
+			qr.Tags[i][j].Indexed = tag.Indexed
 		}
 	}
 
@@ -308,8 +309,71 @@ func (rm *ResponseMetadata) Validate() error {
 }
 
 // Tag represents an individual tag for WriteRequest.
-// This uses the existing tag structure from the sidx package.
-type Tag = tag
+// This is an exported type that can be used outside the package.
+type Tag struct {
+	Name      string
+	Value     []byte
+	ValueType pbv1.ValueType
+	Indexed   bool
+}
+
+// NewTag creates a new Tag instance with the given values.
+func NewTag(name string, value []byte, valueType pbv1.ValueType, indexed bool) Tag {
+	return Tag{
+		Name:      name,
+		Value:     value,
+		ValueType: valueType,
+		Indexed:   indexed,
+	}
+}
+
+// Reset resets the Tag to its zero state for reuse.
+func (t *Tag) Reset() {
+	t.Name = ""
+	t.Value = nil
+	t.ValueType = pbv1.ValueTypeUnknown
+	t.Indexed = false
+}
+
+// Size returns the size of the tag in bytes.
+func (t *Tag) Size() int {
+	return len(t.Name) + len(t.Value) + 1 // +1 for valueType
+}
+
+// Copy creates a deep copy of the Tag.
+func (t *Tag) Copy() Tag {
+	var valueCopy []byte
+	if t.Value != nil {
+		valueCopy = make([]byte, len(t.Value))
+		copy(valueCopy, t.Value)
+	}
+	return Tag{
+		Name:      t.Name,
+		Value:     valueCopy,
+		ValueType: t.ValueType,
+		Indexed:   t.Indexed,
+	}
+}
+
+// toInternalTag converts the exported Tag to an internal tag for use with the pooling system.
+func (t *Tag) toInternalTag() *tag {
+	return &tag{
+		name:      t.Name,
+		value:     t.Value,
+		valueType: t.ValueType,
+		indexed:   t.Indexed,
+	}
+}
+
+// fromInternalTag creates a Tag from an internal tag.
+func fromInternalTag(t *tag) Tag {
+	return Tag{
+		Name:      t.name,
+		Value:     t.value,
+		ValueType: t.valueType,
+		Indexed:   t.indexed,
+	}
+}
 
 // Validate validates a WriteRequest for correctness.
 func (wr WriteRequest) Validate() error {
@@ -324,10 +388,10 @@ func (wr WriteRequest) Validate() error {
 	}
 	// Validate tags if present
 	for i, tag := range wr.Tags {
-		if tag.name == "" {
+		if tag.Name == "" {
 			return fmt.Errorf("tag[%d] name cannot be empty", i)
 		}
-		if len(tag.value) == 0 {
+		if len(tag.Value) == 0 {
 			return fmt.Errorf("tag[%d] value cannot be empty", i)
 		}
 	}

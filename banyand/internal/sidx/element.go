@@ -167,10 +167,10 @@ func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, data []by
 	elementTags := make([]*tag, 0, len(tags))
 	for _, t := range tags {
 		newTag := generateTag()
-		newTag.name = t.name
-		newTag.value = append([]byte(nil), t.value...)
-		newTag.valueType = t.valueType
-		newTag.indexed = t.indexed
+		newTag.name = t.Name
+		newTag.value = append([]byte(nil), t.Value...)
+		newTag.valueType = t.ValueType
+		newTag.indexed = t.Indexed
 		elementTags = append(elementTags, newTag)
 	}
 	e.tags = append(e.tags, elementTags)
