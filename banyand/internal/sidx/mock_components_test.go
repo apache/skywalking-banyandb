@@ -220,6 +220,7 @@ func TestMockQuerier_BasicOperations(t *testing.T) {
 	// Test query operations
 	queryReq := QueryRequest{
 		Name:           "test-query",
+		SeriesIDs:      []common.SeriesID{1, 2},
 		MaxElementSize: 10,
 	}
 
@@ -264,6 +265,7 @@ func TestMockQuerier_QueryBatching(t *testing.T) {
 	// Query with small batch size
 	queryReq := QueryRequest{
 		Name:           "batch-test",
+		SeriesIDs:      []common.SeriesID{1},
 		MaxElementSize: 3,
 	}
 
@@ -425,6 +427,7 @@ func TestMockComponentSuite_Integration(t *testing.T) {
 	// Query elements
 	queryReq := QueryRequest{
 		Name:           "integration-test",
+		SeriesIDs:      []common.SeriesID{1, 2},
 		MaxElementSize: 10,
 	}
 
@@ -629,6 +632,7 @@ func TestMockComponents_PerformanceCharacteristics(t *testing.T) {
 
 	queryReq := QueryRequest{
 		Name:           "performance-test",
+		SeriesIDs:      []common.SeriesID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
 		MaxElementSize: 100,
 	}
 

@@ -25,6 +25,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/api/common"
 )
 
 func TestIntegrationTestFramework_Creation(t *testing.T) {
@@ -483,8 +485,10 @@ func BenchmarkIntegrationTestFramework_QueryPerformance(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		seriesID := common.SeriesID((i % 5) + 1) // Query existing series
 		queryReq := QueryRequest{
 			Name:           fmt.Sprintf("bench-query-%d", i),
+			SeriesIDs:      []common.SeriesID{seriesID},
 			MaxElementSize: 50,
 		}
 

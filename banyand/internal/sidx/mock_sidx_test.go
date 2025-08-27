@@ -97,6 +97,7 @@ func TestMockSIDX_BasicOperations(t *testing.T) {
 	// Test query operations
 	queryReq := QueryRequest{
 		Name:           "series_1",
+		SeriesIDs:      []common.SeriesID{1},
 		MaxElementSize: 10,
 	}
 
@@ -295,7 +296,7 @@ func TestMockSIDX_Delays(t *testing.T) {
 
 	// Test query delay
 	start = time.Now()
-	queryReq := QueryRequest{Name: "series_1"}
+	queryReq := QueryRequest{Name: "series_1", SeriesIDs: []common.SeriesID{1}}
 	result, err := mock.Query(ctx, queryReq)
 	require.NoError(t, err)
 	result.Release()
@@ -337,7 +338,7 @@ func TestMockSIDX_Sorting(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query series 1 - should be sorted by key
-	queryReq := QueryRequest{Name: "series_1"}
+	queryReq := QueryRequest{Name: "series_1", SeriesIDs: []common.SeriesID{1}}
 	result, err := mock.Query(ctx, queryReq)
 	require.NoError(t, err)
 	defer result.Release()
@@ -348,7 +349,7 @@ func TestMockSIDX_Sorting(t *testing.T) {
 	assert.Equal(t, [][]byte{[]byte("data1"), []byte("data3")}, response.Data)
 
 	// Query series 2 - should be sorted by key
-	queryReq = QueryRequest{Name: "series_2"}
+	queryReq = QueryRequest{Name: "series_2", SeriesIDs: []common.SeriesID{2}}
 	result, err = mock.Query(ctx, queryReq)
 	require.NoError(t, err)
 	defer result.Release()
@@ -383,6 +384,7 @@ func TestMockSIDX_QueryBatching(t *testing.T) {
 	// Query with small batch size
 	queryReq := QueryRequest{
 		Name:           "series_1",
+		SeriesIDs:      []common.SeriesID{1},
 		MaxElementSize: 3,
 	}
 	result, err := mock.Query(ctx, queryReq)
@@ -527,7 +529,7 @@ func TestMockSIDX_DynamicConfiguration(t *testing.T) {
 
 	mock.SetQueryDelay(30)
 	start = time.Now()
-	result, err := mock.Query(ctx, QueryRequest{Name: "series_1"})
+	result, err := mock.Query(ctx, QueryRequest{Name: "series_1", SeriesIDs: []common.SeriesID{1}})
 	require.NoError(t, err)
 	result.Release()
 	elapsed = time.Since(start)

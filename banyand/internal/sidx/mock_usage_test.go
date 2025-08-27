@@ -68,6 +68,7 @@ func TestDocumentation_BasicWriteReadWorkflow(t *testing.T) {
 	// Query the data back (from documentation example)
 	queryReq := QueryRequest{
 		Name:           "series_1", // Matches the series name used in mock
+		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
 		MaxElementSize: 100,
 	}
 
@@ -116,6 +117,7 @@ func TestDocumentation_ComponentIntegration(t *testing.T) {
 	// Query data (from documentation example)
 	queryReq := QueryRequest{
 		Name:           "test-query",
+		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
 		MaxElementSize: 10,
 	}
 
@@ -352,6 +354,7 @@ func TestDocumentation_TroubleshootingExamples(t *testing.T) {
 		// Without syncing, query should return no results
 		queryReq := QueryRequest{
 			Name:           "test-query",
+			SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
 			MaxElementSize: 100,
 		}
 		result, err := suite.Querier.Query(ctx, queryReq)
@@ -492,7 +495,11 @@ func TestDocumentation_DebugTips(t *testing.T) {
 	assert.Equal(t, int64(2), count)
 
 	// Query to increment query count
-	queryReq := QueryRequest{Name: "series_1", MaxElementSize: 10}
+	queryReq := QueryRequest{
+		Name:           "series_1",
+		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
+		MaxElementSize: 10,
+	}
 	result, err := mockSIDX.Query(ctx, queryReq)
 	require.NoError(t, err)
 	result.Release()
@@ -523,7 +530,11 @@ func TestDocumentation_Migration(t *testing.T) {
 	err := sidx.Write(ctx, writeReqs)
 	require.NoError(t, err)
 
-	queryReq := QueryRequest{Name: "series_1", MaxElementSize: 10}
+	queryReq := QueryRequest{
+		Name:           "series_1",
+		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
+		MaxElementSize: 10,
+	}
 	result, err := sidx.Query(ctx, queryReq)
 	require.NoError(t, err)
 	defer result.Release()
@@ -564,7 +575,11 @@ func TestDocumentation_PerformanceCharacteristics(t *testing.T) {
 	assert.Greater(t, throughput, 1000.0, "Should achieve reasonable write throughput")
 
 	// Test query performance (from documentation)
-	queryReq := QueryRequest{Name: "series_1", MaxElementSize: 50}
+	queryReq := QueryRequest{
+		Name:           "series_1",
+		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
+		MaxElementSize: 50,
+	}
 
 	start = time.Now()
 	result, err := mockSIDX.Query(ctx, queryReq)
@@ -593,7 +608,7 @@ func TestDocumentation_PerformanceCharacteristics(t *testing.T) {
 // Helper function from documentation.
 func int64ToBytesForTest(val int64) []byte {
 	result := make([]byte, 8)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		result[7-i] = byte(val >> (8 * i))
 	}
 	return result

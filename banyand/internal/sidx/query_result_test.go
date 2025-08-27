@@ -18,6 +18,7 @@
 package sidx
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"testing"
@@ -644,7 +645,7 @@ func createBenchmarkResponseDesc(size int, offset, step int64) *QueryResponse {
 	return response
 }
 
-// Tests for queryResult struct using memPart datasets
+// Tests for queryResult struct using memPart datasets.
 
 func TestQueryResult_Pull_SingleMemPart(t *testing.T) {
 	// Create test dataset with multiple series
@@ -790,7 +791,7 @@ func TestQueryResult_Pull_SingleMemPart(t *testing.T) {
 		}
 
 		// Verify data matches
-		if string(data) != string(expected.data) {
+		if !bytes.Equal(data, expected.data) {
 			t.Errorf("At position %d: expected data %s, got %s", i, string(expected.data), string(data))
 		}
 
@@ -805,7 +806,7 @@ func TestQueryResult_Pull_SingleMemPart(t *testing.T) {
 			if tag.name != expectedTag.name {
 				t.Errorf("At position %d, tag %d: expected name %s, got %s", i, j, expectedTag.name, tag.name)
 			}
-			if string(tag.value) != string(expectedTag.value) {
+			if !bytes.Equal(tag.value, expectedTag.value) {
 				t.Errorf("At position %d, tag %d: expected value %s, got %s", i, j, string(expectedTag.value), string(tag.value))
 			}
 			if tag.valueType != expectedTag.valueType {
@@ -957,7 +958,7 @@ func TestQueryResult_Pull_MultipleMemParts(t *testing.T) {
 		}
 
 		// Verify data matches
-		if string(data) != string(expected.data) {
+		if !bytes.Equal(data, expected.data) {
 			t.Errorf("At position %d: expected data %s, got %s", i, string(expected.data), string(data))
 		}
 
@@ -972,7 +973,7 @@ func TestQueryResult_Pull_MultipleMemParts(t *testing.T) {
 			if tag.name != expectedTag.name {
 				t.Errorf("At position %d, tag %d: expected name %s, got %s", i, j, expectedTag.name, tag.name)
 			}
-			if string(tag.value) != string(expectedTag.value) {
+			if !bytes.Equal(tag.value, expectedTag.value) {
 				t.Errorf("At position %d, tag %d: expected value %s, got %s", i, j, string(expectedTag.value), string(tag.value))
 			}
 			if tag.valueType != expectedTag.valueType {
@@ -1393,7 +1394,7 @@ func TestQueryResult_Pull_ContextCancellation(t *testing.T) {
 
 	mockProtector := &test.MockMemoryProtector{ExpectQuotaExceeded: false}
 
-	// Create cancelled context
+	// Create canceled context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
@@ -1426,12 +1427,12 @@ func TestQueryResult_Pull_ContextCancellation(t *testing.T) {
 
 	response := qr.Pull()
 
-	// With cancelled context, we should handle gracefully
+	// With canceled context, we should handle gracefully
 	// The behavior depends on implementation - it might return nil or an error response
 	if response != nil {
-		t.Logf("Response with cancelled context: error=%v, len=%d", response.Error, response.Len())
+		t.Logf("Response with canceled context: error=%v, len=%d", response.Error, response.Len())
 	} else {
-		t.Log("Got nil response with cancelled context - this is acceptable")
+		t.Log("Got nil response with canceled context - this is acceptable")
 	}
 
 	qr.Release()

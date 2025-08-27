@@ -684,7 +684,7 @@ type mockBlockFilter struct {
 	shouldSkip bool
 }
 
-func (mbf *mockBlockFilter) ShouldSkip(filterOp index.FilterOp) (bool, error) {
+func (mbf *mockBlockFilter) ShouldSkip(_ index.FilterOp) (bool, error) {
 	if mbf.err != nil {
 		return false, mbf.err
 	}
@@ -696,7 +696,7 @@ func (mbf *mockBlockFilter) String() string {
 	return "mockBlockFilter"
 }
 
-func (mbf *mockBlockFilter) Execute(getSearcher index.GetSearcher, seriesID common.SeriesID, timeRange *index.RangeOpts) (posting.List, posting.List, error) {
+func (mbf *mockBlockFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
 	// Not used in our tests, return empty implementation
 	return nil, nil, nil
 }

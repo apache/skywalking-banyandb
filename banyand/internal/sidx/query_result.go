@@ -409,9 +409,8 @@ func (qr *queryResult) mergeWorkerResults() *QueryResponse {
 	// Merge results with ordering from request
 	if qr.asc {
 		return mergeQueryResponseShardsAsc(qr.shards, qr.request.MaxElementSize)
-	} else {
-		return mergeQueryResponseShardsDesc(qr.shards, qr.request.MaxElementSize)
 	}
+	return mergeQueryResponseShardsDesc(qr.shards, qr.request.MaxElementSize)
 }
 
 // Release releases resources associated with the query result.
@@ -532,10 +531,12 @@ func (qrh *QueryResponseHeap) Swap(i, j int) {
 	qrh.cursors[i], qrh.cursors[j] = qrh.cursors[j], qrh.cursors[i]
 }
 
+// Push adds an element to the heap.
 func (qrh *QueryResponseHeap) Push(x interface{}) {
 	qrh.cursors = append(qrh.cursors, x.(*QueryResponseCursor))
 }
 
+// Pop removes and returns the top element from the heap.
 func (qrh *QueryResponseHeap) Pop() interface{} {
 	old := qrh.cursors
 	n := len(old)

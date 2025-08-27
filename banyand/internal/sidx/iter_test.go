@@ -135,7 +135,10 @@ func TestIterComprehensive(t *testing.T) {
 				// Part 2
 				{
 					{seriesID: 3, userKey: 300, data: []byte("data3"), tags: []tag{{name: "service", value: []byte("user-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-					{seriesID: 4, userKey: 400, data: []byte("data4"), tags: []tag{{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+					{
+						seriesID: 4, userKey: 400, data: []byte("data4"),
+						tags: []tag{{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr, indexed: true}},
+					},
 				},
 			},
 			querySids:    []common.SeriesID{2, 4}, // Only series 2 and 4
@@ -159,7 +162,10 @@ func TestIterComprehensive(t *testing.T) {
 				// Part 2
 				{
 					{seriesID: 3, userKey: 250, data: []byte("data3"), tags: []tag{{name: "service", value: []byte("user-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-					{seriesID: 4, userKey: 350, data: []byte("data4"), tags: []tag{{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+					{
+						seriesID: 4, userKey: 350, data: []byte("data4"),
+						tags: []tag{{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr, indexed: true}},
+					},
 				},
 			},
 			querySids:    []common.SeriesID{1, 2, 3, 4},
@@ -519,7 +525,7 @@ func TestBlockMetadataLess(t *testing.T) {
 	})
 }
 
-// Helper types and functions
+// Helper types and functions.
 
 type blockExpectation struct {
 	seriesID common.SeriesID
@@ -527,9 +533,9 @@ type blockExpectation struct {
 	maxKey   int64
 }
 
-// mockBlockFilter is already defined in part_iter_test.go
+// mockBlockFilter is already defined in part_iter_test.go.
 
-// runIteratorTest runs the iterator test with the given test case and parts
+// runIteratorTest runs the iterator test with the given test case and parts.
 func runIteratorTest(t *testing.T, tc struct {
 	blockFilter  index.Filter
 	name         string

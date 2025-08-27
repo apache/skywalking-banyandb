@@ -63,16 +63,16 @@ This document tracks the implementation progress of the Secondary Index File Sys
   - [x] Worker coordination and error propagation
 
 ### 6.4 Query Result (`query_result.go` - like stream's `tsResult`)
-- [ ] **Implementation Tasks**:
-  - [ ] Create `queryResult` struct implementing `QueryResult` interface
-  - [ ] Implement `Pull() *QueryResponse` with worker pool pattern
-  - [ ] Add `runBlockScanner(ctx)` for parallel processing
-  - [ ] Create `Release()` for resource cleanup
-- [ ] **Test Cases**:
-  - [ ] Pull/Release pattern prevents resource leaks
-  - [ ] Parallel workers maintain result ordering
-  - [ ] Result merging produces correct final output
-  - [ ] Performance scales with worker count
+- [x] **Implementation Tasks**:
+  - [x] Create `queryResult` struct implementing `QueryResult` interface
+  - [x] Implement `Pull() *QueryResponse` with worker pool pattern
+  - [x] Add `runBlockScanner(ctx)` for parallel processing
+  - [x] Create `Release()` for resource cleanup
+- [x] **Test Cases**:
+  - [x] Pull/Release pattern prevents resource leaks
+  - [x] Parallel workers maintain result ordering
+  - [x] Result merging produces correct final output
+  - [x] Performance scales with worker count
 
 ### 6.5 SIDX Query Interface (extend `sidx.go`)
 - [ ] **Implementation Tasks**:

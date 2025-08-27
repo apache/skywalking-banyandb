@@ -286,7 +286,7 @@ func TestBlockScanner_ContextCancellation(t *testing.T) {
 	}
 
 	// With empty parts, no batches should be received
-	assert.Equal(t, 0, batchesReceived, "Empty parts should produce no batches even with cancelled context")
+	assert.Equal(t, 0, batchesReceived, "Empty parts should produce no batches even with canceled context")
 	scanner.close()
 }
 
@@ -298,7 +298,7 @@ func TestBlockScanner_FilteredScan(t *testing.T) {
 
 	// Test with nil filter and empty parts
 	parts := []*part{}
-	var mockFilter index.Filter = nil
+	var mockFilter index.Filter
 
 	scanner := &blockScanner{
 		pm:        mockProtector,
