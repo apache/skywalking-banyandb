@@ -26,9 +26,11 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
@@ -36,7 +38,6 @@ import (
 // queryResult implements QueryResult interface with worker pool pattern.
 // Following the tsResult architecture from the stream module.
 type queryResult struct {
-	request    QueryRequest
 	ctx        context.Context
 	pm         protector.Memory
 	snapshot   *snapshot
@@ -45,6 +46,7 @@ type queryResult struct {
 	tagsToLoad map[string]struct{}
 	parts      []*part
 	shards     []*QueryResponse
+	request    QueryRequest
 	asc        bool
 	released   bool
 }
@@ -177,13 +179,19 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	}
 
 	// Read and decompress user keys (always needed)
-	compressedKeysBuf := make([]byte, bm.keysBlock.size)
-	_, err := p.keys.Read(int64(bm.keysBlock.offset), compressedKeysBuf)
-	if err != nil {
-		return false
+	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
 	}
+	defer func() {
+		bb.Buf = bb.Buf[:0]
+		bigValuePool.Put(bb)
+	}()
 
-	keysBuf, err := zstd.Decompress(nil, compressedKeysBuf)
+	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(bm.keysBlock.size))
+	fs.MustReadData(p.keys, int64(bm.keysBlock.offset), bb.Buf)
+
+	keysBuf, err := zstd.Decompress(nil, bb.Buf)
 	if err != nil {
 		return false
 	}
@@ -195,13 +203,19 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	}
 
 	// Read and decompress data payloads (always needed)
-	compressedDataBuf := make([]byte, bm.dataBlock.size)
-	_, err = p.data.Read(int64(bm.dataBlock.offset), compressedDataBuf)
-	if err != nil {
-		return false
+	bb2 := bigValuePool.Get()
+	if bb2 == nil {
+		bb2 = &bytes.Buffer{}
 	}
+	defer func() {
+		bb2.Buf = bb2.Buf[:0]
+		bigValuePool.Put(bb2)
+	}()
 
-	dataBuf, err := zstd.Decompress(nil, compressedDataBuf)
+	bb2.Buf = bytes.ResizeOver(bb2.Buf[:0], int(bm.dataBlock.size))
+	fs.MustReadData(p.data, int64(bm.dataBlock.offset), bb2.Buf)
+
+	dataBuf, err := zstd.Decompress(nil, bb2.Buf)
 	if err != nil {
 		return false
 	}
@@ -262,26 +276,38 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 	}
 
 	// Read tag metadata
-	tmData := make([]byte, tagBlockInfo.size)
-	_, err := tmReader.Read(int64(tagBlockInfo.offset), tmData)
-	if err != nil {
-		return false
+	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
 	}
+	defer func() {
+		bb.Buf = bb.Buf[:0]
+		bigValuePool.Put(bb)
+	}()
 
-	tm, err := unmarshalTagMetadata(tmData)
+	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(tagBlockInfo.size))
+	fs.MustReadData(tmReader, int64(tagBlockInfo.offset), bb.Buf)
+
+	tm, err := unmarshalTagMetadata(bb.Buf)
 	if err != nil {
 		return false
 	}
 	defer releaseTagMetadata(tm)
 
 	// Read and decompress tag data
-	tdData := make([]byte, tm.dataBlock.size)
-	_, err = tdReader.Read(int64(tm.dataBlock.offset), tdData)
-	if err != nil {
-		return false
+	bb2 := bigValuePool.Get()
+	if bb2 == nil {
+		bb2 = &bytes.Buffer{}
 	}
+	defer func() {
+		bb2.Buf = bb2.Buf[:0]
+		bigValuePool.Put(bb2)
+	}()
 
-	decompressedData, err := zstd.Decompress(nil, tdData)
+	bb2.Buf = bytes.ResizeOver(bb2.Buf[:0], int(tm.dataBlock.size))
+	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), bb2.Buf)
+
+	decompressedData, err := zstd.Decompress(nil, bb2.Buf)
 	if err != nil {
 		return false
 	}
