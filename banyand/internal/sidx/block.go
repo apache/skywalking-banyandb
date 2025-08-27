@@ -288,11 +288,10 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 		panic(fmt.Sprintf("failed to encode tag values: %v", err))
 	}
 
-	// Compress and write tag data
-	compressedData := zstd.Compress(nil, encodedData, 1)
+	// Write tag data without compression
 	tm.dataBlock.offset = tdw.bytesWritten
-	tm.dataBlock.size = uint64(len(compressedData))
-	tdw.MustWrite(compressedData)
+	tm.dataBlock.size = uint64(len(encodedData))
+	tdw.MustWrite(encodedData)
 
 	// Write bloom filter if indexed
 	if td.indexed && td.filter != nil {

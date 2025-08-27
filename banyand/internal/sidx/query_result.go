@@ -303,13 +303,8 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 	bb2.Buf = bytes.ResizeOver(bb2.Buf[:0], int(tm.dataBlock.size))
 	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), bb2.Buf)
 
-	decompressedData, err := zstd.Decompress(nil, bb2.Buf)
-	if err != nil {
-		return false
-	}
-
-	// Decode tag values
-	tagValues, err := DecodeTagValues(decompressedData, tm.valueType, count)
+	// Decode tag values directly (no compression)
+	tagValues, err := DecodeTagValues(bb2.Buf, tm.valueType, count)
 	if err != nil {
 		return false
 	}

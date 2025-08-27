@@ -400,17 +400,12 @@ func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements)
 	}
 	defer releaseTagMetadata(tm)
 
-	// Read and decompress tag data
+	// Read tag data
 	tdData := make([]byte, tm.dataBlock.size)
 	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), tdData)
 
-	decompressedData, err := zstd.Decompress(nil, tdData)
-	if err != nil {
-		return fmt.Errorf("cannot decompress tag data: %w", err)
-	}
-
-	// Decode tag values
-	tagValues, err := DecodeTagValues(decompressedData, tm.valueType, int(bm.count))
+	// Decode tag values directly (no compression)
+	tagValues, err := DecodeTagValues(tdData, tm.valueType, int(bm.count))
 	if err != nil {
 		return fmt.Errorf("cannot decode tag values: %w", err)
 	}

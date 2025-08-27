@@ -300,7 +300,6 @@ func TestTagMetadataOperations(t *testing.T) {
 		original.name = "test_tag"
 		original.valueType = pbv1.ValueTypeInt64
 		original.indexed = true
-		original.compressed = false
 		original.dataBlock = dataBlock{offset: 100, size: 500}
 		original.filterBlock = dataBlock{offset: 600, size: 200}
 		original.min = []byte{0x01, 0x02}
@@ -319,7 +318,6 @@ func TestTagMetadataOperations(t *testing.T) {
 		assert.Equal(t, original.name, unmarshaled.name)
 		assert.Equal(t, original.valueType, unmarshaled.valueType)
 		assert.Equal(t, original.indexed, unmarshaled.indexed)
-		assert.Equal(t, original.compressed, unmarshaled.compressed)
 		assert.Equal(t, original.dataBlock, unmarshaled.dataBlock)
 		assert.Equal(t, original.filterBlock, unmarshaled.filterBlock)
 		assert.Equal(t, original.min, unmarshaled.min)
@@ -342,7 +340,6 @@ func TestTagMetadataOperations(t *testing.T) {
 		assert.Equal(t, tm.name, unmarshaled.name)
 		assert.Equal(t, tm.valueType, unmarshaled.valueType)
 		assert.False(t, unmarshaled.indexed)
-		assert.False(t, unmarshaled.compressed)
 		assert.Nil(t, unmarshaled.min)
 		assert.Nil(t, unmarshaled.max)
 	})
@@ -354,7 +351,6 @@ func TestTagMetadataOperations(t *testing.T) {
 		tm.name = "test_tag"
 		tm.valueType = pbv1.ValueTypeInt64
 		tm.indexed = true
-		tm.compressed = true
 		tm.dataBlock = dataBlock{offset: 100, size: 500}
 		tm.filterBlock = dataBlock{offset: 600, size: 200}
 		tm.min = []byte("min")
@@ -367,7 +363,6 @@ func TestTagMetadataOperations(t *testing.T) {
 		assert.Equal(t, "", tm.name)
 		assert.Equal(t, pbv1.ValueTypeUnknown, tm.valueType)
 		assert.False(t, tm.indexed)
-		assert.False(t, tm.compressed)
 		assert.Equal(t, dataBlock{}, tm.dataBlock)
 		assert.Equal(t, dataBlock{}, tm.filterBlock)
 		assert.Nil(t, tm.min)
@@ -502,7 +497,6 @@ func TestRoundTripIntegrity(t *testing.T) {
 		original.name = "integration_tag"
 		original.valueType = pbv1.ValueTypeInt64
 		original.indexed = true
-		original.compressed = true
 		original.dataBlock = dataBlock{offset: 1000, size: 2000}
 		original.filterBlock = dataBlock{offset: 3000, size: 500}
 
@@ -535,7 +529,6 @@ func TestRoundTripIntegrity(t *testing.T) {
 		assert.Equal(t, original.name, unmarshaledMetadata.name)
 		assert.Equal(t, original.valueType, unmarshaledMetadata.valueType)
 		assert.Equal(t, original.indexed, unmarshaledMetadata.indexed)
-		assert.Equal(t, original.compressed, unmarshaledMetadata.compressed)
 
 		// Verify values integrity
 		assert.Equal(t, len(encodedValues), len(unmarshaledValues))

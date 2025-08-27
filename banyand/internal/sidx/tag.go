@@ -44,7 +44,6 @@ type tagMetadata struct {
 	filterBlock dataBlock // Offset/size in .tf file
 	valueType   pbv1.ValueType
 	indexed     bool
-	compressed  bool
 }
 
 // tagData represents the runtime data for a tag with filtering capabilities.
@@ -128,7 +127,6 @@ func (tm *tagMetadata) reset() {
 	tm.name = ""
 	tm.valueType = pbv1.ValueTypeUnknown
 	tm.indexed = false
-	tm.compressed = false
 	tm.dataBlock = dataBlock{}
 	tm.filterBlock = dataBlock{}
 	tm.min = nil
@@ -310,9 +308,6 @@ func (tm *tagMetadata) marshal(dst []byte) []byte {
 	if tm.indexed {
 		flags |= 1
 	}
-	if tm.compressed {
-		flags |= 2
-	}
 	dst = append(dst, flags)
 
 	dst = pkgencoding.EncodeBytes(dst, tm.min)
@@ -348,7 +343,6 @@ func (tm *tagMetadata) unmarshal(src []byte) ([]byte, error) {
 	flags := src[0]
 	src = src[1:]
 	tm.indexed = (flags & 1) != 0
-	tm.compressed = (flags & 2) != 0
 
 	src, tm.min, err = pkgencoding.DecodeBytes(src)
 	if err != nil {
