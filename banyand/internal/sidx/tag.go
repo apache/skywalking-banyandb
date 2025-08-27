@@ -22,7 +22,6 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -131,27 +130,6 @@ func (tm *tagMetadata) reset() {
 	tm.filterBlock = dataBlock{}
 	tm.min = nil
 	tm.max = nil
-}
-
-const (
-	// defaultCompressionLevel for zstd compression.
-	defaultCompressionLevel = 3
-)
-
-// compressTagData compresses tag data using zstd compression.
-func compressTagData(data []byte) []byte {
-	if len(data) == 0 {
-		return nil
-	}
-	return zstd.Compress(nil, data, defaultCompressionLevel)
-}
-
-// decompressTagData decompresses tag data using zstd decompression.
-func decompressTagData(compressedData []byte) ([]byte, error) {
-	if len(compressedData) == 0 {
-		return nil, nil
-	}
-	return zstd.Decompress(nil, compressedData)
 }
 
 // generateBloomFilter gets a bloom filter from pool or creates new.

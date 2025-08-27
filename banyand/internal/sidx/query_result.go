@@ -211,7 +211,7 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	bb2.Buf = bytes.ResizeOver(bb2.Buf[:0], int(bm.dataBlock.size))
 	fs.MustReadData(p.data, int64(bm.dataBlock.offset), bb2.Buf)
 
-	dataBuf, err := zstd.Decompress(nil, bb2.Buf)
+	dataBuf, err := zstd.Decompress(bb.Buf[:0], bb2.Buf)
 	if err != nil {
 		return false
 	}
