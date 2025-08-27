@@ -178,7 +178,7 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 		return false
 	}
 
-	// Read and decompress user keys (always needed)
+	// Read user keys (always needed)
 	bb := bigValuePool.Get()
 	if bb == nil {
 		bb = &bytes.Buffer{}
@@ -191,13 +191,9 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(bm.keysBlock.size))
 	fs.MustReadData(p.keys, int64(bm.keysBlock.offset), bb.Buf)
 
-	keysBuf, err := zstd.Decompress(nil, bb.Buf)
-	if err != nil {
-		return false
-	}
-
-	// Decode user keys
-	tmpBlock.userKeys, err = encoding.BytesToInt64List(tmpBlock.userKeys[:0], keysBuf, bm.keysEncodeType, bm.minKey, int(bm.count))
+	// Decode user keys directly
+	var err error
+	tmpBlock.userKeys, err = encoding.BytesToInt64List(tmpBlock.userKeys[:0], bb.Buf, bm.keysEncodeType, bm.minKey, int(bm.count))
 	if err != nil {
 		return false
 	}

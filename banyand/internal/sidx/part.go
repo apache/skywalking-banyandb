@@ -52,7 +52,7 @@ const (
 // Each part contains multiple files organized by type:
 // - primary.bin: Block metadata and structure information
 // - data.bin: User payload data (compressed)
-// - keys.bin: User-provided int64 keys (compressed)
+// - keys.bin: User-provided int64 keys (encoded but not compressed)
 // - meta.bin: Part metadata
 // - <name>.td: Tag data files (one per tag)
 // - <name>.tm: Tag metadata files (one per tag)
@@ -272,7 +272,6 @@ func (p *part) readAll() ([]*elements, error) {
 	compressedDataBuf := make([]byte, 0, 1024)
 	dataBuf := make([]byte, 0, 1024)
 	compressedKeysBuf := make([]byte, 0, 1024)
-	keysBuf := make([]byte, 0, 1024)
 
 	for _, pbm := range p.primaryBlockMetadata {
 		// Read and decompress primary block metadata
@@ -310,17 +309,8 @@ func (p *part) readAll() ([]*elements, error) {
 			compressedKeysBuf = bytes.ResizeOver(compressedKeysBuf, int(bm.keysBlock.size))
 			fs.MustReadData(p.keys, int64(bm.keysBlock.offset), compressedKeysBuf)
 
-			keysBuf, err = zstd.Decompress(keysBuf[:0], compressedKeysBuf)
-			if err != nil {
-				releaseElements(elems)
-				for _, e := range result {
-					releaseElements(e)
-				}
-				return nil, fmt.Errorf("cannot decompress keys block: %w", err)
-			}
-
-			// Decode user keys using the stored encoding information
-			elems.userKeys, err = encoding.BytesToInt64List(elems.userKeys[:0], keysBuf, bm.keysEncodeType, bm.minKey, int(bm.count))
+			// Decode user keys directly using the stored encoding information
+			elems.userKeys, err = encoding.BytesToInt64List(elems.userKeys[:0], compressedKeysBuf, bm.keysEncodeType, bm.minKey, int(bm.count))
 			if err != nil {
 				releaseElements(elems)
 				for _, e := range result {

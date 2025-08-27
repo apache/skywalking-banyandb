@@ -335,11 +335,10 @@ func mustWriteKeysTo(kb *dataBlock, userKeys []int64, keysWriter *writer) (encod
 	var firstValue int64
 	bb.Buf, encodeType, firstValue = encoding.Int64ListToBytes(bb.Buf[:0], userKeys)
 
-	// Compress and write
-	compressedData := zstd.Compress(nil, bb.Buf, 1)
+	// Write encoded data directly without compression
 	kb.offset = keysWriter.bytesWritten
-	kb.size = uint64(len(compressedData))
-	keysWriter.MustWrite(compressedData)
+	kb.size = uint64(len(bb.Buf))
+	keysWriter.MustWrite(bb.Buf)
 
 	return encodeType, firstValue
 }
