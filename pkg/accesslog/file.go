@@ -128,12 +128,12 @@ func startConsumer(f *fileLog, root, template string, interval time.Duration, lo
 			return
 		case <-rotationTicker.C:
 			flushBatch(f.file, batch, log)
-			clear(batch)
+			batch = batch[:0]
 			rotateFile(root, template, f, log)
 		case <-flushTicker.C:
 			if len(batch) > 0 {
 				flushBatch(f.file, batch, log)
-				clear(batch)
+				batch = batch[:0]
 			}
 		case req, ok := <-f.validRequests:
 			if !ok {
@@ -144,7 +144,7 @@ func startConsumer(f *fileLog, root, template string, interval time.Duration, lo
 			batch = append(batch, req)
 			if len(batch) >= DefaultBatchSize {
 				flushBatch(f.file, batch, log)
-				clear(batch)
+				batch = batch[:0]
 			}
 		}
 	}

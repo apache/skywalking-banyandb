@@ -155,7 +155,6 @@ func TestFileLog_Rotation(t *testing.T) {
 
 	// Ensure we cross a second boundary to get a new timestamped filename, then rotate explicitly
 	time.Sleep(1100 * time.Millisecond)
-	rotateFile(dir, testTemplate, flog.(*fileLog), logger.GetLogger("test"))
 
 	// Write more after rotation (again full batch to force flush)
 	writeMessages(t, flog, DefaultBatchSize)
@@ -163,5 +162,10 @@ func TestFileLog_Rotation(t *testing.T) {
 	// Eventually we should have lines across at least 2 files
 	require.Eventually(t, func() bool {
 		return len(listLogFiles(t, dir)) >= 2
+	}, 3*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool {
+		volume := totalLinesInDir(t, dir)
+		t.Log("volume", volume)
+		return volume == 2*DefaultBatchSize
 	}, 3*time.Second, 20*time.Millisecond)
 }
