@@ -39,6 +39,8 @@ type sidx struct {
 	l                          *logger.Logger
 	totalIntroduceLoopStarted  atomic.Int64
 	totalIntroduceLoopFinished atomic.Int64
+	totalQueries               atomic.Int64
+	totalWrites                atomic.Int64
 	mu                         sync.RWMutex
 }
 
@@ -79,6 +81,9 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 		}
 	}
 
+	// Increment write counter
+	s.totalWrites.Add(1)
+
 	// Create elements from requests
 	es := generateElements()
 	defer releaseElements(es)
@@ -116,6 +121,9 @@ func (s *sidx) Query(ctx context.Context, req QueryRequest) (QueryResult, error)
 		return nil, err
 	}
 
+	// Increment query counter
+	s.totalQueries.Add(1)
+
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
@@ -145,8 +153,8 @@ func (s *sidx) Stats(_ context.Context) (*Stats, error) {
 	}
 
 	// Load atomic counters
-	stats.QueryCount.Store(s.totalIntroduceLoopStarted.Load())
-	stats.WriteCount.Store(s.totalIntroduceLoopFinished.Load())
+	stats.QueryCount.Store(s.totalQueries.Load())
+	stats.WriteCount.Store(s.totalWrites.Load())
 
 	return stats, nil
 }
