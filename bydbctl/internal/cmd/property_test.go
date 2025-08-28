@@ -701,6 +701,220 @@ projection:
 	})
 })
 
+var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
+	Expect(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})).To(Succeed())
+
+	var addr string
+	var deferFunc func()
+	var rootCmd *cobra.Command
+	var nodeIDs []string
+	var nodeRepairAddrs []string
+	var nodeDirs []string
+	var closeNodes []func()
+	var messenger gossip.Messenger
+	var server embeddedetcd.Server
+	var ep string
+	nodeCount := 5
+	closedNodeCount := 3
+
+	BeforeEach(func() {
+		rootCmd = &cobra.Command{Use: "root"}
+		cmd.RootCmdFlags(rootCmd)
+		var ports []int
+		var err error
+		var spaceDefs []func()
+
+		// Create 5 data nodes
+		nodeIDs = make([]string, nodeCount)
+		nodeRepairAddrs = make([]string, nodeCount)
+		nodeDirs = make([]string, nodeCount)
+		closeNodes = make([]func(), nodeCount)
+		spaceDefs = make([]func(), nodeCount)
+
+		// Create data directories for 5 nodes
+		for i := 0; i < nodeCount; i++ {
+			nodeDirs[i], spaceDefs[i], err = test.NewSpace()
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		// Setup cluster with etcd server
+		By("Starting etcd server")
+		ports, err = test.AllocateFreePorts(2)
+		Expect(err).NotTo(HaveOccurred())
+		dir, spaceDef, err := test.NewSpace()
+		Expect(err).NotTo(HaveOccurred())
+		ep = fmt.Sprintf("http://127.0.0.1:%d", ports[0])
+		server, err = embeddedetcd.NewServer(
+			embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
+			embeddedetcd.RootDir(dir),
+		)
+		Expect(err).ShouldNot(HaveOccurred())
+		<-server.ReadyNotify()
+
+		// Start 5 data nodes
+		for i := 0; i < nodeCount; i++ {
+			By(fmt.Sprintf("Starting data node %d", i))
+			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s")
+			// Update node ID to use 127.0.0.1
+			_, nodePort, found := strings.Cut(nodeIDs[i], ":")
+			Expect(found).To(BeTrue())
+			nodeIDs[i] = fmt.Sprintf("127.0.0.1:%s", nodePort)
+		}
+
+		By("Starting liaison node")
+		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(ep)
+		addr = httpSchema + liaisonHTTPAddr
+
+		By("Creating test group with shard=1, copies=5")
+		defUITemplateWithSchema(rootCmd, addr, 1, nodeCount)
+
+		// Setup gossip messenger
+		messenger = gossip.NewMessengerWithoutMetadata(observability.NewBypassRegistry(), 9999)
+		messenger.Validate()
+		err = messenger.PreRun(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{
+			NodeID: "test-client",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		for i := 0; i < nodeCount; i++ {
+			registerNodeToMessenger(messenger, nodeIDs[i], nodeRepairAddrs[i])
+		}
+
+		deferFunc = func() {
+			messenger.GracefulStop()
+			closerLiaisonNode()
+			for i := 0; i < nodeCount; i++ {
+				if closeNodes[i] != nil {
+					closeNodes[i]()
+				}
+			}
+			_ = server.Close()
+			<-server.StopNotify()
+			spaceDef()
+			for i := 0; i < nodeCount; i++ {
+				spaceDefs[i]()
+			}
+		}
+	})
+
+	AfterEach(func() {
+		deferFunc()
+	})
+
+	It("should handle node failures and repairs correctly", func() {
+		By("Writing initial test data")
+		beforeFirstWrite := time.Now()
+		applyData(rootCmd, addr, p1YAML, true, propertyTagCount)
+
+		By("Verifying data can be queried initially")
+		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+			Expect(data).To(ContainSubstring("foo111"))
+		})
+
+		By("Verifying repair tree regeneration after first write")
+		waitForRepairTreeRegeneration(nodeDirs, propertyGroup, beforeFirstWrite)
+
+		By(fmt.Sprintf("Closing %d nodes", closedNodeCount))
+		for i := 0; i < closedNodeCount; i++ {
+			GinkgoWriter.Printf("Closing node %d\n", i)
+			closeNodes[i]()
+			closeNodes[i] = nil
+		}
+
+		By(fmt.Sprintf("Verifying data can still be queried after closing %d nodes", closedNodeCount))
+		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+			Expect(data).To(ContainSubstring("foo111"))
+		})
+
+		By(fmt.Sprintf("Writing new test data with %d nodes down", closedNodeCount))
+		beforeSecondWrite := time.Now()
+		applyData(rootCmd, addr, p3YAML, true, propertyTagCount)
+
+		By("Verifying new data can be queried")
+		queryData(rootCmd, addr, propertyGroup, property2ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+			Expect(data).To(ContainSubstring("foo-mesh"))
+		})
+
+		By("Verifying repair tree regeneration on remaining nodes after second write")
+		waitForRepairTreeRegeneration(nodeDirs[closedNodeCount:nodeCount], propertyGroup, beforeSecondWrite)
+
+		By(fmt.Sprintf("Restarting the %d closed nodes with existing data directories", closedNodeCount))
+		for i := 0; i < closedNodeCount; i++ {
+			GinkgoWriter.Printf("Restarting node %d\n", i)
+			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s")
+			// Update node ID to use 127.0.0.1
+			_, nodePort, found := strings.Cut(nodeIDs[i], ":")
+			Expect(found).To(BeTrue())
+			nodeIDs[i] = fmt.Sprintf("127.0.0.1:%s", nodePort)
+			// Re-register to messenger
+			registerNodeToMessenger(messenger, nodeIDs[i], nodeRepairAddrs[i])
+		}
+
+		By("Triggering repair operations")
+		err := messenger.Propagation(nodeIDs, propertyGroup, 0)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Verifying repair tree regeneration after repair operations")
+		waitForRepairTreeRegeneration(nodeDirs, propertyGroup, beforeSecondWrite)
+
+		By("Closing all nodes before checking data consistency")
+		for i := 0; i < nodeCount; i++ {
+			if closeNodes[i] != nil {
+				GinkgoWriter.Printf("Closing node %d for data consistency check\n", i)
+				closeNodes[i]()
+				closeNodes[i] = nil
+			}
+		}
+
+		By("Verifying data consistency across all nodes after repair")
+		Eventually(func() bool {
+			allNodesConsistent := true
+			for i := 0; i < nodeCount; i++ {
+				store, err := generateInvertedStore(nodeDirs[i])
+				if err != nil {
+					GinkgoWriter.Printf("Node %d store error: %v\n", i, err)
+					allNodesConsistent = false
+					continue
+				}
+				query, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
+					Groups: []string{propertyGroup},
+				}, "_group", "_entity_id")
+				if err != nil {
+					GinkgoWriter.Printf("Node %d query build error: %v\n", i, err)
+					allNodesConsistent = false
+					continue
+				}
+				searchResult, err := store.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query, 10)
+				if err != nil {
+					GinkgoWriter.Printf("Node %d search error: %v\n", i, err)
+					allNodesConsistent = false
+					continue
+				}
+
+				// Filter non-deleted properties
+				nonDeletedCount := 0
+				for _, result := range searchResult {
+					deleted := convert.BytesToBool(result.Fields[deletedFieldKey.TagName])
+					if !deleted {
+						nonDeletedCount++
+					}
+				}
+
+				GinkgoWriter.Printf("Node %d has %d total properties, %d non-deleted\n", i, len(searchResult), nonDeletedCount)
+				if nonDeletedCount < 2 {
+					allNodesConsistent = false
+				}
+			}
+			return allNodesConsistent
+		}, flags.EventuallyTimeout).Should(BeTrue())
+	})
+})
+
 func filterProperties(doc []index.SeriesDocument, filter func(property *propertyv1.Property, deleted bool) bool) (res []*propertyv1.Property) {
 	for _, p := range doc {
 		deleted := convert.BytesToBool(p.Fields[deletedFieldKey.TagName])
@@ -866,4 +1080,34 @@ func registerNodeToMessenger(m gossip.Messenger, nodeID, gossipRepairAddr string
 			PropertyRepairGossipGrpcAddress: gossipRepairAddr,
 		},
 	})
+}
+
+func getRepairTreeFilePath(nodeDir, group string) string {
+	return path.Join(nodeDir, "property", "repairs", "shard0", fmt.Sprintf("state-tree-%s.data", group))
+}
+
+func getRepairTreeModTime(nodeDir, group string) (time.Time, error) {
+	filePath := getRepairTreeFilePath(nodeDir, group)
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
+}
+
+func waitForRepairTreeRegeneration(nodeDirs []string, group string, beforeTime time.Time) {
+	Eventually(func() bool {
+		allRegenerated := true
+		for _, nodeDir := range nodeDirs {
+			modTime, err := getRepairTreeModTime(nodeDir, group)
+			if err != nil {
+				allRegenerated = false
+				continue
+			}
+			if !modTime.After(beforeTime) {
+				allRegenerated = false
+			}
+		}
+		return allRegenerated
+	}, flags.EventuallyTimeout).Should(BeTrue(), "All nodes should regenerate repair tree after data write")
 }

@@ -60,10 +60,10 @@ var (
 )
 
 // NewServer return a http service.
-func NewServer(cfg *auth.Config) Server {
+func NewServer(authReloader *auth.Reloader) Server {
 	return &server{
-		stopCh: make(chan struct{}),
-		cfg:    cfg,
+		stopCh:       make(chan struct{}),
+		authReloader: authReloader,
 	}
 }
 
@@ -90,7 +90,7 @@ type server struct {
 	grpcAddr        string
 	keyFile         string
 	certFile        string
-	cfg             *auth.Config
+	authReloader    *auth.Reloader
 	grpcCert        string
 	grpcMu          sync.Mutex
 	port            uint32
@@ -368,9 +368,9 @@ func (p *server) initGRPCClient() error {
 	// This avoids the conflict when remounting to /api path
 	newMux := chi.NewRouter()
 
-	newMux.Use(authMiddleware(p.cfg))
+	newMux.Use(authMiddleware(p.authReloader))
 	newMux.Handle("/api/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, err := buildGRPCContextForHealthCheck(p.cfg, r)
+		ctx, err := buildGRPCContextForHealthCheck(p.authReloader, r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return

@@ -57,6 +57,13 @@ func (b *repairGossipBase) getTreeReader(ctx context.Context, group string, shar
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to check state file existence for group %s: %w", group, err)
 		}
+		if !stateExist {
+			// check has scheduled or not
+			stateExist, err = b.scheduler.checkHasBuildTree()
+			if err != nil {
+				return nil, false, fmt.Errorf("failed to check if the tree state file exists: %w", err)
+			}
+		}
 		// if the tree is nil, it means the tree is no data
 		return &emptyRepairTreeReader{}, stateExist, nil
 	}
@@ -198,7 +205,9 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 	startSyncSpan.Tag(gossip.TraceTagTargetNode, nextNode.Target())
 	client := propertyv1.NewRepairServiceClient(nextNode)
 	var hasPropertyUpdated bool
+	r.scheduler.setGossipRepairing(true)
 	defer func() {
+		r.scheduler.setGossipRepairing(false)
 		if err != nil {
 			startSyncSpan.Tag("has_property_updates", fmt.Sprintf("%t", hasPropertyUpdated))
 			startSyncSpan.Error(err.Error())
@@ -243,6 +252,7 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 	sendTreeSummarySpan.End()
 	// if the root node matched, then ignore the repair
 	if rootMatch {
+		r.scheduler.l.Debug().Msgf("tree root for group %s, shard %d matched, no need to repair", request.Group, request.ShardId)
 		return nil
 	}
 
@@ -259,6 +269,7 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 		recvResp, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				r.scheduler.l.Debug().Msgf("no more messages from server, client side finished syncing properties for group %s, shard %d", request.Group, request.ShardId)
 				return nil
 			}
 			return fmt.Errorf("failed to keep receive tree summary from server: %w", err)
@@ -274,27 +285,38 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 				differSpan.End()
 				return nil
 			}
+			r.scheduler.l.Debug().Msgf("received differ tree summary from server, nodes count: %d", len(resp.DifferTreeSummary.Nodes))
 			r.handleDifferSummaryFromServer(ctx, stream, resp.DifferTreeSummary, reader, syncShard, rootNode, leafReader, &notProcessingClientNode, &currentComparingClientNode)
 			firstTreeSummaryResp = false
+
+			if err = stream.Send(&propertyv1.RepairRequest{
+				Data: &propertyv1.RepairRequest_WaitNextDiffer{
+					WaitNextDiffer: &propertyv1.WaitNextDifferData{},
+				},
+			}); err != nil {
+				differSpan.Error(err.Error())
+				r.scheduler.l.Warn().Err(err).Msgf("failed to send wait next differ request to server, group: %s, shard: %d", request.Group, request.ShardId)
+			}
 			differSpan.End()
 		case *propertyv1.RepairResponse_PropertySync:
+			r.scheduler.l.Debug().Msgf("received repair response from server")
 			// step 3: keep receiving messages from the server
 			// if the server still sending different nodes, we should keep reading them
 			// if the server sends a PropertySync, we should repair the property and send the newer property back to the server if needed
 			sync := resp.PropertySync
 			syncSpan := tracer.CreateSpan(startSyncSpan, "repair property")
 			syncSpan.Tag(gossip.TraceTagOperateType, gossip.TraceTagOperateRepairProperty)
-			syncSpan.Tag(gossip.TraceTagPropertyID, string(sync.Id))
-			updated, newer, err := syncShard.repair(ctx, sync.Id, sync.Property, sync.DeleteTime)
+			syncSpan.Tag(gossip.TraceTagPropertyID, string(sync.Property.Id))
+			updated, newer, err := syncShard.repair(ctx, sync.Property.Id, sync.Property.Property, sync.Property.DeleteTime)
 			syncSpan.Tag("updated", fmt.Sprintf("%t", updated))
 			syncSpan.Tag("has_newer", fmt.Sprintf("%t", newer != nil))
 			if err != nil {
 				syncSpan.Error(err.Error())
-				r.scheduler.l.Warn().Err(err).Msgf("failed to repair property %s", sync.Id)
+				r.scheduler.l.Warn().Err(err).Msgf("failed to repair property %s", sync.Property.Id)
 				r.scheduler.metrics.totalRepairFailedCount.Inc(1, request.Group, fmt.Sprintf("%d", request.ShardId))
 			}
 			if updated {
-				r.scheduler.l.Debug().Msgf("successfully repaired property %s on client side", sync.Id)
+				r.scheduler.l.Debug().Msgf("successfully repaired property %s on client side", sync.Property.Id)
 				r.scheduler.metrics.totalRepairSuccessCount.Inc(1, request.Group, fmt.Sprintf("%d", request.ShardId))
 				hasPropertyUpdated = true
 				syncSpan.End()
@@ -302,7 +324,10 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 			}
 			// if the property hasn't been updated, and the newer property is not nil,
 			// which means the property is newer than the server side,
-			if !updated && newer != nil {
+
+			// if the sync.From is PROPERTY_MISSING, it means the client doesn't have the property, but the server side has,
+			// but the current client has the newer property, it's meaning the client has updated, so no need to send the property back to the server
+			if !updated && newer != nil && sync.From != propertyv1.PropertySyncFromType_PROPERTY_SYNC_FROM_TYPE_MISSING {
 				var p propertyv1.Property
 				err = protojson.Unmarshal(newer.source, &p)
 				if err != nil {
@@ -371,14 +396,7 @@ func (r *repairGossipClient) handleDifferSummaryFromServer(
 			// then queried and sent property to server
 			r.queryPropertyAndSendToServer(ctx, syncShard, (*notProcessingClientNode).entity, stream)
 		}
-		err := stream.Send(&propertyv1.RepairRequest{
-			Data: &propertyv1.RepairRequest_NoMorePropertySync{
-				NoMorePropertySync: &propertyv1.NoMorePropertySync{},
-			},
-		})
-		if err != nil {
-			r.scheduler.l.Warn().Err(err).Msgf("failed to send no more property sync request to server")
-		}
+		r.scheduler.l.Debug().Msg("no more property sync request sent to server")
 		return
 	}
 
@@ -568,7 +586,11 @@ func newRepairGossipServer(s *repairScheduler) *repairGossipServer {
 	}
 }
 
-func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse]) error {
+func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse]) (err error) {
+	r.scheduler.setGossipRepairing(true)
+	defer func() {
+		r.scheduler.setGossipRepairing(false)
+	}()
 	summary, reader, err := r.combineTreeSummary(s)
 	if err != nil {
 		return fmt.Errorf("failed to receive tree summary request: %w", err)
@@ -583,6 +605,9 @@ func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.Rep
 	shardID := summary.shardID
 	var hasPropertyUpdated bool
 	defer func() {
+		if err != nil {
+			r.scheduler.l.Warn().Err(err).Msgf("server failed to repair gossip for group %s, shard %d", group, shardID)
+		}
 		if hasPropertyUpdated {
 			err = r.scheduler.buildingTree([]common.ShardID{common.ShardID(shardID)}, group, true)
 			if err != nil {
@@ -621,42 +646,10 @@ func (r *repairGossipServer) Repair(s grpclib.BidiStreamingServer[propertyv1.Rep
 			serverMissingSlots = append(serverMissingSlots, clientSlot.index)
 		}
 	}
-	sent, err := r.sendDifferSlots(reader, clientMismatchSlots, serverMissingSlots, s)
-	if err != nil {
-		r.scheduler.l.Warn().Err(err).Msgf("failed to send different slots to client")
-	}
-	// send the tree and no more different slots needs to be sent
-	err = r.sendEmptyDiffer(s)
-	if !sent {
-		return err
-	} else if err != nil {
-		// should keep the message receiving loop
-		r.scheduler.l.Warn().Msgf("sent no difference slot to client failure, error: %v", err)
-	}
-	for {
-		missingOrSyncRequest, err := s.Recv()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return fmt.Errorf("failed to receive missing or sync request: %w", err)
-		}
-		syncShard, err := r.scheduler.db.loadShard(s.Context(), common.ShardID(shardID))
-		if err != nil {
-			return fmt.Errorf("shard %d load failure on server side: %w", shardID, err)
-		}
-		switch req := missingOrSyncRequest.Data.(type) {
-		case *propertyv1.RepairRequest_PropertyMissing:
-			r.processPropertyMissing(s.Context(), syncShard, req.PropertyMissing, s)
-		case *propertyv1.RepairRequest_PropertySync:
-			if r.processPropertySync(s.Context(), syncShard, req.PropertySync, s, group) {
-				hasPropertyUpdated = true
-			}
-		case *propertyv1.RepairRequest_NoMorePropertySync:
-			// if the client has no more property sync, the server side should stop the sync
-			return nil
-		}
-	}
+
+	// send differ slots to the client and wait for the client process
+	r.sendDifferSlots(reader, clientMismatchSlots, serverMissingSlots, group, shardID, &hasPropertyUpdated, s)
+	return nil
 }
 
 func (r *repairGossipServer) combineTreeSummary(
@@ -770,13 +763,17 @@ func (r *repairGossipServer) processPropertySync(
 		// send the newer property to the client
 		err = s.Send(&propertyv1.RepairResponse{
 			Data: &propertyv1.RepairResponse_PropertySync{
-				PropertySync: &propertyv1.PropertySync{
-					Id:         newer.id,
-					Property:   &p,
-					DeleteTime: newer.deleteTime,
+				PropertySync: &propertyv1.PropertySyncWithFrom{
+					From: propertyv1.PropertySyncFromType_PROPERTY_SYNC_FROM_TYPE_SYNC,
+					Property: &propertyv1.PropertySync{
+						Id:         newer.id,
+						Property:   &p,
+						DeleteTime: newer.deleteTime,
+					},
 				},
 			},
 		})
+		r.scheduler.l.Debug().Msgf("sending repaired property %s on server side", sync.Id)
 		if err != nil {
 			r.scheduler.l.Warn().Err(err).Msgf("failed to send newer property sync response to client, entity: %s", newer.id)
 			return false
@@ -801,13 +798,17 @@ func (r *repairGossipServer) processPropertyMissing(
 	}
 	err = s.Send(&propertyv1.RepairResponse{
 		Data: &propertyv1.RepairResponse_PropertySync{
-			PropertySync: &propertyv1.PropertySync{
-				Id:         property.id,
-				Property:   data,
-				DeleteTime: property.deleteTime,
+			PropertySync: &propertyv1.PropertySyncWithFrom{
+				From: propertyv1.PropertySyncFromType_PROPERTY_SYNC_FROM_TYPE_MISSING,
+				Property: &propertyv1.PropertySync{
+					Id:         property.id,
+					Property:   data,
+					DeleteTime: property.deleteTime,
+				},
 			},
 		},
 	})
+	r.scheduler.l.Debug().Msgf("sending missing property on server side: %s", property.id)
 	if err != nil {
 		r.scheduler.l.Warn().Err(err).Msgf("failed to send property sync response to client, entity: %s", missing.Entity)
 		return
@@ -818,16 +819,21 @@ func (r *repairGossipServer) sendDifferSlots(
 	reader repairTreeReader,
 	clientMismatchSlots []*repairTreeNode,
 	serverMissingSlots []int32,
+	group string,
+	shardID uint32,
+	hasPropertyUpdated *bool,
 	s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse],
-) (hasSent bool, err error) {
+) {
 	var leafNodes []*repairTreeNode
+	var err error
 
 	// send server mismatch slots to the client
 	for _, node := range clientMismatchSlots {
 		for {
 			leafNodes, err = reader.read(node, gossipMerkleTreeReadPageSize, false)
 			if err != nil {
-				return hasSent, fmt.Errorf("failed to read leaf nodes for slot %d: %w", node.slotInx, err)
+				r.scheduler.l.Warn().Err(err).Msgf("failed to read leaf nodes for slot %d", node.slotInx)
+				continue
 			}
 			// if there are no more leaf nodes, we can skip this slot
 			if len(leafNodes) == 0 {
@@ -853,8 +859,12 @@ func (r *repairGossipServer) sendDifferSlots(
 			if err != nil {
 				r.scheduler.l.Warn().Err(err).
 					Msgf("failed to send leaf nodes for slot %d", node.slotInx)
-			} else {
-				hasSent = true
+				continue
+			}
+
+			if err = r.recvMsgAndWaitReadNextDiffer(s, group, shardID, hasPropertyUpdated); err != nil {
+				r.scheduler.l.Warn().Err(err).Msgf("failed to waiting the client side process differ finished")
+				return
 			}
 		}
 	}
@@ -879,11 +889,56 @@ func (r *repairGossipServer) sendDifferSlots(
 		if err != nil {
 			r.scheduler.l.Warn().Err(err).
 				Msgf("failed to send missing slots")
-		} else {
-			hasSent = true
+			return
+		}
+		r.scheduler.l.Debug().Msg("successfully sent differ-tree summary to client")
+		if err = r.recvMsgAndWaitReadNextDiffer(s, group, shardID, hasPropertyUpdated); err != nil {
+			r.scheduler.l.Warn().Err(err).Msgf("failed to waiting the client side process differ finished")
+			return
 		}
 	}
-	return hasSent, nil
+
+	// send the empty differ response to the client to make sure the client side finished processing
+	if err = r.sendEmptyDiffer(s); err != nil {
+		r.scheduler.l.Warn().Err(err).Msgf("failed to send empty differ response to client")
+		return
+	}
+	if err = r.recvMsgAndWaitReadNextDiffer(s, group, shardID, hasPropertyUpdated); err != nil {
+		r.scheduler.l.Warn().Err(err).Msgf("failed to waiting the client side process empty differ finished")
+		return
+	}
+}
+
+func (r *repairGossipServer) recvMsgAndWaitReadNextDiffer(
+	s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse],
+	group string,
+	shardID uint32,
+	hasPropertyUpdated *bool,
+) error {
+	for {
+		missingOrSyncRequest, err := s.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				r.scheduler.l.Debug().Msgf("client closed the stream, no more missing or sync request")
+				return nil
+			}
+			return fmt.Errorf("failed to receive missing or sync request: %w", err)
+		}
+		syncShard, err := r.scheduler.db.loadShard(s.Context(), common.ShardID(shardID))
+		if err != nil {
+			return fmt.Errorf("shard %d load failure on server side: %w", shardID, err)
+		}
+		switch req := missingOrSyncRequest.Data.(type) {
+		case *propertyv1.RepairRequest_PropertyMissing:
+			r.processPropertyMissing(s.Context(), syncShard, req.PropertyMissing, s)
+		case *propertyv1.RepairRequest_PropertySync:
+			if r.processPropertySync(s.Context(), syncShard, req.PropertySync, s, group) {
+				*hasPropertyUpdated = true
+			}
+		case *propertyv1.RepairRequest_WaitNextDiffer:
+			return nil
+		}
+	}
 }
 
 func (r *repairGossipServer) sendEmptyDiffer(s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse]) error {

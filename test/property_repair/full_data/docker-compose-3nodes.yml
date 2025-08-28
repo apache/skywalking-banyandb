@@ -1,0 +1,65 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: '3.8'
+
+services:
+  etcd:
+    extends:
+      file: ../base-compose.yml
+      service: etcd
+    networks:
+      - property-repair
+
+  liaison:
+    extends:
+      file: ../base-compose.yml
+      service: liaison
+    networks:
+      - property-repair
+
+  data-node-1:
+    extends:
+      file: ../base-compose.yml
+      service: data-node-1
+    networks:
+      - property-repair
+
+  data-node-2:
+    extends:
+      file: ../base-compose.yml
+      service: data-node-2
+    networks:
+      - property-repair
+
+  data-node-3:
+    extends:
+      file: ../base-compose.yml
+      service: data-node-3
+    networks:
+      - property-repair
+
+  prometheus:
+    extends:
+      file: ../base-compose.yml
+      service: prometheus
+    networks:
+      - property-repair
+    volumes:
+      - ../prometheus-3nodes.yml:/etc/prometheus/prometheus.yml
+
+networks:
+  property-repair:
+    driver: bridge

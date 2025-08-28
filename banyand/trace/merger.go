@@ -260,7 +260,25 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 		}
 	}
 
-	pm, err := mergeBlocks(closeCh, bw, br)
+	var minTimestamp, maxTimestamp int64
+	for i, pw := range parts {
+		pm := pw.p.partMetadata
+		if i == 0 {
+			minTimestamp = pm.MinTimestamp
+			maxTimestamp = pm.MaxTimestamp
+			continue
+		}
+		if pm.MinTimestamp < minTimestamp {
+			minTimestamp = pm.MinTimestamp
+		}
+		if pm.MaxTimestamp > maxTimestamp {
+			maxTimestamp = pm.MaxTimestamp
+		}
+	}
+
+	pm, tf, tt, err := mergeBlocks(closeCh, bw, br)
+	pm.MinTimestamp = minTimestamp
+	pm.MaxTimestamp = maxTimestamp
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -270,6 +288,8 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 		return nil, err
 	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
+	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
+	tt.mustWriteTagType(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
 	p := mustOpenFilePart(partID, root, fileSystem)
 
@@ -278,7 +298,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 
 var errClosed = fmt.Errorf("the merger is closed")
 
-func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, error) {
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, *traceIDFilter, *tagType, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -299,7 +319,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	for br.nextBlockMetadata() {
 		select {
 		case <-closeCh:
-			return nil, errClosed
+			return nil, nil, nil, errClosed
 		default:
 		}
 		b := br.block
@@ -342,7 +362,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		pendingBlockIsEmpty = true
 	}
 	if err := br.error(); err != nil {
-		return nil, fmt.Errorf("cannot read block to merge: %w", err)
+		return nil, nil, nil, fmt.Errorf("cannot read block to merge: %w", err)
 	}
 	if !pendingBlockIsEmpty {
 		bw.mustWriteBlock(pendingBlock.bm.traceID, &pendingBlock.block)
@@ -352,7 +372,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	var tf traceIDFilter
 	tt := make(tagType)
 	bw.Flush(&pm, &tf, &tt)
-	return &pm, nil
+	return &pm, &tf, &tt, nil
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {

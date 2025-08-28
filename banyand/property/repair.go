@@ -62,7 +62,6 @@ import (
 
 const (
 	repairBatchSearchSize = 100
-	repairFileNewLine     = '\n'
 )
 
 type repair struct {
@@ -126,6 +125,7 @@ func (r *repair) checkHasUpdates() (bool, error) {
 }
 
 func (r *repair) buildStatus(ctx context.Context, snapshotPath string, group string) (err error) {
+	r.l.Debug().Msgf("starting building status from snapshot path %s, group: %s", snapshotPath, group)
 	startTime := time.Now()
 	defer func() {
 		r.metrics.totalBuildTreeFinished.Inc(1)
@@ -449,20 +449,27 @@ func (r *repairTreeFileReader) seekPosition(offset int64, whence int) error {
 	return nil
 }
 
-func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, forceReFromStart bool) ([]*repairTreeNode, error) {
+func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, forceReFromStart bool) (nodes []*repairTreeNode, err error) {
+	defer func() {
+		recoverErr := recover()
+		if recoverErr != nil {
+			if recoverData, ok := recoverErr.(error); ok && err == nil {
+				err = fmt.Errorf("reading repair tree file %s failure: %w", r.file.Name(), recoverData)
+			}
+		}
+	}()
 	if parent == nil {
 		// reading the root node
-		err := r.seekPosition(r.footer.slotNodeFinishedOffset, io.SeekStart)
-		if err != nil {
+		if err = r.seekPosition(r.footer.slotNodeFinishedOffset, io.SeekStart); err != nil {
 			return nil, fmt.Errorf("seeking to root node offset %d in file %s failure: %w", r.footer.slotNodeFinishedOffset, r.file.Name(), err)
 		}
 		rootDataBytes := make([]byte, r.footer.rootNodeLen)
 		if _, err = io.ReadFull(r.reader, rootDataBytes); err != nil {
 			return nil, fmt.Errorf("reading root node data from file %s failure: %w", r.file.Name(), err)
 		}
-		_, shaValue, err := encoding.DecodeBytes(rootDataBytes)
-		if err != nil {
-			return nil, fmt.Errorf("decoding root node sha value from file %s failure: %w", r.file.Name(), err)
+		_, shaValue, decodeErr := encoding.DecodeBytes(rootDataBytes)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decoding root node sha value from file %s failure: %w", r.file.Name(), decodeErr)
 		}
 		return []*repairTreeNode{
 			{
@@ -472,54 +479,8 @@ func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, fo
 		}, nil
 	}
 
-	var err error
 	if parent.tp == repairTreeNodeTypeRoot {
-		needSeek := false
-		if r.paging == nil || r.paging.lastNode != parent || forceReFromStart {
-			needSeek = true
-			r.paging = newRepairTreeReaderPage(parent, r.footer.slotNodeCount)
-		}
-		if needSeek {
-			// reading the slot nodes
-			if err = r.seekPosition(r.footer.leafNodeFinishedOffset, io.SeekStart); err != nil {
-				return nil, fmt.Errorf("seeking to slot node offset %d in file %s failure: %w", r.footer.leafNodeFinishedOffset, r.file.Name(), err)
-			}
-		}
-		var slotNodeIndex, leafStartOff, leafCount int64
-		var slotShaVal, slotDataBytes []byte
-		count := r.paging.nextPage(pagingSize)
-		nodes := make([]*repairTreeNode, 0, count)
-		for i := int64(0); i < count; i++ {
-			slotDataBytes, err = r.reader.ReadBytes(repairFileNewLine)
-			if err != nil {
-				return nil, fmt.Errorf("reading slot node data from file %s failure: %w", r.file.Name(), err)
-			}
-			slotDataBytes, slotNodeIndex, err = encoding.BytesToVarInt64(slotDataBytes)
-			if err != nil {
-				return nil, fmt.Errorf("decoding slot node index from file %s failure: %w", r.file.Name(), err)
-			}
-			slotDataBytes, slotShaVal, err = encoding.DecodeBytes(slotDataBytes)
-			if err != nil {
-				return nil, fmt.Errorf("decoding slot node sha value from file %s failure: %w", r.file.Name(), err)
-			}
-			slotDataBytes, leafStartOff, err = encoding.BytesToVarInt64(slotDataBytes)
-			if err != nil {
-				return nil, fmt.Errorf("decoding slot node leaf start offset from file %s failure: %w", r.file.Name(), err)
-			}
-			_, leafCount, err = encoding.BytesToVarInt64(slotDataBytes)
-			if err != nil {
-				return nil, fmt.Errorf("decoding slot node leaf length from file %s failure: %w", r.file.Name(), err)
-			}
-			nodes = append(nodes, &repairTreeNode{
-				shaValue:  string(slotShaVal),
-				slotInx:   int32(slotNodeIndex),
-				tp:        repairTreeNodeTypeSlot,
-				leafStart: leafStartOff,
-				leafCount: leafCount,
-			})
-		}
-
-		return nodes, nil
+		return r.readSlots(parent, pagingSize, forceReFromStart)
 	} else if parent.tp == repairTreeNodeTypeLeaf {
 		return nil, nil
 	}
@@ -538,11 +499,16 @@ func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, fo
 	}
 	var entity, shaVal []byte
 	count := r.paging.nextPage(pagingSize)
-	nodes := make([]*repairTreeNode, 0, count)
 	for i := int64(0); i < count; i++ {
-		leafDataBytes, err := r.reader.ReadBytes(repairFileNewLine)
+		var dataSize int64
+		err = binary.Read(r.reader, binary.LittleEndian, &dataSize)
 		if err != nil {
-			return nil, fmt.Errorf("reading leaf node data from file %s failure: %w", r.file.Name(), err)
+			return nil, fmt.Errorf("reading leaf node data size from file %s failure: %w", r.file.Name(), err)
+		}
+		leafDataBytes := make([]byte, dataSize)
+		leafReadLen, err := io.ReadFull(r.reader, leafDataBytes)
+		if err != nil {
+			return nil, fmt.Errorf("reading leaf node data from file %s failure(readed: %d): %w", r.file.Name(), leafReadLen, err)
 		}
 		leafDataBytes, entity, err = encoding.DecodeBytes(leafDataBytes)
 		if err != nil {
@@ -559,6 +525,61 @@ func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, fo
 			tp:       repairTreeNodeTypeLeaf,
 		})
 	}
+	return nodes, nil
+}
+
+func (r *repairTreeFileReader) readSlots(parent *repairTreeNode, pagingSize int64, forceReFromStart bool) (nodes []*repairTreeNode, err error) {
+	needSeek := false
+	if r.paging == nil || r.paging.lastNode != parent || forceReFromStart {
+		needSeek = true
+		r.paging = newRepairTreeReaderPage(parent, r.footer.slotNodeCount)
+	}
+	if needSeek {
+		// reading the slot nodes
+		if err = r.seekPosition(r.footer.leafNodeFinishedOffset, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("seeking to slot node offset %d in file %s failure: %w", r.footer.leafNodeFinishedOffset, r.file.Name(), err)
+		}
+	}
+	var slotNodeIndex, leafStartOff, leafCount int64
+	var slotShaVal, slotDataBytes []byte
+	count := r.paging.nextPage(pagingSize)
+	for i := int64(0); i < count; i++ {
+		var dataSize int64
+		err = binary.Read(r.reader, binary.LittleEndian, &dataSize)
+		if err != nil {
+			return nil, fmt.Errorf("reading slot node data size from file %s failure: %w", r.file.Name(), err)
+		}
+		slotDataBytes = make([]byte, dataSize)
+		var readSize int
+		readSize, err = io.ReadFull(r.reader, slotDataBytes)
+		if err != nil {
+			return nil, fmt.Errorf("reading slot node data from file %s failure: %w, read %d bytes", r.file.Name(), err, readSize)
+		}
+		slotDataBytes, slotNodeIndex, err = encoding.BytesToVarInt64(slotDataBytes)
+		if err != nil {
+			return nil, fmt.Errorf("decoding slot node index from file %s failure: %w", r.file.Name(), err)
+		}
+		slotDataBytes, slotShaVal, err = encoding.DecodeBytes(slotDataBytes)
+		if err != nil {
+			return nil, fmt.Errorf("decoding slot node sha value from file %s failure: %w", r.file.Name(), err)
+		}
+		slotDataBytes, leafStartOff, err = encoding.BytesToVarInt64(slotDataBytes)
+		if err != nil {
+			return nil, fmt.Errorf("decoding slot node leaf start offset from file %s failure: %w", r.file.Name(), err)
+		}
+		_, leafCount, err = encoding.BytesToVarInt64(slotDataBytes)
+		if err != nil {
+			return nil, fmt.Errorf("decoding slot node leaf length from file %s failure: %w", r.file.Name(), err)
+		}
+		nodes = append(nodes, &repairTreeNode{
+			shaValue:  string(slotShaVal),
+			slotInx:   int32(slotNodeIndex),
+			tp:        repairTreeNodeTypeSlot,
+			leafStart: leafStartOff,
+			leafCount: leafCount,
+		})
+	}
+
 	return nodes, nil
 }
 
@@ -756,7 +777,10 @@ func (r *repairSlotFile) append(entity, shaValue []byte) error {
 	result := make([]byte, 0)
 	result = encoding.EncodeBytes(result, entity)
 	result = encoding.EncodeBytes(result, shaValue)
-	result = append(result, repairFileNewLine)
+	err = binary.Write(r.writer, binary.LittleEndian, int64(len(result)))
+	if err != nil {
+		return fmt.Errorf("writing entity and sha value length to repair slot file %s failure: %w", r.path, err)
+	}
 	_, err = r.writer.Write(result)
 	if err != nil {
 		return fmt.Errorf("writing entity and sha value to repair slot file %s failure: %w", r.path, err)
@@ -846,7 +870,15 @@ func (r *repairTreeBuilder) build() (err error) {
 		data = encoding.EncodeBytes(data, slot.shaVal)
 		data = encoding.VarInt64ToBytes(data, slot.startOff)
 		data = encoding.VarInt64ToBytes(data, slot.leafCount)
-		data = append(data, repairFileNewLine)
+
+		slotTotalLen := int64(len(data))
+		err = binary.Write(r.writer, binary.LittleEndian, slotTotalLen)
+		if err != nil {
+			return fmt.Errorf("writing slot node to repair tree file failure: %w", err)
+		}
+		slotNodesLen += 8
+		slotNodesFinishedOffset += 8
+
 		writedLen, err = r.writer.Write(data)
 		if err != nil {
 			return fmt.Errorf("writing slot node to repair tree file failure: %w", err)
@@ -932,18 +964,20 @@ type repairScheduler struct {
 	latestBuildTreeSchedule   time.Time
 	buildTreeClock            clock.Clock
 	gossipMessenger           gossip.Messenger
-	closer                    *run.Closer
-	buildSnapshotFunc         func(context.Context) (string, error)
+	l                         *logger.Logger
+	gossipRepairing           *int32
 	repairTreeScheduler       *timestamp.Scheduler
 	quickRepairNotified       *int32
 	db                        *database
-	l                         *logger.Logger
+	closer                    *run.Closer
 	metrics                   *repairSchedulerMetrics
-	treeSlotCount             int
+	buildSnapshotFunc         func(context.Context) (string, error)
+	scheduleBasicFile         string
 	buildTreeScheduleInterval time.Duration
 	quickBuildTreeTime        time.Duration
-	lastBuildTimeLocker       sync.Mutex
+	treeSlotCount             int
 	treeLocker                sync.RWMutex
+	lastBuildTimeLocker       sync.Mutex
 }
 
 // nolint: contextcheck
@@ -970,6 +1004,8 @@ func newRepairScheduler(
 		metrics:             newRepairSchedulerMetrics(omr.With(propertyScope.SubScope("scheduler"))),
 		gossipMessenger:     gossipMessenger,
 		treeSlotCount:       treeSlotCount,
+		scheduleBasicFile:   filepath.Join(db.repairBaseDir, "scheduled.json"),
+		gossipRepairing:     new(int32),
 	}
 	c := timestamp.NewScheduler(l, s.buildTreeClock)
 	s.repairTreeScheduler = c
@@ -982,10 +1018,13 @@ func newRepairScheduler(
 	}
 	err = c.Register("trigger", cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
 		triggerCronExp, func(time.Time, *logger.Logger) bool {
-			gossipErr := s.doRepairGossip(s.closer.Ctx())
+			l.Debug().Msgf("starting background repair gossip")
+			group, shardNum, nodes, gossipErr := s.doRepairGossip(s.closer.Ctx())
 			if gossipErr != nil {
 				s.l.Err(gossipErr).Msg("failed to repair gossip")
+				return true
 			}
+			s.l.Info().Str("group", group).Uint32("shardNum", shardNum).Strs("nodes", nodes).Msg("background repair gossip scheduled")
 			return true
 		})
 	if err != nil {
@@ -996,6 +1035,14 @@ func newRepairScheduler(
 		return nil, err
 	}
 	return s, nil
+}
+
+func (r *repairScheduler) setGossipRepairing(repairing bool) {
+	val := int32(0)
+	if repairing {
+		val = 1
+	}
+	atomic.StoreInt32(r.gossipRepairing, val)
 }
 
 func (r *repairScheduler) doBuildTreeScheduler(t time.Time, triggerByCron bool) {
@@ -1012,6 +1059,12 @@ func (r *repairScheduler) doBuildTreeScheduler(t time.Time, triggerByCron bool) 
 func (r *repairScheduler) verifyShouldExecuteBuildTree(t time.Time, triggerByCron bool) bool {
 	r.lastBuildTimeLocker.Lock()
 	defer r.lastBuildTimeLocker.Unlock()
+	// ignore the build tree if the gossip repairing is in progress
+	if atomic.LoadInt32(r.gossipRepairing) == 1 {
+		r.l.Debug().Msg("gossip repairing is in progress, skipping build tree")
+		return false
+	}
+
 	if !triggerByCron {
 		// if not triggered by cron, we need to check if the time is after the (last scheduled time + half of the interval)
 		if r.buildTreeClock.Now().After(r.latestBuildTreeSchedule.Add(r.buildTreeScheduleInterval / 2)) {
@@ -1035,6 +1088,33 @@ func (r *repairScheduler) initializeInterval() error {
 	return nil
 }
 
+func (r *repairScheduler) saveHasBuildTree() error {
+	// save the latest build tree time to the database
+	now := time.Now()
+	data := make(map[string]string, 1)
+	data["lastBuildTreeTime"] = now.Format(time.RFC3339)
+	json, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	err = os.MkdirAll(path.Dir(r.scheduleBasicFile), storage.FilePerm)
+	if err != nil {
+		return fmt.Errorf("creating directory for repair build tree file %s failure: %w", r.scheduleBasicFile, err)
+	}
+	return os.WriteFile(r.scheduleBasicFile, json, storage.FilePerm)
+}
+
+func (r *repairScheduler) checkHasBuildTree() (bool, error) {
+	_, err := os.Stat(r.scheduleBasicFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil // no build tree file, means no build tree has been done
+		}
+		return false, fmt.Errorf("checking repair build tree file existence failure: %w", err)
+	}
+	return true, nil
+}
+
 //nolint:contextcheck
 func (r *repairScheduler) doBuildTree() (err error) {
 	now := time.Now()
@@ -1043,7 +1123,13 @@ func (r *repairScheduler) doBuildTree() (err error) {
 		r.metrics.totalRepairBuildTreeFinished.Inc(1)
 		r.metrics.totalRepairBuildTreeLatency.Inc(time.Since(now).Seconds())
 		if err != nil {
+			r.l.Err(err).Msg("repair build tree failed")
 			r.metrics.totalRepairBuildTreeFailures.Inc(1)
+		}
+
+		saveStatusErr := r.saveHasBuildTree()
+		if saveStatusErr != nil {
+			r.l.Err(saveStatusErr).Msgf("saving repair build tree status failure")
 		}
 	}()
 	sLst := r.db.sLst.Load()
@@ -1140,17 +1226,17 @@ func (r *repairScheduler) close() {
 	r.closer.CloseThenWait()
 }
 
-func (r *repairScheduler) doRepairGossip(ctx context.Context) error {
+func (r *repairScheduler) doRepairGossip(ctx context.Context) (string, uint32, []string, error) {
 	group, shardNum, err := r.randomSelectGroup(ctx)
 	if err != nil {
-		return fmt.Errorf("selecting random group failure: %w", err)
+		return "", 0, nil, fmt.Errorf("selecting random group failure: %w", err)
 	}
 
 	nodes, err := r.gossipMessenger.LocateNodes(group.Metadata.Name, shardNum, uint32(r.copiesCount(group)))
 	if err != nil {
-		return fmt.Errorf("locating nodes for group %s, shard %d failure: %w", group.Metadata.Name, shardNum, err)
+		return "", 0, nil, fmt.Errorf("locating nodes for group %s, shard %d failure: %w", group.Metadata.Name, shardNum, err)
 	}
-	return r.gossipMessenger.Propagation(nodes, group.Metadata.Name, shardNum)
+	return group.Metadata.Name, shardNum, nodes, r.gossipMessenger.Propagation(nodes, group.Metadata.Name, shardNum)
 }
 
 func (r *repairScheduler) randomSelectGroup(ctx context.Context) (*commonv1.Group, uint32, error) {

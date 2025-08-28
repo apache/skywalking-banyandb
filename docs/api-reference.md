@@ -258,9 +258,9 @@
   
 - [banyandb/property/v1/repair.proto](#banyandb_property_v1_repair-proto)
     - [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary)
-    - [NoMorePropertySync](#banyandb-property-v1-NoMorePropertySync)
     - [PropertyMissing](#banyandb-property-v1-PropertyMissing)
     - [PropertySync](#banyandb-property-v1-PropertySync)
+    - [PropertySyncWithFrom](#banyandb-property-v1-PropertySyncWithFrom)
     - [RepairRequest](#banyandb-property-v1-RepairRequest)
     - [RepairResponse](#banyandb-property-v1-RepairResponse)
     - [RootCompare](#banyandb-property-v1-RootCompare)
@@ -268,6 +268,9 @@
     - [TreeRoot](#banyandb-property-v1-TreeRoot)
     - [TreeSlotSHA](#banyandb-property-v1-TreeSlotSHA)
     - [TreeSlots](#banyandb-property-v1-TreeSlots)
+    - [WaitNextDifferData](#banyandb-property-v1-WaitNextDifferData)
+  
+    - [PropertySyncFromType](#banyandb-property-v1-PropertySyncFromType)
   
     - [RepairService](#banyandb-property-v1-RepairService)
   
@@ -3897,16 +3900,6 @@ Property stores the user defined data
 
 
 
-<a name="banyandb-property-v1-NoMorePropertySync"></a>
-
-### NoMorePropertySync
-
-
-
-
-
-
-
 <a name="banyandb-property-v1-PropertyMissing"></a>
 
 ### PropertyMissing
@@ -3939,6 +3932,22 @@ Property stores the user defined data
 
 
 
+<a name="banyandb-property-v1-PropertySyncWithFrom"></a>
+
+### PropertySyncWithFrom
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| from | [PropertySyncFromType](#banyandb-property-v1-PropertySyncFromType) |  |  |
+| property | [PropertySync](#banyandb-property-v1-PropertySync) |  |  |
+
+
+
+
+
+
 <a name="banyandb-property-v1-RepairRequest"></a>
 
 ### RepairRequest
@@ -3951,7 +3960,7 @@ Property stores the user defined data
 | tree_slots | [TreeSlots](#banyandb-property-v1-TreeSlots) |  |  |
 | property_missing | [PropertyMissing](#banyandb-property-v1-PropertyMissing) |  | repair stage case 1: client missing but server existing |
 | property_sync | [PropertySync](#banyandb-property-v1-PropertySync) |  | case 2: client existing but server missing case 3: SHA value mismatches |
-| no_more_property_sync | [NoMorePropertySync](#banyandb-property-v1-NoMorePropertySync) |  | if client side is already send all the properties(missing or property sync) which means the client side will not sending more properties to sync, server side should close the stream. |
+| wait_next_differ | [WaitNextDifferData](#banyandb-property-v1-WaitNextDifferData) |  | wait next differ tree summary for process |
 
 
 
@@ -3968,7 +3977,7 @@ Property stores the user defined data
 | ----- | ---- | ----- | ----------- |
 | root_compare | [RootCompare](#banyandb-property-v1-RootCompare) |  | compare stage |
 | differ_tree_summary | [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary) |  |  |
-| property_sync | [PropertySync](#banyandb-property-v1-PropertySync) |  | repair stage case 1: return from PropertyMissing case 3: return if the client is older |
+| property_sync | [PropertySyncWithFrom](#banyandb-property-v1-PropertySyncWithFrom) |  | repair stage case 1: return from PropertyMissing case 3: return if the client is older |
 
 
 
@@ -4056,7 +4065,30 @@ Property stores the user defined data
 
 
 
+
+<a name="banyandb-property-v1-WaitNextDifferData"></a>
+
+### WaitNextDifferData
+
+
+
+
+
+
  
+
+
+<a name="banyandb-property-v1-PropertySyncFromType"></a>
+
+### PropertySyncFromType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PROPERTY_SYNC_FROM_TYPE_UNSPECIFIED | 0 |  |
+| PROPERTY_SYNC_FROM_TYPE_MISSING | 1 | client missing but server existing |
+| PROPERTY_SYNC_FROM_TYPE_SYNC | 2 | client existing but server missing or SHA value mismatches |
+
 
  
 
