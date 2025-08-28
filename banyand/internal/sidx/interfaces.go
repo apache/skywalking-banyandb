@@ -25,8 +25,8 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -40,10 +40,9 @@ type SIDX interface {
 	Write(ctx context.Context, reqs []WriteRequest) error
 
 	// Query executes a query with key range and tag filtering.
-	// Returns a QueryResult for iterating over results, following BanyanDB pattern.
-	// The returned error indicates query setup/validation failures.
-	// Execution errors during result iteration are available in QueryResponse.Error.
-	Query(ctx context.Context, req QueryRequest) (QueryResult, error)
+	// Returns a QueryResponse directly with all results loaded.
+	// Both setup/validation errors and execution errors are returned via the error return value.
+	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
 
 	// Stats returns current system statistics and performance metrics.
 	Stats(ctx context.Context) (*Stats, error)
@@ -95,10 +94,9 @@ type Writer interface {
 type Querier interface {
 	// Query executes a query with specified parameters including key ranges and tag filters.
 	// The implementation should handle snapshot access, part filtering, block scanning, and result assembly.
-	// Returns a QueryResult for iterating over results following the BanyanDB pattern.
-	// The returned error indicates query setup/validation failures.
-	// Execution errors during result iteration are available in QueryResponse.Error.
-	Query(ctx context.Context, req QueryRequest) (QueryResult, error)
+	// Returns a QueryResponse directly with all results loaded.
+	// Both setup/validation errors and execution errors are returned via the error return value.
+	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
 }
 
 // QueryResult provides iterator-like access to query results, following BanyanDB pattern.
@@ -124,23 +122,12 @@ type WriteRequest struct {
 
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
 type QueryRequest struct {
-	// Name identifies the series/index to query
-	Name string
-
-	// Entities specifies entity filtering (same as StreamQueryOptions)
-	Entities [][]*modelv1.TagValue
-
-	// Filter for key range and tag-based filtering using index.Filter
-	// Note: sidx uses bloom filters for tag filtering, not inverted indexes
-	Filter index.Filter
-
-	// Order specifies result ordering using existing index.OrderBy
-	Order *index.OrderBy
-
-	// TagProjection specifies which tags to include
-	TagProjection []model.TagProjection
-
-	// MaxElementSize limits result size
+	Filter         index.Filter
+	Order          *index.OrderBy
+	MinKey         *int64
+	MaxKey         *int64
+	SeriesIDs      []common.SeriesID
+	TagProjection  []model.TagProjection
 	MaxElementSize int
 }
 
@@ -204,7 +191,7 @@ func (qr *QueryResponse) Validate() error {
 		}
 		for i, tagGroup := range qr.Tags {
 			for j, tag := range tagGroup {
-				if tag.name == "" {
+				if tag.Name == "" {
 					return fmt.Errorf("tags[%d][%d] name cannot be empty", i, j)
 				}
 			}
@@ -245,10 +232,10 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 			qr.Tags[i] = qr.Tags[i][:len(tagGroup)]
 		}
 		for j, tag := range tagGroup {
-			qr.Tags[i][j].name = tag.name
-			qr.Tags[i][j].value = append(qr.Tags[i][j].value[:0], tag.value...)
-			qr.Tags[i][j].valueType = tag.valueType
-			qr.Tags[i][j].indexed = tag.indexed
+			qr.Tags[i][j].Name = tag.Name
+			qr.Tags[i][j].Value = append(qr.Tags[i][j].Value[:0], tag.Value...)
+			qr.Tags[i][j].ValueType = tag.ValueType
+			qr.Tags[i][j].Indexed = tag.Indexed
 		}
 	}
 
@@ -322,8 +309,71 @@ func (rm *ResponseMetadata) Validate() error {
 }
 
 // Tag represents an individual tag for WriteRequest.
-// This uses the existing tag structure from the sidx package.
-type Tag = tag
+// This is an exported type that can be used outside the package.
+type Tag struct {
+	Name      string
+	Value     []byte
+	ValueType pbv1.ValueType
+	Indexed   bool
+}
+
+// NewTag creates a new Tag instance with the given values.
+func NewTag(name string, value []byte, valueType pbv1.ValueType, indexed bool) Tag {
+	return Tag{
+		Name:      name,
+		Value:     value,
+		ValueType: valueType,
+		Indexed:   indexed,
+	}
+}
+
+// Reset resets the Tag to its zero state for reuse.
+func (t *Tag) Reset() {
+	t.Name = ""
+	t.Value = nil
+	t.ValueType = pbv1.ValueTypeUnknown
+	t.Indexed = false
+}
+
+// Size returns the size of the tag in bytes.
+func (t *Tag) Size() int {
+	return len(t.Name) + len(t.Value) + 1 // +1 for valueType
+}
+
+// Copy creates a deep copy of the Tag.
+func (t *Tag) Copy() Tag {
+	var valueCopy []byte
+	if t.Value != nil {
+		valueCopy = make([]byte, len(t.Value))
+		copy(valueCopy, t.Value)
+	}
+	return Tag{
+		Name:      t.Name,
+		Value:     valueCopy,
+		ValueType: t.ValueType,
+		Indexed:   t.Indexed,
+	}
+}
+
+// toInternalTag converts the exported Tag to an internal tag for use with the pooling system.
+func (t *Tag) toInternalTag() *tag {
+	return &tag{
+		name:      t.Name,
+		value:     t.Value,
+		valueType: t.ValueType,
+		indexed:   t.Indexed,
+	}
+}
+
+// fromInternalTag creates a Tag from an internal tag.
+func fromInternalTag(t *tag) Tag {
+	return Tag{
+		Name:      t.name,
+		Value:     t.value,
+		ValueType: t.valueType,
+		Indexed:   t.indexed,
+	}
+}
 
 // Validate validates a WriteRequest for correctness.
 func (wr WriteRequest) Validate() error {
@@ -338,10 +388,10 @@ func (wr WriteRequest) Validate() error {
 	}
 	// Validate tags if present
 	for i, tag := range wr.Tags {
-		if tag.name == "" {
+		if tag.Name == "" {
 			return fmt.Errorf("tag[%d] name cannot be empty", i)
 		}
-		if len(tag.value) == 0 {
+		if len(tag.Value) == 0 {
 			return fmt.Errorf("tag[%d] value cannot be empty", i)
 		}
 	}
@@ -350,11 +400,15 @@ func (wr WriteRequest) Validate() error {
 
 // Validate validates a QueryRequest for correctness.
 func (qr QueryRequest) Validate() error {
-	if qr.Name == "" {
-		return fmt.Errorf("name cannot be empty")
+	if len(qr.SeriesIDs) == 0 {
+		return fmt.Errorf("at least one SeriesID is required")
 	}
 	if qr.MaxElementSize < 0 {
 		return fmt.Errorf("maxElementSize cannot be negative")
+	}
+	// Validate key range
+	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
+		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
 	// Validate tag projection names
 	for i, projection := range qr.TagProjection {
@@ -362,40 +416,28 @@ func (qr QueryRequest) Validate() error {
 			return fmt.Errorf("tagProjection[%d] family cannot be empty", i)
 		}
 	}
-	// Validate entities structure
-	for i, entityGroup := range qr.Entities {
-		if len(entityGroup) == 0 {
-			return fmt.Errorf("entities[%d] cannot be empty", i)
-		}
-		for j, tagValue := range entityGroup {
-			if tagValue == nil {
-				return fmt.Errorf("entities[%d][%d] cannot be nil", i, j)
-			}
-		}
-	}
 	return nil
 }
 
 // Reset resets the QueryRequest to its zero state.
 func (qr *QueryRequest) Reset() {
-	qr.Name = ""
-	qr.Entities = nil
+	qr.SeriesIDs = nil
 	qr.Filter = nil
 	qr.Order = nil
 	qr.TagProjection = nil
 	qr.MaxElementSize = 0
+	qr.MinKey = nil
+	qr.MaxKey = nil
 }
 
 // CopyFrom copies the QueryRequest from other to qr.
 func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
-	qr.Name = other.Name
-
-	// Deep copy for Entities if it's a slice
-	if other.Entities != nil {
-		qr.Entities = make([][]*modelv1.TagValue, len(other.Entities))
-		copy(qr.Entities, other.Entities)
+	// Deep copy for SeriesIDs if it's a slice
+	if other.SeriesIDs != nil {
+		qr.SeriesIDs = make([]common.SeriesID, len(other.SeriesIDs))
+		copy(qr.SeriesIDs, other.SeriesIDs)
 	} else {
-		qr.Entities = nil
+		qr.SeriesIDs = nil
 	}
 
 	qr.Filter = other.Filter
@@ -410,6 +452,21 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 	}
 
 	qr.MaxElementSize = other.MaxElementSize
+
+	// Copy key range pointers
+	if other.MinKey != nil {
+		minKey := *other.MinKey
+		qr.MinKey = &minKey
+	} else {
+		qr.MinKey = nil
+	}
+
+	if other.MaxKey != nil {
+		maxKey := *other.MaxKey
+		qr.MaxKey = &maxKey
+	} else {
+		qr.MaxKey = nil
+	}
 }
 
 // Interface Usage Examples and Best Practices

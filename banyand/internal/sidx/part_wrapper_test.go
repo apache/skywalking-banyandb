@@ -514,3 +514,78 @@ func TestPartWrapper_CleanupIdempotency(t *testing.T) {
 	assert.True(t, pw.isRemoved())
 	assert.Equal(t, int32(0), pw.refCount())
 }
+
+func TestPartWrapper_OverlapsKeyRange(t *testing.T) {
+	tests := []struct {
+		name     string
+		partMin  int64
+		partMax  int64
+		queryMin int64
+		queryMax int64
+		expected bool
+	}{
+		{"complete_overlap", 10, 20, 5, 25, true},
+		{"part_inside_query", 10, 20, 5, 25, true},
+		{"query_inside_part", 5, 25, 10, 20, true},
+		{"partial_overlap_left", 10, 20, 15, 25, true},
+		{"partial_overlap_right", 10, 20, 5, 15, true},
+		{"adjacent_left_no_overlap", 10, 20, 1, 9, false},
+		{"adjacent_right_no_overlap", 10, 20, 21, 30, false},
+		{"touching_left_boundary", 10, 20, 5, 10, true},
+		{"touching_right_boundary", 10, 20, 20, 25, true},
+		{"completely_separate_left", 10, 20, 1, 5, false},
+		{"completely_separate_right", 10, 20, 25, 30, false},
+		{"exact_match", 10, 20, 10, 20, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create part with metadata
+			p := &part{
+				path: "/test/part/001",
+				partMetadata: &partMetadata{
+					ID:     1,
+					MinKey: tt.partMin,
+					MaxKey: tt.partMax,
+				},
+			}
+			pw := newPartWrapper(p)
+
+			result := pw.overlapsKeyRange(tt.queryMin, tt.queryMax)
+			assert.Equal(t, tt.expected, result,
+				"part[%d,%d] query[%d,%d] should be %v",
+				tt.partMin, tt.partMax, tt.queryMin, tt.queryMax, tt.expected)
+		})
+	}
+}
+
+func TestPartWrapper_OverlapsKeyRange_EdgeCases(t *testing.T) {
+	t.Run("nil_part", func(t *testing.T) {
+		pw := newPartWrapper(nil)
+		assert.False(t, pw.overlapsKeyRange(10, 20))
+	})
+
+	t.Run("nil_metadata", func(t *testing.T) {
+		p := &part{
+			path:         "/test/part/001",
+			partMetadata: nil,
+		}
+		pw := newPartWrapper(p)
+		// Should return true (safe default) when metadata is unavailable
+		assert.True(t, pw.overlapsKeyRange(10, 20))
+	})
+
+	t.Run("invalid_query_range", func(t *testing.T) {
+		p := &part{
+			path: "/test/part/001",
+			partMetadata: &partMetadata{
+				ID:     1,
+				MinKey: 10,
+				MaxKey: 20,
+			},
+		}
+		pw := newPartWrapper(p)
+		// Query range where min > max should return false
+		assert.False(t, pw.overlapsKeyRange(25, 15))
+	})
+}

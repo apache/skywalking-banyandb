@@ -105,6 +105,7 @@ func (t *tsResult) runTabScanner(ctx context.Context) (*model.StreamResult, erro
 			t.shards[i].Reset()
 		}
 	}
+	is := t.sm.indexSchema.Load().(indexSchema)
 	for i := range workerSize {
 		go func(workerID int) {
 			tmpBlock := generateBlock()
@@ -121,7 +122,7 @@ func (t *tsResult) runTabScanner(ctx context.Context) (*model.StreamResult, erro
 				for _, bs := range batch.bss {
 					bc := generateBlockCursor()
 					bc.init(bs.p, &bs.bm, bs.qo)
-					if loadBlockCursor(bc, tmpBlock, bs.qo, t.sm) {
+					if loadBlockCursor(bc, tmpBlock, bs.qo, is) {
 						if !t.asc {
 							bc.idx = len(bc.timestamps) - 1
 						}
@@ -156,7 +157,7 @@ func (t *tsResult) runTabScanner(ctx context.Context) (*model.StreamResult, erro
 	return model.MergeStreamResults(t.shards, t.qo.MaxElementSize, t.asc), nil
 }
 
-func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, sm *stream) bool {
+func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, is indexSchema) bool {
 	tmpBlock.reset()
 	if !bc.loadData(tmpBlock) {
 		releaseBlockCursor(bc)
@@ -168,7 +169,6 @@ func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, sm *stre
 	for idx, tagFamily := range bc.tagFamilies {
 		tagFamilyMap[tagFamily.name] = idx + 1
 	}
-	is := sm.indexSchema.Load().(indexSchema)
 	for _, tagFamilyProj := range bc.tagProjection {
 		for j, tagProj := range tagFamilyProj.Names {
 			tagSpec := is.tagMap[tagProj]

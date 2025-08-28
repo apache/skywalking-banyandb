@@ -19,10 +19,14 @@ package sidx
 
 import (
 	"context"
+	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -37,6 +41,7 @@ type sidx struct {
 	loopCloser                 *run.Closer
 	gc                         *gc
 	l                          *logger.Logger
+	pm                         protector.Memory
 	totalIntroduceLoopStarted  atomic.Int64
 	totalIntroduceLoopFinished atomic.Int64
 	mu                         sync.RWMutex
@@ -58,6 +63,7 @@ func NewSIDX(opts *Options) (SIDX, error) {
 		mergeCh:       make(chan *mergerIntroduction),
 		loopCloser:    run.NewCloser(1),
 		l:             logger.GetLogger().Named("sidx"),
+		pm:            opts.Memory,
 	}
 
 	// Initialize garbage collector
@@ -110,8 +116,44 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 	}
 }
 
+// extractKeyRange extracts min/max key range from QueryRequest.
+func extractKeyRange(req QueryRequest) (int64, int64) {
+	minKey := int64(math.MinInt64)
+	maxKey := int64(math.MaxInt64)
+
+	if req.MinKey != nil {
+		minKey = *req.MinKey
+	}
+	if req.MaxKey != nil {
+		maxKey = *req.MaxKey
+	}
+
+	return minKey, maxKey
+}
+
+// extractOrdering extracts ordering direction from QueryRequest.
+func extractOrdering(req QueryRequest) bool {
+	if req.Order == nil {
+		return true // Default ascending
+	}
+	return req.Order.Sort != modelv1.Sort_SORT_DESC
+}
+
+// selectPartsForQuery selects relevant parts from snapshot based on key range.
+func selectPartsForQuery(snap *snapshot, minKey, maxKey int64) []*part {
+	var selectedParts []*part
+
+	for _, pw := range snap.parts {
+		if pw.isActive() && pw.overlapsKeyRange(minKey, maxKey) {
+			selectedParts = append(selectedParts, pw.p)
+		}
+	}
+
+	return selectedParts
+}
+
 // Query implements SIDX interface.
-func (s *sidx) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+func (s *sidx) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
@@ -119,17 +161,78 @@ func (s *sidx) Query(ctx context.Context, req QueryRequest) (QueryResult, error)
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
-		return &emptyQueryResult{}, nil
+		return &QueryResponse{
+			Keys: make([]int64, 0),
+			Data: make([][]byte, 0),
+			Tags: make([][]Tag, 0),
+			SIDs: make([]common.SeriesID, 0),
+		}, nil
 	}
 
-	// Create query result
+	// Extract parameters directly from request
+	minKey, maxKey := extractKeyRange(req)
+	asc := extractOrdering(req)
+
+	// Select relevant parts
+	parts := selectPartsForQuery(snap, minKey, maxKey)
+	if len(parts) == 0 {
+		snap.decRef()
+		return &QueryResponse{
+			Keys: make([]int64, 0),
+			Data: make([][]byte, 0),
+			Tags: make([][]Tag, 0),
+			SIDs: make([]common.SeriesID, 0),
+		}, nil
+	}
+
+	// Sort SeriesIDs for efficient processing
+	seriesIDs := make([]common.SeriesID, len(req.SeriesIDs))
+	copy(seriesIDs, req.SeriesIDs)
+	sort.Slice(seriesIDs, func(i, j int) bool {
+		return seriesIDs[i] < seriesIDs[j]
+	})
+
+	// Initialize block scanner using request parameters directly
+	bs := &blockScanner{
+		pm:        s.pm,
+		filter:    req.Filter,
+		l:         s.l,
+		parts:     parts,
+		seriesIDs: seriesIDs,
+		minKey:    minKey,
+		maxKey:    maxKey,
+		asc:       asc,
+	}
+
+	// Create queryResult and call Pull() once to get the QueryResponse
 	qr := &queryResult{
 		snapshot: snap,
 		request:  req,
 		ctx:      ctx,
+		bs:       bs,
+		asc:      asc,
+		pm:       s.pm,
+		l:        s.l,
+	}
+	defer qr.Release()
+
+	// Pull once to get all results
+	response := qr.Pull()
+	if response == nil {
+		return &QueryResponse{
+			Keys: make([]int64, 0),
+			Data: make([][]byte, 0),
+			Tags: make([][]Tag, 0),
+			SIDs: make([]common.SeriesID, 0),
+		}, nil
 	}
 
-	return qr, nil
+	// If there's an error in the response, return it as a function error
+	if response.Error != nil {
+		return nil, response.Error
+	}
+
+	return response, nil
 }
 
 // Stats implements SIDX interface.
@@ -312,41 +415,4 @@ func (e *emptyQueryResult) Pull() *QueryResponse {
 
 func (e *emptyQueryResult) Release() {
 	// Nothing to release
-}
-
-// queryResult implements QueryResult interface.
-type queryResult struct {
-	ctx      context.Context
-	snapshot *snapshot
-	request  QueryRequest
-	released bool
-}
-
-func (qr *queryResult) Pull() *QueryResponse {
-	if qr.released {
-		return nil
-	}
-
-	// Simple implementation - return empty response
-	// TODO: Implement actual query logic
-	return &QueryResponse{
-		Keys: []int64{},
-		Data: [][]byte{},
-		Tags: [][]Tag{},
-		SIDs: []common.SeriesID{},
-		Metadata: ResponseMetadata{
-			ExecutionTimeMs: 0,
-		},
-	}
-}
-
-func (qr *queryResult) Release() {
-	if qr.released {
-		return
-	}
-	qr.released = true
-	if qr.snapshot != nil {
-		qr.snapshot.decRef()
-		qr.snapshot = nil
-	}
 }
