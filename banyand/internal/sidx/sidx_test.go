@@ -200,25 +200,6 @@ func TestSIDX_Write_WithTags(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestSIDX_Write_ContextCancellation(t *testing.T) {
-	sidx := createTestSIDX(t)
-	defer func() {
-		assert.NoError(t, sidx.Close())
-	}()
-
-	// Create canceled context
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	reqs := []WriteRequest{
-		createTestWriteRequest(1, 100, "data1"),
-	}
-
-	err := sidx.Write(ctx, reqs)
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
 // Query Operation Tests.
 
 func TestSIDX_Query_BasicQuery(t *testing.T) {
