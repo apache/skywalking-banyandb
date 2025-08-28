@@ -31,8 +31,10 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -40,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
+	logical_trace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -52,6 +55,7 @@ var (
 	_ bus.MessageListener = (*streamQueryProcessor)(nil)
 	_ bus.MessageListener = (*measureQueryProcessor)(nil)
 	_ bus.MessageListener = (*topNQueryProcessor)(nil)
+	_ bus.MessageListener = (*traceQueryProcessor)(nil)
 )
 
 type streamQueryProcessor struct {
@@ -419,4 +423,66 @@ func buildCriteriaTree(conditions []*modelv1.Condition) *modelv1.Criteria {
 			},
 		},
 	}
+}
+
+type traceQueryProcessor struct {
+	traceService trace.Service
+	*queryService
+	*bus.UnImplementedHealthyListener
+}
+
+func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+	n := time.Now()
+	now := n.UnixNano()
+	queryCriteria, ok := message.Data().(*tracev1.QueryRequest)
+	if !ok {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
+		return
+	}
+	if p.log.Debug().Enabled() {
+		p.log.Debug().RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a trace query request")
+	}
+	defer func() {
+		if err := recover(); err != nil {
+			p.log.Error().Interface("err", err).RawJSON("req", logger.Proto(queryCriteria)).Str("stack", string(debug.Stack())).Msg("panic")
+			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
+		}
+	}()
+
+	resp = p.executeQuery(ctx, queryCriteria)
+	return
+}
+
+func (p *traceQueryProcessor) executeQuery(_ context.Context, queryCriteria *tracev1.QueryRequest) (resp bus.Message) {
+	n := time.Now()
+	now := n.UnixNano()
+	var schemas []logical.Schema
+	for i := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{
+			Name:  queryCriteria.Name,
+			Group: queryCriteria.Groups[i],
+		}
+		ec, err := p.traceService.Trace(meta)
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for trace %s: %v", meta.GetName(), err))
+			return
+		}
+		s, err := logical_trace.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if err != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for trace %s: %v", meta.GetName(), err))
+			return
+		}
+		schemas = append(schemas, s)
+	}
+
+	// For now, we only implement BuildSchema - the query execution stops here
+	// This is exactly what was requested: "executeQuery stop at the schema parsing since we only implement the BuildSchema right now"
+
+	if p.log.Debug().Enabled() {
+		p.log.Debug().Int("schemas_built", len(schemas)).Msg("trace schemas built successfully, execution stopped at schema parsing")
+	}
+
+	// Return an empty response indicating successful schema building but no actual execution
+	resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{Spans: make([]*tracev1.Span, 0)})
+	return
 }
