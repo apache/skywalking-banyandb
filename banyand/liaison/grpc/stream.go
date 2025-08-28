@@ -57,9 +57,9 @@ func (s *streamService) setLogger(log *logger.Logger) {
 	s.l = log
 }
 
-func (s *streamService) activeIngestionAccessLog(root string) (err error) {
+func (s *streamService) activeIngestionAccessLog(root string, sampled bool) (err error) {
 	if s.ingestionAccessLog, err = accesslog.
-		NewFileLog(root, "stream-ingest-%s", 10*time.Minute, s.log); err != nil {
+		NewFileLog(root, "stream-ingest-%s", 10*time.Minute, s.log, sampled); err != nil {
 		return err
 	}
 	return nil

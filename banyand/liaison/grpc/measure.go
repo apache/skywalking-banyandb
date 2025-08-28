@@ -57,9 +57,9 @@ func (ms *measureService) setLogger(log *logger.Logger) {
 	ms.l = log
 }
 
-func (ms *measureService) activeIngestionAccessLog(root string) (err error) {
+func (ms *measureService) activeIngestionAccessLog(root string, sampled bool) (err error) {
 	if ms.ingestionAccessLog, err = accesslog.
-		NewFileLog(root, "measure-ingest-%s", 10*time.Minute, ms.log); err != nil {
+		NewFileLog(root, "measure-ingest-%s", 10*time.Minute, ms.log, sampled); err != nil {
 		return err
 	}
 	return nil

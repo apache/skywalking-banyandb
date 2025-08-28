@@ -37,6 +37,7 @@ Release Notes.
   - Data ingestion and retrieval.
   - Flush memory data to disk.
   - Merge memory data and disk data.
+- Enhance access log functionality with sampling option
 
 ### Bug Fixes
 

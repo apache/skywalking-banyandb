@@ -81,9 +81,9 @@ type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
 	omr        observability.MetricsRegistry
 	schemaRepo metadata.Repo
-	*topNAggregationRegistryServer
-	*groupRegistryServer
-	stopCh chan struct{}
+	*indexRuleBindingRegistryServer
+	groupRepo *groupRepo
+	stopCh    chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
 	streamSVC *streamService
@@ -94,22 +94,23 @@ type server struct {
 	ser         *grpclib.Server
 	tlsReloader *pkgtls.Reloader
 	*propertyServer
-	*indexRuleBindingRegistryServer
+	*topNAggregationRegistryServer
+	*groupRegistryServer
 	*traceRegistryServer
 	authReloader             *auth.Reloader
-	groupRepo                *groupRepo
 	metrics                  *metrics
-	certFile                 string
 	keyFile                  string
 	authConfigFile           string
 	host                     string
 	addr                     string
 	accessLogRootPath        string
+	certFile                 string
 	accessLogRecorders       []accessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	port                     uint32
-	enableIngestionAccessLog bool
 	tls                      bool
+	enableIngestionAccessLog bool
+	accessLogSampled         bool
 	healthAuthEnabled        bool
 }
 
@@ -198,7 +199,7 @@ func (s *server) PreRun(_ context.Context) error {
 
 	if s.enableIngestionAccessLog {
 		for _, alr := range s.accessLogRecorders {
-			if err := alr.activeIngestionAccessLog(s.accessLogRootPath); err != nil {
+			if err := alr.activeIngestionAccessLog(s.accessLogRootPath, s.accessLogSampled); err != nil {
 				return err
 			}
 		}
@@ -258,6 +259,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
+	fs.BoolVar(&s.accessLogSampled, "access-log-sampled", false, "if true, requests may be dropped when the channel is full; if false, requests are never dropped")
 	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "timeout for writing stream among liaison nodes")
 	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "timeout for writing measure among liaison nodes")
 	fs.DurationVar(&s.measureSVC.maxWaitDuration, "measure-metadata-cache-wait-duration", 0,
@@ -400,6 +402,6 @@ func (s *server) GracefulStop() {
 }
 
 type accessLogRecorder interface {
-	activeIngestionAccessLog(root string) error
+	activeIngestionAccessLog(root string, sampled bool) error
 	Close() error
 }
