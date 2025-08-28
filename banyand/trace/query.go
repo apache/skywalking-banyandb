@@ -25,7 +25,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -308,17 +307,6 @@ func (qr *queryResult) merge() *model.TraceResult {
 	}
 
 	return result
-}
-
-func mustEncodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue, num int) [][]byte {
-	values := make([][]byte, num)
-	tv := encodeTagValue(name, tagType, tagValue)
-	defer releaseTagValue(tv)
-	value := tv.marshal()
-	for i := 0; i < num; i++ {
-		values[i] = value
-	}
-	return values
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
