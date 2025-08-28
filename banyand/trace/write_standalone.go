@@ -302,6 +302,14 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.Tag
 		for i := range tagVal.GetStrArray().Value {
 			tv.valueArr[i] = []byte(tagVal.GetStrArray().Value[i])
 		}
+	case databasev1.TagType_TAG_TYPE_TIMESTAMP:
+		tv.valueType = pbv1.ValueTypeTimestamp
+		if tagVal.GetTimestamp() != nil {
+			// Convert timestamp to 64-bit nanoseconds since epoch for efficient storage
+			ts := tagVal.GetTimestamp()
+			epochNanos := ts.Seconds*1e9 + int64(ts.Nanos)
+			tv.value = convert.Int64ToBytes(epochNanos)
+		}
 	default:
 		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())
 	}

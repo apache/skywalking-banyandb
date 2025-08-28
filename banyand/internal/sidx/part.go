@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
@@ -354,7 +355,7 @@ func (p *part) readAll() ([]*elements, error) {
 
 			// Read tags for each tag name
 			for tagName := range bm.tagsBlocks {
-				err = p.readBlockTags(tagName, bm, elems)
+				err = p.readBlockTags(tagName, bm, elems, blockBytesDecoder)
 				if err != nil {
 					releaseElements(elems)
 					for _, e := range result {
@@ -372,7 +373,7 @@ func (p *part) readAll() ([]*elements, error) {
 }
 
 // readBlockTags reads and decodes tag data for a specific tag in a block.
-func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements) error {
+func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements, decoder *encoding.BytesBlockDecoder) error {
 	tagBlockInfo, exists := bm.tagsBlocks[tagName]
 	if !exists {
 		return fmt.Errorf("tag block info not found for tag: %s", tagName)
@@ -405,7 +406,7 @@ func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements)
 	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), tdData)
 
 	// Decode tag values directly (no compression)
-	tagValues, err := decodeTagValues(tdData, tm.valueType, int(bm.count))
+	tagValues, err := internalencoding.DecodeTagValues(nil, decoder, &bytes.Buffer{Buf: tdData}, tm.valueType, int(bm.count))
 	if err != nil {
 		return fmt.Errorf("cannot decode tag values: %w", err)
 	}

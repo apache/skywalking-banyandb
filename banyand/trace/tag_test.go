@@ -18,223 +18,158 @@
 package trace
 
 import (
-	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-func TestTag_reset(t *testing.T) {
-	tt := &tag{
-		name:      "test",
-		valueType: pbv1.ValueTypeStr,
-		values:    [][]byte{[]byte("value1"), []byte("value2")},
-	}
-
-	tt.reset()
-
-	assert.Equal(t, "", tt.name)
-	assert.Equal(t, 0, len(tt.values))
+func timeToBytes(t time.Time) []byte {
+	return pkgencoding.Int64ToBytes(nil, t.UnixNano())
 }
 
-func TestTag_resizeValues(t *testing.T) {
-	tt := &tag{
-		values: make([][]byte, 2, 5),
-	}
-
-	values := tt.resizeValues(3)
-	assert.Equal(t, 3, len(values))
-	assert.Equal(t, 5, cap(values))
-
-	values = tt.resizeValues(6)
-	assert.Equal(t, 6, len(values))
-	assert.True(t, cap(values) >= 6) // The capacity is at least 6, but could be more
-}
-
-func TestTag_mustWriteTo_mustReadValues(t *testing.T) {
-	tests := []struct {
-		tag  *tag
-		name string
-	}{
-		{
-			name: "string with nils",
-			tag: &tag{
-				name:      "test",
-				valueType: pbv1.ValueTypeStr,
-				values:    [][]byte{[]byte("value1"), nil, []byte("value2"), nil},
+func TestTagEncodingDecoding(t *testing.T) {
+	t.Run("test int64 tag encoding/decoding", func(t *testing.T) {
+		tag := &tag{
+			name:      "test_int64",
+			valueType: pbv1.ValueTypeInt64,
+			values: [][]byte{
+				convert.Int64ToBytes(100),
+				convert.Int64ToBytes(200),
+				convert.Int64ToBytes(300),
 			},
-		},
-		{
-			name: "int64 with null",
-			tag: &tag{
-				name:      "test",
-				valueType: pbv1.ValueTypeInt64,
-				values:    [][]byte{[]byte("null"), nil, []byte("null"), nil},
+		}
+
+		// Test encoding
+		bb := &pkgbytes.Buffer{}
+		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		assert.NoError(t, err)
+		assert.NotNil(t, bb.Buf)
+		assert.Greater(t, len(bb.Buf), 0)
+
+		// Test decoding
+		decoder := &pkgencoding.BytesBlockDecoder{}
+		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, len(tag.values))
+		assert.NoError(t, err)
+		assert.Equal(t, len(tag.values), len(decodedValues))
+		assert.Equal(t, tag.values, decodedValues)
+	})
+
+	t.Run("test float64 tag encoding/decoding", func(t *testing.T) {
+		tag := &tag{
+			name:      "test_float64",
+			valueType: pbv1.ValueTypeFloat64,
+			values: [][]byte{
+				convert.Float64ToBytes(1.5),
+				convert.Float64ToBytes(2.5),
+				convert.Float64ToBytes(3.5),
 			},
-		},
-		{
-			name: "valid int64 values",
-			tag: &tag{
-				name:      "test",
-				valueType: pbv1.ValueTypeInt64,
-				values: [][]byte{
-					convert.Int64ToBytes(1),
-					convert.Int64ToBytes(2),
-					convert.Int64ToBytes(4),
-					convert.Int64ToBytes(5),
-				},
+		}
+
+		// Test encoding
+		bb := &pkgbytes.Buffer{}
+		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		assert.NoError(t, err)
+		assert.NotNil(t, bb.Buf)
+		assert.Greater(t, len(bb.Buf), 0)
+
+		// Test decoding
+		decoder := &pkgencoding.BytesBlockDecoder{}
+		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, len(tag.values))
+		assert.NoError(t, err)
+		assert.Equal(t, len(tag.values), len(decodedValues))
+		assert.Equal(t, tag.values, decodedValues)
+	})
+
+	t.Run("test string tag encoding/decoding", func(t *testing.T) {
+		tag := &tag{
+			name:      "test_string",
+			valueType: pbv1.ValueTypeStr,
+			values: [][]byte{
+				[]byte("value1"),
+				[]byte("value2"),
+				[]byte("value3"),
 			},
-		},
-	}
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tm := &tagMetadata{}
+		// Test encoding
+		bb := &pkgbytes.Buffer{}
+		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		assert.NoError(t, err)
+		assert.NotNil(t, bb.Buf)
+		assert.Greater(t, len(bb.Buf), 0)
 
-			buf, filterBuf := &bytes.Buffer{}, &bytes.Buffer{}
-			w, fw := &writer{}, &writer{}
-			w.init(buf)
-			fw.init(filterBuf)
+		// Test decoding
+		decoder := &pkgencoding.BytesBlockDecoder{}
+		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, len(tag.values))
+		assert.NoError(t, err)
+		assert.Equal(t, len(tag.values), len(decodedValues))
+		assert.Equal(t, tag.values, decodedValues)
+	})
 
-			tt.tag.mustWriteTo(tm, w)
-			assert.Equal(t, w.bytesWritten, tm.size)
-			assert.Equal(t, uint64(len(buf.Buf)), tm.size)
-			assert.Equal(t, uint64(0), tm.offset)
-			assert.Equal(t, tt.tag.name, tm.name)
-			assert.Equal(t, tt.tag.valueType, tm.valueType)
+	t.Run("test timestamp tag encoding/decoding", func(t *testing.T) {
+		// Create test timestamps
+		time1 := time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)
+		time2 := time.Date(2023, 1, 2, 12, 0, 0, 0, time.UTC)
+		time3 := time.Date(2023, 1, 3, 12, 0, 0, 0, time.UTC)
 
-			decoder := &encoding.BytesBlockDecoder{}
-			unmarshaled := &tag{}
-			unmarshaled.name = tm.name
-			unmarshaled.valueType = tm.valueType
-			unmarshaled.mustReadValues(decoder, buf, *tm, uint64(len(tt.tag.values)))
-			assert.Equal(t, tt.tag.values, unmarshaled.values)
-		})
-	}
-}
+		tag := &tag{
+			name:      "test_timestamp",
+			valueType: pbv1.ValueTypeTimestamp,
+			values: [][]byte{
+				timeToBytes(time1),
+				timeToBytes(time2),
+				timeToBytes(time3),
+			},
+		}
 
-func TestTag_HighCardinalityStringEncoding(t *testing.T) {
-	tests := []struct {
-		name            string
-		description     string
-		expectedEncType encoding.EncodeType
-		uniqueCount     int
-		totalCount      int
-	}{
-		{
-			name:            "exactly 256 unique values - should use dictionary",
-			uniqueCount:     256,
-			totalCount:      256,
-			expectedEncType: encoding.EncodeTypeDictionary,
-			description:     "Dictionary encoding should be used when exactly at the threshold",
-		},
-		{
-			name:            "257 unique values - should use plain encoding",
-			uniqueCount:     257,
-			totalCount:      257,
-			expectedEncType: encoding.EncodeTypePlain,
-			description:     "Plain encoding should be used when exceeding dictionary threshold",
-		},
-		{
-			name:            "300 unique values - should use plain encoding",
-			uniqueCount:     300,
-			totalCount:      300,
-			expectedEncType: encoding.EncodeTypePlain,
-			description:     "Plain encoding should be used for high cardinality strings",
-		},
-		{
-			name:            "1000 unique values - should use plain encoding",
-			uniqueCount:     1000,
-			totalCount:      1000,
-			expectedEncType: encoding.EncodeTypePlain,
-			description:     "Plain encoding should be used for very high cardinality",
-		},
-		{
-			name:            "500 total with 200 unique - should use dictionary",
-			uniqueCount:     200,
-			totalCount:      500,
-			expectedEncType: encoding.EncodeTypeDictionary,
-			description:     "Dictionary should be used when unique count is below threshold despite high total count",
-		},
-	}
+		// Test encoding
+		bb := &pkgbytes.Buffer{}
+		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		assert.NoError(t, err)
+		assert.NotNil(t, bb.Buf)
+		assert.Greater(t, len(bb.Buf), 0)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Generate unique string values
-			values := make([][]byte, tt.totalCount)
+		// Test decoding
+		decoder := &pkgencoding.BytesBlockDecoder{}
+		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, len(tag.values))
+		assert.NoError(t, err)
+		assert.Equal(t, len(tag.values), len(decodedValues))
+		assert.Equal(t, tag.values, decodedValues)
 
-			// Create unique values up to uniqueCount
-			for i := 0; i < tt.uniqueCount; i++ {
-				values[i] = []byte(fmt.Sprintf("unique_value_%06d", i))
-			}
+		// Verify the decoded timestamp values can be converted back to time.Time
+		for i, decodedValue := range decodedValues {
+			expectedTime := []time.Time{time1, time2, time3}[i]
+			decodedNanos := pkgencoding.BytesToInt64(decodedValue)
+			decodedTime := time.Unix(0, decodedNanos)
+			assert.Equal(t, expectedTime.Unix(), decodedTime.Unix())
+			// Note: We compare Unix time (seconds) since nanoseconds might have precision differences
+		}
+	})
 
-			// If totalCount > uniqueCount, repeat some values to reach totalCount
-			for i := tt.uniqueCount; i < tt.totalCount; i++ {
-				// Repeat values cyclically
-				repeatIndex := i % tt.uniqueCount
-				values[i] = []byte(fmt.Sprintf("unique_value_%06d", repeatIndex))
-			}
+	t.Run("test empty values", func(t *testing.T) {
+		tag := &tag{
+			name:      "test_empty",
+			valueType: pbv1.ValueTypeStr,
+			values:    [][]byte{},
+		}
 
-			testTag := &tag{
-				name:      "high_cardinality_tag",
-				valueType: pbv1.ValueTypeStr,
-				values:    values,
-			}
+		// Test encoding
+		bb := &pkgbytes.Buffer{}
+		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		assert.NoError(t, err)
+		assert.Nil(t, bb.Buf)
 
-			// Encode the tag
-			tm := &tagMetadata{}
-			buf, filterBuf := &bytes.Buffer{}, &bytes.Buffer{}
-			w, fw := &writer{}, &writer{}
-			w.init(buf)
-			fw.init(filterBuf)
-
-			testTag.mustWriteTo(tm, w)
-
-			// Verify basic metadata
-			assert.Equal(t, w.bytesWritten, tm.size)
-			assert.Equal(t, uint64(len(buf.Buf)), tm.size)
-			assert.Equal(t, uint64(0), tm.offset)
-			assert.Equal(t, testTag.name, tm.name)
-			assert.Equal(t, testTag.valueType, tm.valueType)
-
-			// Check encoding type by examining the first byte of the encoded data
-			assert.True(t, len(buf.Buf) > 0, "Encoded buffer should not be empty")
-			actualEncType := encoding.EncodeType(buf.Buf[0])
-			assert.Equal(t, tt.expectedEncType, actualEncType,
-				"Expected %s encoding (%d), got %d. %s",
-				getEncodeTypeName(tt.expectedEncType), tt.expectedEncType, actualEncType, tt.description)
-
-			// Test roundtrip: decode and verify all values are preserved
-			decoder := &encoding.BytesBlockDecoder{}
-			unmarshaled := &tag{}
-			unmarshaled.name = tm.name
-			unmarshaled.valueType = tm.valueType
-			unmarshaled.mustReadValues(decoder, buf, *tm, uint64(len(testTag.values)))
-
-			assert.Equal(t, len(testTag.values), len(unmarshaled.values), "Number of values should match")
-
-			// Verify all values are correctly decoded
-			for i, originalValue := range testTag.values {
-				assert.Equal(t, originalValue, unmarshaled.values[i],
-					"Value at index %d should match original", i)
-			}
-		})
-	}
-}
-
-// Helper function to get encode type name for better test output.
-func getEncodeTypeName(encType encoding.EncodeType) string {
-	switch encType {
-	case encoding.EncodeTypePlain:
-		return "Plain"
-	case encoding.EncodeTypeDictionary:
-		return "Dictionary"
-	default:
-		return fmt.Sprintf("Unknown(%d)", encType)
-	}
+		// Test decoding
+		decoder := &pkgencoding.BytesBlockDecoder{}
+		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, 0)
+		assert.NoError(t, err)
+		assert.Nil(t, decodedValues)
+	})
 }

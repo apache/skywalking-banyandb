@@ -22,7 +22,6 @@ package encoding
 
 import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -30,15 +29,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
-const (
-	defaultCompressionLevel = 3
-)
-
 var (
 	int64SlicePool   = pool.Register[*[]int64]("tag-encoder-int64Slice")
 	float64SlicePool = pool.Register[*[]float64]("tag-encoder-float64Slice")
 	dictionaryPool   = pool.Register[*encoding.Dictionary]("tag-encoder-dictionary")
-	bigValuePool     = bytes.NewBufferPool("tag-encoder-big-value")
 )
 
 func generateInt64Slice(length int) *[]int64 {
@@ -96,13 +90,10 @@ func releaseDictionary(d *encoding.Dictionary) {
 // For int64: uses delta encoding with first value storage.
 // For float64: converts to decimal integers with exponent, then delta encoding.
 // For other types: uses dictionary encoding, falls back to plain with zstd compression.
-func EncodeTagValues(values [][]byte, valueType pbv1.ValueType) ([]byte, error) {
+func EncodeTagValues(bb *bytes.Buffer, values [][]byte, valueType pbv1.ValueType) error {
 	if len(values) == 0 {
-		return nil, nil
+		return nil
 	}
-
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
 
 	switch valueType {
 	case pbv1.ValueTypeInt64:
@@ -115,29 +106,22 @@ func EncodeTagValues(values [][]byte, valueType pbv1.ValueType) ([]byte, error) 
 }
 
 // DecodeTagValues decodes tag values based on the value type.
-func DecodeTagValues(data []byte, valueType pbv1.ValueType, count int) ([][]byte, error) {
-	if len(data) == 0 {
+func DecodeTagValues(dst [][]byte, decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, valueType pbv1.ValueType, count int) ([][]byte, error) {
+	if len(bb.Buf) == 0 {
 		return nil, nil
 	}
 
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-	bb.Buf = append(bb.Buf[:0], data...)
-
-	decoder := &encoding.BytesBlockDecoder{}
-	values := make([][]byte, 0, count)
-
 	switch valueType {
 	case pbv1.ValueTypeInt64:
-		return decodeInt64TagValues(decoder, bb, uint64(count))
+		return decodeInt64TagValues(dst, decoder, bb, uint64(count))
 	case pbv1.ValueTypeFloat64:
-		return decodeFloat64TagValues(decoder, bb, uint64(count))
+		return decodeFloat64TagValues(dst, decoder, bb, uint64(count))
 	default:
-		return decodeDefaultTagValues(decoder, bb, uint64(count), values)
+		return decodeDefaultTagValues(dst, decoder, bb, uint64(count))
 	}
 }
 
-func encodeInt64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
+func encodeInt64TagValues(bb *bytes.Buffer, values [][]byte) error {
 	intValuesPtr := generateInt64Slice(len(values))
 	intValues := *intValuesPtr
 	defer releaseInt64Slice(intValuesPtr)
@@ -147,11 +131,9 @@ func encodeInt64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
 		if v == nil || string(v) == "null" {
 			// Handle null values by falling back to default encoding
 			bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], values)
-			// Apply zstd compression for plain encoding
-			compressed := zstd.Compress(nil, bb.Buf, defaultCompressionLevel)
 			// Prepend EncodeTypePlain at the head of compressed data
-			result := append([]byte{byte(encoding.EncodeTypePlain)}, compressed...)
-			return result, nil
+			bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
+			return nil
 		}
 		if len(v) != 8 {
 			logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
@@ -167,14 +149,14 @@ func encodeInt64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
 	firstValueBytes := convert.Int64ToBytes(firstValue)
 
 	// Prepend encodeType (1 byte) and firstValue (8 bytes) to the beginning
-	result := append(
+	bb.Buf = append(
 		append([]byte{byte(encodeType)}, firstValueBytes...),
 		bb.Buf...,
 	)
-	return result, nil
+	return nil
 }
 
-func encodeFloat64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
+func encodeFloat64TagValues(bb *bytes.Buffer, values [][]byte) error {
 	intValuesPtr := generateInt64Slice(len(values))
 	intValues := *intValuesPtr
 	defer releaseInt64Slice(intValuesPtr)
@@ -189,11 +171,9 @@ func encodeFloat64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
 		if v == nil || string(v) == "null" {
 			// Handle null values by falling back to default encoding
 			bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], values)
-			// Apply zstd compression for plain encoding
-			compressed := zstd.Compress(nil, bb.Buf, defaultCompressionLevel)
 			// Prepend EncodeTypePlain at the head of compressed data
-			result := append([]byte{byte(encoding.EncodeTypePlain)}, compressed...)
-			return result, nil
+			bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
+			return nil
 		}
 		if len(v) != 8 {
 			logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
@@ -204,13 +184,10 @@ func encodeFloat64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
 	intValues, exp, err := encoding.Float64ListToDecimalIntList(intValues[:0], floatValues)
 	if err != nil {
 		logger.Errorf("cannot convert Float64List to DecimalIntList: %v", err)
-		// Handle error by falling back to default encoding
 		bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], values)
-		// Apply zstd compression for plain encoding
-		compressed := zstd.Compress(nil, bb.Buf, defaultCompressionLevel)
 		// Prepend EncodeTypePlain at the head of compressed data
-		result := append([]byte{byte(encoding.EncodeTypePlain)}, compressed...)
-		return result, nil
+		bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
+		return nil
 	}
 
 	var firstValue int64
@@ -222,14 +199,14 @@ func encodeFloat64TagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
 	expBytes := convert.Int16ToBytes(exp)
 
 	// Prepend encodeType (1 byte), exp (2 bytes) and firstValue (8 bytes) to the beginning
-	result := append(
+	bb.Buf = append(
 		append(append([]byte{byte(encodeType)}, expBytes...), firstValueBytes...),
 		bb.Buf...,
 	)
-	return result, nil
+	return nil
 }
 
-func encodeDefaultTagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
+func encodeDefaultTagValues(bb *bytes.Buffer, values [][]byte) error {
 	dict := generateDictionary()
 	defer releaseDictionary(dict)
 
@@ -238,19 +215,17 @@ func encodeDefaultTagValues(bb *bytes.Buffer, values [][]byte) ([]byte, error) {
 			// Dictionary encoding failed, use plain encoding with zstd compression
 			bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], values)
 			bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
-			// Apply zstd compression for plain encoding
-			compressed := zstd.Compress(nil, bb.Buf, defaultCompressionLevel)
-			return compressed, nil
+			return nil
 		}
 	}
 
 	// Dictionary encoding succeeded
 	bb.Buf = dict.Encode(bb.Buf[:0])
 	bb.Buf = append([]byte{byte(encoding.EncodeTypeDictionary)}, bb.Buf...)
-	return append([]byte(nil), bb.Buf...), nil
+	return nil
 }
 
-func decodeInt64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64) ([][]byte, error) {
+func decodeInt64TagValues(dst [][]byte, decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64) ([][]byte, error) {
 	intValuesPtr := generateInt64Slice(int(count))
 	intValues := *intValuesPtr
 	defer releaseInt64Slice(intValuesPtr)
@@ -263,21 +238,13 @@ func decodeInt64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer,
 	firstByte := encoding.EncodeType(bb.Buf[0])
 
 	if firstByte == encoding.EncodeTypePlain {
-		// This is compressed data with EncodeTypePlain at the head
-		// Skip the EncodeTypePlain byte and decompress the rest
-		compressedData := bb.Buf[1:]
-		decompressed, err := zstd.Decompress(nil, compressedData)
-		if err != nil {
-			logger.Panicf("cannot decompress data: %v", err)
-		}
-
 		// Decode the decompressed data
-		values := make([][]byte, 0, count)
-		values, decodeErr := decoder.Decode(values[:0], decompressed, count)
+		var decodeErr error
+		dst, decodeErr = decoder.Decode(dst[:0], bb.Buf[1:], count)
 		if decodeErr != nil {
 			logger.Panicf("cannot decode values: %v", decodeErr)
 		}
-		return values, nil
+		return dst, nil
 	}
 
 	// Otherwise, this is int list data with EncodeType at the beginning
@@ -296,14 +263,17 @@ func decodeInt64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer,
 	}
 
 	// Convert int64 array to byte array
-	values := make([][]byte, count)
-	for i, v := range intValues {
-		values[i] = convert.Int64ToBytes(v)
+	if len(dst) < len(intValues) {
+		dst = append(dst, make([][]byte, len(intValues)-len(dst))...)
 	}
-	return values, nil
+	dst = dst[:len(intValues)]
+	for i, v := range intValues {
+		dst[i] = convert.Int64ToBytes(v)
+	}
+	return dst, nil
 }
 
-func decodeFloat64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64) ([][]byte, error) {
+func decodeFloat64TagValues(dst [][]byte, decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64) ([][]byte, error) {
 	intValuesPtr := generateInt64Slice(int(count))
 	intValues := *intValuesPtr
 	defer releaseInt64Slice(intValuesPtr)
@@ -320,21 +290,12 @@ func decodeFloat64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffe
 	firstByte := encoding.EncodeType(bb.Buf[0])
 
 	if firstByte == encoding.EncodeTypePlain {
-		// This is compressed data with EncodeTypePlain at the head
-		// Skip the EncodeTypePlain byte and decompress the rest
-		compressedData := bb.Buf[1:]
-		decompressed, err := zstd.Decompress(nil, compressedData)
-		if err != nil {
-			logger.Panicf("cannot decompress data: %v", err)
-		}
-
-		// Decode the decompressed data
-		values := make([][]byte, 0, count)
-		values, decodeErr := decoder.Decode(values[:0], decompressed, count)
+		var decodeErr error
+		dst, decodeErr = decoder.Decode(dst[:0], bb.Buf[1:], count)
 		if decodeErr != nil {
 			logger.Panicf("cannot decode values: %v", decodeErr)
 		}
-		return values, nil
+		return dst, nil
 	}
 
 	// Otherwise, this is float64 int list data with EncodeType at the beginning
@@ -363,26 +324,19 @@ func decodeFloat64TagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffe
 	}
 
 	// Convert float64 array to byte array
-	values := make([][]byte, count)
-	for i, v := range floatValues {
-		values[i] = convert.Float64ToBytes(v)
+	if len(dst) < len(floatValues) {
+		dst = append(dst, make([][]byte, len(floatValues)-len(dst))...)
 	}
-	return values, nil
+	dst = dst[:len(floatValues)]
+	for i, v := range floatValues {
+		dst[i] = convert.Float64ToBytes(v)
+	}
+	return dst, nil
 }
 
-func decodeDefaultTagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64, values [][]byte) ([][]byte, error) {
+func decodeDefaultTagValues(dst [][]byte, decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, count uint64) ([][]byte, error) {
 	if len(bb.Buf) < 1 {
-		return values, nil
-	}
-
-	// Check if this is zstd compressed data (no encode type prefix)
-	decompressed, decompErr := zstd.Decompress(nil, bb.Buf)
-	if decompErr == nil {
-		// Successfully decompressed, this is compressed data
-		bb.Buf = decompressed
-		if len(bb.Buf) < 1 {
-			return values, nil
-		}
+		return dst, nil
 	}
 
 	encodeType := encoding.EncodeType(bb.Buf[0])
@@ -392,15 +346,15 @@ func decodeDefaultTagValues(decoder *encoding.BytesBlockDecoder, bb *bytes.Buffe
 	case encoding.EncodeTypeDictionary:
 		dict := generateDictionary()
 		defer releaseDictionary(dict)
-		values, err = dict.Decode(values[:0], bb.Buf[1:], count)
+		dst, err = dict.Decode(dst[:0], bb.Buf[1:], count)
 	case encoding.EncodeTypePlain:
-		values, err = decoder.Decode(values[:0], bb.Buf[1:], count)
+		dst, err = decoder.Decode(dst[:0], bb.Buf[1:], count)
 	default:
-		values, err = decoder.Decode(values[:0], bb.Buf[1:], count)
+		dst, err = decoder.Decode(dst[:0], bb.Buf[1:], count)
 	}
 
 	if err != nil {
 		logger.Panicf("cannot decode values: %v", err)
 	}
-	return values, nil
+	return dst, nil
 }

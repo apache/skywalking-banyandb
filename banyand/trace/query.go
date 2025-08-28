@@ -24,6 +24,7 @@ import (
 	"sort"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -339,6 +340,12 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 			values = append(values, string(bb.Buf))
 		}
 		return strArrTagValue(values)
+	case pbv1.ValueTypeTimestamp:
+		// Convert 64-bit nanoseconds since epoch back to protobuf timestamp
+		epochNanos := convert.BytesToInt64(value)
+		seconds := epochNanos / 1e9
+		nanos := int32(epochNanos % 1e9)
+		return timestampTagValue(seconds, nanos)
 	default:
 		logger.Panicf("unsupported value type: %v", valueType)
 		return nil
@@ -390,6 +397,17 @@ func strArrTagValue(values []string) *modelv1.TagValue {
 		Value: &modelv1.TagValue_StrArray{
 			StrArray: &modelv1.StrArray{
 				Value: values,
+			},
+		},
+	}
+}
+
+func timestampTagValue(seconds int64, nanos int32) *modelv1.TagValue {
+	return &modelv1.TagValue{
+		Value: &modelv1.TagValue_Timestamp{
+			Timestamp: &timestamppb.Timestamp{
+				Seconds: seconds,
+				Nanos:   nanos,
 			},
 		},
 	}
