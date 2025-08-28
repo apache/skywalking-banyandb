@@ -40,6 +40,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -97,6 +98,7 @@ type server struct {
 	*topNAggregationRegistryServer
 	*groupRegistryServer
 	*traceRegistryServer
+	traceSVC                 *traceService
 	authReloader             *auth.Reloader
 	metrics                  *metrics
 	keyFile                  string
@@ -130,11 +132,17 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 	}
+	traceSVC := &traceService{
+		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.StreamLiaisonNodeRegistry, gr),
+		pipeline:         tir1Client,
+		broadcaster:      broadcaster,
+	}
 
 	s := &server{
 		omr:        omr,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
+		traceSVC:   traceSVC,
 		groupRepo:  gr,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
@@ -169,7 +177,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		schemaRepo:   schemaRegistry,
 		authReloader: auth.InitAuthReloader(),
 	}
-	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
+	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC}
 
 	return s
 }
@@ -178,10 +186,12 @@ func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log.Named("stream-t1"))
 	s.measureSVC.setLogger(s.log)
+	s.traceSVC.setLogger(s.log.Named("trace"))
 	s.propertyServer.SetLogger(s.log)
 	components := []*discoveryService{
 		s.streamSVC.discoveryService,
 		s.measureSVC.discoveryService,
+		s.traceSVC.discoveryService,
 		s.propertyServer.discoveryService,
 	}
 	s.schemaRepo.RegisterHandler("liaison", schema.KindGroup, s.groupRepo)
@@ -208,6 +218,7 @@ func (s *server) PreRun(_ context.Context) error {
 	s.metrics = metrics
 	s.streamSVC.metrics = metrics
 	s.measureSVC.metrics = metrics
+	s.traceSVC.metrics = metrics
 	s.propertyServer.metrics = metrics
 	s.streamRegistryServer.metrics = metrics
 	s.indexRuleBindingRegistryServer.metrics = metrics
@@ -339,6 +350,7 @@ func (s *server) Serve() run.StopNotify {
 	commonv1.RegisterServiceServer(s.ser, &apiVersionService{})
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
 	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
+	tracev1.RegisterTraceServiceServer(s.ser, s.traceSVC)
 	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
 	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
 	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)

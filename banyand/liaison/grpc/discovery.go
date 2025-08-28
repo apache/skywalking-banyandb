@@ -47,7 +47,12 @@ type discoveryService struct {
 }
 
 func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegistry NodeRegistry, gr *groupRepo) *discoveryService {
-	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator)}
+	er := &entityRepo{
+		entitiesMap:     make(map[identity]partition.Locator),
+		measureMap:      make(map[identity]*databasev1.Measure),
+		traceMap:        make(map[identity]*databasev1.Trace),
+		traceIDIndexMap: make(map[identity]int),
+	}
 	return newDiscoveryServiceWithEntityRepo(kind, metadataRepo, nodeRegistry, gr, er)
 }
 
@@ -184,9 +189,11 @@ var _ schema.EventHandler = (*entityRepo)(nil)
 
 type entityRepo struct {
 	schema.UnimplementedOnInitHandler
-	log         *logger.Logger
-	entitiesMap map[identity]partition.Locator
-	measureMap  map[identity]*databasev1.Measure
+	log             *logger.Logger
+	entitiesMap     map[identity]partition.Locator
+	measureMap      map[identity]*databasev1.Measure
+	traceMap        map[identity]*databasev1.Trace
+	traceIDIndexMap map[identity]int // Cache trace ID tag index
 	sync.RWMutex
 }
 
@@ -206,6 +213,12 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 		modRevision = stream.GetMetadata().GetModRevision()
 		l = partition.NewEntityLocator(stream.TagFamilies, stream.Entity, modRevision)
 		id = getID(stream.GetMetadata())
+	case schema.KindTrace:
+		trace := schemaMetadata.Spec.(*databasev1.Trace)
+		modRevision = trace.GetMetadata().GetModRevision()
+		// For trace, we don't need entity-based partitioning, just store metadata
+		l = partition.Locator{ModRevision: modRevision}
+		id = getID(trace.GetMetadata())
 	default:
 		return
 	}
@@ -216,6 +229,8 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 			kind = "measure"
 		case schema.KindStream:
 			kind = "stream"
+		case schema.KindTrace:
+			kind = "trace"
 		default:
 			kind = "unknown"
 		}
@@ -228,11 +243,28 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
 	e.entitiesMap[id] = partition.Locator{TagLocators: l.TagLocators, ModRevision: modRevision}
-	if schemaMetadata.Kind == schema.KindMeasure {
+	switch schemaMetadata.Kind {
+	case schema.KindMeasure:
 		measure := schemaMetadata.Spec.(*databasev1.Measure)
 		e.measureMap[id] = measure
-	} else {
+		delete(e.traceMap, id) // Ensure trace is not stored for measures
+	case schema.KindTrace:
+		trace := schemaMetadata.Spec.(*databasev1.Trace)
+		e.traceMap[id] = trace
+		// Pre-compute trace ID tag index
+		traceIDTagName := trace.GetTraceIdTagName()
+		traceIDIndex := -1
+		for i, tagSpec := range trace.GetTags() {
+			if tagSpec.GetName() == traceIDTagName {
+				traceIDIndex = i
+				break
+			}
+		}
+		e.traceIDIndexMap[id] = traceIDIndex
+		delete(e.measureMap, id) // Ensure measure is not stored for traces
+	default:
 		delete(e.measureMap, id) // Ensure measure is not stored for streams
+		delete(e.traceMap, id)   // Ensure trace is not stored for streams
 	}
 }
 
@@ -246,6 +278,9 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 	case schema.KindStream:
 		stream := schemaMetadata.Spec.(*databasev1.Stream)
 		id = getID(stream.GetMetadata())
+	case schema.KindTrace:
+		trace := schemaMetadata.Spec.(*databasev1.Trace)
+		id = getID(trace.GetMetadata())
 	default:
 		return
 	}
@@ -256,6 +291,8 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 			kind = "measure"
 		case schema.KindStream:
 			kind = "stream"
+		case schema.KindTrace:
+			kind = "trace"
 		default:
 			kind = "unknown"
 		}
@@ -268,7 +305,9 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
 	delete(e.entitiesMap, id)
-	delete(e.measureMap, id) // Ensure measure is not stored for streams
+	delete(e.measureMap, id)      // Clean up measure
+	delete(e.traceMap, id)        // Clean up trace
+	delete(e.traceIDIndexMap, id) // Clean up trace ID index
 }
 
 func (e *entityRepo) getLocator(id identity) (partition.Locator, bool) {
@@ -279,6 +318,26 @@ func (e *entityRepo) getLocator(id identity) (partition.Locator, bool) {
 		return partition.Locator{}, false
 	}
 	return el, true
+}
+
+func (e *entityRepo) getTrace(id identity) (*databasev1.Trace, bool) {
+	e.RWMutex.RLock()
+	defer e.RWMutex.RUnlock()
+	trace, ok := e.traceMap[id]
+	if !ok {
+		return nil, false
+	}
+	return trace, true
+}
+
+func (e *entityRepo) getTraceIDIndex(id identity) (int, bool) {
+	e.RWMutex.RLock()
+	defer e.RWMutex.RUnlock()
+	index, ok := e.traceIDIndexMap[id]
+	if !ok {
+		return -1, false
+	}
+	return index, true
 }
 
 var _ schema.EventHandler = (*shardingKeyRepo)(nil)
