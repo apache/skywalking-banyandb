@@ -24,8 +24,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -49,22 +52,23 @@ const (
 // Each part contains multiple files organized by type:
 // - primary.bin: Block metadata and structure information
 // - data.bin: User payload data (compressed)
-// - keys.bin: User-provided int64 keys (compressed)
+// - keys.bin: User-provided int64 keys (encoded but not compressed)
 // - meta.bin: Part metadata
 // - <name>.td: Tag data files (one per tag)
 // - <name>.tm: Tag metadata files (one per tag)
 // - <name>.tf: Tag filter files (bloom filters, one per tag).
 type part struct {
-	primary       fs.Reader
-	data          fs.Reader
-	keys          fs.Reader
-	fileSystem    fs.FileSystem
-	tagData       map[string]fs.Reader
-	tagMetadata   map[string]fs.Reader
-	tagFilters    map[string]fs.Reader
-	partMetadata  *partMetadata
-	path          string
-	blockMetadata []blockMetadata
+	primary              fs.Reader
+	data                 fs.Reader
+	keys                 fs.Reader
+	meta                 fs.Reader
+	fileSystem           fs.FileSystem
+	tagData              map[string]fs.Reader
+	tagMetadata          map[string]fs.Reader
+	tagFilters           map[string]fs.Reader
+	partMetadata         *partMetadata
+	path                 string
+	primaryBlockMetadata []primaryBlockMetadata
 }
 
 // mustOpenPart opens a part from the specified path using the given file system.
@@ -80,6 +84,7 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 	p.primary = mustOpenReader(filepath.Join(path, primaryFilename), fileSystem)
 	p.data = mustOpenReader(filepath.Join(path, dataFilename), fileSystem)
 	p.keys = mustOpenReader(filepath.Join(path, keysFilename), fileSystem)
+	p.meta = mustOpenReader(filepath.Join(path, metaFilename), fileSystem)
 
 	// Load part metadata from meta.bin.
 	if err := p.loadPartMetadata(); err != nil {
@@ -87,11 +92,8 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load part metadata")
 	}
 
-	// Load block metadata from primary.bin.
-	if err := p.loadBlockMetadata(); err != nil {
-		p.close()
-		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load block metadata")
-	}
+	// Load primary block metadata from primary.bin.
+	p.loadPrimaryBlockMetadata()
 
 	// Discover and open tag files.
 	p.openTagFiles()
@@ -131,22 +133,10 @@ func (p *part) loadPartMetadata() error {
 	return nil
 }
 
-// loadBlockMetadata reads and parses block metadata from primary.bin.
-func (p *part) loadBlockMetadata() error {
-	// Read the entire primary.bin file.
-	_, err := p.fileSystem.Read(filepath.Join(p.path, primaryFilename))
-	if err != nil {
-		return fmt.Errorf("failed to read primary.bin: %w", err)
-	}
-
-	// Parse block metadata (implementation would depend on the exact format).
-	// For now, we'll allocate space based on the part metadata.
-	p.blockMetadata = make([]blockMetadata, 0, p.partMetadata.BlocksCount)
-
-	// TODO: Implement actual primary.bin parsing when block format is defined.
-	// This is a placeholder for the structure.
-
-	return nil
+// loadPrimaryBlockMetadata reads and parses primary block metadata from meta.bin.
+func (p *part) loadPrimaryBlockMetadata() {
+	// Load primary block metadata from meta.bin file (compressed primaryBlockMetadata)
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], p.meta)
 }
 
 // openTagFiles discovers and opens all tag files in the part directory.
@@ -236,6 +226,9 @@ func (p *part) close() {
 	if p.keys != nil {
 		fs.MustClose(p.keys)
 	}
+	if p.meta != nil {
+		fs.MustClose(p.meta)
+	}
 
 	// Close tag files.
 	for _, reader := range p.tagData {
@@ -254,11 +247,7 @@ func (p *part) close() {
 		p.partMetadata = nil
 	}
 
-	// Release block metadata.
-	for i := range p.blockMetadata {
-		releaseBlockMetadata(&p.blockMetadata[i])
-	}
-	p.blockMetadata = nil
+	// No block metadata to release since it's now passed as parameter
 }
 
 // mustOpenReader opens a file reader and panics if it fails.
@@ -268,6 +257,180 @@ func mustOpenReader(filePath string, fileSystem fs.FileSystem) fs.Reader {
 		logger.GetLogger().Panic().Err(err).Str("path", filePath).Msg("cannot open file")
 	}
 	return file
+}
+
+// readAll reads all blocks from the part and returns them as separate elements.
+// Each elements collection represents the data from a single block.
+func (p *part) readAll() ([]*elements, error) {
+	if len(p.primaryBlockMetadata) == 0 {
+		return nil, nil
+	}
+
+	result := make([]*elements, 0, len(p.primaryBlockMetadata))
+	compressedPrimaryBuf := make([]byte, 0, 1024)
+	primaryBuf := make([]byte, 0, 1024)
+	compressedDataBuf := make([]byte, 0, 1024)
+	dataBuf := make([]byte, 0, 1024)
+	compressedKeysBuf := make([]byte, 0, 1024)
+
+	for _, pbm := range p.primaryBlockMetadata {
+		// Read and decompress primary block metadata
+		compressedPrimaryBuf = bytes.ResizeOver(compressedPrimaryBuf, int(pbm.size))
+		fs.MustReadData(p.primary, int64(pbm.offset), compressedPrimaryBuf)
+
+		var err error
+		primaryBuf, err = zstd.Decompress(primaryBuf[:0], compressedPrimaryBuf)
+		if err != nil {
+			// Clean up any elements created so far
+			for _, e := range result {
+				releaseElements(e)
+			}
+			return nil, fmt.Errorf("cannot decompress primary block: %w", err)
+		}
+
+		// Unmarshal all block metadata entries in this primary block
+		blockMetadataArray, err := unmarshalBlockMetadata(nil, primaryBuf)
+		if err != nil {
+			// Clean up any elements created so far
+			for _, e := range result {
+				releaseElements(e)
+			}
+			return nil, fmt.Errorf("cannot unmarshal block metadata: %w", err)
+		}
+
+		// Process each block metadata
+		for i := range blockMetadataArray {
+			bm := &blockMetadataArray[i]
+
+			// Create elements for this block
+			elems := generateElements()
+
+			// Read user keys
+			compressedKeysBuf = bytes.ResizeOver(compressedKeysBuf, int(bm.keysBlock.size))
+			fs.MustReadData(p.keys, int64(bm.keysBlock.offset), compressedKeysBuf)
+
+			// Decode user keys directly using the stored encoding information
+			elems.userKeys, err = encoding.BytesToInt64List(elems.userKeys[:0], compressedKeysBuf, bm.keysEncodeType, bm.minKey, int(bm.count))
+			if err != nil {
+				releaseElements(elems)
+				for _, e := range result {
+					releaseElements(e)
+				}
+				return nil, fmt.Errorf("cannot decode user keys: %w", err)
+			}
+
+			// Read data payloads
+			compressedDataBuf = bytes.ResizeOver(compressedDataBuf, int(bm.dataBlock.size))
+			fs.MustReadData(p.data, int64(bm.dataBlock.offset), compressedDataBuf)
+
+			dataBuf, err = zstd.Decompress(dataBuf[:0], compressedDataBuf)
+			if err != nil {
+				releaseElements(elems)
+				for _, e := range result {
+					releaseElements(e)
+				}
+				return nil, fmt.Errorf("cannot decompress data block: %w", err)
+			}
+
+			// Decode data payloads - create a new decoder for each block to avoid state corruption
+			blockBytesDecoder := &encoding.BytesBlockDecoder{}
+			elems.data, err = blockBytesDecoder.Decode(elems.data[:0], dataBuf, bm.count)
+			if err != nil {
+				releaseElements(elems)
+				for _, e := range result {
+					releaseElements(e)
+				}
+				return nil, fmt.Errorf("cannot decode data payloads: %w", err)
+			}
+
+			// Initialize seriesIDs and tags slices
+			elems.seriesIDs = make([]common.SeriesID, int(bm.count))
+			elems.tags = make([][]*tag, int(bm.count))
+
+			// Fill seriesIDs - all elements in this block have the same seriesID
+			for j := range elems.seriesIDs {
+				elems.seriesIDs[j] = bm.seriesID
+			}
+
+			// Read tags for each tag name
+			for tagName := range bm.tagsBlocks {
+				err = p.readBlockTags(tagName, bm, elems)
+				if err != nil {
+					releaseElements(elems)
+					for _, e := range result {
+						releaseElements(e)
+					}
+					return nil, fmt.Errorf("cannot read tags for %s: %w", tagName, err)
+				}
+			}
+
+			result = append(result, elems)
+		}
+	}
+
+	return result, nil
+}
+
+// readBlockTags reads and decodes tag data for a specific tag in a block.
+func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements) error {
+	tagBlockInfo, exists := bm.tagsBlocks[tagName]
+	if !exists {
+		return fmt.Errorf("tag block info not found for tag: %s", tagName)
+	}
+
+	// Get tag metadata reader
+	tmReader, tmExists := p.getTagMetadataReader(tagName)
+	if !tmExists {
+		return fmt.Errorf("tag metadata reader not found for tag: %s", tagName)
+	}
+
+	// Get tag data reader
+	tdReader, tdExists := p.getTagDataReader(tagName)
+	if !tdExists {
+		return fmt.Errorf("tag data reader not found for tag: %s", tagName)
+	}
+
+	// Read tag metadata
+	tmData := make([]byte, tagBlockInfo.size)
+	fs.MustReadData(tmReader, int64(tagBlockInfo.offset), tmData)
+
+	tm, err := unmarshalTagMetadata(tmData)
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal tag metadata: %w", err)
+	}
+	defer releaseTagMetadata(tm)
+
+	// Read tag data
+	tdData := make([]byte, tm.dataBlock.size)
+	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), tdData)
+
+	// Decode tag values directly (no compression)
+	tagValues, err := decodeTagValues(tdData, tm.valueType, int(bm.count))
+	if err != nil {
+		return fmt.Errorf("cannot decode tag values: %w", err)
+	}
+
+	// Add tag values to elements (only for non-nil values)
+	for i, value := range tagValues {
+		if i >= len(elems.tags) {
+			break
+		}
+		// Skip nil values - they represent missing tags for this element
+		if value == nil {
+			continue
+		}
+		if elems.tags[i] == nil {
+			elems.tags[i] = make([]*tag, 0, 1)
+		}
+		newTag := generateTag()
+		newTag.name = tagName
+		newTag.value = value
+		newTag.valueType = tm.valueType
+		newTag.indexed = tm.indexed
+		elems.tags[i] = append(elems.tags[i], newTag)
+	}
+
+	return nil
 }
 
 // String returns a string representation of the part.
@@ -281,11 +444,6 @@ func (p *part) String() string {
 // getPartMetadata returns the part metadata.
 func (p *part) getPartMetadata() *partMetadata {
 	return p.partMetadata
-}
-
-// getBlockMetadata returns the block metadata slice.
-func (p *part) getBlockMetadata() []blockMetadata {
-	return p.blockMetadata
 }
 
 // getTagDataReader returns the tag data reader for the specified tag name.
@@ -446,10 +604,11 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 		if i == len(es.seriesIDs) || es.seriesIDs[i] != currentSeriesID {
 			// Extract elements for current series
 			seriesUserKeys := es.userKeys[blockStart:i]
+			seriesData := es.data[blockStart:i]
 			seriesTags := es.tags[blockStart:i]
 
 			// Write elements for this series
-			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesTags)
+			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesData, seriesTags)
 
 			if i < len(es.seriesIDs) {
 				currentSeriesID = es.seriesIDs[i]
@@ -473,10 +632,10 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, partPath string) {
 	fileSystem.MkdirPanicIfExist(partPath, storage.DirPerm)
 
 	// Write core files
-	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(partPath, metaFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(partPath, primaryFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.data.Buf, filepath.Join(partPath, dataFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.keys.Buf, filepath.Join(partPath, keysFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(partPath, metaFilename), storage.FilePerm)
 
 	// Write individual tag files
 	for tagName, td := range mp.tagData {
@@ -527,13 +686,16 @@ func openMemPart(mp *memPart) *part {
 		*p.partMetadata = *mp.partMetadata
 	}
 
-	// TODO: Read block metadata when blockWriter is implemented
-	// p.blockMetadata = mustReadBlockMetadata(p.blockMetadata[:0], &mp.primary)
+	// Load primary block metadata from meta buffer
+	if len(mp.meta.Buf) > 0 {
+		p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(nil, &mp.meta)
+	}
 
 	// Open data files as readers from memory buffers
 	p.primary = &mp.primary
 	p.data = &mp.data
 	p.keys = &mp.keys
+	p.meta = &mp.meta
 
 	// Open individual tag files if they exist
 	if mp.tagData != nil {
@@ -552,31 +714,6 @@ func openMemPart(mp *memPart) *part {
 		}
 	}
 	return p
-}
-
-// uncompressedElementSizeBytes calculates the uncompressed size of an element.
-// This is a utility function similar to the stream module.
-func uncompressedElementSizeBytes(index int, es *elements) uint64 {
-	// 8 bytes for user key
-	// 8 bytes for elementID
-	n := uint64(8 + 8)
-
-	// Add data payload size
-	if index < len(es.data) && es.data[index] != nil {
-		n += uint64(len(es.data[index]))
-	}
-
-	// Add tag sizes
-	if index < len(es.tags) {
-		for _, tag := range es.tags[index] {
-			n += uint64(len(tag.name))
-			if tag.value != nil {
-				n += uint64(len(tag.value))
-			}
-		}
-	}
-
-	return n
 }
 
 // partPath returns the path for a part with the given epoch.

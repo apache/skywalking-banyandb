@@ -19,12 +19,14 @@ package sidx
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 )
 
 func TestPartMetadata_Validation(t *testing.T) {
@@ -379,6 +381,48 @@ func TestValidateBlockMetadata(t *testing.T) {
 	}
 }
 
+// validateBlockMetadata validates ordering of blocks within a part.
+func validateBlockMetadata(blocks []blockMetadata) error {
+	if len(blocks) == 0 {
+		return nil
+	}
+
+	for i := 1; i < len(blocks); i++ {
+		prev := &blocks[i-1]
+		curr := &blocks[i]
+
+		// Validate individual blocks
+		if err := prev.validate(); err != nil {
+			return fmt.Errorf("block %d validation failed: %w", i-1, err)
+		}
+
+		// Check ordering: seriesID first, then minKey
+		if curr.seriesID < prev.seriesID {
+			return fmt.Errorf("blocks not ordered by seriesID: block %d seriesID (%d) < block %d seriesID (%d)",
+				i, curr.seriesID, i-1, prev.seriesID)
+		}
+
+		// For same seriesID, check key ordering
+		if curr.seriesID == prev.seriesID && curr.minKey < prev.minKey {
+			return fmt.Errorf("blocks not ordered by key: block %d minKey (%d) < block %d minKey (%d) for seriesID %d",
+				i, curr.minKey, i-1, prev.minKey, curr.seriesID)
+		}
+
+		// Check for overlapping key ranges within same seriesID
+		if curr.seriesID == prev.seriesID && curr.minKey <= prev.maxKey {
+			return fmt.Errorf("overlapping key ranges: block %d [%d, %d] overlaps with block %d [%d, %d] for seriesID %d",
+				i, curr.minKey, curr.maxKey, i-1, prev.minKey, prev.maxKey, curr.seriesID)
+		}
+	}
+
+	// Validate the last block
+	if err := blocks[len(blocks)-1].validate(); err != nil {
+		return fmt.Errorf("block %d validation failed: %w", len(blocks)-1, err)
+	}
+
+	return nil
+}
+
 func TestPartMetadata_Serialization(t *testing.T) {
 	original := &partMetadata{
 		CompressedSizeBytes:   1000,
@@ -425,14 +469,14 @@ func TestBlockMetadata_Serialization(t *testing.T) {
 	}
 
 	// Test marshaling
-	data, err := original.marshal()
-	require.NoError(t, err)
+	data := original.marshal(nil)
 	assert.NotEmpty(t, data)
 
 	// Test unmarshaling
-	restored, err := unmarshalBlockMetadata(data)
+	restoredArray, err := unmarshalBlockMetadata(nil, data)
 	require.NoError(t, err)
-	defer releaseBlockMetadata(restored)
+	require.Len(t, restoredArray, 1)
+	restored := &restoredArray[0]
 
 	// Verify all fields match
 	assert.Equal(t, original.seriesID, restored.seriesID)
@@ -638,4 +682,344 @@ func TestMetadata_Reset(t *testing.T) {
 	assert.Equal(t, dataBlock{}, bm.dataBlock)
 	assert.Equal(t, dataBlock{}, bm.keysBlock)
 	assert.Equal(t, 0, len(bm.tagsBlocks))
+}
+
+func TestBlockMetadata_CopyFrom(t *testing.T) {
+	tests := []struct {
+		name           string
+		source         *blockMetadata
+		target         *blockMetadata
+		expectedResult *blockMetadata
+		description    string
+	}{
+		{
+			name: "copy complete metadata",
+			source: &blockMetadata{
+				seriesID:         common.SeriesID(123),
+				minKey:           10,
+				maxKey:           100,
+				uncompressedSize: 2048,
+				count:            50,
+				keysEncodeType:   1,
+				dataBlock:        dataBlock{offset: 1000, size: 2048},
+				keysBlock:        dataBlock{offset: 3048, size: 512},
+				tagsBlocks: map[string]dataBlock{
+					"service_id": {offset: 3560, size: 256},
+					"endpoint":   {offset: 3816, size: 512},
+					"status":     {offset: 4328, size: 128},
+				},
+				tagProjection: []string{"service_id", "endpoint", "status"},
+			},
+			target: &blockMetadata{},
+			expectedResult: &blockMetadata{
+				seriesID:         common.SeriesID(123),
+				minKey:           10,
+				maxKey:           100,
+				uncompressedSize: 2048,
+				count:            50,
+				keysEncodeType:   1,
+				dataBlock:        dataBlock{offset: 1000, size: 2048},
+				keysBlock:        dataBlock{offset: 3048, size: 512},
+				tagsBlocks: map[string]dataBlock{
+					"service_id": {offset: 3560, size: 256},
+					"endpoint":   {offset: 3816, size: 512},
+					"status":     {offset: 4328, size: 128},
+				},
+				tagProjection: []string{"service_id", "endpoint", "status"},
+			},
+			description: "should copy all fields from source to target",
+		},
+		{
+			name: "copy to target with existing data",
+			source: &blockMetadata{
+				seriesID:         common.SeriesID(456),
+				minKey:           20,
+				maxKey:           200,
+				uncompressedSize: 4096,
+				count:            100,
+				keysEncodeType:   2,
+				dataBlock:        dataBlock{offset: 2000, size: 4096},
+				keysBlock:        dataBlock{offset: 6096, size: 1024},
+				tagsBlocks: map[string]dataBlock{
+					"new_tag": {offset: 7120, size: 512},
+				},
+				tagProjection: []string{"new_tag"},
+			},
+			target: &blockMetadata{
+				seriesID:         common.SeriesID(999),
+				minKey:           999,
+				maxKey:           9999,
+				uncompressedSize: 9999,
+				count:            9999,
+				keysEncodeType:   99,
+				dataBlock:        dataBlock{offset: 9999, size: 9999},
+				keysBlock:        dataBlock{offset: 9999, size: 9999},
+				tagsBlocks: map[string]dataBlock{
+					"old_tag": {offset: 9999, size: 9999},
+				},
+				tagProjection: []string{"old_tag"},
+			},
+			expectedResult: &blockMetadata{
+				seriesID:         common.SeriesID(456),
+				minKey:           20,
+				maxKey:           200,
+				uncompressedSize: 4096,
+				count:            100,
+				keysEncodeType:   2,
+				dataBlock:        dataBlock{offset: 2000, size: 4096},
+				keysBlock:        dataBlock{offset: 6096, size: 1024},
+				tagsBlocks: map[string]dataBlock{
+					"new_tag": {offset: 7120, size: 512},
+				},
+				tagProjection: []string{"new_tag"},
+			},
+			description: "should overwrite all existing data in target",
+		},
+		{
+			name:   "copy empty metadata",
+			source: &blockMetadata{},
+			target: &blockMetadata{},
+			expectedResult: &blockMetadata{
+				tagsBlocks:    map[string]dataBlock{},
+				tagProjection: []string{},
+			},
+			description: "should handle empty source metadata",
+		},
+		{
+			name: "copy with nil tagsBlocks in target",
+			source: &blockMetadata{
+				seriesID:         common.SeriesID(789),
+				minKey:           30,
+				maxKey:           300,
+				uncompressedSize: 1024,
+				count:            25,
+				keysEncodeType:   0,
+				dataBlock:        dataBlock{offset: 3000, size: 1024},
+				keysBlock:        dataBlock{offset: 4024, size: 256},
+				tagsBlocks: map[string]dataBlock{
+					"tag1": {offset: 4280, size: 128},
+				},
+				tagProjection: []string{"tag1"},
+			},
+			target: &blockMetadata{
+				tagsBlocks: nil, // nil map
+			},
+			expectedResult: &blockMetadata{
+				seriesID:         common.SeriesID(789),
+				minKey:           30,
+				maxKey:           300,
+				uncompressedSize: 1024,
+				count:            25,
+				keysEncodeType:   0,
+				dataBlock:        dataBlock{offset: 3000, size: 1024},
+				keysBlock:        dataBlock{offset: 4024, size: 256},
+				tagsBlocks: map[string]dataBlock{
+					"tag1": {offset: 4280, size: 128},
+				},
+				tagProjection: []string{"tag1"},
+			},
+			description: "should initialize nil tagsBlocks map in target",
+		},
+		{
+			name: "copy with empty tagsBlocks in target",
+			source: &blockMetadata{
+				seriesID:         common.SeriesID(111),
+				minKey:           40,
+				maxKey:           400,
+				uncompressedSize: 512,
+				count:            10,
+				keysEncodeType:   3,
+				dataBlock:        dataBlock{offset: 4000, size: 512},
+				keysBlock:        dataBlock{offset: 4512, size: 128},
+				tagsBlocks:       map[string]dataBlock{},
+				tagProjection:    []string{},
+			},
+			target: &blockMetadata{
+				tagsBlocks: map[string]dataBlock{
+					"old_tag1": {offset: 9999, size: 9999},
+					"old_tag2": {offset: 9999, size: 9999},
+				},
+				tagProjection: []string{"old_tag1", "old_tag2"},
+			},
+			expectedResult: &blockMetadata{
+				seriesID:         common.SeriesID(111),
+				minKey:           40,
+				maxKey:           400,
+				uncompressedSize: 512,
+				count:            10,
+				keysEncodeType:   3,
+				dataBlock:        dataBlock{offset: 4000, size: 512},
+				keysBlock:        dataBlock{offset: 4512, size: 128},
+				tagsBlocks:       map[string]dataBlock{},
+				tagProjection:    []string{},
+			},
+			description: "should clear existing tagsBlocks and tagProjection in target",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a copy of the target to avoid modifying the original test data
+			targetCopy := &blockMetadata{}
+			if tt.target.tagsBlocks != nil {
+				targetCopy.tagsBlocks = make(map[string]dataBlock)
+				for k, v := range tt.target.tagsBlocks {
+					targetCopy.tagsBlocks[k] = v
+				}
+			}
+			if tt.target.tagProjection != nil {
+				targetCopy.tagProjection = make([]string, len(tt.target.tagProjection))
+				copy(targetCopy.tagProjection, tt.target.tagProjection)
+			}
+			targetCopy.seriesID = tt.target.seriesID
+			targetCopy.minKey = tt.target.minKey
+			targetCopy.maxKey = tt.target.maxKey
+			targetCopy.uncompressedSize = tt.target.uncompressedSize
+			targetCopy.count = tt.target.count
+			targetCopy.keysEncodeType = tt.target.keysEncodeType
+			targetCopy.dataBlock = tt.target.dataBlock
+			targetCopy.keysBlock = tt.target.keysBlock
+
+			// Execute copyFrom
+			targetCopy.copyFrom(tt.source)
+
+			// Verify all fields are copied correctly
+			assert.Equal(t, tt.expectedResult.seriesID, targetCopy.seriesID, "seriesID mismatch")
+			assert.Equal(t, tt.expectedResult.minKey, targetCopy.minKey, "minKey mismatch")
+			assert.Equal(t, tt.expectedResult.maxKey, targetCopy.maxKey, "maxKey mismatch")
+			assert.Equal(t, tt.expectedResult.uncompressedSize, targetCopy.uncompressedSize, "uncompressedSize mismatch")
+			assert.Equal(t, tt.expectedResult.count, targetCopy.count, "count mismatch")
+			assert.Equal(t, tt.expectedResult.keysEncodeType, targetCopy.keysEncodeType, "keysEncodeType mismatch")
+			assert.Equal(t, tt.expectedResult.dataBlock, targetCopy.dataBlock, "dataBlock mismatch")
+			assert.Equal(t, tt.expectedResult.keysBlock, targetCopy.keysBlock, "keysBlock mismatch")
+
+			// Verify tagsBlocks
+			if tt.expectedResult.tagsBlocks == nil {
+				assert.Nil(t, targetCopy.tagsBlocks, "tagsBlocks should be nil")
+			} else {
+				assert.NotNil(t, targetCopy.tagsBlocks, "tagsBlocks should not be nil")
+				assert.Equal(t, len(tt.expectedResult.tagsBlocks), len(targetCopy.tagsBlocks), "tagsBlocks length mismatch")
+				for k, v := range tt.expectedResult.tagsBlocks {
+					assert.Equal(t, v, targetCopy.tagsBlocks[k], "tagsBlocks[%s] mismatch", k)
+				}
+			}
+
+			// Verify tagProjection
+			assert.Equal(t, len(tt.expectedResult.tagProjection), len(targetCopy.tagProjection), "tagProjection length mismatch")
+			for i, v := range tt.expectedResult.tagProjection {
+				assert.Equal(t, v, targetCopy.tagProjection[i], "tagProjection[%d] mismatch", i)
+			}
+		})
+	}
+}
+
+func TestBlockMetadata_CopyFrom_DeepCopy(t *testing.T) {
+	// Test that copyFrom creates a deep copy, not just references
+	source := &blockMetadata{
+		seriesID:         common.SeriesID(123),
+		minKey:           10,
+		maxKey:           100,
+		uncompressedSize: 2048,
+		count:            50,
+		keysEncodeType:   1,
+		dataBlock:        dataBlock{offset: 1000, size: 2048},
+		keysBlock:        dataBlock{offset: 3048, size: 512},
+		tagsBlocks: map[string]dataBlock{
+			"tag1": {offset: 3560, size: 256},
+		},
+		tagProjection: []string{"tag1"},
+	}
+
+	target := &blockMetadata{}
+	target.copyFrom(source)
+
+	// Verify it's a deep copy by modifying the source
+	source.seriesID = common.SeriesID(999)
+	source.minKey = 999
+	source.maxKey = 9999
+	source.uncompressedSize = 9999
+	source.count = 9999
+	source.keysEncodeType = 99
+	source.dataBlock = dataBlock{offset: 9999, size: 9999}
+	source.keysBlock = dataBlock{offset: 9999, size: 9999}
+	source.tagsBlocks["tag1"] = dataBlock{offset: 9999, size: 9999}
+	source.tagProjection[0] = "modified_tag"
+
+	// Target should remain unchanged
+	assert.Equal(t, common.SeriesID(123), target.seriesID, "target seriesID should not change when source is modified")
+	assert.Equal(t, int64(10), target.minKey, "target minKey should not change when source is modified")
+	assert.Equal(t, int64(100), target.maxKey, "target maxKey should not change when source is modified")
+	assert.Equal(t, uint64(2048), target.uncompressedSize, "target uncompressedSize should not change when source is modified")
+	assert.Equal(t, uint64(50), target.count, "target count should not change when source is modified")
+	assert.Equal(t, encoding.EncodeType(1), target.keysEncodeType, "target keysEncodeType should not change when source is modified")
+	assert.Equal(t, dataBlock{offset: 1000, size: 2048}, target.dataBlock, "target dataBlock should not change when source is modified")
+	assert.Equal(t, dataBlock{offset: 3048, size: 512}, target.keysBlock, "target keysBlock should not change when source is modified")
+	assert.Equal(t, dataBlock{offset: 3560, size: 256}, target.tagsBlocks["tag1"], "target tagsBlocks should not change when source is modified")
+	assert.Equal(t, "tag1", target.tagProjection[0], "target tagProjection should not change when source is modified")
+}
+
+func TestBlockMetadata_CopyFrom_EdgeCases(t *testing.T) {
+	t.Run("copy from nil source", func(t *testing.T) {
+		target := &blockMetadata{
+			seriesID: 123,
+			minKey:   10,
+			maxKey:   100,
+		}
+
+		// This should not panic and should leave target unchanged
+		assert.NotPanics(t, func() {
+			target.copyFrom(nil)
+		})
+
+		// Target should remain unchanged
+		assert.Equal(t, common.SeriesID(123), target.seriesID)
+		assert.Equal(t, int64(10), target.minKey)
+		assert.Equal(t, int64(100), target.maxKey)
+	})
+
+	t.Run("copy to nil target", func(t *testing.T) {
+		source := &blockMetadata{
+			seriesID: 456,
+			minKey:   20,
+			maxKey:   200,
+		}
+
+		// This should panic
+		assert.Panics(t, func() {
+			var target *blockMetadata
+			target.copyFrom(source)
+		})
+	})
+
+	t.Run("copy with very large values", func(t *testing.T) {
+		source := &blockMetadata{
+			seriesID:         common.SeriesID(^uint64(0)),    // Max uint64
+			minKey:           ^int64(0),                      // Min int64
+			maxKey:           ^int64(0) >> 1,                 // Max int64
+			uncompressedSize: ^uint64(0),                     // Max uint64
+			count:            ^uint64(0),                     // Max uint64
+			keysEncodeType:   encoding.EncodeType(^uint8(0)), // Max uint8
+			dataBlock:        dataBlock{offset: ^uint64(0), size: ^uint64(0)},
+			keysBlock:        dataBlock{offset: ^uint64(0), size: ^uint64(0)},
+			tagsBlocks: map[string]dataBlock{
+				"large_tag": {offset: ^uint64(0), size: ^uint64(0)},
+			},
+			tagProjection: []string{"large_tag"},
+		}
+
+		target := &blockMetadata{}
+		target.copyFrom(source)
+
+		// Verify all large values are copied correctly
+		assert.Equal(t, source.seriesID, target.seriesID)
+		assert.Equal(t, source.minKey, target.minKey)
+		assert.Equal(t, source.maxKey, target.maxKey)
+		assert.Equal(t, source.uncompressedSize, target.uncompressedSize)
+		assert.Equal(t, source.count, target.count)
+		assert.Equal(t, source.keysEncodeType, target.keysEncodeType)
+		assert.Equal(t, source.dataBlock, target.dataBlock)
+		assert.Equal(t, source.keysBlock, target.keysBlock)
+		assert.Equal(t, source.tagsBlocks, target.tagsBlocks)
+		assert.Equal(t, source.tagProjection, target.tagProjection)
+	})
 }

@@ -425,7 +425,7 @@ func TestSnapshotReplacement_Basic(t *testing.T) {
 			SeriesID: common.SeriesID(i + 1),
 			Key:      int64(i),
 			Data:     []byte(fmt.Sprintf("test-data-%d", i)),
-			Tags:     []Tag{{name: "test", value: []byte("snapshot-replacement")}},
+			Tags:     []Tag{{Name: "test", Value: []byte("snapshot-replacement")}},
 		}
 
 		if err := sidx.Write(ctx, []WriteRequest{req}); err != nil {
@@ -512,8 +512,8 @@ func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
 				Key:      int64(1000 + i),
 				Data:     []byte(fmt.Sprintf("replacement-data-%d", i)),
 				Tags: []Tag{
-					{name: "test", value: []byte("replacement")},
-					{name: "sequence", value: []byte(fmt.Sprintf("%d", i))},
+					{Name: "test", Value: []byte("replacement")},
+					{Name: "sequence", Value: []byte(fmt.Sprintf("%d", i))},
 				},
 			},
 		}
@@ -601,8 +601,8 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 							Key:      int64(id*1000 + j),
 							Data:     []byte(fmt.Sprintf("race-test-%d-%d", id, j)),
 							Tags: []Tag{
-								{name: "goroutine", value: []byte(fmt.Sprintf("%d", id))},
-								{name: "operation", value: []byte(fmt.Sprintf("%d", j))},
+								{Name: "goroutine", Value: []byte(fmt.Sprintf("%d", id))},
+								{Name: "operation", Value: []byte(fmt.Sprintf("%d", j))},
 							},
 						},
 					}
@@ -613,11 +613,11 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 				case 2:
 					// Query operation - accesses current snapshot
 					queryReq := QueryRequest{
-						Name: "test-index",
+						SeriesIDs: []common.SeriesID{1},
 					}
-					result, err := sidx.Query(ctx, queryReq)
-					if err == nil && result != nil {
-						result.Release()
+					_, err := sidx.Query(ctx, queryReq)
+					if err != nil {
+						t.Errorf("query failed: %v", err)
 					}
 				}
 			}
@@ -658,9 +658,9 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 					Key:      int64(i*100 + j),
 					Data:     []byte(fmt.Sprintf("leak-test-batch-%d-write-%d", i, j)),
 					Tags: []Tag{
-						{name: "batch", value: []byte(fmt.Sprintf("%d", i))},
-						{name: "write", value: []byte(fmt.Sprintf("%d", j))},
-						{name: "test", value: []byte("memory-leak-prevention")},
+						{Name: "batch", Value: []byte(fmt.Sprintf("%d", i))},
+						{Name: "write", Value: []byte(fmt.Sprintf("%d", j))},
+						{Name: "test", Value: []byte("memory-leak-prevention")},
 					},
 				},
 			}
@@ -720,8 +720,8 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 						Key:      int64(writerID*1000 + j + 5000),
 						Data:     []byte(fmt.Sprintf("concurrent-leak-test-%d-%d", writerID, j)),
 						Tags: []Tag{
-							{name: "writer", value: []byte(fmt.Sprintf("%d", writerID))},
-							{name: "concurrent", value: []byte("true")},
+							{Name: "writer", Value: []byte(fmt.Sprintf("%d", writerID))},
+							{Name: "concurrent", Value: []byte("true")},
 						},
 					},
 				}
