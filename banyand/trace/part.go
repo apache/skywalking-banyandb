@@ -484,7 +484,10 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 	mp.tagType.mustWriteTagType(fileSystem, path)
 	mp.traceIDFilter.mustWriteTraceIDFilter(fileSystem, path)
-	releaseBloomFilter(mp.traceIDFilter.filter)
+	if mp.traceIDFilter.filter != nil {
+		releaseBloomFilter(mp.traceIDFilter.filter)
+		mp.traceIDFilter.filter = nil
+	}
 
 	fileSystem.SyncPath(path)
 }
