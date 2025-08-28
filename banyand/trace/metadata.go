@@ -20,10 +20,12 @@ package trace
 import (
 	"context"
 	"fmt"
+	"path"
 	"time"
 
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
@@ -34,7 +36,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -91,7 +95,10 @@ func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.
 }
 
 func (sr *schemaRepo) start() {
-	sr.l.Info().Str("path", sr.path).Msg("starting trace metadata repository")
+	sr.Watcher()
+	sr.metadata.
+		RegisterHandler("trace", schema.KindGroup|schema.KindTrace|schema.KindIndexRuleBinding|schema.KindIndexRule,
+			sr)
 }
 
 func (sr *schemaRepo) Trace(metadata *commonv1.Metadata) (*trace, bool) {
@@ -103,8 +110,16 @@ func (sr *schemaRepo) Trace(metadata *commonv1.Metadata) (*trace, bool) {
 	return t, ok
 }
 
-func (sr *schemaRepo) GetRemovalSegmentsTimeRange(_ string) *timestamp.TimeRange {
-	panic("not implemented")
+func (sr *schemaRepo) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
+	g, ok := sr.LoadGroup(group)
+	if !ok {
+		return nil
+	}
+	db := g.SupplyTSDB()
+	if db == nil {
+		return nil
+	}
+	return db.(storage.TSDB[*tsTable, option]).GetExpiredSegmentsTimeRange()
 }
 
 func (sr *schemaRepo) OnInit(kinds []schema.Kind) (bool, []int64) {
@@ -260,6 +275,15 @@ type supplier struct {
 }
 
 func newSupplier(path string, svc *standalone, nodeLabels map[string]string) *supplier {
+	if svc.pm == nil {
+		svc.l.Panic().Msg("CRITICAL: svc.pm is nil in newSupplier")
+	}
+	opt := svc.option
+	opt.protector = svc.pm
+
+	if opt.protector == nil {
+		svc.l.Panic().Msg("CRITICAL: opt.protector is still nil after assignment")
+	}
 	return &supplier{
 		metadata:   svc.metadata,
 		omr:        svc.omr,
@@ -267,7 +291,7 @@ func newSupplier(path string, svc *standalone, nodeLabels map[string]string) *su
 		l:          svc.l,
 		nodeLabels: nodeLabels,
 		path:       path,
-		option:     svc.option,
+		option:     opt,
 	}
 }
 
@@ -282,8 +306,64 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 	return s.metadata.TraceRegistry().GetTrace(ctx, md)
 }
 
-func (s *supplier) OpenDB(_ *commonv1.Group) (resourceSchema.DB, error) {
-	panic("not implemented")
+func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {
+	name := groupSchema.Metadata.Group
+	p := common.Position{
+		Module:   "trace",
+		Database: name,
+	}
+	ro := groupSchema.ResourceOpts
+	if ro == nil {
+		return nil, fmt.Errorf("no resource opts in group %s", name)
+	}
+	shardNum := ro.ShardNum
+	ttl := ro.Ttl
+	segInterval := ro.SegmentInterval
+	segmentIdleTimeout := time.Duration(0)
+	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
+		var ttlNum uint32
+		for _, st := range ro.Stages {
+			if st.Ttl.Unit != ro.Ttl.Unit {
+				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
+			}
+			selector, err := pub.ParseLabelSelector(st.NodeSelector)
+			if err != nil {
+				return nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
+			}
+			ttlNum += st.Ttl.Num
+			if !selector.Matches(s.nodeLabels) {
+				continue
+			}
+			ttl.Num += ttlNum
+			shardNum = st.ShardNum
+			segInterval = st.SegmentInterval
+			if st.Close {
+				segmentIdleTimeout = 5 * time.Minute
+			}
+			break
+		}
+	}
+	group := groupSchema.Metadata.Group
+	opts := storage.TSDBOpts[*tsTable, option]{
+		ShardNum:                       shardNum,
+		Location:                       path.Join(s.path, group),
+		TSTableCreator:                 newTSTable,
+		TableMetrics:                   s.newMetrics(p),
+		SegmentInterval:                storage.MustToIntervalRule(segInterval),
+		TTL:                            storage.MustToIntervalRule(ttl),
+		Option:                         s.option,
+		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
+		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
+		StorageMetricsFactory:          s.omr.With(traceScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
+		SegmentIdleTimeout:             segmentIdleTimeout,
+		MemoryLimit:                    s.pm.GetLimit(),
+	}
+	return storage.OpenTSDB(
+		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
+			return p
+		}),
+		opts, nil, group,
+	)
 }
 
 // queueSupplier is the supplier for liaison service.
@@ -299,6 +379,15 @@ type queueSupplier struct {
 }
 
 func newQueueSupplier(path string, svc *liaison, traceDataNodeRegistry grpc.NodeRegistry) *queueSupplier {
+	if svc.pm == nil {
+		svc.l.Panic().Msg("CRITICAL: svc.pm is nil in newSupplier")
+	}
+	opt := svc.option
+	opt.protector = svc.pm
+
+	if opt.protector == nil {
+		svc.l.Panic().Msg("CRITICAL: opt.protector is still nil after assignment")
+	}
 	return &queueSupplier{
 		metadata:              svc.metadata,
 		omr:                   svc.omr,
@@ -306,7 +395,7 @@ func newQueueSupplier(path string, svc *liaison, traceDataNodeRegistry grpc.Node
 		traceDataNodeRegistry: traceDataNodeRegistry,
 		l:                     svc.l,
 		path:                  path,
-		option:                svc.option,
+		option:                opt,
 	}
 }
 
@@ -321,6 +410,48 @@ func (qs *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.R
 	return qs.metadata.TraceRegistry().GetTrace(ctx, md)
 }
 
-func (qs *queueSupplier) OpenDB(_ *commonv1.Group) (resourceSchema.DB, error) {
-	panic("not implemented")
+func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {
+	name := groupSchema.Metadata.Group
+	p := common.Position{
+		Module:   "trace",
+		Database: name,
+	}
+	ro := groupSchema.ResourceOpts
+	if ro == nil {
+		return nil, fmt.Errorf("no resource opts in group %s", name)
+	}
+	shardNum := ro.ShardNum
+	group := groupSchema.Metadata.Group
+	opts := wqueue.Opts[*tsTable, option]{
+		Group:           group,
+		ShardNum:        shardNum,
+		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
+		Location:        path.Join(qs.path, group),
+		Option:          qs.option,
+		Metrics:         qs.newMetrics(p),
+		SubQueueCreator: newWriteQueue,
+		GetNodes: func(shardID common.ShardID) []string {
+			copies := ro.Replicas + 1
+			nodeSet := make(map[string]struct{}, copies)
+			for i := uint32(0); i < copies; i++ {
+				nodeID, err := qs.traceDataNodeRegistry.Locate(group, "", uint32(shardID), i)
+				if err != nil {
+					qs.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Uint32("copy", i).Msg("failed to locate node")
+					return nil
+				}
+				nodeSet[nodeID] = struct{}{}
+			}
+			nodes := make([]string, 0, len(nodeSet))
+			for nodeID := range nodeSet {
+				nodes = append(nodes, nodeID)
+			}
+			return nodes
+		},
+	}
+	return wqueue.Open(
+		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
+			return p
+		}),
+		opts, group,
+	)
 }

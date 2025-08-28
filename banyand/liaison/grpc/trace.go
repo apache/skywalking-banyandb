@@ -89,11 +89,11 @@ func (s *traceService) validateTimestamp(writeEntity *tracev1.WriteRequest) erro
 
 func (s *traceService) validateMetadata(writeEntity *tracev1.WriteRequest) error {
 	if writeEntity.Metadata.ModRevision > 0 {
-		traceCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
+		traceCache, existed := s.entityRepo.getTrace(getID(writeEntity.GetMetadata()))
 		if !existed {
 			return errors.New("trace schema not found")
 		}
-		if writeEntity.Metadata.ModRevision != traceCache.ModRevision {
+		if writeEntity.Metadata.ModRevision != traceCache.GetMetadata().GetModRevision() {
 			return errors.New("expired trace schema")
 		}
 	}

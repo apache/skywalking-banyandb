@@ -31,10 +31,6 @@
         {
             "name": "timestamp",
             "type": "TAG_TYPE_TIMESTAMP"
-        },
-        {
-            "name": "data_binary",
-            "type": "TAG_TYPE_DATA_BINARY"
         }
     ],
     "trace_id_tag_name": "trace_id",

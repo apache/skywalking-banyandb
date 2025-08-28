@@ -48,12 +48,11 @@ const (
 var traceScope = observability.RootScope.SubScope("trace")
 
 type option struct {
-	mergePolicy              *mergePolicy
-	protector                protector.Memory
-	tire2Client              queue.Client
-	seriesCacheMaxSize       run.Bytes
-	flushTimeout             time.Duration
-	elementIndexFlushTimeout time.Duration
+	mergePolicy        *mergePolicy
+	protector          protector.Memory
+	tire2Client        queue.Client
+	seriesCacheMaxSize run.Bytes
+	flushTimeout       time.Duration
 }
 
 // Service allows inspecting the trace data.

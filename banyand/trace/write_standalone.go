@@ -186,7 +186,7 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 	}
 
 	is := stm.indexSchema.Load().(indexSchema)
-	if len(is.indexRuleLocators) != len(stm.GetSchema().GetTags()) {
+	if len(is.indexRuleLocators) > len(stm.GetSchema().GetTags()) {
 		return fmt.Errorf("metadata crashed, tag rule length %d, tag length %d",
 			len(is.indexRuleLocators), len(stm.GetSchema().GetTags()))
 	}

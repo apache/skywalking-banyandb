@@ -1,0 +1,177 @@
+[
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "1"
+                }
+            },
+            {
+                "int": {
+                    "value": 1
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_instance_1"
+                }
+            },
+            {
+                "str": {
+                    "value": "/home_endpoint"
+                }
+            },
+            {
+                "int": {
+                    "value": 1000
+                }
+            }
+        ],
+        "span": "YWJjMTIzIT8kKiYoKSctPUB+"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "2"
+                }
+            },
+            {
+                "int": {
+                    "value": 1
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_instance_2"
+                }
+            },
+            {
+                "str": {
+                    "value": "/product_endpoint"
+                }
+            },
+            {
+                "int": {
+                    "value": 500
+                }
+            }
+        ],
+        "span": "YWJjMTIzIT8kKiYoKSctPUB+"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "3"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_instance_1"
+                }
+            },
+            {
+                "str": {
+                    "value": "/home_endpoint"
+                }
+            },
+            {
+                "int": {
+                    "value": 30
+                }
+            }
+        ],
+        "span": "YWJjMTIzIT8kKiYoKSctPUB+"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "4"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_instance_3"
+                }
+            },
+            {
+                "str": {
+                    "value": "/price_endpoint"
+                }
+            },
+            {
+                "int": {
+                    "value": 60
+                }
+            }
+        ],
+        "span": "YWJjMTIzIT8kKiYoKSctPUB+"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "5"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "webapp_instance_1"
+                }
+            },
+            {
+                "str": {
+                    "value": "/item_endpoint"
+                }
+            },
+            {
+                "int": {
+                    "value": 300
+                }
+            }
+        ],
+        "span": "YWJjMTIzIT8kKiYoKSctPUB+"
+    }
+]

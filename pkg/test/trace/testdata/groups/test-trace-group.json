@@ -1,0 +1,19 @@
+{
+    "metadata": {
+        "name": "test-trace-group"
+    },
+    "catalog": "CATALOG_TRACE",
+    "resource_opts": {
+        "shard_num": 2,
+        "replicas": 1,
+        "segment_interval": {
+            "unit": "UNIT_DAY",
+            "num": 1
+        },
+        "ttl": {
+            "unit": "UNIT_DAY",
+            "num": 3
+        }
+    },
+    "updated_at": "2021-04-15T01:30:15.01Z"
+}

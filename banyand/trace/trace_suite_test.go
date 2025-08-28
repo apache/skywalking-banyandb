@@ -33,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
-	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	testtrace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 )
 
 func TestTrace(t *testing.T) {
@@ -57,7 +57,7 @@ func (p *preloadTraceService) Name() string {
 }
 
 func (p *preloadTraceService) PreRun(ctx context.Context) error {
-	return teststream.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
+	return testtrace.PreloadSchema(ctx, p.metaSvc.SchemaRegistry())
 }
 
 type services struct {

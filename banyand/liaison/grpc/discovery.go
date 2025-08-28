@@ -202,26 +202,6 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	var l partition.Locator
 	var id identity
 	var modRevision int64
-	switch schemaMetadata.Kind {
-	case schema.KindMeasure:
-		measure := schemaMetadata.Spec.(*databasev1.Measure)
-		modRevision = measure.GetMetadata().GetModRevision()
-		l = partition.NewEntityLocator(measure.TagFamilies, measure.Entity, modRevision)
-		id = getID(measure.GetMetadata())
-	case schema.KindStream:
-		stream := schemaMetadata.Spec.(*databasev1.Stream)
-		modRevision = stream.GetMetadata().GetModRevision()
-		l = partition.NewEntityLocator(stream.TagFamilies, stream.Entity, modRevision)
-		id = getID(stream.GetMetadata())
-	case schema.KindTrace:
-		trace := schemaMetadata.Spec.(*databasev1.Trace)
-		modRevision = trace.GetMetadata().GetModRevision()
-		// For trace, we don't need entity-based partitioning, just store metadata
-		l = partition.Locator{ModRevision: modRevision}
-		id = getID(trace.GetMetadata())
-	default:
-		return
-	}
 	if le := e.log.Debug(); le.Enabled() {
 		var kind string
 		switch schemaMetadata.Kind {
@@ -240,16 +220,20 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 			Str("kind", kind).
 			Msg("entity added or updated")
 	}
-	e.RWMutex.Lock()
-	defer e.RWMutex.Unlock()
-	e.entitiesMap[id] = partition.Locator{TagLocators: l.TagLocators, ModRevision: modRevision}
 	switch schemaMetadata.Kind {
 	case schema.KindMeasure:
 		measure := schemaMetadata.Spec.(*databasev1.Measure)
-		e.measureMap[id] = measure
-		delete(e.traceMap, id) // Ensure trace is not stored for measures
+		modRevision = measure.GetMetadata().GetModRevision()
+		l = partition.NewEntityLocator(measure.TagFamilies, measure.Entity, modRevision)
+		id = getID(measure.GetMetadata())
+	case schema.KindStream:
+		stream := schemaMetadata.Spec.(*databasev1.Stream)
+		modRevision = stream.GetMetadata().GetModRevision()
+		l = partition.NewEntityLocator(stream.TagFamilies, stream.Entity, modRevision)
+		id = getID(stream.GetMetadata())
 	case schema.KindTrace:
 		trace := schemaMetadata.Spec.(*databasev1.Trace)
+		id = getID(trace.GetMetadata())
 		e.traceMap[id] = trace
 		// Pre-compute trace ID tag index
 		traceIDTagName := trace.GetTraceIdTagName()
@@ -261,10 +245,19 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 			}
 		}
 		e.traceIDIndexMap[id] = traceIDIndex
-		delete(e.measureMap, id) // Ensure measure is not stored for traces
+		return
 	default:
+		return
+	}
+
+	e.RWMutex.Lock()
+	defer e.RWMutex.Unlock()
+	e.entitiesMap[id] = partition.Locator{TagLocators: l.TagLocators, ModRevision: modRevision}
+	if schemaMetadata.Kind == schema.KindMeasure {
+		measure := schemaMetadata.Spec.(*databasev1.Measure)
+		e.measureMap[id] = measure
+	} else {
 		delete(e.measureMap, id) // Ensure measure is not stored for streams
-		delete(e.traceMap, id)   // Ensure trace is not stored for streams
 	}
 }
 
