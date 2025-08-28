@@ -24,6 +24,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -127,6 +128,15 @@ func (s *standalone) PreRun(_ context.Context) error {
 
 	// Initialize snapshot directory
 	s.snapshotDir = filepath.Join(s.dataPath, "snapshot")
+
+	// Set up write callback handler
+	if s.pipeline != nil {
+		writeListener := setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
+		err := s.pipeline.Subscribe(data.TopicTraceWrite, writeListener)
+		if err != nil {
+			return err
+		}
+	}
 
 	s.l.Info().
 		Str("root", s.root).

@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -57,6 +58,10 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	streamSvc, err := stream.NewService(metaSvc, dataPipeline, metricSvc, pm, nil)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
+	}
+	traceSvc, err := trace.NewService(metaSvc, dataPipeline, metricSvc, pm)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate trace service")
 	}
 	var srvMetrics *grpcprom.ServerMetrics
 	srvMetrics.UnaryServerInterceptor()
@@ -88,6 +93,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		propertySvc,
 		measureSvc,
 		streamSvc,
+		traceSvc,
 		q,
 		grpcServer,
 		httpServer,
