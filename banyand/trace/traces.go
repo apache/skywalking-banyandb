@@ -157,7 +157,7 @@ func (t *traces) reset() {
 	t.timestamps = t.timestamps[:0]
 	for i := range t.tags {
 		for j := range t.tags[i] {
-			t.tags[i][j].reset()
+			releaseTagValue(t.tags[i][j])
 		}
 	}
 	t.tags = t.tags[:0]

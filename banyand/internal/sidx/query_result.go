@@ -25,6 +25,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
@@ -247,7 +248,7 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 			continue // Skip missing tags
 		}
 
-		if !qr.loadTagData(tmpBlock, p, tagName, &tagBlockInfo, int(bm.count)) {
+		if !qr.loadTagData(tmpBlock, p, tagName, &tagBlockInfo, int(bm.count), decoder) {
 			// Continue loading other tags even if one fails
 			continue
 		}
@@ -257,7 +258,7 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 }
 
 // loadTagData loads data for a specific tag, following the pattern from readBlockTags.
-func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tagBlockInfo *dataBlock, count int) bool {
+func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tagBlockInfo *dataBlock, count int, decoder *encoding.BytesBlockDecoder) bool {
 	// Get tag metadata reader
 	tmReader, tmExists := p.getTagMetadataReader(tagName)
 	if !tmExists {
@@ -302,18 +303,17 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 	bb2.Buf = bytes.ResizeOver(bb2.Buf[:0], int(tm.dataBlock.size))
 	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), bb2.Buf)
 
+	// Create tag data structure and populate block
+	td := generateTagData()
 	// Decode tag values directly (no compression)
-	tagValues, err := decodeTagValues(bb2.Buf, tm.valueType, count)
+	td.values, err = internalencoding.DecodeTagValues(td.values[:0], decoder, bb2, tm.valueType, count)
 	if err != nil {
 		return false
 	}
 
-	// Create tag data structure and populate block
-	td := generateTagData()
 	td.name = tagName
 	td.valueType = tm.valueType
 	td.indexed = tm.indexed
-	td.values = tagValues
 
 	// Set min/max for int64 tags
 	if tm.valueType == pbv1.ValueTypeInt64 {
@@ -324,7 +324,7 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 	// Create bloom filter for indexed tags if needed
 	if tm.indexed {
 		td.filter = generateBloomFilter(count)
-		for _, value := range tagValues {
+		for _, value := range td.values {
 			if value != nil {
 				td.filter.Add(value)
 			}

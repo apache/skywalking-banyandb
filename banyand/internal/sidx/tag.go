@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -184,14 +183,6 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 	bf.SetBits(bits)
 
 	return bf, nil
-}
-
-func encodeTagValues(values [][]byte, valueType pbv1.ValueType) ([]byte, error) {
-	return encoding.EncodeTagValues(values, valueType)
-}
-
-func decodeTagValues(data []byte, valueType pbv1.ValueType, count int) ([][]byte, error) {
-	return encoding.DecodeTagValues(data, valueType, count)
 }
 
 // updateMinMax updates min/max values for int64 tags.

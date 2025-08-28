@@ -23,6 +23,7 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -278,15 +279,15 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	}()
 
 	// Encode tag values using the encoding module
-	encodedData, err := encodeTagValues(td.values, td.valueType)
+	err := internalencoding.EncodeTagValues(bb, td.values, td.valueType)
 	if err != nil {
 		panic(fmt.Sprintf("failed to encode tag values: %v", err))
 	}
 
 	// Write tag data without compression
 	tm.dataBlock.offset = tdw.bytesWritten
-	tm.dataBlock.size = uint64(len(encodedData))
-	tdw.MustWrite(encodedData)
+	tm.dataBlock.size = uint64(len(bb.Buf))
+	tdw.MustWrite(bb.Buf)
 
 	// Write bloom filter if indexed
 	if td.indexed && td.filter != nil {

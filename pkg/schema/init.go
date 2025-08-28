@@ -33,14 +33,15 @@ type revisionContext struct {
 	group            int64
 	measure          int64
 	stream           int64
+	trace            int64
 	indexRule        int64
 	indexRuleBinding int64
 	topNAgg          int64
 }
 
 func (r revisionContext) String() string {
-	return fmt.Sprintf("Group: %d, Measure: %d, Stream: %d, IndexRule: %d, IndexRuleBinding: %d, TopNAgg: %d",
-		r.group, r.measure, r.stream, r.indexRule, r.indexRuleBinding, r.topNAgg)
+	return fmt.Sprintf("Group: %d, Measure: %d, Stream: %d, Trace: %d, IndexRule: %d, IndexRuleBinding: %d, TopNAgg: %d",
+		r.group, r.measure, r.stream, r.trace, r.indexRule, r.indexRuleBinding, r.topNAgg)
 }
 
 type revisionContextKey struct{}
@@ -48,7 +49,7 @@ type revisionContextKey struct{}
 var revCtxKey = revisionContextKey{}
 
 func (sr *schemaRepo) Init(kind schema.Kind) ([]string, []int64) {
-	if kind != schema.KindMeasure && kind != schema.KindStream {
+	if kind != schema.KindMeasure && kind != schema.KindStream && kind != schema.KindTrace {
 		return nil, nil
 	}
 	catalog := sr.getCatalog(kind)
@@ -74,6 +75,10 @@ func (sr *schemaRepo) Init(kind schema.Kind) ([]string, []int64) {
 		sr.l.Info().Stringer("revision", revCtx).Msg("init measures")
 		return groupNames, []int64{revCtx.group, revCtx.measure, revCtx.indexRuleBinding, revCtx.indexRule, revCtx.topNAgg}
 	}
+	if kind == schema.KindTrace {
+		sr.l.Info().Stringer("revision", revCtx).Msg("init trace")
+		return groupNames, []int64{revCtx.group, revCtx.trace, revCtx.indexRuleBinding, revCtx.indexRule}
+	}
 	sr.l.Info().Stringer("revision", revCtx).Msg("init stream")
 	return groupNames, []int64{revCtx.group, revCtx.stream, revCtx.indexRuleBinding, revCtx.indexRule}
 }
@@ -81,6 +86,9 @@ func (sr *schemaRepo) Init(kind schema.Kind) ([]string, []int64) {
 func (sr *schemaRepo) getCatalog(kind schema.Kind) commonv1.Catalog {
 	if kind == schema.KindMeasure {
 		return commonv1.Catalog_CATALOG_MEASURE
+	}
+	if kind == schema.KindTrace {
+		return commonv1.Catalog_CATALOG_TRACE
 	}
 	return commonv1.Catalog_CATALOG_STREAM
 }
@@ -94,6 +102,10 @@ func (sr *schemaRepo) processGroup(ctx context.Context, g *commonv1.Group, catal
 	sr.processBindings(ctx, g.Metadata.GetName())
 	if catalog == commonv1.Catalog_CATALOG_MEASURE {
 		sr.processMeasure(ctx, g.Metadata.Name)
+		return
+	}
+	if catalog == commonv1.Catalog_CATALOG_TRACE {
+		sr.processTrace(ctx, g.Metadata.Name)
 		return
 	}
 	sr.processStream(ctx, g.Metadata.Name)
@@ -176,6 +188,27 @@ func (sr *schemaRepo) processStream(ctx context.Context, gName string) {
 		}
 	}
 	sr.l.Info().Str("group", gName).Dur("duration", time.Since(start)).Int("size", len(ss)).Msg("store streams")
+}
+
+func (sr *schemaRepo) processTrace(ctx context.Context, gName string) {
+	ctx, cancel := context.WithTimeout(ctx, initTimeout)
+	defer cancel()
+	start := time.Now()
+	tt, err := sr.metadata.TraceRegistry().ListTrace(ctx, schema.ListOpt{Group: gName})
+	if err != nil {
+		logger.Panicf("fails to get the traces: %v", err)
+		return
+	}
+	revCtx := ctx.Value(revCtxKey).(*revisionContext)
+	for _, t := range tt {
+		if err := sr.storeResource(t); err != nil {
+			logger.Panicf("fails to store the trace: %v", err)
+		}
+		if t.Metadata.ModRevision > revCtx.trace {
+			revCtx.trace = t.Metadata.ModRevision
+		}
+	}
+	sr.l.Info().Str("group", gName).Dur("duration", time.Since(start)).Int("size", len(tt)).Msg("store traces")
 }
 
 func (sr *schemaRepo) initGroup(groupSchema *commonv1.Group) (*group, error) {

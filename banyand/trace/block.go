@@ -159,10 +159,12 @@ func (b *block) unmarshalTag(decoder *encoding.BytesBlockDecoder, i int,
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagMetadata: %v", metaReader.Path(), err)
 	}
+	tm.name = name
 	bigValuePool.Release(bb)
 	b.tags[i].name = name
 	if valueType, ok := tagType[name]; ok {
 		b.tags[i].valueType = valueType
+		tm.valueType = valueType
 	} else {
 		b.tags[i].valueType = pbv1.ValueTypeUnknown
 		for j := range b.tags[i].values {
@@ -199,6 +201,8 @@ func (b *block) unmarshalTagFromSeqReaders(decoder *encoding.BytesBlockDecoder, 
 	sort.Strings(keys)
 	b.tags[i].name = keys[i]
 	b.tags[i].valueType = tagType[keys[i]]
+	tm.name = keys[i]
+	tm.valueType = tagType[keys[i]]
 	b.tags[i].mustSeqReadValues(decoder, valueReader, *tm, uint64(b.Len()))
 }
 

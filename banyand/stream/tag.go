@@ -18,7 +18,7 @@
 package stream
 
 import (
-	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -61,18 +61,21 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 	tm.name = t.name
 	tm.valueType = t.valueType
 
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
+
 	// Use shared encoding module
-	encodedData, err := encoding.EncodeTagValues(t.values, t.valueType)
+	err := internalencoding.EncodeTagValues(bb, t.values, t.valueType)
 	if err != nil {
 		logger.Panicf("failed to encode tag values: %v", err)
 	}
 
-	tm.size = uint64(len(encodedData))
+	tm.size = uint64(len(bb.Buf))
 	if tm.size > maxValuesBlockSize {
 		logger.Panicf("too large valuesSize: %d bytes; mustn't exceed %d bytes", tm.size, maxValuesBlockSize)
 	}
 	tm.offset = tagWriter.bytesWritten
-	tagWriter.MustWrite(encodedData)
+	tagWriter.MustWrite(bb.Buf)
 
 	if t.filter != nil {
 		bb := bigValuePool.Generate()
@@ -88,7 +91,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 	}
 }
 
-func (t *tag) mustReadValues(_ *pkgencoding.BytesBlockDecoder, reader fs.Reader, cm tagMetadata, count uint64) {
+func (t *tag) mustReadValues(decoder *pkgencoding.BytesBlockDecoder, reader fs.Reader, cm tagMetadata, count uint64) {
 	t.name = cm.name
 	t.valueType = cm.valueType
 	if t.valueType == pbv1.ValueTypeUnknown {
@@ -103,18 +106,20 @@ func (t *tag) mustReadValues(_ *pkgencoding.BytesBlockDecoder, reader fs.Reader,
 		logger.Panicf("%s: block size cannot exceed %d bytes; got %d bytes", reader.Path(), maxValuesBlockSize, valuesSize)
 	}
 
-	data := make([]byte, valuesSize)
-	fs.MustReadData(reader, int64(cm.offset), data)
-
 	// Use shared decoding module
-	decodedValues, err := encoding.DecodeTagValues(data, t.valueType, int(count))
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
+	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(valuesSize))
+	fs.MustReadData(reader, int64(cm.offset), bb.Buf)
+
+	var err error
+	t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
 	if err != nil {
 		logger.Panicf("%s: failed to decode tag values: %v", reader.Path(), err)
 	}
-	t.values = decodedValues
 }
 
-func (t *tag) mustSeqReadValues(_ *pkgencoding.BytesBlockDecoder, reader *seqReader, cm tagMetadata, count uint64) {
+func (t *tag) mustSeqReadValues(decoder *pkgencoding.BytesBlockDecoder, reader *seqReader, cm tagMetadata, count uint64) {
 	t.name = cm.name
 	t.valueType = cm.valueType
 	if cm.offset != reader.bytesRead {
@@ -125,15 +130,17 @@ func (t *tag) mustSeqReadValues(_ *pkgencoding.BytesBlockDecoder, reader *seqRea
 		logger.Panicf("%s: block size cannot exceed %d bytes; got %d bytes", reader.Path(), maxValuesBlockSize, valuesSize)
 	}
 
-	data := make([]byte, valuesSize)
-	reader.mustReadFull(data)
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
+	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(valuesSize))
+	reader.mustReadFull(bb.Buf)
 
 	// Use shared decoding module
-	decodedValues, err := encoding.DecodeTagValues(data, t.valueType, int(count))
+	var err error
+	t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
 	if err != nil {
 		logger.Panicf("%s: failed to decode tag values: %v", reader.Path(), err)
 	}
-	t.values = decodedValues
 }
 
 var bigValuePool = bytes.NewBufferPool("stream-big-value")

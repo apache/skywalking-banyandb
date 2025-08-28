@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
@@ -41,6 +42,14 @@ func TestMarshalAndUnmarshalTagValue(t *testing.T) {
 		{
 			name: "binary data",
 			src:  &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: []byte("binaryData")}},
+		},
+		{
+			name: "timestamp value",
+			src:  &modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{Timestamp: &timestamppb.Timestamp{Seconds: 1234567890, Nanos: 123456789}}},
+		},
+		{
+			name: "timestamp value with high precision",
+			src:  &modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{Timestamp: &timestamppb.Timestamp{Seconds: 0, Nanos: 999999999}}},
 		},
 		{
 			name: "unsupported type",
