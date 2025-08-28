@@ -32,10 +32,10 @@ const (
 
 // tag represents an individual tag (not tag family like stream).
 type tag struct {
-	name      string
-	value     []byte
-	valueType pbv1.ValueType
-	indexed   bool
+	Name      string
+	Value     []byte
+	ValueType pbv1.ValueType
+	Indexed   bool
 }
 
 // elements is a collection of elements optimized for batch operations.
@@ -48,10 +48,10 @@ type elements struct {
 
 // reset clears tag for reuse.
 func (t *tag) reset() {
-	t.name = ""
-	t.value = nil
-	t.valueType = pbv1.ValueTypeUnknown
-	t.indexed = false
+	t.Name = ""
+	t.Value = nil
+	t.ValueType = pbv1.ValueTypeUnknown
+	t.Indexed = false
 }
 
 // reset elements collection for pooling.
@@ -75,7 +75,7 @@ func (e *elements) reset() {
 
 // size returns the size of the tag in bytes.
 func (t *tag) size() int {
-	return len(t.name) + len(t.value) + 1 // +1 for valueType
+	return len(t.Name) + len(t.Value) + 1 // +1 for valueType
 }
 
 // size returns the total size of all elements.
@@ -167,10 +167,10 @@ func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, data []by
 	elementTags := make([]*tag, 0, len(tags))
 	for _, t := range tags {
 		newTag := generateTag()
-		newTag.name = t.Name
-		newTag.value = append([]byte(nil), t.Value...)
-		newTag.valueType = t.ValueType
-		newTag.indexed = t.Indexed
+		newTag.Name = t.Name
+		newTag.Value = append([]byte(nil), t.Value...)
+		newTag.ValueType = t.ValueType
+		newTag.Indexed = t.Indexed
 		elementTags = append(elementTags, newTag)
 	}
 	e.tags = append(e.tags, elementTags)

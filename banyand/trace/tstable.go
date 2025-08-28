@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -47,6 +48,7 @@ const (
 type tsTable struct {
 	l             *logger.Logger
 	fileSystem    fs.FileSystem
+	sidx          sidx.SIDX
 	pm            protector.Memory
 	metrics       *metrics
 	snapshot      *snapshot
@@ -199,6 +201,15 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	if m != nil {
 		tst.metrics = m.(*metrics)
 	}
+	sidxOpts, err := sidx.NewOptions(filepath.Join(rootPath, "sidx"), option.protector)
+	if err != nil {
+		logger.Panicf("cannot create sidx options: %s", err)
+	}
+	sidx, err := sidx.NewSIDX(sidxOpts)
+	if err != nil {
+		logger.Panicf("cannot create sidx: %s", err)
+	}
+	tst.sidx = sidx
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
@@ -267,10 +278,16 @@ func (tst *tsTable) Close() error {
 	defer tst.Unlock()
 	tst.deleteMetrics()
 	if tst.snapshot == nil {
+		if tst.sidx != nil {
+			return tst.sidx.Close()
+		}
 		return nil
 	}
 	tst.snapshot.decRef()
 	tst.snapshot = nil
+	if tst.sidx != nil {
+		return tst.sidx.Close()
+	}
 	return nil
 }
 

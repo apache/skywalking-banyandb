@@ -203,6 +203,10 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	if len(ind.flushed) < 1 {
 		return
 	}
+	if err := tst.sidx.Flush(); err != nil {
+		tst.l.Warn().Err(err).Msg("sidx flush failed")
+		return
+	}
 	end := time.Now()
 	tst.incTotalFlushed(1)
 	tst.incTotalFlushedMemParts(partsCount)

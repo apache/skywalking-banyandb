@@ -111,6 +111,10 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	if err != nil {
 		return nil, err
 	}
+	if err := tst.sidx.Merge(); err != nil {
+		tst.l.Warn().Err(err).Msg("sidx merge failed")
+		return nil, err
+	}
 	elapsed := time.Since(start)
 	tst.incTotalMergeLatency(elapsed.Seconds(), typ)
 	tst.incTotalMerged(1, typ)

@@ -23,6 +23,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -199,6 +200,7 @@ type tracesInTable struct {
 	tsTable   *tsTable
 	traces    *traces
 	timeRange timestamp.TimeRange
+	sidxReqs  []sidx.WriteRequest
 	shardID   common.ShardID
 }
 

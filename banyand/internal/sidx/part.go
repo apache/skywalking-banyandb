@@ -424,10 +424,10 @@ func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements,
 			elems.tags[i] = make([]*tag, 0, 1)
 		}
 		newTag := generateTag()
-		newTag.name = tagName
-		newTag.value = value
-		newTag.valueType = tm.valueType
-		newTag.indexed = tm.indexed
+		newTag.Name = tagName
+		newTag.Value = value
+		newTag.ValueType = tm.valueType
+		newTag.Indexed = tm.indexed
 		elems.tags[i] = append(elems.tags[i], newTag)
 	}
 

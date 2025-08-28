@@ -101,7 +101,7 @@ func (b *block) mustInitFromTags(elementTags [][]*tag) {
 	tagNames := make(map[string]struct{})
 	for _, tags := range elementTags {
 		for _, tag := range tags {
-			tagNames[tag.name] = struct{}{}
+			tagNames[tag.Name] = struct{}{}
 		}
 	}
 
@@ -124,10 +124,10 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 	for i, tags := range elementTags {
 		found := false
 		for _, tag := range tags {
-			if tag.name == tagName {
-				td.values[i] = tag.value
-				valueType = tag.valueType
-				indexed = tag.indexed
+			if tag.Name == tagName {
+				td.values[i] = tag.Value
+				valueType = tag.ValueType
+				indexed = tag.Indexed
 				found = true
 				break
 			}

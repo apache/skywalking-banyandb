@@ -23,6 +23,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"sort"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -437,6 +438,8 @@ func (mp *memPart) mustInitFromTraces(ts *traces) {
 	if len(ts.traceIDs) == 0 {
 		return
 	}
+
+	sort.Sort(ts)
 
 	bsw := generateBlockWriter()
 	bsw.MustInitForMemPart(mp)
