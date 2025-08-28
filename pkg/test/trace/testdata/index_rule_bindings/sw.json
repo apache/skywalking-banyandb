@@ -1,7 +1,7 @@
 {
     "metadata": {
         "name": "sw-index-rule-binding",
-        "group": "default"
+        "group": "test-trace-group"
     },
     "rules": [
         "duration",

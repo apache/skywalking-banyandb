@@ -1,7 +1,7 @@
 {
     "metadata": {
         "name": "timestamp",
-        "group": "default"
+        "group": "test-trace-group"
     },
     "tags": [
         "service_id",

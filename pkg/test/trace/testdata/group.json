@@ -1,7 +1,7 @@
 [
     {
         "metadata": {
-            "name": "default"
+            "name": "test-trace-group"
         },
         "catalog": "CATALOG_TRACE",
         "resource_opts": {

@@ -1,7 +1,7 @@
 {
     "metadata": {
         "name": "sw",
-        "group": "default"
+        "group": "test-trace-group"
     },
     "tags": [
         {
