@@ -75,7 +75,7 @@ func (s *schema) CreateFieldRef(_ ...*logical.Field) ([]*logical.FieldRef, error
 }
 
 func (s *schema) IndexRuleDefined(_ string) (bool, *databasev1.IndexRule) {
-	panic("trace does not support index rule")
+	return false, &databasev1.IndexRule{}
 }
 
 func (s *schema) EntityList() []string {

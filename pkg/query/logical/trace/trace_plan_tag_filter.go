@@ -70,6 +70,9 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	if len(uis.projectionTags) > 0 {
 		for i := range uis.projectionTags {
 			for _, tag := range uis.projectionTags[i] {
+				if tag.GetTagName() == uis.traceIDTagName {
+					continue
+				}
 				ctx.projectionTags.Names = append(ctx.projectionTags.Names, tag.GetTagName())
 			}
 		}
@@ -93,7 +96,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	}
 	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs)
 	if uis.criteria != nil {
-		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(ctx.globalConditions) > 1)
+		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(traceIDs) > 1, uis.traceIDTagName)
 		if errFilter != nil {
 			return nil, errFilter
 		}
@@ -120,17 +123,15 @@ func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext
 }
 
 type traceAnalyzeContext struct {
-	s                logical.Schema
-	skippingFilter   index.Filter
-	projectionTags   *model.TagProjection
-	globalConditions []interface{}
-	projTagsRefs     [][]*logical.TagRef
+	s              logical.Schema
+	skippingFilter index.Filter
+	projectionTags *model.TagProjection
+	projTagsRefs   [][]*logical.TagRef
 }
 
 func newTraceAnalyzerContext(s logical.Schema) *traceAnalyzeContext {
 	return &traceAnalyzeContext{
-		globalConditions: make([]interface{}, 0),
-		s:                s,
+		s: s,
 	}
 }
 
@@ -193,20 +194,12 @@ func (t *traceTagFilterPlan) Execute(ctx context.Context) (model.TraceResult, er
 		return model.TraceResult{}, err
 	}
 
-	// If there are no tags, no need to check the filter
-	if len(result.Tags) == 0 {
+	// If there are no spans, no need to check the filter
+	if len(result.Spans) == 0 {
 		return model.TraceResult{}, nil
 	}
 
-	// For trace, we need to check if ANY row matches the tag filter
-	// Since result.Tags is column-based, we need to check each row (combination of tag values at same index)
-	// First, determine the number of rows by finding the maximum length of Values slices
-	maxRows := 0
-	for _, tag := range result.Tags {
-		if len(tag.Values) > maxRows {
-			maxRows = len(tag.Values)
-		}
-	}
+	maxRows := len(result.Spans)
 
 	// Check each row to see if any matches the filter
 	for rowIdx := 0; rowIdx < maxRows; rowIdx++ {

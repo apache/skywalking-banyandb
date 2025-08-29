@@ -451,9 +451,6 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			}
 		}
 	}
-	if len(t) == 0 {
-		return false
-	}
 
 	bc.bm.tags = t
 	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)

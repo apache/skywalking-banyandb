@@ -64,9 +64,6 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	if tqo.TimeRange == nil {
 		return nil, errors.New("invalid query options: timeRange are required")
 	}
-	if tqo.TagProjection == nil || len(tqo.TagProjection.Names) == 0 {
-		return nil, errors.New("invalid query options: tagProjection is required")
-	}
 	var tsdb storage.TSDB[*tsTable, option]
 	var err error
 	db := t.tsdb.Load()

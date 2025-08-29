@@ -43,16 +43,14 @@ func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
-		// Collect the tag name
-		collectedTagNames = append(collectedTagNames, cond.Name)
-		// Check if the tag name exists in the allowed tag names
 		if !tagNames[cond.Name] {
 			return nil, nil, collectedTagNames, traceIDs, errors.Errorf("tag name '%s' not found in trace schema", cond.Name)
 		}
 
-		// Extract trace IDs if this condition is for the trace ID tag
 		if cond.Name == traceIDTagName && (cond.Op == modelv1.Condition_BINARY_OP_EQ || cond.Op == modelv1.Condition_BINARY_OP_IN) {
 			traceIDs = extractTraceIDsFromCondition(cond)
+		} else {
+			collectedTagNames = append(collectedTagNames, cond.Name)
 		}
 
 		_, parsedEntity, err := logical.ParseExprOrEntity(entityDict, entity, cond)

@@ -97,7 +97,11 @@ func (i *localScan) Execute(ctx context.Context) (model.TraceResult, error) {
 	if i.result == nil {
 		return model.TraceResult{}, nil
 	}
-	return *i.result.Pull(), nil
+	traceResult := i.result.Pull()
+	if traceResult == nil {
+		return model.TraceResult{}, nil
+	}
+	return *traceResult, nil
 }
 
 func (i *localScan) String() string {

@@ -21,5 +21,7 @@ tag_projection: ["trace_id"]
 criteria:
   condition:
     name: "trace_id"
-    op: "eq"
-    value: "1"
+    op: "BINARY_OP_EQ"
+    value:
+      str:
+        value: "1"
