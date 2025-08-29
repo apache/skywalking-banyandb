@@ -18,3 +18,8 @@
 name: "sw"
 groups: ["test-trace-group"]
 tag_projection: ["trace_id"]
+criteria:
+  condition:
+    name: "trace_id"
+    op: "eq"
+    value: "1"

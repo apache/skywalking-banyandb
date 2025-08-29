@@ -32,13 +32,14 @@ import (
 // Trace conditions are either entity or skipping index.
 // Trace creates explicit index rules for skipping index on all tags that don't belong to entity.
 func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
-	entityDict map[string]int, entity []*modelv1.TagValue,
-) (index.Filter, [][]*modelv1.TagValue, []string, error) {
+	entityDict map[string]int, entity []*modelv1.TagValue, traceIDTagName string,
+) (index.Filter, [][]*modelv1.TagValue, []string, []string, error) {
 	if criteria == nil {
-		return nil, [][]*modelv1.TagValue{entity}, nil, nil
+		return nil, [][]*modelv1.TagValue{entity}, nil, nil, nil
 	}
 
 	var collectedTagNames []string
+	var traceIDs []string
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
@@ -46,64 +47,74 @@ func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
 		collectedTagNames = append(collectedTagNames, cond.Name)
 		// Check if the tag name exists in the allowed tag names
 		if !tagNames[cond.Name] {
-			return nil, nil, collectedTagNames, errors.Errorf("tag name '%s' not found in trace schema", cond.Name)
+			return nil, nil, collectedTagNames, traceIDs, errors.Errorf("tag name '%s' not found in trace schema", cond.Name)
 		}
+
+		// Extract trace IDs if this condition is for the trace ID tag
+		if cond.Name == traceIDTagName && (cond.Op == modelv1.Condition_BINARY_OP_EQ || cond.Op == modelv1.Condition_BINARY_OP_IN) {
+			traceIDs = extractTraceIDsFromCondition(cond)
+		}
+
 		_, parsedEntity, err := logical.ParseExprOrEntity(entityDict, entity, cond)
 		if err != nil {
-			return nil, nil, collectedTagNames, err
+			return nil, nil, collectedTagNames, traceIDs, err
 		}
 		if parsedEntity != nil {
-			return nil, parsedEntity, collectedTagNames, nil
+			return nil, parsedEntity, collectedTagNames, traceIDs, nil
 		}
 		// For trace, all non-entity tags have skipping index
 		expr, _, err := logical.ParseExprOrEntity(entityDict, entity, cond)
 		if err != nil {
-			return nil, nil, collectedTagNames, err
+			return nil, nil, collectedTagNames, traceIDs, err
 		}
 		filter, entities, err := parseConditionToFilter(cond, entity, expr)
-		return filter, entities, collectedTagNames, err
+		return filter, entities, collectedTagNames, traceIDs, err
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
 		if le.GetLeft() == nil && le.GetRight() == nil {
-			return nil, nil, nil, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
+			return nil, nil, nil, traceIDs, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
-			return buildFilter(le.Right, tagNames, entityDict, entity)
+			return buildFilter(le.Right, tagNames, entityDict, entity, traceIDTagName)
 		}
 		if le.GetRight() == nil {
-			return buildFilter(le.Left, tagNames, entityDict, entity)
+			return buildFilter(le.Left, tagNames, entityDict, entity, traceIDTagName)
 		}
-		left, leftEntities, leftTagNames, err := buildFilter(le.Left, tagNames, entityDict, entity)
+		left, leftEntities, leftTagNames, leftTraceIDs, err := buildFilter(le.Left, tagNames, entityDict, entity, traceIDTagName)
 		if err != nil {
-			return nil, nil, leftTagNames, err
+			return nil, nil, leftTagNames, leftTraceIDs, err
 		}
-		right, rightEntities, rightTagNames, err := buildFilter(le.Right, tagNames, entityDict, entity)
+		right, rightEntities, rightTagNames, rightTraceIDs, err := buildFilter(le.Right, tagNames, entityDict, entity, traceIDTagName)
 		if err != nil {
-			return nil, nil, append(leftTagNames, rightTagNames...), err
+			return nil, nil, append(leftTagNames, rightTagNames...), append(leftTraceIDs, rightTraceIDs...), err
 		}
 
 		// Merge tag names from both sides
 		collectedTagNames = append(collectedTagNames, leftTagNames...)
 		collectedTagNames = append(collectedTagNames, rightTagNames...)
 
+		// Merge trace IDs from both sides
+		traceIDs = append(traceIDs, leftTraceIDs...)
+		traceIDs = append(traceIDs, rightTraceIDs...)
+
 		entities := logical.ParseEntities(le.Op, entity, leftEntities, rightEntities)
 		if entities == nil {
-			return nil, nil, collectedTagNames, nil
+			return nil, nil, collectedTagNames, traceIDs, nil
 		}
 		if left == nil {
-			return right, entities, collectedTagNames, nil
+			return right, entities, collectedTagNames, traceIDs, nil
 		}
 		if right == nil {
-			return left, entities, collectedTagNames, nil
+			return left, entities, collectedTagNames, traceIDs, nil
 		}
 		switch le.Op {
 		case modelv1.LogicalExpression_LOGICAL_OP_AND:
-			return &traceAndFilter{left: left, right: right}, entities, collectedTagNames, nil
+			return &traceAndFilter{left: left, right: right}, entities, collectedTagNames, traceIDs, nil
 		case modelv1.LogicalExpression_LOGICAL_OP_OR:
-			return &traceOrFilter{left: left, right: right}, entities, collectedTagNames, nil
+			return &traceOrFilter{left: left, right: right}, entities, collectedTagNames, traceIDs, nil
 		}
 	}
-	return nil, nil, nil, logical.ErrInvalidCriteriaType
+	return nil, nil, nil, traceIDs, logical.ErrInvalidCriteriaType
 }
 
 func parseConditionToFilter(cond *modelv1.Condition, entity []*modelv1.TagValue, expr logical.LiteralExpr) (index.Filter, [][]*modelv1.TagValue, error) {
@@ -288,4 +299,44 @@ func (tmf *traceMatchFilter) ShouldSkip(_ index.FilterOp) (bool, error) {
 
 func (tmf *traceMatchFilter) String() string {
 	return tmf.op + ":" + tmf.tagName
+}
+
+// extractTraceIDsFromCondition extracts trace IDs from equal and in conditions.
+func extractTraceIDsFromCondition(cond *modelv1.Condition) []string {
+	var traceIDs []string
+
+	switch cond.Op {
+	case modelv1.Condition_BINARY_OP_EQ:
+		if cond.Value != nil && cond.Value.Value != nil {
+			switch val := cond.Value.Value.(type) {
+			case *modelv1.TagValue_Str:
+				if val.Str != nil {
+					traceIDs = append(traceIDs, val.Str.Value)
+				}
+			case *modelv1.TagValue_StrArray:
+				if val.StrArray != nil {
+					traceIDs = append(traceIDs, val.StrArray.Value...)
+				}
+			}
+		}
+	case modelv1.Condition_BINARY_OP_IN:
+		if cond.Value != nil && cond.Value.Value != nil {
+			switch val := cond.Value.Value.(type) {
+			case *modelv1.TagValue_StrArray:
+				if val.StrArray != nil {
+					traceIDs = append(traceIDs, val.StrArray.Value...)
+				}
+			case *modelv1.TagValue_Str:
+				if val.Str != nil {
+					traceIDs = append(traceIDs, val.Str.Value)
+				}
+			}
+		}
+	case modelv1.Condition_BINARY_OP_NE, modelv1.Condition_BINARY_OP_LT, modelv1.Condition_BINARY_OP_GT,
+		modelv1.Condition_BINARY_OP_LE, modelv1.Condition_BINARY_OP_GE, modelv1.Condition_BINARY_OP_HAVING,
+		modelv1.Condition_BINARY_OP_NOT_HAVING, modelv1.Condition_BINARY_OP_NOT_IN, modelv1.Condition_BINARY_OP_MATCH:
+		// These operations don't support trace ID extraction
+	}
+
+	return traceIDs
 }

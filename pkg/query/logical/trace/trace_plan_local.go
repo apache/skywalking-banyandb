@@ -48,6 +48,7 @@ type localScan struct {
 	projectionTags    *model.TagProjection
 	timeRange         timestamp.TimeRange
 	projectionTagRefs [][]*logical.TagRef
+	traceIDs          []string
 	maxTraceSize      int
 }
 
@@ -89,6 +90,7 @@ func (i *localScan) Execute(ctx context.Context) (model.TraceResult, error) {
 		Order:          orderBy,
 		TagProjection:  i.projectionTags,
 		MaxTraceSize:   i.maxTraceSize,
+		TraceIDs:       i.traceIDs,
 	}); err != nil {
 		return model.TraceResult{}, err
 	}

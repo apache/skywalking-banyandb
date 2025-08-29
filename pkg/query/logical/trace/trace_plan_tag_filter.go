@@ -40,6 +40,7 @@ type unresolvedTraceTagFilter struct {
 	ec             executor.TraceExecutionContext
 	metadata       *commonv1.Metadata
 	criteria       *modelv1.Criteria
+	traceIDTagName string
 	projectionTags [][]*logical.Tag
 }
 
@@ -52,8 +53,9 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	}
 	var err error
 	var conditionTagNames []string
+	var traceIDs []string
 	// For trace, we only use skipping filter (no inverted filter or entities)
-	ctx.skippingFilter, conditionTagNames, err = buildTraceFilter(uis.criteria, s, entityDict)
+	ctx.skippingFilter, conditionTagNames, traceIDs, err = buildTraceFilter(uis.criteria, s, entityDict, uis.traceIDTagName)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +91,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 			return nil, errProject
 		}
 	}
-	plan := uis.selectTraceScanner(ctx, uis.ec)
+	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs)
 	if uis.criteria != nil {
 		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(ctx.globalConditions) > 1)
 		if errFilter != nil {
@@ -103,7 +105,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	return plan, err
 }
 
-func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext, ec executor.TraceExecutionContext) logical.Plan {
+func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext, ec executor.TraceExecutionContext, traceIDs []string) logical.Plan {
 	return &localScan{
 		timeRange:         timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:            ctx.s,
@@ -113,6 +115,7 @@ func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext
 		skippingFilter:    ctx.skippingFilter,
 		l:                 logger.GetLogger("query", "trace", "local-scan"),
 		ec:                ec,
+		traceIDs:          traceIDs,
 	}
 }
 
@@ -146,9 +149,9 @@ func deduplicateStrings(strings []string) []string {
 
 // buildTraceFilter builds a filter for trace queries and returns both the filter and collected tag names.
 // Unlike stream, trace only needs skipping filter.
-func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict map[string]int) (index.Filter, []string, error) {
+func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict map[string]int, traceIDTagName string) (index.Filter, []string, []string, error) {
 	if criteria == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	// Create a map of valid tag names from the schema
 	tagNames := make(map[string]bool)
@@ -157,8 +160,8 @@ func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict m
 		tagNames[tagName] = true
 	}
 
-	filter, _, collectedTagNames, err := buildFilter(criteria, tagNames, entityDict, nil)
-	return filter, collectedTagNames, err
+	filter, _, collectedTagNames, traceIDs, err := buildFilter(criteria, tagNames, entityDict, nil, traceIDTagName)
+	return filter, collectedTagNames, traceIDs, err
 }
 
 var (

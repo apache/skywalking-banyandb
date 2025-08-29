@@ -105,22 +105,21 @@ type trace struct {
 	group       string
 }
 
-type traceSpec struct {
-	schema *databasev1.Trace
-}
-
 func (t *trace) GetSchema() *databasev1.Trace {
 	return t.schema
 }
 
 func (t *trace) GetIndexRules() []*databasev1.IndexRule {
 	if is := t.indexSchema.Load(); is != nil {
-		return is.(*indexSchema).indexRules
+		return is.(indexSchema).indexRules
 	}
 	return nil
 }
 
 func (t *trace) OnIndexUpdate(index []*databasev1.IndexRule) {
+	if len(index) == 0 {
+		return
+	}
 	var is indexSchema
 	is.indexRules = index
 	is.parse(t.schema)
