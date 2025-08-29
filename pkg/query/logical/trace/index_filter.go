@@ -124,7 +124,7 @@ func parseConditionToFilter(cond *modelv1.Condition, entity []*modelv1.TagValue,
 	return nil, nil, errors.Errorf("unsupported condition operation: %v", cond.Op)
 }
 
-// traceFilter implements index.Filter for trace queries
+// traceFilter implements index.Filter for trace queries.
 type traceFilter struct {
 	op      string
 	tagName string
@@ -144,7 +144,7 @@ func (tf *traceFilter) String() string {
 	return tf.op + ":" + tf.tagName
 }
 
-// traceAndFilter implements index.Filter for AND operations in trace queries
+// traceAndFilter implements index.Filter for AND operations in trace queries.
 type traceAndFilter struct {
 	left  index.Filter
 	right index.Filter
@@ -171,7 +171,7 @@ func (taf *traceAndFilter) String() string {
 	return "and(" + taf.left.String() + "," + taf.right.String() + ")"
 }
 
-// traceOrFilter implements index.Filter for OR operations in trace queries
+// traceOrFilter implements index.Filter for OR operations in trace queries.
 type traceOrFilter struct {
 	left  index.Filter
 	right index.Filter
@@ -198,12 +198,12 @@ func (tof *traceOrFilter) String() string {
 	return "or(" + tof.left.String() + "," + tof.right.String() + ")"
 }
 
-// traceEqFilter implements index.Filter for EQ operations in trace queries
+// traceEqFilter implements index.Filter for EQ operations in trace queries.
 type traceEqFilter struct {
+	expr    logical.LiteralExpr
+	cond    *modelv1.Condition
 	op      string
 	tagName string
-	cond    *modelv1.Condition
-	expr    logical.LiteralExpr
 }
 
 func (tef *traceEqFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
@@ -223,12 +223,12 @@ func (tef *traceEqFilter) String() string {
 	return tef.op + ":" + tef.tagName
 }
 
-// traceRangeFilter implements index.Filter for range operations in trace queries
+// traceRangeFilter implements index.Filter for range operations in trace queries.
 type traceRangeFilter struct {
+	expr    logical.LiteralExpr
+	cond    *modelv1.Condition
 	op      string
 	tagName string
-	cond    *modelv1.Condition
-	expr    logical.LiteralExpr
 }
 
 func (trf *traceRangeFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
@@ -248,6 +248,9 @@ func (trf *traceRangeFilter) ShouldSkip(tagFilters index.FilterOp) (bool, error)
 			opts = trf.expr.RangeOpts(true, false, false)
 		case modelv1.Condition_BINARY_OP_LE:
 			opts = trf.expr.RangeOpts(true, false, true)
+		default:
+			// For non-range operations, return false (don't skip)
+			return false, nil
 		}
 		return tagFilters.Range(trf.tagName, opts)
 	}
@@ -258,7 +261,7 @@ func (trf *traceRangeFilter) String() string {
 	return trf.op + ":" + trf.tagName
 }
 
-// traceMatchFilter implements index.Filter for MATCH operations in trace queries
+// traceMatchFilter implements index.Filter for MATCH operations in trace queries.
 type traceMatchFilter struct {
 	op      string
 	tagName string
