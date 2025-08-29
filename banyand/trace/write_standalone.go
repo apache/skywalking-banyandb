@@ -227,12 +227,9 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 
 	indexRules := stm.GetIndexRules()
 	for _, indexRule := range indexRules {
-		tagName := indexRule.Tags[0]
+		tagName := indexRule.Tags[len(indexRule.Tags)-1]
 		tagIdx, err := getTagIndex(stm, tagName)
-		if err != nil {
-			continue
-		}
-		if tagIdx >= len(req.Tags) {
+		if err != nil || tagIdx >= len(req.Tags) {
 			continue
 		}
 		tv := tags[tagIdx]
@@ -241,9 +238,18 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 		}
 		key := req.Tags[tagIdx].GetInt().GetValue()
 
+		entityValues := make([]*modelv1.TagValue, 0, len(indexRule.Tags))
+		for _, tagName := range indexRule.Tags {
+			tagIdx, err := getTagIndex(stm, tagName)
+			if err != nil || tagIdx >= len(req.Tags) {
+				continue
+			}
+			entityValues = append(entityValues, req.Tags[tagIdx])
+		}
+
 		series := &pbv1.Series{
 			Subject:      req.Metadata.Name,
-			EntityValues: req.Tags[:len(tags)-1],
+			EntityValues: entityValues,
 		}
 		if err := series.Marshal(); err != nil {
 			return fmt.Errorf("cannot marshal series: %w", err)

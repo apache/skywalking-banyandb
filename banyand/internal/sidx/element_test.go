@@ -69,19 +69,19 @@ func TestElementReset(t *testing.T) {
 		tag := generateTag()
 
 		// Set up tag with data
-		tag.Name = "test-tag"
-		tag.Value = []byte("test-value")
-		tag.ValueType = pbv1.ValueTypeStr
-		tag.Indexed = true
+		tag.name = "test-tag"
+		tag.value = []byte("test-value")
+		tag.valueType = pbv1.ValueTypeStr
+		tag.indexed = true
 
 		// Reset the tag
 		tag.reset()
 
 		// Verify all fields are cleared
-		assert.Equal(t, "", tag.Name, "name should be empty")
-		assert.Nil(t, tag.Value, "value should be nil")
-		assert.Equal(t, pbv1.ValueTypeUnknown, tag.ValueType, "valueType should be reset")
-		assert.False(t, tag.Indexed, "indexed should be reset")
+		assert.Equal(t, "", tag.name, "name should be empty")
+		assert.Nil(t, tag.value, "value should be nil")
+		assert.Equal(t, pbv1.ValueTypeUnknown, tag.valueType, "valueType should be reset")
+		assert.False(t, tag.indexed, "indexed should be reset")
 
 		releaseTag(tag)
 	})
@@ -95,14 +95,14 @@ func TestElementReset(t *testing.T) {
 		es.data = [][]byte{[]byte("data1"), []byte("data2"), []byte("data3")}
 		// Create tag pointers
 		tag1 := generateTag()
-		tag1.Name = tag1Name
-		tag1.Value = []byte("value1")
+		tag1.name = tag1Name
+		tag1.value = []byte("value1")
 		tag2 := generateTag()
-		tag2.Name = tag2Name
-		tag2.Value = []byte("value2")
+		tag2.name = tag2Name
+		tag2.value = []byte("value2")
 		tag3 := generateTag()
-		tag3.Name = "tag3"
-		tag3.Value = []byte("value3")
+		tag3.name = "tag3"
+		tag3.value = []byte("value3")
 		es.tags = [][]*tag{
 			{tag1},
 			{tag2},
@@ -125,9 +125,9 @@ func TestElementReset(t *testing.T) {
 func TestSizeCalculation(t *testing.T) {
 	t.Run("tag size calculation", func(t *testing.T) {
 		tag := generateTag()
-		tag.Name = "test-tag"       // 8 bytes
-		tag.Value = []byte("value") // 5 bytes
-		tag.ValueType = pbv1.ValueTypeStr
+		tag.name = "test-tag"       // 8 bytes
+		tag.value = []byte("value") // 5 bytes
+		tag.valueType = pbv1.ValueTypeStr
 
 		expectedSize := 8 + 5 + 1 // name + value + valueType
 		actualSize := tag.size()
@@ -143,11 +143,11 @@ func TestSizeCalculation(t *testing.T) {
 		es.data = [][]byte{[]byte("data1"), []byte("data2")} // 5 + 5 = 10 bytes
 		// Create tag pointers
 		tag1 := generateTag()
-		tag1.Name = tag1Name
-		tag1.Value = []byte("val1")
+		tag1.name = tag1Name
+		tag1.value = []byte("val1")
 		tag2 := generateTag()
-		tag2.Name = tag2Name
-		tag2.Value = []byte("val2")
+		tag2.name = tag2Name
+		tag2.value = []byte("val2")
 		es.tags = [][]*tag{
 			{tag1}, // 4 + 4 + 1 = 9 bytes
 			{tag2}, // 4 + 4 + 1 = 9 bytes
@@ -169,13 +169,13 @@ func TestElementsSorting(t *testing.T) {
 		es.data = [][]byte{[]byte("data3"), []byte("data1"), []byte("data2"), []byte("data1b")}
 		// Create tag pointers
 		tag3 := generateTag()
-		tag3.Name = "tag3"
+		tag3.name = "tag3"
 		tag1 := generateTag()
-		tag1.Name = tag1Name
+		tag1.name = tag1Name
 		tag2 := generateTag()
-		tag2.Name = tag2Name
+		tag2.name = tag2Name
 		tag1b := generateTag()
-		tag1b.Name = "tag1b"
+		tag1b.name = "tag1b"
 		es.tags = [][]*tag{
 			{tag3},
 			{tag1},
@@ -209,11 +209,11 @@ func TestElementsSorting(t *testing.T) {
 		es.data = [][]byte{[]byte("data2"), []byte("data1"), []byte("data3")}
 		// Create tag pointers
 		tag2 := generateTag()
-		tag2.Name = tag2Name
+		tag2.name = tag2Name
 		tag1 := generateTag()
-		tag1.Name = tag1Name
+		tag1.name = tag1Name
 		tag3 := generateTag()
-		tag3.Name = "tag3"
+		tag3.name = "tag3"
 		es.tags = [][]*tag{
 			{tag2},
 			{tag1},
@@ -242,11 +242,11 @@ func TestElementsSorting(t *testing.T) {
 		es.data = [][]byte{[]byte("data300"), []byte("data100"), []byte("data200")}
 		// Create tag pointers
 		tag300 := generateTag()
-		tag300.Name = "tag300"
+		tag300.name = "tag300"
 		tag100 := generateTag()
-		tag100.Name = "tag100"
+		tag100.name = "tag100"
 		tag200 := generateTag()
-		tag200.Name = "tag200"
+		tag200.name = "tag200"
 		es.tags = [][]*tag{
 			{tag300},
 			{tag100},
