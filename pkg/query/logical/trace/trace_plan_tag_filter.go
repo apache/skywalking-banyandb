@@ -162,33 +162,53 @@ func (t *traceTagFilterPlan) Execute(ctx context.Context) (model.TraceResult, er
 		return model.TraceResult{}, err
 	}
 
-	// For trace, we need to check if the result matches the tag filter
-	// Convert trace tags to TagFamilies format for filter matching
-	var tagFamilies []*modelv1.TagFamily
-	if len(result.Tags) > 0 {
-		// Create a single tag family for trace tags (trace has no families)
-		family := &modelv1.TagFamily{
-			Name: "",
-			Tags: make([]*modelv1.Tag, len(result.Tags)),
-		}
-		for i, tag := range result.Tags {
-			family.Tags[i] = &modelv1.Tag{
-				Key:   tag.Name,
-				Value: tag.Values[0], // Use the first value from the tag's Values slice
-			}
-		}
-		tagFamilies = []*modelv1.TagFamily{family}
-	}
-
-	ok, err := t.tagFilter.Match(logical.TagFamilies(tagFamilies), t.s)
-	if err != nil {
-		return model.TraceResult{}, err
-	}
-	if !ok {
+	// If there are no tags, no need to check the filter
+	if len(result.Tags) == 0 {
 		return model.TraceResult{}, nil
 	}
 
-	return result, nil
+	// For trace, we need to check if ANY row matches the tag filter
+	// Since result.Tags is column-based, we need to check each row (combination of tag values at same index)
+	// First, determine the number of rows by finding the maximum length of Values slices
+	maxRows := 0
+	for _, tag := range result.Tags {
+		if len(tag.Values) > maxRows {
+			maxRows = len(tag.Values)
+		}
+	}
+
+	// Check each row to see if any matches the filter
+	for rowIdx := 0; rowIdx < maxRows; rowIdx++ {
+		// Create TagFamilies for this specific row
+		family := &modelv1.TagFamily{
+			Name: "",
+			Tags: make([]*modelv1.Tag, 0, len(result.Tags)),
+		}
+		
+		// Build the row by taking the value at rowIdx from each tag (if it exists)
+		for _, tag := range result.Tags {
+			if rowIdx < len(tag.Values) {
+				family.Tags = append(family.Tags, &modelv1.Tag{
+					Key:   tag.Name,
+					Value: tag.Values[rowIdx],
+				})
+			}
+		}
+		
+		tagFamilies := []*modelv1.TagFamily{family}
+		ok, err := t.tagFilter.Match(logical.TagFamilies(tagFamilies), t.s)
+		if err != nil {
+			return model.TraceResult{}, err
+		}
+		
+		// If ANY row matches, return the entire result
+		if ok {
+			return result, nil
+		}
+	}
+
+	// No rows matched the filter
+	return model.TraceResult{}, nil
 }
 
 func (t *traceTagFilterPlan) String() string {
