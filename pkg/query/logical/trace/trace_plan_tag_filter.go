@@ -51,23 +51,38 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 		entityDict[e] = idx
 	}
 	var err error
+	var conditionTagNames []string
 	// For trace, we only use skipping filter (no inverted filter or entities)
-	ctx.skippingFilter, err = buildTraceFilter(uis.criteria, s, entityDict)
+	ctx.skippingFilter, conditionTagNames, err = buildTraceFilter(uis.criteria, s, entityDict)
 	if err != nil {
 		return nil, err
 	}
 
+	// Initialize projectionTags even if no explicit projection tags are provided
+	ctx.projectionTags = &model.TagProjection{
+		Family: "", // Empty family name for trace
+		Names:  make([]string, 0),
+	}
+
+	// Add explicitly requested projection tags
 	if len(uis.projectionTags) > 0 {
-		// For trace, we use a single TagProjection since traces don't have tag families
-		ctx.projectionTags = &model.TagProjection{
-			Family: "", // Empty family name for trace
-			Names:  make([]string, 0),
-		}
 		for i := range uis.projectionTags {
 			for _, tag := range uis.projectionTags[i] {
 				ctx.projectionTags.Names = append(ctx.projectionTags.Names, tag.GetTagName())
 			}
 		}
+	}
+
+	// Add tag names from filter conditions to projection
+	if len(conditionTagNames) > 0 {
+		ctx.projectionTags.Names = append(ctx.projectionTags.Names, conditionTagNames...)
+	}
+
+	// Deduplicate tag names
+	ctx.projectionTags.Names = deduplicateStrings(ctx.projectionTags.Names)
+
+	// Create tag references if we have any projection tags
+	if len(ctx.projectionTags.Names) > 0 {
 		var errProject error
 		ctx.projTagsRefs, errProject = s.CreateTagRef(uis.projectionTags...)
 		if errProject != nil {
@@ -116,11 +131,24 @@ func newTraceAnalyzerContext(s logical.Schema) *traceAnalyzeContext {
 	}
 }
 
-// buildTraceFilter builds a filter for trace queries.
+// deduplicateStrings removes duplicate strings from a slice while preserving order.
+func deduplicateStrings(strings []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, str := range strings {
+		if !seen[str] {
+			seen[str] = true
+			result = append(result, str)
+		}
+	}
+	return result
+}
+
+// buildTraceFilter builds a filter for trace queries and returns both the filter and collected tag names.
 // Unlike stream, trace only needs skipping filter.
-func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict map[string]int) (index.Filter, error) {
+func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict map[string]int) (index.Filter, []string, error) {
 	if criteria == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	// Create a map of valid tag names from the schema
 	tagNames := make(map[string]bool)
@@ -129,8 +157,8 @@ func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict m
 		tagNames[tagName] = true
 	}
 
-	filter, _, err := buildFilter(criteria, tagNames, entityDict, nil)
-	return filter, err
+	filter, _, collectedTagNames, err := buildFilter(criteria, tagNames, entityDict, nil)
+	return filter, collectedTagNames, err
 }
 
 var (
@@ -184,7 +212,7 @@ func (t *traceTagFilterPlan) Execute(ctx context.Context) (model.TraceResult, er
 			Name: "",
 			Tags: make([]*modelv1.Tag, 0, len(result.Tags)),
 		}
-		
+
 		// Build the row by taking the value at rowIdx from each tag (if it exists)
 		for _, tag := range result.Tags {
 			if rowIdx < len(tag.Values) {
@@ -194,13 +222,13 @@ func (t *traceTagFilterPlan) Execute(ctx context.Context) (model.TraceResult, er
 				})
 			}
 		}
-		
+
 		tagFamilies := []*modelv1.TagFamily{family}
 		ok, err := t.tagFilter.Match(logical.TagFamilies(tagFamilies), t.s)
 		if err != nil {
 			return model.TraceResult{}, err
 		}
-		
+
 		// If ANY row matches, return the entire result
 		if ok {
 			return result, nil

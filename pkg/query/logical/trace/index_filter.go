@@ -33,34 +33,39 @@ import (
 // Trace creates explicit index rules for skipping index on all tags that don't belong to entity.
 func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
 	entityDict map[string]int, entity []*modelv1.TagValue,
-) (index.Filter, [][]*modelv1.TagValue, error) {
+) (index.Filter, [][]*modelv1.TagValue, []string, error) {
 	if criteria == nil {
-		return nil, [][]*modelv1.TagValue{entity}, nil
+		return nil, [][]*modelv1.TagValue{entity}, nil, nil
 	}
+
+	var collectedTagNames []string
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
+		// Collect the tag name
+		collectedTagNames = append(collectedTagNames, cond.Name)
 		// Check if the tag name exists in the allowed tag names
 		if !tagNames[cond.Name] {
-			return nil, nil, errors.Errorf("tag name '%s' not found in trace schema", cond.Name)
+			return nil, nil, collectedTagNames, errors.Errorf("tag name '%s' not found in trace schema", cond.Name)
 		}
 		_, parsedEntity, err := logical.ParseExprOrEntity(entityDict, entity, cond)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, collectedTagNames, err
 		}
 		if parsedEntity != nil {
-			return nil, parsedEntity, nil
+			return nil, parsedEntity, collectedTagNames, nil
 		}
 		// For trace, all non-entity tags have skipping index
 		expr, _, err := logical.ParseExprOrEntity(entityDict, entity, cond)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, collectedTagNames, err
 		}
-		return parseConditionToFilter(cond, entity, expr)
+		filter, entities, err := parseConditionToFilter(cond, entity, expr)
+		return filter, entities, collectedTagNames, err
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
 		if le.GetLeft() == nil && le.GetRight() == nil {
-			return nil, nil, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
+			return nil, nil, nil, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
 		}
 		if le.GetLeft() == nil {
 			return buildFilter(le.Right, tagNames, entityDict, entity)
@@ -68,32 +73,37 @@ func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
 		if le.GetRight() == nil {
 			return buildFilter(le.Left, tagNames, entityDict, entity)
 		}
-		left, leftEntities, err := buildFilter(le.Left, tagNames, entityDict, entity)
+		left, leftEntities, leftTagNames, err := buildFilter(le.Left, tagNames, entityDict, entity)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, leftTagNames, err
 		}
-		right, rightEntities, err := buildFilter(le.Right, tagNames, entityDict, entity)
+		right, rightEntities, rightTagNames, err := buildFilter(le.Right, tagNames, entityDict, entity)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, append(leftTagNames, rightTagNames...), err
 		}
+
+		// Merge tag names from both sides
+		collectedTagNames = append(collectedTagNames, leftTagNames...)
+		collectedTagNames = append(collectedTagNames, rightTagNames...)
+
 		entities := logical.ParseEntities(le.Op, entity, leftEntities, rightEntities)
 		if entities == nil {
-			return nil, nil, nil
+			return nil, nil, collectedTagNames, nil
 		}
 		if left == nil {
-			return right, entities, nil
+			return right, entities, collectedTagNames, nil
 		}
 		if right == nil {
-			return left, entities, nil
+			return left, entities, collectedTagNames, nil
 		}
 		switch le.Op {
 		case modelv1.LogicalExpression_LOGICAL_OP_AND:
-			return &traceAndFilter{left: left, right: right}, entities, nil
+			return &traceAndFilter{left: left, right: right}, entities, collectedTagNames, nil
 		case modelv1.LogicalExpression_LOGICAL_OP_OR:
-			return &traceOrFilter{left: left, right: right}, entities, nil
+			return &traceOrFilter{left: left, right: right}, entities, collectedTagNames, nil
 		}
 	}
-	return nil, nil, logical.ErrInvalidCriteriaType
+	return nil, nil, nil, logical.ErrInvalidCriteriaType
 }
 
 func parseConditionToFilter(cond *modelv1.Condition, entity []*modelv1.TagValue, expr logical.LiteralExpr) (index.Filter, [][]*modelv1.TagValue, error) {
