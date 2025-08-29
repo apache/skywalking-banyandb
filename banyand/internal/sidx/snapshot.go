@@ -300,7 +300,7 @@ func releaseSnapshot(s *snapshot) {
 
 // copyAllTo creates a new snapshot with all parts from current snapshot.
 func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
-	result := generateSnapshot()
+	var result snapshot
 	result.parts = make([]*partWrapper, len(s.parts))
 	result.epoch = epoch
 	result.ref = 1
@@ -314,7 +314,7 @@ func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
 		}
 	}
 
-	return result
+	return &result
 }
 
 // merge creates a new snapshot by merging flushed parts into the current snapshot.
@@ -328,7 +328,7 @@ func (s *snapshot) merge(epoch uint64, flushed map[uint64]*part) *snapshot {
 			part.partMetadata.ID = partID
 		}
 		// Create part wrapper for the flushed part
-		pw := newPartWrapper(part)
+		pw := newPartWrapper(nil, part)
 		result.parts = append(result.parts, pw)
 	}
 
@@ -338,7 +338,7 @@ func (s *snapshot) merge(epoch uint64, flushed map[uint64]*part) *snapshot {
 
 // remove creates a new snapshot by removing specified parts.
 func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot {
-	result := generateSnapshot()
+	var result snapshot
 	result.epoch = epoch
 	result.ref = 1
 	result.released.Store(false)
@@ -352,5 +352,5 @@ func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot 
 		}
 	}
 
-	return result
+	return &result
 }

@@ -442,7 +442,6 @@ func TestPartMetadata_Serialization(t *testing.T) {
 	// Test unmarshaling
 	restored, err := unmarshalPartMetadata(data)
 	require.NoError(t, err)
-	defer releasePartMetadata(restored)
 
 	// Verify all fields match
 	assert.Equal(t, original.CompressedSizeBytes, restored.CompressedSizeBytes)
@@ -607,21 +606,17 @@ func TestBlockMetadata_SetterMethods(t *testing.T) {
 }
 
 func TestMetadata_Pooling(t *testing.T) {
-	// Test partMetadata pooling
-	pm1 := generatePartMetadata()
+	// Test partMetadata creation (no pooling)
+	pm1 := &partMetadata{}
 	pm1.ID = 123
 	pm1.MinKey = 10
 	pm1.MaxKey = 100
 
-	releasePartMetadata(pm1)
-
-	pm2 := generatePartMetadata()
-	// pm2 should be the same instance as pm1, but reset
+	pm2 := &partMetadata{}
+	// pm2 should be a new instance
 	assert.Equal(t, uint64(0), pm2.ID)
 	assert.Equal(t, int64(0), pm2.MinKey)
 	assert.Equal(t, int64(0), pm2.MaxKey)
-
-	releasePartMetadata(pm2)
 
 	// Test blockMetadata pooling
 	bm1 := generateBlockMetadata()

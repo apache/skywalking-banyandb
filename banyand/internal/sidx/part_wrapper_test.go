@@ -35,7 +35,7 @@ func TestPartWrapper_BasicLifecycle(t *testing.T) {
 	}
 
 	// Create wrapper
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 	require.NotNil(t, pw)
 	assert.Equal(t, int32(1), pw.refCount())
 	assert.True(t, pw.isActive())
@@ -70,7 +70,7 @@ func TestPartWrapper_StateTransitions(t *testing.T) {
 		partMetadata: &partMetadata{ID: 2},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 
 	// Initial state should be active
 	assert.True(t, pw.isActive())
@@ -103,7 +103,7 @@ func TestPartWrapper_ConcurrentReferenceCounting(t *testing.T) {
 		partMetadata: &partMetadata{ID: 3},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 
 	const numGoroutines = 100
 	const operationsPerGoroutine = 1000
@@ -148,7 +148,7 @@ func TestPartWrapper_ConcurrentAcquireWithMarkForRemoval(t *testing.T) {
 		partMetadata: &partMetadata{ID: 4},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 
 	const numGoroutines = 20
 	var wg sync.WaitGroup
@@ -202,7 +202,7 @@ func TestPartWrapper_ConcurrentAcquireWithMarkForRemoval(t *testing.T) {
 }
 
 func TestPartWrapper_NilPart(t *testing.T) {
-	pw := newPartWrapper(nil)
+	pw := newPartWrapper(nil, nil)
 	require.NotNil(t, pw)
 
 	assert.Equal(t, int32(1), pw.refCount())
@@ -227,7 +227,7 @@ func TestPartWrapper_MultipleReleases(t *testing.T) {
 		partMetadata: &partMetadata{ID: 5},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 
 	// Release once (should reach 0)
 	pw.release()
@@ -242,7 +242,7 @@ func TestPartWrapper_MultipleReleases(t *testing.T) {
 
 func TestPartWrapper_StringRepresentation(t *testing.T) {
 	// Test with nil part
-	pw1 := newPartWrapper(nil)
+	pw1 := newPartWrapper(nil, nil)
 	str1 := pw1.String()
 	assert.Contains(t, str1, "id=nil")
 	assert.Contains(t, str1, "state=active")
@@ -253,7 +253,7 @@ func TestPartWrapper_StringRepresentation(t *testing.T) {
 		path:         "/test/part/006",
 		partMetadata: &partMetadata{ID: 6},
 	}
-	pw2 := newPartWrapper(p)
+	pw2 := newPartWrapper(nil, p)
 	str2 := pw2.String()
 	assert.Contains(t, str2, "id=6")
 	assert.Contains(t, str2, "state=active")
@@ -283,7 +283,7 @@ func TestPartWrapper_CleanupWithRemovableFlag(t *testing.T) {
 		partMetadata: &partMetadata{ID: 7},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 
 	// Test that removable flag is initially false
 	assert.False(t, pw.removable.Load())
@@ -304,7 +304,7 @@ func BenchmarkPartWrapper_AcquireRelease(b *testing.B) {
 		path:         "/bench/part",
 		partMetadata: &partMetadata{ID: 1},
 	}
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 	defer pw.release() // cleanup
 
 	b.ResetTimer()
@@ -322,7 +322,7 @@ func BenchmarkPartWrapper_StateCheck(b *testing.B) {
 		path:         "/bench/part",
 		partMetadata: &partMetadata{ID: 1},
 	}
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 	defer pw.release() // cleanup
 
 	b.ResetTimer()
@@ -337,7 +337,7 @@ func TestPartWrapper_CleanupPreventNegativeRefCount(t *testing.T) {
 		partMetadata: &partMetadata{ID: 8},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 	assert.Equal(t, int32(1), pw.refCount())
 
 	// Acquire a reference
@@ -369,7 +369,7 @@ func TestPartWrapper_CleanupWithConcurrentAccess(t *testing.T) {
 		partMetadata: &partMetadata{ID: 9},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 	const numGoroutines = 50
 	var wg sync.WaitGroup
 
@@ -414,7 +414,7 @@ func TestPartWrapper_CleanupStateTransition(t *testing.T) {
 		partMetadata: &partMetadata{ID: 10},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 
 	// Verify initial state
 	assert.True(t, pw.isActive())
@@ -437,7 +437,7 @@ func TestPartWrapper_CleanupStateTransition(t *testing.T) {
 }
 
 func TestPartWrapper_CleanupWithNilPart(t *testing.T) {
-	pw := newPartWrapper(nil)
+	pw := newPartWrapper(nil, nil)
 
 	// Verify cleanup works correctly with nil part
 	assert.Equal(t, int32(1), pw.refCount())
@@ -463,7 +463,7 @@ func TestPartWrapper_CleanupRaceCondition(t *testing.T) {
 		partMetadata: &partMetadata{ID: 11},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 
 	// Acquire multiple references
 	assert.True(t, pw.acquire()) // ref = 2
@@ -498,7 +498,7 @@ func TestPartWrapper_CleanupIdempotency(t *testing.T) {
 		partMetadata: &partMetadata{ID: 12},
 	}
 
-	pw := newPartWrapper(p)
+	pw := newPartWrapper(nil, p)
 
 	// Release to trigger cleanup
 	pw.release()
@@ -549,7 +549,7 @@ func TestPartWrapper_OverlapsKeyRange(t *testing.T) {
 					MaxKey: tt.partMax,
 				},
 			}
-			pw := newPartWrapper(p)
+			pw := newPartWrapper(nil, p)
 
 			result := pw.overlapsKeyRange(tt.queryMin, tt.queryMax)
 			assert.Equal(t, tt.expected, result,
@@ -561,7 +561,7 @@ func TestPartWrapper_OverlapsKeyRange(t *testing.T) {
 
 func TestPartWrapper_OverlapsKeyRange_EdgeCases(t *testing.T) {
 	t.Run("nil_part", func(t *testing.T) {
-		pw := newPartWrapper(nil)
+		pw := newPartWrapper(nil, nil)
 		assert.False(t, pw.overlapsKeyRange(10, 20))
 	})
 
@@ -570,7 +570,7 @@ func TestPartWrapper_OverlapsKeyRange_EdgeCases(t *testing.T) {
 			path:         "/test/part/001",
 			partMetadata: nil,
 		}
-		pw := newPartWrapper(p)
+		pw := newPartWrapper(nil, p)
 		// Should return true (safe default) when metadata is unavailable
 		assert.True(t, pw.overlapsKeyRange(10, 20))
 	})
@@ -584,7 +584,7 @@ func TestPartWrapper_OverlapsKeyRange_EdgeCases(t *testing.T) {
 				MaxKey: 20,
 			},
 		}
-		pw := newPartWrapper(p)
+		pw := newPartWrapper(nil, p)
 		// Query range where min > max should return false
 		assert.False(t, pw.overlapsKeyRange(25, 15))
 	})

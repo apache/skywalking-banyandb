@@ -109,9 +109,8 @@ func (p *part) loadPartMetadata() error {
 	manifestData, err := p.fileSystem.Read(manifestPath)
 	if err == nil {
 		// Parse JSON manifest
-		pm := generatePartMetadata()
+		pm := &partMetadata{}
 		if unmarshalErr := json.Unmarshal(manifestData, pm); unmarshalErr != nil {
-			releasePartMetadata(pm)
 			return fmt.Errorf("failed to unmarshal manifest.json: %w", unmarshalErr)
 		}
 		p.partMetadata = pm
@@ -244,7 +243,6 @@ func (p *part) close() {
 
 	// Release metadata.
 	if p.partMetadata != nil {
-		releasePartMetadata(p.partMetadata)
 		p.partMetadata = nil
 	}
 
@@ -587,7 +585,7 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 
 	// Initialize part metadata
 	if mp.partMetadata == nil {
-		mp.partMetadata = generatePartMetadata()
+		mp.partMetadata = &partMetadata{}
 	}
 
 	// Initialize block writer for memory part
@@ -681,11 +679,7 @@ var memPartPool = pool.Register[*memPart]("sidx-memPart")
 // openMemPart creates a part from a memory part.
 func openMemPart(mp *memPart) *part {
 	p := &part{}
-	if mp.partMetadata != nil {
-		// Copy part metadata
-		p.partMetadata = generatePartMetadata()
-		*p.partMetadata = *mp.partMetadata
-	}
+	p.partMetadata = mp.partMetadata
 
 	// Load primary block metadata from meta buffer
 	if len(mp.meta.Buf) > 0 {

@@ -57,6 +57,9 @@ type partWrapper struct {
 	// p is the underlying part. It can be nil for memory parts.
 	p *part
 
+	// mp is the memory part. It can be nil for file-based parts.
+	mp *memPart
+
 	// ref is the atomic reference counter.
 	// It starts at 1 when the wrapper is created.
 	ref int32
@@ -72,8 +75,9 @@ type partWrapper struct {
 
 // newPartWrapper creates a new partWrapper with an initial reference count of 1.
 // The part starts in the active state.
-func newPartWrapper(p *part) *partWrapper {
+func newPartWrapper(mp *memPart, p *part) *partWrapper {
 	pw := &partWrapper{
+		mp:    mp,
 		p:     p,
 		ref:   1,
 		state: int32(partStateActive),
@@ -139,6 +143,12 @@ func (pw *partWrapper) release() {
 func (pw *partWrapper) cleanup() {
 	// Mark as removed
 	atomic.StoreInt32(&pw.state, int32(partStateRemoved))
+
+	// Release memory part if it exists
+	if pw.mp != nil {
+		releaseMemPart(pw.mp)
+		pw.mp = nil
+	}
 
 	if pw.p == nil {
 		return
@@ -207,7 +217,7 @@ func (pw *partWrapper) isRemoved() bool {
 // isMemPart returns true if this wrapper contains a memory part.
 func (pw *partWrapper) isMemPart() bool {
 	// A memory part typically has no file system path or is stored in memory
-	return pw.p != nil && pw.p.path == ""
+	return pw.mp != nil || (pw.p != nil && pw.p.path == "")
 }
 
 // String returns a string representation of the partWrapper.
@@ -215,8 +225,13 @@ func (pw *partWrapper) String() string {
 	state := pw.getState()
 	refCount := pw.refCount()
 
-	if pw.p == nil {
+	if pw.p == nil && pw.mp == nil {
 		return fmt.Sprintf("partWrapper{id=nil, state=%s, ref=%d}", state, refCount)
+	}
+
+	if pw.mp != nil {
+		return fmt.Sprintf("partWrapper{id=%d, state=%s, ref=%d, memPart=true}",
+			pw.ID(), state, refCount)
 	}
 
 	return fmt.Sprintf("partWrapper{id=%d, state=%s, ref=%d, path=%s}",
