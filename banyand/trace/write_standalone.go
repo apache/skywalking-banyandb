@@ -29,6 +29,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -90,7 +91,7 @@ func (w *writeCallback) handle(dst map[string]*tracesInGroup, writeEvent *tracev
 	if err != nil {
 		return nil, err
 	}
-	err = processTraces(w.schemaRepo, et.traces, writeEvent)
+	err = processTraces(w.schemaRepo, et, writeEvent)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +164,7 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 	return et, nil
 }
 
-func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.InternalWriteRequest) error {
+func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEvent *tracev1.InternalWriteRequest) error {
 	req := writeEvent.Request
 	stm, ok := schemaRepo.loadTrace(req.GetMetadata())
 	if !ok {
@@ -174,8 +175,9 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 	if err != nil {
 		return err
 	}
-	traces.traceIDs = append(traces.traceIDs, req.Tags[idx].GetStr().GetValue())
-	traces.spans = append(traces.spans, req.Span)
+	traceID := req.Tags[idx].GetStr().GetValue()
+	tracesInTable.traces.traceIDs = append(tracesInTable.traces.traceIDs, traceID)
+	tracesInTable.traces.spans = append(tracesInTable.traces.spans, req.Span)
 
 	tLen := len(req.GetTags())
 	if tLen < 1 {
@@ -199,7 +201,7 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 			continue
 		}
 		if tagSpec.Name == stm.schema.TimestampTagName {
-			traces.timestamps = append(traces.timestamps, req.Tags[i].GetTimestamp().AsTime().UnixNano())
+			tracesInTable.traces.timestamps = append(tracesInTable.traces.timestamps, req.Tags[i].GetTimestamp().AsTime().UnixNano())
 		}
 
 		var tagValue *modelv1.TagValue
@@ -211,11 +213,61 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 		tv := encodeTagValue(tagSpec.Name, tagSpec.Type, tagValue)
 		tags = append(tags, tv)
 	}
-	traces.tags = append(traces.tags, tags)
+	tracesInTable.traces.tags = append(tracesInTable.traces.tags, tags)
+
+	sidxTags := make([]sidx.Tag, 0, len(tags))
+	// TODO: set Indexed
+	for _, tag := range tags {
+		sidxTags = append(sidxTags, sidx.Tag{
+			Name:      tag.tag,
+			Value:     tag.value,
+			ValueType: tag.valueType,
+		})
+	}
+
+	indexRules := stm.GetIndexRules()
+	for _, indexRule := range indexRules {
+		tagName := indexRule.Tags[len(indexRule.Tags)-1]
+		tagIdx, err := getTagIndex(stm, tagName)
+		if err != nil || tagIdx >= len(req.Tags) {
+			continue
+		}
+		tv := tags[tagIdx]
+		if tv.valueType != pbv1.ValueTypeInt64 {
+			return fmt.Errorf("unsupported tag value type: %s", tv.tag)
+		}
+		key := req.Tags[tagIdx].GetInt().GetValue()
+
+		entityValues := make([]*modelv1.TagValue, 0, len(indexRule.Tags))
+		for _, tagName := range indexRule.Tags {
+			tagIdx, err := getTagIndex(stm, tagName)
+			if err != nil || tagIdx >= len(req.Tags) {
+				continue
+			}
+			entityValues = append(entityValues, req.Tags[tagIdx])
+		}
+
+		series := &pbv1.Series{
+			Subject:      req.Metadata.Name,
+			EntityValues: entityValues,
+		}
+		if err := series.Marshal(); err != nil {
+			return fmt.Errorf("cannot marshal series: %w", err)
+		}
+
+		writeReq := sidx.WriteRequest{
+			Data:     []byte(traceID),
+			Tags:     sidxTags,
+			SeriesID: series.ID,
+			Key:      key,
+		}
+		tracesInTable.sidxReqs = append(tracesInTable.sidxReqs, writeReq)
+	}
+
 	return nil
 }
 
-func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -253,6 +305,11 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		for j := range g.tables {
 			es := g.tables[j]
 			es.tsTable.mustAddTraces(es.traces)
+			if len(es.sidxReqs) > 0 {
+				if err := es.tsTable.sidx.Write(ctx, es.sidxReqs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write to secondary index")
+				}
+			}
 			releaseTraces(es.traces)
 		}
 		if len(g.segments) > 0 {

@@ -87,7 +87,7 @@ func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *t
 	if err != nil {
 		return nil, err
 	}
-	err = processTraces(w.schemaRepo, et.traces, writeEvent)
+	err = processTraces(w.schemaRepo, et, writeEvent)
 	if err != nil {
 		return nil, err
 	}
