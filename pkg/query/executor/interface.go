@@ -25,6 +25,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -87,6 +88,6 @@ type TraceExecutionContext interface {
 
 // TraceExecutable allows querying in the trace schema.
 type TraceExecutable interface {
-	Execute(context.Context) (model.TraceResult, error)
+	Execute(context.Context) (iter.Iterator[model.TraceResult], error)
 	Close()
 }

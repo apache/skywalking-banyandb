@@ -23,6 +23,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -66,42 +67,67 @@ func (i *localScan) Sort(order *logical.OrderBy) {
 	i.order = order
 }
 
-func (i *localScan) Execute(ctx context.Context) (model.TraceResult, error) {
+func (i *localScan) Execute(ctx context.Context) (iter.Iterator[model.TraceResult], error) {
 	select {
 	case <-ctx.Done():
-		return model.TraceResult{}, ctx.Err()
+		return iter.Empty[model.TraceResult](), ctx.Err()
 	default:
 	}
-	if i.result != nil {
-		return *i.result.Pull(), nil
-	}
-	var orderBy *index.OrderBy
-	if i.order != nil {
-		orderBy = &index.OrderBy{
-			Index: i.order.Index,
-			Sort:  i.order.Sort,
+
+	// If we don't have a result yet, execute the query
+	if i.result == nil {
+		var orderBy *index.OrderBy
+		if i.order != nil {
+			orderBy = &index.OrderBy{
+				Index: i.order.Index,
+				Sort:  i.order.Sort,
+			}
+		}
+		var err error
+		if i.result, err = i.ec.Query(ctx, model.TraceQueryOptions{
+			Name:           i.metadata.GetName(),
+			TimeRange:      &i.timeRange,
+			SkippingFilter: i.skippingFilter,
+			Order:          orderBy,
+			TagProjection:  i.projectionTags,
+			MaxTraceSize:   i.maxTraceSize,
+			TraceIDs:       i.traceIDs,
+		}); err != nil {
+			return iter.Empty[model.TraceResult](), err
+		}
+		if i.result == nil {
+			return iter.Empty[model.TraceResult](), nil
 		}
 	}
-	var err error
-	if i.result, err = i.ec.Query(ctx, model.TraceQueryOptions{
-		Name:           i.metadata.GetName(),
-		TimeRange:      &i.timeRange,
-		SkippingFilter: i.skippingFilter,
-		Order:          orderBy,
-		TagProjection:  i.projectionTags,
-		MaxTraceSize:   i.maxTraceSize,
-		TraceIDs:       i.traceIDs,
-	}); err != nil {
-		return model.TraceResult{}, err
+
+	// Return a custom iterator that continuously pulls from i.result
+	return &traceResultIterator{result: i.result}, nil
+}
+
+// traceResultIterator implements iter.Iterator[model.TraceResult] by continuously
+// calling Pull() on the TraceQueryResult until it returns nil or encounters an error.
+type traceResultIterator struct {
+	result model.TraceQueryResult
+	err    error
+}
+
+func (tri *traceResultIterator) Next() (model.TraceResult, bool) {
+	if tri.err != nil || tri.result == nil {
+		return model.TraceResult{}, false
 	}
-	if i.result == nil {
-		return model.TraceResult{}, nil
-	}
-	traceResult := i.result.Pull()
+
+	traceResult := tri.result.Pull()
 	if traceResult == nil {
-		return model.TraceResult{}, nil
+		return model.TraceResult{}, false
 	}
-	return *traceResult, nil
+
+	// Check if the result contains an error
+	if traceResult.Error != nil {
+		tri.err = traceResult.Error
+		return *traceResult, false
+	}
+
+	return *traceResult, true
 }
 
 func (i *localScan) String() string {

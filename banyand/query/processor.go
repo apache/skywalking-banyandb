@@ -524,32 +524,55 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 
 	te := plan.(executor.TraceExecutable)
 	defer te.Close()
-	result, err := te.Execute(ctx)
+	resultIterator, err := te.Execute(ctx)
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the trace query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for trace %s: %v", queryCriteria.GetName(), err))
 		return
 	}
 
-	// Convert model.TraceResult to tracev1.QueryResponse format
-	spans := make([]*tracev1.Span, len(result.Spans))
-	for i, spanBytes := range result.Spans {
-		// Create trace tags from the result
-		var traceTags []*modelv1.Tag
-		if result.Tags != nil {
-			for _, tag := range result.Tags {
-				if len(tag.Values) > 0 {
-					traceTags = append(traceTags, &modelv1.Tag{
-						Key:   tag.Name,
-						Value: tag.Values[0],
-					})
-				}
-			}
+	// Convert model.TraceResult iterator to tracev1.QueryResponse format
+	var spans []*tracev1.Span
+
+	for {
+		result, hasNext := resultIterator.Next()
+		if !hasNext {
+			break
 		}
 
-		spans[i] = &tracev1.Span{
-			Tags: traceTags,
-			Span: spanBytes,
+		// Convert each span in the trace result
+		for i, spanBytes := range result.Spans {
+			// Create trace tags from the result
+			var traceTags []*modelv1.Tag
+			if result.Tags != nil {
+				for _, tag := range result.Tags {
+					if i < len(tag.Values) {
+						traceTags = append(traceTags, &modelv1.Tag{
+							Key:   tag.Name,
+							Value: tag.Values[i],
+						})
+					}
+				}
+			}
+
+			// Add trace ID tag to each span
+			if traceIDTagName != "" && result.TID != "" {
+				traceTags = append(traceTags, &modelv1.Tag{
+					Key: traceIDTagName,
+					Value: &modelv1.TagValue{
+						Value: &modelv1.TagValue_Str{
+							Str: &modelv1.Str{
+								Value: result.TID,
+							},
+						},
+					},
+				})
+			}
+
+			spans = append(spans, &tracev1.Span{
+				Tags: traceTags,
+				Span: spanBytes,
+			})
 		}
 	}
 

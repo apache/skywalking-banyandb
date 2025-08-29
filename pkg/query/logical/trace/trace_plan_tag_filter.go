@@ -25,6 +25,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -188,51 +189,86 @@ func newTraceTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.
 	}
 }
 
-func (t *traceTagFilterPlan) Execute(ctx context.Context) (model.TraceResult, error) {
-	result, err := t.parent.(executor.TraceExecutable).Execute(ctx)
+func (t *traceTagFilterPlan) Execute(ctx context.Context) (iter.Iterator[model.TraceResult], error) {
+	resultIterator, err := t.parent.(executor.TraceExecutable).Execute(ctx)
 	if err != nil {
-		return model.TraceResult{}, err
+		return iter.Empty[model.TraceResult](), err
 	}
 
-	// If there are no spans, no need to check the filter
-	if len(result.Spans) == 0 {
-		return model.TraceResult{}, nil
+	// Return a lazy filtering iterator that processes results on demand
+	return &traceTagFilterIterator{
+		sourceIterator: resultIterator,
+		tagFilter:      t.tagFilter,
+		schema:         t.s,
+	}, nil
+}
+
+// traceTagFilterIterator implements iter.Iterator[model.TraceResult] by lazily
+// filtering results from the source iterator using the tag filter.
+type traceTagFilterIterator struct {
+	sourceIterator iter.Iterator[model.TraceResult]
+	tagFilter      logical.TagFilter
+	schema         logical.Schema
+	err            error
+}
+
+func (tfti *traceTagFilterIterator) Next() (model.TraceResult, bool) {
+	if tfti.err != nil {
+		return model.TraceResult{}, false
 	}
 
-	maxRows := len(result.Spans)
-
-	// Check each row to see if any matches the filter
-	for rowIdx := 0; rowIdx < maxRows; rowIdx++ {
-		// Create TagFamilies for this specific row
-		family := &modelv1.TagFamily{
-			Name: "",
-			Tags: make([]*modelv1.Tag, 0, len(result.Tags)),
+	for {
+		result, hasNext := tfti.sourceIterator.Next()
+		if !hasNext {
+			return model.TraceResult{}, false
 		}
 
-		// Build the row by taking the value at rowIdx from each tag (if it exists)
-		for _, tag := range result.Tags {
-			if rowIdx < len(tag.Values) {
-				family.Tags = append(family.Tags, &modelv1.Tag{
-					Key:   tag.Name,
-					Value: tag.Values[rowIdx],
-				})
+		// If there are no spans, skip this result
+		if len(result.Spans) == 0 {
+			continue
+		}
+
+		maxRows := len(result.Spans)
+		matched := false
+
+		// Check each row to see if any matches the filter
+		for rowIdx := 0; rowIdx < maxRows; rowIdx++ {
+			// Create TagFamilies for this specific row
+			family := &modelv1.TagFamily{
+				Name: "",
+				Tags: make([]*modelv1.Tag, 0, len(result.Tags)),
+			}
+
+			// Build the row by taking the value at rowIdx from each tag (if it exists)
+			for _, tag := range result.Tags {
+				if rowIdx < len(tag.Values) {
+					family.Tags = append(family.Tags, &modelv1.Tag{
+						Key:   tag.Name,
+						Value: tag.Values[rowIdx],
+					})
+				}
+			}
+
+			tagFamilies := []*modelv1.TagFamily{family}
+			ok, err := tfti.tagFilter.Match(logical.TagFamilies(tagFamilies), tfti.schema)
+			if err != nil {
+				tfti.err = err
+				return model.TraceResult{}, false
+			}
+
+			// If ANY row matches, return this result
+			if ok {
+				matched = true
+				break
 			}
 		}
 
-		tagFamilies := []*modelv1.TagFamily{family}
-		ok, err := t.tagFilter.Match(logical.TagFamilies(tagFamilies), t.s)
-		if err != nil {
-			return model.TraceResult{}, err
+		if matched {
+			return result, true
 		}
 
-		// If ANY row matches, return the entire result
-		if ok {
-			return result, nil
-		}
+		// If no match, continue to the next result
 	}
-
-	// No rows matched the filter
-	return model.TraceResult{}, nil
 }
 
 func (t *traceTagFilterPlan) String() string {

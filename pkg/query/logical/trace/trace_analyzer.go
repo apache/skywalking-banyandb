@@ -23,6 +23,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -123,42 +124,56 @@ func (l *traceLimit) Close() {
 	l.Parent.Input.(executor.TraceExecutable).Close()
 }
 
-func (l *traceLimit) Execute(ctx context.Context) (model.TraceResult, error) {
-	// For trace queries, we typically get one result per execution
-	// The limit and offset are handled at the span level within each trace
-	result, err := l.Parent.Input.(executor.TraceExecutable).Execute(ctx)
+func (l *traceLimit) Execute(ctx context.Context) (iter.Iterator[model.TraceResult], error) {
+	// Apply offset and limit to trace results (not spans within each trace)
+	resultIterator, err := l.Parent.Input.(executor.TraceExecutable).Execute(ctx)
 	if err != nil {
-		return model.TraceResult{}, err
+		return iter.Empty[model.TraceResult](), err
 	}
 
-	// Apply offset and limit to spans within the trace
-	if len(result.Spans) == 0 {
-		return result, nil
-	}
-
-	offset := int(l.offsetNum)
-	limit := int(l.limitNum)
-
-	if offset >= len(result.Spans) {
-		return model.TraceResult{
-			Error: result.Error,
-			Spans: [][]byte{},
-			TID:   result.TID,
-			Tags:  result.Tags,
-		}, nil
-	}
-
-	endIndex := offset + limit
-	if endIndex > len(result.Spans) {
-		endIndex = len(result.Spans)
-	}
-
-	return model.TraceResult{
-		Error: result.Error,
-		Spans: result.Spans[offset:endIndex],
-		TID:   result.TID,
-		Tags:  result.Tags,
+	// Return a lazy iterator that handles offset and limit at the result level
+	return &traceLimitIterator{
+		sourceIterator: resultIterator,
+		offset:         int(l.offsetNum),
+		limit:          int(l.limitNum),
+		currentIndex:   0,
+		returned:       0,
 	}, nil
+}
+
+// traceLimitIterator implements iter.Iterator[model.TraceResult] by applying
+// offset and limit to the number of trace results (not spans within results).
+type traceLimitIterator struct {
+	sourceIterator iter.Iterator[model.TraceResult]
+	offset         int
+	limit          int
+	currentIndex   int
+	returned       int
+}
+
+func (tli *traceLimitIterator) Next() (model.TraceResult, bool) {
+	// If we've already returned the maximum number of results, stop
+	if tli.limit > 0 && tli.returned >= tli.limit {
+		return model.TraceResult{}, false
+	}
+
+	for {
+		result, hasNext := tli.sourceIterator.Next()
+		if !hasNext {
+			return model.TraceResult{}, false
+		}
+
+		// Skip results until we reach the offset
+		if tli.currentIndex < tli.offset {
+			tli.currentIndex++
+			continue
+		}
+
+		// We're past the offset, return this result and increment counters
+		tli.currentIndex++
+		tli.returned++
+		return result, true
+	}
 }
 
 func (l *traceLimit) Analyze(s logical.Schema) (logical.Plan, error) {
