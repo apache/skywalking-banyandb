@@ -39,7 +39,7 @@ const checkDoneEvery = 128
 var nilResult = model.TraceQueryResult(nil)
 
 type queryOptions struct {
-	traceID string
+	traceIDs []string
 	model.TraceQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -47,14 +47,15 @@ type queryOptions struct {
 
 func (qo *queryOptions) reset() {
 	qo.TraceQueryOptions.Reset()
-	qo.traceID = ""
+	qo.traceIDs = nil
 	qo.minTimestamp = 0
 	qo.maxTimestamp = 0
 }
 
 func (qo *queryOptions) copyFrom(other *queryOptions) {
 	qo.TraceQueryOptions.CopyFrom(&other.TraceQueryOptions)
-	qo.traceID = other.traceID
+	qo.traceIDs = make([]string, len(other.traceIDs))
+	copy(qo.traceIDs, other.traceIDs)
 	qo.minTimestamp = other.minTimestamp
 	qo.maxTimestamp = other.maxTimestamp
 }
@@ -97,10 +98,11 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 			result.Release()
 		}
 	}()
+	sort.Strings(tqo.TraceIDs)
 	var parts []*part
 	qo := queryOptions{
 		TraceQueryOptions: tqo,
-		traceID:           "",
+		traceIDs:          tqo.TraceIDs,
 		minTimestamp:      tqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:      tqo.TimeRange.End.UnixNano(),
 	}
@@ -133,11 +135,11 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 func (t *trace) searchBlocks(ctx context.Context, result *queryResult, parts []*part, qo queryOptions) error {
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
-	defFn := startBlockScanSpan(ctx, qo.traceID, parts, result)
+	defFn := startBlockScanSpan(ctx, qo.traceIDs, parts, result)
 	defer defFn()
 	tstIter := generateTstIter()
 	defer releaseTstIter(tstIter)
-	tstIter.init(bma, parts, qo.traceID)
+	tstIter.init(bma, parts, qo.traceIDs)
 	if tstIter.Error() != nil {
 		return fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
 	}

@@ -102,7 +102,7 @@ func TestQueryResult(t *testing.T) {
 				bma := generateBlockMetadataArray()
 				defer releaseBlockMetadataArray(bma)
 				ti := &tstIter{}
-				ti.init(bma, pp, tt.traceID)
+				ti.init(bma, pp, []string{tt.traceID})
 
 				var result queryResult
 				result.ctx = context.TODO()
