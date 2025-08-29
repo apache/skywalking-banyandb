@@ -15,67 +15,20 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-bin
-include
-/build
-target
-tmp
+# Prometheus configuration for scraping eBPF sidecar metrics
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
 
-# Test binary, build with `go test -c`
-*.test
-*.log
-
-# Ginkgo test report
-*.report
-
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
-
-# editor and IDE paraphernalia
-.idea
-*.swp
-*.swo
-*~
-.vscode
-
-.DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.run
-
-# mock files
-*mock.go
-*mock_test.go
-gomock_reflect*
-
-# snky cache
-.dccache
-
-# okteto
-.stignore
-
-# profile result
-*.prof
-
-# cursor
-.cursorrules
-.cursor/
-
-# Claude
-Claude.md
-.claude/
-CLAUDE.md
-
-# eBPF generated files and binaries
-ebpf-sidecar/internal/ebpf/generated/
-ebpf-sidecar/sidecar
-ebpf-sidecar/build/
-
+scrape_configs:
+  - job_name: 'ebpf-sidecar'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        labels:
+          instance: 'ebpf-sidecar-prometheus'
+          
+  - job_name: 'banyandb'
+    static_configs:
+      - targets: ['banyandb:17913']
+        labels:
+          instance: 'banyandb'
