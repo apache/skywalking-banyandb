@@ -74,7 +74,7 @@ func (s *schema) CreateFieldRef(_ ...*logical.Field) ([]*logical.FieldRef, error
 	panic("no field for trace")
 }
 
-func (s *schema) IndexRuleDefined(indexRuleName string) (bool, *databasev1.IndexRule) {
+func (s *schema) IndexRuleDefined(_ string) (bool, *databasev1.IndexRule) {
 	panic("trace does not support index rule")
 }
 

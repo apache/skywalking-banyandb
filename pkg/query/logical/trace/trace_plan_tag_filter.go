@@ -101,19 +101,6 @@ func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext
 	}
 }
 
-func traceTagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criteria *modelv1.Criteria,
-	projection [][]*logical.Tag, ec executor.TraceExecutionContext,
-) logical.UnresolvedPlan {
-	return &unresolvedTraceTagFilter{
-		startTime:      startTime,
-		endTime:        endTime,
-		metadata:       metadata,
-		criteria:       criteria,
-		projectionTags: projection,
-		ec:             ec,
-	}
-}
-
 type traceAnalyzeContext struct {
 	s                logical.Schema
 	skippingFilter   index.Filter

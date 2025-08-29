@@ -230,7 +230,7 @@ type unresolvedTraceMerger struct {
 	tagProjection [][]*logical.Tag
 }
 
-func (utm *unresolvedTraceMerger) Analyze(s logical.Schema) (logical.Plan, error) {
+func (utm *unresolvedTraceMerger) Analyze(_ logical.Schema) (logical.Plan, error) {
 	// TODO: Implement trace merger logic
 	return nil, fmt.Errorf("trace merger not implemented yet")
 }
@@ -246,7 +246,7 @@ type unresolvedTraceDistributed struct {
 	criteria *tracev1.QueryRequest
 }
 
-func (utd *unresolvedTraceDistributed) Analyze(s logical.Schema) (logical.Plan, error) {
+func (utd *unresolvedTraceDistributed) Analyze(_ logical.Schema) (logical.Plan, error) {
 	// TODO: Implement distributed trace analysis
 	return nil, fmt.Errorf("distributed trace query not implemented yet")
 }
@@ -268,7 +268,7 @@ type distributedTraceLimit struct {
 	limitNum  uint32
 }
 
-func (dtl *distributedTraceLimit) Analyze(s logical.Schema) (logical.Plan, error) {
+func (dtl *distributedTraceLimit) Analyze(_ logical.Schema) (logical.Plan, error) {
 	// TODO: Implement distributed trace limit analysis
 	return nil, fmt.Errorf("distributed trace limit not implemented yet")
 }

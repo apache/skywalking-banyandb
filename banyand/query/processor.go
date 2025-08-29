@@ -43,7 +43,6 @@ import (
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	logical_trace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 const (
@@ -51,11 +50,10 @@ const (
 )
 
 var (
-	_ run.PreRunner       = (*queryService)(nil)
-	_ bus.MessageListener = (*streamQueryProcessor)(nil)
-	_ bus.MessageListener = (*measureQueryProcessor)(nil)
-	_ bus.MessageListener = (*topNQueryProcessor)(nil)
-	_ bus.MessageListener = (*traceQueryProcessor)(nil)
+	_ bus.MessageListener            = (*streamQueryProcessor)(nil)
+	_ bus.MessageListener            = (*measureQueryProcessor)(nil)
+	_ bus.MessageListener            = (*traceQueryProcessor)(nil)
+	_ executor.TraceExecutionContext = trace.Trace(nil)
 )
 
 type streamQueryProcessor struct {
@@ -453,10 +451,19 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 	return
 }
 
-func (p *traceQueryProcessor) executeQuery(_ context.Context, queryCriteria *tracev1.QueryRequest) (resp bus.Message) {
+func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *tracev1.QueryRequest) (resp bus.Message) {
 	n := time.Now()
 	now := n.UnixNano()
+	defer func() {
+		if err := recover(); err != nil {
+			p.log.Error().Interface("err", err).RawJSON("req", logger.Proto(queryCriteria)).Str("stack", string(debug.Stack())).Msg("panic")
+			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
+		}
+	}()
+
+	var metadata []*commonv1.Metadata
 	var schemas []logical.Schema
+	var ecc []executor.TraceExecutionContext
 	for i := range queryCriteria.Groups {
 		meta := &commonv1.Metadata{
 			Name:  queryCriteria.Name,
@@ -467,22 +474,85 @@ func (p *traceQueryProcessor) executeQuery(_ context.Context, queryCriteria *tra
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for trace %s: %v", meta.GetName(), err))
 			return
 		}
+		ecc = append(ecc, ec)
 		s, err := logical_trace.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if err != nil {
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for trace %s: %v", meta.GetName(), err))
 			return
 		}
 		schemas = append(schemas, s)
+		metadata = append(metadata, meta)
 	}
 
-	// For now, we only implement BuildSchema - the query execution stops here
-	// This is exactly what was requested: "executeQuery stop at the schema parsing since we only implement the BuildSchema right now"
+	plan, err := logical_trace.Analyze(queryCriteria, metadata, schemas, ecc)
+	if err != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for trace %s: %v", queryCriteria.GetName(), err))
+		return
+	}
 
 	if p.log.Debug().Enabled() {
-		p.log.Debug().Int("schemas_built", len(schemas)).Msg("trace schemas built successfully, execution stopped at schema parsing")
+		p.log.Debug().Str("plan", plan.String()).Msg("trace query plan")
 	}
 
-	// Return an empty response indicating successful schema building but no actual execution
-	resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{Spans: make([]*tracev1.Span, 0)})
+	var tracer *query.Tracer
+	var span *query.Span
+	if queryCriteria.Trace {
+		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
+		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
+		span.Tag("plan", plan.String())
+		defer func() {
+			data := resp.Data()
+			switch d := data.(type) {
+			case *tracev1.QueryResponse:
+				d.TraceQueryResult = tracer.ToProto()
+			case *common.Error:
+				span.Error(errors.New(d.Error()))
+				resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{TraceQueryResult: tracer.ToProto()})
+			default:
+				panic("unexpected data type")
+			}
+			span.Stop()
+		}()
+	}
+
+	te := plan.(executor.TraceExecutable)
+	defer te.Close()
+	result, err := te.Execute(ctx)
+	if err != nil {
+		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the trace query plan")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for trace %s: %v", queryCriteria.GetName(), err))
+		return
+	}
+
+	// Convert model.TraceResult to tracev1.QueryResponse format
+	spans := make([]*tracev1.Span, len(result.Spans))
+	for i, spanBytes := range result.Spans {
+		// Create trace tags from the result
+		var traceTags []*modelv1.Tag
+		if result.Tags != nil {
+			for _, tag := range result.Tags {
+				if len(tag.Values) > 0 {
+					traceTags = append(traceTags, &modelv1.Tag{
+						Key:   tag.Name,
+						Value: tag.Values[0],
+					})
+				}
+			}
+		}
+
+		spans[i] = &tracev1.Span{
+			Tags: traceTags,
+			Span: spanBytes,
+		}
+	}
+
+	resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{Spans: spans})
+
+	if !queryCriteria.Trace && p.slowQuery > 0 {
+		latency := time.Since(n)
+		if latency > p.slowQuery {
+			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", len(spans)).Msg("trace slow query")
+		}
+	}
 	return
 }
