@@ -15,10 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-spans:
-  - span: span1_trace_data
-    tags:
-    - key: trace_id
-      value:
-        str:
-          value: "1"
+name: "sw"
+groups: ["test-trace-group"]
+order_by:
+  index_rule_name: "timestamp"
+  sort: "SORT_DESC"
