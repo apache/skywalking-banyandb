@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -158,6 +159,10 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 			traces:      generateTraces(),
 			segment:     segment,
 			sidxReqsMap: make(map[string][]sidx.WriteRequest),
+			seriesDocs: seriesDoc{
+				docs:        make(index.Documents, 0),
+				docIDsAdded: make(map[uint64]struct{}),
+			},
 		}
 		et.traces.reset()
 		eg.tables = append(eg.tables, et)
@@ -271,6 +276,15 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 			tracesInTable.sidxReqsMap[sidxName] = make([]sidx.WriteRequest, 0)
 		}
 		tracesInTable.sidxReqsMap[sidxName] = append(tracesInTable.sidxReqsMap[sidxName], writeReq)
+
+		docID := uint64(series.ID)
+		if _, existed := tracesInTable.seriesDocs.docIDsAdded[docID]; !existed {
+			tracesInTable.seriesDocs.docs = append(tracesInTable.seriesDocs.docs, index.Document{
+				DocID:        docID,
+				EntityValues: series.Buffer,
+			})
+			tracesInTable.seriesDocs.docIDsAdded[docID] = struct{}{}
+		}
 	}
 
 	return nil
@@ -324,6 +338,11 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 					if err := sidxInstance.Write(ctx, sidxReqs); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
 					}
+				}
+			}
+			if len(es.seriesDocs.docs) > 0 {
+				if err := es.segment.IndexDB().Update(es.seriesDocs.docs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write series index")
 				}
 			}
 			releaseTraces(es.traces)

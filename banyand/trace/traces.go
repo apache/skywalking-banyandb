@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -195,12 +196,18 @@ func releaseTraces(t *traces) {
 
 var tracesPool = pool.Register[*traces]("trace-traces")
 
+type seriesDoc struct {
+	docIDsAdded map[uint64]struct{}
+	docs        index.Documents
+}
+
 type tracesInTable struct {
 	segment     storage.Segment[*tsTable, option]
 	tsTable     *tsTable
 	traces      *traces
 	sidxReqsMap map[string][]sidx.WriteRequest
 	timeRange   timestamp.TimeRange
+	seriesDocs  seriesDoc
 	shardID     common.ShardID
 }
 
