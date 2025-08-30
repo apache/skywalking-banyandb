@@ -133,8 +133,12 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 			if sidxErr != nil {
 				t.l.Warn().Err(sidxErr).Str("sidx", sidxName).Msg("sidx query failed, falling back to normal query")
 			} else if len(traceIDs) > 0 {
+				// Store original sidx order before sorting for partIter
+				result.originalSidxOrder = make([]string, len(traceIDs))
+				copy(result.originalSidxOrder, traceIDs)
+
 				qo.traceIDs = traceIDs
-				sort.Strings(qo.traceIDs)
+				sort.Strings(qo.traceIDs) // Sort for partIter efficiency
 			}
 		}
 	}
@@ -201,13 +205,14 @@ func (t *trace) searchBlocks(ctx context.Context, result *queryResult, parts []*
 }
 
 type queryResult struct {
-	ctx           context.Context
-	tagProjection *model.TagProjection
-	data          []*blockCursor
-	snapshots     []*snapshot
-	segments      []storage.Segment[*tsTable, option]
-	hit           int
-	loaded        bool
+	ctx               context.Context
+	tagProjection     *model.TagProjection
+	data              []*blockCursor
+	snapshots         []*snapshot
+	segments          []storage.Segment[*tsTable, option]
+	originalSidxOrder []string // Store original sidx order for final sorting
+	hit               int
+	loaded            bool
 }
 
 func (qr *queryResult) Pull() *model.TraceResult {
@@ -263,6 +268,12 @@ func (qr *queryResult) Pull() *model.TraceResult {
 			qr.data = append(qr.data[:index], qr.data[index+1:]...)
 		}
 		qr.loaded = true
+
+		// Resort data according to original sidx order if available
+		if len(qr.originalSidxOrder) > 0 {
+			qr.resortDataBySidxOrder()
+		}
+
 		heap.Init(qr)
 	}
 	if len(qr.data) == 0 {
@@ -277,6 +288,42 @@ func (qr *queryResult) Pull() *model.TraceResult {
 		return r
 	}
 	return qr.merge()
+}
+
+// resortDataBySidxOrder reorders the data to match the original sidx order.
+func (qr *queryResult) resortDataBySidxOrder() {
+	if len(qr.originalSidxOrder) == 0 || len(qr.data) == 0 {
+		return
+	}
+
+	// Create a map from trace ID to its position in the original sidx order
+	traceIDToOrder := make(map[string]int)
+	for i, traceID := range qr.originalSidxOrder {
+		traceIDToOrder[traceID] = i
+	}
+
+	// Sort data according to the original sidx order
+	sort.Slice(qr.data, func(i, j int) bool {
+		traceIDi := qr.data[i].bm.traceID
+		traceIDj := qr.data[j].bm.traceID
+
+		orderi, existi := traceIDToOrder[traceIDi]
+		orderj, existj := traceIDToOrder[traceIDj]
+
+		// If both trace IDs are in the original order, use that ordering
+		if existi && existj {
+			return orderi < orderj
+		}
+		// If only one is in the original order, prioritize it
+		if existi {
+			return true
+		}
+		if existj {
+			return false
+		}
+		// If neither is in the original order, use alphabetical ordering
+		return traceIDi < traceIDj
+	})
 }
 
 func (qr *queryResult) Release() {
