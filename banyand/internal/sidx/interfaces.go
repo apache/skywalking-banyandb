@@ -123,25 +123,14 @@ type QueryRequest struct {
 // This follows BanyanDB result patterns with parallel arrays for efficiency.
 // Uses individual tag-based strategy (like trace module) rather than tag-family approach (like stream module).
 type QueryResponse struct {
-	// Error contains any error that occurred during this batch of query execution.
-	// Non-nil Error indicates partial or complete failure during result iteration.
-	// Query setup errors are returned by Query() method directly.
-	Error error
-
-	// Keys contains the user-provided ordering keys for each result
-	Keys []int64
-
-	// Data contains the user payload data for each result
-	Data [][]byte
-
-	// Tags contains individual tag data for each result
-	Tags [][]Tag
-
-	// SIDs contains the series IDs for each result
-	SIDs []common.SeriesID
-
-	// Metadata provides query execution information for this batch
-	Metadata ResponseMetadata
+	Error           error
+	uniqueDataMap   map[string]struct{}
+	Keys            []int64
+	Data            [][]byte
+	Tags            [][]Tag
+	SIDs            []common.SeriesID
+	Metadata        ResponseMetadata
+	uniqueDataCount int
 }
 
 // Len returns the number of results in the QueryResponse.
@@ -157,6 +146,9 @@ func (qr *QueryResponse) Reset() {
 	qr.Tags = qr.Tags[:0]
 	qr.SIDs = qr.SIDs[:0]
 	qr.Metadata = ResponseMetadata{}
+	// Reset unique data cache
+	qr.uniqueDataMap = nil
+	qr.uniqueDataCount = 0
 }
 
 // Validate validates a QueryResponse for correctness.

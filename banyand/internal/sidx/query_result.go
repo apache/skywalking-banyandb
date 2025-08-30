@@ -230,12 +230,17 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.SeriesID, result *QueryResponse) {
 	elemCount := len(block.userKeys)
 
-	for i := 0; i < elemCount; i++ {
-		// Apply MaxElementSize limit from request (only if positive)
-		if qr.request.MaxElementSize > 0 && result.Len() >= qr.request.MaxElementSize {
-			break
+	// Initialize unique Data tracking if needed
+	if qr.request.MaxElementSize > 0 && result.uniqueDataMap == nil {
+		result.uniqueDataMap = make(map[string]struct{})
+		// Count existing unique data elements in result if any
+		for _, data := range result.Data {
+			result.uniqueDataMap[string(data)] = struct{}{}
 		}
+		result.uniqueDataCount = len(result.uniqueDataMap)
+	}
 
+	for i := 0; i < elemCount; i++ {
 		// Filter by key range from QueryRequest
 		key := block.userKeys[i]
 		if qr.request.MinKey != nil && key < *qr.request.MinKey {
@@ -243,6 +248,19 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 		}
 		if qr.request.MaxKey != nil && key > *qr.request.MaxKey {
 			continue
+		}
+
+		// Check unique Data element limit from request (only if positive)
+		if qr.request.MaxElementSize > 0 {
+			dataStr := string(block.data[i])
+			if _, exists := result.uniqueDataMap[dataStr]; !exists {
+				// New unique data element
+				if result.uniqueDataCount >= qr.request.MaxElementSize {
+					break
+				}
+				result.uniqueDataMap[dataStr] = struct{}{}
+				result.uniqueDataCount++
+			}
 		}
 
 		// Copy parallel arrays
@@ -424,20 +442,36 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 		step = 1
 	}
 
+	// Track unique Data elements for limit enforcement
+	var uniqueDataCount int
+	var uniqueDataMap map[string]struct{}
+	if limit > 0 {
+		uniqueDataMap = make(map[string]struct{})
+	}
+
 	for qrh.Len() > 0 {
 		topCursor := qrh.cursors[0]
 		idx := topCursor.idx
 		resp := topCursor.response
+
+		// Check unique Data element limit before adding
+		if limit > 0 {
+			dataStr := string(resp.Data[idx])
+			if _, exists := uniqueDataMap[dataStr]; !exists {
+				// New unique data element
+				if uniqueDataCount >= limit {
+					break
+				}
+				uniqueDataMap[dataStr] = struct{}{}
+				uniqueDataCount++
+			}
+		}
 
 		// Copy element from top cursor
 		result.Keys = append(result.Keys, resp.Keys[idx])
 		result.Data = append(result.Data, resp.Data[idx])
 		result.Tags = append(result.Tags, resp.Tags[idx])
 		result.SIDs = append(result.SIDs, resp.SIDs[idx])
-
-		if limit > 0 && result.Len() >= limit {
-			break
-		}
 
 		// Advance cursor
 		topCursor.idx += step
