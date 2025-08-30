@@ -46,7 +46,7 @@ import (
 // - Results are merged maintaining ASC/DESC order as specified in QueryRequest
 // - MaxElementSize limits are respected across the merged result
 // - Partial failures are tolerated - returns success if at least one SIDX succeeds
-// - All errors are aggregated and returned if no SIDX instances succeed
+// - All errors are aggregated and returned if no SIDX instances succeed.
 func QueryMultipleSIDX(ctx context.Context, sidxs []SIDX, req QueryRequest) (*QueryResponse, error) {
 	if len(sidxs) == 0 {
 		return &QueryResponse{
@@ -136,7 +136,7 @@ func QueryMultipleSIDX(ctx context.Context, sidxs []SIDX, req QueryRequest) (*Qu
 
 	// Merge multiple responses
 	mergedResponse := mergeMultipleSIDXResponses(successfulResponses, req)
-	
+
 	// Include partial failure information in the response if there were errors
 	if aggregatedError != nil {
 		mergedResponse.Error = aggregatedError
@@ -174,12 +174,12 @@ func mergeMultipleSIDXResponses(responses []*QueryResponse, req QueryRequest) *Q
 	return mergeQueryResponseShardsDesc(responses, req.MaxElementSize)
 }
 
-// QueryMultipleSIDXWithOptions provides additional configuration options for multi-SIDX queries.
+// MultiSIDXQueryOptions provides additional configuration options for multi-SIDX queries.
 // This is an extended version of QueryMultipleSIDX with more control over execution behavior.
 type MultiSIDXQueryOptions struct {
 	// FailFast determines whether to return immediately on first error or collect all results
 	FailFast bool
-	
+
 	// MinSuccessCount specifies minimum number of successful SIDX queries required
 	// If less than MinSuccessCount succeed, the function returns an error
 	MinSuccessCount int
@@ -233,7 +233,7 @@ func QueryMultipleSIDXWithOptions(ctx context.Context, sidxs []SIDX, req QueryRe
 		go func(idx int, sidx SIDX) {
 			defer wg.Done()
 			resp, err := sidx.Query(queryCtx, req)
-			
+
 			select {
 			case resultCh <- sidxResult{
 				response: resp,
@@ -263,7 +263,7 @@ func QueryMultipleSIDXWithOptions(ctx context.Context, sidxs []SIDX, req QueryRe
 			failureCount++
 			aggregatedError = multierr.Append(aggregatedError,
 				fmt.Errorf("SIDX[%d] query failed: %w", result.index, result.err))
-			
+
 			// Fail fast on first error if enabled
 			if opts.FailFast {
 				cancel() // Cancel remaining queries
@@ -292,7 +292,7 @@ func QueryMultipleSIDXWithOptions(ctx context.Context, sidxs []SIDX, req QueryRe
 	}
 
 	mergedResponse := mergeMultipleSIDXResponses(successfulResponses, req)
-	
+
 	// Include partial failure information if there were errors
 	if aggregatedError != nil && !opts.FailFast {
 		mergedResponse.Error = aggregatedError

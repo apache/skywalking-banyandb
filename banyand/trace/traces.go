@@ -196,12 +196,12 @@ func releaseTraces(t *traces) {
 var tracesPool = pool.Register[*traces]("trace-traces")
 
 type tracesInTable struct {
-	segment   storage.Segment[*tsTable, option]
-	tsTable   *tsTable
-	traces    *traces
-	timeRange timestamp.TimeRange
-	sidxReqs  []sidx.WriteRequest
-	shardID   common.ShardID
+	segment     storage.Segment[*tsTable, option]
+	tsTable     *tsTable
+	traces      *traces
+	sidxReqsMap map[string][]sidx.WriteRequest
+	timeRange   timestamp.TimeRange
+	shardID     common.ShardID
 }
 
 type tracesInGroup struct {

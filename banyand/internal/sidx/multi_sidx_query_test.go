@@ -37,18 +37,18 @@ type mockSIDX struct {
 	delay    bool
 }
 
-func (m *mockSIDX) Write(ctx context.Context, reqs []WriteRequest) error {
+func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest) error {
 	return nil // Not implemented for tests
 }
 
-func (m *mockSIDX) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
+func (m *mockSIDX) Query(_ context.Context, _ QueryRequest) (*QueryResponse, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.response, nil
 }
 
-func (m *mockSIDX) Stats(ctx context.Context) (*Stats, error) {
+func (m *mockSIDX) Stats(_ context.Context) (*Stats, error) {
 	return &Stats{}, nil
 }
 
@@ -326,7 +326,6 @@ func TestQueryMultipleSIDX_ContextCancellation(t *testing.T) {
 
 	// Query should respect context cancellation
 	_, err := QueryMultipleSIDX(ctx, []SIDX{sidx1}, req)
-
 	// May succeed if mock doesn't check context, but real implementation would respect cancellation
 	// This test mainly verifies the context is properly passed through
 	if err != nil {

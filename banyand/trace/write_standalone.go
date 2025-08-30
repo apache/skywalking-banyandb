@@ -153,10 +153,11 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 		}
 
 		et = &tracesInTable{
-			timeRange: segment.GetTimeRange(),
-			tsTable:   tstb,
-			traces:    generateTraces(),
-			segment:   segment,
+			timeRange:   segment.GetTimeRange(),
+			tsTable:     tstb,
+			traces:      generateTraces(),
+			segment:     segment,
+			sidxReqsMap: make(map[string][]sidx.WriteRequest),
 		}
 		et.traces.reset()
 		eg.tables = append(eg.tables, et)
@@ -263,7 +264,13 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 			SeriesID: series.ID,
 			Key:      key,
 		}
-		tracesInTable.sidxReqs = append(tracesInTable.sidxReqs, writeReq)
+
+		sidxName := indexRule.GetMetadata().GetName()
+
+		if tracesInTable.sidxReqsMap[sidxName] == nil {
+			tracesInTable.sidxReqsMap[sidxName] = make([]sidx.WriteRequest, 0)
+		}
+		tracesInTable.sidxReqsMap[sidxName] = append(tracesInTable.sidxReqsMap[sidxName], writeReq)
 	}
 
 	return nil
@@ -307,9 +314,16 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		for j := range g.tables {
 			es := g.tables[j]
 			es.tsTable.mustAddTraces(es.traces)
-			if len(es.sidxReqs) > 0 {
-				if err := es.tsTable.sidx.Write(ctx, es.sidxReqs); err != nil {
-					w.l.Error().Err(err).Msg("cannot write to secondary index")
+			for sidxName, sidxReqs := range es.sidxReqsMap {
+				if len(sidxReqs) > 0 {
+					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
+					if err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
+						continue
+					}
+					if err := sidxInstance.Write(ctx, sidxReqs); err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
+					}
 				}
 			}
 			releaseTraces(es.traces)
