@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -108,6 +109,37 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	for _, segment := range segments {
 		tt, _ := segment.Tables()
 		tables = append(tables, tt...)
+	}
+
+	// Check if we need to use sidx for ordering when no trace IDs are provided
+	if len(tqo.TraceIDs) == 0 && tqo.Order != nil {
+		// Extract sidx name from index rule
+		sidxName := "default" // fallback to default sidx
+		if tqo.Order.Index != nil {
+			sidxName = tqo.Order.Index.GetMetadata().GetName()
+		}
+
+		// Collect sidx instances from all tables
+		var sidxInstances []sidx.SIDX
+		for _, table := range tables {
+			if sidxInstance, exists := table.getSidx(sidxName); exists {
+				sidxInstances = append(sidxInstances, sidxInstance)
+			}
+		}
+
+		if len(sidxInstances) > 0 {
+			// Query sidx for trace IDs
+			traceIDs, sidxErr := t.querySidxForTraceIDs(ctx, sidxInstances, tqo)
+			if sidxErr != nil {
+				t.l.Warn().Err(sidxErr).Str("sidx", sidxName).Msg("sidx query failed, falling back to normal query")
+			} else if len(traceIDs) > 0 {
+				qo.traceIDs = traceIDs
+				sort.Strings(qo.traceIDs)
+			}
+		}
+	}
+	if len(qo.traceIDs) == 0 {
+		return nilResult, nil
 	}
 	for i := range tables {
 		s := tables[i].currentSnapshot()

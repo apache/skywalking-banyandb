@@ -23,11 +23,14 @@ package trace
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -131,6 +134,53 @@ func (t *trace) parseSpec() {
 	var is indexSchema
 	is.parse(t.schema)
 	t.indexSchema.Store(is)
+}
+
+// querySidxForTraceIDs queries sidx instances to get ordered trace IDs.
+func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.SIDX, tqo model.TraceQueryOptions) ([]string, error) {
+	// Convert TraceQueryOptions to sidx.QueryRequest
+	req := sidx.QueryRequest{
+		Filter:         tqo.SkippingFilter,
+		Order:          tqo.Order,
+		MaxElementSize: tqo.MaxTraceSize,
+	}
+
+	// Convert TagProjection to slice format if needed
+	if tqo.TagProjection != nil {
+		req.TagProjection = []model.TagProjection{*tqo.TagProjection}
+	}
+
+	// Set key range based on time range
+	if tqo.TimeRange != nil {
+		minKey := tqo.TimeRange.Start.UnixNano()
+		maxKey := tqo.TimeRange.End.UnixNano()
+		req.MinKey = &minKey
+		req.MaxKey = &maxKey
+	}
+
+	// For now, use all series IDs (this could be optimized further)
+	// TODO: Consider filtering by relevant series IDs based on query context
+	req.SeriesIDs = []common.SeriesID{1} // Placeholder - should be dynamically determined
+
+	// Query multiple sidx instances
+	response, err := sidx.QueryMultipleSIDX(ctx, sidxInstances, req)
+	if err != nil {
+		return nil, fmt.Errorf("sidx query failed: %w", err)
+	}
+
+	if response == nil || len(response.Data) == 0 {
+		return nil, nil
+	}
+
+	// Extract trace IDs from response data
+	traceIDs := make([]string, 0, len(response.Data))
+	for _, data := range response.Data {
+		if len(data) > 0 {
+			traceIDs = append(traceIDs, string(data))
+		}
+	}
+
+	return traceIDs, nil
 }
 
 func openTrace(schema *databasev1.Trace, l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo) *trace {
