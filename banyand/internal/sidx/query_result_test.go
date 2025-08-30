@@ -672,7 +672,7 @@ func TestQueryResult_Pull_SingleMemPart(t *testing.T) {
 	snap := &snapshot{}
 	snap.parts = make([]*partWrapper, len(parts))
 	for i, p := range parts {
-		snap.parts[i] = newPartWrapper(p)
+		snap.parts[i] = newPartWrapper(nil, p)
 	}
 	// Initialize reference count to 1
 	snap.ref = 1
@@ -864,7 +864,7 @@ func TestQueryResult_Pull_MultipleMemParts(t *testing.T) {
 	snap := &snapshot{}
 	snap.parts = make([]*partWrapper, len(parts))
 	for i, p := range parts {
-		snap.parts[i] = newPartWrapper(p)
+		snap.parts[i] = newPartWrapper(nil, p)
 	}
 	// Initialize reference count to 1
 	snap.ref = 1
@@ -1029,7 +1029,7 @@ func TestQueryResult_Pull_WithTagProjection(t *testing.T) {
 	snap := &snapshot{}
 	snap.parts = make([]*partWrapper, len(parts))
 	for i, p := range parts {
-		snap.parts[i] = newPartWrapper(p)
+		snap.parts[i] = newPartWrapper(nil, p)
 	}
 	// Initialize reference count to 1
 	snap.ref = 1
@@ -1117,7 +1117,7 @@ func TestQueryResult_Pull_DescendingOrder(t *testing.T) {
 	snap := &snapshot{}
 	snap.parts = make([]*partWrapper, len(parts))
 	for i, p := range parts {
-		snap.parts[i] = newPartWrapper(p)
+		snap.parts[i] = newPartWrapper(nil, p)
 	}
 	// Initialize reference count to 1
 	snap.ref = 1
@@ -1194,7 +1194,7 @@ func TestQueryResult_Pull_ErrorHandling(t *testing.T) {
 	snap := &snapshot{}
 	snap.parts = make([]*partWrapper, len(parts))
 	for i, p := range parts {
-		snap.parts[i] = newPartWrapper(p)
+		snap.parts[i] = newPartWrapper(nil, p)
 	}
 	// Initialize reference count to 1
 	snap.ref = 1
@@ -1252,7 +1252,7 @@ func TestQueryResult_Release(t *testing.T) {
 	snap := &snapshot{}
 	snap.parts = make([]*partWrapper, len(parts))
 	for i, p := range parts {
-		snap.parts[i] = newPartWrapper(p)
+		snap.parts[i] = newPartWrapper(nil, p)
 	}
 	// Initialize reference count to 1
 	snap.ref = 1
@@ -1375,7 +1375,7 @@ func TestQueryResult_Pull_ContextCancellation(t *testing.T) {
 	snap := &snapshot{}
 	snap.parts = make([]*partWrapper, len(parts))
 	for i, p := range parts {
-		snap.parts[i] = newPartWrapper(p)
+		snap.parts[i] = newPartWrapper(nil, p)
 	}
 	// Initialize reference count to 1
 	snap.ref = 1

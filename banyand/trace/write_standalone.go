@@ -194,6 +194,7 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 	}
 
 	tags := make([]*tagValue, 0, len(stm.schema.Tags))
+	tagMap := make(map[string]*tagValue, len(stm.schema.Tags))
 	tagSpecs := stm.GetSchema().GetTags()
 	for i := range tagSpecs {
 		tagSpec := tagSpecs[i]
@@ -212,6 +213,7 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 		}
 		tv := encodeTagValue(tagSpec.Name, tagSpec.Type, tagValue)
 		tags = append(tags, tv)
+		tagMap[tagSpec.Name] = tv
 	}
 	tracesInTable.traces.tags = append(tracesInTable.traces.tags, tags)
 
@@ -232,8 +234,8 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 		if err != nil || tagIdx >= len(req.Tags) {
 			continue
 		}
-		tv := tags[tagIdx]
-		if tv.valueType != pbv1.ValueTypeInt64 {
+		tv := tagMap[tagName]
+		if tv.valueType != pbv1.ValueTypeInt64 && tv.valueType != pbv1.ValueTypeTimestamp {
 			return fmt.Errorf("unsupported tag value type: %s", tv.tag)
 		}
 		key := req.Tags[tagIdx].GetInt().GetValue()

@@ -104,7 +104,7 @@ func TestPartStringRepresentation(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Test 1: Part with valid metadata
-	pm := generatePartMetadata()
+	pm := &partMetadata{}
 	pm.ID = 99999
 	pm.BlocksCount = 1
 	metaData, err := pm.marshal()
@@ -150,7 +150,6 @@ func TestPartStringRepresentation(t *testing.T) {
 	assert.Equal(t, expectedStringAfterClose, part.String())
 
 	// Cleanup
-	releasePartMetadata(pm)
 }
 
 func TestMemPartInitialization(t *testing.T) {

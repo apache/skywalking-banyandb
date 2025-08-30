@@ -28,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
+	casestrace "github.com/apache/skywalking-banyandb/test/cases/trace/data"
 )
 
 // Initialize test data.
@@ -61,7 +62,6 @@ func Initialize(addr string, now time.Time) {
 	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_updated", "service_cpm_minute_updated_data.json", now.Add(10*time.Minute), interval)
 	time.Sleep(5 * time.Second)
 	// trace
-	// nolint:gocritic
-	// interval = 500 * time.Millisecond
-	// casestrace.Write(conn, "sw", now, interval)
+	interval = 500 * time.Millisecond
+	casestrace.Write(conn, "sw", now, interval)
 }

@@ -70,7 +70,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
-	q, err := query.NewService(ctx, streamSvc, measureSvc, metaSvc, dataPipeline)
+	q, err := query.NewService(ctx, streamSvc, measureSvc, traceSvc, metaSvc, dataPipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}

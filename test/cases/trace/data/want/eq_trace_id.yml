@@ -15,6 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "sw"
-groups: ["test-trace-group"]
-tag_projection: ["trace_id"]
+spans:
+  - span: YWJjMTIzIT8kKiYoKSctPUB+
+    tags:
+    - key: trace_id
+      value:
+        str:
+          value: "1"

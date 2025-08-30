@@ -290,6 +290,7 @@ func newSupplier(path string, svc *standalone, nodeLabels map[string]string) *su
 		pm:         svc.pm,
 		l:          svc.l,
 		nodeLabels: nodeLabels,
+		schemaRepo: &svc.schemaRepo,
 		path:       path,
 		option:     opt,
 	}
@@ -396,6 +397,7 @@ func newQueueSupplier(path string, svc *liaison, traceDataNodeRegistry grpc.Node
 		l:                     svc.l,
 		path:                  path,
 		option:                opt,
+		schemaRepo:            &svc.schemaRepo,
 	}
 }
 

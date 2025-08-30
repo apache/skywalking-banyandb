@@ -48,14 +48,14 @@ func (bc *blockCursor) String() string {
 		bc.p.partMetadata.ID, bc.bm.traceID, bc.bm.count, humanize.Bytes(bc.bm.uncompressedSpanSizeBytes))
 }
 
-func startBlockScanSpan(ctx context.Context, tid string, parts []*part, qr *queryResult) func() {
+func startBlockScanSpan(ctx context.Context, tids []string, parts []*part, qr *queryResult) func() {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
 		return func() {}
 	}
 
 	span, _ := tracer.StartSpan(ctx, "scan-blocks")
-	span.Tag("trace_id", tid)
+	span.Tag("trace_ids", fmt.Sprintf("%v", tids))
 	span.Tag("part_header", partMetadataHeader)
 	span.Tag("part_num", fmt.Sprintf("%d", len(parts)))
 	for i := range parts {

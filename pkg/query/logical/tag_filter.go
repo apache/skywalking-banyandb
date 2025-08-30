@@ -76,11 +76,11 @@ type TagFilter interface {
 
 // BuildSimpleTagFilter returns a TagFilter without any local-index, global index, sharding key support.
 func BuildSimpleTagFilter(criteria *modelv1.Criteria) (TagFilter, error) {
-	return BuildTagFilter(criteria, nil, emptyIndexChecker{}, false)
+	return BuildTagFilter(criteria, nil, emptyIndexChecker{}, false, "")
 }
 
 // BuildTagFilter returns a TagFilter.
-func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, indexChecker IndexChecker, hasGlobalIndex bool) (TagFilter, error) {
+func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, indexChecker IndexChecker, hasGlobalIndex bool, globalTagName string) (TagFilter, error) {
 	if criteria == nil {
 		return DummyFilter, nil
 	}
@@ -97,14 +97,17 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, index
 		if _, ok := entityDict[cond.Name]; ok {
 			return DummyFilter, nil
 		}
+		if cond.Name == globalTagName {
+			return DummyFilter, nil
+		}
 		return parseFilter(cond, expr, indexChecker)
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
-		left, err := BuildTagFilter(le.Left, entityDict, indexChecker, hasGlobalIndex)
+		left, err := BuildTagFilter(le.Left, entityDict, indexChecker, hasGlobalIndex, globalTagName)
 		if err != nil {
 			return nil, err
 		}
-		right, err := BuildTagFilter(le.Right, entityDict, indexChecker, hasGlobalIndex)
+		right, err := BuildTagFilter(le.Right, entityDict, indexChecker, hasGlobalIndex, globalTagName)
 		if err != nil {
 			return nil, err
 		}

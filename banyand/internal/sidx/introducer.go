@@ -155,7 +155,7 @@ func (s *sidx) introduceMemPart(nextIntroduction *introduction, epoch uint64) {
 
 	// Convert memPart to part and wrap it
 	part := openMemPart(next)
-	pw := newPartWrapper(part)
+	pw := newPartWrapper(next, part)
 	nextSnp.parts = append(nextSnp.parts, pw)
 
 	s.replaceSnapshot(nextSnp)
@@ -188,7 +188,7 @@ func (s *sidx) introduceMerged(nextIntroduction *mergerIntroduction, epoch uint6
 	nextSnp := cur.remove(epoch, nextIntroduction.merged)
 
 	// Wrap the new part
-	pw := newPartWrapper(nextIntroduction.newPart)
+	pw := newPartWrapper(nil, nextIntroduction.newPart)
 	nextSnp.parts = append(nextSnp.parts, pw)
 
 	s.replaceSnapshot(nextSnp)

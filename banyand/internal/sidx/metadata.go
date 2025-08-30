@@ -70,28 +70,9 @@ func (bma *blockMetadataArray) reset() {
 }
 
 var (
-	partMetadataPool       = pool.Register[*partMetadata]("sidx-partMetadata")
 	blockMetadataPool      = pool.Register[*blockMetadata]("sidx-blockMetadata")
 	blockMetadataArrayPool = pool.Register[*blockMetadataArray]("sidx-blockMetadataArray")
 )
-
-// generatePartMetadata gets partMetadata from pool or creates new.
-func generatePartMetadata() *partMetadata {
-	v := partMetadataPool.Get()
-	if v == nil {
-		return &partMetadata{}
-	}
-	return v
-}
-
-// releasePartMetadata returns partMetadata to pool after reset.
-func releasePartMetadata(pm *partMetadata) {
-	if pm == nil {
-		return
-	}
-	pm.reset()
-	partMetadataPool.Put(pm)
-}
 
 // generateBlockMetadata gets blockMetadata from pool or creates new.
 func generateBlockMetadata() *blockMetadata {
@@ -234,20 +215,18 @@ func unmarshalPartMetadata(data []byte) (*partMetadata, error) {
 		return nil, fmt.Errorf("empty data provided")
 	}
 
-	pm := generatePartMetadata()
+	var pm partMetadata
 
-	if err := json.Unmarshal(data, pm); err != nil {
-		releasePartMetadata(pm)
+	if err := json.Unmarshal(data, &pm); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal partMetadata from JSON: %w", err)
 	}
 
 	// Validate the metadata
 	if err := pm.validate(); err != nil {
-		releasePartMetadata(pm)
 		return nil, fmt.Errorf("metadata validation failed: %w", err)
 	}
 
-	return pm, nil
+	return &pm, nil
 }
 
 // marshal serializes blockMetadata to bytes.

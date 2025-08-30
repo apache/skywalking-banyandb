@@ -366,7 +366,7 @@ func createTestParts(_ *testing.T, ranges []keyRange) []*partWrapper {
 
 	for i, kr := range ranges {
 		// Create a minimal part with metadata
-		pm := generatePartMetadata()
+		pm := &partMetadata{}
 		pm.MinKey = kr.minKey
 		pm.MaxKey = kr.maxKey
 		pm.ID = kr.id
@@ -378,7 +378,7 @@ func createTestParts(_ *testing.T, ranges []keyRange) []*partWrapper {
 			path:         "",
 		}
 
-		parts[i] = newPartWrapper(part)
+		parts[i] = newPartWrapper(nil, part)
 	}
 
 	return parts
