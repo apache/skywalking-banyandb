@@ -690,8 +690,10 @@ func (t *TopNValue) setMetadata(valueName string, entityTagNames []string) {
 }
 
 func (t *TopNValue) addValue(value int64, entityValues []*modelv1.TagValue) {
+	entityValuesCopy := make([]*modelv1.TagValue, len(entityValues))
+	copy(entityValuesCopy, entityValues)
 	t.values = append(t.values, value)
-	t.entities = append(t.entities, entityValues)
+	t.entities = append(t.entities, entityValuesCopy)
 }
 
 // Values returns the valueName, entityTagNames, values, and entities.
