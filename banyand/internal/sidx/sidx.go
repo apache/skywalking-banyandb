@@ -24,9 +24,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -212,20 +215,17 @@ func (s *sidx) Query(ctx context.Context, req QueryRequest) (*QueryResponse, err
 		asc:       asc,
 	}
 
-	// Create queryResult and call Pull() once to get the QueryResponse
-	qr := &queryResult{
-		snapshot: snap,
-		request:  req,
-		ctx:      ctx,
-		bs:       bs,
-		asc:      asc,
-		pm:       s.pm,
-		l:        s.l,
-	}
-	defer qr.Release()
+	// Execute query with worker pool pattern directly
+	defer func() {
+		if bs != nil {
+			bs.close()
+		}
+		if snap != nil {
+			snap.decRef()
+		}
+	}()
 
-	// Pull once to get all results
-	response := qr.Pull()
+	response := s.executeBlockScannerQuery(ctx, bs, req, asc)
 	if response == nil {
 		return &QueryResponse{
 			Keys: make([]int64, 0),
@@ -241,6 +241,119 @@ func (s *sidx) Query(ctx context.Context, req QueryRequest) (*QueryResponse, err
 	}
 
 	return response, nil
+}
+
+// executeBlockScannerQuery coordinates the worker pool with block scanner following tsResult pattern.
+func (s *sidx) executeBlockScannerQuery(ctx context.Context, bs *blockScanner, req QueryRequest, asc bool) *QueryResponse {
+	workerSize := cgroups.CPUs()
+	batchCh := make(chan *blockScanResultBatch, workerSize)
+
+	// Determine which tags to load once for all workers (shared optimization)
+	tagsToLoad := make(map[string]struct{})
+	if len(req.TagProjection) > 0 {
+		// Load only projected tags
+		for _, proj := range req.TagProjection {
+			for _, tagName := range proj.Names {
+				tagsToLoad[tagName] = struct{}{}
+			}
+		}
+	}
+
+	// Initialize worker result shards
+	shards := make([]*QueryResponse, workerSize)
+	for i := range shards {
+		shards[i] = &QueryResponse{
+			Keys: make([]int64, 0),
+			Data: make([][]byte, 0),
+			Tags: make([][]Tag, 0),
+			SIDs: make([]common.SeriesID, 0),
+		}
+	}
+
+	// Launch worker pool
+	var workerWg sync.WaitGroup
+	workerWg.Add(workerSize)
+
+	for i := range workerSize {
+		go func(workerID int) {
+			defer workerWg.Done()
+			s.processWorkerBatches(workerID, batchCh, shards[workerID], tagsToLoad, req, s.pm)
+		}(i)
+	}
+
+	// Start block scanning
+	go func() {
+		bs.scan(ctx, batchCh)
+		close(batchCh)
+	}()
+
+	workerWg.Wait()
+
+	// Merge results from all workers
+	return s.mergeWorkerResults(shards, asc, req.MaxElementSize)
+}
+
+// processWorkerBatches processes batches in a worker goroutine.
+func (s *sidx) processWorkerBatches(
+	_ int, batchCh chan *blockScanResultBatch, shard *QueryResponse,
+	tagsToLoad map[string]struct{}, req QueryRequest, pm protector.Memory,
+) {
+	tmpBlock := generateBlock()
+	defer releaseBlock(tmpBlock)
+
+	for batch := range batchCh {
+		if batch.err != nil {
+			shard.Error = batch.err
+			releaseBlockScanResultBatch(batch)
+			continue
+		}
+
+		for _, bs := range batch.bss {
+			if !s.loadAndProcessBlock(tmpBlock, bs, shard, tagsToLoad, req, pm) {
+				// If load fails, continue with next block rather than stopping
+				continue
+			}
+		}
+
+		releaseBlockScanResultBatch(batch)
+	}
+}
+
+// mergeWorkerResults merges results from all worker shards with error handling.
+func (s *sidx) mergeWorkerResults(shards []*QueryResponse, asc bool, maxElementSize int) *QueryResponse {
+	// Check for errors first
+	var err error
+	for i := range shards {
+		if shards[i].Error != nil {
+			err = multierr.Append(err, shards[i].Error)
+		}
+	}
+
+	if err != nil {
+		return &QueryResponse{Error: err}
+	}
+
+	// Merge results with ordering
+	if asc {
+		return mergeQueryResponseShardsAsc(shards, maxElementSize)
+	}
+	return mergeQueryResponseShardsDesc(shards, maxElementSize)
+}
+
+// loadAndProcessBlock delegates to the queryResult implementation for now.
+func (s *sidx) loadAndProcessBlock(
+	tmpBlock *block, bs blockScanResult, result *QueryResponse,
+	tagsToLoad map[string]struct{}, req QueryRequest, pm protector.Memory,
+) bool {
+	// Create a temporary queryResult to reuse existing logic
+	qr := &queryResult{
+		request:    req,
+		tagsToLoad: tagsToLoad,
+		pm:         pm,
+		l:          s.l,
+	}
+
+	return qr.loadAndProcessBlock(tmpBlock, bs, result)
 }
 
 // Stats implements SIDX interface.
@@ -412,15 +525,4 @@ func newGC(_ *Options) *gc {
 
 func (g *gc) clean() {
 	// TODO: Implement garbage collection
-}
-
-// emptyQueryResult represents an empty query result.
-type emptyQueryResult struct{}
-
-func (e *emptyQueryResult) Pull() *QueryResponse {
-	return nil
-}
-
-func (e *emptyQueryResult) Release() {
-	// Nothing to release
 }

@@ -19,16 +19,11 @@ package sidx
 
 import (
 	"container/heap"
-	"context"
-	"sync"
-
-	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -36,116 +31,12 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-// queryResult implements QueryResult interface with worker pool pattern.
-// Following the tsResult architecture from the stream module.
+// queryResult is used internally for processing logic only.
 type queryResult struct {
-	ctx        context.Context
 	pm         protector.Memory
-	snapshot   *snapshot
-	bs         *blockScanner
 	l          *logger.Logger
 	tagsToLoad map[string]struct{}
-	shards     []*QueryResponse
 	request    QueryRequest
-	asc        bool
-	released   bool
-}
-
-// Pull returns the next batch of query results using parallel worker processing.
-func (qr *queryResult) Pull() *QueryResponse {
-	if qr.released || qr.bs == nil {
-		return nil
-	}
-
-	return qr.runBlockScanner()
-}
-
-// runBlockScanner coordinates the worker pool with block scanner following tsResult pattern.
-func (qr *queryResult) runBlockScanner() *QueryResponse {
-	workerSize := cgroups.CPUs()
-	batchCh := make(chan *blockScanResultBatch, workerSize)
-
-	// Determine which tags to load once for all workers (shared optimization)
-	if qr.tagsToLoad == nil {
-		qr.tagsToLoad = make(map[string]struct{})
-		if len(qr.request.TagProjection) > 0 {
-			// Load only projected tags
-			for _, proj := range qr.request.TagProjection {
-				for _, tagName := range proj.Names {
-					qr.tagsToLoad[tagName] = struct{}{}
-				}
-			}
-		}
-	}
-
-	// Initialize worker result shards
-	if qr.shards == nil {
-		qr.shards = make([]*QueryResponse, workerSize)
-		for i := range qr.shards {
-			qr.shards[i] = &QueryResponse{
-				Keys: make([]int64, 0),
-				Data: make([][]byte, 0),
-				Tags: make([][]Tag, 0),
-				SIDs: make([]common.SeriesID, 0),
-			}
-		}
-	} else {
-		// Reset existing shards
-		for i := range qr.shards {
-			qr.shards[i].Reset()
-		}
-	}
-
-	// Launch worker pool
-	var workerWg sync.WaitGroup
-	workerWg.Add(workerSize)
-
-	for i := range workerSize {
-		go func(workerID int) {
-			defer workerWg.Done()
-			qr.processWorkerBatches(workerID, batchCh)
-		}(i)
-	}
-
-	// Start block scanning
-	go func() {
-		qr.bs.scan(qr.ctx, batchCh)
-		close(batchCh)
-	}()
-
-	workerWg.Wait()
-
-	// Check for completion
-	if len(qr.bs.parts) == 0 {
-		qr.bs.close()
-		qr.bs = nil
-	}
-
-	// Merge results from all workers
-	return qr.mergeWorkerResults()
-}
-
-// processWorkerBatches processes batches in a worker goroutine.
-func (qr *queryResult) processWorkerBatches(workerID int, batchCh chan *blockScanResultBatch) {
-	tmpBlock := generateBlock()
-	defer releaseBlock(tmpBlock)
-
-	for batch := range batchCh {
-		if batch.err != nil {
-			qr.shards[workerID].Error = batch.err
-			releaseBlockScanResultBatch(batch)
-			continue
-		}
-
-		for _, bs := range batch.bss {
-			if !qr.loadAndProcessBlock(tmpBlock, bs, qr.shards[workerID]) {
-				// If load fails, continue with next block rather than stopping
-				continue
-			}
-		}
-
-		releaseBlockScanResultBatch(batch)
-	}
 }
 
 // loadAndProcessBlock loads a block from part and processes it into QueryResponse format.
@@ -398,44 +289,6 @@ func (qr *queryResult) extractElementTags(block *block, elemIndex int) []Tag {
 	}
 
 	return elementTags
-}
-
-// mergeWorkerResults merges results from all worker shards with error handling.
-func (qr *queryResult) mergeWorkerResults() *QueryResponse {
-	// Check for errors first
-	var err error
-	for i := range qr.shards {
-		if qr.shards[i].Error != nil {
-			err = multierr.Append(err, qr.shards[i].Error)
-		}
-	}
-
-	if err != nil {
-		return &QueryResponse{Error: err}
-	}
-
-	// Merge results with ordering from request
-	if qr.asc {
-		return mergeQueryResponseShardsAsc(qr.shards, qr.request.MaxElementSize)
-	}
-	return mergeQueryResponseShardsDesc(qr.shards, qr.request.MaxElementSize)
-}
-
-// Release releases resources associated with the query result.
-func (qr *queryResult) Release() {
-	if qr.released {
-		return
-	}
-	qr.released = true
-
-	if qr.bs != nil {
-		qr.bs.close()
-	}
-
-	if qr.snapshot != nil {
-		qr.snapshot.decRef()
-		qr.snapshot = nil
-	}
 }
 
 // mergeQueryResponseShardsAsc merges multiple QueryResponse shards in ascending order.

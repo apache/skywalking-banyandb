@@ -99,18 +99,6 @@ type Querier interface {
 	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
 }
 
-// QueryResult provides iterator-like access to query results, following BanyanDB pattern.
-type QueryResult interface {
-	// Pull returns the next batch of query results.
-	// Returns nil when no more results are available.
-	// Check QueryResponse.Error for execution errors during iteration.
-	Pull() *QueryResponse
-
-	// Release releases resources associated with the query result.
-	// Must be called when done with the QueryResult to prevent resource leaks.
-	Release()
-}
-
 // WriteRequest contains data for a single write operation within a batch.
 // The user provides the ordering key as an int64 value that sidx treats opaquely.
 type WriteRequest struct {
@@ -523,7 +511,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		return s.writer.Write(ctx, reqs)
 //	}
 //
-//	func (s *sidxImpl) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+//	func (s *sidxImpl) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
 //		return s.querier.Query(ctx, req)
 //	}
 //
