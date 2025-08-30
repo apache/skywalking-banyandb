@@ -137,7 +137,7 @@ func (t *trace) parseSpec() {
 }
 
 // querySidxForTraceIDs queries sidx instances to get ordered trace IDs.
-func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.SIDX, tqo model.TraceQueryOptions) ([]string, error) {
+func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.SIDX, tqo model.TraceQueryOptions, seriesIDs []common.SeriesID) ([]string, error) {
 	// Convert TraceQueryOptions to sidx.QueryRequest
 	req := sidx.QueryRequest{
 		Filter:         tqo.SkippingFilter,
@@ -158,9 +158,12 @@ func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.S
 		req.MaxKey = &maxKey
 	}
 
-	// For now, use all series IDs (this could be optimized further)
-	// TODO: Consider filtering by relevant series IDs based on query context
-	req.SeriesIDs = []common.SeriesID{1} // Placeholder - should be dynamically determined
+	// Use the provided series IDs for targeted querying
+	if len(seriesIDs) > 0 {
+		req.SeriesIDs = seriesIDs
+	} else {
+		req.SeriesIDs = []common.SeriesID{1}
+	}
 
 	// Query multiple sidx instances
 	response, err := sidx.QueryMultipleSIDX(ctx, sidxInstances, req)

@@ -322,6 +322,7 @@ type TraceQueryOptions struct {
 	Order          *index.OrderBy
 	TagProjection  *TagProjection
 	Name           string
+	Entities       [][]*modelv1.TagValue
 	TraceIDs       []string
 	MaxTraceSize   int
 }
@@ -333,6 +334,7 @@ func (t *TraceQueryOptions) Reset() {
 	t.SkippingFilter = nil
 	t.Order = nil
 	t.TagProjection = nil
+	t.Entities = nil
 	t.TraceIDs = nil
 	t.MaxTraceSize = 0
 }
@@ -344,6 +346,7 @@ func (t *TraceQueryOptions) CopyFrom(other *TraceQueryOptions) {
 	t.SkippingFilter = other.SkippingFilter
 	t.Order = other.Order
 	t.TagProjection = other.TagProjection
+	t.Entities = other.Entities
 	t.MaxTraceSize = other.MaxTraceSize
 }
 

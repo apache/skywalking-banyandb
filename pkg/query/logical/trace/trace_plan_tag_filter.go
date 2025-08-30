@@ -55,11 +55,13 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	var err error
 	var conditionTagNames []string
 	var traceIDs []string
-	// For trace, we only use skipping filter (no inverted filter or entities)
-	ctx.skippingFilter, conditionTagNames, traceIDs, err = buildTraceFilter(uis.criteria, s, entityDict, uis.traceIDTagName)
+	var entities [][]*modelv1.TagValue
+	// For trace, we use skipping filter and capture entities for query optimization
+	ctx.skippingFilter, entities, conditionTagNames, traceIDs, err = buildTraceFilter(uis.criteria, s, entityDict, uis.traceIDTagName)
 	if err != nil {
 		return nil, err
 	}
+	ctx.entities = entities
 
 	// Initialize projectionTags even if no explicit projection tags are provided
 	ctx.projectionTags = &model.TagProjection{
@@ -117,6 +119,7 @@ func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext
 		projectionTags:    ctx.projectionTags,
 		metadata:          uis.metadata,
 		skippingFilter:    ctx.skippingFilter,
+		entities:          ctx.entities,
 		l:                 logger.GetLogger("query", "trace", "local-scan"),
 		ec:                ec,
 		traceIDs:          traceIDs,
@@ -128,6 +131,7 @@ type traceAnalyzeContext struct {
 	skippingFilter index.Filter
 	projectionTags *model.TagProjection
 	projTagsRefs   [][]*logical.TagRef
+	entities       [][]*modelv1.TagValue
 }
 
 func newTraceAnalyzerContext(s logical.Schema) *traceAnalyzeContext {
@@ -151,9 +155,11 @@ func deduplicateStrings(strings []string) []string {
 
 // buildTraceFilter builds a filter for trace queries and returns both the filter and collected tag names.
 // Unlike stream, trace only needs skipping filter.
-func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict map[string]int, traceIDTagName string) (index.Filter, []string, []string, error) {
+func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict map[string]int,
+	traceIDTagName string,
+) (index.Filter, [][]*modelv1.TagValue, []string, []string, error) {
 	if criteria == nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	// Create a map of valid tag names from the schema
 	tagNames := make(map[string]bool)
@@ -162,8 +168,8 @@ func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict m
 		tagNames[tagName] = true
 	}
 
-	filter, _, collectedTagNames, traceIDs, err := buildFilter(criteria, tagNames, entityDict, nil, traceIDTagName)
-	return filter, collectedTagNames, traceIDs, err
+	filter, entities, collectedTagNames, traceIDs, err := buildFilter(criteria, tagNames, entityDict, nil, traceIDTagName)
+	return filter, entities, collectedTagNames, traceIDs, err
 }
 
 var (

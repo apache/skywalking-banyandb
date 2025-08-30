@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -49,6 +50,7 @@ type localScan struct {
 	projectionTags    *model.TagProjection
 	timeRange         timestamp.TimeRange
 	projectionTagRefs [][]*logical.TagRef
+	entities          [][]*modelv1.TagValue
 	traceIDs          []string
 	maxTraceSize      int
 }
@@ -90,6 +92,7 @@ func (i *localScan) Execute(ctx context.Context) (iter.Iterator[model.TraceResul
 			SkippingFilter: i.skippingFilter,
 			Order:          orderBy,
 			TagProjection:  i.projectionTags,
+			Entities:       i.entities,
 			MaxTraceSize:   i.maxTraceSize,
 			TraceIDs:       i.traceIDs,
 		}); err != nil {

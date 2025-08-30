@@ -26,6 +26,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -40,7 +41,8 @@ const checkDoneEvery = 128
 var nilResult = model.TraceQueryResult(nil)
 
 type queryOptions struct {
-	traceIDs []string
+	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
+	traceIDs       []string
 	model.TraceQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -48,6 +50,7 @@ type queryOptions struct {
 
 func (qo *queryOptions) reset() {
 	qo.TraceQueryOptions.Reset()
+	qo.seriesToEntity = nil
 	qo.traceIDs = nil
 	qo.minTimestamp = 0
 	qo.maxTimestamp = 0
@@ -55,6 +58,7 @@ func (qo *queryOptions) reset() {
 
 func (qo *queryOptions) copyFrom(other *queryOptions) {
 	qo.TraceQueryOptions.CopyFrom(&other.TraceQueryOptions)
+	qo.seriesToEntity = other.seriesToEntity
 	qo.traceIDs = make([]string, len(other.traceIDs))
 	copy(qo.traceIDs, other.traceIDs)
 	qo.minTimestamp = other.minTimestamp
@@ -104,6 +108,30 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		minTimestamp:      tqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:      tqo.TimeRange.End.UnixNano(),
 	}
+
+	// Process entities to get series IDs for sidx queries
+	if len(tqo.Entities) > 0 {
+		// Create series from entities for lookup
+		series := make([]*pbv1.Series, len(tqo.Entities))
+		for i, entityValues := range tqo.Entities {
+			series[i] = &pbv1.Series{
+				Subject:      tqo.Name,
+				EntityValues: entityValues,
+			}
+		}
+
+		// Use segment lookup to find actual series that exist in the data
+		qo.seriesToEntity = make(map[common.SeriesID][]*modelv1.TagValue)
+		for _, segment := range segments {
+			sl, lookupErr := segment.Lookup(ctx, series)
+			if lookupErr != nil {
+				return nil, fmt.Errorf("cannot lookup series: %w", lookupErr)
+			}
+			for _, s := range sl {
+				qo.seriesToEntity[s.ID] = s.EntityValues
+			}
+		}
+	}
 	var n int
 	tables := make([]*tsTable, 0)
 	for _, segment := range segments {
@@ -129,7 +157,11 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 		if len(sidxInstances) > 0 {
 			// Query sidx for trace IDs
-			traceIDs, sidxErr := t.querySidxForTraceIDs(ctx, sidxInstances, tqo)
+			var seriesIDs []common.SeriesID
+			for seriesID := range qo.seriesToEntity {
+				seriesIDs = append(seriesIDs, seriesID)
+			}
+			traceIDs, sidxErr := t.querySidxForTraceIDs(ctx, sidxInstances, tqo, seriesIDs)
 			if sidxErr != nil {
 				t.l.Warn().Err(sidxErr).Str("sidx", sidxName).Msg("sidx query failed, falling back to normal query")
 			} else if len(traceIDs) > 0 {
