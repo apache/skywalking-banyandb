@@ -87,6 +87,7 @@ func (b *block) reset() {
 
 	// Clear tag map but keep the map itself
 	for k := range b.tags {
+		releaseTagData(b.tags[k])
 		delete(b.tags, k)
 	}
 }

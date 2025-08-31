@@ -534,6 +534,9 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	// Convert model.TraceResult iterator to tracev1.QueryResponse format
 	var spans []*tracev1.Span
 
+	// Check if trace ID tag should be included based on tag projection
+	shouldIncludeTraceID := slices.Contains(queryCriteria.TagProjection, traceIDTagName)
+
 	for {
 		result, hasNext := resultIterator.Next()
 		if !hasNext {
@@ -555,8 +558,8 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 				}
 			}
 
-			// Add trace ID tag to each span
-			if traceIDTagName != "" && result.TID != "" {
+			// Add trace ID tag to each span if it should be included
+			if shouldIncludeTraceID && result.TID != "" {
 				traceTags = append(traceTags, &modelv1.Tag{
 					Key: traceIDTagName,
 					Value: &modelv1.TagValue{
