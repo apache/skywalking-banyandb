@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
@@ -358,3 +359,276 @@ func mustWriteDataTo(db *dataBlock, data [][]byte, dataWriter *writer) {
 	db.size = uint64(len(compressedData))
 	dataWriter.MustWrite(compressedData)
 }
+
+type blockPointer struct {
+	block
+	bm  blockMetadata
+	idx int
+}
+
+func (bi *blockPointer) updateMetadata() {
+	if len(bi.block.userKeys) == 0 {
+		return
+	}
+	// only update minKey and maxKey since they are used for merging
+	// blockWriter will recompute all fields
+	bi.bm.minKey = bi.block.userKeys[0]
+	bi.bm.maxKey = bi.block.userKeys[len(bi.userKeys)-1]
+}
+
+func (bi *blockPointer) copyFrom(src *blockPointer) {
+	bi.reset()
+	bi.bm.copyFrom(&src.bm)
+	bi.appendAll(src)
+}
+
+func (bi *blockPointer) appendAll(b *blockPointer) {
+	if len(b.userKeys) == 0 {
+		return
+	}
+	bi.append(b, len(b.userKeys))
+}
+
+var log = logger.GetLogger("sidx").Named("block")
+
+func (bi *blockPointer) append(b *blockPointer, offset int) {
+	if offset <= b.idx {
+		return
+	}
+	if len(bi.tags) == 0 && len(b.tags) > 0 {
+		fullTagAppend(bi, b, offset)
+	} else {
+		if err := fastTagAppend(bi, b, offset); err != nil {
+			if log.Debug().Enabled() {
+				log.Debug().Msgf("fastTagMerge failed: %v; falling back to fullTagMerge", err)
+			}
+			fullTagAppend(bi, b, offset)
+		}
+	}
+
+	assertIdxAndOffset("userKeys", len(b.userKeys), bi.idx, offset)
+	bi.userKeys = append(bi.userKeys, b.userKeys[b.idx:offset]...)
+	assertIdxAndOffset("data", len(b.data), bi.idx, offset)
+	bi.data = append(bi.data, b.data[b.idx:offset]...)
+}
+
+func fastTagAppend(bi, b *blockPointer, offset int) error {
+	if len(bi.tags) != len(b.tags) {
+		return fmt.Errorf("unexpected number of tags: got %d; want %d", len(b.tags), len(bi.tags))
+	}
+	for i := range bi.tags {
+		if bi.tags[i].name != b.tags[i].name {
+			return fmt.Errorf("unexpected tag name for tag %q: got %q; want %q",
+				bi.tags[i].name, b.tags[i].name, bi.tags[i].name)
+		}
+		assertIdxAndOffset(b.tags[i].name, len(b.tags[i].values), b.idx, offset)
+		bi.tags[i].values = append(bi.tags[i].values, b.tags[i].values[b.idx:offset]...)
+	}
+	return nil
+}
+
+func fullTagAppend(bi, b *blockPointer, offset int) {
+	existDataSize := len(bi.userKeys)
+
+	if len(bi.tags) == 0 {
+		for _, t := range b.tags {
+			newTagData := tagData{name: t.name, valueType: t.valueType}
+			for j := 0; j < existDataSize; j++ {
+				newTagData.values = append(newTagData.values, nil)
+			}
+			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
+			newTagData.values = append(newTagData.values, t.values[b.idx:offset]...)
+			bi.tags[t.name] = &newTagData
+		}
+		return
+	}
+
+	for _, t := range b.tags {
+		if existingTag, exists := bi.tags[t.name]; exists {
+			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
+			existingTag.values = append(existingTag.values, t.values[b.idx:offset]...)
+		} else {
+			newTagData := tagData{name: t.name, valueType: t.valueType}
+			for j := 0; j < existDataSize; j++ {
+				newTagData.values = append(newTagData.values, nil)
+			}
+			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
+			newTagData.values = append(newTagData.values, t.values[b.idx:offset]...)
+			bi.tags[t.name] = &newTagData
+		}
+	}
+
+	sourceTags := make(map[string]struct{})
+	for _, t := range b.tags {
+		sourceTags[t.name] = struct{}{}
+	}
+
+	emptySize := offset - b.idx
+	for i := range bi.tags {
+		if _, exists := sourceTags[bi.tags[i].name]; !exists {
+			for j := 0; j < emptySize; j++ {
+				bi.tags[i].values = append(bi.tags[i].values, nil)
+			}
+		}
+	}
+}
+
+func assertIdxAndOffset(name string, length int, idx int, offset int) {
+	if idx >= offset {
+		logger.Panicf("%q idx %d must be less than offset %d", name, idx, offset)
+	}
+	if offset > length {
+		logger.Panicf("%q offset %d must be less than or equal to length %d", name, offset, length)
+	}
+}
+
+func (bi *blockPointer) isFull() bool {
+	return bi.bm.count >= maxBlockLength || bi.bm.uncompressedSize >= maxUncompressedBlockSize
+}
+
+func (bi *blockPointer) reset() {
+	bi.idx = 0
+	bi.block.reset()
+	bi.bm.reset()
+}
+
+func generateBlockPointer() *blockPointer {
+	v := blockPointerPool.Get()
+	if v == nil {
+		return &blockPointer{}
+	}
+	return v
+}
+
+func releaseBlockPointer(bi *blockPointer) {
+	bi.reset()
+	blockPointerPool.Put(bi)
+}
+
+func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm blockMetadata) {
+	b.reset()
+	if err := b.readUserKeys(sr, &bm); err != nil {
+		panic(fmt.Sprintf("failed to read user keys: %v", err))
+	}
+	if err := b.readData(decoder, sr, &bm); err != nil {
+		panic(fmt.Sprintf("failed to read data payloads: %v", err))
+	}
+	if err := b.readTagData(decoder, sr, &bm); err != nil {
+		panic(fmt.Sprintf("failed to read tag data: %v", err))
+	}
+}
+
+func (b *block) readUserKeys(sr *seqReaders, bm *blockMetadata) error {
+	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
+	}
+	defer func() {
+		bb.Buf = bb.Buf[:0]
+		bigValuePool.Put(bb)
+	}()
+	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(bm.keysBlock.size))
+	sr.keys.mustReadFull(bb.Buf)
+	var err error
+	b.userKeys, err = encoding.BytesToInt64List(b.userKeys[:0], bb.Buf, bm.keysEncodeType, bm.minKey, int(bm.count))
+	if err != nil {
+		return fmt.Errorf("cannot decode user keys: %w", err)
+	}
+	return nil
+}
+
+func (b *block) readData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm *blockMetadata) error {
+	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
+	}
+	defer func() {
+		bb.Buf = bb.Buf[:0]
+		bigValuePool.Put(bb)
+	}()
+	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(bm.dataBlock.size))
+	sr.data.mustReadFull(bb.Buf)
+	dataBuf, err := zstd.Decompress(bb.Buf[:0], bb.Buf)
+	if err != nil {
+		return fmt.Errorf("cannot decompress data: %w", err)
+	}
+	b.data, err = decoder.Decode(b.data[:0], dataBuf, bm.count)
+	if err != nil {
+		return fmt.Errorf("cannot decode data payloads: %w", err)
+	}
+	return nil
+}
+
+func (b *block) readTagData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm *blockMetadata) error {
+	if b.tags == nil {
+		b.tags = make(map[string]*tagData)
+	}
+	for tagName, tagBlock := range bm.tagsBlocks {
+		if err := b.readSingleTag(decoder, sr, tagName, &tagBlock, int(bm.count)); err != nil {
+			return fmt.Errorf("failed to read tag %s: %w", tagName, err)
+		}
+	}
+	return nil
+}
+
+func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReaders, tagName string, tagBlock *dataBlock, count int) error {
+	tmReader, tmExists := sr.tagMetadata[tagName]
+	if !tmExists {
+		return fmt.Errorf("tag metadata reader not found for tag %s", tagName)
+	}
+	tdReader, tdExists := sr.tagData[tagName]
+	if !tdExists {
+		return fmt.Errorf("tag data reader not found for tag %s", tagName)
+	}
+
+	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
+	}
+	defer func() {
+		bb.Buf = bb.Buf[:0]
+		bigValuePool.Put(bb)
+	}()
+
+	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(tagBlock.size))
+	tmReader.mustReadFull(bb.Buf)
+	tm, err := unmarshalTagMetadata(bb.Buf)
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal tag metadata: %w", err)
+	}
+	defer releaseTagMetadata(tm)
+
+	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(tm.dataBlock.size))
+	tdReader.mustReadFull(bb.Buf)
+	td := generateTagData()
+	td.name = tagName
+	td.valueType = tm.valueType
+	td.indexed = tm.indexed
+	td.values, err = internalencoding.DecodeTagValues(td.values[:0], decoder, bb, tm.valueType, count)
+	if err != nil {
+		releaseTagData(td)
+		return fmt.Errorf("cannot decode tag values: %w", err)
+	}
+
+	if tm.valueType == pbv1.ValueTypeInt64 {
+		td.min = tm.min
+		td.max = tm.max
+	}
+	if tm.indexed && tm.filterBlock.size > 0 {
+		if tfReader, tfExists := sr.tagFilters[tagName]; tfExists {
+			bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(tm.filterBlock.size))
+			tfReader.mustReadFull(bb.Buf)
+
+			filter, err := decodeBloomFilter(bb.Buf)
+			if err != nil {
+				releaseTagData(td)
+				return fmt.Errorf("cannot decode bloom filter: %w", err)
+			}
+			td.filter = filter
+		}
+	}
+	b.tags[tagName] = td
+	return nil
+}
+
+var blockPointerPool = pool.Register[*blockPointer]("sidx-blockPointer")

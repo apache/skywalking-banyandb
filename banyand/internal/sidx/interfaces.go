@@ -76,7 +76,7 @@ type Merger interface {
 	// and coordinate with the introducer loop for snapshot updates.
 	// This operation is user-controlled and synchronous.
 	// Returns error if merge operation fails.
-	Merge() error
+	Merge(partIDs []uint64, newPartID uint64, closeCh <-chan struct{}) error
 }
 
 // Writer handles write path operations for batch processing.

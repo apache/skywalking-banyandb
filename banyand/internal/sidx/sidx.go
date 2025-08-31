@@ -19,29 +19,43 @@ package sidx
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"math"
+	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
+const (
+	maxUncompressedBlockSize = 2 * 1024 * 1024
+	maxBlockLength           = 8 * 1024
+)
+
 // sidx implements the SIDX interface with introduction channels for async operations.
 type sidx struct {
+	fileSystem                 fs.FileSystem
 	snapshot                   *snapshot
 	introductions              chan *introduction
 	flushCh                    chan *flusherIntroduction
 	mergeCh                    chan *mergerIntroduction
 	loopCloser                 *run.Closer
-	gc                         *gc
 	l                          *logger.Logger
 	pm                         protector.Memory
+	root                       string
+	gc                         garbageCleaner
 	totalIntroduceLoopStarted  atomic.Int64
 	totalIntroduceLoopFinished atomic.Int64
 	totalQueries               atomic.Int64
@@ -69,7 +83,7 @@ func NewSIDX(opts *Options) (SIDX, error) {
 	}
 
 	// Initialize garbage collector
-	s.gc = newGC(opts)
+	s.gc.init(s)
 
 	// Start introducer loop
 	watcherCh := make(watcher.Channel, 10)
@@ -275,11 +289,15 @@ func (s *sidx) Flush() error {
 	flushIntro := generateFlusherIntroduction()
 	flushIntro.applied = make(chan struct{})
 
-	// Select memory parts to flush (simplified logic)
+	// Select memory parts to flush
 	for _, pw := range snap.parts {
-		if pw.isMemPart() && pw.isActive() {
-			flushIntro.flushed[pw.ID()] = pw.p
+		if !pw.isMemPart() || !pw.isActive() {
+			continue
 		}
+		partPath := partPath(s.root, pw.ID())
+		pw.mp.mustFlush(s.fileSystem, partPath)
+		p := mustOpenPart(partPath, s.fileSystem)
+		flushIntro.flushed[p.partMetadata.ID] = p
 	}
 
 	if len(flushIntro.flushed) == 0 {
@@ -298,7 +316,7 @@ func (s *sidx) Flush() error {
 }
 
 // Merge implements Merger interface.
-func (s *sidx) Merge() error {
+func (s *sidx) Merge(partIDs []uint64, newPartID uint64, closeCh <-chan struct{}) error {
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
@@ -308,21 +326,18 @@ func (s *sidx) Merge() error {
 
 	// Create merge introduction
 	mergeIntro := generateMergerIntroduction()
+	defer releaseMergerIntroduction(mergeIntro)
 	mergeIntro.applied = make(chan struct{})
 
-	// Select parts to merge (simplified logic - merge first 2 parts)
+	// Select parts to merge
 	var partsToMerge []*partWrapper
 	for _, pw := range snap.parts {
-		if pw.isActive() && !pw.isMemPart() {
+		if pw.isActive() && !pw.isMemPart() && slices.Contains(partIDs, pw.ID()) {
 			partsToMerge = append(partsToMerge, pw)
-			if len(partsToMerge) >= 2 {
-				break
-			}
 		}
 	}
 
 	if len(partsToMerge) < 2 {
-		releaseMergerIntroduction(mergeIntro)
 		return nil
 	}
 
@@ -331,15 +346,18 @@ func (s *sidx) Merge() error {
 		mergeIntro.merged[pw.ID()] = struct{}{}
 	}
 
-	// Create new merged part (simplified - would actually merge the parts)
-	mergeIntro.newPart = partsToMerge[0].p
+	// Create new merged part
+	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
+	if err != nil {
+		return err
+	}
+	mergeIntro.newPart = newPart.p
 
 	// Send to introducer loop
 	s.mergeCh <- mergeIntro
 
 	// Wait for merge to complete
 	<-mergeIntro.applied
-	releaseMergerIntroduction(mergeIntro)
 
 	return nil
 }
@@ -375,9 +393,172 @@ func (s *sidx) currentSnapshot() *snapshot {
 	return nil
 }
 
-// decRef decrements the snapshot reference count (helper for snapshot interface).
-func (s *snapshot) decRef() {
-	s.release()
+var errNoPartToMerge = fmt.Errorf("no part to merge")
+
+func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {
+	if len(parts) == 0 {
+		return nil, errNoPartToMerge
+	}
+	dstPath := partPath(root, partID)
+	var totalSize int64
+	pii := make([]*partMergeIter, 0, len(parts))
+	for i := range parts {
+		pmi := generatePartMergeIter()
+		pmi.mustInitFromPart(parts[i].p)
+		pii = append(pii, pmi)
+		totalSize += int64(parts[i].p.partMetadata.CompressedSizeBytes)
+	}
+	shouldCache := s.pm.ShouldCache(totalSize)
+	br := generateBlockReader()
+	br.init(pii)
+	bw := generateBlockWriter()
+	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
+
+	pm, err := mergeBlocks(closeCh, bw, br)
+	releaseBlockWriter(bw)
+	releaseBlockReader(br)
+	for i := range pii {
+		releasePartMergeIter(pii[i])
+	}
+	if err != nil {
+		return nil, err
+	}
+	pm.mustWriteMetadata(fileSystem, dstPath)
+	fileSystem.SyncPath(dstPath)
+	p := mustOpenPart(dstPath, fileSystem)
+	return newPartWrapper(nil, p), nil
+}
+
+var errClosed = fmt.Errorf("the merger is closed")
+
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, error) {
+	pendingBlockIsEmpty := true
+	pendingBlock := generateBlockPointer()
+	defer releaseBlockPointer(pendingBlock)
+	var tmpBlock, tmpBlock2 *blockPointer
+	var decoder *encoding.BytesBlockDecoder
+	getDecoder := func() *encoding.BytesBlockDecoder {
+		if decoder == nil {
+			decoder = generateColumnValuesDecoder()
+		}
+		return decoder
+	}
+	releaseDecoder := func() {
+		if decoder != nil {
+			releaseColumnValuesDecoder(decoder)
+			decoder = nil
+		}
+	}
+	for br.nextBlockMetadata() {
+		select {
+		case <-closeCh:
+			return nil, errClosed
+		default:
+		}
+		b := br.block
+
+		if pendingBlockIsEmpty {
+			br.loadBlockData(getDecoder())
+			pendingBlock.copyFrom(b)
+			pendingBlockIsEmpty = false
+			continue
+		}
+
+		if pendingBlock.bm.seriesID != b.bm.seriesID ||
+			(pendingBlock.isFull() && pendingBlock.bm.maxKey <= b.bm.minKey) {
+			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
+			releaseDecoder()
+			br.loadBlockData(getDecoder())
+			pendingBlock.copyFrom(b)
+			continue
+		}
+
+		if tmpBlock == nil {
+			tmpBlock = generateBlockPointer()
+			defer releaseBlockPointer(tmpBlock)
+		}
+		tmpBlock.reset()
+		tmpBlock.bm.seriesID = b.bm.seriesID
+		br.loadBlockData(getDecoder())
+		mergeTwoBlocks(tmpBlock, pendingBlock, b)
+		if len(tmpBlock.userKeys) <= maxBlockLength && tmpBlock.uncompressedSizeBytes() <= maxUncompressedBlockSize {
+			if len(tmpBlock.userKeys) == 0 {
+				pendingBlockIsEmpty = true
+			}
+			pendingBlock, tmpBlock = tmpBlock, pendingBlock
+			continue
+		}
+
+		if len(tmpBlock.userKeys) <= maxBlockLength {
+			bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
+			pendingBlock.reset()
+			pendingBlockIsEmpty = true
+			releaseDecoder()
+			continue
+		}
+		tmpBlock.idx = maxBlockLength
+		pendingBlock.copyFrom(tmpBlock)
+		l := tmpBlock.idx
+		tmpBlock.idx = 0
+		if tmpBlock2 == nil {
+			tmpBlock2 = generateBlockPointer()
+			defer releaseBlockPointer(tmpBlock2)
+		}
+		tmpBlock2.reset()
+		tmpBlock2.append(tmpBlock, l)
+		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock2.block)
+		releaseDecoder()
+	}
+	if err := br.error(); err != nil {
+		return nil, fmt.Errorf("cannot read block to merge: %w", err)
+	}
+	if !pendingBlockIsEmpty {
+		bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
+	}
+	releaseDecoder()
+	var result partMetadata
+	bw.Flush(&result)
+	return &result, nil
+}
+
+func mergeTwoBlocks(target, left, right *blockPointer) {
+	appendIfEmpty := func(ib1, ib2 *blockPointer) bool {
+		if ib1.idx >= len(ib1.userKeys) {
+			target.appendAll(ib2)
+			return true
+		}
+		return false
+	}
+
+	defer target.updateMetadata()
+
+	if left.bm.maxKey < right.bm.minKey {
+		target.appendAll(left)
+		target.appendAll(right)
+		return
+	}
+	if right.bm.maxKey < left.bm.minKey {
+		target.appendAll(right)
+		target.appendAll(left)
+		return
+	}
+	if appendIfEmpty(left, right) || appendIfEmpty(right, left) {
+		return
+	}
+
+	for {
+		i := left.idx
+		uk2 := right.userKeys[right.idx]
+		for i < len(left.userKeys) && left.userKeys[i] <= uk2 {
+			i++
+		}
+		target.append(left, i)
+		left.idx = i
+		if appendIfEmpty(left, right) {
+			return
+		}
+		left, right = right, left
+	}
 }
 
 // Helper methods for metrics.
@@ -389,9 +570,33 @@ func (s *sidx) incTotalIntroduceLoopFinished(_ string) {
 	s.totalIntroduceLoopFinished.Add(1)
 }
 
-// persistSnapshot persists the snapshot to disk (placeholder).
-func (s *sidx) persistSnapshot(_ *snapshot) {
-	// TODO: Implement snapshot persistence
+// persistSnapshot persists the snapshot to disk.
+func (s *sidx) persistSnapshot(snapshot *snapshot) {
+	var partNames []string
+	for i := range snapshot.parts {
+		partNames = append(partNames, partName(snapshot.parts[i].ID()))
+	}
+	s.mustWriteSnapshot(snapshot.epoch, partNames)
+	s.gc.registerSnapshot(snapshot)
+}
+
+func (s *sidx) mustWriteSnapshot(snapshot uint64, partNames []string) {
+	data, err := json.Marshal(partNames)
+	if err != nil {
+		logger.Panicf("cannot marshal partNames to JSON: %s", err)
+	}
+	snapshotPath := filepath.Join(s.root, snapshotName(snapshot))
+	lf, err := s.fileSystem.CreateLockFile(snapshotPath, storage.FilePerm)
+	if err != nil {
+		logger.Panicf("cannot create lock file %s: %s", snapshotPath, err)
+	}
+	n, err := lf.Write(data)
+	if err != nil {
+		logger.Panicf("cannot write snapshot %s: %s", snapshotPath, err)
+	}
+	if n != len(data) {
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", snapshotPath, n, len(data))
+	}
 }
 
 // Lock/Unlock methods for introducer loop.
@@ -401,17 +606,6 @@ func (s *sidx) Lock() {
 
 func (s *sidx) Unlock() {
 	s.mu.Unlock()
-}
-
-// gc represents garbage collector (placeholder).
-type gc struct{}
-
-func newGC(_ *Options) *gc {
-	return &gc{}
-}
-
-func (g *gc) clean() {
-	// TODO: Implement garbage collection
 }
 
 // emptyQueryResult represents an empty query result.

@@ -26,6 +26,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
+const (
+	snapshotSuffix = ".snp"
+)
+
 // snapshot represents an immutable collection of parts at a specific epoch.
 // It provides safe concurrent access to parts through reference counting and
 // enables queries to work with a consistent view of data.
@@ -88,6 +92,11 @@ func (s *snapshot) acquire() bool {
 			return true
 		}
 	}
+}
+
+// decRef decrements the snapshot reference count (helper for snapshot interface).
+func (s *snapshot) decRef() {
+	s.release()
 }
 
 // release decrements the snapshot reference count.
@@ -275,6 +284,10 @@ func (s *snapshot) String() string {
 	activeCount := s.getPartCount()
 	return fmt.Sprintf("snapshot{epoch=%d, parts=%d/%d, ref=%d}",
 		s.epoch, activeCount, len(s.parts), s.refCount())
+}
+
+func snapshotName(snapshot uint64) string {
+	return fmt.Sprintf("%016x%s", snapshot, snapshotSuffix)
 }
 
 // Pool for snapshot reuse.

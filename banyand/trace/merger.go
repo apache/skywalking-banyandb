@@ -107,11 +107,16 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
 	start := time.Now()
-	newPart, err := tst.mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root)
+	newPartID := atomic.AddUint64(&tst.curPartID, 1)
+	newPart, err := tst.mergeParts(tst.fileSystem, closeCh, parts, newPartID, tst.root)
 	if err != nil {
 		return nil, err
 	}
-	if err := tst.sidx.Merge(); err != nil {
+	partIDs := make([]uint64, 0, len(parts))
+	for _, pw := range parts {
+		partIDs = append(partIDs, pw.ID())
+	}
+	if err := tst.sidx.Merge(partIDs, newPartID, closeCh); err != nil {
 		tst.l.Warn().Err(err).Msg("sidx merge failed")
 		return nil, err
 	}

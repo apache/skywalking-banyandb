@@ -21,10 +21,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"sort"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
@@ -418,4 +422,12 @@ func (bm *blockMetadata) less(other *blockMetadata) bool {
 		return bm.minKey < other.minKey
 	}
 	return bm.seriesID < other.seriesID
+}
+
+func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath string) {
+	manifestData, err := pm.marshal()
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", partPath).Msg("failed to marshal part metadata")
+	}
+	fs.MustFlush(fileSystem, manifestData, filepath.Join(partPath, manifestFilename), storage.FilePerm)
 }

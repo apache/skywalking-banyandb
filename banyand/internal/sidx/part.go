@@ -649,11 +649,7 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, partPath string) {
 
 	// Write part metadata manifest
 	if mp.partMetadata != nil {
-		manifestData, err := mp.partMetadata.marshal()
-		if err != nil {
-			logger.GetLogger().Panic().Err(err).Str("path", partPath).Msg("failed to marshal part metadata")
-		}
-		fs.MustFlush(fileSystem, manifestData, filepath.Join(partPath, manifestFilename), storage.FilePerm)
+		mp.partMetadata.mustWriteMetadata(fileSystem, partPath)
 	}
 
 	fileSystem.SyncPath(partPath)
