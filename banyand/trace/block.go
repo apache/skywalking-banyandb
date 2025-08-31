@@ -40,7 +40,13 @@ type block struct {
 }
 
 func (b *block) reset() {
+	for i := range b.spans {
+		b.spans[i] = nil
+	}
 	b.spans = b.spans[:0]
+	for i := range b.tags {
+		b.tags[i].reset()
+	}
 	b.tags = b.tags[:0]
 	b.minTS = 0
 	b.maxTS = 0
@@ -292,7 +298,6 @@ func mustReadSpansFrom(spans [][]byte, sm *dataBlock, count int, reader fs.Reade
 		if uint64(len(src)) < spanLen {
 			logger.Panicf("insufficient data for span: need %d bytes, have %d", spanLen, len(src))
 		}
-		spans[i] = spans[i][:0]
 		spans[i] = append(spans[i], src[:spanLen]...)
 		src = src[spanLen:]
 	}
@@ -316,7 +321,6 @@ func mustSeqReadSpansFrom(spans [][]byte, sm *dataBlock, count int, reader *seqR
 		if uint64(len(src)) < spanLen {
 			logger.Panicf("insufficient data for span: need %d bytes, have %d", spanLen, len(src))
 		}
-		spans[i] = spans[i][:0]
 		spans[i] = append(spans[i], src[:spanLen]...)
 		src = src[spanLen:]
 	}
@@ -363,6 +367,9 @@ func (bc *blockCursor) reset() {
 	bc.bm.reset()
 	bc.tagProjection = nil
 
+	for i := range bc.spans {
+		bc.spans[i] = nil
+	}
 	bc.spans = bc.spans[:0]
 
 	for i := range bc.tags {
@@ -388,8 +395,8 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 	}
 
 	r.TID = bc.bm.traceID
-	r.Spans = append(r.Spans, bc.spans[start:end]...)
 
+	r.Spans = append(r.Spans, bc.spans[start:end]...)
 	if desc {
 		slices.Reverse(r.Spans)
 	}
@@ -400,7 +407,6 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 			r.Tags[i] = model.Tag{Name: name}
 		}
 	}
-
 	for i, t := range bc.tags {
 		values := make([]*modelv1.TagValue, end-start)
 		for k := start; k < end; k++ {
@@ -409,9 +415,9 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 			} else {
 				values[k-start] = pbv1.NullTagValue
 			}
-			if desc {
-				slices.Reverse(values)
-			}
+		}
+		if desc {
+			slices.Reverse(values)
 		}
 		r.Tags[i].Values = append(r.Tags[i].Values, values...)
 	}
@@ -460,15 +466,20 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 
 	bc.spans = append(bc.spans, tmpBlock.spans...)
 
-	for _, tag := range tmpBlock.tags {
-		if len(tag.values) == 0 {
+	for _, t := range tmpBlock.tags {
+		if len(t.values) == 0 {
 			continue
 		}
-		if len(tag.values) != len(tmpBlock.spans) {
+		if len(t.values) != len(tmpBlock.spans) {
 			logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
-				tag.name, len(tag.values), len(tmpBlock.spans))
+				t.name, len(t.values), len(tmpBlock.spans))
 		}
-		bc.tags = append(bc.tags, tag)
+		tt := tag{
+			name:      t.name,
+			valueType: t.valueType,
+		}
+		tt.values = append(tt.values, t.values...)
+		bc.tags = append(bc.tags, tt)
 	}
 	return len(bc.spans) > 0
 }

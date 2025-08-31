@@ -281,15 +281,15 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	}
 
 	pm, tf, tt, err := mergeBlocks(closeCh, bw, br)
+	if err != nil {
+		return nil, err
+	}
 	pm.MinTimestamp = minTimestamp
 	pm.MaxTimestamp = maxTimestamp
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
 		releasePartMergeIter(pii[i])
-	}
-	if err != nil {
-		return nil, err
 	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
