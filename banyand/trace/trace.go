@@ -175,11 +175,19 @@ func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.S
 		return nil, nil
 	}
 
-	// Extract trace IDs from response data
-	traceIDs := make([]string, 0, len(response.Data))
+	// Extract trace IDs from response data and deduplicate them while preserving order
+	// Since each trace may be indexed by multiple series, we get duplicates
+	// We need to keep only the first occurrence of each trace ID to preserve ordering
+	seenTraceIDs := make(map[string]bool)
+	var traceIDs []string
+
 	for _, data := range response.Data {
 		if len(data) > 0 {
-			traceIDs = append(traceIDs, string(data))
+			traceID := string(data)
+			if !seenTraceIDs[traceID] {
+				seenTraceIDs[traceID] = true
+				traceIDs = append(traceIDs, traceID)
+			}
 		}
 	}
 

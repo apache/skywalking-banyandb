@@ -244,7 +244,15 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 		if tv.valueType != pbv1.ValueTypeInt64 && tv.valueType != pbv1.ValueTypeTimestamp {
 			return fmt.Errorf("unsupported tag value type: %s", tv.tag)
 		}
-		key := req.Tags[tagIdx].GetInt().GetValue()
+
+		var key int64
+		if tv.valueType == pbv1.ValueTypeTimestamp {
+			// For timestamp tags, get the unix nano timestamp as the key
+			key = req.Tags[tagIdx].GetTimestamp().AsTime().UnixNano()
+		} else {
+			// For int64 tags, get the int value as the key
+			key = req.Tags[tagIdx].GetInt().GetValue()
+		}
 
 		entityValues := make([]*modelv1.TagValue, 0, len(indexRule.Tags))
 		for _, tagName := range indexRule.Tags {

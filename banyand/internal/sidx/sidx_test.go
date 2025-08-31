@@ -302,11 +302,22 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Write data in non-sorted order
+	// Write data from different seriesIDs in non-sorted order to expose ordering bugs
 	reqs := []WriteRequest{
-		createTestWriteRequest(1, 300, "data300"),
-		createTestWriteRequest(1, 100, "data100"),
-		createTestWriteRequest(1, 200, "data200"),
+		// Series 1 data
+		createTestWriteRequest(1, 300, "series1-data300"),
+		createTestWriteRequest(1, 100, "series1-data100"),
+		createTestWriteRequest(1, 200, "series1-data200"),
+
+		// Series 2 data
+		createTestWriteRequest(2, 250, "series2-data250"),
+		createTestWriteRequest(2, 150, "series2-data150"),
+		createTestWriteRequest(2, 50, "series2-data50"),
+
+		// Series 3 data
+		createTestWriteRequest(3, 350, "series3-data350"),
+		createTestWriteRequest(3, 75, "series3-data75"),
+		createTestWriteRequest(3, 175, "series3-data175"),
 	}
 	err := sidx.Write(ctx, reqs)
 	require.NoError(t, err)
@@ -317,29 +328,45 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 	tests := []struct {
 		order     *index.OrderBy
 		name      string
+		seriesIDs []common.SeriesID
 		ascending bool
 	}{
 		{
-			name:      "ascending order",
+			name:      "ascending order single series",
 			ascending: true,
 			order:     &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+			seriesIDs: []common.SeriesID{1},
 		},
 		{
-			name:      "descending order",
+			name:      "descending order single series",
 			ascending: false,
 			order:     &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
+			seriesIDs: []common.SeriesID{1},
 		},
 		{
-			name:      "default order",
+			name:      "ascending order multiple series",
+			ascending: true,
+			order:     &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+			seriesIDs: []common.SeriesID{1, 2, 3},
+		},
+		{
+			name:      "descending order multiple series",
+			ascending: false,
+			order:     &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
+			seriesIDs: []common.SeriesID{1, 2, 3},
+		},
+		{
+			name:      "default order multiple series",
 			ascending: true,
 			order:     nil, // Should default to ascending
+			seriesIDs: []common.SeriesID{1, 2, 3},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			queryReq := QueryRequest{
-				SeriesIDs: []common.SeriesID{1},
+				SeriesIDs: tt.seriesIDs,
 				Order:     tt.order,
 			}
 
@@ -350,6 +377,14 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 			// Get all keys directly from response
 			allKeys := response.Keys
 
+			// Debug: Print the keys and data to understand the ordering
+			t.Logf("Query with series %v, order %v", tt.seriesIDs, tt.order)
+			for i, key := range allKeys {
+				if i < len(response.Data) && i < len(response.SIDs) {
+					t.Logf("  Key: %d, Data: %s, SeriesID: %d", key, string(response.Data[i]), response.SIDs[i])
+				}
+			}
+
 			// Verify ordering
 			if len(allKeys) > 1 {
 				isSorted := sort.SliceIsSorted(allKeys, func(i, j int) bool {
@@ -358,8 +393,8 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 					}
 					return allKeys[i] > allKeys[j]
 				})
-				assert.True(t, isSorted, "Keys should be sorted in %s order",
-					map[bool]string{true: "ascending", false: "descending"}[tt.ascending])
+				assert.True(t, isSorted, "Keys should be sorted in %s order. Keys: %v",
+					map[bool]string{true: "ascending", false: "descending"}[tt.ascending], allKeys)
 			}
 		})
 	}
@@ -840,7 +875,7 @@ func TestQueryResult_ConvertBlockToResponse_IncrementalLimit(t *testing.T) {
 		data:     [][]byte{[]byte("trace2"), []byte("trace2")},
 		tags:     make(map[string]*tagData),
 	}
-	qr.convertBlockToResponse(block2, 1, result)
+	qr.convertBlockToResponse(block2, 2, result)
 
 	// Verify second call results
 	assert.Equal(t, 4, result.Len(), "Second call should add 2 more elements")
@@ -856,7 +891,7 @@ func TestQueryResult_ConvertBlockToResponse_IncrementalLimit(t *testing.T) {
 		data:     [][]byte{[]byte("trace3"), []byte("trace3")},
 		tags:     make(map[string]*tagData),
 	}
-	qr.convertBlockToResponse(block3, 1, result)
+	qr.convertBlockToResponse(block3, 3, result)
 
 	// Verify third call results - should not add anything due to limit
 	assert.Equal(t, 4, result.Len(), "Third call should not add elements due to limit")
@@ -968,7 +1003,7 @@ func TestQueryResponseHeap_MergeWithHeap_UniqueDataLimit(t *testing.T) {
 			// Initialize heap and merge
 			// Note: We can't call heap.Init directly since QueryResponseHeap is not exported
 			// Instead, we'll test via the public mergeQueryResponseShardsAsc function
-			result := mergeQueryResponseShardsAsc(tt.shards, tt.limit)
+			result := mergeQueryResponseShards(tt.shards, tt.limit)
 
 			// Verify total length
 			assert.Equal(t, tt.expectedLen, result.Len(),

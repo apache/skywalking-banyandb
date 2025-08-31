@@ -169,6 +169,12 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 				result.originalSidxOrder = make([]string, len(traceIDs))
 				copy(result.originalSidxOrder, traceIDs)
 
+				// Create sidx order map for efficient heap operations
+				result.sidxOrderMap = make(map[string]int)
+				for i, traceID := range result.originalSidxOrder {
+					result.sidxOrderMap[traceID] = i
+				}
+
 				qo.traceIDs = traceIDs
 				sort.Strings(qo.traceIDs) // Sort for partIter efficiency
 			}
@@ -239,10 +245,11 @@ func (t *trace) searchBlocks(ctx context.Context, result *queryResult, parts []*
 type queryResult struct {
 	ctx               context.Context
 	tagProjection     *model.TagProjection
+	sidxOrderMap      map[string]int
 	data              []*blockCursor
 	snapshots         []*snapshot
 	segments          []storage.Segment[*tsTable, option]
-	originalSidxOrder []string // Store original sidx order for final sorting
+	originalSidxOrder []string
 	hit               int
 	loaded            bool
 }
@@ -328,19 +335,13 @@ func (qr *queryResult) resortDataBySidxOrder() {
 		return
 	}
 
-	// Create a map from trace ID to its position in the original sidx order
-	traceIDToOrder := make(map[string]int)
-	for i, traceID := range qr.originalSidxOrder {
-		traceIDToOrder[traceID] = i
-	}
-
-	// Sort data according to the original sidx order
+	// Sort data according to the original sidx order using the pre-computed map
 	sort.Slice(qr.data, func(i, j int) bool {
 		traceIDi := qr.data[i].bm.traceID
 		traceIDj := qr.data[j].bm.traceID
 
-		orderi, existi := traceIDToOrder[traceIDi]
-		orderj, existj := traceIDToOrder[traceIDj]
+		orderi, existi := qr.sidxOrderMap[traceIDi]
+		orderj, existj := qr.sidxOrderMap[traceIDj]
 
 		// If both trace IDs are in the original order, use that ordering
 		if existi && existj {
@@ -378,7 +379,30 @@ func (qr queryResult) Len() int {
 }
 
 func (qr queryResult) Less(i, j int) bool {
-	return qr.data[i].bm.traceID < qr.data[j].bm.traceID
+	// If no original sidx order, return natural order (no sorted merge)
+	if len(qr.originalSidxOrder) == 0 {
+		return false
+	}
+
+	traceIDi := qr.data[i].bm.traceID
+	traceIDj := qr.data[j].bm.traceID
+
+	orderi, existi := qr.sidxOrderMap[traceIDi]
+	orderj, existj := qr.sidxOrderMap[traceIDj]
+
+	// If both trace IDs are in the original order, use that ordering
+	if existi && existj {
+		return orderi < orderj
+	}
+	// If only one is in the original order, prioritize it
+	if existi {
+		return true
+	}
+	if existj {
+		return false
+	}
+	// If neither is in the original order, use alphabetical ordering as fallback
+	return traceIDi < traceIDj
 }
 
 func (qr queryResult) Swap(i, j int) {

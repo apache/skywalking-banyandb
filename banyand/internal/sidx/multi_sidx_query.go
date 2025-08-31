@@ -169,7 +169,7 @@ func mergeMultipleSIDXResponses(responses []*QueryResponse, req QueryRequest) *Q
 
 	// Use existing merge functions
 	if asc {
-		return mergeQueryResponseShardsAsc(responses, req.MaxElementSize)
+		return mergeQueryResponseShards(responses, req.MaxElementSize)
 	}
 	return mergeQueryResponseShardsDesc(responses, req.MaxElementSize)
 }

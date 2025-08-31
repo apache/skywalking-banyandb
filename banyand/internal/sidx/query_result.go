@@ -39,21 +39,6 @@ type queryResult struct {
 	request    QueryRequest
 }
 
-// loadAndProcessBlock loads a block from part and processes it into QueryResponse format.
-func (qr *queryResult) loadAndProcessBlock(tmpBlock *block, bs blockScanResult, result *QueryResponse) bool {
-	tmpBlock.reset()
-
-	// Load block data from part (similar to stream's loadBlockCursor)
-	if !qr.loadBlockData(tmpBlock, bs.p, &bs.bm) {
-		return false
-	}
-
-	// Convert block data to QueryResponse format
-	qr.convertBlockToResponse(tmpBlock, bs.bm.seriesID, result)
-
-	return true
-}
-
 // loadBlockData loads block data from part using block metadata.
 // Uses blockCursor pattern for optimal performance with selective tag loading.
 func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata) bool {
@@ -309,8 +294,8 @@ func (qr *queryResult) extractElementTags(block *block, elemIndex int) []Tag {
 	return elementTags
 }
 
-// mergeQueryResponseShardsAsc merges multiple QueryResponse shards in ascending order.
-func mergeQueryResponseShardsAsc(shards []*QueryResponse, maxElements int) *QueryResponse {
+// mergeQueryResponseShards merges multiple QueryResponse shards.
+func mergeQueryResponseShards(shards []*QueryResponse, maxElements int) *QueryResponse {
 	// Create heap for ascending merge
 	qrh := &QueryResponseHeap{asc: true}
 
