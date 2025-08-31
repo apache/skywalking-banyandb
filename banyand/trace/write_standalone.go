@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -153,10 +154,15 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 		}
 
 		et = &tracesInTable{
-			timeRange: segment.GetTimeRange(),
-			tsTable:   tstb,
-			traces:    generateTraces(),
-			segment:   segment,
+			timeRange:   segment.GetTimeRange(),
+			tsTable:     tstb,
+			traces:      generateTraces(),
+			segment:     segment,
+			sidxReqsMap: make(map[string][]sidx.WriteRequest),
+			seriesDocs: seriesDoc{
+				docs:        make(index.Documents, 0),
+				docIDsAdded: make(map[uint64]struct{}),
+			},
 		}
 		et.traces.reset()
 		eg.tables = append(eg.tables, et)
@@ -238,13 +244,24 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 		if tv.valueType != pbv1.ValueTypeInt64 && tv.valueType != pbv1.ValueTypeTimestamp {
 			return fmt.Errorf("unsupported tag value type: %s", tv.tag)
 		}
-		key := req.Tags[tagIdx].GetInt().GetValue()
+
+		var key int64
+		if tv.valueType == pbv1.ValueTypeTimestamp {
+			// For timestamp tags, get the unix nano timestamp as the key
+			key = req.Tags[tagIdx].GetTimestamp().AsTime().UnixNano()
+		} else {
+			// For int64 tags, get the int value as the key
+			key = req.Tags[tagIdx].GetInt().GetValue()
+		}
 
 		entityValues := make([]*modelv1.TagValue, 0, len(indexRule.Tags))
-		for _, tagName := range indexRule.Tags {
+		for i, tagName := range indexRule.Tags {
 			tagIdx, err := getTagIndex(stm, tagName)
 			if err != nil || tagIdx >= len(req.Tags) {
 				continue
+			}
+			if i == len(indexRule.Tags)-1 {
+				break
 			}
 			entityValues = append(entityValues, req.Tags[tagIdx])
 		}
@@ -263,7 +280,22 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 			SeriesID: series.ID,
 			Key:      key,
 		}
-		tracesInTable.sidxReqs = append(tracesInTable.sidxReqs, writeReq)
+
+		sidxName := indexRule.GetMetadata().GetName()
+
+		if tracesInTable.sidxReqsMap[sidxName] == nil {
+			tracesInTable.sidxReqsMap[sidxName] = make([]sidx.WriteRequest, 0)
+		}
+		tracesInTable.sidxReqsMap[sidxName] = append(tracesInTable.sidxReqsMap[sidxName], writeReq)
+
+		docID := uint64(series.ID)
+		if _, existed := tracesInTable.seriesDocs.docIDsAdded[docID]; !existed {
+			tracesInTable.seriesDocs.docs = append(tracesInTable.seriesDocs.docs, index.Document{
+				DocID:        docID,
+				EntityValues: series.Buffer,
+			})
+			tracesInTable.seriesDocs.docIDsAdded[docID] = struct{}{}
+		}
 	}
 
 	return nil
@@ -307,9 +339,21 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		for j := range g.tables {
 			es := g.tables[j]
 			es.tsTable.mustAddTraces(es.traces)
-			if len(es.sidxReqs) > 0 {
-				if err := es.tsTable.sidx.Write(ctx, es.sidxReqs); err != nil {
-					w.l.Error().Err(err).Msg("cannot write to secondary index")
+			for sidxName, sidxReqs := range es.sidxReqsMap {
+				if len(sidxReqs) > 0 {
+					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
+					if err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
+						continue
+					}
+					if err := sidxInstance.Write(ctx, sidxReqs); err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
+					}
+				}
+			}
+			if len(es.seriesDocs.docs) > 0 {
+				if err := es.segment.IndexDB().Update(es.seriesDocs.docs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write series index")
 				}
 			}
 			releaseTraces(es.traces)

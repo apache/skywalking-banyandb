@@ -99,18 +99,6 @@ type Querier interface {
 	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
 }
 
-// QueryResult provides iterator-like access to query results, following BanyanDB pattern.
-type QueryResult interface {
-	// Pull returns the next batch of query results.
-	// Returns nil when no more results are available.
-	// Check QueryResponse.Error for execution errors during iteration.
-	Pull() *QueryResponse
-
-	// Release releases resources associated with the query result.
-	// Must be called when done with the QueryResult to prevent resource leaks.
-	Release()
-}
-
 // WriteRequest contains data for a single write operation within a batch.
 // The user provides the ordering key as an int64 value that sidx treats opaquely.
 type WriteRequest struct {
@@ -135,25 +123,14 @@ type QueryRequest struct {
 // This follows BanyanDB result patterns with parallel arrays for efficiency.
 // Uses individual tag-based strategy (like trace module) rather than tag-family approach (like stream module).
 type QueryResponse struct {
-	// Error contains any error that occurred during this batch of query execution.
-	// Non-nil Error indicates partial or complete failure during result iteration.
-	// Query setup errors are returned by Query() method directly.
-	Error error
-
-	// Keys contains the user-provided ordering keys for each result
-	Keys []int64
-
-	// Data contains the user payload data for each result
-	Data [][]byte
-
-	// Tags contains individual tag data for each result
-	Tags [][]Tag
-
-	// SIDs contains the series IDs for each result
-	SIDs []common.SeriesID
-
-	// Metadata provides query execution information for this batch
-	Metadata ResponseMetadata
+	Error           error
+	uniqueDataMap   map[string]struct{}
+	Keys            []int64
+	Data            [][]byte
+	Tags            [][]Tag
+	SIDs            []common.SeriesID
+	Metadata        ResponseMetadata
+	uniqueDataCount int
 }
 
 // Len returns the number of results in the QueryResponse.
@@ -169,6 +146,9 @@ func (qr *QueryResponse) Reset() {
 	qr.Tags = qr.Tags[:0]
 	qr.SIDs = qr.SIDs[:0]
 	qr.Metadata = ResponseMetadata{}
+	// Reset unique data cache
+	qr.uniqueDataMap = nil
+	qr.uniqueDataCount = 0
 }
 
 // Validate validates a QueryResponse for correctness.
@@ -410,12 +390,6 @@ func (qr QueryRequest) Validate() error {
 	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
 		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
-	// Validate tag projection names
-	for i, projection := range qr.TagProjection {
-		if projection.Family == "" {
-			return fmt.Errorf("tagProjection[%d] family cannot be empty", i)
-		}
-	}
 	return nil
 }
 
@@ -523,7 +497,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		return s.writer.Write(ctx, reqs)
 //	}
 //
-//	func (s *sidxImpl) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+//	func (s *sidxImpl) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
 //		return s.querier.Query(ctx, req)
 //	}
 //

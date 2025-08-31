@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"sort"
@@ -464,7 +465,9 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		return false
 	}
 
-	bc.spans = append(bc.spans, tmpBlock.spans...)
+	for i := range tmpBlock.spans {
+		bc.spans = append(bc.spans, bytes.Clone(tmpBlock.spans[i]))
+	}
 
 	for _, t := range tmpBlock.tags {
 		if len(t.values) == 0 {

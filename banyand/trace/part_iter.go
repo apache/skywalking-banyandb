@@ -126,6 +126,40 @@ func (pi *partIter) error() error {
 	return pi.err
 }
 
+func (pi *partIter) nextTID() bool {
+	if pi.tidIdx >= len(pi.tids) {
+		pi.err = io.EOF
+		return false
+	}
+	pi.curBlock.traceID = pi.tids[pi.tidIdx]
+	pi.tidIdx++
+	return true
+}
+
+func (pi *partIter) searchTargetTID(tid string) bool {
+	if pi.curBlock.traceID >= tid {
+		return true
+	}
+	if !pi.nextTID() {
+		return false
+	}
+	if pi.curBlock.traceID >= tid {
+		return true
+	}
+	tids := pi.tids[pi.tidIdx:]
+	pi.tidIdx += sort.Search(len(tids), func(i int) bool {
+		return tid <= tids[i]
+	})
+	if pi.tidIdx >= len(pi.tids) {
+		pi.tidIdx = len(pi.tids)
+		pi.err = io.EOF
+		return false
+	}
+	pi.curBlock.traceID = pi.tids[pi.tidIdx]
+	pi.tidIdx++
+	return true
+}
+
 func (pi *partIter) loadNextBlockMetadata() bool {
 	if len(pi.primaryBlockMetadata) > 0 {
 		if !pi.searchTargetTraceID(pi.primaryBlockMetadata[0].traceID) {
@@ -189,7 +223,7 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 
 func (pi *partIter) findBlock() bool {
 	bhs := pi.bms
-	if len(bhs) > 0 {
+	for len(bhs) > 0 {
 		tid := pi.curBlock.traceID
 		if bhs[0].traceID < tid {
 			n := sort.Search(len(bhs), func(i int) bool {
@@ -203,9 +237,11 @@ func (pi *partIter) findBlock() bool {
 		}
 		bm := &bhs[0]
 
-		if bm.traceID > tid {
-			pi.bms = bhs[:0]
-			return false
+		if bm.traceID != tid {
+			if !pi.searchTargetTID(bm.traceID) {
+				return false
+			}
+			continue
 		}
 
 		pi.curBlock = bm
