@@ -82,8 +82,8 @@ func (s *schema) EntityList() []string {
 	return s.common.EntityList
 }
 
-func (s *schema) IndexDefined(_ string) (bool, *databasev1.IndexRule) {
-	panic("trace does not support finding index by tag name")
+func (s *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+	return s.common.IndexDefined(tagName)
 }
 
 // CreateTagRef create TagRef to the given tags.

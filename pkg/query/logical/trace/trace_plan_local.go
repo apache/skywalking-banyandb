@@ -97,6 +97,8 @@ func (i *localScan) Execute(ctx context.Context) (iter.Iterator[model.TraceResul
 			Entities:       i.entities,
 			MaxTraceSize:   i.maxTraceSize,
 			TraceIDs:       i.traceIDs,
+			MinVal:         i.minVal,
+			MaxVal:         i.maxVal,
 		}); err != nil {
 			return iter.Empty[model.TraceResult](), err
 		}

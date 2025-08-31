@@ -465,6 +465,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	var schemas []logical.Schema
 	var ecc []executor.TraceExecutionContext
 	var traceIDTagName string
+	var timestampTagName string
 	for i := range queryCriteria.Groups {
 		meta := &commonv1.Metadata{
 			Name:  queryCriteria.Name,
@@ -489,9 +490,10 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 			return
 		}
 		traceIDTagName = ec.GetSchema().GetTraceIdTagName()
+		timestampTagName = ec.GetSchema().GetTimestampTagName()
 	}
 
-	plan, err := logical_trace.Analyze(queryCriteria, metadata, schemas, ecc, traceIDTagName)
+	plan, err := logical_trace.Analyze(queryCriteria, metadata, schemas, ecc, traceIDTagName, timestampTagName)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for trace %s: %v", queryCriteria.GetName(), err))
 		return

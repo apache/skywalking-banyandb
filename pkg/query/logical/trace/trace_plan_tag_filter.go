@@ -69,6 +69,10 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	if err != nil {
 		return nil, err
 	}
+	if uis.orderByTag == "" {
+		minVal = uis.startTime.UnixNano()
+		maxVal = uis.endTime.UnixNano()
+	}
 	ctx.entities = entities
 
 	// Initialize projectionTags even if no explicit projection tags are provided

@@ -325,6 +325,8 @@ type TraceQueryOptions struct {
 	Entities       [][]*modelv1.TagValue
 	TraceIDs       []string
 	MaxTraceSize   int
+	MinVal         int64
+	MaxVal         int64
 }
 
 // Reset resets the TraceQueryOptions.

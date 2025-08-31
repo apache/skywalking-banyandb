@@ -143,20 +143,14 @@ func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.S
 		Filter:         tqo.SkippingFilter,
 		Order:          tqo.Order,
 		MaxElementSize: tqo.MaxTraceSize,
+		MinKey:         &tqo.MinVal,
+		MaxKey:         &tqo.MaxVal,
 	}
 
 	// Convert TagProjection to slice format if needed
 	if tqo.TagProjection != nil {
 		req.TagProjection = []model.TagProjection{*tqo.TagProjection}
 	}
-
-	// Set key range based on time range
-	// if tqo.TimeRange != nil {
-	// 	minKey := tqo.TimeRange.Start.UnixNano()
-	// 	maxKey := tqo.TimeRange.End.UnixNano()
-	// 	req.MinKey = &minKey
-	// 	req.MaxKey = &maxKey
-	// }
 
 	// Use the provided series IDs for targeted querying
 	if len(seriesIDs) > 0 {
