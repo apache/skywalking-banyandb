@@ -65,13 +65,6 @@ func releaseBlock(b *block) {
 	if b == nil {
 		return
 	}
-	// Release tag filters back to pool
-	for _, tag := range b.tags {
-		if tag.filter != nil {
-			releaseBloomFilter(tag.filter)
-		}
-		releaseTagData(tag)
-	}
 	b.reset()
 	blockPool.Put(b)
 }
@@ -86,8 +79,11 @@ func (b *block) reset() {
 	b.data = b.data[:0]
 
 	// Clear tag map but keep the map itself
-	for k := range b.tags {
-		releaseTagData(b.tags[k])
+	for k, tag := range b.tags {
+		if tag.filter != nil {
+			releaseBloomFilter(tag.filter)
+		}
+		releaseTagData(tag)
 		delete(b.tags, k)
 	}
 }
