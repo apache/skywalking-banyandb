@@ -112,6 +112,7 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 				return err.Error()
 			}
 			var y []byte
+			// TODO: it lose tag values.
 			y, err = yaml.JSONToYAML(j)
 			if err != nil {
 				return err.Error()

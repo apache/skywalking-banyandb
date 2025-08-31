@@ -549,8 +549,11 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		for i, spanBytes := range result.Spans {
 			// Create trace tags from the result
 			var traceTags []*modelv1.Tag
-			if result.Tags != nil {
+			if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
 				for _, tag := range result.Tags {
+					if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
+						continue
+					}
 					if i < len(tag.Values) {
 						traceTags = append(traceTags, &modelv1.Tag{
 							Key:   tag.Name,
