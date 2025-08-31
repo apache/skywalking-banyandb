@@ -48,23 +48,6 @@ type queryOptions struct {
 	maxTimestamp int64
 }
 
-func (qo *queryOptions) reset() {
-	qo.TraceQueryOptions.Reset()
-	qo.seriesToEntity = nil
-	qo.traceIDs = nil
-	qo.minTimestamp = 0
-	qo.maxTimestamp = 0
-}
-
-func (qo *queryOptions) copyFrom(other *queryOptions) {
-	qo.TraceQueryOptions.CopyFrom(&other.TraceQueryOptions)
-	qo.seriesToEntity = other.seriesToEntity
-	qo.traceIDs = make([]string, len(other.traceIDs))
-	copy(qo.traceIDs, other.traceIDs)
-	qo.minTimestamp = other.minTimestamp
-	qo.maxTimestamp = other.maxTimestamp
-}
-
 func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.TraceQueryResult, error) {
 	if tqo.TimeRange == nil {
 		return nil, errors.New("invalid query options: timeRange are required")

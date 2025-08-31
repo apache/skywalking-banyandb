@@ -255,10 +255,13 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 		}
 
 		entityValues := make([]*modelv1.TagValue, 0, len(indexRule.Tags))
-		for _, tagName := range indexRule.Tags {
+		for i, tagName := range indexRule.Tags {
 			tagIdx, err := getTagIndex(stm, tagName)
 			if err != nil || tagIdx >= len(req.Tags) {
 				continue
+			}
+			if i == len(indexRule.Tags)-1 {
+				break
 			}
 			entityValues = append(entityValues, req.Tags[tagIdx])
 		}

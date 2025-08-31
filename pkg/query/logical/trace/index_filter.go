@@ -38,7 +38,7 @@ func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
 	entityDict map[string]int, entity []*modelv1.TagValue, traceIDTagName string, orderByTag string,
 ) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
 	if criteria == nil {
-		return nil, [][]*modelv1.TagValue{entity}, nil, nil, math.MaxInt64, math.MinInt64, nil
+		return nil, [][]*modelv1.TagValue{entity}, nil, nil, math.MinInt64, math.MaxInt64, nil
 	}
 
 	switch criteria.GetExp().(type) {
@@ -48,7 +48,7 @@ func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
 		return buildFilterFromLogicalExpression(criteria.GetLe(), tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	}
 
-	return nil, nil, nil, nil, math.MaxInt64, math.MinInt64, logical.ErrInvalidCriteriaType
+	return nil, nil, nil, nil, math.MinInt64, math.MaxInt64, logical.ErrInvalidCriteriaType
 }
 
 func parseConditionToFilter(cond *modelv1.Condition, entity []*modelv1.TagValue, expr logical.LiteralExpr) (index.Filter, [][]*modelv1.TagValue, error) {
@@ -281,8 +281,8 @@ func buildFilterFromCondition(cond *modelv1.Condition, tagNames map[string]bool,
 ) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
 	var collectedTagNames []string
 	var traceIDs []string
-	minVal := int64(math.MaxInt64)
-	maxVal := int64(math.MinInt64)
+	minVal := int64(math.MinInt64)
+	maxVal := int64(math.MaxInt64)
 
 	if !tagNames[cond.Name] {
 		return nil, nil, collectedTagNames, traceIDs, minVal, maxVal, errors.Errorf("tag name '%s' not found in trace schema", cond.Name)

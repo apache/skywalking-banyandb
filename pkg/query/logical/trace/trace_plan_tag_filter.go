@@ -176,7 +176,7 @@ func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict m
 	entity []*modelv1.TagValue, traceIDTagName string, orderByTag string,
 ) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
 	if criteria == nil {
-		return nil, [][]*modelv1.TagValue{entity}, nil, nil, math.MaxInt64, math.MinInt64, nil
+		return nil, [][]*modelv1.TagValue{entity}, nil, nil, math.MinInt64, math.MaxInt64, nil
 	}
 	// Create a map of valid tag names from the schema
 	tagNames := make(map[string]bool)
