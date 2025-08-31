@@ -53,6 +53,8 @@ type localScan struct {
 	entities          [][]*modelv1.TagValue
 	traceIDs          []string
 	maxTraceSize      int
+	minVal            int64
+	maxVal            int64
 }
 
 func (i *localScan) Close() {

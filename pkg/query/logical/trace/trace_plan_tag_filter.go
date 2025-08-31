@@ -20,6 +20,7 @@ package trace
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -43,6 +44,7 @@ type unresolvedTraceTagFilter struct {
 	metadata       *commonv1.Metadata
 	criteria       *modelv1.Criteria
 	traceIDTagName string
+	orderByTag     string
 	projectionTags [][]*logical.Tag
 }
 
@@ -60,8 +62,10 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	var conditionTagNames []string
 	var traceIDs []string
 	var entities [][]*modelv1.TagValue
+	var minVal, maxVal int64
 	// For trace, we use skipping filter and capture entities for query optimization
-	ctx.skippingFilter, entities, conditionTagNames, traceIDs, err = buildTraceFilter(uis.criteria, s, entityDict, entity, uis.traceIDTagName)
+	ctx.skippingFilter, entities, conditionTagNames, traceIDs, minVal, maxVal, err = buildTraceFilter(
+		uis.criteria, s, entityDict, entity, uis.traceIDTagName, uis.orderByTag)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +105,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 			return nil, errProject
 		}
 	}
-	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs)
+	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs, minVal, maxVal)
 	if uis.criteria != nil {
 		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(traceIDs) > 1, uis.traceIDTagName)
 		if errFilter != nil {
@@ -115,7 +119,9 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	return plan, err
 }
 
-func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext, ec executor.TraceExecutionContext, traceIDs []string) logical.Plan {
+func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext,
+	ec executor.TraceExecutionContext, traceIDs []string, minVal, maxVal int64,
+) logical.Plan {
 	return &localScan{
 		timeRange:         timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:            ctx.s,
@@ -127,6 +133,8 @@ func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext
 		l:                 logger.GetLogger("query", "trace", "local-scan"),
 		ec:                ec,
 		traceIDs:          traceIDs,
+		minVal:            minVal,
+		maxVal:            maxVal,
 	}
 }
 
@@ -159,11 +167,12 @@ func deduplicateStrings(strings []string) []string {
 
 // buildTraceFilter builds a filter for trace queries and returns both the filter and collected tag names.
 // Unlike stream, trace only needs skipping filter.
+// Returns min/max int64 values for the orderByTag if provided, otherwise returns math.MaxInt64, math.MinInt64.
 func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict map[string]int,
-	entity []*modelv1.TagValue, traceIDTagName string,
-) (index.Filter, [][]*modelv1.TagValue, []string, []string, error) {
+	entity []*modelv1.TagValue, traceIDTagName string, orderByTag string,
+) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
 	if criteria == nil {
-		return nil, [][]*modelv1.TagValue{entity}, nil, nil, nil
+		return nil, [][]*modelv1.TagValue{entity}, nil, nil, math.MaxInt64, math.MinInt64, nil
 	}
 	// Create a map of valid tag names from the schema
 	tagNames := make(map[string]bool)
@@ -172,8 +181,8 @@ func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict m
 		tagNames[tagName] = true
 	}
 
-	filter, entities, collectedTagNames, traceIDs, err := buildFilter(criteria, tagNames, entityDict, entity, traceIDTagName)
-	return filter, entities, collectedTagNames, traceIDs, err
+	filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err := buildFilter(criteria, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+	return filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err
 }
 
 var (
