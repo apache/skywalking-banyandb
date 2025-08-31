@@ -103,8 +103,12 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 
 	// Create tag references if we have any projection tags
 	if len(ctx.projectionTags.Names) > 0 {
+		tags := make([]*logical.Tag, len(ctx.projectionTags.Names))
+		for i := range ctx.projectionTags.Names {
+			tags[i] = logical.NewTag("", ctx.projectionTags.Names[i])
+		}
 		var errProject error
-		ctx.projTagsRefs, errProject = s.CreateTagRef(uis.projectionTags...)
+		ctx.projTagsRefs, errProject = s.CreateTagRef(tags)
 		if errProject != nil {
 			return nil, errProject
 		}
