@@ -21,7 +21,6 @@ package data
 import (
 	"context"
 	"embed"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -141,8 +140,6 @@ func loadData(stream tracev1.TraceService_WriteClient, metadata *commonv1.Metada
 		// Get span data
 		spanData, ok := templateMap["span"].(string)
 		gm.Expect(ok).To(gm.BeTrue())
-		spanBytes, err := base64.StdEncoding.DecodeString(spanData)
-		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 
 		// Get tags data
 		tagsData, ok := templateMap["tags"].([]interface{})
@@ -170,7 +167,7 @@ func loadData(stream tracev1.TraceService_WriteClient, metadata *commonv1.Metada
 		errInner := stream.Send(&tracev1.WriteRequest{
 			Metadata: metadata,
 			Tags:     tagValues,
-			Span:     spanBytes,
+			Span:     []byte(spanData),
 			Version:  uint64(i + 1),
 		})
 		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())

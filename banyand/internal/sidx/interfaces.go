@@ -390,12 +390,6 @@ func (qr QueryRequest) Validate() error {
 	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
 		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
-	// Validate tag projection names
-	for i, projection := range qr.TagProjection {
-		if projection.Family == "" {
-			return fmt.Errorf("tagProjection[%d] family cannot be empty", i)
-		}
-	}
 	return nil
 }
 

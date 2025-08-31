@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -49,15 +50,18 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	ctx := newTraceAnalyzerContext(s)
 	entityList := s.EntityList()
 	entityDict := make(map[string]int)
+	entity := make([]*modelv1.TagValue, len(entityList))
 	for idx, e := range entityList {
 		entityDict[e] = idx
+		// fill AnyEntry by default
+		entity[idx] = pbv1.AnyTagValue
 	}
 	var err error
 	var conditionTagNames []string
 	var traceIDs []string
 	var entities [][]*modelv1.TagValue
 	// For trace, we use skipping filter and capture entities for query optimization
-	ctx.skippingFilter, entities, conditionTagNames, traceIDs, err = buildTraceFilter(uis.criteria, s, entityDict, uis.traceIDTagName)
+	ctx.skippingFilter, entities, conditionTagNames, traceIDs, err = buildTraceFilter(uis.criteria, s, entityDict, entity, uis.traceIDTagName)
 	if err != nil {
 		return nil, err
 	}
@@ -156,10 +160,10 @@ func deduplicateStrings(strings []string) []string {
 // buildTraceFilter builds a filter for trace queries and returns both the filter and collected tag names.
 // Unlike stream, trace only needs skipping filter.
 func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict map[string]int,
-	traceIDTagName string,
+	entity []*modelv1.TagValue, traceIDTagName string,
 ) (index.Filter, [][]*modelv1.TagValue, []string, []string, error) {
 	if criteria == nil {
-		return nil, nil, nil, nil, nil
+		return nil, [][]*modelv1.TagValue{entity}, nil, nil, nil
 	}
 	// Create a map of valid tag names from the schema
 	tagNames := make(map[string]bool)
@@ -168,7 +172,7 @@ func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict m
 		tagNames[tagName] = true
 	}
 
-	filter, entities, collectedTagNames, traceIDs, err := buildFilter(criteria, tagNames, entityDict, nil, traceIDTagName)
+	filter, entities, collectedTagNames, traceIDs, err := buildFilter(criteria, tagNames, entityDict, entity, traceIDTagName)
 	return filter, entities, collectedTagNames, traceIDs, err
 }
 

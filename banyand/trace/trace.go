@@ -151,12 +151,12 @@ func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.S
 	}
 
 	// Set key range based on time range
-	if tqo.TimeRange != nil {
-		minKey := tqo.TimeRange.Start.UnixNano()
-		maxKey := tqo.TimeRange.End.UnixNano()
-		req.MinKey = &minKey
-		req.MaxKey = &maxKey
-	}
+	// if tqo.TimeRange != nil {
+	// 	minKey := tqo.TimeRange.Start.UnixNano()
+	// 	maxKey := tqo.TimeRange.End.UnixNano()
+	// 	req.MinKey = &minKey
+	// 	req.MaxKey = &maxKey
+	// }
 
 	// Use the provided series IDs for targeted querying
 	if len(seriesIDs) > 0 {
