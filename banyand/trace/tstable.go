@@ -48,7 +48,7 @@ const (
 type tsTable struct {
 	l             *logger.Logger
 	fileSystem    fs.FileSystem
-	sidx          sidx.SIDX
+	sidxMap       map[string]sidx.SIDX
 	pm            protector.Memory
 	metrics       *metrics
 	snapshot      *snapshot
@@ -201,15 +201,7 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	if m != nil {
 		tst.metrics = m.(*metrics)
 	}
-	sidxOpts, err := sidx.NewOptions(filepath.Join(rootPath, "sidx"), option.protector)
-	if err != nil {
-		logger.Panicf("cannot create sidx options: %s", err)
-	}
-	sidx, err := sidx.NewSIDX(fileSystem, sidxOpts)
-	if err != nil {
-		logger.Panicf("cannot create sidx: %s", err)
-	}
-	tst.sidx = sidx
+	tst.sidxMap = make(map[string]sidx.SIDX)
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
@@ -269,6 +261,65 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	return t, nil
 }
 
+func (tst *tsTable) getSidx(name string) (sidx.SIDX, bool) {
+	tst.RLock()
+	defer tst.RUnlock()
+	sidxInstance, ok := tst.sidxMap[name]
+	return sidxInstance, ok
+}
+
+func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
+	if sidxInstance, ok := tst.getSidx(name); ok {
+		return sidxInstance, nil
+	}
+
+	tst.Lock()
+	defer tst.Unlock()
+
+	// Double-check after acquiring write lock
+	if sidxInstance, ok := tst.sidxMap[name]; ok {
+		return sidxInstance, nil
+	}
+
+	// Create new sidx instance
+	sidxPath := filepath.Join(tst.root, "sidx", name)
+	sidxOpts, err := sidx.NewOptions(sidxPath, tst.option.protector)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create sidx options for %s: %w", name, err)
+	}
+
+	newSidx, err := sidx.NewSIDX(sidxOpts)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create sidx for %s: %w", name, err)
+	}
+
+	tst.sidxMap[name] = newSidx
+	return newSidx, nil
+}
+
+// getAllSidx returns all sidx instances for potential multi-sidx queries.
+func (tst *tsTable) getAllSidx() []sidx.SIDX {
+	tst.RLock()
+	defer tst.RUnlock()
+
+	result := make([]sidx.SIDX, 0, len(tst.sidxMap))
+	for _, sidxInstance := range tst.sidxMap {
+		result = append(result, sidxInstance)
+	}
+	return result
+}
+
+func (tst *tsTable) closeSidxMap() error {
+	var lastErr error
+	for name, sidxInstance := range tst.sidxMap {
+		if err := sidxInstance.Close(); err != nil {
+			tst.l.Error().Err(err).Str("sidx", name).Msg("failed to close sidx")
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
 func (tst *tsTable) Close() error {
 	if tst.loopCloser != nil {
 		tst.loopCloser.Done()
@@ -278,17 +329,11 @@ func (tst *tsTable) Close() error {
 	defer tst.Unlock()
 	tst.deleteMetrics()
 	if tst.snapshot == nil {
-		if tst.sidx != nil {
-			return tst.sidx.Close()
-		}
-		return nil
+		return tst.closeSidxMap()
 	}
 	tst.snapshot.decRef()
 	tst.snapshot = nil
-	if tst.sidx != nil {
-		return tst.sidx.Close()
-	}
-	return nil
+	return tst.closeSidxMap()
 }
 
 func (tst *tsTable) mustAddMemPart(mp *memPart) {

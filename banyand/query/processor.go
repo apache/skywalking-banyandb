@@ -465,6 +465,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	var schemas []logical.Schema
 	var ecc []executor.TraceExecutionContext
 	var traceIDTagName string
+	var timestampTagName string
 	for i := range queryCriteria.Groups {
 		meta := &commonv1.Metadata{
 			Name:  queryCriteria.Name,
@@ -489,9 +490,10 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 			return
 		}
 		traceIDTagName = ec.GetSchema().GetTraceIdTagName()
+		timestampTagName = ec.GetSchema().GetTimestampTagName()
 	}
 
-	plan, err := logical_trace.Analyze(queryCriteria, metadata, schemas, ecc, traceIDTagName)
+	plan, err := logical_trace.Analyze(queryCriteria, metadata, schemas, ecc, traceIDTagName, timestampTagName)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for trace %s: %v", queryCriteria.GetName(), err))
 		return
@@ -534,6 +536,9 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	// Convert model.TraceResult iterator to tracev1.QueryResponse format
 	var spans []*tracev1.Span
 
+	// Check if trace ID tag should be included based on tag projection
+	shouldIncludeTraceID := slices.Contains(queryCriteria.TagProjection, traceIDTagName)
+
 	for {
 		result, hasNext := resultIterator.Next()
 		if !hasNext {
@@ -544,8 +549,11 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		for i, spanBytes := range result.Spans {
 			// Create trace tags from the result
 			var traceTags []*modelv1.Tag
-			if result.Tags != nil {
+			if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
 				for _, tag := range result.Tags {
+					if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
+						continue
+					}
 					if i < len(tag.Values) {
 						traceTags = append(traceTags, &modelv1.Tag{
 							Key:   tag.Name,
@@ -555,8 +563,8 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 				}
 			}
 
-			// Add trace ID tag to each span
-			if traceIDTagName != "" && result.TID != "" {
+			// Add trace ID tag to each span if it should be included
+			if shouldIncludeTraceID && result.TID != "" {
 				traceTags = append(traceTags, &modelv1.Tag{
 					Key: traceIDTagName,
 					Value: &modelv1.TagValue{

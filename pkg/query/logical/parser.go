@@ -85,6 +85,14 @@ func ParseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, co
 		return newInt64ArrLiteral(v.IntArray.GetValue()), nil, nil
 	case *modelv1.TagValue_Null:
 		return newNullLiteral(), nil, nil
+	case *modelv1.TagValue_Timestamp:
+		if ok {
+			parsedEntity := make([]*modelv1.TagValue, len(entity))
+			copy(parsedEntity, entity)
+			parsedEntity[entityIdx] = cond.Value
+			return nil, [][]*modelv1.TagValue{parsedEntity}, nil
+		}
+		return newTimestampLiteral(v.Timestamp), nil, nil
 	}
 	return nil, nil, errors.WithMessagef(ErrUnsupportedConditionValue, "index filter parses %v", cond)
 }
@@ -102,6 +110,8 @@ func ParseExpr(cond *modelv1.Condition) (LiteralExpr, error) {
 		return newInt64ArrLiteral(v.IntArray.GetValue()), nil
 	case *modelv1.TagValue_Null:
 		return newNullLiteral(), nil
+	case *modelv1.TagValue_Timestamp:
+		return newTimestampLiteral(v.Timestamp), nil
 	}
 	return nil, errors.WithMessagef(ErrUnsupportedConditionValue, "condition parses %v", cond)
 }

@@ -83,7 +83,8 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	ww, err := wantFS.ReadFile("want/" + args.Want + ".yml")
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &tracev1.QueryResponse{}
-	helpers.UnmarshalYAML(ww, want)
+	unmarshalYAMLWithSpanEncoding(ww, want)
+
 	if args.DisOrder {
 		slices.SortFunc(want.Spans, func(a, b *tracev1.Span) int {
 			// Sort by first tag value for consistency
@@ -106,11 +107,12 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 		extra...)).
 		To(gm.BeTrue(), func() string {
 			var j []byte
-			j, err = protojson.Marshal(resp)
+			j, err = marshalToJSONWithStringBytes(resp)
 			if err != nil {
 				return err.Error()
 			}
 			var y []byte
+			// TODO: it lose tag values.
 			y, err = yaml.JSONToYAML(j)
 			if err != nil {
 				return err.Error()
@@ -141,8 +143,6 @@ func loadData(stream tracev1.TraceService_WriteClient, metadata *commonv1.Metada
 		// Get span data
 		spanData, ok := templateMap["span"].(string)
 		gm.Expect(ok).To(gm.BeTrue())
-		spanBytes, err := base64.StdEncoding.DecodeString(spanData)
-		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 
 		// Get tags data
 		tagsData, ok := templateMap["tags"].([]interface{})
@@ -170,7 +170,7 @@ func loadData(stream tracev1.TraceService_WriteClient, metadata *commonv1.Metada
 		errInner := stream.Send(&tracev1.WriteRequest{
 			Metadata: metadata,
 			Tags:     tagValues,
-			Span:     spanBytes,
+			Span:     []byte(spanData),
 			Version:  uint64(i + 1),
 		})
 		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
@@ -205,4 +205,81 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 		_, err := writeClient.Recv()
 		return err
 	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+}
+
+// unmarshalYAMLWithSpanEncoding decodes YAML with special handling for span data.
+// It converts plain strings in the YAML to base64 encoded strings before protobuf unmarshaling.
+func unmarshalYAMLWithSpanEncoding(yamlData []byte, response *tracev1.QueryResponse) {
+	// First convert YAML to JSON
+	j, err := yaml.YAMLToJSON(yamlData)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+
+	// Parse JSON to modify span fields
+	var jsonData map[string]interface{}
+	err = json.Unmarshal(j, &jsonData)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+
+	// Convert span strings to base64
+	if spans, ok := jsonData["spans"].([]interface{}); ok {
+		for _, spanInterface := range spans {
+			if span, ok := spanInterface.(map[string]interface{}); ok {
+				if spanValue, ok := span["span"].(string); ok {
+					// Encode the plain string as base64
+					span["span"] = base64.StdEncoding.EncodeToString([]byte(spanValue))
+				}
+			}
+		}
+	}
+
+	// Convert back to JSON
+	modifiedJSON, err := json.Marshal(jsonData)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+
+	// Finally unmarshal to protobuf
+	gm.Expect(protojson.Unmarshal(modifiedJSON, response)).To(gm.Succeed())
+}
+
+// marshalToJSONWithStringBytes marshals the QueryResponse to JSON with []byte fields as strings instead of base64.
+func marshalToJSONWithStringBytes(resp *tracev1.QueryResponse) ([]byte, error) {
+	// First marshal to JSON using protojson
+	j, err := protojson.Marshal(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the JSON to modify byte fields
+	var jsonData map[string]interface{}
+	err = json.Unmarshal(j, &jsonData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert base64 encoded span fields back to strings
+	if spans, ok := jsonData["spans"].([]interface{}); ok {
+		for _, spanInterface := range spans {
+			if span, ok := spanInterface.(map[string]interface{}); ok {
+				if spanB64, ok := span["span"].(string); ok {
+					// Decode base64 back to original string
+					spanBytes, err := base64.StdEncoding.DecodeString(spanB64)
+					if err != nil {
+						// If it's not valid base64, keep the original value
+						continue
+					}
+					span["span"] = string(spanBytes)
+				}
+			}
+		}
+	}
+
+	// Convert back to JSON
+	return json.Marshal(jsonData)
+}
+
+// GetSpanDataAsString extracts the span data as a string from a Span.
+// This converts the raw bytes back to the original string value like "span5_trace_data".
+func GetSpanDataAsString(span *tracev1.Span) string {
+	if span == nil || len(span.Span) == 0 {
+		return ""
+	}
+	return string(span.Span)
 }

@@ -33,17 +33,29 @@ const defaultLimit uint32 = 20
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
 func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema,
-	ecc []executor.TraceExecutionContext, traceIDTagName string,
+	ecc []executor.TraceExecutionContext, traceIDTagName, timestampTagName string,
 ) (logical.Plan, error) {
 	// parse fields
 	if len(metadata) != len(ss) {
 		return nil, fmt.Errorf("number of schemas %d not equal to number of metadata %d", len(ss), len(metadata))
 	}
+	var orderByTag string
+	if criteria.OrderBy != nil {
+		indexRuleName := criteria.OrderBy.IndexRuleName
+		ok, indexRule := ss[0].IndexRuleDefined(indexRuleName)
+		if !ok {
+			return nil, fmt.Errorf("index rule %s not found", indexRuleName)
+		}
+		ot := indexRule.Tags[len(indexRule.Tags)-1]
+		if ot != timestampTagName {
+			orderByTag = ot
+		}
+	}
 	var plan logical.UnresolvedPlan
 	var s logical.Schema
 	tagProjection := convertStringProjectionToTags(criteria.GetTagProjection())
 	if len(metadata) == 1 {
-		plan = parseTraceTags(criteria, metadata[0], ecc[0], tagProjection, traceIDTagName)
+		plan = parseTraceTags(criteria, metadata[0], ecc[0], tagProjection, traceIDTagName, orderByTag)
 		s = ss[0]
 	} else {
 		var err error
@@ -208,7 +220,7 @@ func newTraceLimit(input logical.UnresolvedPlan, offset, num uint32) logical.Unr
 }
 
 func parseTraceTags(criteria *tracev1.QueryRequest, metadata *commonv1.Metadata,
-	ec executor.TraceExecutionContext, tagProjection [][]*logical.Tag, traceIDTagName string,
+	ec executor.TraceExecutionContext, tagProjection [][]*logical.Tag, traceIDTagName, orderByTag string,
 ) logical.UnresolvedPlan {
 	timeRange := criteria.GetTimeRange()
 	return &unresolvedTraceTagFilter{
@@ -219,6 +231,7 @@ func parseTraceTags(criteria *tracev1.QueryRequest, metadata *commonv1.Metadata,
 		projectionTags: tagProjection,
 		ec:             ec,
 		traceIDTagName: traceIDTagName,
+		orderByTag:     orderByTag,
 	}
 }
 

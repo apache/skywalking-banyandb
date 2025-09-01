@@ -18,6 +18,8 @@
 package trace
 
 import (
+	"math"
+
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -31,88 +33,22 @@ import (
 // Unlike stream queries, trace doesn't need indexRuleType parameter.
 // Trace conditions are either entity or skipping index.
 // Trace creates explicit index rules for skipping index on all tags that don't belong to entity.
+// Returns min/max int64 values for the orderByTag if provided, otherwise returns math.MaxInt64, math.MinInt64.
 func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
-	entityDict map[string]int, entity []*modelv1.TagValue, traceIDTagName string,
-) (index.Filter, [][]*modelv1.TagValue, []string, []string, error) {
+	entityDict map[string]int, entity []*modelv1.TagValue, traceIDTagName string, orderByTag string,
+) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
 	if criteria == nil {
-		return nil, [][]*modelv1.TagValue{entity}, nil, nil, nil
+		return nil, [][]*modelv1.TagValue{entity}, nil, nil, math.MinInt64, math.MaxInt64, nil
 	}
 
-	var collectedTagNames []string
-	var traceIDs []string
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
-		cond := criteria.GetCondition()
-		if !tagNames[cond.Name] {
-			return nil, nil, collectedTagNames, traceIDs, errors.Errorf("tag name '%s' not found in trace schema", cond.Name)
-		}
-
-		if cond.Name == traceIDTagName && (cond.Op == modelv1.Condition_BINARY_OP_EQ || cond.Op == modelv1.Condition_BINARY_OP_IN) {
-			traceIDs = extractTraceIDsFromCondition(cond)
-		} else {
-			collectedTagNames = append(collectedTagNames, cond.Name)
-		}
-
-		_, parsedEntity, err := logical.ParseExprOrEntity(entityDict, entity, cond)
-		if err != nil {
-			return nil, nil, collectedTagNames, traceIDs, err
-		}
-		if parsedEntity != nil {
-			return nil, parsedEntity, collectedTagNames, traceIDs, nil
-		}
-		// For trace, all non-entity tags have skipping index
-		expr, _, err := logical.ParseExprOrEntity(entityDict, entity, cond)
-		if err != nil {
-			return nil, nil, collectedTagNames, traceIDs, err
-		}
-		filter, entities, err := parseConditionToFilter(cond, entity, expr)
-		return filter, entities, collectedTagNames, traceIDs, err
+		return buildFilterFromCondition(criteria.GetCondition(), tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	case *modelv1.Criteria_Le:
-		le := criteria.GetLe()
-		if le.GetLeft() == nil && le.GetRight() == nil {
-			return nil, nil, nil, traceIDs, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
-		}
-		if le.GetLeft() == nil {
-			return buildFilter(le.Right, tagNames, entityDict, entity, traceIDTagName)
-		}
-		if le.GetRight() == nil {
-			return buildFilter(le.Left, tagNames, entityDict, entity, traceIDTagName)
-		}
-		left, leftEntities, leftTagNames, leftTraceIDs, err := buildFilter(le.Left, tagNames, entityDict, entity, traceIDTagName)
-		if err != nil {
-			return nil, nil, leftTagNames, leftTraceIDs, err
-		}
-		right, rightEntities, rightTagNames, rightTraceIDs, err := buildFilter(le.Right, tagNames, entityDict, entity, traceIDTagName)
-		if err != nil {
-			return nil, nil, append(leftTagNames, rightTagNames...), append(leftTraceIDs, rightTraceIDs...), err
-		}
-
-		// Merge tag names from both sides
-		collectedTagNames = append(collectedTagNames, leftTagNames...)
-		collectedTagNames = append(collectedTagNames, rightTagNames...)
-
-		// Merge trace IDs from both sides
-		traceIDs = append(traceIDs, leftTraceIDs...)
-		traceIDs = append(traceIDs, rightTraceIDs...)
-
-		entities := logical.ParseEntities(le.Op, entity, leftEntities, rightEntities)
-		if entities == nil {
-			return nil, nil, collectedTagNames, traceIDs, nil
-		}
-		if left == nil {
-			return right, entities, collectedTagNames, traceIDs, nil
-		}
-		if right == nil {
-			return left, entities, collectedTagNames, traceIDs, nil
-		}
-		switch le.Op {
-		case modelv1.LogicalExpression_LOGICAL_OP_AND:
-			return &traceAndFilter{left: left, right: right}, entities, collectedTagNames, traceIDs, nil
-		case modelv1.LogicalExpression_LOGICAL_OP_OR:
-			return &traceOrFilter{left: left, right: right}, entities, collectedTagNames, traceIDs, nil
-		}
+		return buildFilterFromLogicalExpression(criteria.GetLe(), tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	}
-	return nil, nil, nil, traceIDs, logical.ErrInvalidCriteriaType
+
+	return nil, nil, nil, nil, math.MinInt64, math.MaxInt64, logical.ErrInvalidCriteriaType
 }
 
 func parseConditionToFilter(cond *modelv1.Condition, entity []*modelv1.TagValue, expr logical.LiteralExpr) (index.Filter, [][]*modelv1.TagValue, error) {
@@ -337,4 +273,188 @@ func extractTraceIDsFromCondition(cond *modelv1.Condition) []string {
 	}
 
 	return traceIDs
+}
+
+// buildFilterFromCondition handles single condition filtering and min/max extraction.
+func buildFilterFromCondition(cond *modelv1.Condition, tagNames map[string]bool, entityDict map[string]int,
+	entity []*modelv1.TagValue, traceIDTagName, orderByTag string,
+) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
+	var collectedTagNames []string
+	var traceIDs []string
+	minVal := int64(math.MinInt64)
+	maxVal := int64(math.MaxInt64)
+
+	if !tagNames[cond.Name] {
+		return nil, nil, collectedTagNames, traceIDs, minVal, maxVal, errors.Errorf("tag name '%s' not found in trace schema", cond.Name)
+	}
+
+	// Extract min/max bounds if this condition matches orderByTag
+	if cond.Name == orderByTag {
+		condMin, condMax := extractBoundsFromCondition(cond)
+		if condMin != math.MaxInt64 {
+			minVal = condMin
+		}
+		if condMax != math.MinInt64 {
+			maxVal = condMax
+		}
+	}
+
+	if cond.Name == traceIDTagName && (cond.Op == modelv1.Condition_BINARY_OP_EQ || cond.Op == modelv1.Condition_BINARY_OP_IN) {
+		traceIDs = extractTraceIDsFromCondition(cond)
+	} else {
+		collectedTagNames = append(collectedTagNames, cond.Name)
+	}
+
+	_, parsedEntity, err := logical.ParseExprOrEntity(entityDict, entity, cond)
+	if err != nil {
+		return nil, nil, collectedTagNames, traceIDs, minVal, maxVal, err
+	}
+	if parsedEntity != nil {
+		return nil, parsedEntity, collectedTagNames, traceIDs, minVal, maxVal, nil
+	}
+	// For trace, all non-entity tags have skipping index
+	expr, _, err := logical.ParseExprOrEntity(entityDict, entity, cond)
+	if err != nil {
+		return nil, nil, collectedTagNames, traceIDs, minVal, maxVal, err
+	}
+	filter, entities, err := parseConditionToFilter(cond, entity, expr)
+	return filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err
+}
+
+// buildFilterFromLogicalExpression handles logical expression (AND/OR) filtering and min/max extraction.
+func buildFilterFromLogicalExpression(le *modelv1.LogicalExpression, tagNames map[string]bool, entityDict map[string]int,
+	entity []*modelv1.TagValue, traceIDTagName, orderByTag string,
+) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
+	var collectedTagNames []string
+	var traceIDs []string
+	minVal := int64(math.MaxInt64)
+	maxVal := int64(math.MinInt64)
+
+	if le.GetLeft() == nil && le.GetRight() == nil {
+		return nil, nil, nil, traceIDs, minVal, maxVal, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", le)
+	}
+	if le.GetLeft() == nil {
+		return buildFilter(le.Right, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+	}
+	if le.GetRight() == nil {
+		return buildFilter(le.Left, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+	}
+
+	left, leftEntities, leftTagNames, leftTraceIDs, leftMin, leftMax, err := buildFilter(le.Left, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+	if err != nil {
+		return nil, nil, leftTagNames, leftTraceIDs, minVal, maxVal, err
+	}
+	right, rightEntities, rightTagNames, rightTraceIDs, rightMin, rightMax, err := buildFilter(le.Right, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+	if err != nil {
+		return nil, nil, append(leftTagNames, rightTagNames...), append(leftTraceIDs, rightTraceIDs...), minVal, maxVal, err
+	}
+
+	// Merge tag names from both sides
+	collectedTagNames = append(collectedTagNames, leftTagNames...)
+	collectedTagNames = append(collectedTagNames, rightTagNames...)
+
+	// Merge trace IDs from both sides
+	traceIDs = append(traceIDs, leftTraceIDs...)
+	traceIDs = append(traceIDs, rightTraceIDs...)
+
+	// Merge min/max values based on logical operation
+	finalMin, finalMax := mergeMinMaxBounds(le.Op, leftMin, leftMax, rightMin, rightMax)
+
+	entities := logical.ParseEntities(le.Op, entity, leftEntities, rightEntities)
+	if entities == nil {
+		return nil, nil, collectedTagNames, traceIDs, finalMin, finalMax, nil
+	}
+	if left == nil {
+		return right, entities, collectedTagNames, traceIDs, finalMin, finalMax, nil
+	}
+	if right == nil {
+		return left, entities, collectedTagNames, traceIDs, finalMin, finalMax, nil
+	}
+	switch le.Op {
+	case modelv1.LogicalExpression_LOGICAL_OP_AND:
+		return &traceAndFilter{left: left, right: right}, entities, collectedTagNames, traceIDs, finalMin, finalMax, nil
+	case modelv1.LogicalExpression_LOGICAL_OP_OR:
+		return &traceOrFilter{left: left, right: right}, entities, collectedTagNames, traceIDs, finalMin, finalMax, nil
+	}
+	return nil, nil, collectedTagNames, traceIDs, finalMin, finalMax, logical.ErrInvalidCriteriaType
+}
+
+// mergeMinMaxBounds merges min/max bounds based on logical operation.
+func mergeMinMaxBounds(op modelv1.LogicalExpression_LogicalOp, leftMin, leftMax, rightMin, rightMax int64) (int64, int64) {
+	switch op {
+	case modelv1.LogicalExpression_LOGICAL_OP_AND:
+		// Intersection - take tighter bounds
+		finalMin := leftMin
+		if rightMin > finalMin {
+			finalMin = rightMin
+		}
+		finalMax := leftMax
+		if rightMax < finalMax {
+			finalMax = rightMax
+		}
+		return finalMin, finalMax
+	case modelv1.LogicalExpression_LOGICAL_OP_OR:
+		// Union - take wider bounds
+		finalMin := leftMin
+		if rightMin < finalMin {
+			finalMin = rightMin
+		}
+		finalMax := leftMax
+		if rightMax > finalMax {
+			finalMax = rightMax
+		}
+		return finalMin, finalMax
+	}
+	return leftMin, leftMax
+}
+
+// extractBoundsFromCondition extracts bounds from a single condition.
+func extractBoundsFromCondition(cond *modelv1.Condition) (int64, int64) {
+	if cond.Value == nil || cond.Value.Value == nil {
+		return math.MaxInt64, math.MinInt64
+	}
+
+	var value int64
+
+	switch v := cond.Value.Value.(type) {
+	case *modelv1.TagValue_Int:
+		if v.Int != nil {
+			value = v.Int.Value
+		} else {
+			return math.MaxInt64, math.MinInt64
+		}
+	case *modelv1.TagValue_Timestamp:
+		if v.Timestamp != nil {
+			value = v.Timestamp.AsTime().UnixNano()
+		} else {
+			return math.MaxInt64, math.MinInt64
+		}
+	default:
+		// Only support int64 and timestamp for range operations
+		return math.MaxInt64, math.MinInt64
+	}
+
+	switch cond.Op {
+	case modelv1.Condition_BINARY_OP_GT:
+		// value > X means min is X+1, max is unbounded
+		if value < math.MaxInt64 {
+			return value + 1, math.MinInt64
+		}
+		return math.MaxInt64, math.MinInt64
+	case modelv1.Condition_BINARY_OP_GE:
+		// value >= X means min is X, max is unbounded
+		return value, math.MinInt64
+	case modelv1.Condition_BINARY_OP_LT:
+		// value < X means min is unbounded, max is X-1
+		if value > math.MinInt64 {
+			return math.MaxInt64, value - 1
+		}
+		return math.MaxInt64, math.MinInt64
+	case modelv1.Condition_BINARY_OP_LE:
+		// value <= X means min is unbounded, max is X
+		return math.MaxInt64, value
+	default:
+		// Non-range operations don't contribute bounds
+		return math.MaxInt64, math.MinInt64
+	}
 }
