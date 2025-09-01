@@ -32,9 +32,12 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
+
+const partIDForTesting = 1
 
 // Test helper functions.
 
@@ -51,8 +54,9 @@ func createTestOptions(t *testing.T) *Options {
 }
 
 func createTestSIDX(t *testing.T) SIDX {
+	fileSystem := fs.NewLocalFileSystem()
 	opts := createTestOptions(t)
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	require.NoError(t, err)
 	require.NotNil(t, sidx)
 	return sidx
@@ -97,7 +101,7 @@ func TestSIDX_Write_SingleRequest(t *testing.T) {
 		createTestWriteRequest(1, 100, "data1", createTestTag("tag1", "value1")),
 	}
 
-	err := sidx.Write(ctx, reqs)
+	err := sidx.Write(ctx, reqs, partIDForTesting)
 	assert.NoError(t, err)
 
 	// Verify stats
@@ -121,7 +125,7 @@ func TestSIDX_Write_BatchRequest(t *testing.T) {
 		createTestWriteRequest(2, 200, "data3", createTestTag("tag2", "value3")),
 	}
 
-	err := sidx.Write(ctx, reqs)
+	err := sidx.Write(ctx, reqs, partIDForTesting)
 	assert.NoError(t, err)
 
 	// Verify stats
@@ -167,7 +171,7 @@ func TestSIDX_Write_Validation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := sidx.Write(ctx, []WriteRequest{tt.req})
+			err := sidx.Write(ctx, []WriteRequest{tt.req}, partIDForTesting)
 			if tt.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -196,7 +200,7 @@ func TestSIDX_Write_WithTags(t *testing.T) {
 		createTestWriteRequest(1, 100, "trace-data", tags...),
 	}
 
-	err := sidx.Write(ctx, reqs)
+	err := sidx.Write(ctx, reqs, partIDForTesting)
 	assert.NoError(t, err)
 }
 
@@ -215,7 +219,7 @@ func TestSIDX_Query_BasicQuery(t *testing.T) {
 		createTestWriteRequest(1, 100, "data1"),
 		createTestWriteRequest(1, 101, "data2"),
 	}
-	err := sidx.Write(ctx, reqs)
+	err := sidx.Write(ctx, reqs, partIDForTesting)
 	require.NoError(t, err)
 
 	// Wait for introducer loop to process
@@ -265,7 +269,7 @@ func TestSIDX_Query_KeyRangeFilter(t *testing.T) {
 		createTestWriteRequest(1, 150, "data150"),
 		createTestWriteRequest(1, 200, "data200"),
 	}
-	err := sidx.Write(ctx, reqs)
+	err := sidx.Write(ctx, reqs, partIDForTesting)
 	require.NoError(t, err)
 
 	// Wait for introducer loop to process
@@ -308,7 +312,7 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 		createTestWriteRequest(1, 100, "data100"),
 		createTestWriteRequest(1, 200, "data200"),
 	}
-	err := sidx.Write(ctx, reqs)
+	err := sidx.Write(ctx, reqs, partIDForTesting)
 	require.NoError(t, err)
 
 	// Wait for introducer loop to process
@@ -441,7 +445,7 @@ func TestSIDX_WriteQueryIntegration(t *testing.T) {
 		createTestWriteRequest(2, 180, "series2-data2", createTestTag("env", "dev")),
 	}
 
-	err := sidx.Write(ctx, reqs)
+	err := sidx.Write(ctx, reqs, partIDForTesting)
 	require.NoError(t, err)
 
 	// Test 1: Query single series
@@ -502,7 +506,7 @@ func TestSIDX_DataConsistency(t *testing.T) {
 		reqs = append(reqs, createTestWriteRequest(1, key, data))
 	}
 
-	err := sidx.Write(ctx, reqs)
+	err := sidx.Write(ctx, reqs, partIDForTesting)
 	require.NoError(t, err)
 
 	// Query back and verify data integrity
@@ -549,7 +553,7 @@ func TestSIDX_LargeDataset(t *testing.T) {
 		))
 	}
 
-	err := sidx.Write(ctx, reqs)
+	err := sidx.Write(ctx, reqs, partIDForTesting)
 	require.NoError(t, err)
 
 	// Query back and verify we can handle large result sets
@@ -596,7 +600,7 @@ func TestSIDX_ConcurrentWrites(t *testing.T) {
 				reqs = append(reqs, createTestWriteRequest(seriesID, key, data))
 			}
 
-			if err := sidx.Write(ctx, reqs); err != nil {
+			if err := sidx.Write(ctx, reqs, partIDForTesting); err != nil {
 				errors <- err
 			}
 		}(g)
@@ -628,7 +632,7 @@ func TestSIDX_ConcurrentReadsWrites(t *testing.T) {
 	initialReqs := []WriteRequest{
 		createTestWriteRequest(1, 100, "initial-data"),
 	}
-	err := sidx.Write(ctx, initialReqs)
+	err := sidx.Write(ctx, initialReqs, partIDForTesting)
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -670,7 +674,7 @@ func TestSIDX_ConcurrentReadsWrites(t *testing.T) {
 					int64(writeCount),
 					fmt.Sprintf("writer-%d-data-%d", writerID, writeCount),
 				)
-				sidx.Write(ctx, []WriteRequest{req}) // Ignore errors during concurrent stress
+				sidx.Write(ctx, []WriteRequest{req}, partIDForTesting) // Ignore errors during concurrent stress
 				writeCount++
 			}
 		}(i)

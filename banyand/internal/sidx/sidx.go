@@ -64,7 +64,7 @@ type sidx struct {
 }
 
 // NewSIDX creates a new SIDX instance with introduction channels.
-func NewSIDX(opts *Options) (SIDX, error) {
+func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 	if opts == nil {
 		opts = NewDefaultOptions()
 	}
@@ -74,12 +74,14 @@ func NewSIDX(opts *Options) (SIDX, error) {
 	}
 
 	s := &sidx{
+		fileSystem:    fileSystem,
 		introductions: make(chan *introduction),
 		flushCh:       make(chan *flusherIntroduction),
 		mergeCh:       make(chan *mergerIntroduction),
 		loopCloser:    run.NewCloser(1),
 		l:             logger.GetLogger().Named("sidx"),
 		pm:            opts.Memory,
+		root:          opts.Path,
 	}
 
 	// Initialize garbage collector
@@ -93,7 +95,7 @@ func NewSIDX(opts *Options) (SIDX, error) {
 }
 
 // Write implements SIDX interface.
-func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
+func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, partID uint64) error {
 	// Validate requests
 	for _, req := range reqs {
 		if err := req.Validate(); err != nil {
@@ -119,6 +121,7 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 	// Create introduction
 	intro := generateIntroduction()
 	intro.memPart = mp
+	intro.memPart.partMetadata.ID = partID
 	intro.applied = make(chan struct{})
 
 	// Send to introducer loop

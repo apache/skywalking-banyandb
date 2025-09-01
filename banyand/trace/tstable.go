@@ -205,7 +205,7 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	if err != nil {
 		logger.Panicf("cannot create sidx options: %s", err)
 	}
-	sidx, err := sidx.NewSIDX(sidxOpts)
+	sidx, err := sidx.NewSIDX(fileSystem, sidxOpts)
 	if err != nil {
 		logger.Panicf("cannot create sidx: %s", err)
 	}

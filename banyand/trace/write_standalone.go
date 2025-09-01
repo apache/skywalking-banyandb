@@ -308,7 +308,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			es := g.tables[j]
 			es.tsTable.mustAddTraces(es.traces)
 			if len(es.sidxReqs) > 0 {
-				if err := es.tsTable.sidx.Write(ctx, es.sidxReqs); err != nil {
+				if err := es.tsTable.sidx.Write(ctx, es.sidxReqs, es.tsTable.curPartID); err != nil {
 					w.l.Error().Err(err).Msg("cannot write to secondary index")
 				}
 			}

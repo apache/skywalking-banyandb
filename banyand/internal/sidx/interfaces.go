@@ -37,7 +37,7 @@ import (
 type SIDX interface {
 	// Write performs batch write operations. All writes must be submitted as batches.
 	// Elements within each batch should be pre-sorted by the caller for optimal performance.
-	Write(ctx context.Context, reqs []WriteRequest) error
+	Write(ctx context.Context, reqs []WriteRequest, partID uint64) error
 
 	// Query executes a query with key range and tag filtering.
 	// Returns a QueryResponse directly with all results loaded.
