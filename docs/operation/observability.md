@@ -264,6 +264,30 @@ Prometheus is auto enabled at run time, if no flag is passed or if `promethus` i
 
 When the Prometheus metrics provider is enabled, the metrics server listens on port `2121`. This allows Prometheus to scrape metrics data from BanyanDB for monitoring and analysis.
 
+Next, configure the following target to collect metrics from BanyanDB. Be sure to replace `BANYANDB_NAMESPACE` with the namespace where BanyanDB is deployed:
+
+```yaml
+scrape_configs:
+  - job_name: 'banyandb'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [ '${BANYANDB_NAMESPACE}' ]
+    relabel_configs:
+      - source_labels: [ __meta_kubernetes_pod_label_app_kubernetes_io_name ]
+        action: keep
+        regex: banyandb
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+        action: replace
+      - source_labels: [ __address__ ]
+        target_label: __address__
+        regex: (.*):\d+
+        replacement: $1:2121
+    metrics_path: /metrics
+    scheme: http
+```
+
 #### Grafana Dashboard
 
 Check out the [BanyanDB Cluster Dashboard](grafana-cluster.json) for monitoring BanyanDB metrics.
