@@ -80,9 +80,6 @@ func (b *block) reset() {
 
 	// Clear tag map but keep the map itself
 	for k, tag := range b.tags {
-		if tag.filter != nil {
-			releaseBloomFilter(tag.filter)
-		}
 		releaseTagData(tag)
 		delete(b.tags, k)
 	}
