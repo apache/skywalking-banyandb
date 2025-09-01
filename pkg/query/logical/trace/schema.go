@@ -74,24 +74,16 @@ func (s *schema) CreateFieldRef(_ ...*logical.Field) ([]*logical.FieldRef, error
 	panic("no field for trace")
 }
 
-func (s *schema) IndexRuleDefined(_ string) (bool, *databasev1.IndexRule) {
-	return false, &databasev1.IndexRule{}
+func (s *schema) IndexRuleDefined(name string) (bool, *databasev1.IndexRule) {
+	return s.common.IndexRuleDefined(name)
 }
 
 func (s *schema) EntityList() []string {
 	return s.common.EntityList
 }
 
-// IndexDefined checks whether the field given is indexed.
-// For trace, we check if tagName matches the last tag in any index rule.
 func (s *schema) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
-	for _, rule := range s.common.IndexRules {
-		tags := rule.GetTags()
-		if len(tags) > 0 && tags[len(tags)-1] == tagName {
-			return true, rule
-		}
-	}
-	return false, nil
+	return s.common.IndexDefined(tagName)
 }
 
 // CreateTagRef create TagRef to the given tags.

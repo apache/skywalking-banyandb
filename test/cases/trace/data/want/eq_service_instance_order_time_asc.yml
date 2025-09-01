@@ -17,8 +17,5 @@
 
 spans:
   - span: span1_trace_data
-    tags:
-    - key: trace_id
-      value:
-        str:
-          value: "1"
+  - span: span3_trace_data
+  - span: span5_trace_data

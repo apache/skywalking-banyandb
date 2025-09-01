@@ -26,7 +26,9 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -39,25 +41,11 @@ const checkDoneEvery = 128
 var nilResult = model.TraceQueryResult(nil)
 
 type queryOptions struct {
-	traceIDs []string
+	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
+	traceIDs       []string
 	model.TraceQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
-}
-
-func (qo *queryOptions) reset() {
-	qo.TraceQueryOptions.Reset()
-	qo.traceIDs = nil
-	qo.minTimestamp = 0
-	qo.maxTimestamp = 0
-}
-
-func (qo *queryOptions) copyFrom(other *queryOptions) {
-	qo.TraceQueryOptions.CopyFrom(&other.TraceQueryOptions)
-	qo.traceIDs = make([]string, len(other.traceIDs))
-	copy(qo.traceIDs, other.traceIDs)
-	qo.minTimestamp = other.minTimestamp
-	qo.maxTimestamp = other.maxTimestamp
 }
 
 func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.TraceQueryResult, error) {
@@ -103,11 +91,80 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		minTimestamp:      tqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:      tqo.TimeRange.End.UnixNano(),
 	}
+
+	// Process entities to get series IDs for sidx queries
+	if len(tqo.Entities) > 0 {
+		// Create series from entities for lookup
+		series := make([]*pbv1.Series, len(tqo.Entities))
+		for i, entityValues := range tqo.Entities {
+			series[i] = &pbv1.Series{
+				Subject:      tqo.Name,
+				EntityValues: entityValues,
+			}
+		}
+
+		// Use segment lookup to find actual series that exist in the data
+		qo.seriesToEntity = make(map[common.SeriesID][]*modelv1.TagValue)
+		for _, segment := range segments {
+			sl, lookupErr := segment.Lookup(ctx, series)
+			if lookupErr != nil {
+				return nil, fmt.Errorf("cannot lookup series: %w", lookupErr)
+			}
+			for _, s := range sl {
+				qo.seriesToEntity[s.ID] = s.EntityValues
+			}
+		}
+	}
 	var n int
 	tables := make([]*tsTable, 0)
 	for _, segment := range segments {
 		tt, _ := segment.Tables()
 		tables = append(tables, tt...)
+	}
+
+	// Check if we need to use sidx for ordering when no trace IDs are provided
+	if len(tqo.TraceIDs) == 0 && tqo.Order != nil {
+		// Extract sidx name from index rule
+		sidxName := "default" // fallback to default sidx
+		if tqo.Order.Index != nil {
+			sidxName = tqo.Order.Index.GetMetadata().GetName()
+		}
+
+		// Collect sidx instances from all tables
+		var sidxInstances []sidx.SIDX
+		for _, table := range tables {
+			if sidxInstance, exists := table.getSidx(sidxName); exists {
+				sidxInstances = append(sidxInstances, sidxInstance)
+			}
+		}
+
+		if len(sidxInstances) > 0 {
+			// Query sidx for trace IDs
+			var seriesIDs []common.SeriesID
+			for seriesID := range qo.seriesToEntity {
+				seriesIDs = append(seriesIDs, seriesID)
+			}
+			traceIDs, sidxErr := t.querySidxForTraceIDs(ctx, sidxInstances, tqo, seriesIDs)
+			if sidxErr != nil {
+				t.l.Warn().Err(sidxErr).Str("sidx", sidxName).Msg("sidx query failed, falling back to normal query")
+			} else if len(traceIDs) > 0 {
+				// Store original sidx order before sorting for partIter
+				result.originalSidxOrder = make([]string, len(traceIDs))
+				copy(result.originalSidxOrder, traceIDs)
+
+				// Create sidx order map for efficient heap operations
+				result.sidxOrderMap = make(map[string]int)
+				for i, traceID := range result.originalSidxOrder {
+					result.sidxOrderMap[traceID] = i
+				}
+
+				qo.traceIDs = traceIDs
+				sort.Strings(qo.traceIDs) // Sort for partIter efficiency
+			}
+		}
+	}
+	if len(qo.traceIDs) == 0 {
+		return nilResult, nil
 	}
 	for i := range tables {
 		s := tables[i].currentSnapshot()
@@ -169,13 +226,15 @@ func (t *trace) searchBlocks(ctx context.Context, result *queryResult, parts []*
 }
 
 type queryResult struct {
-	ctx           context.Context
-	tagProjection *model.TagProjection
-	data          []*blockCursor
-	snapshots     []*snapshot
-	segments      []storage.Segment[*tsTable, option]
-	hit           int
-	loaded        bool
+	ctx               context.Context
+	tagProjection     *model.TagProjection
+	sidxOrderMap      map[string]int
+	data              []*blockCursor
+	snapshots         []*snapshot
+	segments          []storage.Segment[*tsTable, option]
+	originalSidxOrder []string
+	hit               int
+	loaded            bool
 }
 
 func (qr *queryResult) Pull() *model.TraceResult {
@@ -231,6 +290,12 @@ func (qr *queryResult) Pull() *model.TraceResult {
 			qr.data = append(qr.data[:index], qr.data[index+1:]...)
 		}
 		qr.loaded = true
+
+		// Resort data according to original sidx order if available
+		if len(qr.originalSidxOrder) > 0 {
+			qr.resortDataBySidxOrder()
+		}
+
 		heap.Init(qr)
 	}
 	if len(qr.data) == 0 {
@@ -245,6 +310,36 @@ func (qr *queryResult) Pull() *model.TraceResult {
 		return r
 	}
 	return qr.merge()
+}
+
+// resortDataBySidxOrder reorders the data to match the original sidx order.
+func (qr *queryResult) resortDataBySidxOrder() {
+	if len(qr.originalSidxOrder) == 0 || len(qr.data) == 0 {
+		return
+	}
+
+	// Sort data according to the original sidx order using the pre-computed map
+	sort.Slice(qr.data, func(i, j int) bool {
+		traceIDi := qr.data[i].bm.traceID
+		traceIDj := qr.data[j].bm.traceID
+
+		orderi, existi := qr.sidxOrderMap[traceIDi]
+		orderj, existj := qr.sidxOrderMap[traceIDj]
+
+		// If both trace IDs are in the original order, use that ordering
+		if existi && existj {
+			return orderi < orderj
+		}
+		// If only one is in the original order, prioritize it
+		if existi {
+			return true
+		}
+		if existj {
+			return false
+		}
+		// If neither is in the original order, use alphabetical ordering
+		return traceIDi < traceIDj
+	})
 }
 
 func (qr *queryResult) Release() {
@@ -267,7 +362,30 @@ func (qr queryResult) Len() int {
 }
 
 func (qr queryResult) Less(i, j int) bool {
-	return qr.data[i].bm.traceID < qr.data[j].bm.traceID
+	// If no original sidx order, return natural order (no sorted merge)
+	if len(qr.originalSidxOrder) == 0 {
+		return false
+	}
+
+	traceIDi := qr.data[i].bm.traceID
+	traceIDj := qr.data[j].bm.traceID
+
+	orderi, existi := qr.sidxOrderMap[traceIDi]
+	orderj, existj := qr.sidxOrderMap[traceIDj]
+
+	// If both trace IDs are in the original order, use that ordering
+	if existi && existj {
+		return orderi < orderj
+	}
+	// If only one is in the original order, prioritize it
+	if existi {
+		return true
+	}
+	if existj {
+		return false
+	}
+	// If neither is in the original order, use alphabetical ordering as fallback
+	return traceIDi < traceIDj
 }
 
 func (qr queryResult) Swap(i, j int) {

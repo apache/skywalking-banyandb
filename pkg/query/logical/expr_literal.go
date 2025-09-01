@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"golang.org/x/exp/slices"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -443,4 +444,87 @@ func (s nullLiteral) String() string {
 
 func (s nullLiteral) Elements() []string {
 	return []string{"null"}
+}
+
+var (
+	_ LiteralExpr    = (*timestampLiteral)(nil)
+	_ ComparableExpr = (*timestampLiteral)(nil)
+)
+
+type timestampLiteral struct {
+	timestamp *timestamppb.Timestamp
+}
+
+func (t *timestampLiteral) Field(key index.FieldKey) index.Field {
+	return index.NewIntField(key, t.timestamp.AsTime().UnixNano())
+}
+
+func (t *timestampLiteral) RangeOpts(isUpper bool, includeLower bool, includeUpper bool) index.RangeOpts {
+	nanos := t.timestamp.AsTime().UnixNano()
+	if isUpper {
+		return index.NewIntRangeOpts(math.MinInt64, nanos, includeLower, includeUpper)
+	}
+	return index.NewIntRangeOpts(nanos, math.MaxInt64, includeLower, includeUpper)
+}
+
+func (t *timestampLiteral) SubExprs() []LiteralExpr {
+	return []LiteralExpr{t}
+}
+
+func newTimestampLiteral(ts *timestamppb.Timestamp) *timestampLiteral {
+	return &timestampLiteral{
+		timestamp: ts,
+	}
+}
+
+func (t *timestampLiteral) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*timestampLiteral); ok {
+		thisNanos := t.timestamp.AsTime().UnixNano()
+		otherNanos := o.timestamp.AsTime().UnixNano()
+		return int(thisNanos - otherNanos), true
+	}
+	if o, ok := other.(*int64Literal); ok {
+		thisNanos := t.timestamp.AsTime().UnixNano()
+		return int(thisNanos - o.int64), true
+	}
+	return 0, false
+}
+
+func (t *timestampLiteral) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*timestampLiteral); ok {
+		return t.timestamp.AsTime().UnixNano() == o.timestamp.AsTime().UnixNano()
+	}
+	if o, ok := other.(*int64Literal); ok {
+		return t.timestamp.AsTime().UnixNano() == o.int64
+	}
+	return false
+}
+
+func (t *timestampLiteral) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*timestampLiteral); ok {
+		return t.timestamp.AsTime().UnixNano() == o.timestamp.AsTime().UnixNano()
+	}
+	if o, ok := other.(*int64Literal); ok {
+		return t.timestamp.AsTime().UnixNano() == o.int64
+	}
+	return false
+}
+
+func (t *timestampLiteral) Bytes() [][]byte {
+	return [][]byte{convert.Int64ToBytes(t.timestamp.AsTime().UnixNano())}
+}
+
+func (t *timestampLiteral) Equal(expr Expr) bool {
+	if other, ok := expr.(*timestampLiteral); ok {
+		return t.timestamp.AsTime().UnixNano() == other.timestamp.AsTime().UnixNano()
+	}
+	return false
+}
+
+func (t *timestampLiteral) String() string {
+	return strconv.FormatInt(t.timestamp.AsTime().UnixNano(), 10)
+}
+
+func (t *timestampLiteral) Elements() []string {
+	return []string{strconv.FormatInt(t.timestamp.AsTime().UnixNano(), 10)}
 }

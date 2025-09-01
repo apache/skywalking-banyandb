@@ -16,9 +16,8 @@
 # under the License.
 
 spans:
+  - span: span5_trace_data
+  - span: span4_trace_data
+  - span: span3_trace_data
+  - span: span2_trace_data
   - span: span1_trace_data
-    tags:
-    - key: trace_id
-      value:
-        str:
-          value: "1"
