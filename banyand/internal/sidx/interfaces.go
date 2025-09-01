@@ -181,9 +181,9 @@ func (qr *QueryResponse) Validate() error {
 
 // UniqueDataTracker tracks unique data elements for limit enforcement.
 type UniqueDataTracker struct {
+	dataMap map[string]struct{}
 	count   int
 	limit   int
-	dataMap map[string]struct{}
 }
 
 // NewUniqueDataTracker creates a new UniqueDataTracker for the given limit.
