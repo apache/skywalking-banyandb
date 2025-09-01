@@ -24,4 +24,4 @@ criteria:
     op: "BINARY_OP_EQ"
     value:
       str:
-        value: "1"
+        value: "trace_001"

@@ -276,7 +276,7 @@ func marshalToJSONWithStringBytes(resp *tracev1.QueryResponse) ([]byte, error) {
 }
 
 // GetSpanDataAsString extracts the span data as a string from a Span.
-// This converts the raw bytes back to the original string value like "span5_trace_data".
+// This converts the raw bytes back to the original string value like "trace_001_span_1".
 func GetSpanDataAsString(span *tracev1.Span) string {
 	if span == nil || len(span.Span) == 0 {
 		return ""

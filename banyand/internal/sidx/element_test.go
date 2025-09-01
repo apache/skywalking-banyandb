@@ -72,7 +72,6 @@ func TestElementReset(t *testing.T) {
 		tag.name = "test-tag"
 		tag.value = []byte("test-value")
 		tag.valueType = pbv1.ValueTypeStr
-		tag.indexed = true
 
 		// Reset the tag
 		tag.reset()
@@ -81,7 +80,6 @@ func TestElementReset(t *testing.T) {
 		assert.Equal(t, "", tag.name, "name should be empty")
 		assert.Nil(t, tag.value, "value should be nil")
 		assert.Equal(t, pbv1.ValueTypeUnknown, tag.valueType, "valueType should be reset")
-		assert.False(t, tag.indexed, "indexed should be reset")
 
 		releaseTag(tag)
 	})
