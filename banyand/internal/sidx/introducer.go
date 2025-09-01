@@ -199,8 +199,8 @@ func (s *sidx) introduceMerged(nextIntroduction *mergerIntroduction, epoch uint6
 }
 
 func (s *sidx) replaceSnapshot(next *snapshot) {
-	s.Lock()
-	defer s.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.snapshot != nil {
 		s.snapshot.decRef()
 	}

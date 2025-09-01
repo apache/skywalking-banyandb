@@ -99,8 +99,12 @@ func (sr *seqReaders) reset() {
 		for k, r := range sr.tagMetadata {
 			releaseSeqReader(r)
 			delete(sr.tagMetadata, k)
+		}
+		for k, r := range sr.tagData {
 			releaseSeqReader(r)
 			delete(sr.tagData, k)
+		}
+		for k, r := range sr.tagFilters {
 			releaseSeqReader(r)
 			delete(sr.tagFilters, k)
 		}
@@ -120,8 +124,12 @@ func (sr *seqReaders) init(p *part) {
 	for k, r := range p.tagData {
 		sr.tagData[k] = generateSeqReader()
 		sr.tagData[k].init(r)
+	}
+	for k, r := range p.tagMetadata {
 		sr.tagMetadata[k] = generateSeqReader()
 		sr.tagMetadata[k].init(r)
+	}
+	for k, r := range p.tagFilters {
 		sr.tagFilters[k] = generateSeqReader()
 		sr.tagFilters[k].init(r)
 	}

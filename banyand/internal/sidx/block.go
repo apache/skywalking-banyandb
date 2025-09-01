@@ -480,7 +480,7 @@ func assertIdxAndOffset(name string, length int, idx int, offset int) {
 }
 
 func (bi *blockPointer) isFull() bool {
-	return bi.bm.count >= maxBlockLength || bi.bm.uncompressedSize >= maxUncompressedBlockSize
+	return bi.bm.count >= maxBlockLength
 }
 
 func (bi *blockPointer) reset() {

@@ -288,7 +288,7 @@ func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 		return nil, fmt.Errorf("cannot create sidx options for %s: %w", name, err)
 	}
 
-	newSidx, err := sidx.NewSIDX(sidxOpts)
+	newSidx, err := sidx.NewSIDX(tst.fileSystem, sidxOpts)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create sidx for %s: %w", name, err)
 	}
