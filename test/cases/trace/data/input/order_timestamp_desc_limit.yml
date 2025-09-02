@@ -15,11 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-spans:
-  - span: trace_005_span_1
-  - span: trace_005_span_2
-  - span: trace_005_span_3
-  - span: trace_005_span_4
-  - span: trace_001_span_1
-  - span: trace_001_span_2
-  - span: trace_001_span_3
+name: "sw"
+groups: ["test-trace-group"]
+order_by:
+  index_rule_name: "timestamp"
+  sort: "SORT_DESC"
+limit: 2

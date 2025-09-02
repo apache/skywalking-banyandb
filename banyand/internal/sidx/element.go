@@ -35,7 +35,6 @@ type tag struct {
 	name      string
 	value     []byte
 	valueType pbv1.ValueType
-	indexed   bool
 }
 
 // elements is a collection of elements optimized for batch operations.
@@ -51,7 +50,6 @@ func (t *tag) reset() {
 	t.name = ""
 	t.value = nil
 	t.valueType = pbv1.ValueTypeUnknown
-	t.indexed = false
 }
 
 // reset elements collection for pooling.
@@ -170,7 +168,6 @@ func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, data []by
 		newTag.name = t.Name
 		newTag.value = append([]byte(nil), t.Value...)
 		newTag.valueType = t.ValueType
-		newTag.indexed = t.Indexed
 		elementTags = append(elementTags, newTag)
 	}
 	e.tags = append(e.tags, elementTags)

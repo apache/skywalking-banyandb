@@ -425,7 +425,6 @@ func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements,
 		newTag.name = tagName
 		newTag.value = value
 		newTag.valueType = tm.valueType
-		newTag.indexed = tm.indexed
 		elems.tags[i] = append(elems.tags[i], newTag)
 	}
 

@@ -16,8 +16,16 @@
 # under the License.
 
 spans:
-  - span: span5_trace_data
-  - span: span4_trace_data
-  - span: span3_trace_data
-  - span: span2_trace_data
-  - span: span1_trace_data
+  - span: trace_005_span_1
+  - span: trace_005_span_2
+  - span: trace_005_span_3
+  - span: trace_005_span_4
+  - span: trace_004_span_1
+  - span: trace_003_span_1
+  - span: trace_003_span_2
+  - span: trace_003_span_3
+  - span: trace_002_span_1
+  - span: trace_002_span_2
+  - span: trace_001_span_1
+  - span: trace_001_span_2
+  - span: trace_001_span_3

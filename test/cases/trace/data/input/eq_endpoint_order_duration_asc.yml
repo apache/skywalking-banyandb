@@ -23,7 +23,7 @@ criteria:
     op: "BINARY_OP_EQ"
     value:
       str:
-        value: "/home_endpoint"
+        value: "/item_endpoint"
 order_by:
   index_rule_name: "duration"
   sort: "SORT_ASC"

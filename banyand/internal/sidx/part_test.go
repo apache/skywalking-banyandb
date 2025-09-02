@@ -164,7 +164,6 @@ func TestMemPartInitialization(t *testing.T) {
 					name:      "service",
 					value:     []byte("order-service"),
 					valueType: pbv1.ValueTypeStr,
-					indexed:   true,
 				},
 			},
 		},
@@ -231,7 +230,6 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 							name:      "service",
 							value:     []byte("order-service"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   true,
 						},
 					},
 				},
@@ -249,13 +247,11 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 							name:      "service",
 							value:     []byte("order-service"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   true,
 						},
 						{
 							name:      "method",
 							value:     []byte("POST"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   false,
 						},
 					},
 				},
@@ -268,13 +264,11 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 							name:      "service",
 							value:     []byte("order-service"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   true,
 						},
 						{
 							name:      "method",
 							value:     []byte("GET"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   false,
 						},
 					},
 				},
@@ -292,13 +286,11 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 							name:      "service",
 							value:     []byte("order-service"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   true,
 						},
 						{
 							name:      "duration",
 							value:     []byte{0, 0, 0, 0, 0, 0, 0, 100}, // int64: 100
 							valueType: pbv1.ValueTypeInt64,
-							indexed:   false,
 						},
 					},
 				},
@@ -311,13 +303,11 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 							name:      "service",
 							value:     []byte("order-service"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   true,
 						},
 						{
 							name:      "duration",
 							value:     []byte{0, 0, 0, 0, 0, 0, 0, 150}, // int64: 150
 							valueType: pbv1.ValueTypeInt64,
-							indexed:   false,
 						},
 					},
 				},
@@ -330,13 +320,11 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 							name:      "service",
 							value:     []byte("payment-service"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   true,
 						},
 						{
 							name:      "duration",
 							value:     []byte{0, 0, 0, 0, 0, 0, 0, 75}, // int64: 75
 							valueType: pbv1.ValueTypeInt64,
-							indexed:   false,
 						},
 					},
 				},
@@ -354,7 +342,6 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 							name:      "service",
 							value:     []byte("order-service"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   true,
 						},
 					},
 				},
@@ -367,13 +354,11 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 							name:      "service",
 							value:     []byte("order-service"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   true,
 						},
 						{
 							name:      "endpoint",
 							value:     []byte("/api/orders"),
 							valueType: pbv1.ValueTypeStr,
-							indexed:   false,
 						},
 					},
 				},
@@ -430,7 +415,6 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 						newTag.name = t.name
 						newTag.value = append([]byte(nil), t.value...)
 						newTag.valueType = t.valueType
-						newTag.indexed = t.indexed
 						newTagSlice = append(newTagSlice, newTag)
 					}
 					combined.tags = append(combined.tags, newTagSlice)
@@ -451,7 +435,6 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 					newTag.name = t.name
 					newTag.value = append([]byte(nil), t.value...)
 					newTag.valueType = t.valueType
-					newTag.indexed = t.indexed
 					newTagSlice = append(newTagSlice, newTag)
 				}
 				originalCopy.tags = append(originalCopy.tags, newTagSlice)
@@ -500,7 +483,6 @@ func createTestElements(testElems []testElement) *elements {
 			newTag.name = t.name
 			newTag.value = append([]byte(nil), t.value...)
 			newTag.valueType = t.valueType
-			newTag.indexed = t.indexed
 			tagsCopy = append(tagsCopy, newTag)
 		}
 		elems.tags = append(elems.tags, tagsCopy)
@@ -548,8 +530,6 @@ func compareElements(t *testing.T, expected, actual *elements) {
 				"tag value mismatch at element %d, tag %d (%s)", i, j, expectedTags[j].name)
 			assert.Equal(t, expectedTags[j].valueType, actualTags[j].valueType,
 				"tag valueType mismatch at element %d, tag %d (%s)", i, j, expectedTags[j].name)
-			assert.Equal(t, expectedTags[j].indexed, actualTags[j].indexed,
-				"tag indexed mismatch at element %d, tag %d (%s)", i, j, expectedTags[j].name)
 		}
 	}
 }

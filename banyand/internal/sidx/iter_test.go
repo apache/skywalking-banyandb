@@ -56,7 +56,7 @@ func TestIterComprehensive(t *testing.T) {
 						userKey:  100,
 						data:     []byte("data1"),
 						tags: []tag{
-							{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr, indexed: true},
+							{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr},
 						},
 					},
 				},
@@ -80,7 +80,7 @@ func TestIterComprehensive(t *testing.T) {
 						userKey:  100,
 						data:     []byte("data1"),
 						tags: []tag{
-							{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr, indexed: true},
+							{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr},
 						},
 					},
 					{
@@ -88,7 +88,7 @@ func TestIterComprehensive(t *testing.T) {
 						userKey:  300,
 						data:     []byte("data3"),
 						tags: []tag{
-							{name: "service", value: []byte("user-service"), valueType: pbv1.ValueTypeStr, indexed: true},
+							{name: "service", value: []byte("user-service"), valueType: pbv1.ValueTypeStr},
 						},
 					},
 				},
@@ -99,7 +99,7 @@ func TestIterComprehensive(t *testing.T) {
 						userKey:  200,
 						data:     []byte("data2"),
 						tags: []tag{
-							{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr, indexed: true},
+							{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr},
 						},
 					},
 					{
@@ -107,7 +107,7 @@ func TestIterComprehensive(t *testing.T) {
 						userKey:  400,
 						data:     []byte("data4"),
 						tags: []tag{
-							{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr, indexed: true},
+							{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr},
 						},
 					},
 				},
@@ -129,15 +129,15 @@ func TestIterComprehensive(t *testing.T) {
 			parts: [][]testElement{
 				// Part 1
 				{
-					{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-					{seriesID: 2, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+					{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr}}},
+					{seriesID: 2, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr}}},
 				},
 				// Part 2
 				{
-					{seriesID: 3, userKey: 300, data: []byte("data3"), tags: []tag{{name: "service", value: []byte("user-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+					{seriesID: 3, userKey: 300, data: []byte("data3"), tags: []tag{{name: "service", value: []byte("user-service"), valueType: pbv1.ValueTypeStr}}},
 					{
 						seriesID: 4, userKey: 400, data: []byte("data4"),
-						tags: []tag{{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr, indexed: true}},
+						tags: []tag{{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr}},
 					},
 				},
 			},
@@ -156,15 +156,15 @@ func TestIterComprehensive(t *testing.T) {
 			parts: [][]testElement{
 				// Part 1
 				{
-					{seriesID: 1, userKey: 50, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-					{seriesID: 2, userKey: 150, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+					{seriesID: 1, userKey: 50, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr}}},
+					{seriesID: 2, userKey: 150, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr}}},
 				},
 				// Part 2
 				{
-					{seriesID: 3, userKey: 250, data: []byte("data3"), tags: []tag{{name: "service", value: []byte("user-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+					{seriesID: 3, userKey: 250, data: []byte("data3"), tags: []tag{{name: "service", value: []byte("user-service"), valueType: pbv1.ValueTypeStr}}},
 					{
 						seriesID: 4, userKey: 350, data: []byte("data4"),
-						tags: []tag{{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr, indexed: true}},
+						tags: []tag{{name: "service", value: []byte("notification-service"), valueType: pbv1.ValueTypeStr}},
 					},
 				},
 			},
@@ -182,8 +182,8 @@ func TestIterComprehensive(t *testing.T) {
 			name: "with_block_filter_allow_all",
 			parts: [][]testElement{
 				{
-					{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-					{seriesID: 2, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+					{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr}}},
+					{seriesID: 2, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr}}},
 				},
 			},
 			querySids:    []common.SeriesID{1, 2},
@@ -200,8 +200,8 @@ func TestIterComprehensive(t *testing.T) {
 			name: "with_block_filter_skip_all",
 			parts: [][]testElement{
 				{
-					{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-					{seriesID: 2, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+					{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("order-service"), valueType: pbv1.ValueTypeStr}}},
+					{seriesID: 2, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("payment-service"), valueType: pbv1.ValueTypeStr}}},
 				},
 			},
 			querySids:    []common.SeriesID{1, 2},
@@ -268,7 +268,7 @@ func TestIterEdgeCases(t *testing.T) {
 	t.Run("empty_series_list", func(t *testing.T) {
 		// Create a part with data
 		elements := createTestElements([]testElement{
-			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("test-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("test-service"), valueType: pbv1.ValueTypeStr}}},
 		})
 		defer releaseElements(elements)
 
@@ -295,12 +295,12 @@ func TestIterEdgeCases(t *testing.T) {
 	t.Run("no_matching_key_range", func(t *testing.T) {
 		// Create parts with data at key 100-300
 		elements1 := createTestElements([]testElement{
-			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("test-service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("test-service1"), valueType: pbv1.ValueTypeStr}}},
 		})
 		defer releaseElements(elements1)
 
 		elements2 := createTestElements([]testElement{
-			{seriesID: 2, userKey: 300, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("test-service2"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+			{seriesID: 2, userKey: 300, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("test-service2"), valueType: pbv1.ValueTypeStr}}},
 		})
 		defer releaseElements(elements2)
 
@@ -336,7 +336,7 @@ func TestIterEdgeCases(t *testing.T) {
 
 	t.Run("single_part_single_block", func(t *testing.T) {
 		elements := createTestElements([]testElement{
-			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("test-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("test-service"), valueType: pbv1.ValueTypeStr}}},
 		})
 		defer releaseElements(elements)
 
@@ -364,7 +364,7 @@ func TestIterEdgeCases(t *testing.T) {
 
 	t.Run("block_filter_error", func(t *testing.T) {
 		elements := createTestElements([]testElement{
-			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("test-service"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("test-service"), valueType: pbv1.ValueTypeStr}}},
 		})
 		defer releaseElements(elements)
 
@@ -400,17 +400,17 @@ func TestIterOrdering(t *testing.T) {
 	t.Run("interleaved_series_ordering", func(t *testing.T) {
 		// Part 1: series 1, 3, 5
 		elements1 := createTestElements([]testElement{
-			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-			{seriesID: 3, userKey: 300, data: []byte("data3"), tags: []tag{{name: "service", value: []byte("service3"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-			{seriesID: 5, userKey: 500, data: []byte("data5"), tags: []tag{{name: "service", value: []byte("service5"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+			{seriesID: 1, userKey: 100, data: []byte("data1"), tags: []tag{{name: "service", value: []byte("service1"), valueType: pbv1.ValueTypeStr}}},
+			{seriesID: 3, userKey: 300, data: []byte("data3"), tags: []tag{{name: "service", value: []byte("service3"), valueType: pbv1.ValueTypeStr}}},
+			{seriesID: 5, userKey: 500, data: []byte("data5"), tags: []tag{{name: "service", value: []byte("service5"), valueType: pbv1.ValueTypeStr}}},
 		})
 		defer releaseElements(elements1)
 
 		// Part 2: series 2, 4, 6
 		elements2 := createTestElements([]testElement{
-			{seriesID: 2, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("service2"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-			{seriesID: 4, userKey: 400, data: []byte("data4"), tags: []tag{{name: "service", value: []byte("service4"), valueType: pbv1.ValueTypeStr, indexed: true}}},
-			{seriesID: 6, userKey: 600, data: []byte("data6"), tags: []tag{{name: "service", value: []byte("service6"), valueType: pbv1.ValueTypeStr, indexed: true}}},
+			{seriesID: 2, userKey: 200, data: []byte("data2"), tags: []tag{{name: "service", value: []byte("service2"), valueType: pbv1.ValueTypeStr}}},
+			{seriesID: 4, userKey: 400, data: []byte("data4"), tags: []tag{{name: "service", value: []byte("service4"), valueType: pbv1.ValueTypeStr}}},
+			{seriesID: 6, userKey: 600, data: []byte("data6"), tags: []tag{{name: "service", value: []byte("service6"), valueType: pbv1.ValueTypeStr}}},
 		})
 		defer releaseElements(elements2)
 
