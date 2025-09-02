@@ -591,29 +591,10 @@ func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReader
 	td := generateTagData()
 	td.name = tagName
 	td.valueType = tm.valueType
-	td.indexed = tm.indexed
 	td.values, err = internalencoding.DecodeTagValues(td.values[:0], decoder, bb, tm.valueType, count)
 	if err != nil {
 		releaseTagData(td)
 		return fmt.Errorf("cannot decode tag values: %w", err)
-	}
-
-	if tm.valueType == pbv1.ValueTypeInt64 {
-		td.min = tm.min
-		td.max = tm.max
-	}
-	if tm.indexed && tm.filterBlock.size > 0 {
-		if tfReader, tfExists := sr.tagFilters[tagName]; tfExists {
-			bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(tm.filterBlock.size))
-			tfReader.mustReadFull(bb.Buf)
-
-			filter, err := decodeBloomFilter(bb.Buf)
-			if err != nil {
-				releaseTagData(td)
-				return fmt.Errorf("cannot decode bloom filter: %w", err)
-			}
-			td.filter = filter
-		}
 	}
 	b.tags[tagName] = td
 	return nil
