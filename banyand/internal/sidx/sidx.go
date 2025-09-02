@@ -658,6 +658,11 @@ func (bch *blockCursorHeap) merge(limit int) *QueryResponse {
 		SIDs: make([]common.SeriesID, 0),
 	}
 
+	// Initialize unique data tracker if limit is specified
+	if limit > 0 {
+		result.InitUniqueTracker(limit)
+	}
+
 	for bch.Len() > 0 {
 		topBC := bch.bcc[0]
 		if topBC.idx < 0 || topBC.idx >= len(topBC.userKeys) {
@@ -667,7 +672,8 @@ func (bch *blockCursorHeap) merge(limit int) *QueryResponse {
 
 		// Try to copy the element (returns false if filtered out by key range)
 		if topBC.copyTo(result) {
-			if limit > 0 && result.Len() >= limit {
+			// Check unique Data element limit after copying
+			if !result.ShouldAddData(result.Data[len(result.Data)-1]) {
 				break
 			}
 		}

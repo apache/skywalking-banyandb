@@ -41,7 +41,6 @@ type tagMetadata struct {
 	dataBlock   dataBlock // Offset/size in .td file
 	filterBlock dataBlock // Offset/size in .tf file
 	valueType   pbv1.ValueType
-	indexed     bool
 }
 
 // tagData represents the runtime data for a tag with filtering capabilities.
@@ -52,7 +51,6 @@ type tagData struct {
 	min       []byte // For int64 tags
 	max       []byte // For int64 tags
 	valueType pbv1.ValueType
-	indexed   bool
 }
 
 var (
@@ -101,7 +99,6 @@ func releaseTagMetadata(tm *tagMetadata) {
 func (td *tagData) reset() {
 	td.name = ""
 	td.valueType = pbv1.ValueTypeUnknown
-	td.indexed = false
 
 	// Reset values slice
 	for i := range td.values {
@@ -124,7 +121,6 @@ func (td *tagData) reset() {
 func (tm *tagMetadata) reset() {
 	tm.name = ""
 	tm.valueType = pbv1.ValueTypeUnknown
-	tm.indexed = false
 	tm.dataBlock = dataBlock{}
 	tm.filterBlock = dataBlock{}
 	tm.min = nil
@@ -226,14 +222,14 @@ func (td *tagData) addValue(value []byte) {
 	td.values = append(td.values, value)
 
 	// Update filter for indexed tags
-	if td.indexed && td.filter != nil {
+	if td.filter != nil {
 		td.filter.Add(value)
 	}
 }
 
 // hasValue checks if a value exists in the tag using the bloom filter.
 func (td *tagData) hasValue(value []byte) bool {
-	if !td.indexed || td.filter == nil {
+	if td.filter == nil {
 		// For non-indexed tags, do linear search
 		for _, v := range td.values {
 			if bytes.Equal(v, value) {
@@ -254,13 +250,6 @@ func (tm *tagMetadata) marshal(dst []byte) []byte {
 	dst = pkgencoding.VarUint64ToBytes(dst, tm.dataBlock.size)
 	dst = pkgencoding.VarUint64ToBytes(dst, tm.filterBlock.offset)
 	dst = pkgencoding.VarUint64ToBytes(dst, tm.filterBlock.size)
-
-	// Write flags
-	var flags uint8
-	if tm.indexed {
-		flags |= 1
-	}
-	dst = append(dst, flags)
 
 	dst = pkgencoding.EncodeBytes(dst, tm.min)
 	dst = pkgencoding.EncodeBytes(dst, tm.max)
@@ -292,9 +281,6 @@ func (tm *tagMetadata) unmarshal(src []byte) ([]byte, error) {
 	if len(src) < 1 {
 		return nil, fmt.Errorf("cannot unmarshal tagMetadata flags: src is too short")
 	}
-	flags := src[0]
-	src = src[1:]
-	tm.indexed = (flags & 1) != 0
 
 	src, tm.min, err = pkgencoding.DecodeBytes(src)
 	if err != nil {

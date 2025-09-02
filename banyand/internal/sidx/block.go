@@ -81,9 +81,6 @@ func (b *block) reset() {
 
 	// Clear tag map but keep the map itself
 	for k, tag := range b.tags {
-		if tag.filter != nil {
-			releaseBloomFilter(tag.filter)
-		}
 		releaseTagData(tag)
 		delete(b.tags, k)
 	}
@@ -116,7 +113,6 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 	td.values = make([][]byte, len(b.userKeys))
 
 	var valueType pbv1.ValueType
-	var indexed bool
 
 	// Collect values for this tag across all elements
 	for i, tags := range elementTags {
@@ -125,7 +121,6 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 			if tag.name == tagName {
 				td.values[i] = tag.value
 				valueType = tag.valueType
-				indexed = tag.indexed
 				found = true
 				break
 			}
@@ -136,15 +131,12 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 	}
 
 	td.valueType = valueType
-	td.indexed = indexed
 
 	// Create bloom filter for indexed tags
-	if indexed {
-		td.filter = generateBloomFilter(len(b.userKeys))
-		for _, value := range td.values {
-			if value != nil {
-				td.filter.Add(value)
-			}
+	td.filter = generateBloomFilter(len(b.userKeys))
+	for _, value := range td.values {
+		if value != nil {
+			td.filter.Add(value)
 		}
 	}
 
@@ -264,7 +256,6 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 
 	tm.name = tagName
 	tm.valueType = td.valueType
-	tm.indexed = td.indexed
 
 	// Write tag values to data file
 	bb := bigValuePool.Get()
@@ -287,8 +278,8 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	tm.dataBlock.size = uint64(len(bb.Buf))
 	tdw.MustWrite(bb.Buf)
 
-	// Write bloom filter if indexed
-	if td.indexed && td.filter != nil {
+	// Write bloom filter
+	if td.filter != nil {
 		filterData := encodeBloomFilter(nil, td.filter)
 		tm.filterBlock.offset = tfw.bytesWritten
 		tm.filterBlock.size = uint64(len(filterData))
