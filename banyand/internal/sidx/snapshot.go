@@ -308,25 +308,25 @@ func parseEpoch(epochStr string) (uint64, error) {
 	return strconv.ParseUint(epochStr, 16, 64)
 }
 
-func readSnapshot(fileSystem fs.FileSystem, root string, snapshot uint64) ([]uint64, error) {
+func mustReadSnapshot(fileSystem fs.FileSystem, root string, snapshot uint64) []uint64 {
 	snapshotPath := filepath.Join(root, snapshotName(snapshot))
 	data, err := fileSystem.Read(snapshotPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read snapshot %s: %w", snapshotPath, err)
+		logger.GetLogger().Panic().Err(err).Str("path", snapshotPath).Msg("cannot read snapshot")
 	}
 	var partNames []string
 	if err := json.Unmarshal(data, &partNames); err != nil {
-		return nil, fmt.Errorf("cannot parse snapshot %s: %w", snapshotPath, err)
+		logger.GetLogger().Panic().Err(err).Str("path", snapshotPath).Msg("cannot parse snapshot")
 	}
 	var result []uint64
 	for i := range partNames {
 		e, err := parseEpoch(partNames[i])
 		if err != nil {
-			return nil, fmt.Errorf("cannot parse part name %s: %w", partNames[i], err)
+			logger.GetLogger().Panic().Err(err).Str("name", partNames[i]).Msg("cannot parse part name")
 		}
 		result = append(result, e)
 	}
-	return result, nil
+	return result
 }
 
 // Pool for snapshot reuse.

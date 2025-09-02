@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/pkg/errors"
 )
 
 // partMetadata contains metadata for an entire part (replaces timestamp-specific metadata from stream module).
@@ -46,6 +47,19 @@ type partMetadata struct {
 
 	// Identity
 	ID uint64 `json:"id"` // Unique part identifier
+}
+
+func validatePartMetadata(fileSystem fs.FileSystem, partPath string) error {
+	metadataPath := filepath.Join(partPath, manifestFilename)
+	metadata, err := fileSystem.Read(metadataPath)
+	if err != nil {
+		return errors.WithMessage(err, "cannot read metadata.json")
+	}
+	var pm partMetadata
+	if err := json.Unmarshal(metadata, &pm); err != nil {
+		return errors.WithMessage(err, "cannot parse metadata.json")
+	}
+	return nil
 }
 
 // blockMetadata contains metadata for a block within a part.

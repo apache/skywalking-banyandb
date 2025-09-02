@@ -21,7 +21,6 @@ import (
 	"container/heap"
 	"context"
 	"encoding/json"
-	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -794,13 +793,8 @@ func (s *sidx) init() uint64 {
 }
 
 func (s *sidx) loadSnapshot(epoch uint64, loadedParts []uint64) {
-	partIDs, err := readSnapshot(s.fileSystem, s.root, epoch)
-	if err != nil {
-		s.l.Error().Err(err).Uint64("epoch", epoch).Msg("failed to read snapshot, skipping")
-		return
-	}
+	partIDs := mustReadSnapshot(s.fileSystem, s.root, epoch)
 	snp := newSnapshot(nil, epoch)
-
 	needToPersist := false
 	for _, id := range loadedParts {
 		var find bool
@@ -811,35 +805,30 @@ func (s *sidx) loadSnapshot(epoch uint64, loadedParts []uint64) {
 			}
 		}
 		if !find {
-			s.l.Debug().Uint64("part_id", id).Msg("part not in snapshot, skipping")
+			s.gc.removePart(id)
 			continue
 		}
-
-		partPath := filepath.Join(s.root, fmt.Sprintf("%016x", id))
-		part := mustOpenPart(partPath, s.fileSystem)
-		if part == nil {
-			s.l.Error().Uint64("part_id", id).Msg("failed to open part, skipping")
+		err := validatePartMetadata(s.fileSystem, partPath(s.root, id))
+		if err != nil {
+			s.l.Info().Err(err).Uint64("id", id).Msg("cannot validate part metadata. skip and delete it")
+			s.gc.removePart(id)
 			needToPersist = true
 			continue
 		}
+		partPath := partPath(s.root, id)
+		part := mustOpenPart(partPath, s.fileSystem)
 		part.partMetadata.ID = id
-
 		pw := newPartWrapper(nil, part)
 		snp.addPart(pw)
 	}
-
 	s.gc.registerSnapshot(snp)
 	s.gc.clean()
-
 	if snp.getPartCount() < 1 {
 		snp.release()
 		return
 	}
-
-	s.mu.Lock()
+	snp.acquire()
 	s.snapshot = snp
-	s.mu.Unlock()
-
 	if needToPersist {
 		s.persistSnapshot(snp)
 	}
