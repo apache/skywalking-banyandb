@@ -86,16 +86,16 @@ func TestOptionsValidation(t *testing.T) {
 		{
 			name: "valid options",
 			opts: &Options{
-				Path:        "/tmp/sidx",
-				Memory:      mockMemory,
+				Path:   "/tmp/sidx",
+				Memory: mockMemory,
 			},
 			expectError: false,
 		},
 		{
 			name: "empty path",
 			opts: &Options{
-				Path:        "",
-				Memory:      mockMemory,
+				Path:   "",
+				Memory: mockMemory,
 			},
 			expectError: true,
 			errorMsg:    "path must not be empty",
@@ -103,8 +103,8 @@ func TestOptionsValidation(t *testing.T) {
 		{
 			name: "relative path",
 			opts: &Options{
-				Path:        "relative/path",
-				Memory:      mockMemory,
+				Path:   "relative/path",
+				Memory: mockMemory,
 			},
 			expectError: true,
 			errorMsg:    "path must be absolute",
@@ -112,8 +112,8 @@ func TestOptionsValidation(t *testing.T) {
 		{
 			name: "nil memory protector",
 			opts: &Options{
-				Path:        "/tmp/sidx",
-				Memory:      nil,
+				Path:   "/tmp/sidx",
+				Memory: nil,
 			},
 			expectError: true,
 			errorMsg:    "memory protector must not be nil",
@@ -142,7 +142,7 @@ func TestOptionsWithMethods(t *testing.T) {
 		newOpts := originalOpts.WithPath(newPath)
 
 		assert.Equal(t, newPath, newOpts.Path)
-		assert.Equal(t, originalOpts.Path, "/tmp/sidx")                // Original unchanged
+		assert.Equal(t, originalOpts.Path, "/tmp/sidx") // Original unchanged
 	})
 
 	t.Run("WithMemory", func(t *testing.T) {
