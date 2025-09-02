@@ -37,7 +37,7 @@ import (
 type SIDX interface {
 	// Write performs batch write operations. All writes must be submitted as batches.
 	// Elements within each batch should be pre-sorted by the caller for optimal performance.
-	Write(ctx context.Context, reqs []WriteRequest) error
+	Write(ctx context.Context, reqs []WriteRequest, partID uint64) error
 
 	// Query executes a query with key range and tag filtering.
 	// Returns a QueryResponse directly with all results loaded.
@@ -76,7 +76,7 @@ type Merger interface {
 	// and coordinate with the introducer loop for snapshot updates.
 	// This operation is user-controlled and synchronous.
 	// Returns error if merge operation fails.
-	Merge() error
+	Merge(partIDs []uint64, newPartID uint64, closeCh <-chan struct{}) error
 }
 
 // Writer handles write path operations for batch processing.
