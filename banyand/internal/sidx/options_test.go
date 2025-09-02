@@ -37,12 +37,6 @@ func TestNewOptions(t *testing.T) {
 
 		assert.Equal(t, "/tmp/sidx", opts.Path)
 		assert.Equal(t, mockMemory, opts.Memory)
-		assert.NotNil(t, opts.MergePolicy)
-
-		// Verify default merge policy values
-		assert.Equal(t, 8, opts.MergePolicy.MaxParts)
-		assert.Equal(t, 1.7, opts.MergePolicy.MinMergeMultiplier)
-		assert.Equal(t, uint64(1<<30), opts.MergePolicy.MaxFanOutSize)
 
 		// Should validate successfully
 		assert.NoError(t, opts.Validate())
@@ -75,36 +69,9 @@ func TestNewDefaultOptions(t *testing.T) {
 
 	assert.Equal(t, "/tmp/sidx", opts.Path)
 	assert.Nil(t, opts.Memory)
-	assert.NotNil(t, opts.MergePolicy)
-
-	// Verify default merge policy values
-	assert.Equal(t, 8, opts.MergePolicy.MaxParts)
-	assert.Equal(t, 1.7, opts.MergePolicy.MinMergeMultiplier)
-	assert.Equal(t, uint64(1<<30), opts.MergePolicy.MaxFanOutSize)
 
 	// Should fail validation due to nil memory
 	assert.Error(t, opts.Validate())
-}
-
-func TestNewDefaultMergePolicy(t *testing.T) {
-	policy := NewDefaultMergePolicy()
-
-	assert.Equal(t, 8, policy.MaxParts)
-	assert.Equal(t, 1.7, policy.MinMergeMultiplier)
-	assert.Equal(t, uint64(1<<30), policy.MaxFanOutSize)
-
-	// Ensure it validates successfully
-	assert.NoError(t, policy.Validate())
-}
-
-func TestNewMergePolicy(t *testing.T) {
-	policy := NewMergePolicy(10, 2.0, 1<<20)
-
-	assert.Equal(t, 10, policy.MaxParts)
-	assert.Equal(t, 2.0, policy.MinMergeMultiplier)
-	assert.Equal(t, uint64(1<<20), policy.MaxFanOutSize)
-
-	assert.NoError(t, policy.Validate())
 }
 
 func TestOptionsValidation(t *testing.T) {
@@ -121,7 +88,6 @@ func TestOptionsValidation(t *testing.T) {
 			opts: &Options{
 				Path:        "/tmp/sidx",
 				Memory:      mockMemory,
-				MergePolicy: NewDefaultMergePolicy(),
 			},
 			expectError: false,
 		},
@@ -130,7 +96,6 @@ func TestOptionsValidation(t *testing.T) {
 			opts: &Options{
 				Path:        "",
 				Memory:      mockMemory,
-				MergePolicy: NewDefaultMergePolicy(),
 			},
 			expectError: true,
 			errorMsg:    "path must not be empty",
@@ -140,7 +105,6 @@ func TestOptionsValidation(t *testing.T) {
 			opts: &Options{
 				Path:        "relative/path",
 				Memory:      mockMemory,
-				MergePolicy: NewDefaultMergePolicy(),
 			},
 			expectError: true,
 			errorMsg:    "path must be absolute",
@@ -150,87 +114,15 @@ func TestOptionsValidation(t *testing.T) {
 			opts: &Options{
 				Path:        "/tmp/sidx",
 				Memory:      nil,
-				MergePolicy: NewDefaultMergePolicy(),
 			},
 			expectError: true,
 			errorMsg:    "memory protector must not be nil",
-		},
-		{
-			name: "nil merge policy",
-			opts: &Options{
-				Path:        "/tmp/sidx",
-				Memory:      mockMemory,
-				MergePolicy: nil,
-			},
-			expectError: true,
-			errorMsg:    "merge policy must not be nil",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.opts.Validate()
-			if tt.expectError {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorMsg)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestMergePolicyValidation(t *testing.T) {
-	tests := []struct {
-		policy      *MergePolicy
-		name        string
-		errorMsg    string
-		expectError bool
-	}{
-		{
-			name: "valid merge policy",
-			policy: &MergePolicy{
-				MaxParts:           8,
-				MinMergeMultiplier: 1.7,
-				MaxFanOutSize:      1 << 30,
-			},
-			expectError: false,
-		},
-		{
-			name: "maxParts too small",
-			policy: &MergePolicy{
-				MaxParts:           1,
-				MinMergeMultiplier: 1.7,
-				MaxFanOutSize:      1 << 30,
-			},
-			expectError: true,
-			errorMsg:    "maxParts must be at least 2",
-		},
-		{
-			name: "minMergeMultiplier too small",
-			policy: &MergePolicy{
-				MaxParts:           8,
-				MinMergeMultiplier: 1.0,
-				MaxFanOutSize:      1 << 30,
-			},
-			expectError: true,
-			errorMsg:    "minMergeMultiplier must be greater than 1.0",
-		},
-		{
-			name: "zero maxFanOutSize",
-			policy: &MergePolicy{
-				MaxParts:           8,
-				MinMergeMultiplier: 1.7,
-				MaxFanOutSize:      0,
-			},
-			expectError: true,
-			errorMsg:    "maxFanOutSize must be greater than 0",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.policy.Validate()
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errorMsg)
@@ -251,7 +143,6 @@ func TestOptionsWithMethods(t *testing.T) {
 
 		assert.Equal(t, newPath, newOpts.Path)
 		assert.Equal(t, originalOpts.Path, "/tmp/sidx")                // Original unchanged
-		assert.Equal(t, originalOpts.MergePolicy, newOpts.MergePolicy) // Other fields copied
 	})
 
 	t.Run("WithMemory", func(t *testing.T) {
@@ -261,15 +152,6 @@ func TestOptionsWithMethods(t *testing.T) {
 		assert.Nil(t, originalOpts.Memory)               // Original unchanged
 		assert.Equal(t, originalOpts.Path, newOpts.Path) // Other fields copied
 	})
-
-	t.Run("WithMergePolicy", func(t *testing.T) {
-		customPolicy := NewMergePolicy(10, 2.0, 1<<20)
-		newOpts := originalOpts.WithMergePolicy(customPolicy)
-
-		assert.Equal(t, customPolicy, newOpts.MergePolicy)
-		assert.NotEqual(t, customPolicy, originalOpts.MergePolicy) // Original unchanged
-		assert.Equal(t, originalOpts.Path, newOpts.Path)           // Other fields copied
-	})
 }
 
 func TestOptionsConfiguration(t *testing.T) {
@@ -278,25 +160,19 @@ func TestOptionsConfiguration(t *testing.T) {
 	// Test using new mandatory constructor
 	baseOpts, err := NewOptions("/base/sidx", mockMemory)
 	require.NoError(t, err)
-	require.NotNil(t, baseOpts.MergePolicy)
 
 	// Test configuration can be merged and overridden
 	customOpts := baseOpts.
-		WithPath("/custom/sidx").
-		WithMergePolicy(NewMergePolicy(5, 1.5, 512<<20))
+		WithPath("/custom/sidx")
 
 	assert.Equal(t, "/custom/sidx", customOpts.Path)
 	assert.Equal(t, mockMemory, customOpts.Memory)
-	assert.Equal(t, 5, customOpts.MergePolicy.MaxParts)
-	assert.Equal(t, 1.5, customOpts.MergePolicy.MinMergeMultiplier)
-	assert.Equal(t, uint64(512<<20), customOpts.MergePolicy.MaxFanOutSize)
 
 	// Ensure validation works with custom configuration
 	assert.NoError(t, customOpts.Validate())
 
 	// Test deprecated constructor still works but requires memory to be set
 	defaultOpts := NewDefaultOptions()
-	require.NotNil(t, defaultOpts.MergePolicy)
 
 	// Should fail validation due to nil memory
 	assert.Error(t, defaultOpts.Validate())
@@ -304,24 +180,4 @@ func TestOptionsConfiguration(t *testing.T) {
 	// But works after setting memory
 	optsWithMemory := defaultOpts.WithMemory(mockMemory)
 	assert.NoError(t, optsWithMemory.Validate())
-}
-
-func TestOptionsEdgeCases(t *testing.T) {
-	t.Run("minimum valid merge policy", func(t *testing.T) {
-		policy := &MergePolicy{
-			MaxParts:           2,
-			MinMergeMultiplier: 1.001,
-			MaxFanOutSize:      1,
-		}
-		assert.NoError(t, policy.Validate())
-	})
-
-	t.Run("large values", func(t *testing.T) {
-		policy := &MergePolicy{
-			MaxParts:           1000,
-			MinMergeMultiplier: 100.0,
-			MaxFanOutSize:      1 << 60,
-		}
-		assert.NoError(t, policy.Validate())
-	})
 }

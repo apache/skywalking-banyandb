@@ -21,7 +21,9 @@ import (
 	"container/heap"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -86,9 +88,12 @@ func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 	// Initialize garbage collector
 	s.gc.init(s)
 
-	// Start introducer loop
+	// Initialize sidx
+	epoch := s.init()
+
+	// Start introducer loop with loaded epoch
 	watcherCh := make(watcher.Channel, 10)
-	go s.introducerLoop(s.flushCh, s.mergeCh, watcherCh, 0)
+	go s.introducerLoop(s.flushCh, s.mergeCh, watcherCh, epoch)
 
 	return s, nil
 }
@@ -725,4 +730,117 @@ func releaseBlockCursor(bc *blockCursor) {
 	bc.seriesID = 0
 	bc.idx = 0
 	blockCursorPool.Put(bc)
+}
+
+func (s *sidx) init() uint64 {
+	if _, err := os.Stat(s.root); os.IsNotExist(err) {
+		s.l.Debug().Str("path", s.root).Msg("sidx directory does not exist")
+		return 0
+	}
+
+	entries := s.fileSystem.ReadDir(s.root)
+	if len(entries) == 0 {
+		s.l.Debug().Str("path", s.root).Msg("no existing sidx data found")
+		return 0
+	}
+
+	var loadedParts []uint64
+	var loadedSnapshots []uint64
+	var needToDelete []string
+
+	for i := range entries {
+		if entries[i].IsDir() {
+			p, err := parseEpoch(entries[i].Name())
+			if err != nil {
+				s.l.Info().Err(err).Str("name", entries[i].Name()).Msg("cannot parse part directory name, skipping")
+				needToDelete = append(needToDelete, entries[i].Name())
+				continue
+			}
+			loadedParts = append(loadedParts, p)
+			continue
+		}
+
+		if filepath.Ext(entries[i].Name()) != snapshotSuffix {
+			continue
+		}
+		snapshot, err := parseSnapshot(entries[i].Name())
+		if err != nil {
+			s.l.Info().Err(err).Str("name", entries[i].Name()).Msg("cannot parse snapshot file name, skipping")
+			needToDelete = append(needToDelete, entries[i].Name())
+			continue
+		}
+		loadedSnapshots = append(loadedSnapshots, snapshot)
+	}
+
+	for i := range needToDelete {
+		s.l.Info().Str("path", filepath.Join(s.root, needToDelete[i])).Msg("deleting invalid directory or file")
+		s.fileSystem.MustRMAll(filepath.Join(s.root, needToDelete[i]))
+	}
+
+	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
+		s.l.Debug().Msg("no valid parts or snapshots found")
+		return 0
+	}
+
+	sort.Slice(loadedSnapshots, func(i, j int) bool {
+		return loadedSnapshots[i] > loadedSnapshots[j]
+	})
+
+	latestEpoch := loadedSnapshots[0]
+	s.loadSnapshot(latestEpoch, loadedParts)
+
+	s.l.Info().Uint64("epoch", latestEpoch).Int("parts", len(loadedParts)).Msg("loaded existing sidx data")
+	return latestEpoch
+}
+
+func (s *sidx) loadSnapshot(epoch uint64, loadedParts []uint64) {
+	partIDs, err := readSnapshot(s.fileSystem, s.root, epoch)
+	if err != nil {
+		s.l.Error().Err(err).Uint64("epoch", epoch).Msg("failed to read snapshot, skipping")
+		return
+	}
+	snp := newSnapshot(nil, epoch)
+
+	needToPersist := false
+	for _, id := range loadedParts {
+		var find bool
+		for j := range partIDs {
+			if id == partIDs[j] {
+				find = true
+				break
+			}
+		}
+		if !find {
+			s.l.Debug().Uint64("part_id", id).Msg("part not in snapshot, skipping")
+			continue
+		}
+
+		partPath := filepath.Join(s.root, fmt.Sprintf("%016x", id))
+		part := mustOpenPart(partPath, s.fileSystem)
+		if part == nil {
+			s.l.Error().Uint64("part_id", id).Msg("failed to open part, skipping")
+			needToPersist = true
+			continue
+		}
+		part.partMetadata.ID = id
+
+		pw := newPartWrapper(nil, part)
+		snp.addPart(pw)
+	}
+
+	s.gc.registerSnapshot(snp)
+	s.gc.clean()
+
+	if snp.getPartCount() < 1 {
+		snp.release()
+		return
+	}
+
+	s.mu.Lock()
+	s.snapshot = snp
+	s.mu.Unlock()
+
+	if needToPersist {
+		s.persistSnapshot(snp)
+	}
 }

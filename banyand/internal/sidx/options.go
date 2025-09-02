@@ -27,12 +27,6 @@ import (
 // Options contains configuration options for the Secondary Index File System (SIDX).
 // Path and Memory are mandatory fields that must be provided during construction.
 type Options struct {
-	// MergePolicy controls the merge behavior for parts.
-	// It determines which parts should be merged together to optimize
-	// storage efficiency and query performance.
-	// If not set, a default policy will be used.
-	MergePolicy *MergePolicy
-
 	// Memory is the memory protector that controls resource limits.
 	// It monitors memory usage and prevents OOM by applying backpressure
 	// when memory consumption exceeds configured thresholds.
@@ -76,9 +70,8 @@ func NewOptions(path string, memory protector.Memory) (*Options, error) {
 	}
 
 	return &Options{
-		Path:        path,
-		Memory:      memory,
-		MergePolicy: NewDefaultMergePolicy(),
+		Path:   path,
+		Memory: memory,
 	}, nil
 }
 
@@ -87,28 +80,8 @@ func NewOptions(path string, memory protector.Memory) (*Options, error) {
 // Memory must be set using WithMemory() before using the Options.
 func NewDefaultOptions() *Options {
 	return &Options{
-		Path:        "/tmp/sidx",
-		Memory:      nil, // Must be provided by caller using WithMemory()
-		MergePolicy: NewDefaultMergePolicy(),
-	}
-}
-
-// NewDefaultMergePolicy creates a MergePolicy with default parameters optimized
-// for typical SIDX workloads.
-func NewDefaultMergePolicy() *MergePolicy {
-	return &MergePolicy{
-		MaxParts:           8,
-		MinMergeMultiplier: 1.7,
-		MaxFanOutSize:      1 << 30, // 1GB
-	}
-}
-
-// NewMergePolicy creates a MergePolicy with custom parameters.
-func NewMergePolicy(maxParts int, minMergeMultiplier float64, maxFanOutSize uint64) *MergePolicy {
-	return &MergePolicy{
-		MaxParts:           maxParts,
-		MinMergeMultiplier: minMergeMultiplier,
-		MaxFanOutSize:      maxFanOutSize,
+		Path:   "/tmp/sidx",
+		Memory: nil, // Must be provided by caller using WithMemory()
 	}
 }
 
@@ -126,27 +99,6 @@ func (o *Options) Validate() error {
 		return fmt.Errorf("memory protector must not be nil")
 	}
 
-	if o.MergePolicy == nil {
-		return fmt.Errorf("merge policy must not be nil")
-	}
-
-	return o.MergePolicy.Validate()
-}
-
-// Validate validates the merge policy configuration.
-func (mp *MergePolicy) Validate() error {
-	if mp.MaxParts < 2 {
-		return fmt.Errorf("maxParts must be at least 2, got: %d", mp.MaxParts)
-	}
-
-	if mp.MinMergeMultiplier <= 1.0 {
-		return fmt.Errorf("minMergeMultiplier must be greater than 1.0, got: %f", mp.MinMergeMultiplier)
-	}
-
-	if mp.MaxFanOutSize == 0 {
-		return fmt.Errorf("maxFanOutSize must be greater than 0")
-	}
-
 	return nil
 }
 
@@ -161,12 +113,5 @@ func (o *Options) WithPath(path string) *Options {
 func (o *Options) WithMemory(memory protector.Memory) *Options {
 	opts := *o
 	opts.Memory = memory
-	return &opts
-}
-
-// WithMergePolicy returns a copy of the options with the specified merge policy.
-func (o *Options) WithMergePolicy(policy *MergePolicy) *Options {
-	opts := *o
-	opts.MergePolicy = policy
 	return &opts
 }

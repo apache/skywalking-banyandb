@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -43,6 +44,7 @@ import (
 
 const (
 	snapshotSuffix = ".snp"
+	sidxDirName    = "sidx"
 )
 
 type tsTable struct {
@@ -201,7 +203,7 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	if m != nil {
 		tst.metrics = m.(*metrics)
 	}
-	tst.sidxMap = make(map[string]sidx.SIDX)
+	tst.loadSidxMap()
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
@@ -212,6 +214,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	var needToDelete []string
 	for i := range ee {
 		if ee[i].IsDir() {
+			if ee[i].Name() == sidxDirName {
+				continue
+			}
 			p, err := parseEpoch(ee[i].Name())
 			if err != nil {
 				l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")
@@ -282,7 +287,7 @@ func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 	}
 
 	// Create new sidx instance
-	sidxPath := filepath.Join(tst.root, "sidx", name)
+	sidxPath := filepath.Join(tst.root, sidxDirName, name)
 	sidxOpts, err := sidx.NewOptions(sidxPath, tst.option.protector)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create sidx options for %s: %w", name, err)
@@ -307,6 +312,40 @@ func (tst *tsTable) getAllSidx() []sidx.SIDX {
 		result = append(result, sidxInstance)
 	}
 	return result
+}
+
+func (tst *tsTable) loadSidxMap() {
+	tst.sidxMap = make(map[string]sidx.SIDX)
+	sidxRootPath := filepath.Join(tst.root, sidxDirName)
+	if _, err := os.Stat(sidxRootPath); os.IsNotExist(err) {
+		tst.l.Debug().Str("path", sidxRootPath).Msg("sidx directory does not exist")
+		return
+	}
+	entries := tst.fileSystem.ReadDir(sidxRootPath)
+	if len(entries) == 0 {
+		tst.l.Debug().Str("path", sidxRootPath).Msg("no sidx entries found")
+		return
+	}
+
+	for i := range entries {
+		if !entries[i].IsDir() {
+			continue
+		}
+		sidxName := entries[i].Name()
+		sidxPath := filepath.Join(sidxRootPath, sidxName)
+		sidxOpts, err := sidx.NewOptions(sidxPath, tst.option.protector)
+		if err != nil {
+			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx options, skipping")
+			continue
+		}
+		newSidx, err := sidx.NewSIDX(tst.fileSystem, sidxOpts)
+		if err != nil {
+			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx instance, skipping")
+			continue
+		}
+		tst.sidxMap[sidxName] = newSidx
+		tst.l.Debug().Str("name", sidxName).Str("path", sidxPath).Msg("loaded sidx instance")
+	}
 }
 
 func (tst *tsTable) closeSidxMap() error {

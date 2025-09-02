@@ -18,10 +18,14 @@
 package sidx
 
 import (
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"sync/atomic"
 
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
@@ -288,6 +292,41 @@ func (s *snapshot) String() string {
 
 func snapshotName(snapshot uint64) string {
 	return fmt.Sprintf("%016x%s", snapshot, snapshotSuffix)
+}
+
+func parseSnapshot(name string) (uint64, error) {
+	if filepath.Ext(name) != snapshotSuffix {
+		return 0, fmt.Errorf("invalid snapshot file ext")
+	}
+	if len(name) < 16 {
+		return 0, fmt.Errorf("invalid snapshot file name")
+	}
+	return parseEpoch(name[:16])
+}
+
+func parseEpoch(epochStr string) (uint64, error) {
+	return strconv.ParseUint(epochStr, 16, 64)
+}
+
+func readSnapshot(fileSystem fs.FileSystem, root string, snapshot uint64) ([]uint64, error) {
+	snapshotPath := filepath.Join(root, snapshotName(snapshot))
+	data, err := fileSystem.Read(snapshotPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read snapshot %s: %w", snapshotPath, err)
+	}
+	var partNames []string
+	if err := json.Unmarshal(data, &partNames); err != nil {
+		return nil, fmt.Errorf("cannot parse snapshot %s: %w", snapshotPath, err)
+	}
+	var result []uint64
+	for i := range partNames {
+		e, err := parseEpoch(partNames[i])
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse part name %s: %w", partNames[i], err)
+		}
+		result = append(result, e)
+	}
+	return result, nil
 }
 
 // Pool for snapshot reuse.

@@ -203,9 +203,10 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	if len(ind.flushed) < 1 {
 		return
 	}
-	for sidxName, sidxInstance := range tst.sidxMap {
+	allSidx := tst.getAllSidx()
+	for _, sidxInstance := range allSidx {
 		if err := sidxInstance.Flush(); err != nil {
-			tst.l.Warn().Err(err).Str("sidx", sidxName).Msg("sidx flush failed")
+			tst.l.Warn().Err(err).Msg("sidx flush failed")
 			return
 		}
 	}
