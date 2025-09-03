@@ -496,9 +496,10 @@ type evictNode struct {
 }
 
 // isRequestAllowed checks if a request to the given node is allowed based on circuit breaker state.
+// It also handles state transitions from Open to Half-Open when cooldown expires.
 func (p *pub) isRequestAllowed(node string) bool {
-	p.cbMu.RLock()
-	defer p.cbMu.RUnlock()
+	p.cbMu.Lock()
+	defer p.cbMu.Unlock()
 
 	cb, exists := p.cbStates[node]
 	if !exists {
@@ -510,17 +511,22 @@ func (p *pub) isRequestAllowed(node string) bool {
 		return true
 	case StateOpen:
 		// Check if cooldown period has expired
-		return time.Since(cb.openTime) >= 60*time.Second // TODO: make configurable
+		if time.Since(cb.openTime) >= 60*time.Second { // TODO: make configurable
+			// Transition to Half-Open to allow probe requests
+			cb.state = StateHalfOpen
+			p.log.Info().Str("node", node).Msg("circuit breaker transitioned to half-open")
+			return true
+		}
+		return false // Still in cooldown period
 	case StateHalfOpen:
-		// Allow only one probe request in half-open state
-		// This is a simple implementation - in production, we'd need atomic operations
+		// Allow requests in half-open state (probe requests)
 		return true
 	default:
 		return true
 	}
 }
-
 // recordSuccess resets the circuit breaker state to Closed on successful operation.
+// This handles Half-Open -> Closed transitions.
 func (p *pub) recordSuccess(node string) {
 	p.cbMu.Lock()
 	defer p.cbMu.Unlock()
