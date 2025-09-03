@@ -60,6 +60,23 @@ var (
 	}]}`, serviceName)
 )
 
+// CircuitState defines the circuit breaker states.
+type CircuitState int
+
+const (
+	StateClosed   CircuitState = iota // Normal operation
+	StateOpen                         // Reject requests until cooldown expires
+	StateHalfOpen                     // Allow a single probe
+)
+
+// circuitState holds circuit breaker metadata; it does NOT duplicate gRPC clients/conns.
+type circuitState struct {
+	lastFailureTime     time.Time
+	openTime            time.Time
+	state               CircuitState
+	consecutiveFailures int
+}
+
 type client struct {
 	client clusterv1.ServiceClient
 	conn   *grpc.ClientConn
@@ -131,6 +148,8 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	c := clusterv1.NewServiceClient(conn)
 	p.active[name] = &client{conn: conn, client: c, md: md}
 	p.addClient(md)
+	// Initialize or reset circuit breaker state to closed
+	p.recordSuccess(name)
 	p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("new node is healthy, add it to active queue")
 }
 
@@ -279,6 +298,8 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 						p.active[name] = &client{conn: connEvict, client: c, md: md}
 						p.addClient(md)
 						delete(p.evictable, name)
+						// Reset circuit breaker state to closed
+						p.recordSuccess(name)
 						p.log.Info().Str("status", p.dump()).Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
 					}()
 					return
@@ -417,6 +438,8 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 						if !okCur {
 							return
 						}
+						// Record success for circuit breaker
+						p.recordSuccess(nodeName)
 						h.OnAddOrUpdate(nodeCur.md)
 					}()
 					return
@@ -470,4 +493,84 @@ func (p *pub) dump() string {
 type evictNode struct {
 	n *databasev1.Node
 	c chan struct{}
+}
+
+// isRequestAllowed checks if a request to the given node is allowed based on circuit breaker state.
+func (p *pub) isRequestAllowed(node string) bool {
+	p.cbMu.RLock()
+	defer p.cbMu.RUnlock()
+
+	cb, exists := p.cbStates[node]
+	if !exists {
+		return true // No circuit breaker state, allow request
+	}
+
+	switch cb.state {
+	case StateClosed:
+		return true
+	case StateOpen:
+		// Check if cooldown period has expired
+		return time.Since(cb.openTime) >= 60*time.Second // TODO: make configurable
+	case StateHalfOpen:
+		// Allow only one probe request in half-open state
+		// This is a simple implementation - in production, we'd need atomic operations
+		return true
+	default:
+		return true
+	}
+}
+
+// recordSuccess resets the circuit breaker state to Closed on successful operation.
+func (p *pub) recordSuccess(node string) {
+	p.cbMu.Lock()
+	defer p.cbMu.Unlock()
+
+	cb, exists := p.cbStates[node]
+	if !exists {
+		// Initialize circuit breaker state
+		p.cbStates[node] = &circuitState{
+			state:               StateClosed,
+			consecutiveFailures: 0,
+		}
+		return
+	}
+
+	// Reset to closed state
+	cb.state = StateClosed
+	cb.consecutiveFailures = 0
+	cb.lastFailureTime = time.Time{}
+	cb.openTime = time.Time{}
+}
+
+// recordFailure updates the circuit breaker state on failed operation.
+func (p *pub) recordFailure(node string) {
+	p.cbMu.Lock()
+	defer p.cbMu.Unlock()
+
+	cb, exists := p.cbStates[node]
+	if !exists {
+		// Initialize circuit breaker state
+		cb = &circuitState{
+			state:               StateClosed,
+			consecutiveFailures: 1,
+			lastFailureTime:     time.Now(),
+		}
+		p.cbStates[node] = cb
+	} else {
+		cb.consecutiveFailures++
+		cb.lastFailureTime = time.Now()
+	}
+
+	// Check if we should open the circuit
+	threshold := 5 // TODO: make configurable
+	if cb.consecutiveFailures >= threshold && cb.state == StateClosed {
+		cb.state = StateOpen
+		cb.openTime = time.Now()
+		p.log.Warn().Str("node", node).Int("failures", cb.consecutiveFailures).Msg("circuit breaker opened")
+	} else if cb.state == StateHalfOpen {
+		// Failed during half-open, go back to open
+		cb.state = StateOpen
+		cb.openTime = time.Now()
+		p.log.Warn().Str("node", node).Msg("circuit breaker reopened after half-open failure")
+	}
 }

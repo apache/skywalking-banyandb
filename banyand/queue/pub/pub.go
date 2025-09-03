@@ -64,17 +64,19 @@ var (
 type pub struct {
 	schema.UnimplementedOnInitHandler
 	metadata        metadata.Repo
-	handlers        map[bus.Topic]schema.EventHandler
-	log             *logger.Logger
+	writableProbe   map[string]map[string]struct{}
+	cbStates        map[string]*circuitState
 	registered      map[string]*databasev1.Node
 	active          map[string]*client
 	evictable       map[string]evictNode
 	closer          *run.Closer
-	writableProbe   map[string]map[string]struct{}
+	handlers        map[bus.Topic]schema.EventHandler
+	log             *logger.Logger
 	caCertPath      string
 	prefix          string
 	allowedRoles    []databasev1.Role
 	mu              sync.RWMutex
+	cbMu            sync.RWMutex
 	writableProbeMu sync.Mutex
 	tlsEnabled      bool
 }
@@ -290,6 +292,7 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 		allowedRoles:  roles,
 		prefix:        strBuilder.String(),
 		writableProbe: make(map[string]map[string]struct{}),
+		cbStates:      make(map[string]*circuitState),
 	}
 	return p
 }
