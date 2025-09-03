@@ -120,13 +120,13 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	var decoder *encoding.BytesBlockDecoder
 	getDecoder := func() *encoding.BytesBlockDecoder {
 		if decoder == nil {
-			decoder = generateColumnValuesDecoder()
+			decoder = generateTagValuesDecoder()
 		}
 		return decoder
 	}
 	releaseDecoder := func() {
 		if decoder != nil {
-			releaseColumnValuesDecoder(decoder)
+			releaseTagValuesDecoder(decoder)
 			decoder = nil
 		}
 	}
