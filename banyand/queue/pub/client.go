@@ -372,7 +372,8 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 	if !ok {
 		return false, nil
 	}
-	err := p.checkServiceHealth(topic.String(), node.conn)
+	topicStr := topic.String()
+	err := p.checkServiceHealth(topicStr, node.conn)
 	if err == nil {
 		return true, nil
 	}
@@ -380,25 +381,47 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 	if !p.closer.AddRunning() {
 		return false, err
 	}
-	go func() {
+	// Deduplicate concurrent probes for the same node/topic.
+	p.writableProbeMu.Lock()
+	if _, ok := p.writableProbe[n]; !ok {
+		p.writableProbe[n] = make(map[string]struct{})
+	}
+	if _, exists := p.writableProbe[n][topicStr]; exists {
+		p.writableProbeMu.Unlock()
+		return false, err
+	}
+	p.writableProbe[n][topicStr] = struct{}{}
+	p.writableProbeMu.Unlock()
+
+	go func(nodeName, t string) {
 		defer p.closer.Done()
+		defer func() {
+			p.writableProbeMu.Lock()
+			if topics, ok := p.writableProbe[nodeName]; ok {
+				delete(topics, t)
+				if len(topics) == 0 {
+					delete(p.writableProbe, nodeName)
+				}
+			}
+			p.writableProbeMu.Unlock()
+		}()
 		backoff := initBackoff
 		for {
 			select {
 			case <-time.After(backoff):
-				if errInternal := p.checkServiceHealth(topic.String(), node.conn); errInternal != nil {
+				if errInternal := p.checkServiceHealth(t, node.conn); errInternal == nil {
 					func() {
 						p.mu.Lock()
 						defer p.mu.Unlock()
-						node, ok := p.active[n]
-						if !ok {
+						nodeCur, okCur := p.active[nodeName]
+						if !okCur {
 							return
 						}
-						h.OnAddOrUpdate(node.md)
+						h.OnAddOrUpdate(nodeCur.md)
 					}()
 					return
 				}
-				p.log.Warn().Str("topic", topic.String()).Err(err).Str("node", n).Dur("backoff", backoff).Msg("data node can not ingest data")
+				p.log.Warn().Str("topic", t).Err(err).Str("node", nodeName).Dur("backoff", backoff).Msg("data node can not ingest data")
 			case <-p.closer.CloseNotify():
 				return
 			}
@@ -408,7 +431,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 				backoff = maxBackoff
 			}
 		}
-	}()
+	}(n, topicStr)
 	return false, err
 }
 

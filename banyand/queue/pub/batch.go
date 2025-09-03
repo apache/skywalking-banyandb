@@ -147,7 +147,8 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		}
 		bp.f.events = append(bp.f.events, make(chan batchEvent))
 		_ = sendData()
-		go func(s clusterv1.Service_SendClient, deferFn func(), bc chan batchEvent) {
+		nodeName := node
+		go func(s clusterv1.Service_SendClient, deferFn func(), bc chan batchEvent, curNode string) {
 			defer func() {
 				close(bc)
 				deferFn()
@@ -160,7 +161,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			resp, errRecv := s.Recv()
 			if errRecv != nil {
 				if isFailoverError(errRecv) {
-					bc <- batchEvent{n: node, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}
+					bc <- batchEvent{n: curNode, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}
 				}
 				return
 			}
@@ -172,9 +173,9 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			}
 			if isFailoverStatus(resp.Status) {
 				ce := common.NewErrorWithStatus(resp.Status, resp.Error)
-				bc <- batchEvent{n: node, e: ce}
+				bc <- batchEvent{n: curNode, e: ce}
 			}
-		}(stream, deferFn, bp.f.events[len(bp.f.events)-1])
+		}(stream, deferFn, bp.f.events[len(bp.f.events)-1], nodeName)
 	}
 	return nil, err
 }

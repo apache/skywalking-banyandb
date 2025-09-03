@@ -63,18 +63,20 @@ var (
 
 type pub struct {
 	schema.UnimplementedOnInitHandler
-	metadata     metadata.Repo
-	evictable    map[string]evictNode
-	log          *logger.Logger
-	registered   map[string]*databasev1.Node
-	active       map[string]*client
-	handlers     map[bus.Topic]schema.EventHandler
-	closer       *run.Closer
-	caCertPath   string
-	prefix       string
-	allowedRoles []databasev1.Role
-	mu           sync.RWMutex
-	tlsEnabled   bool
+	metadata        metadata.Repo
+	handlers        map[bus.Topic]schema.EventHandler
+	log             *logger.Logger
+	registered      map[string]*databasev1.Node
+	active          map[string]*client
+	evictable       map[string]evictNode
+	closer          *run.Closer
+	writableProbe   map[string]map[string]struct{}
+	caCertPath      string
+	prefix          string
+	allowedRoles    []databasev1.Role
+	mu              sync.RWMutex
+	writableProbeMu sync.Mutex
+	tlsEnabled      bool
 }
 
 func (p *pub) FlagSet() *run.FlagSet {
@@ -279,14 +281,15 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 		}
 	}
 	p := &pub{
-		metadata:     metadata,
-		active:       make(map[string]*client),
-		evictable:    make(map[string]evictNode),
-		registered:   make(map[string]*databasev1.Node),
-		handlers:     make(map[bus.Topic]schema.EventHandler),
-		closer:       run.NewCloser(1),
-		allowedRoles: roles,
-		prefix:       strBuilder.String(),
+		metadata:      metadata,
+		active:        make(map[string]*client),
+		evictable:     make(map[string]evictNode),
+		registered:    make(map[string]*databasev1.Node),
+		handlers:      make(map[bus.Topic]schema.EventHandler),
+		closer:        run.NewCloser(1),
+		allowedRoles:  roles,
+		prefix:        strBuilder.String(),
+		writableProbe: make(map[string]map[string]struct{}),
 	}
 	return p
 }
