@@ -160,10 +160,11 @@ const (
 
 // circuitState holds circuit breaker metadata; it does NOT duplicate gRPC clients/conns.
 type circuitState struct {
-	lastFailureTime     time.Time
-	openTime            time.Time
-	state               CircuitState
-	consecutiveFailures int
+	lastFailureTime       time.Time
+	openTime              time.Time
+	state                 CircuitState
+	consecutiveFailures   int
+	halfOpenProbeInFlight bool
 }
 
 type client struct {
@@ -654,14 +655,21 @@ func (p *pub) isRequestAllowed(node string) bool {
 	case StateOpen:
 		// Check if cooldown period has expired
 		if time.Since(cb.openTime) >= defaultCBResetTimeout {
-			// Transition to Half-Open to allow probe requests
+			// Transition to Half-Open to allow a single probe request
 			cb.state = StateHalfOpen
+			cb.halfOpenProbeInFlight = true // Set token for the probe
 			p.log.Info().Str("node", node).Msg("circuit breaker transitioned to half-open")
 			return true
 		}
 		return false // Still in cooldown period
 	case StateHalfOpen:
-		// Allow requests in half-open state (probe requests)
+		// In half-open state, deny requests if probe is already in flight
+		if cb.halfOpenProbeInFlight {
+			return false // Probe already in progress, deny additional requests
+		}
+		// This case should not normally happen since we set the token on transition,
+		// but handle it defensively by allowing the request and setting the token
+		cb.halfOpenProbeInFlight = true
 		return true
 	default:
 		return true
@@ -689,6 +697,7 @@ func (p *pub) recordSuccess(node string) {
 	cb.consecutiveFailures = 0
 	cb.lastFailureTime = time.Time{}
 	cb.openTime = time.Time{}
+	cb.halfOpenProbeInFlight = false // Clear probe token
 }
 
 // recordFailure updates the circuit breaker state on failed operation.
@@ -720,6 +729,7 @@ func (p *pub) recordFailure(node string) {
 		// Failed during half-open, go back to open
 		cb.state = StateOpen
 		cb.openTime = time.Now()
+		cb.halfOpenProbeInFlight = false // Clear probe token
 		p.log.Warn().Str("node", node).Msg("circuit breaker reopened after half-open failure")
 	}
 }
