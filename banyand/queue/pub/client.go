@@ -39,9 +39,8 @@ const (
 	rpcTimeout = 2 * time.Second
 )
 
-var (
-	// The timeout is set by each RPC.
-	retryPolicy = `{
+// The timeout is set by each RPC.
+var retryPolicy = `{
 	"methodConfig": [
 	  {
 	    "name": [{"service": "banyandb.cluster.v1.Service"}],
@@ -110,7 +109,6 @@ var (
 	    }
 	  }
 	]}`
-)
 
 type client struct {
 	client clusterv1.ServiceClient
