@@ -70,6 +70,13 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			continue
 		}
 		node := m.Node()
+
+		// Check circuit breaker before attempting send
+		if !bp.pub.isRequestAllowed(node) {
+			err = multierr.Append(err, fmt.Errorf("circuit breaker open for node %s", node))
+			continue
+		}
+
 		sendData := func() (success bool) {
 			if stream, ok := bp.streams[node]; ok {
 				defer func() {
@@ -84,12 +91,16 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 					return false
 				default:
 				}
-				errSend := stream.client.Send(r)
+				errSend := bp.retrySend(ctx, stream.client, r, node)
 				if errSend != nil {
 					err = multierr.Append(err, fmt.Errorf("failed to send message to node %s: %w", node, errSend))
+					// Record failure for circuit breaker
+					bp.pub.recordFailure(node)
 					return false
 				}
-				return errSend == nil
+				// Record success for circuit breaker
+				bp.pub.recordSuccess(node)
+				return true
 			}
 			return false
 		}
@@ -254,4 +265,70 @@ func (b *batchFuture) get() map[string]batchEvent {
 
 func isFailoverStatus(s modelv1.Status) bool {
 	return s == modelv1.Status_STATUS_DISK_FULL
+}
+
+// retrySend implements bounded retries for client streaming sends with exponential backoff and jitter.
+func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Service_SendClient, r *clusterv1.SendRequest, node string) error {
+	var lastErr error
+
+	for attempt := 0; attempt <= defaultMaxRetries; attempt++ {
+		// Create per-attempt timeout context
+		attemptCtx, cancel := context.WithTimeout(ctx, defaultPerRequestTimeout)
+
+		// Check if parent context is canceled or stream context is done
+		select {
+		case <-ctx.Done():
+			cancel()
+			return ctx.Err()
+		case <-stream.Context().Done():
+			cancel()
+			return stream.Context().Err()
+		case <-attemptCtx.Done():
+			cancel()
+			if attempt == 0 {
+				// First attempt timed out before we could even try
+				lastErr = attemptCtx.Err()
+				continue
+			}
+		default:
+		}
+
+		// Attempt to send
+		sendErr := stream.Send(r)
+		cancel()
+
+		if sendErr == nil {
+			// Success
+			return nil
+		}
+
+		lastErr = sendErr
+
+		// Check if error is retryable
+		if !isTransientError(sendErr) {
+			// Non-transient error, don't retry
+			return sendErr
+		}
+
+		// If this was the last attempt, don't sleep
+		if attempt >= defaultMaxRetries {
+			break
+		}
+
+		// Calculate backoff with jitter
+		backoff := jitteredBackoff(defaultBackoffBase, defaultBackoffMax, attempt, defaultJitterFactor)
+
+		// Sleep with backoff, but respect context cancellation
+		select {
+		case <-time.After(backoff):
+			// Continue to next attempt
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		}
+	}
+
+	// All retries exhausted
+	return fmt.Errorf("retry exhausted for node %s after %d attempts, last error: %w", node, defaultMaxRetries+1, lastErr)
 }

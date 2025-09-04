@@ -19,11 +19,15 @@ package pub
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
@@ -35,34 +39,119 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-const rpcTimeout = 2 * time.Second
+const (
+	rpcTimeout               = 2 * time.Second
+	defaultJitterFactor      = 0.2
+	defaultMaxRetries        = 3
+	defaultCBThreshold       = 5
+	defaultCBResetTimeout    = 60 * time.Second
+	defaultPerRequestTimeout = 2 * time.Second
+	defaultBackoffBase       = 500 * time.Millisecond
+	defaultBackoffMax        = 30 * time.Second
+)
 
 var (
 	// Retry policy for health check.
-	initBackoff       = time.Second
-	maxBackoff        = 20 * time.Second
-	backoffMultiplier = 2.0
-
-	serviceName = clusterv1.Service_ServiceDesc.ServiceName
+	initBackoff = time.Second
+	maxBackoff  = 20 * time.Second
 
 	// The timeout is set by each RPC.
-	retryPolicy = fmt.Sprintf(`{
-	"methodConfig": [{
-	  "name": [{"service": "%s"}],
-	  "waitForReady": true,
-	  "retryPolicy": {
-	      "MaxAttempts": 4,
-	      "InitialBackoff": ".5s",
-	      "MaxBackoff": "10s",
-	      "BackoffMultiplier": 1.0,
-	      "RetryableStatusCodes": [ "UNAVAILABLE" ]
+	retryPolicy = `{
+	"methodConfig": [
+	  {
+	    "name": [{"service": "banyandb.cluster.v1.Service"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".5s",
+	        "MaxBackoff": "10s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.cluster.v1.ChunkedSyncService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 3,
+	        "InitialBackoff": ".5s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.trace.v1.TraceService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".2s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.stream.v1.StreamService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".2s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.measure.v1.MeasureService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".2s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.property.v1.PropertyService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".2s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
 	  }
-	}]}`, serviceName)
+	]}`
+
+	// Retryable gRPC status codes for streaming send retries.
+	retryableCodes = map[codes.Code]bool{
+		codes.OK:                 false,
+		codes.Canceled:           false,
+		codes.Unknown:            false,
+		codes.InvalidArgument:    false,
+		codes.DeadlineExceeded:   true, // Retryable - operation exceeded deadline
+		codes.NotFound:           false,
+		codes.AlreadyExists:      false,
+		codes.PermissionDenied:   false,
+		codes.ResourceExhausted:  true, // Retryable - server resource limits exceeded
+		codes.FailedPrecondition: false,
+		codes.Aborted:            false,
+		codes.OutOfRange:         false,
+		codes.Unimplemented:      false,
+		codes.Internal:           false,
+		codes.Unavailable:        true, // Retryable - service temporarily unavailable
+		codes.DataLoss:           false,
+		codes.Unauthenticated:    false,
+	}
 )
 
 // CircuitState defines the circuit breaker states.
 type CircuitState int
 
+// CircuitState defines the circuit breaker states.
 const (
 	StateClosed   CircuitState = iota // Normal operation
 	StateOpen                         // Reject requests until cooldown expires
@@ -213,9 +302,10 @@ func (p *pub) OnDelete(md schema.Metadata) {
 		}
 		go func() {
 			defer p.closer.Done()
-			backoff := initBackoff
 			var elapsed time.Duration
+			attempt := 0
 			for {
+				backoff := jitteredBackoff(initBackoff, maxBackoff, attempt, defaultJitterFactor)
 				select {
 				case <-time.After(backoff):
 					if func() bool {
@@ -237,11 +327,7 @@ func (p *pub) OnDelete(md schema.Metadata) {
 				case <-p.closer.CloseNotify():
 					return
 				}
-				if backoff < maxBackoff {
-					backoff *= time.Duration(backoffMultiplier)
-				} else {
-					backoff = maxBackoff
-				}
+				attempt++
 			}
 		}()
 	}
@@ -256,6 +342,68 @@ func (p *pub) removeNodeIfUnhealthy(md schema.Metadata, node *databasev1.Node, c
 	delete(p.active, name)
 	p.deleteClient(md)
 	return true
+}
+
+// secureRandFloat64 generates a cryptographically secure random float64 in [0, 1).
+func secureRandFloat64() float64 {
+	// Generate a random uint64
+	maxVal := big.NewInt(1 << 53) // Use 53 bits for precision similar to math/rand
+	n, err := rand.Int(rand.Reader, maxVal)
+	if err != nil {
+		// Fallback to a reasonable value if crypto/rand fails
+		return 0.5
+	}
+	return float64(n.Uint64()) / float64(1<<53)
+}
+
+// jitteredBackoff calculates backoff duration with jitter to avoid thundering herds.
+// Uses bounded symmetric jitter: backoff * (1 + jitter * (rand() - 0.5) * 2).
+func jitteredBackoff(baseBackoff, maxBackoff time.Duration, attempt int, jitterFactor float64) time.Duration {
+	if jitterFactor < 0 {
+		jitterFactor = 0
+	}
+	if jitterFactor > 1 {
+		jitterFactor = 1
+	}
+
+	// Exponential backoff: base * 2^attempt
+	backoff := baseBackoff
+	for i := 0; i < attempt; i++ {
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+			break
+		}
+	}
+
+	// Apply jitter: backoff * (1 + jitter * (rand() - 0.5) * 2)
+	// This gives us a range of [backoff * (1-jitter), backoff * (1+jitter)]
+	jitterRange := float64(backoff) * jitterFactor
+	randomFloat := secureRandFloat64()
+	randomOffset := (randomFloat - 0.5) * 2 * jitterRange
+
+	jitteredDuration := time.Duration(float64(backoff) + randomOffset)
+	if jitteredDuration < 0 {
+		jitteredDuration = baseBackoff / 10 // Minimum backoff
+	}
+	if jitteredDuration > maxBackoff {
+		jitteredDuration = maxBackoff
+	}
+
+	return jitteredDuration
+}
+
+// isTransientError checks if the error is considered transient and retryable.
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if s, ok := status.FromError(err); ok {
+		return retryableCodes[s.Code()]
+	}
+
+	return false
 }
 
 func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Metadata) bool {
@@ -276,8 +424,9 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 	p.deleteClient(md)
 	go func(p *pub, name string, en evictNode, md schema.Metadata) {
 		defer p.closer.Done()
-		backoff := initBackoff
+		attempt := 0
 		for {
+			backoff := jitteredBackoff(initBackoff, maxBackoff, attempt, defaultJitterFactor)
 			select {
 			case <-time.After(backoff):
 				credOpts, errEvict := p.getClientTransportCredentials()
@@ -314,11 +463,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 			case <-p.closer.CloseNotify():
 				return
 			}
-			if backoff < maxBackoff {
-				backoff *= time.Duration(backoffMultiplier)
-			} else {
-				backoff = maxBackoff
-			}
+			attempt++
 		}
 	}(p, name, p.evictable[name], md)
 	return false
@@ -426,8 +571,9 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 			}
 			p.writableProbeMu.Unlock()
 		}()
-		backoff := initBackoff
+		attempt := 0
 		for {
+			backoff := jitteredBackoff(initBackoff, maxBackoff, attempt, defaultJitterFactor)
 			select {
 			case <-time.After(backoff):
 				if errInternal := p.checkServiceHealth(t, node.conn); errInternal == nil {
@@ -448,11 +594,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 			case <-p.closer.CloseNotify():
 				return
 			}
-			if backoff < maxBackoff {
-				backoff *= time.Duration(backoffMultiplier)
-			} else {
-				backoff = maxBackoff
-			}
+			attempt++
 		}
 	}(n, topicStr)
 	return false, err
@@ -511,7 +653,7 @@ func (p *pub) isRequestAllowed(node string) bool {
 		return true
 	case StateOpen:
 		// Check if cooldown period has expired
-		if time.Since(cb.openTime) >= 60*time.Second { // TODO: make configurable
+		if time.Since(cb.openTime) >= defaultCBResetTimeout {
 			// Transition to Half-Open to allow probe requests
 			cb.state = StateHalfOpen
 			p.log.Info().Str("node", node).Msg("circuit breaker transitioned to half-open")
@@ -525,6 +667,7 @@ func (p *pub) isRequestAllowed(node string) bool {
 		return true
 	}
 }
+
 // recordSuccess resets the circuit breaker state to Closed on successful operation.
 // This handles Half-Open -> Closed transitions.
 func (p *pub) recordSuccess(node string) {
@@ -568,7 +711,7 @@ func (p *pub) recordFailure(node string) {
 	}
 
 	// Check if we should open the circuit
-	threshold := 5 // TODO: make configurable
+	threshold := defaultCBThreshold
 	if cb.consecutiveFailures >= threshold && cb.state == StateClosed {
 		cb.state = StateOpen
 		cb.openTime = time.Now()
