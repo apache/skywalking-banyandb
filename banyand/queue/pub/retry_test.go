@@ -33,8 +33,6 @@ import (
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 )
 
-//go:generate mockgen -source=../../../api/proto/banyandb/cluster/v1/rpc_grpc.pb.go -destination=mock_send_client.go -package=pub
-
 // MockSendClient implements the clusterv1.Service_SendClient interface for testing.
 type MockSendClient struct {
 	ctx           context.Context
