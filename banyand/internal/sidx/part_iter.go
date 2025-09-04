@@ -388,17 +388,17 @@ func (pih *partMergeIterHeap) Pop() interface{} {
 	return v
 }
 
-func generateColumnValuesDecoder() *encoding.BytesBlockDecoder {
-	v := columnValuesDecoderPool.Get()
+func generateTagValuesDecoder() *encoding.BytesBlockDecoder {
+	v := tagValuesDecoderPool.Get()
 	if v == nil {
 		return &encoding.BytesBlockDecoder{}
 	}
 	return v
 }
 
-func releaseColumnValuesDecoder(d *encoding.BytesBlockDecoder) {
+func releaseTagValuesDecoder(d *encoding.BytesBlockDecoder) {
 	d.Reset()
-	columnValuesDecoderPool.Put(d)
+	tagValuesDecoderPool.Put(d)
 }
 
-var columnValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("sidx-columnValuesDecoder")
+var tagValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("sidx-tagValuesDecoder")
