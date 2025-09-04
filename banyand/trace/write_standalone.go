@@ -355,7 +355,6 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddTraces(es.traces)
 			for sidxName, sidxReqs := range es.sidxReqsMap {
 				if len(sidxReqs) > 0 {
 					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
@@ -373,6 +372,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 					w.l.Error().Err(err).Msg("cannot write series index")
 				}
 			}
+			es.tsTable.mustAddTraces(es.traces)
 			releaseTraces(es.traces)
 		}
 		if len(g.segments) > 0 {
