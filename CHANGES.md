@@ -37,7 +37,8 @@ Release Notes.
   - Data ingestion and retrieval.
   - Flush memory data to disk.
   - Merge memory data and disk data.
-- Enhance access log functionality with sampling option
+- Enhance access log functionality with sampling option.
+- Implement a resilient publisher with circuit breaker and retry logic with exponential backoff.
 
 ### Bug Fixes
 

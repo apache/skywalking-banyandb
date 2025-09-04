@@ -222,6 +222,34 @@ func newPub(roles ...databasev1.Role) *pub {
 	return p.(*pub)
 }
 
+// newPubWithNoRetry creates a pub with a retry policy that doesn't retry Unavailable errors.
+func newPubWithNoRetry(roles ...databasev1.Role) *pub {
+	p := New(nil, roles...)
+	p.(*pub).log = logger.GetLogger("queue-client")
+	p.Register(data.TopicStreamWrite, &mockHandler{})
+	p.Register(data.TopicMeasureWrite, &mockHandler{})
+
+	// Override the retry policy to not retry Unavailable errors
+	noRetryPolicy := `{
+		"methodConfig": [
+		  {
+		    "name": [{"service": "banyandb.cluster.v1.Service"}],
+		    "waitForReady": true,
+		    "retryPolicy": {
+		        "MaxAttempts": 2,
+		        "InitialBackoff": ".5s",
+		        "MaxBackoff": "10s",
+		        "BackoffMultiplier": 2.0,
+		        "RetryableStatusCodes": [ "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+		    }
+		  }
+		]}`
+
+	// Store the original retry policy and replace it
+	p.(*pub).retryPolicy = noRetryPolicy
+	return p.(*pub)
+}
+
 func getDataNode(name string, address string) schema.Metadata {
 	return schema.Metadata{
 		TypeMeta: schema.TypeMeta{
