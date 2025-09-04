@@ -94,8 +94,8 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 				errSend := bp.retrySend(ctx, stream.client, r, node)
 				if errSend != nil {
 					err = multierr.Append(err, fmt.Errorf("failed to send message to node %s: %w", node, errSend))
-					// Record failure for circuit breaker
-					bp.pub.recordFailure(node)
+					// Record failure for circuit breaker (only for transient/internal errors)
+					bp.pub.recordFailure(node, errSend)
 					return false
 				}
 				// Record success for circuit breaker

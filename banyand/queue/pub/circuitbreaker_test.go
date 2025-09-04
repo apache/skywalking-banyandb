@@ -24,11 +24,20 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const testNodeName = "test-node"
+
+var (
+	// Test errors for circuit breaker testing.
+	errTransient = status.Error(codes.Unavailable, "service unavailable")
+	errInternal  = status.Error(codes.Internal, "internal server error")
+	errNonRetry  = status.Error(codes.InvalidArgument, "invalid argument")
+)
 
 func TestCircuitBreakerStateTransitions(t *testing.T) {
 	tests := []struct {
@@ -44,11 +53,11 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 				p.recordSuccess(testNodeName)
 			},
 			actions: []func(*pub, string){
-				func(p *pub, node string) { p.recordFailure(node) },
-				func(p *pub, node string) { p.recordFailure(node) },
-				func(p *pub, node string) { p.recordFailure(node) },
-				func(p *pub, node string) { p.recordFailure(node) },
-				func(p *pub, node string) { p.recordFailure(node) },
+				func(p *pub, node string) { p.recordFailure(node, errTransient) },
+				func(p *pub, node string) { p.recordFailure(node, errTransient) },
+				func(p *pub, node string) { p.recordFailure(node, errTransient) },
+				func(p *pub, node string) { p.recordFailure(node, errTransient) },
+				func(p *pub, node string) { p.recordFailure(node, errTransient) },
 			},
 			expectedState:  StateOpen,
 			allowsRequests: false,
@@ -59,9 +68,9 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 				p.recordSuccess(testNodeName)
 			},
 			actions: []func(*pub, string){
-				func(p *pub, node string) { p.recordFailure(node) },
-				func(p *pub, node string) { p.recordFailure(node) },
-				func(p *pub, node string) { p.recordFailure(node) },
+				func(p *pub, node string) { p.recordFailure(node, errTransient) },
+				func(p *pub, node string) { p.recordFailure(node, errTransient) },
+				func(p *pub, node string) { p.recordFailure(node, errTransient) },
 			},
 			expectedState:  StateClosed,
 			allowsRequests: true,
@@ -72,7 +81,7 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 				p.recordSuccess(testNodeName)
 				// Trip the circuit breaker
 				for i := 0; i < defaultCBThreshold; i++ {
-					p.recordFailure(testNodeName)
+					p.recordFailure(testNodeName, errTransient)
 				}
 				// Simulate cooldown period has passed
 				p.cbMu.Lock()
@@ -90,7 +99,7 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 				p.recordSuccess(testNodeName)
 				// Trip the circuit breaker
 				for i := 0; i < defaultCBThreshold; i++ {
-					p.recordFailure(testNodeName)
+					p.recordFailure(testNodeName, errTransient)
 				}
 				// Set to half-open state
 				p.cbMu.Lock()
@@ -110,7 +119,7 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 				p.recordSuccess(testNodeName)
 				// Trip the circuit breaker
 				for i := 0; i < defaultCBThreshold; i++ {
-					p.recordFailure(testNodeName)
+					p.recordFailure(testNodeName, errTransient)
 				}
 				// Set to half-open state
 				p.cbMu.Lock()
@@ -119,7 +128,7 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 				p.cbMu.Unlock()
 			},
 			actions: []func(*pub, string){
-				func(p *pub, node string) { p.recordFailure(node) },
+				func(p *pub, node string) { p.recordFailure(node, errTransient) },
 			},
 			expectedState:  StateOpen,
 			allowsRequests: false,
@@ -189,7 +198,7 @@ func TestCircuitBreakerConcurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < numOperations; j++ {
-				p.recordFailure(node)
+				p.recordFailure(node, errTransient)
 				p.isRequestAllowed(node)
 			}
 		}()
@@ -222,12 +231,12 @@ func TestCircuitBreakerMultipleNodes(t *testing.T) {
 
 	// Trip circuit breaker for node1 only
 	for i := 0; i < defaultCBThreshold; i++ {
-		p.recordFailure("node1")
+		p.recordFailure("node1", errTransient)
 	}
 
 	// Add some failures to node2 but below threshold
 	for i := 0; i < defaultCBThreshold-1; i++ {
-		p.recordFailure("node2")
+		p.recordFailure("node2", errTransient)
 	}
 
 	// Keep node3 healthy
@@ -269,7 +278,7 @@ func TestCircuitBreakerRecoveryAfterCooldown(t *testing.T) {
 
 	// Trip circuit breaker
 	for i := 0; i < defaultCBThreshold; i++ {
-		p.recordFailure(node)
+		p.recordFailure(node, errTransient)
 	}
 
 	// Verify circuit is open
@@ -338,7 +347,7 @@ func TestCircuitBreakerFailureThresholdEdgeCase(t *testing.T) {
 
 	// Add failures just below threshold
 	for i := 0; i < defaultCBThreshold-1; i++ {
-		p.recordFailure(node)
+		p.recordFailure(node, errTransient)
 	}
 
 	// Circuit should still be closed
@@ -349,7 +358,7 @@ func TestCircuitBreakerFailureThresholdEdgeCase(t *testing.T) {
 	p.cbMu.RUnlock()
 
 	// One more failure should open the circuit
-	p.recordFailure(node)
+	p.recordFailure(node, errTransient)
 
 	p.cbMu.RLock()
 	assert.Equal(t, StateOpen, cb.state, "circuit should be open after reaching threshold")
@@ -369,7 +378,7 @@ func TestCircuitBreakerSingleProbeEnforcement(t *testing.T) {
 	// Initialize and trip circuit breaker
 	p.recordSuccess(node)
 	for i := 0; i < defaultCBThreshold; i++ {
-		p.recordFailure(node)
+		p.recordFailure(node, errTransient)
 	}
 
 	// Verify circuit is open
@@ -412,7 +421,7 @@ func TestCircuitBreakerSingleProbeSuccess(t *testing.T) {
 	// Setup half-open state with probe in flight
 	p.recordSuccess(node)
 	for i := 0; i < defaultCBThreshold; i++ {
-		p.recordFailure(node)
+		p.recordFailure(node, errTransient)
 	}
 
 	p.cbMu.Lock()
@@ -454,7 +463,7 @@ func TestCircuitBreakerSingleProbeFailure(t *testing.T) {
 	// Setup half-open state with probe in flight
 	p.recordSuccess(node)
 	for i := 0; i < defaultCBThreshold; i++ {
-		p.recordFailure(node)
+		p.recordFailure(node, errTransient)
 	}
 
 	p.cbMu.Lock()
@@ -472,7 +481,7 @@ func TestCircuitBreakerSingleProbeFailure(t *testing.T) {
 	p.cbMu.RUnlock()
 
 	// Record failure (probe fails)
-	p.recordFailure(node)
+	p.recordFailure(node, errTransient)
 
 	// Verify circuit is back to open and probe token is cleared
 	p.cbMu.RLock()
@@ -496,7 +505,7 @@ func TestCircuitBreakerConcurrentProbeAttempts(t *testing.T) {
 	// Setup open state ready for half-open transition
 	p.recordSuccess(node)
 	for i := 0; i < defaultCBThreshold; i++ {
-		p.recordFailure(node)
+		p.recordFailure(node, errTransient)
 	}
 
 	p.cbMu.Lock()
@@ -555,4 +564,69 @@ func TestCircuitBreakerProbeTokenInitialization(t *testing.T) {
 	cb := p.cbStates[node]
 	assert.False(t, cb.halfOpenProbeInFlight, "new circuit breaker should have probe token cleared")
 	p.cbMu.RUnlock()
+}
+
+func TestCircuitBreakerErrorFiltering(t *testing.T) {
+	p := &pub{
+		cbStates: make(map[string]*circuitState),
+		cbMu:     sync.RWMutex{},
+		log:      logger.GetLogger("test"),
+	}
+
+	node := testNodeName
+
+	// Verify initial state is closed
+	assert.True(t, p.isRequestAllowed(node))
+	p.cbMu.Lock()
+	_, exists := p.cbStates[node]
+	p.cbMu.Unlock()
+	assert.False(t, exists)
+
+	// Try to trip circuit with non-retryable error
+	for i := 0; i < defaultCBThreshold*2; i++ {
+		p.recordFailure(node, errNonRetry)
+	}
+
+	// Circuit should still be closed (non-retryable errors don't count)
+	assert.True(t, p.isRequestAllowed(node))
+	p.cbMu.Lock()
+	cb, exists := p.cbStates[node]
+	p.cbMu.Unlock()
+	// State should not exist or be closed with 0 failures
+	if exists {
+		assert.Equal(t, StateClosed, cb.state)
+		assert.Equal(t, 0, cb.consecutiveFailures)
+	}
+
+	// Now try with transient errors - these should count
+	for i := 0; i < defaultCBThreshold; i++ {
+		p.recordFailure(node, errTransient)
+	}
+
+	// Circuit should now be open
+	assert.False(t, p.isRequestAllowed(node))
+	p.cbMu.Lock()
+	cb, exists = p.cbStates[node]
+	p.cbMu.Unlock()
+	assert.True(t, exists)
+	assert.Equal(t, StateOpen, cb.state)
+	assert.Equal(t, defaultCBThreshold, cb.consecutiveFailures)
+
+	// Reset for internal error test
+	p.recordSuccess(node)
+	assert.True(t, p.isRequestAllowed(node))
+
+	// Try with internal errors - these should also count
+	for i := 0; i < defaultCBThreshold; i++ {
+		p.recordFailure(node, errInternal)
+	}
+
+	// Circuit should be open again
+	assert.False(t, p.isRequestAllowed(node))
+	p.cbMu.Lock()
+	cb, exists = p.cbStates[node]
+	p.cbMu.Unlock()
+	assert.True(t, exists)
+	assert.Equal(t, StateOpen, cb.state)
+	assert.Equal(t, defaultCBThreshold, cb.consecutiveFailures)
 }

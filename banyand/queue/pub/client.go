@@ -141,7 +141,7 @@ var (
 		codes.Aborted:            false,
 		codes.OutOfRange:         false,
 		codes.Unimplemented:      false,
-		codes.Internal:           false,
+		codes.Internal:           true, // Retryable - internal server error should participate in circuit breaker
 		codes.Unavailable:        true, // Retryable - service temporarily unavailable
 		codes.DataLoss:           false,
 		codes.Unauthenticated:    false,
@@ -402,6 +402,19 @@ func isTransientError(err error) bool {
 
 	if s, ok := status.FromError(err); ok {
 		return retryableCodes[s.Code()]
+	}
+
+	return false
+}
+
+// isInternalError checks if the error is an internal server error.
+func isInternalError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if s, ok := status.FromError(err); ok {
+		return s.Code() == codes.Internal
 	}
 
 	return false
@@ -701,7 +714,12 @@ func (p *pub) recordSuccess(node string) {
 }
 
 // recordFailure updates the circuit breaker state on failed operation.
-func (p *pub) recordFailure(node string) {
+// Only records failures for transient/internal errors that should count toward opening the circuit.
+func (p *pub) recordFailure(node string, err error) {
+	// Only record failure if the error is transient or internal
+	if !isTransientError(err) && !isInternalError(err) {
+		return
+	}
 	p.cbMu.Lock()
 	defer p.cbMu.Unlock()
 
