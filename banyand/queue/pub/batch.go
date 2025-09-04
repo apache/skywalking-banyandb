@@ -172,6 +172,8 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			resp, errRecv := s.Recv()
 			if errRecv != nil {
 				if isFailoverError(errRecv) {
+					// Record circuit breaker failure before creating failover event
+					bp.pub.recordFailure(curNode, errRecv)
 					bc <- batchEvent{n: curNode, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}
 				}
 				return
@@ -184,6 +186,8 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			}
 			if isFailoverStatus(resp.Status) {
 				ce := common.NewErrorWithStatus(resp.Status, resp.Error)
+				// Record circuit breaker failure before creating failover event
+				bp.pub.recordFailure(curNode, ce)
 				bc <- batchEvent{n: curNode, e: ce}
 			}
 		}(stream, deferFn, bp.f.events[len(bp.f.events)-1], nodeName)
@@ -206,6 +210,8 @@ func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 		go func() {
 			defer bp.pub.closer.Done()
 			for n, e := range batchEvents {
+				// Record circuit breaker failure before failover
+				bp.pub.recordFailure(n, e.e)
 				if bp.topic == nil {
 					bp.pub.failover(n, e.e, data.TopicCommon)
 					continue

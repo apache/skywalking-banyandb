@@ -20,6 +20,7 @@ package pub
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -400,8 +401,21 @@ func isTransientError(err error) bool {
 		return false
 	}
 
+	// Handle gRPC status errors
 	if s, ok := status.FromError(err); ok {
 		return retryableCodes[s.Code()]
+	}
+
+	// Handle common.Error types
+	var ce *common.Error
+	if errors.As(err, &ce) {
+		// Map common status to gRPC codes for consistency
+		switch ce.Status() {
+		case modelv1.Status_STATUS_INTERNAL_ERROR:
+			return retryableCodes[codes.Internal]
+		default:
+			return false
+		}
 	}
 
 	return false
@@ -413,8 +427,15 @@ func isInternalError(err error) bool {
 		return false
 	}
 
+	// Handle gRPC status errors
 	if s, ok := status.FromError(err); ok {
 		return s.Code() == codes.Internal
+	}
+
+	// Handle common.Error types
+	var ce *common.Error
+	if errors.As(err, &ce) {
+		return ce.Status() == modelv1.Status_STATUS_INTERNAL_ERROR
 	}
 
 	return false

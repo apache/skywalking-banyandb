@@ -27,6 +27,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -619,6 +621,55 @@ func TestCircuitBreakerErrorFiltering(t *testing.T) {
 	// Try with internal errors - these should also count
 	for i := 0; i < defaultCBThreshold; i++ {
 		p.recordFailure(node, errInternal)
+	}
+
+	// Circuit should be open again
+	assert.False(t, p.isRequestAllowed(node))
+	p.cbMu.Lock()
+	cb, exists = p.cbStates[node]
+	p.cbMu.Unlock()
+	assert.True(t, exists)
+	assert.Equal(t, StateOpen, cb.state)
+	assert.Equal(t, defaultCBThreshold, cb.consecutiveFailures)
+}
+
+func TestCircuitBreakerFailoverErrors(t *testing.T) {
+	p := &pub{
+		cbStates: make(map[string]*circuitState),
+		cbMu:     sync.RWMutex{},
+		log:      logger.GetLogger("test"),
+	}
+
+	node := testNodeName
+
+	// Test failover errors from Recv() - using codes.Unavailable which is a failover error
+	failoverErr := status.Error(codes.Unavailable, "service unavailable")
+
+	// Verify initial state is closed
+	assert.True(t, p.isRequestAllowed(node))
+
+	// Simulate failover errors that should increment circuit breaker
+	for i := 0; i < defaultCBThreshold; i++ {
+		p.recordFailure(node, failoverErr)
+	}
+
+	// Circuit should be open after failover errors
+	assert.False(t, p.isRequestAllowed(node))
+	p.cbMu.Lock()
+	cb, exists := p.cbStates[node]
+	p.cbMu.Unlock()
+	assert.True(t, exists)
+	assert.Equal(t, StateOpen, cb.state)
+	assert.Equal(t, defaultCBThreshold, cb.consecutiveFailures)
+
+	// Reset and test with common.Error (simulating Close() method errors)
+	p.recordSuccess(node)
+	assert.True(t, p.isRequestAllowed(node))
+
+	// Test with common.Error types that would come from Close() method
+	internalErr := common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, "internal error")
+	for i := 0; i < defaultCBThreshold; i++ {
+		p.recordFailure(node, internalErr)
 	}
 
 	// Circuit should be open again
