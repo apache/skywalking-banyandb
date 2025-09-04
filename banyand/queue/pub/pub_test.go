@@ -273,7 +273,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			ff, err := p.Broadcast(15*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
+			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(ff).Should(gomega.HaveLen(2))
 			for i := range ff {
