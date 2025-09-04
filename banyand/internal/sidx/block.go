@@ -404,13 +404,12 @@ func fastTagAppend(bi, b *blockPointer, offset int) error {
 	if len(bi.tags) != len(b.tags) {
 		return fmt.Errorf("unexpected number of tags: got %d; want %d", len(b.tags), len(bi.tags))
 	}
-	for i := range bi.tags {
-		if bi.tags[i].name != b.tags[i].name {
-			return fmt.Errorf("unexpected tag name for tag %q: got %q; want %q",
-				bi.tags[i].name, b.tags[i].name, bi.tags[i].name)
+	for _, t := range bi.tags {
+		if _, exists := b.tags[t.name]; !exists {
+			return fmt.Errorf("unexpected tag name for tag %q", t.name)
 		}
-		assertIdxAndOffset(b.tags[i].name, len(b.tags[i].values), b.idx, offset)
-		bi.tags[i].values = append(bi.tags[i].values, b.tags[i].values[b.idx:offset]...)
+		assertIdxAndOffset(t.name, len(b.tags[t.name].values), b.idx, offset)
+		bi.tags[t.name].values = append(bi.tags[t.name].values, b.tags[t.name].values[b.idx:offset]...)
 	}
 	return nil
 }
@@ -418,6 +417,9 @@ func fastTagAppend(bi, b *blockPointer, offset int) error {
 func fullTagAppend(bi, b *blockPointer, offset int) {
 	existDataSize := len(bi.userKeys)
 
+	if bi.tags == nil {
+		bi.tags = make(map[string]*tagData)
+	}
 	if len(bi.tags) == 0 {
 		for _, t := range b.tags {
 			newTagData := tagData{name: t.name, valueType: t.valueType}
@@ -452,10 +454,10 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 	}
 
 	emptySize := offset - b.idx
-	for i := range bi.tags {
-		if _, exists := sourceTags[bi.tags[i].name]; !exists {
+	for _, t := range bi.tags {
+		if _, exists := sourceTags[t.name]; !exists {
 			for j := 0; j < emptySize; j++ {
-				bi.tags[i].values = append(bi.tags[i].values, nil)
+				bi.tags[t.name].values = append(bi.tags[t.name].values, nil)
 			}
 		}
 	}
