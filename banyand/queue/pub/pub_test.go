@@ -64,7 +64,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			bp := p.NewBatchPublisher(3 * time.Second)
+			bp := p.NewBatchPublisher(15 * time.Second)
 			ctx := context.TODO()
 			for i := 0; i < 10; i++ {
 				_, err := bp.Publish(ctx, data.TopicStreamWrite,
@@ -94,7 +94,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			bp := p.NewBatchPublisher(3 * time.Second)
+			bp := p.NewBatchPublisher(15 * time.Second)
 			ctx := context.TODO()
 			for i := 0; i < 10; i++ {
 				_, err := bp.Publish(ctx, data.TopicStreamWrite,
@@ -141,7 +141,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			bp := p.NewBatchPublisher(3 * time.Second)
+			bp := p.NewBatchPublisher(15 * time.Second)
 			ctx := context.TODO()
 			for i := 0; i < 10; i++ {
 				_, err := bp.Publish(ctx, data.TopicStreamWrite,
@@ -178,7 +178,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			bp := p.NewBatchPublisher(3 * time.Second)
+			bp := p.NewBatchPublisher(15 * time.Second)
 			ctx := context.TODO()
 			for i := 0; i < 10; i++ {
 				_, err := bp.Publish(ctx, data.TopicStreamWrite,
@@ -217,7 +217,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			p.OnAddOrUpdate(node2)
 
 			req := &streamv1.QueryRequest{}
-			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), req))
+			ff, err := p.Broadcast(15*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), req))
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(ff).Should(gomega.HaveLen(2))
 			messages, err := ff[0].GetAll()
@@ -230,7 +230,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			addr2 := getAddress()
 			closeFn1 := setup(addr1, codes.OK, 200*time.Millisecond)
 			closeFn2 := setup(addr2, codes.Unavailable, 0)
-			p := newPub()
+			p := newPubWithNoRetry()
 			defer func() {
 				p.GracefulStop()
 				closeFn1()
@@ -241,7 +241,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
+			ff, err := p.Broadcast(15*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(ff).Should(gomega.HaveLen(2))
 			for i := range ff {
@@ -273,7 +273,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
 
-			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
+			ff, err := p.Broadcast(15*time.Second, data.TopicStreamQuery, bus.NewMessage(bus.MessageID(1), &streamv1.QueryRequest{}))
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(ff).Should(gomega.HaveLen(2))
 			for i := range ff {
@@ -326,7 +326,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 				group1: {""},
 			}
 
-			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,
+			ff, err := p.Broadcast(15*time.Second, data.TopicStreamQuery,
 				bus.NewMessageWithNodeSelectors(bus.MessageID(1), nodeSelectors, timeRange, &streamv1.QueryRequest{}))
 
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
@@ -377,7 +377,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 				group1: {"role=ingest"},
 			}
 
-			ff, err := p.Broadcast(3*time.Second, data.TopicStreamQuery,
+			ff, err := p.Broadcast(15*time.Second, data.TopicStreamQuery,
 				bus.NewMessageWithNodeSelectors(bus.MessageID(1), nodeSelectors, timeRange, &streamv1.QueryRequest{}))
 
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())

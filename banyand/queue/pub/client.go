@@ -225,7 +225,7 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 		p.log.Error().Err(err).Msg("failed to load client TLS credentials")
 		return
 	}
-	conn, err := grpc.NewClient(address, append(credOpts, grpc.WithDefaultServiceConfig(retryPolicy))...)
+	conn, err := grpc.NewClient(address, append(credOpts, grpc.WithDefaultServiceConfig(p.retryPolicy))...)
 	if err != nil {
 		p.log.Error().Err(err).Msg("failed to connect to grpc server")
 		return
@@ -469,7 +469,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 					p.log.Error().Err(errEvict).Msg("failed to load client TLS credentials (evict)")
 					return
 				}
-				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, append(credOpts, grpc.WithDefaultServiceConfig(retryPolicy))...)
+				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, append(credOpts, grpc.WithDefaultServiceConfig(p.retryPolicy))...)
 				if errEvict == nil && p.healthCheck(en.n.String(), connEvict) {
 					func() {
 						p.mu.Lock()
