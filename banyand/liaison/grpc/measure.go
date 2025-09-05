@@ -44,6 +44,7 @@ import (
 type measureService struct {
 	measurev1.UnimplementedMeasureServiceServer
 	ingestionAccessLog accesslog.Log
+	queryAccessLog     accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
 	*discoveryService
@@ -60,6 +61,14 @@ func (ms *measureService) setLogger(log *logger.Logger) {
 func (ms *measureService) activeIngestionAccessLog(root string, sampled bool) (err error) {
 	if ms.ingestionAccessLog, err = accesslog.
 		NewFileLog(root, "measure-ingest-%s", 10*time.Minute, ms.log, sampled); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ms *measureService) activeQueryAccessLog(root string, sampled bool) (err error) {
+	if ms.queryAccessLog, err = accesslog.
+		NewFileLog(root, "measure-query-%s", 10*time.Minute, ms.log, sampled); err != nil {
 		return err
 	}
 	return nil
@@ -277,6 +286,11 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 			ms.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "measure", "query")
 		}
 	}()
+	if ms.queryAccessLog != nil {
+		if errAccessLog := ms.queryAccessLog.Write(req); errAccessLog != nil {
+			ms.l.Error().Err(errAccessLog).Msg("query access log error")
+		}
+	}
 	if err = timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
@@ -317,6 +331,11 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 }
 
 func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNRequest) (resp *measurev1.TopNResponse, err error) {
+	if ms.queryAccessLog != nil {
+		if errAccessLog := ms.queryAccessLog.Write(topNRequest); errAccessLog != nil {
+			ms.l.Error().Err(errAccessLog).Msg("query access log error")
+		}
+	}
 	if err = timestamp.CheckTimeRange(topNRequest.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", topNRequest.GetTimeRange(), err)
 	}
