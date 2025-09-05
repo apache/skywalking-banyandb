@@ -195,6 +195,9 @@ func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte
 			Type:  index.SeriesMatcherTypeExact,
 		})
 	}
+	if len(seriesMatchers) == 0 {
+		return nil, nil
+	}
 	iq, err := s.store.BuildQuery(seriesMatchers, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build property query failure: %w", err)
