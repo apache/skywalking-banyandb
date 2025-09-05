@@ -39,6 +39,7 @@ Release Notes.
   - Merge memory data and disk data.
 - Enhance access log functionality with sampling option.
 - Implement a resilient publisher with circuit breaker and retry logic with exponential backoff.
+- Optimize gRPC message size limits: increase server max receive message size to 16MB and client max receive message size to 32MB for better handling of large time-series data blocks.
 
 ### Bug Fixes
 
