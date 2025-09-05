@@ -20,7 +20,10 @@ package sidx
 import (
 	"container/heap"
 	"context"
+	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -29,24 +32,30 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
+const maxBlockLength = 8 * 1024
+
 // sidx implements the SIDX interface with introduction channels for async operations.
 type sidx struct {
+	fileSystem                 fs.FileSystem
 	snapshot                   *snapshot
 	introductions              chan *introduction
 	flushCh                    chan *flusherIntroduction
 	mergeCh                    chan *mergerIntroduction
 	loopCloser                 *run.Closer
-	gc                         *gc
 	l                          *logger.Logger
 	pm                         protector.Memory
+	root                       string
+	gc                         garbageCleaner
 	totalIntroduceLoopStarted  atomic.Int64
 	totalIntroduceLoopFinished atomic.Int64
 	totalQueries               atomic.Int64
@@ -55,7 +64,7 @@ type sidx struct {
 }
 
 // NewSIDX creates a new SIDX instance with introduction channels.
-func NewSIDX(opts *Options) (SIDX, error) {
+func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 	if opts == nil {
 		opts = NewDefaultOptions()
 	}
@@ -65,26 +74,31 @@ func NewSIDX(opts *Options) (SIDX, error) {
 	}
 
 	s := &sidx{
+		fileSystem:    fileSystem,
 		introductions: make(chan *introduction),
 		flushCh:       make(chan *flusherIntroduction),
 		mergeCh:       make(chan *mergerIntroduction),
 		loopCloser:    run.NewCloser(1),
 		l:             logger.GetLogger().Named("sidx"),
 		pm:            opts.Memory,
+		root:          opts.Path,
 	}
 
 	// Initialize garbage collector
-	s.gc = newGC(opts)
+	s.gc.init(s)
 
-	// Start introducer loop
+	// Initialize sidx
+	epoch := s.init()
+
+	// Start introducer loop with loaded epoch
 	watcherCh := make(watcher.Channel, 10)
-	go s.introducerLoop(s.flushCh, s.mergeCh, watcherCh, 0)
+	go s.introducerLoop(s.flushCh, s.mergeCh, watcherCh, epoch)
 
 	return s, nil
 }
 
 // Write implements SIDX interface.
-func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
+func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, partID uint64) error {
 	// Validate requests
 	for _, req := range reqs {
 		if err := req.Validate(); err != nil {
@@ -110,6 +124,7 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 	// Create introduction
 	intro := generateIntroduction()
 	intro.memPart = mp
+	intro.memPart.partMetadata.ID = partID
 	intro.applied = make(chan struct{})
 
 	// Send to introducer loop
@@ -124,42 +139,6 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 		releaseMemPart(mp)
 		return ctx.Err()
 	}
-}
-
-// extractKeyRange extracts min/max key range from QueryRequest.
-func extractKeyRange(req QueryRequest) (int64, int64) {
-	minKey := int64(math.MinInt64)
-	maxKey := int64(math.MaxInt64)
-
-	if req.MinKey != nil {
-		minKey = *req.MinKey
-	}
-	if req.MaxKey != nil {
-		maxKey = *req.MaxKey
-	}
-
-	return minKey, maxKey
-}
-
-// extractOrdering extracts ordering direction from QueryRequest.
-func extractOrdering(req QueryRequest) bool {
-	if req.Order == nil {
-		return true // Default ascending
-	}
-	return req.Order.Sort != modelv1.Sort_SORT_DESC
-}
-
-// selectPartsForQuery selects relevant parts from snapshot based on key range.
-func selectPartsForQuery(snap *snapshot, minKey, maxKey int64) []*part {
-	var selectedParts []*part
-
-	for _, pw := range snap.parts {
-		if pw.isActive() && pw.overlapsKeyRange(minKey, maxKey) {
-			selectedParts = append(selectedParts, pw.p)
-		}
-	}
-
-	return selectedParts
 }
 
 // Query implements SIDX interface.
@@ -243,6 +222,42 @@ func (s *sidx) Query(ctx context.Context, req QueryRequest) (*QueryResponse, err
 	}
 
 	return response, nil
+}
+
+// extractKeyRange extracts min/max key range from QueryRequest.
+func extractKeyRange(req QueryRequest) (int64, int64) {
+	minKey := int64(math.MinInt64)
+	maxKey := int64(math.MaxInt64)
+
+	if req.MinKey != nil {
+		minKey = *req.MinKey
+	}
+	if req.MaxKey != nil {
+		maxKey = *req.MaxKey
+	}
+
+	return minKey, maxKey
+}
+
+// extractOrdering extracts ordering direction from QueryRequest.
+func extractOrdering(req QueryRequest) bool {
+	if req.Order == nil {
+		return true // Default ascending
+	}
+	return req.Order.Sort != modelv1.Sort_SORT_DESC
+}
+
+// selectPartsForQuery selects relevant parts from snapshot based on key range.
+func selectPartsForQuery(snap *snapshot, minKey, maxKey int64) []*part {
+	var selectedParts []*part
+
+	for _, pw := range snap.parts {
+		if pw.isActive() && pw.overlapsKeyRange(minKey, maxKey) {
+			selectedParts = append(selectedParts, pw.p)
+		}
+	}
+
+	return selectedParts
 }
 
 // executeBlockScannerQuery coordinates the worker pool with block scanner following tsResult pattern.
@@ -392,17 +407,21 @@ func (s *sidx) Flush() error {
 
 	// Create flush introduction
 	flushIntro := generateFlusherIntroduction()
+	defer releaseFlusherIntroduction(flushIntro)
 	flushIntro.applied = make(chan struct{})
 
-	// Select memory parts to flush (simplified logic)
+	// Select memory parts to flush
 	for _, pw := range snap.parts {
-		if pw.isMemPart() && pw.isActive() {
-			flushIntro.flushed[pw.ID()] = pw.p
+		if !pw.isMemPart() || !pw.isActive() {
+			continue
 		}
+		partPath := partPath(s.root, pw.ID())
+		pw.mp.mustFlush(s.fileSystem, partPath)
+		p := mustOpenPart(partPath, s.fileSystem)
+		flushIntro.flushed[p.partMetadata.ID] = p
 	}
 
 	if len(flushIntro.flushed) == 0 {
-		releaseFlusherIntroduction(flushIntro)
 		return nil
 	}
 
@@ -411,54 +430,6 @@ func (s *sidx) Flush() error {
 
 	// Wait for flush to complete
 	<-flushIntro.applied
-	releaseFlusherIntroduction(flushIntro)
-
-	return nil
-}
-
-// Merge implements Merger interface.
-func (s *sidx) Merge() error {
-	// Get current snapshot
-	snap := s.currentSnapshot()
-	if snap == nil {
-		return nil
-	}
-	defer snap.decRef()
-
-	// Create merge introduction
-	mergeIntro := generateMergerIntroduction()
-	mergeIntro.applied = make(chan struct{})
-
-	// Select parts to merge (simplified logic - merge first 2 parts)
-	var partsToMerge []*partWrapper
-	for _, pw := range snap.parts {
-		if pw.isActive() && !pw.isMemPart() {
-			partsToMerge = append(partsToMerge, pw)
-			if len(partsToMerge) >= 2 {
-				break
-			}
-		}
-	}
-
-	if len(partsToMerge) < 2 {
-		releaseMergerIntroduction(mergeIntro)
-		return nil
-	}
-
-	// Mark parts for merging
-	for _, pw := range partsToMerge {
-		mergeIntro.merged[pw.ID()] = struct{}{}
-	}
-
-	// Create new merged part (simplified - would actually merge the parts)
-	mergeIntro.newPart = partsToMerge[0].p
-
-	// Send to introducer loop
-	s.mergeCh <- mergeIntro
-
-	// Wait for merge to complete
-	<-mergeIntro.applied
-	releaseMergerIntroduction(mergeIntro)
 
 	return nil
 }
@@ -494,9 +465,33 @@ func (s *sidx) currentSnapshot() *snapshot {
 	return nil
 }
 
-// decRef decrements the snapshot reference count (helper for snapshot interface).
-func (s *snapshot) decRef() {
-	s.release()
+// persistSnapshot persists the snapshot to disk.
+func (s *sidx) persistSnapshot(snapshot *snapshot) {
+	var partNames []string
+	for i := range snapshot.parts {
+		partNames = append(partNames, partName(snapshot.parts[i].ID()))
+	}
+	s.mustWriteSnapshot(snapshot.epoch, partNames)
+	s.gc.registerSnapshot(snapshot)
+}
+
+func (s *sidx) mustWriteSnapshot(snapshot uint64, partNames []string) {
+	data, err := json.Marshal(partNames)
+	if err != nil {
+		logger.Panicf("cannot marshal partNames to JSON: %s", err)
+	}
+	snapshotPath := filepath.Join(s.root, snapshotName(snapshot))
+	lf, err := s.fileSystem.CreateLockFile(snapshotPath, storage.FilePerm)
+	if err != nil {
+		logger.Panicf("cannot create lock file %s: %s", snapshotPath, err)
+	}
+	n, err := lf.Write(data)
+	if err != nil {
+		logger.Panicf("cannot write snapshot %s: %s", snapshotPath, err)
+	}
+	if n != len(data) {
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", snapshotPath, n, len(data))
+	}
 }
 
 // Helper methods for metrics.
@@ -506,31 +501,6 @@ func (s *sidx) incTotalIntroduceLoopStarted(_ string) {
 
 func (s *sidx) incTotalIntroduceLoopFinished(_ string) {
 	s.totalIntroduceLoopFinished.Add(1)
-}
-
-// persistSnapshot persists the snapshot to disk (placeholder).
-func (s *sidx) persistSnapshot(_ *snapshot) {
-	// TODO: Implement snapshot persistence
-}
-
-// Lock/Unlock methods for introducer loop.
-func (s *sidx) Lock() {
-	s.mu.Lock()
-}
-
-func (s *sidx) Unlock() {
-	s.mu.Unlock()
-}
-
-// gc represents garbage collector (placeholder).
-type gc struct{}
-
-func newGC(_ *Options) *gc {
-	return &gc{}
-}
-
-func (g *gc) clean() {
-	// TODO: Implement garbage collection
 }
 
 // blockCursor represents a cursor for iterating through a loaded block, similar to query_by_ts.go.
@@ -688,6 +658,11 @@ func (bch *blockCursorHeap) merge(limit int) *QueryResponse {
 		SIDs: make([]common.SeriesID, 0),
 	}
 
+	// Initialize unique data tracker if limit is specified
+	if limit > 0 {
+		result.InitUniqueTracker(limit)
+	}
+
 	for bch.Len() > 0 {
 		topBC := bch.bcc[0]
 		if topBC.idx < 0 || topBC.idx >= len(topBC.userKeys) {
@@ -697,7 +672,8 @@ func (bch *blockCursorHeap) merge(limit int) *QueryResponse {
 
 		// Try to copy the element (returns false if filtered out by key range)
 		if topBC.copyTo(result) {
-			if limit > 0 && result.Len() >= limit {
+			// Check unique Data element limit after copying
+			if !result.ShouldAddData(result.Data[len(result.Data)-1]) {
 				break
 			}
 		}
@@ -759,4 +735,107 @@ func releaseBlockCursor(bc *blockCursor) {
 	bc.seriesID = 0
 	bc.idx = 0
 	blockCursorPool.Put(bc)
+}
+
+func (s *sidx) init() uint64 {
+	if _, err := os.Stat(s.root); os.IsNotExist(err) {
+		s.l.Debug().Str("path", s.root).Msg("sidx directory does not exist")
+		return 0
+	}
+
+	entries := s.fileSystem.ReadDir(s.root)
+	if len(entries) == 0 {
+		s.l.Debug().Str("path", s.root).Msg("no existing sidx data found")
+		return 0
+	}
+
+	var loadedParts []uint64
+	var loadedSnapshots []uint64
+	var needToDelete []string
+
+	for i := range entries {
+		if entries[i].IsDir() {
+			p, err := parseEpoch(entries[i].Name())
+			if err != nil {
+				s.l.Info().Err(err).Str("name", entries[i].Name()).Msg("cannot parse part directory name, skipping")
+				needToDelete = append(needToDelete, entries[i].Name())
+				continue
+			}
+			loadedParts = append(loadedParts, p)
+			continue
+		}
+
+		if filepath.Ext(entries[i].Name()) != snapshotSuffix {
+			continue
+		}
+		snapshot, err := parseSnapshot(entries[i].Name())
+		if err != nil {
+			s.l.Info().Err(err).Str("name", entries[i].Name()).Msg("cannot parse snapshot file name, skipping")
+			needToDelete = append(needToDelete, entries[i].Name())
+			continue
+		}
+		loadedSnapshots = append(loadedSnapshots, snapshot)
+	}
+
+	for i := range needToDelete {
+		s.l.Info().Str("path", filepath.Join(s.root, needToDelete[i])).Msg("deleting invalid directory or file")
+		s.fileSystem.MustRMAll(filepath.Join(s.root, needToDelete[i]))
+	}
+
+	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
+		s.l.Debug().Msg("no valid parts or snapshots found")
+		return 0
+	}
+
+	sort.Slice(loadedSnapshots, func(i, j int) bool {
+		return loadedSnapshots[i] > loadedSnapshots[j]
+	})
+
+	latestEpoch := loadedSnapshots[0]
+	s.loadSnapshot(latestEpoch, loadedParts)
+
+	s.l.Info().Uint64("epoch", latestEpoch).Int("parts", len(loadedParts)).Msg("loaded existing sidx data")
+	return latestEpoch
+}
+
+func (s *sidx) loadSnapshot(epoch uint64, loadedParts []uint64) {
+	partIDs := mustReadSnapshot(s.fileSystem, s.root, epoch)
+	snp := newSnapshot(nil, epoch)
+	needToPersist := false
+	for _, id := range loadedParts {
+		var find bool
+		for j := range partIDs {
+			if id == partIDs[j] {
+				find = true
+				break
+			}
+		}
+		if !find {
+			s.gc.removePart(id)
+			continue
+		}
+		err := validatePartMetadata(s.fileSystem, partPath(s.root, id))
+		if err != nil {
+			s.l.Info().Err(err).Uint64("id", id).Msg("cannot validate part metadata. skip and delete it")
+			s.gc.removePart(id)
+			needToPersist = true
+			continue
+		}
+		partPath := partPath(s.root, id)
+		part := mustOpenPart(partPath, s.fileSystem)
+		part.partMetadata.ID = id
+		pw := newPartWrapper(nil, part)
+		snp.addPart(pw)
+	}
+	s.gc.registerSnapshot(snp)
+	s.gc.clean()
+	if snp.getPartCount() < 1 {
+		snp.release()
+		return
+	}
+	snp.acquire()
+	s.snapshot = snp
+	if needToPersist {
+		s.persistSnapshot(snp)
+	}
 }

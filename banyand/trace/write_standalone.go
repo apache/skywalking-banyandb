@@ -224,7 +224,6 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 	tracesInTable.traces.tags = append(tracesInTable.traces.tags, tags)
 
 	sidxTags := make([]sidx.Tag, 0, len(tags))
-	// TODO: set Indexed
 	for _, tag := range tags {
 		sidxTags = append(sidxTags, sidx.Tag{
 			Name:      tag.tag,
@@ -241,6 +240,9 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 			continue
 		}
 		tv := tagMap[tagName]
+		if tv == nil {
+			continue
+		}
 		if tv.valueType != pbv1.ValueTypeInt64 && tv.valueType != pbv1.ValueTypeTimestamp {
 			return fmt.Errorf("unsupported tag value type: %s", tv.tag)
 		}
@@ -274,9 +276,24 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 			return fmt.Errorf("cannot marshal series: %w", err)
 		}
 
+		// Filter sidxTags to remove tags that are in indexRule.Tags
+		filteredSidxTags := make([]sidx.Tag, 0, len(sidxTags))
+		for _, sidxTag := range sidxTags {
+			shouldInclude := true
+			for _, ruleTagName := range indexRule.Tags {
+				if sidxTag.Name == ruleTagName {
+					shouldInclude = false
+					break
+				}
+			}
+			if shouldInclude {
+				filteredSidxTags = append(filteredSidxTags, sidxTag)
+			}
+		}
+
 		writeReq := sidx.WriteRequest{
 			Data:     []byte(traceID),
-			Tags:     sidxTags,
+			Tags:     filteredSidxTags,
 			SeriesID: series.ID,
 			Key:      key,
 		}
@@ -338,7 +355,6 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddTraces(es.traces)
 			for sidxName, sidxReqs := range es.sidxReqsMap {
 				if len(sidxReqs) > 0 {
 					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
@@ -346,7 +362,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
 						continue
 					}
-					if err := sidxInstance.Write(ctx, sidxReqs); err != nil {
+					if err := sidxInstance.Write(ctx, sidxReqs, es.tsTable.curPartID); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
 					}
 				}
@@ -356,6 +372,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 					w.l.Error().Err(err).Msg("cannot write series index")
 				}
 			}
+			es.tsTable.mustAddTraces(es.traces)
 			releaseTraces(es.traces)
 		}
 		if len(g.segments) > 0 {

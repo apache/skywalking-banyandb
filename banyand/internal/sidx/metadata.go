@@ -21,10 +21,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"sort"
 
+	"github.com/pkg/errors"
+
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
@@ -42,6 +48,19 @@ type partMetadata struct {
 
 	// Identity
 	ID uint64 `json:"id"` // Unique part identifier
+}
+
+func validatePartMetadata(fileSystem fs.FileSystem, partPath string) error {
+	metadataPath := filepath.Join(partPath, manifestFilename)
+	metadata, err := fileSystem.Read(metadataPath)
+	if err != nil {
+		return errors.WithMessage(err, "cannot read metadata.json")
+	}
+	var pm partMetadata
+	if err := json.Unmarshal(metadata, &pm); err != nil {
+		return errors.WithMessage(err, "cannot parse metadata.json")
+	}
+	return nil
 }
 
 // blockMetadata contains metadata for a block within a part.
@@ -418,4 +437,12 @@ func (bm *blockMetadata) less(other *blockMetadata) bool {
 		return bm.minKey < other.minKey
 	}
 	return bm.seriesID < other.seriesID
+}
+
+func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath string) {
+	manifestData, err := pm.marshal()
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", partPath).Msg("failed to marshal part metadata")
+	}
+	fs.MustFlush(fileSystem, manifestData, filepath.Join(partPath, manifestFilename), storage.FilePerm)
 }

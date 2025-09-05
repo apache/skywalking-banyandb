@@ -31,24 +31,21 @@ func TestTagExportedFields(t *testing.T) {
 		Name:      "test-tag",
 		Value:     []byte("test-value"),
 		ValueType: pbv1.ValueTypeStr,
-		Indexed:   true,
 	}
 
 	// Test that exported fields are accessible
 	assert.Equal(t, "test-tag", tag.Name)
 	assert.Equal(t, []byte("test-value"), tag.Value)
 	assert.Equal(t, pbv1.ValueTypeStr, tag.ValueType)
-	assert.Equal(t, true, tag.Indexed)
 }
 
 func TestNewTag(t *testing.T) {
 	// Test the NewTag constructor function
-	tag := NewTag("service", []byte("order-service"), pbv1.ValueTypeStr, true)
+	tag := NewTag("service", []byte("order-service"), pbv1.ValueTypeStr)
 
 	assert.Equal(t, "service", tag.Name)
 	assert.Equal(t, []byte("order-service"), tag.Value)
 	assert.Equal(t, pbv1.ValueTypeStr, tag.ValueType)
-	assert.Equal(t, true, tag.Indexed)
 }
 
 func TestTagReset(t *testing.T) {
@@ -56,7 +53,6 @@ func TestTagReset(t *testing.T) {
 		Name:      "test-tag",
 		Value:     []byte("test-value"),
 		ValueType: pbv1.ValueTypeStr,
-		Indexed:   true,
 	}
 
 	tag.Reset()
@@ -64,7 +60,6 @@ func TestTagReset(t *testing.T) {
 	assert.Equal(t, "", tag.Name)
 	assert.Nil(t, tag.Value)
 	assert.Equal(t, pbv1.ValueTypeUnknown, tag.ValueType)
-	assert.Equal(t, false, tag.Indexed)
 }
 
 func TestTagSize(t *testing.T) {
@@ -72,7 +67,6 @@ func TestTagSize(t *testing.T) {
 		Name:      "test",
 		Value:     []byte("value"),
 		ValueType: pbv1.ValueTypeStr,
-		Indexed:   true,
 	}
 
 	// Size should be len(name) + len(value) + 1 (for valueType)
@@ -85,7 +79,6 @@ func TestTagCopy(t *testing.T) {
 		Name:      "original",
 		Value:     []byte("original-value"),
 		ValueType: pbv1.ValueTypeStr,
-		Indexed:   true,
 	}
 
 	copied := original.Copy()
@@ -94,7 +87,6 @@ func TestTagCopy(t *testing.T) {
 	assert.Equal(t, original.Name, copied.Name)
 	assert.Equal(t, original.Value, copied.Value)
 	assert.Equal(t, original.ValueType, copied.ValueType)
-	assert.Equal(t, original.Indexed, copied.Indexed)
 
 	// Test that modifying original doesn't affect copy
 	original.Name = "modified"
@@ -110,8 +102,8 @@ func TestTagInWriteRequest(t *testing.T) {
 		Key:      456,
 		Data:     []byte("test-data"),
 		Tags: []Tag{
-			{Name: "service", Value: []byte("order-service"), ValueType: pbv1.ValueTypeStr, Indexed: true},
-			{Name: "environment", Value: []byte("prod"), ValueType: pbv1.ValueTypeStr, Indexed: false},
+			{Name: "service", Value: []byte("order-service"), ValueType: pbv1.ValueTypeStr},
+			{Name: "environment", Value: []byte("prod"), ValueType: pbv1.ValueTypeStr},
 		},
 	}
 

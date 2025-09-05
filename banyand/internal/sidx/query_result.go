@@ -189,7 +189,6 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 
 	td.name = tagName
 	td.valueType = tm.valueType
-	td.indexed = tm.indexed
 
 	// Set min/max for int64 tags
 	if tm.valueType == pbv1.ValueTypeInt64 {
@@ -197,13 +196,11 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 		td.max = tm.max
 	}
 
-	// Create bloom filter for indexed tags if needed
-	if tm.indexed {
-		td.filter = generateBloomFilter(count)
-		for _, value := range td.values {
-			if value != nil {
-				td.filter.Add(value)
-			}
+	// Create bloom filter for indexed tags
+	td.filter = generateBloomFilter(count)
+	for _, value := range td.values {
+		if value != nil {
+			td.filter.Add(value)
 		}
 	}
 
@@ -216,13 +213,12 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 	elemCount := len(block.userKeys)
 
 	// Initialize unique Data tracking if needed
-	if qr.request.MaxElementSize > 0 && result.uniqueDataMap == nil {
-		result.uniqueDataMap = make(map[string]struct{})
-		// Count existing unique data elements in result if any
+	if qr.request.MaxElementSize > 0 && result.uniqueTracker == nil {
+		result.InitUniqueTracker(qr.request.MaxElementSize)
+		// Initialize tracker with existing data
 		for _, data := range result.Data {
-			result.uniqueDataMap[string(data)] = struct{}{}
+			result.uniqueTracker.ShouldAdd(data)
 		}
-		result.uniqueDataCount = len(result.uniqueDataMap)
 	}
 
 	for i := 0; i < elemCount; i++ {
@@ -235,17 +231,9 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 			continue
 		}
 
-		// Check unique Data element limit from request (only if positive)
-		if qr.request.MaxElementSize > 0 {
-			dataStr := string(block.data[i])
-			if _, exists := result.uniqueDataMap[dataStr]; !exists {
-				// New unique data element
-				if result.uniqueDataCount >= qr.request.MaxElementSize {
-					break
-				}
-				result.uniqueDataMap[dataStr] = struct{}{}
-				result.uniqueDataCount++
-			}
+		// Check unique Data element limit using QueryResponse's tracker
+		if !result.ShouldAddData(block.data[i]) {
+			break
 		}
 
 		// Copy parallel arrays
@@ -422,16 +410,14 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 		SIDs: make([]common.SeriesID, 0, limit),
 	}
 
+	// Initialize unique data tracker if limit is specified
+	if limit > 0 {
+		result.InitUniqueTracker(limit)
+	}
+
 	step := -1
 	if qrh.asc {
 		step = 1
-	}
-
-	// Track unique Data elements for limit enforcement
-	var uniqueDataCount int
-	var uniqueDataMap map[string]struct{}
-	if limit > 0 {
-		uniqueDataMap = make(map[string]struct{})
 	}
 
 	for qrh.Len() > 0 {
@@ -440,16 +426,8 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 		resp := topCursor.response
 
 		// Check unique Data element limit before adding
-		if limit > 0 {
-			dataStr := string(resp.Data[idx])
-			if _, exists := uniqueDataMap[dataStr]; !exists {
-				// New unique data element
-				if uniqueDataCount >= limit {
-					break
-				}
-				uniqueDataMap[dataStr] = struct{}{}
-				uniqueDataCount++
-			}
+		if !result.ShouldAddData(resp.Data[idx]) {
+			break
 		}
 
 		// Copy element from top cursor

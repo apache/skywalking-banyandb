@@ -26,9 +26,11 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type partIter struct {
@@ -258,3 +260,145 @@ func (pi *partIter) findBlock() bool {
 	pi.bms = nil
 	return false
 }
+
+type partMergeIter struct {
+	seqReaders           seqReaders
+	err                  error
+	primaryBlockMetadata []primaryBlockMetadata
+	compressedPrimaryBuf []byte
+	primaryBuf           []byte
+	block                blockPointer
+	partID               uint64
+	primaryMetadataIdx   int
+}
+
+func (pmi *partMergeIter) reset() {
+	pmi.err = nil
+	pmi.seqReaders.reset()
+	pmi.primaryBlockMetadata = nil
+	pmi.primaryMetadataIdx = 0
+	pmi.partID = 0
+	pmi.primaryBuf = pmi.primaryBuf[:0]
+	pmi.compressedPrimaryBuf = pmi.compressedPrimaryBuf[:0]
+	pmi.block.reset()
+}
+
+func (pmi *partMergeIter) mustInitFromPart(p *part) {
+	pmi.reset()
+	pmi.seqReaders.init(p)
+	pmi.primaryBlockMetadata = p.primaryBlockMetadata
+	pmi.partID = p.partMetadata.ID
+}
+
+func (pmi *partMergeIter) error() error {
+	if pmi.err == nil || errors.Is(pmi.err, io.EOF) {
+		return nil
+	}
+	return pmi.err
+}
+
+func (pmi *partMergeIter) nextBlockMetadata() bool {
+	if pmi.err != nil {
+		return false
+	}
+	pmi.block.reset()
+	if len(pmi.primaryBuf) == 0 {
+		if err := pmi.loadPrimaryBuf(); err != nil {
+			pmi.err = err
+			return false
+		}
+	}
+	if err := pmi.loadBlockMetadata(); err != nil {
+		pmi.err = err
+		return false
+	}
+	return true
+}
+
+func (pmi *partMergeIter) loadPrimaryBuf() error {
+	if pmi.primaryMetadataIdx >= len(pmi.primaryBlockMetadata) {
+		return io.EOF
+	}
+	pm := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx]
+	pmi.compressedPrimaryBuf = bytes.ResizeOver(pmi.compressedPrimaryBuf, int(pm.size))
+	pmi.seqReaders.primary.mustReadFull(pmi.compressedPrimaryBuf)
+	var err error
+	pmi.primaryBuf, err = zstd.Decompress(pmi.primaryBuf[:0], pmi.compressedPrimaryBuf)
+	if err != nil {
+		return fmt.Errorf("cannot decompress primary block: %w", err)
+	}
+	pmi.primaryMetadataIdx++
+	return nil
+}
+
+func (pmi *partMergeIter) loadBlockMetadata() error {
+	pmi.block.reset()
+	var err error
+	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf)
+	if err != nil {
+		pm := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1]
+		return fmt.Errorf("can't read block metadata from primary at %d: %w", pm.offset, err)
+	}
+	return nil
+}
+
+func (pmi *partMergeIter) mustLoadBlockData(decoder *encoding.BytesBlockDecoder, block *blockPointer) {
+	block.block.mustSeqReadFrom(decoder, &pmi.seqReaders, pmi.block.bm)
+}
+
+func generatePartMergeIter() *partMergeIter {
+	v := pmiPool.Get()
+	if v == nil {
+		return &partMergeIter{}
+	}
+	return v
+}
+
+func releasePartMergeIter(pmi *partMergeIter) {
+	pmi.reset()
+	pmiPool.Put(pmi)
+}
+
+var pmiPool = pool.Register[*partMergeIter]("sidx-partMergeIter")
+
+type partMergeIterHeap []*partMergeIter
+
+func (pih *partMergeIterHeap) Len() int {
+	return len(*pih)
+}
+
+func (pih *partMergeIterHeap) Less(i, j int) bool {
+	x := *pih
+	return x[i].block.bm.less(&x[j].block.bm)
+}
+
+func (pih *partMergeIterHeap) Swap(i, j int) {
+	x := *pih
+	x[i], x[j] = x[j], x[i]
+}
+
+func (pih *partMergeIterHeap) Push(x interface{}) {
+	*pih = append(*pih, x.(*partMergeIter))
+}
+
+func (pih *partMergeIterHeap) Pop() interface{} {
+	a := *pih
+	v := a[len(a)-1]
+	*pih = a[:len(a)-1]
+	return v
+}
+
+func generateTagValuesDecoder() *encoding.BytesBlockDecoder {
+	v := tagValuesDecoderPool.Get()
+	if v == nil {
+		return &encoding.BytesBlockDecoder{}
+	}
+	return v
+}
+
+func releaseTagValuesDecoder(d *encoding.BytesBlockDecoder) {
+	d.Reset()
+	tagValuesDecoderPool.Put(d)
+}
+
+var tagValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("sidx-tagValuesDecoder")

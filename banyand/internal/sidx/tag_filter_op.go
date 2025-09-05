@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -176,18 +175,11 @@ func (tfo *tagFilterOp) readTagMetadata(tagName string, tagBlock dataBlock) (*ta
 		return nil, fmt.Errorf("no metadata reader for tag %s", tagName)
 	}
 
-	// Read compressed metadata
-	compressedData := make([]byte, tagBlock.size)
-	fs.MustReadData(metaReader, int64(tagBlock.offset), compressedData)
-
-	// Decompress data
-	decompressedData, err := zstd.Decompress(nil, compressedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decompress tag metadata: %w", err)
-	}
+	data := make([]byte, tagBlock.size)
+	fs.MustReadData(metaReader, int64(tagBlock.offset), data)
 
 	// Unmarshal tag metadata
-	tm, err := unmarshalTagMetadata(decompressedData)
+	tm, err := unmarshalTagMetadata(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tag metadata: %w", err)
 	}

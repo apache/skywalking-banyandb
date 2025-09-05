@@ -146,13 +146,11 @@ func TestBlockScanner_QuotaExceeded(t *testing.T) {
 								name:      "service",
 								value:     []byte("test-service"),
 								valueType: pbv1.ValueTypeStr,
-								indexed:   true,
 							},
 							{
 								name:      "instance",
 								value:     []byte("instance-" + string(rune('0'+i))),
 								valueType: pbv1.ValueTypeStr,
-								indexed:   true,
 							},
 						},
 					})

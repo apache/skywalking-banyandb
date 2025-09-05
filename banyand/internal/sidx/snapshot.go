@@ -18,12 +18,20 @@
 package sidx
 
 import (
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"sync/atomic"
 
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+)
+
+const (
+	snapshotSuffix = ".snp"
 )
 
 // snapshot represents an immutable collection of parts at a specific epoch.
@@ -88,6 +96,11 @@ func (s *snapshot) acquire() bool {
 			return true
 		}
 	}
+}
+
+// decRef decrements the snapshot reference count (helper for snapshot interface).
+func (s *snapshot) decRef() {
+	s.release()
 }
 
 // release decrements the snapshot reference count.
@@ -275,6 +288,45 @@ func (s *snapshot) String() string {
 	activeCount := s.getPartCount()
 	return fmt.Sprintf("snapshot{epoch=%d, parts=%d/%d, ref=%d}",
 		s.epoch, activeCount, len(s.parts), s.refCount())
+}
+
+func snapshotName(snapshot uint64) string {
+	return fmt.Sprintf("%016x%s", snapshot, snapshotSuffix)
+}
+
+func parseSnapshot(name string) (uint64, error) {
+	if filepath.Ext(name) != snapshotSuffix {
+		return 0, fmt.Errorf("invalid snapshot file ext")
+	}
+	if len(name) < 16 {
+		return 0, fmt.Errorf("invalid snapshot file name")
+	}
+	return parseEpoch(name[:16])
+}
+
+func parseEpoch(epochStr string) (uint64, error) {
+	return strconv.ParseUint(epochStr, 16, 64)
+}
+
+func mustReadSnapshot(fileSystem fs.FileSystem, root string, snapshot uint64) []uint64 {
+	snapshotPath := filepath.Join(root, snapshotName(snapshot))
+	data, err := fileSystem.Read(snapshotPath)
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", snapshotPath).Msg("cannot read snapshot")
+	}
+	var partNames []string
+	if err := json.Unmarshal(data, &partNames); err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", snapshotPath).Msg("cannot parse snapshot")
+	}
+	var result []uint64
+	for i := range partNames {
+		e, err := parseEpoch(partNames[i])
+		if err != nil {
+			logger.GetLogger().Panic().Err(err).Str("name", partNames[i]).Msg("cannot parse part name")
+		}
+		result = append(result, e)
+	}
+	return result
 }
 
 // Pool for snapshot reuse.
