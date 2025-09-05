@@ -108,10 +108,12 @@ type server struct {
 	accessLogRootPath        string
 	certFile                 string
 	accessLogRecorders       []accessLogRecorder
+	queryAccessLogRecorders  []queryAccessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	port                     uint32
 	tls                      bool
 	enableIngestionAccessLog bool
+	enableQueryAccessLog     bool
 	accessLogSampled         bool
 	healthAuthEnabled        bool
 }
@@ -177,7 +179,8 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		schemaRepo:   schemaRegistry,
 		authReloader: auth.InitAuthReloader(),
 	}
-	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC}
+	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
+	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 
 	return s
 }
@@ -210,6 +213,14 @@ func (s *server) PreRun(_ context.Context) error {
 	if s.enableIngestionAccessLog {
 		for _, alr := range s.accessLogRecorders {
 			if err := alr.activeIngestionAccessLog(s.accessLogRootPath, s.accessLogSampled); err != nil {
+				return err
+			}
+		}
+	}
+
+	if s.enableQueryAccessLog {
+		for _, qalr := range s.queryAccessLogRecorders {
+			if err := qalr.activeQueryAccessLog(s.accessLogRootPath, s.accessLogSampled); err != nil {
 				return err
 			}
 		}
@@ -269,6 +280,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
+	fs.BoolVar(&s.enableQueryAccessLog, "enable-query-access-log", false, "enable query access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	fs.BoolVar(&s.accessLogSampled, "access-log-sampled", false, "if true, requests may be dropped when the channel is full; if false, requests are never dropped")
 	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "timeout for writing stream among liaison nodes")
@@ -399,6 +411,11 @@ func (s *server) GracefulStop() {
 				_ = alr.Close()
 			}
 		}
+		if s.enableQueryAccessLog {
+			for _, qalr := range s.queryAccessLogRecorders {
+				_ = qalr.Close()
+			}
+		}
 		close(stopped)
 	}()
 
@@ -415,5 +432,10 @@ func (s *server) GracefulStop() {
 
 type accessLogRecorder interface {
 	activeIngestionAccessLog(root string, sampled bool) error
+	Close() error
+}
+
+type queryAccessLogRecorder interface {
+	activeQueryAccessLog(root string, sampled bool) error
 	Close() error
 }

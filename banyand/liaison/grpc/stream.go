@@ -44,6 +44,7 @@ import (
 type streamService struct {
 	streamv1.UnimplementedStreamServiceServer
 	ingestionAccessLog accesslog.Log
+	queryAccessLog     accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
 	*discoveryService
@@ -60,6 +61,14 @@ func (s *streamService) setLogger(log *logger.Logger) {
 func (s *streamService) activeIngestionAccessLog(root string, sampled bool) (err error) {
 	if s.ingestionAccessLog, err = accesslog.
 		NewFileLog(root, "stream-ingest-%s", 10*time.Minute, s.log, sampled); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *streamService) activeQueryAccessLog(root string, sampled bool) (err error) {
+	if s.queryAccessLog, err = accesslog.
+		NewFileLog(root, "stream-query-%s", 10*time.Minute, s.log, sampled); err != nil {
 		return err
 	}
 	return nil
@@ -255,6 +264,11 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 			s.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "stream", "query")
 		}
 	}()
+	if s.queryAccessLog != nil {
+		if errAccessLog := s.queryAccessLog.Write(req); errAccessLog != nil {
+			s.l.Error().Err(errAccessLog).Msg("query access log error")
+		}
+	}
 	timeRange := req.GetTimeRange()
 	if timeRange == nil {
 		req.TimeRange = timestamp.DefaultTimeRange
