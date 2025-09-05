@@ -37,6 +37,8 @@ import (
 
 const (
 	rpcTimeout = 2 * time.Second
+	// maxReceiveMessageSize sets the maximum message size the client can receive (32MB).
+	maxReceiveMessageSize = 32 << 20
 )
 
 // The timeout is set by each RPC.
@@ -167,7 +169,9 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 		p.log.Error().Err(err).Msg("failed to load client TLS credentials")
 		return
 	}
-	conn, err := grpc.NewClient(address, append(credOpts, grpc.WithDefaultServiceConfig(p.retryPolicy))...)
+	conn, err := grpc.NewClient(address, append(credOpts,
+		grpc.WithDefaultServiceConfig(p.retryPolicy),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxReceiveMessageSize)))...)
 	if err != nil {
 		p.log.Error().Err(err).Msg("failed to connect to grpc server")
 		return
@@ -316,7 +320,9 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 					p.log.Error().Err(errEvict).Msg("failed to load client TLS credentials (evict)")
 					return
 				}
-				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, append(credOpts, grpc.WithDefaultServiceConfig(p.retryPolicy))...)
+				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, append(credOpts,
+					grpc.WithDefaultServiceConfig(p.retryPolicy),
+					grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxReceiveMessageSize)))...)
 				if errEvict == nil && p.healthCheck(en.n.String(), connEvict) {
 					func() {
 						p.mu.Lock()
