@@ -40,6 +40,7 @@ Release Notes.
 - Enhance access log functionality with sampling option.
 - Implement a resilient publisher with circuit breaker and retry logic with exponential backoff.
 - Optimize gRPC message size limits: increase server max receive message size to 16MB and client max receive message size to 32MB for better handling of large time-series data blocks.
+- Add query access log support for stream, measure, trace, and property services to capture and log all query requests for monitoring and debugging purposes.
 
 ### Bug Fixes
 
