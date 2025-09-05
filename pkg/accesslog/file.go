@@ -19,6 +19,7 @@ package accesslog
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -40,7 +41,7 @@ const (
 
 type fileLog struct {
 	file          *os.File // Single file for all goroutines
-	validRequests chan proto.Message
+	validRequests chan interface{}
 	closer        *run.Closer
 	sampled       bool
 }
@@ -49,12 +50,12 @@ type fileLog struct {
 // sampled: if true (default), requests may be dropped when the channel is full.
 // If false, requests are never dropped but use buffered channel to prevent blocking.
 func NewFileLog(root, template string, interval time.Duration, log *logger.Logger, sampled bool) (Log, error) {
-	var validRequests chan proto.Message
+	var validRequests chan interface{}
 	if sampled {
-		validRequests = make(chan proto.Message, 100)
+		validRequests = make(chan interface{}, 100)
 	} else {
 		// For non-sampled mode, use buffered channel to prevent blocking on writes
-		validRequests = make(chan proto.Message, 1000) // Buffer to handle burst writes
+		validRequests = make(chan interface{}, 1000) // Buffer to handle burst writes
 	}
 
 	f := &fileLog{
@@ -92,6 +93,27 @@ func (f *fileLog) Write(req proto.Message) error {
 	return nil
 }
 
+func (f *fileLog) WriteQuery(service string, startTime time.Time, duration time.Duration, req proto.Message, err error) error {
+	if f == nil {
+		return nil
+	}
+
+	queryEntry := NewQueryLogEntry(service, startTime, duration, req, err)
+
+	if f.sampled {
+		// Sampled mode: may drop requests if channel is full
+		select {
+		case f.validRequests <- queryEntry:
+		default:
+			return fmt.Errorf("access log is full")
+		}
+	} else {
+		// Non-sampled mode: never drop requests, block until buffer has space
+		f.validRequests <- queryEntry
+	}
+	return nil
+}
+
 func (f *fileLog) Close() error {
 	if f == nil {
 		return nil
@@ -118,7 +140,7 @@ func startConsumer(f *fileLog, root, template string, interval time.Duration, lo
 	flushTicker := time.NewTicker(DefaultFlushInterval)
 	defer flushTicker.Stop()
 
-	batch := make([]proto.Message, 0, DefaultBatchSize)
+	batch := make([]interface{}, 0, DefaultBatchSize)
 
 	for {
 		select {
@@ -151,14 +173,29 @@ func startConsumer(f *fileLog, root, template string, interval time.Duration, lo
 }
 
 // flushBatch marshals and writes a batch of requests to the specified file.
-func flushBatch(file *os.File, batch []proto.Message, log *logger.Logger) {
+func flushBatch(file *os.File, batch []interface{}, log *logger.Logger) {
 	if file == nil || len(batch) == 0 {
 		return
 	}
 
 	var buffer bytes.Buffer
 	for _, req := range batch {
-		data, err := protojson.Marshal(req)
+		var data []byte
+		var err error
+
+		// Handle different types of messages
+		switch v := req.(type) {
+		case *QueryLogEntry:
+			// For query log entries, use regular JSON marshaling
+			data, err = json.Marshal(v)
+		case proto.Message:
+			// For protobuf messages, use protojson marshaling
+			data, err = protojson.Marshal(v)
+		default:
+			// For unknown types, try JSON marshaling
+			data, err = json.Marshal(v)
+		}
+
 		if err != nil {
 			log.Error().Err(err).Msg("failed to marshal request")
 			continue

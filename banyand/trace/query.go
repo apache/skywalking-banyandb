@@ -52,6 +52,9 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	if tqo.TimeRange == nil {
 		return nil, errors.New("invalid query options: timeRange are required")
 	}
+	if len(tqo.TraceIDs) == 0 && tqo.Order == nil {
+		return nil, errors.New("invalid query options: either traceIDs or order must be specified")
+	}
 	var tsdb storage.TSDB[*tsTable, option]
 	var err error
 	db := t.tsdb.Load()
