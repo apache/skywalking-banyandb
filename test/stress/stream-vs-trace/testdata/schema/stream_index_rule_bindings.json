@@ -1,0 +1,23 @@
+[
+  {
+    "metadata": {
+      "name": "segment_stream_binding",
+      "group": "stream_performance_test"
+    },
+    "rules": [
+      "latency_index",
+      "trace_id_index",
+      "span_id_index",
+      "parent_span_id_index",
+      "operation_name_index",
+      "component_index",
+      "is_error_index"
+    ],
+    "subject": {
+      "name": "segment_stream",
+      "catalog": "CATALOG_STREAM"
+    },
+    "begin_at": "2024-01-01T00:00:00Z",
+    "expire_at": "2030-01-01T00:00:00Z"
+  }
+]

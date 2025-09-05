@@ -1,0 +1,36 @@
+[
+  {
+    "metadata": {
+      "name": "stream_performance_test"
+    },
+    "catalog": "CATALOG_STREAM",
+    "resource_opts": {
+      "shard_num": 2,
+      "segment_interval": {
+        "unit": "UNIT_DAY",
+        "num": 1
+      },
+      "ttl": {
+        "unit": "UNIT_DAY",
+        "num": 7
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "trace_performance_test"
+    },
+    "catalog": "CATALOG_TRACE",
+    "resource_opts": {
+      "shard_num": 2,
+      "segment_interval": {
+        "unit": "UNIT_DAY",
+        "num": 1
+      },
+      "ttl": {
+        "unit": "UNIT_DAY",
+        "num": 7
+      }
+    }
+  }
+]
