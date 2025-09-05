@@ -256,19 +256,21 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 	}
 	start := time.Now()
 	defer func() {
+		duration := time.Since(start)
 		for _, g := range req.Groups {
 			s.metrics.totalFinished.Inc(1, g, "stream", "query")
 			if err != nil {
 				s.metrics.totalErr.Inc(1, g, "stream", "query")
 			}
-			s.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "stream", "query")
+			s.metrics.totalLatency.Inc(duration.Seconds(), g, "stream", "query")
+		}
+		// Log query with timing information at the end
+		if s.queryAccessLog != nil {
+			if errAccessLog := s.queryAccessLog.WriteQuery("stream", start, duration, req, err); errAccessLog != nil {
+				s.l.Error().Err(errAccessLog).Msg("query access log error")
+			}
 		}
 	}()
-	if s.queryAccessLog != nil {
-		if errAccessLog := s.queryAccessLog.Write(req); errAccessLog != nil {
-			s.l.Error().Err(errAccessLog).Msg("query access log error")
-		}
-	}
 	timeRange := req.GetTimeRange()
 	if timeRange == nil {
 		req.TimeRange = timestamp.DefaultTimeRange

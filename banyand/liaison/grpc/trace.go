@@ -319,19 +319,21 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 	}
 	start := time.Now()
 	defer func() {
+		duration := time.Since(start)
 		for _, g := range req.Groups {
 			s.metrics.totalFinished.Inc(1, g, "trace", "query")
 			if err != nil {
 				s.metrics.totalErr.Inc(1, g, "trace", "query")
 			}
-			s.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "trace", "query")
+			s.metrics.totalLatency.Inc(duration.Seconds(), g, "trace", "query")
+		}
+		// Log query with timing information at the end
+		if s.queryAccessLog != nil {
+			if errAccessLog := s.queryAccessLog.WriteQuery("trace", start, duration, req, err); errAccessLog != nil {
+				s.l.Error().Err(errAccessLog).Msg("query access log error")
+			}
 		}
 	}()
-	if s.queryAccessLog != nil {
-		if errAccessLog := s.queryAccessLog.Write(req); errAccessLog != nil {
-			s.l.Error().Err(errAccessLog).Msg("query access log error")
-		}
-	}
 	timeRange := req.GetTimeRange()
 	if timeRange == nil {
 		req.TimeRange = timestamp.DefaultTimeRange

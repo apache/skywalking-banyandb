@@ -415,17 +415,19 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	ps.metrics.totalStarted.Inc(1, "", "property", "query")
 	start := time.Now()
 	defer func() {
+		duration := time.Since(start)
 		ps.metrics.totalFinished.Inc(1, "", "property", "query")
-		ps.metrics.totalLatency.Inc(time.Since(start).Seconds(), "", "property", "query")
+		ps.metrics.totalLatency.Inc(duration.Seconds(), "", "property", "query")
 		if err != nil {
 			ps.metrics.totalErr.Inc(1, "", "property", "query")
 		}
-	}()
-	if ps.queryAccessLog != nil {
-		if errAccessLog := ps.queryAccessLog.Write(req); errAccessLog != nil {
-			ps.log.Error().Err(errAccessLog).Msg("query access log error")
+		// Log query with timing information at the end
+		if ps.queryAccessLog != nil {
+			if errAccessLog := ps.queryAccessLog.WriteQuery("property", start, duration, req, err); errAccessLog != nil {
+				ps.log.Error().Err(errAccessLog).Msg("query access log error")
+			}
 		}
-	}
+	}()
 	if len(req.Groups) == 0 {
 		return nil, schema.BadRequest("groups", "groups should not be empty")
 	}

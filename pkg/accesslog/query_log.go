@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package accesslog provides access log for banyandb.
 package accesslog
 
 import (
@@ -24,12 +23,25 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Log is the interface for access log.
-type Log interface {
-	// Write writes the access log.
-	Write(req proto.Message) error
-	// WriteQuery writes the query access log with timing information.
-	WriteQuery(service string, startTime time.Time, duration time.Duration, req proto.Message, err error) error
-	// Close closes the access log.
-	Close() error
+// QueryLogEntry wraps a query request with execution timing information.
+type QueryLogEntry struct {
+	StartTime time.Time     `json:"start_time"`
+	Request   proto.Message `json:"request"`
+	Service   string        `json:"service"`
+	Error     string        `json:"error,omitempty"`
+	Duration  time.Duration `json:"duration_ms"`
+}
+
+// NewQueryLogEntry creates a new query log entry with timing information.
+func NewQueryLogEntry(service string, startTime time.Time, duration time.Duration, request proto.Message, err error) *QueryLogEntry {
+	entry := &QueryLogEntry{
+		Service:   service,
+		StartTime: startTime,
+		Duration:  duration,
+		Request:   request,
+	}
+	if err != nil {
+		entry.Error = err.Error()
+	}
+	return entry
 }
