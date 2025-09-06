@@ -187,7 +187,7 @@ func flushBatch(file *os.File, batch []interface{}, log *logger.Logger) {
 		switch v := req.(type) {
 		case *QueryLogEntry:
 			// For query log entries, use regular JSON marshaling
-			data, err = json.Marshal(v)
+			data, err = v.Marshal()
 		case proto.Message:
 			// For protobuf messages, use protojson marshaling
 			data, err = protojson.Marshal(v)

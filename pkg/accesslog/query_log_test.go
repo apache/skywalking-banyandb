@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -102,6 +104,16 @@ func TestQueryLogEntry_WriteQuery(t *testing.T) {
 		// Verify service is correct
 		service := entry["service"].(string)
 		require.True(t, service == "stream" || service == "measure")
+
+		// Verify Request can be Unmarshal
+		requestStr := entry["request"].(string)
+		var msg proto.Message
+		if service == "stream" {
+			msg = &streamv1.QueryRequest{}
+		} else {
+			msg = &measurev1.QueryRequest{}
+		}
+		require.NoError(t, protojson.Unmarshal([]byte(requestStr), msg))
 
 		// Verify duration is recorded
 		durationMs := entry["duration_ms"]
