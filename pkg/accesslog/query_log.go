@@ -18,18 +18,28 @@
 package accesslog
 
 import (
+	"encoding/json"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
 // QueryLogEntry wraps a query request with execution timing information.
 type QueryLogEntry struct {
-	StartTime time.Time     `json:"start_time"`
-	Request   proto.Message `json:"request"`
-	Service   string        `json:"service"`
-	Error     string        `json:"error,omitempty"`
-	Duration  time.Duration `json:"duration_ms"`
+	StartTime time.Time
+	Request   proto.Message
+	Service   string
+	Error     string
+	Duration  time.Duration
+}
+
+type queryJSONObject struct {
+	StartTime time.Time `json:"start_time"`
+	Request   string    `json:"request"`
+	Service   string    `json:"service"`
+	Error     string    `json:"error,omitempty"`
+	Duration  int64     `json:"duration_ms"`
 }
 
 // NewQueryLogEntry creates a new query log entry with timing information.
@@ -44,4 +54,20 @@ func NewQueryLogEntry(service string, startTime time.Time, duration time.Duratio
 		entry.Error = err.Error()
 	}
 	return entry
+}
+
+// Marshal marshals the log entry to JSON.
+func (l *QueryLogEntry) Marshal() ([]byte, error) {
+	request, err := protojson.Marshal(l.Request)
+	if err != nil {
+		return nil, err
+	}
+	obj := &queryJSONObject{
+		StartTime: l.StartTime,
+		Request:   string(request),
+		Service:   l.Service,
+		Error:     l.Error,
+		Duration:  l.Duration.Milliseconds(),
+	}
+	return json.Marshal(obj)
 }
