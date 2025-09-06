@@ -30,60 +30,38 @@ const LastMonth = 3600 * 1000 * 24 * 30;
 const Last3Months = 3600 * 1000 * 24 * 90;
 
 export const Shortcuts = [
-    {
-        text: 'Last 15 minutes',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - Last15Minutes);
-            return [start, end];
-        },
-    },
-    {
-        text: 'Last 30 minutes',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - Last30Minutes);
-            return [start, end];
-        },
-    },
-    {
-        text: 'Last hour',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - LastHour);
-            return [start, end];
-        },
-    },
-    {
-        text: 'Last day',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - LastDay);
-            return [start, end];
-        },
-    },
-    {
-        text: 'Last week',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - LastWeek);
-            return [start, end];
-        },
-    },
-    {
-        text: 'Last month',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - LastMonth);
-            return [start, end];
-        },
-    },
-    {
-        text: 'Last 3 months',
-        value: () => {
-            const end = new Date();
-            const start = new Date(end.getTime() - Last3Months);
-            return [start, end];
-        },
-    },
+  {
+    text: 'Last 15 minutes',
+    value: () => createRange(Last15Minutes),
+  },
+  {
+    text: 'Last 30 minutes',
+    value: () => createRange(Last30Minutes),
+  },
+  {
+    text: 'Last hour',
+    value: () => createRange(LastHour),
+  },
+  {
+    text: 'Last day',
+    value: () => createRange(LastDay),
+  },
+  {
+    text: 'Last week',
+    value: () => createRange(LastWeek),
+  },
+  {
+    text: 'Last month',
+    value: () => createRange(LastMonth),
+  },
+  {
+    text: 'Last 3 months',
+    value: () => createRange(Last3Months),
+  },
 ];
+
+function createRange(duration) {
+  const end = new Date();
+  const start = new Date(end.getTime() - duration);
+  return [start, end];
+}
