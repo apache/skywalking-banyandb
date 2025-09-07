@@ -69,6 +69,8 @@ linters-settings:
       alias: streamv1
     - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1
       alias: clusterv1
+    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1
+      alias: tracev1
     - pkg: github.com/apache/skywalking-banyandb/pkg/pb/v1
       alias: pbv1
   lll:
@@ -150,8 +152,13 @@ issues:
   - linters:
     - staticcheck
     text: "SA1019: package github.com/golang/protobuf"
+  # TODO: remove this after the trace is done
   - path: "^trace/"
     linters:
     - unused
     - unparam
+  # TODO: remove this after the sidx is done
+  - path: "internal/sidx/"
+    linters:
+    - unused
   max-same-issues: 0

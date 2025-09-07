@@ -35,30 +35,82 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-const rpcTimeout = 2 * time.Second
-
-var (
-	// Retry policy for health check.
-	initBackoff       = time.Second
-	maxBackoff        = 20 * time.Second
-	backoffMultiplier = 2.0
-
-	serviceName = clusterv1.Service_ServiceDesc.ServiceName
-
-	// The timeout is set by each RPC.
-	retryPolicy = fmt.Sprintf(`{
-	"methodConfig": [{
-	  "name": [{"service": "%s"}],
-	  "waitForReady": true,
-	  "retryPolicy": {
-	      "MaxAttempts": 4,
-	      "InitialBackoff": ".5s",
-	      "MaxBackoff": "10s",
-	      "BackoffMultiplier": 1.0,
-	      "RetryableStatusCodes": [ "UNAVAILABLE" ]
-	  }
-	}]}`, serviceName)
+const (
+	rpcTimeout = 2 * time.Second
+	// maxReceiveMessageSize sets the maximum message size the client can receive (32MB).
+	maxReceiveMessageSize = 32 << 20
 )
+
+// The timeout is set by each RPC.
+var retryPolicy = `{
+	"methodConfig": [
+	  {
+	    "name": [{"service": "banyandb.cluster.v1.Service"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".5s",
+	        "MaxBackoff": "10s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.cluster.v1.ChunkedSyncService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 3,
+	        "InitialBackoff": ".5s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.trace.v1.TraceService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".2s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.stream.v1.StreamService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".2s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.measure.v1.MeasureService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".2s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  },
+	  {
+	    "name": [{"service": "banyandb.property.v1.PropertyService"}],
+	    "waitForReady": true,
+	    "retryPolicy": {
+	        "MaxAttempts": 4,
+	        "InitialBackoff": ".2s",
+	        "MaxBackoff": "5s",
+	        "BackoffMultiplier": 2.0,
+	        "RetryableStatusCodes": [ "UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED" ]
+	    }
+	  }
+	]}`
 
 type client struct {
 	client clusterv1.ServiceClient
@@ -117,7 +169,9 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 		p.log.Error().Err(err).Msg("failed to load client TLS credentials")
 		return
 	}
-	conn, err := grpc.NewClient(address, append(credOpts, grpc.WithDefaultServiceConfig(retryPolicy))...)
+	conn, err := grpc.NewClient(address, append(credOpts,
+		grpc.WithDefaultServiceConfig(p.retryPolicy),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxReceiveMessageSize)))...)
 	if err != nil {
 		p.log.Error().Err(err).Msg("failed to connect to grpc server")
 		return
@@ -131,6 +185,8 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	c := clusterv1.NewServiceClient(conn)
 	p.active[name] = &client{conn: conn, client: c, md: md}
 	p.addClient(md)
+	// Initialize or reset circuit breaker state to closed
+	p.recordSuccess(name)
 	p.log.Info().Str("status", p.dump()).Stringer("node", node).Msg("new node is healthy, add it to active queue")
 }
 
@@ -194,9 +250,10 @@ func (p *pub) OnDelete(md schema.Metadata) {
 		}
 		go func() {
 			defer p.closer.Done()
-			backoff := initBackoff
 			var elapsed time.Duration
+			attempt := 0
 			for {
+				backoff := jitteredBackoff(initBackoff, maxBackoff, attempt, defaultJitterFactor)
 				select {
 				case <-time.After(backoff):
 					if func() bool {
@@ -218,11 +275,7 @@ func (p *pub) OnDelete(md schema.Metadata) {
 				case <-p.closer.CloseNotify():
 					return
 				}
-				if backoff < maxBackoff {
-					backoff *= time.Duration(backoffMultiplier)
-				} else {
-					backoff = maxBackoff
-				}
+				attempt++
 			}
 		}()
 	}
@@ -257,8 +310,9 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 	p.deleteClient(md)
 	go func(p *pub, name string, en evictNode, md schema.Metadata) {
 		defer p.closer.Done()
-		backoff := initBackoff
+		attempt := 0
 		for {
+			backoff := jitteredBackoff(initBackoff, maxBackoff, attempt, defaultJitterFactor)
 			select {
 			case <-time.After(backoff):
 				credOpts, errEvict := p.getClientTransportCredentials()
@@ -266,7 +320,9 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 					p.log.Error().Err(errEvict).Msg("failed to load client TLS credentials (evict)")
 					return
 				}
-				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, append(credOpts, grpc.WithDefaultServiceConfig(retryPolicy))...)
+				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, append(credOpts,
+					grpc.WithDefaultServiceConfig(p.retryPolicy),
+					grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxReceiveMessageSize)))...)
 				if errEvict == nil && p.healthCheck(en.n.String(), connEvict) {
 					func() {
 						p.mu.Lock()
@@ -279,6 +335,8 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 						p.active[name] = &client{conn: connEvict, client: c, md: md}
 						p.addClient(md)
 						delete(p.evictable, name)
+						// Reset circuit breaker state to closed
+						p.recordSuccess(name)
 						p.log.Info().Str("status", p.dump()).Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
 					}()
 					return
@@ -293,11 +351,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 			case <-p.closer.CloseNotify():
 				return
 			}
-			if backoff < maxBackoff {
-				backoff *= time.Duration(backoffMultiplier)
-			} else {
-				backoff = maxBackoff
-			}
+			attempt++
 		}
 	}(p, name, p.evictable[name], md)
 	return false
@@ -372,7 +426,8 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 	if !ok {
 		return false, nil
 	}
-	err := p.checkServiceHealth(topic.String(), node.conn)
+	topicStr := topic.String()
+	err := p.checkServiceHealth(topicStr, node.conn)
 	if err == nil {
 		return true, nil
 	}
@@ -380,35 +435,56 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 	if !p.closer.AddRunning() {
 		return false, err
 	}
-	go func() {
+	// Deduplicate concurrent probes for the same node/topic.
+	p.writableProbeMu.Lock()
+	if _, ok := p.writableProbe[n]; !ok {
+		p.writableProbe[n] = make(map[string]struct{})
+	}
+	if _, exists := p.writableProbe[n][topicStr]; exists {
+		p.writableProbeMu.Unlock()
+		return false, err
+	}
+	p.writableProbe[n][topicStr] = struct{}{}
+	p.writableProbeMu.Unlock()
+
+	go func(nodeName, t string) {
 		defer p.closer.Done()
-		backoff := initBackoff
+		defer func() {
+			p.writableProbeMu.Lock()
+			if topics, ok := p.writableProbe[nodeName]; ok {
+				delete(topics, t)
+				if len(topics) == 0 {
+					delete(p.writableProbe, nodeName)
+				}
+			}
+			p.writableProbeMu.Unlock()
+		}()
+		attempt := 0
 		for {
+			backoff := jitteredBackoff(initBackoff, maxBackoff, attempt, defaultJitterFactor)
 			select {
 			case <-time.After(backoff):
-				if errInternal := p.checkServiceHealth(topic.String(), node.conn); errInternal != nil {
+				if errInternal := p.checkServiceHealth(t, node.conn); errInternal == nil {
 					func() {
 						p.mu.Lock()
 						defer p.mu.Unlock()
-						node, ok := p.active[n]
-						if !ok {
+						nodeCur, okCur := p.active[nodeName]
+						if !okCur {
 							return
 						}
-						h.OnAddOrUpdate(node.md)
+						// Record success for circuit breaker
+						p.recordSuccess(nodeName)
+						h.OnAddOrUpdate(nodeCur.md)
 					}()
 					return
 				}
-				p.log.Warn().Str("topic", topic.String()).Err(err).Str("node", n).Dur("backoff", backoff).Msg("data node can not ingest data")
+				p.log.Warn().Str("topic", t).Err(err).Str("node", nodeName).Dur("backoff", backoff).Msg("data node can not ingest data")
 			case <-p.closer.CloseNotify():
 				return
 			}
-			if backoff < maxBackoff {
-				backoff *= time.Duration(backoffMultiplier)
-			} else {
-				backoff = maxBackoff
-			}
+			attempt++
 		}
-	}()
+	}(n, topicStr)
 	return false, err
 }
 

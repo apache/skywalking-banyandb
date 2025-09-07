@@ -42,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 )
 
 const host = "localhost"
@@ -51,6 +52,7 @@ func Standalone(flags ...string) (string, string, func()) {
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "trace"},
 	}, "", "", "", "", flags...)
 }
 
@@ -59,6 +61,7 @@ func StandaloneWithAuth(username, password string, flags ...string) (string, str
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "trace"},
 	}, "", "", username, password, flags...)
 }
 
@@ -67,6 +70,7 @@ func StandaloneWithTLS(certFile, keyFile string, flags ...string) (string, strin
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "trace"},
 	}, certFile, keyFile, "", "", flags...)
 }
 
@@ -99,6 +103,7 @@ func ClosableStandalone(path string, ports []int, flags ...string) (string, stri
 	return standaloneServer(path, ports, []SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "trace"},
 	}, "", "", flags...)
 }
 
@@ -134,6 +139,7 @@ func standaloneServerWithAuth(path string, ports []int, schemaLoaders []SchemaLo
 		"--measure-root-path=" + path,
 		"--metadata-root-path=" + path,
 		"--property-root-path=" + path,
+		"--trace-root-path=" + path,
 		fmt.Sprintf("--etcd-listen-client-url=%s", endpoint), fmt.Sprintf("--etcd-listen-peer-url=http://%s:%d", host, ports[3]),
 	}
 	tlsEnabled := false
@@ -201,6 +207,9 @@ func (p *preloadService) Name() string {
 func (p *preloadService) PreRun(ctx context.Context) error {
 	if p.name == "stream" {
 		return test_stream.PreloadSchema(ctx, p.registry)
+	}
+	if p.name == "trace" {
+		return test_trace.PreloadSchema(ctx, p.registry)
 	}
 	return test_measure.PreloadSchema(ctx, p.registry)
 }

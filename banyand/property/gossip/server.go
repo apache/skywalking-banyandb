@@ -51,7 +51,7 @@ var (
 	}]}`, serviceName)
 
 	// perNodeSyncTimeout is the timeout for each node to sync the property data.
-	perNodeSyncTimeout = time.Minute * 10
+	perNodeSyncTimeout = time.Hour * 1
 )
 
 func (s *service) Subscribe(listener MessageListener) {
@@ -188,11 +188,15 @@ func (q *protocolHandler) handle(ctx context.Context, request *handlingRequest) 
 		if err != nil {
 			q.s.serverMetrics.totalSendToNextErr.Inc(1, request.Group)
 			handlingSpan.Error(err.Error())
+			q.s.log.Warn().Err(err).Stringer("request", request).
+				Msgf("failed to handle gossip message for propagation")
 		}
 		q.s.serverMetrics.totalFinished.Inc(1, request.Group)
 		q.s.serverMetrics.totalLatency.Inc(n.Sub(time.Unix(0, now)).Seconds(), request.Group)
 		if !needsKeepPropagation {
-			q.s.serverMetrics.totalPropagationCount.Inc(float64(request.Context.CurrentPropagationCount),
+			q.s.log.Info().Str("group", request.Group).Uint32("shardNum", request.ShardId).
+				Msgf("propagation message for propagation is finished")
+			q.s.serverMetrics.totalPropagationCount.Inc(1,
 				request.Group, request.Context.OriginNode)
 			q.s.serverMetrics.totalPropagationPercent.Observe(
 				float64(request.Context.CurrentPropagationCount)/float64(request.Context.MaxPropagationCount), request.Group)
@@ -388,6 +392,7 @@ func (s *service) newConnectionFromNode(n *databasev1.Node) (*grpc.ClientConn, e
 		return nil, fmt.Errorf("failed to get client transport credentials: %w", err)
 	}
 	conn, err := grpc.NewClient(n.PropertyRepairGossipGrpcAddress, append(credOpts, grpc.WithDefaultServiceConfig(retryPolicy))...)
+	s.log.Debug().Str("address", n.PropertyRepairGossipGrpcAddress).Msg("starting to create gRPC client connection to node")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gRPC client connection to node %s: %w", n.PropertyRepairGossipGrpcAddress, err)
 	}

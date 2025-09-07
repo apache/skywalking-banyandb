@@ -29,10 +29,12 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -90,7 +92,7 @@ func (w *writeCallback) handle(dst map[string]*tracesInGroup, writeEvent *tracev
 	if err != nil {
 		return nil, err
 	}
-	err = processTraces(w.schemaRepo, et.traces, writeEvent)
+	err = processTraces(w.schemaRepo, et, writeEvent)
 	if err != nil {
 		return nil, err
 	}
@@ -152,10 +154,15 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 		}
 
 		et = &tracesInTable{
-			timeRange: segment.GetTimeRange(),
-			tsTable:   tstb,
-			traces:    generateTraces(),
-			segment:   segment,
+			timeRange:   segment.GetTimeRange(),
+			tsTable:     tstb,
+			traces:      generateTraces(),
+			segment:     segment,
+			sidxReqsMap: make(map[string][]sidx.WriteRequest),
+			seriesDocs: seriesDoc{
+				docs:        make(index.Documents, 0),
+				docIDsAdded: make(map[uint64]struct{}),
+			},
 		}
 		et.traces.reset()
 		eg.tables = append(eg.tables, et)
@@ -163,7 +170,7 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 	return et, nil
 }
 
-func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.InternalWriteRequest) error {
+func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEvent *tracev1.InternalWriteRequest) error {
 	req := writeEvent.Request
 	stm, ok := schemaRepo.loadTrace(req.GetMetadata())
 	if !ok {
@@ -174,8 +181,9 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 	if err != nil {
 		return err
 	}
-	traces.traceIDs = append(traces.traceIDs, req.Tags[idx].GetStr().GetValue())
-	traces.spans = append(traces.spans, req.Span)
+	traceID := req.Tags[idx].GetStr().GetValue()
+	tracesInTable.traces.traceIDs = append(tracesInTable.traces.traceIDs, traceID)
+	tracesInTable.traces.spans = append(tracesInTable.traces.spans, req.Span)
 
 	tLen := len(req.GetTags())
 	if tLen < 1 {
@@ -186,12 +194,13 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 	}
 
 	is := stm.indexSchema.Load().(indexSchema)
-	if len(is.indexRuleLocators) != len(stm.GetSchema().GetTags()) {
+	if len(is.indexRuleLocators) > len(stm.GetSchema().GetTags()) {
 		return fmt.Errorf("metadata crashed, tag rule length %d, tag length %d",
 			len(is.indexRuleLocators), len(stm.GetSchema().GetTags()))
 	}
 
 	tags := make([]*tagValue, 0, len(stm.schema.Tags))
+	tagMap := make(map[string]*tagValue, len(stm.schema.Tags))
 	tagSpecs := stm.GetSchema().GetTags()
 	for i := range tagSpecs {
 		tagSpec := tagSpecs[i]
@@ -199,7 +208,7 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 			continue
 		}
 		if tagSpec.Name == stm.schema.TimestampTagName {
-			traces.timestamps = append(traces.timestamps, req.Tags[i].GetTimestamp().AsTime().UnixNano())
+			tracesInTable.traces.timestamps = append(tracesInTable.traces.timestamps, req.Tags[i].GetTimestamp().AsTime().UnixNano())
 		}
 
 		var tagValue *modelv1.TagValue
@@ -210,12 +219,106 @@ func processTraces(schemaRepo *schemaRepo, traces *traces, writeEvent *tracev1.I
 		}
 		tv := encodeTagValue(tagSpec.Name, tagSpec.Type, tagValue)
 		tags = append(tags, tv)
+		tagMap[tagSpec.Name] = tv
 	}
-	traces.tags = append(traces.tags, tags)
+	tracesInTable.traces.tags = append(tracesInTable.traces.tags, tags)
+
+	sidxTags := make([]sidx.Tag, 0, len(tags))
+	for _, tag := range tags {
+		sidxTags = append(sidxTags, sidx.Tag{
+			Name:      tag.tag,
+			Value:     tag.value,
+			ValueType: tag.valueType,
+		})
+	}
+
+	indexRules := stm.GetIndexRules()
+	for _, indexRule := range indexRules {
+		tagName := indexRule.Tags[len(indexRule.Tags)-1]
+		tagIdx, err := getTagIndex(stm, tagName)
+		if err != nil || tagIdx >= len(req.Tags) {
+			continue
+		}
+		tv := tagMap[tagName]
+		if tv == nil {
+			continue
+		}
+		if tv.valueType != pbv1.ValueTypeInt64 && tv.valueType != pbv1.ValueTypeTimestamp {
+			return fmt.Errorf("unsupported tag value type: %s", tv.tag)
+		}
+
+		var key int64
+		if tv.valueType == pbv1.ValueTypeTimestamp {
+			// For timestamp tags, get the unix nano timestamp as the key
+			key = req.Tags[tagIdx].GetTimestamp().AsTime().UnixNano()
+		} else {
+			// For int64 tags, get the int value as the key
+			key = req.Tags[tagIdx].GetInt().GetValue()
+		}
+
+		entityValues := make([]*modelv1.TagValue, 0, len(indexRule.Tags))
+		for i, tagName := range indexRule.Tags {
+			tagIdx, err := getTagIndex(stm, tagName)
+			if err != nil || tagIdx >= len(req.Tags) {
+				continue
+			}
+			if i == len(indexRule.Tags)-1 {
+				break
+			}
+			entityValues = append(entityValues, req.Tags[tagIdx])
+		}
+
+		series := &pbv1.Series{
+			Subject:      req.Metadata.Name,
+			EntityValues: entityValues,
+		}
+		if err := series.Marshal(); err != nil {
+			return fmt.Errorf("cannot marshal series: %w", err)
+		}
+
+		// Filter sidxTags to remove tags that are in indexRule.Tags
+		filteredSidxTags := make([]sidx.Tag, 0, len(sidxTags))
+		for _, sidxTag := range sidxTags {
+			shouldInclude := true
+			for _, ruleTagName := range indexRule.Tags {
+				if sidxTag.Name == ruleTagName {
+					shouldInclude = false
+					break
+				}
+			}
+			if shouldInclude {
+				filteredSidxTags = append(filteredSidxTags, sidxTag)
+			}
+		}
+
+		writeReq := sidx.WriteRequest{
+			Data:     []byte(traceID),
+			Tags:     filteredSidxTags,
+			SeriesID: series.ID,
+			Key:      key,
+		}
+
+		sidxName := indexRule.GetMetadata().GetName()
+
+		if tracesInTable.sidxReqsMap[sidxName] == nil {
+			tracesInTable.sidxReqsMap[sidxName] = make([]sidx.WriteRequest, 0)
+		}
+		tracesInTable.sidxReqsMap[sidxName] = append(tracesInTable.sidxReqsMap[sidxName], writeReq)
+
+		docID := uint64(series.ID)
+		if _, existed := tracesInTable.seriesDocs.docIDsAdded[docID]; !existed {
+			tracesInTable.seriesDocs.docs = append(tracesInTable.seriesDocs.docs, index.Document{
+				DocID:        docID,
+				EntityValues: series.Buffer,
+			})
+			tracesInTable.seriesDocs.docIDsAdded[docID] = struct{}{}
+		}
+	}
+
 	return nil
 }
 
-func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -252,6 +355,23 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
+			for sidxName, sidxReqs := range es.sidxReqsMap {
+				if len(sidxReqs) > 0 {
+					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
+					if err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
+						continue
+					}
+					if err := sidxInstance.Write(ctx, sidxReqs, es.tsTable.curPartID); err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
+					}
+				}
+			}
+			if len(es.seriesDocs.docs) > 0 {
+				if err := es.segment.IndexDB().Update(es.seriesDocs.docs); err != nil {
+					w.l.Error().Err(err).Msg("cannot write series index")
+				}
+			}
 			es.tsTable.mustAddTraces(es.traces)
 			releaseTraces(es.traces)
 		}
@@ -301,6 +421,14 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.Tag
 		tv.valueArr = make([][]byte, len(tagVal.GetStrArray().Value))
 		for i := range tagVal.GetStrArray().Value {
 			tv.valueArr[i] = []byte(tagVal.GetStrArray().Value[i])
+		}
+	case databasev1.TagType_TAG_TYPE_TIMESTAMP:
+		tv.valueType = pbv1.ValueTypeTimestamp
+		if tagVal.GetTimestamp() != nil {
+			// Convert timestamp to 64-bit nanoseconds since epoch for efficient storage
+			ts := tagVal.GetTimestamp()
+			epochNanos := ts.Seconds*1e9 + int64(ts.Nanos)
+			tv.value = convert.Int64ToBytes(epochNanos)
 		}
 	default:
 		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())

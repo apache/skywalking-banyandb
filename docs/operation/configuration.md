@@ -54,6 +54,7 @@ The following flags are used to configure access logs for the data ingestion:
 
 - `--access-log-root-path string`: Access log root path.
 - `--enable-ingestion-access-log`: Enable ingestion access log.
+- `--access-log-sampled`: if true, requests may be dropped when the channel is full; if false, requests are never dropped
 
 BanyanDB uses etcd for service discovery and configuration. The following flags are used to configure the etcd settings. These flags are only used when running as a liaison or data server. Standalone server embeds etcd server and does not need these flags.
 

@@ -25,6 +25,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -78,4 +79,15 @@ func WithDistributedExecutionContext(ctx context.Context, ec DistributedExecutio
 // FromDistributedExecutionContext returns the distributed execution context from context.Context.
 func FromDistributedExecutionContext(ctx context.Context) DistributedExecutionContext {
 	return ctx.Value(distributedExecutionContextKeyInstance).(DistributedExecutionContext)
+}
+
+// TraceExecutionContext allows retrieving data through the trace module.
+type TraceExecutionContext interface {
+	Query(ctx context.Context, opts model.TraceQueryOptions) (model.TraceQueryResult, error)
+}
+
+// TraceExecutable allows querying in the trace schema.
+type TraceExecutable interface {
+	Execute(context.Context) (iter.Iterator[model.TraceResult], error)
+	Close()
 }

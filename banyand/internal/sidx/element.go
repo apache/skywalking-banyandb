@@ -28,26 +28,13 @@ import (
 
 const (
 	maxPooledSliceSize = 1024 * 1024 // 1MB
-	maxPooledTagCount  = 100
 )
-
-// element represents a single data element in sidx.
-type element struct {
-	data     []byte // User payload data (pooled slice)
-	tags     []tag  // Individual tags (pooled slice)
-	seriesID common.SeriesID
-	userKey  int64 // The ordering key from user (replaces timestamp)
-
-	// Internal fields for pooling
-	pooled bool // Whether this element came from pool
-}
 
 // tag represents an individual tag (not tag family like stream).
 type tag struct {
 	name      string
 	value     []byte
 	valueType pbv1.ValueType
-	indexed   bool
 }
 
 // elements is a collection of elements optimized for batch operations.
@@ -55,31 +42,7 @@ type elements struct {
 	seriesIDs []common.SeriesID // Pooled slice
 	userKeys  []int64           // Pooled slice (replaces timestamps)
 	data      [][]byte          // Pooled slice of slices
-	tags      [][]tag           // Pooled slice of tag slices
-
-	// Pool management
-	pooled bool // Whether from pool
-}
-
-// reset clears element for reuse in object pool.
-func (e *element) reset() {
-	e.seriesID = 0
-	e.userKey = 0
-	if cap(e.data) <= maxPooledSliceSize {
-		e.data = e.data[:0] // Reuse slice if not too large
-	} else {
-		e.data = nil // Release oversized slice
-	}
-	if cap(e.tags) <= maxPooledTagCount {
-		// Reset each tag for reuse
-		for i := range e.tags {
-			e.tags[i].reset()
-		}
-		e.tags = e.tags[:0]
-	} else {
-		e.tags = nil
-	}
-	e.pooled = false
+	tags      [][]*tag          // Pooled slice of tag pointer slices
 }
 
 // reset clears tag for reuse.
@@ -87,7 +50,6 @@ func (t *tag) reset() {
 	t.name = ""
 	t.value = nil
 	t.valueType = pbv1.ValueTypeUnknown
-	t.indexed = false
 }
 
 // reset elements collection for pooling.
@@ -99,25 +61,14 @@ func (e *elements) reset() {
 		e.data[i] = nil
 	}
 	e.data = e.data[:0]
-	// Reset tag slices
+	// Reset tag slices and release tag pointers to pool
 	for i := range e.tags {
 		for j := range e.tags[i] {
-			e.tags[i][j].reset()
+			releaseTag(e.tags[i][j])
 		}
 		e.tags[i] = e.tags[i][:0]
 	}
 	e.tags = e.tags[:0]
-	e.pooled = false
-}
-
-// size returns the total size of the element in bytes.
-func (e *element) size() int {
-	size := 8 + 8 // seriesID + userKey
-	size += len(e.data)
-	for i := range e.tags {
-		size += e.tags[i].size()
-	}
-	return size
 }
 
 // size returns the size of the tag in bytes.
@@ -160,43 +111,22 @@ func (e *elements) Swap(i, j int) {
 }
 
 var (
-	elementPool  = pool.Register[*element]("sidx-element")
 	elementsPool = pool.Register[*elements]("sidx-elements")
 	tagPool      = pool.Register[*tag]("sidx-tag")
 )
-
-// generateElement gets an element from pool or creates new.
-func generateElement() *element {
-	v := elementPool.Get()
-	if v == nil {
-		return &element{pooled: true}
-	}
-	v.pooled = true
-	return v
-}
-
-// releaseElement returns element to pool after reset.
-func releaseElement(e *element) {
-	if e == nil || !e.pooled {
-		return
-	}
-	e.reset()
-	elementPool.Put(e)
-}
 
 // generateElements gets elements collection from pool.
 func generateElements() *elements {
 	v := elementsPool.Get()
 	if v == nil {
-		return &elements{pooled: true}
+		return &elements{}
 	}
-	v.pooled = true
 	return v
 }
 
 // releaseElements returns elements to pool after reset.
 func releaseElements(e *elements) {
-	if e == nil || !e.pooled {
+	if e == nil {
 		return
 	}
 	e.reset()
@@ -219,4 +149,26 @@ func releaseTag(t *tag) {
 	}
 	t.reset()
 	tagPool.Put(t)
+}
+
+// mustAppend adds a new element to the collection.
+func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, data []byte, tags []Tag) {
+	e.seriesIDs = append(e.seriesIDs, seriesID)
+	e.userKeys = append(e.userKeys, userKey)
+
+	// Copy data
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+	e.data = append(e.data, dataCopy)
+
+	// Convert and copy tags using generateTag()
+	elementTags := make([]*tag, 0, len(tags))
+	for _, t := range tags {
+		newTag := generateTag()
+		newTag.name = t.Name
+		newTag.value = append([]byte(nil), t.Value...)
+		newTag.valueType = t.ValueType
+		elementTags = append(elementTags, newTag)
+	}
+	e.tags = append(e.tags, elementTags)
 }

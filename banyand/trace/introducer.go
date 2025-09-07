@@ -32,7 +32,7 @@ func (i *introduction) reset() {
 	i.applied = nil
 }
 
-var introductionPool = pool.Register[*introduction]("stream-introduction")
+var introductionPool = pool.Register[*introduction]("trace-introduction")
 
 func generateIntroduction() *introduction {
 	v := introductionPool.Get()
@@ -60,7 +60,7 @@ func (i *flusherIntroduction) reset() {
 	i.applied = nil
 }
 
-var flusherIntroductionPool = pool.Register[*flusherIntroduction]("stream-flusher-introduction")
+var flusherIntroductionPool = pool.Register[*flusherIntroduction]("trace-flusher-introduction")
 
 func generateFlusherIntroduction() *flusherIntroduction {
 	v := flusherIntroductionPool.Get()
@@ -94,7 +94,7 @@ func (i *mergerIntroduction) reset() {
 	i.creator = 0
 }
 
-var mergerIntroductionPool = pool.Register[*mergerIntroduction]("stream-merger-introduction")
+var mergerIntroductionPool = pool.Register[*mergerIntroduction]("trace-merger-introduction")
 
 func generateMergerIntroduction() *mergerIntroduction {
 	v := mergerIntroductionPool.Get()
@@ -122,7 +122,7 @@ func (i *syncIntroduction) reset() {
 	i.applied = nil
 }
 
-var syncIntroductionPool = pool.Register[*syncIntroduction]("stream-sync-introduction")
+var syncIntroductionPool = pool.Register[*syncIntroduction]("trace-sync-introduction")
 
 func generateSyncIntroduction() *syncIntroduction {
 	v := syncIntroductionPool.Get()

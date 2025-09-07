@@ -40,6 +40,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -51,7 +52,7 @@ import (
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
-const defaultRecvSize = 10 << 20
+const defaultRecvSize = 16 << 20
 
 var (
 	errServerCert        = errors.New("invalid server cert file")
@@ -66,7 +67,7 @@ var (
 // Server defines the gRPC server.
 type Server interface {
 	run.Unit
-	GetAuthCfg() *auth.Config
+	GetAuthReloader() *auth.Reloader
 	GetPort() *uint32
 }
 
@@ -81,9 +82,9 @@ type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
 	omr        observability.MetricsRegistry
 	schemaRepo metadata.Repo
-	*topNAggregationRegistryServer
-	*groupRegistryServer
-	stopCh chan struct{}
+	*indexRuleBindingRegistryServer
+	groupRepo *groupRepo
+	stopCh    chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
 	streamSVC *streamService
@@ -94,22 +95,27 @@ type server struct {
 	ser         *grpclib.Server
 	tlsReloader *pkgtls.Reloader
 	*propertyServer
-	*indexRuleBindingRegistryServer
+	*topNAggregationRegistryServer
+	*groupRegistryServer
 	*traceRegistryServer
-	groupRepo                *groupRepo
+	traceSVC                 *traceService
+	authReloader             *auth.Reloader
 	metrics                  *metrics
-	certFile                 string
 	keyFile                  string
 	authConfigFile           string
-	cfg                      *auth.Config
 	host                     string
 	addr                     string
 	accessLogRootPath        string
+	certFile                 string
 	accessLogRecorders       []accessLogRecorder
+	queryAccessLogRecorders  []queryAccessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	port                     uint32
-	enableIngestionAccessLog bool
 	tls                      bool
+	enableIngestionAccessLog bool
+	enableQueryAccessLog     bool
+	accessLogSampled         bool
+	healthAuthEnabled        bool
 }
 
 // NewServer returns a new gRPC server.
@@ -128,11 +134,17 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 	}
+	traceSVC := &traceService{
+		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.StreamLiaisonNodeRegistry, gr),
+		pipeline:         tir1Client,
+		broadcaster:      broadcaster,
+	}
 
 	s := &server{
 		omr:        omr,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
+		traceSVC:   traceSVC,
 		groupRepo:  gr,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
@@ -164,10 +176,11 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		traceRegistryServer: &traceRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
-		schemaRepo: schemaRegistry,
-		cfg:        auth.InitCfg(),
+		schemaRepo:   schemaRegistry,
+		authReloader: auth.InitAuthReloader(),
 	}
-	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
+	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
+	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 
 	return s
 }
@@ -176,10 +189,12 @@ func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log.Named("stream-t1"))
 	s.measureSVC.setLogger(s.log)
+	s.traceSVC.setLogger(s.log.Named("trace"))
 	s.propertyServer.SetLogger(s.log)
 	components := []*discoveryService{
 		s.streamSVC.discoveryService,
 		s.measureSVC.discoveryService,
+		s.traceSVC.discoveryService,
 		s.propertyServer.discoveryService,
 	}
 	s.schemaRepo.RegisterHandler("liaison", schema.KindGroup, s.groupRepo)
@@ -190,14 +205,22 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}
 	if s.authConfigFile != "" {
-		if err := auth.LoadConfig(s.cfg, s.authConfigFile); err != nil {
+		if err := s.authReloader.ConfigAuthReloader(s.authConfigFile, s.healthAuthEnabled, s.log); err != nil {
 			return err
 		}
 	}
 
 	if s.enableIngestionAccessLog {
 		for _, alr := range s.accessLogRecorders {
-			if err := alr.activeIngestionAccessLog(s.accessLogRootPath); err != nil {
+			if err := alr.activeIngestionAccessLog(s.accessLogRootPath, s.accessLogSampled); err != nil {
+				return err
+			}
+		}
+	}
+
+	if s.enableQueryAccessLog {
+		for _, qalr := range s.queryAccessLogRecorders {
+			if err := qalr.activeQueryAccessLog(s.accessLogRootPath, s.accessLogSampled); err != nil {
 				return err
 			}
 		}
@@ -206,6 +229,7 @@ func (s *server) PreRun(_ context.Context) error {
 	s.metrics = metrics
 	s.streamSVC.metrics = metrics
 	s.measureSVC.metrics = metrics
+	s.traceSVC.metrics = metrics
 	s.propertyServer.metrics = metrics
 	s.streamRegistryServer.metrics = metrics
 	s.indexRuleBindingRegistryServer.metrics = metrics
@@ -239,9 +263,9 @@ func (s *server) GetPort() *uint32 {
 	return &s.port
 }
 
-// GetAuthCfg returns auth cfg (for httpserver).
-func (s *server) GetAuthCfg() *auth.Config {
-	return s.cfg
+// GetAuthReloader returns auth reloader (for httpserver).
+func (s *server) GetAuthReloader() *auth.Reloader {
+	return s.authReloader
 }
 
 func (s *server) FlagSet() *run.FlagSet {
@@ -252,11 +276,13 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
 	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "Path to the authentication config file (YAML format)")
-	fs.BoolVar(&s.cfg.HealthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
+	fs.BoolVar(&s.healthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
+	fs.BoolVar(&s.enableQueryAccessLog, "enable-query-access-log", false, "enable query access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
+	fs.BoolVar(&s.accessLogSampled, "access-log-sampled", false, "if true, requests may be dropped when the channel is full; if false, requests are never dropped")
 	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "timeout for writing stream among liaison nodes")
 	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "timeout for writing measure among liaison nodes")
 	fs.DurationVar(&s.measureSVC.maxWaitDuration, "measure-metadata-cache-wait-duration", 0,
@@ -300,6 +326,14 @@ func (s *server) Serve() run.StopNotify {
 		creds := credentials.NewTLS(tlsConfig)
 		opts = append(opts, grpclib.Creds(creds))
 	}
+	if s.authConfigFile != "" {
+		if err := s.authReloader.Start(); err != nil {
+			s.log.Error().Err(err).Msg("Failed to start authReloader for gRPC")
+			close(s.stopCh)
+			return s.stopCh
+		}
+		s.log.Info().Str("authConfigFile", s.authConfigFile).Msg("Starting auth config file monitoring")
+	}
 	grpcPanicRecoveryHandler := func(p any) (err error) {
 		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
 		s.metrics.totalPanic.Inc(1)
@@ -315,8 +349,8 @@ func (s *server) Serve() run.StopNotify {
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
 	if s.authConfigFile != "" {
-		streamChain = append(streamChain, authStreamInterceptor(s.cfg))
-		unaryChain = append(unaryChain, authInterceptor(s.cfg))
+		streamChain = append(streamChain, authStreamInterceptor(s.authReloader))
+		unaryChain = append(unaryChain, authInterceptor(s.authReloader))
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
@@ -328,6 +362,7 @@ func (s *server) Serve() run.StopNotify {
 	commonv1.RegisterServiceServer(s.ser, &apiVersionService{})
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
 	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
+	tracev1.RegisterTraceServiceServer(s.ser, s.traceSVC)
 	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
 	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
 	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)
@@ -365,12 +400,20 @@ func (s *server) GracefulStop() {
 	if s.tls && s.tlsReloader != nil {
 		s.tlsReloader.Stop()
 	}
+	if s.authConfigFile != "" && s.authReloader != nil {
+		s.authReloader.Stop()
+	}
 	stopped := make(chan struct{})
 	go func() {
 		s.ser.GracefulStop()
 		if s.enableIngestionAccessLog {
 			for _, alr := range s.accessLogRecorders {
 				_ = alr.Close()
+			}
+		}
+		if s.enableQueryAccessLog {
+			for _, qalr := range s.queryAccessLogRecorders {
+				_ = qalr.Close()
 			}
 		}
 		close(stopped)
@@ -388,6 +431,11 @@ func (s *server) GracefulStop() {
 }
 
 type accessLogRecorder interface {
-	activeIngestionAccessLog(root string) error
+	activeIngestionAccessLog(root string, sampled bool) error
+	Close() error
+}
+
+type queryAccessLogRecorder interface {
+	activeQueryAccessLog(root string, sampled bool) error
 	Close() error
 }

@@ -1,0 +1,111 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: '3.8'
+
+
+x-data-base: &data_base
+  extends:
+    file: ../docker/base-compose.yml
+    service: data
+  image: apache/skywalking-banyandb:latest
+  depends_on:
+    etcd:
+      condition: service_healthy
+  cpus: 2
+  mem_limit: 4g
+  command: &base_data_cmd |
+    data --etcd-endpoints=http://etcd:2379
+         --observability-modes=prometheus
+         --observability-listener-addr=:2121
+         --property-repair-enabled=true
+         --property-repair-build-tree-cron="@every 30s"
+         --stream-root-path=/tmp/banyandb-data
+         --measure-root-path=/tmp/banyandb-data
+         --property-root-path=/tmp/banyandb-data
+
+# Base services for property repair tests
+services:
+  etcd:
+    extends:
+      file: ../docker/base-compose.yml
+      service: etcd
+    ports:
+      - "2379:2379"
+
+  liaison:
+    extends:
+      file: ../docker/base-compose.yml
+      service: liaison
+    image: apache/skywalking-banyandb:latest
+    depends_on:
+      etcd:
+        condition: service_healthy
+    cpus: 2
+    mem_limit: 3g
+    container_name: liaison
+    ports:
+      - "17912:17912"
+      - "17913:17913"
+      - "2121:2121"  # observability port for metrics
+    command: liaison --etcd-endpoints=http://etcd:2379 --observability-modes=prometheus
+
+  # Data nodes with specific configurations
+  data-node-1:
+    <<: *data_base
+    hostname: data-node-1
+    container_name: data-node-1
+    ports:
+      - "2122:2121"  # observability port
+      - "6061:6060"  # pprof port
+    command: |
+      data --etcd-endpoints=http://etcd:2379
+           --observability-modes=prometheus
+           --observability-listener-addr=:2121
+           --property-repair-enabled=true
+           --property-repair-build-tree-cron="@every 30s"
+           --stream-root-path=/tmp/banyandb-data
+           --measure-root-path=/tmp/banyandb-data
+           --property-root-path=/tmp/banyandb-data
+           --property-repair-trigger-cron="*/10 * * * *"
+
+  data-node-2:
+    <<: *data_base
+    hostname: data-node-2
+    container_name: data-node-2
+    ports:
+      - "2123:2121"  # observability port
+      - "6062:6060"  # pprof port
+    command: *base_data_cmd
+
+  data-node-3:
+    <<: *data_base
+    hostname: data-node-3
+    container_name: data-node-3
+    ports:
+      - "2124:2121"  # observability port
+      - "6063:6060"  # pprof port
+    command: *base_data_cmd
+
+  # Prometheus for monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
