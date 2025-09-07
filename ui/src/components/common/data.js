@@ -17,17 +17,17 @@
 
 export const Last15Minutes = 900 * 1000;
 
-const Last30Minutes = 1800 * 1000;
+export const Last30Minutes = 1800 * 1000;
 
-const LastHour = 3600 * 1000;
+export const LastHour = 3600 * 1000;
 
-const LastDay = 3600 * 1000 * 24;
+export const LastDay = 3600 * 1000 * 24;
 
-const LastWeek = 3600 * 1000 * 24 * 7;
+export const LastWeek = 3600 * 1000 * 24 * 7;
 
-const LastMonth = 3600 * 1000 * 24 * 30;
+export const LastMonth = 3600 * 1000 * 24 * 30;
 
-const Last3Months = 3600 * 1000 * 24 * 90;
+export const Last3Months = 3600 * 1000 * 24 * 90;
 
 export const Shortcuts = [
   {
