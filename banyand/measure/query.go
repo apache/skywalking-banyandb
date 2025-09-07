@@ -113,16 +113,101 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}
 
-	sids, tables, caches, storedIndexValue, newTagProjection, err := m.searchSeriesList(ctx, series, mqo, segments)
+	return m.executeQuery(ctx, mqo, segments, series)
+}
+
+func (m *measure) executeQuery(ctx context.Context, mqo model.MeasureQueryOptions,
+	segments []storage.Segment[*tsTable, option], series []*pbv1.Series,
+) (mqr model.MeasureQueryResult, err error) {
+	result := queryResult{
+		ctx:              ctx,
+		sidToIndex:       make(map[common.SeriesID]int),
+		storedIndexValue: make(map[common.SeriesID]map[string]*modelv1.TagValue),
+		tagProjection:    mqo.TagProjection,
+		segments:         make([]storage.Segment[*tsTable, option], 0),
+	}
+	shardResults := make(map[common.ShardID]bool)
+
+	for _, segment := range segments {
+		tables, _, shardIDs := segment.TablesWithShardID()
+		for i := range tables {
+			shardID := shardIDs[i]
+			if _, exists := shardResults[shardID]; exists {
+				for j := range segments {
+					segments[j].DecRef()
+				}
+				return nil, fmt.Errorf("duplicate shard ID %d detected across segments", shardID)
+			}
+			shardResults[shardID] = true
+
+			// execute query for each shard
+			shardResult, err := m.executeQueryForShard(ctx, mqo, []storage.Segment[*tsTable, option]{segment},
+				series)
+			if err != nil {
+				continue
+			}
+			if shardResult == nil {
+				continue
+			}
+			if mqo.NeedEachShardResult {
+				measureResult := shardResult.Pull()
+				if measureResult != nil {
+					shardIDTagFamily := model.TagFamily{
+						Name: "shard_info",
+						Tags: []model.Tag{
+							{
+								Name: "shard_id",
+								Values: []*modelv1.TagValue{
+									{
+										Value: &modelv1.TagValue_Int{
+											Int: &modelv1.Int{
+												Value: int64(shardID),
+											},
+										},
+									},
+								},
+							},
+						},
+					}
+					measureResult.TagFamilies = append(measureResult.TagFamilies, shardIDTagFamily)
+				}
+			}
+			qr, ok := shardResult.(*queryResult)
+			if !ok {
+				continue
+			}
+			result.data = append(result.data, qr.data...)
+			result.snapshots = append(result.snapshots, qr.snapshots...)
+			result.segments = append(result.segments, qr.segments...)
+			for sid, index := range qr.sidToIndex {
+				result.sidToIndex[sid] = index
+			}
+			for sid, values := range qr.storedIndexValue {
+				if result.storedIndexValue[sid] == nil {
+					result.storedIndexValue[sid] = make(map[string]*modelv1.TagValue)
+				}
+				for key, value := range values {
+					result.storedIndexValue[sid][key] = value
+				}
+			}
+		}
+	}
+
+	return &result, nil
+}
+
+func (m *measure) executeQueryForShard(ctx context.Context, mqo model.MeasureQueryOptions,
+	segments []storage.Segment[*tsTable, option],
+	series []*pbv1.Series,
+) (mqr model.MeasureQueryResult, err error) {
+	sids, tablesFromSearch, cachesFromSearch, storedIndexValue, newTagProjection, err := m.searchSeriesList(ctx, series, mqo, segments)
 	if err != nil {
 		return nil, err
 	}
 	if len(sids) < 1 {
-		for i := range segments {
-			segments[i].DecRef()
-		}
-		return nilResult, nil
+		return nil, nil
 	}
+
 	result := queryResult{
 		ctx:              ctx,
 		segments:         segments,
@@ -142,12 +227,12 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
 	}
 	var n int
-	for i := range tables {
-		s := tables[i].currentSnapshot()
+	for i := range tablesFromSearch {
+		s := tablesFromSearch[i].currentSnapshot()
 		if s == nil {
 			continue
 		}
-		parts, n = s.getParts(parts, caches[i], qo.minTimestamp, qo.maxTimestamp)
+		parts, n = s.getParts(parts, cachesFromSearch[i], qo.minTimestamp, qo.maxTimestamp)
 		if n < 1 {
 			s.decRef()
 			continue

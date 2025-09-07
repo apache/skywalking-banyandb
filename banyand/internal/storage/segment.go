@@ -144,6 +144,18 @@ func (s *segment[T, O]) Tables() (tt []T, cc []Cache) {
 	return tt, cc
 }
 
+func (s *segment[T, O]) TablesWithShardID() (tt []T, cc []Cache, shardIDs []common.ShardID) {
+	sLst := s.sLst.Load()
+	if sLst != nil {
+		for _, s := range *sLst {
+			tt = append(tt, s.table)
+			cc = append(cc, s.shardCache)
+			shardIDs = append(shardIDs, s.id)
+		}
+	}
+	return tt, cc, shardIDs
+}
+
 func (s *segment[T, O]) incRef(ctx context.Context) error {
 	s.lastAccessed.Store(time.Now().UnixNano())
 	if atomic.LoadInt32(&s.refCount) <= 0 {

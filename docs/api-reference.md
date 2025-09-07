@@ -3426,6 +3426,7 @@ QueryRequest is the request contract for query.
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
 | stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
 | rewrite_agg_top_n_result | [bool](#bool) |  | rewriteAggTopNResult will rewrite agg result to raw data |
+| need_each_shard_result | [bool](#bool) |  | return each shard result to the liasion node |
 
 
 

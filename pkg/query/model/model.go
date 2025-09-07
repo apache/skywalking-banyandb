@@ -57,13 +57,14 @@ type TagProjection struct {
 
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
-	Query           index.Query
-	TimeRange       *timestamp.TimeRange
-	Order           *index.OrderBy
-	Name            string
-	Entities        [][]*modelv1.TagValue
-	TagProjection   []TagProjection
-	FieldProjection []string
+	Query               index.Query
+	TimeRange           *timestamp.TimeRange
+	Order               *index.OrderBy
+	Name                string
+	Entities            [][]*modelv1.TagValue
+	TagProjection       []TagProjection
+	FieldProjection     []string
+	NeedEachShardResult bool
 }
 
 // MeasureResult is the result of a query.

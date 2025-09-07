@@ -213,5 +213,5 @@ func parseFields(criteria *measurev1.QueryRequest, metadata *commonv1.Metadata, 
 	}
 	timeRange := criteria.GetTimeRange()
 	return indexScan(timeRange.GetBegin().AsTime(), timeRange.GetEnd().AsTime(), metadata,
-		tagProjection, projFields, groupByEntity, criteria.GetCriteria(), ec)
+		tagProjection, projFields, groupByEntity, criteria.GetCriteria(), ec, criteria.GetNeedEachShardResult())
 }

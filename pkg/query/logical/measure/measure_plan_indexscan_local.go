@@ -41,14 +41,15 @@ import (
 var _ logical.UnresolvedPlan = (*unresolvedIndexScan)(nil)
 
 type unresolvedIndexScan struct {
-	startTime        time.Time
-	endTime          time.Time
-	ec               executor.MeasureExecutionContext
-	metadata         *commonv1.Metadata
-	criteria         *modelv1.Criteria
-	projectionTags   [][]*logical.Tag
-	projectionFields []*logical.Field
-	groupByEntity    bool
+	startTime           time.Time
+	endTime             time.Time
+	ec                  executor.MeasureExecutionContext
+	metadata            *commonv1.Metadata
+	criteria            *modelv1.Criteria
+	projectionTags      [][]*logical.Tag
+	projectionFields    []*logical.Field
+	groupByEntity       bool
+	needEachShardResult bool
 }
 
 func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -98,6 +99,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 			metadata:             uis.metadata,
 			query:                query,
 			groupByEntity:        uis.groupByEntity,
+			needEachShardResult:  uis.needEachShardResult,
 			uis:                  uis,
 			l:                    logger.GetLogger("query", "measure", uis.metadata.Group, uis.metadata.Name, "local-index"),
 			ec:                   uis.ec,
@@ -128,6 +130,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		query:                query,
 		entities:             entities,
 		groupByEntity:        uis.groupByEntity,
+		needEachShardResult:  uis.needEachShardResult,
 		uis:                  uis,
 		l:                    logger.GetLogger("query", "measure", uis.metadata.Group, uis.metadata.Name, "local-index"),
 		ec:                   uis.ec,
@@ -154,6 +157,7 @@ type localIndexScan struct {
 	projectionFields     []string
 	projectionTags       []model.TagProjection
 	groupByEntity        bool
+	needEachShardResult  bool
 }
 
 func (i *localIndexScan) Sort(order *logical.OrderBy) {
@@ -183,13 +187,14 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 	ctx, stop := i.startSpan(ctx, query.GetTracer(ctx), orderBy)
 	defer stop(err)
 	result, err := i.ec.Query(ctx, model.MeasureQueryOptions{
-		Name:            i.metadata.GetName(),
-		TimeRange:       &i.timeRange,
-		Entities:        i.entities,
-		Query:           i.query,
-		Order:           orderBy,
-		TagProjection:   i.projectionTags,
-		FieldProjection: i.projectionFields,
+		Name:                i.metadata.GetName(),
+		TimeRange:           &i.timeRange,
+		Entities:            i.entities,
+		Query:               i.query,
+		Order:               orderBy,
+		TagProjection:       i.projectionTags,
+		FieldProjection:     i.projectionFields,
+		NeedEachShardResult: i.needEachShardResult,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query measure: %w", err)
@@ -218,16 +223,18 @@ func (i *localIndexScan) Schema() logical.Schema {
 
 func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projectionTags [][]*logical.Tag,
 	projectionFields []*logical.Field, groupByEntity bool, criteria *modelv1.Criteria, ec executor.MeasureExecutionContext,
+	needEachShardResult bool,
 ) logical.UnresolvedPlan {
 	return &unresolvedIndexScan{
-		startTime:        startTime,
-		endTime:          endTime,
-		metadata:         metadata,
-		projectionTags:   projectionTags,
-		projectionFields: projectionFields,
-		groupByEntity:    groupByEntity,
-		criteria:         criteria,
-		ec:               ec,
+		startTime:           startTime,
+		endTime:             endTime,
+		metadata:            metadata,
+		projectionTags:      projectionTags,
+		projectionFields:    projectionFields,
+		groupByEntity:       groupByEntity,
+		criteria:            criteria,
+		ec:                  ec,
+		needEachShardResult: needEachShardResult,
 	}
 }
 

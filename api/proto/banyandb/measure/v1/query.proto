@@ -115,4 +115,6 @@ message QueryRequest {
   repeated string stages = 14;
   // rewriteAggTopNResult will rewrite agg result to raw data
   bool rewrite_agg_top_n_result = 15;
+  // return each shard result to the liasion node
+  bool need_each_shard_result = 16;
 }
