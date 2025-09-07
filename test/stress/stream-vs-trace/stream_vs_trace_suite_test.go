@@ -82,19 +82,29 @@ var _ = g.Describe("Stream vs Trace Performance", func() {
 		// Run performance tests
 		g.By("Running Stream vs Trace performance comparison")
 
-		// TODO: Implement actual performance tests
-		// This is a placeholder for the performance test implementation
-		fmt.Println("Schema setup completed successfully!")
-		fmt.Println("Stream group: stream_performance_test")
-		fmt.Println("Trace group: trace_performance_test")
-		fmt.Println("Ready to run performance tests...")
-
-		// Verify schemas are created
-		ctx := context.Background()
-
-		// Test basic connectivity
+		// Create clients
 		streamClient := NewStreamClient(conn)
 		traceClient := NewTraceClient(conn)
+
+		// Create context for operations
+		ctx := context.Background()
+
+		// Create benchmark runner with small scale for testing
+		config := DefaultBenchmarkConfig(SmallScale)
+		config.TestDuration = 2 * time.Minute // Shorter duration for testing
+		config.Concurrency = 5                // Lower concurrency for testing
+
+		benchmarkRunner := NewBenchmarkRunner(config, streamClient, traceClient)
+
+		// Run write benchmark
+		err = benchmarkRunner.RunWriteBenchmark(ctx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Compare results
+		benchmarkRunner.CompareResults()
+
+		// Verify schemas are created
+		// Test basic connectivity
 
 		// Verify stream group
 		streamGroupExists, err := streamClient.VerifyGroup(ctx, "stream_performance_test")
